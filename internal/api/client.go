@@ -18,6 +18,9 @@ import (
 	"clerk.com/cli/internal/output"
 )
 
+// Version is set at build time via ldflags.
+var Version = "dev"
+
 const (
 	MaxRetries   = 3
 	BaseDelayMs  = 1000
@@ -119,6 +122,7 @@ func (c *Client) RequestWithMeta(method, path string, opts *RequestOptions) ([]b
 		req.Header.Set("Authorization", "Bearer "+c.apiKey)
 		req.Header.Set("Content-Type", "application/json")
 		req.Header.Set("Accept", "application/json")
+		req.Header.Set("User-Agent", "clerk-cli/"+Version)
 
 		if opts.IfMatch != "" {
 			req.Header.Set("If-Match", opts.IfMatch)

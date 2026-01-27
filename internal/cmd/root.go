@@ -66,6 +66,8 @@ func init() {
 	rootCmd.Version = Version
 	rootCmd.SetVersionTemplate("clerk version {{.Version}}\n")
 
+	api.Version = Version
+
 	rootCmd.SetUsageFunc(colorizedUsage)
 	rootCmd.SetHelpFunc(colorizedHelp)
 
