@@ -10,6 +10,7 @@ import (
 // Provider represents an AI provider that can generate rule expressions
 type Provider interface {
 	GenerateExpression(schema string, description string) (string, error)
+	ModifyExpression(schema string, currentExpression string, modification string) (string, error)
 }
 
 // Config holds AI configuration
@@ -110,3 +111,21 @@ IMPORTANT:
 - Return ONLY the expression, nothing else
 - Do not include any explanation or markdown
 - The expression must be valid and use only fields from the provided schema`
+
+const modifyPrompt = `You are an expert at writing Clerk Protect rule expressions. You will be given an existing rule expression and a description of how to modify it.
+
+Rules about the expression syntax:
+- Expressions must evaluate to a boolean (true/false)
+- Use dot notation to access nested fields (e.g., ip.privacy.is_vpn)
+- Comparison operators: ==, !=, <, >, <=, >=
+- Logical operators: &&, ||, !
+- String values must be quoted with double quotes
+- Boolean fields can be used directly without comparison (e.g., ip.privacy.is_vpn, not ip.privacy.is_vpn == true)
+- To negate a boolean field, use ! (e.g., !ip.privacy.is_vpn, not ip.privacy.is_vpn == false)
+- Numbers can be integers or decimals
+
+IMPORTANT:
+- Return ONLY the modified expression, nothing else
+- Do not include any explanation or markdown
+- The expression must be valid and use only fields from the provided schema
+- Preserve parts of the original expression that are not affected by the modification`

@@ -659,8 +659,8 @@ func formatSchemaFieldsForAI(sb *strings.Builder, fields map[string]api.SchemaFi
 
 var protectRulesEditCmd = &cobra.Command{
 	Use:   "edit <ruleset> <rule-id>",
-	Short: "Edit rule in editor",
-	Long:  "Open the rule in your editor ($EDITOR) for modification.",
+	Short: "Edit rule",
+	Long:  "Edit a rule via flags, AI prompt, or $EDITOR.",
 	Args:  RequireArgs("ruleset", "rule-id"),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		client, err := GetClient()
@@ -676,6 +676,7 @@ var protectRulesEditCmd = &cobra.Command{
 		expression, _ := cmd.Flags().GetString("expression")
 		action, _ := cmd.Flags().GetString("action")
 		description, _ := cmd.Flags().GetString("description")
+		aiPrompt, _ := cmd.Flags().GetString("ai")
 
 		if expression != "" || action != "" || description != "" {
 			// Direct update via flags
@@ -694,7 +695,57 @@ var protectRulesEditCmd = &cobra.Command{
 			})
 		}
 
-		// Interactive editor mode - fetch existing rule first
+		// AI-assisted edit
+		if aiPrompt != "" {
+			return editRuleWithAI(protectAPI, ruleset, id, aiPrompt)
+		}
+
+		// Interactive: prompt for method if AI is available
+		if output.IsInteractive() {
+			aiConfig := ai.GetConfig(GetProfile())
+			if aiConfig.IsConfigured() {
+				var method string
+				err := huh.NewSelect[string]().
+					Title("How do you want to edit the expression?").
+					Options(
+						huh.NewOption("Describe changes (AI)", "ai"),
+						huh.NewOption("Open in editor", "editor"),
+					).
+					Value(&method).
+					Run()
+				if err != nil {
+					return err
+				}
+
+				if method == "ai" {
+					var modification string
+					existingRule, err := protectAPI.GetRule(ruleset, id)
+					if err != nil {
+						return err
+					}
+					fmt.Println(output.Dim("Current expression:"), output.Cyan(existingRule.Expression))
+					fmt.Println()
+
+					err = huh.NewInput().
+						Title("Describe how to modify the rule:").
+						Value(&modification).
+						Validate(func(s string) error {
+							if s == "" {
+								return fmt.Errorf("description is required")
+							}
+							return nil
+						}).
+						Run()
+					if err != nil {
+						return err
+					}
+
+					return editRuleWithAI(protectAPI, ruleset, id, modification)
+				}
+			}
+		}
+
+		// Editor mode - fetch existing rule first
 		existingRule, err := protectAPI.GetRule(ruleset, id)
 		if err != nil {
 			return fmt.Errorf("failed to fetch rule: %w", err)
@@ -729,6 +780,68 @@ var protectRulesEditCmd = &cobra.Command{
 			output.Success(fmt.Sprintf("Updated rule %s", rule.ID))
 		})
 	},
+}
+
+func editRuleWithAI(protectAPI *api.ProtectAPI, ruleset, id, modification string) error {
+	existingRule, err := protectAPI.GetRule(ruleset, id)
+	if err != nil {
+		return err
+	}
+
+	aiConfig := ai.GetConfig(GetProfile())
+	if !aiConfig.IsConfigured() {
+		return fmt.Errorf("AI not configured. Set ai.provider and API key, or use OPENAI_API_KEY/ANTHROPIC_API_KEY")
+	}
+
+	provider, err := ai.NewProvider(aiConfig)
+	if err != nil {
+		return err
+	}
+
+	schema, err := protectAPI.GetSchema(ruleset)
+	if err != nil {
+		return fmt.Errorf("failed to fetch schema: %w", err)
+	}
+	schemaStr := formatSchemaForAI(schema)
+
+	fmt.Println(output.Dim("Current expression:"), output.Cyan(existingRule.Expression))
+	fmt.Println(output.Dim("Modifying:"), modification)
+	fmt.Println()
+
+	newExpression, err := provider.ModifyExpression(schemaStr, existingRule.Expression, modification)
+	if err != nil {
+		return fmt.Errorf("failed to generate expression: %w", err)
+	}
+
+	fmt.Println(output.BoldYellow("Updated expression:"))
+	fmt.Println("  " + output.Cyan(newExpression))
+	fmt.Println()
+
+	if output.IsInteractive() {
+		confirm := true
+		err := huh.NewConfirm().
+			Title("Apply this change?").
+			Value(&confirm).
+			Run()
+		if err != nil {
+			return err
+		}
+		if !confirm {
+			return fmt.Errorf("cancelled")
+		}
+	}
+
+	rule, err := protectAPI.UpdateRule(ruleset, id, api.UpdateRuleParams{
+		Expression: newExpression,
+	})
+	if err != nil {
+		return err
+	}
+
+	formatter := GetFormatter()
+	return formatter.Output(rule, func() {
+		output.Success(fmt.Sprintf("Updated rule %s", rule.ID))
+	})
 }
 
 // editableRule is the structure used for editing in the editor
@@ -1415,6 +1528,7 @@ func init() {
 	protectRulesEditCmd.Flags().String("expression", "", "New expression")
 	protectRulesEditCmd.Flags().String("action", "", "New action")
 	protectRulesEditCmd.Flags().String("description", "", "New description")
+	protectRulesEditCmd.Flags().String("ai", "", "Describe changes in plain English (uses AI)")
 
 	protectRulesDeleteCmd.Flags().BoolP("force", "f", false, "Skip confirmation prompt")
 
