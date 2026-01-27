@@ -12,6 +12,8 @@ class Clerk < Formula
   def install
     ldflags = "-s -w -X clerk.com/cli/internal/cmd.Version=#{version}"
     system "go", "build", *std_go_args(ldflags:), "./cmd/clerk"
+
+    generate_completions_from_executable(bin/"clerk", "completion")
   end
 
   test do
