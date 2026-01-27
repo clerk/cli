@@ -432,11 +432,12 @@ var aliasCmd = &cobra.Command{
 }
 
 var aliasAddCmd = &cobra.Command{
-	Use:   "add <name> <command>",
+	Use:   "add <name> <command...>",
 	Short: "Create alias",
-	Args:  RequireArgs("alias-name", "command"),
+	Args:  cobra.MinimumNArgs(2),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		name, command := args[0], args[1]
+		name := args[0]
+		command := strings.Join(args[1:], " ")
 		if err := config.AddAlias(name, command); err != nil {
 			return err
 		}
