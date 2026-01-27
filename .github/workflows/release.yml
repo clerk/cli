@@ -66,11 +66,12 @@ jobs:
       - name: Update Homebrew formula
         run: |
           VERSION="${GITHUB_REF_NAME}"
-          REVISION="$(git rev-parse HEAD)"
-          sed -i "s/tag: \"v[^\"]*\"/tag: \"${VERSION}\"/" Formula/clerk.rb
-          sed -i "s/revision: \"[^\"]*\"/revision: \"${REVISION}\"/" Formula/clerk.rb
+          TAG_SHA="$(git rev-parse "${VERSION}")"
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
+          git checkout main
+          sed -i "s/tag: \"v[^\"]*\"/tag: \"${VERSION}\"/" Formula/clerk.rb
+          sed -i "s/revision: \"[^\"]*\"/revision: \"${TAG_SHA}\"/" Formula/clerk.rb
           git add Formula/clerk.rb
           git commit -m "formula: update to ${VERSION}"
-          git push origin HEAD:main
+          git push origin main
