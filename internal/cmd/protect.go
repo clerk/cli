@@ -1357,7 +1357,55 @@ func sortStrings(s []string) {
 	}
 }
 
+var protectStatusCmd = &cobra.Command{
+	Use:   "status",
+	Short: "Show or update Clerk Protect status",
+	RunE: func(cmd *cobra.Command, args []string) error {
+		client, err := GetClient()
+		if err != nil {
+			return err
+		}
+		protectAPI := api.NewProtectAPI(client)
+
+		enableRules, _ := cmd.Flags().GetBool("enable-rules")
+		disableRules, _ := cmd.Flags().GetBool("disable-rules")
+
+		if enableRules && disableRules {
+			return fmt.Errorf("cannot use --enable-rules and --disable-rules together")
+		}
+
+		var status *api.ProtectStatus
+		if enableRules {
+			status, err = protectAPI.SetRulesEnabled(true)
+		} else if disableRules {
+			status, err = protectAPI.SetRulesEnabled(false)
+		} else {
+			status, err = protectAPI.GetStatus()
+		}
+		if err != nil {
+			return err
+		}
+
+		formatter := GetFormatter()
+		return formatter.Output(status, func() {
+			fmt.Println(output.BoldYellow("Clerk Protect"))
+			fmt.Println(output.Dim("Rules:  "), formatEnabled(status.RulesEnabled))
+			fmt.Println(output.Dim("Specter:"), formatEnabled(status.SpecterEnabled))
+		})
+	},
+}
+
+func formatEnabled(v bool) string {
+	if v {
+		return output.Green("enabled")
+	}
+	return output.Red("disabled")
+}
+
 func init() {
+	protectStatusCmd.Flags().Bool("enable-rules", false, "Enable protect rules")
+	protectStatusCmd.Flags().Bool("disable-rules", false, "Disable protect rules")
+
 	protectRulesAddCmd.Flags().String("expression", "", "Rule expression")
 	protectRulesAddCmd.Flags().StringP("generate", "g", "", "Generate expression from natural language using AI")
 	protectRulesAddCmd.Flags().String("action", "", "Rule action (ALLOW, BLOCK, CHALLENGE)")
@@ -1388,6 +1436,7 @@ func init() {
 	protectSchemaCmd.AddCommand(protectSchemaListCmd)
 	protectSchemaCmd.AddCommand(protectSchemaTypeCmd)
 
+	protectCmd.AddCommand(protectStatusCmd)
 	protectCmd.AddCommand(protectRulesCmd)
 	protectCmd.AddCommand(protectSchemaCmd)
 }

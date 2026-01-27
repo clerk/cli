@@ -290,3 +290,28 @@ func (a *ProtectAPI) GetEventTypes() ([]string, error) {
 }
 
 var EventTypes = []string{"ALL", "SIGN_IN", "SIGN_UP", "SMS", "EMAIL"}
+
+// Protect instance settings
+
+type ProtectStatus struct {
+	RulesEnabled   bool `json:"rules_enabled"`
+	SpecterEnabled bool `json:"specter_enabled"`
+}
+
+func (a *ProtectAPI) GetStatus() (*ProtectStatus, error) {
+	data, err := a.client.Get("/v1/instance/protect", nil)
+	if err != nil {
+		return nil, err
+	}
+	return ParseResponse[*ProtectStatus](data)
+}
+
+func (a *ProtectAPI) SetRulesEnabled(enabled bool) (*ProtectStatus, error) {
+	data, err := a.client.Patch("/v1/instance/protect", map[string]bool{
+		"rules_enabled": enabled,
+	})
+	if err != nil {
+		return nil, err
+	}
+	return ParseResponse[*ProtectStatus](data)
+}
