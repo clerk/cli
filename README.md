@@ -1,6 +1,6 @@
 # Clerk CLI
 
-The official command-line interface for managing your Clerk instances. This CLI provides tools for managing users, organizations, sessions, domains, Clerk Protect rules, and more.
+A command-line interface for managing your Clerk instances. This CLI provides tools for managing users, organizations, sessions, domains, Clerk Protect, and more.
 
 ## Installation
 
@@ -98,7 +98,7 @@ Create custom shortcuts for frequently used commands:
 
 ```bash
 # Create aliases
-clerk config alias add prl protect rules list
+clerk config alias add prl -- protect rules list
 clerk config alias add pra protect rules add
 
 # Use aliases
