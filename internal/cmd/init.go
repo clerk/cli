@@ -5,7 +5,7 @@ import (
 
 	"clerk.com/cli/internal/config"
 	"clerk.com/cli/internal/output"
-	"github.com/AlecAivazis/survey/v2"
+	"github.com/charmbracelet/huh"
 	"github.com/spf13/cobra"
 )
 
@@ -27,10 +27,12 @@ func runInit(cmd *cobra.Command, args []string) error {
 	fmt.Println()
 
 	var apiKey string
-	prompt := &survey.Password{
-		Message: "Enter your Clerk Secret Key (sk_test_... or sk_live_...):",
-	}
-	if err := survey.AskOne(prompt, &apiKey); err != nil {
+	err := huh.NewInput().
+		Title("Enter your Clerk Secret Key (sk_test_... or sk_live_...):").
+		EchoMode(huh.EchoModePassword).
+		Value(&apiKey).
+		Run()
+	if err != nil {
 		return err
 	}
 
@@ -41,19 +43,20 @@ func runInit(cmd *cobra.Command, args []string) error {
 	profileName := "default"
 
 	var useCustomProfile bool
-	confirmPrompt := &survey.Confirm{
-		Message: "Would you like to save this to a named profile instead of 'default'?",
-		Default: false,
-	}
-	if err := survey.AskOne(confirmPrompt, &useCustomProfile); err != nil {
+	err = huh.NewConfirm().
+		Title("Would you like to save this to a named profile instead of 'default'?").
+		Value(&useCustomProfile).
+		Run()
+	if err != nil {
 		return err
 	}
 
 	if useCustomProfile {
-		namePrompt := &survey.Input{
-			Message: "Profile name:",
-		}
-		if err := survey.AskOne(namePrompt, &profileName); err != nil {
+		err = huh.NewInput().
+			Title("Profile name:").
+			Value(&profileName).
+			Run()
+		if err != nil {
 			return err
 		}
 		if profileName == "" {

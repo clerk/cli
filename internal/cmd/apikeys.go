@@ -6,7 +6,7 @@ import (
 
 	"clerk.com/cli/internal/api"
 	"clerk.com/cli/internal/output"
-	"github.com/AlecAivazis/survey/v2"
+	"github.com/charmbracelet/huh"
 	"github.com/spf13/cobra"
 )
 
@@ -120,11 +120,11 @@ var apiKeysRevokeCmd = &cobra.Command{
 		force, _ := cmd.Flags().GetBool("force")
 		if !force && output.IsInteractive() {
 			var confirm bool
-			prompt := &survey.Confirm{
-				Message: fmt.Sprintf("Revoke API key %s?", args[0]),
-				Default: false,
-			}
-			if err := survey.AskOne(prompt, &confirm); err != nil {
+			err := huh.NewConfirm().
+				Title(fmt.Sprintf("Revoke API key %s?", args[0])).
+				Value(&confirm).
+				Run()
+			if err != nil {
 				return err
 			}
 			if !confirm {

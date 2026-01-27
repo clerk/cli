@@ -10,7 +10,7 @@ import (
 	"clerk.com/cli/internal/api"
 	"clerk.com/cli/internal/config"
 	"clerk.com/cli/internal/output"
-	"github.com/AlecAivazis/survey/v2"
+	"github.com/charmbracelet/huh"
 	"github.com/spf13/cobra"
 	"gopkg.in/yaml.v3"
 )
@@ -218,11 +218,11 @@ var protectRulesAddCmd = &cobra.Command{
 				fmt.Println()
 
 				var wantConfigure bool
-				configPrompt := &survey.Confirm{
-					Message: "Would you like to configure AI now?",
-					Default: false,
-				}
-				if err := survey.AskOne(configPrompt, &wantConfigure); err != nil {
+				err := huh.NewConfirm().
+					Title("Would you like to configure AI now?").
+					Value(&wantConfigure).
+					Run()
+				if err != nil {
 					return err
 				}
 
@@ -328,102 +328,103 @@ var protectRulesAddCmd = &cobra.Command{
 // Interactive prompt helpers
 
 func promptRuleset() (string, error) {
-	prompt := &survey.Select{
-		Message: "Select ruleset:",
-		Options: api.EventTypes,
-		Default: "ALL",
+	options := make([]huh.Option[string], len(api.EventTypes))
+	for i, et := range api.EventTypes {
+		options[i] = huh.NewOption(et, et)
 	}
 	var result string
-	if err := survey.AskOne(prompt, &result, survey.WithIcons(surveyIcons)); err != nil {
+	err := huh.NewSelect[string]().
+		Title("Select ruleset:").
+		Options(options...).
+		Value(&result).
+		Run()
+	if err != nil {
 		return "", err
 	}
 	return result, nil
 }
 
 func promptExpressionMethod() (string, error) {
-	prompt := &survey.Select{
-		Message: "How do you want to create the expression?",
-		Options: []string{
-			"Generate from description (AI)",
-			"Write manually",
-		},
-		Default: "Generate from description (AI)",
-	}
 	var result string
-	if err := survey.AskOne(prompt, &result, survey.WithIcons(surveyIcons)); err != nil {
+	err := huh.NewSelect[string]().
+		Title("How do you want to create the expression?").
+		Options(
+			huh.NewOption("Generate from description (AI)", "generate"),
+			huh.NewOption("Write manually", "manual"),
+		).
+		Value(&result).
+		Run()
+	if err != nil {
 		return "", err
 	}
-	if strings.HasPrefix(result, "Generate") {
-		return "generate", nil
-	}
-	return "manual", nil
+	return result, nil
 }
 
 func promptGenerateDescription() (string, error) {
-	prompt := &survey.Input{
-		Message: "Describe the rule in plain English:",
-		Help:    "e.g., 'block VPN users', 'only allow US phone numbers'",
-	}
 	var result string
-	if err := survey.AskOne(prompt, &result, survey.WithValidator(survey.Required), survey.WithIcons(surveyIcons)); err != nil {
+	err := huh.NewInput().
+		Title("Describe the rule in plain English:").
+		Description("e.g., 'block VPN users', 'only allow US phone numbers'").
+		Value(&result).
+		Validate(func(s string) error {
+			if s == "" {
+				return fmt.Errorf("description is required")
+			}
+			return nil
+		}).
+		Run()
+	if err != nil {
 		return "", err
 	}
 	return result, nil
 }
 
 func promptExpression() (string, error) {
-	prompt := &survey.Input{
-		Message: "Enter rule expression:",
-		Help:    "e.g., 'ip.privacy.is_vpn == true'",
-	}
 	var result string
-	if err := survey.AskOne(prompt, &result, survey.WithValidator(survey.Required), survey.WithIcons(surveyIcons)); err != nil {
+	err := huh.NewInput().
+		Title("Enter rule expression:").
+		Description("e.g., 'ip.privacy.is_vpn == true'").
+		Value(&result).
+		Validate(func(s string) error {
+			if s == "" {
+				return fmt.Errorf("expression is required")
+			}
+			return nil
+		}).
+		Run()
+	if err != nil {
 		return "", err
 	}
 	return result, nil
 }
 
 func promptAction() (string, error) {
-	prompt := &survey.Select{
-		Message: "Select action when expression matches:",
-		Options: []string{"BLOCK", "ALLOW", "CHALLENGE"},
-		Default: "BLOCK",
-		Description: func(value string, index int) string {
-			switch value {
-			case "BLOCK":
-				return "Deny the request"
-			case "ALLOW":
-				return "Allow the request"
-			case "CHALLENGE":
-				return "Present a challenge (e.g., CAPTCHA)"
-			}
-			return ""
-		},
-	}
 	var result string
-	if err := survey.AskOne(prompt, &result, survey.WithIcons(surveyIcons)); err != nil {
+	err := huh.NewSelect[string]().
+		Title("Select action when expression matches:").
+		Options(
+			huh.NewOption("BLOCK - Deny the request", "BLOCK"),
+			huh.NewOption("ALLOW - Allow the request", "ALLOW"),
+			huh.NewOption("CHALLENGE - Present a challenge (e.g., CAPTCHA)", "CHALLENGE"),
+		).
+		Value(&result).
+		Run()
+	if err != nil {
 		return "", err
 	}
 	return result, nil
 }
 
 func promptDescription() (string, error) {
-	prompt := &survey.Input{
-		Message: "Description (optional):",
-	}
 	var result string
-	if err := survey.AskOne(prompt, &result, survey.WithIcons(surveyIcons)); err != nil {
+	err := huh.NewInput().
+		Title("Description (optional):").
+		Value(&result).
+		Run()
+	if err != nil {
 		return "", err
 	}
 	return result, nil
-}
-
-// Custom survey icons for better visual appearance
-var surveyIcons = func(icons *survey.IconSet) {
-	icons.Question.Text = "?"
-	icons.Question.Format = "cyan+b"
-	icons.SelectFocus.Text = "▸"
-	icons.SelectFocus.Format = "cyan+b"
 }
 
 // generateRuleExpression uses AI to generate a rule expression from a description
@@ -443,12 +444,12 @@ func generateRuleExpression(protectAPI *api.ProtectAPI, ruleset, description str
 		fmt.Println(output.Dim("  Example: \"Allow only US phone numbers\""))
 		fmt.Println()
 
-		var wantConfigure bool
-		prompt := &survey.Confirm{
-			Message: "Would you like to configure AI now?",
-			Default: true,
-		}
-		if err := survey.AskOne(prompt, &wantConfigure); err != nil {
+		wantConfigure := true
+		err := huh.NewConfirm().
+			Title("Would you like to configure AI now?").
+			Value(&wantConfigure).
+			Run()
+		if err != nil {
 			return "", err
 		}
 		if !wantConfigure {
@@ -456,7 +457,6 @@ func generateRuleExpression(protectAPI *api.ProtectAPI, ruleset, description str
 		}
 
 		// Configure AI interactively
-		var err error
 		aiConfig, err = promptForAIConfig(GetProfile())
 		if err != nil {
 			return "", err
@@ -498,12 +498,12 @@ func generateRuleExpressionWithConfig(protectAPI *api.ProtectAPI, ruleset, descr
 
 	// Ask for confirmation in interactive mode
 	if output.IsInteractive() {
-		var confirm bool
-		prompt := &survey.Confirm{
-			Message: "Create rule with this expression?",
-			Default: true,
-		}
-		if err := survey.AskOne(prompt, &confirm); err != nil {
+		confirm := true
+		err := huh.NewConfirm().
+			Title("Create rule with this expression?").
+			Value(&confirm).
+			Run()
+		if err != nil {
 			return "", err
 		}
 		if !confirm {
@@ -518,46 +518,44 @@ func generateRuleExpressionWithConfig(protectAPI *api.ProtectAPI, ruleset, descr
 func promptForAIConfig(profileName string) (*ai.Config, error) {
 	// Select provider
 	var provider string
-	providerPrompt := &survey.Select{
-		Message: "Select AI provider:",
-		Options: []string{"OpenAI (Recommended)", "Anthropic"},
-		Default: "OpenAI (Recommended)",
-	}
-	if err := survey.AskOne(providerPrompt, &provider); err != nil {
+	err := huh.NewSelect[string]().
+		Title("Select AI provider:").
+		Options(
+			huh.NewOption("OpenAI (Recommended)", "openai"),
+			huh.NewOption("Anthropic", "anthropic"),
+		).
+		Value(&provider).
+		Run()
+	if err != nil {
 		return nil, err
-	}
-
-	// Normalize provider selection
-	if strings.HasPrefix(provider, "OpenAI") {
-		provider = "openai"
-	} else {
-		provider = "anthropic"
 	}
 
 	// Get API key
 	var apiKey string
-	var keyPrompt *survey.Password
+	var keyMessage, keyDescription string
 	var keyConfigKey, modelConfigKey, defaultModel string
 
 	if provider == "openai" {
-		keyPrompt = &survey.Password{
-			Message: "Enter your OpenAI API key:",
-			Help:    "Get your API key from https://platform.openai.com/api-keys",
-		}
+		keyMessage = "Enter your OpenAI API key:"
+		keyDescription = "Get your API key from https://platform.openai.com/api-keys"
 		keyConfigKey = "ai.openai.key"
 		modelConfigKey = "ai.openai.model"
 		defaultModel = "gpt-4o"
 	} else {
-		keyPrompt = &survey.Password{
-			Message: "Enter your Anthropic API key:",
-			Help:    "Get your API key from https://console.anthropic.com/settings/keys",
-		}
+		keyMessage = "Enter your Anthropic API key:"
+		keyDescription = "Get your API key from https://console.anthropic.com/settings/keys"
 		keyConfigKey = "ai.anthropic.key"
 		modelConfigKey = "ai.anthropic.model"
 		defaultModel = "claude-sonnet-4-20250514"
 	}
 
-	if err := survey.AskOne(keyPrompt, &apiKey); err != nil {
+	err = huh.NewInput().
+		Title(keyMessage).
+		Description(keyDescription).
+		EchoMode(huh.EchoModePassword).
+		Value(&apiKey).
+		Run()
+	if err != nil {
 		return nil, err
 	}
 
@@ -566,23 +564,23 @@ func promptForAIConfig(profileName string) (*ai.Config, error) {
 	}
 
 	// Ask about model (with default)
-	var useCustomModel bool
-	modelPrompt := &survey.Confirm{
-		Message: fmt.Sprintf("Use default model (%s)?", defaultModel),
-		Default: true,
-	}
-	if err := survey.AskOne(modelPrompt, &useCustomModel); err != nil {
+	useDefaultModel := true
+	err = huh.NewConfirm().
+		Title(fmt.Sprintf("Use default model (%s)?", defaultModel)).
+		Value(&useDefaultModel).
+		Run()
+	if err != nil {
 		return nil, err
 	}
 
 	model := defaultModel
-	if !useCustomModel {
-		var customModel string
-		customModelPrompt := &survey.Input{
-			Message: "Enter model name:",
-			Default: defaultModel,
-		}
-		if err := survey.AskOne(customModelPrompt, &customModel); err != nil {
+	if !useDefaultModel {
+		customModel := defaultModel
+		err = huh.NewInput().
+			Title("Enter model name:").
+			Value(&customModel).
+			Run()
+		if err != nil {
 			return nil, err
 		}
 		if customModel != "" {
@@ -591,12 +589,12 @@ func promptForAIConfig(profileName string) (*ai.Config, error) {
 	}
 
 	// Ask to save configuration
-	var saveConfig bool
-	savePrompt := &survey.Confirm{
-		Message: fmt.Sprintf("Save AI configuration to profile '%s'?", profileName),
-		Default: true,
-	}
-	if err := survey.AskOne(savePrompt, &saveConfig); err != nil {
+	saveConfig := true
+	err = huh.NewConfirm().
+		Title(fmt.Sprintf("Save AI configuration to profile '%s'?", profileName)).
+		Value(&saveConfig).
+		Run()
+	if err != nil {
 		return nil, err
 	}
 
@@ -880,11 +878,11 @@ var protectRulesDeleteCmd = &cobra.Command{
 		force, _ := cmd.Flags().GetBool("force")
 		if !force && interactive {
 			var confirm bool
-			prompt := &survey.Confirm{
-				Message: fmt.Sprintf("Delete rule %s from %s?", output.Cyan(id), output.Yellow(ruleset)),
-				Default: false,
-			}
-			if err := survey.AskOne(prompt, &confirm, survey.WithIcons(surveyIcons)); err != nil {
+			err := huh.NewConfirm().
+				Title(fmt.Sprintf("Delete rule %s from %s?", id, ruleset)).
+				Value(&confirm).
+				Run()
+			if err != nil {
 				return err
 			}
 			if !confirm {
@@ -912,31 +910,26 @@ func promptRuleSelection(protectAPI *api.ProtectAPI, ruleset string) (string, er
 		return "", fmt.Errorf("no rules found in %s ruleset", ruleset)
 	}
 
-	options := make([]string, len(rules))
+	options := make([]huh.Option[string], len(rules))
 	for i, r := range rules {
 		expr := r.Expression
 		if len(expr) > 50 {
 			expr = expr[:47] + "..."
 		}
-		options[i] = fmt.Sprintf("%s  %s  %s", r.ID, output.Dim(r.Action), expr)
+		label := fmt.Sprintf("%s  %s  %s", r.ID, r.Action, expr)
+		options[i] = huh.NewOption(label, r.ID)
 	}
 
-	prompt := &survey.Select{
-		Message:  "Select rule to delete:",
-		Options:  options,
-		PageSize: 10,
-	}
 	var selected string
-	if err := survey.AskOne(prompt, &selected, survey.WithIcons(surveyIcons)); err != nil {
+	err = huh.NewSelect[string]().
+		Title("Select rule to delete:").
+		Options(options...).
+		Value(&selected).
+		Run()
+	if err != nil {
 		return "", err
 	}
-
-	// Extract ID from selection
-	parts := strings.Fields(selected)
-	if len(parts) > 0 {
-		return parts[0], nil
-	}
-	return "", fmt.Errorf("invalid selection")
+	return selected, nil
 }
 
 var protectRulesFlushCmd = &cobra.Command{
@@ -955,11 +948,11 @@ var protectRulesFlushCmd = &cobra.Command{
 		force, _ := cmd.Flags().GetBool("force")
 		if !force && output.IsInteractive() {
 			var confirm bool
-			prompt := &survey.Confirm{
-				Message: fmt.Sprintf("Delete all rules in %s ruleset?", ruleset),
-				Default: false,
-			}
-			if err := survey.AskOne(prompt, &confirm); err != nil {
+			err := huh.NewConfirm().
+				Title(fmt.Sprintf("Delete all rules in %s ruleset?", ruleset)).
+				Value(&confirm).
+				Run()
+			if err != nil {
 				return err
 			}
 			if !confirm {
@@ -1061,17 +1054,21 @@ var protectRulesReorderCmd = &cobra.Command{
 }
 
 func promptReorder(rules []api.Rule) ([]string, error) {
-	// Create options showing rule details
-	options := make([]string, len(rules))
-	idMap := make(map[string]string)
+	type ruleOption struct {
+		label string
+		id    string
+	}
+
+	allOptions := make([]ruleOption, len(rules))
 	for i, r := range rules {
 		expr := r.Expression
 		if len(expr) > 40 {
 			expr = expr[:37] + "..."
 		}
-		label := fmt.Sprintf("%s  %s  %s", r.ID[:12]+"...", r.Action, expr)
-		options[i] = label
-		idMap[label] = r.ID
+		allOptions[i] = ruleOption{
+			label: fmt.Sprintf("%s  %s  %s", r.ID[:12]+"...", r.Action, expr),
+			id:    r.ID,
+		}
 	}
 
 	fmt.Println(output.Dim("Select rules in the order you want them (first = highest priority):"))
@@ -1079,33 +1076,37 @@ func promptReorder(rules []api.Rule) ([]string, error) {
 	fmt.Println()
 
 	var orderedIDs []string
-	remaining := make([]string, len(options))
-	copy(remaining, options)
+	remaining := make([]ruleOption, len(allOptions))
+	copy(remaining, allOptions)
 
 	for i := 0; i < len(rules); i++ {
 		if len(remaining) == 1 {
-			// Auto-select last remaining
-			orderedIDs = append(orderedIDs, idMap[remaining[0]])
+			orderedIDs = append(orderedIDs, remaining[0].id)
 			break
 		}
 
-		prompt := &survey.Select{
-			Message:  fmt.Sprintf("Position %d:", i+1),
-			Options:  remaining,
-			PageSize: 10,
+		options := make([]huh.Option[string], len(remaining))
+		for j, ro := range remaining {
+			options[j] = huh.NewOption(ro.label, ro.id)
 		}
+
 		var selected string
-		if err := survey.AskOne(prompt, &selected, survey.WithIcons(surveyIcons)); err != nil {
+		err := huh.NewSelect[string]().
+			Title(fmt.Sprintf("Position %d:", i+1)).
+			Options(options...).
+			Value(&selected).
+			Run()
+		if err != nil {
 			return nil, err
 		}
 
-		orderedIDs = append(orderedIDs, idMap[selected])
+		orderedIDs = append(orderedIDs, selected)
 
 		// Remove selected from remaining
-		newRemaining := make([]string, 0, len(remaining)-1)
-		for _, opt := range remaining {
-			if opt != selected {
-				newRemaining = append(newRemaining, opt)
+		newRemaining := make([]ruleOption, 0, len(remaining)-1)
+		for _, ro := range remaining {
+			if ro.id != selected {
+				newRemaining = append(newRemaining, ro)
 			}
 		}
 		remaining = newRemaining
@@ -1159,28 +1160,30 @@ var protectSchemaShowCmd = &cobra.Command{
 }
 
 func promptEventType() (string, error) {
-	prompt := &survey.Select{
-		Message: "Select event type:",
-		Options: api.EventTypes,
-		Default: "ALL",
-		Description: func(value string, index int) string {
-			switch value {
-			case "ALL":
-				return "Schema fields available in all event types"
-			case "SIGN_IN":
-				return "Sign-in authentication attempts"
-			case "SIGN_UP":
-				return "New user registrations"
-			case "SMS":
-				return "SMS verification requests"
-			case "EMAIL":
-				return "Email verification requests"
-			}
-			return ""
-		},
+	eventTypeDescriptions := map[string]string{
+		"ALL":     "Schema fields available in all event types",
+		"SIGN_IN": "Sign-in authentication attempts",
+		"SIGN_UP": "New user registrations",
+		"SMS":     "SMS verification requests",
+		"EMAIL":   "Email verification requests",
 	}
+
+	options := make([]huh.Option[string], len(api.EventTypes))
+	for i, et := range api.EventTypes {
+		label := et
+		if desc, ok := eventTypeDescriptions[et]; ok {
+			label = fmt.Sprintf("%s - %s", et, desc)
+		}
+		options[i] = huh.NewOption(label, et)
+	}
+
 	var result string
-	if err := survey.AskOne(prompt, &result, survey.WithIcons(surveyIcons)); err != nil {
+	err := huh.NewSelect[string]().
+		Title("Select event type:").
+		Options(options...).
+		Value(&result).
+		Run()
+	if err != nil {
 		return "", err
 	}
 	return result, nil

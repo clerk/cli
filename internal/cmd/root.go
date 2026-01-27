@@ -8,7 +8,7 @@ import (
 	"clerk.com/cli/internal/api"
 	"clerk.com/cli/internal/config"
 	"clerk.com/cli/internal/output"
-	"github.com/AlecAivazis/survey/v2"
+	"github.com/charmbracelet/huh"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 )
@@ -137,10 +137,12 @@ func promptForAPIKey(profileName string) (string, error) {
 	fmt.Println()
 
 	var apiKey string
-	prompt := &survey.Password{
-		Message: "Enter your Clerk secret key:",
-	}
-	if err := survey.AskOne(prompt, &apiKey); err != nil {
+	err := huh.NewInput().
+		Title("Enter your Clerk secret key:").
+		EchoMode(huh.EchoModePassword).
+		Value(&apiKey).
+		Run()
+	if err != nil {
 		return "", err
 	}
 
@@ -150,11 +152,13 @@ func promptForAPIKey(profileName string) (string, error) {
 
 	// Ask if they want to save the key
 	var saveKey bool
-	savePrompt := &survey.Confirm{
-		Message: fmt.Sprintf("Save key to profile '%s'?", profileName),
-		Default: true,
-	}
-	if err := survey.AskOne(savePrompt, &saveKey); err != nil {
+	err = huh.NewConfirm().
+		Title(fmt.Sprintf("Save key to profile '%s'?", profileName)).
+		Affirmative("Yes").
+		Negative("No").
+		Value(&saveKey).
+		Run()
+	if err != nil {
 		return apiKey, nil // Return the key even if we can't ask about saving
 	}
 
