@@ -17,11 +17,25 @@ func expandPrefixArgs(cmd *cobra.Command, args []string) []string {
 	result := make([]string, 0, len(args))
 	currentCmd := cmd
 
-	for i, arg := range args {
-		// Skip flags
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+
+		// Pass flags through as-is
 		if strings.HasPrefix(arg, "-") {
-			result = append(result, args[i:]...)
-			break
+			result = append(result, arg)
+			// If it's a flag that takes a value (e.g. --profile foo), pass the value too
+			if !strings.Contains(arg, "=") && i+1 < len(args) && !strings.HasPrefix(args[i+1], "-") {
+				// Check if this flag expects a value on the current command
+				flagName := strings.TrimLeft(arg, "-")
+				if f := currentCmd.Flags().Lookup(flagName); f != nil && f.Value.Type() != "bool" {
+					i++
+					result = append(result, args[i])
+				} else if f := currentCmd.PersistentFlags().Lookup(flagName); f != nil && f.Value.Type() != "bool" {
+					i++
+					result = append(result, args[i])
+				}
+			}
+			continue
 		}
 
 		// Try to find a matching subcommand

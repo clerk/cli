@@ -46,12 +46,12 @@ func (a *InvitationsAPI) List(params ListInvitationsParams) ([]Invitation, int, 
 		return nil, 0, err
 	}
 
-	result, err := ParseListResponse[Invitation](data)
+	result, err := ParseArrayResponse[Invitation](data)
 	if err != nil {
 		return nil, 0, err
 	}
 
-	return result.Data, result.TotalCount, nil
+	return result, len(result), nil
 }
 
 type CreateInvitationParams struct {
@@ -83,12 +83,7 @@ func (a *InvitationsAPI) BulkCreate(params BulkCreateInvitationsParams) ([]Invit
 		return nil, err
 	}
 
-	result, err := ParseListResponse[Invitation](data)
-	if err != nil {
-		return nil, err
-	}
-
-	return result.Data, nil
+	return ParseArrayResponse[Invitation](data)
 }
 
 func (a *InvitationsAPI) Revoke(id string) (*Invitation, error) {
