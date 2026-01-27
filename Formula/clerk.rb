@@ -3,7 +3,7 @@ class Clerk < Formula
   homepage "https://github.com/clerk/gocli"
   url "https://github.com/clerk/gocli.git",
     tag: "v0.0.1",
-    revision: "6cc54bd7d6c0ef1eca3b08416c15e40e5e1746f7"
+    revision: "151eee4278266060d8c52866368b3b0e1cf3ab60"
   license "MIT"
   head "https://github.com/clerk/gocli.git", branch: "main"
 
