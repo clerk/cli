@@ -27,12 +27,7 @@ func (a *APIKeysAPI) List() ([]APIKey, error) {
 		return nil, err
 	}
 
-	result, err := ParseListResponse[APIKey](data)
-	if err != nil {
-		return nil, err
-	}
-
-	return result.Data, nil
+	return ParseArrayResponse[APIKey](data)
 }
 
 func (a *APIKeysAPI) Get(id string) (*APIKey, error) {

@@ -256,11 +256,19 @@ func ParseListResponse[T any](data []byte) (*ListResponse[T], error) {
 	return &result, nil
 }
 
-// ParseArrayResponse parses a raw JSON array response (for APIs that don't wrap in data/total_count)
+// ParseArrayResponse parses a JSON response that could be either a raw array
+// or a wrapped {data: [], total_count: N} object, returning just the items.
 func ParseArrayResponse[T any](data []byte) ([]T, error) {
-	var result []T
-	if err := json.Unmarshal(data, &result); err != nil {
+	// Try plain array first
+	var arr []T
+	if err := json.Unmarshal(data, &arr); err == nil {
+		return arr, nil
+	}
+
+	// Fall back to wrapped format
+	var wrapped ListResponse[T]
+	if err := json.Unmarshal(data, &wrapped); err != nil {
 		return nil, fmt.Errorf("failed to parse response: %w", err)
 	}
-	return result, nil
+	return wrapped.Data, nil
 }

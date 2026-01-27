@@ -26,12 +26,7 @@ func (a *AllowlistAPI) List() ([]AllowlistIdentifier, error) {
 		return nil, err
 	}
 
-	result, err := ParseListResponse[AllowlistIdentifier](data)
-	if err != nil {
-		return nil, err
-	}
-
-	return result.Data, nil
+	return ParseArrayResponse[AllowlistIdentifier](data)
 }
 
 type AddAllowlistParams struct {

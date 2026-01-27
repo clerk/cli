@@ -30,12 +30,12 @@ func (a *JWTTemplatesAPI) List() ([]JWTTemplate, int, error) {
 		return nil, 0, err
 	}
 
-	result, err := ParseListResponse[JWTTemplate](data)
+	result, err := ParseArrayResponse[JWTTemplate](data)
 	if err != nil {
 		return nil, 0, err
 	}
 
-	return result.Data, result.TotalCount, nil
+	return result, len(result), nil
 }
 
 func (a *JWTTemplatesAPI) Get(id string) (*JWTTemplate, error) {
