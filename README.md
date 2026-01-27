@@ -4,6 +4,12 @@ A command-line interface for managing your Clerk instances. This CLI provides to
 
 ## Installation
 
+From Homebrew:
+
+```bash
+brew tap clerk/gocli git@github.com:clerk/gocli.git && brew install clerk
+```
+
 Build from source:
 
 ```bash
