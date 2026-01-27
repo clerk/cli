@@ -2,8 +2,8 @@ class Clerk < Formula
   desc "CLI for managing Clerk authentication instances"
   homepage "https://github.com/clerk/gocli"
   url "https://github.com/clerk/gocli.git",
-    tag: "v0.0.3",
-    revision: "aab44a23a3ead4942964539e6bb12192ddc3f3ca"
+    tag: "v0.0.4",
+    revision: "df98054c7738fa04431db04712cbff612717fb9d"
   license "MIT"
   head "https://github.com/clerk/gocli.git", branch: "main"
 
