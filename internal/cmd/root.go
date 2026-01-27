@@ -106,14 +106,21 @@ func IsDebug() bool {
 	return debugFlag || config.IsDebugEnabled()
 }
 
-// GetClient creates an API client, prompting for the API key if not configured
-// and running in an interactive terminal.
+// GetClient creates an API client, prompting for the API key only if no
+// configuration exists at all and the terminal is interactive.
+// If a non-default profile was explicitly requested but doesn't exist, it errors.
 func GetClient() (*api.Client, error) {
 	profileName := GetProfile()
+
+	// If a non-default profile was explicitly specified, it must exist
+	if profileName != "default" && !config.ProfileExists(profileName) {
+		return nil, fmt.Errorf("profile '%s' does not exist\n\nCreate it with:\n  clerk config profile create %s", profileName, profileName)
+	}
+
 	apiKey := config.GetAPIKey(profileName)
 
-	// If no API key and running interactively, prompt for it
-	if apiKey == "" && output.IsInteractive() {
+	// Only prompt if there's no configuration at all (fresh install)
+	if apiKey == "" && !config.HasAnyConfig() && output.IsInteractive() {
 		var err error
 		apiKey, err = promptForAPIKey(profileName)
 		if err != nil {
@@ -122,7 +129,7 @@ func GetClient() (*api.Client, error) {
 	}
 
 	if apiKey == "" {
-		return nil, fmt.Errorf("API key not configured. Set clerk.key in your profile or CLERK_SECRET_KEY environment variable")
+		return nil, fmt.Errorf("API key not configured. Run 'clerk init' or set CLERK_SECRET_KEY environment variable")
 	}
 
 	return api.NewClient(api.ClientOptions{

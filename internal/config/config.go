@@ -506,6 +506,38 @@ func GetRawValue(profileName, key string) string {
 	return ""
 }
 
+// ProfileExists returns true if the named profile exists in the config.
+// The "default" profile is always considered to exist.
+func ProfileExists(name string) bool {
+	if name == "default" {
+		return true
+	}
+	cfg, _ := Load()
+	if cfg == nil || cfg.Profiles == nil {
+		return false
+	}
+	_, exists := cfg.Profiles[name]
+	return exists
+}
+
+// HasAnyConfig returns true if there is any configuration at all
+// (any profiles with values, or environment-based API key).
+func HasAnyConfig() bool {
+	if os.Getenv("CLERK_SECRET_KEY") != "" {
+		return true
+	}
+	cfg, _ := Load()
+	if cfg == nil {
+		return false
+	}
+	for _, profile := range cfg.Profiles {
+		if len(profile) > 0 {
+			return true
+		}
+	}
+	return false
+}
+
 func GetAPIKey(profileName string) string {
 	return ResolveValue("clerk.key", "", "CLERK_SECRET_KEY", "", profileName)
 }
