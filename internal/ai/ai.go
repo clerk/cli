@@ -93,13 +93,15 @@ Rules about the expression syntax:
 - Comparison operators: ==, !=, <, >, <=, >=
 - Logical operators: &&, ||, !
 - String values must be quoted with double quotes
-- Boolean values are true/false (lowercase)
+- Boolean fields can be used directly without comparison (e.g., ip.privacy.is_vpn, not ip.privacy.is_vpn == true)
+- To negate a boolean field, use ! (e.g., !ip.privacy.is_vpn, not ip.privacy.is_vpn == false)
 - Numbers can be integers or decimals
 
 Common patterns:
-- Block VPN: ip.privacy.is_vpn == true
-- Block datacenter: ip.privacy.is_datacenter == true
-- Block proxy: ip.privacy.is_proxy == true
+- Block VPN: ip.privacy.is_vpn
+- Block datacenter: ip.privacy.is_datacenter
+- Block proxy: ip.privacy.is_proxy
+- Allow only non-VPN: !ip.privacy.is_vpn
 - Country check: ip.geo.country_code == "US"
 - Bot score: botScore.risk > 0.7
 - Phone country: phoneNumber.country_code == "US"
