@@ -20,34 +20,33 @@ func runWhoami(cmd *cobra.Command, args []string) error {
 	profileName := GetProfile()
 	profile := config.GetProfile(profileName)
 
+	// Get the effective API key using the same resolution as GetClient()
+	useDotEnv := shouldUseDotEnvQuiet(profileName)
+	effectiveAPIKey := config.GetAPIKeyWithDotEnv(profileName, useDotEnv)
+
 	formatter := GetFormatter()
+
+	apiURL := profile.APIURL
+	if apiURL == "" {
+		apiURL = config.DefaultAPIURL
+	}
 
 	data := map[string]interface{}{
 		"profile": profileName,
-		"apiKey":  maskAPIKey(profile.APIKey),
-		"apiUrl":  profile.APIURL,
-	}
-
-	if profile.APIURL == "" {
-		data["apiUrl"] = config.DefaultAPIURL
+		"apiKey":  maskAPIKey(effectiveAPIKey),
+		"apiUrl":  apiURL,
 	}
 
 	return formatter.Output(data, func() {
 		fmt.Println(output.BoldYellow("Active Profile:"), output.Cyan(profileName))
 		fmt.Println()
 
-		apiKey := profile.APIKey
-		if apiKey == "" {
+		if effectiveAPIKey == "" {
 			fmt.Println(output.Yellow("⚠"), "No API key configured")
 			fmt.Println()
 			fmt.Println("Run", output.Cyan("clerk init"), "to set up your API key")
 		} else {
-			fmt.Println(output.Dim("API Key:"), maskAPIKey(apiKey))
-
-			apiURL := profile.APIURL
-			if apiURL == "" {
-				apiURL = config.DefaultAPIURL
-			}
+			fmt.Println(output.Dim("API Key:"), maskAPIKey(effectiveAPIKey))
 			fmt.Println(output.Dim("API URL:"), apiURL)
 		}
 	})

@@ -176,6 +176,12 @@ var configListCmd = &cobra.Command{
 			profile = make(map[string]string)
 		}
 
+		// Check if we should use .env file (respects --dotenv flag and profile key presence)
+		useDotEnv := shouldUseDotEnvQuiet(profileName)
+
+		// Pre-fetch dotenv info
+		dotEnvValue, dotEnvPath := config.FindDotEnvSecretKeyWithPath()
+
 		// Build output data for all settings
 		type settingInfo struct {
 			Key    string `json:"key"`
@@ -198,6 +204,17 @@ var configListCmd = &cobra.Command{
 					allSettings = append(allSettings, info)
 					continue
 				}
+			}
+
+			// Check .env file for clerk.key when appropriate
+			if useDotEnv && s.Key == "clerk.key" && dotEnvValue != "" {
+				info.Value = dotEnvValue
+				info.Source = "dotenv:" + dotEnvPath
+				if isSecretKey(s.Key) {
+					info.Value = maskAPIKey(dotEnvValue)
+				}
+				allSettings = append(allSettings, info)
+				continue
 			}
 
 			// Check profile value

@@ -17,6 +17,7 @@ var (
 	profileFlag string
 	outputFlag  string
 	debugFlag   bool
+	dotenvFlag  bool
 
 	Version = "dev"
 )
@@ -62,6 +63,7 @@ func init() {
 	rootCmd.PersistentFlags().StringVarP(&profileFlag, "profile", "p", "", "Use specific profile")
 	rootCmd.PersistentFlags().StringVarP(&outputFlag, "output", "o", "table", "Output format: table, json, yaml")
 	rootCmd.PersistentFlags().BoolVar(&debugFlag, "debug", false, "Enable debug mode")
+	rootCmd.PersistentFlags().BoolVar(&dotenvFlag, "dotenv", false, "Use CLERK_SECRET_KEY from .env file")
 
 	rootCmd.Version = Version
 	rootCmd.SetVersionTemplate("clerk version {{.Version}}\n")
@@ -116,7 +118,9 @@ func GetClient() (*api.Client, error) {
 		return nil, fmt.Errorf("profile '%s' does not exist\n\nCreate it with:\n  clerk config profile create %s", profileName, profileName)
 	}
 
-	apiKey := config.GetAPIKey(profileName)
+	// Determine whether to use .env file
+	useDotEnv := shouldUseDotEnv(profileName)
+	apiKey := config.GetAPIKeyWithDotEnv(profileName, useDotEnv)
 
 	// Only prompt if there's no configuration at all (fresh install)
 	if apiKey == "" && !config.HasAnyConfig() && output.IsInteractive() {
@@ -136,6 +140,48 @@ func GetClient() (*api.Client, error) {
 		APIKey:  apiKey,
 		Debug:   IsDebug(),
 	}), nil
+}
+
+// shouldUseDotEnv determines whether to use .env file for API key resolution.
+// Returns true if:
+// - --dotenv flag is specified, OR
+// - No -p flag is specified AND the profile has no key configured
+// Also warns if a .env file exists but is not being used.
+func shouldUseDotEnv(profileName string) bool {
+	return shouldUseDotEnvWithWarn(profileName, true)
+}
+
+// shouldUseDotEnvQuiet is like shouldUseDotEnv but doesn't print warnings.
+func shouldUseDotEnvQuiet(profileName string) bool {
+	return shouldUseDotEnvWithWarn(profileName, false)
+}
+
+// shouldUseDotEnvWithWarn is the implementation that optionally warns.
+func shouldUseDotEnvWithWarn(profileName string, warn bool) bool {
+	// If -p flag is specified, never use .env
+	if profileFlag != "" {
+		return false
+	}
+
+	// If --dotenv flag is specified, always use .env
+	if dotenvFlag {
+		return true
+	}
+
+	// Check if profile has a key configured (not from env var)
+	profileKey := config.GetProfileKey(profileName)
+	if profileKey != "" {
+		// Profile has a key, check if .env exists and warn
+		if warn {
+			if dotEnvValue, dotEnvPath := config.FindDotEnvSecretKeyWithPath(); dotEnvValue != "" {
+				output.Warn(fmt.Sprintf("Found .env file at %s but using profile key. Use --dotenv to use the .env file instead.", dotEnvPath))
+			}
+		}
+		return false
+	}
+
+	// No profile key configured, use .env as fallback
+	return true
 }
 
 func promptForAPIKey(profileName string) (string, error) {

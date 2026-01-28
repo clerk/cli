@@ -73,6 +73,7 @@ These options can be used with any command:
 |--------|-------------|
 | `-p, --profile <name>` | Use a specific profile |
 | `-o, --output <format>` | Output format: `table`, `json`, or `yaml` (default: `table`) |
+| `--dotenv` | Use `CLERK_SECRET_KEY` from `.env` file (see [Project-Level Configuration](#project-level-configuration-env-files)) |
 | `--debug` | Enable debug mode (outputs HTTP requests to stderr) |
 | `-h, --help` | Display colorized help |
 
@@ -163,8 +164,97 @@ The CLI uses an INI-based configuration system where **profiles** can override *
 When resolving a setting value, the CLI checks in this order:
 1. Command-line flag (e.g., `--output json`)
 2. Environment variable (e.g., `CLERK_SECRET_KEY`)
-3. Active profile's value
-4. Default value
+3. `.env` file (for `clerk.key` only, when applicable — see below)
+4. Active profile's value
+5. Default value
+
+### Project-Level Configuration (.env files)
+
+The CLI can automatically detect and use a `CLERK_SECRET_KEY` from a `.env` file in your project directory. This is useful for development workflows where you want to use project-specific API keys without configuring global profiles.
+
+#### How It Works
+
+When you run a command without the `-p` flag, the CLI searches for a `.env` file starting from the current directory and walking up through parent directories. If found, it reads the `CLERK_SECRET_KEY` value.
+
+```bash
+# Example .env file in your project root
+CLERK_SECRET_KEY=sk_test_xxxxx
+```
+
+#### Resolution Priority
+
+The `.env` file is used as a **fallback** when no profile key is configured:
+
+1. If your profile already has a `clerk.key` configured → profile key is used
+2. If your profile has no key → `.env` file is used automatically
+
+When a `.env` file exists but your profile has a key configured, the CLI warns you:
+
+```
+⚠ Found .env file at /path/to/project/.env but using profile key. Use --dotenv to use the .env file instead.
+```
+
+#### Using `--dotenv` Flag
+
+Use the `--dotenv` flag to explicitly use the `.env` file, even when your profile has a key configured:
+
+```bash
+# Force using .env file instead of profile key
+clerk users list --dotenv
+
+# See which key would be used
+clerk whoami --dotenv
+
+# Check config resolution
+clerk config list --dotenv
+```
+
+#### When `.env` Is NOT Used
+
+The `.env` file is skipped in these cases:
+
+- When `-p <profile>` flag is specified (explicit profile selection)
+- When `CLERK_SECRET_KEY` environment variable is set (env var takes priority)
+- When `--dotenv` is not specified and the active profile has a key configured
+
+#### Example Workflow
+
+```bash
+# Project structure
+my-app/
+├── .env                    # Contains CLERK_SECRET_KEY=sk_test_project_key
+└── src/
+
+# In the project directory (no profile key configured)
+cd my-app
+clerk users list            # Uses sk_test_project_key from .env
+
+# With a profile key configured
+clerk config set clerk.key sk_test_profile_key
+clerk users list            # Uses sk_test_profile_key (warns about .env)
+clerk users list --dotenv   # Uses sk_test_project_key from .env
+
+# Using explicit profile
+clerk users list -p staging # Uses staging profile, ignores .env
+```
+
+#### Supported `.env` Format
+
+The CLI supports standard `.env` file format:
+
+```bash
+# Comments are ignored
+CLERK_SECRET_KEY=sk_test_xxxxx
+
+# Quoted values are supported
+CLERK_SECRET_KEY="sk_test_xxxxx"
+CLERK_SECRET_KEY='sk_test_xxxxx'
+
+# Spaces around = are allowed
+CLERK_SECRET_KEY = sk_test_xxxxx
+```
+
+Only `CLERK_SECRET_KEY` is read from `.env` files. Other Clerk environment variables (like `CLERK_API_URL`) should be set via profiles or shell environment variables.
 
 ### Available Settings
 

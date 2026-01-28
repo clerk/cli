@@ -521,9 +521,12 @@ func ProfileExists(name string) bool {
 }
 
 // HasAnyConfig returns true if there is any configuration at all
-// (any profiles with values, or environment-based API key).
+// (any profiles with values, environment-based API key, or .env file).
 func HasAnyConfig() bool {
 	if os.Getenv("CLERK_SECRET_KEY") != "" {
+		return true
+	}
+	if FindDotEnvSecretKey() != "" {
 		return true
 	}
 	cfg, _ := Load()
@@ -539,11 +542,137 @@ func HasAnyConfig() bool {
 }
 
 func GetAPIKey(profileName string) string {
-	return ResolveValue("clerk.key", "", "CLERK_SECRET_KEY", "", profileName)
+	return GetAPIKeyWithDotEnv(profileName, false)
+}
+
+// GetAPIKeyWithDotEnv returns the API key, optionally checking .env files
+// in the current and parent directories when checkDotEnv is true.
+func GetAPIKeyWithDotEnv(profileName string, checkDotEnv bool) string {
+	// Check env var first (highest priority)
+	if val := os.Getenv("CLERK_SECRET_KEY"); val != "" {
+		return val
+	}
+
+	// Check .env file if enabled (before profile lookup)
+	if checkDotEnv {
+		if val := FindDotEnvSecretKey(); val != "" {
+			return val
+		}
+	}
+
+	// Profile-based lookup
+	cfg, _ := Load()
+	if cfg == nil {
+		return ""
+	}
+
+	// Check profile
+	if profile := cfg.Profiles[profileName]; profile != nil {
+		if val, ok := profile["clerk.key"]; ok && val != "" {
+			if cfg.TypeMarkers[profileName] != nil && cfg.TypeMarkers[profileName]["clerk.key"] == "command" {
+				return executeCommand(val)
+			}
+			return val
+		}
+	}
+
+	// Check defaults
+	if val, ok := cfg.Defaults["clerk.key"]; ok && val != "" {
+		return val
+	}
+
+	return ""
+}
+
+// FindDotEnvSecretKey searches upward from the current directory for a .env file
+// and returns the value of CLERK_SECRET_KEY if found.
+func FindDotEnvSecretKey() string {
+	value, _ := FindDotEnvSecretKeyWithPath()
+	return value
+}
+
+// FindDotEnvSecretKeyWithPath searches upward from the current directory for a .env file
+// and returns the value of CLERK_SECRET_KEY along with the file path if found.
+func FindDotEnvSecretKeyWithPath() (value string, filePath string) {
+	cwd, err := os.Getwd()
+	if err != nil {
+		return "", ""
+	}
+
+	for dir := cwd; ; {
+		envFile := filepath.Join(dir, ".env")
+		if key := parseEnvFileForKey(envFile, "CLERK_SECRET_KEY"); key != "" {
+			return key, envFile
+		}
+
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			break // reached root
+		}
+		dir = parent
+	}
+	return "", ""
+}
+
+// parseEnvFileForKey parses a .env file and returns the value for the given key.
+func parseEnvFileForKey(filename, targetKey string) string {
+	file, err := os.Open(filename)
+	if err != nil {
+		return ""
+	}
+	defer file.Close()
+
+	scanner := bufio.NewScanner(file)
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+
+		if idx := strings.Index(line, "="); idx > 0 {
+			key := strings.TrimSpace(line[:idx])
+			if key == targetKey {
+				value := strings.TrimSpace(line[idx+1:])
+				// Remove quotes if present
+				if len(value) >= 2 && ((value[0] == '"' && value[len(value)-1] == '"') ||
+					(value[0] == '\'' && value[len(value)-1] == '\'')) {
+					value = value[1 : len(value)-1]
+				}
+				return value
+			}
+		}
+	}
+	return ""
 }
 
 func GetAPIURL(profileName string) string {
 	return ResolveValue("clerk.api.url", "", "CLERK_API_URL", DefaultAPIURL, profileName)
+}
+
+// GetProfileKey returns the API key stored directly in the profile configuration.
+// This does NOT check environment variables or .env files.
+func GetProfileKey(profileName string) string {
+	cfg, _ := Load()
+	if cfg == nil {
+		return ""
+	}
+
+	// Check profile
+	if profile := cfg.Profiles[profileName]; profile != nil {
+		if val, ok := profile["clerk.key"]; ok && val != "" {
+			if cfg.TypeMarkers[profileName] != nil && cfg.TypeMarkers[profileName]["clerk.key"] == "command" {
+				return executeCommand(val)
+			}
+			return val
+		}
+	}
+
+	// Check defaults
+	if val, ok := cfg.Defaults["clerk.key"]; ok && val != "" {
+		return val
+	}
+
+	return ""
 }
 
 func IsDebugEnabled() bool {
