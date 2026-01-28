@@ -13,7 +13,7 @@ import (
 var invitationsCmd = &cobra.Command{
 	Use:     "invitations",
 	Aliases: []string{"invites"},
-	Short:   "Manage invitations",
+	Short:   "User invitations",
 	Long:    "Manage invitations in your Clerk instance.",
 }
 

@@ -9,16 +9,56 @@ import (
 	"github.com/spf13/cobra"
 )
 
-var phonesCmd = &cobra.Command{
-	Use:     "phone-numbers",
-	Aliases: []string{"phones"},
-	Short:   "Manage phone numbers",
-	Long:    "Manage phone numbers in your Clerk instance.",
+var usersPhonesCmd = &cobra.Command{
+	Use:     "phones",
+	Aliases: []string{"phone"},
+	Short:   "User phone numbers",
+	Long:    "Manage phone numbers for users in your Clerk instance.",
 }
 
-var phonesGetCmd = &cobra.Command{
+var usersPhonesListCmd = &cobra.Command{
+	Use:   "list <user-id>",
+	Short: "List phone numbers for a user",
+	Args:  RequireArg("user-id"),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		client, err := GetClient()
+		if err != nil {
+			return err
+		}
+		usersAPI := api.NewUsersAPI(client)
+
+		user, err := usersAPI.Get(args[0])
+		if err != nil {
+			return err
+		}
+
+		formatter := GetFormatter()
+		return formatter.Output(user.PhoneNumbers, func() {
+			if len(user.PhoneNumbers) == 0 {
+				fmt.Println("No phone numbers found")
+				return
+			}
+
+			rows := make([][]string, len(user.PhoneNumbers))
+			for i, p := range user.PhoneNumbers {
+				primary := ""
+				if p.ID == user.PrimaryPhoneID {
+					primary = "yes"
+				}
+				verified := "no"
+				if p.Verified {
+					verified = "yes"
+				}
+				rows[i] = []string{p.ID, p.PhoneNumber, verified, primary}
+			}
+			output.Table([]string{"ID", "PHONE", "VERIFIED", "PRIMARY"}, rows)
+		})
+	},
+}
+
+var usersPhonesGetCmd = &cobra.Command{
 	Use:   "get <phone-id>",
-	Short: "Get phone number",
+	Short: "Get phone number details",
 	Args:  RequireArg("phone-id"),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		client, err := GetClient()
@@ -42,9 +82,10 @@ var phonesGetCmd = &cobra.Command{
 	},
 }
 
-var phonesCreateCmd = &cobra.Command{
-	Use:   "create",
-	Short: "Create phone number",
+var usersPhonesAddCmd = &cobra.Command{
+	Use:   "add <user-id>",
+	Short: "Add phone number to a user",
+	Args:  RequireArg("user-id"),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		client, err := GetClient()
 		if err != nil {
@@ -52,17 +93,16 @@ var phonesCreateCmd = &cobra.Command{
 		}
 		phonesAPI := api.NewPhonesAPI(client)
 
-		userID, _ := cmd.Flags().GetString("user-id")
 		number, _ := cmd.Flags().GetString("phone")
 		verified, _ := cmd.Flags().GetBool("verified")
 		primary, _ := cmd.Flags().GetBool("primary")
 
-		if userID == "" || number == "" {
-			return fmt.Errorf("--user-id and --phone are required")
+		if number == "" {
+			return fmt.Errorf("--phone is required")
 		}
 
 		phone, err := phonesAPI.Create(api.CreatePhoneParams{
-			UserID:      userID,
+			UserID:      args[0],
 			PhoneNumber: number,
 			Verified:    verified,
 			Primary:     primary,
@@ -73,12 +113,12 @@ var phonesCreateCmd = &cobra.Command{
 
 		formatter := GetFormatter()
 		return formatter.Output(phone, func() {
-			output.Success(fmt.Sprintf("Created phone number %s", phone.ID))
+			output.Success(fmt.Sprintf("Added phone number %s", phone.ID))
 		})
 	},
 }
 
-var phonesUpdateCmd = &cobra.Command{
+var usersPhonesUpdateCmd = &cobra.Command{
 	Use:   "update <phone-id>",
 	Short: "Update phone number",
 	Args:  RequireArg("phone-id"),
@@ -107,9 +147,9 @@ var phonesUpdateCmd = &cobra.Command{
 	},
 }
 
-var phonesDeleteCmd = &cobra.Command{
-	Use:   "delete <phone-id>",
-	Short: "Delete phone number",
+var usersPhonesRemoveCmd = &cobra.Command{
+	Use:   "remove <phone-id>",
+	Short: "Remove phone number",
 	Args:  RequireArg("phone-id"),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		client, err := GetClient()
@@ -122,22 +162,22 @@ var phonesDeleteCmd = &cobra.Command{
 			return err
 		}
 
-		output.Success(fmt.Sprintf("Deleted phone number %s", args[0]))
+		output.Success(fmt.Sprintf("Removed phone number %s", args[0]))
 		return nil
 	},
 }
 
 func init() {
-	phonesCreateCmd.Flags().String("user-id", "", "User ID")
-	phonesCreateCmd.Flags().String("phone", "", "Phone number")
-	phonesCreateCmd.Flags().Bool("verified", false, "Mark as verified")
-	phonesCreateCmd.Flags().Bool("primary", false, "Set as primary")
+	usersPhonesAddCmd.Flags().String("phone", "", "Phone number")
+	usersPhonesAddCmd.Flags().Bool("verified", false, "Mark as verified")
+	usersPhonesAddCmd.Flags().Bool("primary", false, "Set as primary")
 
-	phonesUpdateCmd.Flags().Bool("verified", false, "Mark as verified")
-	phonesUpdateCmd.Flags().Bool("primary", false, "Set as primary")
+	usersPhonesUpdateCmd.Flags().Bool("verified", false, "Mark as verified")
+	usersPhonesUpdateCmd.Flags().Bool("primary", false, "Set as primary")
 
-	phonesCmd.AddCommand(phonesGetCmd)
-	phonesCmd.AddCommand(phonesCreateCmd)
-	phonesCmd.AddCommand(phonesUpdateCmd)
-	phonesCmd.AddCommand(phonesDeleteCmd)
+	usersPhonesCmd.AddCommand(usersPhonesListCmd)
+	usersPhonesCmd.AddCommand(usersPhonesGetCmd)
+	usersPhonesCmd.AddCommand(usersPhonesAddCmd)
+	usersPhonesCmd.AddCommand(usersPhonesUpdateCmd)
+	usersPhonesCmd.AddCommand(usersPhonesRemoveCmd)
 }

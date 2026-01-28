@@ -11,7 +11,7 @@ import (
 
 var instanceCmd = &cobra.Command{
 	Use:   "instance",
-	Short: "Manage instance",
+	Short: "Instance settings",
 	Long:  "Manage instance settings for your Clerk instance.",
 }
 

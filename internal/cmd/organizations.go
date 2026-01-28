@@ -13,7 +13,7 @@ import (
 var organizationsCmd = &cobra.Command{
 	Use:     "organizations",
 	Aliases: []string{"orgs"},
-	Short:   "Manage organizations",
+	Short:   "Organizations and members",
 	Long:    "Manage organizations in your Clerk instance.",
 }
 

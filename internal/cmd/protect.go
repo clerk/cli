@@ -19,7 +19,7 @@ var mcpConfigFlag string
 
 var protectCmd = &cobra.Command{
 	Use:   "protect",
-	Short: "Manage Clerk Protect",
+	Short: "Clerk Protect rules and schemas",
 	Long:  "Manage Clerk Protect rules and schema.",
 }
 

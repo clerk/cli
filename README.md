@@ -1206,102 +1206,92 @@ clerk invitations revoke inv_abc123
 
 ---
 
-## Allowlist Commands
+## Restrictions Commands
 
-### `clerk allowlist`
+### `clerk restrictions`
 
-Manage the allowlist to restrict sign-ups to specific identifiers.
+Manage allowlist and blocklist restrictions for sign-ups.
 
-#### `clerk allowlist list`
+#### `clerk restrictions list`
+
+List all allowlist and blocklist identifiers.
 
 ```bash
-clerk allowlist list
+clerk restrictions list
+clerk restrictions ls
 ```
 
-#### `clerk allowlist add <identifier> [options]`
+#### `clerk restrictions add <identifier> [options]`
+
+Add an identifier to the allowlist or blocklist.
 
 | Option | Description |
 |--------|-------------|
-| `--notify` | Send an invitation to the identifier |
+| `--allow` | Add to allowlist (permits sign-up) |
+| `--block` | Add to blocklist (prevents sign-up) |
+| `--notify` | Send notification email (allowlist only) |
 
 ```bash
-clerk allowlist add john@example.com
-clerk allowlist add john@example.com --notify
+# Add to allowlist
+clerk restrictions add john@example.com --allow
+clerk restrictions add john@example.com --allow --notify
+
+# Add to blocklist
+clerk restrictions add spammer@example.com --block
+clerk restrictions add "@spam-domain.com" --block
 ```
 
-#### `clerk allowlist remove <identifierId> [-f]`
+#### `clerk restrictions remove <id>`
 
-Also available as `clerk allowlist rm`.
-
-| Option | Description |
-|--------|-------------|
-| `-f, --force` | Skip confirmation prompt |
+Remove an identifier from the allowlist or blocklist by its ID. Also available as `clerk restrictions rm`.
 
 ```bash
-clerk allowlist remove alid_abc123
+clerk restrictions remove alid_abc123
+clerk restrictions rm blid_abc123
 ```
 
 ---
 
-## Blocklist Commands
+## User Email Commands
 
-### `clerk blocklist`
+### `clerk users emails`
 
-Manage the blocklist to prevent specific identifiers from signing up.
+Manage email addresses for users. Also available as `clerk users email`.
 
-#### `clerk blocklist list`
+#### `clerk users emails list <userId>`
 
-```bash
-clerk blocklist list
-```
-
-#### `clerk blocklist add <identifier>`
+List all email addresses for a user.
 
 ```bash
-clerk blocklist add spammer@example.com
-clerk blocklist add "@spam-domain.com"
+clerk users emails list user_abc123
 ```
 
-#### `clerk blocklist remove <identifierId> [-f]`
+#### `clerk users emails get <emailAddressId>`
 
-Also available as `clerk blocklist rm`.
+Get details of an email address.
+
+```bash
+clerk users emails get idn_abc123
+```
+
+#### `clerk users emails add <userId> [options]`
+
+Add an email address to a user.
 
 | Option | Description |
 |--------|-------------|
-| `-f, --force` | Skip confirmation prompt |
-
-```bash
-clerk blocklist remove blid_abc123
-```
-
----
-
-## Email Address Commands
-
-### `clerk emails`
-
-Manage user email addresses.
-
-#### `clerk emails get <emailAddressId>`
-
-```bash
-clerk emails get idn_abc123
-```
-
-#### `clerk emails create [options]`
-
-| Option | Description |
-|--------|-------------|
-| `--user-id <id>` | User ID (required) |
 | `--email <email>` | Email address (required) |
 | `--verified` | Mark as verified |
 | `--primary` | Set as primary email |
 
 ```bash
-clerk emails create --user-id user_abc123 --email john@example.com --verified
+clerk users emails add user_abc123 --email john@example.com
+clerk users emails add user_abc123 --email john@example.com --verified --primary
 ```
 
-#### `clerk emails update <emailAddressId> [options]`
+#### `clerk users emails update <emailAddressId> [options]`
+
+Update an email address.
 
 | Option | Description |
 |--------|-------------|
@@ -1309,67 +1299,75 @@ clerk emails create --user-id user_abc123 --email john@example.com --verified
 | `--primary` | Set as primary email |
 
 ```bash
-clerk emails update idn_abc123 --verified --primary
+clerk users emails update idn_abc123 --verified --primary
 ```
 
-#### `clerk emails delete <emailAddressId> [-f]`
+#### `clerk users emails remove <emailAddressId>`
 
-| Option | Description |
-|--------|-------------|
-| `-f, --force` | Skip confirmation prompt |
+Remove an email address.
 
 ```bash
-clerk emails delete idn_abc123 --force
+clerk users emails remove idn_abc123
 ```
 
 ---
 
-## Phone Number Commands
+## User Phone Commands
 
-### `clerk phones`
+### `clerk users phones`
 
-Manage user phone numbers.
+Manage phone numbers for users. Also available as `clerk users phone`.
 
-#### `clerk phones get <phoneNumberId>`
+#### `clerk users phones list <userId>`
+
+List all phone numbers for a user.
 
 ```bash
-clerk phones get idn_abc123
+clerk users phones list user_abc123
 ```
 
-#### `clerk phones create [options]`
+#### `clerk users phones get <phoneNumberId>`
+
+Get details of a phone number.
+
+```bash
+clerk users phones get idn_abc123
+```
+
+#### `clerk users phones add <userId> [options]`
+
+Add a phone number to a user.
 
 | Option | Description |
 |--------|-------------|
-| `--user-id <id>` | User ID (required) |
 | `--phone <number>` | Phone number in E.164 format (required) |
 | `--verified` | Mark as verified |
 | `--primary` | Set as primary phone number |
-| `--reserve-for-2fa` | Reserve for multi-factor authentication |
 
 ```bash
-clerk phones create --user-id user_abc123 --phone "+15551234567" --verified
+clerk users phones add user_abc123 --phone "+15551234567"
+clerk users phones add user_abc123 --phone "+15551234567" --verified --primary
 ```
 
-#### `clerk phones update <phoneNumberId> [options]`
+#### `clerk users phones update <phoneNumberId> [options]`
+
+Update a phone number.
 
 | Option | Description |
 |--------|-------------|
 | `--verified` | Mark as verified |
 | `--primary` | Set as primary phone number |
-| `--reserve-for-2fa` | Reserve for 2FA |
 
 ```bash
-clerk phones update idn_abc123 --verified --reserve-for-2fa
+clerk users phones update idn_abc123 --verified --primary
 ```
 
-#### `clerk phones delete <phoneNumberId> [-f]`
+#### `clerk users phones remove <phoneNumberId>`
 
-| Option | Description |
-|--------|-------------|
-| `-f, --force` | Skip confirmation prompt |
+Remove a phone number.
 
 ```bash
-clerk phones delete idn_abc123 --force
+clerk users phones remove idn_abc123
 ```
 
 ---
@@ -1743,8 +1741,7 @@ internal/
     sessions.go              # Sessions API
     apikeys.go               # API Keys API
     invitations.go           # Invitations API
-    allowlist.go             # Allowlist API
-    blocklist.go             # Blocklist API
+    restrictions.go          # Restrictions API (allowlist/blocklist)
     emails.go                # Email Addresses API
     phones.go                # Phone Numbers API
     domains.go               # Domains API
@@ -1765,10 +1762,9 @@ internal/
     sessions.go              # Sessions commands
     apikeys.go               # API Keys commands
     invitations.go           # Invitations commands
-    allowlist.go             # Allowlist commands
-    blocklist.go             # Blocklist commands
-    emails.go                # Email addresses commands
-    phones.go                # Phone numbers commands
+    restrictions.go          # Restrictions (allowlist/blocklist) commands
+    emails.go                # User email addresses commands (under users)
+    phones.go                # User phone numbers commands (under users)
     domains.go               # Domains commands
     jwttemplates.go          # JWT templates commands
     instance.go              # Instance commands

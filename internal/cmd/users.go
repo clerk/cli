@@ -12,7 +12,7 @@ import (
 
 var usersCmd = &cobra.Command{
 	Use:   "users",
-	Short: "Manage users",
+	Short: "Users and accounts",
 	Long:  "Manage users in your Clerk instance.",
 }
 
@@ -407,4 +407,6 @@ func init() {
 	usersCmd.AddCommand(usersLockCmd)
 	usersCmd.AddCommand(usersUnlockCmd)
 	usersCmd.AddCommand(usersVerifyPasswordCmd)
+	usersCmd.AddCommand(usersEmailsCmd)
+	usersCmd.AddCommand(usersPhonesCmd)
 }

@@ -10,7 +10,7 @@ import (
 
 var jwksCmd = &cobra.Command{
 	Use:   "jwks",
-	Short: "Manage JWKS",
+	Short: "JSON Web Key Sets",
 	Long:  "Manage JSON Web Key Sets for your Clerk instance.",
 }
 

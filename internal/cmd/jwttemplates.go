@@ -12,7 +12,7 @@ import (
 
 var jwtTemplatesCmd = &cobra.Command{
 	Use:   "jwt-templates",
-	Short: "Manage JWT templates",
+	Short: "JWT token templates",
 	Long:  "Manage JWT templates in your Clerk instance.",
 }
 

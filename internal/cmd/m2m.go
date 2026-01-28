@@ -12,7 +12,7 @@ import (
 
 var m2mCmd = &cobra.Command{
 	Use:   "m2m",
-	Short: "Manage M2M (machine-to-machine)",
+	Short: "Machine-to-machine authentication",
 	Long:  "Manage machine-to-machine tokens and machines in your Clerk instance.",
 }
 

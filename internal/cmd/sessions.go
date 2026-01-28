@@ -12,7 +12,7 @@ import (
 
 var sessionsCmd = &cobra.Command{
 	Use:   "sessions",
-	Short: "Manage sessions",
+	Short: "User sessions",
 	Long:  "Manage sessions in your Clerk instance.",
 }
 

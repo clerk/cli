@@ -13,7 +13,7 @@ import (
 
 var configCmd = &cobra.Command{
 	Use:   "config",
-	Short: "Manage CLI configuration",
+	Short: "CLI settings and profiles",
 	Long:  "Manage CLI configuration settings, profiles, and aliases.",
 }
 

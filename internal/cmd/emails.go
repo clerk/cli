@@ -9,16 +9,56 @@ import (
 	"github.com/spf13/cobra"
 )
 
-var emailsCmd = &cobra.Command{
-	Use:     "email-addresses",
-	Aliases: []string{"emails"},
-	Short:   "Manage email addresses",
-	Long:    "Manage email addresses in your Clerk instance.",
+var usersEmailsCmd = &cobra.Command{
+	Use:     "emails",
+	Aliases: []string{"email"},
+	Short:   "User email addresses",
+	Long:    "Manage email addresses for users in your Clerk instance.",
 }
 
-var emailsGetCmd = &cobra.Command{
+var usersEmailsListCmd = &cobra.Command{
+	Use:   "list <user-id>",
+	Short: "List email addresses for a user",
+	Args:  RequireArg("user-id"),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		client, err := GetClient()
+		if err != nil {
+			return err
+		}
+		usersAPI := api.NewUsersAPI(client)
+
+		user, err := usersAPI.Get(args[0])
+		if err != nil {
+			return err
+		}
+
+		formatter := GetFormatter()
+		return formatter.Output(user.EmailAddresses, func() {
+			if len(user.EmailAddresses) == 0 {
+				fmt.Println("No email addresses found")
+				return
+			}
+
+			rows := make([][]string, len(user.EmailAddresses))
+			for i, e := range user.EmailAddresses {
+				primary := ""
+				if e.ID == user.PrimaryEmailID {
+					primary = "yes"
+				}
+				verified := "no"
+				if e.Verified {
+					verified = "yes"
+				}
+				rows[i] = []string{e.ID, e.EmailAddress, verified, primary}
+			}
+			output.Table([]string{"ID", "EMAIL", "VERIFIED", "PRIMARY"}, rows)
+		})
+	},
+}
+
+var usersEmailsGetCmd = &cobra.Command{
 	Use:   "get <email-id>",
-	Short: "Get email address",
+	Short: "Get email address details",
 	Args:  RequireArg("email-id"),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		client, err := GetClient()
@@ -42,9 +82,10 @@ var emailsGetCmd = &cobra.Command{
 	},
 }
 
-var emailsCreateCmd = &cobra.Command{
-	Use:   "create",
-	Short: "Create email address",
+var usersEmailsAddCmd = &cobra.Command{
+	Use:   "add <user-id>",
+	Short: "Add email address to a user",
+	Args:  RequireArg("user-id"),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		client, err := GetClient()
 		if err != nil {
@@ -52,17 +93,16 @@ var emailsCreateCmd = &cobra.Command{
 		}
 		emailsAPI := api.NewEmailsAPI(client)
 
-		userID, _ := cmd.Flags().GetString("user-id")
 		address, _ := cmd.Flags().GetString("email")
 		verified, _ := cmd.Flags().GetBool("verified")
 		primary, _ := cmd.Flags().GetBool("primary")
 
-		if userID == "" || address == "" {
-			return fmt.Errorf("--user-id and --email are required")
+		if address == "" {
+			return fmt.Errorf("--email is required")
 		}
 
 		email, err := emailsAPI.Create(api.CreateEmailParams{
-			UserID:       userID,
+			UserID:       args[0],
 			EmailAddress: address,
 			Verified:     verified,
 			Primary:      primary,
@@ -73,12 +113,12 @@ var emailsCreateCmd = &cobra.Command{
 
 		formatter := GetFormatter()
 		return formatter.Output(email, func() {
-			output.Success(fmt.Sprintf("Created email address %s", email.ID))
+			output.Success(fmt.Sprintf("Added email address %s", email.ID))
 		})
 	},
 }
 
-var emailsUpdateCmd = &cobra.Command{
+var usersEmailsUpdateCmd = &cobra.Command{
 	Use:   "update <email-id>",
 	Short: "Update email address",
 	Args:  RequireArg("email-id"),
@@ -107,9 +147,9 @@ var emailsUpdateCmd = &cobra.Command{
 	},
 }
 
-var emailsDeleteCmd = &cobra.Command{
-	Use:   "delete <email-id>",
-	Short: "Delete email address",
+var usersEmailsRemoveCmd = &cobra.Command{
+	Use:   "remove <email-id>",
+	Short: "Remove email address",
 	Args:  RequireArg("email-id"),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		client, err := GetClient()
@@ -122,22 +162,22 @@ var emailsDeleteCmd = &cobra.Command{
 			return err
 		}
 
-		output.Success(fmt.Sprintf("Deleted email address %s", args[0]))
+		output.Success(fmt.Sprintf("Removed email address %s", args[0]))
 		return nil
 	},
 }
 
 func init() {
-	emailsCreateCmd.Flags().String("user-id", "", "User ID")
-	emailsCreateCmd.Flags().String("email", "", "Email address")
-	emailsCreateCmd.Flags().Bool("verified", false, "Mark as verified")
-	emailsCreateCmd.Flags().Bool("primary", false, "Set as primary")
+	usersEmailsAddCmd.Flags().String("email", "", "Email address")
+	usersEmailsAddCmd.Flags().Bool("verified", false, "Mark as verified")
+	usersEmailsAddCmd.Flags().Bool("primary", false, "Set as primary")
 
-	emailsUpdateCmd.Flags().Bool("verified", false, "Mark as verified")
-	emailsUpdateCmd.Flags().Bool("primary", false, "Set as primary")
+	usersEmailsUpdateCmd.Flags().Bool("verified", false, "Mark as verified")
+	usersEmailsUpdateCmd.Flags().Bool("primary", false, "Set as primary")
 
-	emailsCmd.AddCommand(emailsGetCmd)
-	emailsCmd.AddCommand(emailsCreateCmd)
-	emailsCmd.AddCommand(emailsUpdateCmd)
-	emailsCmd.AddCommand(emailsDeleteCmd)
+	usersEmailsCmd.AddCommand(usersEmailsListCmd)
+	usersEmailsCmd.AddCommand(usersEmailsGetCmd)
+	usersEmailsCmd.AddCommand(usersEmailsAddCmd)
+	usersEmailsCmd.AddCommand(usersEmailsUpdateCmd)
+	usersEmailsCmd.AddCommand(usersEmailsRemoveCmd)
 }

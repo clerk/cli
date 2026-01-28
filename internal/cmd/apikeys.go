@@ -12,7 +12,7 @@ import (
 
 var apiKeysCmd = &cobra.Command{
 	Use:   "api-keys",
-	Short: "Manage API keys",
+	Short: "API keys for users and organizations",
 	Long:  "Manage API keys in your Clerk instance.",
 }
 

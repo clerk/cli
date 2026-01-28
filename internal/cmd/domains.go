@@ -11,7 +11,7 @@ import (
 
 var domainsCmd = &cobra.Command{
 	Use:   "domains",
-	Short: "Manage domains",
+	Short: "Instance domains",
 	Long:  "Manage domains in your Clerk instance.",
 }
 

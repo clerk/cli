@@ -83,10 +83,7 @@ func addCommands() {
 	rootCmd.AddCommand(sessionsCmd)
 	rootCmd.AddCommand(apiKeysCmd)
 	rootCmd.AddCommand(invitationsCmd)
-	rootCmd.AddCommand(allowlistCmd)
-	rootCmd.AddCommand(blocklistCmd)
-	rootCmd.AddCommand(emailsCmd)
-	rootCmd.AddCommand(phonesCmd)
+	rootCmd.AddCommand(restrictionsCmd)
 	rootCmd.AddCommand(domainsCmd)
 	rootCmd.AddCommand(jwtTemplatesCmd)
 	rootCmd.AddCommand(instanceCmd)
@@ -206,11 +203,22 @@ func colorizedHelp(cmd *cobra.Command, _ []string) {
 			if sub.Hidden {
 				continue
 			}
-			name := output.Cyan(sub.Name())
+			// Calculate visible width (without color codes) for proper alignment
+			visibleName := sub.Name()
 			if len(sub.Aliases) > 0 {
-				name += output.Dim("|") + output.Cyan(strings.Join(sub.Aliases, output.Dim("|")))
+				visibleName += "|" + strings.Join(sub.Aliases, "|")
 			}
-			fmt.Printf("  %-30s %s\n", name, output.Dim(sub.Short))
+			// Build the colorized version
+			coloredName := output.Cyan(sub.Name())
+			if len(sub.Aliases) > 0 {
+				coloredName += output.Dim("|") + output.Cyan(strings.Join(sub.Aliases, output.Dim("|")))
+			}
+			// Pad based on visible width (30 chars total for name column)
+			padding := 30 - len(visibleName)
+			if padding < 1 {
+				padding = 1
+			}
+			fmt.Printf("  %s%s%s\n", coloredName, strings.Repeat(" ", padding), output.Dim(sub.Short))
 		}
 		fmt.Println()
 	}
@@ -234,22 +242,38 @@ func printFlags(cmd *cobra.Command) {
 			return
 		}
 
-		var flagStr string
+		// Calculate visible width (without color codes)
+		var visibleFlag string
 		if f.Shorthand != "" {
-			flagStr = output.Green("-"+f.Shorthand) + ", " + output.Green("--"+f.Name)
+			visibleFlag = "-" + f.Shorthand + ", --" + f.Name
 		} else {
-			flagStr = "    " + output.Green("--"+f.Name)
+			visibleFlag = "    --" + f.Name
+		}
+		if f.Value.Type() != "bool" {
+			visibleFlag += " <" + f.Value.Type() + ">"
 		}
 
+		// Build the colorized version
+		var coloredFlag string
+		if f.Shorthand != "" {
+			coloredFlag = output.Green("-"+f.Shorthand) + ", " + output.Green("--"+f.Name)
+		} else {
+			coloredFlag = "    " + output.Green("--"+f.Name)
+		}
 		if f.Value.Type() != "bool" {
-			flagStr += " " + output.Magenta("<"+f.Value.Type()+">")
+			coloredFlag += " " + output.Magenta("<"+f.Value.Type()+">")
 		}
 
 		desc := output.Dim(f.Usage)
 		if f.DefValue != "" && f.DefValue != "false" {
-			desc += output.Blue(" (default: "+f.DefValue+")")
+			desc += output.Blue(" (default: " + f.DefValue + ")")
 		}
 
-		fmt.Printf("  %-40s %s\n", flagStr, desc)
+		// Pad based on visible width (30 chars total for flag column, matching commands)
+		padding := 30 - len(visibleFlag)
+		if padding < 1 {
+			padding = 1
+		}
+		fmt.Printf("  %s%s%s\n", coloredFlag, strings.Repeat(" ", padding), desc)
 	})
 }
