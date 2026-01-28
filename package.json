@@ -1,0 +1,37 @@
+{
+  "name": "clerk-cli",
+  "version": "0.0.6",
+  "description": "Clerk CLI - Command line interface for Clerk",
+  "bin": {
+    "clerk": "bin/clerk"
+  },
+  "scripts": {
+    "postinstall": "node scripts/postinstall.js"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/clerk/gocli.git"
+  },
+  "keywords": [
+    "clerk",
+    "cli"
+  ],
+  "author": "Clerk",
+  "license": "MIT",
+  "bugs": {
+    "url": "https://github.com/clerk/gocli/issues"
+  },
+  "homepage": "https://github.com/clerk/gocli#readme",
+  "engines": {
+    "node": ">=14"
+  },
+  "os": [
+    "darwin",
+    "linux",
+    "win32"
+  ],
+  "cpu": [
+    "x64",
+    "arm64"
+  ]
+}

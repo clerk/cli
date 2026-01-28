@@ -1,1 +1,4 @@
 clerk
+node_modules/
+bin/clerk-bin
+bin/clerk-bin.exe
