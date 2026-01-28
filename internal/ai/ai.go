@@ -9,8 +9,8 @@ import (
 
 // Provider represents an AI provider that can generate rule expressions
 type Provider interface {
-	GenerateExpression(schema string, description string) (string, error)
-	ModifyExpression(schema string, currentExpression string, modification string) (string, error)
+	GenerateExpression(schema string, description string, tools *ToolManager) (string, error)
+	ModifyExpression(schema string, currentExpression string, modification string, tools *ToolManager) (string, error)
 }
 
 // Config holds AI configuration
@@ -20,10 +20,12 @@ type Config struct {
 	OpenAIModel    string
 	AnthropicKey   string
 	AnthropicModel string
+	MCPServers     map[string]MCPServerConfig
 }
 
-// GetConfig retrieves AI configuration from profile and environment
-func GetConfig(profileName string) *Config {
+// GetConfig retrieves AI configuration from profile and environment.
+// mcpConfigFlag is an optional flag value for the MCP config file path.
+func GetConfig(profileName, mcpConfigFlag string) *Config {
 	cfg := &Config{
 		Provider:       config.ResolveValue("ai.provider", "", "", "", profileName),
 		OpenAIKey:      config.ResolveValue("ai.openai.key", "", "OPENAI_API_KEY", "", profileName),
@@ -40,6 +42,15 @@ func GetConfig(profileName string) *Config {
 			cfg.Provider = "anthropic"
 		}
 	}
+
+	// Load MCP server configuration
+	servers, err := LoadMCPServers(profileName, mcpConfigFlag)
+	if err != nil {
+		if IsDebug() {
+			fmt.Printf("[DEBUG] Failed to load MCP servers: %v\n", err)
+		}
+	}
+	cfg.MCPServers = servers
 
 	return cfg
 }
@@ -112,6 +123,13 @@ IMPORTANT:
 - Do not include any explanation or markdown
 - The expression must be valid and use only fields from the provided schema`
 
+const systemPromptToolsSuffix = `
+
+You have access to tools that can help you look up information needed to write accurate expressions.
+For example, you can look up ASN numbers, resolve IP addresses, query domain registration data, etc.
+Use the available tools when the user's request requires information you don't have (e.g., converting an ASN name to a number, finding which ASN announces a specific IP).
+After gathering the information you need via tools, return ONLY the final expression.`
+
 const modifyPrompt = `You are an expert at writing Clerk Protect rule expressions. You will be given an existing rule expression and a description of how to modify it.
 
 Rules about the expression syntax:
@@ -129,3 +147,9 @@ IMPORTANT:
 - Do not include any explanation or markdown
 - The expression must be valid and use only fields from the provided schema
 - Preserve parts of the original expression that are not affected by the modification`
+
+const modifyPromptToolsSuffix = `
+
+You have access to tools that can help you look up information needed to write accurate expressions.
+Use the available tools when the modification requires information you don't have.
+After gathering the information you need via tools, return ONLY the final modified expression.`

@@ -179,6 +179,7 @@ When resolving a setting value, the CLI checks in this order:
 | `ai.openai.model` | OpenAI model (default: `gpt-4o`) | |
 | `ai.anthropic.key` | Anthropic API key | `ANTHROPIC_API_KEY` |
 | `ai.anthropic.model` | Anthropic model (default: `claude-sonnet-4-20250514`) | |
+| `ai.mcp.config` | Path to MCP servers config file (default: `~/.config/clerk/cli/mcp.json`) | |
 
 ---
 
@@ -457,6 +458,12 @@ CLERK_SECRET_KEY=${{ secrets.CLERK_KEY }} clerk protect rules list SIGN_IN
 
 ## Clerk Protect Commands
 
+All protect subcommands accept the following option:
+
+| Option | Description |
+|--------|-------------|
+| `--mcp-config <path>` | Path to MCP servers config file (overrides profile setting and default) |
+
 ### `clerk protect rules`
 
 Manage Clerk Protect rules for blocking suspicious authentication attempts.
@@ -619,6 +626,88 @@ clerk protect rules add SIGN_IN --generate "block requests from datacenters"
 - "high bot scores above 70%"
 - "non-US phone numbers with suspicious activity"
 - "block if automation score exceeds 50%"
+
+#### MCP Tool Servers
+
+You can connect external tool servers using the [Model Context Protocol (MCP)](https://modelcontextprotocol.io) to give the AI access to live data during rule generation. This is useful for lookups that the AI can't do on its own, such as:
+
+- Converting an ASN name (e.g., "Cloudflare") to its ASN number
+- Looking up which ASN is announcing a specific IP address
+- Querying domain name registration (WHOIS) data
+- Resolving hostnames or checking IP reputation
+
+##### Configuration
+
+Create `~/.config/clerk/cli/mcp.json`:
+
+```json
+{
+  "servers": {
+    "asn-lookup": {
+      "command": "npx",
+      "args": ["-y", "@example/asn-mcp-server"]
+    },
+    "whois": {
+      "command": "/usr/local/bin/whois-mcp-server",
+      "env": {
+        "API_KEY": "your-api-key"
+      }
+    }
+  }
+}
+```
+
+Each server entry has:
+
+| Field | Description |
+|-------|-------------|
+| `command` | The executable to run (required) |
+| `args` | Command-line arguments (optional) |
+| `env` | Additional environment variables (optional) |
+
+Servers are started as subprocesses using the MCP stdio transport. The CLI discovers available tools from each server at startup and makes them available to the LLM during expression generation and modification.
+
+To use a different config file, pass `--mcp-config` to any protect subcommand:
+
+```bash
+clerk protect rules add --generate "block VPNs" --mcp-config /path/to/mcp.json
+```
+
+You can also set it per profile:
+
+```bash
+clerk config set ai.mcp.config /path/to/custom/mcp.json --profile production
+```
+
+##### How It Works
+
+When MCP servers are configured, the AI can call tools during rule generation:
+
+```
+$ clerk protect rules add SIGN_IN -g "block traffic from Cloudflare's ASN"
+Loaded 3 tool(s) from MCP servers
+Generating expression for: block traffic from Cloudflare's ASN
+
+# The AI calls the asn-lookup tool to resolve "Cloudflare" → AS13335
+# Then generates the expression using the resolved number
+
+Generated expression:
+  ip.asn.number == 13335
+
+? Create rule with this expression? Yes
+```
+
+If no MCP servers are configured, the AI generates expressions using only the schema and its built-in knowledge — no tools are called. Servers that fail to start are skipped gracefully.
+
+##### Debugging
+
+Use `--debug` or `CLERK_CLI_DEBUG=1` to see MCP tool calls and results:
+
+```bash
+CLERK_CLI_DEBUG=1 clerk protect rules add SIGN_IN -g "block Cloudflare ASN"
+# [DEBUG] MCP tool call: resolve_asn({"name":"Cloudflare"})
+# [DEBUG] MCP tool result: {"asn":13335,"name":"Cloudflare, Inc.","country":"US"}
+```
 
 ---
 
@@ -1567,6 +1656,7 @@ The CLI stores configuration in `~/.config/clerk/cli/`:
 |------|---------|
 | `profiles` | Configuration profiles and settings (INI format) |
 | `aliases.json` | Command aliases (JSON format) |
+| `mcp.json` | MCP tool server configuration (JSON format, optional) |
 
 ### Profiles File
 
@@ -1695,6 +1785,9 @@ internal/
     ai.go                    # AI provider abstraction
     openai.go                # OpenAI provider
     anthropic.go             # Anthropic provider
+    mcp.go                   # MCP client (JSON-RPC over stdio)
+    mcp_config.go            # MCP server configuration loader
+    tools.go                 # Tool manager (routes calls to MCP servers)
 ```
 
 ### Architecture

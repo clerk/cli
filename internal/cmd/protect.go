@@ -15,6 +15,8 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+var mcpConfigFlag string
+
 var protectCmd = &cobra.Command{
 	Use:   "protect",
 	Short: "Manage Clerk Protect",
@@ -187,7 +189,7 @@ var protectRulesAddCmd = &cobra.Command{
 		}
 
 		// Check if AI is configured for interactive mode hints
-		aiConfig := ai.GetConfig(GetProfile())
+		aiConfig := ai.GetConfig(GetProfile(), mcpConfigFlag)
 		aiConfigured := aiConfig.IsConfigured()
 
 		// If no expression and no generate flag, prompt interactively
@@ -430,7 +432,7 @@ func promptDescription() (string, error) {
 // generateRuleExpression uses AI to generate a rule expression from a description
 func generateRuleExpression(protectAPI *api.ProtectAPI, ruleset, description string) (string, error) {
 	// Get AI configuration
-	aiConfig := ai.GetConfig(GetProfile())
+	aiConfig := ai.GetConfig(GetProfile(), mcpConfigFlag)
 	if !aiConfig.IsConfigured() {
 		if !output.IsInteractive() {
 			return "", fmt.Errorf("AI not configured. Set ai.provider and API key, or use OPENAI_API_KEY/ANTHROPIC_API_KEY environment variable")
@@ -474,6 +476,19 @@ func generateRuleExpressionWithConfig(protectAPI *api.ProtectAPI, ruleset, descr
 		return "", err
 	}
 
+	// Start MCP tool servers if configured
+	var tools *ai.ToolManager
+	if len(aiConfig.MCPServers) > 0 {
+		tools, err = ai.NewToolManager(aiConfig.MCPServers)
+		if err != nil {
+			fmt.Println(output.Dim("Warning: failed to start MCP servers:"), err)
+		}
+		if tools != nil {
+			defer tools.Close()
+			fmt.Println(output.Dim(fmt.Sprintf("Loaded %d tool(s) from MCP servers", len(tools.GetTools()))))
+		}
+	}
+
 	// Fetch schema for the ruleset
 	schema, err := protectAPI.GetSchema(ruleset)
 	if err != nil {
@@ -487,7 +502,7 @@ func generateRuleExpressionWithConfig(protectAPI *api.ProtectAPI, ruleset, descr
 	fmt.Println()
 
 	// Generate expression
-	expression, err := provider.GenerateExpression(schemaStr, description)
+	expression, err := provider.GenerateExpression(schemaStr, description, tools)
 	if err != nil {
 		return "", fmt.Errorf("failed to generate expression: %w", err)
 	}
@@ -702,7 +717,7 @@ var protectRulesEditCmd = &cobra.Command{
 
 		// Interactive: prompt for method if AI is available
 		if output.IsInteractive() {
-			aiConfig := ai.GetConfig(GetProfile())
+			aiConfig := ai.GetConfig(GetProfile(), mcpConfigFlag)
 			if aiConfig.IsConfigured() {
 				var method string
 				err := huh.NewSelect[string]().
@@ -788,7 +803,7 @@ func editRuleWithAI(protectAPI *api.ProtectAPI, ruleset, id, modification string
 		return err
 	}
 
-	aiConfig := ai.GetConfig(GetProfile())
+	aiConfig := ai.GetConfig(GetProfile(), mcpConfigFlag)
 	if !aiConfig.IsConfigured() {
 		return fmt.Errorf("AI not configured. Set ai.provider and API key, or use OPENAI_API_KEY/ANTHROPIC_API_KEY")
 	}
@@ -796,6 +811,18 @@ func editRuleWithAI(protectAPI *api.ProtectAPI, ruleset, id, modification string
 	provider, err := ai.NewProvider(aiConfig)
 	if err != nil {
 		return err
+	}
+
+	// Start MCP tool servers if configured
+	var tools *ai.ToolManager
+	if len(aiConfig.MCPServers) > 0 {
+		tools, err = ai.NewToolManager(aiConfig.MCPServers)
+		if err != nil {
+			fmt.Println(output.Dim("Warning: failed to start MCP servers:"), err)
+		}
+		if tools != nil {
+			defer tools.Close()
+		}
 	}
 
 	schema, err := protectAPI.GetSchema(ruleset)
@@ -808,7 +835,7 @@ func editRuleWithAI(protectAPI *api.ProtectAPI, ruleset, id, modification string
 	fmt.Println(output.Dim("Modifying:"), modification)
 	fmt.Println()
 
-	newExpression, err := provider.ModifyExpression(schemaStr, existingRule.Expression, modification)
+	newExpression, err := provider.ModifyExpression(schemaStr, existingRule.Expression, modification, tools)
 	if err != nil {
 		return fmt.Errorf("failed to generate expression: %w", err)
 	}
@@ -1549,6 +1576,8 @@ func init() {
 	protectSchemaCmd.AddCommand(protectSchemaShowCmd)
 	protectSchemaCmd.AddCommand(protectSchemaListCmd)
 	protectSchemaCmd.AddCommand(protectSchemaTypeCmd)
+
+	protectCmd.PersistentFlags().StringVar(&mcpConfigFlag, "mcp-config", "", "Path to MCP servers config file")
 
 	protectCmd.AddCommand(protectStatusCmd)
 	protectCmd.AddCommand(protectRulesCmd)

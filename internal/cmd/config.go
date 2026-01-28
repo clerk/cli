@@ -115,6 +115,7 @@ var configSettings = []struct {
 	{"ai.openai.model", "", "gpt-4o", "OpenAI model"},
 	{"ai.anthropic.key", "ANTHROPIC_API_KEY", "", "Anthropic API key"},
 	{"ai.anthropic.model", "", "claude-sonnet-4-20250514", "Anthropic model"},
+	{"ai.mcp.config", "", "", "Path to MCP servers config file"},
 }
 
 // isSecretKey returns true if the key contains sensitive data
