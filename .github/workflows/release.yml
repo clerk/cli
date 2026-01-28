@@ -55,10 +55,16 @@ jobs:
           cd dist
           sha256sum clerk-* > checksums.txt
 
+      - name: Extract tag annotation
+        id: tag_notes
+        run: |
+          # Fetch the annotated tag message (skipping the first line which is the tag name)
+          git tag -l --format='%(contents:body)' "${GITHUB_REF_NAME}" > /tmp/release_notes.md
+
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          generate_release_notes: true
+          body_path: /tmp/release_notes.md
           files: |
             dist/clerk-*
             dist/checksums.txt
