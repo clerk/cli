@@ -69,15 +69,17 @@ jobs:
             dist/clerk-*
             dist/checksums.txt
 
-      - name: Update Homebrew formula
+      - name: Update Homebrew formula and npm package version
         run: |
           VERSION="${GITHUB_REF_NAME}"
+          VERSION_NUM="${VERSION#v}"
           TAG_SHA="$(git rev-parse "${VERSION}")"
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git checkout main
           sed -i "s/tag: \"v[^\"]*\"/tag: \"${VERSION}\"/" Formula/clerk.rb
           sed -i "s/revision: \"[^\"]*\"/revision: \"${TAG_SHA}\"/" Formula/clerk.rb
-          git add Formula/clerk.rb
-          git commit -m "formula: update to ${VERSION}"
+          sed -i "s/\"version\": \"[^\"]*\"/\"version\": \"${VERSION_NUM}\"/" package.json
+          git add Formula/clerk.rb package.json
+          git commit -m "release: update to ${VERSION}"
           git push origin main
