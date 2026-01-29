@@ -92,6 +92,7 @@ func addCommands() {
 	rootCmd.AddCommand(jwksCmd)
 	rootCmd.AddCommand(m2mCmd)
 	rootCmd.AddCommand(protectCmd)
+	rootCmd.AddCommand(billingCmd)
 }
 
 func GetProfile() string {

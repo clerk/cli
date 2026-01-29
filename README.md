@@ -1736,6 +1736,151 @@ clerk m2m machines add-scope mch_abc123 --scope "read:users"
 
 ---
 
+## Billing Commands
+
+### `clerk billing`
+
+Manage billing plans, subscriptions, and statements.
+
+### `clerk billing plans`
+
+#### `clerk billing plans list [options]`
+
+List all billing plans.
+
+| Option | Description |
+|--------|-------------|
+| `--limit <n>` | Maximum plans to return (default: 10) |
+| `--offset <n>` | Pagination offset |
+
+```bash
+clerk billing plans list
+clerk billing plans ls -o json
+```
+
+---
+
+### `clerk billing subscription`
+
+#### `clerk billing subscription get-user <userId>`
+
+Get the billing subscription for a user.
+
+```bash
+clerk billing subscription get-user user_abc123
+clerk billing subscription get-user user_abc123 -o json
+```
+
+#### `clerk billing subscription get-org <organizationId>`
+
+Get the billing subscription for an organization.
+
+```bash
+clerk billing subscription get-org org_abc123
+clerk billing subscription get-org org_abc123 -o json
+```
+
+---
+
+### `clerk billing subscription-items`
+
+Manage subscription items. Also available as `clerk billing items`.
+
+#### `clerk billing subscription-items list [options]`
+
+List all subscription items.
+
+| Option | Description |
+|--------|-------------|
+| `--limit <n>` | Maximum items to return (default: 10) |
+| `--offset <n>` | Pagination offset |
+
+```bash
+clerk billing subscription-items list
+clerk billing items ls
+```
+
+#### `clerk billing subscription-items delete <subscriptionItemId> [-f]`
+
+Delete a subscription item.
+
+| Option | Description |
+|--------|-------------|
+| `-f, --force` | Skip confirmation prompt |
+
+```bash
+clerk billing subscription-items delete csub_item_abc123
+clerk billing items delete csub_item_abc123 --force
+```
+
+#### `clerk billing subscription-items extend-trial <subscriptionItemId> [options]`
+
+Extend the free trial for a subscription item.
+
+| Option | Description |
+|--------|-------------|
+| `--days <n>` | Number of days to extend the trial |
+
+```bash
+clerk billing subscription-items extend-trial csub_item_abc123 --days 14
+```
+
+#### `clerk billing subscription-items transition-price <subscriptionItemId> [options]`
+
+Transition a subscription item to a new price.
+
+| Option | Description |
+|--------|-------------|
+| `--price-id <id>` | New price ID |
+| `--immediate` | Apply transition immediately |
+
+```bash
+clerk billing subscription-items transition-price csub_item_abc123 --price-id cprice_xyz --immediate
+```
+
+---
+
+### `clerk billing statements`
+
+#### `clerk billing statements list [options]`
+
+List all billing statements.
+
+| Option | Description |
+|--------|-------------|
+| `--limit <n>` | Maximum statements to return (default: 10) |
+| `--offset <n>` | Pagination offset |
+
+```bash
+clerk billing statements list
+clerk billing statements ls -o json
+```
+
+#### `clerk billing statements get <statementId>`
+
+Get details of a specific statement.
+
+```bash
+clerk billing statements get stmt_abc123
+clerk billing statements get stmt_abc123 -o json
+```
+
+#### `clerk billing statements payment-attempts <statementId> [options]`
+
+List payment attempts for a statement.
+
+| Option | Description |
+|--------|-------------|
+| `--limit <n>` | Maximum attempts to return (default: 10) |
+| `--offset <n>` | Pagination offset |
+
+```bash
+clerk billing statements payment-attempts stmt_abc123
+clerk billing statements payment-attempts stmt_abc123 -o json
+```
+
+---
+
 ## Configuration Files
 
 The CLI stores configuration in `~/.config/clerk/cli/`:
@@ -1839,6 +1984,7 @@ internal/
     instance.go              # Instance API
     jwks.go                  # JWKS API
     m2m.go                   # M2M API (tokens + machines)
+    billing.go               # Billing API (plans, subscriptions, statements)
     protect.go               # Protect Rules & Schema API
   cmd/
     root.go                  # Root command, global flags, prefix matching
@@ -1860,6 +2006,7 @@ internal/
     instance.go              # Instance commands
     jwks.go                  # JWKS commands
     m2m.go                   # M2M commands
+    billing.go               # Billing commands
     protect.go               # Protect commands
   config/
     config.go                # Configuration management (INI format)
