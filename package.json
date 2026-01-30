@@ -10,7 +10,7 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/clerk/gocli.git"
+    "url": "git+https://github.com/clerk/cli.git"
   },
   "keywords": [
     "clerk",
@@ -19,9 +19,9 @@
   "author": "Clerk",
   "license": "MIT",
   "bugs": {
-    "url": "https://github.com/clerk/gocli/issues"
+    "url": "https://github.com/clerk/cli/issues"
   },
-  "homepage": "https://github.com/clerk/gocli#readme",
+  "homepage": "https://github.com/clerk/cli#readme",
   "engines": {
     "node": ">=14"
   },

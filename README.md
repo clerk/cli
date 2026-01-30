@@ -13,7 +13,7 @@ gh auth status
 gh auth setup-git
 
 ## new install:
-brew tap clerk/gocli git@github.com:clerk/gocli.git && brew install clerk
+brew tap clerk/cli git@github.com:clerk/cli.git && brew install clerk
 
 ## or to update:
 brew update && brew upgrade clerk

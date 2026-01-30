@@ -5,7 +5,7 @@ const path = require("path");
 const { execSync, spawnSync } = require("child_process");
 
 const VERSION = require("../package.json").version;
-const REPO = "clerk/gocli";
+const REPO = "clerk/cli";
 
 function getPlatformInfo() {
   const platform = process.platform;
@@ -120,7 +120,7 @@ async function main() {
       "Make sure you're authenticated with GitHub CLI: gh auth login"
     );
     console.error(
-      "You can also download manually from: https://github.com/clerk/gocli/releases"
+      "You can also download manually from: https://github.com/clerk/cli/releases"
     );
     process.exit(1);
   }

@@ -1,11 +1,11 @@
 class Clerk < Formula
   desc "CLI for managing Clerk authentication instances"
-  homepage "https://github.com/clerk/gocli"
-  url "https://github.com/clerk/gocli.git",
+  homepage "https://github.com/clerk/cli"
+  url "https://github.com/clerk/cli.git",
     tag: "v0.0.7",
     revision: "bc15b774571f60a4670101ab8a502e123938f11d"
   license "MIT"
-  head "https://github.com/clerk/gocli.git", branch: "main"
+  head "https://github.com/clerk/cli.git", branch: "main"
 
   depends_on "go" => :build
 
