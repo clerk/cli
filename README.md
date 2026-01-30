@@ -17,6 +17,12 @@ brew update && brew upgrade clerk
 
 ```
 
+From NPX:
+
+```
+npx --yes github:clerk/cli@latest [command] [options]
+```
+
 Build from source:
 
 ```bash
