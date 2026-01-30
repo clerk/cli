@@ -1,6 +1,6 @@
 {
   "name": "clerk-cli",
-  "version": "0.0.6",
+  "version": "0.0.8",
   "description": "Clerk CLI - Command line interface for Clerk",
   "bin": {
     "clerk": "bin/clerk"
