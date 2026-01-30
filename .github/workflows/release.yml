@@ -55,11 +55,20 @@ jobs:
           cd dist
           sha256sum clerk-* > checksums.txt
 
-      - name: Extract tag annotation
-        id: tag_notes
+      - name: Get release notes
+        id: release_notes
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
-          # Fetch the annotated tag message (skipping the first line which is the tag name)
-          git tag -l --format='%(contents:body)' "${GITHUB_REF_NAME}" > /tmp/release_notes.md
+          # Check if release already exists with notes
+          EXISTING_NOTES=$(gh release view "${GITHUB_REF_NAME}" --json body -q .body 2>/dev/null || echo "")
+          if [ -n "$EXISTING_NOTES" ]; then
+            echo "Release already has notes, preserving them"
+            echo "$EXISTING_NOTES" > /tmp/release_notes.md
+          else
+            # Fall back to tag annotation if available
+            git tag -l --format='%(contents:body)' "${GITHUB_REF_NAME}" > /tmp/release_notes.md
+          fi
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
