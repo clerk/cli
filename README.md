@@ -1,5 +1,7 @@
 # Clerk CLI
 
+> **Early Access** — This CLI is under active development and not yet officially supported. We'd love your feedback! Please open an issue or reach out with suggestions.
+
 A command-line interface for managing your Clerk instances. This CLI provides tools for managing users, organizations, sessions, domains, Clerk Protect, and more.
 
 ## Installation
@@ -7,11 +9,6 @@ A command-line interface for managing your Clerk instances. This CLI provides to
 From Homebrew:
 
 ```bash
-
-## while github repo is private, ensure you're authenticated with GitHub CLI:
-gh auth status
-gh auth setup-git
-
 ## new install:
 brew tap clerk/cli git@github.com:clerk/cli.git && brew install clerk
 
