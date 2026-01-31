@@ -2062,3 +2062,115 @@ go build -o clerk ./cmd/clerk
 ./clerk whoami
 ./clerk users list --output json
 ```
+
+---
+
+## Releasing
+
+Releases are automated via GitHub Actions. When you push a tag (e.g., `v1.0.0`), the workflow:
+
+1. Builds binaries for all platforms (darwin, linux, windows × amd64, arm64)
+2. Signs and notarizes macOS .pkg installers (if configured)
+3. Creates a GitHub Release with all artifacts
+4. Updates the Homebrew formula and Cask versions
+
+### Creating a Release
+
+```bash
+git tag v1.0.0
+git push origin v1.0.0
+```
+
+### Distribution Channels
+
+| Channel | Type | Command |
+|---------|------|---------|
+| Homebrew (source) | Formula | `brew install clerk/cli/clerk` |
+| Homebrew (signed pkg) | Cask | `brew install --cask clerk/cli/clerk` |
+| NPM | Binary wrapper | `npx clerk-cli` |
+| GitHub Releases | Direct download | Download from releases page |
+
+---
+
+## macOS Code Signing Setup
+
+To distribute signed and notarized macOS .pkg installers via Homebrew Cask, you need an Apple Developer account and certificates.
+
+### Prerequisites
+
+1. **Apple Developer Program membership** ($99/year) - https://developer.apple.com/programs/enroll/
+2. **Developer ID certificates**:
+   - Developer ID Application (signs the binary)
+   - Developer ID Installer (signs the .pkg)
+3. **App-Specific Password** for notarization - generate at https://appleid.apple.com
+
+### Required GitHub Secrets
+
+Add these secrets in your repository settings (Settings → Secrets and variables → Actions → Secrets):
+
+| Secret | Description |
+|--------|-------------|
+| `APPLE_DEVELOPER_ID_APPLICATION_P12` | Base64-encoded .p12 of Developer ID Application cert |
+| `APPLE_DEVELOPER_ID_INSTALLER_P12` | Base64-encoded .p12 of Developer ID Installer cert |
+| `APPLE_CERTIFICATE_PASSWORD` | Password used when exporting the .p12 files |
+| `APPLE_ID` | Your Apple ID email |
+| `APPLE_APP_SPECIFIC_PASSWORD` | App-specific password for notarization |
+| `APPLE_TEAM_ID` | Your 10-character Apple Team ID |
+| `APPLE_DEVELOPER_NAME` | Developer name as shown in certificate (e.g., "Your Name" or "Your Company, Inc.") |
+
+### Required Repository Variable
+
+Add this variable (Settings → Secrets and variables → Actions → Variables):
+
+| Variable | Value |
+|----------|-------|
+| `MACOS_SIGNING_ENABLED` | `true` |
+
+### Exporting Certificates
+
+1. Open **Keychain Access** on your Mac
+2. Find your **Developer ID Application** certificate
+3. Right-click → **Export** → Save as .p12 file with a password
+4. Repeat for **Developer ID Installer** certificate
+5. Run the helper script to get base64-encoded values:
+
+```bash
+./scripts/export-certs-for-github.sh
+```
+
+### How Signing Works
+
+The release workflow includes a `sign-macos` job that:
+
+1. Runs on `macos-latest` (required for codesign/notarytool)
+2. Imports certificates into a temporary keychain
+3. Signs the Go binary with `codesign` (hardened runtime)
+4. Builds a .pkg installer with `pkgbuild`
+5. Signs the .pkg with `productsign`
+6. Submits to Apple for notarization via `notarytool`
+7. Staples the notarization ticket to the .pkg
+
+The signed .pkg files are uploaded to GitHub Releases alongside the unsigned binaries.
+
+### Homebrew Cask
+
+The `Casks/clerk.rb` file defines the Homebrew Cask that installs the signed .pkg:
+
+```bash
+# Add the tap
+brew tap clerk/cli https://github.com/clerk/cli
+
+# Install via Cask (uses signed .pkg)
+brew install --cask clerk/cli/clerk
+
+# Or install via Formula (builds from source)
+brew install clerk/cli/clerk
+```
+
+### Troubleshooting
+
+**Notarization fails**: Check that your Apple ID has accepted the latest developer agreements at https://developer.apple.com
+
+**Certificate not found**: Ensure the certificate names match exactly. Run `security find-identity -v -p codesigning` to list available certificates.
+
+**Gatekeeper blocks the binary**: The binary must be signed with hardened runtime (`--options runtime`) and successfully notarized.

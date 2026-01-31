@@ -8,7 +8,7 @@ permissions:
   contents: write
 
 jobs:
-  release:
+  build:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -50,6 +50,120 @@ jobs:
               go build -ldflags "$LDFLAGS" -o "${DIST}/${output}" "$PKG"
           done
 
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: binaries
+          path: dist/
+          retention-days: 1
+
+  sign-macos:
+    needs: build
+    runs-on: macos-latest
+    # Only run if signing secrets are configured
+    if: ${{ vars.MACOS_SIGNING_ENABLED == 'true' }}
+    strategy:
+      matrix:
+        arch: [amd64, arm64]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: binaries
+          path: dist/
+
+      - name: Import certificates
+        env:
+          APPLE_DEVELOPER_ID_APPLICATION_P12: ${{ secrets.APPLE_DEVELOPER_ID_APPLICATION_P12 }}
+          APPLE_DEVELOPER_ID_INSTALLER_P12: ${{ secrets.APPLE_DEVELOPER_ID_INSTALLER_P12 }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+        run: |
+          # Create temporary keychain
+          KEYCHAIN_PATH="$RUNNER_TEMP/signing.keychain-db"
+          KEYCHAIN_PASSWORD="$(openssl rand -base64 32)"
+
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+
+          # Import Developer ID Application certificate
+          APP_CERT_PATH="$RUNNER_TEMP/app_cert.p12"
+          echo "$APPLE_DEVELOPER_ID_APPLICATION_P12" | base64 --decode > "$APP_CERT_PATH"
+          security import "$APP_CERT_PATH" \
+            -P "$APPLE_CERTIFICATE_PASSWORD" \
+            -A \
+            -t cert \
+            -f pkcs12 \
+            -k "$KEYCHAIN_PATH"
+
+          # Import Developer ID Installer certificate
+          INSTALLER_CERT_PATH="$RUNNER_TEMP/installer_cert.p12"
+          echo "$APPLE_DEVELOPER_ID_INSTALLER_P12" | base64 --decode > "$INSTALLER_CERT_PATH"
+          security import "$INSTALLER_CERT_PATH" \
+            -P "$APPLE_CERTIFICATE_PASSWORD" \
+            -A \
+            -t cert \
+            -f pkcs12 \
+            -k "$KEYCHAIN_PATH"
+
+          # Set keychain for code signing
+          security list-keychain -d user -s "$KEYCHAIN_PATH"
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+
+          # Clean up cert files
+          rm -f "$APP_CERT_PATH" "$INSTALLER_CERT_PATH"
+
+      - name: Build signed .pkg
+        env:
+          VERSION: ${{ github.ref_name }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APP_IDENTITY: "Developer ID Application: ${{ secrets.APPLE_DEVELOPER_NAME }} (${{ secrets.APPLE_TEAM_ID }})"
+          INSTALLER_IDENTITY: "Developer ID Installer: ${{ secrets.APPLE_DEVELOPER_NAME }} (${{ secrets.APPLE_TEAM_ID }})"
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+        run: |
+          chmod +x scripts/build-macos-pkg.sh
+          ./scripts/build-macos-pkg.sh ${{ matrix.arch }}
+
+      - name: Upload signed .pkg
+        uses: actions/upload-artifact@v4
+        with:
+          name: pkg-darwin-${{ matrix.arch }}
+          path: dist/*.pkg
+          retention-days: 1
+
+  release:
+    needs: [build, sign-macos]
+    # Run even if sign-macos is skipped (when signing is not configured)
+    if: ${{ always() && needs.build.result == 'success' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Download build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: binaries
+          path: dist/
+
+      - name: Download signed macOS packages (amd64)
+        uses: actions/download-artifact@v4
+        continue-on-error: true
+        with:
+          name: pkg-darwin-amd64
+          path: dist/
+
+      - name: Download signed macOS packages (arm64)
+        uses: actions/download-artifact@v4
+        continue-on-error: true
+        with:
+          name: pkg-darwin-arm64
+          path: dist/
+
       - name: Create checksums
         run: |
           cd dist
@@ -78,7 +192,7 @@ jobs:
             dist/clerk-*
             dist/checksums.txt
 
-      - name: Update Homebrew formula and npm package version
+      - name: Update Homebrew formula, cask, and npm package version
         run: |
           VERSION="${GITHUB_REF_NAME}"
           VERSION_NUM="${VERSION#v}"
@@ -86,9 +200,17 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git checkout main
+
+          # Update Formula (builds from source)
           sed -i "s/tag: \"v[^\"]*\"/tag: \"${VERSION}\"/" Formula/clerk.rb
           sed -i "s/revision: \"[^\"]*\"/revision: \"${TAG_SHA}\"/" Formula/clerk.rb
+
+          # Update Cask (uses signed .pkg)
+          sed -i "s/version \"[^\"]*\"/version \"${VERSION_NUM}\"/" Casks/clerk.rb
+
+          # Update npm package version
           sed -i "s/\"version\": \"[^\"]*\"/\"version\": \"${VERSION_NUM}\"/" package.json
-          git add Formula/clerk.rb package.json
+
+          git add Formula/clerk.rb Casks/clerk.rb package.json
           git commit -m "release: update to ${VERSION}"
           git push origin main
