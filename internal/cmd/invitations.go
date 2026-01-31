@@ -5,9 +5,10 @@ import (
 	"strings"
 	"time"
 
+	"github.com/spf13/cobra"
+
 	"clerk.com/cli/internal/api"
 	"clerk.com/cli/internal/output"
-	"github.com/spf13/cobra"
 )
 
 var invitationsCmd = &cobra.Command{

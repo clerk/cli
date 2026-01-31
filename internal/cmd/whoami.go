@@ -4,9 +4,10 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/spf13/cobra"
+
 	"clerk.com/cli/internal/config"
 	"clerk.com/cli/internal/output"
-	"github.com/spf13/cobra"
 )
 
 var whoamiCmd = &cobra.Command{

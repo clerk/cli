@@ -75,13 +75,76 @@ make build                # or: go build -o clerk ./cmd/clerk
 ./clerk users list
 
 # Run tests
-make test                 # or: go test ./...
+make test                 # or: go test -race ./...
+
+# Format code
+make fmt                  # gofmt + goimports
 
 # Lint
-make lint                 # requires golangci-lint
+make lint                 # Run golangci-lint
+make lint-fix             # Run golangci-lint with auto-fix
 
-# Format
-make fmt                  # or: go fmt ./...
+# Security scanning
+make security             # Run gosec
+make vulncheck            # Check for known vulnerabilities
+
+# Run all checks before pushing
+make check                # fmt + vet + lint + test
+make check-all            # Above + security + vulncheck
+```
+
+## Setup Development Environment
+
+```bash
+# Install all development tools (golangci-lint, gosec, govulncheck, goimports)
+make setup
+
+# Install git pre-commit hook
+make setup-hooks
+```
+
+The pre-commit hook runs on staged Go files:
+- Format check (gofmt)
+- go vet
+- golangci-lint (incremental)
+- Short tests
+
+To skip the hook for a specific commit: `git commit --no-verify`
+
+## Linting & Security
+
+The project uses comprehensive linting via `.golangci.yml`:
+
+### Enabled Linters
+
+| Category | Linters |
+|----------|---------|
+| **Security** | gosec, bodyclose, noctx |
+| **Bugs** | govet, staticcheck, durationcheck, nilerr, nilnil |
+| **Code Quality** | gocritic, errcheck, ineffassign, unconvert, unparam |
+| **Style** | gofmt, goimports, revive, misspell, errname, errorlint |
+
+### CI Pipeline
+
+The CI workflow (`.github/workflows/ci.yml`) runs:
+
+1. **Lint job**: golangci-lint with full configuration
+2. **Security job**: gosec + govulncheck for vulnerability scanning
+3. **Build & Test job**: Cross-platform build and test with race detection
+
+Build & Test only runs after Lint passes.
+
+### Running Checks Locally
+
+```bash
+# Quick check before committing (recommended)
+make check
+
+# Full check including security scanning
+make check-all
+
+# Fix auto-fixable lint issues
+make lint-fix
 ```
 
 ## Key Patterns

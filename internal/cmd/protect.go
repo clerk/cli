@@ -6,13 +6,14 @@ import (
 	"os/exec"
 	"strings"
 
+	"github.com/charmbracelet/huh"
+	"github.com/spf13/cobra"
+	"gopkg.in/yaml.v3"
+
 	"clerk.com/cli/internal/ai"
 	"clerk.com/cli/internal/api"
 	"clerk.com/cli/internal/config"
 	"clerk.com/cli/internal/output"
-	"github.com/charmbracelet/huh"
-	"github.com/spf13/cobra"
-	"gopkg.in/yaml.v3"
 )
 
 var mcpConfigFlag string
@@ -522,7 +523,7 @@ func generateRuleExpressionWithConfig(protectAPI *api.ProtectAPI, ruleset, descr
 			return "", err
 		}
 		if !confirm {
-			return "", fmt.Errorf("cancelled")
+			return "", fmt.Errorf("canceled")
 		}
 	}
 
@@ -854,7 +855,7 @@ func editRuleWithAI(protectAPI *api.ProtectAPI, ruleset, id, modification string
 			return err
 		}
 		if !confirm {
-			return fmt.Errorf("cancelled")
+			return fmt.Errorf("canceled")
 		}
 	}
 
@@ -892,7 +893,9 @@ func editRuleInEditor(rule *api.Rule) (*editableRule, error) {
 		return nil, fmt.Errorf("failed to create temp file: %w", err)
 	}
 	tmpPath := tmpFile.Name()
-	defer os.Remove(tmpPath)
+	defer func() {
+		_ = os.Remove(tmpPath) //nolint:errcheck // best-effort cleanup
+	}()
 
 	// Write header comments and rule content
 	header := `# Edit the rule below and save to apply changes.
@@ -1026,7 +1029,7 @@ var protectRulesDeleteCmd = &cobra.Command{
 				return err
 			}
 			if !confirm {
-				fmt.Println(output.Dim("Cancelled"))
+				fmt.Println(output.Dim("Canceled"))
 				return nil
 			}
 		}
@@ -1096,7 +1099,7 @@ var protectRulesFlushCmd = &cobra.Command{
 				return err
 			}
 			if !confirm {
-				fmt.Println("Cancelled")
+				fmt.Println("Canceled")
 				return nil
 			}
 		}

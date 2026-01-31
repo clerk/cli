@@ -31,10 +31,10 @@ type openAIRequest struct {
 }
 
 type openAIMessage struct {
-	Role       string          `json:"role"`
-	Content    *string         `json:"content,omitempty"`
+	Role       string           `json:"role"`
+	Content    *string          `json:"content,omitempty"`
 	ToolCalls  []openAIToolCall `json:"tool_calls,omitempty"`
-	ToolCallID string          `json:"tool_call_id,omitempty"`
+	ToolCallID string           `json:"tool_call_id,omitempty"`
 }
 
 type openAITool struct {
@@ -61,7 +61,7 @@ type openAIResponse struct {
 	Choices []struct {
 		Message struct {
 			Content   *string          `json:"content"`
-			ToolCalls []openAIToolCall  `json:"tool_calls,omitempty"`
+			ToolCalls []openAIToolCall `json:"tool_calls,omitempty"`
 		} `json:"message"`
 		FinishReason string `json:"finish_reason"`
 	} `json:"choices"`

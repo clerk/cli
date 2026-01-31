@@ -8,25 +8,25 @@ import (
 )
 
 type User struct {
-	ID                string                 `json:"id"`
-	ExternalID        string                 `json:"external_id,omitempty"`
-	FirstName         string                 `json:"first_name,omitempty"`
-	LastName          string                 `json:"last_name,omitempty"`
-	Username          string                 `json:"username,omitempty"`
-	EmailAddresses    []EmailAddress         `json:"email_addresses,omitempty"`
-	PhoneNumbers      []PhoneNumber          `json:"phone_numbers,omitempty"`
-	PrimaryEmailID    string                 `json:"primary_email_address_id,omitempty"`
-	PrimaryPhoneID    string                 `json:"primary_phone_number_id,omitempty"`
-	ImageURL          string                 `json:"image_url,omitempty"`
-	ProfileImageURL   string                 `json:"profile_image_url,omitempty"`
-	PublicMetadata    map[string]interface{} `json:"public_metadata,omitempty"`
-	PrivateMetadata   map[string]interface{} `json:"private_metadata,omitempty"`
-	UnsafeMetadata    map[string]interface{} `json:"unsafe_metadata,omitempty"`
-	Banned            bool                   `json:"banned"`
-	Locked            bool                   `json:"locked"`
-	LastSignInAt      int64                  `json:"last_sign_in_at,omitempty"`
-	CreatedAt         int64                  `json:"created_at"`
-	UpdatedAt         int64                  `json:"updated_at"`
+	ID              string                 `json:"id"`
+	ExternalID      string                 `json:"external_id,omitempty"`
+	FirstName       string                 `json:"first_name,omitempty"`
+	LastName        string                 `json:"last_name,omitempty"`
+	Username        string                 `json:"username,omitempty"`
+	EmailAddresses  []EmailAddress         `json:"email_addresses,omitempty"`
+	PhoneNumbers    []PhoneNumber          `json:"phone_numbers,omitempty"`
+	PrimaryEmailID  string                 `json:"primary_email_address_id,omitempty"`
+	PrimaryPhoneID  string                 `json:"primary_phone_number_id,omitempty"`
+	ImageURL        string                 `json:"image_url,omitempty"`
+	ProfileImageURL string                 `json:"profile_image_url,omitempty"`
+	PublicMetadata  map[string]interface{} `json:"public_metadata,omitempty"`
+	PrivateMetadata map[string]interface{} `json:"private_metadata,omitempty"`
+	UnsafeMetadata  map[string]interface{} `json:"unsafe_metadata,omitempty"`
+	Banned          bool                   `json:"banned"`
+	Locked          bool                   `json:"locked"`
+	LastSignInAt    int64                  `json:"last_sign_in_at,omitempty"`
+	CreatedAt       int64                  `json:"created_at"`
+	UpdatedAt       int64                  `json:"updated_at"`
 }
 
 type EmailAddress struct {

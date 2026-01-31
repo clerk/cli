@@ -22,9 +22,9 @@ import (
 var Version = "dev"
 
 const (
-	MaxRetries   = 3
-	BaseDelayMs  = 1000
-	MaxDelayMs   = 30000
+	MaxRetries  = 3
+	BaseDelayMs = 1000
+	MaxDelayMs  = 30000
 )
 
 type Client struct {

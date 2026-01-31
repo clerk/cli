@@ -25,11 +25,11 @@ func NewAnthropicProvider(apiKey, model string) *AnthropicProvider {
 }
 
 type anthropicRequest struct {
-	Model     string              `json:"model"`
-	MaxTokens int                 `json:"max_tokens"`
-	System    string              `json:"system,omitempty"`
-	Messages  []anthropicMessage  `json:"messages"`
-	Tools     []anthropicTool     `json:"tools,omitempty"`
+	Model     string             `json:"model"`
+	MaxTokens int                `json:"max_tokens"`
+	System    string             `json:"system,omitempty"`
+	Messages  []anthropicMessage `json:"messages"`
+	Tools     []anthropicTool    `json:"tools,omitempty"`
 }
 
 type anthropicMessage struct {
@@ -55,9 +55,9 @@ type anthropicTool struct {
 }
 
 type anthropicResponse struct {
-	Content  []anthropicContentBlock `json:"content"`
-	StopReason string               `json:"stop_reason"`
-	Error    *struct {
+	Content    []anthropicContentBlock `json:"content"`
+	StopReason string                  `json:"stop_reason"`
+	Error      *struct {
 		Type    string `json:"type"`
 		Message string `json:"message"`
 	} `json:"error,omitempty"`

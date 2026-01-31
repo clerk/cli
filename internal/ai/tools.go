@@ -14,9 +14,9 @@ type Tool struct {
 
 // ToolManager manages multiple MCP clients and routes tool calls.
 type ToolManager struct {
-	clients  []*MCPClient
-	tools    []Tool
-	toolMap  map[string]*MCPClient // tool name → owning client
+	clients []*MCPClient
+	tools   []Tool
+	toolMap map[string]*MCPClient // tool name → owning client
 }
 
 // NewToolManager starts all configured MCP servers and collects their tools.

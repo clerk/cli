@@ -5,10 +5,11 @@ import (
 	"os"
 	"strings"
 
-	"clerk.com/cli/internal/config"
-	"clerk.com/cli/internal/output"
 	"github.com/charmbracelet/huh"
 	"github.com/spf13/cobra"
+
+	"clerk.com/cli/internal/config"
+	"clerk.com/cli/internal/output"
 )
 
 var configCmd = &cobra.Command{
@@ -378,7 +379,7 @@ var profileDeleteCmd = &cobra.Command{
 				return err
 			}
 			if !confirm {
-				fmt.Println("Cancelled")
+				fmt.Println("Canceled")
 				return nil
 			}
 		}
@@ -419,8 +420,8 @@ var profileShowCmd = &cobra.Command{
 		formatter := GetFormatter()
 
 		data := map[string]interface{}{
-			"name":        name,
-			"clerk.key":   maskAPIKey(profile.APIKey),
+			"name":          name,
+			"clerk.key":     maskAPIKey(profile.APIKey),
 			"clerk.api.url": profile.APIURL,
 		}
 

@@ -5,12 +5,13 @@ import (
 	"os"
 	"strings"
 
-	"clerk.com/cli/internal/api"
-	"clerk.com/cli/internal/config"
-	"clerk.com/cli/internal/output"
 	"github.com/charmbracelet/huh"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
+
+	"clerk.com/cli/internal/api"
+	"clerk.com/cli/internal/config"
+	"clerk.com/cli/internal/output"
 )
 
 var (
@@ -212,7 +213,8 @@ func promptForAPIKey(profileName string) (string, error) {
 		Value(&saveKey).
 		Run()
 	if err != nil {
-		return apiKey, nil // Return the key even if we can't ask about saving
+		// UI prompt failed (e.g., non-interactive terminal) - return key without saving
+		return apiKey, nil //nolint:nilerr // intentional: key is valid even if save prompt fails
 	}
 
 	if saveKey {

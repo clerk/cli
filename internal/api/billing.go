@@ -88,18 +88,18 @@ type SubscriptionItem struct {
 
 // Statement represents a billing statement
 type Statement struct {
-	ID              string                 `json:"id"`
-	Object          string                 `json:"object,omitempty"`
-	Status          string                 `json:"status,omitempty"`
-	Amount          int64                  `json:"amount,omitempty"`
-	Currency        string                 `json:"currency,omitempty"`
-	DueDate         int64                  `json:"due_date,omitempty"`
-	PaidAt          int64                  `json:"paid_at,omitempty"`
-	PeriodStart     int64                  `json:"period_start,omitempty"`
-	PeriodEnd       int64                  `json:"period_end,omitempty"`
-	Metadata        map[string]interface{} `json:"metadata,omitempty"`
-	CreatedAt       int64                  `json:"created_at,omitempty"`
-	UpdatedAt       int64                  `json:"updated_at,omitempty"`
+	ID          string                 `json:"id"`
+	Object      string                 `json:"object,omitempty"`
+	Status      string                 `json:"status,omitempty"`
+	Amount      int64                  `json:"amount,omitempty"`
+	Currency    string                 `json:"currency,omitempty"`
+	DueDate     int64                  `json:"due_date,omitempty"`
+	PaidAt      int64                  `json:"paid_at,omitempty"`
+	PeriodStart int64                  `json:"period_start,omitempty"`
+	PeriodEnd   int64                  `json:"period_end,omitempty"`
+	Metadata    map[string]interface{} `json:"metadata,omitempty"`
+	CreatedAt   int64                  `json:"created_at,omitempty"`
+	UpdatedAt   int64                  `json:"updated_at,omitempty"`
 }
 
 // PaymentAttempt represents a payment attempt on a statement

@@ -5,16 +5,16 @@ import (
 )
 
 type Domain struct {
-	ID            string `json:"id"`
-	Name          string `json:"name"`
-	IsSatellite   bool   `json:"is_satellite"`
-	FrontendAPI   string `json:"frontend_api_url,omitempty"`
-	AccountsURL   string `json:"accounts_portal_url,omitempty"`
-	ProxyURL      string `json:"proxy_url,omitempty"`
-	CNAMETargets  []CNAMETarget `json:"cname_targets,omitempty"`
-	DevelopmentOrigin string `json:"development_origin"`
-	CreatedAt     int64  `json:"created_at"`
-	UpdatedAt     int64  `json:"updated_at"`
+	ID                string        `json:"id"`
+	Name              string        `json:"name"`
+	IsSatellite       bool          `json:"is_satellite"`
+	FrontendAPI       string        `json:"frontend_api_url,omitempty"`
+	AccountsURL       string        `json:"accounts_portal_url,omitempty"`
+	ProxyURL          string        `json:"proxy_url,omitempty"`
+	CNAMETargets      []CNAMETarget `json:"cname_targets,omitempty"`
+	DevelopmentOrigin string        `json:"development_origin"`
+	CreatedAt         int64         `json:"created_at"`
+	UpdatedAt         int64         `json:"updated_at"`
 }
 
 type CNAMETarget struct {

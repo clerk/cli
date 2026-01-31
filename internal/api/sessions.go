@@ -6,15 +6,15 @@ import (
 )
 
 type Session struct {
-	ID              string `json:"id"`
-	ClientID        string `json:"client_id"`
-	UserID          string `json:"user_id"`
-	Status          string `json:"status"`
-	LastActiveAt    int64  `json:"last_active_at"`
-	ExpireAt        int64  `json:"expire_at"`
-	AbandonAt       int64  `json:"abandon_at"`
-	CreatedAt       int64  `json:"created_at"`
-	UpdatedAt       int64  `json:"updated_at"`
+	ID           string `json:"id"`
+	ClientID     string `json:"client_id"`
+	UserID       string `json:"user_id"`
+	Status       string `json:"status"`
+	LastActiveAt int64  `json:"last_active_at"`
+	ExpireAt     int64  `json:"expire_at"`
+	AbandonAt    int64  `json:"abandon_at"`
+	CreatedAt    int64  `json:"created_at"`
+	UpdatedAt    int64  `json:"updated_at"`
 }
 
 type SessionsAPI struct {

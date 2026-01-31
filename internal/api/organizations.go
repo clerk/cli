@@ -7,15 +7,15 @@ import (
 )
 
 type Organization struct {
-	ID              string                 `json:"id"`
-	Name            string                 `json:"name"`
-	Slug            string                 `json:"slug,omitempty"`
-	ImageURL        string                 `json:"image_url,omitempty"`
-	MaxAllowedMemberships int              `json:"max_allowed_memberships,omitempty"`
-	PublicMetadata  map[string]interface{} `json:"public_metadata,omitempty"`
-	PrivateMetadata map[string]interface{} `json:"private_metadata,omitempty"`
-	CreatedAt       int64                  `json:"created_at"`
-	UpdatedAt       int64                  `json:"updated_at"`
+	ID                    string                 `json:"id"`
+	Name                  string                 `json:"name"`
+	Slug                  string                 `json:"slug,omitempty"`
+	ImageURL              string                 `json:"image_url,omitempty"`
+	MaxAllowedMemberships int                    `json:"max_allowed_memberships,omitempty"`
+	PublicMetadata        map[string]interface{} `json:"public_metadata,omitempty"`
+	PrivateMetadata       map[string]interface{} `json:"private_metadata,omitempty"`
+	CreatedAt             int64                  `json:"created_at"`
+	UpdatedAt             int64                  `json:"updated_at"`
 }
 
 type OrganizationMembership struct {

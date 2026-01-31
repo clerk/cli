@@ -4,10 +4,11 @@ import (
 	"fmt"
 	"time"
 
-	"clerk.com/cli/internal/api"
-	"clerk.com/cli/internal/output"
 	"github.com/charmbracelet/huh"
 	"github.com/spf13/cobra"
+
+	"clerk.com/cli/internal/api"
+	"clerk.com/cli/internal/output"
 )
 
 var organizationsCmd = &cobra.Command{
@@ -167,7 +168,7 @@ var orgsDeleteCmd = &cobra.Command{
 				return err
 			}
 			if !confirm {
-				fmt.Println("Cancelled")
+				fmt.Println("Canceled")
 				return nil
 			}
 		}

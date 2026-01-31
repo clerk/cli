@@ -1,0 +1,156 @@
+# golangci-lint configuration
+# https://golangci-lint.run/usage/configuration/
+
+run:
+  timeout: 5m
+  modules-download-mode: readonly
+
+output:
+  formats:
+    - format: colored-line-number
+  sort-results: true
+
+linters:
+  enable:
+    # Default linters
+    - errcheck          # Check for unchecked errors
+    - gosimple          # Simplify code
+    - govet             # Report suspicious constructs
+    - ineffassign       # Detect ineffectual assignments
+    - staticcheck       # Static analysis checks
+    - unused            # Check for unused code
+
+    # Security linters
+    - gosec             # Security problems
+    - bodyclose         # HTTP response body close
+
+    # Bug detection
+    - durationcheck     # Check for two durations multiplied together
+    - copyloopvar       # Check for pointers to loop variables (replaces exportloopref)
+    - makezero          # Find slice declarations not initialized with zero length
+    - nilerr            # Find code that returns nil even if it checks err != nil
+
+    # Code quality
+    - gocritic          # Opinionated linter with many checks
+    - gofmt             # Check if code is formatted
+    - goimports         # Check imports formatting
+    - misspell          # Find commonly misspelled words
+    - unconvert         # Remove unnecessary type conversions
+    - wastedassign      # Find wasted assignment statements
+
+    # Style
+    - dogsled           # Check for too many blank identifiers
+    - errname           # Check error naming conventions
+    - errorlint         # Find issues with error wrapping
+    - predeclared       # Find shadowing of predeclared identifiers
+    - whitespace        # Check for unnecessary whitespace
+
+linters-settings:
+  errcheck:
+    check-type-assertions: true
+    check-blank: true
+    exclude-functions:
+      - (io.Closer).Close
+      - (net/http.ResponseWriter).Write
+
+  gocritic:
+    enabled-tags:
+      - diagnostic
+      - style
+      - performance
+      - opinionated
+    disabled-checks:
+      - hugeParam        # Allow large structs as params (common in CLI)
+      - rangeValCopy     # Allow range value copies for readability
+
+  gofmt:
+    simplify: true
+
+  goimports:
+    local-prefixes: clerk.com/cli
+
+  gosec:
+    excludes:
+      - G104  # Audit errors not checked (covered by errcheck)
+      - G304  # File path from variable (common in CLI tools)
+      - G204  # Subprocess with variable (intentional in MCP client)
+
+  govet:
+    enable-all: true
+    disable:
+      - fieldalignment  # Don't enforce struct field alignment
+      - shadow          # Too noisy for CLI apps
+
+  misspell:
+    locale: US
+
+  staticcheck:
+    checks:
+      - all
+
+issues:
+  exclude-rules:
+    # Ignore linting in tests (more permissive)
+    - path: _test\.go
+      linters: [gosec, errcheck, gocritic]
+
+    # Allow http.NewRequest without context in AI providers (they manage their own timeouts)
+    - path: internal/ai/
+      linters: [noctx]
+
+    # Allow unchecked Close() errors (common pattern)
+    - text: "Error return value of .*.Close"
+      linters: [errcheck]
+
+    # Allow unchecked Kill/Wait on process cleanup
+    - text: "Error return value of .*(Kill|Wait)"
+      linters: [errcheck]
+
+    # Allow unchecked Cobra flag getters (they have defaults, errors are programming bugs)
+    - text: "Error return value of `\\(\\*github.com/spf13/pflag.FlagSet\\)"
+      linters: [errcheck]
+
+    # Allow weak RNG for non-security purposes (jitter, etc)
+    - text: "G404: Use of weak random number generator"
+      linters: [gosec]
+
+    # gocritic suggestions that are too opinionated for CLI code
+    - linters: [gocritic]
+      text: "paramTypeCombine|nestingReduce|appendCombine|ifElseChain|preferFprint|equalFold|appendAssign"
+
+    # Allow unchecked config.Load() - config errors are handled gracefully with defaults
+    - path: internal/cmd/root\.go
+      text: "Error return value of `config.Load`"
+      linters: [errcheck]
+
+    # Allow unchecked Load/Save in config package (uses defaults on error)
+    - path: internal/config/
+      text: "Error return value"
+      linters: [errcheck]
+
+    # Allow struct literal conversion style (clearer in some contexts)
+    - linters: [gosimple]
+      text: "S1016"
+
+    # Allow 0755 for directories (standard permission)
+    - text: "G301: Expect directory permissions"
+      linters: [gosec]
+
+    # Allow old-style octal literals (0600 vs 0o600) for compatibility
+    - linters: [gocritic]
+      text: "octalLiteral"
+
+  exclude-use-default: false
+  max-issues-per-linter: 0
+  max-same-issues: 0
+  new: false
+
+severity:
+  default-severity: warning
+  rules:
+    - linters: [gosec]
+      severity: error
+    - linters: [govet]
+      severity: error
+    - linters: [staticcheck]
+      severity: error

@@ -1,21 +1,21 @@
 package api
 
 type Instance struct {
-	Object                  string `json:"object"`
-	ID                      string `json:"id"`
-	EnvironmentType         string `json:"environment_type"`
-	AllowedOrigins          []string `json:"allowed_origins,omitempty"`
-	HomeOrigin              string `json:"home_origin,omitempty"`
-	SupportEmail            string `json:"support_email,omitempty"`
-	ClerkJSVersion          string `json:"clerk_js_version,omitempty"`
-	DevelopmentOrigin       string `json:"development_origin,omitempty"`
-	MaintenanceMode         bool   `json:"maintenance_mode"`
+	Object            string   `json:"object"`
+	ID                string   `json:"id"`
+	EnvironmentType   string   `json:"environment_type"`
+	AllowedOrigins    []string `json:"allowed_origins,omitempty"`
+	HomeOrigin        string   `json:"home_origin,omitempty"`
+	SupportEmail      string   `json:"support_email,omitempty"`
+	ClerkJSVersion    string   `json:"clerk_js_version,omitempty"`
+	DevelopmentOrigin string   `json:"development_origin,omitempty"`
+	MaintenanceMode   bool     `json:"maintenance_mode"`
 }
 
 type InstanceRestrictions struct {
-	Allowlist      bool `json:"allowlist"`
-	Blocklist      bool `json:"blocklist"`
-	BlockDisposable bool `json:"block_email_subaddresses"`
+	Allowlist         bool `json:"allowlist"`
+	Blocklist         bool `json:"blocklist"`
+	BlockDisposable   bool `json:"block_email_subaddresses"`
 	BlockSubaddresses bool `json:"block_disposable_email_domains"`
 }
 

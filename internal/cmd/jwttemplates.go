@@ -5,9 +5,10 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/spf13/cobra"
+
 	"clerk.com/cli/internal/api"
 	"clerk.com/cli/internal/output"
-	"github.com/spf13/cobra"
 )
 
 var jwtTemplatesCmd = &cobra.Command{
@@ -77,9 +78,10 @@ var jwtTemplatesGetCmd = &cobra.Command{
 			fmt.Println(output.Dim("Lifetime:"), template.Lifetime, "seconds")
 			fmt.Println(output.Dim("Clock Skew:"), template.AllowedClockSkew, "seconds")
 			if len(template.Claims) > 0 {
-				claimsJSON, _ := json.MarshalIndent(template.Claims, "", "  ")
-				fmt.Println(output.Dim("Claims:"))
-				fmt.Println(string(claimsJSON))
+				if claimsJSON, err := json.MarshalIndent(template.Claims, "", "  "); err == nil {
+					fmt.Println(output.Dim("Claims:"))
+					fmt.Println(string(claimsJSON))
+				}
 			}
 		})
 	},

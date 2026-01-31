@@ -3,10 +3,11 @@ package cmd
 import (
 	"fmt"
 
-	"clerk.com/cli/internal/config"
-	"clerk.com/cli/internal/output"
 	"github.com/charmbracelet/huh"
 	"github.com/spf13/cobra"
+
+	"clerk.com/cli/internal/config"
+	"clerk.com/cli/internal/output"
 )
 
 var initCmd = &cobra.Command{

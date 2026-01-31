@@ -1,0 +1,52 @@
+#!/bin/bash
+#
+# Git pre-commit hook for Clerk CLI
+# Runs linting and tests before allowing commits
+#
+# Install: make setup-hooks
+# Skip: git commit --no-verify
+
+set -e
+
+echo "Running pre-commit checks..."
+
+# Get the root of the repo
+ROOT=$(git rev-parse --show-toplevel)
+cd "$ROOT"
+
+# Check if there are staged Go files
+STAGED_GO_FILES=$(git diff --cached --name-only --diff-filter=ACM | grep '\.go$' || true)
+
+if [ -z "$STAGED_GO_FILES" ]; then
+    echo "No Go files staged, skipping checks."
+    exit 0
+fi
+
+# Run gofmt check
+echo "==> Checking formatting..."
+UNFORMATTED=$(gofmt -l $STAGED_GO_FILES)
+if [ -n "$UNFORMATTED" ]; then
+    echo "ERROR: The following files are not formatted:"
+    echo "$UNFORMATTED"
+    echo ""
+    echo "Run 'make fmt' to fix."
+    exit 1
+fi
+
+# Run go vet
+echo "==> Running go vet..."
+go vet ./...
+
+# Run golangci-lint (only on staged files for speed)
+echo "==> Running golangci-lint..."
+if command -v golangci-lint &> /dev/null; then
+    golangci-lint run --new-from-rev=HEAD~1 --timeout=3m
+else
+    echo "WARNING: golangci-lint not installed, skipping. Run 'make setup' to install."
+fi
+
+# Run tests
+echo "==> Running tests..."
+go test -short ./...
+
+echo "✓ Pre-commit checks passed!"

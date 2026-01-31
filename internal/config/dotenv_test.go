@@ -155,8 +155,7 @@ func TestGetAPIKeyWithDotEnv(t *testing.T) {
 	}
 
 	// Test with checkDotEnv=false (should not find .env)
-	result = GetAPIKeyWithDotEnv("default", false)
 	// This will return whatever is in the config, which may not be empty
-	// So we just verify it's not the .env value when checkDotEnv is false
-	// Actually, let's just test that it works at all
+	// So we just verify it doesn't crash
+	_ = GetAPIKeyWithDotEnv("default", false)
 }

@@ -2,6 +2,7 @@ package output
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -124,7 +125,8 @@ func DisplayError(err error) {
 	if err == nil {
 		return
 	}
-	if apiErr, ok := err.(*APIError); ok {
+	var apiErr *APIError
+	if errors.As(err, &apiErr) {
 		Error(apiErr.Message)
 		if apiErr.LongMessage != "" {
 			fmt.Fprintf(os.Stderr, "  %s\n", Dim(apiErr.LongMessage))

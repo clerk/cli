@@ -6,13 +6,13 @@ import (
 )
 
 type Invitation struct {
-	ID           string                 `json:"id"`
-	EmailAddress string                 `json:"email_address"`
-	Status       string                 `json:"status"`
-	URL          string                 `json:"url,omitempty"`
+	ID             string                 `json:"id"`
+	EmailAddress   string                 `json:"email_address"`
+	Status         string                 `json:"status"`
+	URL            string                 `json:"url,omitempty"`
 	PublicMetadata map[string]interface{} `json:"public_metadata,omitempty"`
-	CreatedAt    int64                  `json:"created_at"`
-	UpdatedAt    int64                  `json:"updated_at"`
+	CreatedAt      int64                  `json:"created_at"`
+	UpdatedAt      int64                  `json:"updated_at"`
 }
 
 type InvitationsAPI struct {
