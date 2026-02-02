@@ -60,6 +60,7 @@ jobs:
   sign-macos:
     needs: build
     runs-on: macos-latest
+    environment: release
     # Only run if signing secrets are configured
     if: ${{ vars.MACOS_SIGNING_ENABLED == 'true' }}
     strategy:
@@ -78,6 +79,7 @@ jobs:
         env:
           APPLE_DEVELOPER_ID_APPLICATION_P12: ${{ secrets.APPLE_DEVELOPER_ID_APPLICATION_P12 }}
           APPLE_DEVELOPER_ID_INSTALLER_P12: ${{ secrets.APPLE_DEVELOPER_ID_INSTALLER_P12 }}
+          # Password can be empty if certs were exported without one
           APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
         run: |
           # Create temporary keychain
@@ -88,21 +90,21 @@ jobs:
           security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
           security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
 
-          # Import Developer ID Application certificate
+          # Import Developer ID Application certificate (empty password is valid)
           APP_CERT_PATH="$RUNNER_TEMP/app_cert.p12"
           echo "$APPLE_DEVELOPER_ID_APPLICATION_P12" | base64 --decode > "$APP_CERT_PATH"
           security import "$APP_CERT_PATH" \
-            -P "$APPLE_CERTIFICATE_PASSWORD" \
+            -P "${APPLE_CERTIFICATE_PASSWORD:-}" \
             -A \
             -t cert \
             -f pkcs12 \
             -k "$KEYCHAIN_PATH"
 
-          # Import Developer ID Installer certificate
+          # Import Developer ID Installer certificate (empty password is valid)
           INSTALLER_CERT_PATH="$RUNNER_TEMP/installer_cert.p12"
           echo "$APPLE_DEVELOPER_ID_INSTALLER_P12" | base64 --decode > "$INSTALLER_CERT_PATH"
           security import "$INSTALLER_CERT_PATH" \
-            -P "$APPLE_CERTIFICATE_PASSWORD" \
+            -P "${APPLE_CERTIFICATE_PASSWORD:-}" \
             -A \
             -t cert \
             -f pkcs12 \
