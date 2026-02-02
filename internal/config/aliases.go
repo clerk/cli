@@ -24,7 +24,7 @@ type Aliases map[string]string
 func LoadAliases() (Aliases, error) {
 	aliases := make(Aliases)
 
-	data, err := os.ReadFile(aliasesFile)
+	data, err := os.ReadFile(aliasesFile) // #nosec G304 -- aliases file path is from known config location
 	if err != nil {
 		if os.IsNotExist(err) {
 			return aliases, nil

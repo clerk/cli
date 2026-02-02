@@ -934,7 +934,7 @@ func editRuleInEditor(rule *api.Rule) (*editableRule, error) {
 	}
 
 	// Open editor
-	editorCmd := exec.Command(editor, tmpPath)
+	editorCmd := exec.Command(editor, tmpPath) // #nosec G204 -- editor is from $EDITOR env var, user-controlled
 	editorCmd.Stdin = os.Stdin
 	editorCmd.Stdout = os.Stdout
 	editorCmd.Stderr = os.Stderr
@@ -944,7 +944,7 @@ func editRuleInEditor(rule *api.Rule) (*editableRule, error) {
 	}
 
 	// Read modified content
-	modifiedContent, err := os.ReadFile(tmpPath)
+	modifiedContent, err := os.ReadFile(tmpPath) // #nosec G304 -- tmpPath is a temp file we created
 	if err != nil {
 		return nil, fmt.Errorf("failed to read modified file: %w", err)
 	}

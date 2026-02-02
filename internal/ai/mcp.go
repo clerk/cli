@@ -99,7 +99,7 @@ func NewMCPClient(name, command string, args []string, env map[string]string) *M
 
 // Start spawns the MCP server process and performs the initialization handshake.
 func (c *MCPClient) Start() error {
-	c.cmd = exec.Command(c.command, c.args...)
+	c.cmd = exec.Command(c.command, c.args...) // #nosec G204 -- MCP command is from user config
 
 	// Inherit current environment and add configured env vars
 	c.cmd.Env = os.Environ()

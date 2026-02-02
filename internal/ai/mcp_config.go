@@ -31,7 +31,7 @@ func LoadMCPServers(profileName, flagValue string) (map[string]MCPServerConfig, 
 		configPath = filepath.Join(config.ConfigDir(), "mcp.json")
 	}
 
-	data, err := os.ReadFile(configPath)
+	data, err := os.ReadFile(configPath) // #nosec G304 -- MCP config path is from known location
 	if err != nil {
 		if os.IsNotExist(err) {
 			// No MCP config is fine — just means no tools available

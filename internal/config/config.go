@@ -51,7 +51,7 @@ func ConfigDir() string  { return configDir }
 func ConfigFile() string { return profilesFile }
 
 func EnsureConfigDir() error {
-	return os.MkdirAll(configDir, 0755)
+	return os.MkdirAll(configDir, 0755) // #nosec G301 -- 0755 is appropriate for config directory
 }
 
 func Load() (*Config, error) {
@@ -92,7 +92,7 @@ func Load() (*Config, error) {
 }
 
 func loadINI(filename string, cfg *Config) error {
-	file, err := os.Open(filename)
+	file, err := os.Open(filename) // #nosec G304 -- config file path is from known location
 	if err != nil {
 		return err
 	}
@@ -233,7 +233,7 @@ func Save() error {
 
 // migrateFromJSON migrates from old JSON config format
 func migrateFromJSON(jsonFile string, cfg *Config) bool {
-	data, err := os.ReadFile(jsonFile)
+	data, err := os.ReadFile(jsonFile) // #nosec G304 -- migration path is from known config location
 	if err != nil {
 		return false
 	}
@@ -338,7 +338,7 @@ func executeCommand(cmd string) string {
 	if shell == "" {
 		shell = "/bin/sh"
 	}
-	command := exec.Command(shell, "-c", cmd)
+	command := exec.Command(shell, "-c", cmd) // #nosec G204 -- intentional shell exec for ! prefixed config values
 	output, err := command.Output()
 	if err != nil {
 		return ""
@@ -616,7 +616,7 @@ func FindDotEnvSecretKeyWithPath() (value string, filePath string) {
 
 // parseEnvFileForKey parses a .env file and returns the value for the given key.
 func parseEnvFileForKey(filename, targetKey string) string {
-	file, err := os.Open(filename)
+	file, err := os.Open(filename) // #nosec G304 -- .env file path is user-specified, expected for CLI
 	if err != nil {
 		return ""
 	}

@@ -192,7 +192,7 @@ func (c *Client) calculateDelay(attempt int, resp *http.Response) time.Duration 
 	}
 
 	delay := float64(BaseDelayMs) * math.Pow(2, float64(attempt-1))
-	jitter := rand.Float64() * 0.3 * delay
+	jitter := rand.Float64() * 0.3 * delay // #nosec G404 -- math/rand is fine for jitter, not crypto
 	delay += jitter
 
 	if delay > MaxDelayMs {
