@@ -3,6 +3,16 @@ name: Release
 on:
   push:
     tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to build (e.g., v0.1.1-test)'
+        required: true
+        default: 'v0.0.0-test'
+      skip_release:
+        description: 'Skip creating GitHub release (just test build/sign)'
+        type: boolean
+        default: true
 
 permissions:
   contents: write
@@ -22,7 +32,7 @@ jobs:
       - name: Build release binaries
         run: |
           set -e
-          VERSION="${GITHUB_REF_NAME}"
+          VERSION="${{ inputs.version || github.ref_name }}"
           LDFLAGS="-s -w -X clerk.com/cli/internal/cmd.Version=${VERSION}"
           PKG="./cmd/clerk"
           DIST="dist"
@@ -119,7 +129,7 @@ jobs:
 
       - name: Build signed .pkg
         env:
-          VERSION: ${{ github.ref_name }}
+          VERSION: ${{ inputs.version || github.ref_name }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
           APP_IDENTITY: "Developer ID Application: ${{ secrets.APPLE_DEVELOPER_NAME }} (${{ secrets.APPLE_TEAM_ID }})"
           INSTALLER_IDENTITY: "Developer ID Installer: ${{ secrets.APPLE_DEVELOPER_NAME }} (${{ secrets.APPLE_TEAM_ID }})"
@@ -138,8 +148,8 @@ jobs:
 
   release:
     needs: [build, sign-macos]
-    # Run even if sign-macos is skipped (when signing is not configured)
-    if: ${{ always() && needs.build.result == 'success' }}
+    # Run even if sign-macos is skipped, but skip if testing via workflow_dispatch with skip_release
+    if: ${{ always() && needs.build.result == 'success' && inputs.skip_release != true }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -175,28 +185,31 @@ jobs:
         id: release_notes
         env:
           GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ inputs.version || github.ref_name }}
         run: |
           # Check if release already exists with notes
-          EXISTING_NOTES=$(gh release view "${GITHUB_REF_NAME}" --json body -q .body 2>/dev/null || echo "")
+          EXISTING_NOTES=$(gh release view "${VERSION}" --json body -q .body 2>/dev/null || echo "")
           if [ -n "$EXISTING_NOTES" ]; then
             echo "Release already has notes, preserving them"
             echo "$EXISTING_NOTES" > /tmp/release_notes.md
           else
             # Fall back to tag annotation if available
-            git tag -l --format='%(contents:body)' "${GITHUB_REF_NAME}" > /tmp/release_notes.md
+            git tag -l --format='%(contents:body)' "${VERSION}" > /tmp/release_notes.md
           fi
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ inputs.version || github.ref_name }}
           body_path: /tmp/release_notes.md
           files: |
             dist/clerk-*
             dist/checksums.txt
 
       - name: Update Homebrew formula, cask, and npm package version
+        env:
+          VERSION: ${{ inputs.version || github.ref_name }}
         run: |
-          VERSION="${GITHUB_REF_NAME}"
           VERSION_NUM="${VERSION#v}"
           TAG_SHA="$(git rev-parse "${VERSION}")"
           git config user.name "github-actions[bot]"
