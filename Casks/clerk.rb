@@ -1,5 +1,5 @@
 cask "clerk" do
-  version "0.0.8"
+  version "0.1.0"
 
   on_intel do
     sha256 :no_check # Update with actual sha256 after first signed release
