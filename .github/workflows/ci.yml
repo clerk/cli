@@ -66,7 +66,13 @@ jobs:
         run: go build -v ./...
 
       - name: Test
-        run: go test -v -race -coverprofile=coverage.out ./...
+        shell: bash
+        run: |
+          if [ "${{ matrix.os }}" = "ubuntu-latest" ]; then
+            go test -v -race -coverprofile=coverage.out ./...
+          else
+            go test -v -race ./...
+          fi
 
       - name: Upload coverage
         if: matrix.os == 'ubuntu-latest'
