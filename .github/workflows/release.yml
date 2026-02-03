@@ -128,10 +128,10 @@ jobs:
       - name: Build signed .pkg
         env:
           VERSION: ${{ inputs.version || github.ref_name }}
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-          APP_IDENTITY: "Developer ID Application: ${{ secrets.APPLE_DEVELOPER_NAME }} (${{ secrets.APPLE_TEAM_ID }})"
-          INSTALLER_IDENTITY: "Developer ID Installer: ${{ secrets.APPLE_DEVELOPER_NAME }} (${{ secrets.APPLE_TEAM_ID }})"
-          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_TEAM_ID: ${{ vars.APPLE_TEAM_ID }}
+          APP_IDENTITY: "Developer ID Application: ${{ vars.APPLE_DEVELOPER_NAME }} (${{ vars.APPLE_TEAM_ID }})"
+          INSTALLER_IDENTITY: "Developer ID Installer: ${{ vars.APPLE_DEVELOPER_NAME }} (${{ vars.APPLE_TEAM_ID }})"
+          APPLE_ID: ${{ vars.APPLE_ID }}
           APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
         run: |
           chmod +x scripts/build-macos-pkg.sh
