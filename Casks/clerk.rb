@@ -2,12 +2,12 @@ cask "clerk" do
   version "0.1.2"
 
   on_intel do
-    sha256 :no_check # Update with actual sha256 after first signed release
+    sha256 "26eaa5fe6011c8ec9be4d19ea1c06c8c43ddde2ef49763a283b508877a22fd46"
     url "https://github.com/clerk/cli/releases/download/v#{version}/clerk-v#{version}-darwin-amd64.pkg"
   end
 
   on_arm do
-    sha256 :no_check # Update with actual sha256 after first signed release
+    sha256 "877c6b4ab158ff6e8c764a4ff067a213c19bca54ad644203db7b2285c362d356"
     url "https://github.com/clerk/cli/releases/download/v#{version}/clerk-v#{version}-darwin-arm64.pkg"
   end
 
