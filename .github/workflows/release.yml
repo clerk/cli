@@ -71,8 +71,6 @@ jobs:
     needs: build
     runs-on: macos-latest
     environment: release
-    # Only run if signing secrets are configured
-    if: ${{ vars.MACOS_SIGNING_ENABLED == 'true' }}
     strategy:
       matrix:
         arch: [amd64, arm64]
