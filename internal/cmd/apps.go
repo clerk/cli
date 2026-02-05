@@ -126,15 +126,19 @@ var appsCreateCmd = &cobra.Command{
 		name, _ := cmd.Flags().GetString("name")
 		logoURL, _ := cmd.Flags().GetString("logo-url")
 		homeURL, _ := cmd.Flags().GetString("home-url")
+		environmentTypes, _ := cmd.Flags().GetStringSlice("environment-types")
+		domain, _ := cmd.Flags().GetString("domain")
 
 		if name == "" {
 			return fmt.Errorf("--name is required")
 		}
 
 		app, err := appsAPI.Create(api.CreateApplicationParams{
-			Name:    name,
-			LogoURL: logoURL,
-			HomeURL: homeURL,
+			Name:             name,
+			LogoURL:          logoURL,
+			HomeURL:          homeURL,
+			EnvironmentTypes: environmentTypes,
+			Domain:           domain,
 		})
 		if err != nil {
 			return err
@@ -278,6 +282,8 @@ func init() {
 	appsCreateCmd.Flags().String("name", "", "Application name (required)")
 	appsCreateCmd.Flags().String("logo-url", "", "Logo URL")
 	appsCreateCmd.Flags().String("home-url", "", "Home URL")
+	appsCreateCmd.Flags().StringSlice("environment-types", nil, "Instance types to create (development,production)")
+	appsCreateCmd.Flags().String("domain", "", "Production domain (used when creating production instance)")
 
 	appsUpdateCmd.Flags().String("name", "", "Application name")
 	appsUpdateCmd.Flags().String("logo-url", "", "Logo URL")
