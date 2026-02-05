@@ -1,5 +1,5 @@
 cask "clerk" do
-  version "0.1.2"
+  version "0.2.0"
 
   on_intel do
     sha256 "26eaa5fe6011c8ec9be4d19ea1c06c8c43ddde2ef49763a283b508877a22fd46"
