@@ -1938,8 +1938,6 @@ Create a new application.
 | Option | Description |
 |--------|-------------|
 | `--name <name>` | Application name (required) |
-| `--logo-url <url>` | Logo URL |
-| `--home-url <url>` | Home URL |
 | `--environment-types <types>` | Environment types for instances (comma-separated, e.g. `development,production`) |
 | `--proxy-path <path>` | Proxy path for the application |
 | `--template <template>` | Template for the application |
@@ -1957,8 +1955,6 @@ Update an existing application.
 | Option | Description |
 |--------|-------------|
 | `--name <name>` | Application name |
-| `--logo-url <url>` | Logo URL |
-| `--home-url <url>` | Home URL |
 
 ```bash
 clerk apps update app_abc123 --name "Updated Name"
