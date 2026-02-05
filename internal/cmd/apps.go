@@ -91,12 +91,6 @@ var appsGetCmd = &cobra.Command{
 			if app.Name != "" {
 				fmt.Println(output.Dim("Name:"), app.Name)
 			}
-			if app.LogoURL != "" {
-				fmt.Println(output.Dim("Logo URL:"), app.LogoURL)
-			}
-			if app.HomeURL != "" {
-				fmt.Println(output.Dim("Home URL:"), app.HomeURL)
-			}
 			if len(app.Instances) > 0 {
 				fmt.Println(output.Dim("Instances:"))
 				for _, inst := range app.Instances {
@@ -124,17 +118,21 @@ var appsCreateCmd = &cobra.Command{
 		appsAPI := api.NewApplicationsAPI(client)
 
 		name, _ := cmd.Flags().GetString("name")
-		logoURL, _ := cmd.Flags().GetString("logo-url")
-		homeURL, _ := cmd.Flags().GetString("home-url")
+		environmentTypes, _ := cmd.Flags().GetStringSlice("environment-types")
+		proxyPath, _ := cmd.Flags().GetString("proxy-path")
+		template, _ := cmd.Flags().GetString("template")
+		domain, _ := cmd.Flags().GetString("domain")
 
 		if name == "" {
 			return fmt.Errorf("--name is required")
 		}
 
 		app, err := appsAPI.Create(api.CreateApplicationParams{
-			Name:    name,
-			LogoURL: logoURL,
-			HomeURL: homeURL,
+			Name:             name,
+			EnvironmentTypes: environmentTypes,
+			ProxyPath:        proxyPath,
+			Template:         template,
+			Domain:           domain,
 		})
 		if err != nil {
 			return err
@@ -159,13 +157,9 @@ var appsUpdateCmd = &cobra.Command{
 		appsAPI := api.NewApplicationsAPI(client)
 
 		name, _ := cmd.Flags().GetString("name")
-		logoURL, _ := cmd.Flags().GetString("logo-url")
-		homeURL, _ := cmd.Flags().GetString("home-url")
 
 		app, err := appsAPI.Update(args[0], api.UpdateApplicationParams{
-			Name:    name,
-			LogoURL: logoURL,
-			HomeURL: homeURL,
+			Name: name,
 		})
 		if err != nil {
 			return err
@@ -276,12 +270,12 @@ func init() {
 	appsListCmd.Flags().String("query", "", "Search query")
 
 	appsCreateCmd.Flags().String("name", "", "Application name (required)")
-	appsCreateCmd.Flags().String("logo-url", "", "Logo URL")
-	appsCreateCmd.Flags().String("home-url", "", "Home URL")
+	appsCreateCmd.Flags().StringSlice("environment-types", nil, "Environment types for instances (e.g. development,production)")
+	appsCreateCmd.Flags().String("proxy-path", "", "Proxy path for the application")
+	appsCreateCmd.Flags().String("template", "", "Template for the application")
+	appsCreateCmd.Flags().String("domain", "", "Domain for the application")
 
 	appsUpdateCmd.Flags().String("name", "", "Application name")
-	appsUpdateCmd.Flags().String("logo-url", "", "Logo URL")
-	appsUpdateCmd.Flags().String("home-url", "", "Home URL")
 
 	appsDeleteCmd.Flags().BoolP("force", "f", false, "Skip confirmation prompt")
 
