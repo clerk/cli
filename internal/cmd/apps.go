@@ -126,15 +126,23 @@ var appsCreateCmd = &cobra.Command{
 		name, _ := cmd.Flags().GetString("name")
 		logoURL, _ := cmd.Flags().GetString("logo-url")
 		homeURL, _ := cmd.Flags().GetString("home-url")
+		environmentTypes, _ := cmd.Flags().GetStringSlice("environment-types")
+		proxyPath, _ := cmd.Flags().GetString("proxy-path")
+		template, _ := cmd.Flags().GetString("template")
+		domain, _ := cmd.Flags().GetString("domain")
 
 		if name == "" {
 			return fmt.Errorf("--name is required")
 		}
 
 		app, err := appsAPI.Create(api.CreateApplicationParams{
-			Name:    name,
-			LogoURL: logoURL,
-			HomeURL: homeURL,
+			Name:             name,
+			LogoURL:          logoURL,
+			HomeURL:          homeURL,
+			EnvironmentTypes: environmentTypes,
+			ProxyPath:        proxyPath,
+			Template:         template,
+			Domain:           domain,
 		})
 		if err != nil {
 			return err
@@ -278,6 +286,10 @@ func init() {
 	appsCreateCmd.Flags().String("name", "", "Application name (required)")
 	appsCreateCmd.Flags().String("logo-url", "", "Logo URL")
 	appsCreateCmd.Flags().String("home-url", "", "Home URL")
+	appsCreateCmd.Flags().StringSlice("environment-types", nil, "Environment types for instances (e.g. development,production)")
+	appsCreateCmd.Flags().String("proxy-path", "", "Proxy path for the application")
+	appsCreateCmd.Flags().String("template", "", "Template for the application")
+	appsCreateCmd.Flags().String("domain", "", "Domain for the application")
 
 	appsUpdateCmd.Flags().String("name", "", "Application name")
 	appsUpdateCmd.Flags().String("logo-url", "", "Logo URL")

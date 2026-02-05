@@ -83,9 +83,13 @@ func (a *ApplicationsAPI) Get(id string) (*Application, error) {
 
 // CreateApplicationParams contains parameters for creating an application.
 type CreateApplicationParams struct {
-	Name    string `json:"name"`
-	LogoURL string `json:"logo_url,omitempty"`
-	HomeURL string `json:"home_url,omitempty"`
+	Name             string   `json:"name"`
+	LogoURL          string   `json:"logo_url,omitempty"`
+	HomeURL          string   `json:"home_url,omitempty"`
+	EnvironmentTypes []string `json:"environment_types,omitempty"`
+	ProxyPath        string   `json:"proxy_path,omitempty"`
+	Template         string   `json:"template,omitempty"`
+	Domain           string   `json:"domain,omitempty"`
 }
 
 // Create creates a new application.
