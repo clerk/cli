@@ -36,7 +36,7 @@ func NewToolManager(servers map[string]MCPServerConfig) (*ToolManager, error) {
 			if IsDebug() {
 				fmt.Printf("[DEBUG] MCP server %s failed to start: %v\n", name, err)
 			}
-			client.Close()
+			_ = client.Close()
 			continue
 		}
 
@@ -45,17 +45,13 @@ func NewToolManager(servers map[string]MCPServerConfig) (*ToolManager, error) {
 			if IsDebug() {
 				fmt.Printf("[DEBUG] MCP server %s failed to list tools: %v\n", name, err)
 			}
-			client.Close()
+			_ = client.Close()
 			continue
 		}
 
 		tm.clients = append(tm.clients, client)
 		for _, t := range tools {
-			tool := Tool{
-				Name:        t.Name,
-				Description: t.Description,
-				InputSchema: t.InputSchema,
-			}
+			tool := Tool(t)
 			tm.tools = append(tm.tools, tool)
 			tm.toolMap[t.Name] = client
 		}
@@ -97,7 +93,7 @@ func (tm *ToolManager) Close() {
 		return
 	}
 	for _, client := range tm.clients {
-		client.Close()
+		_ = client.Close()
 	}
 }
 

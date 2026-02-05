@@ -142,7 +142,7 @@ func (c *Client) RequestWithMeta(method, path string, opts *RequestOptions) ([]b
 		}
 
 		respBody, err := io.ReadAll(resp.Body)
-		resp.Body.Close()
+		_ = resp.Body.Close() // body already read
 		if err != nil {
 			lastErr = err
 			continue

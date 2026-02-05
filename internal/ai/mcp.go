@@ -136,13 +136,13 @@ func (c *MCPClient) Start() error {
 		},
 	})
 	if err != nil {
-		c.Close()
+		_ = c.Close()
 		return fmt.Errorf("mcp server %s: initialization failed: %w", c.name, err)
 	}
 
 	// Send initialized notification (no ID = notification)
 	if err := c.notify("notifications/initialized", nil); err != nil {
-		c.Close()
+		_ = c.Close()
 		return fmt.Errorf("mcp server %s: initialized notification failed: %w", c.name, err)
 	}
 
@@ -205,11 +205,11 @@ func (c *MCPClient) CallTool(name string, arguments map[string]interface{}) (str
 // Close terminates the MCP server process.
 func (c *MCPClient) Close() error {
 	if c.stdin != nil {
-		c.stdin.Close()
+		_ = c.stdin.Close()
 	}
 	if c.cmd != nil && c.cmd.Process != nil {
-		c.cmd.Process.Kill()
-		c.cmd.Wait()
+		_ = c.cmd.Process.Kill()
+		_ = c.cmd.Wait()
 	}
 	return nil
 }

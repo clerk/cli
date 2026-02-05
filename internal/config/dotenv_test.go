@@ -12,7 +12,7 @@ func TestParseEnvFileForKey(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer os.RemoveAll(tmpDir)
+	defer os.RemoveAll(tmpDir) //nolint:errcheck // test cleanup
 
 	tests := []struct {
 		name     string
@@ -67,7 +67,7 @@ func TestParseEnvFileForKey(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			envFile := filepath.Join(tmpDir, ".env")
-			os.WriteFile(envFile, []byte(tt.content), 0644)
+			_ = os.WriteFile(envFile, []byte(tt.content), 0600)
 
 			result := parseEnvFileForKey(envFile, tt.key)
 			if result != tt.expected {
@@ -83,29 +83,29 @@ func TestFindDotEnvSecretKey(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer os.RemoveAll(tmpDir)
+	defer os.RemoveAll(tmpDir) //nolint:errcheck // test cleanup
 
 	// Create parent with .env
 	parentEnv := filepath.Join(tmpDir, ".env")
-	os.WriteFile(parentEnv, []byte("CLERK_SECRET_KEY=sk_parent"), 0644)
+	_ = os.WriteFile(parentEnv, []byte("CLERK_SECRET_KEY=sk_parent"), 0600)
 
 	// Create subdirectory without .env
 	subDir := filepath.Join(tmpDir, "subdir")
-	os.MkdirAll(subDir, 0755)
+	_ = os.MkdirAll(subDir, 0750)
 
 	// Save current working directory
 	origWd, _ := os.Getwd()
-	defer os.Chdir(origWd)
+	defer os.Chdir(origWd) //nolint:errcheck // test cleanup
 
 	// Test from subdirectory - should find parent .env
-	os.Chdir(subDir)
+	_ = os.Chdir(subDir)
 	result := FindDotEnvSecretKey()
 	if result != "sk_parent" {
 		t.Errorf("FindDotEnvSecretKey() from subdir = %q, want %q", result, "sk_parent")
 	}
 
 	// Test from parent directory
-	os.Chdir(tmpDir)
+	_ = os.Chdir(tmpDir)
 	result = FindDotEnvSecretKey()
 	if result != "sk_parent" {
 		t.Errorf("FindDotEnvSecretKey() from parent = %q, want %q", result, "sk_parent")
@@ -113,8 +113,8 @@ func TestFindDotEnvSecretKey(t *testing.T) {
 
 	// Test with child .env overriding parent
 	childEnv := filepath.Join(subDir, ".env")
-	os.WriteFile(childEnv, []byte("CLERK_SECRET_KEY=sk_child"), 0644)
-	os.Chdir(subDir)
+	_ = os.WriteFile(childEnv, []byte("CLERK_SECRET_KEY=sk_child"), 0600)
+	_ = os.Chdir(subDir)
 	result = FindDotEnvSecretKey()
 	if result != "sk_child" {
 		t.Errorf("FindDotEnvSecretKey() with child .env = %q, want %q", result, "sk_child")
@@ -127,26 +127,26 @@ func TestGetAPIKeyWithDotEnv(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer os.RemoveAll(tmpDir)
+	defer os.RemoveAll(tmpDir) //nolint:errcheck // test cleanup
 
 	envFile := filepath.Join(tmpDir, ".env")
-	os.WriteFile(envFile, []byte("CLERK_SECRET_KEY=sk_from_dotenv"), 0644)
+	_ = os.WriteFile(envFile, []byte("CLERK_SECRET_KEY=sk_from_dotenv"), 0600)
 
 	// Save and clear state
 	origWd, _ := os.Getwd()
 	origEnv := os.Getenv("CLERK_SECRET_KEY")
-	os.Unsetenv("CLERK_SECRET_KEY")
+	_ = os.Unsetenv("CLERK_SECRET_KEY")
 	defer func() {
-		os.Chdir(origWd)
+		_ = os.Chdir(origWd)
 		if origEnv != "" {
-			os.Setenv("CLERK_SECRET_KEY", origEnv)
+			_ = os.Setenv("CLERK_SECRET_KEY", origEnv)
 		}
 	}()
 
 	// Reset config cache
 	Reset()
 
-	os.Chdir(tmpDir)
+	_ = os.Chdir(tmpDir)
 
 	// Test with checkDotEnv=true (should find .env)
 	result := GetAPIKeyWithDotEnv("default", true)

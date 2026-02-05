@@ -33,7 +33,7 @@ domains, JWT templates, and security rules (Clerk Protect).`,
 	SilenceUsage:  true,
 	SilenceErrors: true,
 	PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
-		config.Load()
+		_, _ = config.Load()
 		return nil
 	},
 }

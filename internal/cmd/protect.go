@@ -662,9 +662,9 @@ func formatSchemaFieldsForAI(sb *strings.Builder, fields map[string]api.SchemaFi
 		}
 
 		if field.Description != "" {
-			sb.WriteString(fmt.Sprintf("  %s (%s) - %s\n", fullName, field.Type, field.Description))
+			fmt.Fprintf(sb, "  %s (%s) - %s\n", fullName, field.Type, field.Description)
 		} else {
-			sb.WriteString(fmt.Sprintf("  %s (%s)\n", fullName, field.Type))
+			fmt.Fprintf(sb, "  %s (%s)\n", fullName, field.Type)
 		}
 
 		if len(field.Fields) > 0 {
@@ -905,15 +905,15 @@ func editRuleInEditor(rule *api.Rule) (*editableRule, error) {
 `
 	content, err := yaml.Marshal(editable)
 	if err != nil {
-		tmpFile.Close()
+		_ = tmpFile.Close()
 		return nil, fmt.Errorf("failed to marshal rule: %w", err)
 	}
 
 	if _, err := tmpFile.WriteString(header + string(content)); err != nil {
-		tmpFile.Close()
+		_ = tmpFile.Close()
 		return nil, fmt.Errorf("failed to write temp file: %w", err)
 	}
-	tmpFile.Close()
+	_ = tmpFile.Close()
 
 	// Get editor from environment
 	editor := os.Getenv("EDITOR")
@@ -1437,7 +1437,7 @@ func printFlatSchema(fields map[string]api.SchemaField, prefix string) {
 	}
 }
 
-func printTreeSchema(fields map[string]api.SchemaField, indent string, isLast bool) {
+func printTreeSchema(fields map[string]api.SchemaField, indent string, _ bool) {
 	// Sort field names for consistent output
 	names := make([]string, 0, len(fields))
 	for name := range fields {

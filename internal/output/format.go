@@ -48,7 +48,7 @@ func (f *Formatter) Output(data interface{}, tableFunc func()) error {
 	case FormatYAML:
 		encoder := yaml.NewEncoder(os.Stdout)
 		encoder.SetIndent(2)
-		defer encoder.Close()
+		defer encoder.Close() //nolint:errcheck // best-effort cleanup
 		return encoder.Encode(data)
 	default:
 		if tableFunc != nil {

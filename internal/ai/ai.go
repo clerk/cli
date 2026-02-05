@@ -77,7 +77,7 @@ func NewProvider(cfg *Config) (Provider, error) {
 		return NewOpenAIProvider(cfg.OpenAIKey, cfg.OpenAIModel), nil
 	case "anthropic":
 		if cfg.AnthropicKey == "" {
-			return nil, fmt.Errorf("Anthropic API key not configured. Set ai.anthropic.key or ANTHROPIC_API_KEY")
+			return nil, fmt.Errorf("anthropic API key not configured. Set ai.anthropic.key or ANTHROPIC_API_KEY")
 		}
 		return NewAnthropicProvider(cfg.AnthropicKey, cfg.AnthropicModel), nil
 	default:
