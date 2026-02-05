@@ -47,7 +47,7 @@ func (a *TransfersAPI) List(params ListTransfersParams) ([]Transfer, int, error)
 		query["status"] = params.Status
 	}
 
-	data, err := a.client.Get("/transfers", query)
+	data, err := a.client.Get("/application_transfers", query)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -62,7 +62,7 @@ func (a *TransfersAPI) List(params ListTransfersParams) ([]Transfer, int, error)
 
 // Get returns a single transfer by ID.
 func (a *TransfersAPI) Get(id string) (*Transfer, error) {
-	data, err := a.client.Get(fmt.Sprintf("/transfers/%s", id), nil)
+	data, err := a.client.Get(fmt.Sprintf("/application_transfers/%s", id), nil)
 	if err != nil {
 		return nil, err
 	}
@@ -77,7 +77,7 @@ type CreateTransferParams struct {
 
 // Create creates a new transfer.
 func (a *TransfersAPI) Create(params CreateTransferParams) (*Transfer, error) {
-	data, err := a.client.Post("/transfers", params)
+	data, err := a.client.Post("/application_transfers", params)
 	if err != nil {
 		return nil, err
 	}
@@ -86,7 +86,7 @@ func (a *TransfersAPI) Create(params CreateTransferParams) (*Transfer, error) {
 
 // Accept accepts a pending transfer.
 func (a *TransfersAPI) Accept(id string) (*Transfer, error) {
-	data, err := a.client.Post(fmt.Sprintf("/transfers/%s/accept", id), nil)
+	data, err := a.client.Post(fmt.Sprintf("/application_transfers/%s/accept", id), nil)
 	if err != nil {
 		return nil, err
 	}
@@ -95,7 +95,7 @@ func (a *TransfersAPI) Accept(id string) (*Transfer, error) {
 
 // Cancel cancels a pending transfer.
 func (a *TransfersAPI) Cancel(id string) (*Transfer, error) {
-	data, err := a.client.Post(fmt.Sprintf("/transfers/%s/cancel", id), nil)
+	data, err := a.client.Post(fmt.Sprintf("/application_transfers/%s/cancel", id), nil)
 	if err != nil {
 		return nil, err
 	}
