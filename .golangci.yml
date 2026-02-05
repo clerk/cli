@@ -1,5 +1,6 @@
 # golangci-lint configuration
 # https://golangci-lint.run/usage/configuration/
+version: "2"
 
 run:
   timeout: 5m
@@ -7,17 +8,16 @@ run:
 
 output:
   formats:
-    - format: colored-line-number
+    colored-line-number: {}
   sort-results: true
 
 linters:
   enable:
-    # Default linters
+    # Default linters (enabled by default, listed explicitly for clarity)
     - errcheck          # Check for unchecked errors
-    - gosimple          # Simplify code
     - govet             # Report suspicious constructs
     - ineffassign       # Detect ineffectual assignments
-    - staticcheck       # Static analysis checks
+    - staticcheck       # Static analysis checks (includes gosimple)
     - unused            # Check for unused code
 
     # Security linters
@@ -26,14 +26,12 @@ linters:
 
     # Bug detection
     - durationcheck     # Check for two durations multiplied together
-    - copyloopvar       # Check for pointers to loop variables (replaces exportloopref)
+    - copyloopvar       # Check for pointers to loop variables
     - makezero          # Find slice declarations not initialized with zero length
     - nilerr            # Find code that returns nil even if it checks err != nil
 
     # Code quality
     - gocritic          # Opinionated linter with many checks
-    - gofmt             # Check if code is formatted
-    - goimports         # Check imports formatting
     - misspell          # Find commonly misspelled words
     - unconvert         # Remove unnecessary type conversions
     - wastedassign      # Find wasted assignment statements
@@ -44,6 +42,11 @@ linters:
     - errorlint         # Find issues with error wrapping
     - predeclared       # Find shadowing of predeclared identifiers
     - whitespace        # Check for unnecessary whitespace
+
+formatters:
+  enable:
+    - gofmt             # Check if code is formatted
+    - goimports         # Check imports formatting
 
 linters-settings:
   errcheck:
@@ -63,12 +66,6 @@ linters-settings:
       - hugeParam        # Allow large structs as params (common in CLI)
       - rangeValCopy     # Allow range value copies for readability
 
-  gofmt:
-    simplify: true
-
-  goimports:
-    local-prefixes: clerk.com/cli
-
   gosec:
     excludes:
       - G104  # Audit errors not checked (covered by errcheck)
@@ -87,6 +84,13 @@ linters-settings:
   staticcheck:
     checks:
       - all
+
+formatters-settings:
+  gofmt:
+    simplify: true
+
+  goimports:
+    local-prefixes: clerk.com/cli
 
 issues:
   exclude-rules:
@@ -129,7 +133,7 @@ issues:
       linters: [errcheck]
 
     # Allow struct literal conversion style (clearer in some contexts)
-    - linters: [gosimple]
+    - linters: [staticcheck]
       text: "S1016"
 
     # Allow 0755 for directories (standard permission)
@@ -146,7 +150,7 @@ issues:
   new: false
 
 severity:
-  default-severity: warning
+  default: warning
   rules:
     - linters: [gosec]
       severity: error

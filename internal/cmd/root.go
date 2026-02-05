@@ -94,6 +94,10 @@ func addCommands() {
 	rootCmd.AddCommand(m2mCmd)
 	rootCmd.AddCommand(protectCmd)
 	rootCmd.AddCommand(billingCmd)
+
+	// Platform API commands (use ak_* keys)
+	rootCmd.AddCommand(appsCmd)
+	rootCmd.AddCommand(transfersCmd)
 }
 
 func GetProfile() string {
@@ -219,6 +223,94 @@ func promptForAPIKey(profileName string) (string, error) {
 
 	if saveKey {
 		if err := config.SetProfileValue(profileName, "clerk.key", apiKey); err != nil {
+			output.Warn(fmt.Sprintf("Failed to save key: %v", err))
+		} else {
+			output.Success(fmt.Sprintf("Key saved to profile '%s'", profileName))
+		}
+	}
+
+	return apiKey, nil
+}
+
+// GetPlatformClient creates a Platform API client for workspace-level operations.
+// Uses ak_* API keys instead of sk_* keys.
+func GetPlatformClient() (*api.PlatformClient, error) {
+	profileName := GetProfile()
+
+	apiKey := config.GetPlatformAPIKey(profileName)
+
+	// Prompt for key if not configured and terminal is interactive
+	if apiKey == "" && output.IsInteractive() {
+		var err error
+		apiKey, err = promptForPlatformAPIKey(profileName)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	if apiKey == "" {
+		return nil, fmt.Errorf(`platform API key not configured
+
+Set the CLERK_PLATFORM_KEY environment variable:
+  export CLERK_PLATFORM_KEY=ak_...
+
+Or configure it in your profile:
+  clerk config set clerk.platform.key <your-ak-key>
+
+Get your Platform API key from the Clerk Dashboard:
+  https://dashboard.clerk.com/settings/api-keys`)
+	}
+
+	// Validate key prefix
+	if !strings.HasPrefix(apiKey, "ak_") {
+		return nil, fmt.Errorf("platform API keys start with 'ak_', you may have entered a secret key (sk_*) instead")
+	}
+
+	return api.NewPlatformClient(api.PlatformClientOptions{
+		Profile: profileName,
+		APIKey:  apiKey,
+		Debug:   IsDebug(),
+	}), nil
+}
+
+func promptForPlatformAPIKey(profileName string) (string, error) {
+	output.Warn("No Platform API key configured")
+	fmt.Println()
+
+	var apiKey string
+	err := huh.NewInput().
+		Title("Enter your Clerk Platform API key (ak_...):").
+		EchoMode(huh.EchoModePassword).
+		Value(&apiKey).
+		Run()
+	if err != nil {
+		return "", err
+	}
+
+	if apiKey == "" {
+		return "", fmt.Errorf("platform API key is required")
+	}
+
+	// Validate key prefix
+	if !strings.HasPrefix(apiKey, "ak_") {
+		return "", fmt.Errorf("platform API keys start with 'ak_', you may have entered a secret key (sk_*) instead")
+	}
+
+	// Ask if they want to save the key
+	var saveKey bool
+	err = huh.NewConfirm().
+		Title(fmt.Sprintf("Save key to profile '%s'?", profileName)).
+		Affirmative("Yes").
+		Negative("No").
+		Value(&saveKey).
+		Run()
+	if err != nil {
+		// UI prompt failed (e.g., non-interactive terminal) - return key without saving
+		return apiKey, nil //nolint:nilerr // intentional: key is valid even if save prompt fails
+	}
+
+	if saveKey {
+		if err := config.SetProfileValue(profileName, "clerk.platform.key", apiKey); err != nil {
 			output.Warn(fmt.Sprintf("Failed to save key: %v", err))
 		} else {
 			output.Success(fmt.Sprintf("Key saved to profile '%s'", profileName))

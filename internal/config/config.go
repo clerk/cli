@@ -12,8 +12,9 @@ import (
 )
 
 const (
-	DefaultAPIURL       = "https://api.clerk.com"
-	DefaultOutputFormat = "table"
+	DefaultAPIURL         = "https://api.clerk.com"
+	DefaultPlatformAPIURL = "https://api.clerk.com/v1/platform"
+	DefaultOutputFormat   = "table"
 )
 
 var (
@@ -647,6 +648,46 @@ func parseEnvFileForKey(filename, targetKey string) string {
 
 func GetAPIURL(profileName string) string {
 	return ResolveValue("clerk.api.url", "", "CLERK_API_URL", DefaultAPIURL, profileName)
+}
+
+// GetPlatformAPIKey returns the Platform API key (ak_*) for workspace-level operations.
+// Resolution order:
+// 1. CLERK_PLATFORM_KEY environment variable
+// 2. Profile clerk.platform.key
+// 3. Defaults clerk.platform.key
+func GetPlatformAPIKey(profileName string) string {
+	// Check env var first (highest priority)
+	if val := os.Getenv("CLERK_PLATFORM_KEY"); val != "" {
+		return val
+	}
+
+	// Profile-based lookup
+	cfg, _ := Load()
+	if cfg == nil {
+		return ""
+	}
+
+	// Check profile
+	if profile := cfg.Profiles[profileName]; profile != nil {
+		if val, ok := profile["clerk.platform.key"]; ok && val != "" {
+			if cfg.TypeMarkers[profileName] != nil && cfg.TypeMarkers[profileName]["clerk.platform.key"] == "command" {
+				return executeCommand(val)
+			}
+			return val
+		}
+	}
+
+	// Check defaults
+	if val, ok := cfg.Defaults["clerk.platform.key"]; ok && val != "" {
+		return val
+	}
+
+	return ""
+}
+
+// GetPlatformAPIURL returns the Platform API base URL.
+func GetPlatformAPIURL(profileName string) string {
+	return ResolveValue("clerk.platform.api.url", "", "CLERK_PLATFORM_API_URL", DefaultPlatformAPIURL, profileName)
 }
 
 // GetProfileKey returns the API key stored directly in the profile configuration.

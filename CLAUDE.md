@@ -24,9 +24,12 @@ cmd/clerk/
 
 internal/
   api/                    # HTTP client layer
-    client.go             # Base client with auth, retries, debug logging
+    client.go             # Backend API client (sk_* keys)
+    platform_client.go    # Platform API client (ak_* keys)
     users.go              # Users API
     organizations.go      # Organizations API
+    applications.go       # Applications API (Platform)
+    transfers.go          # Transfers API (Platform)
     protect.go            # Protect Rules & Schema API
     billing.go            # Billing API
     ...                   # Other resource APIs
@@ -35,6 +38,8 @@ internal/
     root.go               # Root command, global flags, prefix matching
     config.go             # Config, profile, alias commands
     users.go              # Users commands
+    apps.go               # Applications commands (Platform API)
+    transfers.go          # Transfers commands (Platform API)
     protect.go            # Protect commands
     ...                   # Other command groups
 
@@ -169,6 +174,72 @@ The variable is defined in `internal/cmd/root.go`.
 - Profiles stored in `~/.config/clerk/cli/profiles` (INI format)
 - Values prefixed with `!` are shell commands executed to fetch secrets
 - Active profile set in `[default]` section or via `CLERK_PROFILE` env var
+
+## API Types
+
+The CLI supports two different Clerk APIs:
+
+### Backend API (Instance-level)
+
+Used for managing resources within a specific Clerk instance (users, organizations, sessions, etc.).
+
+- **Base URL**: `https://api.clerk.com`
+- **Auth**: Secret keys (`sk_live_*` or `sk_test_*`)
+- **Commands**: `users`, `organizations`, `sessions`, `protect`, etc.
+
+**Configuration:**
+```bash
+# Environment variable
+export CLERK_SECRET_KEY=sk_live_...
+
+# Or in profile
+clerk config set clerk.key sk_live_...
+```
+
+### Platform API (Workspace-level)
+
+Used for managing workspace-level resources (applications, transfers between workspaces).
+
+- **Base URL**: `https://api.clerk.com/v1/platform`
+- **Auth**: Platform API keys (`ak_*`)
+- **Commands**: `apps`, `transfers`
+
+**Configuration:**
+```bash
+# Environment variable
+export CLERK_PLATFORM_KEY=ak_...
+
+# Or in profile
+clerk config set clerk.platform.key ak_...
+```
+
+**Example profile with both keys:**
+```ini
+[profile production]
+clerk.key = sk_live_xxx           # Backend API
+clerk.platform.key = ak_xxx       # Platform API
+```
+
+### Platform API Commands
+
+```bash
+# Applications
+clerk apps list                              # List all applications
+clerk apps get <app-id>                      # Get application details
+clerk apps create --name "My App"            # Create application
+clerk apps update <app-id> --name "New Name" # Update application
+clerk apps delete <app-id>                   # Delete application
+
+# Application instances
+clerk apps instances list <app-id>                        # List instances
+clerk apps instances list <app-id> --include-secret-keys  # Include secret keys
+
+# Transfers
+clerk transfers list                                      # List transfers
+clerk transfers create --app-id <id> --target-workspace <id>  # Create transfer
+clerk transfers accept <transfer-id>                      # Accept transfer
+clerk transfers cancel <transfer-id>                      # Cancel transfer
+```
 
 ## Releasing
 
@@ -308,7 +379,11 @@ Set `MACOS_SIGNING_ENABLED=true` to enable the signing job.
 ### Test a Command
 
 ```bash
+# Backend API commands (uses CLERK_SECRET_KEY)
 go run ./cmd/clerk users list --debug
+
+# Platform API commands (uses CLERK_PLATFORM_KEY)
+go run ./cmd/clerk apps list --debug
 ```
 
 ### Test the NPM Package

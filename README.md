@@ -263,8 +263,10 @@ Only `CLERK_SECRET_KEY` is read from `.env` files. Other Clerk environment varia
 
 | Setting | Description | Env Var |
 |---------|-------------|---------|
-| `clerk.key` | Clerk secret API key | `CLERK_SECRET_KEY` |
+| `clerk.key` | Clerk secret API key (sk_*) | `CLERK_SECRET_KEY` |
 | `clerk.api.url` | Clerk API URL (default: `https://api.clerk.com`) | `CLERK_API_URL` |
+| `clerk.platform.key` | Clerk Platform API key (ak_*) | `CLERK_PLATFORM_KEY` |
+| `clerk.platform.api.url` | Platform API URL (default: `https://api.clerk.com/v1/platform`) | `CLERK_PLATFORM_API_URL` |
 | `output` | Default output format (`table`, `json`, `yaml`) | |
 | `debug` | Enable debug mode (`true`, `false`) | `CLERK_CLI_DEBUG` |
 | `ai.provider` | AI provider (`openai`, `anthropic`) | |
@@ -518,8 +520,10 @@ clerk config alias add ps protect schema show
 | Variable | Description |
 |----------|-------------|
 | `CLERK_PROFILE` | Profile name to use (overrides the default profile) |
-| `CLERK_SECRET_KEY` | API key (overrides profile's API key) |
-| `CLERK_API_URL` | API URL (overrides profile's API URL) |
+| `CLERK_SECRET_KEY` | Backend API key - sk_* (overrides profile's API key) |
+| `CLERK_API_URL` | Backend API URL (overrides profile's API URL) |
+| `CLERK_PLATFORM_KEY` | Platform API key - ak_* (for `apps` and `transfers` commands) |
+| `CLERK_PLATFORM_API_URL` | Platform API URL (overrides default) |
 | `CLERK_CLI_DEBUG` | Set to `1` or `true` to enable debug mode |
 | `OPENAI_API_KEY` | OpenAI API key for AI-powered rule generation |
 | `ANTHROPIC_API_KEY` | Anthropic API key for AI-powered rule generation |
@@ -1884,6 +1888,172 @@ clerk billing statements payment-attempts stmt_abc123 -o json
 
 ---
 
+## Platform API Commands
+
+The Platform API uses workspace-level API keys (`ak_*`) instead of instance-level secret keys (`sk_*`). These commands manage resources across your entire Clerk workspace.
+
+### Configuration
+
+```bash
+# Set Platform API key via environment variable
+export CLERK_PLATFORM_KEY=ak_...
+
+# Or configure in your profile
+clerk config set clerk.platform.key ak_...
+```
+
+---
+
+### `clerk apps`
+
+Manage applications in your Clerk workspace. Also available as `clerk applications`.
+
+#### `clerk apps list [options]`
+
+List all applications in the workspace.
+
+| Option | Description |
+|--------|-------------|
+| `--limit <n>` | Maximum applications to return (default: 10) |
+| `--offset <n>` | Pagination offset |
+| `--query <text>` | Search query |
+
+```bash
+clerk apps list
+clerk apps ls -o json
+```
+
+#### `clerk apps get <appId>`
+
+Get details of a specific application.
+
+```bash
+clerk apps get app_abc123
+```
+
+#### `clerk apps create [options]`
+
+Create a new application.
+
+| Option | Description |
+|--------|-------------|
+| `--name <name>` | Application name (required) |
+| `--logo-url <url>` | Logo URL |
+| `--home-url <url>` | Home URL |
+
+```bash
+clerk apps create --name "My New App"
+```
+
+#### `clerk apps update <appId> [options]`
+
+Update an existing application.
+
+| Option | Description |
+|--------|-------------|
+| `--name <name>` | Application name |
+| `--logo-url <url>` | Logo URL |
+| `--home-url <url>` | Home URL |
+
+```bash
+clerk apps update app_abc123 --name "Updated Name"
+```
+
+#### `clerk apps delete <appId> [-f]`
+
+Delete an application.
+
+| Option | Description |
+|--------|-------------|
+| `-f, --force` | Skip confirmation prompt |
+
+```bash
+clerk apps delete app_abc123 --force
+```
+
+---
+
+### `clerk apps instances`
+
+Manage application instances (environments).
+
+#### `clerk apps instances list <appId> [options]`
+
+List all instances for an application.
+
+| Option | Description |
+|--------|-------------|
+| `--include-secret-keys` | Include secret keys in output |
+
+```bash
+clerk apps instances list app_abc123
+clerk apps instances list app_abc123 --include-secret-keys
+```
+
+---
+
+### `clerk transfers`
+
+Manage application transfers between workspaces.
+
+#### `clerk transfers list [options]`
+
+List all transfers.
+
+| Option | Description |
+|--------|-------------|
+| `--limit <n>` | Maximum transfers to return (default: 10) |
+| `--offset <n>` | Pagination offset |
+| `--status <status>` | Filter by status: `pending`, `accepted`, `canceled`, `expired` |
+
+```bash
+clerk transfers list
+clerk transfers list --status pending
+```
+
+#### `clerk transfers get <transferId>`
+
+Get details of a specific transfer.
+
+```bash
+clerk transfers get txfr_abc123
+```
+
+#### `clerk transfers create [options]`
+
+Create a new transfer request.
+
+| Option | Description |
+|--------|-------------|
+| `--app-id <id>` | Application ID to transfer (required) |
+| `--target-workspace <id>` | Target workspace ID (required) |
+
+```bash
+clerk transfers create --app-id app_abc123 --target-workspace ws_xyz789
+```
+
+#### `clerk transfers accept <transferId>`
+
+Accept a pending transfer.
+
+```bash
+clerk transfers accept txfr_abc123
+```
+
+#### `clerk transfers cancel <transferId> [-f]`
+
+Cancel a pending transfer.
+
+| Option | Description |
+|--------|-------------|
+| `-f, --force` | Skip confirmation prompt |
+
+```bash
+clerk transfers cancel txfr_abc123 --force
+```
+
+---
+
 ## Configuration Files
 
 The CLI stores configuration in `~/.config/clerk/cli/`:
@@ -1908,6 +2078,7 @@ output = table
 
 [profile production]
 clerk.key = sk_live_xxxxx
+clerk.platform.key = ak_xxxxx
 output = json
 
 [profile staging]
@@ -1916,6 +2087,7 @@ clerk.api.url = https://api.staging.clerk.com
 
 [profile vault]
 clerk.key = !op read 'op://Vault/Clerk/api-key'
+clerk.platform.key = !op read 'op://Vault/Clerk/platform-key'
 output = table
 ```
 
@@ -1973,7 +2145,8 @@ cmd/clerk/
   main.go                    # Entry point
 internal/
   api/
-    client.go                # Base HTTP client with retry logic
+    client.go                # Backend API HTTP client (sk_* keys)
+    platform_client.go       # Platform API HTTP client (ak_* keys)
     users.go                 # Users API
     organizations.go         # Organizations API
     sessions.go              # Sessions API
@@ -1989,6 +2162,8 @@ internal/
     m2m.go                   # M2M API (tokens + machines)
     billing.go               # Billing API (plans, subscriptions, statements)
     protect.go               # Protect Rules & Schema API
+    applications.go          # Applications API (Platform)
+    transfers.go             # Transfers API (Platform)
   cmd/
     root.go                  # Root command, global flags, prefix matching
     args.go                  # Argument validation helpers
@@ -2011,6 +2186,8 @@ internal/
     m2m.go                   # M2M commands
     billing.go               # Billing commands
     protect.go               # Protect commands
+    apps.go                  # Applications commands (Platform API)
+    transfers.go             # Transfers commands (Platform API)
   config/
     config.go                # Configuration management (INI format)
     aliases.go               # Command aliases (JSON format)
