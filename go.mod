@@ -6,7 +6,7 @@ toolchain go1.24.13
 
 require (
 	github.com/charmbracelet/huh v0.8.0
-	github.com/clerk/clerk-sdk-go/v2 v2.0.0
+	github.com/clerk/clerk-sdk-go/v2 v2.5.1
 	github.com/fatih/color v1.16.0
 	github.com/olekukonko/tablewriter v0.0.5
 	github.com/spf13/cobra v1.8.0
