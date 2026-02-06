@@ -2,8 +2,9 @@ package cmd
 
 import (
 	"fmt"
-	"time"
 
+	clerk "github.com/clerk/clerk-sdk-go/v2"
+	sdkdomain "github.com/clerk/clerk-sdk-go/v2/domain"
 	"github.com/spf13/cobra"
 
 	"clerk.com/cli/internal/api"
@@ -27,32 +28,28 @@ var domainsListCmd = &cobra.Command{
 		}
 		domainsAPI := api.NewDomainsAPI(client)
 
-		domains, total, err := domainsAPI.List()
+		result, err := domainsAPI.List()
 		if err != nil {
 			return err
 		}
 
 		formatter := GetFormatter()
-		return formatter.Output(map[string]interface{}{
-			"data":        domains,
-			"total_count": total,
-		}, func() {
-			if len(domains) == 0 {
+		return formatter.Output(result, func() {
+			if len(result.Domains) == 0 {
 				fmt.Println("No domains found")
 				return
 			}
 
-			rows := make([][]string, len(domains))
-			for i, d := range domains {
+			rows := make([][]string, len(result.Domains))
+			for i, d := range result.Domains {
 				satellite := "No"
 				if d.IsSatellite {
 					satellite = "Yes"
 				}
-				created := time.UnixMilli(d.CreatedAt).Format("2006-01-02")
-				rows[i] = []string{d.ID, d.Name, satellite, created}
+				rows[i] = []string{d.ID, d.Name, satellite}
 			}
-			output.Table([]string{"ID", "NAME", "SATELLITE", "CREATED"}, rows)
-			fmt.Printf("\nTotal: %d\n", total)
+			output.Table([]string{"ID", "NAME", "SATELLITE"}, rows)
+			fmt.Printf("\nTotal: %d\n", result.TotalCount)
 		})
 	},
 }
@@ -78,10 +75,9 @@ var domainsGetCmd = &cobra.Command{
 			fmt.Println(output.BoldYellow("Domain:"), domain.ID)
 			fmt.Println(output.Dim("Name:"), domain.Name)
 			fmt.Println(output.Dim("Satellite:"), domain.IsSatellite)
-			if domain.FrontendAPI != "" {
-				fmt.Println(output.Dim("Frontend API:"), domain.FrontendAPI)
+			if domain.FrontendAPIURL != "" {
+				fmt.Println(output.Dim("Frontend API:"), domain.FrontendAPIURL)
 			}
-			fmt.Println(output.Dim("Created:"), time.UnixMilli(domain.CreatedAt).Format(time.RFC3339))
 		})
 	},
 }
@@ -103,11 +99,15 @@ var domainsAddCmd = &cobra.Command{
 			return fmt.Errorf("--name is required")
 		}
 
-		domain, err := domainsAPI.Add(api.AddDomainParams{
-			Name:        name,
-			IsSatellite: true,
-			ProxyURL:    proxyURL,
-		})
+		params := sdkdomain.CreateParams{
+			Name:        clerk.String(name),
+			IsSatellite: clerk.Bool(true),
+		}
+		if proxyURL != "" {
+			params.ProxyURL = clerk.String(proxyURL)
+		}
+
+		domain, err := domainsAPI.Add(params)
 		if err != nil {
 			return err
 		}
@@ -133,10 +133,15 @@ var domainsUpdateCmd = &cobra.Command{
 		name, _ := cmd.Flags().GetString("name")
 		proxyURL, _ := cmd.Flags().GetString("proxy-url")
 
-		domain, err := domainsAPI.Update(args[0], api.UpdateDomainParams{
-			Name:     name,
-			ProxyURL: proxyURL,
-		})
+		params := sdkdomain.UpdateParams{}
+		if name != "" {
+			params.Name = clerk.String(name)
+		}
+		if proxyURL != "" {
+			params.ProxyURL = clerk.String(proxyURL)
+		}
+
+		domain, err := domainsAPI.Update(args[0], params)
 		if err != nil {
 			return err
 		}

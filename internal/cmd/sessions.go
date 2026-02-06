@@ -5,6 +5,8 @@ import (
 	"time"
 
 	"github.com/charmbracelet/huh"
+	clerk "github.com/clerk/clerk-sdk-go/v2"
+	sdksession "github.com/clerk/clerk-sdk-go/v2/session"
 	"github.com/spf13/cobra"
 
 	"clerk.com/cli/internal/api"
@@ -38,34 +40,42 @@ var sessionsListCmd = &cobra.Command{
 			return fmt.Errorf("either --user-id or --client-id is required")
 		}
 
-		sessions, total, err := sessionsAPI.List(api.ListSessionsParams{
-			UserID:   userID,
-			ClientID: clientID,
-			Status:   status,
-			Limit:    limit,
-			Offset:   offset,
-		})
+		params := sdksession.ListParams{}
+		if userID != "" {
+			params.UserID = clerk.String(userID)
+		}
+		if clientID != "" {
+			params.ClientID = clerk.String(clientID)
+		}
+		if status != "" {
+			params.Status = clerk.String(status)
+		}
+		if limit > 0 {
+			params.Limit = clerk.Int64(int64(limit))
+		}
+		if offset > 0 {
+			params.Offset = clerk.Int64(int64(offset))
+		}
+
+		result, err := sessionsAPI.List(params)
 		if err != nil {
 			return err
 		}
 
 		formatter := GetFormatter()
-		return formatter.Output(map[string]interface{}{
-			"data":        sessions,
-			"total_count": total,
-		}, func() {
-			if len(sessions) == 0 {
+		return formatter.Output(result, func() {
+			if len(result.Sessions) == 0 {
 				fmt.Println("No sessions found")
 				return
 			}
 
-			rows := make([][]string, len(sessions))
-			for i, s := range sessions {
+			rows := make([][]string, len(result.Sessions))
+			for i, s := range result.Sessions {
 				lastActive := time.UnixMilli(s.LastActiveAt).Format("2006-01-02 15:04")
 				rows[i] = []string{s.ID, s.UserID, s.Status, lastActive}
 			}
 			output.Table([]string{"ID", "USER ID", "STATUS", "LAST ACTIVE"}, rows)
-			fmt.Printf("\nTotal: %d\n", total)
+			fmt.Printf("\nTotal: %d\n", result.TotalCount)
 		})
 	},
 }

@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"time"
 
+	clerk "github.com/clerk/clerk-sdk-go/v2"
+	sdkemail "github.com/clerk/clerk-sdk-go/v2/emailaddress"
 	"github.com/spf13/cobra"
 
 	"clerk.com/cli/internal/api"
@@ -43,11 +45,11 @@ var usersEmailsListCmd = &cobra.Command{
 			rows := make([][]string, len(user.EmailAddresses))
 			for i, e := range user.EmailAddresses {
 				primary := ""
-				if e.ID == user.PrimaryEmailID {
+				if e.ID == api.StrVal(user.PrimaryEmailAddressID) {
 					primary = "yes"
 				}
 				verified := "no"
-				if e.Verified {
+				if e.Verification != nil && e.Verification.Status == "verified" {
 					verified = "yes"
 				}
 				rows[i] = []string{e.ID, e.EmailAddress, verified, primary}
@@ -73,11 +75,13 @@ var usersEmailsGetCmd = &cobra.Command{
 			return err
 		}
 
+		verified := email.Verification != nil && email.Verification.Status == "verified"
+
 		formatter := GetFormatter()
 		return formatter.Output(email, func() {
 			fmt.Println(output.BoldYellow("Email Address:"), email.ID)
 			fmt.Println(output.Dim("Address:"), email.EmailAddress)
-			fmt.Println(output.Dim("Verified:"), email.Verified)
+			fmt.Println(output.Dim("Verified:"), verified)
 			fmt.Println(output.Dim("Created:"), time.UnixMilli(email.CreatedAt).Format(time.RFC3339))
 		})
 	},
@@ -102,12 +106,18 @@ var usersEmailsAddCmd = &cobra.Command{
 			return fmt.Errorf("--email is required")
 		}
 
-		email, err := emailsAPI.Create(api.CreateEmailParams{
-			UserID:       args[0],
-			EmailAddress: address,
-			Verified:     verified,
-			Primary:      primary,
-		})
+		params := sdkemail.CreateParams{
+			UserID:       clerk.String(args[0]),
+			EmailAddress: clerk.String(address),
+		}
+		if verified {
+			params.Verified = clerk.Bool(true)
+		}
+		if primary {
+			params.Primary = clerk.Bool(true)
+		}
+
+		email, err := emailsAPI.Create(params)
 		if err != nil {
 			return err
 		}
@@ -133,10 +143,15 @@ var usersEmailsUpdateCmd = &cobra.Command{
 		verified, _ := cmd.Flags().GetBool("verified")
 		primary, _ := cmd.Flags().GetBool("primary")
 
-		email, err := emailsAPI.Update(args[0], api.UpdateEmailParams{
-			Verified: verified,
-			Primary:  primary,
-		})
+		params := sdkemail.UpdateParams{}
+		if verified {
+			params.Verified = clerk.Bool(true)
+		}
+		if primary {
+			params.Primary = clerk.Bool(true)
+		}
+
+		email, err := emailsAPI.Update(args[0], params)
 		if err != nil {
 			return err
 		}

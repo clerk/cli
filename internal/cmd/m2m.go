@@ -5,6 +5,9 @@ import (
 	"strings"
 	"time"
 
+	clerk "github.com/clerk/clerk-sdk-go/v2"
+	sdkm2mtoken "github.com/clerk/clerk-sdk-go/v2/m2m_token"
+	sdkmachine "github.com/clerk/clerk-sdk-go/v2/machine"
 	"github.com/spf13/cobra"
 
 	"clerk.com/cli/internal/api"
@@ -38,31 +41,35 @@ var m2mTokensListCmd = &cobra.Command{
 		limit, _ := cmd.Flags().GetInt("limit")
 		offset, _ := cmd.Flags().GetInt("offset")
 
-		tokens, total, err := m2mAPI.ListTokens(api.ListM2MTokensParams{
-			MachineID: machineID,
-			Limit:     limit,
-			Offset:    offset,
-		})
+		params := sdkm2mtoken.ListParams{}
+		if machineID != "" {
+			params.Subject = clerk.String(machineID)
+		}
+		if limit > 0 {
+			params.Limit = clerk.Int64(int64(limit))
+		}
+		if offset > 0 {
+			params.Offset = clerk.Int64(int64(offset))
+		}
+
+		result, err := m2mAPI.ListTokens(params)
 		if err != nil {
 			return err
 		}
 
 		formatter := GetFormatter()
-		return formatter.Output(map[string]interface{}{
-			"data":        tokens,
-			"total_count": total,
-		}, func() {
-			if len(tokens) == 0 {
+		return formatter.Output(result, func() {
+			if len(result.M2MTokens) == 0 {
 				fmt.Println("No tokens found")
 				return
 			}
 
-			rows := make([][]string, len(tokens))
-			for i, t := range tokens {
+			rows := make([][]string, len(result.M2MTokens))
+			for i, t := range result.M2MTokens {
 				scopes := strings.Join(t.Scopes, ", ")
-				rows[i] = []string{t.TokenType, scopes, fmt.Sprintf("%d", t.ExpiresIn)}
+				rows[i] = []string{t.ID, t.Subject, scopes}
 			}
-			output.Table([]string{"TYPE", "SCOPES", "EXPIRES IN"}, rows)
+			output.Table([]string{"ID", "SUBJECT", "SCOPES"}, rows)
 		})
 	},
 }
@@ -78,23 +85,19 @@ var m2mTokensCreateCmd = &cobra.Command{
 		m2mAPI := api.NewM2MAPI(client)
 
 		machineID, _ := cmd.Flags().GetString("machine-id")
-		scopesStr, _ := cmd.Flags().GetString("scopes")
+		_, _ = cmd.Flags().GetString("scopes")
 		expiresIn, _ := cmd.Flags().GetInt("expires-in")
 
 		if machineID == "" {
 			return fmt.Errorf("--machine-id is required")
 		}
 
-		var scopes []string
-		if scopesStr != "" {
-			scopes = strings.Split(scopesStr, ",")
+		params := sdkm2mtoken.CreateParams{}
+		if expiresIn > 0 {
+			params.SecondsUntilExpiration = clerk.Int64(int64(expiresIn))
 		}
 
-		token, err := m2mAPI.CreateToken(api.CreateM2MTokenParams{
-			MachineID: machineID,
-			Scopes:    scopes,
-			ExpiresIn: expiresIn,
-		})
+		token, err := m2mAPI.CreateToken(params)
 		if err != nil {
 			return err
 		}
@@ -126,7 +129,7 @@ var m2mTokensVerifyCmd = &cobra.Command{
 			return fmt.Errorf("--token is required")
 		}
 
-		result, err := m2mAPI.VerifyToken(token)
+		result, err := m2mAPI.VerifyToken(sdkm2mtoken.VerifyParams{Token: token})
 		if err != nil {
 			return err
 		}
@@ -134,8 +137,8 @@ var m2mTokensVerifyCmd = &cobra.Command{
 		formatter := GetFormatter()
 		return formatter.Output(result, func() {
 			output.Success("Token is valid")
-			fmt.Println(output.Dim("Token Type:"), result.TokenType)
-			fmt.Println(output.Dim("Expires In:"), result.ExpiresIn)
+			fmt.Println(output.Dim("Subject:"), result.Subject)
+			fmt.Println(output.Dim("Scopes:"), strings.Join(result.Scopes, ", "))
 		})
 	},
 }
@@ -161,32 +164,36 @@ var m2mMachinesListCmd = &cobra.Command{
 		offset, _ := cmd.Flags().GetInt("offset")
 		query, _ := cmd.Flags().GetString("query")
 
-		machines, total, err := m2mAPI.ListMachines(api.ListMachinesParams{
-			Limit:  limit,
-			Offset: offset,
-			Query:  query,
-		})
+		params := sdkmachine.ListParams{}
+		if limit > 0 {
+			params.Limit = clerk.Int64(int64(limit))
+		}
+		if offset > 0 {
+			params.Offset = clerk.Int64(int64(offset))
+		}
+		if query != "" {
+			params.Query = clerk.String(query)
+		}
+
+		result, err := m2mAPI.ListMachines(params)
 		if err != nil {
 			return err
 		}
 
 		formatter := GetFormatter()
-		return formatter.Output(map[string]interface{}{
-			"data":        machines,
-			"total_count": total,
-		}, func() {
-			if len(machines) == 0 {
+		return formatter.Output(result, func() {
+			if len(result.Machines) == 0 {
 				fmt.Println("No machines found")
 				return
 			}
 
-			rows := make([][]string, len(machines))
-			for i, m := range machines {
+			rows := make([][]string, len(result.Machines))
+			for i, m := range result.Machines {
 				created := time.UnixMilli(m.CreatedAt).Format("2006-01-02")
-				rows[i] = []string{m.ID, m.Name, m.ClientID, created}
+				rows[i] = []string{m.ID, m.Name, created}
 			}
-			output.Table([]string{"ID", "NAME", "CLIENT ID", "CREATED"}, rows)
-			fmt.Printf("\nTotal: %d\n", total)
+			output.Table([]string{"ID", "NAME", "CREATED"}, rows)
+			fmt.Printf("\nTotal: %d\n", result.TotalCount)
 		})
 	},
 }
@@ -211,10 +218,6 @@ var m2mMachinesGetCmd = &cobra.Command{
 		return formatter.Output(machine, func() {
 			fmt.Println(output.BoldYellow("Machine:"), machine.ID)
 			fmt.Println(output.Dim("Name:"), machine.Name)
-			fmt.Println(output.Dim("Client ID:"), machine.ClientID)
-			if len(machine.Scopes) > 0 {
-				fmt.Println(output.Dim("Scopes:"), strings.Join(machine.Scopes, ", "))
-			}
 			fmt.Println(output.Dim("Created:"), time.UnixMilli(machine.CreatedAt).Format(time.RFC3339))
 		})
 	},
@@ -242,9 +245,9 @@ var m2mMachinesCreateCmd = &cobra.Command{
 			scopes = strings.Split(scopesStr, ",")
 		}
 
-		machine, err := m2mAPI.CreateMachine(api.CreateMachineParams{
-			Name:   name,
-			Scopes: scopes,
+		machine, err := m2mAPI.CreateMachine(sdkmachine.CreateParams{
+			Name:           name,
+			ScopedMachines: scopes,
 		})
 		if err != nil {
 			return err
@@ -253,6 +256,11 @@ var m2mMachinesCreateCmd = &cobra.Command{
 		formatter := GetFormatter()
 		return formatter.Output(machine, func() {
 			output.Success(fmt.Sprintf("Created machine %s", machine.ID))
+			if machine.SecretKey != "" {
+				fmt.Println()
+				fmt.Println(output.Yellow("Secret Key (save this, it won't be shown again):"))
+				fmt.Println(machine.SecretKey)
+			}
 		})
 	},
 }
@@ -270,9 +278,12 @@ var m2mMachinesUpdateCmd = &cobra.Command{
 
 		name, _ := cmd.Flags().GetString("name")
 
-		machine, err := m2mAPI.UpdateMachine(args[0], api.UpdateMachineParams{
-			Name: name,
-		})
+		params := sdkmachine.UpdateParams{}
+		if name != "" {
+			params.Name = clerk.String(name)
+		}
+
+		machine, err := m2mAPI.UpdateMachine(args[0], params)
 		if err != nil {
 			return err
 		}
@@ -343,15 +354,12 @@ var m2mMachinesAddScopeCmd = &cobra.Command{
 			return fmt.Errorf("--scope is required")
 		}
 
-		machine, err := m2mAPI.AddScope(args[0], scope)
-		if err != nil {
+		if err := m2mAPI.AddScope(args[0], scope); err != nil {
 			return err
 		}
 
-		formatter := GetFormatter()
-		return formatter.Output(machine, func() {
-			output.Success(fmt.Sprintf("Added scope to machine %s", machine.ID))
-		})
+		output.Success(fmt.Sprintf("Added scope to machine %s", args[0]))
+		return nil
 	},
 }
 

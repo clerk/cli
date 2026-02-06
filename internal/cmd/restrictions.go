@@ -4,6 +4,9 @@ import (
 	"fmt"
 	"time"
 
+	clerk "github.com/clerk/clerk-sdk-go/v2"
+	sdkallowlist "github.com/clerk/clerk-sdk-go/v2/allowlistidentifier"
+	sdkblocklist "github.com/clerk/clerk-sdk-go/v2/blocklistidentifier"
 	"github.com/spf13/cobra"
 
 	"clerk.com/cli/internal/api"
@@ -39,18 +42,18 @@ var restrictionsListCmd = &cobra.Command{
 		}
 
 		type listOutput struct {
-			Allowlist []api.RestrictionIdentifier `json:"allowlist"`
-			Blocklist []api.RestrictionIdentifier `json:"blocklist"`
+			Allowlist []*clerk.AllowlistIdentifier `json:"allowlist"`
+			Blocklist []*clerk.BlocklistIdentifier `json:"blocklist"`
 		}
 
 		formatter := GetFormatter()
-		return formatter.Output(listOutput{Allowlist: allowlist, Blocklist: blocklist}, func() {
+		return formatter.Output(listOutput{Allowlist: allowlist.AllowlistIdentifiers, Blocklist: blocklist.BlocklistIdentifiers}, func() {
 			fmt.Println(output.BoldYellow("Allowlist"))
-			if len(allowlist) == 0 {
+			if len(allowlist.AllowlistIdentifiers) == 0 {
 				fmt.Println("  No allowlist identifiers found")
 			} else {
-				rows := make([][]string, len(allowlist))
-				for i, id := range allowlist {
+				rows := make([][]string, len(allowlist.AllowlistIdentifiers))
+				for i, id := range allowlist.AllowlistIdentifiers {
 					created := time.UnixMilli(id.CreatedAt).Format("2006-01-02")
 					rows[i] = []string{id.ID, id.Identifier, id.IdentifierType, created}
 				}
@@ -59,11 +62,11 @@ var restrictionsListCmd = &cobra.Command{
 			fmt.Println()
 
 			fmt.Println(output.BoldYellow("Blocklist"))
-			if len(blocklist) == 0 {
+			if len(blocklist.BlocklistIdentifiers) == 0 {
 				fmt.Println("  No blocklist identifiers found")
 			} else {
-				rows := make([][]string, len(blocklist))
-				for i, id := range blocklist {
+				rows := make([][]string, len(blocklist.BlocklistIdentifiers))
+				for i, id := range blocklist.BlocklistIdentifiers {
 					created := time.UnixMilli(id.CreatedAt).Format("2006-01-02")
 					rows[i] = []string{id.ID, id.Identifier, id.IdentifierType, created}
 				}
@@ -99,23 +102,35 @@ Use --block to add to the blocklist (prevents sign-up).`,
 		}
 		restrictionsAPI := api.NewRestrictionsAPI(client)
 
-		var identifier *api.RestrictionIdentifier
 		var listName string
 
 		if allow {
-			identifier, err = restrictionsAPI.AddToAllowlist(api.AddRestrictionParams{
-				Identifier: args[0],
-				Notify:     notify,
-			})
+			params := sdkallowlist.CreateParams{
+				Identifier: clerk.String(args[0]),
+			}
+			if notify {
+				params.Notify = clerk.Bool(true)
+			}
+
+			identifier, err := restrictionsAPI.AddToAllowlist(params)
+			if err != nil {
+				return err
+			}
 			listName = "allowlist"
-		} else {
-			identifier, err = restrictionsAPI.AddToBlocklist(args[0])
-			listName = "blocklist"
+
+			formatter := GetFormatter()
+			return formatter.Output(identifier, func() {
+				output.Success(fmt.Sprintf("Added %s to %s", identifier.Identifier, listName))
+			})
 		}
 
+		identifier, err := restrictionsAPI.AddToBlocklist(sdkblocklist.CreateParams{
+			Identifier: clerk.String(args[0]),
+		})
 		if err != nil {
 			return err
 		}
+		listName = "blocklist"
 
 		formatter := GetFormatter()
 		return formatter.Output(identifier, func() {

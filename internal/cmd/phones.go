@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"time"
 
+	clerk "github.com/clerk/clerk-sdk-go/v2"
+	sdkphone "github.com/clerk/clerk-sdk-go/v2/phonenumber"
 	"github.com/spf13/cobra"
 
 	"clerk.com/cli/internal/api"
@@ -43,11 +45,11 @@ var usersPhonesListCmd = &cobra.Command{
 			rows := make([][]string, len(user.PhoneNumbers))
 			for i, p := range user.PhoneNumbers {
 				primary := ""
-				if p.ID == user.PrimaryPhoneID {
+				if p.ID == api.StrVal(user.PrimaryPhoneNumberID) {
 					primary = "yes"
 				}
 				verified := "no"
-				if p.Verified {
+				if p.Verification != nil && p.Verification.Status == "verified" {
 					verified = "yes"
 				}
 				rows[i] = []string{p.ID, p.PhoneNumber, verified, primary}
@@ -73,11 +75,13 @@ var usersPhonesGetCmd = &cobra.Command{
 			return err
 		}
 
+		verified := phone.Verification != nil && phone.Verification.Status == "verified"
+
 		formatter := GetFormatter()
 		return formatter.Output(phone, func() {
 			fmt.Println(output.BoldYellow("Phone Number:"), phone.ID)
 			fmt.Println(output.Dim("Number:"), phone.PhoneNumber)
-			fmt.Println(output.Dim("Verified:"), phone.Verified)
+			fmt.Println(output.Dim("Verified:"), verified)
 			fmt.Println(output.Dim("Created:"), time.UnixMilli(phone.CreatedAt).Format(time.RFC3339))
 		})
 	},
@@ -102,12 +106,18 @@ var usersPhonesAddCmd = &cobra.Command{
 			return fmt.Errorf("--phone is required")
 		}
 
-		phone, err := phonesAPI.Create(api.CreatePhoneParams{
-			UserID:      args[0],
-			PhoneNumber: number,
-			Verified:    verified,
-			Primary:     primary,
-		})
+		params := sdkphone.CreateParams{
+			UserID:      clerk.String(args[0]),
+			PhoneNumber: clerk.String(number),
+		}
+		if verified {
+			params.Verified = clerk.Bool(true)
+		}
+		if primary {
+			params.Primary = clerk.Bool(true)
+		}
+
+		phone, err := phonesAPI.Create(params)
 		if err != nil {
 			return err
 		}
@@ -133,10 +143,15 @@ var usersPhonesUpdateCmd = &cobra.Command{
 		verified, _ := cmd.Flags().GetBool("verified")
 		primary, _ := cmd.Flags().GetBool("primary")
 
-		phone, err := phonesAPI.Update(args[0], api.UpdatePhoneParams{
-			Verified: verified,
-			Primary:  primary,
-		})
+		params := sdkphone.UpdateParams{}
+		if verified {
+			params.Verified = clerk.Bool(true)
+		}
+		if primary {
+			params.Primary = clerk.Bool(true)
+		}
+
+		phone, err := phonesAPI.Update(args[0], params)
 		if err != nil {
 			return err
 		}

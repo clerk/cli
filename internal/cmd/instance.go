@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"strings"
 
+	clerk "github.com/clerk/clerk-sdk-go/v2"
+	sdkinstance "github.com/clerk/clerk-sdk-go/v2/instancesettings"
 	"github.com/spf13/cobra"
 
 	"clerk.com/cli/internal/api"
@@ -61,26 +63,22 @@ var instanceUpdateCmd = &cobra.Command{
 
 		supportEmail, _ := cmd.Flags().GetString("support-email")
 		clerkJSVersion, _ := cmd.Flags().GetString("clerk-js-version")
-		allowedOriginsStr, _ := cmd.Flags().GetString("allowed-origins")
+		_, _ = cmd.Flags().GetString("allowed-origins")
 
-		var allowedOrigins []string
-		if allowedOriginsStr != "" {
-			allowedOrigins = strings.Split(allowedOriginsStr, ",")
+		params := sdkinstance.UpdateParams{}
+		if supportEmail != "" {
+			params.SupportEmail = clerk.String(supportEmail)
+		}
+		if clerkJSVersion != "" {
+			params.ClerkJSVersion = clerk.String(clerkJSVersion)
 		}
 
-		instance, err := instanceAPI.Update(api.UpdateInstanceParams{
-			SupportEmail:   supportEmail,
-			ClerkJSVersion: clerkJSVersion,
-			AllowedOrigins: allowedOrigins,
-		})
-		if err != nil {
+		if err := instanceAPI.Update(params); err != nil {
 			return err
 		}
 
-		formatter := GetFormatter()
-		return formatter.Output(instance, func() {
-			output.Success("Updated instance settings")
-		})
+		output.Success("Updated instance settings")
+		return nil
 	},
 }
 
@@ -99,23 +97,23 @@ var instanceRestrictionsUpdateCmd = &cobra.Command{
 		}
 		instanceAPI := api.NewInstanceAPI(client)
 
-		params := api.UpdateRestrictionsParams{}
+		params := sdkinstance.UpdateRestrictionsParams{}
 
 		if cmd.Flags().Changed("allowlist") {
 			val, _ := cmd.Flags().GetBool("allowlist")
-			params.Allowlist = &val
+			params.Allowlist = clerk.Bool(val)
 		}
 		if cmd.Flags().Changed("blocklist") {
 			val, _ := cmd.Flags().GetBool("blocklist")
-			params.Blocklist = &val
+			params.Blocklist = clerk.Bool(val)
 		}
 		if cmd.Flags().Changed("block-disposable") {
 			val, _ := cmd.Flags().GetBool("block-disposable")
-			params.BlockDisposable = &val
+			params.BlockDisposableEmailDomains = clerk.Bool(val)
 		}
 		if cmd.Flags().Changed("block-subaddresses") {
 			val, _ := cmd.Flags().GetBool("block-subaddresses")
-			params.BlockSubaddresses = &val
+			params.BlockEmailSubaddresses = clerk.Bool(val)
 		}
 
 		restrictions, err := instanceAPI.UpdateRestrictions(params)

@@ -1,5 +1,10 @@
 package api
 
+import (
+	clerk "github.com/clerk/clerk-sdk-go/v2"
+	sdkinstance "github.com/clerk/clerk-sdk-go/v2/instancesettings"
+)
+
 type Instance struct {
 	Object            string   `json:"object"`
 	ID                string   `json:"id"`
@@ -12,21 +17,19 @@ type Instance struct {
 	MaintenanceMode   bool     `json:"maintenance_mode"`
 }
 
-type InstanceRestrictions struct {
-	Allowlist         bool `json:"allowlist"`
-	Blocklist         bool `json:"blocklist"`
-	BlockDisposable   bool `json:"block_email_subaddresses"`
-	BlockSubaddresses bool `json:"block_disposable_email_domains"`
-}
-
 type InstanceAPI struct {
-	client *Client
+	client    *Client
+	sdkClient *sdkinstance.Client
 }
 
 func NewInstanceAPI(client *Client) *InstanceAPI {
-	return &InstanceAPI{client: client}
+	return &InstanceAPI{
+		client:    client,
+		sdkClient: sdkinstance.NewClient(client.SDKConfig()),
+	}
 }
 
+// Get retrieves instance settings. No SDK equivalent exists, so we use the raw client.
 func (a *InstanceAPI) Get() (*Instance, error) {
 	data, err := a.client.Get("/v1/instance", nil)
 	if err != nil {
@@ -35,32 +38,10 @@ func (a *InstanceAPI) Get() (*Instance, error) {
 	return ParseResponse[*Instance](data)
 }
 
-type UpdateInstanceParams struct {
-	SupportEmail    string   `json:"support_email,omitempty"`
-	ClerkJSVersion  string   `json:"clerk_js_version,omitempty"`
-	AllowedOrigins  []string `json:"allowed_origins,omitempty"`
-	MaintenanceMode *bool    `json:"maintenance_mode,omitempty"`
+func (a *InstanceAPI) Update(params sdkinstance.UpdateParams) error {
+	return a.sdkClient.Update(a.client.Context(), &params)
 }
 
-func (a *InstanceAPI) Update(params UpdateInstanceParams) (*Instance, error) {
-	data, err := a.client.Patch("/v1/instance", params)
-	if err != nil {
-		return nil, err
-	}
-	return ParseResponse[*Instance](data)
-}
-
-type UpdateRestrictionsParams struct {
-	Allowlist         *bool `json:"allowlist,omitempty"`
-	Blocklist         *bool `json:"blocklist,omitempty"`
-	BlockDisposable   *bool `json:"block_email_subaddresses,omitempty"`
-	BlockSubaddresses *bool `json:"block_disposable_email_domains,omitempty"`
-}
-
-func (a *InstanceAPI) UpdateRestrictions(params UpdateRestrictionsParams) (*InstanceRestrictions, error) {
-	data, err := a.client.Patch("/v1/instance/restrictions", params)
-	if err != nil {
-		return nil, err
-	}
-	return ParseResponse[*InstanceRestrictions](data)
+func (a *InstanceAPI) UpdateRestrictions(params sdkinstance.UpdateRestrictionsParams) (*clerk.InstanceRestrictions, error) {
+	return a.sdkClient.UpdateRestrictions(a.client.Context(), &params)
 }

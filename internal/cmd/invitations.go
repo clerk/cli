@@ -5,6 +5,8 @@ import (
 	"strings"
 	"time"
 
+	clerk "github.com/clerk/clerk-sdk-go/v2"
+	sdkinvitation "github.com/clerk/clerk-sdk-go/v2/invitation"
 	"github.com/spf13/cobra"
 
 	"clerk.com/cli/internal/api"
@@ -33,32 +35,36 @@ var invitationsListCmd = &cobra.Command{
 		limit, _ := cmd.Flags().GetInt("limit")
 		offset, _ := cmd.Flags().GetInt("offset")
 
-		invitations, total, err := invitationsAPI.List(api.ListInvitationsParams{
-			Status: status,
-			Limit:  limit,
-			Offset: offset,
-		})
+		params := sdkinvitation.ListParams{}
+		if status != "" {
+			params.Statuses = []string{status}
+		}
+		if limit > 0 {
+			params.Limit = clerk.Int64(int64(limit))
+		}
+		if offset > 0 {
+			params.Offset = clerk.Int64(int64(offset))
+		}
+
+		result, err := invitationsAPI.List(params)
 		if err != nil {
 			return err
 		}
 
 		formatter := GetFormatter()
-		return formatter.Output(map[string]interface{}{
-			"data":        invitations,
-			"total_count": total,
-		}, func() {
-			if len(invitations) == 0 {
+		return formatter.Output(result, func() {
+			if len(result.Invitations) == 0 {
 				fmt.Println("No invitations found")
 				return
 			}
 
-			rows := make([][]string, len(invitations))
-			for i, inv := range invitations {
+			rows := make([][]string, len(result.Invitations))
+			for i, inv := range result.Invitations {
 				created := time.UnixMilli(inv.CreatedAt).Format("2006-01-02")
 				rows[i] = []string{inv.ID, inv.EmailAddress, inv.Status, created}
 			}
 			output.Table([]string{"ID", "EMAIL", "STATUS", "CREATED"}, rows)
-			fmt.Printf("\nTotal: %d\n", total)
+			fmt.Printf("\nTotal: %d\n", result.TotalCount)
 		})
 	},
 }
@@ -81,11 +87,17 @@ var invitationsCreateCmd = &cobra.Command{
 			return fmt.Errorf("--email is required")
 		}
 
-		invitation, err := invitationsAPI.Create(api.CreateInvitationParams{
+		params := sdkinvitation.CreateParams{
 			EmailAddress: email,
-			RedirectURL:  redirectURL,
-			Notify:       notify,
-		})
+		}
+		if redirectURL != "" {
+			params.RedirectURL = clerk.String(redirectURL)
+		}
+		if notify {
+			params.Notify = clerk.Bool(true)
+		}
+
+		invitation, err := invitationsAPI.Create(params)
 		if err != nil {
 			return err
 		}
@@ -124,11 +136,25 @@ var invitationsBulkCreateCmd = &cobra.Command{
 			emails[i] = strings.TrimSpace(emails[i])
 		}
 
-		invitations, err := invitationsAPI.BulkCreate(api.BulkCreateInvitationsParams{
-			EmailAddresses: emails,
-			RedirectURL:    redirectURL,
-			Notify:         notify,
-			IgnoreExisting: ignoreExisting,
+		invitationsParams := make([]*sdkinvitation.CreateParams, 0, len(emails))
+		for _, email := range emails {
+			invitation := &sdkinvitation.CreateParams{
+				EmailAddress: email,
+			}
+			if redirectURL != "" {
+				invitation.RedirectURL = clerk.String(redirectURL)
+			}
+			if notify {
+				invitation.Notify = clerk.Bool(true)
+			}
+			if ignoreExisting {
+				invitation.IgnoreExisting = clerk.Bool(true)
+			}
+			invitationsParams = append(invitationsParams, invitation)
+		}
+
+		invitations, err := invitationsAPI.BulkCreate(sdkinvitation.BulkCreateParams{
+			Invitations: invitationsParams,
 		})
 		if err != nil {
 			return err

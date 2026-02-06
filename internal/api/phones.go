@@ -1,63 +1,35 @@
 package api
 
 import (
-	"fmt"
+	clerk "github.com/clerk/clerk-sdk-go/v2"
+	sdkphone "github.com/clerk/clerk-sdk-go/v2/phonenumber"
 )
 
-type PhoneNumberDetails struct {
-	ID          string `json:"id"`
-	PhoneNumber string `json:"phone_number"`
-	Verified    bool   `json:"verified"`
-	Primary     bool   `json:"primary,omitempty"`
-	CreatedAt   int64  `json:"created_at"`
-	UpdatedAt   int64  `json:"updated_at"`
-}
-
 type PhonesAPI struct {
-	client *Client
+	client    *Client
+	sdkClient *sdkphone.Client
 }
 
 func NewPhonesAPI(client *Client) *PhonesAPI {
-	return &PhonesAPI{client: client}
-}
-
-func (a *PhonesAPI) Get(id string) (*PhoneNumberDetails, error) {
-	data, err := a.client.Get(fmt.Sprintf("/v1/phone_numbers/%s", id), nil)
-	if err != nil {
-		return nil, err
+	return &PhonesAPI{
+		client:    client,
+		sdkClient: sdkphone.NewClient(client.SDKConfig()),
 	}
-	return ParseResponse[*PhoneNumberDetails](data)
 }
 
-type CreatePhoneParams struct {
-	UserID      string `json:"user_id"`
-	PhoneNumber string `json:"phone_number"`
-	Verified    bool   `json:"verified,omitempty"`
-	Primary     bool   `json:"primary,omitempty"`
+func (a *PhonesAPI) Get(id string) (*clerk.PhoneNumber, error) {
+	return a.sdkClient.Get(a.client.Context(), id)
 }
 
-func (a *PhonesAPI) Create(params CreatePhoneParams) (*PhoneNumberDetails, error) {
-	data, err := a.client.Post("/v1/phone_numbers", params)
-	if err != nil {
-		return nil, err
-	}
-	return ParseResponse[*PhoneNumberDetails](data)
+func (a *PhonesAPI) Create(params sdkphone.CreateParams) (*clerk.PhoneNumber, error) {
+	return a.sdkClient.Create(a.client.Context(), &params)
 }
 
-type UpdatePhoneParams struct {
-	Verified bool `json:"verified,omitempty"`
-	Primary  bool `json:"primary,omitempty"`
-}
-
-func (a *PhonesAPI) Update(id string, params UpdatePhoneParams) (*PhoneNumberDetails, error) {
-	data, err := a.client.Patch(fmt.Sprintf("/v1/phone_numbers/%s", id), params)
-	if err != nil {
-		return nil, err
-	}
-	return ParseResponse[*PhoneNumberDetails](data)
+func (a *PhonesAPI) Update(id string, params sdkphone.UpdateParams) (*clerk.PhoneNumber, error) {
+	return a.sdkClient.Update(a.client.Context(), id, &params)
 }
 
 func (a *PhonesAPI) Delete(id string) error {
-	_, err := a.client.Delete(fmt.Sprintf("/v1/phone_numbers/%s", id))
+	_, err := a.sdkClient.Delete(a.client.Context(), id)
 	return err
 }

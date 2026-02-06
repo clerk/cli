@@ -5,6 +5,8 @@ import (
 	"time"
 
 	"github.com/charmbracelet/huh"
+	clerk "github.com/clerk/clerk-sdk-go/v2"
+	sdkuser "github.com/clerk/clerk-sdk-go/v2/user"
 	"github.com/spf13/cobra"
 
 	"clerk.com/cli/internal/api"
@@ -40,46 +42,66 @@ var usersListCmd = &cobra.Command{
 		orgIDs, _ := cmd.Flags().GetStringSlice("organization-id")
 		lastActiveSince, _ := cmd.Flags().GetInt64("last-active-since")
 
-		users, total, err := usersAPI.List(api.ListUsersParams{
-			Limit:           limit,
-			Offset:          offset,
-			Query:           query,
-			OrderBy:         orderBy,
-			EmailAddress:    emails,
-			PhoneNumber:     phones,
-			Username:        usernames,
-			ExternalID:      externalIDs,
-			UserID:          userIDs,
-			OrganizationID:  orgIDs,
-			LastActiveSince: lastActiveSince,
-		})
+		params := sdkuser.ListParams{}
+		if limit > 0 {
+			params.Limit = clerk.Int64(int64(limit))
+		}
+		if offset > 0 {
+			params.Offset = clerk.Int64(int64(offset))
+		}
+		if query != "" {
+			params.Query = clerk.String(query)
+		}
+		if orderBy != "" {
+			params.OrderBy = clerk.String(orderBy)
+		}
+		if len(emails) > 0 {
+			params.EmailAddresses = emails
+		}
+		if len(phones) > 0 {
+			params.PhoneNumbers = phones
+		}
+		if len(usernames) > 0 {
+			params.Usernames = usernames
+		}
+		if len(externalIDs) > 0 {
+			params.ExternalIDs = externalIDs
+		}
+		if len(userIDs) > 0 {
+			params.UserIDs = userIDs
+		}
+		if len(orgIDs) > 0 {
+			params.OrganizationIDs = orgIDs
+		}
+		if lastActiveSince > 0 {
+			params.LastActiveAtAfter = clerk.Int64(lastActiveSince)
+		}
+
+		result, err := usersAPI.List(params)
 		if err != nil {
 			return err
 		}
 
 		formatter := GetFormatter()
 
-		return formatter.Output(map[string]interface{}{
-			"data":        users,
-			"total_count": total,
-		}, func() {
-			if len(users) == 0 {
+		return formatter.Output(result, func() {
+			if len(result.Users) == 0 {
 				fmt.Println("No users found")
 				return
 			}
 
-			rows := make([][]string, len(users))
-			for i, u := range users {
+			rows := make([][]string, len(result.Users))
+			for i, u := range result.Users {
 				email := ""
 				if len(u.EmailAddresses) > 0 {
 					email = u.EmailAddresses[0].EmailAddress
 				}
-				name := fmt.Sprintf("%s %s", u.FirstName, u.LastName)
+				name := fmt.Sprintf("%s %s", api.StrVal(u.FirstName), api.StrVal(u.LastName))
 				created := time.UnixMilli(u.CreatedAt).Format("2006-01-02")
 				rows[i] = []string{u.ID, name, email, created}
 			}
 			output.Table([]string{"ID", "NAME", "EMAIL", "CREATED"}, rows)
-			fmt.Printf("\nTotal: %d\n", total)
+			fmt.Printf("\nTotal: %d\n", result.TotalCount)
 		})
 	},
 }
@@ -96,13 +118,18 @@ var usersCountCmd = &cobra.Command{
 
 		query, _ := cmd.Flags().GetString("query")
 
-		count, err := usersAPI.Count(api.ListUsersParams{Query: query})
+		params := sdkuser.ListParams{}
+		if query != "" {
+			params.Query = clerk.String(query)
+		}
+
+		count, err := usersAPI.Count(params)
 		if err != nil {
 			return err
 		}
 
 		formatter := GetFormatter()
-		return formatter.Output(map[string]int{"count": count}, func() {
+		return formatter.Output(map[string]int64{"count": count}, func() {
 			fmt.Printf("Total users: %d\n", count)
 		})
 	},
@@ -127,9 +154,9 @@ var usersGetCmd = &cobra.Command{
 		formatter := GetFormatter()
 		return formatter.Output(user, func() {
 			fmt.Println(output.BoldYellow("User:"), user.ID)
-			fmt.Println(output.Dim("Name:"), fmt.Sprintf("%s %s", user.FirstName, user.LastName))
-			if user.Username != "" {
-				fmt.Println(output.Dim("Username:"), user.Username)
+			fmt.Println(output.Dim("Name:"), fmt.Sprintf("%s %s", api.StrVal(user.FirstName), api.StrVal(user.LastName)))
+			if api.StrVal(user.Username) != "" {
+				fmt.Println(output.Dim("Username:"), api.StrVal(user.Username))
 			}
 			if len(user.EmailAddresses) > 0 {
 				fmt.Println(output.Dim("Email:"), user.EmailAddresses[0].EmailAddress)
@@ -162,13 +189,24 @@ var usersCreateCmd = &cobra.Command{
 			emails = []string{email}
 		}
 
-		user, err := usersAPI.Create(api.CreateUserParams{
-			EmailAddress: emails,
-			FirstName:    firstName,
-			LastName:     lastName,
-			Username:     username,
-			Password:     password,
-		})
+		params := sdkuser.CreateParams{}
+		if len(emails) > 0 {
+			params.EmailAddresses = &emails
+		}
+		if firstName != "" {
+			params.FirstName = clerk.String(firstName)
+		}
+		if lastName != "" {
+			params.LastName = clerk.String(lastName)
+		}
+		if username != "" {
+			params.Username = clerk.String(username)
+		}
+		if password != "" {
+			params.Password = clerk.String(password)
+		}
+
+		user, err := usersAPI.Create(params)
 		if err != nil {
 			return err
 		}
@@ -195,11 +233,18 @@ var usersUpdateCmd = &cobra.Command{
 		lastName, _ := cmd.Flags().GetString("last-name")
 		username, _ := cmd.Flags().GetString("username")
 
-		user, err := usersAPI.Update(args[0], api.UpdateUserParams{
-			FirstName: firstName,
-			LastName:  lastName,
-			Username:  username,
-		})
+		params := sdkuser.UpdateParams{}
+		if firstName != "" {
+			params.FirstName = clerk.String(firstName)
+		}
+		if lastName != "" {
+			params.LastName = clerk.String(lastName)
+		}
+		if username != "" {
+			params.Username = clerk.String(username)
+		}
+
+		user, err := usersAPI.Update(args[0], params)
 		if err != nil {
 			return err
 		}

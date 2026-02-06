@@ -5,6 +5,10 @@ import (
 	"time"
 
 	"github.com/charmbracelet/huh"
+	clerk "github.com/clerk/clerk-sdk-go/v2"
+	sdkorg "github.com/clerk/clerk-sdk-go/v2/organization"
+	sdkorginvitation "github.com/clerk/clerk-sdk-go/v2/organizationinvitation"
+	sdkmembership "github.com/clerk/clerk-sdk-go/v2/organizationmembership"
 	"github.com/spf13/cobra"
 
 	"clerk.com/cli/internal/api"
@@ -33,32 +37,36 @@ var orgsListCmd = &cobra.Command{
 		offset, _ := cmd.Flags().GetInt("offset")
 		query, _ := cmd.Flags().GetString("query")
 
-		orgs, total, err := orgsAPI.List(api.ListOrganizationsParams{
-			Limit:  limit,
-			Offset: offset,
-			Query:  query,
-		})
+		params := sdkorg.ListParams{}
+		if limit > 0 {
+			params.Limit = clerk.Int64(int64(limit))
+		}
+		if offset > 0 {
+			params.Offset = clerk.Int64(int64(offset))
+		}
+		if query != "" {
+			params.Query = clerk.String(query)
+		}
+
+		result, err := orgsAPI.List(params)
 		if err != nil {
 			return err
 		}
 
 		formatter := GetFormatter()
-		return formatter.Output(map[string]interface{}{
-			"data":        orgs,
-			"total_count": total,
-		}, func() {
-			if len(orgs) == 0 {
+		return formatter.Output(result, func() {
+			if len(result.Organizations) == 0 {
 				fmt.Println("No organizations found")
 				return
 			}
 
-			rows := make([][]string, len(orgs))
-			for i, o := range orgs {
+			rows := make([][]string, len(result.Organizations))
+			for i, o := range result.Organizations {
 				created := time.UnixMilli(o.CreatedAt).Format("2006-01-02")
 				rows[i] = []string{o.ID, o.Name, o.Slug, created}
 			}
 			output.Table([]string{"ID", "NAME", "SLUG", "CREATED"}, rows)
-			fmt.Printf("\nTotal: %d\n", total)
+			fmt.Printf("\nTotal: %d\n", result.TotalCount)
 		})
 	},
 }
@@ -107,11 +115,17 @@ var orgsCreateCmd = &cobra.Command{
 			return fmt.Errorf("--name is required")
 		}
 
-		org, err := orgsAPI.Create(api.CreateOrganizationParams{
-			Name:      name,
-			Slug:      slug,
-			CreatedBy: createdBy,
-		})
+		params := sdkorg.CreateParams{
+			Name: clerk.String(name),
+		}
+		if slug != "" {
+			params.Slug = clerk.String(slug)
+		}
+		if createdBy != "" {
+			params.CreatedBy = clerk.String(createdBy)
+		}
+
+		org, err := orgsAPI.Create(params)
 		if err != nil {
 			return err
 		}
@@ -137,10 +151,15 @@ var orgsUpdateCmd = &cobra.Command{
 		name, _ := cmd.Flags().GetString("name")
 		slug, _ := cmd.Flags().GetString("slug")
 
-		org, err := orgsAPI.Update(args[0], api.UpdateOrganizationParams{
-			Name: name,
-			Slug: slug,
-		})
+		params := sdkorg.UpdateParams{}
+		if name != "" {
+			params.Name = clerk.String(name)
+		}
+		if slug != "" {
+			params.Slug = clerk.String(slug)
+		}
+
+		org, err := orgsAPI.Update(args[0], params)
 		if err != nil {
 			return err
 		}
@@ -209,30 +228,34 @@ var orgsMembersListCmd = &cobra.Command{
 		limit, _ := cmd.Flags().GetInt("limit")
 		offset, _ := cmd.Flags().GetInt("offset")
 
-		members, total, err := orgsAPI.ListMembers(args[0], api.ListMembersParams{
-			Limit:  limit,
-			Offset: offset,
-		})
+		params := sdkmembership.ListParams{
+			OrganizationID: args[0],
+		}
+		if limit > 0 {
+			params.Limit = clerk.Int64(int64(limit))
+		}
+		if offset > 0 {
+			params.Offset = clerk.Int64(int64(offset))
+		}
+
+		result, err := orgsAPI.ListMembers(params)
 		if err != nil {
 			return err
 		}
 
 		formatter := GetFormatter()
-		return formatter.Output(map[string]interface{}{
-			"data":        members,
-			"total_count": total,
-		}, func() {
-			if len(members) == 0 {
+		return formatter.Output(result, func() {
+			if len(result.OrganizationMemberships) == 0 {
 				fmt.Println("No members found")
 				return
 			}
 
-			rows := make([][]string, len(members))
-			for i, m := range members {
+			rows := make([][]string, len(result.OrganizationMemberships))
+			for i, m := range result.OrganizationMemberships {
 				rows[i] = []string{m.ID, m.Role, time.UnixMilli(m.CreatedAt).Format("2006-01-02")}
 			}
 			output.Table([]string{"ID", "ROLE", "JOINED"}, rows)
-			fmt.Printf("\nTotal: %d\n", total)
+			fmt.Printf("\nTotal: %d\n", result.TotalCount)
 		})
 	},
 }
@@ -255,9 +278,10 @@ var orgsMembersAddCmd = &cobra.Command{
 			return fmt.Errorf("--user-id is required")
 		}
 
-		member, err := orgsAPI.AddMember(args[0], api.AddMemberParams{
-			UserID: userID,
-			Role:   role,
+		member, err := orgsAPI.AddMember(sdkmembership.CreateParams{
+			OrganizationID: args[0],
+			UserID:         clerk.String(userID),
+			Role:           clerk.String(role),
 		})
 		if err != nil {
 			return err
@@ -283,8 +307,10 @@ var orgsMembersUpdateCmd = &cobra.Command{
 
 		role, _ := cmd.Flags().GetString("role")
 
-		member, err := orgsAPI.UpdateMember(args[0], args[1], api.UpdateMemberParams{
-			Role: role,
+		member, err := orgsAPI.UpdateMember(sdkmembership.UpdateParams{
+			OrganizationID: args[0],
+			UserID:         args[1],
+			Role:           clerk.String(role),
 		})
 		if err != nil {
 			return err
@@ -308,7 +334,10 @@ var orgsMembersRemoveCmd = &cobra.Command{
 		}
 		orgsAPI := api.NewOrganizationsAPI(client)
 
-		if err := orgsAPI.RemoveMember(args[0], args[1]); err != nil {
+		if err := orgsAPI.RemoveMember(sdkmembership.DeleteParams{
+			OrganizationID: args[0],
+			UserID:         args[1],
+		}); err != nil {
 			return err
 		}
 
@@ -339,26 +368,30 @@ var orgsInvitationsListCmd = &cobra.Command{
 		limit, _ := cmd.Flags().GetInt("limit")
 		offset, _ := cmd.Flags().GetInt("offset")
 
-		invitations, total, err := orgsAPI.ListInvitations(args[0], api.ListOrgInvitationsParams{
-			Limit:  limit,
-			Offset: offset,
-		})
+		params := sdkorginvitation.ListParams{
+			OrganizationID: args[0],
+		}
+		if limit > 0 {
+			params.Limit = clerk.Int64(int64(limit))
+		}
+		if offset > 0 {
+			params.Offset = clerk.Int64(int64(offset))
+		}
+
+		result, err := orgsAPI.ListInvitations(params)
 		if err != nil {
 			return err
 		}
 
 		formatter := GetFormatter()
-		return formatter.Output(map[string]interface{}{
-			"data":        invitations,
-			"total_count": total,
-		}, func() {
-			if len(invitations) == 0 {
+		return formatter.Output(result, func() {
+			if len(result.OrganizationInvitations) == 0 {
 				fmt.Println("No invitations found")
 				return
 			}
 
-			rows := make([][]string, len(invitations))
-			for i, inv := range invitations {
+			rows := make([][]string, len(result.OrganizationInvitations))
+			for i, inv := range result.OrganizationInvitations {
 				rows[i] = []string{inv.ID, inv.EmailAddress, inv.Role, inv.Status}
 			}
 			output.Table([]string{"ID", "EMAIL", "ROLE", "STATUS"}, rows)
@@ -384,9 +417,10 @@ var orgsInvitationsCreateCmd = &cobra.Command{
 			return fmt.Errorf("--email is required")
 		}
 
-		invitation, err := orgsAPI.CreateInvitation(args[0], api.CreateOrgInvitationParams{
-			EmailAddress: email,
-			Role:         role,
+		invitation, err := orgsAPI.CreateInvitation(sdkorginvitation.CreateParams{
+			OrganizationID: args[0],
+			EmailAddress:   clerk.String(email),
+			Role:           clerk.String(role),
 		})
 		if err != nil {
 			return err
@@ -410,7 +444,10 @@ var orgsInvitationsRevokeCmd = &cobra.Command{
 		}
 		orgsAPI := api.NewOrganizationsAPI(client)
 
-		invitation, err := orgsAPI.RevokeInvitation(args[0], args[1])
+		invitation, err := orgsAPI.RevokeInvitation(sdkorginvitation.RevokeParams{
+			OrganizationID: args[0],
+			ID:             args[1],
+		})
 		if err != nil {
 			return err
 		}

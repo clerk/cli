@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"time"
 
+	clerk "github.com/clerk/clerk-sdk-go/v2"
+	sdkjwt "github.com/clerk/clerk-sdk-go/v2/jwttemplate"
 	"github.com/spf13/cobra"
 
 	"clerk.com/cli/internal/api"
@@ -28,28 +30,25 @@ var jwtTemplatesListCmd = &cobra.Command{
 		}
 		jwtAPI := api.NewJWTTemplatesAPI(client)
 
-		templates, total, err := jwtAPI.List()
+		result, err := jwtAPI.List()
 		if err != nil {
 			return err
 		}
 
 		formatter := GetFormatter()
-		return formatter.Output(map[string]interface{}{
-			"data":        templates,
-			"total_count": total,
-		}, func() {
-			if len(templates) == 0 {
+		return formatter.Output(result, func() {
+			if len(result.JWTTemplates) == 0 {
 				fmt.Println("No JWT templates found")
 				return
 			}
 
-			rows := make([][]string, len(templates))
-			for i, t := range templates {
+			rows := make([][]string, len(result.JWTTemplates))
+			for i, t := range result.JWTTemplates {
 				created := time.UnixMilli(t.CreatedAt).Format("2006-01-02")
 				rows[i] = []string{t.ID, t.Name, t.SigningAlgorithm, created}
 			}
 			output.Table([]string{"ID", "NAME", "ALGORITHM", "CREATED"}, rows)
-			fmt.Printf("\nTotal: %d\n", total)
+			fmt.Printf("\nTotal: %d\n", result.TotalCount)
 		})
 	},
 }
@@ -78,9 +77,12 @@ var jwtTemplatesGetCmd = &cobra.Command{
 			fmt.Println(output.Dim("Lifetime:"), template.Lifetime, "seconds")
 			fmt.Println(output.Dim("Clock Skew:"), template.AllowedClockSkew, "seconds")
 			if len(template.Claims) > 0 {
-				if claimsJSON, err := json.MarshalIndent(template.Claims, "", "  "); err == nil {
-					fmt.Println(output.Dim("Claims:"))
-					fmt.Println(string(claimsJSON))
+				var claimsParsed interface{}
+				if err := json.Unmarshal(template.Claims, &claimsParsed); err == nil {
+					if claimsJSON, err := json.MarshalIndent(claimsParsed, "", "  "); err == nil {
+						fmt.Println(output.Dim("Claims:"))
+						fmt.Println(string(claimsJSON))
+					}
 				}
 			}
 		})
@@ -107,20 +109,32 @@ var jwtTemplatesCreateCmd = &cobra.Command{
 			return fmt.Errorf("--name is required")
 		}
 
-		var claims map[string]interface{}
+		var claimsJSON json.RawMessage
 		if claimsStr != "" {
-			if err := json.Unmarshal([]byte(claimsStr), &claims); err != nil {
+			var parsed interface{}
+			if err := json.Unmarshal([]byte(claimsStr), &parsed); err != nil {
 				return fmt.Errorf("invalid claims JSON: %w", err)
 			}
+			claimsJSON = json.RawMessage(claimsStr)
 		}
 
-		template, err := jwtAPI.Create(api.CreateJWTTemplateParams{
-			Name:             name,
-			Claims:           claims,
-			Lifetime:         lifetime,
-			AllowedClockSkew: clockSkew,
-			SigningAlgorithm: algorithm,
-		})
+		params := sdkjwt.CreateParams{
+			Name: clerk.String(name),
+		}
+		if len(claimsJSON) > 0 {
+			params.Claims = claimsJSON
+		}
+		if lifetime > 0 {
+			params.Lifetime = clerk.Int64(int64(lifetime))
+		}
+		if clockSkew > 0 {
+			params.AllowedClockSkew = clerk.Int64(int64(clockSkew))
+		}
+		if algorithm != "" {
+			params.SigningAlgorithm = clerk.String(algorithm)
+		}
+
+		template, err := jwtAPI.Create(params)
 		if err != nil {
 			return err
 		}
@@ -148,19 +162,30 @@ var jwtTemplatesUpdateCmd = &cobra.Command{
 		lifetime, _ := cmd.Flags().GetInt("lifetime")
 		clockSkew, _ := cmd.Flags().GetInt("clock-skew")
 
-		var claims map[string]interface{}
+		var claimsJSON json.RawMessage
 		if claimsStr != "" {
-			if err := json.Unmarshal([]byte(claimsStr), &claims); err != nil {
+			var parsed interface{}
+			if err := json.Unmarshal([]byte(claimsStr), &parsed); err != nil {
 				return fmt.Errorf("invalid claims JSON: %w", err)
 			}
+			claimsJSON = json.RawMessage(claimsStr)
 		}
 
-		template, err := jwtAPI.Update(args[0], api.UpdateJWTTemplateParams{
-			Name:             name,
-			Claims:           claims,
-			Lifetime:         lifetime,
-			AllowedClockSkew: clockSkew,
-		})
+		params := sdkjwt.UpdateParams{}
+		if name != "" {
+			params.Name = clerk.String(name)
+		}
+		if len(claimsJSON) > 0 {
+			params.Claims = claimsJSON
+		}
+		if lifetime > 0 {
+			params.Lifetime = clerk.Int64(int64(lifetime))
+		}
+		if clockSkew > 0 {
+			params.AllowedClockSkew = clerk.Int64(int64(clockSkew))
+		}
+
+		template, err := jwtAPI.Update(args[0], params)
 		if err != nil {
 			return err
 		}

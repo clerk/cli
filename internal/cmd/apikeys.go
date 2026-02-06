@@ -5,6 +5,8 @@ import (
 	"time"
 
 	"github.com/charmbracelet/huh"
+	clerk "github.com/clerk/clerk-sdk-go/v2"
+	sdkapikey "github.com/clerk/clerk-sdk-go/v2/apikey"
 	"github.com/spf13/cobra"
 
 	"clerk.com/cli/internal/api"
@@ -28,20 +30,20 @@ var apiKeysListCmd = &cobra.Command{
 		}
 		apiKeysAPI := api.NewAPIKeysAPI(client)
 
-		keys, err := apiKeysAPI.List()
+		result, err := apiKeysAPI.List()
 		if err != nil {
 			return err
 		}
 
 		formatter := GetFormatter()
-		return formatter.Output(keys, func() {
-			if len(keys) == 0 {
+		return formatter.Output(result, func() {
+			if len(result.APIKeys) == 0 {
 				fmt.Println("No API keys found")
 				return
 			}
 
-			rows := make([][]string, len(keys))
-			for i, k := range keys {
+			rows := make([][]string, len(result.APIKeys))
+			for i, k := range result.APIKeys {
 				created := time.UnixMilli(k.CreatedAt).Format("2006-01-02")
 				rows[i] = []string{k.ID, k.Name, k.Type, created}
 			}
@@ -93,10 +95,14 @@ var apiKeysCreateCmd = &cobra.Command{
 			return fmt.Errorf("--name is required")
 		}
 
-		key, err := apiKeysAPI.Create(api.CreateAPIKeyParams{
-			Name: name,
-			Type: keyType,
-		})
+		params := sdkapikey.CreateParams{
+			Name: clerk.String(name),
+		}
+		if keyType != "" {
+			params.Type = clerk.String(keyType)
+		}
+
+		key, err := apiKeysAPI.Create(params)
 		if err != nil {
 			return err
 		}

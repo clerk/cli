@@ -1,85 +1,44 @@
 package api
 
 import (
-	"fmt"
+	clerk "github.com/clerk/clerk-sdk-go/v2"
+	sdkdomain "github.com/clerk/clerk-sdk-go/v2/domain"
 )
 
-type Domain struct {
-	ID                string        `json:"id"`
-	Name              string        `json:"name"`
-	IsSatellite       bool          `json:"is_satellite"`
-	FrontendAPI       string        `json:"frontend_api_url,omitempty"`
-	AccountsURL       string        `json:"accounts_portal_url,omitempty"`
-	ProxyURL          string        `json:"proxy_url,omitempty"`
-	CNAMETargets      []CNAMETarget `json:"cname_targets,omitempty"`
-	DevelopmentOrigin string        `json:"development_origin"`
-	CreatedAt         int64         `json:"created_at"`
-	UpdatedAt         int64         `json:"updated_at"`
-}
-
-type CNAMETarget struct {
-	Host  string `json:"host"`
-	Value string `json:"value"`
-}
-
 type DomainsAPI struct {
-	client *Client
+	client    *Client
+	sdkClient *sdkdomain.Client
 }
 
 func NewDomainsAPI(client *Client) *DomainsAPI {
-	return &DomainsAPI{client: client}
+	return &DomainsAPI{
+		client:    client,
+		sdkClient: sdkdomain.NewClient(client.SDKConfig()),
+	}
 }
 
-func (a *DomainsAPI) List() ([]Domain, int, error) {
-	data, err := a.client.Get("/v1/domains", nil)
-	if err != nil {
-		return nil, 0, err
-	}
-
-	result, err := ParseListResponse[Domain](data)
-	if err != nil {
-		return nil, 0, err
-	}
-
-	return result.Data, result.TotalCount, nil
+func (a *DomainsAPI) List() (*clerk.DomainList, error) {
+	return a.sdkClient.List(a.client.Context(), &sdkdomain.ListParams{})
 }
 
-func (a *DomainsAPI) Get(id string) (*Domain, error) {
-	data, err := a.client.Get(fmt.Sprintf("/v1/domains/%s", id), nil)
+func (a *DomainsAPI) Get(id string) (*clerk.Domain, error) {
+	// The SDK domain client doesn't have a Get method, so we use the raw client
+	data, err := a.client.Get("/v1/domains/"+id, nil)
 	if err != nil {
 		return nil, err
 	}
-	return ParseResponse[*Domain](data)
+	return ParseResponse[*clerk.Domain](data)
 }
 
-type AddDomainParams struct {
-	Name        string `json:"name"`
-	IsSatellite bool   `json:"is_satellite"`
-	ProxyURL    string `json:"proxy_url,omitempty"`
+func (a *DomainsAPI) Add(params sdkdomain.CreateParams) (*clerk.Domain, error) {
+	return a.sdkClient.Create(a.client.Context(), &params)
 }
 
-func (a *DomainsAPI) Add(params AddDomainParams) (*Domain, error) {
-	data, err := a.client.Post("/v1/domains", params)
-	if err != nil {
-		return nil, err
-	}
-	return ParseResponse[*Domain](data)
-}
-
-type UpdateDomainParams struct {
-	Name     string `json:"name,omitempty"`
-	ProxyURL string `json:"proxy_url,omitempty"`
-}
-
-func (a *DomainsAPI) Update(id string, params UpdateDomainParams) (*Domain, error) {
-	data, err := a.client.Patch(fmt.Sprintf("/v1/domains/%s", id), params)
-	if err != nil {
-		return nil, err
-	}
-	return ParseResponse[*Domain](data)
+func (a *DomainsAPI) Update(id string, params sdkdomain.UpdateParams) (*clerk.Domain, error) {
+	return a.sdkClient.Update(a.client.Context(), id, &params)
 }
 
 func (a *DomainsAPI) Delete(id string) error {
-	_, err := a.client.Delete(fmt.Sprintf("/v1/domains/%s", id))
+	_, err := a.sdkClient.Delete(a.client.Context(), id)
 	return err
 }
