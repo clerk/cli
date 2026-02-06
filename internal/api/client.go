@@ -15,9 +15,10 @@ import (
 	"strings"
 	"time"
 
+	clerk "github.com/clerk/clerk-sdk-go/v2"
+
 	"clerk.com/cli/internal/config"
 	"clerk.com/cli/internal/output"
-	clerk "github.com/clerk/clerk-sdk-go/v2"
 )
 
 // Version is set at build time via ldflags.
