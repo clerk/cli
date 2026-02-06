@@ -1,250 +1,79 @@
 package api
 
 import (
-	"encoding/json"
-	"fmt"
-	"strconv"
+	clerk "github.com/clerk/clerk-sdk-go/v2"
+	sdkorg "github.com/clerk/clerk-sdk-go/v2/organization"
+	sdkorginvitation "github.com/clerk/clerk-sdk-go/v2/organizationinvitation"
+	sdkmembership "github.com/clerk/clerk-sdk-go/v2/organizationmembership"
 )
 
-type Organization struct {
-	ID                    string                 `json:"id"`
-	Name                  string                 `json:"name"`
-	Slug                  string                 `json:"slug,omitempty"`
-	ImageURL              string                 `json:"image_url,omitempty"`
-	MaxAllowedMemberships int                    `json:"max_allowed_memberships,omitempty"`
-	PublicMetadata        map[string]interface{} `json:"public_metadata,omitempty"`
-	PrivateMetadata       map[string]interface{} `json:"private_metadata,omitempty"`
-	CreatedAt             int64                  `json:"created_at"`
-	UpdatedAt             int64                  `json:"updated_at"`
-}
-
-type OrganizationMembership struct {
-	ID             string                 `json:"id"`
-	Organization   Organization           `json:"organization"`
-	PublicUserData map[string]interface{} `json:"public_user_data,omitempty"`
-	Role           string                 `json:"role"`
-	CreatedAt      int64                  `json:"created_at"`
-	UpdatedAt      int64                  `json:"updated_at"`
-}
-
-type OrganizationInvitation struct {
-	ID             string `json:"id"`
-	EmailAddress   string `json:"email_address"`
-	OrganizationID string `json:"organization_id"`
-	Role           string `json:"role"`
-	Status         string `json:"status"`
-	CreatedAt      int64  `json:"created_at"`
-	UpdatedAt      int64  `json:"updated_at"`
-}
-
 type OrganizationsAPI struct {
-	client *Client
+	client              *Client
+	sdkOrgClient        *sdkorg.Client
+	sdkMembershipClient *sdkmembership.Client
+	sdkInvitationClient *sdkorginvitation.Client
 }
 
 func NewOrganizationsAPI(client *Client) *OrganizationsAPI {
-	return &OrganizationsAPI{client: client}
+	config := client.SDKConfig()
+	return &OrganizationsAPI{
+		client:              client,
+		sdkOrgClient:        sdkorg.NewClient(config),
+		sdkMembershipClient: sdkmembership.NewClient(config),
+		sdkInvitationClient: sdkorginvitation.NewClient(config),
+	}
 }
 
-type ListOrganizationsParams struct {
-	Limit   int
-	Offset  int
-	OrderBy string
-	Query   string
+func (a *OrganizationsAPI) List(params sdkorg.ListParams) (*clerk.OrganizationList, error) {
+	return a.sdkOrgClient.List(a.client.Context(), &params)
 }
 
-func (a *OrganizationsAPI) List(params ListOrganizationsParams) ([]Organization, int, error) {
-	query := make(map[string]string)
-	if params.Limit > 0 {
-		query["limit"] = strconv.Itoa(params.Limit)
-	}
-	if params.Offset > 0 {
-		query["offset"] = strconv.Itoa(params.Offset)
-	}
-	if params.OrderBy != "" {
-		query["order_by"] = params.OrderBy
-	}
-	if params.Query != "" {
-		query["query"] = params.Query
-	}
-
-	data, err := a.client.Get("/v1/organizations", query)
-	if err != nil {
-		return nil, 0, err
-	}
-
-	result, err := ParseListResponse[Organization](data)
-	if err != nil {
-		return nil, 0, err
-	}
-
-	return result.Data, result.TotalCount, nil
+func (a *OrganizationsAPI) Get(id string) (*clerk.Organization, error) {
+	return a.sdkOrgClient.Get(a.client.Context(), id)
 }
 
-func (a *OrganizationsAPI) Get(id string) (*Organization, error) {
-	data, err := a.client.Get(fmt.Sprintf("/v1/organizations/%s", id), nil)
-	if err != nil {
-		return nil, err
-	}
-	return ParseResponse[*Organization](data)
+func (a *OrganizationsAPI) Create(params sdkorg.CreateParams) (*clerk.Organization, error) {
+	return a.sdkOrgClient.Create(a.client.Context(), &params)
 }
 
-type CreateOrganizationParams struct {
-	Name                  string                 `json:"name"`
-	Slug                  string                 `json:"slug,omitempty"`
-	CreatedBy             string                 `json:"created_by,omitempty"`
-	MaxAllowedMemberships int                    `json:"max_allowed_memberships,omitempty"`
-	PublicMetadata        map[string]interface{} `json:"public_metadata,omitempty"`
-	PrivateMetadata       map[string]interface{} `json:"private_metadata,omitempty"`
-}
-
-func (a *OrganizationsAPI) Create(params CreateOrganizationParams) (*Organization, error) {
-	data, err := a.client.Post("/v1/organizations", params)
-	if err != nil {
-		return nil, err
-	}
-	return ParseResponse[*Organization](data)
-}
-
-type UpdateOrganizationParams struct {
-	Name                  string                 `json:"name,omitempty"`
-	Slug                  string                 `json:"slug,omitempty"`
-	MaxAllowedMemberships int                    `json:"max_allowed_memberships,omitempty"`
-	PublicMetadata        map[string]interface{} `json:"public_metadata,omitempty"`
-	PrivateMetadata       map[string]interface{} `json:"private_metadata,omitempty"`
-}
-
-func (a *OrganizationsAPI) Update(id string, params UpdateOrganizationParams) (*Organization, error) {
-	data, err := a.client.Patch(fmt.Sprintf("/v1/organizations/%s", id), params)
-	if err != nil {
-		return nil, err
-	}
-	return ParseResponse[*Organization](data)
+func (a *OrganizationsAPI) Update(id string, params sdkorg.UpdateParams) (*clerk.Organization, error) {
+	return a.sdkOrgClient.Update(a.client.Context(), id, &params)
 }
 
 func (a *OrganizationsAPI) Delete(id string) error {
-	_, err := a.client.Delete(fmt.Sprintf("/v1/organizations/%s", id))
+	_, err := a.sdkOrgClient.Delete(a.client.Context(), id)
 	return err
 }
 
 // Members
 
-type ListMembersParams struct {
-	Limit   int
-	Offset  int
-	OrderBy string
+func (a *OrganizationsAPI) ListMembers(params sdkmembership.ListParams) (*clerk.OrganizationMembershipList, error) {
+	return a.sdkMembershipClient.List(a.client.Context(), &params)
 }
 
-func (a *OrganizationsAPI) ListMembers(orgID string, params ListMembersParams) ([]OrganizationMembership, int, error) {
-	query := make(map[string]string)
-	if params.Limit > 0 {
-		query["limit"] = strconv.Itoa(params.Limit)
-	}
-	if params.Offset > 0 {
-		query["offset"] = strconv.Itoa(params.Offset)
-	}
-	if params.OrderBy != "" {
-		query["order_by"] = params.OrderBy
-	}
-
-	data, err := a.client.Get(fmt.Sprintf("/v1/organizations/%s/memberships", orgID), query)
-	if err != nil {
-		return nil, 0, err
-	}
-
-	result, err := ParseListResponse[OrganizationMembership](data)
-	if err != nil {
-		return nil, 0, err
-	}
-
-	return result.Data, result.TotalCount, nil
+func (a *OrganizationsAPI) AddMember(params sdkmembership.CreateParams) (*clerk.OrganizationMembership, error) {
+	return a.sdkMembershipClient.Create(a.client.Context(), &params)
 }
 
-type AddMemberParams struct {
-	UserID string `json:"user_id"`
-	Role   string `json:"role"`
+func (a *OrganizationsAPI) UpdateMember(params sdkmembership.UpdateParams) (*clerk.OrganizationMembership, error) {
+	return a.sdkMembershipClient.Update(a.client.Context(), &params)
 }
 
-func (a *OrganizationsAPI) AddMember(orgID string, params AddMemberParams) (*OrganizationMembership, error) {
-	data, err := a.client.Post(fmt.Sprintf("/v1/organizations/%s/memberships", orgID), params)
-	if err != nil {
-		return nil, err
-	}
-	return ParseResponse[*OrganizationMembership](data)
-}
-
-type UpdateMemberParams struct {
-	Role string `json:"role"`
-}
-
-func (a *OrganizationsAPI) UpdateMember(orgID, userID string, params UpdateMemberParams) (*OrganizationMembership, error) {
-	data, err := a.client.Patch(fmt.Sprintf("/v1/organizations/%s/memberships/%s", orgID, userID), params)
-	if err != nil {
-		return nil, err
-	}
-	return ParseResponse[*OrganizationMembership](data)
-}
-
-func (a *OrganizationsAPI) RemoveMember(orgID, userID string) error {
-	_, err := a.client.Delete(fmt.Sprintf("/v1/organizations/%s/memberships/%s", orgID, userID))
+func (a *OrganizationsAPI) RemoveMember(params sdkmembership.DeleteParams) error {
+	_, err := a.sdkMembershipClient.Delete(a.client.Context(), &params)
 	return err
 }
 
 // Invitations
 
-type ListOrgInvitationsParams struct {
-	Limit  int
-	Offset int
-	Status string
+func (a *OrganizationsAPI) ListInvitations(params sdkorginvitation.ListParams) (*clerk.OrganizationInvitationList, error) {
+	return a.sdkInvitationClient.List(a.client.Context(), &params)
 }
 
-func (a *OrganizationsAPI) ListInvitations(orgID string, params ListOrgInvitationsParams) ([]OrganizationInvitation, int, error) {
-	query := make(map[string]string)
-	if params.Limit > 0 {
-		query["limit"] = strconv.Itoa(params.Limit)
-	}
-	if params.Offset > 0 {
-		query["offset"] = strconv.Itoa(params.Offset)
-	}
-	if params.Status != "" {
-		query["status"] = params.Status
-	}
-
-	data, err := a.client.Get(fmt.Sprintf("/v1/organizations/%s/invitations", orgID), query)
-	if err != nil {
-		return nil, 0, err
-	}
-
-	result, err := ParseListResponse[OrganizationInvitation](data)
-	if err != nil {
-		return nil, 0, err
-	}
-
-	return result.Data, result.TotalCount, nil
+func (a *OrganizationsAPI) CreateInvitation(params sdkorginvitation.CreateParams) (*clerk.OrganizationInvitation, error) {
+	return a.sdkInvitationClient.Create(a.client.Context(), &params)
 }
 
-type CreateOrgInvitationParams struct {
-	EmailAddress   string                 `json:"email_address"`
-	Role           string                 `json:"role"`
-	RedirectURL    string                 `json:"redirect_url,omitempty"`
-	PublicMetadata map[string]interface{} `json:"public_metadata,omitempty"`
-}
-
-func (a *OrganizationsAPI) CreateInvitation(orgID string, params CreateOrgInvitationParams) (*OrganizationInvitation, error) {
-	data, err := a.client.Post(fmt.Sprintf("/v1/organizations/%s/invitations", orgID), params)
-	if err != nil {
-		return nil, err
-	}
-	return ParseResponse[*OrganizationInvitation](data)
-}
-
-func (a *OrganizationsAPI) RevokeInvitation(orgID, invitationID string) (*OrganizationInvitation, error) {
-	data, err := a.client.Post(fmt.Sprintf("/v1/organizations/%s/invitations/%s/revoke", orgID, invitationID), nil)
-	if err != nil {
-		return nil, err
-	}
-	return ParseResponse[*OrganizationInvitation](data)
-}
-
-func init() {
-	_ = json.Marshal
+func (a *OrganizationsAPI) RevokeInvitation(params sdkorginvitation.RevokeParams) (*clerk.OrganizationInvitation, error) {
+	return a.sdkInvitationClient.Revoke(a.client.Context(), &params)
 }

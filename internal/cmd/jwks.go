@@ -39,9 +39,9 @@ var jwksGetCmd = &cobra.Command{
 
 			rows := make([][]string, len(jwks.Keys))
 			for i, k := range jwks.Keys {
-				rows[i] = []string{k.Kid, k.Kty, k.Alg, k.Use}
+				rows[i] = []string{k.KeyID, k.Algorithm, k.Use}
 			}
-			output.Table([]string{"KID", "KTY", "ALG", "USE"}, rows)
+			output.Table([]string{"KID", "ALG", "USE"}, rows)
 		})
 	},
 }

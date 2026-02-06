@@ -1,63 +1,35 @@
 package api
 
 import (
-	"fmt"
+	clerk "github.com/clerk/clerk-sdk-go/v2"
+	sdkemail "github.com/clerk/clerk-sdk-go/v2/emailaddress"
 )
 
-type EmailAddressDetails struct {
-	ID           string `json:"id"`
-	EmailAddress string `json:"email_address"`
-	Verified     bool   `json:"verified"`
-	Primary      bool   `json:"primary,omitempty"`
-	CreatedAt    int64  `json:"created_at"`
-	UpdatedAt    int64  `json:"updated_at"`
-}
-
 type EmailsAPI struct {
-	client *Client
+	client    *Client
+	sdkClient *sdkemail.Client
 }
 
 func NewEmailsAPI(client *Client) *EmailsAPI {
-	return &EmailsAPI{client: client}
-}
-
-func (a *EmailsAPI) Get(id string) (*EmailAddressDetails, error) {
-	data, err := a.client.Get(fmt.Sprintf("/v1/email_addresses/%s", id), nil)
-	if err != nil {
-		return nil, err
+	return &EmailsAPI{
+		client:    client,
+		sdkClient: sdkemail.NewClient(client.SDKConfig()),
 	}
-	return ParseResponse[*EmailAddressDetails](data)
 }
 
-type CreateEmailParams struct {
-	UserID       string `json:"user_id"`
-	EmailAddress string `json:"email_address"`
-	Verified     bool   `json:"verified,omitempty"`
-	Primary      bool   `json:"primary,omitempty"`
+func (a *EmailsAPI) Get(id string) (*clerk.EmailAddress, error) {
+	return a.sdkClient.Get(a.client.Context(), id)
 }
 
-func (a *EmailsAPI) Create(params CreateEmailParams) (*EmailAddressDetails, error) {
-	data, err := a.client.Post("/v1/email_addresses", params)
-	if err != nil {
-		return nil, err
-	}
-	return ParseResponse[*EmailAddressDetails](data)
+func (a *EmailsAPI) Create(params sdkemail.CreateParams) (*clerk.EmailAddress, error) {
+	return a.sdkClient.Create(a.client.Context(), &params)
 }
 
-type UpdateEmailParams struct {
-	Verified bool `json:"verified,omitempty"`
-	Primary  bool `json:"primary,omitempty"`
-}
-
-func (a *EmailsAPI) Update(id string, params UpdateEmailParams) (*EmailAddressDetails, error) {
-	data, err := a.client.Patch(fmt.Sprintf("/v1/email_addresses/%s", id), params)
-	if err != nil {
-		return nil, err
-	}
-	return ParseResponse[*EmailAddressDetails](data)
+func (a *EmailsAPI) Update(id string, params sdkemail.UpdateParams) (*clerk.EmailAddress, error) {
+	return a.sdkClient.Update(a.client.Context(), id, &params)
 }
 
 func (a *EmailsAPI) Delete(id string) error {
-	_, err := a.client.Delete(fmt.Sprintf("/v1/email_addresses/%s", id))
+	_, err := a.sdkClient.Delete(a.client.Context(), id)
 	return err
 }

@@ -1,33 +1,22 @@
 package api
 
-type JWKS struct {
-	Keys []JWK `json:"keys"`
-}
-
-type JWK struct {
-	Use string `json:"use"`
-	Kty string `json:"kty"`
-	Kid string `json:"kid"`
-	Alg string `json:"alg"`
-	N   string `json:"n,omitempty"`
-	E   string `json:"e,omitempty"`
-	Crv string `json:"crv,omitempty"`
-	X   string `json:"x,omitempty"`
-	Y   string `json:"y,omitempty"`
-}
+import (
+	clerk "github.com/clerk/clerk-sdk-go/v2"
+	sdkjwks "github.com/clerk/clerk-sdk-go/v2/jwks"
+)
 
 type JWKSAPI struct {
-	client *Client
+	client    *Client
+	sdkClient *sdkjwks.Client
 }
 
 func NewJWKSAPI(client *Client) *JWKSAPI {
-	return &JWKSAPI{client: client}
+	return &JWKSAPI{
+		client:    client,
+		sdkClient: sdkjwks.NewClient(client.SDKConfig()),
+	}
 }
 
-func (a *JWKSAPI) Get() (*JWKS, error) {
-	data, err := a.client.Get("/v1/jwks", nil)
-	if err != nil {
-		return nil, err
-	}
-	return ParseResponse[*JWKS](data)
+func (a *JWKSAPI) Get() (*clerk.JSONWebKeySet, error) {
+	return a.sdkClient.Get(a.client.Context(), &sdkjwks.GetParams{})
 }

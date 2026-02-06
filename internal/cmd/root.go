@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"strings"
@@ -19,6 +20,8 @@ var (
 	outputFlag  string
 	debugFlag   bool
 	dotenvFlag  bool
+	// cmdCtx is the active Cobra command context for the current invocation.
+	cmdCtx context.Context
 
 	Version = "dev"
 )
@@ -33,6 +36,7 @@ domains, JWT templates, and security rules (Clerk Protect).`,
 	SilenceUsage:  true,
 	SilenceErrors: true,
 	PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
+		cmdCtx = cmd.Context()
 		_, _ = config.Load()
 		return nil
 	},
@@ -145,6 +149,7 @@ func GetClient() (*api.Client, error) {
 		Profile: profileName,
 		APIKey:  apiKey,
 		Debug:   IsDebug(),
+		Context: cmdCtx,
 	}), nil
 }
 
@@ -270,6 +275,7 @@ Get your Platform API key from the Clerk Dashboard:
 		Profile: profileName,
 		APIKey:  apiKey,
 		Debug:   IsDebug(),
+		Context: cmdCtx,
 	}), nil
 }
 

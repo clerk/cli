@@ -1,86 +1,39 @@
 package api
 
 import (
-	"fmt"
+	clerk "github.com/clerk/clerk-sdk-go/v2"
+	sdkjwt "github.com/clerk/clerk-sdk-go/v2/jwttemplate"
 )
 
-type JWTTemplate struct {
-	ID               string                 `json:"id"`
-	Name             string                 `json:"name"`
-	Claims           map[string]interface{} `json:"claims"`
-	Lifetime         int                    `json:"lifetime"`
-	AllowedClockSkew int                    `json:"allowed_clock_skew"`
-	CustomSigningKey bool                   `json:"custom_signing_key"`
-	SigningAlgorithm string                 `json:"signing_algorithm"`
-	CreatedAt        int64                  `json:"created_at"`
-	UpdatedAt        int64                  `json:"updated_at"`
-}
-
 type JWTTemplatesAPI struct {
-	client *Client
+	client    *Client
+	sdkClient *sdkjwt.Client
 }
 
 func NewJWTTemplatesAPI(client *Client) *JWTTemplatesAPI {
-	return &JWTTemplatesAPI{client: client}
-}
-
-func (a *JWTTemplatesAPI) List() ([]JWTTemplate, int, error) {
-	data, err := a.client.Get("/v1/jwt_templates", nil)
-	if err != nil {
-		return nil, 0, err
+	return &JWTTemplatesAPI{
+		client:    client,
+		sdkClient: sdkjwt.NewClient(client.SDKConfig()),
 	}
-
-	result, err := ParseArrayResponse[JWTTemplate](data)
-	if err != nil {
-		return nil, 0, err
-	}
-
-	return result, len(result), nil
 }
 
-func (a *JWTTemplatesAPI) Get(id string) (*JWTTemplate, error) {
-	data, err := a.client.Get(fmt.Sprintf("/v1/jwt_templates/%s", id), nil)
-	if err != nil {
-		return nil, err
-	}
-	return ParseResponse[*JWTTemplate](data)
+func (a *JWTTemplatesAPI) List() (*clerk.JWTTemplateList, error) {
+	return a.sdkClient.List(a.client.Context(), &sdkjwt.ListParams{})
 }
 
-type CreateJWTTemplateParams struct {
-	Name             string                 `json:"name"`
-	Claims           map[string]interface{} `json:"claims"`
-	Lifetime         int                    `json:"lifetime,omitempty"`
-	AllowedClockSkew int                    `json:"allowed_clock_skew,omitempty"`
-	SigningAlgorithm string                 `json:"signing_algorithm,omitempty"`
-	SigningKey       string                 `json:"signing_key,omitempty"`
+func (a *JWTTemplatesAPI) Get(id string) (*clerk.JWTTemplate, error) {
+	return a.sdkClient.Get(a.client.Context(), id)
 }
 
-func (a *JWTTemplatesAPI) Create(params CreateJWTTemplateParams) (*JWTTemplate, error) {
-	data, err := a.client.Post("/v1/jwt_templates", params)
-	if err != nil {
-		return nil, err
-	}
-	return ParseResponse[*JWTTemplate](data)
+func (a *JWTTemplatesAPI) Create(params sdkjwt.CreateParams) (*clerk.JWTTemplate, error) {
+	return a.sdkClient.Create(a.client.Context(), &params)
 }
 
-type UpdateJWTTemplateParams struct {
-	Name             string                 `json:"name,omitempty"`
-	Claims           map[string]interface{} `json:"claims,omitempty"`
-	Lifetime         int                    `json:"lifetime,omitempty"`
-	AllowedClockSkew int                    `json:"allowed_clock_skew,omitempty"`
-	SigningAlgorithm string                 `json:"signing_algorithm,omitempty"`
-	SigningKey       string                 `json:"signing_key,omitempty"`
-}
-
-func (a *JWTTemplatesAPI) Update(id string, params UpdateJWTTemplateParams) (*JWTTemplate, error) {
-	data, err := a.client.Patch(fmt.Sprintf("/v1/jwt_templates/%s", id), params)
-	if err != nil {
-		return nil, err
-	}
-	return ParseResponse[*JWTTemplate](data)
+func (a *JWTTemplatesAPI) Update(id string, params sdkjwt.UpdateParams) (*clerk.JWTTemplate, error) {
+	return a.sdkClient.Update(a.client.Context(), id, &params)
 }
 
 func (a *JWTTemplatesAPI) Delete(id string) error {
-	_, err := a.client.Delete(fmt.Sprintf("/v1/jwt_templates/%s", id))
+	_, err := a.sdkClient.Delete(a.client.Context(), id)
 	return err
 }

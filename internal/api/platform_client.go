@@ -2,6 +2,7 @@ package api
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -25,6 +26,7 @@ type PlatformClient struct {
 	apiKey     string
 	httpClient *http.Client
 	debug      bool
+	ctx        context.Context
 }
 
 // PlatformClientOptions configures a PlatformClient.
@@ -33,6 +35,7 @@ type PlatformClientOptions struct {
 	APIKey  string
 	APIURL  string
 	Debug   bool
+	Context context.Context
 }
 
 // NewPlatformClient creates a new Platform API client.
@@ -50,13 +53,26 @@ func NewPlatformClient(opts PlatformClientOptions) *PlatformClient {
 	}
 
 	debug := opts.Debug || config.IsDebugEnabled()
+	ctx := opts.Context
+	if ctx == nil {
+		ctx = context.Background()
+	}
 
 	return &PlatformClient{
 		baseURL:    strings.TrimSuffix(apiURL, "/"),
 		apiKey:     apiKey,
 		httpClient: &http.Client{Timeout: 30 * time.Second},
 		debug:      debug,
+		ctx:        ctx,
 	}
+}
+
+// Context returns the request context configured for this client.
+func (c *PlatformClient) Context() context.Context {
+	if c.ctx == nil {
+		return context.Background()
+	}
+	return c.ctx
 }
 
 // Request performs an HTTP request to the Platform API.
@@ -101,7 +117,7 @@ func (c *PlatformClient) RequestWithMeta(method, path string, opts *RequestOptio
 			time.Sleep(delay)
 		}
 
-		req, err := http.NewRequest(method, fullURL, bodyReader)
+		req, err := http.NewRequestWithContext(c.Context(), method, fullURL, bodyReader)
 		if err != nil {
 			return nil, nil, fmt.Errorf("failed to create request: %w", err)
 		}

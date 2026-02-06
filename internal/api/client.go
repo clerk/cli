@@ -2,6 +2,7 @@ package api
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -13,6 +14,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	clerk "github.com/clerk/clerk-sdk-go/v2"
 
 	"clerk.com/cli/internal/config"
 	"clerk.com/cli/internal/output"
@@ -32,6 +35,7 @@ type Client struct {
 	apiKey     string
 	httpClient *http.Client
 	debug      bool
+	ctx        context.Context
 }
 
 type ClientOptions struct {
@@ -39,6 +43,7 @@ type ClientOptions struct {
 	APIKey  string
 	APIURL  string
 	Debug   bool
+	Context context.Context
 }
 
 func NewClient(opts ClientOptions) *Client {
@@ -55,13 +60,62 @@ func NewClient(opts ClientOptions) *Client {
 	}
 
 	debug := opts.Debug || config.IsDebugEnabled()
+	ctx := opts.Context
+	if ctx == nil {
+		ctx = context.Background()
+	}
 
 	return &Client{
 		baseURL:    strings.TrimSuffix(apiURL, "/"),
 		apiKey:     apiKey,
 		httpClient: &http.Client{Timeout: 30 * time.Second},
 		debug:      debug,
+		ctx:        ctx,
 	}
+}
+
+// Context returns the request context configured for this client.
+func (c *Client) Context() context.Context {
+	if c.ctx == nil {
+		return context.Background()
+	}
+	return c.ctx
+}
+
+// SDKConfig returns a clerk.ClientConfig configured from the CLI client's settings.
+func (c *Client) SDKConfig() *clerk.ClientConfig {
+	// The CLI uses base URL like "https://api.clerk.com" and prepends "/v1/..." to paths.
+	// The SDK uses "https://api.clerk.com/v1" as the base URL and appends resource paths.
+	sdkURL := c.baseURL
+	if !strings.HasSuffix(sdkURL, "/v1") {
+		sdkURL = strings.TrimSuffix(sdkURL, "/") + "/v1"
+	}
+
+	return &clerk.ClientConfig{
+		BackendConfig: clerk.BackendConfig{
+			URL: clerk.String(sdkURL),
+			Key: clerk.String(c.apiKey),
+			HTTPClient: &http.Client{
+				Timeout: c.httpClient.Timeout,
+			},
+		},
+	}
+}
+
+// StrVal safely dereferences a string pointer, returning "" if nil.
+func StrVal(s *string) string {
+	if s == nil {
+		return ""
+	}
+	return *s
+}
+
+// Int64Val safely dereferences an int64 pointer, returning 0 if nil.
+func Int64Val(p *int64) int64 {
+	if p == nil {
+		return 0
+	}
+	return *p
 }
 
 type RequestOptions struct {
@@ -114,7 +168,7 @@ func (c *Client) RequestWithMeta(method, path string, opts *RequestOptions) ([]b
 			time.Sleep(delay)
 		}
 
-		req, err := http.NewRequest(method, fullURL, bodyReader)
+		req, err := http.NewRequestWithContext(c.Context(), method, fullURL, bodyReader)
 		if err != nil {
 			return nil, nil, fmt.Errorf("failed to create request: %w", err)
 		}
