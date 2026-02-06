@@ -10,8 +10,6 @@ import (
 type Application struct {
 	ID        string                `json:"application_id"`
 	Name      string                `json:"name,omitempty"`
-	LogoURL   string                `json:"logo_url,omitempty"`
-	HomeURL   string                `json:"home_url,omitempty"`
 	Instances []ApplicationInstance `json:"instances,omitempty"`
 	CreatedAt int64                 `json:"created_at,omitempty"`
 	UpdatedAt int64                 `json:"updated_at,omitempty"`
@@ -83,9 +81,11 @@ func (a *ApplicationsAPI) Get(id string) (*Application, error) {
 
 // CreateApplicationParams contains parameters for creating an application.
 type CreateApplicationParams struct {
-	Name    string `json:"name"`
-	LogoURL string `json:"logo_url,omitempty"`
-	HomeURL string `json:"home_url,omitempty"`
+	Name             string   `json:"name"`
+	EnvironmentTypes []string `json:"environment_types,omitempty"`
+	ProxyPath        string   `json:"proxy_path,omitempty"`
+	Template         string   `json:"template,omitempty"`
+	Domain           string   `json:"domain,omitempty"`
 }
 
 // Create creates a new application.
@@ -99,9 +99,7 @@ func (a *ApplicationsAPI) Create(params CreateApplicationParams) (*Application, 
 
 // UpdateApplicationParams contains parameters for updating an application.
 type UpdateApplicationParams struct {
-	Name    string `json:"name,omitempty"`
-	LogoURL string `json:"logo_url,omitempty"`
-	HomeURL string `json:"home_url,omitempty"`
+	Name string `json:"name,omitempty"`
 }
 
 // Update updates an existing application.

@@ -92,6 +92,6 @@ func ExpandAlias(args []string) ([]string, bool) {
 	}
 
 	expandedParts := strings.Fields(aliasCmd)
-	expandedArgs := append(expandedParts, args[1:]...)
-	return expandedArgs, true
+	expandedParts = append(expandedParts, args[1:]...)
+	return expandedParts, true
 }

@@ -83,9 +83,9 @@ func Load() (*Config, error) {
 		if migrateFromJSON(oldConfigFile, cfg) {
 			// Save in new format and remove old file
 			cfgMu.Unlock()
-			Save()
+			_ = Save()
 			cfgMu.Lock()
-			os.Remove(oldConfigFile)
+			_ = os.Remove(oldConfigFile)
 		}
 	}
 
@@ -97,7 +97,7 @@ func loadINI(filename string, cfg *Config) error {
 	if err != nil {
 		return err
 	}
-	defer file.Close()
+	defer file.Close() //nolint:errcheck // best-effort cleanup
 
 	scanner := bufio.NewScanner(file)
 	var currentSection string
@@ -115,16 +115,17 @@ func loadINI(filename string, cfg *Config) error {
 		if strings.HasPrefix(line, "[") && strings.HasSuffix(line, "]") {
 			section := strings.TrimSpace(line[1 : len(line)-1])
 
-			if section == "default" {
+			switch {
+			case section == "default":
 				currentSection = "default"
 				currentProfile = ""
-			} else if strings.HasPrefix(section, "profile ") {
+			case strings.HasPrefix(section, "profile "):
 				currentSection = "profile"
 				currentProfile = strings.TrimSpace(section[8:])
 				if cfg.Profiles[currentProfile] == nil {
 					cfg.Profiles[currentProfile] = make(map[string]string)
 				}
-			} else {
+			default:
 				currentSection = section
 				currentProfile = ""
 			}
@@ -621,7 +622,7 @@ func parseEnvFileForKey(filename, targetKey string) string {
 	if err != nil {
 		return ""
 	}
-	defer file.Close()
+	defer file.Close() //nolint:errcheck // best-effort cleanup
 
 	scanner := bufio.NewScanner(file)
 	for scanner.Scan() {

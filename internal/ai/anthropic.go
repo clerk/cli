@@ -107,11 +107,7 @@ func (p *AnthropicProvider) chatWithTools(sysPrompt string, messages []anthropic
 	var anthropicTools []anthropicTool
 	if tools.HasTools() {
 		for _, t := range tools.GetTools() {
-			anthropicTools = append(anthropicTools, anthropicTool{
-				Name:        t.Name,
-				Description: t.Description,
-				InputSchema: t.InputSchema,
-			})
+			anthropicTools = append(anthropicTools, anthropicTool(t))
 		}
 	}
 
@@ -208,7 +204,7 @@ func (p *AnthropicProvider) doRequest(reqBody anthropicRequest) (*anthropicRespo
 	if err != nil {
 		return nil, fmt.Errorf("failed to make request: %w", err)
 	}
-	defer resp.Body.Close()
+	defer resp.Body.Close() //nolint:errcheck // best-effort cleanup
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
@@ -221,7 +217,7 @@ func (p *AnthropicProvider) doRequest(reqBody anthropicRequest) (*anthropicRespo
 	}
 
 	if result.Error != nil {
-		return nil, fmt.Errorf("Anthropic error: %s", result.Error.Message)
+		return nil, fmt.Errorf("anthropic error: %s", result.Error.Message)
 	}
 
 	return &result, nil

@@ -37,7 +37,7 @@ domains, JWT templates, and security rules (Clerk Protect).`,
 	SilenceErrors: true,
 	PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
 		cmdCtx = cmd.Context()
-		config.Load()
+		_, _ = config.Load()
 		return nil
 	},
 }
