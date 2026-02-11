@@ -1,0 +1,5 @@
+{
+  "scripts": {
+    "run": "bun run dev -- init"
+  }
+}
