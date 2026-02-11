@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { program } from "commander";
+import { setMode, type Mode } from "./mode.js";
 import { init } from "./commands/init.js";
 import { login } from "./commands/auth/login.js";
 import { logout } from "./commands/auth/logout.js";
@@ -9,7 +10,22 @@ import { pull } from "./commands/env/pull.js";
 program
   .name("clerk")
   .description("Clerk CLI")
-  .version("0.0.1");
+  .version("0.0.1")
+  .option(
+    "--mode <mode>",
+    "Force interaction mode (human or agent). Defaults to auto-detect based on TTY.",
+  );
+
+program.hook("preAction", () => {
+  const opts = program.opts();
+  if (opts.mode) {
+    if (opts.mode !== "human" && opts.mode !== "agent") {
+      console.error(`Invalid mode "${opts.mode}". Must be "human" or "agent".`);
+      process.exit(1);
+    }
+    setMode(opts.mode as Mode);
+  }
+});
 
 program
   .command("init")
