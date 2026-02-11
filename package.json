@@ -1,0 +1,23 @@
+{
+  "name": "@clerk/cli",
+  "version": "0.0.1",
+  "description": "Clerk CLI",
+  "type": "module",
+  "bin": {
+    "clerk": "./dist/cli.js"
+  },
+  "scripts": {
+    "build": "bun build ./src/cli.ts --outfile ./dist/cli.js --target node",
+    "dev": "bun run ./src/cli.ts"
+  },
+  "devDependencies": {
+    "@types/bun": "latest"
+  },
+  "peerDependencies": {
+    "typescript": "^5"
+  },
+  "dependencies": {
+    "@inquirer/prompts": "^8.2.0",
+    "commander": "^14.0.3"
+  }
+}
