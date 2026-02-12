@@ -6,6 +6,7 @@ import { login } from "./commands/auth/login.js";
 import { logout } from "./commands/auth/logout.js";
 import { whoami } from "./commands/whoami.js";
 import { pull } from "./commands/env/pull.js";
+import { deploy } from "./commands/deploy/index.js";
 
 program
   .name("clerk")
@@ -60,5 +61,11 @@ env
   .command("pull")
   .description("Pull environment variables from Clerk to .env.local")
   .action(pull);
+
+program
+  .command("deploy")
+  .description("Deploy your Clerk application")
+  .option("--debug", "Show debug output")
+  .action(deploy);
 
 program.parse();
