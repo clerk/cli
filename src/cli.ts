@@ -101,7 +101,8 @@ config
 program
   .command("api")
   .description("Make authenticated requests to the Clerk API")
-  .argument("<endpoint>", "API endpoint path (e.g., /users, /organizations)")
+  .argument("[endpoint]", "API endpoint path, 'ls' to list endpoints, or omit for interactive mode")
+  .argument("[filter]", "Filter keyword (used with 'ls')")
   .option("-X, --method <method>", "HTTP method (default: GET, or POST if body provided)")
   .option("-d, --data <json>", "JSON request body")
   .option("--file <path>", "Read request body from a file")

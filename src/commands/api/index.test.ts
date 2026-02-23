@@ -48,7 +48,7 @@ describe("api command", () => {
 
   async function runApi(endpoint: string, options: Record<string, unknown> = {}) {
     const { api } = await import("./index");
-    return api(endpoint, options);
+    return api(endpoint, undefined, options);
   }
 
   // --- GET requests ---

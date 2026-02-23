@@ -1,0 +1,181 @@
+import { test, expect, describe, beforeEach, afterEach, spyOn, mock } from "bun:test";
+import { mkdtemp, rm } from "node:fs/promises";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
+import { parseSpec, _setCacheDir } from "./catalog";
+import { setMode } from "../../mode";
+
+const MINIMAL_SPEC = `
+openapi: "3.0.0"
+info:
+  title: Test API
+  version: "1.0"
+paths:
+  /users:
+    get:
+      tags: [Users]
+      summary: List all users
+      operationId: GetUserList
+    post:
+      tags: [Users]
+      summary: Create a new user
+      operationId: CreateUser
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+  /users/{user_id}:
+    get:
+      tags: [Users]
+      summary: Retrieve a user
+      operationId: GetUser
+      parameters:
+        - name: user_id
+          in: path
+          description: The ID of the user
+`;
+
+// Track mock prompt responses
+let selectResponses: unknown[] = [];
+let inputResponses: string[] = [];
+let confirmResponses: boolean[] = [];
+
+// Track api calls
+let apiCalls: { endpoint: string; options: Record<string, unknown> }[] = [];
+
+mock.module("@inquirer/prompts", () => ({
+  select: async () => selectResponses.shift(),
+  input: async () => inputResponses.shift(),
+  confirm: async () => confirmResponses.shift(),
+  editor: async () => "{}",
+}));
+
+// Mock the api handler to track calls without making real requests
+mock.module("./index.ts", () => ({
+  api: async (endpoint: string, _filter: unknown, options: Record<string, unknown>) => {
+    apiCalls.push({ endpoint, options });
+  },
+}));
+
+describe("apiInteractive", () => {
+  let tempDir: string;
+  let errorSpy: ReturnType<typeof spyOn>;
+  let exitSpy: ReturnType<typeof spyOn>;
+  const originalFetch = globalThis.fetch;
+
+  beforeEach(async () => {
+    tempDir = await mkdtemp(join(tmpdir(), "clerk-interactive-test-"));
+    _setCacheDir(tempDir);
+
+    // Pre-populate fresh cache
+    const cached = parseSpec(MINIMAL_SPEC);
+    cached.fetchedAt = Date.now();
+    await Bun.write(join(tempDir, "bapi-catalog.json"), JSON.stringify(cached));
+
+    errorSpy = spyOn(console, "error").mockImplementation(() => {});
+    exitSpy = spyOn(process, "exit").mockImplementation(() => {
+      throw new Error("process.exit");
+    });
+    globalThis.fetch = async () => {
+      throw new Error("Should not fetch");
+    };
+
+    // Reset tracking
+    selectResponses = [];
+    inputResponses = [];
+    confirmResponses = [];
+    apiCalls = [];
+  });
+
+  afterEach(async () => {
+    _setCacheDir(undefined);
+    globalThis.fetch = originalFetch;
+    errorSpy.mockRestore();
+    exitSpy.mockRestore();
+    await rm(tempDir, { recursive: true, force: true });
+  });
+
+  test("shows help and exits in agent mode", async () => {
+    setMode("agent");
+    const { apiInteractive } = await import("./interactive");
+
+    await expect(apiInteractive({})).rejects.toThrow("process.exit");
+    expect(errorSpy).toHaveBeenCalledWith(
+      expect.stringContaining("Interactive mode requires a TTY"),
+    );
+    setMode("human");
+  });
+
+  test("completes full flow for GET endpoint (no body, no params)", async () => {
+    setMode("human");
+    const { apiInteractive } = await import("./interactive");
+
+    // Step 1: select tag "Users"
+    selectResponses.push("Users");
+    // Step 2: select endpoint GET /users
+    selectResponses.push({
+      method: "GET",
+      path: "/users",
+      summary: "List all users",
+      tag: "Users",
+      operationId: "GetUserList",
+      pathParams: [],
+      hasRequestBody: false,
+    });
+    // Step 5: confirm execution
+    confirmResponses.push(true);
+
+    await apiInteractive({});
+
+    expect(apiCalls.length).toBe(1);
+    expect(apiCalls[0].endpoint).toBe("/users");
+    expect(apiCalls[0].options.method).toBe("GET");
+    expect(apiCalls[0].options.yes).toBe(true);
+  });
+
+  test("prompts for path parameters", async () => {
+    setMode("human");
+    const { apiInteractive } = await import("./interactive");
+
+    selectResponses.push("Users");
+    selectResponses.push({
+      method: "GET",
+      path: "/users/{user_id}",
+      summary: "Retrieve a user",
+      tag: "Users",
+      operationId: "GetUser",
+      pathParams: [{ name: "user_id", description: "The ID of the user" }],
+      hasRequestBody: false,
+    });
+    inputResponses.push("user_abc123");
+    confirmResponses.push(true);
+
+    await apiInteractive({});
+
+    expect(apiCalls.length).toBe(1);
+    expect(apiCalls[0].endpoint).toBe("/users/user_abc123");
+  });
+
+  test("aborts when user declines confirmation", async () => {
+    setMode("human");
+    const { apiInteractive } = await import("./interactive");
+
+    selectResponses.push("Users");
+    selectResponses.push({
+      method: "GET",
+      path: "/users",
+      summary: "List all users",
+      tag: "Users",
+      operationId: "GetUserList",
+      pathParams: [],
+      hasRequestBody: false,
+    });
+    confirmResponses.push(false); // decline
+
+    await apiInteractive({});
+
+    expect(apiCalls.length).toBe(0);
+    expect(errorSpy).toHaveBeenCalledWith("Aborted.");
+  });
+});

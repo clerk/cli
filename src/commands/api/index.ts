@@ -5,7 +5,7 @@ import { BAPI_BASE_URL, PLAPI_BASE_URL } from "../../lib/constants.ts";
 import { bapiRequest, BapiError } from "./bapi.ts";
 import { isHuman } from "../../mode.ts";
 
-interface ApiOptions {
+export interface ApiOptions {
   method?: string;
   data?: string;
   file?: string;
@@ -19,7 +19,23 @@ interface ApiOptions {
 
 const MUTATING_METHODS = new Set(["POST", "PUT", "PATCH", "DELETE"]);
 
-export async function api(endpoint: string, options: ApiOptions): Promise<void> {
+export async function api(
+  endpoint: string | undefined,
+  filter: string | undefined,
+  options: ApiOptions,
+): Promise<void> {
+  // Route: no args → interactive builder
+  if (!endpoint) {
+    const { apiInteractive } = await import("./interactive.ts");
+    return apiInteractive(options);
+  }
+
+  // Route: "ls" → list endpoints
+  if (endpoint === "ls") {
+    const { apiLs } = await import("./ls.ts");
+    return apiLs(filter, options);
+  }
+
   // 1. Resolve the request body
   const body = await resolveBody(options);
 

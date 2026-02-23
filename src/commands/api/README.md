@@ -8,6 +8,15 @@ the instance secret key. Use `--platform` to target the Platform API instead.
 ## Usage
 
 ```sh
+# List available API endpoints
+clerk api ls
+
+# Filter endpoints by keyword
+clerk api ls users
+
+# Interactive request builder (TTY only)
+clerk api
+
 # List users
 clerk api /users
 
@@ -86,6 +95,29 @@ Base URL: `https://api.clerk.com` (overridable via `CLERK_PLATFORM_API_URL`)
 | Method | Endpoint | Description |
 |---|---|---|
 | Any | `/v1/{path}` | Pass-through to Clerk Platform API. Authenticated via `Bearer` token from `CLERK_PLATFORM_API_KEY`. |
+
+## Subcommands
+
+### `clerk api ls [filter]`
+
+Lists available API endpoints from the Clerk OpenAPI spec.
+
+- Fetches the spec from `clerk/openapi-specs` on GitHub
+- Caches locally in `~/.clerk/cache/` for 24 hours
+- Supports `--platform` to list Platform API endpoints
+- Optional filter keyword matches against path, summary, tag, and operation ID
+
+### `clerk api` (interactive mode)
+
+When run with no arguments in a TTY, launches an interactive request builder:
+
+1. Select an API category (Users, Organizations, Sessions, etc.)
+2. Select an endpoint
+3. Fill in path parameters (if any)
+4. Optionally provide a request body (opens `$EDITOR`)
+5. Preview and confirm before executing
+
+Requires human mode (TTY). In agent mode, prints usage help instead.
 
 ## Safety
 
