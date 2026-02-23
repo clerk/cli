@@ -1,4 +1,4 @@
-import { select, input, confirm } from "@inquirer/prompts";
+import { select, input, confirm, password } from "@inquirer/prompts";
 
 export async function deploy(options: { debug?: boolean }) {
   const debug = options.debug ? (...args: unknown[]) => console.log("[debug]", ...args) : () => {};
@@ -137,7 +137,7 @@ export async function deploy(options: { debug?: boolean }) {
         message: `${displayName} OAuth Client ID:`,
       });
 
-      const clientSecret = await input({
+      const clientSecret = await password({
         message: `${displayName} OAuth Client Secret:`,
       });
 
