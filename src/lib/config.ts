@@ -25,7 +25,10 @@ interface Auth {
 interface Profile {
   workspaceId: string;
   appId: string;
-  instanceId: string;
+  instances: {
+    development: string;
+    production?: string;
+  };
 }
 
 interface ClerkConfig {
@@ -97,6 +100,28 @@ export async function resolveProfile(cwd: string): Promise<{ path: string; profi
     dir = parent;
   }
   return undefined;
+}
+
+const INSTANCE_ALIASES: Record<string, "development" | "production"> = {
+  dev: "development",
+  development: "development",
+  prod: "production",
+  production: "production",
+};
+
+export function resolveInstanceId(profile: Profile, flag?: string): { id: string; label: string } {
+  if (!flag) {
+    return { id: profile.instances.development, label: "development" };
+  }
+
+  const env = INSTANCE_ALIASES[flag];
+  if (!env) return { id: flag, label: flag }; // literal instance ID
+
+  const id = profile.instances[env];
+  if (!id) {
+    throw new Error(`No ${env} instance configured. Run \`clerk init\` to set one up.`);
+  }
+  return { id, label: env };
 }
 
 export type { Auth, Profile, ClerkConfig };
