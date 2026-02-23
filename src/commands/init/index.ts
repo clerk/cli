@@ -1,4 +1,4 @@
-import { login } from "./auth/login.js";
+import { login } from "../auth/login.js";
 
 const AGENT_PROMPT = `You are integrating Clerk authentication into an existing project. Follow these steps:
 

@@ -3,15 +3,15 @@ import { test, expect, describe, afterEach, mock, spyOn } from "bun:test";
 const mockGetToken = mock();
 const mockFetchUserInfo = mock();
 
-mock.module("../lib/credential-store.ts", () => ({
+mock.module("../../lib/credential-store.ts", () => ({
   getToken: (...args: unknown[]) => mockGetToken(...args),
 }));
 
-mock.module("../lib/token-exchange.ts", () => ({
+mock.module("../../lib/token-exchange.ts", () => ({
   fetchUserInfo: (...args: unknown[]) => mockFetchUserInfo(...args),
 }));
 
-const { whoami } = await import("./whoami.ts");
+const { whoami } = await import("./index.ts");
 
 describe("whoami", () => {
   let consoleSpy: ReturnType<typeof spyOn>;
