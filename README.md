@@ -33,3 +33,7 @@ clerk config pull
 clerk deploy
   --debug              Show debug output
 ```
+
+## Open Questions
+
+- How do we keep types in sync with PLAPI?
