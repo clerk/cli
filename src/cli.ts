@@ -9,6 +9,7 @@ import { pull } from "./commands/env/pull.js";
 import { deploy } from "./commands/deploy/index.js";
 import { configPull } from "./commands/config/pull.js";
 import { configPatch, configPut } from "./commands/config/push.js";
+import { api } from "./commands/api/index.js";
 
 program
   .name("clerk")
@@ -96,6 +97,22 @@ config
   .option("--dry-run", "Show what would be sent without making the API call")
   .option("--yes", "Skip confirmation prompts")
   .action(configPut);
+
+program
+  .command("api")
+  .description("Make authenticated requests to the Clerk API")
+  .argument("[endpoint]", "API endpoint path, 'ls' to list endpoints, or omit for interactive mode")
+  .argument("[filter]", "Filter keyword (used with 'ls')")
+  .option("-X, --method <method>", "HTTP method (default: GET, or POST if body provided)")
+  .option("-d, --data <json>", "JSON request body")
+  .option("--file <path>", "Read request body from a file")
+  .option("--include", "Show response headers")
+  .option("--secret-key <key>", "Override the secret key")
+  .option("--instance <id>", "Instance to target (dev, prod, or instance ID)")
+  .option("--platform", "Use Platform API instead of Backend API")
+  .option("--dry-run", "Show the request without executing it")
+  .option("--yes", "Skip confirmation for mutating requests")
+  .action(api);
 
 program
   .command("deploy", { hidden: true })

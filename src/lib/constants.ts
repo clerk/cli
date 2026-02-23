@@ -33,6 +33,22 @@ export const AUTH_TIMEOUT_MS = Number(process.env.CLERK_AUTH_TIMEOUT_MS) || 2 * 
 
 export const PLAPI_BASE_URL = process.env.CLERK_PLATFORM_API_URL ?? "https://api.clerk.com";
 
+// ── Backend API ────────────────────────────────────────────────────────────
+
+export const BAPI_BASE_URL = process.env.CLERK_BACKEND_API_URL ?? "https://api.clerk.dev";
+
+// ── OpenAPI Spec ──────────────────────────────────────────────────────────
+
+export const OPENAPI_SPEC_URLS = {
+  bapi: "https://raw.githubusercontent.com/clerk/openapi-specs/main/bapi/2025-11-10.yml",
+  platform: "https://raw.githubusercontent.com/clerk/openapi-specs/main/platform/beta.yml",
+} as const;
+
+// ── Cache ────────────────────────────────────────────────────────────────
+
+export const CLERK_CACHE_DIR = join(CLERK_HOME_DIR, "cache");
+export const CACHE_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
+
 // ── Keychain ────────────────────────────────────────────────────────────────
 
 export const KEYCHAIN_SERVICE = "clerk-cli";

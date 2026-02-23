@@ -25,6 +25,9 @@ Commands:
     put [options]      Replace entire instance configuration (PUT)
   env                  Manage environment variables
     pull [options]     Pull environment variables from Clerk to .env.local
+  api [options] [endpoint] [filter]  Make authenticated requests to the Clerk API
+    ls [filter]        List available API endpoints
+    (no args)          Interactive request builder (TTY only)
   deploy [options]     Deploy your Clerk application (hidden)
 
 clerk init
@@ -51,6 +54,20 @@ clerk config put
 clerk env pull
   --instance <id>      Instance to target (dev, prod, or a full instance ID)
   --file <path>        Target env file (default: auto-detect)
+
+clerk api [endpoint] [filter]
+  -X, --method <method>  HTTP method (default: GET, or POST if body provided)
+  -d, --data <json>      JSON request body
+  --file <path>          Read request body from a file
+  --include              Show response headers
+  --secret-key <key>     Override the secret key
+  --instance <id>        Instance to target (dev, prod, or instance ID)
+  --platform             Use Platform API instead of Backend API
+  --dry-run              Show the request without executing it
+  --yes                  Skip confirmation for mutating requests
+
+clerk api ls [filter]    List available API endpoints
+clerk api                Interactive request builder (TTY only)
 
 clerk deploy
   --debug              Show debug output
