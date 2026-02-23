@@ -76,3 +76,40 @@ export async function fetchApplication(
 
   return response.json() as Promise<Application>;
 }
+
+async function sendInstanceConfig(
+  method: "PUT" | "PATCH",
+  applicationId: string,
+  instanceId: string,
+  config: Record<string, unknown>,
+): Promise<Record<string, unknown>> {
+  const url = `${PLAPI_BASE_URL}/v1/platform/applications/${applicationId}/instances/${instanceId}/config`;
+  const response = await fetch(url, {
+    method,
+    headers: {
+      Authorization: `Bearer ${getApiKey()}`,
+      "Content-Type": "application/json",
+      Accept: "application/json",
+    },
+    body: JSON.stringify(config),
+  });
+
+  if (!response.ok) {
+    const body = await response.text();
+    throw new PlapiError(response.status, body);
+  }
+
+  return response.json() as Promise<Record<string, unknown>>;
+}
+
+export const putInstanceConfig = (
+  applicationId: string,
+  instanceId: string,
+  config: Record<string, unknown>,
+) => sendInstanceConfig("PUT", applicationId, instanceId, config);
+
+export const patchInstanceConfig = (
+  applicationId: string,
+  instanceId: string,
+  config: Record<string, unknown>,
+) => sendInstanceConfig("PATCH", applicationId, instanceId, config);
