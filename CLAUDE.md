@@ -109,3 +109,18 @@ bun --hot ./index.ts
 ```
 
 For more information, read the Bun API docs in `node_modules/bun-types/docs/**.md`.
+
+## Commands
+
+Every CLI command lives in its own directory under `src/commands/<name>/`. Each directory must contain a `README.md` that documents:
+
+- What the command does
+- Usage and options
+- Clerk API endpoints the command calls (method, path, description)
+- Whether the command (or parts of it) is mocked/stubbed — call this out prominently with a blockquote at the top of the README if so
+
+When adding a new command, create its directory and README. When modifying a command's behavior, options, or API calls, update its README to match.
+
+### Root README
+
+`README.md` at the project root contains the CLI help output. When commands are added, removed, or their options change, update the help output in `README.md` to stay in sync. You can regenerate it by running `bun run src/cli.ts --help`.

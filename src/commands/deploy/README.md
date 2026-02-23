@@ -1,5 +1,7 @@
 # Deploy Command
 
+> **Fully mocked.** This command uses hardcoded test data and is not yet wired to real APIs. The interactive prompts are real, but all API calls (application lookup, instance creation, DNS, OAuth credential storage) are simulated.
+
 Guides a user through deploying their Clerk application to production.
 
 ## Sequence Diagram

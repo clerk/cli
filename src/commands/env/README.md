@@ -2,6 +2,19 @@
 
 Pulls Clerk API keys for the linked instance and merges them into the project's `.env` file.
 
+## Usage
+
+```
+clerk env pull [--instance dev|prod|<instance_id>] [--file <path>]
+```
+
+### Options
+
+| Option | Description |
+|---|---|
+| `--instance <id>` | Instance to target (`dev`, `prod`, or a full instance ID) |
+| `--file <path>` | Target env file (default: auto-detect) |
+
 ## Sequence Diagram
 
 ```mermaid

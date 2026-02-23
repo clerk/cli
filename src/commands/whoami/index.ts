@@ -1,5 +1,5 @@
-import { getToken } from "../lib/credential-store.ts";
-import { fetchUserInfo } from "../lib/token-exchange.ts";
+import { getToken } from "../../lib/credential-store.ts";
+import { fetchUserInfo } from "../../lib/token-exchange.ts";
 
 export async function whoami() {
   const token = await getToken();

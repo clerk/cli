@@ -1,10 +1,10 @@
 #!/usr/bin/env node
 import { program } from "commander";
 import { setMode, type Mode } from "./mode.js";
-import { init } from "./commands/init.js";
+import { init } from "./commands/init/index.js";
 import { login } from "./commands/auth/login.js";
 import { logout } from "./commands/auth/logout.js";
-import { whoami } from "./commands/whoami.js";
+import { whoami } from "./commands/whoami/index.js";
 import { pull } from "./commands/env/pull.js";
 import { deploy } from "./commands/deploy/index.js";
 import { configPull } from "./commands/config/pull.js";
