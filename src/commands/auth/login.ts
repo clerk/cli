@@ -1,59 +1,77 @@
-const MOCK_APP_URL = "http://localhost:5174";
+import { generateCodeVerifier, generateCodeChallenge, generateState } from "../../lib/pkce.ts";
+import { startAuthServer } from "../../lib/auth-server.ts";
+import { OAUTH_CONFIG, exchangeCodeForToken, fetchUserInfo } from "../../lib/token-exchange.ts";
+import { storeToken, getToken } from "../../lib/credential-store.ts";
+import { getAuth, setAuth } from "../../lib/config.ts";
+import { CALLBACK_PATH } from "../../lib/constants.ts";
 
-export async function login(): Promise<{ isNewUser: boolean }> {
-  console.log("[debug] Starting clerk auth login...");
+export async function login(): Promise<{ userId: string; email: string }> {
+  // Check if already authenticated
+  const existingToken = await getToken();
+  if (existingToken) {
+    const auth = await getAuth();
+    if (auth) {
+      try {
+        const userInfo = await fetchUserInfo(existingToken);
+        console.log(`Already logged in as ${userInfo.email}`);
+        return userInfo;
+      } catch {
+        // Token expired or invalid — continue with fresh login
+      }
+    }
+  }
 
-  const { port, result } = await startCallbackServer();
-  const url = `${MOCK_APP_URL}?callback_port=${port}`;
+  // Generate PKCE parameters
+  const codeVerifier = generateCodeVerifier();
+  const codeChallenge = await generateCodeChallenge(codeVerifier);
+  const state = generateState();
 
-  console.log(`[debug] Opening browser: ${url}`);
-  const proc = Bun.spawn(["open", url]);
+  // Start local callback server
+  const authServer = startAuthServer(state);
+  const redirectUri = `http://127.0.0.1:${authServer.port}${CALLBACK_PATH}`;
+
+  // Build authorization URL
+  const authorizeUrl = new URL(OAUTH_CONFIG.authorizeUrl);
+  authorizeUrl.searchParams.set("client_id", OAUTH_CONFIG.clientId);
+  authorizeUrl.searchParams.set("redirect_uri", redirectUri);
+  authorizeUrl.searchParams.set("response_type", "code");
+  authorizeUrl.searchParams.set("scope", OAUTH_CONFIG.scopes);
+  authorizeUrl.searchParams.set("state", state);
+  authorizeUrl.searchParams.set("code_challenge", codeChallenge);
+  authorizeUrl.searchParams.set("code_challenge_method", "S256");
+
+  // Open browser (platform-aware)
+  const openCmd =
+    process.platform === "darwin" ? "open" :
+    process.platform === "win32" ? "start" :
+    "xdg-open";
+  const proc = Bun.spawn([openCmd, authorizeUrl.toString()]);
   await proc.exited;
 
-  console.log("[debug] Waiting for authentication callback...");
-  const data = await result;
+  // Wait for the OAuth callback
+  console.log("Waiting for authentication...");
+  let callbackResult: { code: string };
+  try {
+    callbackResult = await authServer.waitForCallback();
+  } catch (error) {
+    authServer.stop();
+    throw error;
+  }
 
-  console.log(
-    `[debug] Auth complete. User ${data.isNewUser ? "signed up" : "signed in"}.`,
-  );
-
-  return data;
-}
-
-function startCallbackServer(): Promise<{
-  port: number;
-  result: Promise<{ isNewUser: boolean }>;
-}> {
-  return new Promise((resolveSetup) => {
-    let resolveResult: (data: { isNewUser: boolean }) => void;
-    const result = new Promise<{ isNewUser: boolean }>((r) => {
-      resolveResult = r;
-    });
-
-    const server = Bun.serve({
-      port: 0,
-      routes: {
-        "/callback": {
-          POST: async (req) => {
-            const data = (await req.json()) as { isNewUser: boolean };
-            resolveResult(data);
-            setTimeout(() => server.stop(), 100);
-            return new Response("ok", {
-              headers: { "Access-Control-Allow-Origin": "*" },
-            });
-          },
-          OPTIONS: () =>
-            new Response(null, {
-              headers: {
-                "Access-Control-Allow-Origin": "*",
-                "Access-Control-Allow-Methods": "POST",
-                "Access-Control-Allow-Headers": "Content-Type",
-              },
-            }),
-        },
-      },
-    });
-
-    resolveSetup({ port: server.port, result });
+  // Exchange authorization code for access token
+  const tokenResponse = await exchangeCodeForToken({
+    code: callbackResult.code,
+    codeVerifier,
+    redirectUri,
   });
+
+  // Store the access token
+  await storeToken(tokenResponse.access_token);
+
+  // Fetch user info and save to config
+  const userInfo = await fetchUserInfo(tokenResponse.access_token);
+  await setAuth({ userId: userInfo.userId });
+
+  console.log(`Logged in as ${userInfo.email}`);
+  return userInfo;
 }
