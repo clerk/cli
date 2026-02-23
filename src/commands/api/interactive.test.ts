@@ -41,8 +41,8 @@ let selectResponses: unknown[] = [];
 let inputResponses: string[] = [];
 let confirmResponses: boolean[] = [];
 
-// Track api calls
-let apiCalls: { endpoint: string; options: Record<string, unknown> }[] = [];
+// Track fetch calls made by the real api handler
+let fetchCalls: { url: string; method: string }[] = [];
 
 mock.module("@inquirer/prompts", () => ({
   select: async () => selectResponses.shift(),
@@ -51,18 +51,15 @@ mock.module("@inquirer/prompts", () => ({
   editor: async () => "{}",
 }));
 
-// Mock the api handler to track calls without making real requests
-mock.module("./index.ts", () => ({
-  api: async (endpoint: string, _filter: unknown, options: Record<string, unknown>) => {
-    apiCalls.push({ endpoint, options });
-  },
-}));
-
 describe("apiInteractive", () => {
   let tempDir: string;
   let errorSpy: ReturnType<typeof spyOn>;
+  let logSpy: ReturnType<typeof spyOn>;
   let exitSpy: ReturnType<typeof spyOn>;
   const originalFetch = globalThis.fetch;
+  const originalIsTTY = process.stdin.isTTY;
+
+  const originalEnv = { ...process.env };
 
   beforeEach(async () => {
     tempDir = await mkdtemp(join(tmpdir(), "clerk-interactive-test-"));
@@ -73,25 +70,35 @@ describe("apiInteractive", () => {
     cached.fetchedAt = Date.now();
     await Bun.write(join(tempDir, "bapi-catalog.json"), JSON.stringify(cached));
 
+    process.env.CLERK_SECRET_KEY = "sk_test_123";
+    // Prevent resolveBody from trying to read stdin
+    Object.defineProperty(process.stdin, "isTTY", { value: true, writable: true, configurable: true });
+
     errorSpy = spyOn(console, "error").mockImplementation(() => {});
+    logSpy = spyOn(console, "log").mockImplementation(() => {});
     exitSpy = spyOn(process, "exit").mockImplementation(() => {
       throw new Error("process.exit");
     });
-    globalThis.fetch = async () => {
-      throw new Error("Should not fetch");
+    // Capture fetch calls from the real api handler
+    globalThis.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
+      fetchCalls.push({ url: input.toString(), method: init?.method ?? "GET" });
+      return new Response(JSON.stringify({ data: [] }), { status: 200 });
     };
 
     // Reset tracking
     selectResponses = [];
     inputResponses = [];
     confirmResponses = [];
-    apiCalls = [];
+    fetchCalls = [];
   });
 
   afterEach(async () => {
     _setCacheDir(undefined);
+    process.env = { ...originalEnv };
     globalThis.fetch = originalFetch;
+    Object.defineProperty(process.stdin, "isTTY", { value: originalIsTTY, writable: true, configurable: true });
     errorSpy.mockRestore();
+    logSpy.mockRestore();
     exitSpy.mockRestore();
     await rm(tempDir, { recursive: true, force: true });
   });
@@ -128,10 +135,9 @@ describe("apiInteractive", () => {
 
     await apiInteractive({});
 
-    expect(apiCalls.length).toBe(1);
-    expect(apiCalls[0].endpoint).toBe("/users");
-    expect(apiCalls[0].options.method).toBe("GET");
-    expect(apiCalls[0].options.yes).toBe(true);
+    expect(fetchCalls.length).toBe(1);
+    expect(fetchCalls[0].url).toContain("/v1/users");
+    expect(fetchCalls[0].method).toBe("GET");
   });
 
   test("prompts for path parameters", async () => {
@@ -153,8 +159,8 @@ describe("apiInteractive", () => {
 
     await apiInteractive({});
 
-    expect(apiCalls.length).toBe(1);
-    expect(apiCalls[0].endpoint).toBe("/users/user_abc123");
+    expect(fetchCalls.length).toBe(1);
+    expect(fetchCalls[0].url).toContain("/v1/users/user_abc123");
   });
 
   test("aborts when user declines confirmation", async () => {
@@ -175,7 +181,7 @@ describe("apiInteractive", () => {
 
     await apiInteractive({});
 
-    expect(apiCalls.length).toBe(0);
+    expect(fetchCalls.length).toBe(0);
     expect(errorSpy).toHaveBeenCalledWith("Aborted.");
   });
 });
