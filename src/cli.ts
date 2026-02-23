@@ -61,6 +61,8 @@ const env = program
 env
   .command("pull")
   .description("Pull environment variables from Clerk to .env.local")
+  .option("--instance <id>", "Instance to target (dev, prod, or a full instance ID)")
+  .option("--file <path>", "Target env file (default: auto-detect)")
   .action(pull);
 
 const config = program

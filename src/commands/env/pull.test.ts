@@ -1,0 +1,255 @@
+import { test, expect, describe, beforeEach, afterEach, spyOn } from "bun:test";
+import { mkdtemp, rm } from "node:fs/promises";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
+import { _setConfigDir, setProfile } from "../../lib/config";
+
+describe("env pull", () => {
+  const originalEnv = { ...process.env };
+  const originalFetch = globalThis.fetch;
+  const originalCwd = process.cwd;
+  let tempDir: string;
+  let errorSpy: ReturnType<typeof spyOn>;
+  let exitSpy: ReturnType<typeof spyOn>;
+
+  const mockApplication = {
+    application_id: "app_1",
+    instances: [
+      {
+        instance_id: "ins_dev",
+        environment_type: "development",
+        publishable_key: "pk_test_abc123",
+        secret_key: "sk_test_xyz789",
+      },
+      {
+        instance_id: "ins_prod",
+        environment_type: "production",
+        publishable_key: "pk_live_abc123",
+        secret_key: "sk_live_xyz789",
+      },
+    ],
+  };
+
+  beforeEach(async () => {
+    tempDir = await mkdtemp(join(tmpdir(), "clerk-env-pull-test-"));
+    _setConfigDir(tempDir);
+    process.env.CLERK_PLATFORM_API_KEY = "test_key";
+    process.env.CLERK_PLATFORM_API_URL = "https://test-api.clerk.com";
+
+    // Write a package.json so framework detection works (fallback)
+    await Bun.write(
+      join(tempDir, "package.json"),
+      JSON.stringify({ dependencies: { express: "4.0.0" } }),
+    );
+
+    // Mock cwd to tempDir so file resolution works
+    process.cwd = () => tempDir;
+
+    errorSpy = spyOn(console, "error").mockImplementation(() => {});
+    exitSpy = spyOn(process, "exit").mockImplementation(() => {
+      throw new Error("process.exit");
+    });
+
+    globalThis.fetch = async () =>
+      new Response(JSON.stringify(mockApplication), { status: 200 });
+  });
+
+  afterEach(async () => {
+    _setConfigDir(undefined);
+    process.env = { ...originalEnv };
+    process.cwd = originalCwd;
+    globalThis.fetch = originalFetch;
+    errorSpy.mockRestore();
+    exitSpy.mockRestore();
+    await rm(tempDir, { recursive: true, force: true });
+  });
+
+  async function runEnvPull(options: { instance?: string; file?: string } = {}) {
+    const { pull } = await import("./pull");
+    return pull(options);
+  }
+
+  test("errors when no profile is linked", async () => {
+    await expect(runEnvPull()).rejects.toThrow("process.exit");
+    expect(errorSpy).toHaveBeenCalledWith(
+      expect.stringContaining("No Clerk project linked"),
+    );
+  });
+
+  test("errors when CLERK_PLATFORM_API_KEY is missing", async () => {
+    await setProfile(tempDir, {
+      workspaceId: "org_1",
+      appId: "app_1",
+      instances: { development: "ins_dev" },
+    });
+    delete process.env.CLERK_PLATFORM_API_KEY;
+
+    await expect(runEnvPull()).rejects.toThrow("process.exit");
+    expect(errorSpy).toHaveBeenCalledWith(
+      expect.stringContaining("CLERK_PLATFORM_API_KEY"),
+    );
+  });
+
+  test("creates .env.local with keys when no env file exists", async () => {
+    await setProfile(tempDir, {
+      workspaceId: "org_1",
+      appId: "app_1",
+      instances: { development: "ins_dev" },
+    });
+
+    await runEnvPull();
+
+    const content = await Bun.file(join(tempDir, ".env.local")).text();
+    expect(content).toContain("CLERK_PUBLISHABLE_KEY=pk_test_abc123");
+    expect(content).toContain("CLERK_SECRET_KEY=sk_test_xyz789");
+  });
+
+  test("updates existing .env.local preserving other vars", async () => {
+    await setProfile(tempDir, {
+      workspaceId: "org_1",
+      appId: "app_1",
+      instances: { development: "ins_dev" },
+    });
+    await Bun.write(join(tempDir, ".env.local"), "DB_URL=postgres://localhost\nAPP_NAME=myapp\n");
+
+    await runEnvPull();
+
+    const content = await Bun.file(join(tempDir, ".env.local")).text();
+    expect(content).toContain("DB_URL=postgres://localhost");
+    expect(content).toContain("APP_NAME=myapp");
+    expect(content).toContain("CLERK_PUBLISHABLE_KEY=pk_test_abc123");
+    expect(content).toContain("CLERK_SECRET_KEY=sk_test_xyz789");
+  });
+
+  test("updates existing Clerk keys in-place", async () => {
+    await setProfile(tempDir, {
+      workspaceId: "org_1",
+      appId: "app_1",
+      instances: { development: "ins_dev" },
+    });
+    await Bun.write(
+      join(tempDir, ".env.local"),
+      "CLERK_PUBLISHABLE_KEY=old_pk\nOTHER=val\nCLERK_SECRET_KEY=old_sk\n",
+    );
+
+    await runEnvPull();
+
+    const content = await Bun.file(join(tempDir, ".env.local")).text();
+    expect(content).toBe(
+      "CLERK_PUBLISHABLE_KEY=pk_test_abc123\nOTHER=val\nCLERK_SECRET_KEY=sk_test_xyz789\n",
+    );
+  });
+
+  test("falls back to .env when .env.local does not exist", async () => {
+    await setProfile(tempDir, {
+      workspaceId: "org_1",
+      appId: "app_1",
+      instances: { development: "ins_dev" },
+    });
+    await Bun.write(join(tempDir, ".env"), "EXISTING=value\n");
+
+    await runEnvPull();
+
+    const content = await Bun.file(join(tempDir, ".env")).text();
+    expect(content).toContain("EXISTING=value");
+    expect(content).toContain("CLERK_SECRET_KEY=sk_test_xyz789");
+    // Should not have created .env.local
+    expect(await Bun.file(join(tempDir, ".env.local")).exists()).toBe(false);
+  });
+
+  test("uses --file flag to target specific file", async () => {
+    await setProfile(tempDir, {
+      workspaceId: "org_1",
+      appId: "app_1",
+      instances: { development: "ins_dev" },
+    });
+
+    await runEnvPull({ file: ".env.development" });
+
+    const content = await Bun.file(join(tempDir, ".env.development")).text();
+    expect(content).toContain("CLERK_SECRET_KEY=sk_test_xyz789");
+  });
+
+  test("uses --instance prod to target production", async () => {
+    await setProfile(tempDir, {
+      workspaceId: "org_1",
+      appId: "app_1",
+      instances: { development: "ins_dev", production: "ins_prod" },
+    });
+
+    await runEnvPull({ instance: "prod" });
+
+    const content = await Bun.file(join(tempDir, ".env.local")).text();
+    expect(content).toContain("CLERK_PUBLISHABLE_KEY=pk_live_abc123");
+    expect(content).toContain("CLERK_SECRET_KEY=sk_live_xyz789");
+  });
+
+  test("shows instance label in status message", async () => {
+    await setProfile(tempDir, {
+      workspaceId: "org_1",
+      appId: "app_1",
+      instances: { development: "ins_dev" },
+    });
+
+    await runEnvPull();
+    expect(errorSpy).toHaveBeenCalledWith("Pulling env vars from development instance...");
+  });
+
+  test("shows written file in status message", async () => {
+    await setProfile(tempDir, {
+      workspaceId: "org_1",
+      appId: "app_1",
+      instances: { development: "ins_dev" },
+    });
+
+    await runEnvPull();
+    expect(errorSpy).toHaveBeenCalledWith(
+      expect.stringContaining("Environment variables written to"),
+    );
+  });
+
+  test("errors when instance not found in API response", async () => {
+    await setProfile(tempDir, {
+      workspaceId: "org_1",
+      appId: "app_1",
+      instances: { development: "ins_unknown" },
+    });
+
+    await expect(runEnvPull()).rejects.toThrow("process.exit");
+    expect(errorSpy).toHaveBeenCalledWith(
+      expect.stringContaining("Instance ins_unknown not found"),
+    );
+  });
+
+  test("handles API errors gracefully", async () => {
+    globalThis.fetch = async () => new Response("Unauthorized", { status: 401 });
+
+    await setProfile(tempDir, {
+      workspaceId: "org_1",
+      appId: "app_1",
+      instances: { development: "ins_dev" },
+    });
+
+    await expect(runEnvPull()).rejects.toThrow("process.exit");
+    expect(errorSpy).toHaveBeenCalledWith(
+      expect.stringContaining("Failed to fetch API keys"),
+    );
+  });
+
+  test("detects Next.js and uses NEXT_PUBLIC_* key name", async () => {
+    await setProfile(tempDir, {
+      workspaceId: "org_1",
+      appId: "app_1",
+      instances: { development: "ins_dev" },
+    });
+    await Bun.write(
+      join(tempDir, "package.json"),
+      JSON.stringify({ dependencies: { next: "14.0.0" } }),
+    );
+
+    await runEnvPull();
+
+    const content = await Bun.file(join(tempDir, ".env.local")).text();
+    expect(content).toContain("NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=pk_test_abc123");
+  });
+});
