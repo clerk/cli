@@ -49,6 +49,7 @@ mock.module("@inquirer/prompts", () => ({
   input: async () => inputResponses.shift(),
   confirm: async () => confirmResponses.shift(),
   editor: async () => "{}",
+  password: async () => "",
 }));
 
 describe("apiInteractive", () => {
