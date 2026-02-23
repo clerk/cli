@@ -10,7 +10,7 @@ import { pull } from "./commands/env/pull.js";
 program
   .name("clerk")
   .description("Clerk CLI")
-  .version("0.0.1")
+  .version(require("../package.json").version)
   .option(
     "--mode <mode>",
     "Force interaction mode (human or agent). Defaults to auto-detect based on TTY.",

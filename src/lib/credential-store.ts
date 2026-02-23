@@ -3,15 +3,13 @@
  * Uses macOS Keychain as primary, falls back to a plaintext file with chmod 600.
  */
 
-import { homedir } from "node:os";
-import { join } from "node:path";
+import { dirname } from "node:path";
 import { mkdir, chmod } from "node:fs/promises";
-
-const SERVICE = "clerk-cli";
-const ACCOUNT = "oauth-access-token";
-
-const CREDENTIALS_DIR = join(homedir(), ".clerk");
-const CREDENTIALS_FILE = join(CREDENTIALS_DIR, "credentials");
+import {
+  CREDENTIALS_FILE,
+  KEYCHAIN_SERVICE,
+  KEYCHAIN_ACCOUNT,
+} from "./constants.ts";
 
 const isMacOS = process.platform === "darwin";
 
@@ -19,7 +17,7 @@ async function keychainStore(token: string): Promise<boolean> {
   if (!isMacOS) return false;
   try {
     // -U flag updates existing entry if present
-    await Bun.$`security add-generic-password -a ${ACCOUNT} -s ${SERVICE} -w ${token} -U`.quiet();
+    await Bun.$`security add-generic-password -a ${KEYCHAIN_ACCOUNT} -s ${KEYCHAIN_SERVICE} -w ${token} -U`.quiet();
     return true;
   } catch {
     return false;
@@ -29,7 +27,7 @@ async function keychainStore(token: string): Promise<boolean> {
 async function keychainGet(): Promise<string | null> {
   if (!isMacOS) return null;
   try {
-    const result = await Bun.$`security find-generic-password -a ${ACCOUNT} -s ${SERVICE} -w`.quiet();
+    const result = await Bun.$`security find-generic-password -a ${KEYCHAIN_ACCOUNT} -s ${KEYCHAIN_SERVICE} -w`.quiet();
     return result.text().trim();
   } catch {
     return null;
@@ -39,7 +37,7 @@ async function keychainGet(): Promise<string | null> {
 async function keychainDelete(): Promise<boolean> {
   if (!isMacOS) return false;
   try {
-    await Bun.$`security delete-generic-password -a ${ACCOUNT} -s ${SERVICE}`.quiet();
+    await Bun.$`security delete-generic-password -a ${KEYCHAIN_ACCOUNT} -s ${KEYCHAIN_SERVICE}`.quiet();
     return true;
   } catch {
     return false;
@@ -47,7 +45,7 @@ async function keychainDelete(): Promise<boolean> {
 }
 
 async function fileStore(token: string): Promise<void> {
-  await mkdir(CREDENTIALS_DIR, { recursive: true });
+  await mkdir(dirname(CREDENTIALS_FILE), { recursive: true });
   await Bun.write(CREDENTIALS_FILE, token);
   await chmod(CREDENTIALS_FILE, 0o600);
 }

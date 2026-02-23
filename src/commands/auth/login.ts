@@ -3,6 +3,7 @@ import { startAuthServer } from "../../lib/auth-server.ts";
 import { OAUTH_CONFIG, exchangeCodeForToken, fetchUserInfo } from "../../lib/token-exchange.ts";
 import { storeToken, getToken } from "../../lib/credential-store.ts";
 import { getAuth, setAuth } from "../../lib/config.ts";
+import { CALLBACK_PATH } from "../../lib/constants.ts";
 
 export async function login(): Promise<{ userId: string; email: string }> {
   // Check if already authenticated
@@ -27,7 +28,7 @@ export async function login(): Promise<{ userId: string; email: string }> {
 
   // Start local callback server
   const authServer = startAuthServer(state);
-  const redirectUri = `http://127.0.0.1:${authServer.port}/callback`;
+  const redirectUri = `http://127.0.0.1:${authServer.port}${CALLBACK_PATH}`;
 
   // Build authorization URL
   const authorizeUrl = new URL(OAUTH_CONFIG.authorizeUrl);
@@ -39,8 +40,12 @@ export async function login(): Promise<{ userId: string; email: string }> {
   authorizeUrl.searchParams.set("code_challenge", codeChallenge);
   authorizeUrl.searchParams.set("code_challenge_method", "S256");
 
-  // Open browser
-  const proc = Bun.spawn(["open", authorizeUrl.toString()]);
+  // Open browser (platform-aware)
+  const openCmd =
+    process.platform === "darwin" ? "open" :
+    process.platform === "win32" ? "start" :
+    "xdg-open";
+  const proc = Bun.spawn([openCmd, authorizeUrl.toString()]);
   await proc.exited;
 
   // Wait for the OAuth callback

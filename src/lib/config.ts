@@ -3,23 +3,19 @@
  * Stores auth identity and path-keyed project profiles.
  */
 
-import { homedir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { mkdir } from "node:fs/promises";
+import { CLERK_HOME_DIR, CONFIG_FILE } from "./constants.ts";
 
-let overrideDir: string | undefined;
+let overrideConfigFile: string | undefined;
 
-/** Test-only: override the config directory. Pass undefined to reset. */
+/** Test-only: override the config file path. Pass undefined to reset. */
 export function _setConfigDir(dir: string | undefined): void {
-  overrideDir = dir;
-}
-
-function configDir(): string {
-  return overrideDir ?? join(homedir(), ".clerk");
+  overrideConfigFile = dir ? `${dir}/config.json` : undefined;
 }
 
 function configFile(): string {
-  return join(configDir(), "config.json");
+  return overrideConfigFile ?? CONFIG_FILE;
 }
 
 interface Auth {
@@ -52,7 +48,7 @@ export async function readConfig(): Promise<ClerkConfig> {
 }
 
 export async function writeConfig(config: ClerkConfig): Promise<void> {
-  await mkdir(configDir(), { recursive: true });
+  await mkdir(dirname(configFile()), { recursive: true });
   await Bun.write(configFile(), JSON.stringify(config, null, 2) + "\n");
 }
 

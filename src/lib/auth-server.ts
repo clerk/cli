@@ -3,7 +3,16 @@
  * Starts a temporary HTTP server on 127.0.0.1 to receive the auth code redirect.
  */
 
-const TIMEOUT_MS = 2 * 60 * 1000; // 2 minutes
+import { AUTH_TIMEOUT_MS, CALLBACK_PATH } from "./constants.ts";
+
+function escapeHtml(str: string): string {
+  return str
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
 
 const SUCCESS_HTML = `<!DOCTYPE html>
 <html>
@@ -22,7 +31,7 @@ const ERROR_HTML = (message: string) => `<!DOCTYPE html>
 <body style="font-family: system-ui, sans-serif; display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0;">
   <div style="text-align: center;">
     <h1>Authentication failed</h1>
-    <p>${message}</p>
+    <p>${escapeHtml(message)}</p>
   </div>
 </body>
 </html>`;
@@ -45,13 +54,13 @@ export function startAuthServer(expectedState: string): AuthServerResult {
   const timeout = setTimeout(() => {
     rejectCallback(new Error("Authentication timed out. Please try again."));
     server.stop();
-  }, TIMEOUT_MS);
+  }, AUTH_TIMEOUT_MS);
 
   const server = Bun.serve({
     hostname: "127.0.0.1",
     port: 0,
     routes: {
-      "/callback": {
+      [CALLBACK_PATH]: {
         GET: (req) => {
           const url = new URL(req.url);
           const code = url.searchParams.get("code");

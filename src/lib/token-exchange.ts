@@ -9,17 +9,9 @@
  *   CLERK_OAUTH_SCOPES=profile email
  */
 
-const CLIENT_ID = process.env.CLERK_OAUTH_CLIENT_ID ?? "ins_1lyWDZiobr600AKUeQDoSlrEmoM";
-const BASE_URL = process.env.CLERK_OAUTH_BASE_URL ?? "https://clerk.clerk.com";
-const SCOPES = process.env.CLERK_OAUTH_SCOPES ?? "profile email";
+import { OAUTH } from "./constants.ts";
 
-export const OAUTH_CONFIG = {
-  clientId: CLIENT_ID,
-  scopes: SCOPES,
-  authorizeUrl: new URL("/oauth/authorize", BASE_URL).href,
-  tokenUrl: new URL("/oauth/token", BASE_URL).href,
-  userinfoUrl: new URL("/oauth/userinfo", BASE_URL).href,
-};
+export const OAUTH_CONFIG = OAUTH;
 
 interface TokenResponse {
   access_token: string;
