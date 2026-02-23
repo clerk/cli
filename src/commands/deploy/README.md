@@ -4,6 +4,31 @@
 
 Guides a user through deploying their Clerk application to production.
 
+## Usage
+
+```sh
+clerk deploy              # Interactive wizard (human mode)
+clerk deploy --debug      # With debug output
+clerk deploy --mode agent # Output agent prompt instead of interactive flow
+```
+
+## Agent Mode
+
+> **TODO:** The `DEPLOY_PROMPT` string is hardcoded. It should probably fetch from the quickstart prompt in the Clerk docs instead.
+
+When running in agent mode (`--mode agent`, `CLERK_MODE=agent`, or non-TTY context), this command outputs a structured prompt describing the full deployment flow instead of running the interactive wizard. The prompt includes:
+
+- Prerequisites and pre-flight checks
+- Domain selection options (custom vs. Clerk subdomain)
+- Production instance creation steps
+- OAuth credential collection for social providers
+- All relevant Platform API endpoints
+
+Agent mode is detected via the mode system (`src/mode.ts`), which checks in priority order:
+1. `--mode` CLI flag
+2. `CLERK_MODE` environment variable
+3. TTY detection (`process.stdout.isTTY`)
+
 ## Sequence Diagram
 
 ```mermaid
