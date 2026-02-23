@@ -21,6 +21,8 @@ Commands:
   whoami               Show the current logged-in user
   config               Manage instance configuration
     pull [options]     Pull instance configuration from Clerk
+    patch [options]    Partially update instance configuration (PATCH)
+    put [options]      Replace entire instance configuration (PUT)
   env                  Manage environment variables
     pull [options]     Pull environment variables from Clerk to .env.local
   deploy [options]     Deploy your Clerk application (hidden)
@@ -31,6 +33,20 @@ clerk init
 clerk config pull
   --instance <id>      Instance to target (dev, prod, or a full instance ID)
   --output <file>      Write config to a file instead of stdout
+
+clerk config patch
+  --instance <id>      Instance to target (dev, prod, or a full instance ID)
+  --file <path>        Read config JSON from a file
+  --json <string>      Pass config JSON inline
+  --dry-run            Show what would be sent without making the API call
+  --yes                Skip confirmation prompts
+
+clerk config put
+  --instance <id>      Instance to target (dev, prod, or a full instance ID)
+  --file <path>        Read config JSON from a file
+  --json <string>      Pass config JSON inline
+  --dry-run            Show what would be sent without making the API call
+  --yes                Skip confirmation prompts
 
 clerk env pull
   --instance <id>      Instance to target (dev, prod, or a full instance ID)

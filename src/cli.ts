@@ -8,6 +8,7 @@ import { whoami } from "./commands/whoami/index.js";
 import { pull } from "./commands/env/pull.js";
 import { deploy } from "./commands/deploy/index.js";
 import { configPull } from "./commands/config/pull.js";
+import { configPatch, configPut } from "./commands/config/push.js";
 
 program
   .name("clerk")
@@ -75,6 +76,26 @@ config
   .option("--instance <id>", "Instance to target (dev, prod, or a full instance ID)")
   .option("--output <file>", "Write config to a file instead of stdout")
   .action(configPull);
+
+config
+  .command("patch")
+  .description("Partially update instance configuration (PATCH)")
+  .option("--instance <id>", "Instance to target (dev, prod, or a full instance ID)")
+  .option("--file <path>", "Read config JSON from a file")
+  .option("--json <string>", "Pass config JSON inline")
+  .option("--dry-run", "Show what would be sent without making the API call")
+  .option("--yes", "Skip confirmation prompts")
+  .action(configPatch);
+
+config
+  .command("put")
+  .description("Replace entire instance configuration (PUT)")
+  .option("--instance <id>", "Instance to target (dev, prod, or a full instance ID)")
+  .option("--file <path>", "Read config JSON from a file")
+  .option("--json <string>", "Pass config JSON inline")
+  .option("--dry-run", "Show what would be sent without making the API call")
+  .option("--yes", "Skip confirmation prompts")
+  .action(configPut);
 
 program
   .command("deploy", { hidden: true })
