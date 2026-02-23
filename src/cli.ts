@@ -63,7 +63,7 @@ env
   .action(pull);
 
 program
-  .command("deploy")
+  .command("deploy", { hidden: true })
   .description("Deploy your Clerk application")
   .option("--debug", "Show debug output")
   .action(deploy);

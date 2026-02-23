@@ -3,6 +3,8 @@ import { select, input, confirm, password } from "@inquirer/prompts";
 export async function deploy(options: { debug?: boolean }) {
   const debug = options.debug ? (...args: unknown[]) => console.log("[debug]", ...args) : () => {};
 
+  console.log("\x1b[33m[mock] This command uses mocked data and is not yet wired up to real APIs.\x1b[0m\n");
+
   debug("Checking for authenticated user and linked application...");
 
   // Mock state — will be replaced with real lookups
