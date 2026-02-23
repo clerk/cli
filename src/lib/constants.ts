@@ -29,6 +29,10 @@ export const OAUTH = {
 export const CALLBACK_PATH = "/callback";
 export const AUTH_TIMEOUT_MS = Number(process.env.CLERK_AUTH_TIMEOUT_MS) || 2 * 60 * 1000;
 
+// ── Platform API ────────────────────────────────────────────────────────────
+
+export const PLAPI_BASE_URL = process.env.CLERK_PLATFORM_API_URL ?? "https://api.clerk.com";
+
 // ── Keychain ────────────────────────────────────────────────────────────────
 
 export const KEYCHAIN_SERVICE = "clerk-cli";

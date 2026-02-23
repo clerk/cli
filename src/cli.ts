@@ -7,6 +7,7 @@ import { logout } from "./commands/auth/logout.js";
 import { whoami } from "./commands/whoami.js";
 import { pull } from "./commands/env/pull.js";
 import { deploy } from "./commands/deploy/index.js";
+import { configPull } from "./commands/config/pull.js";
 
 program
   .name("clerk")
@@ -61,6 +62,17 @@ env
   .command("pull")
   .description("Pull environment variables from Clerk to .env.local")
   .action(pull);
+
+const config = program
+  .command("config")
+  .description("Manage instance configuration");
+
+config
+  .command("pull")
+  .description("Pull instance configuration from Clerk")
+  .option("--instance <id>", "Instance to target (dev, prod, or a full instance ID)")
+  .option("--output <file>", "Write config to a file instead of stdout")
+  .action(configPull);
 
 program
   .command("deploy", { hidden: true })
