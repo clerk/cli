@@ -33,6 +33,10 @@ export const AUTH_TIMEOUT_MS = Number(process.env.CLERK_AUTH_TIMEOUT_MS) || 2 * 
 
 export const PLAPI_BASE_URL = process.env.CLERK_PLATFORM_API_URL ?? "https://api.clerk.com";
 
+// ── Backend API ────────────────────────────────────────────────────────────
+
+export const BAPI_BASE_URL = process.env.CLERK_BACKEND_API_URL ?? "https://api.clerk.dev";
+
 // ── Keychain ────────────────────────────────────────────────────────────────
 
 export const KEYCHAIN_SERVICE = "clerk-cli";
