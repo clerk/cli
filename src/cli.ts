@@ -10,6 +10,8 @@ import { deploy } from "./commands/deploy/index.js";
 import { configPull } from "./commands/config/pull.js";
 import { configPatch, configPut } from "./commands/config/push.js";
 import { api } from "./commands/api/index.js";
+import { link } from "./commands/link/index.js";
+import { unlink } from "./commands/unlink/index.js";
 
 program
   .name("clerk")
@@ -50,6 +52,18 @@ auth
   .command("logout")
   .description("Log out of your Clerk account")
   .action(logout);
+
+program
+  .command("link")
+  .description("Link this project to a Clerk application")
+  .option("--app <id>", "Application ID to link (skips interactive picker)")
+  .action(link);
+
+program
+  .command("unlink")
+  .description("Unlink this project from its Clerk application")
+  .option("--yes", "Skip confirmation prompt")
+  .action(unlink);
 
 program
   .command("whoami")

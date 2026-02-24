@@ -1,32 +1,33 @@
-import { test, expect, describe, beforeEach, afterAll, mock } from "bun:test";
+import { test, expect, describe, beforeEach, afterAll } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
 const tempDir = await mkdtemp(join(tmpdir(), "clerk-cred-test-"));
-const uniqueId = `test-${Date.now()}`;
 
-mock.module("./constants.ts", () => ({
-  CREDENTIALS_FILE: join(tempDir, "credentials"),
-  KEYCHAIN_SERVICE: `clerk-cli-${uniqueId}`,
-  KEYCHAIN_ACCOUNT: `account-${uniqueId}`,
-}));
+// Redirect file-based credential storage to temp dir via env var
+// (constants.ts reads CLERK_CONFIG_DIR before falling back to ~/.clerk)
+process.env.CLERK_CONFIG_DIR = tempDir;
 
 const { storeToken, getToken, deleteToken } = await import("./credential-store.ts");
 
+let savedToken: string | null = null;
+
 afterAll(async () => {
-  await rm(tempDir, { recursive: true, force: true });
-  if (process.platform === "darwin") {
-    try {
-      await Bun.$`security delete-generic-password -a account-${uniqueId} -s clerk-cli-${uniqueId}`.quiet();
-    } catch {
-      // Entry may not exist
-    }
+  // Restore any pre-existing keychain token on macOS
+  if (process.platform === "darwin" && savedToken !== null) {
+    await storeToken(savedToken);
   }
+  delete process.env.CLERK_CONFIG_DIR;
+  await rm(tempDir, { recursive: true, force: true });
 });
 
 describe("credential-store", () => {
   beforeEach(async () => {
+    // On first run, save any existing keychain token so we can restore it later
+    if (process.platform === "darwin" && savedToken === null) {
+      savedToken = await getToken();
+    }
     await deleteToken();
   });
 

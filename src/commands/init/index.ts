@@ -1,4 +1,5 @@
 import { login } from "../auth/login.js";
+import { link } from "../link/index.js";
 
 const AGENT_PROMPT = `You are integrating Clerk authentication into an existing project. Follow these steps:
 
@@ -43,34 +44,9 @@ export async function init(options: { prompt?: boolean }) {
     return;
   }
 
-  console.log("[debug] Starting clerk init...");
-
   // Step 1: Authenticate the user
-  console.log("[debug] Step 1: Running clerk auth login...");
-  const { isNewUser } = await login();
+  await login();
 
-  if (isNewUser) {
-    // New sign-up flow: automatically create an app and write keys to .env
-    console.log(
-      "[debug] New user detected. Automatically creating a new Clerk app...",
-    );
-    console.log('[debug] Created app "my-app" (app_xxx)');
-    console.log(
-      "[debug] Writing NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY and CLERK_SECRET_KEY to .env",
-    );
-    console.log("[debug] .env file written successfully.");
-  } else {
-    // Existing user flow: browser UI asks them to pick or create an app
-    console.log(
-      "[debug] Existing user detected. Browser will prompt to link an existing app or create a new one...",
-    );
-    console.log("[debug] Waiting for app selection callback...");
-    console.log('[debug] User selected app "my-existing-app" (app_yyy)');
-    console.log(
-      "[debug] Writing NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY and CLERK_SECRET_KEY to .env",
-    );
-    console.log("[debug] .env file written successfully.");
-  }
-
-  console.log("[debug] clerk init complete.");
+  // Step 2: Link to a Clerk application
+  await link();
 }

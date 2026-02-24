@@ -18,6 +18,8 @@ Commands:
   auth                 Manage authentication
     login              Log in to your Clerk account
     logout             Log out of your Clerk account
+  link [options]       Link this project to a Clerk application
+  unlink [options]     Unlink this project from its Clerk application
   whoami               Show the current logged-in user
   config               Manage instance configuration
     pull [options]     Pull instance configuration from Clerk
@@ -32,6 +34,12 @@ Commands:
 
 clerk init
   --prompt             Output a prompt for an AI agent to integrate Clerk
+
+clerk link
+  --app <id>           Application ID to link (skips interactive picker)
+
+clerk unlink
+  --yes                Skip confirmation prompt
 
 clerk config pull
   --instance <id>      Instance to target (dev, prod, or a full instance ID)
