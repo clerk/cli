@@ -1,10 +1,8 @@
 import { join } from "node:path";
 import { login } from "../auth/login.js";
 import { link } from "../link/index.js";
-import { resolveProfile } from "../../lib/config.js";
-import { fetchApplication, PlapiError } from "../../lib/plapi.js";
-import { detectFramework, detectPublishableKeyName } from "../../lib/framework.js";
-import { parseEnvFile, mergeEnvVars, serializeEnvFile } from "../../lib/dotenv.js";
+import { pull } from "../env/pull.js";
+import { detectFramework } from "../../lib/framework.js";
 import { isAgent } from "../../mode.js";
 
 const dim = (s: string) => `\x1b[2m${s}\x1b[0m`;
@@ -85,45 +83,6 @@ async function installSdk(cwd: string, sdk: string, frameworkName: string): Prom
   }
 }
 
-async function writeEnvVars(cwd: string): Promise<void> {
-  const resolved = await resolveProfile(cwd);
-  if (!resolved) return;
-
-  const { profile } = resolved;
-  const devInstanceId = profile.instances.development;
-
-  let app;
-  try {
-    app = await fetchApplication(profile.appId);
-  } catch (error) {
-    if (error instanceof PlapiError) {
-      console.error(`Failed to fetch API keys: ${error.message}`);
-    }
-    return;
-  }
-
-  const matched = app.instances.find((i) => i.instance_id === devInstanceId);
-  if (!matched) return;
-
-  const publishableKeyName = await detectPublishableKeyName(cwd);
-  const targetFile = join(cwd, ".env.local");
-  const file = Bun.file(targetFile);
-  const existingContent = (await file.exists()) ? await file.text() : "";
-
-  const lines = parseEnvFile(existingContent);
-  const vars: Record<string, string> = {
-    [publishableKeyName]: matched.publishable_key,
-  };
-  if (matched.secret_key) {
-    vars.CLERK_SECRET_KEY = matched.secret_key;
-  }
-  const merged = mergeEnvVars(lines, vars);
-  const output = serializeEnvFile(merged);
-
-  await Bun.write(targetFile, output);
-  console.log(`Environment variables written to ${dim(".env.local")}`);
-}
-
 export async function init() {
   if (isAgent()) {
     console.log(AGENT_PROMPT);
@@ -148,6 +107,6 @@ export async function init() {
     );
   }
 
-  // Step 4: Write environment variables
-  await writeEnvVars(cwd);
+  // Step 4: Pull environment variables
+  await pull({});
 }
