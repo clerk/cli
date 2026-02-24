@@ -15,4 +15,12 @@ jobs:
 
       - run: bun install --frozen-lockfile
 
-      - run: bun test
+      - name: Run tests
+        run: |
+          failed=0
+          for f in $(find src -name '*.test.ts' | sort); do
+            if ! bun test "$f"; then
+              failed=1
+            fi
+          done
+          exit $failed
