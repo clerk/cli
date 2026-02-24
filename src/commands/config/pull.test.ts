@@ -1,8 +1,8 @@
-import { test, expect, describe, beforeEach, afterEach, mock, spyOn } from "bun:test";
+import { test, expect, describe, beforeEach, afterEach, spyOn } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { _setConfigDir, setProfile } from "../../lib/config";
+import { _setConfigDir, setProfile } from "../../lib/config.ts";
 
 describe("config pull", () => {
   const originalEnv = { ...process.env };
