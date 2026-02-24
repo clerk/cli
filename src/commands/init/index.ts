@@ -5,6 +5,7 @@ import { resolveProfile } from "../../lib/config.js";
 import { fetchApplication, PlapiError } from "../../lib/plapi.js";
 import { detectFramework, detectPublishableKeyName } from "../../lib/framework.js";
 import { parseEnvFile, mergeEnvVars, serializeEnvFile } from "../../lib/dotenv.js";
+import { isAgent } from "../../mode.js";
 
 const dim = (s: string) => `\x1b[2m${s}\x1b[0m`;
 const cyan = (s: string) => `\x1b[36m${s}\x1b[0m`;
@@ -110,18 +111,21 @@ async function writeEnvVars(cwd: string): Promise<void> {
   const existingContent = (await file.exists()) ? await file.text() : "";
 
   const lines = parseEnvFile(existingContent);
-  const merged = mergeEnvVars(lines, {
+  const vars: Record<string, string> = {
     [publishableKeyName]: matched.publishable_key,
-    CLERK_SECRET_KEY: matched.secret_key,
-  });
+  };
+  if (matched.secret_key) {
+    vars.CLERK_SECRET_KEY = matched.secret_key;
+  }
+  const merged = mergeEnvVars(lines, vars);
   const output = serializeEnvFile(merged);
 
   await Bun.write(targetFile, output);
   console.log(`Environment variables written to ${dim(".env.local")}`);
 }
 
-export async function init(options: { prompt?: boolean }) {
-  if (options.prompt) {
+export async function init() {
+  if (isAgent()) {
     console.log(AGENT_PROMPT);
     return;
   }
