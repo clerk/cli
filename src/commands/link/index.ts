@@ -28,6 +28,7 @@ const AGENT_PROMPT = `You are linking a Clerk application to the current project
 
 interface LinkOptions {
   app?: string;
+  skipIfLinked?: boolean;
 }
 
 function appLabel(app: Application): string {
@@ -46,6 +47,7 @@ export async function link(options: LinkOptions = {}): Promise<void> {
   const cwd = process.cwd();
   const existing = await resolveProfile(cwd);
   if (existing && existing.path === cwd) {
+    if (options.skipIfLinked) return;
     console.log(`Already linked to ${cyan(existing.profile.appId)} in ${dim(cwd)}`);
     const relink = await confirm({ message: "Re-link to a different application?", default: false });
     if (!relink) return;

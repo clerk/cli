@@ -1,39 +1,58 @@
 /**
- * Framework detection for determining the correct publishable key env var name.
+ * Framework detection for determining the correct Clerk SDK and env var name.
  * Reads package.json to identify the project's framework.
  */
 
 import { join } from "node:path";
 
-const FRAMEWORK_MAP: Array<{ dep: string; envVar: string }> = [
-  { dep: "next", envVar: "NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY" },
-  { dep: "expo", envVar: "EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY" },
-  { dep: "astro", envVar: "PUBLIC_CLERK_PUBLISHABLE_KEY" },
-  { dep: "nuxt", envVar: "NUXT_PUBLIC_CLERK_PUBLISHABLE_KEY" },
-  { dep: "vite", envVar: "VITE_CLERK_PUBLISHABLE_KEY" },
+export interface FrameworkInfo {
+  dep: string;
+  name: string;
+  sdk: string;
+  envVar: string;
+}
+
+// Order matters: more specific frameworks first (e.g. next before react, nuxt before vue)
+const FRAMEWORK_MAP: FrameworkInfo[] = [
+  { dep: "next", name: "Next.js", sdk: "@clerk/nextjs", envVar: "NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY" },
+  { dep: "expo", name: "Expo", sdk: "@clerk/expo", envVar: "EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY" },
+  { dep: "astro", name: "Astro", sdk: "@clerk/astro", envVar: "PUBLIC_CLERK_PUBLISHABLE_KEY" },
+  { dep: "nuxt", name: "Nuxt", sdk: "@clerk/nuxt", envVar: "NUXT_PUBLIC_CLERK_PUBLISHABLE_KEY" },
+  { dep: "@tanstack/react-start", name: "TanStack Start", sdk: "@clerk/tanstack-start", envVar: "VITE_CLERK_PUBLISHABLE_KEY" },
+  { dep: "react-router", name: "React Router", sdk: "@clerk/react-router", envVar: "VITE_CLERK_PUBLISHABLE_KEY" },
+  { dep: "fastify", name: "Fastify", sdk: "@clerk/fastify", envVar: "CLERK_PUBLISHABLE_KEY" },
+  { dep: "express", name: "Express", sdk: "@clerk/express", envVar: "CLERK_PUBLISHABLE_KEY" },
+  { dep: "vue", name: "Vue", sdk: "@clerk/vue", envVar: "VITE_CLERK_PUBLISHABLE_KEY" },
+  { dep: "react", name: "React", sdk: "@clerk/clerk-react", envVar: "VITE_CLERK_PUBLISHABLE_KEY" },
+  { dep: "vite", name: "Vite", sdk: "@clerk/clerk-react", envVar: "VITE_CLERK_PUBLISHABLE_KEY" },
 ];
 
 const FALLBACK_KEY = "CLERK_PUBLISHABLE_KEY";
 
-export async function detectPublishableKeyName(cwd: string): Promise<string> {
+async function readDeps(cwd: string): Promise<Record<string, string> | null> {
   const file = Bun.file(join(cwd, "package.json"));
-  if (!(await file.exists())) return FALLBACK_KEY;
+  if (!(await file.exists())) return null;
 
-  let pkg: Record<string, Record<string, string>>;
   try {
-    pkg = await file.json();
+    const pkg = await file.json();
+    return { ...pkg.dependencies, ...pkg.devDependencies };
   } catch {
-    return FALLBACK_KEY;
+    return null;
+  }
+}
+
+export async function detectFramework(cwd: string): Promise<FrameworkInfo | null> {
+  const allDeps = await readDeps(cwd);
+  if (!allDeps) return null;
+
+  for (const fw of FRAMEWORK_MAP) {
+    if (fw.dep in allDeps) return fw;
   }
 
-  const allDeps = {
-    ...pkg.dependencies,
-    ...pkg.devDependencies,
-  };
+  return null;
+}
 
-  for (const { dep, envVar } of FRAMEWORK_MAP) {
-    if (dep in allDeps) return envVar;
-  }
-
-  return FALLBACK_KEY;
+export async function detectPublishableKeyName(cwd: string): Promise<string> {
+  const fw = await detectFramework(cwd);
+  return fw?.envVar ?? FALLBACK_KEY;
 }

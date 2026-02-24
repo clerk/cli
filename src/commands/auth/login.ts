@@ -13,7 +13,7 @@ export async function login(): Promise<{ userId: string; email: string }> {
     if (auth) {
       try {
         const userInfo = await fetchUserInfo(existingToken);
-        console.log(`Already logged in as ${userInfo.email}`);
+        console.log(`Logged in as ${userInfo.email}`);
         return userInfo;
       } catch {
         // Token expired or invalid — continue with fresh login

@@ -1,6 +1,6 @@
 # Init Command
 
-Initializes Clerk in a project by authenticating the user and linking a Clerk application.
+Initializes Clerk in a project by authenticating the user, linking a Clerk application, installing the SDK, and writing environment variables.
 
 ## Usage
 
@@ -19,7 +19,33 @@ clerk init --prompt
 
 1. Authenticates the user via `clerk auth login` (see [auth/README.md](../auth/README.md) for APIs)
 2. Links the project to a Clerk application via `clerk link` (see [link/README.md](../link/README.md) for APIs)
+3. Detects the project's framework from `package.json` and installs the appropriate Clerk SDK (e.g. `@clerk/nextjs` for Next.js)
+4. Fetches the development instance API keys and writes them to `.env.local`
+
+## Framework Detection
+
+The command detects the project's framework by checking `package.json` dependencies:
+
+| Dependency | Framework | Clerk SDK |
+|---|---|---|
+| `next` | Next.js | `@clerk/nextjs` |
+| `expo` | Expo | `@clerk/expo` |
+| `astro` | Astro | `@clerk/astro` |
+| `nuxt` | Nuxt | `@clerk/nuxt` |
+| `@tanstack/react-start` | TanStack Start | `@clerk/tanstack-start` |
+| `react-router` | React Router | `@clerk/react-router` |
+| `fastify` | Fastify | `@clerk/fastify` |
+| `express` | Express | `@clerk/express` |
+| `vue` | Vue | `@clerk/vue` |
+| `react` | React | `@clerk/clerk-react` |
+| `vite` | Vite | `@clerk/clerk-react` |
+
+The package manager is detected from lock files (`bun.lockb` → bun, `yarn.lock` → yarn, `pnpm-lock.yaml` → pnpm, else npm).
 
 ## API Endpoints
 
-See [auth/README.md](../auth/README.md) and [link/README.md](../link/README.md) for the API endpoints used by each step.
+| Method | Path | Description |
+|---|---|---|
+| GET | /v1/platform/applications/{appId} | Fetch application with instance keys (for env vars) |
+
+Also see [auth/README.md](../auth/README.md) and [link/README.md](../link/README.md) for the API endpoints used by steps 1 and 2.

@@ -36,7 +36,6 @@ program.hook("preAction", () => {
 program
   .command("init")
   .description("Initialize Clerk in your project")
-  .option("--prompt", "Output a prompt for an AI agent to integrate Clerk")
   .action(init);
 
 const auth = program

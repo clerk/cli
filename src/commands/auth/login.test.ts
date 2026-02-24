@@ -82,7 +82,7 @@ describe("login", () => {
     const result = await login();
 
     expect(result).toEqual({ userId: "user_123", email: "existing@example.com" });
-    expect(consoleSpy).toHaveBeenCalledWith("Already logged in as existing@example.com");
+    expect(consoleSpy).toHaveBeenCalledWith("Logged in as existing@example.com");
     expect(mockStartAuthServer).not.toHaveBeenCalled();
   });
 
