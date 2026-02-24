@@ -6,21 +6,14 @@ Initializes Clerk in a project by authenticating the user, linking a Clerk appli
 
 ```sh
 clerk init
-clerk init --prompt
 ```
-
-## Options
-
-| Flag | Description |
-|---|---|
-| `--prompt` | Output an AI agent prompt for integrating Clerk instead of running the interactive flow |
 
 ## Flow
 
 1. Authenticates the user via `clerk auth login` (see [auth/README.md](../auth/README.md) for APIs)
 2. Links the project to a Clerk application via `clerk link` (see [link/README.md](../link/README.md) for APIs)
 3. Detects the project's framework from `package.json` and installs the appropriate Clerk SDK (e.g. `@clerk/nextjs` for Next.js)
-4. Fetches the development instance API keys and writes them to `.env.local`
+4. Pulls development instance API keys via `clerk env pull` and writes them to `.env.local`
 
 ## Framework Detection
 
@@ -44,8 +37,4 @@ The package manager is detected from lock files (`bun.lockb` → bun, `yarn.lock
 
 ## API Endpoints
 
-| Method | Path | Description |
-|---|---|---|
-| GET | /v1/platform/applications/{appId} | Fetch application with instance keys (for env vars) |
-
-Also see [auth/README.md](../auth/README.md) and [link/README.md](../link/README.md) for the API endpoints used by steps 1 and 2.
+See [auth/README.md](../auth/README.md), [link/README.md](../link/README.md), and [env/README.md](../env/README.md) for the API endpoints used by each step.
