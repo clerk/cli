@@ -83,6 +83,12 @@ export async function setProfile(path: string, profile: Profile): Promise<void> 
   await writeConfig(config);
 }
 
+export async function removeProfile(path: string): Promise<void> {
+  const config = await readConfig();
+  delete config.profiles[path];
+  await writeConfig(config);
+}
+
 export async function listProfiles(): Promise<Record<string, Profile>> {
   const config = await readConfig();
   return config.profiles;

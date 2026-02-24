@@ -1,24 +1,59 @@
 import { test, expect, describe, beforeEach, afterEach, mock } from "bun:test";
-import { fetchInstanceConfig, putInstanceConfig, patchInstanceConfig, PlapiError } from "./plapi";
+
+const mockGetToken = mock();
+mock.module("./credential-store.ts", () => ({
+  getToken: (...args: unknown[]) => mockGetToken(...args),
+}));
+
+const { fetchInstanceConfig, putInstanceConfig, patchInstanceConfig, listApplications, PlapiError } = await import("./plapi.ts");
 
 describe("plapi", () => {
   const originalEnv = { ...process.env };
   const originalFetch = globalThis.fetch;
 
   beforeEach(() => {
+    mockGetToken.mockResolvedValue(null);
     process.env.CLERK_PLATFORM_API_KEY = "test_key_123";
   });
 
   afterEach(() => {
     process.env = { ...originalEnv };
     globalThis.fetch = originalFetch;
+    mockGetToken.mockReset();
   });
 
-  test("throws when CLERK_PLATFORM_API_KEY is not set", async () => {
+  test("throws when neither OAuth token nor env var is set", async () => {
+    mockGetToken.mockResolvedValue(null);
     delete process.env.CLERK_PLATFORM_API_KEY;
     await expect(fetchInstanceConfig("app_1", "ins_1")).rejects.toThrow(
-      "CLERK_PLATFORM_API_KEY environment variable is required",
+      "Not authenticated",
     );
+  });
+
+  test("prefers CLERK_PLATFORM_API_KEY over OAuth token", async () => {
+    mockGetToken.mockResolvedValue("oauth_token_abc");
+    process.env.CLERK_PLATFORM_API_KEY = "env_key_xyz";
+    let capturedHeaders: Headers | undefined;
+    globalThis.fetch = async (_input: RequestInfo | URL, init?: RequestInit) => {
+      capturedHeaders = new Headers(init?.headers);
+      return new Response(JSON.stringify({}), { status: 200 });
+    };
+
+    await fetchInstanceConfig("app_1", "ins_1");
+    expect(capturedHeaders?.get("Authorization")).toBe("Bearer env_key_xyz");
+  });
+
+  test("falls back to OAuth token when no CLERK_PLATFORM_API_KEY", async () => {
+    delete process.env.CLERK_PLATFORM_API_KEY;
+    mockGetToken.mockResolvedValue("oauth_token_abc");
+    let capturedHeaders: Headers | undefined;
+    globalThis.fetch = async (_input: RequestInfo | URL, init?: RequestInit) => {
+      capturedHeaders = new Headers(init?.headers);
+      return new Response(JSON.stringify({}), { status: 200 });
+    };
+
+    await fetchInstanceConfig("app_1", "ins_1");
+    expect(capturedHeaders?.get("Authorization")).toBe("Bearer oauth_token_abc");
   });
 
   test("constructs correct URL", async () => {
@@ -199,6 +234,43 @@ describe("plapi", () => {
       } catch (error) {
         expect(error).toBeInstanceOf(PlapiError);
         expect((error as PlapiError).status).toBe(422);
+      }
+    });
+  });
+
+  describe("listApplications", () => {
+    test("constructs correct URL", async () => {
+      let requestedUrl = "";
+      globalThis.fetch = async (input: RequestInfo | URL) => {
+        requestedUrl = input.toString();
+        return new Response(JSON.stringify([]), { status: 200 });
+      };
+
+      await listApplications();
+      expect(requestedUrl).toBe("https://api.clerk.com/v1/platform/applications");
+    });
+
+    test("returns parsed application list", async () => {
+      const mockApps = [
+        { application_id: "app_1", instances: [] },
+        { application_id: "app_2", instances: [] },
+      ];
+      globalThis.fetch = async () =>
+        new Response(JSON.stringify(mockApps), { status: 200 });
+
+      const result = await listApplications();
+      expect(result).toEqual(mockApps);
+    });
+
+    test("throws PlapiError on non-2xx response", async () => {
+      globalThis.fetch = async () => new Response("Forbidden", { status: 403 });
+
+      try {
+        await listApplications();
+        expect(true).toBe(false);
+      } catch (error) {
+        expect(error).toBeInstanceOf(PlapiError);
+        expect((error as PlapiError).status).toBe(403);
       }
     });
   });

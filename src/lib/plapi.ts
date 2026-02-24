@@ -4,6 +4,7 @@
  */
 
 import { PLAPI_BASE_URL } from "./constants.ts";
+import { getToken } from "./credential-store.ts";
 
 export class PlapiError extends Error {
   constructor(
@@ -15,25 +16,29 @@ export class PlapiError extends Error {
   }
 }
 
-function getApiKey(): string {
-  // TODO: Support OAuth token from login flow long-term
+async function getAuthToken(): Promise<string> {
+  // Prefer platform API key (OAuth token doesn't have platform scopes yet)
   const key = process.env.CLERK_PLATFORM_API_KEY;
-  if (!key) {
-    throw new Error(
-      "CLERK_PLATFORM_API_KEY environment variable is required.",
-    );
-  }
-  return key;
+  if (key) return key;
+
+  // Fall back to OAuth access token from `clerk auth login`
+  const oauthToken = await getToken();
+  if (oauthToken) return oauthToken;
+
+  throw new Error(
+    "Not authenticated. Run `clerk auth login` or set CLERK_PLATFORM_API_KEY.",
+  );
 }
 
 export async function fetchInstanceConfig(
   applicationId: string,
   instanceId: string,
 ): Promise<Record<string, unknown>> {
+  const token = await getAuthToken();
   const url = `${PLAPI_BASE_URL}/v1/platform/applications/${applicationId}/instances/${instanceId}/config`;
   const response = await fetch(url, {
     headers: {
-      Authorization: `Bearer ${getApiKey()}`,
+      Authorization: `Bearer ${token}`,
       Accept: "application/json",
     },
   });
@@ -49,22 +54,24 @@ export async function fetchInstanceConfig(
 export interface ApplicationInstance {
   instance_id: string;
   environment_type: string;
-  secret_key: string;
+  secret_key?: string;
   publishable_key: string;
 }
 
 export interface Application {
   application_id: string;
+  name?: string;
   instances: ApplicationInstance[];
 }
 
 export async function fetchApplication(
   applicationId: string,
 ): Promise<Application> {
+  const token = await getAuthToken();
   const url = `${PLAPI_BASE_URL}/v1/platform/applications/${applicationId}`;
   const response = await fetch(url, {
     headers: {
-      Authorization: `Bearer ${getApiKey()}`,
+      Authorization: `Bearer ${token}`,
       Accept: "application/json",
     },
   });
@@ -83,11 +90,12 @@ async function sendInstanceConfig(
   instanceId: string,
   config: Record<string, unknown>,
 ): Promise<Record<string, unknown>> {
+  const token = await getAuthToken();
   const url = `${PLAPI_BASE_URL}/v1/platform/applications/${applicationId}/instances/${instanceId}/config`;
   const response = await fetch(url, {
     method,
     headers: {
-      Authorization: `Bearer ${getApiKey()}`,
+      Authorization: `Bearer ${token}`,
       "Content-Type": "application/json",
       Accept: "application/json",
     },
@@ -113,3 +121,21 @@ export const patchInstanceConfig = (
   instanceId: string,
   config: Record<string, unknown>,
 ) => sendInstanceConfig("PATCH", applicationId, instanceId, config);
+
+export async function listApplications(): Promise<Application[]> {
+  const token = await getAuthToken();
+  const url = `${PLAPI_BASE_URL}/v1/platform/applications`;
+  const response = await fetch(url, {
+    headers: {
+      Authorization: `Bearer ${token}`,
+      Accept: "application/json",
+    },
+  });
+
+  if (!response.ok) {
+    const body = await response.text();
+    throw new PlapiError(response.status, body);
+  }
+
+  return response.json() as Promise<Application[]>;
+}
