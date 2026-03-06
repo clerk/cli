@@ -4,9 +4,7 @@ import { link } from "../link/index.js";
 import { pull } from "../env/pull.js";
 import { detectFramework } from "../../lib/framework.js";
 import { isAgent } from "../../mode.js";
-
-const dim = (s: string) => `\x1b[2m${s}\x1b[0m`;
-const cyan = (s: string) => `\x1b[36m${s}\x1b[0m`;
+import { dim, cyan } from "../../lib/color.js";
 
 const AGENT_PROMPT = `You are integrating Clerk authentication into an existing project. Follow these steps:
 

@@ -21,6 +21,10 @@ mock.module("@inquirer/prompts", () => ({
 
 const { deploy } = await import("./index.ts");
 
+function capturedOutput(spy: ReturnType<typeof spyOn>): string {
+  return spy.mock.calls.map((c: unknown[]) => c[0]).join("\n");
+}
+
 describe("deploy", () => {
   let consoleSpy: ReturnType<typeof spyOn>;
 
@@ -110,7 +114,7 @@ describe("deploy", () => {
 
       await deploy({});
 
-      const allOutput = consoleSpy.mock.calls.map((c) => c[0]).join("\n");
+      const allOutput = capturedOutput(consoleSpy);
       expect(allOutput).not.toContain(
         "deploying a Clerk application to production"
       );
@@ -122,7 +126,7 @@ describe("deploy", () => {
 
       await deploy({});
 
-      const allOutput = consoleSpy.mock.calls.map((c) => c[0]).join("\n");
+      const allOutput = capturedOutput(consoleSpy);
       expect(allOutput).toContain("[mock]");
     });
   });
