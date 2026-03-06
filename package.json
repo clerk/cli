@@ -8,7 +8,8 @@
   },
   "scripts": {
     "build": "bun build ./src/cli.ts --outfile ./dist/cli.js --target node",
-    "dev": "bun run ./src/cli.ts"
+    "dev": "bun run ./src/cli.ts",
+    "test": "bun test"
   },
   "devDependencies": {
     "@types/bun": "latest"

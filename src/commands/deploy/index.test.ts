@@ -1,18 +1,23 @@
 import { test, expect, describe, afterEach, mock, spyOn } from "bun:test";
+import { capturedOutput, promptsStubs } from "../../test/stubs.ts";
 
 const mockIsAgent = mock();
+let _modeOverride: string | undefined;
 
 mock.module("../../mode.ts", () => ({
-  isAgent: (...args: unknown[]) => mockIsAgent(...args),
+  isAgent: (...args: unknown[]) => _modeOverride !== undefined ? _modeOverride === "agent" : mockIsAgent(...args),
+  isHuman: (...args: unknown[]) => _modeOverride !== undefined ? _modeOverride !== "agent" : !mockIsAgent(...args),
+  setMode: (m: string) => { _modeOverride = m; },
+  getMode: () => _modeOverride ?? "human",
 }));
 
-// Mock inquirer prompts so human-mode tests don't hang
 const mockSelect = mock();
 const mockInput = mock();
 const mockConfirm = mock();
 const mockPassword = mock();
 
 mock.module("@inquirer/prompts", () => ({
+  ...promptsStubs,
   select: (...args: unknown[]) => mockSelect(...args),
   input: (...args: unknown[]) => mockInput(...args),
   confirm: (...args: unknown[]) => mockConfirm(...args),
@@ -21,14 +26,11 @@ mock.module("@inquirer/prompts", () => ({
 
 const { deploy } = await import("./index.ts");
 
-function capturedOutput(spy: ReturnType<typeof spyOn>): string {
-  return spy.mock.calls.map((c: unknown[]) => c[0]).join("\n");
-}
-
 describe("deploy", () => {
   let consoleSpy: ReturnType<typeof spyOn>;
 
   afterEach(() => {
+    _modeOverride = undefined;
     mockIsAgent.mockReset();
     mockSelect.mockReset();
     mockInput.mockReset();

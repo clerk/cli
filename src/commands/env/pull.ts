@@ -68,10 +68,13 @@ export async function pull(options: EnvPullOptions): Promise<void> {
   const existingContent = (await file.exists()) ? await file.text() : "";
 
   const lines = parseEnvFile(existingContent);
-  const merged = mergeEnvVars(lines, {
+  const vars: Record<string, string> = {
     [publishableKeyName]: matched.publishable_key,
-    CLERK_SECRET_KEY: matched.secret_key,
-  });
+  };
+  if (matched.secret_key) {
+    vars.CLERK_SECRET_KEY = matched.secret_key;
+  }
+  const merged = mergeEnvVars(lines, vars);
   const output = serializeEnvFile(merged);
 
   await Bun.write(targetFile, output);

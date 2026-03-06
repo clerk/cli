@@ -1,26 +1,33 @@
 import { test, expect, describe, afterEach, mock, spyOn } from "bun:test";
+import { capturedOutput, configStubs, gitStubs, promptsStubs } from "../../test/stubs.ts";
 
 const mockIsAgent = mock();
 const mockIsHuman = mock();
+let _modeOverride: string | undefined;
 mock.module("../../mode.ts", () => ({
-  isAgent: (...args: unknown[]) => mockIsAgent(...args),
-  isHuman: (...args: unknown[]) => mockIsHuman(...args),
+  isAgent: (...args: unknown[]) => _modeOverride !== undefined ? _modeOverride === "agent" : mockIsAgent(...args),
+  isHuman: (...args: unknown[]) => _modeOverride !== undefined ? _modeOverride !== "agent" : mockIsHuman(...args),
+  setMode: (m: string) => { _modeOverride = m; },
+  getMode: () => _modeOverride ?? "human",
 }));
 
 const mockResolveProfile = mock();
 const mockRemoveProfile = mock();
 mock.module("../../lib/config.ts", () => ({
+  ...configStubs,
   resolveProfile: (...args: unknown[]) => mockResolveProfile(...args),
   removeProfile: (...args: unknown[]) => mockRemoveProfile(...args),
 }));
 
 const mockGetGitRepoRoot = mock();
 mock.module("../../lib/git.ts", () => ({
+  ...gitStubs,
   getGitRepoRoot: (...args: unknown[]) => mockGetGitRepoRoot(...args),
 }));
 
 const mockConfirm = mock();
 mock.module("@inquirer/prompts", () => ({
+  ...promptsStubs,
   confirm: (...args: unknown[]) => mockConfirm(...args),
 }));
 
@@ -31,16 +38,13 @@ const mockProfile = {
   profile: { workspaceId: "", appId: "app_123", instances: { development: "ins_dev" } },
 };
 
-function capturedOutput(spy: ReturnType<typeof spyOn>): string {
-  return spy.mock.calls.map((c: unknown[]) => c[0]).join("\n");
-}
-
 describe("unlink", () => {
   let consoleSpy: ReturnType<typeof spyOn>;
   let errorSpy: ReturnType<typeof spyOn>;
   let exitSpy: ReturnType<typeof spyOn>;
 
   afterEach(() => {
+    _modeOverride = undefined;
     mockIsAgent.mockReset();
     mockIsHuman.mockReset();
     mockResolveProfile.mockReset();
@@ -114,7 +118,9 @@ describe("unlink", () => {
 
       await unlink();
 
-      expect(mockConfirm).toHaveBeenCalled();
+      expect(mockConfirm).toHaveBeenCalledWith(
+        expect.objectContaining({ message: expect.stringContaining("/repo") }),
+      );
       expect(mockRemoveProfile).toHaveBeenCalledWith(process.cwd());
     });
 

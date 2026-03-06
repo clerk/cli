@@ -2,8 +2,18 @@ import { test, expect, describe, beforeEach, afterEach, spyOn, mock } from "bun:
 import { mkdtemp, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { parseSpec, _setCacheDir } from "./catalog";
-import { setMode } from "../../mode";
+import { promptsStubs, stubFetch } from "../../test/stubs.ts";
+
+let _mode = "human";
+mock.module("../../mode.ts", () => ({
+  setMode: (m: string) => { _mode = m; },
+  getMode: () => _mode,
+  isAgent: () => _mode === "agent",
+  isHuman: () => _mode !== "agent",
+}));
+
+const { parseSpec, _setCacheDir } = await import("./catalog") as any;
+const { setMode } = await import("../../mode") as any;
 
 const MINIMAL_SPEC = `
 openapi: "3.0.0"
@@ -45,11 +55,10 @@ let confirmResponses: boolean[] = [];
 let fetchCalls: { url: string; method: string }[] = [];
 
 mock.module("@inquirer/prompts", () => ({
+  ...promptsStubs,
   select: async () => selectResponses.shift(),
   input: async () => inputResponses.shift(),
   confirm: async () => confirmResponses.shift(),
-  editor: async () => "{}",
-  password: async () => "",
 }));
 
 describe("apiInteractive", () => {
@@ -81,10 +90,10 @@ describe("apiInteractive", () => {
       throw new Error("process.exit");
     });
     // Capture fetch calls from the real api handler
-    globalThis.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
+    stubFetch(async (input, init) => {
       fetchCalls.push({ url: input.toString(), method: init?.method ?? "GET" });
       return new Response(JSON.stringify({ data: [] }), { status: 200 });
-    };
+    });
 
     // Reset tracking
     selectResponses = [];

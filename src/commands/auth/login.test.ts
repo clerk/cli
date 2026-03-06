@@ -1,4 +1,5 @@
 import { test, expect, describe, afterEach, mock, spyOn } from "bun:test";
+import { credentialStoreStubs, configStubs } from "../../test/stubs.ts";
 
 const mockGetToken = mock();
 const mockStoreToken = mock();
@@ -9,11 +10,13 @@ const mockFetchUserInfo = mock();
 const mockStartAuthServer = mock();
 
 mock.module("../../lib/credential-store.ts", () => ({
+  ...credentialStoreStubs,
   getToken: (...args: unknown[]) => mockGetToken(...args),
   storeToken: (...args: unknown[]) => mockStoreToken(...args),
 }));
 
 mock.module("../../lib/config.ts", () => ({
+  ...configStubs,
   getAuth: (...args: unknown[]) => mockGetAuth(...args),
   setAuth: (...args: unknown[]) => mockSetAuth(...args),
 }));

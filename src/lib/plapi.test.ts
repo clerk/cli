@@ -1,7 +1,9 @@
 import { test, expect, describe, beforeEach, afterEach, mock } from "bun:test";
+import { credentialStoreStubs, stubFetch } from "../test/stubs.ts";
 
 const mockGetToken = mock();
 mock.module("./credential-store.ts", () => ({
+  ...credentialStoreStubs,
   getToken: (...args: unknown[]) => mockGetToken(...args),
 }));
 
@@ -34,10 +36,10 @@ describe("plapi", () => {
     mockGetToken.mockResolvedValue("oauth_token_abc");
     process.env.CLERK_PLATFORM_API_KEY = "env_key_xyz";
     let capturedHeaders: Headers | undefined;
-    globalThis.fetch = async (_input: RequestInfo | URL, init?: RequestInit) => {
+    stubFetch(async (_input, init) => {
       capturedHeaders = new Headers(init?.headers);
       return new Response(JSON.stringify({}), { status: 200 });
-    };
+    });
 
     await fetchInstanceConfig("app_1", "ins_1");
     expect(capturedHeaders?.get("Authorization")).toBe("Bearer env_key_xyz");
@@ -47,10 +49,10 @@ describe("plapi", () => {
     delete process.env.CLERK_PLATFORM_API_KEY;
     mockGetToken.mockResolvedValue("oauth_token_abc");
     let capturedHeaders: Headers | undefined;
-    globalThis.fetch = async (_input: RequestInfo | URL, init?: RequestInit) => {
+    stubFetch(async (_input, init) => {
       capturedHeaders = new Headers(init?.headers);
       return new Response(JSON.stringify({}), { status: 200 });
-    };
+    });
 
     await fetchInstanceConfig("app_1", "ins_1");
     expect(capturedHeaders?.get("Authorization")).toBe("Bearer oauth_token_abc");
@@ -58,10 +60,10 @@ describe("plapi", () => {
 
   test("constructs correct URL", async () => {
     let requestedUrl = "";
-    globalThis.fetch = async (input: RequestInfo | URL) => {
+    stubFetch(async (input) => {
       requestedUrl = input.toString();
       return new Response(JSON.stringify({}), { status: 200 });
-    };
+    });
 
     await fetchInstanceConfig("app_abc", "ins_def");
     expect(requestedUrl).toBe(
@@ -71,10 +73,10 @@ describe("plapi", () => {
 
   test("sends Bearer token in Authorization header", async () => {
     let capturedHeaders: Headers | undefined;
-    globalThis.fetch = async (_input: RequestInfo | URL, init?: RequestInit) => {
+    stubFetch(async (_input, init) => {
       capturedHeaders = new Headers(init?.headers);
       return new Response(JSON.stringify({}), { status: 200 });
-    };
+    });
 
     await fetchInstanceConfig("app_1", "ins_1");
     expect(capturedHeaders?.get("Authorization")).toBe("Bearer test_key_123");
@@ -83,14 +85,14 @@ describe("plapi", () => {
 
   test("returns parsed JSON on success", async () => {
     const mockConfig = { session: { lifetime: 604800 }, sign_up: { mode: "public" } };
-    globalThis.fetch = async () => new Response(JSON.stringify(mockConfig), { status: 200 });
+    stubFetch(async () => new Response(JSON.stringify(mockConfig), { status: 200 }));
 
     const result = await fetchInstanceConfig("app_1", "ins_1");
     expect(result).toEqual(mockConfig);
   });
 
   test("throws PlapiError on non-2xx response", async () => {
-    globalThis.fetch = async () => new Response("Not Found", { status: 404 });
+    stubFetch(async () => new Response("Not Found", { status: 404 }));
 
     try {
       await fetchInstanceConfig("app_1", "ins_bad");
@@ -104,10 +106,10 @@ describe("plapi", () => {
 
   test("default base URL is api.clerk.com", async () => {
     let requestedUrl = "";
-    globalThis.fetch = async (input: RequestInfo | URL) => {
+    stubFetch(async (input) => {
       requestedUrl = input.toString();
       return new Response(JSON.stringify({}), { status: 200 });
-    };
+    });
 
     await fetchInstanceConfig("app_1", "ins_1");
     expect(requestedUrl).toStartWith("https://api.clerk.com/");
@@ -117,11 +119,11 @@ describe("plapi", () => {
     test("sends PUT method with correct URL", async () => {
       let capturedMethod = "";
       let capturedUrl = "";
-      globalThis.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
+      stubFetch(async (input, init) => {
         capturedUrl = input.toString();
         capturedMethod = init?.method ?? "GET";
         return new Response(JSON.stringify({}), { status: 200 });
-      };
+      });
 
       await putInstanceConfig("app_abc", "ins_def", { session: { lifetime: 3600 } });
       expect(capturedMethod).toBe("PUT");
@@ -132,10 +134,10 @@ describe("plapi", () => {
 
     test("sends Content-Type and Authorization headers", async () => {
       let capturedHeaders: Headers | undefined;
-      globalThis.fetch = async (_input: RequestInfo | URL, init?: RequestInit) => {
+      stubFetch(async (_input, init) => {
         capturedHeaders = new Headers(init?.headers);
         return new Response(JSON.stringify({}), { status: 200 });
-      };
+      });
 
       await putInstanceConfig("app_1", "ins_1", {});
       expect(capturedHeaders?.get("Authorization")).toBe("Bearer test_key_123");
@@ -145,10 +147,10 @@ describe("plapi", () => {
 
     test("sends JSON body", async () => {
       let capturedBody = "";
-      globalThis.fetch = async (_input: RequestInfo | URL, init?: RequestInit) => {
+      stubFetch(async (_input, init) => {
         capturedBody = init?.body as string;
         return new Response(JSON.stringify({}), { status: 200 });
-      };
+      });
 
       const payload = { session: { lifetime: 3600 } };
       await putInstanceConfig("app_1", "ins_1", payload);
@@ -157,14 +159,14 @@ describe("plapi", () => {
 
     test("returns parsed JSON on success", async () => {
       const mockResult = { session: { lifetime: 3600 }, sign_up: { mode: "restricted" } };
-      globalThis.fetch = async () => new Response(JSON.stringify(mockResult), { status: 200 });
+      stubFetch(async () => new Response(JSON.stringify(mockResult), { status: 200 }));
 
       const result = await putInstanceConfig("app_1", "ins_1", { session: { lifetime: 3600 } });
       expect(result).toEqual(mockResult);
     });
 
     test("throws PlapiError on non-2xx response", async () => {
-      globalThis.fetch = async () => new Response("Bad Request", { status: 400 });
+      stubFetch(async () => new Response("Bad Request", { status: 400 }));
 
       try {
         await putInstanceConfig("app_1", "ins_1", {});
@@ -180,11 +182,11 @@ describe("plapi", () => {
     test("sends PATCH method with correct URL", async () => {
       let capturedMethod = "";
       let capturedUrl = "";
-      globalThis.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
+      stubFetch(async (input, init) => {
         capturedUrl = input.toString();
         capturedMethod = init?.method ?? "GET";
         return new Response(JSON.stringify({}), { status: 200 });
-      };
+      });
 
       await patchInstanceConfig("app_abc", "ins_def", { session: { lifetime: 3600 } });
       expect(capturedMethod).toBe("PATCH");
@@ -195,10 +197,10 @@ describe("plapi", () => {
 
     test("sends Content-Type and Authorization headers", async () => {
       let capturedHeaders: Headers | undefined;
-      globalThis.fetch = async (_input: RequestInfo | URL, init?: RequestInit) => {
+      stubFetch(async (_input, init) => {
         capturedHeaders = new Headers(init?.headers);
         return new Response(JSON.stringify({}), { status: 200 });
-      };
+      });
 
       await patchInstanceConfig("app_1", "ins_1", {});
       expect(capturedHeaders?.get("Authorization")).toBe("Bearer test_key_123");
@@ -207,10 +209,10 @@ describe("plapi", () => {
 
     test("sends JSON body", async () => {
       let capturedBody = "";
-      globalThis.fetch = async (_input: RequestInfo | URL, init?: RequestInit) => {
+      stubFetch(async (_input, init) => {
         capturedBody = init?.body as string;
         return new Response(JSON.stringify({}), { status: 200 });
-      };
+      });
 
       const payload = { sign_up: { mode: "restricted" } };
       await patchInstanceConfig("app_1", "ins_1", payload);
@@ -219,14 +221,14 @@ describe("plapi", () => {
 
     test("returns full config after merge", async () => {
       const mockResult = { session: { lifetime: 3600 }, sign_up: { mode: "public" } };
-      globalThis.fetch = async () => new Response(JSON.stringify(mockResult), { status: 200 });
+      stubFetch(async () => new Response(JSON.stringify(mockResult), { status: 200 }));
 
       const result = await patchInstanceConfig("app_1", "ins_1", { session: { lifetime: 3600 } });
       expect(result).toEqual(mockResult);
     });
 
     test("throws PlapiError on non-2xx response", async () => {
-      globalThis.fetch = async () => new Response("Unprocessable Entity", { status: 422 });
+      stubFetch(async () => new Response("Unprocessable Entity", { status: 422 }));
 
       try {
         await patchInstanceConfig("app_1", "ins_1", { bad: "config" });
@@ -241,10 +243,10 @@ describe("plapi", () => {
   describe("listApplications", () => {
     test("constructs correct URL", async () => {
       let requestedUrl = "";
-      globalThis.fetch = async (input: RequestInfo | URL) => {
+      stubFetch(async (input) => {
         requestedUrl = input.toString();
         return new Response(JSON.stringify([]), { status: 200 });
-      };
+      });
 
       await listApplications();
       expect(requestedUrl).toBe("https://api.clerk.com/v1/platform/applications");
@@ -255,15 +257,15 @@ describe("plapi", () => {
         { application_id: "app_1", instances: [] },
         { application_id: "app_2", instances: [] },
       ];
-      globalThis.fetch = async () =>
-        new Response(JSON.stringify(mockApps), { status: 200 });
+      stubFetch(async () =>
+        new Response(JSON.stringify(mockApps), { status: 200 }));
 
       const result = await listApplications();
       expect(result).toEqual(mockApps);
     });
 
     test("throws PlapiError on non-2xx response", async () => {
-      globalThis.fetch = async () => new Response("Forbidden", { status: 403 });
+      stubFetch(async () => new Response("Forbidden", { status: 403 }));
 
       try {
         await listApplications();

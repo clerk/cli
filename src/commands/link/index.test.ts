@@ -1,12 +1,18 @@
 import { test, expect, describe, afterEach, mock, spyOn } from "bun:test";
+import { capturedOutput, configStubs, credentialStoreStubs, gitStubs, promptsStubs } from "../../test/stubs.ts";
 
 const mockIsAgent = mock();
+let _modeOverride: string | undefined;
 mock.module("../../mode.ts", () => ({
-  isAgent: (...args: unknown[]) => mockIsAgent(...args),
+  isAgent: (...args: unknown[]) => _modeOverride !== undefined ? _modeOverride === "agent" : mockIsAgent(...args),
+  isHuman: (...args: unknown[]) => _modeOverride !== undefined ? _modeOverride !== "agent" : !mockIsAgent(...args),
+  setMode: (m: string) => { _modeOverride = m; },
+  getMode: () => _modeOverride ?? "human",
 }));
 
 const mockGetToken = mock();
 mock.module("../../lib/credential-store.ts", () => ({
+  ...credentialStoreStubs,
   getToken: (...args: unknown[]) => mockGetToken(...args),
 }));
 
@@ -20,12 +26,17 @@ const mockFetchApplication = mock();
 mock.module("../../lib/plapi.ts", () => ({
   listApplications: (...args: unknown[]) => mockListApplications(...args),
   fetchApplication: (...args: unknown[]) => mockFetchApplication(...args),
+  PlapiError: class PlapiError extends Error {},
+  fetchInstanceConfig: async () => ({}),
+  putInstanceConfig: async () => ({}),
+  patchInstanceConfig: async () => ({}),
 }));
 
 const mockSetProfile = mock();
 const mockResolveProfile = mock();
 const mockMoveProfile = mock();
 mock.module("../../lib/config.ts", () => ({
+  ...configStubs,
   setProfile: (...args: unknown[]) => mockSetProfile(...args),
   resolveProfile: (...args: unknown[]) => mockResolveProfile(...args),
   moveProfile: (...args: unknown[]) => mockMoveProfile(...args),
@@ -35,6 +46,7 @@ const mockGetGitRepoIdentifier = mock();
 const mockGetGitRepoRoot = mock();
 const mockGetGitNormalizedRemote = mock();
 mock.module("../../lib/git.ts", () => ({
+  ...gitStubs,
   getGitRepoIdentifier: (...args: unknown[]) => mockGetGitRepoIdentifier(...args),
   getGitRepoRoot: (...args: unknown[]) => mockGetGitRepoRoot(...args),
   getGitNormalizedRemote: (...args: unknown[]) => mockGetGitNormalizedRemote(...args),
@@ -43,6 +55,7 @@ mock.module("../../lib/git.ts", () => ({
 const mockSearch = mock();
 const mockConfirm = mock();
 mock.module("@inquirer/prompts", () => ({
+  ...promptsStubs,
   search: (...args: unknown[]) => mockSearch(...args),
   confirm: (...args: unknown[]) => mockConfirm(...args),
 }));
@@ -57,16 +70,13 @@ const mockApp = {
   ],
 };
 
-function capturedOutput(spy: ReturnType<typeof spyOn>): string {
-  return spy.mock.calls.map((c: unknown[]) => c[0]).join("\n");
-}
-
 describe("link", () => {
   let consoleSpy: ReturnType<typeof spyOn>;
   let errorSpy: ReturnType<typeof spyOn>;
   let exitSpy: ReturnType<typeof spyOn>;
 
   afterEach(() => {
+    _modeOverride = undefined;
     mockIsAgent.mockReset();
     mockGetToken.mockReset();
     mockLogin.mockReset();

@@ -1,4 +1,5 @@
 import { test, expect, describe, beforeEach, afterEach, spyOn } from "bun:test";
+import { stubFetch } from "../../test/stubs.ts";
 import { mkdtemp, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
@@ -196,10 +197,10 @@ describe("loadCatalog", () => {
 
   test("fetches and caches on first load", async () => {
     let fetchCalled = false;
-    globalThis.fetch = async () => {
+    stubFetch(async () => {
       fetchCalled = true;
       return new Response(MINIMAL_SPEC, { status: 200 });
-    };
+    });
 
     const catalog = await loadCatalog();
     expect(fetchCalled).toBe(true);
@@ -217,10 +218,10 @@ describe("loadCatalog", () => {
     await Bun.write(join(tempDir, "bapi-catalog.json"), JSON.stringify(cached));
 
     let fetchCalled = false;
-    globalThis.fetch = async () => {
+    stubFetch(async () => {
       fetchCalled = true;
       return new Response(MINIMAL_SPEC, { status: 200 });
-    };
+    });
 
     const catalog = await loadCatalog();
     expect(fetchCalled).toBe(false);
@@ -234,10 +235,10 @@ describe("loadCatalog", () => {
     await Bun.write(join(tempDir, "bapi-catalog.json"), JSON.stringify(cached));
 
     let fetchCalled = false;
-    globalThis.fetch = async () => {
+    stubFetch(async () => {
       fetchCalled = true;
       return new Response(MINIMAL_SPEC, { status: 200 });
-    };
+    });
 
     await loadCatalog();
     expect(fetchCalled).toBe(true);
@@ -249,9 +250,9 @@ describe("loadCatalog", () => {
     cached.fetchedAt = Date.now() - 25 * 60 * 60 * 1000;
     await Bun.write(join(tempDir, "bapi-catalog.json"), JSON.stringify(cached));
 
-    globalThis.fetch = async () => {
+    stubFetch(async () => {
       throw new Error("Network error");
-    };
+    });
 
     const catalog = await loadCatalog();
     expect(catalog.endpoints.length).toBe(6);
@@ -261,19 +262,19 @@ describe("loadCatalog", () => {
   });
 
   test("errors when offline with no cache", async () => {
-    globalThis.fetch = async () => {
+    stubFetch(async () => {
       throw new Error("Network error");
-    };
+    });
 
     await expect(loadCatalog()).rejects.toThrow("Unable to fetch API catalog");
   });
 
   test("uses platform URL when platform flag set", async () => {
     let capturedUrl = "";
-    globalThis.fetch = async (input: RequestInfo | URL) => {
+    stubFetch(async (input) => {
       capturedUrl = input.toString();
       return new Response(MINIMAL_SPEC, { status: 200 });
-    };
+    });
 
     await loadCatalog({ platform: true });
     expect(capturedUrl).toContain("platform");

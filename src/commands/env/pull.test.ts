@@ -1,8 +1,37 @@
-import { test, expect, describe, beforeEach, afterEach, spyOn } from "bun:test";
+import { test, expect, describe, beforeEach, afterEach, spyOn, mock } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { _setConfigDir, setProfile } from "../../lib/config";
+import { credentialStoreStubs, gitStubs, configStubs, stubFetch } from "../../test/stubs.ts";
+
+mock.module("../../lib/credential-store.ts", () => credentialStoreStubs);
+mock.module("../../lib/git.ts", () => gitStubs);
+
+type Profile = { workspaceId: string; appId: string; instances: Record<string, string> };
+const _profiles: Record<string, Profile> = {};
+const INSTANCE_ALIASES: Record<string, string> = {
+  dev: "development", development: "development",
+  prod: "production", production: "production",
+};
+
+mock.module("../../lib/config.ts", () => ({
+  ...configStubs,
+  setProfile: async (path: string, profile: Profile) => { _profiles[path] = profile; },
+  resolveProfile: async (cwd: string) => {
+    if (_profiles[cwd]) return { path: cwd, profile: _profiles[cwd], resolvedVia: "directory" as const };
+    return undefined;
+  },
+  resolveInstanceId: (profile: Profile, flag?: string) => {
+    if (!flag) return { id: profile.instances.development, label: "development" };
+    const env = INSTANCE_ALIASES[flag];
+    if (!env) return { id: flag, label: flag };
+    const id = profile.instances[env];
+    if (!id) throw new Error(`No ${env} instance configured. Run \`clerk init\` to set one up.`);
+    return { id, label: env };
+  },
+}));
+
+const { _setConfigDir, setProfile } = await import("../../lib/config") as any;
 
 describe("env pull", () => {
   const originalEnv = { ...process.env };
@@ -31,6 +60,7 @@ describe("env pull", () => {
   };
 
   beforeEach(async () => {
+    Object.keys(_profiles).forEach(k => delete _profiles[k]);
     tempDir = await mkdtemp(join(tmpdir(), "clerk-env-pull-test-"));
     _setConfigDir(tempDir);
     process.env.CLERK_PLATFORM_API_KEY = "test_key";
@@ -50,8 +80,8 @@ describe("env pull", () => {
       throw new Error("process.exit");
     });
 
-    globalThis.fetch = async () =>
-      new Response(JSON.stringify(mockApplication), { status: 200 });
+    stubFetch(async () =>
+      new Response(JSON.stringify(mockApplication), { status: 200 }));
   });
 
   afterEach(async () => {
@@ -222,7 +252,7 @@ describe("env pull", () => {
   });
 
   test("handles API errors gracefully", async () => {
-    globalThis.fetch = async () => new Response("Unauthorized", { status: 401 });
+    stubFetch(async () => new Response("Unauthorized", { status: 401 }));
 
     await setProfile(tempDir, {
       workspaceId: "org_1",
