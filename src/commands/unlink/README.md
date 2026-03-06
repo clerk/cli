@@ -17,7 +17,7 @@ clerk unlink --yes
 
 ## Behavior
 
-1. Resolves the current profile by walking up from the working directory
+1. Resolves the current profile by checking the normalized remote URL, then git-common-dir, then walking up from the working directory
 2. If no profile is found, exits with an error
 3. Prompts for confirmation (unless `--yes` is passed)
 4. Removes the profile entry from `~/.clerk/config.json`

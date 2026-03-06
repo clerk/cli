@@ -1,13 +1,16 @@
 import { test, expect, describe, afterEach, mock, spyOn } from "bun:test";
+import { credentialStoreStubs, tokenExchangeStubs } from "../../test/stubs.ts";
 
 const mockGetToken = mock();
 const mockFetchUserInfo = mock();
 
 mock.module("../../lib/credential-store.ts", () => ({
+  ...credentialStoreStubs,
   getToken: (...args: unknown[]) => mockGetToken(...args),
 }));
 
 mock.module("../../lib/token-exchange.ts", () => ({
+  ...tokenExchangeStubs,
   fetchUserInfo: (...args: unknown[]) => mockFetchUserInfo(...args),
 }));
 
