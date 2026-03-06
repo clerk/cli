@@ -25,9 +25,7 @@ async function getAuthToken(): Promise<string> {
   const oauthToken = await getToken();
   if (oauthToken) return oauthToken;
 
-  throw new Error(
-    "Not authenticated. Run `clerk auth login` or set CLERK_PLATFORM_API_KEY.",
-  );
+  throw new Error("Not authenticated. Run `clerk auth login` or set CLERK_PLATFORM_API_KEY.");
 }
 
 export async function fetchInstanceConfig(
@@ -64,9 +62,7 @@ export interface Application {
   instances: ApplicationInstance[];
 }
 
-export async function fetchApplication(
-  applicationId: string,
-): Promise<Application> {
+export async function fetchApplication(applicationId: string): Promise<Application> {
   const token = await getAuthToken();
   const url = `${PLAPI_BASE_URL}/v1/platform/applications/${applicationId}`;
   const response = await fetch(url, {

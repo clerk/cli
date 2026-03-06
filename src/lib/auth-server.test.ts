@@ -44,9 +44,7 @@ describe("auth-server", () => {
 
     const errorPromise = server.waitForCallback().catch((e: Error) => e);
 
-    const response = await fetch(
-      `http://127.0.0.1:${server.port}/callback?state=test-state`,
-    );
+    const response = await fetch(`http://127.0.0.1:${server.port}/callback?state=test-state`);
     expect(response.status).toBe(400);
 
     const error = await errorPromise;

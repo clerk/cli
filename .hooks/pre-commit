@@ -1,0 +1,19 @@
+#!/bin/sh
+
+# Check formatting on staged files
+echo "Checking formatting..."
+bun run format:check
+if [ $? -ne 0 ]; then
+  echo ""
+  echo "Formatting check failed. Run 'bun run format' to fix."
+  exit 1
+fi
+
+# Run linter
+echo "Running linter..."
+bun run lint
+if [ $? -ne 0 ]; then
+  echo ""
+  echo "Linting failed. Fix the errors above before committing."
+  exit 1
+fi

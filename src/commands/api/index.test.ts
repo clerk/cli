@@ -2,14 +2,22 @@ import { test, expect, describe, beforeEach, afterEach, spyOn, mock } from "bun:
 import { mkdtemp, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { credentialStoreStubs, gitStubs, configStubs, promptsStubs, stubFetch } from "../../test/stubs.ts";
+import {
+  credentialStoreStubs,
+  gitStubs,
+  configStubs,
+  promptsStubs,
+  stubFetch,
+} from "../../test/stubs.ts";
 
 mock.module("../../lib/credential-store.ts", () => credentialStoreStubs);
 mock.module("../../lib/git.ts", () => gitStubs);
 
 let _mode = "human";
 mock.module("../../mode.ts", () => ({
-  setMode: (m: string) => { _mode = m; },
+  setMode: (m: string) => {
+    _mode = m;
+  },
   getMode: () => _mode,
   isAgent: () => _mode === "agent",
   isHuman: () => _mode !== "agent",
@@ -19,13 +27,21 @@ type Profile = { workspaceId: string; appId: string; instances: Record<string, s
 const _profiles: Record<string, Profile> = {};
 mock.module("../../lib/config.ts", () => ({
   ...configStubs,
-  setProfile: async (path: string, profile: Profile) => { _profiles[path] = profile; },
+  setProfile: async (path: string, profile: Profile) => {
+    _profiles[path] = profile;
+  },
   resolveProfile: async (cwd: string) => {
-    if (_profiles[cwd]) return { path: cwd, profile: _profiles[cwd], resolvedVia: "directory" as const };
+    if (_profiles[cwd])
+      return { path: cwd, profile: _profiles[cwd], resolvedVia: "directory" as const };
     return undefined;
   },
   resolveInstanceId: (profile: Profile, flag?: string) => {
-    const aliases: Record<string, string> = { dev: "development", development: "development", prod: "production", production: "production" };
+    const aliases: Record<string, string> = {
+      dev: "development",
+      development: "development",
+      prod: "production",
+      production: "production",
+    };
     if (!flag) return { id: profile.instances.development, label: "development" };
     const env = aliases[flag];
     if (!env) return { id: flag, label: flag };
@@ -37,8 +53,8 @@ mock.module("../../lib/config.ts", () => ({
 
 mock.module("@inquirer/prompts", () => promptsStubs);
 
-const { _setConfigDir } = await import("../../lib/config") as any;
-const { setMode } = await import("../../mode") as any;
+const { _setConfigDir } = (await import("../../lib/config")) as any;
+const { setMode } = (await import("../../mode")) as any;
 
 describe("api command", () => {
   const originalEnv = { ...process.env };
@@ -53,13 +69,17 @@ describe("api command", () => {
   const originalIsTTY = process.stdin.isTTY;
 
   beforeEach(async () => {
-    Object.keys(_profiles).forEach(k => delete _profiles[k]);
+    Object.keys(_profiles).forEach((k) => delete _profiles[k]);
     _mode = "human";
     tempDir = await mkdtemp(join(tmpdir(), "clerk-api-test-"));
     _setConfigDir(tempDir);
     process.env.CLERK_SECRET_KEY = "sk_test_123";
     setMode("agent"); // skip confirmation prompts
-    Object.defineProperty(process.stdin, "isTTY", { value: true, writable: true, configurable: true });
+    Object.defineProperty(process.stdin, "isTTY", {
+      value: true,
+      writable: true,
+      configurable: true,
+    });
 
     logSpy = spyOn(console, "log").mockImplementation(() => {});
     errorSpy = spyOn(console, "error").mockImplementation(() => {});
@@ -74,7 +94,11 @@ describe("api command", () => {
     _setConfigDir(undefined);
     process.env = { ...originalEnv };
     globalThis.fetch = originalFetch;
-    Object.defineProperty(process.stdin, "isTTY", { value: originalIsTTY, writable: true, configurable: true });
+    Object.defineProperty(process.stdin, "isTTY", {
+      value: originalIsTTY,
+      writable: true,
+      configurable: true,
+    });
     logSpy.mockRestore();
     errorSpy.mockRestore();
     exitSpy.mockRestore();
@@ -174,22 +198,21 @@ describe("api command", () => {
   });
 
   test("errors when --file does not exist", async () => {
-    await expect(
-      runApi("/users", { file: "/tmp/nonexistent-file.json" }),
-    ).rejects.toThrow("process.exit");
-    expect(errorSpy).toHaveBeenCalledWith(
-      expect.stringContaining("File not found"),
+    await expect(runApi("/users", { file: "/tmp/nonexistent-file.json" })).rejects.toThrow(
+      "process.exit",
     );
+    expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining("File not found"));
   });
 
   // --- --include option ---
 
   test("--include shows response headers", async () => {
-    stubFetch(async () =>
-      new Response(JSON.stringify(mockUsers), {
-        status: 200,
-        headers: { "x-request-id": "req_123" },
-      }),
+    stubFetch(
+      async () =>
+        new Response(JSON.stringify(mockUsers), {
+          status: 200,
+          headers: { "x-request-id": "req_123" },
+        }),
     );
 
     await runApi("/users", { include: true });
@@ -208,16 +231,12 @@ describe("api command", () => {
 
     await runApi("/users", { dryRun: true });
     expect(fetchCalled).toBe(false);
-    expect(errorSpy).toHaveBeenCalledWith(
-      expect.stringContaining("[dry-run] GET"),
-    );
+    expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining("[dry-run] GET"));
   });
 
   test("--dry-run shows body when present", async () => {
     await runApi("/users", { dryRun: true, data: '{"email":"a@b.com"}' });
-    expect(logSpy).toHaveBeenCalledWith(
-      JSON.stringify({ email: "a@b.com" }, null, 2),
-    );
+    expect(logSpy).toHaveBeenCalledWith(JSON.stringify({ email: "a@b.com" }, null, 2));
   });
 
   // --- --secret-key override ---
@@ -255,12 +274,10 @@ describe("api command", () => {
   test("--platform errors when CLERK_PLATFORM_API_KEY missing", async () => {
     delete process.env.CLERK_PLATFORM_API_KEY;
 
-    await expect(
-      runApi("/v1/platform/applications", { platform: true }),
-    ).rejects.toThrow("process.exit");
-    expect(errorSpy).toHaveBeenCalledWith(
-      expect.stringContaining("CLERK_PLATFORM_API_KEY"),
+    await expect(runApi("/v1/platform/applications", { platform: true })).rejects.toThrow(
+      "process.exit",
     );
+    expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining("CLERK_PLATFORM_API_KEY"));
   });
 
   // --- Error handling ---
@@ -269,9 +286,7 @@ describe("api command", () => {
     delete process.env.CLERK_SECRET_KEY;
 
     await expect(runApi("/users")).rejects.toThrow("process.exit");
-    expect(errorSpy).toHaveBeenCalledWith(
-      expect.stringContaining("No secret key found"),
-    );
+    expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining("No secret key found"));
   });
 
   test("prints API error response body to stdout and exits 1", async () => {
@@ -283,16 +298,15 @@ describe("api command", () => {
   });
 
   test("--include shows headers on error responses too", async () => {
-    stubFetch(async () =>
-      new Response('{"error":"bad"}', {
-        status: 400,
-        headers: { "x-request-id": "req_err" },
-      }),
+    stubFetch(
+      async () =>
+        new Response('{"error":"bad"}', {
+          status: 400,
+          headers: { "x-request-id": "req_err" },
+        }),
     );
 
-    await expect(
-      runApi("/users", { include: true }),
-    ).rejects.toThrow("process.exit");
+    await expect(runApi("/users", { include: true })).rejects.toThrow("process.exit");
     expect(errorSpy).toHaveBeenCalledWith("HTTP 400");
     expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining("x-request-id: req_err"));
   });

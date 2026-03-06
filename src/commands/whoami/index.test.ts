@@ -44,9 +44,7 @@ describe("whoami", () => {
     consoleSpy = spyOn(console, "log").mockImplementation(() => {});
     await whoami();
 
-    expect(consoleSpy).toHaveBeenCalledWith(
-      expect.stringContaining("Not logged in")
-    );
+    expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining("Not logged in"));
     expect(mockFetchUserInfo).not.toHaveBeenCalled();
   });
 
@@ -57,8 +55,6 @@ describe("whoami", () => {
     consoleSpy = spyOn(console, "log").mockImplementation(() => {});
     await whoami();
 
-    expect(consoleSpy).toHaveBeenCalledWith(
-      expect.stringContaining("Session expired")
-    );
+    expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining("Session expired"));
   });
 });

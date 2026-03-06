@@ -10,15 +10,20 @@ mock.module("../../lib/git.ts", () => gitStubs);
 type Profile = { workspaceId: string; appId: string; instances: Record<string, string> };
 const _profiles: Record<string, Profile> = {};
 const INSTANCE_ALIASES: Record<string, string> = {
-  dev: "development", development: "development",
-  prod: "production", production: "production",
+  dev: "development",
+  development: "development",
+  prod: "production",
+  production: "production",
 };
 
 mock.module("../../lib/config.ts", () => ({
   ...configStubs,
-  setProfile: async (path: string, profile: Profile) => { _profiles[path] = profile; },
+  setProfile: async (path: string, profile: Profile) => {
+    _profiles[path] = profile;
+  },
   resolveProfile: async (cwd: string) => {
-    if (_profiles[cwd]) return { path: cwd, profile: _profiles[cwd], resolvedVia: "directory" as const };
+    if (_profiles[cwd])
+      return { path: cwd, profile: _profiles[cwd], resolvedVia: "directory" as const };
     return undefined;
   },
   resolveInstanceId: (profile: Profile, flag?: string) => {
@@ -31,7 +36,7 @@ mock.module("../../lib/config.ts", () => ({
   },
 }));
 
-const { _setConfigDir, setProfile } = await import("../../lib/config") as any;
+const { _setConfigDir, setProfile } = (await import("../../lib/config")) as any;
 
 describe("env pull", () => {
   const originalEnv = { ...process.env };
@@ -60,7 +65,7 @@ describe("env pull", () => {
   };
 
   beforeEach(async () => {
-    Object.keys(_profiles).forEach(k => delete _profiles[k]);
+    Object.keys(_profiles).forEach((k) => delete _profiles[k]);
     tempDir = await mkdtemp(join(tmpdir(), "clerk-env-pull-test-"));
     _setConfigDir(tempDir);
     process.env.CLERK_PLATFORM_API_KEY = "test_key";
@@ -80,8 +85,7 @@ describe("env pull", () => {
       throw new Error("process.exit");
     });
 
-    stubFetch(async () =>
-      new Response(JSON.stringify(mockApplication), { status: 200 }));
+    stubFetch(async () => new Response(JSON.stringify(mockApplication), { status: 200 }));
   });
 
   afterEach(async () => {
@@ -101,9 +105,7 @@ describe("env pull", () => {
 
   test("errors when no profile is linked", async () => {
     await expect(runEnvPull()).rejects.toThrow("process.exit");
-    expect(errorSpy).toHaveBeenCalledWith(
-      expect.stringContaining("No Clerk project linked"),
-    );
+    expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining("No Clerk project linked"));
   });
 
   test("errors when CLERK_PLATFORM_API_KEY is missing", async () => {
@@ -115,9 +117,7 @@ describe("env pull", () => {
     delete process.env.CLERK_PLATFORM_API_KEY;
 
     await expect(runEnvPull()).rejects.toThrow("process.exit");
-    expect(errorSpy).toHaveBeenCalledWith(
-      expect.stringContaining("CLERK_PLATFORM_API_KEY"),
-    );
+    expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining("CLERK_PLATFORM_API_KEY"));
   });
 
   test("creates .env.local with keys when no env file exists", async () => {
@@ -261,9 +261,7 @@ describe("env pull", () => {
     });
 
     await expect(runEnvPull()).rejects.toThrow("process.exit");
-    expect(errorSpy).toHaveBeenCalledWith(
-      expect.stringContaining("Failed to fetch API keys"),
-    );
+    expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining("Failed to fetch API keys"));
   });
 
   test("detects Next.js and uses NEXT_PUBLIC_* key name", async () => {

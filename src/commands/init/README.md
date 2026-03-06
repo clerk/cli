@@ -19,19 +19,19 @@ clerk init
 
 The command detects the project's framework by checking `package.json` dependencies:
 
-| Dependency | Framework | Clerk SDK |
-|---|---|---|
-| `next` | Next.js | `@clerk/nextjs` |
-| `expo` | Expo | `@clerk/expo` |
-| `astro` | Astro | `@clerk/astro` |
-| `nuxt` | Nuxt | `@clerk/nuxt` |
+| Dependency              | Framework      | Clerk SDK               |
+| ----------------------- | -------------- | ----------------------- |
+| `next`                  | Next.js        | `@clerk/nextjs`         |
+| `expo`                  | Expo           | `@clerk/expo`           |
+| `astro`                 | Astro          | `@clerk/astro`          |
+| `nuxt`                  | Nuxt           | `@clerk/nuxt`           |
 | `@tanstack/react-start` | TanStack Start | `@clerk/tanstack-start` |
-| `react-router` | React Router | `@clerk/react-router` |
-| `fastify` | Fastify | `@clerk/fastify` |
-| `express` | Express | `@clerk/express` |
-| `vue` | Vue | `@clerk/vue` |
-| `react` | React | `@clerk/clerk-react` |
-| `vite` | Vite | `@clerk/clerk-react` |
+| `react-router`          | React Router   | `@clerk/react-router`   |
+| `fastify`               | Fastify        | `@clerk/fastify`        |
+| `express`               | Express        | `@clerk/express`        |
+| `vue`                   | Vue            | `@clerk/vue`            |
+| `react`                 | React          | `@clerk/clerk-react`    |
+| `vite`                  | Vite           | `@clerk/clerk-react`    |
 
 The package manager is detected from lock files (`bun.lockb` → bun, `yarn.lock` → yarn, `pnpm-lock.yaml` → pnpm, else npm).
 

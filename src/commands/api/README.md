@@ -56,17 +56,17 @@ clerk api /v1/platform/applications --platform
 
 ## Options
 
-| Flag | Description |
-|---|---|
-| `-X, --method <method>` | HTTP method. Defaults to GET, or POST if body is provided. |
-| `-d, --data <json>` | JSON request body (inline) |
-| `--file <path>` | Read request body from a file |
-| `--include` | Show response status and headers |
-| `--secret-key <key>` | Override the secret key |
-| `--instance <id>` | Instance to target for key resolution (`dev`, `prod`, or full ID) |
-| `--platform` | Use Platform API instead of Backend API |
-| `--dry-run` | Show request without executing |
-| `--yes` | Skip confirmation for mutating requests |
+| Flag                    | Description                                                       |
+| ----------------------- | ----------------------------------------------------------------- |
+| `-X, --method <method>` | HTTP method. Defaults to GET, or POST if body is provided.        |
+| `-d, --data <json>`     | JSON request body (inline)                                        |
+| `--file <path>`         | Read request body from a file                                     |
+| `--include`             | Show response status and headers                                  |
+| `--secret-key <key>`    | Override the secret key                                           |
+| `--instance <id>`       | Instance to target for key resolution (`dev`, `prod`, or full ID) |
+| `--platform`            | Use Platform API instead of Backend API                           |
+| `--dry-run`             | Show request without executing                                    |
+| `--yes`                 | Skip confirmation for mutating requests                           |
 
 ## Authentication
 
@@ -84,17 +84,17 @@ For `--platform` mode, uses `CLERK_PLATFORM_API_KEY` environment variable.
 
 Base URL: `https://api.clerk.dev` (overridable via `CLERK_BACKEND_API_URL`)
 
-| Method | Endpoint | Description |
-|---|---|---|
-| Any | `/v1/{path}` | Pass-through to Clerk Backend API. Authenticated via `Bearer` token from secret key. |
+| Method | Endpoint     | Description                                                                          |
+| ------ | ------------ | ------------------------------------------------------------------------------------ |
+| Any    | `/v1/{path}` | Pass-through to Clerk Backend API. Authenticated via `Bearer` token from secret key. |
 
 ### Platform API (`--platform`)
 
 Base URL: `https://api.clerk.com` (overridable via `CLERK_PLATFORM_API_URL`)
 
-| Method | Endpoint | Description |
-|---|---|---|
-| Any | `/v1/{path}` | Pass-through to Clerk Platform API. Authenticated via `Bearer` token from `CLERK_PLATFORM_API_KEY`. |
+| Method | Endpoint     | Description                                                                                         |
+| ------ | ------------ | --------------------------------------------------------------------------------------------------- |
+| Any    | `/v1/{path}` | Pass-through to Clerk Platform API. Authenticated via `Bearer` token from `CLERK_PLATFORM_API_KEY`. |
 
 ## Subcommands
 

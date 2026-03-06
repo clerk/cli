@@ -6,14 +6,16 @@ import { promptsStubs, stubFetch } from "../../test/stubs.ts";
 
 let _mode = "human";
 mock.module("../../mode.ts", () => ({
-  setMode: (m: string) => { _mode = m; },
+  setMode: (m: string) => {
+    _mode = m;
+  },
   getMode: () => _mode,
   isAgent: () => _mode === "agent",
   isHuman: () => _mode !== "agent",
 }));
 
-const { parseSpec, _setCacheDir } = await import("./catalog") as any;
-const { setMode } = await import("../../mode") as any;
+const { parseSpec, _setCacheDir } = (await import("./catalog")) as any;
+const { setMode } = (await import("../../mode")) as any;
 
 const MINIMAL_SPEC = `
 openapi: "3.0.0"
@@ -82,7 +84,11 @@ describe("apiInteractive", () => {
 
     process.env.CLERK_SECRET_KEY = "sk_test_123";
     // Prevent resolveBody from trying to read stdin
-    Object.defineProperty(process.stdin, "isTTY", { value: true, writable: true, configurable: true });
+    Object.defineProperty(process.stdin, "isTTY", {
+      value: true,
+      writable: true,
+      configurable: true,
+    });
 
     errorSpy = spyOn(console, "error").mockImplementation(() => {});
     logSpy = spyOn(console, "log").mockImplementation(() => {});
@@ -106,7 +112,11 @@ describe("apiInteractive", () => {
     _setCacheDir(undefined);
     process.env = { ...originalEnv };
     globalThis.fetch = originalFetch;
-    Object.defineProperty(process.stdin, "isTTY", { value: originalIsTTY, writable: true, configurable: true });
+    Object.defineProperty(process.stdin, "isTTY", {
+      value: originalIsTTY,
+      writable: true,
+      configurable: true,
+    });
     errorSpy.mockRestore();
     logSpy.mockRestore();
     exitSpy.mockRestore();

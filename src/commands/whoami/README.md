@@ -17,6 +17,6 @@ clerk whoami
 
 ## API Endpoints
 
-| Method | Endpoint | Description |
-|---|---|---|
-| `GET` | `/oauth/userinfo` | Fetches the user's `email` and `sub` (user ID) using the stored access token. Base URL defaults to `https://clerk.clerk.com`. |
+| Method | Endpoint          | Description                                                                                                                   |
+| ------ | ----------------- | ----------------------------------------------------------------------------------------------------------------------------- |
+| `GET`  | `/oauth/userinfo` | Fetches the user's `email` and `sub` (user ID) using the stored access token. Base URL defaults to `https://clerk.clerk.com`. |

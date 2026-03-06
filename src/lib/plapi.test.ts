@@ -7,7 +7,13 @@ mock.module("./credential-store.ts", () => ({
   getToken: (...args: unknown[]) => mockGetToken(...args),
 }));
 
-const { fetchInstanceConfig, putInstanceConfig, patchInstanceConfig, listApplications, PlapiError } = await import("./plapi.ts");
+const {
+  fetchInstanceConfig,
+  putInstanceConfig,
+  patchInstanceConfig,
+  listApplications,
+  PlapiError,
+} = await import("./plapi.ts");
 
 describe("plapi", () => {
   const originalEnv = { ...process.env };
@@ -27,9 +33,7 @@ describe("plapi", () => {
   test("throws when neither OAuth token nor env var is set", async () => {
     mockGetToken.mockResolvedValue(null);
     delete process.env.CLERK_PLATFORM_API_KEY;
-    await expect(fetchInstanceConfig("app_1", "ins_1")).rejects.toThrow(
-      "Not authenticated",
-    );
+    await expect(fetchInstanceConfig("app_1", "ins_1")).rejects.toThrow("Not authenticated");
   });
 
   test("prefers CLERK_PLATFORM_API_KEY over OAuth token", async () => {
@@ -257,8 +261,7 @@ describe("plapi", () => {
         { application_id: "app_1", instances: [] },
         { application_id: "app_2", instances: [] },
       ];
-      stubFetch(async () =>
-        new Response(JSON.stringify(mockApps), { status: 200 }));
+      stubFetch(async () => new Response(JSON.stringify(mockApps), { status: 200 }));
 
       const result = await listApplications();
       expect(result).toEqual(mockApps);

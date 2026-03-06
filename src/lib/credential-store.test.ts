@@ -12,12 +12,16 @@ process.env.CLERK_CONFIG_DIR = tempDir;
 const isMacOS = process.platform === "darwin";
 const KEYCHAIN_SERVICE = "clerk-cli";
 const KEYCHAIN_ACCOUNT = "oauth-access-token";
-const credFile = () => join(process.env.CLERK_CONFIG_DIR ?? join(require("os").homedir(), ".clerk"), "credentials");
+const credFile = () =>
+  join(process.env.CLERK_CONFIG_DIR ?? join(require("os").homedir(), ".clerk"), "credentials");
 
 mock.module("./credential-store.ts", () => ({
   async storeToken(token: string) {
     if (isMacOS) {
-      try { await Bun.$`security add-generic-password -a ${KEYCHAIN_ACCOUNT} -s ${KEYCHAIN_SERVICE} -w ${token} -U`.quiet(); return; } catch {}
+      try {
+        await Bun.$`security add-generic-password -a ${KEYCHAIN_ACCOUNT} -s ${KEYCHAIN_SERVICE} -w ${token} -U`.quiet();
+        return;
+      } catch {}
     }
     const f = credFile();
     await mkdir(dirname(f), { recursive: true });
@@ -26,7 +30,13 @@ mock.module("./credential-store.ts", () => ({
   },
   async getToken() {
     if (isMacOS) {
-      try { return (await Bun.$`security find-generic-password -a ${KEYCHAIN_ACCOUNT} -s ${KEYCHAIN_SERVICE} -w`.quiet()).text().trim(); } catch {}
+      try {
+        return (
+          await Bun.$`security find-generic-password -a ${KEYCHAIN_ACCOUNT} -s ${KEYCHAIN_SERVICE} -w`.quiet()
+        )
+          .text()
+          .trim();
+      } catch {}
     }
     const file = Bun.file(credFile());
     if (!(await file.exists())) return null;
@@ -34,7 +44,11 @@ mock.module("./credential-store.ts", () => ({
     return content.trim() || null;
   },
   async deleteToken() {
-    if (isMacOS) { try { await Bun.$`security delete-generic-password -a ${KEYCHAIN_ACCOUNT} -s ${KEYCHAIN_SERVICE}`.quiet(); } catch {} }
+    if (isMacOS) {
+      try {
+        await Bun.$`security delete-generic-password -a ${KEYCHAIN_ACCOUNT} -s ${KEYCHAIN_SERVICE}`.quiet();
+      } catch {}
+    }
     const file = Bun.file(credFile());
     if (await file.exists()) await Bun.write(credFile(), "");
   },

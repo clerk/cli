@@ -30,8 +30,7 @@ describe("config push", () => {
       throw new Error("process.exit");
     });
 
-    stubFetch(async () =>
-      new Response(JSON.stringify(mockResponse), { status: 200 }));
+    stubFetch(async () => new Response(JSON.stringify(mockResponse), { status: 200 }));
   });
 
   afterEach(async () => {
@@ -44,12 +43,28 @@ describe("config push", () => {
     await rm(tempDir, { recursive: true, force: true });
   });
 
-  async function runConfigPatch(options: { instance?: string; file?: string; json?: string; dryRun?: boolean; yes?: boolean } = {}) {
+  async function runConfigPatch(
+    options: {
+      instance?: string;
+      file?: string;
+      json?: string;
+      dryRun?: boolean;
+      yes?: boolean;
+    } = {},
+  ) {
     const { configPatch } = await import("./push");
     return configPatch(options);
   }
 
-  async function runConfigPut(options: { instance?: string; file?: string; json?: string; dryRun?: boolean; yes?: boolean } = {}) {
+  async function runConfigPut(
+    options: {
+      instance?: string;
+      file?: string;
+      json?: string;
+      dryRun?: boolean;
+      yes?: boolean;
+    } = {},
+  ) {
     const { configPut } = await import("./push");
     return configPut(options);
   }
@@ -58,9 +73,7 @@ describe("config push", () => {
 
   test("errors when no profile is linked", async () => {
     await expect(runConfigPatch({ json: '{"a":1}' })).rejects.toThrow("process.exit");
-    expect(errorSpy).toHaveBeenCalledWith(
-      expect.stringContaining("No Clerk project linked"),
-    );
+    expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining("No Clerk project linked"));
   });
 
   test("errors when CLERK_PLATFORM_API_KEY is missing", async () => {
@@ -72,9 +85,7 @@ describe("config push", () => {
     delete process.env.CLERK_PLATFORM_API_KEY;
 
     await expect(runConfigPatch({ json: '{"a":1}', yes: true })).rejects.toThrow("process.exit");
-    expect(errorSpy).toHaveBeenCalledWith(
-      expect.stringContaining("CLERK_PLATFORM_API_KEY"),
-    );
+    expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining("CLERK_PLATFORM_API_KEY"));
   });
 
   test("errors when no input source is provided", async () => {
@@ -86,9 +97,7 @@ describe("config push", () => {
 
     // Without --file or --json, falls through to stdin which yields empty input
     await expect(runConfigPatch()).rejects.toThrow("process.exit");
-    expect(errorSpy).toHaveBeenCalledWith(
-      expect.stringContaining("No input"),
-    );
+    expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining("No input"));
   });
 
   test("errors on invalid JSON input", async () => {
@@ -99,9 +108,7 @@ describe("config push", () => {
     });
 
     await expect(runConfigPatch({ json: "not-json" })).rejects.toThrow("process.exit");
-    expect(errorSpy).toHaveBeenCalledWith(
-      expect.stringContaining("Invalid JSON"),
-    );
+    expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining("Invalid JSON"));
   });
 
   test("errors when JSON is an array", async () => {
@@ -112,9 +119,7 @@ describe("config push", () => {
     });
 
     await expect(runConfigPatch({ json: "[1,2,3]" })).rejects.toThrow("process.exit");
-    expect(errorSpy).toHaveBeenCalledWith(
-      expect.stringContaining("Config must be a JSON object"),
-    );
+    expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining("Config must be a JSON object"));
   });
 
   test("errors when --file points to nonexistent file", async () => {
@@ -124,10 +129,10 @@ describe("config push", () => {
       instances: { development: "ins_dev" },
     });
 
-    await expect(runConfigPatch({ file: "/tmp/does-not-exist.json" })).rejects.toThrow("process.exit");
-    expect(errorSpy).toHaveBeenCalledWith(
-      expect.stringContaining("File not found"),
+    await expect(runConfigPatch({ file: "/tmp/does-not-exist.json" })).rejects.toThrow(
+      "process.exit",
     );
+    expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining("File not found"));
   });
 
   // --- PATCH happy paths ---
@@ -294,12 +299,8 @@ describe("config push", () => {
 
     await runConfigPatch({ json: '{"session":{"lifetime":3600}}', dryRun: true });
     expect(fetchCalled).toBe(false);
-    expect(errorSpy).toHaveBeenCalledWith(
-      expect.stringContaining("[dry-run]"),
-    );
-    expect(logSpy).toHaveBeenCalledWith(
-      JSON.stringify({ session: { lifetime: 3600 } }, null, 2),
-    );
+    expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining("[dry-run]"));
+    expect(logSpy).toHaveBeenCalledWith(JSON.stringify({ session: { lifetime: 3600 } }, null, 2));
   });
 
   test("dry-run for put shows PUT method", async () => {
@@ -310,9 +311,7 @@ describe("config push", () => {
     });
 
     await runConfigPut({ json: '{"a":1}', dryRun: true });
-    expect(errorSpy).toHaveBeenCalledWith(
-      expect.stringContaining("[dry-run] Would PUT"),
-    );
+    expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining("[dry-run] Would PUT"));
   });
 
   // --- API error handling ---
@@ -327,9 +326,7 @@ describe("config push", () => {
     });
 
     await expect(runConfigPatch({ json: '{"a":1}', yes: true })).rejects.toThrow("process.exit");
-    expect(errorSpy).toHaveBeenCalledWith(
-      expect.stringContaining("Failed to push config"),
-    );
+    expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining("Failed to push config"));
   });
 
   test("shows success message after push", async () => {

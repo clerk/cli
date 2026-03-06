@@ -101,9 +101,7 @@ describe("apiLs", () => {
     await apiLs("zzzzz", {});
 
     expect(logSpy).not.toHaveBeenCalled();
-    expect(errorSpy).toHaveBeenCalledWith(
-      expect.stringContaining('No endpoints matching "zzzzz"'),
-    );
+    expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining('No endpoints matching "zzzzz"'));
   });
 
   test("uses platform catalog when --platform set", async () => {

@@ -3,13 +3,7 @@ import { stubFetch } from "../../test/stubs.ts";
 import { mkdtemp, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import {
-  parseSpec,
-  loadCatalog,
-  filterEndpoints,
-  endpointsByTag,
-  _setCacheDir,
-} from "./catalog";
+import { parseSpec, loadCatalog, filterEndpoints, endpointsByTag, _setCacheDir } from "./catalog";
 
 const MINIMAL_SPEC = `
 openapi: "3.0.0"
@@ -76,9 +70,7 @@ describe("parseSpec", () => {
   test("extracts path parameters", () => {
     const catalog = parseSpec(MINIMAL_SPEC);
     const getUser = catalog.endpoints.find((e) => e.operationId === "GetUser");
-    expect(getUser!.pathParams).toEqual([
-      { name: "user_id", description: "The ID of the user" },
-    ]);
+    expect(getUser!.pathParams).toEqual([{ name: "user_id", description: "The ID of the user" }]);
   });
 
   test("detects requestBody presence", () => {
@@ -256,9 +248,7 @@ describe("loadCatalog", () => {
 
     const catalog = await loadCatalog();
     expect(catalog.endpoints.length).toBe(6);
-    expect(errorSpy).toHaveBeenCalledWith(
-      expect.stringContaining("Unable to refresh"),
-    );
+    expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining("Unable to refresh"));
   });
 
   test("errors when offline with no cache", async () => {

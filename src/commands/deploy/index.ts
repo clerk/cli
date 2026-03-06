@@ -89,7 +89,9 @@ export async function deploy(options: { debug?: boolean }) {
   }
   const debug = options.debug ? (...args: unknown[]) => console.log("[debug]", ...args) : () => {};
 
-  console.log(yellow("[mock] This command uses mocked data and is not yet wired up to real APIs.") + "\n");
+  console.log(
+    yellow("[mock] This command uses mocked data and is not yet wired up to real APIs.") + "\n",
+  );
 
   debug("Checking for authenticated user and linked application...");
 
@@ -181,7 +183,9 @@ export async function deploy(options: { debug?: boolean }) {
   };
 
   if (devSettings.socialProviders.length > 0) {
-    debug(`Found social providers requiring production credentials: ${devSettings.socialProviders.join(", ")}`);
+    debug(
+      `Found social providers requiring production credentials: ${devSettings.socialProviders.join(", ")}`,
+    );
 
     for (const provider of devSettings.socialProviders) {
       const displayName = provider.charAt(0).toUpperCase() + provider.slice(1);
@@ -202,8 +206,9 @@ export async function deploy(options: { debug?: boolean }) {
       });
 
       if (credentialChoice === "walkthrough") {
-
-        console.log(`\n${bold(`When configuring your ${displayName} OAuth app, use these values:`)}\n`);
+        console.log(
+          `\n${bold(`When configuring your ${displayName} OAuth app, use these values:`)}\n`,
+        );
         console.log(`  ${dim("Authorized JavaScript origins:")}`);
         console.log(`    ${cyan(`https://${domain}`)}`);
         console.log(`    ${cyan(`https://www.${domain}`)}`);
@@ -234,6 +239,12 @@ export async function deploy(options: { debug?: boolean }) {
 
   debug("Deploy complete.");
 
-  console.log(`\n${bold(green(`Your production application is set up and ready at ${blue(`https://${domain}`)}`))}`)
-  console.log(dim("If your application is not loading correctly, you may need to redeploy with your updated Clerk secret keys."));
+  console.log(
+    `\n${bold(green(`Your production application is set up and ready at ${blue(`https://${domain}`)}`))}`,
+  );
+  console.log(
+    dim(
+      "If your application is not loading correctly, you may need to redeploy with your updated Clerk secret keys.",
+    ),
+  );
 }

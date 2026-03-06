@@ -121,9 +121,9 @@ async function resolveSecretKey(options: ApiOptions): Promise<string> {
   if (!resolved) {
     console.error(
       "No secret key found. Provide one via:\n" +
-      "  --secret-key <key>\n" +
-      "  CLERK_SECRET_KEY environment variable\n" +
-      "  Link a project with `clerk init` and set CLERK_PLATFORM_API_KEY",
+        "  --secret-key <key>\n" +
+        "  CLERK_SECRET_KEY environment variable\n" +
+        "  Link a project with `clerk init` and set CLERK_PLATFORM_API_KEY",
     );
     process.exit(1);
   }
@@ -133,9 +133,9 @@ async function resolveSecretKey(options: ApiOptions): Promise<string> {
   if (!platformKey) {
     console.error(
       "No secret key found. Provide one via:\n" +
-      "  --secret-key <key>\n" +
-      "  CLERK_SECRET_KEY environment variable\n" +
-      "  Set CLERK_PLATFORM_API_KEY to auto-resolve from your linked project",
+        "  --secret-key <key>\n" +
+        "  CLERK_SECRET_KEY environment variable\n" +
+        "  Set CLERK_PLATFORM_API_KEY to auto-resolve from your linked project",
     );
     process.exit(1);
   }

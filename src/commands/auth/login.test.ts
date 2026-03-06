@@ -165,7 +165,7 @@ describe("login", () => {
     const mockServer = {
       port: 54321,
       waitForCallback: mock().mockRejectedValue(
-        new Error("Authentication timed out. Please try again.")
+        new Error("Authentication timed out. Please try again."),
       ),
       stop: mock(),
     };

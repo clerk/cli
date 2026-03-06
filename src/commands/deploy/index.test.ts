@@ -5,9 +5,13 @@ const mockIsAgent = mock();
 let _modeOverride: string | undefined;
 
 mock.module("../../mode.ts", () => ({
-  isAgent: (...args: unknown[]) => _modeOverride !== undefined ? _modeOverride === "agent" : mockIsAgent(...args),
-  isHuman: (...args: unknown[]) => _modeOverride !== undefined ? _modeOverride !== "agent" : !mockIsAgent(...args),
-  setMode: (m: string) => { _modeOverride = m; },
+  isAgent: (...args: unknown[]) =>
+    _modeOverride !== undefined ? _modeOverride === "agent" : mockIsAgent(...args),
+  isHuman: (...args: unknown[]) =>
+    _modeOverride !== undefined ? _modeOverride !== "agent" : !mockIsAgent(...args),
+  setMode: (m: string) => {
+    _modeOverride = m;
+  },
   getMode: () => _modeOverride ?? "human",
 }));
 
@@ -117,9 +121,7 @@ describe("deploy", () => {
       await deploy({});
 
       const allOutput = capturedOutput(consoleSpy);
-      expect(allOutput).not.toContain(
-        "deploying a Clerk application to production"
-      );
+      expect(allOutput).not.toContain("deploying a Clerk application to production");
     });
 
     test("shows mock banner", async () => {

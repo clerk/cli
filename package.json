@@ -9,10 +9,16 @@
   "scripts": {
     "build": "bun build ./src/cli.ts --outfile ./dist/cli.js --target node",
     "dev": "bun run ./src/cli.ts",
-    "test": "bun test"
+    "test": "bun test",
+    "lint": "oxlint src/",
+    "format": "oxfmt --write src/",
+    "format:check": "oxfmt --check src/",
+    "prepare": "git config core.hooksPath .hooks"
   },
   "devDependencies": {
-    "@types/bun": "latest"
+    "@types/bun": "latest",
+    "oxfmt": "^0.36.0",
+    "oxlint": "^1.51.0"
   },
   "peerDependencies": {
     "typescript": "^5"

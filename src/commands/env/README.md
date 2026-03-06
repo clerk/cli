@@ -10,10 +10,10 @@ clerk env pull [--instance dev|prod|<instance_id>] [--file <path>]
 
 ### Options
 
-| Option | Description |
-|---|---|
+| Option            | Description                                               |
+| ----------------- | --------------------------------------------------------- |
 | `--instance <id>` | Instance to target (`dev`, `prod`, or a full instance ID) |
-| `--file <path>` | Target env file (default: auto-detect) |
+| `--file <path>`   | Target env file (default: auto-detect)                    |
 
 ## Sequence Diagram
 
@@ -62,23 +62,23 @@ sequenceDiagram
 
 ## API Endpoints
 
-| Step | Method | Endpoint | Notes |
-|---|---|---|---|
-| Auth | — | Local config | Token from `CLERK_PLATFORM_API_KEY` env var |
-| Fetch application | `GET` | `/v1/platform/applications/{appId}` | Returns all instances with keys |
+| Step              | Method | Endpoint                            | Notes                                       |
+| ----------------- | ------ | ----------------------------------- | ------------------------------------------- |
+| Auth              | —      | Local config                        | Token from `CLERK_PLATFORM_API_KEY` env var |
+| Fetch application | `GET`  | `/v1/platform/applications/{appId}` | Returns all instances with keys             |
 
 ## Framework Detection
 
 Reads `package.json` dependencies to determine the correct publishable key env var name:
 
-| Framework dependency | Env var name |
-|---|---|
-| `next` | `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` |
-| `expo` | `EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY` |
-| `astro` | `PUBLIC_CLERK_PUBLISHABLE_KEY` |
-| `nuxt` | `NUXT_PUBLIC_CLERK_PUBLISHABLE_KEY` |
-| `vite` | `VITE_CLERK_PUBLISHABLE_KEY` |
-| fallback | `CLERK_PUBLISHABLE_KEY` |
+| Framework dependency | Env var name                        |
+| -------------------- | ----------------------------------- |
+| `next`               | `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` |
+| `expo`               | `EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY` |
+| `astro`              | `PUBLIC_CLERK_PUBLISHABLE_KEY`      |
+| `nuxt`               | `NUXT_PUBLIC_CLERK_PUBLISHABLE_KEY` |
+| `vite`               | `VITE_CLERK_PUBLISHABLE_KEY`        |
+| fallback             | `CLERK_PUBLISHABLE_KEY`             |
 
 Priority is top-to-bottom (e.g., a Next.js project that also has Vite will use `NEXT_PUBLIC_*`).
 

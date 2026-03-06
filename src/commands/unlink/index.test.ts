@@ -5,9 +5,13 @@ const mockIsAgent = mock();
 const mockIsHuman = mock();
 let _modeOverride: string | undefined;
 mock.module("../../mode.ts", () => ({
-  isAgent: (...args: unknown[]) => _modeOverride !== undefined ? _modeOverride === "agent" : mockIsAgent(...args),
-  isHuman: (...args: unknown[]) => _modeOverride !== undefined ? _modeOverride !== "agent" : mockIsHuman(...args),
-  setMode: (m: string) => { _modeOverride = m; },
+  isAgent: (...args: unknown[]) =>
+    _modeOverride !== undefined ? _modeOverride === "agent" : mockIsAgent(...args),
+  isHuman: (...args: unknown[]) =>
+    _modeOverride !== undefined ? _modeOverride !== "agent" : mockIsHuman(...args),
+  setMode: (m: string) => {
+    _modeOverride = m;
+  },
   getMode: () => _modeOverride ?? "human",
 }));
 
@@ -86,7 +90,9 @@ describe("unlink", () => {
       mockIsAgent.mockReturnValue(false);
       mockResolveProfile.mockResolvedValue(undefined);
       errorSpy = spyOn(console, "error").mockImplementation(() => {});
-      exitSpy = spyOn(process, "exit").mockImplementation(() => { throw new Error("exit"); });
+      exitSpy = spyOn(process, "exit").mockImplementation(() => {
+        throw new Error("exit");
+      });
 
       await expect(unlink()).rejects.toThrow("exit");
 
