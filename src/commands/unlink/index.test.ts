@@ -1,21 +1,33 @@
 import { test, expect, describe, afterEach, mock, spyOn } from "bun:test";
+import { capturedOutput, configStubs, gitStubs, promptsStubs } from "../../test/stubs.ts";
 
 const mockIsAgent = mock();
 const mockIsHuman = mock();
+let _modeOverride: string | undefined;
 mock.module("../../mode.ts", () => ({
-  isAgent: (...args: unknown[]) => mockIsAgent(...args),
-  isHuman: (...args: unknown[]) => mockIsHuman(...args),
+  isAgent: (...args: unknown[]) => _modeOverride !== undefined ? _modeOverride === "agent" : mockIsAgent(...args),
+  isHuman: (...args: unknown[]) => _modeOverride !== undefined ? _modeOverride !== "agent" : mockIsHuman(...args),
+  setMode: (m: string) => { _modeOverride = m; },
+  getMode: () => _modeOverride ?? "human",
 }));
 
 const mockResolveProfile = mock();
 const mockRemoveProfile = mock();
 mock.module("../../lib/config.ts", () => ({
+  ...configStubs,
   resolveProfile: (...args: unknown[]) => mockResolveProfile(...args),
   removeProfile: (...args: unknown[]) => mockRemoveProfile(...args),
 }));
 
+const mockGetGitRepoRoot = mock();
+mock.module("../../lib/git.ts", () => ({
+  ...gitStubs,
+  getGitRepoRoot: (...args: unknown[]) => mockGetGitRepoRoot(...args),
+}));
+
 const mockConfirm = mock();
 mock.module("@inquirer/prompts", () => ({
+  ...promptsStubs,
   confirm: (...args: unknown[]) => mockConfirm(...args),
 }));
 
@@ -32,10 +44,13 @@ describe("unlink", () => {
   let exitSpy: ReturnType<typeof spyOn>;
 
   afterEach(() => {
+    _modeOverride = undefined;
     mockIsAgent.mockReset();
     mockIsHuman.mockReset();
     mockResolveProfile.mockReset();
     mockRemoveProfile.mockReset();
+    mockGetGitRepoRoot.mockReset();
+    mockGetGitRepoRoot.mockResolvedValue("/repo");
     mockConfirm.mockReset();
     consoleSpy?.mockRestore();
     errorSpy?.mockRestore();
@@ -103,7 +118,9 @@ describe("unlink", () => {
 
       await unlink();
 
-      expect(mockConfirm).toHaveBeenCalled();
+      expect(mockConfirm).toHaveBeenCalledWith(
+        expect.objectContaining({ message: expect.stringContaining("/repo") }),
+      );
       expect(mockRemoveProfile).toHaveBeenCalledWith(process.cwd());
     });
 
@@ -117,7 +134,7 @@ describe("unlink", () => {
       await unlink();
 
       expect(mockRemoveProfile).not.toHaveBeenCalled();
-      const output = consoleSpy.mock.calls.map((c) => c[0]).join("\n");
+      const output = capturedOutput(consoleSpy);
       expect(output).toContain("Aborted");
     });
   });
@@ -132,7 +149,7 @@ describe("unlink", () => {
 
       await unlink({ yes: true });
 
-      const output = consoleSpy.mock.calls.map((c) => c[0]).join("\n");
+      const output = capturedOutput(consoleSpy);
       expect(output).toContain("Unlinked");
     });
   });

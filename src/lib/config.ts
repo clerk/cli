@@ -5,7 +5,8 @@
 
 import { dirname, join } from "node:path";
 import { mkdir } from "node:fs/promises";
-import { CLERK_HOME_DIR, CONFIG_FILE } from "./constants.ts";
+import { CONFIG_FILE } from "./constants.ts";
+import { getGitRepoIdentifier, getGitNormalizedRemote } from "./git.ts";
 
 let overrideConfigFile: string | undefined;
 
@@ -89,17 +90,51 @@ export async function removeProfile(path: string): Promise<void> {
   await writeConfig(config);
 }
 
+export async function moveProfile(oldKey: string, newKey: string): Promise<void> {
+  const config = await readConfig();
+  const profile = config.profiles[oldKey];
+  if (!profile) return;
+  config.profiles[newKey] = profile;
+  delete config.profiles[oldKey];
+  await writeConfig(config);
+}
+
 export async function listProfiles(): Promise<Record<string, Profile>> {
   const config = await readConfig();
   return config.profiles;
 }
 
-export async function resolveProfile(cwd: string): Promise<{ path: string; profile: Profile } | undefined> {
+type ResolvedVia = "remote" | "git-common-dir" | "directory";
+
+export async function resolveProfile(cwd: string): Promise<{
+  path: string;
+  profile: Profile;
+  resolvedVia: ResolvedVia;
+  availableRemote?: string;
+} | undefined> {
   const config = await readConfig();
+
+  // Try normalized remote URL first (cross-clone matching)
+  const normalizedRemote = await getGitNormalizedRemote();
+  if (normalizedRemote && config.profiles[normalizedRemote]) {
+    return { path: normalizedRemote, profile: config.profiles[normalizedRemote], resolvedVia: "remote" };
+  }
+
+  // For non-remote matches, include availableRemote when a remote URL exists
+  const fallbackFields = normalizedRemote ? { availableRemote: normalizedRemote } : {};
+
+  // Try git repo identifier (shared across worktrees, backward compat)
+  const repoId = await getGitRepoIdentifier();
+  if (repoId && config.profiles[repoId]) {
+    return { path: repoId, profile: config.profiles[repoId], resolvedVia: "git-common-dir", ...fallbackFields };
+  }
+
+  // Fall back to directory walking for backward compatibility
   let dir = cwd;
   while (true) {
-    if (config.profiles[dir]) {
-      return { path: dir, profile: config.profiles[dir] };
+    const profile = config.profiles[dir];
+    if (profile) {
+      return { path: dir, profile, resolvedVia: "directory", ...fallbackFields };
     }
     const parent = join(dir, "..");
     if (parent === dir) break;

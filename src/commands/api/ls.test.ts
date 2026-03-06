@@ -3,6 +3,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { parseSpec, _setCacheDir } from "./catalog";
+import { stubFetch } from "../../test/stubs.ts";
 import { apiLs } from "./ls";
 
 const MINIMAL_SPEC = `
@@ -57,9 +58,9 @@ describe("apiLs", () => {
 
     logSpy = spyOn(console, "log").mockImplementation(() => {});
     errorSpy = spyOn(console, "error").mockImplementation(() => {});
-    globalThis.fetch = async () => {
+    stubFetch(async () => {
       throw new Error("Should not fetch");
-    };
+    });
   });
 
   afterEach(async () => {

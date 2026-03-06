@@ -1,9 +1,44 @@
-import { test, expect, describe, beforeEach, afterEach, spyOn } from "bun:test";
+import { test, expect, describe, beforeEach, afterEach, spyOn, mock } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { _setConfigDir, setProfile } from "../../lib/config";
-import { setMode } from "../../mode";
+import { credentialStoreStubs, gitStubs, configStubs, promptsStubs, stubFetch } from "../../test/stubs.ts";
+
+mock.module("../../lib/credential-store.ts", () => credentialStoreStubs);
+mock.module("../../lib/git.ts", () => gitStubs);
+
+let _mode = "human";
+mock.module("../../mode.ts", () => ({
+  setMode: (m: string) => { _mode = m; },
+  getMode: () => _mode,
+  isAgent: () => _mode === "agent",
+  isHuman: () => _mode !== "agent",
+}));
+
+type Profile = { workspaceId: string; appId: string; instances: Record<string, string> };
+const _profiles: Record<string, Profile> = {};
+mock.module("../../lib/config.ts", () => ({
+  ...configStubs,
+  setProfile: async (path: string, profile: Profile) => { _profiles[path] = profile; },
+  resolveProfile: async (cwd: string) => {
+    if (_profiles[cwd]) return { path: cwd, profile: _profiles[cwd], resolvedVia: "directory" as const };
+    return undefined;
+  },
+  resolveInstanceId: (profile: Profile, flag?: string) => {
+    const aliases: Record<string, string> = { dev: "development", development: "development", prod: "production", production: "production" };
+    if (!flag) return { id: profile.instances.development, label: "development" };
+    const env = aliases[flag];
+    if (!env) return { id: flag, label: flag };
+    const id = profile.instances[env];
+    if (!id) throw new Error(`No ${env} instance configured.`);
+    return { id, label: env };
+  },
+}));
+
+mock.module("@inquirer/prompts", () => promptsStubs);
+
+const { _setConfigDir } = await import("../../lib/config") as any;
+const { setMode } = await import("../../mode") as any;
 
 describe("api command", () => {
   const originalEnv = { ...process.env };
@@ -18,11 +53,12 @@ describe("api command", () => {
   const originalIsTTY = process.stdin.isTTY;
 
   beforeEach(async () => {
+    Object.keys(_profiles).forEach(k => delete _profiles[k]);
+    _mode = "human";
     tempDir = await mkdtemp(join(tmpdir(), "clerk-api-test-"));
     _setConfigDir(tempDir);
     process.env.CLERK_SECRET_KEY = "sk_test_123";
     setMode("agent"); // skip confirmation prompts
-    // Prevent resolveBody from trying to read stdin in tests
     Object.defineProperty(process.stdin, "isTTY", { value: true, writable: true, configurable: true });
 
     logSpy = spyOn(console, "log").mockImplementation(() => {});
@@ -31,8 +67,7 @@ describe("api command", () => {
       throw new Error("process.exit");
     });
 
-    globalThis.fetch = async () =>
-      new Response(JSON.stringify(mockUsers), { status: 200 });
+    stubFetch(async () => new Response(JSON.stringify(mockUsers), { status: 200 }));
   });
 
   afterEach(async () => {
@@ -57,12 +92,12 @@ describe("api command", () => {
     let capturedUrl = "";
     let capturedMethod = "";
     let capturedHeaders: Headers | undefined;
-    globalThis.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
+    stubFetch(async (input, init) => {
       capturedUrl = input.toString();
       capturedMethod = init?.method ?? "GET";
-      capturedHeaders = new Headers(init?.headers as HeadersInit);
+      capturedHeaders = new Headers(init?.headers);
       return new Response(JSON.stringify(mockUsers), { status: 200 });
-    };
+    });
 
     await runApi("/users");
     expect(capturedUrl).toContain("/v1/users");
@@ -73,10 +108,10 @@ describe("api command", () => {
 
   test("defaults to GET when no body provided", async () => {
     let capturedMethod = "";
-    globalThis.fetch = async (_: RequestInfo | URL, init?: RequestInit) => {
+    stubFetch(async (_input, init) => {
       capturedMethod = init?.method ?? "GET";
       return new Response(JSON.stringify({}), { status: 200 });
-    };
+    });
 
     await runApi("/users");
     expect(capturedMethod).toBe("GET");
@@ -87,11 +122,11 @@ describe("api command", () => {
   test("defaults to POST when -d data is provided", async () => {
     let capturedMethod = "";
     let capturedBody = "";
-    globalThis.fetch = async (_: RequestInfo | URL, init?: RequestInit) => {
+    stubFetch(async (_input, init) => {
       capturedMethod = init?.method ?? "GET";
       capturedBody = init?.body as string;
       return new Response(JSON.stringify({}), { status: 200 });
-    };
+    });
 
     await runApi("/users", { data: '{"email_address":["a@b.com"]}' });
     expect(capturedMethod).toBe("POST");
@@ -102,10 +137,10 @@ describe("api command", () => {
 
   test("uses explicit -X method override", async () => {
     let capturedMethod = "";
-    globalThis.fetch = async (_: RequestInfo | URL, init?: RequestInit) => {
+    stubFetch(async (_input, init) => {
       capturedMethod = init?.method ?? "GET";
       return new Response(JSON.stringify({}), { status: 200 });
-    };
+    });
 
     await runApi("/users/user_1", { method: "PATCH", data: '{"first_name":"Alice"}' });
     expect(capturedMethod).toBe("PATCH");
@@ -113,10 +148,10 @@ describe("api command", () => {
 
   test("method is case-insensitive", async () => {
     let capturedMethod = "";
-    globalThis.fetch = async (_: RequestInfo | URL, init?: RequestInit) => {
+    stubFetch(async (_input, init) => {
       capturedMethod = init?.method ?? "GET";
       return new Response(JSON.stringify({}), { status: 200 });
-    };
+    });
 
     await runApi("/users", { method: "delete" });
     expect(capturedMethod).toBe("DELETE");
@@ -126,10 +161,10 @@ describe("api command", () => {
 
   test("reads body from --file", async () => {
     let capturedBody = "";
-    globalThis.fetch = async (_: RequestInfo | URL, init?: RequestInit) => {
+    stubFetch(async (_input, init) => {
       capturedBody = init?.body as string;
       return new Response(JSON.stringify({}), { status: 200 });
-    };
+    });
 
     const bodyFile = join(tempDir, "body.json");
     await Bun.write(bodyFile, JSON.stringify({ first_name: "Bob" }));
@@ -150,11 +185,12 @@ describe("api command", () => {
   // --- --include option ---
 
   test("--include shows response headers", async () => {
-    globalThis.fetch = async () =>
+    stubFetch(async () =>
       new Response(JSON.stringify(mockUsers), {
         status: 200,
         headers: { "x-request-id": "req_123" },
-      });
+      }),
+    );
 
     await runApi("/users", { include: true });
     expect(errorSpy).toHaveBeenCalledWith("HTTP 200");
@@ -165,10 +201,10 @@ describe("api command", () => {
 
   test("--dry-run shows request without executing", async () => {
     let fetchCalled = false;
-    globalThis.fetch = async () => {
+    stubFetch(async () => {
       fetchCalled = true;
       return new Response(JSON.stringify({}), { status: 200 });
-    };
+    });
 
     await runApi("/users", { dryRun: true });
     expect(fetchCalled).toBe(false);
@@ -188,10 +224,10 @@ describe("api command", () => {
 
   test("--secret-key overrides env var", async () => {
     let capturedHeaders: Headers | undefined;
-    globalThis.fetch = async (_: RequestInfo | URL, init?: RequestInit) => {
-      capturedHeaders = new Headers(init?.headers as HeadersInit);
+    stubFetch(async (_input, init) => {
+      capturedHeaders = new Headers(init?.headers);
       return new Response(JSON.stringify({}), { status: 200 });
-    };
+    });
 
     await runApi("/users", { secretKey: "sk_live_override" });
     expect(capturedHeaders?.get("Authorization")).toBe("Bearer sk_live_override");
@@ -204,11 +240,11 @@ describe("api command", () => {
     let capturedHeaders: Headers | undefined;
     process.env.CLERK_PLATFORM_API_KEY = "plat_key_123";
 
-    globalThis.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
+    stubFetch(async (input, init) => {
       capturedUrl = input.toString();
-      capturedHeaders = new Headers(init?.headers as HeadersInit);
+      capturedHeaders = new Headers(init?.headers);
       return new Response(JSON.stringify({}), { status: 200 });
-    };
+    });
 
     await runApi("/v1/platform/applications", { platform: true });
     expect(capturedUrl).toContain("api.clerk.com");
@@ -240,19 +276,19 @@ describe("api command", () => {
 
   test("prints API error response body to stdout and exits 1", async () => {
     const errorBody = { errors: [{ message: "not found", code: "resource_not_found" }] };
-    globalThis.fetch = async () =>
-      new Response(JSON.stringify(errorBody), { status: 404 });
+    stubFetch(async () => new Response(JSON.stringify(errorBody), { status: 404 }));
 
     await expect(runApi("/users/bad_id")).rejects.toThrow("process.exit");
     expect(logSpy).toHaveBeenCalledWith(JSON.stringify(errorBody, null, 2));
   });
 
   test("--include shows headers on error responses too", async () => {
-    globalThis.fetch = async () =>
+    stubFetch(async () =>
       new Response('{"error":"bad"}', {
         status: 400,
         headers: { "x-request-id": "req_err" },
-      });
+      }),
+    );
 
     await expect(
       runApi("/users", { include: true }),
@@ -265,10 +301,10 @@ describe("api command", () => {
 
   test("-d takes priority over --file", async () => {
     let capturedBody = "";
-    globalThis.fetch = async (_: RequestInfo | URL, init?: RequestInit) => {
+    stubFetch(async (_input, init) => {
       capturedBody = init?.body as string;
       return new Response(JSON.stringify({}), { status: 200 });
-    };
+    });
 
     const bodyFile = join(tempDir, "should-not-read.json");
     await Bun.write(bodyFile, JSON.stringify({ from: "file" }));

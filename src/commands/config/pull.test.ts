@@ -3,6 +3,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { _setConfigDir, setProfile } from "../../lib/config";
+import { stubFetch } from "../../test/stubs.ts";
 
 describe("config pull", () => {
   const originalEnv = { ...process.env };
@@ -29,8 +30,8 @@ describe("config pull", () => {
       throw new Error("process.exit");
     });
 
-    globalThis.fetch = async () =>
-      new Response(JSON.stringify(mockConfig), { status: 200 });
+    stubFetch(async () =>
+      new Response(JSON.stringify(mockConfig), { status: 200 }));
   });
 
   afterEach(async () => {
@@ -119,10 +120,10 @@ describe("config pull", () => {
 
   test("uses development instance by default", async () => {
     let requestedUrl = "";
-    globalThis.fetch = async (input: RequestInfo | URL) => {
+    stubFetch(async (input) => {
       requestedUrl = input.toString();
       return new Response(JSON.stringify(mockConfig), { status: 200 });
-    };
+    });
 
     await setProfile(process.cwd(), {
       workspaceId: "org_1",
@@ -136,10 +137,10 @@ describe("config pull", () => {
 
   test("--instance prod targets production instance", async () => {
     let requestedUrl = "";
-    globalThis.fetch = async (input: RequestInfo | URL) => {
+    stubFetch(async (input) => {
       requestedUrl = input.toString();
       return new Response(JSON.stringify(mockConfig), { status: 200 });
-    };
+    });
 
     await setProfile(process.cwd(), {
       workspaceId: "org_1",
@@ -153,10 +154,10 @@ describe("config pull", () => {
 
   test("--instance with literal ID passes through", async () => {
     let requestedUrl = "";
-    globalThis.fetch = async (input: RequestInfo | URL) => {
+    stubFetch(async (input) => {
       requestedUrl = input.toString();
       return new Response(JSON.stringify(mockConfig), { status: 200 });
-    };
+    });
 
     await setProfile(process.cwd(), {
       workspaceId: "org_1",
@@ -182,7 +183,7 @@ describe("config pull", () => {
   });
 
   test("handles API errors gracefully", async () => {
-    globalThis.fetch = async () => new Response("Unauthorized", { status: 401 });
+    stubFetch(async () => new Response("Unauthorized", { status: 401 }));
 
     await setProfile(process.cwd(), {
       workspaceId: "org_1",

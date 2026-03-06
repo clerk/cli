@@ -1,9 +1,8 @@
 import { confirm } from "@inquirer/prompts";
 import { isAgent, isHuman } from "../../mode.js";
 import { resolveProfile, removeProfile } from "../../lib/config.js";
-
-const dim = (s: string) => `\x1b[2m${s}\x1b[0m`;
-const cyan = (s: string) => `\x1b[36m${s}\x1b[0m`;
+import { getGitRepoRoot } from "../../lib/git.js";
+import { dim, cyan } from "../../lib/color.js";
 
 const AGENT_PROMPT = `You are unlinking a Clerk application from the current project directory.
 
@@ -39,10 +38,12 @@ export async function unlink(options: UnlinkOptions = {}): Promise<void> {
   }
 
   const label = existing.profile.appId;
+  const repoRoot = await getGitRepoRoot();
+  const displayPath = repoRoot ?? existing.path;
 
   if (isHuman() && !options.yes) {
     const ok = await confirm({
-      message: `Unlink ${label} from ${existing.path}?`,
+      message: `Unlink ${label} from ${displayPath}?`,
       default: false,
     });
     if (!ok) {
@@ -52,5 +53,5 @@ export async function unlink(options: UnlinkOptions = {}): Promise<void> {
   }
 
   await removeProfile(existing.path);
-  console.log(`\nUnlinked ${cyan(label)} from ${dim(existing.path)}`);
+  console.log(`\nUnlinked ${cyan(label)} from ${dim(displayPath)}`);
 }

@@ -3,6 +3,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { _setConfigDir, setProfile } from "../../lib/config";
+import { stubFetch } from "../../test/stubs.ts";
 
 describe("config push", () => {
   const originalEnv = { ...process.env };
@@ -29,8 +30,8 @@ describe("config push", () => {
       throw new Error("process.exit");
     });
 
-    globalThis.fetch = async () =>
-      new Response(JSON.stringify(mockResponse), { status: 200 });
+    stubFetch(async () =>
+      new Response(JSON.stringify(mockResponse), { status: 200 }));
   });
 
   afterEach(async () => {
@@ -134,11 +135,11 @@ describe("config push", () => {
   test("patch sends PATCH method with --json input", async () => {
     let capturedMethod = "";
     let capturedBody = "";
-    globalThis.fetch = async (_input: RequestInfo | URL, init?: RequestInit) => {
+    stubFetch(async (_input, init) => {
       capturedMethod = init?.method ?? "GET";
       capturedBody = init?.body as string;
       return new Response(JSON.stringify(mockResponse), { status: 200 });
-    };
+    });
 
     await setProfile(process.cwd(), {
       workspaceId: "org_1",
@@ -153,10 +154,10 @@ describe("config push", () => {
 
   test("patch reads config from --file", async () => {
     let capturedBody = "";
-    globalThis.fetch = async (_input: RequestInfo | URL, init?: RequestInit) => {
+    stubFetch(async (_input, init) => {
       capturedBody = init?.body as string;
       return new Response(JSON.stringify(mockResponse), { status: 200 });
-    };
+    });
 
     const configFile = join(tempDir, "input.json");
     await Bun.write(configFile, JSON.stringify({ session: { lifetime: 7200 } }));
@@ -197,10 +198,10 @@ describe("config push", () => {
 
   test("put sends PUT method", async () => {
     let capturedMethod = "";
-    globalThis.fetch = async (_input: RequestInfo | URL, init?: RequestInit) => {
+    stubFetch(async (_input, init) => {
       capturedMethod = init?.method ?? "GET";
       return new Response(JSON.stringify(mockResponse), { status: 200 });
-    };
+    });
 
     await setProfile(process.cwd(), {
       workspaceId: "org_1",
@@ -227,10 +228,10 @@ describe("config push", () => {
 
   test("targets development instance by default", async () => {
     let requestedUrl = "";
-    globalThis.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
+    stubFetch(async (input) => {
       requestedUrl = input.toString();
       return new Response(JSON.stringify(mockResponse), { status: 200 });
-    };
+    });
 
     await setProfile(process.cwd(), {
       workspaceId: "org_1",
@@ -244,10 +245,10 @@ describe("config push", () => {
 
   test("--instance prod targets production instance", async () => {
     let requestedUrl = "";
-    globalThis.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
+    stubFetch(async (input) => {
       requestedUrl = input.toString();
       return new Response(JSON.stringify(mockResponse), { status: 200 });
-    };
+    });
 
     await setProfile(process.cwd(), {
       workspaceId: "org_1",
@@ -261,10 +262,10 @@ describe("config push", () => {
 
   test("--instance with literal ID passes through", async () => {
     let requestedUrl = "";
-    globalThis.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
+    stubFetch(async (input) => {
       requestedUrl = input.toString();
       return new Response(JSON.stringify(mockResponse), { status: 200 });
-    };
+    });
 
     await setProfile(process.cwd(), {
       workspaceId: "org_1",
@@ -280,10 +281,10 @@ describe("config push", () => {
 
   test("dry-run prints payload without calling API", async () => {
     let fetchCalled = false;
-    globalThis.fetch = async () => {
+    stubFetch(async () => {
       fetchCalled = true;
       return new Response(JSON.stringify(mockResponse), { status: 200 });
-    };
+    });
 
     await setProfile(process.cwd(), {
       workspaceId: "org_1",
@@ -317,7 +318,7 @@ describe("config push", () => {
   // --- API error handling ---
 
   test("handles API errors gracefully", async () => {
-    globalThis.fetch = async () => new Response("Bad Request", { status: 400 });
+    stubFetch(async () => new Response("Bad Request", { status: 400 }));
 
     await setProfile(process.cwd(), {
       workspaceId: "org_1",
@@ -346,10 +347,10 @@ describe("config push", () => {
 
   test("--json takes priority over --file", async () => {
     let capturedBody = "";
-    globalThis.fetch = async (_input: RequestInfo | URL, init?: RequestInit) => {
+    stubFetch(async (_input, init) => {
       capturedBody = init?.body as string;
       return new Response(JSON.stringify(mockResponse), { status: 200 });
-    };
+    });
 
     const configFile = join(tempDir, "should-not-read.json");
     await Bun.write(configFile, JSON.stringify({ from: "file" }));

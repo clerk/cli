@@ -1,13 +1,16 @@
 import { test, expect, describe, afterEach, mock, spyOn } from "bun:test";
+import { credentialStoreStubs, configStubs } from "../../test/stubs.ts";
 
 const mockDeleteToken = mock();
 const mockClearAuth = mock();
 
 mock.module("../../lib/credential-store.ts", () => ({
+  ...credentialStoreStubs,
   deleteToken: (...args: unknown[]) => mockDeleteToken(...args),
 }));
 
 mock.module("../../lib/config.ts", () => ({
+  ...configStubs,
   clearAuth: (...args: unknown[]) => mockClearAuth(...args),
 }));
 

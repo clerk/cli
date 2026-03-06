@@ -1,5 +1,6 @@
 import { select, input, confirm, password } from "@inquirer/prompts";
 import { isAgent } from "../../mode.js";
+import { dim, bold, cyan, green, blue, yellow } from "../../lib/color.js";
 
 const DEPLOY_PROMPT = `You are deploying a Clerk application to production. Follow these steps:
 
@@ -88,7 +89,7 @@ export async function deploy(options: { debug?: boolean }) {
   }
   const debug = options.debug ? (...args: unknown[]) => console.log("[debug]", ...args) : () => {};
 
-  console.log("\x1b[33m[mock] This command uses mocked data and is not yet wired up to real APIs.\x1b[0m\n");
+  console.log(yellow("[mock] This command uses mocked data and is not yet wired up to real APIs.") + "\n");
 
   debug("Checking for authenticated user and linked application...");
 
@@ -201,9 +202,6 @@ export async function deploy(options: { debug?: boolean }) {
       });
 
       if (credentialChoice === "walkthrough") {
-        const dim = (s: string) => `\x1b[2m${s}\x1b[0m`;
-        const bold = (s: string) => `\x1b[1m${s}\x1b[0m`;
-        const cyan = (s: string) => `\x1b[36m${s}\x1b[0m`;
 
         console.log(`\n${bold(`When configuring your ${displayName} OAuth app, use these values:`)}\n`);
         console.log(`  ${dim("Authorized JavaScript origins:")}`);
@@ -236,6 +234,6 @@ export async function deploy(options: { debug?: boolean }) {
 
   debug("Deploy complete.");
 
-  console.log(`\n\x1b[1m\x1b[32mYour production application is set up and ready at \x1b[34mhttps://${domain}\x1b[0m`);
-  console.log(`\x1b[2mIf your application is not loading correctly, you may need to redeploy with your updated Clerk secret keys.\x1b[0m`);
+  console.log(`\n${bold(green(`Your production application is set up and ready at ${blue(`https://${domain}`)}`))}`)
+  console.log(dim("If your application is not loading correctly, you may need to redeploy with your updated Clerk secret keys."));
 }

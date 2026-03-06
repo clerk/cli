@@ -1,13 +1,12 @@
 import { basename } from "node:path";
-import { select, confirm } from "@inquirer/prompts";
+import { search, confirm } from "@inquirer/prompts";
 import { isAgent } from "../../mode.js";
 import { getToken } from "../../lib/credential-store.js";
 import { login } from "../auth/login.js";
 import { listApplications, fetchApplication, type Application } from "../../lib/plapi.js";
-import { setProfile, resolveProfile } from "../../lib/config.js";
-
-const dim = (s: string) => `\x1b[2m${s}\x1b[0m`;
-const cyan = (s: string) => `\x1b[36m${s}\x1b[0m`;
+import { setProfile, resolveProfile, moveProfile } from "../../lib/config.js";
+import { getGitRepoIdentifier, getGitRepoRoot, getGitNormalizedRemote } from "../../lib/git.js";
+import { dim, cyan } from "../../lib/color.js";
 
 const AGENT_PROMPT = `You are linking a Clerk application to the current project directory.
 
@@ -17,7 +16,7 @@ const AGENT_PROMPT = `You are linking a Clerk application to the current project
 2. Determine which application to link:
    - If the user provides an app ID: \`clerk link --app <app_id>\`
    - Otherwise, list available applications with \`GET /v1/platform/applications\` and ask the user to select one.
-3. The link is stored in ~/.clerk/config.json as a profile keyed by the current directory path.
+3. The link is stored in ~/.clerk/config.json as a profile keyed by the git repository root (shared across worktrees).
 
 ## API Endpoints
 
@@ -43,12 +42,40 @@ export async function link(options: LinkOptions = {}): Promise<void> {
     return;
   }
 
-  // Check if already linked
+  // Resolve git repo identifier — prefer normalized remote URL for cross-clone matching
   const cwd = process.cwd();
+  const repoRoot = await getGitRepoRoot();
+  const normalizedRemote = await getGitNormalizedRemote();
+  const repoId = await getGitRepoIdentifier();
+  const profileKey = normalizedRemote ?? repoId ?? cwd;
+  const displayPath = repoRoot ?? cwd;
+
+  // Check if already linked
   const existing = await resolveProfile(cwd);
-  if (existing && existing.path === cwd) {
+  if (existing) {
+    // Print context-specific message
+    if (existing.resolvedVia === "remote") {
+      console.log(`Auto-linked via git remote (${dim(normalizedRemote ?? existing.path)})`);
+    } else {
+      console.log(`Already linked to ${cyan(existing.profile.appId)} in ${dim(existing.path)}`);
+    }
+
     if (options.skipIfLinked) return;
-    console.log(`Already linked to ${cyan(existing.profile.appId)} in ${dim(cwd)}`);
+
+    // Offer upgrade when an old profile key can migrate to a remote URL
+    if (existing.availableRemote) {
+      console.log(`We detected this is now a git repository with remote ${dim(existing.availableRemote)}.`);
+      const upgrade = await confirm({
+        message: "Update the link to use the git remote? This shares it across clones and worktrees.",
+        default: true,
+      });
+      if (upgrade) {
+        await moveProfile(existing.path, existing.availableRemote);
+        console.log(`\nLink updated to use git remote (${cyan(existing.availableRemote)})`);
+        return;
+      }
+    }
+
     const relink = await confirm({ message: "Re-link to a different application?", default: false });
     if (!relink) return;
   }
@@ -75,15 +102,26 @@ export async function link(options: LinkOptions = {}): Promise<void> {
       process.exit(1);
     }
 
-    const selectedId = await select({
-      message: `Select a Clerk application to link ${dim(`(dir: /${basename(process.cwd())})`)}`,
-      choices: apps.map((a) => ({
-        name: appLabel(a),
-        value: a.application_id,
-      })),
+    const choices = apps.map((a) => ({
+      name: appLabel(a),
+      value: a.application_id,
+    }));
+
+    const selectedId = await search({
+      message: `Select a Clerk application to link ${dim(`(repo: ${basename(displayPath)})`)}`,
+      source: (term) => {
+        if (!term) return choices;
+        const lower = term.toLowerCase();
+        return choices.filter((c) => c.name.toLowerCase().includes(lower));
+      },
     });
 
-    app = apps.find((a) => a.application_id === selectedId)!;
+    const found = apps.find((a) => a.application_id === selectedId);
+    if (!found) {
+      console.error("Selected application not found.");
+      process.exit(1);
+    }
+    app = found;
   }
 
   const devInstance = app.instances.find(
@@ -98,8 +136,8 @@ export async function link(options: LinkOptions = {}): Promise<void> {
     process.exit(1);
   }
 
-  // Store profile
-  await setProfile(cwd, {
+  // Store profile keyed by git repo (or cwd if not in a repo)
+  await setProfile(profileKey, {
     workspaceId: "",
     appId: app.application_id,
     instances: {
@@ -109,5 +147,5 @@ export async function link(options: LinkOptions = {}): Promise<void> {
   });
 
   const label = app.name || app.application_id;
-  console.log(`\nLinked to ${cyan(label)} in ${dim(cwd)}`);
+  console.log(`\nLinked to ${cyan(label)} in ${dim(displayPath)}`);
 }

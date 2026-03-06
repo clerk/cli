@@ -1,4 +1,5 @@
 import { test, expect, describe, afterEach } from "bun:test";
+import { stubFetch } from "../../test/stubs.ts";
 import { bapiRequest, BapiError } from "./bapi";
 
 describe("bapi", () => {
@@ -10,50 +11,50 @@ describe("bapi", () => {
 
   test("constructs correct URL with /v1/ prefix", async () => {
     let requestedUrl = "";
-    globalThis.fetch = async (input: RequestInfo | URL) => {
+    stubFetch(async (input) => {
       requestedUrl = input.toString();
       return new Response(JSON.stringify({}), { status: 200 });
-    };
+    });
     await bapiRequest({ method: "GET", path: "/users", secretKey: "sk_test_123" });
     expect(requestedUrl).toBe("https://api.clerk.dev/v1/users");
   });
 
   test("does not double-prefix /v1/", async () => {
     let requestedUrl = "";
-    globalThis.fetch = async (input: RequestInfo | URL) => {
+    stubFetch(async (input) => {
       requestedUrl = input.toString();
       return new Response(JSON.stringify({}), { status: 200 });
-    };
+    });
     await bapiRequest({ method: "GET", path: "/v1/users", secretKey: "sk_test_123" });
     expect(requestedUrl).toBe("https://api.clerk.dev/v1/users");
   });
 
   test("handles path without leading slash", async () => {
     let requestedUrl = "";
-    globalThis.fetch = async (input: RequestInfo | URL) => {
+    stubFetch(async (input) => {
       requestedUrl = input.toString();
       return new Response(JSON.stringify({}), { status: 200 });
-    };
+    });
     await bapiRequest({ method: "GET", path: "users", secretKey: "sk_test_123" });
     expect(requestedUrl).toBe("https://api.clerk.dev/v1/users");
   });
 
   test("sends Bearer token in Authorization header", async () => {
     let capturedHeaders: Headers | undefined;
-    globalThis.fetch = async (_: RequestInfo | URL, init?: RequestInit) => {
-      capturedHeaders = new Headers(init?.headers as HeadersInit);
+    stubFetch(async (_input, init) => {
+      capturedHeaders = new Headers(init?.headers);
       return new Response(JSON.stringify({}), { status: 200 });
-    };
+    });
     await bapiRequest({ method: "GET", path: "/users", secretKey: "sk_test_abc" });
     expect(capturedHeaders?.get("Authorization")).toBe("Bearer sk_test_abc");
   });
 
   test("sends Content-Type header when body is present", async () => {
     let capturedHeaders: Headers | undefined;
-    globalThis.fetch = async (_: RequestInfo | URL, init?: RequestInit) => {
-      capturedHeaders = new Headers(init?.headers as HeadersInit);
+    stubFetch(async (_input, init) => {
+      capturedHeaders = new Headers(init?.headers);
       return new Response(JSON.stringify({}), { status: 200 });
-    };
+    });
     await bapiRequest({
       method: "POST",
       path: "/users",
@@ -65,31 +66,31 @@ describe("bapi", () => {
 
   test("does not send Content-Type header when no body", async () => {
     let capturedHeaders: Headers | undefined;
-    globalThis.fetch = async (_: RequestInfo | URL, init?: RequestInit) => {
-      capturedHeaders = new Headers(init?.headers as HeadersInit);
+    stubFetch(async (_input, init) => {
+      capturedHeaders = new Headers(init?.headers);
       return new Response(JSON.stringify({}), { status: 200 });
-    };
+    });
     await bapiRequest({ method: "GET", path: "/users", secretKey: "sk_test_abc" });
     expect(capturedHeaders?.get("Content-Type")).toBeNull();
   });
 
   test("returns parsed JSON body on success", async () => {
     const data = { data: [{ id: "user_1" }] };
-    globalThis.fetch = async () => new Response(JSON.stringify(data), { status: 200 });
+    stubFetch(async () => new Response(JSON.stringify(data), { status: 200 }));
     const result = await bapiRequest({ method: "GET", path: "/users", secretKey: "sk_test_abc" });
     expect(result.body).toEqual(data);
     expect(result.status).toBe(200);
   });
 
   test("returns raw text when response is not JSON", async () => {
-    globalThis.fetch = async () => new Response("plain text", { status: 200 });
+    stubFetch(async () => new Response("plain text", { status: 200 }));
     const result = await bapiRequest({ method: "GET", path: "/health", secretKey: "sk_test_abc" });
     expect(result.body).toBe("plain text");
     expect(result.rawBody).toBe("plain text");
   });
 
   test("throws BapiError on non-2xx response", async () => {
-    globalThis.fetch = async () => new Response("Not Found", { status: 404 });
+    stubFetch(async () => new Response("Not Found", { status: 404 }));
     try {
       await bapiRequest({ method: "GET", path: "/users/bad", secretKey: "sk_test_abc" });
       expect(true).toBe(false); // should not reach
@@ -102,10 +103,10 @@ describe("bapi", () => {
 
   test("respects baseUrl override", async () => {
     let requestedUrl = "";
-    globalThis.fetch = async (input: RequestInfo | URL) => {
+    stubFetch(async (input) => {
       requestedUrl = input.toString();
       return new Response(JSON.stringify({}), { status: 200 });
-    };
+    });
     await bapiRequest({
       method: "GET",
       path: "/users",
@@ -117,10 +118,10 @@ describe("bapi", () => {
 
   test("sends request body", async () => {
     let capturedBody = "";
-    globalThis.fetch = async (_: RequestInfo | URL, init?: RequestInit) => {
+    stubFetch(async (_input, init) => {
       capturedBody = init?.body as string;
       return new Response(JSON.stringify({}), { status: 200 });
-    };
+    });
     await bapiRequest({
       method: "POST",
       path: "/users",

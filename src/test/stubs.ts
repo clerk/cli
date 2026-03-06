@@ -1,0 +1,57 @@
+import type { spyOn } from "bun:test";
+
+export function capturedOutput(spy: ReturnType<typeof spyOn>): string {
+  return spy.mock.calls.map((c: unknown[]) => c[0]).join("\n");
+}
+
+const noop = async () => {};
+
+export const configStubs = {
+  _setConfigDir: () => {},
+  readConfig: noop,
+  writeConfig: noop,
+  getAuth: noop,
+  setAuth: noop,
+  clearAuth: noop,
+  getProfile: noop,
+  setProfile: noop,
+  removeProfile: noop,
+  moveProfile: noop,
+  listProfiles: noop,
+  resolveProfile: noop,
+  resolveInstanceId: () => ({ id: "", label: "" }),
+};
+
+export const credentialStoreStubs = {
+  getToken: async () => null,
+  storeToken: async () => {},
+  deleteToken: async () => {},
+};
+
+export const gitStubs = {
+  getGitRepoRoot: async () => undefined,
+  getGitRepoIdentifier: async () => undefined,
+  getGitNormalizedRemote: async () => undefined,
+  normalizeGitRemoteUrl: (url: string) => url,
+};
+
+export const promptsStubs = {
+  select: async () => undefined,
+  search: async () => undefined,
+  input: async () => "",
+  confirm: async () => true,
+  password: async () => "",
+  editor: async () => "{}",
+};
+
+export const tokenExchangeStubs = {
+  exchangeCodeForToken: async () => ({}),
+  fetchUserInfo: async () => ({}),
+  OAUTH_CONFIG: {},
+};
+
+type FetchImpl = (input: string | URL | Request, init?: RequestInit) => Promise<Response>;
+
+export function stubFetch(impl: FetchImpl): void {
+  globalThis.fetch = impl as typeof fetch;
+}
