@@ -13,7 +13,7 @@ export async function configSchema(
   const resolved = await resolveProfile(process.cwd());
   if (!resolved) {
     console.error(
-      "No Clerk project linked to this directory. Run `clerk init` to set up.",
+      "No Clerk project linked to this directory. Run `clerk link` to set up.",
     );
     process.exit(1);
   }
