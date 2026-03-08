@@ -30,6 +30,35 @@ async function getAuthToken(): Promise<string> {
   );
 }
 
+export async function fetchInstanceConfigSchema(
+  applicationId: string,
+  instanceId: string,
+  keys?: string[],
+): Promise<Record<string, unknown>> {
+  const token = await getAuthToken();
+  const url = new URL(
+    `${PLAPI_BASE_URL}/v1/platform/applications/${applicationId}/instances/${instanceId}/config/schema`,
+  );
+  if (keys?.length) {
+    for (const key of keys) {
+      url.searchParams.append("keys", key);
+    }
+  }
+  const response = await fetch(url.toString(), {
+    headers: {
+      Authorization: `Bearer ${token}`,
+      Accept: "application/json",
+    },
+  });
+
+  if (!response.ok) {
+    const body = await response.text();
+    throw new PlapiError(response.status, body);
+  }
+
+  return response.json() as Promise<Record<string, unknown>>;
+}
+
 export async function fetchInstanceConfig(
   applicationId: string,
   instanceId: string,

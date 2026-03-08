@@ -9,6 +9,7 @@ import { pull } from "./commands/env/pull.js";
 import { deploy } from "./commands/deploy/index.js";
 import { configPull } from "./commands/config/pull.js";
 import { configPatch, configPut } from "./commands/config/push.js";
+import { configSchema } from "./commands/config/schema.js";
 import { api } from "./commands/api/index.js";
 import { link } from "./commands/link/index.js";
 import { unlink } from "./commands/unlink/index.js";
@@ -38,14 +39,9 @@ program
   .description("Initialize Clerk in your project")
   .action(init);
 
-const auth = program
-  .command("auth")
-  .description("Manage authentication");
+const auth = program.command("auth").description("Manage authentication");
 
-auth
-  .command("login")
-  .description("Log in to your Clerk account")
-  .action(login);
+auth.command("login").description("Log in to your Clerk account").action(login);
 
 auth
   .command("logout")
@@ -69,14 +65,15 @@ program
   .description("Show the current logged-in user")
   .action(whoami);
 
-const env = program
-  .command("env")
-  .description("Manage environment variables");
+const env = program.command("env").description("Manage environment variables");
 
 env
   .command("pull")
   .description("Pull environment variables from Clerk to .env.local")
-  .option("--instance <id>", "Instance to target (dev, prod, or a full instance ID)")
+  .option(
+    "--instance <id>",
+    "Instance to target (dev, prod, or a full instance ID)",
+  )
   .option("--file <path>", "Target env file (default: auto-detect)")
   .action(pull);
 
@@ -87,14 +84,31 @@ const config = program
 config
   .command("pull")
   .description("Pull instance configuration from Clerk")
-  .option("--instance <id>", "Instance to target (dev, prod, or a full instance ID)")
+  .option(
+    "--instance <id>",
+    "Instance to target (dev, prod, or a full instance ID)",
+  )
   .option("--output <file>", "Write config to a file instead of stdout")
   .action(configPull);
 
 config
+  .command("schema")
+  .description("Pull instance config schema from Clerk")
+  .option(
+    "--instance <id>",
+    "Instance to target (dev, prod, or a full instance ID)",
+  )
+  .option("--output <file>", "Write schema to a file instead of stdout")
+  .option("--keys <keys...>", "Config keys to retrieve schema for")
+  .action(configSchema);
+
+config
   .command("patch")
   .description("Partially update instance configuration (PATCH)")
-  .option("--instance <id>", "Instance to target (dev, prod, or a full instance ID)")
+  .option(
+    "--instance <id>",
+    "Instance to target (dev, prod, or a full instance ID)",
+  )
   .option("--file <path>", "Read config JSON from a file")
   .option("--json <string>", "Pass config JSON inline")
   .option("--dry-run", "Show what would be sent without making the API call")
@@ -104,7 +118,10 @@ config
 config
   .command("put")
   .description("Replace entire instance configuration (PUT)")
-  .option("--instance <id>", "Instance to target (dev, prod, or a full instance ID)")
+  .option(
+    "--instance <id>",
+    "Instance to target (dev, prod, or a full instance ID)",
+  )
   .option("--file <path>", "Read config JSON from a file")
   .option("--json <string>", "Pass config JSON inline")
   .option("--dry-run", "Show what would be sent without making the API call")
@@ -114,9 +131,15 @@ config
 program
   .command("api")
   .description("Make authenticated requests to the Clerk API")
-  .argument("[endpoint]", "API endpoint path, 'ls' to list endpoints, or omit for interactive mode")
+  .argument(
+    "[endpoint]",
+    "API endpoint path, 'ls' to list endpoints, or omit for interactive mode",
+  )
   .argument("[filter]", "Filter keyword (used with 'ls')")
-  .option("-X, --method <method>", "HTTP method (default: GET, or POST if body provided)")
+  .option(
+    "-X, --method <method>",
+    "HTTP method (default: GET, or POST if body provided)",
+  )
   .option("-d, --data <json>", "JSON request body")
   .option("--file <path>", "Read request body from a file")
   .option("--include", "Show response headers")

@@ -71,7 +71,15 @@ export async function storeToken(token: string): Promise<void> {
   }
 }
 
+let tokenOverride: string | null | undefined;
+
+/** Test-only: override getToken() result. Pass undefined to clear. */
+export function _setTokenOverride(value: string | null | undefined): void {
+  tokenOverride = value;
+}
+
 export async function getToken(): Promise<string | null> {
+  if (tokenOverride !== undefined) return tokenOverride;
   const token = await keychainGet();
   if (token) return token;
   return fileGet();

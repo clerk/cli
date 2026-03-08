@@ -8,7 +8,7 @@ import { credentialStoreStubs, gitStubs, stubFetch } from "../../test/stubs.ts";
 mock.module("../../lib/credential-store.ts", () => credentialStoreStubs);
 mock.module("../../lib/git.ts", () => gitStubs);
 
-describe("config pull", () => {
+describe("config schema", () => {
   const originalEnv = { ...process.env };
   const originalFetch = globalThis.fetch;
   let tempDir: string;
@@ -16,13 +16,18 @@ describe("config pull", () => {
   let errorSpy: ReturnType<typeof spyOn>;
   let exitSpy: ReturnType<typeof spyOn>;
 
-  const mockConfig = {
-    session: { lifetime: 604800 },
-    sign_up: { mode: "public" },
+  const mockSchema = {
+    type: "object",
+    properties: {
+      session: {
+        type: "object",
+        properties: { lifetime: { type: "integer" } },
+      },
+    },
   };
 
   beforeEach(async () => {
-    tempDir = await mkdtemp(join(tmpdir(), "clerk-config-pull-test-"));
+    tempDir = await mkdtemp(join(tmpdir(), "clerk-config-schema-test-"));
     _setConfigDir(tempDir);
     process.env.CLERK_PLATFORM_API_KEY = "test_key";
     process.env.CLERK_PLATFORM_API_URL = "https://test-api.clerk.com";
@@ -34,7 +39,7 @@ describe("config pull", () => {
     });
 
     stubFetch(async () =>
-      new Response(JSON.stringify(mockConfig), { status: 200 }));
+      new Response(JSON.stringify(mockSchema), { status: 200 }));
   });
 
   afterEach(async () => {
@@ -47,14 +52,15 @@ describe("config pull", () => {
     await rm(tempDir, { recursive: true, force: true });
   });
 
-  // Dynamically import to get fresh module state
-  async function runConfigPull(options: { instance?: string; output?: string } = {}) {
-    const { configPull } = await import("./pull");
-    return configPull(options);
+  async function runConfigSchema(
+    options: { instance?: string; output?: string; keys?: string[] } = {},
+  ) {
+    const { configSchema } = await import("./schema");
+    return configSchema(options);
   }
 
   test("errors when no profile is linked", async () => {
-    await expect(runConfigPull()).rejects.toThrow("process.exit");
+    await expect(runConfigSchema()).rejects.toThrow("process.exit");
     expect(errorSpy).toHaveBeenCalledWith(
       expect.stringContaining("No Clerk project linked"),
     );
@@ -68,35 +74,37 @@ describe("config pull", () => {
     });
     delete process.env.CLERK_PLATFORM_API_KEY;
 
-    await expect(runConfigPull()).rejects.toThrow("process.exit");
+    await expect(runConfigSchema()).rejects.toThrow("process.exit");
     expect(errorSpy).toHaveBeenCalledWith(
       expect.stringContaining("CLERK_PLATFORM_API_KEY"),
     );
   });
 
-  test("prints config JSON to stdout by default", async () => {
+  test("prints schema JSON to stdout by default", async () => {
     await setProfile(process.cwd(), {
       workspaceId: "org_1",
       appId: "app_1",
       instances: { development: "ins_dev" },
     });
 
-    await runConfigPull();
-    expect(logSpy).toHaveBeenCalledWith(JSON.stringify(mockConfig, null, 2));
+    await runConfigSchema();
+    expect(logSpy).toHaveBeenCalledWith(JSON.stringify(mockSchema, null, 2));
   });
 
-  test("writes config to file with --output", async () => {
+  test("writes schema to file with --output", async () => {
     await setProfile(process.cwd(), {
       workspaceId: "org_1",
       appId: "app_1",
       instances: { development: "ins_dev" },
     });
-    const outFile = join(tempDir, "output.json");
+    const outFile = join(tempDir, "schema.json");
 
-    await runConfigPull({ output: outFile });
+    await runConfigSchema({ output: outFile });
     const written = await Bun.file(outFile).json();
-    expect(written).toEqual(mockConfig);
-    expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining("Config written to"));
+    expect(written).toEqual(mockSchema);
+    expect(errorSpy).toHaveBeenCalledWith(
+      expect.stringContaining("Schema written to"),
+    );
   });
 
   test("shows which environment is being pulled", async () => {
@@ -106,8 +114,10 @@ describe("config pull", () => {
       instances: { development: "ins_dev" },
     });
 
-    await runConfigPull();
-    expect(errorSpy).toHaveBeenCalledWith("Pulling config from development instance...");
+    await runConfigSchema();
+    expect(errorSpy).toHaveBeenCalledWith(
+      "Pulling config schema from development instance...",
+    );
   });
 
   test("shows production label when --instance prod", async () => {
@@ -117,15 +127,17 @@ describe("config pull", () => {
       instances: { development: "ins_dev", production: "ins_prod" },
     });
 
-    await runConfigPull({ instance: "prod" });
-    expect(errorSpy).toHaveBeenCalledWith("Pulling config from production instance...");
+    await runConfigSchema({ instance: "prod" });
+    expect(errorSpy).toHaveBeenCalledWith(
+      "Pulling config schema from production instance...",
+    );
   });
 
   test("uses development instance by default", async () => {
     let requestedUrl = "";
     stubFetch(async (input) => {
       requestedUrl = input.toString();
-      return new Response(JSON.stringify(mockConfig), { status: 200 });
+      return new Response(JSON.stringify(mockSchema), { status: 200 });
     });
 
     await setProfile(process.cwd(), {
@@ -134,7 +146,7 @@ describe("config pull", () => {
       instances: { development: "ins_dev", production: "ins_prod" },
     });
 
-    await runConfigPull();
+    await runConfigSchema();
     expect(requestedUrl).toContain("/instances/ins_dev/");
   });
 
@@ -142,7 +154,7 @@ describe("config pull", () => {
     let requestedUrl = "";
     stubFetch(async (input) => {
       requestedUrl = input.toString();
-      return new Response(JSON.stringify(mockConfig), { status: 200 });
+      return new Response(JSON.stringify(mockSchema), { status: 200 });
     });
 
     await setProfile(process.cwd(), {
@@ -151,7 +163,7 @@ describe("config pull", () => {
       instances: { development: "ins_dev", production: "ins_prod" },
     });
 
-    await runConfigPull({ instance: "prod" });
+    await runConfigSchema({ instance: "prod" });
     expect(requestedUrl).toContain("/instances/ins_prod/");
   });
 
@@ -159,7 +171,7 @@ describe("config pull", () => {
     let requestedUrl = "";
     stubFetch(async (input) => {
       requestedUrl = input.toString();
-      return new Response(JSON.stringify(mockConfig), { status: 200 });
+      return new Response(JSON.stringify(mockSchema), { status: 200 });
     });
 
     await setProfile(process.cwd(), {
@@ -168,8 +180,27 @@ describe("config pull", () => {
       instances: { development: "ins_dev" },
     });
 
-    await runConfigPull({ instance: "ins_custom_123" });
+    await runConfigSchema({ instance: "ins_custom_123" });
     expect(requestedUrl).toContain("/instances/ins_custom_123/");
+  });
+
+  test("passes --keys to API as query params", async () => {
+    let requestedUrl = "";
+    stubFetch(async (input) => {
+      requestedUrl = input.toString();
+      return new Response(JSON.stringify(mockSchema), { status: 200 });
+    });
+
+    await setProfile(process.cwd(), {
+      workspaceId: "org_1",
+      appId: "app_1",
+      instances: { development: "ins_dev" },
+    });
+
+    await runConfigSchema({ keys: ["session", "sign_up"] });
+    expect(requestedUrl).toContain("keys=session");
+    expect(requestedUrl).toContain("keys=sign_up");
+    expect(requestedUrl).toContain("/config/schema");
   });
 
   test("errors when production instance not configured", async () => {
@@ -179,7 +210,9 @@ describe("config pull", () => {
       instances: { development: "ins_dev" },
     });
 
-    await expect(runConfigPull({ instance: "prod" })).rejects.toThrow("process.exit");
+    await expect(runConfigSchema({ instance: "prod" })).rejects.toThrow(
+      "process.exit",
+    );
     expect(errorSpy).toHaveBeenCalledWith(
       expect.stringContaining("No production instance configured"),
     );
@@ -194,9 +227,9 @@ describe("config pull", () => {
       instances: { development: "ins_dev" },
     });
 
-    await expect(runConfigPull()).rejects.toThrow("process.exit");
+    await expect(runConfigSchema()).rejects.toThrow("process.exit");
     expect(errorSpy).toHaveBeenCalledWith(
-      expect.stringContaining("Failed to fetch config"),
+      expect.stringContaining("Failed to fetch config schema"),
     );
   });
 });

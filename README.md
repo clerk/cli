@@ -23,6 +23,7 @@ Commands:
   whoami               Show the current logged-in user
   config               Manage instance configuration
     pull [options]     Pull instance configuration from Clerk
+    schema [options]   Pull instance config schema from Clerk
     patch [options]    Partially update instance configuration (PATCH)
     put [options]      Replace entire instance configuration (PUT)
   env                  Manage environment variables
@@ -44,6 +45,11 @@ clerk unlink
 clerk config pull
   --instance <id>      Instance to target (dev, prod, or a full instance ID)
   --output <file>      Write config to a file instead of stdout
+
+clerk config schema
+  --instance <id>      Instance to target (dev, prod, or a full instance ID)
+  --output <file>      Write schema to a file instead of stdout
+  --keys <keys...>     Config keys to retrieve schema for
 
 clerk config patch
   --instance <id>      Instance to target (dev, prod, or a full instance ID)

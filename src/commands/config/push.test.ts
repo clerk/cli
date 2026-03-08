@@ -1,9 +1,12 @@
-import { test, expect, describe, beforeEach, afterEach, spyOn } from "bun:test";
+import { test, expect, describe, beforeEach, afterEach, spyOn, mock } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { _setConfigDir, setProfile } from "../../lib/config";
-import { stubFetch } from "../../test/stubs.ts";
+import { credentialStoreStubs, gitStubs, stubFetch } from "../../test/stubs.ts";
+
+mock.module("../../lib/credential-store.ts", () => credentialStoreStubs);
+mock.module("../../lib/git.ts", () => gitStubs);
 
 describe("config push", () => {
   const originalEnv = { ...process.env };
