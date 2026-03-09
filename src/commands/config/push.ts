@@ -15,7 +15,11 @@ type Operation = {
   method: "PUT" | "PATCH";
   verb: string;
   warning?: string;
-  apiFn: (appId: string, instId: string, config: Record<string, unknown>) => Promise<Record<string, unknown>>;
+  apiFn: (
+    appId: string,
+    instId: string,
+    config: Record<string, unknown>,
+  ) => Promise<Record<string, unknown>>;
 };
 
 const PUT_OP: Operation = {
@@ -142,8 +146,8 @@ export async function readInput(options: { file?: string; json?: string }): Prom
 
   throw new Error(
     "No input provided. Use --file <path>, --json <string>, or pipe JSON to stdin.\n" +
-    "  Example: clerk config patch --file config.json\n" +
-    "  Example: clerk config patch --json '{\"session\":{\"lifetime\":3600}}'\n" +
-    "  Example: cat config.json | clerk config patch",
+      "  Example: clerk config patch --file config.json\n" +
+      '  Example: clerk config patch --json \'{"session":{"lifetime":3600}}\'\n' +
+      "  Example: cat config.json | clerk config patch",
   );
 }

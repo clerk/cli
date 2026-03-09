@@ -42,9 +42,7 @@ export async function login(): Promise<{ userId: string; email: string }> {
 
   // Open browser (platform-aware)
   const openCmd =
-    process.platform === "darwin" ? "open" :
-    process.platform === "win32" ? "start" :
-    "xdg-open";
+    process.platform === "darwin" ? "open" : process.platform === "win32" ? "start" : "xdg-open";
   const proc = Bun.spawn([openCmd, authorizeUrl.toString()]);
   await proc.exited;
 

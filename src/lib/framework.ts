@@ -14,12 +14,27 @@ export interface FrameworkInfo {
 
 // Order matters: more specific frameworks first (e.g. next before react, nuxt before vue)
 const FRAMEWORK_MAP: FrameworkInfo[] = [
-  { dep: "next", name: "Next.js", sdk: "@clerk/nextjs", envVar: "NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY" },
+  {
+    dep: "next",
+    name: "Next.js",
+    sdk: "@clerk/nextjs",
+    envVar: "NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY",
+  },
   { dep: "expo", name: "Expo", sdk: "@clerk/expo", envVar: "EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY" },
   { dep: "astro", name: "Astro", sdk: "@clerk/astro", envVar: "PUBLIC_CLERK_PUBLISHABLE_KEY" },
   { dep: "nuxt", name: "Nuxt", sdk: "@clerk/nuxt", envVar: "NUXT_PUBLIC_CLERK_PUBLISHABLE_KEY" },
-  { dep: "@tanstack/react-start", name: "TanStack Start", sdk: "@clerk/tanstack-start", envVar: "VITE_CLERK_PUBLISHABLE_KEY" },
-  { dep: "react-router", name: "React Router", sdk: "@clerk/react-router", envVar: "VITE_CLERK_PUBLISHABLE_KEY" },
+  {
+    dep: "@tanstack/react-start",
+    name: "TanStack Start",
+    sdk: "@clerk/tanstack-start",
+    envVar: "VITE_CLERK_PUBLISHABLE_KEY",
+  },
+  {
+    dep: "react-router",
+    name: "React Router",
+    sdk: "@clerk/react-router",
+    envVar: "VITE_CLERK_PUBLISHABLE_KEY",
+  },
   { dep: "fastify", name: "Fastify", sdk: "@clerk/fastify", envVar: "CLERK_PUBLISHABLE_KEY" },
   { dep: "express", name: "Express", sdk: "@clerk/express", envVar: "CLERK_PUBLISHABLE_KEY" },
   { dep: "vue", name: "Vue", sdk: "@clerk/vue", envVar: "VITE_CLERK_PUBLISHABLE_KEY" },

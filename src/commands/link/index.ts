@@ -31,9 +31,7 @@ interface LinkOptions {
 }
 
 function appLabel(app: Application): string {
-  return app.name
-    ? `${app.name} (${app.application_id})`
-    : app.application_id;
+  return app.name ? `${app.name} (${app.application_id})` : app.application_id;
 }
 
 export async function link(options: LinkOptions = {}): Promise<void> {
@@ -64,9 +62,12 @@ export async function link(options: LinkOptions = {}): Promise<void> {
 
     // Offer upgrade when an old profile key can migrate to a remote URL
     if (existing.availableRemote) {
-      console.log(`We detected this is now a git repository with remote ${dim(existing.availableRemote)}.`);
+      console.log(
+        `We detected this is now a git repository with remote ${dim(existing.availableRemote)}.`,
+      );
       const upgrade = await confirm({
-        message: "Update the link to use the git remote? This shares it across clones and worktrees.",
+        message:
+          "Update the link to use the git remote? This shares it across clones and worktrees.",
         default: true,
       });
       if (upgrade) {
@@ -76,7 +77,10 @@ export async function link(options: LinkOptions = {}): Promise<void> {
       }
     }
 
-    const relink = await confirm({ message: "Re-link to a different application?", default: false });
+    const relink = await confirm({
+      message: "Re-link to a different application?",
+      default: false,
+    });
     if (!relink) return;
   }
 
@@ -96,9 +100,7 @@ export async function link(options: LinkOptions = {}): Promise<void> {
     const apps = await listApplications();
 
     if (apps.length === 0) {
-      console.error(
-        "No applications found. Create one at https://dashboard.clerk.com first.",
-      );
+      console.error("No applications found. Create one at https://dashboard.clerk.com first.");
       process.exit(1);
     }
 
@@ -124,12 +126,8 @@ export async function link(options: LinkOptions = {}): Promise<void> {
     app = found;
   }
 
-  const devInstance = app.instances.find(
-    (i) => i.environment_type === "development",
-  );
-  const prodInstance = app.instances.find(
-    (i) => i.environment_type === "production",
-  );
+  const devInstance = app.instances.find((i) => i.environment_type === "development");
+  const prodInstance = app.instances.find((i) => i.environment_type === "production");
 
   if (!devInstance) {
     console.error("Application has no development instance.");

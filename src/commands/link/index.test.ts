@@ -1,12 +1,22 @@
 import { test, expect, describe, afterEach, mock, spyOn } from "bun:test";
-import { capturedOutput, configStubs, credentialStoreStubs, gitStubs, promptsStubs } from "../../test/stubs.ts";
+import {
+  capturedOutput,
+  configStubs,
+  credentialStoreStubs,
+  gitStubs,
+  promptsStubs,
+} from "../../test/stubs.ts";
 
 const mockIsAgent = mock();
 let _modeOverride: string | undefined;
 mock.module("../../mode.ts", () => ({
-  isAgent: (...args: unknown[]) => _modeOverride !== undefined ? _modeOverride === "agent" : mockIsAgent(...args),
-  isHuman: (...args: unknown[]) => _modeOverride !== undefined ? _modeOverride !== "agent" : !mockIsAgent(...args),
-  setMode: (m: string) => { _modeOverride = m; },
+  isAgent: (...args: unknown[]) =>
+    _modeOverride !== undefined ? _modeOverride === "agent" : mockIsAgent(...args),
+  isHuman: (...args: unknown[]) =>
+    _modeOverride !== undefined ? _modeOverride !== "agent" : !mockIsAgent(...args),
+  setMode: (m: string) => {
+    _modeOverride = m;
+  },
   getMode: () => _modeOverride ?? "human",
 }));
 
@@ -65,8 +75,18 @@ const { link } = await import("./index.ts");
 const mockApp = {
   application_id: "app_123",
   instances: [
-    { instance_id: "ins_dev", environment_type: "development", secret_key: "sk_test", publishable_key: "pk_test" },
-    { instance_id: "ins_prod", environment_type: "production", secret_key: "sk_live", publishable_key: "pk_live" },
+    {
+      instance_id: "ins_dev",
+      environment_type: "development",
+      secret_key: "sk_test",
+      publishable_key: "pk_test",
+    },
+    {
+      instance_id: "ins_prod",
+      environment_type: "production",
+      secret_key: "sk_live",
+      publishable_key: "pk_live",
+    },
   ],
 };
 
@@ -204,8 +224,18 @@ describe("link", () => {
       mockIsAgent.mockReturnValue(false);
       mockGetToken.mockResolvedValue("token");
       mockListApplications.mockResolvedValue([
-        { application_id: "app_a", instances: [{ instance_id: "ins_1", environment_type: "development", publishable_key: "pk_test" }] },
-        { application_id: "app_b", instances: [{ instance_id: "ins_2", environment_type: "development", publishable_key: "pk_test2" }] },
+        {
+          application_id: "app_a",
+          instances: [
+            { instance_id: "ins_1", environment_type: "development", publishable_key: "pk_test" },
+          ],
+        },
+        {
+          application_id: "app_b",
+          instances: [
+            { instance_id: "ins_2", environment_type: "development", publishable_key: "pk_test2" },
+          ],
+        },
       ]);
       mockSearch.mockResolvedValue("app_a");
       consoleSpy = spyOn(console, "log").mockImplementation(() => {});
@@ -221,14 +251,28 @@ describe("link", () => {
       mockIsAgent.mockReturnValue(false);
       mockGetToken.mockResolvedValue("token");
       mockListApplications.mockResolvedValue([
-        { name: "My App", application_id: "app_a", instances: [{ instance_id: "ins_1", environment_type: "development", publishable_key: "pk_test" }] },
-        { name: "Other App", application_id: "app_b", instances: [{ instance_id: "ins_2", environment_type: "development", publishable_key: "pk_test2" }] },
+        {
+          name: "My App",
+          application_id: "app_a",
+          instances: [
+            { instance_id: "ins_1", environment_type: "development", publishable_key: "pk_test" },
+          ],
+        },
+        {
+          name: "Other App",
+          application_id: "app_b",
+          instances: [
+            { instance_id: "ins_2", environment_type: "development", publishable_key: "pk_test2" },
+          ],
+        },
       ]);
-      mockSearch.mockImplementation(async (config: { source: (term: string | undefined) => unknown[] }) => {
-        const results = config.source(undefined);
-        expect(results).toHaveLength(2);
-        return "app_a";
-      });
+      mockSearch.mockImplementation(
+        async (config: { source: (term: string | undefined) => unknown[] }) => {
+          const results = config.source(undefined);
+          expect(results).toHaveLength(2);
+          return "app_a";
+        },
+      );
       consoleSpy = spyOn(console, "log").mockImplementation(() => {});
 
       await link();
@@ -238,19 +282,35 @@ describe("link", () => {
       mockIsAgent.mockReturnValue(false);
       mockGetToken.mockResolvedValue("token");
       mockListApplications.mockResolvedValue([
-        { name: "My App", application_id: "app_a", instances: [{ instance_id: "ins_1", environment_type: "development", publishable_key: "pk_test" }] },
-        { name: "Other App", application_id: "app_b", instances: [{ instance_id: "ins_2", environment_type: "development", publishable_key: "pk_test2" }] },
+        {
+          name: "My App",
+          application_id: "app_a",
+          instances: [
+            { instance_id: "ins_1", environment_type: "development", publishable_key: "pk_test" },
+          ],
+        },
+        {
+          name: "Other App",
+          application_id: "app_b",
+          instances: [
+            { instance_id: "ins_2", environment_type: "development", publishable_key: "pk_test2" },
+          ],
+        },
       ]);
-      mockSearch.mockImplementation(async (config: { source: (term: string | undefined) => { name: string; value: string }[] }) => {
-        const results = config.source("my");
-        expect(results).toHaveLength(1);
-        expect(results[0]!.value).toBe("app_a");
+      mockSearch.mockImplementation(
+        async (config: {
+          source: (term: string | undefined) => { name: string; value: string }[];
+        }) => {
+          const results = config.source("my");
+          expect(results).toHaveLength(1);
+          expect(results[0]!.value).toBe("app_a");
 
-        const noMatch = config.source("zzz");
-        expect(noMatch).toHaveLength(0);
+          const noMatch = config.source("zzz");
+          expect(noMatch).toHaveLength(0);
 
-        return "app_a";
-      });
+          return "app_a";
+        },
+      );
       consoleSpy = spyOn(console, "log").mockImplementation(() => {});
 
       await link();
@@ -260,15 +320,30 @@ describe("link", () => {
       mockIsAgent.mockReturnValue(false);
       mockGetToken.mockResolvedValue("token");
       mockListApplications.mockResolvedValue([
-        { application_id: "app_abc", instances: [{ instance_id: "ins_1", environment_type: "development", publishable_key: "pk_test" }] },
-        { name: "Named", application_id: "app_xyz", instances: [{ instance_id: "ins_2", environment_type: "development", publishable_key: "pk_test2" }] },
+        {
+          application_id: "app_abc",
+          instances: [
+            { instance_id: "ins_1", environment_type: "development", publishable_key: "pk_test" },
+          ],
+        },
+        {
+          name: "Named",
+          application_id: "app_xyz",
+          instances: [
+            { instance_id: "ins_2", environment_type: "development", publishable_key: "pk_test2" },
+          ],
+        },
       ]);
-      mockSearch.mockImplementation(async (config: { source: (term: string | undefined) => { name: string; value: string }[] }) => {
-        const results = config.source("abc");
-        expect(results).toHaveLength(1);
-        expect(results[0]!.value).toBe("app_abc");
-        return "app_abc";
-      });
+      mockSearch.mockImplementation(
+        async (config: {
+          source: (term: string | undefined) => { name: string; value: string }[];
+        }) => {
+          const results = config.source("abc");
+          expect(results).toHaveLength(1);
+          expect(results[0]!.value).toBe("app_abc");
+          return "app_abc";
+        },
+      );
       consoleSpy = spyOn(console, "log").mockImplementation(() => {});
 
       await link();
@@ -279,7 +354,9 @@ describe("link", () => {
       mockGetToken.mockResolvedValue("token");
       mockListApplications.mockResolvedValue([]);
       errorSpy = spyOn(console, "error").mockImplementation(() => {});
-      exitSpy = spyOn(process, "exit").mockImplementation(() => { throw new Error("exit"); });
+      exitSpy = spyOn(process, "exit").mockImplementation(() => {
+        throw new Error("exit");
+      });
 
       await expect(link()).rejects.toThrow("exit");
 
@@ -355,7 +432,12 @@ describe("link", () => {
       mockFetchApplication.mockResolvedValue({
         application_id: "app_123",
         instances: [
-          { instance_id: "ins_dev", environment_type: "development", secret_key: "sk_test", publishable_key: "pk_test" },
+          {
+            instance_id: "ins_dev",
+            environment_type: "development",
+            secret_key: "sk_test",
+            publishable_key: "pk_test",
+          },
         ],
       });
       consoleSpy = spyOn(console, "log").mockImplementation(() => {});
@@ -372,11 +454,18 @@ describe("link", () => {
       mockFetchApplication.mockResolvedValue({
         application_id: "app_123",
         instances: [
-          { instance_id: "ins_prod", environment_type: "production", secret_key: "sk_live", publishable_key: "pk_live" },
+          {
+            instance_id: "ins_prod",
+            environment_type: "production",
+            secret_key: "sk_live",
+            publishable_key: "pk_live",
+          },
         ],
       });
       errorSpy = spyOn(console, "error").mockImplementation(() => {});
-      exitSpy = spyOn(process, "exit").mockImplementation(() => { throw new Error("exit"); });
+      exitSpy = spyOn(process, "exit").mockImplementation(() => {
+        throw new Error("exit");
+      });
 
       await expect(link({ app: "app_123" })).rejects.toThrow("exit");
 
@@ -479,7 +568,7 @@ describe("link", () => {
       mockGetGitNormalizedRemote.mockResolvedValue("github.com/org/repo");
       mockResolveProfile.mockResolvedValue(dirProfile);
       mockConfirm
-        .mockResolvedValueOnce(false)  // decline upgrade
+        .mockResolvedValueOnce(false) // decline upgrade
         .mockResolvedValueOnce(false); // decline re-link
       consoleSpy = spyOn(console, "log").mockImplementation(() => {});
 

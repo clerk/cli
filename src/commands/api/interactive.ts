@@ -48,9 +48,7 @@ export async function apiInteractive(options: ApiOptions): Promise<void> {
   let resolvedPath = endpoint.path;
   for (const param of endpoint.pathParams) {
     const value = await input({
-      message: param.description
-        ? `${param.name} (${param.description}):`
-        : `${param.name}:`,
+      message: param.description ? `${param.name} (${param.description}):` : `${param.name}:`,
       validate: (v: string) => v.trim().length > 0 || `${param.name} is required`,
     });
     resolvedPath = resolvedPath.replace(`{${param.name}}`, value.trim());

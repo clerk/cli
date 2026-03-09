@@ -14,8 +14,8 @@ clerk link --app app_abc123   # Link directly by app ID
 
 ## Options
 
-| Flag | Description |
-|---|---|
+| Flag         | Description                                       |
+| ------------ | ------------------------------------------------- |
 | `--app <id>` | Application ID to link (skips interactive picker) |
 
 ## Agent Mode
@@ -37,7 +37,7 @@ interactive flow.
 
 ## API Endpoints
 
-| Method | Endpoint | Description |
-|---|---|---|
-| `GET` | `/v1/platform/applications` | List all applications for the authenticated user |
-| `GET` | `/v1/platform/applications/{appId}` | Fetch application details with instance IDs |
+| Method | Endpoint                            | Description                                      |
+| ------ | ----------------------------------- | ------------------------------------------------ |
+| `GET`  | `/v1/platform/applications`         | List all applications for the authenticated user |
+| `GET`  | `/v1/platform/applications/{appId}` | Fetch application details with instance IDs      |

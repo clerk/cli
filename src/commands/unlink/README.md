@@ -11,8 +11,8 @@ clerk unlink --yes
 
 ## Options
 
-| Flag | Description |
-|---|---|
+| Flag    | Description                  |
+| ------- | ---------------------------- |
 | `--yes` | Skip the confirmation prompt |
 
 ## Behavior

@@ -25,6 +25,7 @@ When running in agent mode (`--mode agent`, `CLERK_MODE=agent`, or non-TTY conte
 - All relevant Platform API endpoints
 
 Agent mode is detected via the mode system (`src/mode.ts`), which checks in priority order:
+
 1. `--mode` CLI flag
 2. `CLERK_MODE` environment variable
 3. TTY detection (`process.stdout.isTTY`)
@@ -138,17 +139,17 @@ sequenceDiagram
 
 All endpoints are on the **Platform API** (`/v1/platform/...`).
 
-| Step | Method | Endpoint | Notes |
-|---|---|---|---|
-| Auth | — | Local config | Token stored from `clerk auth login` |
-| Get application | `GET` | `/v1/platform/applications/{appID}` | |
-| Check prod instance | `GET` | `.../instances/production/config` | 404 if none exists |
-| Read dev config | `GET` | `.../instances/development/config` | Returns all settings including `connection_oauth_*` keys |
-| Subscription check | `GET` | `.../subscription` | Returns `{ id, stripe_subscription_id }` only — feature comparison is client-side |
-| Create prod instance | `POST` | `/v1/platform/applications` | **Gap: no endpoint to add a production instance to an existing app** |
-| Add domain | `POST` | `.../domains` | Body: `{ name, is_satellite }` |
-| DNS check | `POST` | `.../domains/{domainID}/dns_check` | Triggers async DNS verification |
-| Write OAuth creds | `PATCH` | `.../instances/production/config` | Body: `{ connection_oauth_{provider}: { enabled, client_id, client_secret } }` |
+| Step                 | Method  | Endpoint                            | Notes                                                                             |
+| -------------------- | ------- | ----------------------------------- | --------------------------------------------------------------------------------- |
+| Auth                 | —       | Local config                        | Token stored from `clerk auth login`                                              |
+| Get application      | `GET`   | `/v1/platform/applications/{appID}` |                                                                                   |
+| Check prod instance  | `GET`   | `.../instances/production/config`   | 404 if none exists                                                                |
+| Read dev config      | `GET`   | `.../instances/development/config`  | Returns all settings including `connection_oauth_*` keys                          |
+| Subscription check   | `GET`   | `.../subscription`                  | Returns `{ id, stripe_subscription_id }` only — feature comparison is client-side |
+| Create prod instance | `POST`  | `/v1/platform/applications`         | **Gap: no endpoint to add a production instance to an existing app**              |
+| Add domain           | `POST`  | `.../domains`                       | Body: `{ name, is_satellite }`                                                    |
+| DNS check            | `POST`  | `.../domains/{domainID}/dns_check`  | Triggers async DNS verification                                                   |
+| Write OAuth creds    | `PATCH` | `.../instances/production/config`   | Body: `{ connection_oauth_{provider}: { enabled, client_id, client_secret } }`    |
 
 ## API Gaps
 
@@ -166,12 +167,14 @@ POST /v1/platform/applications
 ```
 
 There is **no endpoint** to add a production instance to an application that was originally created with only a development instance. This needs either:
+
 1. A new `POST /v1/platform/applications/{appID}/instances` endpoint
 2. Or a different approach (e.g., re-creating the application)
 
 ### Subscription feature comparison
 
 `GET /v1/platform/applications/{appID}/subscription` returns only basic metadata (`id`, `stripe_subscription_id`), not feature lists. Feature detection is done server-side in `pkg/pricing/pricing.go` by inspecting instance config. The CLI would need either:
+
 1. A new endpoint that returns the feature comparison result
 2. Or access to plan feature lists to compare client-side
 
@@ -193,13 +196,13 @@ PATCH /v1/platform/applications/{appID}/instances/production/config
 
 ### Provider-specific required fields
 
-| Provider | Required Fields |
-|---|---|
-| Google | `client_id`, `client_secret` |
-| GitHub | `client_id`, `client_secret` |
-| Microsoft | `client_id`, `client_secret` |
-| Apple | `client_id`, `client_secret`, `key_id`, `team_id` |
-| Linear | `client_id`, `client_secret` |
+| Provider  | Required Fields                                   |
+| --------- | ------------------------------------------------- |
+| Google    | `client_id`, `client_secret`                      |
+| GitHub    | `client_id`, `client_secret`                      |
+| Microsoft | `client_id`, `client_secret`                      |
+| Apple     | `client_id`, `client_secret`, `key_id`, `team_id` |
+| Linear    | `client_id`, `client_secret`                      |
 
 Production instances return `422` if you try to enable a provider without credentials.
 
@@ -211,7 +214,7 @@ Google enforces a pattern: `^[0-9]+-[a-z0-9]+\.apps\.googleusercontent\.com$`
 
 When the user chooses the guided walkthrough, these values are derived from their domain:
 
-| Field | Value |
-|---|---|
-| Authorized JavaScript origins | `https://{domain}`, `https://www.{domain}` |
-| Authorized redirect URI | `https://accounts.{domain}/v1/oauth_callback` |
+| Field                         | Value                                         |
+| ----------------------------- | --------------------------------------------- |
+| Authorized JavaScript origins | `https://{domain}`, `https://www.{domain}`    |
+| Authorized redirect URI       | `https://accounts.{domain}/v1/oauth_callback` |

@@ -20,11 +20,11 @@ Authenticates the user via an OAuth 2.0 PKCE flow.
 
 All requests are made against the Clerk OAuth system instance (default `https://clerk.clerk.com`, overridable via `CLERK_OAUTH_BASE_URL`).
 
-| Step | Method | Endpoint | Description |
-|---|---|---|---|
-| Authorize | `GET` | `/oauth/authorize` | Browser redirect with PKCE `code_challenge`, `state`, `client_id`, `redirect_uri` |
-| Token exchange | `POST` | `/oauth/token` | Exchanges authorization code + `code_verifier` for an access token |
-| User info | `GET` | `/oauth/userinfo` | Fetches `sub` (user ID) and `email` using the access token |
+| Step           | Method | Endpoint           | Description                                                                       |
+| -------------- | ------ | ------------------ | --------------------------------------------------------------------------------- |
+| Authorize      | `GET`  | `/oauth/authorize` | Browser redirect with PKCE `code_challenge`, `state`, `client_id`, `redirect_uri` |
+| Token exchange | `POST` | `/oauth/token`     | Exchanges authorization code + `code_verifier` for an access token                |
+| User info      | `GET`  | `/oauth/userinfo`  | Fetches `sub` (user ID) and `email` using the access token                        |
 
 ### `clerk auth logout`
 

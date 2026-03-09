@@ -33,8 +33,7 @@ describe("config pull", () => {
       throw new Error("process.exit");
     });
 
-    stubFetch(async () =>
-      new Response(JSON.stringify(mockConfig), { status: 200 }));
+    stubFetch(async () => new Response(JSON.stringify(mockConfig), { status: 200 }));
   });
 
   afterEach(async () => {
@@ -55,9 +54,7 @@ describe("config pull", () => {
 
   test("errors when no profile is linked", async () => {
     await expect(runConfigPull()).rejects.toThrow("process.exit");
-    expect(errorSpy).toHaveBeenCalledWith(
-      expect.stringContaining("No Clerk project linked"),
-    );
+    expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining("No Clerk project linked"));
   });
 
   test("errors when CLERK_PLATFORM_API_KEY is missing", async () => {
@@ -69,9 +66,7 @@ describe("config pull", () => {
     delete process.env.CLERK_PLATFORM_API_KEY;
 
     await expect(runConfigPull()).rejects.toThrow("process.exit");
-    expect(errorSpy).toHaveBeenCalledWith(
-      expect.stringContaining("CLERK_PLATFORM_API_KEY"),
-    );
+    expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining("CLERK_PLATFORM_API_KEY"));
   });
 
   test("prints config JSON to stdout by default", async () => {
@@ -195,8 +190,6 @@ describe("config pull", () => {
     });
 
     await expect(runConfigPull()).rejects.toThrow("process.exit");
-    expect(errorSpy).toHaveBeenCalledWith(
-      expect.stringContaining("Failed to fetch config"),
-    );
+    expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining("Failed to fetch config"));
   });
 });

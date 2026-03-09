@@ -5,16 +5,21 @@ on:
     branches: [main]
 
 jobs:
-  test:
-    runs-on: ubuntu-latest
-
+  lint:
+    runs-on: blacksmith-2vcpu-ubuntu-2404
     steps:
       - uses: actions/checkout@v4
-
       - uses: oven-sh/setup-bun@v2
-
       - run: bun install --frozen-lockfile
+      - run: bun run format:check
+      - run: bun run lint
 
+  test:
+    runs-on: blacksmith-2vcpu-ubuntu-2404
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+      - run: bun install --frozen-lockfile
       - name: Run tests
         run: |
           failed=0

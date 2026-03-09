@@ -16,10 +16,10 @@ clerk config pull --output clerk-config.json
 
 #### Options
 
-| Flag | Description |
-|---|---|
+| Flag              | Description                                                                         |
+| ----------------- | ----------------------------------------------------------------------------------- |
 | `--instance <id>` | Instance to target (`dev`, `prod`, or a full instance ID). Defaults to development. |
-| `--output <file>` | Write config to a file instead of stdout |
+| `--output <file>` | Write config to a file instead of stdout                                            |
 
 #### Requirements
 
@@ -30,9 +30,9 @@ clerk config pull --output clerk-config.json
 
 All requests are made against the Clerk Platform API (default `https://api.clerk.com`, overridable via `CLERK_PLATFORM_API_URL`).
 
-| Method | Endpoint | Description |
-|---|---|---|
-| `GET` | `/v1/platform/applications/{appID}/instances/{instanceID}/config` | Fetches the full instance configuration as JSON. Authenticated via `Bearer` token from `CLERK_PLATFORM_API_KEY`. |
+| Method | Endpoint                                                          | Description                                                                                                      |
+| ------ | ----------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
+| `GET`  | `/v1/platform/applications/{appID}/instances/{instanceID}/config` | Fetches the full instance configuration as JSON. Authenticated via `Bearer` token from `CLERK_PLATFORM_API_KEY`. |
 
 ---
 
@@ -83,13 +83,13 @@ clerk config patch --file partial-config.json --dry-run
 
 #### Options
 
-| Flag | Description |
-|---|---|
+| Flag              | Description                                                                         |
+| ----------------- | ----------------------------------------------------------------------------------- |
 | `--instance <id>` | Instance to target (`dev`, `prod`, or a full instance ID). Defaults to development. |
-| `--file <path>` | Read config JSON from a file |
-| `--json <string>` | Pass config JSON inline (takes priority over `--file`) |
-| `--dry-run` | Show what would be sent without making the API call |
-| `--yes` | Skip confirmation prompts |
+| `--file <path>`   | Read config JSON from a file                                                        |
+| `--json <string>` | Pass config JSON inline (takes priority over `--file`)                              |
+| `--dry-run`       | Show what would be sent without making the API call                                 |
+| `--yes`           | Skip confirmation prompts                                                           |
 
 #### Requirements
 
@@ -98,8 +98,8 @@ clerk config patch --file partial-config.json --dry-run
 
 #### API Endpoints
 
-| Method | Endpoint | Description |
-|---|---|---|
+| Method  | Endpoint                                                          | Description                                                                                               |
+| ------- | ----------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------- |
 | `PATCH` | `/v1/platform/applications/{appID}/instances/{instanceID}/config` | Partially updates instance configuration. Authenticated via `Bearer` token from `CLERK_PLATFORM_API_KEY`. |
 
 ---
@@ -119,13 +119,13 @@ clerk config put --file full-config.json --dry-run
 
 #### Options
 
-| Flag | Description |
-|---|---|
+| Flag              | Description                                                                         |
+| ----------------- | ----------------------------------------------------------------------------------- |
 | `--instance <id>` | Instance to target (`dev`, `prod`, or a full instance ID). Defaults to development. |
-| `--file <path>` | Read config JSON from a file |
-| `--json <string>` | Pass config JSON inline (takes priority over `--file`) |
-| `--dry-run` | Show what would be sent without making the API call |
-| `--yes` | Skip confirmation prompts |
+| `--file <path>`   | Read config JSON from a file                                                        |
+| `--json <string>` | Pass config JSON inline (takes priority over `--file`)                              |
+| `--dry-run`       | Show what would be sent without making the API call                                 |
+| `--yes`           | Skip confirmation prompts                                                           |
 
 #### Requirements
 
@@ -134,6 +134,6 @@ clerk config put --file full-config.json --dry-run
 
 #### API Endpoints
 
-| Method | Endpoint | Description |
-|---|---|---|
-| `PUT` | `/v1/platform/applications/{appID}/instances/{instanceID}/config` | Replaces the full instance configuration. Authenticated via `Bearer` token from `CLERK_PLATFORM_API_KEY`. |
+| Method | Endpoint                                                          | Description                                                                                               |
+| ------ | ----------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------- |
+| `PUT`  | `/v1/platform/applications/{appID}/instances/{instanceID}/config` | Replaces the full instance configuration. Authenticated via `Bearer` token from `CLERK_PLATFORM_API_KEY`. |

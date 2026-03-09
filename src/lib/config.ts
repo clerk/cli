@@ -106,18 +106,25 @@ export async function listProfiles(): Promise<Record<string, Profile>> {
 
 type ResolvedVia = "remote" | "git-common-dir" | "directory";
 
-export async function resolveProfile(cwd: string): Promise<{
-  path: string;
-  profile: Profile;
-  resolvedVia: ResolvedVia;
-  availableRemote?: string;
-} | undefined> {
+export async function resolveProfile(cwd: string): Promise<
+  | {
+      path: string;
+      profile: Profile;
+      resolvedVia: ResolvedVia;
+      availableRemote?: string;
+    }
+  | undefined
+> {
   const config = await readConfig();
 
   // Try normalized remote URL first (cross-clone matching)
   const normalizedRemote = await getGitNormalizedRemote();
   if (normalizedRemote && config.profiles[normalizedRemote]) {
-    return { path: normalizedRemote, profile: config.profiles[normalizedRemote], resolvedVia: "remote" };
+    return {
+      path: normalizedRemote,
+      profile: config.profiles[normalizedRemote],
+      resolvedVia: "remote",
+    };
   }
 
   // For non-remote matches, include availableRemote when a remote URL exists
@@ -126,7 +133,12 @@ export async function resolveProfile(cwd: string): Promise<{
   // Try git repo identifier (shared across worktrees, backward compat)
   const repoId = await getGitRepoIdentifier();
   if (repoId && config.profiles[repoId]) {
-    return { path: repoId, profile: config.profiles[repoId], resolvedVia: "git-common-dir", ...fallbackFields };
+    return {
+      path: repoId,
+      profile: config.profiles[repoId],
+      resolvedVia: "git-common-dir",
+      ...fallbackFields,
+    };
   }
 
   // Fall back to directory walking for backward compatibility

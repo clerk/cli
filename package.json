@@ -2,24 +2,38 @@
   "name": "@clerk/cli",
   "version": "0.0.1",
   "description": "Clerk CLI",
-  "type": "module",
   "bin": {
     "clerk": "./dist/cli.js"
   },
+  "type": "module",
   "scripts": {
     "build": "bun build ./src/cli.ts --outfile ./dist/cli.js --target node",
     "dev": "bun run ./src/cli.ts",
-    "test": "bun test"
-  },
-  "devDependencies": {
-    "@types/bun": "latest"
-  },
-  "peerDependencies": {
-    "typescript": "^5"
+    "test": "bun test",
+    "lint": "oxlint src/",
+    "format": "oxfmt --write src/",
+    "format:check": "oxfmt --check src/",
+    "prepare": "git config core.hooksPath .hooks"
   },
   "dependencies": {
     "@inquirer/prompts": "^8.2.0",
     "commander": "^14.0.3",
     "yaml": "^2.8.2"
+  },
+  "devDependencies": {
+    "@types/bun": "latest",
+    "nano-staged": "^0.9.0",
+    "oxfmt": "^0.36.0",
+    "oxlint": "^1.51.0"
+  },
+  "peerDependencies": {
+    "typescript": "^5"
+  },
+  "nano-staged": {
+    "*.{ts,tsx,js,jsx}": [
+      "oxfmt --write",
+      "oxlint"
+    ],
+    "*.{md,json,css}": "oxfmt --write"
   }
 }

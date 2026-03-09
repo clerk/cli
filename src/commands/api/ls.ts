@@ -30,10 +30,7 @@ export async function apiLs(
 
 function printTable(endpoints: EndpointInfo[]): void {
   const methodWidth = 8;
-  const pathWidth = Math.min(
-    Math.max(...endpoints.map((e) => e.path.length)) + 2,
-    50,
-  );
+  const pathWidth = Math.min(Math.max(...endpoints.map((e) => e.path.length)) + 2, 50);
 
   for (const ep of endpoints) {
     const method = ep.method.padEnd(methodWidth);

@@ -34,19 +34,13 @@ program.hook("preAction", () => {
   }
 });
 
-program
-  .command("init")
-  .description("Initialize Clerk in your project")
-  .action(init);
+program.command("init").description("Initialize Clerk in your project").action(init);
 
 const auth = program.command("auth").description("Manage authentication");
 
 auth.command("login").description("Log in to your Clerk account").action(login);
 
-auth
-  .command("logout")
-  .description("Log out of your Clerk account")
-  .action(logout);
+auth.command("logout").description("Log out of your Clerk account").action(logout);
 
 program
   .command("link")
@@ -60,10 +54,7 @@ program
   .option("--yes", "Skip confirmation prompt")
   .action(unlink);
 
-program
-  .command("whoami")
-  .description("Show the current logged-in user")
-  .action(whoami);
+program.command("whoami").description("Show the current logged-in user").action(whoami);
 
 const env = program.command("env").description("Manage environment variables");
 
@@ -77,9 +68,7 @@ env
   .option("--file <path>", "Target env file (default: auto-detect)")
   .action(pull);
 
-const config = program
-  .command("config")
-  .description("Manage instance configuration");
+const config = program.command("config").description("Manage instance configuration");
 
 config
   .command("pull")

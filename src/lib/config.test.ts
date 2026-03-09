@@ -1,5 +1,18 @@
 import { test, expect, describe, beforeEach, afterEach } from "bun:test";
-import { readConfig, writeConfig, getAuth, setAuth, clearAuth, getProfile, setProfile, listProfiles, resolveProfile, resolveInstanceId, _setConfigDir, type Profile } from "./config";
+import {
+  readConfig,
+  writeConfig,
+  getAuth,
+  setAuth,
+  clearAuth,
+  getProfile,
+  setProfile,
+  listProfiles,
+  resolveProfile,
+  resolveInstanceId,
+  _setConfigDir,
+  type Profile,
+} from "./config";
 import { join } from "node:path";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -118,7 +131,10 @@ describe("config", () => {
     });
 
     test("resolves development alias", () => {
-      expect(resolveInstanceId(profile, "development")).toEqual({ id: "ins_dev", label: "development" });
+      expect(resolveInstanceId(profile, "development")).toEqual({
+        id: "ins_dev",
+        label: "development",
+      });
     });
 
     test("resolves prod alias", () => {
@@ -126,11 +142,17 @@ describe("config", () => {
     });
 
     test("resolves production alias", () => {
-      expect(resolveInstanceId(profile, "production")).toEqual({ id: "ins_prod", label: "production" });
+      expect(resolveInstanceId(profile, "production")).toEqual({
+        id: "ins_prod",
+        label: "production",
+      });
     });
 
     test("passes through literal instance ID", () => {
-      expect(resolveInstanceId(profile, "ins_custom")).toEqual({ id: "ins_custom", label: "ins_custom" });
+      expect(resolveInstanceId(profile, "ins_custom")).toEqual({
+        id: "ins_custom",
+        label: "ins_custom",
+      });
     });
 
     test("throws when production not configured", () => {
@@ -139,9 +161,7 @@ describe("config", () => {
         appId: "app_1",
         instances: { development: "ins_dev" },
       };
-      expect(() => resolveInstanceId(devOnly, "prod")).toThrow(
-        "No production instance configured"
-      );
+      expect(() => resolveInstanceId(devOnly, "prod")).toThrow("No production instance configured");
     });
   });
 });

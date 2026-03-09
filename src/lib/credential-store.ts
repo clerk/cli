@@ -5,11 +5,7 @@
 
 import { dirname } from "node:path";
 import { mkdir, chmod } from "node:fs/promises";
-import {
-  CREDENTIALS_FILE,
-  KEYCHAIN_SERVICE,
-  KEYCHAIN_ACCOUNT,
-} from "./constants.ts";
+import { CREDENTIALS_FILE, KEYCHAIN_SERVICE, KEYCHAIN_ACCOUNT } from "./constants.ts";
 
 const isMacOS = process.platform === "darwin";
 
@@ -27,7 +23,8 @@ async function keychainStore(token: string): Promise<boolean> {
 async function keychainGet(): Promise<string | null> {
   if (!isMacOS) return null;
   try {
-    const result = await Bun.$`security find-generic-password -a ${KEYCHAIN_ACCOUNT} -s ${KEYCHAIN_SERVICE} -w`.quiet();
+    const result =
+      await Bun.$`security find-generic-password -a ${KEYCHAIN_ACCOUNT} -s ${KEYCHAIN_SERVICE} -w`.quiet();
     return result.text().trim();
   } catch {
     return null;

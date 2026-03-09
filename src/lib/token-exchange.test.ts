@@ -73,7 +73,7 @@ describe("exchangeCodeForToken", () => {
         code: "bad-code",
         codeVerifier: "verifier",
         redirectUri: "http://127.0.0.1:3000/callback",
-      })
+      }),
     ).rejects.toThrow("Token exchange failed (400)");
   });
 
@@ -87,7 +87,7 @@ describe("exchangeCodeForToken", () => {
         code: "code",
         codeVerifier: "verifier",
         redirectUri: "http://localhost/callback",
-      })
+      }),
     ).rejects.toThrow("detailed error info");
   });
 });
@@ -101,7 +101,7 @@ describe("fetchUserInfo", () => {
     globalThis.fetch = mock(async () => {
       return new Response(
         JSON.stringify({ sub: "user_abc", email: "user@example.com", name: "Test" }),
-        { status: 200 }
+        { status: 200 },
       );
     }) as typeof fetch;
 
@@ -125,9 +125,7 @@ describe("fetchUserInfo", () => {
       return new Response("Unauthorized", { status: 401 });
     }) as typeof fetch;
 
-    await expect(fetchUserInfo("expired-token")).rejects.toThrow(
-      "Failed to fetch user info (401)"
-    );
+    await expect(fetchUserInfo("expired-token")).rejects.toThrow("Failed to fetch user info (401)");
   });
 
   test("includes response body in error message", async () => {

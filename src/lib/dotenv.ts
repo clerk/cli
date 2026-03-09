@@ -30,10 +30,7 @@ export function parseEnvFile(content: string): EnvLine[] {
   });
 }
 
-export function mergeEnvVars(
-  lines: EnvLine[],
-  vars: Record<string, string>,
-): EnvLine[] {
+export function mergeEnvVars(lines: EnvLine[], vars: Record<string, string>): EnvLine[] {
   const remaining = { ...vars };
   const result = lines.map((line): EnvLine => {
     if (line.type !== "entry" || !(line.key in remaining)) return line;
@@ -46,9 +43,7 @@ export function mergeEnvVars(
   if (toAppend.length === 0) return result;
 
   // Add a Clerk section header if no Clerk keys existed in the original file
-  const hadClerkKey = lines.some(
-    (l) => l.type === "entry" && l.key in vars,
-  );
+  const hadClerkKey = lines.some((l) => l.type === "entry" && l.key in vars);
   if (!hadClerkKey && result.length > 0) {
     result.push({ type: "blank" });
     result.push({ type: "comment", raw: "# Clerk" });
