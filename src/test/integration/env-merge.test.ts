@@ -5,7 +5,7 @@
  * the --file flag.
  */
 
-import { test, expect } from "bun:test";
+import { test, expect, beforeEach } from "bun:test";
 import { join } from "node:path";
 import {
   useIntegrationTestHarness,
@@ -21,24 +21,19 @@ const h = useIntegrationTestHarness();
 
 const devInstance = getInstance(MOCK_APP, "development");
 
-function setupLinkedProject() {
-  return setProfile("github.com/test/project", {
+beforeEach(async () => {
+  await setProfile("github.com/test/project", {
     workspaceId: "",
     appId: MOCK_APP.application_id,
     instances: { development: devInstance.instance_id },
   });
-}
 
-function setupFetch() {
   installFetchMock({
     [`/applications/${MOCK_APP.application_id}`]: MOCK_APP,
   });
-}
+});
 
 test("preserves existing non-Clerk vars and appends Clerk section", async () => {
-  await setupLinkedProject();
-  setupFetch();
-
   // Write a package.json (Express) so framework detection finds a match
   await Bun.write(
     join(h.tempDir, "package.json"),
@@ -67,9 +62,6 @@ test("preserves existing non-Clerk vars and appends Clerk section", async () => 
 });
 
 test("updates stale Clerk keys in-place without duplicates", async () => {
-  await setupLinkedProject();
-  setupFetch();
-
   await Bun.write(
     join(h.tempDir, "package.json"),
     JSON.stringify({ name: "test", dependencies: { next: "15.0.0" } }),
@@ -97,9 +89,6 @@ test("updates stale Clerk keys in-place without duplicates", async () => {
 });
 
 test("--file flag writes to specified file instead of .env.local", async () => {
-  await setupLinkedProject();
-  setupFetch();
-
   await Bun.write(
     join(h.tempDir, "package.json"),
     JSON.stringify({ name: "test", dependencies: { express: "4.21.0" } }),
@@ -119,9 +108,6 @@ test("--file flag writes to specified file instead of .env.local", async () => {
 });
 
 test("falls back to .env when it exists and .env.local does not", async () => {
-  await setupLinkedProject();
-  setupFetch();
-
   await Bun.write(
     join(h.tempDir, "package.json"),
     JSON.stringify({ name: "test", dependencies: { express: "4.21.0" } }),

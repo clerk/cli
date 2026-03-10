@@ -4,7 +4,7 @@
  * distinct from `config patch` which partially updates it.
  */
 
-import { test, expect } from "bun:test";
+import { test, expect, beforeEach } from "bun:test";
 import {
   useIntegrationTestHarness,
   installFetchMock,
@@ -21,19 +21,17 @@ useIntegrationTestHarness();
 
 const devInstance = getInstance(MOCK_APP, "development");
 
-function setupLinkedProject() {
-  return setProfile("github.com/test/project", {
+beforeEach(async () => {
+  await setProfile("github.com/test/project", {
     workspaceId: "",
     appId: MOCK_APP.application_id,
     instances: { development: devInstance.instance_id },
   });
-}
+});
 
 test.each([{ mode: "human" }, { mode: "agent" }])(
   "config put sends PUT request with full config ($mode mode)",
   async ({ mode }) => {
-    await setupLinkedProject();
-
     const fullConfig = {
       session: { lifetime: 86400 },
       sign_up: { mode: "restricted" },
@@ -61,8 +59,6 @@ test.each([{ mode: "human" }, { mode: "agent" }])(
 );
 
 test("config put requires confirmation in human mode without --yes", async () => {
-  await setupLinkedProject();
-
   const fullConfig = { session: { lifetime: 3600 } };
 
   installFetchMock({
@@ -79,8 +75,6 @@ test("config put requires confirmation in human mode without --yes", async () =>
 });
 
 test("config put aborted when user declines confirmation", async () => {
-  await setupLinkedProject();
-
   installFetchMock({
     "/config": MOCK_CONFIG,
   });
@@ -106,8 +100,6 @@ test("config put aborted when user declines confirmation", async () => {
 });
 
 test("config put --dry-run shows payload without sending request", async () => {
-  await setupLinkedProject();
-
   installFetchMock();
 
   const { stdout, stderr } = await clerk(
