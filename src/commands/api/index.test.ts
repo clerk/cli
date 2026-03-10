@@ -102,6 +102,7 @@ describe("api command", () => {
     logSpy.mockRestore();
     errorSpy.mockRestore();
     exitSpy.mockRestore();
+    process.exitCode = undefined;
     await rm(tempDir, { recursive: true, force: true });
   });
 
@@ -199,9 +200,8 @@ describe("api command", () => {
 
   test("errors when --file does not exist", async () => {
     await expect(runApi("/users", { file: "/tmp/nonexistent-file.json" })).rejects.toThrow(
-      "process.exit",
+      "File not found",
     );
-    expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining("File not found"));
   });
 
   // --- --include option ---
@@ -275,9 +275,8 @@ describe("api command", () => {
     delete process.env.CLERK_PLATFORM_API_KEY;
 
     await expect(runApi("/v1/platform/applications", { platform: true })).rejects.toThrow(
-      "process.exit",
+      "CLERK_PLATFORM_API_KEY",
     );
-    expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining("CLERK_PLATFORM_API_KEY"));
   });
 
   // --- Error handling ---
@@ -285,15 +284,15 @@ describe("api command", () => {
   test("errors when no secret key available", async () => {
     delete process.env.CLERK_SECRET_KEY;
 
-    await expect(runApi("/users")).rejects.toThrow("process.exit");
-    expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining("No secret key found"));
+    await expect(runApi("/users")).rejects.toThrow("No secret key found");
   });
 
   test("prints API error response body to stdout and exits 1", async () => {
     const errorBody = { errors: [{ message: "not found", code: "resource_not_found" }] };
     stubFetch(async () => new Response(JSON.stringify(errorBody), { status: 404 }));
 
-    await expect(runApi("/users/bad_id")).rejects.toThrow("process.exit");
+    await runApi("/users/bad_id");
+    expect(process.exitCode).toBe(1);
     expect(logSpy).toHaveBeenCalledWith(JSON.stringify(errorBody, null, 2));
   });
 
@@ -306,7 +305,8 @@ describe("api command", () => {
         }),
     );
 
-    await expect(runApi("/users", { include: true })).rejects.toThrow("process.exit");
+    await runApi("/users", { include: true });
+    expect(process.exitCode).toBe(1);
     expect(errorSpy).toHaveBeenCalledWith("HTTP 400");
     expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining("x-request-id: req_err"));
   });

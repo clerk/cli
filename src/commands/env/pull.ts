@@ -1,8 +1,9 @@
 import { join } from "node:path";
 import { resolveProfile, resolveInstanceId } from "../../lib/config.ts";
-import { fetchApplication, PlapiError } from "../../lib/plapi.ts";
+import { fetchApplication } from "../../lib/plapi.ts";
 import { parseEnvFile, mergeEnvVars, serializeEnvFile } from "../../lib/dotenv.ts";
 import { detectPublishableKeyName } from "../../lib/framework.ts";
+import { CliError } from "../../lib/errors.ts";
 
 interface EnvPullOptions {
   instance?: string;
@@ -24,41 +25,21 @@ async function resolveTargetFile(cwd: string, flag?: string): Promise<string> {
 export async function pull(options: EnvPullOptions): Promise<void> {
   const resolved = await resolveProfile(process.cwd());
   if (!resolved) {
-    console.error("No Clerk project linked to this directory. Run `clerk init` to set up.");
-    process.exit(1);
+    throw new CliError("No Clerk project linked to this directory. Run `clerk link` to set up.");
   }
 
   const { profile } = resolved;
-
-  let instance: { id: string; label: string };
-  try {
-    instance = resolveInstanceId(profile, options.instance);
-  } catch (error) {
-    console.error((error as Error).message);
-    process.exit(1);
-  }
+  const instance = resolveInstanceId(profile, options.instance);
 
   console.error(`Pulling env vars from ${instance.label} instance...`);
 
-  let app;
-  try {
-    app = await fetchApplication(profile.appId);
-  } catch (error) {
-    if (error instanceof PlapiError) {
-      console.error(`Failed to fetch API keys: ${error.message}`);
-      process.exit(1);
-    }
-    if (error instanceof Error) {
-      console.error(error.message);
-      process.exit(1);
-    }
-    throw error;
-  }
+  const app = await fetchApplication(profile.appId);
 
   const matched = app.instances.find((i) => i.instance_id === instance.id);
   if (!matched) {
-    console.error(`Instance ${instance.id} not found in application response.`);
-    process.exit(1);
+    throw new CliError(`Instance ${instance.id} not found in application response.`, {
+      docsUrl: "https://clerk.com/docs/guides/development/managing-environments",
+    });
   }
 
   const publishableKeyName = await detectPublishableKeyName(process.cwd());

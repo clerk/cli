@@ -10,6 +10,7 @@
  */
 
 import { OAUTH } from "./constants.ts";
+import { ApiError } from "./errors.ts";
 
 export const OAUTH_CONFIG = OAUTH;
 
@@ -46,7 +47,7 @@ export async function exchangeCodeForToken(params: {
 
   if (!response.ok) {
     const error = await response.text();
-    throw new Error(`Token exchange failed (${response.status}): ${error}`);
+    throw new ApiError(response.status, error);
   }
 
   return response.json() as Promise<TokenResponse>;
@@ -59,7 +60,7 @@ export async function fetchUserInfo(accessToken: string): Promise<UserInfo> {
 
   if (!response.ok) {
     const error = await response.text();
-    throw new Error(`Failed to fetch user info (${response.status}): ${error}`);
+    throw new ApiError(response.status, error);
   }
 
   const data = (await response.json()) as Record<string, unknown>;

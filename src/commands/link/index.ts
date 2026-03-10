@@ -7,6 +7,7 @@ import { listApplications, fetchApplication, type Application } from "../../lib/
 import { setProfile, resolveProfile, moveProfile } from "../../lib/config.js";
 import { getGitRepoIdentifier, getGitRepoRoot, getGitNormalizedRemote } from "../../lib/git.js";
 import { dim, cyan } from "../../lib/color.js";
+import { CliError } from "../../lib/errors.js";
 
 const AGENT_PROMPT = `You are linking a Clerk application to the current project directory.
 
@@ -100,8 +101,7 @@ export async function link(options: LinkOptions = {}): Promise<void> {
     const apps = await listApplications();
 
     if (apps.length === 0) {
-      console.error("No applications found. Create one at https://dashboard.clerk.com first.");
-      process.exit(1);
+      throw new CliError("No applications found. Create one at https://dashboard.clerk.com first.");
     }
 
     const choices = apps.map((a) => ({
@@ -120,8 +120,7 @@ export async function link(options: LinkOptions = {}): Promise<void> {
 
     const found = apps.find((a) => a.application_id === selectedId);
     if (!found) {
-      console.error("Selected application not found.");
-      process.exit(1);
+      throw new CliError("Selected application not found.");
     }
     app = found;
   }
@@ -130,8 +129,7 @@ export async function link(options: LinkOptions = {}): Promise<void> {
   const prodInstance = app.instances.find((i) => i.environment_type === "production");
 
   if (!devInstance) {
-    console.error("Application has no development instance.");
-    process.exit(1);
+    throw new CliError("Application has no development instance.");
   }
 
   // Store profile keyed by git repo (or cwd if not in a repo)

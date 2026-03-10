@@ -31,7 +31,7 @@ mock.module("../../lib/config.ts", () => ({
     const env = INSTANCE_ALIASES[flag];
     if (!env) return { id: flag, label: flag };
     const id = profile.instances[env];
-    if (!id) throw new Error(`No ${env} instance configured. Run \`clerk init\` to set one up.`);
+    if (!id) throw new Error(`No ${env} instance configured. Run \`clerk link\` to set one up.`);
     return { id, label: env };
   },
 }));
@@ -104,8 +104,7 @@ describe("env pull", () => {
   }
 
   test("errors when no profile is linked", async () => {
-    await expect(runEnvPull()).rejects.toThrow("process.exit");
-    expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining("No Clerk project linked"));
+    await expect(runEnvPull()).rejects.toThrow("No Clerk project linked");
   });
 
   test("errors when CLERK_PLATFORM_API_KEY is missing", async () => {
@@ -116,8 +115,7 @@ describe("env pull", () => {
     });
     delete process.env.CLERK_PLATFORM_API_KEY;
 
-    await expect(runEnvPull()).rejects.toThrow("process.exit");
-    expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining("CLERK_PLATFORM_API_KEY"));
+    await expect(runEnvPull()).rejects.toThrow("Not authenticated");
   });
 
   test("creates .env.local with keys when no env file exists", async () => {
@@ -245,10 +243,7 @@ describe("env pull", () => {
       instances: { development: "ins_unknown" },
     });
 
-    await expect(runEnvPull()).rejects.toThrow("process.exit");
-    expect(errorSpy).toHaveBeenCalledWith(
-      expect.stringContaining("Instance ins_unknown not found"),
-    );
+    await expect(runEnvPull()).rejects.toThrow("Instance ins_unknown not found");
   });
 
   test("handles API errors gracefully", async () => {
@@ -260,8 +255,7 @@ describe("env pull", () => {
       instances: { development: "ins_dev" },
     });
 
-    await expect(runEnvPull()).rejects.toThrow("process.exit");
-    expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining("Failed to fetch API keys"));
+    await expect(runEnvPull()).rejects.toThrow("API error");
   });
 
   test("detects Next.js and uses NEXT_PUBLIC_* key name", async () => {

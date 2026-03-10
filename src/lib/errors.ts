@@ -1,0 +1,151 @@
+/** Standard process exit codes used by the CLI. */
+export const EXIT_CODE = {
+  SUCCESS: 0,
+  GENERAL: 1,
+  USAGE: 2,
+  SIGINT: 130,
+} as const;
+
+type ExitCode = (typeof EXIT_CODE)[keyof typeof EXIT_CODE];
+
+interface CliErrorOptions {
+  exitCode?: ExitCode;
+  docsUrl?: string;
+}
+
+/**
+ * General-purpose CLI error for user-facing messages.
+ *
+ * Throw this when a command encounters a known failure (e.g. missing
+ * configuration, invalid input, resource not found). The global error handler
+ * in `cli.ts` prints the message in red and exits with `exitCode`.
+ *
+ * For usage/validation errors, **prefer {@link usageError}** over constructing
+ * a `CliError` with `EXIT_CODE.USAGE` directly.
+ *
+ * @example
+ * ```ts
+ * throw new CliError("No Clerk project linked. Run `clerk link` first.");
+ * ```
+ */
+export class CliError extends Error {
+  public exitCode: ExitCode;
+  public docsUrl?: string;
+
+  constructor(message: string, options?: CliErrorOptions) {
+    super(message);
+    this.name = "CliError";
+    this.exitCode = options?.exitCode ?? EXIT_CODE.GENERAL;
+    this.docsUrl = options?.docsUrl;
+  }
+}
+
+/**
+ * Signals that the user cancelled an interactive prompt or confirmation.
+ *
+ * The global error handler treats this as a clean exit (`EXIT_CODE.SUCCESS`)
+ * with no error message.
+ *
+ * **Do not construct directly** — use {@link userAbort} instead.
+ */
+export class UserAbortError extends Error {
+  constructor() {
+    super("User aborted");
+    this.name = "UserAbortError";
+  }
+}
+
+/**
+ * Base class for HTTP API errors.
+ *
+ * Thrown when an API request returns a non-OK status. The global error handler
+ * extracts the first error message from the JSON body (or truncates the raw
+ * body) and prints it. Subclasses {@link BapiError} and {@link PlapiError}
+ * add a labeled prefix so users know which API failed.
+ *
+ * @param status - HTTP status code
+ * @param body - Raw response body text
+ * @param headers - Response headers (optional)
+ */
+export class ApiError extends Error {
+  constructor(
+    public status: number,
+    public body: string,
+    public headers?: Headers,
+  ) {
+    super(`API error (${status}): ${body}`);
+    this.name = "ApiError";
+  }
+}
+
+/**
+ * Error from the Clerk Platform API (PLAPI).
+ *
+ * Thrown by `src/lib/plapi.ts` helpers when a Platform API request fails.
+ * Displayed as "Platform API request failed" in the global error handler.
+ *
+ * @param status - HTTP status code
+ * @param body - Raw response body text
+ */
+export class PlapiError extends ApiError {
+  constructor(status: number, body: string) {
+    super(status, body);
+    this.name = "PlapiError";
+  }
+}
+
+/**
+ * Error from the Clerk Backend API (BAPI).
+ *
+ * Thrown by `src/commands/api/bapi.ts` when a Backend API request fails.
+ * Displayed as "Backend API request failed" in the global error handler.
+ * Unlike {@link PlapiError}, `headers` is always present (required).
+ *
+ * @param status - HTTP status code
+ * @param body - Raw response body text
+ * @param headers - Response headers (always present for BAPI responses)
+ */
+export class BapiError extends ApiError {
+  declare headers: Headers;
+
+  constructor(status: number, body: string, headers: Headers) {
+    super(status, body, headers);
+    this.name = "BapiError";
+  }
+}
+
+/**
+ * Throw a usage error indicating the user provided invalid arguments or options.
+ *
+ * Exits with `EXIT_CODE.USAGE` (2). Use this for validation failures in
+ * command option parsing, missing required values, or malformed input.
+ *
+ * @param message - Error message describing the usage problem
+ * @param docsUrl - Optional URL to relevant documentation
+ *
+ * @example
+ * ```ts
+ * if (!secretKey) {
+ *   usageError("No secret key found. Set CLERK_SECRET_KEY or use --secret-key.");
+ * }
+ * ```
+ */
+export function usageError(message: string, docsUrl?: string): never {
+  throw new CliError(message, { exitCode: EXIT_CODE.USAGE, docsUrl });
+}
+
+/**
+ * Signal that the user cancelled an interactive prompt.
+ *
+ * Call this when the user declines a confirmation dialog or exits a picker.
+ * The global error handler exits cleanly with no error output.
+ *
+ * @example
+ * ```ts
+ * const confirmed = await confirm({ message: "Proceed?" });
+ * if (!confirmed) userAbort();
+ * ```
+ */
+export function userAbort(): never {
+  throw new UserAbortError();
+}

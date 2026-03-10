@@ -53,8 +53,7 @@ describe("config pull", () => {
   }
 
   test("errors when no profile is linked", async () => {
-    await expect(runConfigPull()).rejects.toThrow("process.exit");
-    expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining("No Clerk project linked"));
+    await expect(runConfigPull()).rejects.toThrow("No Clerk project linked");
   });
 
   test("errors when CLERK_PLATFORM_API_KEY is missing", async () => {
@@ -65,8 +64,7 @@ describe("config pull", () => {
     });
     delete process.env.CLERK_PLATFORM_API_KEY;
 
-    await expect(runConfigPull()).rejects.toThrow("process.exit");
-    expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining("CLERK_PLATFORM_API_KEY"));
+    await expect(runConfigPull()).rejects.toThrow("Not authenticated");
   });
 
   test("prints config JSON to stdout by default", async () => {
@@ -174,9 +172,8 @@ describe("config pull", () => {
       instances: { development: "ins_dev" },
     });
 
-    await expect(runConfigPull({ instance: "prod" })).rejects.toThrow("process.exit");
-    expect(errorSpy).toHaveBeenCalledWith(
-      expect.stringContaining("No production instance configured"),
+    await expect(runConfigPull({ instance: "prod" })).rejects.toThrow(
+      "No production instance configured",
     );
   });
 
@@ -189,7 +186,6 @@ describe("config pull", () => {
       instances: { development: "ins_dev" },
     });
 
-    await expect(runConfigPull()).rejects.toThrow("process.exit");
-    expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining("Failed to fetch config"));
+    await expect(runConfigPull()).rejects.toThrow("API error");
   });
 });

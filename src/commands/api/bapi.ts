@@ -4,17 +4,7 @@
  */
 
 import { BAPI_BASE_URL } from "../../lib/constants.ts";
-
-export class BapiError extends Error {
-  constructor(
-    public status: number,
-    public body: string,
-    public headers: Headers,
-  ) {
-    super(`Backend API error (${status}): ${body}`);
-    this.name = "BapiError";
-  }
-}
+import { BapiError } from "../../lib/errors.ts";
 
 export interface BapiResponse {
   status: number;

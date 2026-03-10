@@ -59,8 +59,7 @@ describe("config schema", () => {
   }
 
   test("errors when no profile is linked", async () => {
-    await expect(runConfigSchema()).rejects.toThrow("process.exit");
-    expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining("No Clerk project linked"));
+    await expect(runConfigSchema()).rejects.toThrow("No Clerk project linked");
   });
 
   test("errors when CLERK_PLATFORM_API_KEY is missing", async () => {
@@ -71,8 +70,7 @@ describe("config schema", () => {
     });
     delete process.env.CLERK_PLATFORM_API_KEY;
 
-    await expect(runConfigSchema()).rejects.toThrow("process.exit");
-    expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining("CLERK_PLATFORM_API_KEY"));
+    await expect(runConfigSchema()).rejects.toThrow("Not authenticated");
   });
 
   test("prints schema JSON to stdout by default", async () => {
@@ -199,9 +197,8 @@ describe("config schema", () => {
       instances: { development: "ins_dev" },
     });
 
-    await expect(runConfigSchema({ instance: "prod" })).rejects.toThrow("process.exit");
-    expect(errorSpy).toHaveBeenCalledWith(
-      expect.stringContaining("No production instance configured"),
+    await expect(runConfigSchema({ instance: "prod" })).rejects.toThrow(
+      "No production instance configured",
     );
   });
 
@@ -214,7 +211,6 @@ describe("config schema", () => {
       instances: { development: "ins_dev" },
     });
 
-    await expect(runConfigSchema()).rejects.toThrow("process.exit");
-    expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining("Failed to fetch config schema"));
+    await expect(runConfigSchema()).rejects.toThrow("API error");
   });
 });

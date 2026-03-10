@@ -1,8 +1,9 @@
 import { confirm } from "@inquirer/prompts";
 import { resolveProfile, resolveInstanceId } from "../../lib/config.ts";
-import { fetchApplication, PlapiError } from "../../lib/plapi.ts";
+import { fetchApplication } from "../../lib/plapi.ts";
 import { BAPI_BASE_URL, PLAPI_BASE_URL } from "../../lib/constants.ts";
-import { bapiRequest, BapiError } from "./bapi.ts";
+import { bapiRequest } from "./bapi.ts";
+import { BapiError, CliError, usageError, userAbort } from "../../lib/errors.ts";
 import { isHuman } from "../../mode.ts";
 
 export interface ApiOptions {
@@ -49,8 +50,10 @@ export async function api(
   if (options.platform) {
     const key = process.env.CLERK_PLATFORM_API_KEY;
     if (!key) {
-      console.error("CLERK_PLATFORM_API_KEY environment variable is required for --platform mode.");
-      process.exit(1);
+      usageError(
+        "CLERK_PLATFORM_API_KEY environment variable is required for --platform mode.",
+        "https://clerk.com/docs/guides/development/clerk-environment-variables",
+      );
     }
     secretKey = key;
     baseUrl = PLAPI_BASE_URL;
@@ -76,8 +79,7 @@ export async function api(
     }
     const ok = await confirm({ message: "Proceed?" });
     if (!ok) {
-      console.error("Aborted.");
-      process.exit(0);
+      userAbort();
     }
   }
 
@@ -96,16 +98,15 @@ export async function api(
     }
     printBody(response.body);
   } catch (error) {
+    // Handle BapiError locally to print the raw API response body to stdout
+    // (for piping), rather than propagating to the global error handler.
     if (error instanceof BapiError) {
       if (options.include) {
         printHeaders(error.status, error.headers);
       }
       prettyPrint(error.body);
-      process.exit(1);
-    }
-    if (error instanceof Error) {
-      console.error(error.message);
-      process.exit(1);
+      process.exitCode = 1;
+      return;
     }
     throw error;
   }
@@ -118,51 +119,31 @@ async function resolveSecretKey(options: ApiOptions): Promise<string> {
 
   // Resolve from linked profile via Platform API
   const resolved = await resolveProfile(process.cwd());
-  if (!resolved) {
-    console.error(
+  const platformKey = process.env.CLERK_PLATFORM_API_KEY;
+
+  if (!resolved || !platformKey) {
+    usageError(
       "No secret key found. Provide one via:\n" +
         "  --secret-key <key>\n" +
         "  CLERK_SECRET_KEY environment variable\n" +
-        "  Link a project with `clerk init` and set CLERK_PLATFORM_API_KEY",
+        (resolved
+          ? "  Set CLERK_PLATFORM_API_KEY to auto-resolve from your linked project"
+          : "  Link a project with `clerk link` and set CLERK_PLATFORM_API_KEY"),
+      "https://clerk.com/docs/guides/development/clerk-environment-variables",
     );
-    process.exit(1);
   }
 
   const { profile } = resolved;
-  const platformKey = process.env.CLERK_PLATFORM_API_KEY;
-  if (!platformKey) {
-    console.error(
-      "No secret key found. Provide one via:\n" +
-        "  --secret-key <key>\n" +
-        "  CLERK_SECRET_KEY environment variable\n" +
-        "  Set CLERK_PLATFORM_API_KEY to auto-resolve from your linked project",
-    );
-    process.exit(1);
-  }
+  const instance = resolveInstanceId(profile, options.instance);
 
-  let instance: { id: string; label: string };
-  try {
-    instance = resolveInstanceId(profile, options.instance);
-  } catch (error) {
-    console.error((error as Error).message);
-    process.exit(1);
+  const app = await fetchApplication(profile.appId);
+  const matched = app.instances.find((i) => i.instance_id === instance.id);
+  if (!matched) {
+    throw new CliError(`Instance ${instance.id} not found in application.`, {
+      docsUrl: "https://clerk.com/docs/guides/development/managing-environments",
+    });
   }
-
-  try {
-    const app = await fetchApplication(profile.appId);
-    const matched = app.instances.find((i) => i.instance_id === instance.id);
-    if (!matched) {
-      console.error(`Instance ${instance.id} not found in application.`);
-      process.exit(1);
-    }
-    return matched.secret_key;
-  } catch (error) {
-    if (error instanceof PlapiError) {
-      console.error(`Failed to resolve secret key: ${error.message}`);
-      process.exit(1);
-    }
-    throw error;
-  }
+  return matched.secret_key;
 }
 
 async function resolveBody(options: { data?: string; file?: string }): Promise<string | null> {
@@ -171,8 +152,7 @@ async function resolveBody(options: { data?: string; file?: string }): Promise<s
   if (options.file) {
     const file = Bun.file(options.file);
     if (!(await file.exists())) {
-      console.error(`File not found: ${options.file}`);
-      process.exit(1);
+      usageError(`File not found: ${options.file}`);
     }
     return file.text();
   }

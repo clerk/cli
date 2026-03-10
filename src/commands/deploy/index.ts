@@ -8,7 +8,7 @@ const DEPLOY_PROMPT = `You are deploying a Clerk application to production. Foll
 
 Ensure the following before starting:
 - The user is authenticated (\`clerk auth login\` has been run)
-- A Clerk application is linked to the project (\`clerk init\` has been run)
+- A Clerk application is linked to the project (\`clerk link\` has been run)
 - The project has a development instance with a working configuration
 
 ## Step 1: Verify Subscription Compatibility

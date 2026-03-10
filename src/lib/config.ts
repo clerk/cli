@@ -7,6 +7,7 @@ import { dirname, join } from "node:path";
 import { mkdir } from "node:fs/promises";
 import { CONFIG_FILE } from "./constants.ts";
 import { getGitRepoIdentifier, getGitNormalizedRemote } from "./git.ts";
+import { CliError } from "./errors.ts";
 
 let overrideConfigFile: string | undefined;
 
@@ -172,7 +173,9 @@ export function resolveInstanceId(profile: Profile, flag?: string): { id: string
 
   const id = profile.instances[env];
   if (!id) {
-    throw new Error(`No ${env} instance configured. Run \`clerk init\` to set one up.`);
+    throw new CliError(`No ${env} instance configured. Run \`clerk link\` to set one up.`, {
+      docsUrl: "https://clerk.com/docs/guides/development/managing-environments",
+    });
   }
   return { id, label: env };
 }

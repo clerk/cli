@@ -74,7 +74,7 @@ describe("exchangeCodeForToken", () => {
         codeVerifier: "verifier",
         redirectUri: "http://127.0.0.1:3000/callback",
       }),
-    ).rejects.toThrow("Token exchange failed (400)");
+    ).rejects.toThrow("API error (400)");
   });
 
   test("includes error body in thrown message", async () => {
@@ -125,7 +125,7 @@ describe("fetchUserInfo", () => {
       return new Response("Unauthorized", { status: 401 });
     }) as typeof fetch;
 
-    await expect(fetchUserInfo("expired-token")).rejects.toThrow("Failed to fetch user info (401)");
+    await expect(fetchUserInfo("expired-token")).rejects.toThrow("API error (401)");
   });
 
   test("includes response body in error message", async () => {

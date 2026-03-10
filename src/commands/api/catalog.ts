@@ -7,6 +7,7 @@ import { parse as parseYaml } from "yaml";
 import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import { CLERK_CACHE_DIR, CACHE_TTL_MS, OPENAPI_SPEC_URLS } from "../../lib/constants.ts";
+import { CliError } from "../../lib/errors.ts";
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
@@ -138,7 +139,7 @@ export async function loadCatalog(options: { platform?: boolean } = {}): Promise
       console.error("Warning: Unable to refresh API catalog, using cached version.");
       return cached;
     }
-    throw new Error(
+    throw new CliError(
       `Unable to fetch API catalog. Check your network connection.\n` +
         `  URL: ${url}\n` +
         `  ${(error as Error).message}`,

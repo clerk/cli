@@ -1,7 +1,8 @@
 import { confirm } from "@inquirer/prompts";
 import { resolveProfile, resolveInstanceId } from "../../lib/config.ts";
-import { putInstanceConfig, patchInstanceConfig, PlapiError } from "../../lib/plapi.ts";
+import { putInstanceConfig, patchInstanceConfig } from "../../lib/plapi.ts";
 import { isHuman } from "../../mode.ts";
+import { CliError, usageError, userAbort } from "../../lib/errors.ts";
 
 interface ConfigPushOptions {
   instance?: string;
@@ -46,39 +47,22 @@ export async function configPatch(options: ConfigPushOptions): Promise<void> {
 async function configPush(options: ConfigPushOptions, op: Operation): Promise<void> {
   const resolved = await resolveProfile(process.cwd());
   if (!resolved) {
-    console.error("No Clerk project linked to this directory. Run `clerk init` to set up.");
-    process.exit(1);
+    throw new CliError("No Clerk project linked to this directory. Run `clerk link` to set up.");
   }
 
   const { profile } = resolved;
-
-  let instance: { id: string; label: string };
-  try {
-    instance = resolveInstanceId(profile, options.instance);
-  } catch (error) {
-    console.error((error as Error).message);
-    process.exit(1);
-  }
-
-  let rawInput: string;
-  try {
-    rawInput = await readInput(options);
-  } catch (error) {
-    console.error((error as Error).message);
-    process.exit(1);
-  }
+  const instance = resolveInstanceId(profile, options.instance);
+  const rawInput = await readInput(options);
 
   let configPayload: Record<string, unknown>;
   try {
     configPayload = JSON.parse(rawInput);
   } catch {
-    console.error("Invalid JSON input. Please provide valid JSON.");
-    process.exit(1);
+    usageError("Invalid JSON input. Please provide valid JSON.");
   }
 
   if (typeof configPayload !== "object" || configPayload === null || Array.isArray(configPayload)) {
-    console.error("Config must be a JSON object.");
-    process.exit(1);
+    usageError("Config must be a JSON object.");
   }
 
   if (options.dryRun) {
@@ -95,28 +79,15 @@ async function configPush(options: ConfigPushOptions, op: Operation): Promise<vo
     }
     const ok = await confirm({ message: "Proceed?" });
     if (!ok) {
-      console.error("Aborted.");
-      process.exit(0);
+      userAbort();
     }
   }
 
   console.error(`${op.verb} config on ${instance.label} instance...`);
 
-  try {
-    const result = await op.apiFn(profile.appId, instance.id, configPayload);
-    console.log(JSON.stringify(result, null, 2));
-    console.error("Config pushed successfully.");
-  } catch (error) {
-    if (error instanceof PlapiError) {
-      console.error(`Failed to push config: ${error.message}`);
-      process.exit(1);
-    }
-    if (error instanceof Error) {
-      console.error(error.message);
-      process.exit(1);
-    }
-    throw error;
-  }
+  const result = await op.apiFn(profile.appId, instance.id, configPayload);
+  console.log(JSON.stringify(result, null, 2));
+  console.error("Config pushed successfully.");
 }
 
 export async function readInput(options: { file?: string; json?: string }): Promise<string> {
@@ -127,7 +98,7 @@ export async function readInput(options: { file?: string; json?: string }): Prom
   if (options.file) {
     const file = Bun.file(options.file);
     if (!(await file.exists())) {
-      throw new Error(`File not found: ${options.file}`);
+      usageError(`File not found: ${options.file}`);
     }
     return file.text();
   }
@@ -139,12 +110,12 @@ export async function readInput(options: { file?: string; json?: string }): Prom
     }
     const text = Buffer.concat(chunks).toString("utf-8").trim();
     if (!text) {
-      throw new Error("No input received from stdin.");
+      usageError("No input received from stdin.");
     }
     return text;
   }
 
-  throw new Error(
+  usageError(
     "No input provided. Use --file <path>, --json <string>, or pipe JSON to stdin.\n" +
       "  Example: clerk config patch --file config.json\n" +
       '  Example: clerk config patch --json \'{"session":{"lifetime":3600}}\'\n' +

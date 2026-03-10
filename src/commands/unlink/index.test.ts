@@ -94,9 +94,7 @@ describe("unlink", () => {
         throw new Error("exit");
       });
 
-      await expect(unlink()).rejects.toThrow("exit");
-
-      expect(errorSpy.mock.calls[0][0]).toContain("not linked");
+      await expect(unlink()).rejects.toThrow("not linked");
     });
   });
 
@@ -137,11 +135,8 @@ describe("unlink", () => {
       mockConfirm.mockResolvedValue(false);
       consoleSpy = spyOn(console, "log").mockImplementation(() => {});
 
-      await unlink();
-
+      await expect(unlink()).rejects.toThrow("User aborted");
       expect(mockRemoveProfile).not.toHaveBeenCalled();
-      const output = capturedOutput(consoleSpy);
-      expect(output).toContain("Aborted");
     });
   });
 

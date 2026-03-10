@@ -1,0 +1,13 @@
+{
+  "rules": {
+    "unicorn/no-process-exit": "error"
+  },
+  "overrides": [
+    {
+      "files": ["src/cli.ts"],
+      "rules": {
+        "unicorn/no-process-exit": "off"
+      }
+    }
+  ]
+}

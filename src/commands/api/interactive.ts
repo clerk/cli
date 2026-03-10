@@ -6,6 +6,7 @@ import { select, input, confirm, editor } from "@inquirer/prompts";
 import { isHuman } from "../../mode.ts";
 import { loadCatalog, endpointsByTag, type EndpointInfo } from "./catalog.ts";
 import type { ApiOptions } from "./index.ts";
+import { userAbort } from "../../lib/errors.ts";
 
 export async function apiInteractive(options: ApiOptions): Promise<void> {
   if (!isHuman()) {
@@ -18,7 +19,7 @@ export async function apiInteractive(options: ApiOptions): Promise<void> {
         "  clerk api /users\n" +
         "  clerk api ls users",
     );
-    process.exit(0);
+    return;
   }
 
   // 1. Load catalog and group by tag
@@ -92,8 +93,7 @@ export async function apiInteractive(options: ApiOptions): Promise<void> {
 
   const proceed = await confirm({ message: "Execute this request?" });
   if (!proceed) {
-    console.error("Aborted.");
-    return;
+    userAbort();
   }
 
   // 7. Delegate to the main api handler

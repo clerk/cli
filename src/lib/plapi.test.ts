@@ -7,13 +7,9 @@ mock.module("./credential-store.ts", () => ({
   getToken: (...args: unknown[]) => mockGetToken(...args),
 }));
 
-const {
-  fetchInstanceConfig,
-  putInstanceConfig,
-  patchInstanceConfig,
-  listApplications,
-  PlapiError,
-} = await import("./plapi.ts");
+const { fetchInstanceConfig, putInstanceConfig, patchInstanceConfig, listApplications } =
+  await import("./plapi.ts");
+const { PlapiError } = await import("./errors.ts");
 
 describe("plapi", () => {
   const originalEnv = { ...process.env };

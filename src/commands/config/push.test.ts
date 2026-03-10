@@ -3,10 +3,11 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { _setConfigDir, setProfile } from "../../lib/config";
-import { credentialStoreStubs, gitStubs, stubFetch } from "../../test/stubs.ts";
+import { credentialStoreStubs, gitStubs, promptsStubs, stubFetch } from "../../test/stubs.ts";
 
 mock.module("../../lib/credential-store.ts", () => credentialStoreStubs);
 mock.module("../../lib/git.ts", () => gitStubs);
+mock.module("@inquirer/prompts", () => promptsStubs);
 
 describe("config push", () => {
   const originalEnv = { ...process.env };
@@ -75,8 +76,7 @@ describe("config push", () => {
   // --- Shared error cases ---
 
   test("errors when no profile is linked", async () => {
-    await expect(runConfigPatch({ json: '{"a":1}' })).rejects.toThrow("process.exit");
-    expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining("No Clerk project linked"));
+    await expect(runConfigPatch({ json: '{"a":1}' })).rejects.toThrow("No Clerk project linked");
   });
 
   test("errors when CLERK_PLATFORM_API_KEY is missing", async () => {
@@ -87,8 +87,9 @@ describe("config push", () => {
     });
     delete process.env.CLERK_PLATFORM_API_KEY;
 
-    await expect(runConfigPatch({ json: '{"a":1}', yes: true })).rejects.toThrow("process.exit");
-    expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining("CLERK_PLATFORM_API_KEY"));
+    await expect(runConfigPatch({ json: '{"a":1}', yes: true })).rejects.toThrow(
+      "Not authenticated",
+    );
   });
 
   test("errors when no input source is provided", async () => {
@@ -99,8 +100,7 @@ describe("config push", () => {
     });
 
     // Without --file or --json, falls through to stdin which yields empty input
-    await expect(runConfigPatch()).rejects.toThrow("process.exit");
-    expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining("No input"));
+    await expect(runConfigPatch()).rejects.toThrow("No input");
   });
 
   test("errors on invalid JSON input", async () => {
@@ -110,8 +110,7 @@ describe("config push", () => {
       instances: { development: "ins_dev" },
     });
 
-    await expect(runConfigPatch({ json: "not-json" })).rejects.toThrow("process.exit");
-    expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining("Invalid JSON"));
+    await expect(runConfigPatch({ json: "not-json" })).rejects.toThrow("Invalid JSON");
   });
 
   test("errors when JSON is an array", async () => {
@@ -121,8 +120,9 @@ describe("config push", () => {
       instances: { development: "ins_dev" },
     });
 
-    await expect(runConfigPatch({ json: "[1,2,3]" })).rejects.toThrow("process.exit");
-    expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining("Config must be a JSON object"));
+    await expect(runConfigPatch({ json: "[1,2,3]" })).rejects.toThrow(
+      "Config must be a JSON object",
+    );
   });
 
   test("errors when --file points to nonexistent file", async () => {
@@ -133,9 +133,8 @@ describe("config push", () => {
     });
 
     await expect(runConfigPatch({ file: "/tmp/does-not-exist.json" })).rejects.toThrow(
-      "process.exit",
+      "File not found",
     );
-    expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining("File not found"));
   });
 
   // --- PATCH happy paths ---
@@ -328,8 +327,7 @@ describe("config push", () => {
       instances: { development: "ins_dev" },
     });
 
-    await expect(runConfigPatch({ json: '{"a":1}', yes: true })).rejects.toThrow("process.exit");
-    expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining("Failed to push config"));
+    await expect(runConfigPatch({ json: '{"a":1}', yes: true })).rejects.toThrow("API error");
   });
 
   test("shows success message after push", async () => {

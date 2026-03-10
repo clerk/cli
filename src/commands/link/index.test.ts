@@ -353,14 +353,8 @@ describe("link", () => {
       mockIsAgent.mockReturnValue(false);
       mockGetToken.mockResolvedValue("token");
       mockListApplications.mockResolvedValue([]);
-      errorSpy = spyOn(console, "error").mockImplementation(() => {});
-      exitSpy = spyOn(process, "exit").mockImplementation(() => {
-        throw new Error("exit");
-      });
 
-      await expect(link()).rejects.toThrow("exit");
-
-      expect(errorSpy.mock.calls[0][0]).toContain("No applications found");
+      await expect(link()).rejects.toThrow("No applications found");
     });
   });
 
@@ -462,14 +456,10 @@ describe("link", () => {
           },
         ],
       });
-      errorSpy = spyOn(console, "error").mockImplementation(() => {});
-      exitSpy = spyOn(process, "exit").mockImplementation(() => {
-        throw new Error("exit");
-      });
 
-      await expect(link({ app: "app_123" })).rejects.toThrow("exit");
-
-      expect(errorSpy.mock.calls[0][0]).toContain("no development instance");
+      await expect(link({ app: "app_123" })).rejects.toThrow(
+        "Application has no development instance",
+      );
     });
 
     test("logs confirmation message", async () => {

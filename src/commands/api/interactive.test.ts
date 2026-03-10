@@ -123,11 +123,11 @@ describe("apiInteractive", () => {
     await rm(tempDir, { recursive: true, force: true });
   });
 
-  test("shows help and exits in agent mode", async () => {
+  test("shows help and returns in agent mode", async () => {
     setMode("agent");
     const { apiInteractive } = await import("./interactive");
 
-    await expect(apiInteractive({})).rejects.toThrow("process.exit");
+    await apiInteractive({});
     expect(errorSpy).toHaveBeenCalledWith(
       expect.stringContaining("Interactive mode requires a TTY"),
     );
@@ -199,9 +199,8 @@ describe("apiInteractive", () => {
     });
     confirmResponses.push(false); // decline
 
-    await apiInteractive({});
+    await expect(apiInteractive({})).rejects.toThrow("User aborted");
 
     expect(fetchCalls.length).toBe(0);
-    expect(errorSpy).toHaveBeenCalledWith("Aborted.");
   });
 });

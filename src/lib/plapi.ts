@@ -5,16 +5,7 @@
 
 import { PLAPI_BASE_URL } from "./constants.ts";
 import { getToken } from "./credential-store.ts";
-
-export class PlapiError extends Error {
-  constructor(
-    public status: number,
-    public body: string,
-  ) {
-    super(`Platform API error (${status}): ${body}`);
-    this.name = "PlapiError";
-  }
-}
+import { CliError, PlapiError } from "./errors.ts";
 
 async function getAuthToken(): Promise<string> {
   // Prefer platform API key (OAuth token doesn't have platform scopes yet)
@@ -25,7 +16,9 @@ async function getAuthToken(): Promise<string> {
   const oauthToken = await getToken();
   if (oauthToken) return oauthToken;
 
-  throw new Error("Not authenticated. Run `clerk auth login` or set CLERK_PLATFORM_API_KEY.");
+  throw new CliError("Not authenticated. Run `clerk auth login` or set CLERK_PLATFORM_API_KEY.", {
+    docsUrl: "https://clerk.com/docs/guides/development/clerk-environment-variables",
+  });
 }
 
 export async function fetchInstanceConfigSchema(
