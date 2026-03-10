@@ -1,15 +1,21 @@
 /** Standard process exit codes used by the CLI. */
 export const EXIT_CODE = {
+  /** Clean exit, no error. */
   SUCCESS: 0,
+  /** General runtime error. */
   GENERAL: 1,
+  /** Invalid arguments or options. */
   USAGE: 2,
+  /** Interrupted by Ctrl+C (128 + SIGINT signal 2). */
   SIGINT: 130,
 } as const;
 
 type ExitCode = (typeof EXIT_CODE)[keyof typeof EXIT_CODE];
 
 interface CliErrorOptions {
+  /** Process exit code. Defaults to {@link EXIT_CODE.GENERAL}. */
   exitCode?: ExitCode;
+  /** URL to relevant documentation, printed after the error message. */
   docsUrl?: string;
 }
 
