@@ -102,10 +102,7 @@ export async function deploy(options: { debug?: boolean }) {
   debug(`Found authenticated user: ${user.email} (${user.id})`);
   debug(`Found linked application: ${application.name} (${application.id})`);
 
-  // Mock state — no production instance exists yet
   debug("Checking for production instance...");
-  const productionInstance = null;
-
   debug("No production instance found.");
 
   // Mock state — check subscription vs dev instance features
@@ -227,7 +224,7 @@ export async function deploy(options: { debug?: boolean }) {
         message: `${displayName} OAuth Client ID:`,
       });
 
-      const clientSecret = await password({
+      await password({
         message: `${displayName} OAuth Client Secret:`,
       });
 

@@ -7,14 +7,10 @@ interface ConfigSchemaOptions {
   keys?: string[];
 }
 
-export async function configSchema(
-  options: ConfigSchemaOptions,
-): Promise<void> {
+export async function configSchema(options: ConfigSchemaOptions): Promise<void> {
   const resolved = await resolveProfile(process.cwd());
   if (!resolved) {
-    console.error(
-      "No Clerk project linked to this directory. Run `clerk link` to set up.",
-    );
+    console.error("No Clerk project linked to this directory. Run `clerk link` to set up.");
     process.exit(1);
   }
 
@@ -33,11 +29,7 @@ export async function configSchema(
 
   let schema: Record<string, unknown>;
   try {
-    schema = await fetchInstanceConfigSchema(
-      profile.appId,
-      instance.id,
-      options.keys,
-    );
+    schema = await fetchInstanceConfigSchema(profile.appId, instance.id, options.keys);
   } catch (error) {
     if (error instanceof PlapiError) {
       console.error(`Failed to fetch config schema: ${error.message}`);
