@@ -102,7 +102,7 @@ describe("api command", () => {
     logSpy.mockRestore();
     errorSpy.mockRestore();
     exitSpy.mockRestore();
-    process.exitCode = undefined;
+    process.exitCode = 0;
     await rm(tempDir, { recursive: true, force: true });
   });
 
