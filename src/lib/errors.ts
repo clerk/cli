@@ -68,6 +68,8 @@ export class UserAbortError extends Error {
  * @param headers - Response headers (optional)
  */
 export class ApiError extends Error {
+  public context?: string;
+
   constructor(
     public status: number,
     public body: string,
@@ -148,4 +150,25 @@ export function usageError(message: string, docsUrl?: string): never {
  */
 export function userAbort(): never {
   throw new UserAbortError();
+}
+
+/**
+ * Wrap a promise so that any {@link ApiError} it rejects with gets a
+ * human-readable `context` string attached before re-throwing.
+ *
+ * @example
+ * ```ts
+ * const config = await withApiContext(
+ *   fetchInstanceConfig(appId, instanceId),
+ *   "Failed to fetch config",
+ * );
+ * ```
+ */
+export function withApiContext<T>(promise: Promise<T>, context: string): Promise<T> {
+  return promise.catch((error) => {
+    if (error instanceof ApiError) {
+      error.context = context;
+    }
+    throw error;
+  });
 }

@@ -2,7 +2,7 @@ import { confirm } from "@inquirer/prompts";
 import { resolveProfile, resolveInstanceId } from "../../lib/config.ts";
 import { putInstanceConfig, patchInstanceConfig } from "../../lib/plapi.ts";
 import { isHuman } from "../../mode.ts";
-import { CliError, usageError, userAbort } from "../../lib/errors.ts";
+import { CliError, usageError, userAbort, withApiContext } from "../../lib/errors.ts";
 
 interface ConfigPushOptions {
   instance?: string;
@@ -85,7 +85,10 @@ async function configPush(options: ConfigPushOptions, op: Operation): Promise<vo
 
   console.error(`${op.verb} config on ${instance.label} instance...`);
 
-  const result = await op.apiFn(profile.appId, instance.id, configPayload);
+  const result = await withApiContext(
+    op.apiFn(profile.appId, instance.id, configPayload),
+    "Failed to push config",
+  );
   console.log(JSON.stringify(result, null, 2));
   console.error("Config pushed successfully.");
 }

@@ -3,7 +3,7 @@ import { resolveProfile, resolveInstanceId } from "../../lib/config.ts";
 import { fetchApplication } from "../../lib/plapi.ts";
 import { parseEnvFile, mergeEnvVars, serializeEnvFile } from "../../lib/dotenv.ts";
 import { detectPublishableKeyName } from "../../lib/framework.ts";
-import { CliError } from "../../lib/errors.ts";
+import { CliError, withApiContext } from "../../lib/errors.ts";
 
 interface EnvPullOptions {
   instance?: string;
@@ -33,7 +33,7 @@ export async function pull(options: EnvPullOptions): Promise<void> {
 
   console.error(`Pulling env vars from ${instance.label} instance...`);
 
-  const app = await fetchApplication(profile.appId);
+  const app = await withApiContext(fetchApplication(profile.appId), "Failed to fetch API keys");
 
   const matched = app.instances.find((i) => i.instance_id === instance.id);
   if (!matched) {

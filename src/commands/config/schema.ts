@@ -1,6 +1,6 @@
 import { resolveProfile, resolveInstanceId } from "../../lib/config.ts";
 import { fetchInstanceConfigSchema } from "../../lib/plapi.ts";
-import { CliError } from "../../lib/errors.ts";
+import { CliError, withApiContext } from "../../lib/errors.ts";
 
 interface ConfigSchemaOptions {
   instance?: string;
@@ -20,7 +20,10 @@ export async function configSchema(options: ConfigSchemaOptions): Promise<void> 
   // Use `console.error` for informational messages so stdout is just the JSON response.
   console.error(`Pulling config schema from ${instance.label} instance...`);
 
-  const schema = await fetchInstanceConfigSchema(profile.appId, instance.id, options.keys);
+  const schema = await withApiContext(
+    fetchInstanceConfigSchema(profile.appId, instance.id, options.keys),
+    "Failed to fetch config schema",
+  );
 
   const json = JSON.stringify(schema, null, 2);
 

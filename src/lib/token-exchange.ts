@@ -10,7 +10,7 @@
  */
 
 import { OAUTH } from "./constants.ts";
-import { ApiError } from "./errors.ts";
+import { ApiError, withApiContext } from "./errors.ts";
 
 export const OAUTH_CONFIG = OAUTH;
 
@@ -39,34 +39,44 @@ export async function exchangeCodeForToken(params: {
     redirect_uri: params.redirectUri,
   });
 
-  const response = await fetch(OAUTH_CONFIG.tokenUrl, {
-    method: "POST",
-    headers: { "Content-Type": "application/x-www-form-urlencoded" },
-    body: body.toString(),
-  });
+  return withApiContext(
+    (async () => {
+      const response = await fetch(OAUTH_CONFIG.tokenUrl, {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body: body.toString(),
+      });
 
-  if (!response.ok) {
-    const error = await response.text();
-    throw new ApiError(response.status, error);
-  }
+      if (!response.ok) {
+        const error = await response.text();
+        throw new ApiError(response.status, error);
+      }
 
-  return response.json() as Promise<TokenResponse>;
+      return response.json() as Promise<TokenResponse>;
+    })(),
+    "Token exchange failed",
+  );
 }
 
 export async function fetchUserInfo(accessToken: string): Promise<UserInfo> {
-  const response = await fetch(OAUTH_CONFIG.userinfoUrl, {
-    headers: { Authorization: `Bearer ${accessToken}` },
-  });
+  return withApiContext(
+    (async () => {
+      const response = await fetch(OAUTH_CONFIG.userinfoUrl, {
+        headers: { Authorization: `Bearer ${accessToken}` },
+      });
 
-  if (!response.ok) {
-    const error = await response.text();
-    throw new ApiError(response.status, error);
-  }
+      if (!response.ok) {
+        const error = await response.text();
+        throw new ApiError(response.status, error);
+      }
 
-  const data = (await response.json()) as Record<string, unknown>;
+      const data = (await response.json()) as Record<string, unknown>;
 
-  return {
-    userId: data.sub as string,
-    email: data.email as string,
-  };
+      return {
+        userId: data.sub as string,
+        email: data.email as string,
+      };
+    })(),
+    "Failed to fetch user info",
+  );
 }

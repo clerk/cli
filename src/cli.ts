@@ -13,15 +13,7 @@ import { configSchema } from "./commands/config/schema.js";
 import { api } from "./commands/api/index.js";
 import { link } from "./commands/link/index.js";
 import { unlink } from "./commands/unlink/index.js";
-import {
-  CliError,
-  UserAbortError,
-  ApiError,
-  BapiError,
-  PlapiError,
-  EXIT_CODE,
-  usageError,
-} from "./lib/errors.js";
+import { CliError, UserAbortError, ApiError, EXIT_CODE, usageError } from "./lib/errors.js";
 import { red } from "./lib/color.js";
 
 process.on("SIGINT", () => process.exit(EXIT_CODE.SIGINT));
@@ -179,11 +171,9 @@ async function main(): Promise<void> {
     }
 
     if (error instanceof ApiError) {
-      let label = "API";
-      if (error instanceof BapiError) label = "Backend API";
-      else if (error instanceof PlapiError) label = "Platform API";
       const detail = formatApiBody(error.body, verbose);
-      console.error(red(`error: ${label} request failed (${error.status}): ${detail}`));
+      const prefix = error.context ?? "Request failed";
+      console.error(red(`error: ${prefix} (${error.status}): ${detail}`));
       process.exit(EXIT_CODE.GENERAL);
     }
 

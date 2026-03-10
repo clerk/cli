@@ -1,6 +1,6 @@
 import { resolveProfile, resolveInstanceId } from "../../lib/config.ts";
 import { fetchInstanceConfig } from "../../lib/plapi.ts";
-import { CliError } from "../../lib/errors.ts";
+import { CliError, withApiContext } from "../../lib/errors.ts";
 
 interface ConfigPullOptions {
   instance?: string;
@@ -18,7 +18,10 @@ export async function configPull(options: ConfigPullOptions): Promise<void> {
 
   console.error(`Pulling config from ${instance.label} instance...`);
 
-  const config = await fetchInstanceConfig(profile.appId, instance.id);
+  const config = await withApiContext(
+    fetchInstanceConfig(profile.appId, instance.id),
+    "Failed to fetch config",
+  );
   const json = JSON.stringify(config, null, 2);
 
   if (options.output) {
