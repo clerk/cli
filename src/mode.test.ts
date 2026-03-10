@@ -1,4 +1,4 @@
-import { test, expect, beforeEach, afterEach, describe } from "bun:test";
+import { test, expect, afterEach, describe } from "bun:test";
 
 // Re-import fresh module per test by using dynamic import
 // But since bun caches modules, we test the exported functions directly
