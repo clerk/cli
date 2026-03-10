@@ -25,7 +25,6 @@ const {
   checkProjectLinked,
   checkLinkedAppExists,
   checkInstances,
-  checkGitAvailable,
   checkEnvVars,
   checkConfigFile,
 } = await import("./checks.ts");
@@ -316,15 +315,6 @@ describe("checkInstances", () => {
     const result = await checkInstances(ctx);
     expect(result.status).toBe("warn");
     expect(result.message).toContain("Skipped");
-  });
-});
-
-describe("checkGitAvailable", () => {
-  test("pass when git is installed", async () => {
-    const ctx = createMockContext();
-    const result = await checkGitAvailable(ctx);
-    expect(result.status).toBe("pass");
-    expect(result.message).toContain("git version");
   });
 });
 

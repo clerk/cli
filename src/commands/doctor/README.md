@@ -32,7 +32,6 @@ clerk doctor --fix       # Offer to auto-fix issues
 | Project linkage       | Project        | Current directory is linked to a Clerk app                         |
 | Linked app exists     | Project        | Linked application ID is accessible via the API                    |
 | Instances             | Project        | Configured dev/prod instance IDs match the application's instances |
-| Git                   | Environment    | Git is installed and available                                     |
 | Environment variables | Environment    | .env.local or .env has Clerk keys                                  |
 | CLI configuration     | Configuration  | ~/.clerk/config.json exists and parses                             |
 

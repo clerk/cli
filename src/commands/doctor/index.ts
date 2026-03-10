@@ -7,7 +7,6 @@ import {
   checkProjectLinked,
   checkLinkedAppExists,
   checkInstances,
-  checkGitAvailable,
   checkEnvVars,
   checkConfigFile,
 } from "./checks.ts";
@@ -20,7 +19,6 @@ const CHECKS: CheckFn[] = [
   checkProjectLinked,
   checkLinkedAppExists,
   checkInstances,
-  checkGitAvailable,
   checkEnvVars,
   checkConfigFile,
 ];

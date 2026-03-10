@@ -243,32 +243,6 @@ export async function checkInstances(ctx: DoctorContext): Promise<CheckResult> {
 
 // ── Environment ─────────────────────────────────────────────────────────────
 
-export async function checkGitAvailable(_ctx: DoctorContext): Promise<CheckResult> {
-  try {
-    const result = await Bun.$`git --version`.quiet().nothrow();
-    if (result.exitCode !== 0) {
-      return {
-        name: "Git",
-        status: "warn",
-        message: "Git is not available",
-        remedy: "Install git to enable repository-based project linking.",
-      };
-    }
-    return {
-      name: "Git",
-      status: "pass",
-      message: result.text().trim(),
-    };
-  } catch {
-    return {
-      name: "Git",
-      status: "warn",
-      message: "Git is not available",
-      remedy: "Install git to enable repository-based project linking.",
-    };
-  }
-}
-
 export async function checkEnvVars(ctx: DoctorContext): Promise<CheckResult> {
   const cwd = process.cwd();
 
