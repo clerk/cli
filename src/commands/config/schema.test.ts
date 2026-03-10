@@ -38,8 +38,7 @@ describe("config schema", () => {
       throw new Error("process.exit");
     });
 
-    stubFetch(async () =>
-      new Response(JSON.stringify(mockSchema), { status: 200 }));
+    stubFetch(async () => new Response(JSON.stringify(mockSchema), { status: 200 }));
   });
 
   afterEach(async () => {
@@ -61,9 +60,7 @@ describe("config schema", () => {
 
   test("errors when no profile is linked", async () => {
     await expect(runConfigSchema()).rejects.toThrow("process.exit");
-    expect(errorSpy).toHaveBeenCalledWith(
-      expect.stringContaining("No Clerk project linked"),
-    );
+    expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining("No Clerk project linked"));
   });
 
   test("errors when CLERK_PLATFORM_API_KEY is missing", async () => {
@@ -75,9 +72,7 @@ describe("config schema", () => {
     delete process.env.CLERK_PLATFORM_API_KEY;
 
     await expect(runConfigSchema()).rejects.toThrow("process.exit");
-    expect(errorSpy).toHaveBeenCalledWith(
-      expect.stringContaining("CLERK_PLATFORM_API_KEY"),
-    );
+    expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining("CLERK_PLATFORM_API_KEY"));
   });
 
   test("prints schema JSON to stdout by default", async () => {
@@ -102,9 +97,7 @@ describe("config schema", () => {
     await runConfigSchema({ output: outFile });
     const written = await Bun.file(outFile).json();
     expect(written).toEqual(mockSchema);
-    expect(errorSpy).toHaveBeenCalledWith(
-      expect.stringContaining("Schema written to"),
-    );
+    expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining("Schema written to"));
   });
 
   test("shows which environment is being pulled", async () => {
@@ -115,9 +108,7 @@ describe("config schema", () => {
     });
 
     await runConfigSchema();
-    expect(errorSpy).toHaveBeenCalledWith(
-      "Pulling config schema from development instance...",
-    );
+    expect(errorSpy).toHaveBeenCalledWith("Pulling config schema from development instance...");
   });
 
   test("shows production label when --instance prod", async () => {
@@ -128,9 +119,7 @@ describe("config schema", () => {
     });
 
     await runConfigSchema({ instance: "prod" });
-    expect(errorSpy).toHaveBeenCalledWith(
-      "Pulling config schema from production instance...",
-    );
+    expect(errorSpy).toHaveBeenCalledWith("Pulling config schema from production instance...");
   });
 
   test("uses development instance by default", async () => {
@@ -210,9 +199,7 @@ describe("config schema", () => {
       instances: { development: "ins_dev" },
     });
 
-    await expect(runConfigSchema({ instance: "prod" })).rejects.toThrow(
-      "process.exit",
-    );
+    await expect(runConfigSchema({ instance: "prod" })).rejects.toThrow("process.exit");
     expect(errorSpy).toHaveBeenCalledWith(
       expect.stringContaining("No production instance configured"),
     );
@@ -228,8 +215,6 @@ describe("config schema", () => {
     });
 
     await expect(runConfigSchema()).rejects.toThrow("process.exit");
-    expect(errorSpy).toHaveBeenCalledWith(
-      expect.stringContaining("Failed to fetch config schema"),
-    );
+    expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining("Failed to fetch config schema"));
   });
 });

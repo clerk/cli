@@ -49,11 +49,11 @@ clerk config schema --keys session sign_up
 
 #### Options
 
-| Flag | Description |
-|---|---|
-| `--instance <id>` | Instance to target (`dev`, `prod`, or a full instance ID). Defaults to development. |
-| `--output <file>` | Write schema to a file instead of stdout |
-| `--keys <keys...>` | Config keys to retrieve schema for |
+| Flag               | Description                                                                         |
+| ------------------ | ----------------------------------------------------------------------------------- |
+| `--instance <id>`  | Instance to target (`dev`, `prod`, or a full instance ID). Defaults to development. |
+| `--output <file>`  | Write schema to a file instead of stdout                                            |
+| `--keys <keys...>` | Config keys to retrieve schema for                                                  |
 
 #### Requirements
 
@@ -62,9 +62,9 @@ clerk config schema --keys session sign_up
 
 #### API Endpoints
 
-| Method | Endpoint | Description |
-|---|---|---|
-| `GET` | `/v1/platform/applications/{appID}/instances/{instanceID}/config/schema` | Fetches the config JSON Schema. Supports optional `keys` query param to filter to specific config keys. Authenticated via `Bearer` token from `CLERK_PLATFORM_API_KEY`. |
+| Method | Endpoint                                                                 | Description                                                                                                                                                             |
+| ------ | ------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `GET`  | `/v1/platform/applications/{appID}/instances/{instanceID}/config/schema` | Fetches the config JSON Schema. Supports optional `keys` query param to filter to specific config keys. Authenticated via `Bearer` token from `CLERK_PLATFORM_API_KEY`. |
 
 ---
 
