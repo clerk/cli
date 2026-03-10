@@ -31,6 +31,7 @@ Commands:
   api [options] [endpoint] [filter]  Make authenticated requests to the Clerk API
     ls [filter]        List available API endpoints
     (no args)          Interactive request builder (TTY only)
+  doctor [options]     Check your project's Clerk integration health
   deploy [options]     Deploy your Clerk application (hidden)
 
 clerk init
@@ -82,6 +83,12 @@ clerk api [endpoint] [filter]
 
 clerk api ls [filter]    List available API endpoints
 clerk api                Interactive request builder (TTY only)
+
+clerk doctor
+  --verbose            Show detailed output for each check
+  --json               Output results as JSON
+  --spotlight           Only show warnings and failures
+  --fix                Attempt to auto-fix issues
 
 clerk deploy
   --debug              Show debug output
