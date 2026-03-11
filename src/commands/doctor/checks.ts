@@ -56,18 +56,18 @@ function defineCheck(name: string, fixFactory?: () => FixAction): CheckBuilder {
 }
 
 export async function checkLoggedIn(ctx: DoctorContext): Promise<CheckResult> {
-  const check = defineCheck("Authentication token", ctx.fixes.login);
+  const check = defineCheck("Logged in", ctx.fixes.login);
   const token = await ctx.getToken();
   if (!token) {
     return check.fail("Not logged in", {
       remedy: "Run `clerk auth login` to authenticate.",
     });
   }
-  return check.pass("Token found in credential store");
+  return check.pass("Logged in (token found in credential store)");
 }
 
 export async function checkTokenValid(ctx: DoctorContext): Promise<CheckResult> {
-  const check = defineCheck("Token validity", ctx.fixes.login);
+  const check = defineCheck("Authentication valid", ctx.fixes.login);
   const token = await ctx.getToken();
   if (!token) return check.skip("no token");
 
@@ -82,7 +82,7 @@ export async function checkTokenValid(ctx: DoctorContext): Promise<CheckResult> 
       });
     }
 
-    return check.warn("Could not verify token — network issue", {
+    return check.warn("Could not reach Clerk to verify authentication — network issue", {
       detail:
         "Your stored token from a previous login is likely still valid. " +
         "The auth server was unreachable.",
@@ -93,7 +93,7 @@ export async function checkTokenValid(ctx: DoctorContext): Promise<CheckResult> 
 }
 
 export async function checkProjectLinked(ctx: DoctorContext): Promise<CheckResult> {
-  const check = defineCheck("Project linkage", ctx.fixes.link);
+  const check = defineCheck("Project linked", ctx.fixes.link);
   const resolved = await ctx.getProfile();
   if (!resolved) {
     return check.fail("Not linked to a Clerk application", {
@@ -109,13 +109,13 @@ export async function checkProjectLinked(ctx: DoctorContext): Promise<CheckResul
         : `via directory (${resolved.path})`;
 
   return check.pass(
-    `Linked to ${resolved.profile.appId} ${via}`,
+    `Linked ${via}`,
     `Workspace: ${resolved.profile.workspaceId || "(none)"}\nDev instance: ${resolved.profile.instances.development}\nProd instance: ${resolved.profile.instances.production ?? "(not set)"}`,
   );
 }
 
 export async function checkLinkedAppExists(ctx: DoctorContext): Promise<CheckResult> {
-  const check = defineCheck("Linked application", ctx.fixes.link);
+  const check = defineCheck("Application reachable", ctx.fixes.link);
   const token = await ctx.getToken();
   if (!token) return check.skip("not authenticated");
 
@@ -126,15 +126,15 @@ export async function checkLinkedAppExists(ctx: DoctorContext): Promise<CheckRes
     const app = await ctx.getApplication();
     if (!app) return check.skip("could not fetch application");
     const label = app.name || app.application_id;
-    return check.pass(`Application "${label}" is accessible`);
+    return check.pass(`Application "${label}" (${app.application_id}) is reachable`);
   } catch (error) {
     if (error instanceof PlapiError && error.status === 404) {
-      return check.fail(`Application ${resolved.profile.appId} not found`, {
+      return check.fail(`Application ${resolved.profile.appId} not found on Clerk`, {
         remedy:
-          "Run `clerk link` to link to a different application, or `clerk unlink` to remove the stale link.",
+          "The application doesn't exist or may have been deleted from the Clerk Dashboard. Run `clerk link` to link to a different application, or `clerk unlink` to remove the stale link.",
       });
     }
-    return check.fail(`Could not verify application: ${(error as Error).message}`, {
+    return check.fail(`Could not reach Clerk to verify application: ${(error as Error).message}`, {
       remedy: "Check your network connection and authentication.",
       fixable: false,
     });
@@ -142,7 +142,7 @@ export async function checkLinkedAppExists(ctx: DoctorContext): Promise<CheckRes
 }
 
 export async function checkInstances(ctx: DoctorContext): Promise<CheckResult> {
-  const check = defineCheck("Instances", ctx.fixes.link);
+  const check = defineCheck("Instance IDs", ctx.fixes.link);
   const token = await ctx.getToken();
   if (!token) return check.skip("not authenticated");
 
@@ -178,19 +178,19 @@ export async function checkInstances(ctx: DoctorContext): Promise<CheckResult> {
     }
 
     if (stale.length > 0) {
-      return check.fail(`Stale instance ID: ${stale.join(", ")}`, {
+      return check.fail(`Instance ID mismatch: ${stale.join(", ")} not found in application`, {
         remedy:
           "Run `clerk link` to re-link with valid instances, or `clerk unlink` and `clerk link` to start fresh.",
       });
     }
 
     if (!prodId) {
-      return check.warn(`Instances: ${parts.join(", ")} (production not configured)`, {
+      return check.warn(`${parts.join(", ")} (production not configured)`, {
         detail: "Production instance is optional but recommended for deployment.",
       });
     }
 
-    return check.pass(`Instances: ${parts.join(", ")}`);
+    return check.pass(parts.join(", "));
   } catch (error) {
     return check.fail(`Could not verify instances: ${(error as Error).message}`, {
       remedy: "Check your network connection and authentication.",

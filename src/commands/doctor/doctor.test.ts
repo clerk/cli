@@ -157,14 +157,14 @@ describe("checkLoggedIn", () => {
   test("pass when token exists", async () => {
     const ctx = createMockContext({ token: "test_token" });
     const result = await checkLoggedIn(ctx);
-    expectCheck(result, { name: "Authentication token", status: "pass", message: "Token found" });
+    expectCheck(result, { name: "Logged in", status: "pass", message: "Logged in" });
   });
 
   test("fail when no token", async () => {
     const ctx = createMockContext({ token: null });
     const result = await checkLoggedIn(ctx);
     expectCheck(result, {
-      name: "Authentication token",
+      name: "Logged in",
       status: "fail",
       remedy: "clerk auth login",
       fix: true,
@@ -177,7 +177,11 @@ describe("checkTokenValid", () => {
     mockUserInfo = { userId: "user_1", email: "dev@example.com" };
     const ctx = createMockContext({ token: "test_token" });
     const result = await checkTokenValid(ctx);
-    expectCheck(result, { name: "Token validity", status: "pass", message: "dev@example.com" });
+    expectCheck(result, {
+      name: "Authentication valid",
+      status: "pass",
+      message: "dev@example.com",
+    });
   });
 
   test("fail when token is expired (401)", async () => {
@@ -185,7 +189,7 @@ describe("checkTokenValid", () => {
     const ctx = createMockContext({ token: "expired_token" });
     const result = await checkTokenValid(ctx);
     expectCheck(result, {
-      name: "Token validity",
+      name: "Authentication valid",
       status: "fail",
       message: "expired or invalid",
       remedy: "clerk auth login",
@@ -198,9 +202,9 @@ describe("checkTokenValid", () => {
     const ctx = createMockContext({ token: "test_token" });
     const result = await checkTokenValid(ctx);
     expectCheck(result, {
-      name: "Token validity",
+      name: "Authentication valid",
       status: "warn",
-      message: "network issue",
+      message: ["Could not reach Clerk", "network issue"],
       detail: "likely still valid",
       fix: false,
     });
@@ -209,7 +213,7 @@ describe("checkTokenValid", () => {
   test("warn+skip when no token", async () => {
     const ctx = createMockContext({ token: null });
     const result = await checkTokenValid(ctx);
-    expectCheck(result, { name: "Token validity", status: "warn", message: "Skipped" });
+    expectCheck(result, { name: "Authentication valid", status: "warn", message: "Skipped" });
   });
 });
 
@@ -220,9 +224,9 @@ describe("checkProjectLinked", () => {
     });
     const result = await checkProjectLinked(ctx);
     expectCheck(result, {
-      name: "Project linkage",
+      name: "Project linked",
       status: "pass",
-      message: ["app_1", "via git remote"],
+      message: ["Linked", "via git remote"],
     });
   });
 
@@ -230,7 +234,7 @@ describe("checkProjectLinked", () => {
     const ctx = createMockContext();
     const result = await checkProjectLinked(ctx);
     expectCheck(result, {
-      name: "Project linkage",
+      name: "Project linked",
       status: "fail",
       remedy: "clerk link",
       fix: true,
@@ -239,7 +243,7 @@ describe("checkProjectLinked", () => {
 });
 
 describe("checkLinkedAppExists", () => {
-  test("pass when app is accessible", async () => {
+  test("pass when app is reachable", async () => {
     const ctx = createMockContext({
       token: "test_token",
       profile: mockProfile,
@@ -247,9 +251,9 @@ describe("checkLinkedAppExists", () => {
     });
     const result = await checkLinkedAppExists(ctx);
     expectCheck(result, {
-      name: "Linked application",
+      name: "Application reachable",
       status: "pass",
-      message: "My App",
+      message: ["My App", "app_1", "is reachable"],
     });
   });
 
@@ -262,9 +266,10 @@ describe("checkLinkedAppExists", () => {
     });
     const result = await checkLinkedAppExists(ctx);
     expectCheck(result, {
-      name: "Linked application",
+      name: "Application reachable",
       status: "fail",
-      message: "not found",
+      message: "not found on Clerk",
+      remedy: "doesn't exist or may have been deleted",
       fix: true,
     });
   });
@@ -277,9 +282,9 @@ describe("checkLinkedAppExists", () => {
     });
     const result = await checkLinkedAppExists(ctx);
     expectCheck(result, {
-      name: "Linked application",
+      name: "Application reachable",
       status: "fail",
-      message: "Could not verify application",
+      message: "Could not reach Clerk to verify application",
       fix: false,
     });
   });
@@ -287,13 +292,13 @@ describe("checkLinkedAppExists", () => {
   test("warn when not authenticated", async () => {
     const ctx = createMockContext({ token: null });
     const result = await checkLinkedAppExists(ctx);
-    expectCheck(result, { name: "Linked application", status: "warn", message: "Skipped" });
+    expectCheck(result, { name: "Application reachable", status: "warn", message: "Skipped" });
   });
 
   test("warn when no project linked", async () => {
     const ctx = createMockContext({ token: "test_token" });
     const result = await checkLinkedAppExists(ctx);
-    expectCheck(result, { name: "Linked application", status: "warn", message: "Skipped" });
+    expectCheck(result, { name: "Application reachable", status: "warn", message: "Skipped" });
   });
 });
 
@@ -314,7 +319,7 @@ describe("checkInstances", () => {
     });
     const result = await checkInstances(ctx);
     expectCheck(result, {
-      name: "Instances",
+      name: "Instance IDs",
       status: "pass",
       message: ["ins_dev", "ins_prod"],
     });
@@ -328,7 +333,7 @@ describe("checkInstances", () => {
     });
     const result = await checkInstances(ctx);
     expectCheck(result, {
-      name: "Instances",
+      name: "Instance IDs",
       status: "warn",
       message: "production not configured",
     });
@@ -346,9 +351,9 @@ describe("checkInstances", () => {
     });
     const result = await checkInstances(ctx);
     expectCheck(result, {
-      name: "Instances",
+      name: "Instance IDs",
       status: "fail",
-      message: ["Stale", "ins_old"],
+      message: ["mismatch", "ins_old", "not found in application"],
       fix: true,
     });
   });
@@ -356,13 +361,13 @@ describe("checkInstances", () => {
   test("warn when not authenticated", async () => {
     const ctx = createMockContext({ token: null });
     const result = await checkInstances(ctx);
-    expectCheck(result, { name: "Instances", status: "warn", message: "Skipped" });
+    expectCheck(result, { name: "Instance IDs", status: "warn", message: "Skipped" });
   });
 
   test("warn when no project linked", async () => {
     const ctx = createMockContext({ token: "test_token" });
     const result = await checkInstances(ctx);
-    expectCheck(result, { name: "Instances", status: "warn", message: "Skipped" });
+    expectCheck(result, { name: "Instance IDs", status: "warn", message: "Skipped" });
   });
 });
 
