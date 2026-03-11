@@ -13,6 +13,7 @@ import { configSchema } from "./commands/config/schema.js";
 import { api } from "./commands/api/index.js";
 import { link } from "./commands/link/index.js";
 import { unlink } from "./commands/unlink/index.js";
+import { doctor } from "./commands/doctor/index.js";
 import { CliError, UserAbortError, ApiError, EXIT_CODE, throwUsageError } from "./lib/errors.js";
 import { red } from "./lib/color.js";
 
@@ -42,7 +43,12 @@ program.command("init").description("Initialize Clerk in your project").action(i
 
 const auth = program.command("auth").description("Manage authentication");
 
-auth.command("login").description("Log in to your Clerk account").action(login);
+auth
+  .command("login")
+  .description("Log in to your Clerk account")
+  .action(async () => {
+    await login();
+  });
 
 auth.command("logout").description("Log out of your Clerk account").action(logout);
 
@@ -121,6 +127,15 @@ program
   .option("--dry-run", "Show the request without executing it")
   .option("--yes", "Skip confirmation for mutating requests")
   .action(api);
+
+program
+  .command("doctor")
+  .description("Check your project's Clerk integration health")
+  .option("--verbose", "Show detailed output for each check")
+  .option("--json", "Output results as JSON")
+  .option("--spotlight", "Only show warnings and failures")
+  .option("--fix", "Attempt to auto-fix issues")
+  .action(doctor);
 
 program
   .command("deploy", { hidden: true })
