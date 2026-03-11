@@ -92,7 +92,6 @@ test("config put aborted when user declines confirmation", async () => {
   );
 
   expect(result.exitCode).toBe(0);
-  expect(result.stderr).toContain("Aborted");
 
   // No PUT request sent
   const putReqs = requests.filter((r) => r.method === "PUT");

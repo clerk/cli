@@ -361,7 +361,7 @@ export interface CLIResult {
 }
 
 async function execCLI(...args: string[]): Promise<CLIResult> {
-  const { createProgram } = await import("../../cli-program.ts");
+  const { createProgram, runProgram } = await import("../../cli-program.ts");
   const program = createProgram();
   program.exitOverride();
 
@@ -376,7 +376,7 @@ async function execCLI(...args: string[]): Promise<CLIResult> {
   let exitCode = 0;
 
   try {
-    await program.parseAsync(args, { from: "user" });
+    await runProgram(program, args, { from: "user" });
   } catch (error: unknown) {
     if ((error as any)?.code?.startsWith?.("commander.")) {
       exitCode = (error as any).exitCode ?? 1;

@@ -13,7 +13,8 @@ import { api } from "./commands/api/index.js";
 import { link } from "./commands/link/index.js";
 import { unlink } from "./commands/unlink/index.js";
 import { doctor } from "./commands/doctor/index.js";
-import { EXIT_CODE, throwUsageError } from "./lib/errors.js";
+import { CliError, UserAbortError, ApiError, EXIT_CODE, throwUsageError } from "./lib/errors.js";
+import { red } from "./lib/color.js";
 
 export function createProgram(): Command {
   const program = new Command();
@@ -148,4 +149,71 @@ export function createProgram(): Command {
     .action(deploy);
 
   return program;
+}
+
+function formatApiBody(body: string, verbose: boolean): string {
+  if (verbose) {
+    try {
+      return "\n" + JSON.stringify(JSON.parse(body), null, 2);
+    } catch {
+      return "\n" + body;
+    }
+  }
+
+  try {
+    const parsed = JSON.parse(body);
+    if (parsed.errors?.[0]?.message) return parsed.errors[0].message;
+    if (parsed.error) return parsed.error;
+    if (parsed.message) return parsed.message;
+  } catch {
+    // not JSON
+  }
+
+  if (body.length > 200) return body.slice(0, 200) + "...";
+  return body;
+}
+
+/**
+ * Parse and run a program, handling all typed errors with user-facing messages.
+ * Used by `cli.ts` for real execution and by integration tests.
+ */
+export async function runProgram(
+  program: Command,
+  args?: string[],
+  options?: { from?: "user" | "node" },
+): Promise<void> {
+  try {
+    await program.parseAsync(args, options);
+  } catch (error) {
+    const verbose = program.opts().verbose ?? false;
+
+    if (error instanceof UserAbortError) {
+      process.exit(EXIT_CODE.SUCCESS);
+    }
+
+    if (error instanceof CliError) {
+      if (error.message) {
+        console.error(red(`error: ${error.message}`));
+      }
+      if (error.docsUrl) {
+        console.error(`\nFor more information, see: ${error.docsUrl}`);
+      }
+      process.exit(error.exitCode);
+    }
+
+    if (error instanceof ApiError) {
+      const detail = formatApiBody(error.body, verbose);
+      const prefix = error.context ?? "Request failed";
+      console.error(red(`error: ${prefix} (${error.status}): ${detail}`));
+      process.exit(EXIT_CODE.GENERAL);
+    }
+
+    if (error instanceof Error) {
+      console.error(red(`error: ${error.message}`));
+      process.exit(EXIT_CODE.GENERAL);
+    }
+
+    console.error(red("error: An unexpected error occurred"));
+    process.exit(EXIT_CODE.GENERAL);
+  }
 }
