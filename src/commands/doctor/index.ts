@@ -1,5 +1,6 @@
 import { isHuman } from "../../mode.ts";
 import { bold, green, red } from "../../lib/color.ts";
+import { CliError } from "../../lib/errors.ts";
 import { createDoctorContext } from "./context.ts";
 import {
   checkLoggedIn,
@@ -112,7 +113,7 @@ export async function doctor(options: DoctorOptions = {}): Promise<void> {
 
       const hasVerifyFailure = verifyResults.some((r) => r.status === "fail");
       if (hasVerifyFailure) {
-        process.exit(1);
+        throw new CliError("Some checks still failing after auto-fix.");
       }
       return;
     }
@@ -120,6 +121,6 @@ export async function doctor(options: DoctorOptions = {}): Promise<void> {
 
   const hasFailure = allResults.some((r) => r.status === "fail");
   if (hasFailure) {
-    process.exit(1);
+    throw new CliError("Doctor found issues with your Clerk integration.");
   }
 }

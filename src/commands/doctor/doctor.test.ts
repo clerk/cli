@@ -254,7 +254,7 @@ describe("checkLinkedAppExists", () => {
   });
 
   test("fail when app not found (404)", async () => {
-    const { PlapiError } = await import("../../lib/plapi.ts");
+    const { PlapiError } = await import("../../lib/errors.ts");
     const ctx = createMockContext({
       token: "test_token",
       profile: mockProfile,
