@@ -3,7 +3,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { gitStubs, tokenExchangeStubs, stubFetch } from "../../test/stubs.ts";
-import type { DoctorContext, ResolvedProfile } from "./types.ts";
+import type { CheckResult, CheckStatus, DoctorContext, ResolvedProfile } from "./types.ts";
 import type { Application } from "../../lib/plapi.ts";
 
 let mockUserInfo: { userId: string; email: string } | null = null;
@@ -62,6 +62,12 @@ type Profile = {
 
 const noopFix = () => ({ label: "noop", run: async () => {} });
 
+const mockProfile = {
+  path: "github.com/org/repo",
+  profile: { workspaceId: "org_1", appId: "app_1", instances: { development: "ins_dev" } },
+  resolvedVia: "remote" as const,
+};
+
 function createMockContext(
   overrides: {
     token?: string | null;
@@ -89,6 +95,45 @@ function createMockContext(
   };
 }
 
+interface ExpectedCheck {
+  name: string;
+  status: CheckStatus;
+  message?: string | string[];
+  messageNot?: string | string[];
+  remedy?: string;
+  detail?: string;
+  fix?: boolean;
+}
+
+function toArray(value: string | string[] | undefined): string[] {
+  if (!value) return [];
+  return Array.isArray(value) ? value : [value];
+}
+
+function expectCheck(result: CheckResult, expected: ExpectedCheck) {
+  expect(result.name).toBe(expected.name);
+  expect(result.status).toBe(expected.status);
+
+  for (const msg of toArray(expected.message)) {
+    expect(result.message).toContain(msg);
+  }
+  for (const msg of toArray(expected.messageNot)) {
+    expect(result.message).not.toContain(msg);
+  }
+
+  if (expected.remedy !== undefined) {
+    expect(result.remedy).toContain(expected.remedy);
+  }
+  if (expected.detail !== undefined) {
+    expect(result.detail).toContain(expected.detail);
+  }
+  if (expected.fix === true) {
+    expect(result.fix).toBeDefined();
+  } else if (expected.fix === false) {
+    expect(result.fix).toBeUndefined();
+  }
+}
+
 beforeEach(async () => {
   tempDir = await mkdtemp(join(tmpdir(), "clerk-doctor-test-"));
   process.cwd = () => tempDir;
@@ -112,16 +157,18 @@ describe("checkLoggedIn", () => {
   test("pass when token exists", async () => {
     const ctx = createMockContext({ token: "test_token" });
     const result = await checkLoggedIn(ctx);
-    expect(result.status).toBe("pass");
-    expect(result.message).toContain("Token found");
+    expectCheck(result, { name: "Authentication token", status: "pass", message: "Token found" });
   });
 
   test("fail when no token", async () => {
     const ctx = createMockContext({ token: null });
     const result = await checkLoggedIn(ctx);
-    expect(result.status).toBe("fail");
-    expect(result.remedy).toContain("clerk auth login");
-    expect(result.fix).toBeDefined();
+    expectCheck(result, {
+      name: "Authentication token",
+      status: "fail",
+      remedy: "clerk auth login",
+      fix: true,
+    });
   });
 });
 
@@ -130,59 +177,64 @@ describe("checkTokenValid", () => {
     mockUserInfo = { userId: "user_1", email: "dev@example.com" };
     const ctx = createMockContext({ token: "test_token" });
     const result = await checkTokenValid(ctx);
-    expect(result.status).toBe("pass");
-    expect(result.message).toContain("dev@example.com");
+    expectCheck(result, { name: "Token validity", status: "pass", message: "dev@example.com" });
   });
 
   test("fail when token is expired (401)", async () => {
     mockUserInfoError = new Error("Failed to fetch user info (401): Unauthorized");
     const ctx = createMockContext({ token: "expired_token" });
     const result = await checkTokenValid(ctx);
-    expect(result.status).toBe("fail");
-    expect(result.message).toContain("expired or invalid");
-    expect(result.remedy).toContain("clerk auth login");
-    expect(result.fix).toBeDefined();
+    expectCheck(result, {
+      name: "Token validity",
+      status: "fail",
+      message: "expired or invalid",
+      remedy: "clerk auth login",
+      fix: true,
+    });
   });
 
   test("warn when network is unreachable", async () => {
     mockUserInfoError = new TypeError("fetch failed");
     const ctx = createMockContext({ token: "test_token" });
     const result = await checkTokenValid(ctx);
-    expect(result.status).toBe("warn");
-    expect(result.message).toContain("network issue");
-    expect(result.detail).toContain("likely still valid");
-    expect(result.fix).toBeUndefined();
+    expectCheck(result, {
+      name: "Token validity",
+      status: "warn",
+      message: "network issue",
+      detail: "likely still valid",
+      fix: false,
+    });
   });
 
   test("warn+skip when no token", async () => {
     const ctx = createMockContext({ token: null });
     const result = await checkTokenValid(ctx);
-    expect(result.status).toBe("warn");
-    expect(result.message).toContain("Skipped");
+    expectCheck(result, { name: "Token validity", status: "warn", message: "Skipped" });
   });
 });
 
 describe("checkProjectLinked", () => {
   test("pass when profile exists", async () => {
     const ctx = createMockContext({
-      profile: {
-        path: "github.com/org/repo",
-        profile: { workspaceId: "org_1", appId: "app_1", instances: { development: "ins_dev" } },
-        resolvedVia: "remote",
-      },
+      profile: mockProfile,
     });
     const result = await checkProjectLinked(ctx);
-    expect(result.status).toBe("pass");
-    expect(result.message).toContain("app_1");
-    expect(result.message).toContain("via git remote");
+    expectCheck(result, {
+      name: "Project linkage",
+      status: "pass",
+      message: ["app_1", "via git remote"],
+    });
   });
 
   test("fail when no profile", async () => {
     const ctx = createMockContext();
     const result = await checkProjectLinked(ctx);
-    expect(result.status).toBe("fail");
-    expect(result.remedy).toContain("clerk link");
-    expect(result.fix).toBeDefined();
+    expectCheck(result, {
+      name: "Project linkage",
+      status: "fail",
+      remedy: "clerk link",
+      fix: true,
+    });
   });
 });
 
@@ -190,63 +242,58 @@ describe("checkLinkedAppExists", () => {
   test("pass when app is accessible", async () => {
     const ctx = createMockContext({
       token: "test_token",
-      profile: {
-        path: "github.com/org/repo",
-        profile: { workspaceId: "org_1", appId: "app_1", instances: { development: "ins_dev" } },
-        resolvedVia: "remote",
-      },
+      profile: mockProfile,
       application: mockApplication,
     });
     const result = await checkLinkedAppExists(ctx);
-    expect(result.status).toBe("pass");
-    expect(result.message).toContain("My App");
+    expectCheck(result, {
+      name: "Linked application",
+      status: "pass",
+      message: "My App",
+    });
   });
 
   test("fail when app not found (404)", async () => {
     const { PlapiError } = await import("../../lib/plapi.ts");
     const ctx = createMockContext({
       token: "test_token",
-      profile: {
-        path: "github.com/org/repo",
-        profile: { workspaceId: "org_1", appId: "app_1", instances: { development: "ins_dev" } },
-        resolvedVia: "remote",
-      },
+      profile: mockProfile,
       applicationError: new PlapiError(404, "Not found"),
     });
     const result = await checkLinkedAppExists(ctx);
-    expect(result.status).toBe("fail");
-    expect(result.message).toContain("not found");
-    expect(result.fix).toBeDefined();
+    expectCheck(result, {
+      name: "Linked application",
+      status: "fail",
+      message: "not found",
+      fix: true,
+    });
   });
 
   test("fail with generic error on non-404", async () => {
     const ctx = createMockContext({
       token: "test_token",
-      profile: {
-        path: "github.com/org/repo",
-        profile: { workspaceId: "org_1", appId: "app_1", instances: { development: "ins_dev" } },
-        resolvedVia: "remote",
-      },
+      profile: mockProfile,
       applicationError: new Error("Connection timeout"),
     });
     const result = await checkLinkedAppExists(ctx);
-    expect(result.status).toBe("fail");
-    expect(result.message).toContain("Could not verify application");
-    expect(result.fix).toBeUndefined();
+    expectCheck(result, {
+      name: "Linked application",
+      status: "fail",
+      message: "Could not verify application",
+      fix: false,
+    });
   });
 
   test("warn when not authenticated", async () => {
     const ctx = createMockContext({ token: null });
     const result = await checkLinkedAppExists(ctx);
-    expect(result.status).toBe("warn");
-    expect(result.message).toContain("Skipped");
+    expectCheck(result, { name: "Linked application", status: "warn", message: "Skipped" });
   });
 
   test("warn when no project linked", async () => {
     const ctx = createMockContext({ token: "test_token" });
     const result = await checkLinkedAppExists(ctx);
-    expect(result.status).toBe("warn");
-    expect(result.message).toContain("Skipped");
+    expectCheck(result, { name: "Linked application", status: "warn", message: "Skipped" });
   });
 });
 
@@ -266,24 +313,25 @@ describe("checkInstances", () => {
       application: mockApplication,
     });
     const result = await checkInstances(ctx);
-    expect(result.status).toBe("pass");
-    expect(result.message).toContain("ins_dev");
-    expect(result.message).toContain("ins_prod");
+    expectCheck(result, {
+      name: "Instances",
+      status: "pass",
+      message: ["ins_dev", "ins_prod"],
+    });
   });
 
   test("warn when production not configured", async () => {
     const ctx = createMockContext({
       token: "test_token",
-      profile: {
-        path: "github.com/org/repo",
-        profile: { workspaceId: "org_1", appId: "app_1", instances: { development: "ins_dev" } },
-        resolvedVia: "remote",
-      },
+      profile: mockProfile,
       application: mockApplication,
     });
     const result = await checkInstances(ctx);
-    expect(result.status).toBe("warn");
-    expect(result.message).toContain("production not configured");
+    expectCheck(result, {
+      name: "Instances",
+      status: "warn",
+      message: "production not configured",
+    });
   });
 
   test("fail when stored instance ID is stale", async () => {
@@ -297,24 +345,24 @@ describe("checkInstances", () => {
       application: mockApplication,
     });
     const result = await checkInstances(ctx);
-    expect(result.status).toBe("fail");
-    expect(result.message).toContain("Stale");
-    expect(result.message).toContain("ins_old");
-    expect(result.fix).toBeDefined();
+    expectCheck(result, {
+      name: "Instances",
+      status: "fail",
+      message: ["Stale", "ins_old"],
+      fix: true,
+    });
   });
 
   test("warn when not authenticated", async () => {
     const ctx = createMockContext({ token: null });
     const result = await checkInstances(ctx);
-    expect(result.status).toBe("warn");
-    expect(result.message).toContain("Skipped");
+    expectCheck(result, { name: "Instances", status: "warn", message: "Skipped" });
   });
 
   test("warn when no project linked", async () => {
     const ctx = createMockContext({ token: "test_token" });
     const result = await checkInstances(ctx);
-    expect(result.status).toBe("warn");
-    expect(result.message).toContain("Skipped");
+    expectCheck(result, { name: "Instances", status: "warn", message: "Skipped" });
   });
 });
 
@@ -326,17 +374,15 @@ describe("checkEnvVars", () => {
     );
     const ctx = createMockContext({
       token: "test_token",
-      profile: {
-        path: "github.com/org/repo",
-        profile: { workspaceId: "org_1", appId: "app_1", instances: { development: "ins_dev" } },
-        resolvedVia: "remote",
-      },
+      profile: mockProfile,
       application: mockApplication,
     });
     const result = await checkEnvVars(ctx);
-    expect(result.status).toBe("pass");
-    expect(result.message).toContain("CLERK_PUBLISHABLE_KEY");
-    expect(result.message).toContain("development instance");
+    expectCheck(result, {
+      name: "Environment variables",
+      status: "pass",
+      message: ["CLERK_PUBLISHABLE_KEY", "development instance"],
+    });
   });
 
   test("pass without environment label when app not available", async () => {
@@ -346,10 +392,12 @@ describe("checkEnvVars", () => {
     );
     const ctx = createMockContext();
     const result = await checkEnvVars(ctx);
-    expect(result.status).toBe("pass");
-    expect(result.message).toContain("CLERK_PUBLISHABLE_KEY");
-    expect(result.message).toContain("CLERK_SECRET_KEY");
-    expect(result.message).not.toContain("instance");
+    expectCheck(result, {
+      name: "Environment variables",
+      status: "pass",
+      message: ["CLERK_PUBLISHABLE_KEY", "CLERK_SECRET_KEY"],
+      messageNot: "instance",
+    });
   });
 
   test("identifies environment via secret key when publishable key doesn't match", async () => {
@@ -359,16 +407,15 @@ describe("checkEnvVars", () => {
     );
     const ctx = createMockContext({
       token: "test_token",
-      profile: {
-        path: "github.com/org/repo",
-        profile: { workspaceId: "org_1", appId: "app_1", instances: { development: "ins_dev" } },
-        resolvedVia: "remote",
-      },
+      profile: mockProfile,
       application: mockApplication,
     });
     const result = await checkEnvVars(ctx);
-    expect(result.status).toBe("pass");
-    expect(result.message).toContain("development instance");
+    expectCheck(result, {
+      name: "Environment variables",
+      status: "pass",
+      message: "development instance",
+    });
   });
 
   test("pass without environment label when neither key matches any instance", async () => {
@@ -378,16 +425,15 @@ describe("checkEnvVars", () => {
     );
     const ctx = createMockContext({
       token: "test_token",
-      profile: {
-        path: "github.com/org/repo",
-        profile: { workspaceId: "org_1", appId: "app_1", instances: { development: "ins_dev" } },
-        resolvedVia: "remote",
-      },
+      profile: mockProfile,
       application: mockApplication,
     });
     const result = await checkEnvVars(ctx);
-    expect(result.status).toBe("pass");
-    expect(result.message).not.toContain("instance");
+    expectCheck(result, {
+      name: "Environment variables",
+      status: "pass",
+      messageNot: "instance",
+    });
   });
 
   test("detects framework-specific key name for Next.js", async () => {
@@ -401,17 +447,15 @@ describe("checkEnvVars", () => {
     );
     const ctx = createMockContext({
       token: "test_token",
-      profile: {
-        path: "github.com/org/repo",
-        profile: { workspaceId: "org_1", appId: "app_1", instances: { development: "ins_dev" } },
-        resolvedVia: "remote",
-      },
+      profile: mockProfile,
       application: mockApplication,
     });
     const result = await checkEnvVars(ctx);
-    expect(result.status).toBe("pass");
-    expect(result.message).toContain("NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY");
-    expect(result.message).toContain("development instance");
+    expectCheck(result, {
+      name: "Environment variables",
+      status: "pass",
+      message: ["NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY", "development instance"],
+    });
   });
 
   test("pass without environment label when getApplication throws", async () => {
@@ -423,8 +467,11 @@ describe("checkEnvVars", () => {
       applicationError: new Error("Network timeout"),
     });
     const result = await checkEnvVars(ctx);
-    expect(result.status).toBe("pass");
-    expect(result.message).not.toContain("instance");
+    expectCheck(result, {
+      name: "Environment variables",
+      status: "pass",
+      messageNot: "instance",
+    });
   });
 
   test("falls back to .env when .env.local does not exist", async () => {
@@ -434,26 +481,35 @@ describe("checkEnvVars", () => {
     );
     const ctx = createMockContext({ application: mockApplication });
     const result = await checkEnvVars(ctx);
-    expect(result.status).toBe("pass");
-    expect(result.message).toContain(".env contains");
+    expectCheck(result, {
+      name: "Environment variables",
+      status: "pass",
+      message: ".env contains",
+    });
   });
 
   test("warn when keys missing", async () => {
     await Bun.write(join(tempDir, ".env.local"), "OTHER=value\n");
     const ctx = createMockContext();
     const result = await checkEnvVars(ctx);
-    expect(result.status).toBe("warn");
-    expect(result.message).toContain("missing");
-    expect(result.remedy).toContain("clerk env pull");
-    expect(result.fix).toBeDefined();
+    expectCheck(result, {
+      name: "Environment variables",
+      status: "warn",
+      message: "missing",
+      remedy: "clerk env pull",
+      fix: true,
+    });
   });
 
   test("warn when no env file", async () => {
     const ctx = createMockContext();
     const result = await checkEnvVars(ctx);
-    expect(result.status).toBe("warn");
-    expect(result.message).toContain("No .env.local or .env file found");
-    expect(result.fix).toBeDefined();
+    expectCheck(result, {
+      name: "Environment variables",
+      status: "warn",
+      message: "No .env.local or .env file found",
+      fix: true,
+    });
   });
 });
 
@@ -466,18 +522,23 @@ describe("checkConfigFile", () => {
     );
     const ctx = createMockContext();
     const result = await checkConfigFile(ctx);
-    expect(result.status).toBe("pass");
-    expect(result.message).toContain("valid");
-    expect(result.message).toContain("1 profile");
+    expectCheck(result, {
+      name: "CLI configuration",
+      status: "pass",
+      message: ["valid", "1 profile"],
+    });
   });
 
   test("warn when config file does not exist", async () => {
     process.env.CLERK_CONFIG_DIR = join(tempDir, "nonexistent");
     const ctx = createMockContext();
     const result = await checkConfigFile(ctx);
-    expect(result.status).toBe("warn");
-    expect(result.message).toContain("does not exist");
-    expect(result.fix).toBeDefined();
+    expectCheck(result, {
+      name: "CLI configuration",
+      status: "warn",
+      message: "does not exist",
+      fix: true,
+    });
   });
 
   test("fail when config has invalid JSON", async () => {
@@ -485,8 +546,11 @@ describe("checkConfigFile", () => {
     await Bun.write(join(tempDir, "config.json"), "{ invalid json }");
     const ctx = createMockContext();
     const result = await checkConfigFile(ctx);
-    expect(result.status).toBe("fail");
-    expect(result.message).toContain("failed to parse");
-    expect(result.fix).toBeDefined();
+    expectCheck(result, {
+      name: "CLI configuration",
+      status: "fail",
+      message: "failed to parse",
+      fix: true,
+    });
   });
 });

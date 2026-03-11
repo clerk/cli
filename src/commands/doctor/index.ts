@@ -68,8 +68,9 @@ export async function doctor(options: DoctorOptions = {}): Promise<void> {
 
     const seen = new Set<string>();
     const uniqueFixable = fixable.filter((r) => {
-      if (seen.has(r.fix!.label)) return false;
-      seen.add(r.fix!.label);
+      const label = r.fix?.label;
+      if (!label || seen.has(label)) return false;
+      seen.add(label);
       return true;
     });
 
@@ -81,14 +82,16 @@ export async function doctor(options: DoctorOptions = {}): Promise<void> {
       const { confirm } = await import("@inquirer/prompts");
 
       for (const result of uniqueFixable) {
+        const fix = result.fix;
+        if (!fix) continue;
         const proceed = await confirm({
-          message: `Fix "${result.name}"? (${result.fix!.label})`,
+          message: `Fix "${result.name}"? (${fix.label})`,
           default: true,
         });
 
         if (proceed) {
           try {
-            await result.fix!.run();
+            await fix.run();
             console.log(`  ${green("✓")} ${result.name} fixed`);
           } catch (error) {
             console.log(`  ${red("✗")} Fix failed: ${(error as Error).message}`);
