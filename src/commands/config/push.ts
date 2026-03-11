@@ -2,7 +2,7 @@ import { confirm } from "@inquirer/prompts";
 import { resolveProfile, resolveInstanceId } from "../../lib/config.ts";
 import { putInstanceConfig, patchInstanceConfig } from "../../lib/plapi.ts";
 import { isHuman } from "../../mode.ts";
-import { CliError, usageError, userAbort, withApiContext } from "../../lib/errors.ts";
+import { CliError, throwUsageError, throwUserAbort, withApiContext } from "../../lib/errors.ts";
 
 interface ConfigPushOptions {
   instance?: string;
@@ -58,11 +58,11 @@ async function configPush(options: ConfigPushOptions, op: Operation): Promise<vo
   try {
     configPayload = JSON.parse(rawInput);
   } catch {
-    usageError("Invalid JSON input. Please provide valid JSON.");
+    throwUsageError("Invalid JSON input. Please provide valid JSON.");
   }
 
   if (typeof configPayload !== "object" || configPayload === null || Array.isArray(configPayload)) {
-    usageError("Config must be a JSON object.");
+    throwUsageError("Config must be a JSON object.");
   }
 
   if (options.dryRun) {
@@ -79,7 +79,7 @@ async function configPush(options: ConfigPushOptions, op: Operation): Promise<vo
     }
     const ok = await confirm({ message: "Proceed?" });
     if (!ok) {
-      userAbort();
+      throwUserAbort();
     }
   }
 
@@ -101,7 +101,7 @@ export async function readInput(options: { file?: string; json?: string }): Prom
   if (options.file) {
     const file = Bun.file(options.file);
     if (!(await file.exists())) {
-      usageError(`File not found: ${options.file}`);
+      throwUsageError(`File not found: ${options.file}`);
     }
     return file.text();
   }
@@ -113,12 +113,12 @@ export async function readInput(options: { file?: string; json?: string }): Prom
     }
     const text = Buffer.concat(chunks).toString("utf-8").trim();
     if (!text) {
-      usageError("No input received from stdin.");
+      throwUsageError("No input received from stdin.");
     }
     return text;
   }
 
-  usageError(
+  throwUsageError(
     "No input provided. Use --file <path>, --json <string>, or pipe JSON to stdin.\n" +
       "  Example: clerk config patch --file config.json\n" +
       '  Example: clerk config patch --json \'{"session":{"lifetime":3600}}\'\n' +

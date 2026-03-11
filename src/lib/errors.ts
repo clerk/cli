@@ -1,3 +1,5 @@
+import { isAgent } from "../mode";
+
 /** Standard process exit codes used by the CLI. */
 export const EXIT_CODE = {
   /** Clean exit, no error. */
@@ -24,9 +26,11 @@ interface CliErrorOptions {
  *
  * Throw this when a command encounters a known failure (e.g. missing
  * configuration, invalid input, resource not found). The global error handler
- * in `cli.ts` prints the message in red and exits with `exitCode`.
+ * in `cli.ts` prints the message in red and exits with `exitCode`. Any Clerk
+ * URLs in `docsUrl` will automatically have ".md" appended in agent mode to
+ * link to the raw markdown version.
  *
- * For usage/validation errors, **prefer {@link usageError}** over constructing
+ * For usage/validation errors, **prefer {@link throwUsageError}** over constructing
  * a `CliError` with `EXIT_CODE.USAGE` directly.
  *
  * @example
@@ -42,7 +46,20 @@ export class CliError extends Error {
     super(message);
     this.name = "CliError";
     this.exitCode = options?.exitCode ?? EXIT_CODE.GENERAL;
-    this.docsUrl = options?.docsUrl;
+
+    if (options?.docsUrl) {
+      this.docsUrl = options.docsUrl;
+
+      // If we're running in agent mode and the docs URL is a Clerk docs link
+      // without a .md extension, add .md to get the raw markdown URL.
+      if (
+        isAgent() &&
+        this.docsUrl.startsWith("https://docs.clerk.com/") &&
+        !this.docsUrl.endsWith(".md")
+      ) {
+        this.docsUrl += ".md";
+      }
+    }
   }
 }
 
@@ -52,7 +69,7 @@ export class CliError extends Error {
  * The global error handler treats this as a clean exit (`EXIT_CODE.SUCCESS`)
  * with no error message.
  *
- * **Do not construct directly** — use {@link userAbort} instead.
+ * **Do not construct directly** — use {@link throwUserAbort} instead.
  */
 export class UserAbortError extends Error {
   constructor() {
@@ -126,7 +143,9 @@ export class BapiError extends ApiError {
  * Throw a usage error indicating the user provided invalid arguments or options.
  *
  * Exits with `EXIT_CODE.USAGE` (2). Use this for validation failures in
- * command option parsing, missing required values, or malformed input.
+ * command option parsing, missing required values, or malformed input. Any
+ * Clerk URL's will automatically have ".md" appended in agent mode to link to
+ * the raw markdown version.
  *
  * @param message - Error message describing the usage problem
  * @param docsUrl - Optional URL to relevant documentation
@@ -138,7 +157,7 @@ export class BapiError extends ApiError {
  * }
  * ```
  */
-export function usageError(message: string, docsUrl?: string): never {
+export function throwUsageError(message: string, docsUrl?: string): never {
   throw new CliError(message, { exitCode: EXIT_CODE.USAGE, docsUrl });
 }
 
@@ -154,7 +173,7 @@ export function usageError(message: string, docsUrl?: string): never {
  * if (!confirmed) userAbort();
  * ```
  */
-export function userAbort(): never {
+export function throwUserAbort(): never {
   throw new UserAbortError();
 }
 

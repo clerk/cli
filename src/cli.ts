@@ -13,7 +13,7 @@ import { configSchema } from "./commands/config/schema.js";
 import { api } from "./commands/api/index.js";
 import { link } from "./commands/link/index.js";
 import { unlink } from "./commands/unlink/index.js";
-import { CliError, UserAbortError, ApiError, EXIT_CODE, usageError } from "./lib/errors.js";
+import { CliError, UserAbortError, ApiError, EXIT_CODE, throwUsageError } from "./lib/errors.js";
 import { red } from "./lib/color.js";
 
 process.on("SIGINT", () => process.exit(EXIT_CODE.SIGINT));
@@ -32,7 +32,7 @@ program.hook("preAction", () => {
   const opts = program.opts();
   if (opts.mode) {
     if (opts.mode !== "human" && opts.mode !== "agent") {
-      usageError(`Invalid mode "${opts.mode}". Must be "human" or "agent".`);
+      throwUsageError(`Invalid mode "${opts.mode}". Must be "human" or "agent".`);
     }
     setMode(opts.mode as Mode);
   }

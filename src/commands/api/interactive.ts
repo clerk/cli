@@ -6,7 +6,7 @@ import { select, input, confirm, editor } from "@inquirer/prompts";
 import { isHuman } from "../../mode.ts";
 import { loadCatalog, endpointsByTag, type EndpointInfo } from "./catalog.ts";
 import type { ApiOptions } from "./index.ts";
-import { userAbort } from "../../lib/errors.ts";
+import { throwUserAbort } from "../../lib/errors.ts";
 
 export async function apiInteractive(options: ApiOptions): Promise<void> {
   if (!isHuman()) {
@@ -93,7 +93,7 @@ export async function apiInteractive(options: ApiOptions): Promise<void> {
 
   const proceed = await confirm({ message: "Execute this request?" });
   if (!proceed) {
-    userAbort();
+    throwUserAbort();
   }
 
   // 7. Delegate to the main api handler

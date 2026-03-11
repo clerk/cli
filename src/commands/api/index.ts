@@ -3,7 +3,13 @@ import { resolveProfile, resolveInstanceId } from "../../lib/config.ts";
 import { fetchApplication } from "../../lib/plapi.ts";
 import { BAPI_BASE_URL, PLAPI_BASE_URL } from "../../lib/constants.ts";
 import { bapiRequest } from "./bapi.ts";
-import { BapiError, CliError, usageError, userAbort, withApiContext } from "../../lib/errors.ts";
+import {
+  BapiError,
+  CliError,
+  throwUsageError,
+  throwUserAbort,
+  withApiContext,
+} from "../../lib/errors.ts";
 import { isHuman } from "../../mode.ts";
 
 export interface ApiOptions {
@@ -50,7 +56,7 @@ export async function api(
   if (options.platform) {
     const key = process.env.CLERK_PLATFORM_API_KEY;
     if (!key) {
-      usageError(
+      throwUsageError(
         "CLERK_PLATFORM_API_KEY environment variable is required for --platform mode.",
         "https://clerk.com/docs/guides/development/clerk-environment-variables",
       );
@@ -79,7 +85,7 @@ export async function api(
     }
     const ok = await confirm({ message: "Proceed?" });
     if (!ok) {
-      userAbort();
+      throwUserAbort();
     }
   }
 
@@ -122,7 +128,7 @@ async function resolveSecretKey(options: ApiOptions): Promise<string> {
   const platformKey = process.env.CLERK_PLATFORM_API_KEY;
 
   if (!resolved || !platformKey) {
-    usageError(
+    throwUsageError(
       "No secret key found. Provide one via:\n" +
         "  --secret-key <key>\n" +
         "  CLERK_SECRET_KEY environment variable\n" +
@@ -152,7 +158,7 @@ async function resolveBody(options: { data?: string; file?: string }): Promise<s
   if (options.file) {
     const file = Bun.file(options.file);
     if (!(await file.exists())) {
-      usageError(`File not found: ${options.file}`);
+      throwUsageError(`File not found: ${options.file}`);
     }
     return file.text();
   }

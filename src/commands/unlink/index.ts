@@ -3,7 +3,7 @@ import { isAgent, isHuman } from "../../mode.js";
 import { resolveProfile, removeProfile } from "../../lib/config.js";
 import { getGitRepoRoot } from "../../lib/git.js";
 import { dim, cyan } from "../../lib/color.js";
-import { CliError, userAbort } from "../../lib/errors.js";
+import { CliError, throwUserAbort } from "../../lib/errors.js";
 
 const AGENT_PROMPT = `You are unlinking a Clerk application from the current project directory.
 
@@ -47,7 +47,7 @@ export async function unlink(options: UnlinkOptions = {}): Promise<void> {
       default: false,
     });
     if (!ok) {
-      userAbort();
+      throwUserAbort();
     }
   }
 
