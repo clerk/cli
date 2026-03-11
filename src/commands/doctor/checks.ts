@@ -185,12 +185,12 @@ export async function checkInstances(ctx: DoctorContext): Promise<CheckResult> {
     }
 
     if (!prodId) {
-      return check.warn(`${parts.join(", ")} (production not configured)`, {
+      return check.warn(`Instance IDs: ${parts.join(", ")} (production not configured)`, {
         detail: "Production instance is optional but recommended for deployment.",
       });
     }
 
-    return check.pass(parts.join(", "));
+    return check.pass(`Instance IDs: ${parts.join(", ")}`);
   } catch (error) {
     return check.fail(`Could not verify instances: ${(error as Error).message}`, {
       remedy: "Check your network connection and authentication.",
