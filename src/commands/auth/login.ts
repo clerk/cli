@@ -28,6 +28,7 @@ export async function login(): Promise<{ userId: string; email: string }> {
 
   // Start local callback server
   const authServer = startAuthServer(state);
+  // Use `http://127.0.0.1` (not localhost) so the backend permits any port https://datatracker.ietf.org/doc/html/rfc8252#section-7.3
   const redirectUri = `http://127.0.0.1:${authServer.port}${CALLBACK_PATH}`;
 
   // Build authorization URL
