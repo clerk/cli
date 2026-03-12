@@ -49,21 +49,28 @@ export async function link(options: LinkOptions = {}): Promise<void> {
   const profileKey = normalizedRemote ?? repoId ?? cwd;
   const displayPath = repoRoot ?? cwd;
 
-  const isRelinking = await handleExistingProfile(cwd, normalizedRemote, options);
-  if (isRelinking === undefined) return;
+  const existing = await resolveProfile(cwd);
 
-  if (options.skipIfLinked && !options.app) {
+  if (existing && options.skipIfLinked) {
+    printExistingStatus(existing, normalizedRemote);
+    return;
+  }
+
+  if (!existing && options.skipIfLinked && !options.app) {
     const autolinked = await autolink(cwd);
     if (autolinked) return;
   }
 
-  const token = await getToken();
-  if (!token) {
-    console.log("Not logged in. Authenticating first...");
-    await login();
+  if (existing) {
+    const shouldRelink = await handleExistingProfile(existing, normalizedRemote, options);
+    if (!shouldRelink) return;
   }
 
-  const app = await resolveApp(cwd, displayPath, options, isRelinking);
+  await ensureAuth();
+
+  const app = options.app
+    ? await fetchApplication(options.app)
+    : await resolveApp(cwd, displayPath, !existing);
 
   const devInstance = app.instances.find((i) => i.environment_type === "development");
   const prodInstance = app.instances.find((i) => i.environment_type === "production");
@@ -85,24 +92,31 @@ export async function link(options: LinkOptions = {}): Promise<void> {
   console.log(`\nLinked to ${cyan(label)} in ${dim(displayPath)}`);
 }
 
-/**
- * Returns `undefined` to stop, `false` for first-time link, `true` for re-link.
- */
-async function handleExistingProfile(
-  cwd: string,
-  normalizedRemote: string | undefined,
-  options: LinkOptions,
-): Promise<boolean | undefined> {
-  const existing = await resolveProfile(cwd);
-  if (!existing) return false;
+async function ensureAuth() {
+  const token = await getToken();
+  if (!token) {
+    console.log("Not logged in. Authenticating first...");
+    await login();
+  }
+}
 
+function printExistingStatus(
+  existing: Awaited<ReturnType<typeof resolveProfile>> & {},
+  normalizedRemote: string | undefined,
+) {
   if (existing.resolvedVia === "remote") {
     console.log(`Auto-linked via git remote (${dim(normalizedRemote ?? existing.path)})`);
   } else {
     console.log(`Already linked to ${cyan(existing.profile.appId)} in ${dim(existing.path)}`);
   }
+}
 
-  if (options.skipIfLinked) return undefined;
+async function handleExistingProfile(
+  existing: Awaited<ReturnType<typeof resolveProfile>> & {},
+  normalizedRemote: string | undefined,
+  options: LinkOptions,
+): Promise<boolean> {
+  printExistingStatus(existing, normalizedRemote);
 
   if (existing.availableRemote) {
     console.log(
@@ -115,34 +129,31 @@ async function handleExistingProfile(
     if (upgrade) {
       await moveProfile(existing.path, existing.availableRemote);
       console.log(`\nLink updated to use git remote (${cyan(existing.availableRemote)})`);
-      return undefined;
+      return false;
     }
   }
 
-  const relink = await confirm({
-    message: "Re-link to a different application?",
-    default: false,
-  });
-  return relink ? true : undefined;
+  if (options.app) {
+    await ensureAuth();
+    const targetApp = await fetchApplication(options.app);
+    return confirm({ message: `Re-link to ${cyan(appLabel(targetApp))}?`, default: false });
+  }
+
+  return confirm({ message: "Re-link to a different application?", default: false });
 }
 
 async function resolveApp(
   cwd: string,
   displayPath: string,
-  options: LinkOptions,
-  isRelinking: boolean,
+  detectKeys: boolean,
 ): Promise<Application> {
-  if (options.app) {
-    return fetchApplication(options.app);
-  }
-
   const apps = await listApplications();
 
   if (apps.length === 0) {
     throw new CliError("No applications found. Create one at https://dashboard.clerk.com first.");
   }
 
-  if (!isRelinking) {
+  if (detectKeys) {
     const detectedKeys = await findClerkKeys(cwd);
     const match = detectedKeys.length > 0 ? matchKeyToApp(detectedKeys, apps) : undefined;
 

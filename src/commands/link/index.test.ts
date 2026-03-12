@@ -802,6 +802,50 @@ describe("link", () => {
       expect(mockFetchApplication).toHaveBeenCalledWith("app_123");
     });
 
+    test("shows target app name in re-link prompt when --app is provided", async () => {
+      mockIsAgent.mockReturnValue(false);
+      mockResolveProfile.mockResolvedValue({
+        path: "github.com/org/repo",
+        profile: { workspaceId: "", appId: "app_existing", instances: { development: "ins_1" } },
+      });
+      const namedApp = { ...mockApp, name: "My Cool App" };
+      mockGetToken.mockResolvedValue("token");
+      mockFetchApplication.mockResolvedValue(namedApp);
+      mockConfirm.mockResolvedValue(true);
+      consoleSpy = spyOn(console, "log").mockImplementation(() => {});
+
+      await link({ app: "app_123" });
+
+      const confirmCall = mockConfirm.mock.calls.find((c: unknown[]) =>
+        (c[0] as { message: string }).message.includes("Re-link"),
+      );
+      expect(confirmCall).toBeDefined();
+      expect((confirmCall![0] as { message: string }).message).toContain("My Cool App");
+    });
+
+    test("does not show app name in re-link prompt without --app", async () => {
+      mockIsAgent.mockReturnValue(false);
+      mockResolveProfile.mockResolvedValue({
+        path: "github.com/org/repo",
+        profile: { workspaceId: "", appId: "app_existing", instances: { development: "ins_1" } },
+      });
+      mockConfirm.mockResolvedValue(true);
+      mockGetToken.mockResolvedValue("token");
+      mockListApplications.mockResolvedValue([mockApp]);
+      mockSearch.mockResolvedValue("app_123");
+      consoleSpy = spyOn(console, "log").mockImplementation(() => {});
+
+      await link();
+
+      const confirmCall = mockConfirm.mock.calls.find((c: unknown[]) =>
+        (c[0] as { message: string }).message.includes("Re-link"),
+      );
+      expect(confirmCall).toBeDefined();
+      expect((confirmCall![0] as { message: string }).message).toBe(
+        "Re-link to a different application?",
+      );
+    });
+
     test("still suggests key match on first-time link", async () => {
       mockIsAgent.mockReturnValue(false);
       mockGetToken.mockResolvedValue("token");
