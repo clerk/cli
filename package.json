@@ -7,7 +7,7 @@
   },
   "type": "module",
   "scripts": {
-    "build": "bun build ./src/cli.ts --outfile ./dist/cli.js --target node",
+    "build": "bun build ./src/cli.ts --outfile ./dist/cli.js --target node --external @napi-rs/keyring",
     "dev": "bun run ./src/cli.ts",
     "test": "bun test",
     "lint": "oxlint src/",
@@ -17,7 +17,9 @@
   },
   "dependencies": {
     "@inquirer/prompts": "^8.2.0",
+    "@napi-rs/keyring": "^1.2.0",
     "commander": "^14.0.3",
+    "env-paths": "^4.0.0",
     "yaml": "^2.8.2"
   },
   "devDependencies": {
