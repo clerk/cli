@@ -6,13 +6,12 @@
 import { test, expect, describe } from "bun:test";
 import {
   useIntegrationTestHarness,
-  installFetchMock,
-  requests,
+  http,
   clerk,
   getInstance,
   MOCK_APP,
   MOCK_USERS,
-} from "./setup.ts";
+} from "../lib/setup.ts";
 
 useIntegrationTestHarness();
 
@@ -24,7 +23,7 @@ describe("Query users and create resources via the API", () => {
   test.each([{ mode: "human" }, { mode: "agent" }])(
     "list users and create a user ($mode mode)",
     async ({ mode }) => {
-      installFetchMock({
+      http.mock({
         "/v1/users": MOCK_USERS,
       });
 
@@ -40,7 +39,7 @@ describe("Query users and create resources via the API", () => {
       expect(getOutput).toContain(mockEmail);
 
       // Verify request was made
-      const getReq = requests.find((r) => r.method === "GET" && r.url.includes("/users"));
+      const getReq = http.requests.find((r) => r.method === "GET" && r.url.includes("/users"));
       expect(getReq).toBeDefined();
 
       // POST /users
@@ -48,7 +47,7 @@ describe("Query users and create resources via the API", () => {
         id: "user_2",
         email_addresses: [{ email_address: "jane@example.com" }],
       };
-      installFetchMock({ "/v1/users": newUser });
+      http.mock({ "/v1/users": newUser });
 
       await clerk(
         "--mode",
@@ -61,7 +60,7 @@ describe("Query users and create resources via the API", () => {
         '{"email_address":["jane@example.com"]}',
         "--yes",
       );
-      const postReq = requests.find((r) => r.method === "POST");
+      const postReq = http.requests.find((r) => r.method === "POST");
       expect(postReq).toBeDefined();
       expect(postReq!.body).toContain("jane@example.com");
     },

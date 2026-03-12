@@ -6,15 +6,14 @@
 import { test, expect } from "bun:test";
 import {
   useIntegrationTestHarness,
-  installFetchMock,
-  requests,
+  http,
   setProfile,
   clerk,
   getInstance,
   MOCK_APP,
   MOCK_CONFIG,
   MOCK_SCHEMA,
-} from "./setup.ts";
+} from "../lib/setup.ts";
 
 useIntegrationTestHarness();
 
@@ -31,8 +30,7 @@ test.each([{ mode: "human" }, { mode: "agent" }])(
 
     const updatedConfig = { session: { lifetime: 86400 }, sign_up: { mode: "public" } };
 
-    installFetchMock({
-      "/config/schema": MOCK_SCHEMA,
+    http.mock({
       "/config": MOCK_CONFIG,
     });
 
@@ -40,8 +38,8 @@ test.each([{ mode: "human" }, { mode: "agent" }])(
     const { stdout: pullOutput } = await clerk("--mode", mode, "config", "pull");
     expect(pullOutput).toContain(`"lifetime": ${MOCK_CONFIG.session.lifetime}`);
 
-    // Pull schema
-    installFetchMock({
+    // Pull schema, then patch config
+    http.mock({
       "/config/schema": MOCK_SCHEMA,
       "/config": updatedConfig,
     });
@@ -61,12 +59,12 @@ test.each([{ mode: "human" }, { mode: "agent" }])(
     );
 
     // Verify PATCH request was sent
-    const patchReqs = requests.filter((r) => r.method === "PATCH");
-    expect(patchReqs.length).toBeGreaterThan(0);
+    const patchReqs = http.requests.filter((r) => r.method === "PATCH");
+    expect(patchReqs.length).toBe(1);
     expect(JSON.parse(patchReqs[0]!.body!)).toEqual({ session: { lifetime: 86400 } });
 
     // Verify all API URLs used correct instance ID
-    const instanceCalls = requests.filter((r) => r.url.includes("/instances/"));
+    const instanceCalls = http.requests.filter((r) => r.url.includes("/instances/"));
     for (const call of instanceCalls) {
       expect(call.url).toContain(devInstance.instance_id);
     }

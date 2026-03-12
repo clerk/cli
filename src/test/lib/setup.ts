@@ -4,16 +4,23 @@
  * Registers module mocks (must happen at import time, before dynamic imports),
  * exports controllable mock state, mock data, CLI harness, and
  * test harness setup/teardown functions.
+ *
+ * WARNING: Do NOT add static imports of modules that transitively import any
+ * mocked module (credential-store, git, mode, inquirer, token-exchange,
+ * auth-server, pkce). Bun's `mock.module()` must be registered before any
+ * consumer loads the real module. All consuming imports must use dynamic
+ * `await import(...)` AFTER the mock.module() calls below.
  */
 
 import { mock, spyOn, beforeEach, afterEach } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { stubFetch, capturedOutput } from "../stubs.ts";
+import { capturedOutput } from "../stubs.ts";
+import { http } from "./http.ts";
 import type { Application, ApplicationInstance } from "../../lib/plapi.ts";
 
-export { capturedOutput };
+export { capturedOutput, http };
 
 // ── Controllable mock state ──────────────────────────────────────────────────
 
@@ -32,33 +39,45 @@ export const mockState = {
 
 // ── Module mocks (executed at import time) ───────────────────────────────────
 
-mock.module("../../lib/credential-store.ts", () => ({
-  getToken: async () => mockState.storedToken,
-  storeToken: async (token: string) => {
-    mockState.storedToken = token;
-  },
-  deleteToken: async () => {
-    mockState.storedToken = null;
-  },
-  _setTokenOverride: () => {},
-}));
+mock.module(
+  "../../lib/credential-store.ts",
+  () =>
+    ({
+      getToken: async () => mockState.storedToken,
+      storeToken: async (token: string) => {
+        mockState.storedToken = token;
+      },
+      deleteToken: async () => {
+        mockState.storedToken = null;
+      },
+      _setTokenOverride: () => {},
+    }) satisfies typeof import("../../lib/credential-store.ts"),
+);
 
-mock.module("../../lib/git.ts", () => ({
-  getGitRepoRoot: async () => mockState.gitRepoRoot,
-  getGitRepoIdentifier: async () => mockState.gitRepoIdentifier,
-  getGitNormalizedRemote: async () => mockState.gitNormalizedRemote,
-  normalizeGitRemoteUrl: (url: string) => url,
-}));
+mock.module(
+  "../../lib/git.ts",
+  () =>
+    ({
+      getGitRepoRoot: async () => mockState.gitRepoRoot,
+      getGitRepoIdentifier: async () => mockState.gitRepoIdentifier,
+      getGitNormalizedRemote: async () => mockState.gitNormalizedRemote,
+      normalizeGitRemoteUrl: (url: string) => url,
+    }) satisfies typeof import("../../lib/git.ts"),
+);
 
 let _mode: "human" | "agent" = "human";
-mock.module("../../mode.ts", () => ({
-  getMode: () => _mode,
-  setMode: (m: "human" | "agent") => {
-    _mode = m;
-  },
-  isHuman: () => _mode === "human",
-  isAgent: () => _mode === "agent",
-}));
+mock.module(
+  "../../mode.ts",
+  () =>
+    ({
+      getMode: () => _mode,
+      setMode: (m: "human" | "agent") => {
+        _mode = m;
+      },
+      isHuman: () => _mode === "human",
+      isAgent: () => _mode === "agent",
+    }) satisfies typeof import("../../mode.ts"),
+);
 
 // ── Prompt queue (replaces @inquirer/prompts) ────────────────────────────────
 
@@ -140,38 +159,50 @@ mock.module("@inquirer/prompts", () => ({
   editor: dequeuePrompt("editor"),
 }));
 
-mock.module("../../lib/token-exchange.ts", () => ({
-  exchangeCodeForToken: async () => ({
-    access_token: "mock_access_token",
-    token_type: "Bearer",
-    expires_in: 3600,
-  }),
-  fetchUserInfo: async (token: string) => {
-    if (!token || token === "expired_token") throw new Error("Unauthorized");
-    return { userId: "user_123", email: "test@example.com" };
-  },
-  OAUTH_CONFIG: {
-    clientId: "test_client",
-    scopes: "profile email",
-    authorizeUrl: "https://test.clerk.com/oauth/authorize",
-    tokenUrl: "https://test.clerk.com/oauth/token",
-    userinfoUrl: "https://test.clerk.com/oauth/userinfo",
-  },
-}));
+mock.module(
+  "../../lib/token-exchange.ts",
+  () =>
+    ({
+      exchangeCodeForToken: async () => ({
+        access_token: "mock_access_token",
+        token_type: "Bearer",
+        expires_in: 3600,
+      }),
+      fetchUserInfo: async (token: string) => {
+        if (!token || token === "expired_token") throw new Error("Unauthorized");
+        return { userId: "user_123", email: "test@example.com" };
+      },
+      OAUTH_CONFIG: {
+        clientId: "test_client",
+        scopes: "profile email",
+        authorizeUrl: "https://test.clerk.com/oauth/authorize",
+        tokenUrl: "https://test.clerk.com/oauth/token",
+        userinfoUrl: "https://test.clerk.com/oauth/userinfo",
+      },
+    }) satisfies typeof import("../../lib/token-exchange.ts"),
+);
 
-mock.module("../../lib/auth-server.ts", () => ({
-  startAuthServer: () => ({
-    port: 12345,
-    waitForCallback: async () => ({ code: "mock_code" }),
-    stop: () => {},
-  }),
-}));
+mock.module(
+  "../../lib/auth-server.ts",
+  () =>
+    ({
+      startAuthServer: () => ({
+        port: 12345,
+        waitForCallback: async () => ({ code: "mock_code" }),
+        stop: () => {},
+      }),
+    }) satisfies typeof import("../../lib/auth-server.ts"),
+);
 
-mock.module("../../lib/pkce.ts", () => ({
-  generateCodeVerifier: () => "mock_verifier",
-  generateCodeChallenge: async () => "mock_challenge",
-  generateState: () => "mock_state",
-}));
+mock.module(
+  "../../lib/pkce.ts",
+  () =>
+    ({
+      generateCodeVerifier: () => "mock_verifier",
+      generateCodeChallenge: async () => "mock_challenge",
+      generateState: () => "mock_state",
+    }) satisfies typeof import("../../lib/pkce.ts"),
+);
 
 // ── Real config module ───────────────────────────────────────────────────────
 
@@ -245,7 +276,29 @@ export const MOCK_APP_B: Application = {
   ],
 };
 
-export const MOCK_USERS = [
+/** Minimal subset of the Backend API user response. */
+interface User {
+  id: string;
+  object: string;
+  first_name: string;
+  last_name: string;
+  email_addresses: Array<{
+    id: string;
+    object: string;
+    email_address: string;
+    verification: { status: string };
+  }>;
+  created_at: number;
+  updated_at: number;
+}
+
+/** Recursive JSON Schema node for instance configuration. */
+interface ConfigSchema {
+  type: string;
+  properties?: Record<string, ConfigSchema>;
+}
+
+export const MOCK_USERS: User[] = [
   {
     id: "user_1",
     object: "user",
@@ -264,14 +317,14 @@ export const MOCK_USERS = [
   },
 ];
 
-export const MOCK_CONFIG = {
+export const MOCK_CONFIG: Record<string, unknown> = {
   session: { lifetime: 604800 },
   sign_up: { mode: "public" },
   sign_in: { enabled: true },
 };
 
-export const MOCK_SCHEMA = {
-  type: "object" as const,
+export const MOCK_SCHEMA: ConfigSchema = {
+  type: "object",
   properties: {
     session: { type: "object", properties: { lifetime: { type: "number" } } },
   },
@@ -312,42 +365,6 @@ export function parseEnvFile(content: string, filePath: string): Map<string, str
   }
 
   return env;
-}
-
-// ── Fetch mock with request logging ──────────────────────────────────────────
-
-export const requests: Array<{ method: string; url: string; body: string | null }> = [];
-
-/**
- * Install a mock `fetch` implementation that matches URLs against a route map.
- * Clears the {@link requests} log before installing.
- *
- * Routes are matched by substring — if the request URL contains the route key,
- * the corresponding value is returned as a JSON response with status 200.
- * Unmatched requests throw an error to catch missing route mocks.
- *
- * When called with no arguments (or an empty map), every fetch call throws —
- * this is the default installed by {@link setupTest} to catch unmocked calls.
- */
-export function installFetchMock(routes: Record<string, unknown> = {}) {
-  requests.length = 0;
-  const sortedRoutes = Object.entries(routes).sort((a, b) => b[0].length - a[0].length);
-  stubFetch(async (input, init) => {
-    const url = input.toString();
-    const method = init?.method ?? "GET";
-    const body = (init?.body as string) ?? null;
-    requests.push({ method, url, body });
-
-    for (const [pattern, response] of sortedRoutes) {
-      if (url.includes(pattern)) {
-        return new Response(JSON.stringify(response), { status: 200 });
-      }
-    }
-    throw new Error(
-      `Unmocked fetch route: ${method} ${url}. ` +
-        `Add a matching route pattern to installFetchMock().`,
-    );
-  });
 }
 
 // ── CLI harness ──────────────────────────────────────────────────────────────
@@ -456,9 +473,8 @@ export async function setupTest(): Promise<TestHarness> {
   mockState.gitNormalizedRemote = "github.com/test/project";
   mockState.gitRepoRoot = "/repo";
   mockState.gitRepoIdentifier = "/repo/.git";
-  requests.length = 0;
   resetPromptQueues();
-  installFetchMock();
+  http.reset();
   process.stdin.isTTY = true;
 
   const logSpy = spyOn(console, "log").mockImplementation(() => {});
@@ -481,6 +497,7 @@ export async function setupTest(): Promise<TestHarness> {
 export async function teardownTest(harness: TestHarness): Promise<void> {
   currentHarness = null;
   assertPromptQueuesEmpty();
+  http.assertRoutesConsumed();
   _setConfigDir(undefined);
   process.cwd = originalCwd;
   for (const [key, original] of envMutations) {

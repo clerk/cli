@@ -19,8 +19,6 @@ import { red } from "./lib/color.js";
 export function createProgram(): Command {
   const program = new Command();
 
-  process.on("SIGINT", () => process.exit(EXIT_CODE.SIGINT));
-
   program
     .name("clerk")
     .description("Clerk CLI")

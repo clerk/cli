@@ -11,14 +11,13 @@ import { test, expect } from "bun:test";
 import { join } from "node:path";
 import {
   useIntegrationTestHarness,
-  installFetchMock,
-  requests,
+  http,
   readConfig,
   parseEnvFile,
   clerk,
   getInstance,
   MOCK_APP,
-} from "./setup.ts";
+} from "../lib/setup.ts";
 
 const h = useIntegrationTestHarness();
 
@@ -89,9 +88,8 @@ test.each([
 
   const devInstance = getInstance(MOCK_APP, "development");
 
-  installFetchMock({
+  http.mock({
     [`/applications/${MOCK_APP.application_id}`]: MOCK_APP,
-    "/applications": [MOCK_APP],
   });
 
   // Link to the app
@@ -112,6 +110,6 @@ test.each([
   expect(env.get("CLERK_SECRET_KEY")).toBe(devInstance.secret_key);
 
   // Verify Platform API calls included auth header
-  const plapiCalls = requests.filter((r) => r.url.includes("/applications/"));
+  const plapiCalls = http.requests.filter((r) => r.url.includes("/applications/"));
   expect(plapiCalls.length).toBeGreaterThan(0);
 });

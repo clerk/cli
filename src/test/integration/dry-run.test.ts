@@ -3,32 +3,32 @@
  * Preview destructive operations safely.
  */
 
-import { test, expect } from "bun:test";
+import { test, expect, beforeEach } from "bun:test";
 import {
   useIntegrationTestHarness,
-  installFetchMock,
-  requests,
+  http,
   setProfile,
   clerk,
   getInstance,
   MOCK_APP,
-} from "./setup.ts";
+} from "../lib/setup.ts";
 
 useIntegrationTestHarness();
 
+const devInstance = getInstance(MOCK_APP, "development");
+
+beforeEach(async () => {
+  await setProfile("github.com/test/project", {
+    workspaceId: "",
+    appId: MOCK_APP.application_id,
+    instances: { development: devInstance.instance_id },
+  });
+});
+
 test.each([{ mode: "human" }, { mode: "agent" }])(
-  "dry-run prevents destructive operations ($mode mode)",
+  "api dry-run sends no requests ($mode mode)",
   async ({ mode }) => {
-    const devInstance = getInstance(MOCK_APP, "development");
-
-    await setProfile("github.com/test/project", {
-      workspaceId: "",
-      appId: MOCK_APP.application_id,
-      instances: { development: devInstance.instance_id },
-    });
-
-    // API dry-run: no request sent
-    const { stderr: apiDryRunErr } = await clerk(
+    const { stderr } = await clerk(
       "--mode",
       mode,
       "api",
@@ -39,11 +39,15 @@ test.each([{ mode: "human" }, { mode: "agent" }])(
       '{"email_address":["test@x.com"]}',
       "--dry-run",
     );
-    expect(requests.length).toBe(0);
-    expect(apiDryRunErr).toContain("[dry-run] POST");
+    expect(http.requests.length).toBe(0);
+    expect(stderr).toContain("[dry-run] POST");
+  },
+);
 
-    // Config patch dry-run: no PATCH sent
-    const { stdout: patchDryRunOut, stderr: patchDryRunErr } = await clerk(
+test.each([{ mode: "human" }, { mode: "agent" }])(
+  "config patch dry-run sends no requests ($mode mode)",
+  async ({ mode }) => {
+    const { stdout, stderr } = await clerk(
       "--mode",
       mode,
       "config",
@@ -52,14 +56,17 @@ test.each([{ mode: "human" }, { mode: "agent" }])(
       '{"session":{"lifetime":3600}}',
       "--dry-run",
     );
-    const patchReqs = requests.filter((r) => r.method === "PATCH");
-    expect(patchReqs.length).toBe(0);
-    expect(patchDryRunErr).toContain("[dry-run]");
-    expect(patchDryRunOut).toContain('"lifetime": 3600');
+    expect(http.requests.length).toBe(0);
+    expect(stderr).toContain("[dry-run]");
+    expect(stdout).toContain('"lifetime": 3600');
+  },
+);
 
-    // Same patch without dryRun -> actually sends PATCH
+test.each([{ mode: "human" }, { mode: "agent" }])(
+  "config patch without dry-run sends PATCH ($mode mode)",
+  async ({ mode }) => {
     const updatedConfig = { session: { lifetime: 3600 } };
-    installFetchMock({ "/config": updatedConfig });
+    http.mock({ "/config": updatedConfig });
 
     await clerk(
       "--mode",
@@ -70,7 +77,7 @@ test.each([{ mode: "human" }, { mode: "agent" }])(
       '{"session":{"lifetime":3600}}',
       "--yes",
     );
-    const realPatchReqs = requests.filter((r) => r.method === "PATCH");
-    expect(realPatchReqs.length).toBeGreaterThan(0);
+    const patchReqs = http.requests.filter((r) => r.method === "PATCH");
+    expect(patchReqs.length).toBe(1);
   },
 );

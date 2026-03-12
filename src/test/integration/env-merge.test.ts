@@ -9,13 +9,13 @@ import { test, expect, beforeEach } from "bun:test";
 import { join } from "node:path";
 import {
   useIntegrationTestHarness,
-  installFetchMock,
+  http,
   parseEnvFile,
   setProfile,
   clerk,
   getInstance,
   MOCK_APP,
-} from "./setup.ts";
+} from "../lib/setup.ts";
 
 const h = useIntegrationTestHarness();
 
@@ -28,7 +28,7 @@ beforeEach(async () => {
     instances: { development: devInstance.instance_id },
   });
 
-  installFetchMock({
+  http.mock({
     [`/applications/${MOCK_APP.application_id}`]: MOCK_APP,
   });
 });

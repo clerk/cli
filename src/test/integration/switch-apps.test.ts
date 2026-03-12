@@ -11,14 +11,14 @@ import { test, expect } from "bun:test";
 import { join } from "node:path";
 import {
   useIntegrationTestHarness,
-  installFetchMock,
+  http,
   readConfig,
   parseEnvFile,
   clerk,
   getInstance,
   MOCK_APP,
   MOCK_APP_B,
-} from "./setup.ts";
+} from "../lib/setup.ts";
 
 const h = useIntegrationTestHarness();
 
@@ -32,9 +32,8 @@ test("re-link from one app to another", async () => {
   const appBDev = getInstance(MOCK_APP_B, "development");
 
   // Link to App A
-  installFetchMock({
+  http.mock({
     [`/applications/${MOCK_APP.application_id}`]: MOCK_APP,
-    "/applications": [MOCK_APP],
   });
   await clerk("--mode", "human", "link", "--app", MOCK_APP.application_id);
 
@@ -52,9 +51,8 @@ test("re-link from one app to another", async () => {
   expect(config.profiles["github.com/test/project"]).toBeUndefined();
 
   // Link to App B
-  installFetchMock({
+  http.mock({
     [`/applications/${MOCK_APP_B.application_id}`]: MOCK_APP_B,
-    "/applications": [MOCK_APP_B],
   });
   await clerk("--mode", "human", "link", "--app", MOCK_APP_B.application_id);
 

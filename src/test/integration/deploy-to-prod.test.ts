@@ -7,14 +7,13 @@ import { test, expect } from "bun:test";
 import { join } from "node:path";
 import {
   useIntegrationTestHarness,
-  installFetchMock,
-  requests,
+  http,
   setProfile,
   parseEnvFile,
   clerk,
   getInstance,
   MOCK_APP,
-} from "./setup.ts";
+} from "../lib/setup.ts";
 
 const h = useIntegrationTestHarness();
 
@@ -34,7 +33,7 @@ test.each([{ mode: "human" }, { mode: "agent" }])(
       JSON.stringify({ name: "test", dependencies: { next: "15.0.0" } }),
     );
 
-    installFetchMock({
+    http.mock({
       [`/applications/${MOCK_APP.application_id}`]: MOCK_APP,
     });
 
@@ -62,11 +61,11 @@ test.each([{ mode: "human" }, { mode: "agent" }])(
 
     // Config pull targets prod instance
     await clerk("--mode", mode, "config", "pull", "--instance", "prod");
-    const configCalls = requests.filter(
+    const configCalls = http.requests.filter(
       (r) =>
         r.url.includes(`/instances/${prodInstance.instance_id}/config`) &&
         !r.url.includes("schema"),
     );
-    expect(configCalls.length).toBeGreaterThan(0);
+    expect(configCalls.length).toBe(1);
   },
 );

@@ -5,18 +5,16 @@
 
 import { test, expect, describe } from "bun:test";
 import { join } from "node:path";
-import { stubFetch } from "../stubs.ts";
 import {
   useIntegrationTestHarness,
-  installFetchMock,
-  requests,
+  http,
   setProfile,
   parseEnvFile,
   clerk,
   getInstance,
   MOCK_APP,
   MOCK_APP_DEV_ONLY,
-} from "./setup.ts";
+} from "../lib/setup.ts";
 
 const h = useIntegrationTestHarness();
 
@@ -43,17 +41,13 @@ describe("Recover from errors gracefully", () => {
     const devInstance = getInstance(MOCK_APP, "development");
 
     // Link the project
-    installFetchMock({
+    http.mock({
       [`/applications/${MOCK_APP.application_id}`]: MOCK_APP,
-      "/applications": [MOCK_APP],
     });
     await clerk("--mode", "human", "link", "--app", MOCK_APP.application_id);
 
     // API returns 500
-    stubFetch(async (input, init) => {
-      const url = input.toString();
-      const method = init?.method ?? "GET";
-      requests.push({ method, url, body: null });
+    http.stub(async () => {
       return new Response("Internal Server Error", { status: 500 });
     });
 
@@ -62,7 +56,7 @@ describe("Recover from errors gracefully", () => {
     expect(apiErr).toContain("Failed to fetch API keys");
 
     // Retry with working API
-    installFetchMock({
+    http.mock({
       [`/applications/${MOCK_APP.application_id}`]: MOCK_APP,
     });
     await clerk("--mode", "human", "env", "pull");
@@ -80,10 +74,6 @@ describe("Recover from errors gracefully", () => {
         workspaceId: "",
         appId: MOCK_APP_DEV_ONLY.application_id,
         instances: { development: devInstance.instance_id },
-      });
-
-      installFetchMock({
-        [`/applications/${MOCK_APP_DEV_ONLY.application_id}`]: MOCK_APP_DEV_ONLY,
       });
 
       const { stderr, exitCode } = await clerk.raw(

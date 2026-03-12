@@ -7,15 +7,13 @@
 import { test, expect, beforeEach } from "bun:test";
 import {
   useIntegrationTestHarness,
-  installFetchMock,
-  requests,
+  http,
   mockPrompts,
   setProfile,
   clerk,
   getInstance,
   MOCK_APP,
-  MOCK_CONFIG,
-} from "./setup.ts";
+} from "../lib/setup.ts";
 
 useIntegrationTestHarness();
 
@@ -38,19 +36,19 @@ test.each([{ mode: "human" }, { mode: "agent" }])(
       sign_in: { enabled: true },
     };
 
-    installFetchMock({
+    http.mock({
       "/config": fullConfig,
     });
 
     await clerk("--mode", mode, "config", "put", "--json", JSON.stringify(fullConfig), "--yes");
 
     // Verify PUT (not PATCH) request was sent
-    const putReqs = requests.filter((r) => r.method === "PUT");
+    const putReqs = http.requests.filter((r) => r.method === "PUT");
     expect(putReqs.length).toBe(1);
     expect(JSON.parse(putReqs[0]!.body!)).toEqual(fullConfig);
 
     // Verify no PATCH requests were sent
-    const patchReqs = requests.filter((r) => r.method === "PATCH");
+    const patchReqs = http.requests.filter((r) => r.method === "PATCH");
     expect(patchReqs.length).toBe(0);
 
     // Verify correct instance ID in URL
@@ -61,7 +59,7 @@ test.each([{ mode: "human" }, { mode: "agent" }])(
 test("config put requires confirmation in human mode without --yes", async () => {
   const fullConfig = { session: { lifetime: 3600 } };
 
-  installFetchMock({
+  http.mock({
     "/config": fullConfig,
   });
 
@@ -70,15 +68,11 @@ test("config put requires confirmation in human mode without --yes", async () =>
 
   await clerk("--mode", "human", "config", "put", "--json", JSON.stringify(fullConfig));
 
-  const putReqs = requests.filter((r) => r.method === "PUT");
+  const putReqs = http.requests.filter((r) => r.method === "PUT");
   expect(putReqs.length).toBe(1);
 });
 
 test("config put aborted when user declines confirmation", async () => {
-  installFetchMock({
-    "/config": MOCK_CONFIG,
-  });
-
   // Queue a "no" confirmation
   mockPrompts.confirm(false);
 
@@ -94,13 +88,11 @@ test("config put aborted when user declines confirmation", async () => {
   expect(result.exitCode).toBe(0);
 
   // No PUT request sent
-  const putReqs = requests.filter((r) => r.method === "PUT");
+  const putReqs = http.requests.filter((r) => r.method === "PUT");
   expect(putReqs.length).toBe(0);
 });
 
 test("config put --dry-run shows payload without sending request", async () => {
-  installFetchMock();
-
   const { stdout, stderr } = await clerk(
     "--mode",
     "human",
@@ -115,5 +107,5 @@ test("config put --dry-run shows payload without sending request", async () => {
   expect(stdout).toContain('"lifetime": 3600');
 
   // No requests sent
-  expect(requests.length).toBe(0);
+  expect(http.requests.length).toBe(0);
 });
