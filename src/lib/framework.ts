@@ -13,16 +13,31 @@ export interface FrameworkInfo {
 }
 
 // Order matters: more specific frameworks first (e.g. next before react, nuxt before vue)
-const FRAMEWORK_MAP: FrameworkInfo[] = [
+const FRAMEWORK_MAP = [
   {
     dep: "next",
     name: "Next.js",
     sdk: "@clerk/nextjs",
     envVar: "NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY",
   },
-  { dep: "expo", name: "Expo", sdk: "@clerk/expo", envVar: "EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY" },
-  { dep: "astro", name: "Astro", sdk: "@clerk/astro", envVar: "PUBLIC_CLERK_PUBLISHABLE_KEY" },
-  { dep: "nuxt", name: "Nuxt", sdk: "@clerk/nuxt", envVar: "NUXT_PUBLIC_CLERK_PUBLISHABLE_KEY" },
+  {
+    dep: "expo",
+    name: "Expo",
+    sdk: "@clerk/expo",
+    envVar: "EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY",
+  },
+  {
+    dep: "astro",
+    name: "Astro",
+    sdk: "@clerk/astro",
+    envVar: "PUBLIC_CLERK_PUBLISHABLE_KEY",
+  },
+  {
+    dep: "nuxt",
+    name: "Nuxt",
+    sdk: "@clerk/nuxt",
+    envVar: "NUXT_PUBLIC_CLERK_PUBLISHABLE_KEY",
+  },
   {
     dep: "@tanstack/react-start",
     name: "TanStack Start",
@@ -35,12 +50,39 @@ const FRAMEWORK_MAP: FrameworkInfo[] = [
     sdk: "@clerk/react-router",
     envVar: "VITE_CLERK_PUBLISHABLE_KEY",
   },
-  { dep: "fastify", name: "Fastify", sdk: "@clerk/fastify", envVar: "CLERK_PUBLISHABLE_KEY" },
-  { dep: "express", name: "Express", sdk: "@clerk/express", envVar: "CLERK_PUBLISHABLE_KEY" },
-  { dep: "vue", name: "Vue", sdk: "@clerk/vue", envVar: "VITE_CLERK_PUBLISHABLE_KEY" },
-  { dep: "react", name: "React", sdk: "@clerk/clerk-react", envVar: "VITE_CLERK_PUBLISHABLE_KEY" },
-  { dep: "vite", name: "Vite", sdk: "@clerk/clerk-react", envVar: "VITE_CLERK_PUBLISHABLE_KEY" },
-];
+  {
+    dep: "fastify",
+    name: "Fastify",
+    sdk: "@clerk/fastify",
+    envVar: "CLERK_PUBLISHABLE_KEY",
+  },
+  {
+    dep: "express",
+    name: "Express",
+    sdk: "@clerk/express",
+    envVar: "CLERK_PUBLISHABLE_KEY",
+  },
+  {
+    dep: "vue",
+    name: "Vue",
+    sdk: "@clerk/vue",
+    envVar: "VITE_CLERK_PUBLISHABLE_KEY",
+  },
+  {
+    dep: "react",
+    name: "React",
+    sdk: "@clerk/clerk-react",
+    envVar: "VITE_CLERK_PUBLISHABLE_KEY",
+  },
+  {
+    dep: "vite",
+    name: "Vite",
+    sdk: "@clerk/clerk-react",
+    envVar: "VITE_CLERK_PUBLISHABLE_KEY",
+  },
+] as const satisfies readonly FrameworkInfo[];
+
+export type FrameworkDep = (typeof FRAMEWORK_MAP)[number]["dep"];
 
 const FALLBACK_KEY = "CLERK_PUBLISHABLE_KEY";
 
@@ -56,7 +98,7 @@ async function readDeps(cwd: string): Promise<Record<string, string> | null> {
   }
 }
 
-export async function detectFramework(cwd: string): Promise<FrameworkInfo | null> {
+export async function detectFramework(cwd: string) {
   const allDeps = await readDeps(cwd);
   if (!allDeps) return null;
 
