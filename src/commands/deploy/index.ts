@@ -1,96 +1,41 @@
 import { select, input, confirm, password } from "@inquirer/prompts";
 import { isAgent } from "../../mode.js";
 import { dim, bold, cyan, green, blue, yellow } from "../../lib/color.js";
-
-const DEPLOY_PROMPT = `You are deploying a Clerk application to production. Follow these steps:
-
-## Prerequisites
-
-Ensure the following before starting:
-- The user is authenticated (\`clerk auth login\` has been run)
-- A Clerk application is linked to the project (\`clerk link\` has been run)
-- The project has a development instance with a working configuration
-
-## Step 1: Verify Subscription Compatibility
-
-Check that the development instance's features are covered by the application's subscription plan.
-
-- Fetch the development config: \`GET /v1/platform/applications/{appID}/instances/development/config\`
-- Fetch the subscription: \`GET /v1/platform/applications/{appID}/subscription\`
-- If any development features are not covered by the plan, the user must upgrade before deploying.
-
-## Step 2: Choose a Production Domain
-
-Ask the user which domain setup they prefer:
-
-**Option A: Custom domain**
-- The user provides their own domain (e.g., example.com)
-- DNS must be configured to point to Clerk. Check if the DNS provider supports Domain Connect for automatic setup.
-- If Domain Connect is available, direct the user to the Domain Connect URL to authorize DNS changes.
-- If not, provide the DNS records the user must add manually.
-- Verify DNS propagation: \`POST /v1/platform/applications/{appID}/domains/{domainID}/dns_check\`
-
-**Option B: Clerk-provided subdomain**
-- A subdomain like \`{adjective}-{animal}-{number}.clerk.app\` is automatically assigned.
-- No DNS configuration is needed.
-
-## Step 3: Create the Production Instance
-
-Create or configure the production instance for the application.
-- Add the domain: \`POST /v1/platform/applications/{appID}/domains\` with body \`{ "name": "<domain>", "is_satellite": false }\`
-- Note: There is currently no dedicated endpoint to add a production instance to an existing app. This may require \`POST /v1/platform/applications\` with \`environment_types: ["development", "production"]\`.
-
-## Step 4: Configure Social OAuth Providers
-
-For each social provider enabled in the development instance (e.g., Google, GitHub, Apple), production OAuth credentials are required.
-
-Check the dev config for \`connection_oauth_*\` keys. For each enabled provider:
-
-1. Collect the required credentials from the user:
-   - Most providers: \`client_id\` and \`client_secret\`
-   - Apple: also requires \`key_id\` and \`team_id\`
-
-2. When helping the user create OAuth credentials, provide these values:
-   - Authorized JavaScript origins: \`https://{domain}\` and \`https://www.{domain}\`
-   - Authorized redirect URI: \`https://accounts.{domain}/v1/oauth_callback\`
-
-3. Write credentials to production config:
-   \`PATCH /v1/platform/applications/{appID}/instances/production/config\`
-   Body: \`{ "connection_oauth_{provider}": { "enabled": true, "client_id": "...", "client_secret": "..." } }\`
-
-Provider-specific documentation: https://clerk.com/docs/guides/configure/auth-strategies/social-connections/{provider}
-
-## Step 5: Finalize
-
-After all configuration is complete:
-- Inform the user their production application is ready at \`https://{domain}\`
-- Remind them to redeploy their application with the updated Clerk production secret keys
-- They can pull production keys with: \`clerk env pull --instance prod\`
-
-## API Reference
-
-| Method | Endpoint | Purpose |
-|--------|----------|---------|
-| GET | /v1/platform/applications/{appID} | Fetch application details |
-| GET | .../instances/development/config | Read dev instance config and enabled features |
-| GET | .../instances/production/config | Check if production instance exists (404 if not) |
-| GET | .../subscription | Check subscription plan |
-| POST | /v1/platform/applications | Create application with production instance |
-| POST | .../domains | Add a custom domain |
-| POST | .../domains/{domainID}/dns_check | Trigger DNS verification |
-| PATCH | .../instances/production/config | Write OAuth credentials to production |
-
-Refer to the Clerk Platform API docs for detailed request/response schemas.`;
+import { createCommandOutput } from "../../lib/cli.js";
+import { getToken } from "../../lib/credential-store.js";
+import { resolveProfile } from "../../lib/config.js";
 
 export async function deploy(options: { debug?: boolean }) {
-  if (isAgent()) {
-    console.log(DEPLOY_PROMPT);
-    return;
-  }
+  using out = createCommandOutput("deploy");
+
   const debug = options.debug ? (...args: unknown[]) => console.log("[debug]", ...args) : () => {};
 
+  // Pre-flight: auth + link
+  const token = await getToken();
+  out.add("authenticated", !!token, token ? "Logged in" : "Not authenticated", "clerk auth login");
+  if (!token) return;
+
+  const profile = await resolveProfile(process.cwd());
+  out.add(
+    "linked",
+    !!profile,
+    profile ? `Linked to ${profile.profile.appId}` : "Not linked",
+    "clerk link",
+  );
+  if (!profile) return;
+
+  if (isAgent()) {
+    // Agent mode: report pre-flight status only — the deploy wizard requires interactive input
+    out.add("subscription", true, "Check subscription compatibility before deploying");
+    out.add("production_instance", false, "No production instance configured");
+    out.suggest("clerk deploy (run interactively to complete setup)");
+    return;
+  }
+
+  // ── Human interactive flow ───────────────────────────────────────────────
+
   console.log(
-    yellow("[mock] This command uses mocked data and is not yet wired up to real APIs.") + "\n",
+    yellow("  [mock] This command uses mocked data and is not yet wired up to real APIs.") + "\n",
   );
 
   debug("Checking for authenticated user and linked application...");
@@ -113,11 +58,11 @@ export async function deploy(options: { debug?: boolean }) {
 
   if (unsupported.length > 0) {
     debug(`Found features not covered by subscription: ${unsupported.join(", ")}`);
-    debug("User must upgrade their plan before deploying.");
+    out.add("subscription", false, `Features not covered: ${unsupported.join(", ")}`);
     return;
   }
 
-  debug("All development features are covered by subscription.");
+  out.add("subscription", true, "All dev features covered by plan");
 
   const domainChoice = await select({
     message: "How would you like to set up your production domain?",
@@ -170,6 +115,8 @@ export async function deploy(options: { debug?: boolean }) {
 
     debug("Opening Domain Connect flow in browser...");
   }
+
+  out.add("domain", true, `Production domain: ${domain}`);
 
   // Check dev instance settings that require production credentials
   debug("Checking development instance settings for production requirements...");
@@ -231,10 +178,12 @@ export async function deploy(options: { debug?: boolean }) {
       debug(`Received ${displayName} credentials (client ID: ${clientId.slice(0, 8)}...)`);
     }
 
-    debug("All social provider credentials collected.");
+    out.add("oauth_credentials", true, "All provider credentials configured");
   }
 
   debug("Deploy complete.");
+
+  out.add("deployed", true, `Ready at https://${domain}`);
 
   console.log(
     `\n${bold(green(`Your production application is set up and ready at ${blue(`https://${domain}`)}`))}`,

@@ -1,30 +1,14 @@
 import { basename } from "node:path";
 import { search, confirm } from "@inquirer/prompts";
-import { isAgent } from "../../mode.js";
+import { isHuman } from "../../mode.js";
 import { getToken } from "../../lib/credential-store.js";
 import { login } from "../auth/login.js";
 import { listApplications, fetchApplication, type Application } from "../../lib/plapi.js";
 import { setProfile, resolveProfile, moveProfile } from "../../lib/config.js";
 import { getGitRepoIdentifier, getGitRepoRoot, getGitNormalizedRemote } from "../../lib/git.js";
-import { dim, cyan } from "../../lib/color.js";
+import { dim } from "../../lib/color.js";
+import { createCommandOutput } from "../../lib/cli.js";
 import { CliError } from "../../lib/errors.js";
-
-const AGENT_PROMPT = `You are linking a Clerk application to the current project directory.
-
-## Steps
-
-1. Ensure the user is authenticated. If not, run \`clerk auth login\` first.
-2. Determine which application to link:
-   - If the user provides an app ID: \`clerk link --app <app_id>\`
-   - Otherwise, list available applications with \`GET /v1/platform/applications\` and ask the user to select one.
-3. The link is stored in ~/.clerk/config.json as a profile keyed by the git repository root (shared across worktrees).
-
-## API Endpoints
-
-| Method | Endpoint | Purpose |
-|--------|----------|---------|
-| GET | /v1/platform/applications | List all applications |
-| GET | /v1/platform/applications/{appId} | Fetch application with instance details |`;
 
 interface LinkOptions {
   app?: string;
@@ -36,10 +20,7 @@ function appLabel(app: Application): string {
 }
 
 export async function link(options: LinkOptions = {}): Promise<void> {
-  if (isAgent()) {
-    console.log(AGENT_PROMPT);
-    return;
-  }
+  using out = createCommandOutput("link");
 
   // Resolve git repo identifier — prefer normalized remote URL for cross-clone matching
   const cwd = process.cwd();
@@ -52,44 +33,58 @@ export async function link(options: LinkOptions = {}): Promise<void> {
   // Check if already linked
   const existing = await resolveProfile(cwd);
   if (existing) {
-    // Print context-specific message
-    if (existing.resolvedVia === "remote") {
-      console.log(`Auto-linked via git remote (${dim(normalizedRemote ?? existing.path)})`);
-    } else {
-      console.log(`Already linked to ${cyan(existing.profile.appId)} in ${dim(existing.path)}`);
-    }
+    out.add("already_linked", true, `Already linked to ${existing.profile.appId}`);
 
     if (options.skipIfLinked) return;
 
-    // Offer upgrade when an old profile key can migrate to a remote URL
-    if (existing.availableRemote) {
-      console.log(
-        `We detected this is now a git repository with remote ${dim(existing.availableRemote)}.`,
-      );
-      const upgrade = await confirm({
-        message:
-          "Update the link to use the git remote? This shares it across clones and worktrees.",
-        default: true,
-      });
-      if (upgrade) {
-        await moveProfile(existing.path, existing.availableRemote);
-        console.log(`\nLink updated to use git remote (${cyan(existing.availableRemote)})`);
-        return;
+    if (isHuman()) {
+      // Print context-specific message
+      if (existing.resolvedVia === "remote") {
+        console.log(`  Auto-linked via git remote (${dim(normalizedRemote ?? existing.path)})`);
       }
-    }
 
-    const relink = await confirm({
-      message: "Re-link to a different application?",
-      default: false,
-    });
-    if (!relink) return;
+      // Offer upgrade when an old profile key can migrate to a remote URL
+      if (existing.availableRemote) {
+        console.log(
+          `  We detected this is now a git repository with remote ${dim(existing.availableRemote)}.`,
+        );
+        const upgrade = await confirm({
+          message:
+            "Update the link to use the git remote? This shares it across clones and worktrees.",
+          default: true,
+        });
+        if (upgrade) {
+          await moveProfile(existing.path, existing.availableRemote);
+          out.add("upgraded", true, `Link updated to use git remote (${existing.availableRemote})`);
+          return;
+        }
+      }
+
+      const relink = await confirm({
+        message: "Re-link to a different application?",
+        default: false,
+      });
+      if (!relink) return;
+    } else {
+      // Agent: already linked, suggest re-link with --app if needed
+      out.suggest(`clerk link --app <app_id>`);
+      return;
+    }
   }
 
-  // Ensure authenticated
+  // Check auth
   const token = await getToken();
   if (!token) {
-    console.log("Not logged in. Authenticating first...");
-    await login();
+    if (isHuman()) {
+      console.log("  Not logged in. Authenticating first...");
+      await login();
+      out.add("authenticated", true, "Logged in");
+    } else {
+      out.add("authenticated", false, "Not logged in", "clerk auth login");
+      return;
+    }
+  } else {
+    out.add("authenticated", true, "Logged in");
   }
 
   // Determine which app to link
@@ -101,35 +96,56 @@ export async function link(options: LinkOptions = {}): Promise<void> {
     const apps = await listApplications();
 
     if (apps.length === 0) {
-      throw new CliError("No applications found. Create one at https://dashboard.clerk.com first.");
+      if (isHuman()) {
+        throw new CliError("No applications found. Create one at https://dashboard.clerk.com");
+      }
+      out.add(
+        "applications",
+        false,
+        "No applications found",
+        "Create one at https://dashboard.clerk.com",
+      );
+      return;
     }
 
-    const choices = apps.map((a) => ({
-      name: appLabel(a),
-      value: a.application_id,
-    }));
+    if (isHuman()) {
+      const choices = apps.map((a) => ({
+        name: appLabel(a),
+        value: a.application_id,
+      }));
 
-    const selectedId = await search({
-      message: `Select a Clerk application to link ${dim(`(repo: ${basename(displayPath)})`)}`,
-      source: (term) => {
-        if (!term) return choices;
-        const lower = term.toLowerCase();
-        return choices.filter((c) => c.name.toLowerCase().includes(lower));
-      },
-    });
+      const selectedId = await search({
+        message: `Select a Clerk application to link ${dim(`(repo: ${basename(displayPath)})`)}`,
+        source: (term) => {
+          if (!term) return choices;
+          const lower = term.toLowerCase();
+          return choices.filter((c) => c.name.toLowerCase().includes(lower));
+        },
+      });
 
-    const found = apps.find((a) => a.application_id === selectedId);
-    if (!found) {
-      throw new CliError("Selected application not found.");
+      const found = apps.find((a) => a.application_id === selectedId);
+      if (!found) {
+        throw new CliError("Selected application not found.");
+      }
+      app = found;
+    } else {
+      // Agent can't pick interactively — list available apps with names
+      const appList = apps.map((a) => `${appLabel(a)}`).join(", ");
+      out.add("applications", true, `${apps.length} available: ${appList}`);
+      out.suggest("clerk link --app <app_id> (pick one from above)");
+      return;
     }
-    app = found;
   }
 
   const devInstance = app.instances.find((i) => i.environment_type === "development");
   const prodInstance = app.instances.find((i) => i.environment_type === "production");
 
   if (!devInstance) {
-    throw new CliError("Application has no development instance.");
+    if (isHuman()) {
+      throw new CliError("Application has no development instance.");
+    }
+    out.add("instance", false, "Application has no development instance");
+    return;
   }
 
   // Store profile keyed by git repo (or cwd if not in a repo)
@@ -143,5 +159,5 @@ export async function link(options: LinkOptions = {}): Promise<void> {
   });
 
   const label = app.name || app.application_id;
-  console.log(`\nLinked to ${cyan(label)} in ${dim(displayPath)}`);
+  out.add("linked", true, `Linked to ${label} in ${displayPath}`);
 }

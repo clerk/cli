@@ -92,8 +92,6 @@ const mockApp = {
 
 describe("link", () => {
   let consoleSpy: ReturnType<typeof spyOn>;
-  let errorSpy: ReturnType<typeof spyOn>;
-  let exitSpy: ReturnType<typeof spyOn>;
 
   afterEach(() => {
     _modeOverride = undefined;
@@ -115,31 +113,38 @@ describe("link", () => {
     mockSearch.mockReset();
     mockConfirm.mockReset();
     consoleSpy?.mockRestore();
-    errorSpy?.mockRestore();
-    exitSpy?.mockRestore();
   });
 
   describe("agent mode", () => {
-    test("outputs prompt and returns", async () => {
+    test("outputs structured TOON for unauthenticated state", async () => {
       mockIsAgent.mockReturnValue(true);
+      mockGetToken.mockResolvedValue(null);
       consoleSpy = spyOn(console, "log").mockImplementation(() => {});
 
       await link();
 
-      expect(consoleSpy).toHaveBeenCalledTimes(1);
-      const output = consoleSpy.mock.calls[0][0] as string;
-      expect(output).toContain("linking a Clerk application");
+      const output = capturedOutput(consoleSpy);
+      expect(output).toContain("command: link");
+      expect(output).toContain("authenticated,false");
+      expect(output).toContain("clerk auth login");
     });
 
     test("does not trigger interactive prompts", async () => {
       mockIsAgent.mockReturnValue(true);
+      mockGetToken.mockResolvedValue("token");
+      mockListApplications.mockResolvedValue([
+        {
+          application_id: "app_a",
+          name: "App A",
+          instances: [{ instance_id: "ins_1", environment_type: "development" }],
+        },
+      ]);
       consoleSpy = spyOn(console, "log").mockImplementation(() => {});
 
       await link();
 
       expect(mockSearch).not.toHaveBeenCalled();
-      expect(mockGetToken).not.toHaveBeenCalled();
-      expect(mockListApplications).not.toHaveBeenCalled();
+      expect(mockConfirm).not.toHaveBeenCalled();
     });
   });
 
@@ -349,10 +354,11 @@ describe("link", () => {
       await link();
     });
 
-    test("exits when no apps found", async () => {
+    test("throws CliError when no apps found", async () => {
       mockIsAgent.mockReturnValue(false);
       mockGetToken.mockResolvedValue("token");
       mockListApplications.mockResolvedValue([]);
+      consoleSpy = spyOn(console, "log").mockImplementation(() => {});
 
       await expect(link()).rejects.toThrow("No applications found");
     });
@@ -442,7 +448,7 @@ describe("link", () => {
       expect(storedProfile.instances.production).toBeUndefined();
     });
 
-    test("exits when no development instance", async () => {
+    test("throws CliError when no development instance", async () => {
       mockIsAgent.mockReturnValue(false);
       mockGetToken.mockResolvedValue("token");
       mockFetchApplication.mockResolvedValue({
@@ -456,10 +462,9 @@ describe("link", () => {
           },
         ],
       });
+      consoleSpy = spyOn(console, "log").mockImplementation(() => {});
 
-      await expect(link({ app: "app_123" })).rejects.toThrow(
-        "Application has no development instance",
-      );
+      await expect(link({ app: "app_123" })).rejects.toThrow("no development instance");
     });
 
     test("logs confirmation message", async () => {
@@ -470,8 +475,8 @@ describe("link", () => {
 
       await link({ app: "app_123" });
 
-      const lastCall = consoleSpy.mock.calls[consoleSpy.mock.calls.length - 1][0] as string;
-      expect(lastCall).toContain("Linked to");
+      const output = capturedOutput(consoleSpy);
+      expect(output).toContain("Linked to");
     });
   });
 
@@ -494,7 +499,7 @@ describe("link", () => {
       expect(output).toContain("github.com/org/repo");
     });
 
-    test("skips silently with skipIfLinked after printing auto-link notice", async () => {
+    test("skips silently with skipIfLinked after printing already-linked check", async () => {
       mockIsAgent.mockReturnValue(false);
       mockGetGitNormalizedRemote.mockResolvedValue("github.com/org/repo");
       mockResolveProfile.mockResolvedValue({
@@ -507,7 +512,7 @@ describe("link", () => {
       await link({ skipIfLinked: true });
 
       const output = capturedOutput(consoleSpy);
-      expect(output).toContain("Auto-linked via git remote");
+      expect(output).toContain("Already linked");
       expect(mockConfirm).not.toHaveBeenCalled();
       expect(mockGetToken).not.toHaveBeenCalled();
     });

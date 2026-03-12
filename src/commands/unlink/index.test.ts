@@ -44,8 +44,6 @@ const mockProfile = {
 
 describe("unlink", () => {
   let consoleSpy: ReturnType<typeof spyOn>;
-  let errorSpy: ReturnType<typeof spyOn>;
-  let exitSpy: ReturnType<typeof spyOn>;
 
   afterEach(() => {
     _modeOverride = undefined;
@@ -57,44 +55,55 @@ describe("unlink", () => {
     mockGetGitRepoRoot.mockResolvedValue("/repo");
     mockConfirm.mockReset();
     consoleSpy?.mockRestore();
-    errorSpy?.mockRestore();
-    exitSpy?.mockRestore();
   });
 
   describe("agent mode", () => {
-    test("outputs prompt and returns", async () => {
+    test("outputs structured TOON with check results", async () => {
       mockIsAgent.mockReturnValue(true);
+      mockResolveProfile.mockResolvedValue(mockProfile);
+      mockRemoveProfile.mockResolvedValue(undefined);
       consoleSpy = spyOn(console, "log").mockImplementation(() => {});
 
-      await unlink();
+      await unlink({ yes: true });
 
-      expect(consoleSpy).toHaveBeenCalledTimes(1);
-      const output = consoleSpy.mock.calls[0][0] as string;
-      expect(output).toContain("unlinking a Clerk application");
+      const output = capturedOutput(consoleSpy);
+      expect(output).toContain("command: unlink");
+      expect(output).toContain("linked,true");
+      expect(output).toContain("unlinked,true");
     });
 
-    test("does not trigger side effects", async () => {
+    test("does not trigger interactive prompts", async () => {
       mockIsAgent.mockReturnValue(true);
+      mockResolveProfile.mockResolvedValue(mockProfile);
+      mockRemoveProfile.mockResolvedValue(undefined);
       consoleSpy = spyOn(console, "log").mockImplementation(() => {});
 
-      await unlink();
+      await unlink({ yes: true });
 
-      expect(mockResolveProfile).not.toHaveBeenCalled();
-      expect(mockRemoveProfile).not.toHaveBeenCalled();
       expect(mockConfirm).not.toHaveBeenCalled();
     });
   });
 
   describe("not linked", () => {
-    test("exits when directory is not linked", async () => {
+    test("throws in human mode when not linked", async () => {
       mockIsAgent.mockReturnValue(false);
+      mockIsHuman.mockReturnValue(true);
       mockResolveProfile.mockResolvedValue(undefined);
-      errorSpy = spyOn(console, "error").mockImplementation(() => {});
-      exitSpy = spyOn(process, "exit").mockImplementation(() => {
-        throw new Error("exit");
-      });
+      consoleSpy = spyOn(console, "log").mockImplementation(() => {});
 
       await expect(unlink()).rejects.toThrow("not linked");
+    });
+
+    test("reports not linked and returns in agent mode", async () => {
+      mockIsAgent.mockReturnValue(true);
+      mockIsHuman.mockReturnValue(false);
+      mockResolveProfile.mockResolvedValue(undefined);
+      consoleSpy = spyOn(console, "log").mockImplementation(() => {});
+
+      await unlink();
+
+      const output = capturedOutput(consoleSpy);
+      expect(output).toContain("not linked");
     });
   });
 
@@ -128,7 +137,7 @@ describe("unlink", () => {
       expect(mockRemoveProfile).toHaveBeenCalledWith(process.cwd());
     });
 
-    test("aborts when user declines", async () => {
+    test("throws UserAbortError when user declines", async () => {
       mockIsAgent.mockReturnValue(false);
       mockIsHuman.mockReturnValue(true);
       mockResolveProfile.mockResolvedValue(mockProfile);
@@ -136,6 +145,7 @@ describe("unlink", () => {
       consoleSpy = spyOn(console, "log").mockImplementation(() => {});
 
       await expect(unlink()).rejects.toThrow("User aborted");
+
       expect(mockRemoveProfile).not.toHaveBeenCalled();
     });
   });

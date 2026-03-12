@@ -3,73 +3,39 @@ import { login } from "../auth/login.js";
 import { link } from "../link/index.js";
 import { pull } from "../env/pull.js";
 import { detectFramework } from "../../lib/framework.js";
-import { isAgent } from "../../mode.js";
-import { dim, cyan } from "../../lib/color.js";
+import { isHuman } from "../../mode.js";
+import { cyan } from "../../lib/color.js";
+import { createCommandOutput } from "../../lib/cli.js";
+import { getToken } from "../../lib/credential-store.js";
+import { resolveProfile } from "../../lib/config.js";
+import { CliError } from "../../lib/errors.js";
+import { getRecipe } from "./recipes/index.js";
 
-const AGENT_PROMPT = `You are integrating Clerk authentication into an existing project. Follow these steps:
+// ── Package manager detection ──────────────────────────────────────────────
 
-1. Authenticate with Clerk: Run \`clerk auth login\` to log in via the browser.
+const PM_CHECKS: Array<{ files: string[]; add: string }> = [
+  { files: ["bun.lockb", "bun.lock"], add: "bun add" },
+  { files: ["yarn.lock"], add: "yarn add" },
+  { files: ["pnpm-lock.yaml"], add: "pnpm add" },
+];
 
-2. Link a Clerk application: Run \`clerk link\` to associate this directory with a Clerk application.
-
-3. Install the Clerk SDK appropriate for the project's framework:
-   - Next.js: \`@clerk/nextjs\`
-   - React: \`@clerk/clerk-react\`
-   - Express: \`@clerk/express\`
-   - Fastify: \`@clerk/fastify\`
-   - Astro: \`@clerk/astro\`
-   - Tanstack Start: \`@clerk/tanstack-start\`
-   - React Router: \`@clerk/react-router\`
-   - Nuxt: \`@clerk/nuxt\`
-   - Vue: \`@clerk/vue\`
-
-4. Add the environment variable NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY (or the equivalent for your framework) and CLERK_SECRET_KEY to the project's .env.local file. You can retrieve these with \`clerk env pull\`.
-
-5. Set up the Clerk provider at the root of the application:
-   - For Next.js: Wrap the app with \`<ClerkProvider>\` in the root layout.
-   - For React: Wrap the app with \`<ClerkProvider publishableKey={key}>\`.
-   - For Express/Fastify: Use the \`clerkMiddleware()\` middleware.
-
-6. Add sign-in and sign-up routes/components:
-   - Use \`<SignInButton>\` and \`<SignUpButton>\` for trigger buttons.
-   - Use \`<SignIn>\` and \`<SignUp>\` for full-page components.
-   - Use \`<UserButton>\` to show the signed-in user's avatar and menu.
-
-7. Protect routes that require authentication:
-   - Next.js: Use \`clerkMiddleware()\` in \`middleware.ts\` and configure with \`createRouteMatcher\`.
-   - React: Use \`<SignedIn>\` and \`<SignedOut>\` components to conditionally render.
-   - Express/Fastify: Use \`requireAuth()\` middleware on protected routes.
-
-8. Access the current user:
-   - Client-side: \`useUser()\` hook returns the current user object.
-   - Server-side (Next.js): \`auth()\` or \`currentUser()\` from \`@clerk/nextjs/server\`.
-   - Express/Fastify: \`req.auth\` after applying \`clerkMiddleware()\`.
-
-Refer to the Clerk docs at https://clerk.com/docs for framework-specific details.`;
-
-async function detectPackageManager(cwd: string): Promise<{ cmd: string; add: string }> {
-  const checks: Array<{ files: string[]; cmd: string; add: string }> = [
-    { files: ["bun.lockb", "bun.lock"], cmd: "bun", add: "bun add" },
-    { files: ["yarn.lock"], cmd: "yarn", add: "yarn add" },
-    { files: ["pnpm-lock.yaml"], cmd: "pnpm", add: "pnpm add" },
-  ];
-
-  for (const { files, cmd, add } of checks) {
+/** Returns the install command for the detected package manager (e.g. "bun add", "npm install"). */
+async function detectPackageManager(cwd: string): Promise<string> {
+  for (const { files, add } of PM_CHECKS) {
     for (const file of files) {
       if (await Bun.file(join(cwd, file)).exists()) {
-        return { cmd, add };
+        return add;
       }
     }
   }
-
-  return { cmd: "npm", add: "npm install" };
+  return "npm install";
 }
 
 async function installSdk(cwd: string, sdk: string, frameworkName: string): Promise<void> {
   const pm = await detectPackageManager(cwd);
-  console.log(`Installing ${cyan(sdk)} for ${frameworkName}...`);
+  console.log(`  Installing ${cyan(sdk)} for ${frameworkName}...`);
 
-  const proc = Bun.spawn(pm.add.split(" ").concat(sdk), {
+  const proc = Bun.spawn(pm.split(" ").concat(sdk), {
     cwd,
     stdout: "inherit",
     stderr: "inherit",
@@ -77,34 +43,84 @@ async function installSdk(cwd: string, sdk: string, frameworkName: string): Prom
   const exitCode = await proc.exited;
 
   if (exitCode !== 0) {
-    console.error(`Failed to install ${sdk}. You can install it manually: ${pm.add} ${sdk}`);
+    console.error(`  Failed to install ${sdk}. You can install it manually: ${pm} ${sdk}`);
   }
 }
 
 export async function init() {
-  if (isAgent()) {
-    console.log(AGENT_PROMPT);
-    return;
-  }
-
-  // Step 1: Authenticate the user
-  await login();
-
-  // Step 2: Link to a Clerk application
-  await link({ skipIfLinked: true });
-
+  using out = createCommandOutput("init");
   const cwd = process.cwd();
 
-  // Step 3: Detect framework and install SDK
-  const fw = await detectFramework(cwd);
-  if (fw) {
-    await installSdk(cwd, fw.sdk, fw.name);
+  if (isHuman()) {
+    // Human mode: run the full interactive flow (login/link throw on failure)
+    await login();
+    out.add("authenticated", true, "Logged in");
+
+    await link({ skipIfLinked: true });
+
+    // Verify link succeeded — link() doesn't return a value, so check directly
+    const profile = await resolveProfile(cwd);
+    if (!profile) {
+      throw new CliError("Failed to link application. Run `clerk link` to link manually.");
+    }
+    out.add("linked", true, `Linked to ${profile.profile.appId}`);
   } else {
-    console.log(
-      `Could not detect a framework. Install the appropriate Clerk SDK manually: ${dim("https://clerk.com/docs")}`,
+    // Agent mode: check pre-requisites without side effects
+    const token = await getToken();
+    out.add(
+      "authenticated",
+      !!token,
+      token ? "Logged in" : "Not authenticated",
+      "clerk auth login",
+    );
+    if (!token) return;
+
+    const profile = await resolveProfile(cwd);
+    out.add(
+      "linked",
+      !!profile,
+      profile ? `Linked to ${profile.profile.appId}` : "Not linked",
+      "clerk link",
+    );
+    if (!profile) return;
+  }
+
+  const fw = await detectFramework(cwd);
+
+  if (fw) {
+    out.add("framework", true, `Detected ${fw.name}`);
+
+    if (isHuman()) {
+      await installSdk(cwd, fw.sdk, fw.name);
+      out.add("sdk", true, `Installed ${fw.sdk}`);
+    } else {
+      const pm = await detectPackageManager(cwd);
+      out.add("sdk", false, `${fw.sdk} needed`, `${pm} ${fw.sdk}`);
+    }
+  } else {
+    out.add(
+      "framework",
+      false,
+      "Could not detect framework",
+      "See https://clerk.com/docs for SDK installation",
     );
   }
 
-  // Step 4: Pull environment variables
-  await pull({});
+  if (isHuman()) {
+    await pull({});
+    out.add("env", true, "Environment variables pulled");
+  } else {
+    out.add("env", false, "Environment variables not pulled", "clerk env pull");
+  }
+
+  if (fw) {
+    const recipe = getRecipe(fw.dep);
+    if (recipe) {
+      out.meta("recipe", recipe);
+      if (isHuman()) {
+        console.log();
+        console.log(recipe);
+      }
+    }
+  }
 }

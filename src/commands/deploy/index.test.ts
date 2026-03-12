@@ -1,5 +1,10 @@
 import { test, expect, describe, afterEach, mock, spyOn } from "bun:test";
-import { capturedOutput, promptsStubs } from "../../test/stubs.ts";
+import {
+  capturedOutput,
+  configStubs,
+  credentialStoreStubs,
+  promptsStubs,
+} from "../../test/stubs.ts";
 
 const mockIsAgent = mock();
 let _modeOverride: string | undefined;
@@ -13,6 +18,18 @@ mock.module("../../mode.ts", () => ({
     _modeOverride = m;
   },
   getMode: () => _modeOverride ?? "human",
+}));
+
+const mockGetToken = mock();
+mock.module("../../lib/credential-store.ts", () => ({
+  ...credentialStoreStubs,
+  getToken: (...args: unknown[]) => mockGetToken(...args),
+}));
+
+const mockResolveProfile = mock();
+mock.module("../../lib/config.ts", () => ({
+  ...configStubs,
+  resolveProfile: (...args: unknown[]) => mockResolveProfile(...args),
 }));
 
 const mockSelect = mock();
@@ -30,12 +47,20 @@ mock.module("@inquirer/prompts", () => ({
 
 const { deploy } = await import("./index.ts");
 
+const mockProfile = {
+  path: "github.com/org/repo",
+  profile: { workspaceId: "", appId: "app_xyz789", instances: { development: "ins_dev" } },
+  resolvedVia: "remote" as const,
+};
+
 describe("deploy", () => {
   let consoleSpy: ReturnType<typeof spyOn>;
 
   afterEach(() => {
     _modeOverride = undefined;
     mockIsAgent.mockReset();
+    mockGetToken.mockReset();
+    mockResolveProfile.mockReset();
     mockSelect.mockReset();
     mockInput.mockReset();
     mockConfirm.mockReset();
@@ -44,56 +69,37 @@ describe("deploy", () => {
   });
 
   describe("agent mode", () => {
-    test("outputs deploy prompt and returns", async () => {
+    test("outputs structured TOON with pre-flight checks", async () => {
       mockIsAgent.mockReturnValue(true);
+      mockGetToken.mockResolvedValue("token");
+      mockResolveProfile.mockResolvedValue(mockProfile);
       consoleSpy = spyOn(console, "log").mockImplementation(() => {});
 
       await deploy({});
 
-      expect(consoleSpy).toHaveBeenCalledTimes(1);
-      const output = consoleSpy.mock.calls[0][0] as string;
-      expect(output).toContain("deploying a Clerk application to production");
+      const output = capturedOutput(consoleSpy);
+      expect(output).toContain("command: deploy");
+      expect(output).toContain("authenticated");
+      expect(output).toContain("production_instance");
     });
 
-    test("prompt includes all deployment steps", async () => {
+    test("reports unauthenticated when no token", async () => {
       mockIsAgent.mockReturnValue(true);
+      mockGetToken.mockResolvedValue(null);
       consoleSpy = spyOn(console, "log").mockImplementation(() => {});
 
       await deploy({});
 
-      const output = consoleSpy.mock.calls[0][0] as string;
-      expect(output).toContain("Prerequisites");
-      expect(output).toContain("Verify Subscription Compatibility");
-      expect(output).toContain("Choose a Production Domain");
-      expect(output).toContain("Create the Production Instance");
-      expect(output).toContain("Configure Social OAuth Providers");
-      expect(output).toContain("Finalize");
-    });
-
-    test("prompt includes API reference", async () => {
-      mockIsAgent.mockReturnValue(true);
-      consoleSpy = spyOn(console, "log").mockImplementation(() => {});
-
-      await deploy({});
-
-      const output = consoleSpy.mock.calls[0][0] as string;
-      expect(output).toContain("/v1/platform/applications");
-      expect(output).toContain("instances/production/config");
-      expect(output).toContain("instances/development/config");
-    });
-
-    test("prompt includes OAuth redirect URI pattern", async () => {
-      mockIsAgent.mockReturnValue(true);
-      consoleSpy = spyOn(console, "log").mockImplementation(() => {});
-
-      await deploy({});
-
-      const output = consoleSpy.mock.calls[0][0] as string;
-      expect(output).toContain("accounts.{domain}/v1/oauth_callback");
+      const output = capturedOutput(consoleSpy);
+      expect(output).toContain("authenticated");
+      expect(output).toContain("false");
+      expect(output).toContain("clerk auth login");
     });
 
     test("does not trigger interactive prompts", async () => {
       mockIsAgent.mockReturnValue(true);
+      mockGetToken.mockResolvedValue("token");
+      mockResolveProfile.mockResolvedValue(mockProfile);
       consoleSpy = spyOn(console, "log").mockImplementation(() => {});
 
       await deploy({ debug: true });
@@ -108,20 +114,22 @@ describe("deploy", () => {
   describe("human mode", () => {
     function mockHumanFlow() {
       mockIsAgent.mockReturnValue(false);
+      mockGetToken.mockResolvedValue("token");
+      mockResolveProfile.mockResolvedValue(mockProfile);
       // Domain selection → OAuth credential choice
       mockSelect.mockResolvedValueOnce("clerk-subdomain").mockResolvedValueOnce("have-credentials");
       mockInput.mockResolvedValueOnce("fake-client-id-12345");
       mockPassword.mockResolvedValueOnce("fake-secret");
     }
 
-    test("does not print deploy prompt", async () => {
+    test("does not print agent markdown", async () => {
       mockHumanFlow();
       consoleSpy = spyOn(console, "log").mockImplementation(() => {});
 
       await deploy({});
 
       const allOutput = capturedOutput(consoleSpy);
-      expect(allOutput).not.toContain("deploying a Clerk application to production");
+      expect(allOutput).not.toContain("## deploy\n");
     });
 
     test("shows mock banner", async () => {
