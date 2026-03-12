@@ -1,7 +1,7 @@
 # Link Command
 
 Links the current git repository to a Clerk application, storing the app ID
-and instance IDs in `~/.clerk/config.json`. The link is keyed by the
+and instance IDs in the Clerk CLI config file. The link is keyed by the
 normalized git remote URL (e.g., `github.com/org/repo`), so it is
 automatically shared across all clones and worktrees of the same repository.
 
@@ -20,9 +20,13 @@ clerk link --app app_abc123   # Link directly by app ID
 
 ## Agent Mode
 
-When running in agent mode (`--mode agent` or piped stdin), outputs a structured
-prompt describing how to perform the link operation instead of running the
-interactive flow.
+When running in agent mode (`--mode agent` or piped stdin):
+
+- **Without `--app`**: Lists available applications and suggests
+  `clerk link --app <app_id>` as a next step, since the interactive picker
+  cannot be used.
+- **With `--app`**: Completes the link non-interactively (same as human mode
+  with `--app`).
 
 ## Flow
 
@@ -32,7 +36,7 @@ interactive flow.
 4. If `--app` is provided, uses that app ID directly
 5. Otherwise, fetches the list of applications and presents a searchable picker (type to filter by name)
 6. Fetches application details to retrieve instance IDs
-7. Stores the profile in `~/.clerk/config.json` keyed by the normalized remote URL
+7. Stores the profile in the Clerk CLI config file keyed by the normalized remote URL
 8. Falls back to git-common-dir or the current directory path if no remote is configured
 
 ## API Endpoints

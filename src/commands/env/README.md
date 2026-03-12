@@ -27,7 +27,7 @@ sequenceDiagram
     Note over CLI: clerk env pull [--instance dev|prod] [--file .env]
 
     %% Resolve project profile
-    CLI->>FS: Read ~/.clerk/config.json
+    CLI->>FS: Read config.json
     FS-->>CLI: { appId, instances }
 
     %% Fetch application with keys

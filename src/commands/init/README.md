@@ -35,6 +35,15 @@ The command detects the project's framework by checking `package.json` dependenc
 
 The package manager is detected from lock files (`bun.lockb` → bun, `yarn.lock` → yarn, `pnpm-lock.yaml` → pnpm, else npm).
 
+## Post-Setup Recipes
+
+After completing the setup steps, the command outputs a framework-specific integration recipe with the code changes needed to finish the Clerk integration (middleware, providers, components). Recipes are bundled as static markdown files in `recipes/`.
+
+- **Human mode**: the recipe text is printed to the console after the check lines.
+- **Agent mode**: the recipe is included as a `recipe` field in the TOON output, giving agents the full integration guide to follow.
+
+Supported frameworks: Next.js, React/Vite, Expo, Astro, Nuxt, TanStack Start, React Router, Fastify, Express, Vue.
+
 ## API Endpoints
 
 See [auth/README.md](../auth/README.md), [link/README.md](../link/README.md), and [env/README.md](../env/README.md) for the API endpoints used by each step.
