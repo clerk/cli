@@ -1,4 +1,4 @@
-import { Command } from "commander";
+import { Command } from "@commander-js/extra-typings";
 import { setMode, type Mode } from "./mode.js";
 import { init } from "./commands/init/index.js";
 import { login } from "./commands/auth/login.js";
@@ -16,10 +16,8 @@ import { doctor } from "./commands/doctor/index.js";
 import { CliError, UserAbortError, ApiError, EXIT_CODE, throwUsageError } from "./lib/errors.js";
 import { red } from "./lib/color.js";
 
-export function createProgram(): Command {
-  const program = new Command();
-
-  program
+export function createProgram() {
+  const program = new Command()
     .name("clerk")
     .description("Clerk CLI")
     .version(require("../package.json").version)
@@ -181,9 +179,9 @@ function formatApiBody(body: string, verbose: boolean): string {
  * Used by `cli.ts` for real execution and by integration tests.
  */
 export async function runProgram(
-  program: Command,
+  program: ReturnType<typeof createProgram>,
   args?: string[],
-  options?: { from?: "user" | "node" },
+  options?: { from: "user" | "node" },
 ): Promise<void> {
   try {
     await program.parseAsync(args, options);
