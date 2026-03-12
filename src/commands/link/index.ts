@@ -49,8 +49,8 @@ export async function link(options: LinkOptions = {}): Promise<void> {
   const profileKey = normalizedRemote ?? repoId ?? cwd;
   const displayPath = repoRoot ?? cwd;
 
-  const shouldContinue = await handleExistingProfile(cwd, normalizedRemote, options);
-  if (!shouldContinue) return;
+  const isRelinking = await handleExistingProfile(cwd, normalizedRemote, options);
+  if (isRelinking === undefined) return;
 
   if (options.skipIfLinked && !options.app) {
     const autolinked = await autolink(cwd);
@@ -63,7 +63,7 @@ export async function link(options: LinkOptions = {}): Promise<void> {
     await login();
   }
 
-  const app = await resolveApp(cwd, displayPath, options);
+  const app = await resolveApp(cwd, displayPath, options, isRelinking);
 
   const devInstance = app.instances.find((i) => i.environment_type === "development");
   const prodInstance = app.instances.find((i) => i.environment_type === "production");
@@ -85,13 +85,16 @@ export async function link(options: LinkOptions = {}): Promise<void> {
   console.log(`\nLinked to ${cyan(label)} in ${dim(displayPath)}`);
 }
 
+/**
+ * Returns `undefined` to stop, `false` for first-time link, `true` for re-link.
+ */
 async function handleExistingProfile(
   cwd: string,
   normalizedRemote: string | undefined,
   options: LinkOptions,
-): Promise<boolean> {
+): Promise<boolean | undefined> {
   const existing = await resolveProfile(cwd);
-  if (!existing) return true;
+  if (!existing) return false;
 
   if (existing.resolvedVia === "remote") {
     console.log(`Auto-linked via git remote (${dim(normalizedRemote ?? existing.path)})`);
@@ -99,7 +102,7 @@ async function handleExistingProfile(
     console.log(`Already linked to ${cyan(existing.profile.appId)} in ${dim(existing.path)}`);
   }
 
-  if (options.skipIfLinked) return false;
+  if (options.skipIfLinked) return undefined;
 
   if (existing.availableRemote) {
     console.log(
@@ -112,7 +115,7 @@ async function handleExistingProfile(
     if (upgrade) {
       await moveProfile(existing.path, existing.availableRemote);
       console.log(`\nLink updated to use git remote (${cyan(existing.availableRemote)})`);
-      return false;
+      return undefined;
     }
   }
 
@@ -120,13 +123,14 @@ async function handleExistingProfile(
     message: "Re-link to a different application?",
     default: false,
   });
-  return relink;
+  return relink ? true : undefined;
 }
 
 async function resolveApp(
   cwd: string,
   displayPath: string,
   options: LinkOptions,
+  isRelinking: boolean,
 ): Promise<Application> {
   if (options.app) {
     return fetchApplication(options.app);
@@ -138,21 +142,22 @@ async function resolveApp(
     throw new CliError("No applications found. Create one at https://dashboard.clerk.com first.");
   }
 
-  const detectedKeys = await findClerkKeys(cwd);
-  const match = detectedKeys.length > 0 ? matchKeyToApp(detectedKeys, apps) : undefined;
+  if (!isRelinking) {
+    const detectedKeys = await findClerkKeys(cwd);
+    const match = detectedKeys.length > 0 ? matchKeyToApp(detectedKeys, apps) : undefined;
 
-  if (!match) {
-    return pickApp(apps, displayPath);
+    if (match) {
+      const label = appLabel(match.app);
+      console.log(`We found ${cyan(label)} from ${dim(match.source)}.`);
+      const useDetected = await confirm({
+        message: "Link to this application?",
+        default: true,
+      });
+      if (useDetected) return match.app;
+    }
   }
 
-  const label = appLabel(match.app);
-  console.log(`We found ${cyan(label)} from ${dim(match.source)}.`);
-  const useDetected = await confirm({
-    message: "Link to this application?",
-    default: true,
-  });
-
-  return useDetected ? match.app : pickApp(apps, displayPath);
+  return pickApp(apps, displayPath);
 }
 
 async function pickApp(apps: Application[], displayPath: string): Promise<Application> {

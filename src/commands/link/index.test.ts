@@ -742,4 +742,109 @@ describe("link", () => {
       expect(mockSearch).toHaveBeenCalled();
     });
   });
+
+  describe("re-link skips key detection", () => {
+    test("skips key suggestion and shows picker when re-linking", async () => {
+      mockIsAgent.mockReturnValue(false);
+      mockResolveProfile.mockResolvedValue({
+        path: "github.com/org/repo",
+        profile: { workspaceId: "", appId: "app_existing", instances: { development: "ins_1" } },
+      });
+      mockConfirm.mockResolvedValue(true);
+      mockGetToken.mockResolvedValue("token");
+      mockListApplications.mockResolvedValue([mockApp]);
+      mockSearch.mockResolvedValue("app_123");
+      consoleSpy = spyOn(console, "log").mockImplementation(() => {});
+
+      await link();
+
+      expect(mockFindClerkKeys).not.toHaveBeenCalled();
+      expect(mockMatchKeyToApp).not.toHaveBeenCalled();
+      expect(mockSearch).toHaveBeenCalled();
+    });
+
+    test("skips key suggestion when re-linking from auto-linked remote", async () => {
+      mockIsAgent.mockReturnValue(false);
+      mockResolveProfile.mockResolvedValue({
+        path: "github.com/org/repo",
+        profile: { workspaceId: "", appId: "app_existing", instances: { development: "ins_1" } },
+        resolvedVia: "remote",
+      });
+      mockConfirm.mockResolvedValue(true);
+      mockGetToken.mockResolvedValue("token");
+      mockListApplications.mockResolvedValue([mockApp]);
+      mockSearch.mockResolvedValue("app_123");
+      consoleSpy = spyOn(console, "log").mockImplementation(() => {});
+
+      await link();
+
+      const output = capturedOutput(consoleSpy);
+      expect(output).toContain("Auto-linked via git remote");
+      expect(mockFindClerkKeys).not.toHaveBeenCalled();
+      expect(mockSearch).toHaveBeenCalled();
+    });
+
+    test("skips key suggestion but respects --app flag when re-linking", async () => {
+      mockIsAgent.mockReturnValue(false);
+      mockResolveProfile.mockResolvedValue({
+        path: "github.com/org/repo",
+        profile: { workspaceId: "", appId: "app_existing", instances: { development: "ins_1" } },
+      });
+      mockConfirm.mockResolvedValue(true);
+      mockGetToken.mockResolvedValue("token");
+      mockFetchApplication.mockResolvedValue(mockApp);
+      consoleSpy = spyOn(console, "log").mockImplementation(() => {});
+
+      await link({ app: "app_123" });
+
+      expect(mockFindClerkKeys).not.toHaveBeenCalled();
+      expect(mockSearch).not.toHaveBeenCalled();
+      expect(mockFetchApplication).toHaveBeenCalledWith("app_123");
+    });
+
+    test("still suggests key match on first-time link", async () => {
+      mockIsAgent.mockReturnValue(false);
+      mockGetToken.mockResolvedValue("token");
+      mockListApplications.mockResolvedValue([mockApp]);
+      mockFindClerkKeys.mockResolvedValue([
+        { key: "pk_test", source: "CLERK_PUBLISHABLE_KEY env var" },
+      ]);
+      mockMatchKeyToApp.mockReturnValue({
+        app: mockApp,
+        instance: mockApp.instances[0],
+        source: "CLERK_PUBLISHABLE_KEY env var",
+      });
+      mockConfirm.mockResolvedValue(true);
+      consoleSpy = spyOn(console, "log").mockImplementation(() => {});
+
+      await link();
+
+      expect(mockFindClerkKeys).toHaveBeenCalled();
+      expect(mockMatchKeyToApp).toHaveBeenCalled();
+      const output = capturedOutput(consoleSpy);
+      expect(output).toContain("We found");
+    });
+
+    test("skips key suggestion after declining profile upgrade", async () => {
+      mockIsAgent.mockReturnValue(false);
+      mockResolveProfile.mockResolvedValue({
+        path: "/repo/.git",
+        profile: { workspaceId: "", appId: "app_existing", instances: { development: "ins_1" } },
+        resolvedVia: "git-common-dir",
+        availableRemote: "github.com/org/repo",
+      });
+      mockConfirm
+        .mockResolvedValueOnce(false) // decline upgrade
+        .mockResolvedValueOnce(true); // accept re-link
+      mockGetToken.mockResolvedValue("token");
+      mockListApplications.mockResolvedValue([mockApp]);
+      mockSearch.mockResolvedValue("app_123");
+      consoleSpy = spyOn(console, "log").mockImplementation(() => {});
+
+      await link();
+
+      expect(mockFindClerkKeys).not.toHaveBeenCalled();
+      expect(mockSearch).toHaveBeenCalled();
+    });
+  });
 });
