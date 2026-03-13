@@ -1,4 +1,3 @@
-import { join } from "node:path";
 import { Command } from "@commander-js/extra-typings";
 import { setMode, type Mode } from "./mode.ts";
 import { init } from "./commands/init/index.ts";
@@ -16,21 +15,13 @@ import { unlink } from "./commands/unlink/index.ts";
 import { doctor } from "./commands/doctor/index.ts";
 import { CliError, UserAbortError, ApiError, EXIT_CODE, throwUsageError } from "./lib/errors.ts";
 import { red } from "./lib/color.ts";
+import wrapperPkg from "../../cli/package.json";
 
-async function getDevVersion(): Promise<string> {
-  try {
-    const pkg = await Bun.file(join(import.meta.dir, "..", "..", "cli", "package.json")).json();
-    return `${pkg.version}-dev`;
-  } catch {
-    return "0.0.0-dev";
-  }
-}
-
-export async function createProgram() {
+export function createProgram() {
   const program = new Command()
     .name("clerk")
     .description("Clerk CLI")
-    .version(typeof CLI_VERSION !== "undefined" ? CLI_VERSION : await getDevVersion())
+    .version(typeof CLI_VERSION !== "undefined" ? CLI_VERSION : `${wrapperPkg.version}-dev`)
     .option(
       "--mode <mode>",
       "Force interaction mode (human or agent). Defaults to auto-detect based on TTY.",

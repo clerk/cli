@@ -79,7 +79,7 @@ async function generatePlatformPackage(target: Target, version: string): Promise
 }
 
 function publish(dir: string, dryRun: boolean, tag?: string): void {
-  const flags = ["npm", "publish", "--access", "public", "--ignore-scripts"];
+  const flags = ["npm", "publish", "--access", "public", "--provenance", "--ignore-scripts"];
   if (tag) flags.push("--tag", tag);
   if (dryRun) flags.push("--dry-run");
   const result = Bun.spawnSync(flags, { cwd: dir, stdio: ["ignore", "pipe", "pipe"] });
