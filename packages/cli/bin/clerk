@@ -2,7 +2,7 @@
 
 "use strict";
 
-const { spawn } = require("node:child_process");
+const { spawnSync } = require("node:child_process");
 const { platform, arch, argv, exit } = require("node:process");
 
 // Detect musl vs glibc to select the correct prebuilt binary.
@@ -47,27 +47,13 @@ try {
   exit(1);
 }
 
-const child = spawn(binPath, argv.slice(2), { stdio: "inherit" });
-
-let exited = false;
-
-child.on("error", (err) => {
-  if (exited) return;
-  exited = true;
-  console.error(`Failed to start Clerk CLI: ${err.message}`);
+const { status, signal, error } = spawnSync(binPath, argv.slice(2), { stdio: "inherit" });
+if (error) {
+  console.error(`Failed to start Clerk CLI: ${error.message}`);
   exit(1);
-});
-
-const signals = platform === "win32" ? ["SIGINT", "SIGTERM"] : ["SIGINT", "SIGTERM", "SIGHUP"];
-for (const sig of signals) {
-  process.on(sig, () => { if (!exited) child.kill(sig); });
 }
-
-child.on("close", (code, signal) => {
-  if (exited) return;
-  exited = true;
-  if (code !== null) exit(code);
-  // 128 + signal number is the conventional exit code for signal termination
+if (signal) {
   const signum = { SIGHUP: 1, SIGINT: 2, SIGTERM: 15 };
   exit(128 + (signum[signal] ?? 1));
-});
+}
+exit(status ?? 1);
