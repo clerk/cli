@@ -5,11 +5,17 @@
 const { spawn } = require("node:child_process");
 const { platform, arch, argv, exit } = require("node:process");
 
+// Detect musl vs glibc to select the correct prebuilt binary.
+// Approach based on detect-libc: https://github.com/lovell/detect-libc
 function isMusl() {
   if (platform !== "linux") return false;
+  // On musl systems, ldd is a shell script (or the dynamic linker itself)
+  // containing "musl". Similar to rustup's `ldd --version | grep musl`.
   try {
     return require("fs").readFileSync("/usr/bin/ldd", "utf-8").includes("musl");
   } catch {}
+  // Fallback: Node's diagnostic report exposes libc info without child processes.
+  // https://nodejs.org/api/report.html#reportgetreport
   try {
     const report = process.report.getReport();
     if (report.header && report.header.glibcVersionRuntime) return false;

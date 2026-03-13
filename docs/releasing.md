@@ -60,11 +60,11 @@ Configuration:
 
 ## Build Pipeline
 
-The release workflow (`.github/workflows/release.yml`) runs when release-please creates a release. Build and publish jobs run on Blacksmith runners (`blacksmith-2vcpu-ubuntu-2404`); smoke tests run on platform-native GitHub-hosted runners.
+The release workflow (`.github/workflows/release.yml`) runs when release-please creates a release. Binary compilation is handled by a reusable workflow (`.github/workflows/build-binaries.yml`) shared across stable, canary, and snapshot pipelines. Build and publish jobs run on Blacksmith runners (`blacksmith-2vcpu-ubuntu-2404`); smoke tests run on platform-native GitHub-hosted runners.
 
 ### 1. Build Job (matrix)
 
-Runs once per target platform on a Blacksmith runner. Each job:
+Defined in [`.github/workflows/build-binaries.yml`](../.github/workflows/build-binaries.yml) and called by the release, canary, and snapshot pipelines. Runs once per target platform on a Blacksmith runner. Each job:
 
 1. Cross-compiles the CLI using `bun build --compile --no-compile-autoload-dotenv --target=<bun_target>`
 2. Injects the version via `--define "CLI_VERSION=\"$CLI_VERSION\""`
@@ -73,7 +73,7 @@ Runs once per target platform on a Blacksmith runner. Each job:
 
 ### 2. Smoke Test Job (matrix)
 
-Downloads each compiled binary and runs `--version` on a native runner for that platform to verify the binary actually executes. The target-to-runner mapping is defined in the `smoke-test` matrix in [`.github/workflows/release.yml`](../.github/workflows/release.yml).
+Downloads each compiled binary and runs `--version` to verify the binary actually executes. glibc targets run natively on a platform-matched GitHub-hosted runner; musl targets run inside an Alpine Docker container on a Linux runner. The target-to-runner mapping is defined in the `smoke-test` matrix in [`.github/workflows/release.yml`](../.github/workflows/release.yml).
 
 Not all targets may have a native runner available (e.g., `win32-arm64` is skipped because there is no GitHub-hosted ARM Windows runner).
 
@@ -112,27 +112,27 @@ Attaches the compiled binaries to the GitHub Release for direct download. Binari
 
 ## Key Files
 
-| File                                 | Purpose                                                                        |
-| ------------------------------------ | ------------------------------------------------------------------------------ |
-| `packages/cli/bin/clerk`             | CJS shim that resolves and spawns the platform binary                          |
-| `packages/cli/package.json`          | Wrapper package (has `prepublishOnly` guard against accidental direct publish) |
-| `packages/cli-core/src/cli.ts`       | CLI entrypoint (reads `CLI_VERSION` global at runtime)                         |
-| `packages/cli-core/src/globals.d.ts` | TypeScript declaration for the `CLI_VERSION` compile-time define               |
-| `scripts/releaser/index.ts`          | Generates platform packages and publishes everything to npm                    |
-| `scripts/releaser/targets.ts`        | Target definitions — must be kept in sync with the workflow matrix             |
-| `.github/workflows/release.yml`      | GitHub Actions release + canary workflow                                       |
-| `.github/workflows/snapshot.yml`     | GitHub Actions snapshot workflow (triggered by PR comments)                    |
+| File                                   | Purpose                                                                        |
+| -------------------------------------- | ------------------------------------------------------------------------------ |
+| `packages/cli/bin/clerk`               | CJS shim that resolves and spawns the platform binary                          |
+| `packages/cli/package.json`            | Wrapper package (has `prepublishOnly` guard against accidental direct publish) |
+| `packages/cli-core/src/cli.ts`         | CLI entrypoint (reads `CLI_VERSION` global at runtime)                         |
+| `packages/cli-core/src/globals.d.ts`   | TypeScript declaration for the `CLI_VERSION` compile-time define               |
+| `scripts/releaser/index.ts`            | Generates platform packages and publishes everything to npm                    |
+| `scripts/releaser/targets.ts`          | Target definitions — must be kept in sync with the workflow matrix             |
+| `.github/workflows/build-binaries.yml` | Reusable workflow for cross-compiling binaries (called by release + snapshot)  |
+| `.github/workflows/release.yml`        | GitHub Actions release + canary workflow                                       |
+| `.github/workflows/snapshot.yml`       | GitHub Actions snapshot workflow (triggered by PR comments)                    |
 
 ## Keeping Targets in Sync
 
 The target list exists in these places that must stay in sync:
 
 1. `scripts/releaser/targets.ts` — used by the releaser to generate platform packages
-2. `.github/workflows/release.yml` build matrix — compiles binaries (maps target names to Bun cross-compile targets, e.g., `win32-x64` → `bun-windows-x64`)
+2. `.github/workflows/build-binaries.yml` build matrix — compiles binaries (maps target names to Bun cross-compile targets, e.g., `win32-x64` → `bun-windows-x64`)
 3. `.github/workflows/release.yml` smoke-test matrix — verifies binaries on native runners
-4. `.github/workflows/release.yml` canary-build matrix — compiles canary binaries
-5. `.github/workflows/snapshot.yml` build matrix — compiles snapshot binaries
-   If you add or remove a target, update all of these. Note that the smoke-test matrix may not cover every target if a native runner isn't available (e.g., `win32-arm64`).
+
+If you add or remove a target, update all of these. Note that the smoke-test matrix may not cover every target if a native runner isn't available (e.g., `win32-arm64`).
 
 ## Local Development
 
