@@ -29,3 +29,14 @@ export function isHuman(): boolean {
 export function isAgent(): boolean {
   return getMode() === "agent";
 }
+
+let jsonFlag = false;
+
+export function setJsonFlag(flag: boolean) {
+  jsonFlag = flag;
+}
+
+/** Returns true when output should be structured JSON (agent mode OR --json flag). */
+export function isJsonOutput(): boolean {
+  return isAgent() || jsonFlag;
+}
