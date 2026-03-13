@@ -4,7 +4,7 @@ Manage authentication with Clerk.
 
 ## Commands
 
-### `clerk auth login`
+### `clerk auth login` (aliases: `signup`, `signin`, `sign-in`)
 
 Authenticates the user via an OAuth 2.0 PKCE flow.
 
@@ -26,6 +26,6 @@ All requests are made against the Clerk OAuth system instance (default `https://
 | Token exchange | `POST` | `/oauth/token`     | Exchanges authorization code + `code_verifier` for an access token                |
 | User info      | `GET`  | `/oauth/userinfo`  | Fetches `sub` (user ID) and `email` using the access token                        |
 
-### `clerk auth logout`
+### `clerk auth logout` (aliases: `signout`, `sign-out`)
 
 Removes the stored authentication token and clears auth info from local config. No API calls are made.

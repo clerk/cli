@@ -16,8 +16,8 @@ Options:
 Commands:
   init [options]       Initialize Clerk in your project
   auth                 Manage authentication
-    login              Log in to your Clerk account
-    logout             Log out of your Clerk account
+    login|signup       Log in to your Clerk account
+    logout|signout     Log out of your Clerk account
   link [options]       Link this project to a Clerk application
   unlink [options]     Unlink this project from its Clerk application
   whoami               Show the current logged-in user
