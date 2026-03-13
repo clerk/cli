@@ -110,6 +110,18 @@ bun --hot ./index.ts
 
 For more information, read the Bun API docs in `node_modules/bun-types/docs/**.md`.
 
+## CI Checks
+
+After modifying files, run these commands to match what CI enforces on pull requests:
+
+```sh
+bun run format       # Format with oxfmt (writes changes)
+bun run lint         # Lint with oxlint
+bun test             # Run all tests
+```
+
+CI runs `bun run format:check` (fails if unformatted), `bun run lint`, and `bun test` on every PR to `main`.
+
 ## Commands
 
 Every CLI command lives in its own directory under `src/commands/<name>/`. Each directory must contain a `README.md` that documents:

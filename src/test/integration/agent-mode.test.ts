@@ -1,0 +1,30 @@
+/**
+ * Agent mode provides actionable instructions
+ * AI agents get structured prompts instead of interactive flows.
+ */
+
+import { test, expect } from "bun:test";
+import { useIntegrationTestHarness, http, clerk } from "../lib/setup.ts";
+
+useIntegrationTestHarness();
+
+test("init outputs structured agent prompt without API calls", async () => {
+  const { stdout } = await clerk("--mode", "agent", "init");
+  expect(stdout).toContain("integrating Clerk authentication");
+  expect(stdout).toContain("clerk auth login");
+  expect(http.requests.length).toBe(0);
+});
+
+test("link outputs structured agent prompt without API calls", async () => {
+  const { stdout } = await clerk("--mode", "agent", "link");
+  expect(stdout).toContain("linking a Clerk application");
+  expect(stdout).toContain("## Steps");
+  expect(http.requests.length).toBe(0);
+});
+
+test("unlink outputs structured agent prompt without API calls", async () => {
+  const { stdout } = await clerk("--mode", "agent", "unlink");
+  expect(stdout).toContain("unlinking a Clerk application");
+  expect(stdout).toContain("## Steps");
+  expect(http.requests.length).toBe(0);
+});
