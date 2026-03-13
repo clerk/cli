@@ -16,6 +16,7 @@ permissions:
 jobs:
   release-please:
     runs-on: blacksmith-2vcpu-ubuntu-2404
+    timeout-minutes: 5
     outputs:
       release_created: ${{ steps.release.outputs['packages/cli--release_created'] }}
       tag_name: ${{ steps.release.outputs['packages/cli--tag_name'] }}
@@ -47,6 +48,7 @@ jobs:
     needs: [release-please, build, smoke-test]
     # Must run on GitHub-hosted runner for npm OIDC trusted publishing
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     permissions:
       contents: read
       id-token: write
@@ -74,6 +76,7 @@ jobs:
   upload-github-assets:
     needs: [release-please, build, smoke-test, publish-npm]
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     permissions:
       contents: write
     steps:
@@ -100,6 +103,7 @@ jobs:
     needs: release-please
     if: ${{ needs.release-please.outputs.release_created != 'true' }}
     runs-on: blacksmith-2vcpu-ubuntu-2404
+    timeout-minutes: 5
     outputs:
       version: ${{ steps.version.outputs.version }}
     steps:
@@ -131,6 +135,7 @@ jobs:
     needs: [canary-version, canary-build, canary-smoke-test]
     # Must run on GitHub-hosted runner for npm OIDC trusted publishing
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     permissions:
       contents: read
       id-token: write

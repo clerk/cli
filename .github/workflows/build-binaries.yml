@@ -17,6 +17,7 @@ on:
 jobs:
   build:
     runs-on: blacksmith-2vcpu-ubuntu-2404
+    timeout-minutes: 10
     strategy:
       fail-fast: false
       matrix:
@@ -85,3 +86,4 @@ jobs:
         with:
           name: ${{ inputs.artifact-prefix }}-${{ matrix.target }}
           path: clerk${{ matrix.ext }}
+          retention-days: 1
