@@ -934,7 +934,7 @@ func editRuleInEditor(rule *api.Rule) (*editableRule, error) {
 	}
 
 	// Open editor
-	editorCmd := exec.Command(editor, tmpPath) // #nosec G204 -- editor is from $EDITOR env var, user-controlled
+	editorCmd := exec.Command(editor, tmpPath) // #nosec G204 G702 -- editor is from $EDITOR env var, user-controlled
 	editorCmd.Stdin = os.Stdin
 	editorCmd.Stdout = os.Stdout
 	editorCmd.Stderr = os.Stderr

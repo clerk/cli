@@ -340,7 +340,7 @@ func executeCommand(cmd string) string {
 	if shell == "" {
 		shell = "/bin/sh"
 	}
-	command := exec.Command(shell, "-c", cmd) // #nosec G204 -- intentional shell exec for ! prefixed config values
+	command := exec.Command(shell, "-c", cmd) // #nosec G204 G702 -- intentional shell exec for ! prefixed config values
 	output, err := command.Output()
 	if err != nil {
 		return ""
