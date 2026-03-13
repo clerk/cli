@@ -1,40 +1,57 @@
 /**
  * Credential store for persisting the OAuth access token.
- * Uses macOS Keychain as primary, falls back to a plaintext file with chmod 600.
+ * Uses platform keyring as primary (via @napi-rs/keyring), falls back to a plaintext file with chmod 600.
  */
 
 import { dirname } from "node:path";
-import { mkdir, chmod } from "node:fs/promises";
-import { CREDENTIALS_FILE, KEYCHAIN_SERVICE, KEYCHAIN_ACCOUNT } from "./constants.ts";
+import { mkdir, chmod, unlink } from "node:fs/promises";
+import { CREDENTIALS_FILE } from "./constants.ts";
 
-const isMacOS = process.platform === "darwin";
+export const KEYCHAIN_SERVICE = "clerk-cli";
+export const KEYCHAIN_ACCOUNT = "oauth-access-token";
 
-async function keychainStore(token: string): Promise<boolean> {
-  if (!isMacOS) return false;
+let keyringModule: typeof import("@napi-rs/keyring") | null | undefined;
+
+async function getKeyring(): Promise<typeof import("@napi-rs/keyring") | null> {
+  if (keyringModule !== undefined) return keyringModule;
   try {
-    // -U flag updates existing entry if present
-    await Bun.$`security add-generic-password -a ${KEYCHAIN_ACCOUNT} -s ${KEYCHAIN_SERVICE} -w ${token} -U`.quiet();
+    keyringModule = await import("@napi-rs/keyring");
+    return keyringModule;
+  } catch {
+    keyringModule = null;
+    return null;
+  }
+}
+
+async function keyringStore(token: string): Promise<boolean> {
+  const mod = await getKeyring();
+  if (!mod) return false;
+  try {
+    const entry = new mod.Entry(KEYCHAIN_SERVICE, KEYCHAIN_ACCOUNT);
+    entry.setPassword(token);
     return true;
   } catch {
     return false;
   }
 }
 
-async function keychainGet(): Promise<string | null> {
-  if (!isMacOS) return null;
+async function keyringGet(): Promise<string | null> {
+  const mod = await getKeyring();
+  if (!mod) return null;
   try {
-    const result =
-      await Bun.$`security find-generic-password -a ${KEYCHAIN_ACCOUNT} -s ${KEYCHAIN_SERVICE} -w`.quiet();
-    return result.text().trim();
+    const entry = new mod.Entry(KEYCHAIN_SERVICE, KEYCHAIN_ACCOUNT);
+    return entry.getPassword();
   } catch {
     return null;
   }
 }
 
-async function keychainDelete(): Promise<boolean> {
-  if (!isMacOS) return false;
+async function keyringDelete(): Promise<boolean> {
+  const mod = await getKeyring();
+  if (!mod) return false;
   try {
-    await Bun.$`security delete-generic-password -a ${KEYCHAIN_ACCOUNT} -s ${KEYCHAIN_SERVICE}`.quiet();
+    const entry = new mod.Entry(KEYCHAIN_SERVICE, KEYCHAIN_ACCOUNT);
+    entry.deletePassword();
     return true;
   } catch {
     return false;
@@ -55,17 +72,22 @@ async function fileGet(): Promise<string | null> {
 }
 
 async function fileDelete(): Promise<void> {
-  const file = Bun.file(CREDENTIALS_FILE);
-  if (await file.exists()) {
-    await Bun.write(CREDENTIALS_FILE, "");
+  try {
+    await unlink(CREDENTIALS_FILE);
+  } catch {
+    // File doesn't exist, nothing to delete
   }
 }
 
 export async function storeToken(token: string): Promise<void> {
-  const stored = await keychainStore(token);
-  if (!stored) {
-    await fileStore(token);
+  const stored = await keyringStore(token);
+  if (stored) {
+    // Clean up any stale plaintext credentials from a previous file-based storage
+    await fileDelete();
+    return;
   }
+
+  await fileStore(token);
 }
 
 let tokenOverride: string | null | undefined;
@@ -77,12 +99,12 @@ export function _setTokenOverride(value: string | null | undefined): void {
 
 export async function getToken(): Promise<string | null> {
   if (tokenOverride !== undefined) return tokenOverride;
-  const token = await keychainGet();
+  const token = await keyringGet();
   if (token) return token;
   return fileGet();
 }
 
 export async function deleteToken(): Promise<void> {
-  await keychainDelete();
+  await keyringDelete();
   await fileDelete();
 }
