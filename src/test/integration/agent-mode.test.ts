@@ -4,27 +4,39 @@
  */
 
 import { test, expect } from "bun:test";
-import { useIntegrationTestHarness, http, clerk } from "../lib/setup.ts";
+import { useIntegrationTestHarness, http, clerk, mockState } from "../lib/setup.ts";
 
 useIntegrationTestHarness();
 
-test("init outputs structured agent prompt without API calls", async () => {
+test("init outputs structured JSON without API calls", async () => {
   const { stdout } = await clerk("--mode", "agent", "init");
-  expect(stdout).toContain("integrating Clerk authentication");
-  expect(stdout).toContain("clerk auth login");
+  const parsed = JSON.parse(stdout.trim());
+  expect(parsed.command).toBe("init");
+  expect(parsed.checks).toEqual(
+    expect.arrayContaining([expect.objectContaining({ name: "authenticated", ok: true })]),
+  );
   expect(http.requests.length).toBe(0);
 });
 
-test("link outputs structured agent prompt without API calls", async () => {
+test("link outputs structured JSON for unauthenticated state without API calls", async () => {
+  mockState.storedToken = null;
   const { stdout } = await clerk("--mode", "agent", "link");
-  expect(stdout).toContain("linking a Clerk application");
-  expect(stdout).toContain("## Steps");
+  const parsed = JSON.parse(stdout.trim());
+  expect(parsed.command).toBe("link");
+  expect(parsed.checks).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({ name: "authenticated", ok: false, fix: "clerk auth login" }),
+    ]),
+  );
   expect(http.requests.length).toBe(0);
 });
 
-test("unlink outputs structured agent prompt without API calls", async () => {
+test("unlink outputs structured JSON without API calls", async () => {
   const { stdout } = await clerk("--mode", "agent", "unlink");
-  expect(stdout).toContain("unlinking a Clerk application");
-  expect(stdout).toContain("## Steps");
+  const parsed = JSON.parse(stdout.trim());
+  expect(parsed.command).toBe("unlink");
+  expect(parsed.checks).toEqual(
+    expect.arrayContaining([expect.objectContaining({ name: "linked", ok: false })]),
+  );
   expect(http.requests.length).toBe(0);
 });

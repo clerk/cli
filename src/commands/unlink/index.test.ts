@@ -9,6 +9,7 @@ mock.module("../../mode.ts", () => ({
     _modeOverride !== undefined ? _modeOverride === "agent" : mockIsAgent(...args),
   isHuman: (...args: unknown[]) =>
     _modeOverride !== undefined ? _modeOverride !== "agent" : mockIsHuman(...args),
+  isJsonOutput: () => (_modeOverride !== undefined ? _modeOverride === "agent" : mockIsAgent()),
   setMode: (m: string) => {
     _modeOverride = m;
   },
@@ -58,7 +59,7 @@ describe("unlink", () => {
   });
 
   describe("agent mode", () => {
-    test("outputs structured TOON with check results", async () => {
+    test("outputs structured JSON with check results", async () => {
       mockIsAgent.mockReturnValue(true);
       mockResolveProfile.mockResolvedValue(mockProfile);
       mockRemoveProfile.mockResolvedValue(undefined);
@@ -66,10 +67,23 @@ describe("unlink", () => {
 
       await unlink({ yes: true });
 
-      const output = capturedOutput(consoleSpy);
-      expect(output).toContain("command: unlink");
-      expect(output).toContain("linked,true");
-      expect(output).toContain("unlinked,true");
+      const jsonLine = consoleSpy.mock.calls.find((c: unknown[]) => {
+        try {
+          JSON.parse(c[0] as string);
+          return true;
+        } catch {
+          return false;
+        }
+      });
+      expect(jsonLine).toBeDefined();
+      const parsed = JSON.parse(jsonLine![0] as string);
+      expect(parsed.command).toBe("unlink");
+      expect(parsed.checks).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ name: "linked", ok: true }),
+          expect.objectContaining({ name: "unlinked", ok: true }),
+        ]),
+      );
     });
 
     test("does not trigger interactive prompts", async () => {

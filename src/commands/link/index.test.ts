@@ -14,6 +14,7 @@ mock.module("../../mode.ts", () => ({
     _modeOverride !== undefined ? _modeOverride === "agent" : mockIsAgent(...args),
   isHuman: (...args: unknown[]) =>
     _modeOverride !== undefined ? _modeOverride !== "agent" : !mockIsAgent(...args),
+  isJsonOutput: () => (_modeOverride !== undefined ? _modeOverride === "agent" : mockIsAgent()),
   setMode: (m: string) => {
     _modeOverride = m;
   },
@@ -116,17 +117,29 @@ describe("link", () => {
   });
 
   describe("agent mode", () => {
-    test("outputs structured TOON for unauthenticated state", async () => {
+    test("outputs structured JSON for unauthenticated state", async () => {
       mockIsAgent.mockReturnValue(true);
       mockGetToken.mockResolvedValue(null);
       consoleSpy = spyOn(console, "log").mockImplementation(() => {});
 
       await link();
 
-      const output = capturedOutput(consoleSpy);
-      expect(output).toContain("command: link");
-      expect(output).toContain("authenticated,false");
-      expect(output).toContain("clerk auth login");
+      const jsonLine = consoleSpy.mock.calls.find((c: unknown[]) => {
+        try {
+          JSON.parse(c[0] as string);
+          return true;
+        } catch {
+          return false;
+        }
+      });
+      expect(jsonLine).toBeDefined();
+      const parsed = JSON.parse(jsonLine![0] as string);
+      expect(parsed.command).toBe("link");
+      expect(parsed.checks).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ name: "authenticated", ok: false, fix: "clerk auth login" }),
+        ]),
+      );
     });
 
     test("does not trigger interactive prompts", async () => {

@@ -14,6 +14,7 @@ mock.module("../../mode.ts", () => ({
     _modeOverride !== undefined ? _modeOverride === "agent" : mockIsAgent(...args),
   isHuman: (...args: unknown[]) =>
     _modeOverride !== undefined ? _modeOverride !== "agent" : !mockIsAgent(...args),
+  isJsonOutput: () => (_modeOverride !== undefined ? _modeOverride === "agent" : mockIsAgent()),
   setMode: (m: string) => {
     _modeOverride = m;
   },
@@ -69,7 +70,7 @@ describe("deploy", () => {
   });
 
   describe("agent mode", () => {
-    test("outputs structured TOON with pre-flight checks", async () => {
+    test("outputs structured JSON with pre-flight checks", async () => {
       mockIsAgent.mockReturnValue(true);
       mockGetToken.mockResolvedValue("token");
       mockResolveProfile.mockResolvedValue(mockProfile);
@@ -77,10 +78,23 @@ describe("deploy", () => {
 
       await deploy({});
 
-      const output = capturedOutput(consoleSpy);
-      expect(output).toContain("command: deploy");
-      expect(output).toContain("authenticated");
-      expect(output).toContain("production_instance");
+      const jsonLine = consoleSpy.mock.calls.find((c: unknown[]) => {
+        try {
+          JSON.parse(c[0] as string);
+          return true;
+        } catch {
+          return false;
+        }
+      });
+      expect(jsonLine).toBeDefined();
+      const parsed = JSON.parse(jsonLine![0] as string);
+      expect(parsed.command).toBe("deploy");
+      expect(parsed.checks).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ name: "authenticated", ok: true }),
+          expect.objectContaining({ name: "production_instance", ok: false }),
+        ]),
+      );
     });
 
     test("reports unauthenticated when no token", async () => {
@@ -90,10 +104,21 @@ describe("deploy", () => {
 
       await deploy({});
 
-      const output = capturedOutput(consoleSpy);
-      expect(output).toContain("authenticated");
-      expect(output).toContain("false");
-      expect(output).toContain("clerk auth login");
+      const jsonLine = consoleSpy.mock.calls.find((c: unknown[]) => {
+        try {
+          JSON.parse(c[0] as string);
+          return true;
+        } catch {
+          return false;
+        }
+      });
+      expect(jsonLine).toBeDefined();
+      const parsed = JSON.parse(jsonLine![0] as string);
+      expect(parsed.checks).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ name: "authenticated", ok: false, fix: "clerk auth login" }),
+        ]),
+      );
     });
 
     test("does not trigger interactive prompts", async () => {
@@ -122,14 +147,21 @@ describe("deploy", () => {
       mockPassword.mockResolvedValueOnce("fake-secret");
     }
 
-    test("does not print agent markdown", async () => {
+    test("does not print JSON on dispose", async () => {
       mockHumanFlow();
       consoleSpy = spyOn(console, "log").mockImplementation(() => {});
 
       await deploy({});
 
-      const allOutput = capturedOutput(consoleSpy);
-      expect(allOutput).not.toContain("## deploy\n");
+      const jsonLine = consoleSpy.mock.calls.find((c: unknown[]) => {
+        try {
+          JSON.parse(c[0] as string);
+          return true;
+        } catch {
+          return false;
+        }
+      });
+      expect(jsonLine).toBeUndefined();
     });
 
     test("shows mock banner", async () => {
