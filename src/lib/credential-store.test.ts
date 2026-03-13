@@ -1,7 +1,7 @@
 import { test, expect, describe, beforeEach, afterAll, mock, setDefaultTimeout } from "bun:test";
 
 // Keyring initialization can be slow on first access (macOS Keychain, etc.)
-setDefaultTimeout(15_000);
+setDefaultTimeout(5_000);
 import { mkdtemp, rm, mkdir, chmod, unlink } from "node:fs/promises";
 import { join, dirname } from "node:path";
 import { tmpdir } from "node:os";
