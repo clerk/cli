@@ -60,7 +60,7 @@ child.on("error", (err) => {
 
 const signals = platform === "win32" ? ["SIGINT", "SIGTERM"] : ["SIGINT", "SIGTERM", "SIGHUP"];
 for (const sig of signals) {
-  process.on(sig, () => child.kill(sig));
+  process.on(sig, () => { if (!exited) child.kill(sig); });
 }
 
 child.on("close", (code, signal) => {

@@ -61,8 +61,22 @@ jobs:
       ref: ${{ needs.snapshot.outputs.sha }}
       artifact-prefix: clerk-snapshot
 
+  smoke-test:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: clerk-snapshot-linux-x64
+      - name: Make executable
+        run: chmod +x ./clerk
+      - name: Smoke test
+        run: |
+          version=$(./clerk --version)
+          echo "Binary reports $version"
+
   publish:
-    needs: [snapshot, build]
+    needs: [snapshot, build, smoke-test]
     runs-on: blacksmith-2vcpu-ubuntu-2404
     permissions:
       contents: read

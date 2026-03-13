@@ -60,7 +60,9 @@ jobs:
           - target: win32-x64
             runner: windows-latest
             bin: ./clerk.exe
-          # win32-arm64: no GitHub-hosted ARM Windows runner available
+          # win32-arm64: no GitHub-hosted ARM Windows runner available — binary is
+          # published untested (best-effort). Build-time format verification confirms
+          # it is a valid PE32+/Aarch64 binary but execution is not validated.
     runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/download-artifact@v4

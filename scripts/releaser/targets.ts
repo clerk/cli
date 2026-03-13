@@ -7,7 +7,7 @@ export interface Target {
 
 // Target names use Node.js ${process.platform}-${process.arch} convention so the wrapper
 // shim (packages/cli/bin/clerk) can derive package names without a lookup table.
-// Keep in sync with .github/workflows/release.yml matrix.
+// Keep in sync with .github/workflows/build-binaries.yml matrix.
 export const targets: Target[] = [
   { name: "darwin-arm64", os: "darwin", cpu: "arm64" },
   { name: "darwin-x64", os: "darwin", cpu: "x64" },

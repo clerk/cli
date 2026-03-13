@@ -17,8 +17,9 @@ push to main
 
 PR comment "!snapshot [name]"
   → build job: cross-compile binaries from PR branch
-    → publish-npm: publish @snapshot packages
-      → post installation comment on PR
+    → smoke-test job: verify linux-x64 binary
+      → publish-npm: publish @snapshot packages
+        → post installation comment on PR
 ```
 
 ## Architecture
@@ -39,7 +40,7 @@ Install: `npm install -g @clerk/cli`
 
 ### Canary (`@canary`)
 
-Published automatically on every push to `main` that does **not** trigger a stable release. Canary versions use the format `x.y.z-canary.<short-sha>` (e.g., `0.0.1-canary.abc1234`). Smoke tests are skipped for faster feedback.
+Published automatically on every push to `main` that does **not** trigger a stable release. Canary versions use the format `x.y.z-canary.<short-sha>` (e.g., `0.0.1-canary.abc1234`). A single linux-x64 smoke test runs before publishing.
 
 Install: `npm install -g @clerk/cli@canary`
 
@@ -75,7 +76,7 @@ Defined in [`.github/workflows/build-binaries.yml`](../.github/workflows/build-b
 
 Downloads each compiled binary and runs `--version` to verify the binary actually executes. glibc targets run natively on a platform-matched GitHub-hosted runner; musl targets run inside an Alpine Docker container on a Linux runner. The target-to-runner mapping is defined in the `smoke-test` matrix in [`.github/workflows/release.yml`](../.github/workflows/release.yml).
 
-Not all targets may have a native runner available (e.g., `win32-arm64` is skipped because there is no GitHub-hosted ARM Windows runner).
+Not all targets have a native runner available. `win32-arm64` is published as best-effort — the build job verifies it is a valid PE32+/Aarch64 binary via `file` output, but no execution-level smoke test runs because there is no GitHub-hosted ARM Windows runner.
 
 Publishing and GitHub Release upload are gated on all smoke tests passing.
 
