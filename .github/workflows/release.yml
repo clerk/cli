@@ -84,7 +84,8 @@ jobs:
 
   publish-npm:
     needs: [release-please, build, smoke-test]
-    runs-on: blacksmith-2vcpu-ubuntu-2404
+    # Must run on GitHub-hosted runner for npm OIDC trusted publishing
+    runs-on: ubuntu-latest
     permissions:
       contents: read
       id-token: write
@@ -95,6 +96,8 @@ jobs:
         with:
           node-version: "22"
           registry-url: "https://registry.npmjs.org"
+      - name: Upgrade npm for OIDC trusted publishing
+        run: npm install -g npm@latest
       - run: bun install --frozen-lockfile
 
       - uses: actions/download-artifact@v4
@@ -105,12 +108,10 @@ jobs:
         run: bun run scripts/releaser/index.ts
         env:
           ARTIFACTS_DIR: ${{ github.workspace }}/dist/artifacts
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-          NPM_CONFIG_PROVENANCE: true
 
   upload-github-assets:
     needs: [release-please, build, smoke-test, publish-npm]
-    runs-on: blacksmith-2vcpu-ubuntu-2404
+    runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:
@@ -171,7 +172,8 @@ jobs:
 
   canary-publish:
     needs: [canary-version, canary-build, canary-smoke-test]
-    runs-on: blacksmith-2vcpu-ubuntu-2404
+    # Must run on GitHub-hosted runner for npm OIDC trusted publishing
+    runs-on: ubuntu-latest
     permissions:
       contents: read
       id-token: write
@@ -182,6 +184,8 @@ jobs:
         with:
           node-version: "22"
           registry-url: "https://registry.npmjs.org"
+      - name: Upgrade npm for OIDC trusted publishing
+        run: npm install -g npm@latest
       - run: bun install --frozen-lockfile
 
       - uses: actions/download-artifact@v4
@@ -202,5 +206,3 @@ jobs:
         env:
           CANARY_VERSION: ${{ needs.canary-version.outputs.version }}
           ARTIFACTS_DIR: ${{ github.workspace }}/dist/artifacts
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-          NPM_CONFIG_PROVENANCE: true

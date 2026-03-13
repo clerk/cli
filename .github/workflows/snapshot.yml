@@ -77,7 +77,8 @@ jobs:
 
   publish:
     needs: [snapshot, build, smoke-test]
-    runs-on: blacksmith-2vcpu-ubuntu-2404
+    # Must run on GitHub-hosted runner for npm OIDC trusted publishing
+    runs-on: ubuntu-latest
     permissions:
       contents: read
       pull-requests: write
@@ -91,6 +92,8 @@ jobs:
         with:
           node-version: "22"
           registry-url: "https://registry.npmjs.org"
+      - name: Upgrade npm for OIDC trusted publishing
+        run: npm install -g npm@latest
       - run: bun install --frozen-lockfile
 
       - uses: actions/download-artifact@v4
@@ -111,8 +114,6 @@ jobs:
         env:
           SNAPSHOT_VERSION: ${{ needs.snapshot.outputs.version }}
           ARTIFACTS_DIR: ${{ github.workspace }}/dist/artifacts
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-          NPM_CONFIG_PROVENANCE: true
 
       - name: React with rocket
         env:

@@ -88,7 +88,7 @@ Runs the releaser script (`scripts/releaser/index.ts`):
 2. For each target, generates a platform package in `dist/platform-packages/`:
    - Creates `package.json` with `os`/`cpu` fields for npm platform selection
    - Copies the compiled binary from the build artifacts
-3. Publishes each platform package with `--access public` (provenance attestation is enabled via the `NPM_CONFIG_PROVENANCE=true` environment variable set in CI, which uses GitHub's OIDC token with `id-token: write` permission)
+3. Publishes each platform package with `--access public` (authentication and provenance use npm OIDC trusted publishing — no `NPM_TOKEN` secret needed, just `id-token: write` permission on a GitHub-hosted runner)
 4. Temporarily mutates the wrapper `package.json` to add `optionalDependencies` and remove `private: true`, publishes it, then restores the original file
 
 The releaser accepts these flags:
@@ -104,8 +104,12 @@ All publishes are idempotent — the script checks `npm view` before publishing 
 The releaser script and publish workflow steps use these environment variables:
 
 - `ARTIFACTS_DIR` — path to directory containing compiled binaries from the build job (defaults to `./dist/artifacts`)
-- `NODE_AUTH_TOKEN` — npm authentication token for publishing (set from `secrets.NPM_TOKEN` in workflows)
-- `NPM_CONFIG_PROVENANCE` — set to `true` to enable provenance attestation (requires `id-token: write` permission)
+
+#### npm Authentication
+
+Publishing uses [npm OIDC trusted publishing](https://docs.npmjs.com/trusted-publishers/) instead of stored secrets. The publish jobs run on GitHub-hosted runners with `id-token: write` permission, and npm >= 11.5.1 automatically authenticates via GitHub's OIDC provider. Each package must have a trusted publisher configured on npmjs.com pointing to the correct workflow file.
+
+> **First publish**: New packages cannot use trusted publishing until they exist on npm. The very first stable release requires a one-time `NODE_AUTH_TOKEN` with a granular access token. After that, configure trusted publishers for all packages and remove the token.
 
 ### 4. Upload GitHub Assets Job
 
@@ -160,4 +164,5 @@ bun run scripts/releaser/index.ts --dry-run
 - **Binary format verification**: The build job verifies each compiled binary matches its expected architecture before uploading.
 - **Native smoke tests**: Each binary is executed on a native runner for its platform before publishing. This catches cross-compilation issues that format checks alone would miss.
 - **Org membership check**: Snapshot releases require the commenter to be a `MEMBER` or `OWNER` of the repository's organization, verified via `author_association`.
+- **OIDC trusted publishing**: Publish jobs authenticate via GitHub's OIDC provider instead of stored npm tokens. This eliminates secret rotation, prevents token exfiltration, and scopes publish permissions to specific workflow files.
 - **CI build check**: Every PR to `main` runs a JS bundle build to catch bundler-specific failures before merge.
