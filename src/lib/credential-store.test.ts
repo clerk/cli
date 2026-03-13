@@ -1,5 +1,8 @@
-import { test, expect, describe, beforeEach, afterAll, mock } from "bun:test";
-import { mkdtemp, rm, mkdir, chmod } from "node:fs/promises";
+import { test, expect, describe, beforeEach, afterAll, mock, setDefaultTimeout } from "bun:test";
+
+// Keyring initialization can be slow on first access (macOS Keychain, etc.)
+setDefaultTimeout(5_000);
+import { mkdtemp, rm, mkdir, chmod, unlink } from "node:fs/promises";
 import { join, dirname } from "node:path";
 import { tmpdir } from "node:os";
 
@@ -8,18 +11,26 @@ const tempDir = await mkdtemp(join(tmpdir(), "clerk-cred-test-"));
 // Redirect file-based credential storage to temp dir via env var
 process.env.CLERK_CONFIG_DIR = tempDir;
 
-// Re-register real credential-store to override any stale mocks from other test files
-const isMacOS = process.platform === "darwin";
-const KEYCHAIN_SERVICE = "clerk-cli";
-const KEYCHAIN_ACCOUNT = "oauth-access-token";
+// Import constants from the source module to avoid duplication
+const { KEYCHAIN_SERVICE, KEYCHAIN_ACCOUNT } = await import("./credential-store.ts");
 const credFile = () =>
   join(process.env.CLERK_CONFIG_DIR ?? join(require("os").homedir(), ".clerk"), "credentials");
 
+let keyringModule: typeof import("@napi-rs/keyring") | null;
+try {
+  keyringModule = await import("@napi-rs/keyring");
+} catch {
+  keyringModule = null;
+}
+
 mock.module("./credential-store.ts", () => ({
+  KEYCHAIN_SERVICE,
+  KEYCHAIN_ACCOUNT,
   async storeToken(token: string) {
-    if (isMacOS) {
+    if (keyringModule) {
       try {
-        await Bun.$`security add-generic-password -a ${KEYCHAIN_ACCOUNT} -s ${KEYCHAIN_SERVICE} -w ${token} -U`.quiet();
+        const entry = new keyringModule.Entry(KEYCHAIN_SERVICE, KEYCHAIN_ACCOUNT);
+        entry.setPassword(token);
         return;
       } catch {}
     }
@@ -29,13 +40,10 @@ mock.module("./credential-store.ts", () => ({
     await chmod(f, 0o600);
   },
   async getToken() {
-    if (isMacOS) {
+    if (keyringModule) {
       try {
-        return (
-          await Bun.$`security find-generic-password -a ${KEYCHAIN_ACCOUNT} -s ${KEYCHAIN_SERVICE} -w`.quiet()
-        )
-          .text()
-          .trim();
+        const entry = new keyringModule.Entry(KEYCHAIN_SERVICE, KEYCHAIN_ACCOUNT);
+        return entry.getPassword();
       } catch {}
     }
     const file = Bun.file(credFile());
@@ -44,13 +52,17 @@ mock.module("./credential-store.ts", () => ({
     return content.trim() || null;
   },
   async deleteToken() {
-    if (isMacOS) {
+    if (keyringModule) {
       try {
-        await Bun.$`security delete-generic-password -a ${KEYCHAIN_ACCOUNT} -s ${KEYCHAIN_SERVICE}`.quiet();
+        const entry = new keyringModule.Entry(KEYCHAIN_SERVICE, KEYCHAIN_ACCOUNT);
+        entry.deletePassword();
       } catch {}
     }
-    const file = Bun.file(credFile());
-    if (await file.exists()) await Bun.write(credFile(), "");
+    try {
+      await unlink(credFile());
+    } catch {
+      // File doesn't exist, nothing to delete
+    }
   },
 }));
 
@@ -59,8 +71,8 @@ const { storeToken, getToken, deleteToken } = await import("./credential-store.t
 let savedToken: string | null = null;
 
 afterAll(async () => {
-  // Restore any pre-existing keychain token on macOS
-  if (process.platform === "darwin" && savedToken !== null) {
+  // Restore any pre-existing keyring token
+  if (keyringModule && savedToken !== null) {
     await storeToken(savedToken);
   }
   delete process.env.CLERK_CONFIG_DIR;
@@ -69,8 +81,8 @@ afterAll(async () => {
 
 describe("credential-store", () => {
   beforeEach(async () => {
-    // On first run, save any existing keychain token so we can restore it later
-    if (process.platform === "darwin" && savedToken === null) {
+    // On first run, save any existing keyring token so we can restore it later
+    if (keyringModule && savedToken === null) {
       savedToken = await getToken();
     }
     await deleteToken();

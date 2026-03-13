@@ -4,7 +4,7 @@
   },
   "overrides": [
     {
-      "files": ["src/cli.ts"],
+      "files": ["src/cli.ts", "src/cli-program.ts"],
       "rules": {
         "unicorn/no-process-exit": "off"
       }

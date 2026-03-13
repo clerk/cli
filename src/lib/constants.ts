@@ -3,14 +3,16 @@
  * Centralizes configuration values that are used across multiple modules.
  */
 
-import { homedir } from "node:os";
 import { join } from "node:path";
+import envPaths from "env-paths";
 
 // ── File paths ──────────────────────────────────────────────────────────────
 
-export const CLERK_HOME_DIR = process.env.CLERK_CONFIG_DIR ?? join(homedir(), ".clerk");
-export const CONFIG_FILE = join(CLERK_HOME_DIR, "config.json");
-export const CREDENTIALS_FILE = join(CLERK_HOME_DIR, "credentials");
+const clerkConfigDir = process.env.CLERK_CONFIG_DIR;
+const paths = envPaths("clerk-cli", { suffix: false });
+
+export const CONFIG_FILE = join(clerkConfigDir ?? paths.config, "config.json");
+export const CREDENTIALS_FILE = join(clerkConfigDir ?? paths.data, "credentials");
 
 // ── OAuth ───────────────────────────────────────────────────────────────────
 
@@ -46,10 +48,5 @@ export const OPENAPI_SPEC_URLS = {
 
 // ── Cache ────────────────────────────────────────────────────────────────
 
-export const CLERK_CACHE_DIR = join(CLERK_HOME_DIR, "cache");
+export const CLERK_CACHE_DIR = clerkConfigDir ? join(clerkConfigDir, "cache") : paths.cache;
 export const CACHE_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
-
-// ── Keychain ────────────────────────────────────────────────────────────────
-
-export const KEYCHAIN_SERVICE = "clerk-cli";
-export const KEYCHAIN_ACCOUNT = "oauth-access-token";

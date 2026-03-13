@@ -1,5 +1,5 @@
 /**
- * Config file management for ~/.clerk/config.json.
+ * Config file management for the Clerk CLI config file.
  * Stores auth identity and path-keyed project profiles.
  */
 
