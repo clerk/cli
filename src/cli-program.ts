@@ -23,6 +23,7 @@ export function createProgram(): Command {
     .name("clerk")
     .description("Clerk CLI")
     .version(require("../package.json").version)
+    .enablePositionalOptions()
     .option(
       "--mode <mode>",
       "Force interaction mode (human or agent). Defaults to auto-detect based on TTY.",
@@ -84,7 +85,10 @@ export function createProgram(): Command {
     .option("--file <path>", "Target env file (default: auto-detect)")
     .action(pull);
 
-  const config = program.command("config").description("Manage instance configuration");
+  const config = program
+    .command("config")
+    .description("Manage instance configuration")
+    .enablePositionalOptions();
 
   config
     .command("pull")

@@ -18,7 +18,6 @@
   "dependencies": {
     "@inquirer/prompts": "^8.2.0",
     "@napi-rs/keyring": "^1.2.0",
-    "@toon-format/toon": "^2.1.0",
     "commander": "^14.0.3",
     "env-paths": "^4.0.0",
     "yaml": "^2.8.2"

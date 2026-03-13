@@ -66,6 +66,7 @@ mock.module(
 );
 
 let _mode: "human" | "agent" = "human";
+let _jsonFlag = false;
 mock.module(
   "../../mode.ts",
   () =>
@@ -76,6 +77,10 @@ mock.module(
       },
       isHuman: () => _mode === "human",
       isAgent: () => _mode === "agent",
+      setJsonFlag: (flag: boolean) => {
+        _jsonFlag = flag;
+      },
+      isJsonOutput: () => _mode === "agent" || _jsonFlag,
     }) satisfies typeof import("../../mode.ts"),
 );
 
@@ -473,6 +478,7 @@ export async function setupTest(): Promise<TestHarness> {
   mockState.gitNormalizedRemote = "github.com/test/project";
   mockState.gitRepoRoot = "/repo";
   mockState.gitRepoIdentifier = "/repo/.git";
+  _jsonFlag = false;
   resetPromptQueues();
   http.reset();
   process.stdin.isTTY = true;
