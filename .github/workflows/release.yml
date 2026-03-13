@@ -153,8 +153,22 @@ jobs:
       ref: ${{ github.sha }}
       artifact-prefix: clerk-canary
 
+  canary-smoke-test:
+    needs: canary-build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: clerk-canary-linux-x64
+      - name: Make executable
+        run: chmod +x ./clerk
+      - name: Smoke test
+        run: |
+          version=$(./clerk --version)
+          echo "Binary reports $version"
+
   canary-publish:
-    needs: [canary-version, canary-build]
+    needs: [canary-version, canary-build, canary-smoke-test]
     runs-on: blacksmith-2vcpu-ubuntu-2404
     permissions:
       contents: read

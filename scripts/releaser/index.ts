@@ -68,6 +68,7 @@ async function generatePlatformPackage(target: Target, version: string): Promise
     os: [target.os],
     cpu: [target.cpu],
     preferUnplugged: true,
+    files: ["bin"],
   };
   if (target.libc) {
     pkg.libc = [target.libc];
