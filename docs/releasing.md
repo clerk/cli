@@ -9,10 +9,16 @@ push to main
   → release-please creates/updates a version PR
     → merge version PR
       → release-please creates a GitHub Release + tag
-        → build job: cross-compile binaries (6 targets)
-          → smoke-test job: verify binaries on native runners (5 targets)
+        → build job: cross-compile binaries (8 targets)
+          → smoke-test job: verify binaries on native runners
             → publish-npm: generate platform packages + publish wrapper
             → upload-github-assets: attach binaries to the GitHub Release
+    → (if no release created) canary job: build + publish @canary
+
+PR comment "!snapshot [name]"
+  → build job: cross-compile binaries from PR branch
+    → publish-npm: publish @snapshot packages
+      → post installation comment on PR
 ```
 
 ## Architecture
@@ -22,6 +28,26 @@ The CLI is distributed as an npm wrapper package (`@clerk/cli`) plus one platfor
 When a user runs `npm install -g @clerk/cli`, npm installs the wrapper plus the matching platform package via `optionalDependencies`. The wrapper's `bin/clerk` shim resolves the binary from the platform package using `require.resolve()`.
 
 Target names follow Node.js's `${process.platform}-${process.arch}` convention so the shim can derive package names without a lookup table.
+
+## Release Channels
+
+### Stable (`@latest`)
+
+Published when a release-please version PR is merged. Includes full smoke testing on native runners before publishing. Binaries are also attached to the GitHub Release.
+
+Install: `npm install -g @clerk/cli`
+
+### Canary (`@canary`)
+
+Published automatically on every push to `main` that does **not** trigger a stable release. Canary versions use the format `x.y.z-canary.<short-sha>` (e.g., `0.0.1-canary.abc1234`). Smoke tests are skipped for faster feedback.
+
+Install: `npm install -g @clerk/cli@canary`
+
+### Snapshot (`@snapshot`)
+
+Published on-demand from PR branches by commenting `!snapshot` (or `!snapshot <name>`) on a pull request. The commenter must be a member or owner of the repository's organization. Snapshot versions use the format `x.y.z-<name>.<short-sha>` (e.g., `0.0.1-snapshot.abc1234` or `0.0.1-my-feature.abc1234`).
+
+Install: `npm install -g @clerk/cli@<version>` (version is posted as a PR comment after publishing)
 
 ## Versioning
 
@@ -57,12 +83,18 @@ Publishing and GitHub Release upload are gated on all smoke tests passing.
 
 Runs the releaser script (`scripts/releaser/index.ts`):
 
-1. Reads the version from `packages/cli/package.json`
+1. Reads the version from `packages/cli/package.json` (or uses `--version` override for canary/snapshot)
 2. For each target, generates a platform package in `dist/platform-packages/`:
    - Creates `package.json` with `os`/`cpu` fields for npm platform selection
    - Copies the compiled binary from the build artifacts
 3. Publishes each platform package with `--provenance --access public`
 4. Temporarily mutates the wrapper `package.json` to add `optionalDependencies` and remove `private: true`, publishes it, then restores the original file
+
+The releaser accepts these flags:
+
+- `--dry-run` — simulate publishing without actually uploading to npm
+- `--tag <tag>` — publish with a specific npm dist-tag (e.g., `canary`, `snapshot`); defaults to `latest`
+- `--version <version>` — override the version read from `package.json`
 
 All publishes are idempotent — the script checks `npm view` before publishing and skips already-published versions.
 
@@ -80,17 +112,20 @@ Attaches the compiled binaries to the GitHub Release for direct download. Binari
 | `packages/cli-core/src/globals.d.ts` | TypeScript declaration for the `CLI_VERSION` compile-time define               |
 | `scripts/releaser/index.ts`          | Generates platform packages and publishes everything to npm                    |
 | `scripts/releaser/targets.ts`        | Target definitions — must be kept in sync with the workflow matrix             |
-| `.github/workflows/release.yml`      | GitHub Actions release workflow                                                |
+| `.github/workflows/release.yml`      | GitHub Actions release + canary workflow                                       |
+| `.github/workflows/snapshot.yml`     | GitHub Actions snapshot workflow (triggered by PR comments)                    |
 
 ## Keeping Targets in Sync
 
-The target list exists in three places that must stay in sync:
+The target list exists in these places that must stay in sync:
 
 1. `scripts/releaser/targets.ts` — used by the releaser to generate platform packages
 2. `.github/workflows/release.yml` build matrix — compiles binaries (maps target names to Bun cross-compile targets, e.g., `win32-x64` → `bun-windows-x64`)
 3. `.github/workflows/release.yml` smoke-test matrix — verifies binaries on native runners
+4. `.github/workflows/release.yml` canary-build matrix — compiles canary binaries
+5. `.github/workflows/snapshot.yml` build matrix — compiles snapshot binaries
 
-If you add or remove a target, update all three. Note that the smoke-test matrix may not cover every target if a native runner isn't available (e.g., `win32-arm64`).
+If you add or remove a target, update all of these. Note that the smoke-test matrix may not cover every target if a native runner isn't available (e.g., `win32-arm64`).
 
 ## Local Development
 
@@ -116,3 +151,4 @@ bun run scripts/releaser/index.ts --dry-run
 - **Idempotent publishing**: The releaser checks npm before publishing and skips already-published versions, making it safe to re-run.
 - **Binary format verification**: The build job verifies each compiled binary matches its expected architecture before uploading.
 - **Native smoke tests**: Each binary is executed on a native runner for its platform before publishing. This catches cross-compilation issues that format checks alone would miss.
+- **Org membership check**: Snapshot releases require the commenter to be a `MEMBER` or `OWNER` of the repository's organization, verified via `author_association`.

@@ -103,7 +103,6 @@ const mockApp = {
 
 describe("link", () => {
   let consoleSpy: ReturnType<typeof spyOn>;
-  let errorSpy: ReturnType<typeof spyOn>;
 
   afterEach(() => {
     _modeOverride = undefined;
@@ -131,7 +130,6 @@ describe("link", () => {
     mockSearch.mockReset();
     mockConfirm.mockReset();
     consoleSpy?.mockRestore();
-    errorSpy?.mockRestore();
   });
 
   describe("agent mode", () => {

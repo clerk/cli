@@ -8,9 +8,9 @@
     "build": "bun run --filter @clerk/cli-core build",
     "dev": "bun run --filter @clerk/cli-core dev",
     "test": "bun run --filter @clerk/cli-core test",
-    "lint": "bun run --filter @clerk/cli-core lint",
-    "format": "bun run --filter @clerk/cli-core format",
-    "format:check": "bun run --filter @clerk/cli-core format:check",
+    "lint": "bun run --filter @clerk/cli-core lint && oxlint scripts/",
+    "format": "bun run --filter @clerk/cli-core format && oxfmt --write scripts/",
+    "format:check": "bun run --filter @clerk/cli-core format:check && oxfmt --check scripts/",
     "prepare": "git config core.hooksPath .hooks"
   },
   "devDependencies": {

@@ -20,6 +20,8 @@ jobs:
       - id: release
         uses: googleapis/release-please-action@v4
 
+  # ─── Stable release ────────────────────────────────────────────────
+
   build:
     needs: release-please
     if: ${{ needs.release-please.outputs.release_created == 'true' }}
@@ -181,3 +183,105 @@ jobs:
             ext=""; [[ "$target" == win32-* ]] && ext=".exe"
             gh release upload "$tag" "${dir}clerk${ext}#clerk-${target}${ext}"
           done
+
+  # ─── Canary release ────────────────────────────────────────────────
+
+  canary-version:
+    needs: release-please
+    if: ${{ needs.release-please.outputs.release_created != 'true' }}
+    runs-on: blacksmith-2vcpu-ubuntu-2404
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Compute canary version
+        id: version
+        run: |
+          base=$(jq -r '.["packages/cli"]' .release-please-manifest.json)
+          sha=$(git rev-parse --short=7 HEAD)
+          echo "version=${base}-canary.${sha}" >> "$GITHUB_OUTPUT"
+
+  canary-build:
+    needs: canary-version
+    runs-on: blacksmith-2vcpu-ubuntu-2404
+    strategy:
+      fail-fast: false
+      matrix:
+        # Keep in sync with scripts/releaser/targets.ts
+        include:
+          - target: darwin-arm64
+            bun_target: bun-darwin-arm64
+            ext: ""
+          - target: darwin-x64
+            bun_target: bun-darwin-x64
+            ext: ""
+          - target: linux-arm64
+            bun_target: bun-linux-arm64
+            ext: ""
+          - target: linux-arm64-musl
+            bun_target: bun-linux-arm64-musl
+            ext: ""
+          - target: linux-x64
+            bun_target: bun-linux-x64
+            ext: ""
+          - target: linux-x64-musl
+            bun_target: bun-linux-x64-musl
+            ext: ""
+          - target: win32-arm64
+            bun_target: bun-windows-arm64
+            ext: ".exe"
+          - target: win32-x64
+            bun_target: bun-windows-x64
+            ext: ".exe"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+      - run: bun install --frozen-lockfile
+
+      - name: Build compiled binary
+        env:
+          CLI_VERSION: ${{ needs.canary-version.outputs.version }}
+        run: |
+          bun build --compile \
+            --no-compile-autoload-dotenv \
+            --target=${{ matrix.bun_target }} \
+            --define "CLI_VERSION=\"$CLI_VERSION\"" \
+            ./packages/cli-core/src/cli.ts \
+            --outfile clerk${{ matrix.ext }}
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: clerk-canary-${{ matrix.target }}
+          path: clerk${{ matrix.ext }}
+
+  canary-publish:
+    needs: [canary-version, canary-build]
+    runs-on: blacksmith-2vcpu-ubuntu-2404
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          registry-url: "https://registry.npmjs.org"
+      - run: bun install --frozen-lockfile
+
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: clerk-canary-*
+          path: dist/artifacts
+
+      - name: Rename artifact directories
+        run: |
+          cd dist/artifacts
+          for dir in clerk-canary-*/; do
+            target=${dir#clerk-canary-} && target=${target%/}
+            mv "$dir" "clerk-${target}"
+          done
+
+      - name: Publish canary packages
+        run: bun run scripts/releaser/index.ts --tag canary --version "$CANARY_VERSION"
+        env:
+          CANARY_VERSION: ${{ needs.canary-version.outputs.version }}
+          ARTIFACTS_DIR: ${{ github.workspace }}/dist/artifacts
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

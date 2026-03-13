@@ -1,0 +1,172 @@
+name: Snapshot Release
+
+on:
+  issue_comment:
+    types: [created]
+
+permissions:
+  contents: read
+  pull-requests: write
+  id-token: write
+
+jobs:
+  snapshot:
+    if: >-
+      github.event.issue.pull_request &&
+      startsWith(github.event.comment.body, '!snapshot') &&
+      contains(fromJSON('["MEMBER","OWNER"]'), github.event.comment.author_association)
+    runs-on: blacksmith-2vcpu-ubuntu-2404
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      sha: ${{ steps.pr.outputs.sha }}
+    steps:
+      - name: React to comment
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          gh api "repos/${GH_REPO}/issues/comments/${{ github.event.comment.id }}/reactions" \
+            -f content=eyes --silent
+
+      - name: Get PR head SHA
+        id: pr
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          sha=$(gh api "repos/${GH_REPO}/pulls/${{ github.event.issue.number }}" --jq '.head.sha')
+          echo "sha=${sha}" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.pr.outputs.sha }}
+
+      - name: Compute snapshot version
+        id: version
+        run: |
+          body="${{ github.event.comment.body }}"
+          # Extract optional name from "!snapshot <name>" — default to "snapshot"
+          name=$(echo "$body" | sed 's/^!snapshot[[:space:]]*//' | tr -cd 'a-zA-Z0-9-')
+          if [ -z "$name" ]; then name="snapshot"; fi
+          base=$(jq -r '.["packages/cli"]' .release-please-manifest.json)
+          sha=$(echo "${{ steps.pr.outputs.sha }}" | cut -c1-7)
+          echo "version=${base}-${name}.${sha}" >> "$GITHUB_OUTPUT"
+
+  build:
+    needs: snapshot
+    runs-on: blacksmith-2vcpu-ubuntu-2404
+    strategy:
+      fail-fast: false
+      matrix:
+        # Keep in sync with scripts/releaser/targets.ts
+        include:
+          - target: darwin-arm64
+            bun_target: bun-darwin-arm64
+            ext: ""
+          - target: darwin-x64
+            bun_target: bun-darwin-x64
+            ext: ""
+          - target: linux-arm64
+            bun_target: bun-linux-arm64
+            ext: ""
+          - target: linux-arm64-musl
+            bun_target: bun-linux-arm64-musl
+            ext: ""
+          - target: linux-x64
+            bun_target: bun-linux-x64
+            ext: ""
+          - target: linux-x64-musl
+            bun_target: bun-linux-x64-musl
+            ext: ""
+          - target: win32-arm64
+            bun_target: bun-windows-arm64
+            ext: ".exe"
+          - target: win32-x64
+            bun_target: bun-windows-x64
+            ext: ".exe"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.snapshot.outputs.sha }}
+      - uses: oven-sh/setup-bun@v2
+      - run: bun install --frozen-lockfile
+
+      - name: Build compiled binary
+        env:
+          CLI_VERSION: ${{ needs.snapshot.outputs.version }}
+        run: |
+          bun build --compile \
+            --no-compile-autoload-dotenv \
+            --target=${{ matrix.bun_target }} \
+            --define "CLI_VERSION=\"$CLI_VERSION\"" \
+            ./packages/cli-core/src/cli.ts \
+            --outfile clerk${{ matrix.ext }}
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: clerk-snapshot-${{ matrix.target }}
+          path: clerk${{ matrix.ext }}
+
+  publish:
+    needs: [snapshot, build]
+    runs-on: blacksmith-2vcpu-ubuntu-2404
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.snapshot.outputs.sha }}
+      - uses: oven-sh/setup-bun@v2
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          registry-url: "https://registry.npmjs.org"
+      - run: bun install --frozen-lockfile
+
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: clerk-snapshot-*
+          path: dist/artifacts
+
+      - name: Rename artifact directories
+        run: |
+          cd dist/artifacts
+          for dir in clerk-snapshot-*/; do
+            target=${dir#clerk-snapshot-} && target=${target%/}
+            mv "$dir" "clerk-${target}"
+          done
+
+      - name: Publish snapshot packages
+        run: bun run scripts/releaser/index.ts --tag snapshot --version "$SNAPSHOT_VERSION"
+        env:
+          SNAPSHOT_VERSION: ${{ needs.snapshot.outputs.version }}
+          ARTIFACTS_DIR: ${{ github.workspace }}/dist/artifacts
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: React with rocket
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          gh api "repos/${GH_REPO}/issues/comments/${{ github.event.comment.id }}/reactions" \
+            -f content=rocket --silent
+
+      - name: Post installation comment
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          SNAPSHOT_VERSION: ${{ needs.snapshot.outputs.version }}
+        run: |
+          sha=$(echo "${SNAPSHOT_VERSION}" | rev | cut -d. -f1 | rev)
+          gh pr comment "${{ github.event.issue.number }}" --repo "${GH_REPO}" --body "$(cat <<EOF
+          ## Snapshot published
+
+          \`\`\`sh
+          npm install -g @clerk/cli@${SNAPSHOT_VERSION}
+          \`\`\`
+
+          | Package | Version |
+          |---------|---------|
+          | \`@clerk/cli\` | \`${SNAPSHOT_VERSION}\` |
+
+          > Published from ${sha}
+          EOF
+          )"

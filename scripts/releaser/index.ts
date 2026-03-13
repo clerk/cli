@@ -6,6 +6,19 @@ const DIST_DIR = join(import.meta.dir, "../../dist/platform-packages");
 const ARTIFACTS_DIR = process.env.ARTIFACTS_DIR ?? join(import.meta.dir, "../../dist/artifacts");
 const WRAPPER_PKG_PATH = join(import.meta.dir, "../../packages/cli/package.json");
 
+function parseArgs(): { dryRun: boolean; tag?: string; versionOverride?: string } {
+  const args = process.argv.slice(2);
+  const dryRun = args.includes("--dry-run");
+
+  const tagIdx = args.indexOf("--tag");
+  const tag = tagIdx !== -1 ? args[tagIdx + 1] : undefined;
+
+  const versionIdx = args.indexOf("--version");
+  const versionOverride = versionIdx !== -1 ? args[versionIdx + 1] : undefined;
+
+  return { dryRun, tag, versionOverride };
+}
+
 async function readVersion(): Promise<string> {
   const pkg = await Bun.file(WRAPPER_PKG_PATH).json();
   return pkg.version;
@@ -64,8 +77,9 @@ async function generatePlatformPackage(target: Target, version: string): Promise
   return dir;
 }
 
-function publish(dir: string, dryRun: boolean): void {
+function publish(dir: string, dryRun: boolean, tag?: string): void {
   const flags = ["npm", "publish", "--provenance", "--access", "public", "--ignore-scripts"];
+  if (tag) flags.push("--tag", tag);
   if (dryRun) flags.push("--dry-run");
   const result = Bun.spawnSync(flags, { cwd: dir, stdio: ["ignore", "pipe", "pipe"] });
   if (result.exitCode !== 0) {
@@ -74,9 +88,11 @@ function publish(dir: string, dryRun: boolean): void {
   }
 }
 
-const dryRun = process.argv.includes("--dry-run");
-const version = await readVersion();
-console.log(`Publishing version ${version}${dryRun ? " (dry run)" : ""}`);
+const { dryRun, tag, versionOverride } = parseArgs();
+const version = versionOverride ?? (await readVersion());
+console.log(
+  `Publishing version ${version}${tag ? ` (tag: ${tag})` : ""}${dryRun ? " (dry run)" : ""}`,
+);
 
 await rm(DIST_DIR, { recursive: true, force: true });
 
@@ -88,7 +104,7 @@ for (const target of targets) {
   }
   console.log(`Publishing ${name}@${version}...`);
   const dir = await generatePlatformPackage(target, version);
-  publish(dir, dryRun);
+  publish(dir, dryRun, tag);
 }
 
 // Build wrapper package.json for publishing: add optionalDependencies from targets and remove private flag.
@@ -97,6 +113,7 @@ for (const target of targets) {
 const wrapperRaw = await Bun.file(WRAPPER_PKG_PATH).text();
 try {
   const wrapperPkg = JSON.parse(wrapperRaw);
+  wrapperPkg.version = version;
   wrapperPkg.optionalDependencies = Object.fromEntries(
     targets.map((t) => [packageName(t.name), version]),
   );
@@ -108,7 +125,7 @@ try {
     console.log(`Skipping ${wrapperName}@${version} (already published)`);
   } else {
     console.log(`Publishing ${wrapperName}@${version}...`);
-    publish(join(import.meta.dir, "../../packages/cli"), dryRun);
+    publish(join(import.meta.dir, "../../packages/cli"), dryRun, tag);
   }
 } finally {
   await Bun.write(WRAPPER_PKG_PATH, wrapperRaw);
