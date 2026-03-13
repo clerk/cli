@@ -7,7 +7,7 @@
     "build": "bun build ./src/cli.ts --outfile ./dist/cli.js --target node --external @napi-rs/keyring",
     "build:compile": "bun build --compile --no-compile-autoload-dotenv ./src/cli.ts --outfile ./dist/clerk",
     "dev": "bun run ./src/cli.ts",
-    "test": "bun test",
+    "test": "for f in $(find src -name '*.test.ts' | sort); do bun test \"$f\" || exit 1; done",
     "lint": "oxlint src/",
     "format": "oxfmt --write src/",
     "format:check": "oxfmt --check src/"
