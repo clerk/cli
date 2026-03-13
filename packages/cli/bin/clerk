@@ -12,14 +12,12 @@ function isMusl() {
   if (platform !== "linux") return false;
   // On musl systems, ldd is a shell script (or the dynamic linker itself)
   // containing "musl". Similar to rustup's `ldd --version | grep musl`.
-  try {
-    // Check common ldd locations; on musl systems the file contains "musl".
-    for (const p of ["/usr/bin/ldd", "/bin/ldd"]) {
-      try {
-        if (require("fs").readFileSync(p, "utf-8").includes("musl")) return true;
-      } catch {}
-    }
-  } catch {}
+  // Check common ldd locations; on musl systems the file contains "musl".
+  for (const p of ["/usr/bin/ldd", "/bin/ldd"]) {
+    try {
+      if (require("fs").readFileSync(p, "utf-8").includes("musl")) return true;
+    } catch {}
+  }
   // Fallback: Node's diagnostic report exposes libc info without child processes.
   // https://nodejs.org/api/report.html#reportgetreport
   try {

@@ -54,6 +54,10 @@ jobs:
           name=$(echo "$COMMENT_BODY" | sed 's/^!snapshot[[:space:]]*//' | tr -cd 'a-zA-Z0-9-')
           if [ -z "$name" ]; then name="snapshot"; fi
           base=$(jq -r '.["packages/cli"]' .release-please-manifest.json)
+          if [ -z "$base" ] || [ "$base" = "null" ]; then
+            echo "::error::Could not read base version from .release-please-manifest.json"
+            exit 1
+          fi
           datetime=$(date -u +%Y%m%d%H%M%S)
           echo "version=${base}-${name}.v${datetime}" >> "$GITHUB_OUTPUT"
 

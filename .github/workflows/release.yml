@@ -112,6 +112,10 @@ jobs:
         id: version
         run: |
           base=$(jq -r '.["packages/cli"]' .release-please-manifest.json)
+          if [ -z "$base" ] || [ "$base" = "null" ]; then
+            echo "::error::Could not read base version from .release-please-manifest.json"
+            exit 1
+          fi
           sha=$(git rev-parse --short=7 HEAD)
           echo "version=${base}-canary.${sha}" >> "$GITHUB_OUTPUT"
 

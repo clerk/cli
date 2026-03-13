@@ -4,6 +4,18 @@ globs: "*.ts, *.tsx, *.html, *.css, *.js, *.jsx, package.json"
 alwaysApply: false
 ---
 
+## Project Structure
+
+This is a Bun workspace monorepo:
+
+- `packages/cli-core/` — CLI source code, commands, and tests
+- `packages/cli/` — npm wrapper package with platform binary shim (not run directly during development; do not add command logic here)
+- `scripts/releaser/` — release publishing script that generates platform packages and publishes to npm
+
+See [docs/releasing.md](docs/releasing.md) for the full release flow, channels, and safeguards.
+
+## Bun
+
 Default to using Bun instead of Node.js.
 
 - Use `bun <file>` instead of `node <file>` or `ts-node <file>`
@@ -121,6 +133,10 @@ bun test             # Run all tests
 ```
 
 CI runs `bun run format:check` (fails if unformatted), `bun run lint`, and `bun test` on every PR to `main`.
+
+## Versioning
+
+The `CLI_VERSION` global is injected at compile time via `bun build --compile --define "CLI_VERSION=..."`. Local `build:compile` omits it, so the binary reports `0.0.0-dev`. The CI release workflow injects the real version.
 
 ## Commands
 

@@ -12,9 +12,11 @@ function parseArgs(): { dryRun: boolean; tag?: string; versionOverride?: string 
 
   const tagIdx = args.indexOf("--tag");
   const tag = tagIdx !== -1 ? args[tagIdx + 1] : undefined;
+  if (tagIdx !== -1 && !tag) throw new Error("--tag requires a value");
 
   const versionIdx = args.indexOf("--version");
   const versionOverride = versionIdx !== -1 ? args[versionIdx + 1] : undefined;
+  if (versionIdx !== -1 && !versionOverride) throw new Error("--version requires a value");
 
   return { dryRun, tag, versionOverride };
 }
