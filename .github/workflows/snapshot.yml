@@ -50,8 +50,8 @@ jobs:
           name=$(echo "$COMMENT_BODY" | sed 's/^!snapshot[[:space:]]*//' | tr -cd 'a-zA-Z0-9-')
           if [ -z "$name" ]; then name="snapshot"; fi
           base=$(jq -r '.["packages/cli"]' .release-please-manifest.json)
-          sha=$(echo "${{ steps.pr.outputs.sha }}" | cut -c1-7)
-          echo "version=${base}-${name}.${sha}" >> "$GITHUB_OUTPUT"
+          datetime=$(date -u +%Y%m%d%H%M%S)
+          echo "version=${base}-${name}.v${datetime}" >> "$GITHUB_OUTPUT"
 
   build:
     needs: snapshot
@@ -64,6 +64,10 @@ jobs:
   publish:
     needs: [snapshot, build]
     runs-on: blacksmith-2vcpu-ubuntu-2404
+    permissions:
+      contents: read
+      pull-requests: write
+      id-token: write
     steps:
       - uses: actions/checkout@v4
         with:
@@ -94,6 +98,7 @@ jobs:
           SNAPSHOT_VERSION: ${{ needs.snapshot.outputs.version }}
           ARTIFACTS_DIR: ${{ github.workspace }}/dist/artifacts
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          NPM_CONFIG_PROVENANCE: true
 
       - name: React with rocket
         env:
@@ -108,8 +113,9 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
           SNAPSHOT_VERSION: ${{ needs.snapshot.outputs.version }}
+          SNAPSHOT_SHA: ${{ needs.snapshot.outputs.sha }}
         run: |
-          sha=$(echo "${SNAPSHOT_VERSION}" | rev | cut -d. -f1 | rev)
+          short_sha=$(echo "${SNAPSHOT_SHA}" | cut -c1-7)
           gh pr comment "${{ github.event.issue.number }}" --repo "${GH_REPO}" --body "$(cat <<EOF
 ## Snapshot published
 
@@ -121,6 +127,6 @@ npm install -g @clerk/cli@${SNAPSHOT_VERSION}
 |---------|---------|
 | \`@clerk/cli\` | \`${SNAPSHOT_VERSION}\` |
 
-> Published from ${sha}
+> Published from ${short_sha}
 EOF
           )"

@@ -45,7 +45,7 @@ Install: `npm install -g @clerk/cli@canary`
 
 ### Snapshot (`@snapshot`)
 
-Published on-demand from PR branches by commenting `!snapshot` (or `!snapshot <name>`) on a pull request. The commenter must be a member or owner of the repository's organization. Snapshot versions use the format `x.y.z-<name>.<short-sha>` (e.g., `0.0.1-snapshot.abc1234` or `0.0.1-my-feature.abc1234`).
+Published on-demand from PR branches by commenting `!snapshot` (or `!snapshot <name>`) on a pull request. The commenter must be a member or owner of the repository's organization. Snapshot versions use the format `x.y.z-<name>.v<YYYYMMDDHHmmss>` (e.g., `0.0.1-snapshot.v20260313145959` or `0.0.1-my-feature.v20260313145959`). The datetime format ensures multiple snapshots from the same PR sort monotonically in semver.
 
 Install: `npm install -g @clerk/cli@<version>` (version is posted as a PR comment after publishing)
 
@@ -87,7 +87,7 @@ Runs the releaser script (`scripts/releaser/index.ts`):
 2. For each target, generates a platform package in `dist/platform-packages/`:
    - Creates `package.json` with `os`/`cpu` fields for npm platform selection
    - Copies the compiled binary from the build artifacts
-3. Publishes each platform package with `--provenance --access public`
+3. Publishes each platform package with `--access public` (provenance attestation is enabled via the `NPM_CONFIG_PROVENANCE=true` environment variable set in CI, which uses GitHub's OIDC token with `id-token: write` permission)
 4. Temporarily mutates the wrapper `package.json` to add `optionalDependencies` and remove `private: true`, publishes it, then restores the original file
 
 The releaser accepts these flags:
@@ -97,6 +97,14 @@ The releaser accepts these flags:
 - `--version <version>` — override the version read from `package.json`
 
 All publishes are idempotent — the script checks `npm view` before publishing and skips already-published versions.
+
+#### Environment Variables
+
+The releaser script and publish workflow steps use these environment variables:
+
+- `ARTIFACTS_DIR` — path to directory containing compiled binaries from the build job (defaults to `./dist/artifacts`)
+- `NODE_AUTH_TOKEN` — npm authentication token for publishing (set from `secrets.NPM_TOKEN` in workflows)
+- `NPM_CONFIG_PROVENANCE` — set to `true` to enable provenance attestation (requires `id-token: write` permission)
 
 ### 4. Upload GitHub Assets Job
 
@@ -124,8 +132,7 @@ The target list exists in these places that must stay in sync:
 3. `.github/workflows/release.yml` smoke-test matrix — verifies binaries on native runners
 4. `.github/workflows/release.yml` canary-build matrix — compiles canary binaries
 5. `.github/workflows/snapshot.yml` build matrix — compiles snapshot binaries
-
-If you add or remove a target, update all of these. Note that the smoke-test matrix may not cover every target if a native runner isn't available (e.g., `win32-arm64`).
+   If you add or remove a target, update all of these. Note that the smoke-test matrix may not cover every target if a native runner isn't available (e.g., `win32-arm64`).
 
 ## Local Development
 
@@ -152,3 +159,4 @@ bun run scripts/releaser/index.ts --dry-run
 - **Binary format verification**: The build job verifies each compiled binary matches its expected architecture before uploading.
 - **Native smoke tests**: Each binary is executed on a native runner for its platform before publishing. This catches cross-compilation issues that format checks alone would miss.
 - **Org membership check**: Snapshot releases require the commenter to be a `MEMBER` or `OWNER` of the repository's organization, verified via `author_association`.
+- **CI build check**: Every PR to `main` runs a JS bundle build to catch bundler-specific failures before merge.

@@ -83,6 +83,9 @@ jobs:
   publish-npm:
     needs: [release-please, build, smoke-test]
     runs-on: blacksmith-2vcpu-ubuntu-2404
+    permissions:
+      contents: read
+      id-token: write
     steps:
       - uses: actions/checkout@v4
       - uses: oven-sh/setup-bun@v2
@@ -101,10 +104,13 @@ jobs:
         env:
           ARTIFACTS_DIR: ${{ github.workspace }}/dist/artifacts
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          NPM_CONFIG_PROVENANCE: true
 
   upload-github-assets:
     needs: [release-please, build, smoke-test, publish-npm]
     runs-on: blacksmith-2vcpu-ubuntu-2404
+    permissions:
+      contents: write
     steps:
       - uses: actions/download-artifact@v4
         with:
@@ -150,6 +156,9 @@ jobs:
   canary-publish:
     needs: [canary-version, canary-build]
     runs-on: blacksmith-2vcpu-ubuntu-2404
+    permissions:
+      contents: read
+      id-token: write
     steps:
       - uses: actions/checkout@v4
       - uses: oven-sh/setup-bun@v2
@@ -178,3 +187,4 @@ jobs:
           CANARY_VERSION: ${{ needs.canary-version.outputs.version }}
           ARTIFACTS_DIR: ${{ github.workspace }}/dist/artifacts
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          NPM_CONFIG_PROVENANCE: true
