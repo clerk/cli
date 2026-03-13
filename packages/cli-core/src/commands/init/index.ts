@@ -1,10 +1,10 @@
 import { join } from "node:path";
-import { login } from "../auth/login.js";
-import { link } from "../link/index.js";
-import { pull } from "../env/pull.js";
-import { detectFramework } from "../../lib/framework.js";
-import { isAgent } from "../../mode.js";
-import { dim, cyan } from "../../lib/color.js";
+import { login } from "../auth/login.ts";
+import { link } from "../link/index.ts";
+import { pull } from "../env/pull.ts";
+import { detectFramework } from "../../lib/framework.ts";
+import { isAgent } from "../../mode.ts";
+import { dim, cyan } from "../../lib/color.ts";
 
 const AGENT_PROMPT = `You are integrating Clerk authentication into an existing project. Follow these steps:
 

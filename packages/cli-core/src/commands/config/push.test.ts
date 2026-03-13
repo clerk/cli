@@ -56,7 +56,7 @@ describe("config push", () => {
       yes?: boolean;
     } = {},
   ) {
-    const { configPatch } = await import("./push");
+    const { configPatch } = await import("./push.ts");
     return configPatch(options);
   }
 
@@ -69,7 +69,7 @@ describe("config push", () => {
       yes?: boolean;
     } = {},
   ) {
-    const { configPut } = await import("./push");
+    const { configPut } = await import("./push.ts");
     return configPut(options);
   }
 

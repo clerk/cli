@@ -1,14 +1,14 @@
 import { basename } from "node:path";
 import { search, confirm } from "@inquirer/prompts";
-import { isAgent } from "../../mode.js";
-import { getToken } from "../../lib/credential-store.js";
-import { login } from "../auth/login.js";
-import { listApplications, fetchApplication, type Application } from "../../lib/plapi.js";
-import { setProfile, resolveProfile, moveProfile } from "../../lib/config.js";
-import { autolink, findClerkKeys, matchKeyToApp } from "../../lib/autolink.js";
-import { getGitRepoIdentifier, getGitRepoRoot, getGitNormalizedRemote } from "../../lib/git.js";
-import { dim, cyan } from "../../lib/color.js";
-import { CliError } from "../../lib/errors.js";
+import { isAgent } from "../../mode.ts";
+import { getToken } from "../../lib/credential-store.ts";
+import { login } from "../auth/login.ts";
+import { listApplications, fetchApplication, type Application } from "../../lib/plapi.ts";
+import { setProfile, resolveProfile, moveProfile } from "../../lib/config.ts";
+import { autolink, findClerkKeys, matchKeyToApp } from "../../lib/autolink.ts";
+import { getGitRepoIdentifier, getGitRepoRoot, getGitNormalizedRemote } from "../../lib/git.ts";
+import { dim, cyan } from "../../lib/color.ts";
+import { CliError } from "../../lib/errors.ts";
 
 const AGENT_PROMPT = `You are linking a Clerk application to the current project directory.
 

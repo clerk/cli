@@ -1,5 +1,5 @@
 import { test, expect, describe } from "bun:test";
-import { parseEnvFile, mergeEnvVars, serializeEnvFile } from "./dotenv";
+import { parseEnvFile, mergeEnvVars, serializeEnvFile } from "./dotenv.ts";
 
 describe("parseEnvFile", () => {
   test("returns empty array for empty string", () => {

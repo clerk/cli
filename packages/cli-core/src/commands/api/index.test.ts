@@ -53,8 +53,8 @@ mock.module("../../lib/config.ts", () => ({
 
 mock.module("@inquirer/prompts", () => promptsStubs);
 
-const { _setConfigDir } = (await import("../../lib/config")) as any;
-const { setMode } = (await import("../../mode")) as any;
+const { _setConfigDir } = (await import("../../lib/config.ts")) as any;
+const { setMode } = (await import("../../mode.ts")) as any;
 
 describe("api command", () => {
   const originalEnv = { ...process.env };
@@ -107,7 +107,7 @@ describe("api command", () => {
   });
 
   async function runApi(endpoint: string, options: Record<string, unknown> = {}) {
-    const { api } = await import("./index");
+    const { api } = await import("./index.ts");
     return api(endpoint, undefined, options);
   }
 

@@ -2,9 +2,9 @@ import { test, expect, describe, beforeEach, afterEach, spyOn } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { parseSpec, _setCacheDir } from "./catalog";
+import { parseSpec, _setCacheDir } from "./catalog.ts";
 import { stubFetch } from "../../test/stubs.ts";
-import { apiLs } from "./ls";
+import { apiLs } from "./ls.ts";
 
 const MINIMAL_SPEC = `
 openapi: "3.0.0"

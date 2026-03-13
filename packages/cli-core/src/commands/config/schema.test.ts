@@ -54,7 +54,7 @@ describe("config schema", () => {
   async function runConfigSchema(
     options: { instance?: string; output?: string; keys?: string[] } = {},
   ) {
-    const { configSchema } = await import("./schema");
+    const { configSchema } = await import("./schema.ts");
     return configSchema(options);
   }
 

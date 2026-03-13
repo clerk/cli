@@ -2,7 +2,7 @@ import { test, expect, describe, beforeEach, afterEach } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { detectPublishableKeyName, detectFramework } from "./framework";
+import { detectPublishableKeyName, detectFramework } from "./framework.ts";
 
 function writePkg(dir: string, deps: Record<string, string>, devDeps?: Record<string, string>) {
   return Bun.write(

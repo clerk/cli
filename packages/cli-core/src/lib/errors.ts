@@ -1,4 +1,4 @@
-import { isAgent } from "../mode";
+import { isAgent } from "../mode.ts";
 
 /** Standard process exit codes used by the CLI. */
 export const EXIT_CODE = {

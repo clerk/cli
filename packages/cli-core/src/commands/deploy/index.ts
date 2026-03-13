@@ -1,6 +1,6 @@
 import { select, input, confirm, password } from "@inquirer/prompts";
-import { isAgent } from "../../mode.js";
-import { dim, bold, cyan, green, blue, yellow } from "../../lib/color.js";
+import { isAgent } from "../../mode.ts";
+import { dim, bold, cyan, green, blue, yellow } from "../../lib/color.ts";
 
 const DEPLOY_PROMPT = `You are deploying a Clerk application to production. Follow these steps:
 

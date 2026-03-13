@@ -1,5 +1,5 @@
 import { test, expect, describe, afterEach, mock } from "bun:test";
-import { exchangeCodeForToken, fetchUserInfo } from "./token-exchange";
+import { exchangeCodeForToken, fetchUserInfo } from "./token-exchange.ts";
 
 const originalFetch = globalThis.fetch;
 

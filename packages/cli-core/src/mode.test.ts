@@ -2,7 +2,7 @@ import { test, expect, afterEach, describe } from "bun:test";
 
 // Re-import fresh module per test by using dynamic import
 // But since bun caches modules, we test the exported functions directly
-import { getMode, setMode, isHuman, isAgent } from "./mode";
+import { getMode, setMode, isHuman, isAgent } from "./mode.ts";
 
 describe("mode detection", () => {
   const originalEnv = process.env.CLERK_MODE;

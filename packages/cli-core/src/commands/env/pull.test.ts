@@ -36,7 +36,7 @@ mock.module("../../lib/config.ts", () => ({
   },
 }));
 
-const { _setConfigDir, setProfile } = (await import("../../lib/config")) as any;
+const { _setConfigDir, setProfile } = (await import("../../lib/config.ts")) as any;
 
 describe("env pull", () => {
   const originalEnv = { ...process.env };
@@ -99,7 +99,7 @@ describe("env pull", () => {
   });
 
   async function runEnvPull(options: { instance?: string; file?: string } = {}) {
-    const { pull } = await import("./pull");
+    const { pull } = await import("./pull.ts");
     return pull(options);
   }
 

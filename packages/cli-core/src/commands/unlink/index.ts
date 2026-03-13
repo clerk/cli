@@ -1,9 +1,9 @@
 import { confirm } from "@inquirer/prompts";
-import { isAgent, isHuman } from "../../mode.js";
-import { resolveProfile, removeProfile } from "../../lib/config.js";
-import { getGitRepoRoot } from "../../lib/git.js";
-import { dim, cyan } from "../../lib/color.js";
-import { CliError, throwUserAbort } from "../../lib/errors.js";
+import { isAgent, isHuman } from "../../mode.ts";
+import { resolveProfile, removeProfile } from "../../lib/config.ts";
+import { getGitRepoRoot } from "../../lib/git.ts";
+import { dim, cyan } from "../../lib/color.ts";
+import { CliError, throwUserAbort } from "../../lib/errors.ts";
 
 const AGENT_PROMPT = `You are unlinking a Clerk application from the current project directory.
 

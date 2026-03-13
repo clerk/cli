@@ -14,8 +14,8 @@ mock.module("../../mode.ts", () => ({
   isHuman: () => _mode !== "agent",
 }));
 
-const { parseSpec, _setCacheDir } = (await import("./catalog")) as any;
-const { setMode } = (await import("../../mode")) as any;
+const { parseSpec, _setCacheDir } = (await import("./catalog.ts")) as any;
+const { setMode } = (await import("../../mode.ts")) as any;
 
 const MINIMAL_SPEC = `
 openapi: "3.0.0"
@@ -125,7 +125,7 @@ describe("apiInteractive", () => {
 
   test("shows help and returns in agent mode", async () => {
     setMode("agent");
-    const { apiInteractive } = await import("./interactive");
+    const { apiInteractive } = await import("./interactive.ts");
 
     await apiInteractive({});
     expect(errorSpy).toHaveBeenCalledWith(
@@ -136,7 +136,7 @@ describe("apiInteractive", () => {
 
   test("completes full flow for GET endpoint (no body, no params)", async () => {
     setMode("human");
-    const { apiInteractive } = await import("./interactive");
+    const { apiInteractive } = await import("./interactive.ts");
 
     // Step 1: select tag "Users"
     selectResponses.push("Users");
@@ -162,7 +162,7 @@ describe("apiInteractive", () => {
 
   test("prompts for path parameters", async () => {
     setMode("human");
-    const { apiInteractive } = await import("./interactive");
+    const { apiInteractive } = await import("./interactive.ts");
 
     selectResponses.push("Users");
     selectResponses.push({
@@ -185,7 +185,7 @@ describe("apiInteractive", () => {
 
   test("aborts when user declines confirmation", async () => {
     setMode("human");
-    const { apiInteractive } = await import("./interactive");
+    const { apiInteractive } = await import("./interactive.ts");
 
     selectResponses.push("Users");
     selectResponses.push({

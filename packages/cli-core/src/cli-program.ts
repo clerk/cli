@@ -1,20 +1,20 @@
 import { Command } from "@commander-js/extra-typings";
-import { setMode, type Mode } from "./mode.js";
-import { init } from "./commands/init/index.js";
-import { login } from "./commands/auth/login.js";
-import { logout } from "./commands/auth/logout.js";
-import { whoami } from "./commands/whoami/index.js";
-import { pull } from "./commands/env/pull.js";
-import { deploy } from "./commands/deploy/index.js";
-import { configPull } from "./commands/config/pull.js";
-import { configPatch, configPut } from "./commands/config/push.js";
-import { configSchema } from "./commands/config/schema.js";
-import { api } from "./commands/api/index.js";
-import { link } from "./commands/link/index.js";
-import { unlink } from "./commands/unlink/index.js";
-import { doctor } from "./commands/doctor/index.js";
-import { CliError, UserAbortError, ApiError, EXIT_CODE, throwUsageError } from "./lib/errors.js";
-import { red } from "./lib/color.js";
+import { setMode, type Mode } from "./mode.ts";
+import { init } from "./commands/init/index.ts";
+import { login } from "./commands/auth/login.ts";
+import { logout } from "./commands/auth/logout.ts";
+import { whoami } from "./commands/whoami/index.ts";
+import { pull } from "./commands/env/pull.ts";
+import { deploy } from "./commands/deploy/index.ts";
+import { configPull } from "./commands/config/pull.ts";
+import { configPatch, configPut } from "./commands/config/push.ts";
+import { configSchema } from "./commands/config/schema.ts";
+import { api } from "./commands/api/index.ts";
+import { link } from "./commands/link/index.ts";
+import { unlink } from "./commands/unlink/index.ts";
+import { doctor } from "./commands/doctor/index.ts";
+import { CliError, UserAbortError, ApiError, EXIT_CODE, throwUsageError } from "./lib/errors.ts";
+import { red } from "./lib/color.ts";
 
 async function getDevVersion(): Promise<string> {
   try {

@@ -1,7 +1,7 @@
 import { test, expect, describe, afterEach } from "bun:test";
 import { stubFetch } from "../../test/stubs.ts";
-import { bapiRequest } from "./bapi";
-import { BapiError } from "../../lib/errors";
+import { bapiRequest } from "./bapi.ts";
+import { BapiError } from "../../lib/errors.ts";
 
 describe("bapi", () => {
   const originalFetch = globalThis.fetch;

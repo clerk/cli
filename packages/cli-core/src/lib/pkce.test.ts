@@ -1,5 +1,5 @@
 import { test, expect, describe } from "bun:test";
-import { generateCodeVerifier, generateCodeChallenge, generateState } from "./pkce";
+import { generateCodeVerifier, generateCodeChallenge, generateState } from "./pkce.ts";
 
 describe("PKCE", () => {
   test("generateCodeVerifier returns a 43-char string", () => {

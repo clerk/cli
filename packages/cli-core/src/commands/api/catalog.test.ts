@@ -3,7 +3,13 @@ import { stubFetch } from "../../test/stubs.ts";
 import { mkdtemp, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { parseSpec, loadCatalog, filterEndpoints, endpointsByTag, _setCacheDir } from "./catalog";
+import {
+  parseSpec,
+  loadCatalog,
+  filterEndpoints,
+  endpointsByTag,
+  _setCacheDir,
+} from "./catalog.ts";
 
 const MINIMAL_SPEC = `
 openapi: "3.0.0"

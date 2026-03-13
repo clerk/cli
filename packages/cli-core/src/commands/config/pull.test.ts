@@ -48,7 +48,7 @@ describe("config pull", () => {
 
   // Dynamically import to get fresh module state
   async function runConfigPull(options: { instance?: string; output?: string } = {}) {
-    const { configPull } = await import("./pull");
+    const { configPull } = await import("./pull.ts");
     return configPull(options);
   }
 

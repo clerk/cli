@@ -1,5 +1,5 @@
 import { test, expect, describe } from "bun:test";
-import { startAuthServer } from "./auth-server";
+import { startAuthServer } from "./auth-server.ts";
 
 describe("auth-server", () => {
   test("starts on a random port", () => {
