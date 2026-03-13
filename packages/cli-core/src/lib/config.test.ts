@@ -12,7 +12,7 @@ import {
   resolveInstanceId,
   _setConfigDir,
   type Profile,
-} from "./config";
+} from "./config.ts";
 import { join } from "node:path";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
