@@ -45,12 +45,17 @@ export function createProgram(): Command {
 
   auth
     .command("login")
+    .aliases(["signup", "signin", "sign-in"])
     .description("Log in to your Clerk account")
     .action(async () => {
       await login();
     });
 
-  auth.command("logout").description("Log out of your Clerk account").action(logout);
+  auth
+    .command("logout")
+    .aliases(["signout", "sign-out"])
+    .description("Log out of your Clerk account")
+    .action(logout);
 
   program
     .command("link")
