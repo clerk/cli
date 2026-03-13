@@ -49,11 +49,11 @@ func IsColorEnabled() bool {
 	if forceColor := os.Getenv("FORCE_COLOR"); forceColor == "1" || forceColor == "true" {
 		return true
 	}
-	return term.IsTerminal(int(os.Stdout.Fd()))
+	return term.IsTerminal(int(os.Stdout.Fd())) // #nosec G115 -- fd conversion is safe, standard Go pattern
 }
 
 func IsInteractive() bool {
-	return term.IsTerminal(int(os.Stdin.Fd())) && term.IsTerminal(int(os.Stdout.Fd()))
+	return term.IsTerminal(int(os.Stdin.Fd())) && term.IsTerminal(int(os.Stdout.Fd())) // #nosec G115 -- fd conversion is safe, standard Go pattern
 }
 
 func init() {

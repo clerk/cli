@@ -127,7 +127,7 @@ func parseFieldValue(raw string) (parsedField, error) {
 	case val == "null":
 		return parsedField{Key: key, Value: nil}, nil
 	case strings.HasPrefix(val, "@"):
-		content, err := os.ReadFile(val[1:])
+		content, err := os.ReadFile(val[1:]) // #nosec G304 -- user-specified file via -F key=@file flag
 		if err != nil {
 			return parsedField{}, fmt.Errorf("reading field file %s: %w", val[1:], err)
 		}
@@ -374,7 +374,7 @@ func readInput(path string) ([]byte, error) {
 	if path == "-" {
 		return io.ReadAll(os.Stdin)
 	}
-	return os.ReadFile(path)
+	return os.ReadFile(path) // #nosec G304 -- user-specified file via --input flag
 }
 
 func parseHeader(h string) (key, value string, ok bool) {
