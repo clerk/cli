@@ -54,7 +54,7 @@ export class CliError extends Error {
       // without a .md extension, add .md to get the raw markdown URL.
       if (
         isAgent() &&
-        this.docsUrl.startsWith("https://docs.clerk.com/") &&
+        this.docsUrl.startsWith("https://clerk.com/docs/") &&
         !this.docsUrl.endsWith(".md")
       ) {
         this.docsUrl += ".md";

@@ -1,5 +1,5 @@
 {
-  "name": "cli-new",
+  "name": "@clerk/cli-workspace",
   "private": true,
   "workspaces": [
     "packages/*"

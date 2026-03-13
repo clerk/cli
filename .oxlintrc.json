@@ -4,7 +4,7 @@
   },
   "overrides": [
     {
-      "files": ["**/cli.ts", "**/cli-program.ts"],
+      "files": ["packages/cli-core/src/cli.ts", "packages/cli-core/src/cli-program.ts"],
       "rules": {
         "unicorn/no-process-exit": "off"
       }

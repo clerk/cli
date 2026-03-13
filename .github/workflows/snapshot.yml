@@ -43,10 +43,11 @@ jobs:
 
       - name: Compute snapshot version
         id: version
+        env:
+          COMMENT_BODY: ${{ github.event.comment.body }}
         run: |
-          body="${{ github.event.comment.body }}"
           # Extract optional name from "!snapshot <name>" — default to "snapshot"
-          name=$(echo "$body" | sed 's/^!snapshot[[:space:]]*//' | tr -cd 'a-zA-Z0-9-')
+          name=$(echo "$COMMENT_BODY" | sed 's/^!snapshot[[:space:]]*//' | tr -cd 'a-zA-Z0-9-')
           if [ -z "$name" ]; then name="snapshot"; fi
           base=$(jq -r '.["packages/cli"]' .release-please-manifest.json)
           sha=$(echo "${{ steps.pr.outputs.sha }}" | cut -c1-7)
@@ -54,58 +55,11 @@ jobs:
 
   build:
     needs: snapshot
-    runs-on: blacksmith-2vcpu-ubuntu-2404
-    strategy:
-      fail-fast: false
-      matrix:
-        # Keep in sync with scripts/releaser/targets.ts
-        include:
-          - target: darwin-arm64
-            bun_target: bun-darwin-arm64
-            ext: ""
-          - target: darwin-x64
-            bun_target: bun-darwin-x64
-            ext: ""
-          - target: linux-arm64
-            bun_target: bun-linux-arm64
-            ext: ""
-          - target: linux-arm64-musl
-            bun_target: bun-linux-arm64-musl
-            ext: ""
-          - target: linux-x64
-            bun_target: bun-linux-x64
-            ext: ""
-          - target: linux-x64-musl
-            bun_target: bun-linux-x64-musl
-            ext: ""
-          - target: win32-arm64
-            bun_target: bun-windows-arm64
-            ext: ".exe"
-          - target: win32-x64
-            bun_target: bun-windows-x64
-            ext: ".exe"
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: ${{ needs.snapshot.outputs.sha }}
-      - uses: oven-sh/setup-bun@v2
-      - run: bun install --frozen-lockfile
-
-      - name: Build compiled binary
-        env:
-          CLI_VERSION: ${{ needs.snapshot.outputs.version }}
-        run: |
-          bun build --compile \
-            --no-compile-autoload-dotenv \
-            --target=${{ matrix.bun_target }} \
-            --define "CLI_VERSION=\"$CLI_VERSION\"" \
-            ./packages/cli-core/src/cli.ts \
-            --outfile clerk${{ matrix.ext }}
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: clerk-snapshot-${{ matrix.target }}
-          path: clerk${{ matrix.ext }}
+    uses: ./.github/workflows/build-binaries.yml
+    with:
+      version: ${{ needs.snapshot.outputs.version }}
+      ref: ${{ needs.snapshot.outputs.sha }}
+      artifact-prefix: clerk-snapshot
 
   publish:
     needs: [snapshot, build]
@@ -157,16 +111,16 @@ jobs:
         run: |
           sha=$(echo "${SNAPSHOT_VERSION}" | rev | cut -d. -f1 | rev)
           gh pr comment "${{ github.event.issue.number }}" --repo "${GH_REPO}" --body "$(cat <<EOF
-          ## Snapshot published
+## Snapshot published
 
-          \`\`\`sh
-          npm install -g @clerk/cli@${SNAPSHOT_VERSION}
-          \`\`\`
+\`\`\`sh
+npm install -g @clerk/cli@${SNAPSHOT_VERSION}
+\`\`\`
 
-          | Package | Version |
-          |---------|---------|
-          | \`@clerk/cli\` | \`${SNAPSHOT_VERSION}\` |
+| Package | Version |
+|---------|---------|
+| \`@clerk/cli\` | \`${SNAPSHOT_VERSION}\` |
 
-          > Published from ${sha}
-          EOF
+> Published from ${sha}
+EOF
           )"

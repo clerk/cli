@@ -17,6 +17,10 @@ function isMusl() {
       return report.sharedObjects.some((f) => f.includes("libc.musl-") || f.includes("ld-musl-"));
     }
   } catch {}
+  console.warn(
+    "Warning: Could not detect libc variant on Linux. Defaulting to glibc. " +
+      "If the binary fails to start, try installing the musl variant manually.",
+  );
   return false;
 }
 

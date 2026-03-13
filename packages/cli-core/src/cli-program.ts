@@ -1,3 +1,4 @@
+import { join } from "node:path";
 import { Command } from "@commander-js/extra-typings";
 import { setMode, type Mode } from "./mode.ts";
 import { init } from "./commands/init/index.ts";
@@ -18,7 +19,7 @@ import { red } from "./lib/color.ts";
 
 async function getDevVersion(): Promise<string> {
   try {
-    const pkg = await Bun.file(`${import.meta.dir}/../../cli/package.json`).json();
+    const pkg = await Bun.file(join(import.meta.dir, "..", "..", "cli", "package.json")).json();
     return `${pkg.version}-dev`;
   } catch {
     return "0.0.0-dev";
