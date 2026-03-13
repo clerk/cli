@@ -5,8 +5,7 @@
  * is automatically flushed when the command scope exits.
  */
 
-import { encode } from "@toon-format/toon";
-import { isAgent } from "../mode.js";
+import { isJsonOutput } from "../mode.js";
 import { green, yellow } from "./color.js";
 
 export interface CommandOutput extends Disposable {
@@ -14,7 +13,7 @@ export interface CommandOutput extends Disposable {
   add(name: string, ok: boolean, detail: string, fix?: string): void;
   /** Suggest a next-step command (only shown to agents). */
   suggest(command: string): void;
-  /** Attach arbitrary metadata to the TOON output (agent mode only). */
+  /** Attach arbitrary metadata to the JSON output (agent/json mode only). */
   meta(key: string, value: unknown): void;
 }
 
@@ -22,8 +21,8 @@ export interface CommandOutput extends Disposable {
  * Creates a check/fix tracker that auto-renders output on dispose.
  *
  * - Human mode: each `add()` call prints a ✓/✗ line immediately.
- * - Agent mode: all checks are batched and emitted as TOON (Token-Oriented
- *   Object Notation) when the resource is disposed (via `using`).
+ * - JSON output mode: all checks are batched and emitted as JSON when the
+ *   resource is disposed (via `using`). Triggered by agent mode or --json flag.
  *
  * @example
  * ```ts
@@ -47,7 +46,7 @@ export function createCommandOutput(command: string): CommandOutput {
   return {
     add(name: string, ok: boolean, detail: string, fix?: string) {
       checks.push({ name, ok, detail, fix });
-      if (!isAgent()) {
+      if (!isJsonOutput()) {
         const icon = ok ? green("✓") : yellow("✗");
         const fixHint = !ok && fix ? ` (run: ${fix})` : "";
         console.log(`  ${icon} ${name}: ${detail}${fixHint}`);
@@ -63,7 +62,7 @@ export function createCommandOutput(command: string): CommandOutput {
     },
 
     [Symbol.dispose]() {
-      if (!isAgent()) return;
+      if (!isJsonOutput()) return;
 
       // Collect fixes from failed checks + explicit suggestions
       const fixes = checks.filter((c) => !c.ok && c.fix).map((c) => c.fix!);
@@ -81,7 +80,7 @@ export function createCommandOutput(command: string): CommandOutput {
       if (next.length > 0) data.next = next;
       if (Object.keys(metadata).length > 0) data.meta = metadata;
 
-      console.log(encode(data));
+      console.log(JSON.stringify(data, null, 2));
     },
   };
 }

@@ -1,5 +1,5 @@
 import { test, expect, beforeEach, describe, spyOn } from "bun:test";
-import { setMode } from "../mode";
+import { setMode, setJsonFlag, isJsonOutput } from "../mode";
 import { createCommandOutput } from "./cli";
 
 describe("createCommandOutput", () => {
@@ -15,9 +15,10 @@ describe("createCommandOutput", () => {
   describe("agent mode", () => {
     beforeEach(() => {
       setMode("agent");
+      setJsonFlag(false);
     });
 
-    test("emits TOON with passing checks on dispose", () => {
+    test("emits JSON with passing checks on dispose", () => {
       {
         using out = createCommandOutput("init");
         out.add("authenticated", true, "Logged in");
@@ -25,37 +26,39 @@ describe("createCommandOutput", () => {
         out.add("framework", true, "Detected Next.js");
       }
 
-      expect(logs).toMatchInlineSnapshot(`
-        [
-          
-        "command: init
-        checks[3]{name,ok,detail}:
-          authenticated,true,Logged in
-          linked,true,Application linked
-          framework,true,Detected Next.js"
-        ,
-        ]
-      `);
+      expect(logs).toHaveLength(1);
+      const parsed = JSON.parse(logs[0]!);
+      expect(parsed).toEqual({
+        command: "init",
+        checks: [
+          { name: "authenticated", ok: true, detail: "Logged in" },
+          { name: "linked", ok: true, detail: "Application linked" },
+          { name: "framework", ok: true, detail: "Detected Next.js" },
+        ],
+      });
     });
 
-    test("emits TOON with failing checks and fix suggestions", () => {
+    test("emits JSON with failing checks and fix suggestions", () => {
       {
         using out = createCommandOutput("deploy");
         out.add("authenticated", false, "Not authenticated", "clerk auth login");
         out.add("linked", false, "Not linked", "clerk link");
       }
 
-      expect(logs).toMatchInlineSnapshot(`
-        [
-          
-        "command: deploy
-        checks[2]{name,ok,detail,fix}:
-          authenticated,false,Not authenticated,clerk auth login
-          linked,false,Not linked,clerk link
-        next[2]: clerk auth login,clerk link"
-        ,
-        ]
-      `);
+      const parsed = JSON.parse(logs[0]!);
+      expect(parsed).toEqual({
+        command: "deploy",
+        checks: [
+          {
+            name: "authenticated",
+            ok: false,
+            detail: "Not authenticated",
+            fix: "clerk auth login",
+          },
+          { name: "linked", ok: false, detail: "Not linked", fix: "clerk link" },
+        ],
+        next: ["clerk auth login", "clerk link"],
+      });
     });
 
     test("includes explicit suggestions in next steps", () => {
@@ -66,17 +69,15 @@ describe("createCommandOutput", () => {
         out.suggest("clerk link --app <app_id> (pick one from above)");
       }
 
-      expect(logs).toMatchInlineSnapshot(`
-        [
-          
-        "command: link
-        checks[2]{name,ok,detail}:
-          authenticated,true,Logged in
-          applications,true,"3 available: My App (app_abc123)"
-        next[1]: clerk link --app <app_id> (pick one from above)"
-        ,
-        ]
-      `);
+      const parsed = JSON.parse(logs[0]!);
+      expect(parsed).toEqual({
+        command: "link",
+        checks: [
+          { name: "authenticated", ok: true, detail: "Logged in" },
+          { name: "applications", ok: true, detail: "3 available: My App (app_abc123)" },
+        ],
+        next: ["clerk link --app <app_id> (pick one from above)"],
+      });
     });
 
     test("combines fix suggestions from failed checks with explicit suggestions", () => {
@@ -86,36 +87,34 @@ describe("createCommandOutput", () => {
         out.suggest("clerk link");
       }
 
-      expect(logs).toMatchInlineSnapshot(`
-        [
-          
-        "command: init
-        checks[1]{name,ok,detail,fix}:
-          authenticated,false,Not authenticated,clerk auth login
-        next[2]: clerk auth login,clerk link"
-        ,
-        ]
-      `);
+      const parsed = JSON.parse(logs[0]!);
+      expect(parsed).toEqual({
+        command: "init",
+        checks: [
+          {
+            name: "authenticated",
+            ok: false,
+            detail: "Not authenticated",
+            fix: "clerk auth login",
+          },
+        ],
+        next: ["clerk auth login", "clerk link"],
+      });
     });
 
-    test("includes metadata in TOON output", () => {
+    test("includes metadata in JSON output", () => {
       {
         using out = createCommandOutput("init");
         out.add("framework", true, "Detected Next.js");
         out.meta("recipe", "Add ClerkProvider to layout.tsx");
       }
 
-      expect(logs).toMatchInlineSnapshot(`
-        [
-          
-        "command: init
-        checks[1]{name,ok,detail}:
-          framework,true,Detected Next.js
-        meta:
-          recipe: Add ClerkProvider to layout.tsx"
-        ,
-        ]
-      `);
+      const parsed = JSON.parse(logs[0]!);
+      expect(parsed).toEqual({
+        command: "init",
+        checks: [{ name: "framework", ok: true, detail: "Detected Next.js" }],
+        meta: { recipe: "Add ClerkProvider to layout.tsx" },
+      });
     });
 
     test("does not print check lines immediately", () => {
@@ -136,14 +135,15 @@ describe("createCommandOutput", () => {
         out.add("unlinked", true, "Unlinked app_abc123 from /path/to/repo");
       }
 
-      const output = logs.join("\n");
-      expect(output).not.toContain("next");
+      const parsed = JSON.parse(logs[0]!);
+      expect(parsed.next).toBeUndefined();
     });
   });
 
   describe("human mode", () => {
     beforeEach(() => {
       setMode("human");
+      setJsonFlag(false);
     });
 
     test("prints check lines immediately on add", () => {
@@ -171,7 +171,7 @@ describe("createCommandOutput", () => {
       expect(logs).toHaveLength(2);
     });
 
-    test("does not emit TOON on dispose", () => {
+    test("does not emit JSON on dispose", () => {
       {
         using out = createCommandOutput("init");
         out.add("authenticated", true, "Logged in");
@@ -179,8 +179,53 @@ describe("createCommandOutput", () => {
         out.suggest("clerk env pull");
       }
 
-      // Only the add() line, no TOON
+      // Only the add() line, no JSON
       expect(logs).toHaveLength(1);
+    });
+  });
+
+  describe("isJsonOutput", () => {
+    beforeEach(() => {
+      setMode("human");
+      setJsonFlag(false);
+    });
+
+    test("returns true when in agent mode", () => {
+      setMode("agent");
+      expect(isJsonOutput()).toBe(true);
+    });
+
+    test("returns true when json flag is set", () => {
+      setMode("human");
+      setJsonFlag(true);
+      expect(isJsonOutput()).toBe(true);
+    });
+
+    test("returns false in human mode without json flag", () => {
+      setMode("human");
+      setJsonFlag(false);
+      expect(isJsonOutput()).toBe(false);
+    });
+  });
+
+  describe("json flag mode", () => {
+    beforeEach(() => {
+      setMode("human");
+      setJsonFlag(true);
+    });
+
+    test("emits JSON on dispose even in human mode when json flag is set", () => {
+      {
+        using out = createCommandOutput("init");
+        out.add("authenticated", true, "Logged in");
+      }
+
+      expect(logs).toHaveLength(1);
+      const parsed = JSON.parse(logs[0]!);
+      expect(parsed).toEqual({
+        command: "init",
+        checks: [{ name: "authenticated", ok: true, detail: "Logged in" }],
+      });
     });
   });
 });
