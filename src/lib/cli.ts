@@ -5,7 +5,7 @@
  * is automatically flushed when the command scope exits.
  */
 
-import { isJsonOutput } from "../mode.js";
+import { isJSON } from "../mode.js";
 import { green, yellow } from "./color.js";
 
 export interface CommandOutput extends Disposable {
@@ -46,7 +46,7 @@ export function createCommandOutput(command: string): CommandOutput {
   return {
     add(name: string, ok: boolean, detail: string, fix?: string) {
       checks.push({ name, ok, detail, fix });
-      if (!isJsonOutput()) {
+      if (!isJSON()) {
         const icon = ok ? green("✓") : yellow("✗");
         const fixHint = !ok && fix ? ` (run: ${fix})` : "";
         console.log(`  ${icon} ${name}: ${detail}${fixHint}`);
@@ -62,7 +62,7 @@ export function createCommandOutput(command: string): CommandOutput {
     },
 
     [Symbol.dispose]() {
-      if (!isJsonOutput()) return;
+      if (!isJSON()) return;
 
       // Collect fixes from failed checks + explicit suggestions
       const fixes = checks.filter((c) => !c.ok && c.fix).map((c) => c.fix!);

@@ -9,7 +9,7 @@ mock.module("../../mode.ts", () => ({
     _modeOverride !== undefined ? _modeOverride === "agent" : mockIsAgent(...args),
   isHuman: (...args: unknown[]) =>
     _modeOverride !== undefined ? _modeOverride !== "agent" : mockIsHuman(...args),
-  isJsonOutput: () => (_modeOverride !== undefined ? _modeOverride === "agent" : mockIsAgent()),
+  isJSON: () => (_modeOverride !== undefined ? _modeOverride === "agent" : mockIsAgent()),
   setMode: (m: string) => {
     _modeOverride = m;
   },

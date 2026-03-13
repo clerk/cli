@@ -80,7 +80,7 @@ mock.module(
       setJsonFlag: (flag: boolean) => {
         _jsonFlag = flag;
       },
-      isJsonOutput: () => _mode === "agent" || _jsonFlag,
+      isJSON: () => _mode === "agent" || _jsonFlag,
     }) satisfies typeof import("../../mode.ts"),
 );
 

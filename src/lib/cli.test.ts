@@ -1,5 +1,5 @@
 import { test, expect, beforeEach, describe, spyOn } from "bun:test";
-import { setMode, setJsonFlag, isJsonOutput } from "../mode";
+import { setMode, setJsonFlag, isJSON } from "../mode";
 import { createCommandOutput } from "./cli";
 
 describe("createCommandOutput", () => {
@@ -184,7 +184,7 @@ describe("createCommandOutput", () => {
     });
   });
 
-  describe("isJsonOutput", () => {
+  describe("isJSON", () => {
     beforeEach(() => {
       setMode("human");
       setJsonFlag(false);
@@ -192,19 +192,19 @@ describe("createCommandOutput", () => {
 
     test("returns true when in agent mode", () => {
       setMode("agent");
-      expect(isJsonOutput()).toBe(true);
+      expect(isJSON()).toBe(true);
     });
 
     test("returns true when json flag is set", () => {
       setMode("human");
       setJsonFlag(true);
-      expect(isJsonOutput()).toBe(true);
+      expect(isJSON()).toBe(true);
     });
 
     test("returns false in human mode without json flag", () => {
       setMode("human");
       setJsonFlag(false);
-      expect(isJsonOutput()).toBe(false);
+      expect(isJSON()).toBe(false);
     });
   });
 

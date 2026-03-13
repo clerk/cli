@@ -37,6 +37,6 @@ export function setJsonFlag(flag: boolean) {
 }
 
 /** Returns true when output should be structured JSON (agent mode OR --json flag). */
-export function isJsonOutput(): boolean {
+export function isJSON(): boolean {
   return isAgent() || jsonFlag;
 }
