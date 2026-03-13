@@ -4,12 +4,7 @@ const app = document.getElementById("app")!;
 const params = new URLSearchParams(window.location.search);
 const callbackPort = params.get("callback_port");
 
-type Screen =
-  | "sign-in"
-  | "sign-up"
-  | "select-app"
-  | "success-new"
-  | "success-existing";
+type Screen = "sign-in" | "sign-up" | "select-app" | "success-new" | "success-existing";
 
 function render(screen: Screen) {
   switch (screen) {
@@ -135,9 +130,7 @@ function renderSelectApp() {
   document.getElementById("app-list")!.addEventListener("click", (e) => {
     const li = (e.target as HTMLElement).closest("li");
     if (!li) return;
-    document
-      .querySelectorAll(".app-list li")
-      .forEach((el) => el.classList.remove("selected"));
+    document.querySelectorAll(".app-list li").forEach((el) => el.classList.remove("selected"));
     li.classList.add("selected");
     selected = li.dataset.id!;
     linkBtn.disabled = false;

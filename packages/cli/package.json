@@ -1,0 +1,32 @@
+{
+  "name": "@clerk/cli",
+  "version": "0.0.1",
+  "private": true,
+  "description": "Clerk CLI",
+  "keywords": [
+    "authentication",
+    "clerk",
+    "cli"
+  ],
+  "homepage": "https://clerk.com/docs",
+  "bugs": {
+    "url": "https://github.com/clerk/cli/issues"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/clerk/cli.git"
+  },
+  "bin": {
+    "clerk": "./bin/clerk"
+  },
+  "files": [
+    "bin"
+  ],
+  "scripts": {
+    "prepublishOnly": "echo 'Use scripts/releaser instead' && exit 1"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}

@@ -379,7 +379,7 @@ export interface CLIResult {
 
 async function execCLI(...args: string[]): Promise<CLIResult> {
   const { createProgram, runProgram } = await import("../../cli-program.ts");
-  const program = createProgram();
+  const program = await createProgram();
   program.exitOverride();
 
   if (!currentHarness) {

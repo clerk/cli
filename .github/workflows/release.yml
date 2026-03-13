@@ -1,0 +1,183 @@
+name: Release
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+  pull-requests: write
+  id-token: write
+
+jobs:
+  release-please:
+    runs-on: blacksmith-2vcpu-ubuntu-2404
+    outputs:
+      release_created: ${{ steps.release.outputs['packages/cli--release_created'] }}
+      tag_name: ${{ steps.release.outputs['packages/cli--tag_name'] }}
+      version: ${{ steps.release.outputs['packages/cli--version'] }}
+    steps:
+      - id: release
+        uses: googleapis/release-please-action@v4
+
+  build:
+    needs: release-please
+    if: ${{ needs.release-please.outputs.release_created == 'true' }}
+    runs-on: blacksmith-2vcpu-ubuntu-2404
+    strategy:
+      fail-fast: false
+      matrix:
+        # Keep in sync with scripts/releaser/targets.ts
+        include:
+          - target: darwin-arm64
+            bun_target: bun-darwin-arm64
+            ext: ""
+          - target: darwin-x64
+            bun_target: bun-darwin-x64
+            ext: ""
+          - target: linux-arm64
+            bun_target: bun-linux-arm64
+            ext: ""
+          - target: linux-arm64-musl
+            bun_target: bun-linux-arm64-musl
+            ext: ""
+          - target: linux-x64
+            bun_target: bun-linux-x64
+            ext: ""
+          - target: linux-x64-musl
+            bun_target: bun-linux-x64-musl
+            ext: ""
+          - target: win32-arm64
+            bun_target: bun-windows-arm64
+            ext: ".exe"
+          - target: win32-x64
+            bun_target: bun-windows-x64
+            ext: ".exe"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+      - run: bun install --frozen-lockfile
+
+      - name: Build compiled binary
+        env:
+          CLI_VERSION: ${{ needs.release-please.outputs.version }}
+        run: |
+          bun build --compile \
+            --no-compile-autoload-dotenv \
+            --target=${{ matrix.bun_target }} \
+            --define "CLI_VERSION=\"$CLI_VERSION\"" \
+            ./packages/cli-core/src/cli.ts \
+            --outfile clerk${{ matrix.ext }}
+
+      - name: Verify binary format
+        run: |
+          expected_format="${{ matrix.target }}"
+          binary="clerk${{ matrix.ext }}"
+          file_output=$(file "$binary")
+          echo "Binary: $file_output"
+          case "$expected_format" in
+            darwin-arm64)       echo "$file_output" | grep -q "Mach-O.*arm64" ;;
+            darwin-x64)         echo "$file_output" | grep -q "Mach-O.*x86_64" ;;
+            linux-arm64*)       echo "$file_output" | grep -q "ELF.*ARM aarch64" ;;
+            linux-x64*)         echo "$file_output" | grep -q "ELF.*x86-64" ;;
+            win32-arm64)        echo "$file_output" | grep -q "PE32+.*Aarch64" ;;
+            win32-x64)          echo "$file_output" | grep -q "PE32+.*x86-64" ;;
+            *)                  echo "Unknown target: $expected_format" && exit 1 ;;
+          esac
+          echo "Binary format verified for $expected_format"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: clerk-${{ matrix.target }}
+          path: clerk${{ matrix.ext }}
+
+  smoke-test:
+    needs: build
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: darwin-arm64
+            runner: macos-latest
+            bin: ./clerk
+          - target: darwin-x64
+            runner: macos-13
+            bin: ./clerk
+          - target: linux-arm64
+            runner: ubuntu-24.04-arm
+            bin: ./clerk
+          - target: linux-arm64-musl
+            runner: ubuntu-24.04-arm
+            bin: ./clerk
+            docker: alpine
+          - target: linux-x64
+            runner: ubuntu-latest
+            bin: ./clerk
+          - target: linux-x64-musl
+            runner: ubuntu-latest
+            bin: ./clerk
+            docker: alpine
+          - target: win32-x64
+            runner: windows-latest
+            bin: ./clerk.exe
+          # win32-arm64: no GitHub-hosted ARM Windows runner available
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: clerk-${{ matrix.target }}
+      - name: Make executable
+        if: runner.os != 'Windows'
+        run: chmod +x ${{ matrix.bin }}
+      - name: Smoke test (native)
+        if: ${{ !matrix.docker }}
+        shell: bash
+        run: |
+          version=$(${{ matrix.bin }} --version)
+          echo "Binary reports $version"
+      - name: Smoke test (docker)
+        if: ${{ matrix.docker }}
+        run: |
+          docker run --rm -v "$PWD:/work" ${{ matrix.docker }} /work/${{ matrix.bin }} --version
+
+  publish-npm:
+    needs: [release-please, build, smoke-test]
+    runs-on: blacksmith-2vcpu-ubuntu-2404
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          registry-url: "https://registry.npmjs.org"
+      - run: bun install --frozen-lockfile
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist/artifacts
+
+      - name: Publish packages
+        run: bun run scripts/releaser/index.ts
+        env:
+          ARTIFACTS_DIR: ${{ github.workspace }}/dist/artifacts
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+  upload-github-assets:
+    needs: [release-please, build, smoke-test, publish-npm]
+    runs-on: blacksmith-2vcpu-ubuntu-2404
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist/artifacts
+
+      - name: Upload binaries to GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          tag="${{ needs.release-please.outputs.tag_name }}"
+          for dir in dist/artifacts/clerk-*/; do
+            target=${dir#dist/artifacts/clerk-} && target=${target%/}
+            ext=""; [[ "$target" == win32-* ]] && ext=".exe"
+            gh release upload "$tag" "${dir}clerk${ext}#clerk-${target}${ext}"
+          done

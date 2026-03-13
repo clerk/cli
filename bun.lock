@@ -4,16 +4,8 @@
   "workspaces": {
     "": {
       "name": "marseille",
-      "dependencies": {
-        "@commander-js/extra-typings": "^14.0.0",
-        "@inquirer/prompts": "^8.2.0",
-        "@napi-rs/keyring": "^1.2.0",
-        "commander": "^14.0.3",
-        "env-paths": "^4.0.0",
-        "yaml": "^2.8.2",
-      },
       "devDependencies": {
-        "@types/bun": "latest",
+        "@types/bun": "^1.3.9",
         "nano-staged": "^0.9.0",
         "oxfmt": "^0.36.0",
         "oxlint": "^1.51.0",
@@ -22,9 +14,29 @@
         "typescript": "^5",
       },
     },
+    "packages/cli": {
+      "name": "@clerk/cli",
+      "version": "0.0.1",
+      "bin": {
+        "clerk": "./bin/clerk",
+      },
+    },
+    "packages/cli-core": {
+      "name": "@clerk/cli-core",
+      "version": "0.0.0",
+      "dependencies": {
+        "@inquirer/prompts": "^8.2.0",
+        "@napi-rs/keyring": "^1.2.0",
+        "commander": "^14.0.3",
+        "env-paths": "^4.0.0",
+        "yaml": "^2.8.2",
+      },
+    },
   },
   "packages": {
-    "@commander-js/extra-typings": ["@commander-js/extra-typings@14.0.0", "", { "peerDependencies": { "commander": "~14.0.0" } }, "sha512-hIn0ncNaJRLkZrxBIp5AsW/eXEHNKYQBh0aPdoUqNgD+Io3NIykQqpKFyKcuasZhicGaEZJX/JBSIkZ4e5x8Dg=="],
+    "@clerk/cli": ["@clerk/cli@workspace:packages/cli"],
+
+    "@clerk/cli-core": ["@clerk/cli-core@workspace:packages/cli-core"],
 
     "@inquirer/ansi": ["@inquirer/ansi@2.0.3", "", {}, "sha512-g44zhR3NIKVs0zUesa4iMzExmZpLUdTLRMCStqX3GE5NT6VkPcxQGJ+uC8tDgBUC/vB1rUhUd55cOf++4NZcmw=="],
 

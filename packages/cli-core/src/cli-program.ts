@@ -16,11 +16,20 @@ import { doctor } from "./commands/doctor/index.js";
 import { CliError, UserAbortError, ApiError, EXIT_CODE, throwUsageError } from "./lib/errors.js";
 import { red } from "./lib/color.js";
 
-export function createProgram() {
+async function getDevVersion(): Promise<string> {
+  try {
+    const pkg = await Bun.file(`${import.meta.dir}/../../cli/package.json`).json();
+    return `${pkg.version}-dev`;
+  } catch {
+    return "0.0.0-dev";
+  }
+}
+
+export async function createProgram() {
   const program = new Command()
     .name("clerk")
     .description("Clerk CLI")
-    .version(require("../package.json").version)
+    .version(typeof CLI_VERSION !== "undefined" ? CLI_VERSION : await getDevVersion())
     .option(
       "--mode <mode>",
       "Force interaction mode (human or agent). Defaults to auto-detect based on TTY.",

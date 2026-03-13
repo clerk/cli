@@ -8,31 +8,36 @@ Usage: clerk [options] [command]
 Clerk CLI
 
 Options:
-  -V, --version        Display version
-  --mode <mode>        Force interaction mode (human or agent).
-                       Defaults to auto-detect based on TTY.
-  -h, --help           Display help for command
+  -V, --version                      output the version number
+  --mode <mode>                      Force interaction mode (human or agent).
+                                     Defaults to auto-detect based on TTY.
+  --verbose                          Show detailed error output
+  -h, --help                         display help for command
 
 Commands:
-  init [options]       Initialize Clerk in your project
-  auth                 Manage authentication
+  init                               Initialize Clerk in your project
+  auth                               Manage authentication
     login|signup       Log in to your Clerk account
     logout|signout     Log out of your Clerk account
-  link [options]       Link this project to a Clerk application
-  unlink [options]     Unlink this project from its Clerk application
-  whoami               Show the current logged-in user
-  config               Manage instance configuration
+  link [options]                     Link this project to a Clerk application
+  unlink [options]                   Unlink this project from its Clerk
+                                     application
+  whoami                             Show the current logged-in user
+  env                                Manage environment variables
+    pull [options]     Pull environment variables from Clerk to .env.local
+  config                             Manage instance configuration
     pull [options]     Pull instance configuration from Clerk
     schema [options]   Pull instance config schema from Clerk
     patch [options]    Partially update instance configuration (PATCH)
     put [options]      Replace entire instance configuration (PUT)
-  env                  Manage environment variables
-    pull [options]     Pull environment variables from Clerk to .env.local
-  api [options] [endpoint] [filter]  Make authenticated requests to the Clerk API
+  api [options] [endpoint] [filter]  Make authenticated requests to the Clerk
+                                     API
     ls [filter]        List available API endpoints
     (no args)          Interactive request builder (TTY only)
-  doctor [options]     Check your project's Clerk integration health
+  doctor [options]                   Check your project's Clerk integration
+                                     health
   deploy [options]     Deploy your Clerk application (hidden)
+  help [command]                     display help for command
 
 clerk init
   --prompt             Output a prompt for an AI agent to integrate Clerk
