@@ -1,5 +1,5 @@
 import { Command } from "commander";
-import { setMode, type Mode } from "./mode.js";
+import { setMode, setJsonFlag, type Mode } from "./mode.js";
 import { init } from "./commands/init/index.js";
 import { login } from "./commands/auth/login.js";
 import { logout } from "./commands/auth/logout.js";
@@ -27,7 +27,8 @@ export function createProgram(): Command {
       "--mode <mode>",
       "Force interaction mode (human or agent). Defaults to auto-detect based on TTY.",
     )
-    .option("--verbose", "Show detailed error output");
+    .option("--verbose", "Show detailed error output")
+    .option("--json", "Output structured JSON (same format as agent mode)");
 
   program.hook("preAction", () => {
     const opts = program.opts();
@@ -36,6 +37,9 @@ export function createProgram(): Command {
         throwUsageError(`Invalid mode "${opts.mode}". Must be "human" or "agent".`);
       }
       setMode(opts.mode as Mode);
+    }
+    if (opts.json) {
+      setJsonFlag(true);
     }
   });
 
