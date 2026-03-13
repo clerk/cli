@@ -32,7 +32,7 @@ jobs:
       artifact-prefix: clerk
 
   smoke-test:
-    needs: build
+    needs: [release-please, build]
     strategy:
       fail-fast: false
       matrix:
@@ -75,12 +75,23 @@ jobs:
         if: ${{ !matrix.docker }}
         shell: bash
         run: |
-          version=$(${{ matrix.bin }} --version)
-          echo "Binary reports $version"
+          expected="${{ needs.release-please.outputs.version }}"
+          actual=$(${{ matrix.bin }} --version)
+          echo "Binary reports $actual (expected $expected)"
+          if [ "$actual" != "$expected" ]; then
+            echo "::error::Version mismatch: expected $expected, got $actual"
+            exit 1
+          fi
       - name: Smoke test (docker)
         if: ${{ matrix.docker }}
         run: |
-          docker run --rm -v "$PWD:/work" ${{ matrix.docker }} /work/${{ matrix.bin }} --version
+          expected="${{ needs.release-please.outputs.version }}"
+          actual=$(docker run --rm -v "$PWD:/work" ${{ matrix.docker }} /work/${{ matrix.bin }} --version)
+          echo "Binary reports $actual (expected $expected)"
+          if [ "$actual" != "$expected" ]; then
+            echo "::error::Version mismatch: expected $expected, got $actual"
+            exit 1
+          fi
 
   publish-npm:
     needs: [release-please, build, smoke-test]
@@ -157,18 +168,33 @@ jobs:
       artifact-prefix: clerk-canary
 
   canary-smoke-test:
-    needs: canary-build
-    runs-on: ubuntu-latest
+    needs: [canary-version, canary-build]
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: darwin-arm64
+            runner: macos-latest
+            bin: ./clerk
+          - target: linux-x64
+            runner: ubuntu-latest
+            bin: ./clerk
+    runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/download-artifact@v4
         with:
-          name: clerk-canary-linux-x64
+          name: clerk-canary-${{ matrix.target }}
       - name: Make executable
-        run: chmod +x ./clerk
+        run: chmod +x ${{ matrix.bin }}
       - name: Smoke test
         run: |
-          version=$(./clerk --version)
-          echo "Binary reports $version"
+          expected="${{ needs.canary-version.outputs.version }}"
+          actual=$(${{ matrix.bin }} --version)
+          echo "Binary reports $actual (expected $expected)"
+          if [ "$actual" != "$expected" ]; then
+            echo "::error::Version mismatch: expected $expected, got $actual"
+            exit 1
+          fi
 
   canary-publish:
     needs: [canary-version, canary-build, canary-smoke-test]

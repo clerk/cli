@@ -3,6 +3,7 @@
 "use strict";
 
 const { spawnSync } = require("node:child_process");
+const { constants } = require("node:os");
 const { platform, arch, argv, exit } = require("node:process");
 
 // Detect musl vs glibc to select the correct prebuilt binary.
@@ -53,7 +54,6 @@ if (error) {
   exit(1);
 }
 if (signal) {
-  const signum = { SIGHUP: 1, SIGINT: 2, SIGTERM: 15 };
-  exit(128 + (signum[signal] ?? 1));
+  exit(128 + (constants.signals[signal] ?? 1));
 }
 exit(status ?? 1);

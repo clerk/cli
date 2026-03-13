@@ -11,6 +11,9 @@ permissions:
 
 jobs:
   snapshot:
+    # Intentionally restricted to MEMBER and OWNER — external collaborators
+    # (COLLABORATOR association) cannot trigger snapshots. This is a deliberate
+    # security boundary: snapshot publishing has npm write access via OIDC.
     if: >-
       github.event.issue.pull_request &&
       startsWith(github.event.comment.body, '!snapshot') &&
@@ -62,7 +65,7 @@ jobs:
       artifact-prefix: clerk-snapshot
 
   smoke-test:
-    needs: build
+    needs: [snapshot, build]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/download-artifact@v4
@@ -72,8 +75,13 @@ jobs:
         run: chmod +x ./clerk
       - name: Smoke test
         run: |
-          version=$(./clerk --version)
-          echo "Binary reports $version"
+          expected="${{ needs.snapshot.outputs.version }}"
+          actual=$(./clerk --version)
+          echo "Binary reports $actual (expected $expected)"
+          if [ "$actual" != "$expected" ]; then
+            echo "::error::Version mismatch: expected $expected, got $actual"
+            exit 1
+          fi
 
   publish:
     needs: [snapshot, build, smoke-test]
