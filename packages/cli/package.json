@@ -21,12 +21,13 @@
     "clerk": "./bin/clerk"
   },
   "files": [
-    "bin"
+    "bin",
+    "LICENSE"
   ],
   "scripts": {
     "prepublishOnly": "echo 'Use scripts/releaser instead' && exit 1"
   },
   "engines": {
-    "node": ">=18.0.0"
+    "node": ">=20.0.0"
   }
 }
