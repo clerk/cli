@@ -66,22 +66,11 @@ jobs:
 
   smoke-test:
     needs: [snapshot, build]
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/download-artifact@v4
-        with:
-          name: clerk-snapshot-linux-x64
-      - name: Make executable
-        run: chmod +x ./clerk
-      - name: Smoke test
-        run: |
-          expected="${{ needs.snapshot.outputs.version }}"
-          actual=$(./clerk --version)
-          echo "Binary reports $actual (expected $expected)"
-          if [ "$actual" != "$expected" ]; then
-            echo "::error::Version mismatch: expected $expected, got $actual"
-            exit 1
-          fi
+    uses: ./.github/workflows/smoke-test.yml
+    with:
+      version: ${{ needs.snapshot.outputs.version }}
+      artifact-prefix: clerk-snapshot
+      preset: snapshot
 
   publish:
     needs: [snapshot, build, smoke-test]
@@ -101,7 +90,7 @@ jobs:
           node-version: "22"
           registry-url: "https://registry.npmjs.org"
       - name: Upgrade npm for OIDC trusted publishing
-        run: npm install -g npm@latest
+        run: npm install -g npm@11
       - run: bun install --frozen-lockfile
 
       - uses: actions/download-artifact@v4
@@ -153,3 +142,29 @@ npm install -g @clerk/cli@${SNAPSHOT_VERSION}
 > Published from ${short_sha}
 EOF
           )"
+
+  notify-failure:
+    needs: [snapshot, build, smoke-test, publish]
+    if: failure()
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - name: React with confused emoji
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          gh api "repos/${GH_REPO}/issues/comments/${{ github.event.comment.id }}/reactions" \
+            -f content=confused --silent
+
+      - name: Post failure comment
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          gh pr comment "${{ github.event.issue.number }}" --repo "${GH_REPO}" --body \
+            "## Snapshot failed
+
+          The snapshot publish workflow failed. [View the workflow run](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}) for details."

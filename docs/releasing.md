@@ -13,7 +13,7 @@ push to main
           → smoke-test job: verify binaries on native runners
             → publish-npm: generate platform packages + publish wrapper
             → upload-github-assets: attach binaries to the GitHub Release
-    → (if no release created) canary job: build + publish @canary
+    → (if no release created) canary job: build + smoke-test subset + publish @canary
 
 PR comment "!snapshot [name]"
   → build job: cross-compile binaries from PR branch
@@ -40,7 +40,7 @@ Install: `npm install -g @clerk/cli`
 
 ### Canary (`@canary`)
 
-Published automatically on every push to `main` that does **not** trigger a stable release. Canary versions use the format `x.y.z-canary.<short-sha>` (e.g., `0.0.1-canary.abc1234`). A single linux-x64 smoke test runs before publishing.
+Published automatically on every push to `main` that does **not** trigger a stable release. Canary versions use the format `x.y.z-canary.<short-sha>` (e.g., `0.0.1-canary.abc1234`). A subset of smoke tests (darwin-arm64, linux-x64, linux-x64-musl) runs before publishing.
 
 Install: `npm install -g @clerk/cli@canary`
 
@@ -74,7 +74,7 @@ Defined in [`.github/workflows/build-binaries.yml`](../.github/workflows/build-b
 
 ### 2. Smoke Test Job (matrix)
 
-Downloads each compiled binary and runs `--version` to verify the binary actually executes. glibc targets run natively on a platform-matched GitHub-hosted runner; musl targets run inside an Alpine Docker container on a Linux runner. The target-to-runner mapping is defined in the `smoke-test` matrix in [`.github/workflows/release.yml`](../.github/workflows/release.yml).
+Downloads each compiled binary and runs `--version` to verify the binary actually executes. Smoke testing is handled by a reusable workflow (`.github/workflows/smoke-test.yml`) shared across stable, canary, and snapshot pipelines. Each caller passes a preset name (`stable`, `canary`, or `snapshot`); the reusable workflow resolves the preset to a target matrix internally. glibc targets run natively on a platform-matched GitHub-hosted runner; musl targets run inside an Alpine Docker container on a Linux runner.
 
 Not all targets have a native runner available. `win32-arm64` is published as best-effort — the build job verifies it is a valid PE32+/Aarch64 binary via `file` output, but no execution-level smoke test runs because there is no GitHub-hosted ARM Windows runner.
 
@@ -126,6 +126,7 @@ Attaches the compiled binaries to the GitHub Release for direct download. Binari
 | `scripts/releaser/index.ts`            | Generates platform packages and publishes everything to npm                    |
 | `scripts/releaser/targets.ts`          | Target definitions — must be kept in sync with the workflow matrix             |
 | `.github/workflows/build-binaries.yml` | Reusable workflow for cross-compiling binaries (called by release + snapshot)  |
+| `.github/workflows/smoke-test.yml`     | Reusable workflow for smoke-testing binaries (called by release + snapshot)    |
 | `.github/workflows/release.yml`        | GitHub Actions release + canary workflow                                       |
 | `.github/workflows/snapshot.yml`       | GitHub Actions snapshot workflow (triggered by PR comments)                    |
 
@@ -135,9 +136,9 @@ The target list exists in these places that must stay in sync:
 
 1. `scripts/releaser/targets.ts` — used by the releaser to generate platform packages
 2. `.github/workflows/build-binaries.yml` build matrix — compiles binaries (maps target names to Bun cross-compile targets, e.g., `win32-x64` → `bun-windows-x64`)
-3. `.github/workflows/release.yml` smoke-test matrix — verifies binaries on native runners
+3. `.github/workflows/smoke-test.yml` preset definitions — defines the target matrix for each preset (`stable`, `canary`, `snapshot`)
 
-If you add or remove a target, update all of these. Note that the smoke-test matrix may not cover every target if a native runner isn't available (e.g., `win32-arm64`).
+If you add or remove a target, update all of these. Note that the smoke-test presets may not cover every target if a native runner isn't available (e.g., `win32-arm64`).
 
 ## Local Development
 

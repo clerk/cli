@@ -37,65 +37,11 @@ jobs:
 
   smoke-test:
     needs: [release-please, build]
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - target: darwin-arm64
-            runner: macos-latest
-            bin: ./clerk
-          - target: darwin-x64
-            runner: macos-15-large
-            bin: ./clerk
-          - target: linux-arm64
-            runner: ubuntu-24.04-arm
-            bin: ./clerk
-          - target: linux-arm64-musl
-            runner: ubuntu-24.04-arm
-            bin: ./clerk
-            docker: alpine
-          - target: linux-x64
-            runner: ubuntu-latest
-            bin: ./clerk
-          - target: linux-x64-musl
-            runner: ubuntu-latest
-            bin: ./clerk
-            docker: alpine
-          - target: win32-x64
-            runner: windows-latest
-            bin: ./clerk.exe
-          # win32-arm64: no GitHub-hosted ARM Windows runner available — binary is
-          # published untested (best-effort). Build-time format verification confirms
-          # it is a valid PE32+/Aarch64 binary but execution is not validated.
-    runs-on: ${{ matrix.runner }}
-    steps:
-      - uses: actions/download-artifact@v4
-        with:
-          name: clerk-${{ matrix.target }}
-      - name: Make executable
-        if: runner.os != 'Windows'
-        run: chmod +x ${{ matrix.bin }}
-      - name: Smoke test (native)
-        if: ${{ !matrix.docker }}
-        shell: bash
-        run: |
-          expected="${{ needs.release-please.outputs.version }}"
-          actual=$(${{ matrix.bin }} --version)
-          echo "Binary reports $actual (expected $expected)"
-          if [ "$actual" != "$expected" ]; then
-            echo "::error::Version mismatch: expected $expected, got $actual"
-            exit 1
-          fi
-      - name: Smoke test (docker)
-        if: ${{ matrix.docker }}
-        run: |
-          expected="${{ needs.release-please.outputs.version }}"
-          actual=$(docker run --rm -v "$PWD:/work" ${{ matrix.docker }} /work/${{ matrix.bin }} --version)
-          echo "Binary reports $actual (expected $expected)"
-          if [ "$actual" != "$expected" ]; then
-            echo "::error::Version mismatch: expected $expected, got $actual"
-            exit 1
-          fi
+    uses: ./.github/workflows/smoke-test.yml
+    with:
+      version: ${{ needs.release-please.outputs.version }}
+      artifact-prefix: clerk
+      preset: stable
 
   publish-npm:
     needs: [release-please, build, smoke-test]
@@ -112,7 +58,7 @@ jobs:
           node-version: "22"
           registry-url: "https://registry.npmjs.org"
       - name: Upgrade npm for OIDC trusted publishing
-        run: npm install -g npm@latest
+        run: npm install -g npm@11
       - run: bun install --frozen-lockfile
 
       - uses: actions/download-artifact@v4
@@ -173,54 +119,13 @@ jobs:
       ref: ${{ github.sha }}
       artifact-prefix: clerk-canary
 
-  # Canary smoke tests cover a subset of targets for speed/cost. Full matrix runs
-  # on stable releases. darwin-arm64 + linux-x64 cover the two most common dev
-  # platforms; musl is included since it runs on the same ubuntu-latest runner.
   canary-smoke-test:
     needs: [canary-version, canary-build]
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - target: darwin-arm64
-            runner: macos-latest
-            bin: ./clerk
-          - target: linux-x64
-            runner: ubuntu-latest
-            bin: ./clerk
-          - target: linux-x64-musl
-            runner: ubuntu-latest
-            bin: ./clerk
-            docker: alpine
-    runs-on: ${{ matrix.runner }}
-    steps:
-      - uses: actions/download-artifact@v4
-        with:
-          name: clerk-canary-${{ matrix.target }}
-      - name: Make executable
-        if: ${{ !matrix.docker }}
-        run: chmod +x ${{ matrix.bin }}
-      - name: Smoke test (native)
-        if: ${{ !matrix.docker }}
-        shell: bash
-        run: |
-          expected="${{ needs.canary-version.outputs.version }}"
-          actual=$(${{ matrix.bin }} --version)
-          echo "Binary reports $actual (expected $expected)"
-          if [ "$actual" != "$expected" ]; then
-            echo "::error::Version mismatch: expected $expected, got $actual"
-            exit 1
-          fi
-      - name: Smoke test (docker)
-        if: ${{ matrix.docker }}
-        run: |
-          expected="${{ needs.canary-version.outputs.version }}"
-          actual=$(docker run --rm -v "$PWD:/work" ${{ matrix.docker }} /work/${{ matrix.bin }} --version)
-          echo "Binary reports $actual (expected $expected)"
-          if [ "$actual" != "$expected" ]; then
-            echo "::error::Version mismatch: expected $expected, got $actual"
-            exit 1
-          fi
+    uses: ./.github/workflows/smoke-test.yml
+    with:
+      version: ${{ needs.canary-version.outputs.version }}
+      artifact-prefix: clerk-canary
+      preset: canary
 
   canary-publish:
     needs: [canary-version, canary-build, canary-smoke-test]
@@ -237,7 +142,7 @@ jobs:
           node-version: "22"
           registry-url: "https://registry.npmjs.org"
       - name: Upgrade npm for OIDC trusted publishing
-        run: npm install -g npm@latest
+        run: npm install -g npm@11
       - run: bun install --frozen-lockfile
 
       - uses: actions/download-artifact@v4
