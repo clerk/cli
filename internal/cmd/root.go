@@ -95,6 +95,9 @@ func addCommands() {
 	rootCmd.AddCommand(protectCmd)
 	rootCmd.AddCommand(billingCmd)
 
+	// Raw API access
+	rootCmd.AddCommand(apiCmd)
+
 	// Platform API commands (use ak_* keys)
 	rootCmd.AddCommand(appsCmd)
 	rootCmd.AddCommand(transfersCmd)
