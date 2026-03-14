@@ -112,21 +112,21 @@ describe("findClerkKeys", () => {
     expect(keys[1]).toEqual({ key: "pk_from_file", source: ".env.local" });
   });
 
-  test("deduplicates identical keys across sources", async () => {
+  test("deduplicates identical keys across sources (last wins)", async () => {
     process.env.CLERK_PUBLISHABLE_KEY = "pk_test_same";
     await Bun.write(join(tempDir, ".env.local"), "CLERK_PUBLISHABLE_KEY=pk_test_same\n");
     const keys = await findClerkKeys(tempDir);
     expect(keys).toHaveLength(1);
-    expect(keys[0]!.source).toBe("CLERK_PUBLISHABLE_KEY env var");
+    expect(keys[0]!.source).toBe(".env.local");
   });
 
-  test("prioritizes .env.local over .env", async () => {
-    await Bun.write(join(tempDir, ".env.local"), "CLERK_PUBLISHABLE_KEY=pk_local\n");
+  test(".env.local overrides .env for the same key (last wins)", async () => {
     await Bun.write(join(tempDir, ".env"), "CLERK_PUBLISHABLE_KEY=pk_dotenv\n");
+    await Bun.write(join(tempDir, ".env.local"), "CLERK_PUBLISHABLE_KEY=pk_local\n");
     const keys = await findClerkKeys(tempDir);
     expect(keys).toHaveLength(2);
-    expect(keys[0]!.key).toBe("pk_local");
-    expect(keys[1]!.key).toBe("pk_dotenv");
+    expect(keys[0]!.key).toBe("pk_dotenv");
+    expect(keys[1]!.key).toBe("pk_local");
   });
 
   test("detects framework-specific publishable keys from .env files", async () => {
@@ -222,6 +222,7 @@ describe("autolink", () => {
   const originalFetch = globalThis.fetch;
   let tempDir: string;
   let errorSpy: ReturnType<typeof spyOn>;
+  let debugSpy: ReturnType<typeof spyOn>;
 
   beforeEach(async () => {
     tempDir = await mkdtemp(join(tmpdir(), "clerk-autolink-test-"));
@@ -235,6 +236,7 @@ describe("autolink", () => {
     mockGetGitNormalizedRemote.mockReset();
     mockGetGitNormalizedRemote.mockResolvedValue(undefined);
     errorSpy = spyOn(console, "error").mockImplementation(() => {});
+    debugSpy = spyOn(console, "debug").mockImplementation(() => {});
 
     stubFetch(async () => new Response(JSON.stringify(mockApps), { status: 200 }));
   });
@@ -244,6 +246,7 @@ describe("autolink", () => {
     process.env = { ...originalEnv };
     globalThis.fetch = originalFetch;
     errorSpy.mockRestore();
+    debugSpy.mockRestore();
     await rm(tempDir, { recursive: true, force: true });
   });
 

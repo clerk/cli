@@ -1,7 +1,7 @@
 # Link Command
 
 Links the current git repository to a Clerk application, storing the app ID
-and instance IDs in `~/.clerk/config.json`. The link is keyed by the
+and instance IDs in the config file. The link is keyed by the
 normalized git remote URL (e.g., `github.com/org/repo`), so it is
 automatically shared across all clones and worktrees of the same repository.
 
@@ -33,12 +33,12 @@ interactive flow.
 3. If `skipIfLinked` and not already linked, tries silent autolink (detect keys → match → persist without prompting)
 4. Checks for authentication (calls `clerk auth login` if needed)
 5. If `--app` is provided, fetches that app directly
-6. Otherwise, fetches the list of applications and scans for publishable keys in env vars / `.env` files
+6. Otherwise, fetches the list of applications and scans for publishable keys in env vars / `.env` / `.env.local`
 7. If a key matches an application, suggests it: "We found \<app\>. Link to this application?"
    - If the user confirms (default), links to the detected app
    - If the user declines, falls through to the interactive picker
 8. If no match, presents a searchable picker (type to filter by name)
-9. Stores the profile in `~/.clerk/config.json` keyed by the normalized remote URL
+9. Stores the profile in the config file keyed by the normalized remote URL
 10. Falls back to git-common-dir or the current directory path if no remote is configured
 
 ## Key Detection

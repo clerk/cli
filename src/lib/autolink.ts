@@ -6,22 +6,29 @@ import { parseEnvFile } from "./dotenv.ts";
 import { detectPublishableKeyName } from "./framework.ts";
 import { dim, cyan } from "./color.ts";
 
-const ENV_FILES = [".env.local", ".env"];
+const ENV_FILES = [".env", ".env.local"];
 
 interface DetectedKey {
   key: string;
   source: string;
 }
 
+/**
+ * Collects Clerk publishable keys from the environment and .env files.
+ * Sources are checked in order: process.env, .env, .env.local (last wins for duplicates).
+ */
 export async function findClerkKeys(cwd: string): Promise<DetectedKey[]> {
   const keys: DetectedKey[] = [];
-  const seen = new Set<string>();
   const publishableKeyName = await detectPublishableKeyName(cwd);
 
   function add(key: string, source: string) {
-    if (!key || seen.has(key)) return;
-    seen.add(key);
-    keys.push({ key, source });
+    if (!key) return;
+    const existing = keys.findIndex((k) => k.key === key);
+    if (existing !== -1) {
+      keys[existing]!.source = source;
+    } else {
+      keys.push({ key, source });
+    }
   }
 
   if (process.env[publishableKeyName]) {
@@ -46,6 +53,10 @@ export async function findClerkKeys(cwd: string): Promise<DetectedKey[]> {
   return keys;
 }
 
+/**
+ * Returns the first key/app pair where a detected key matches an app instance's publishable key.
+ * Keys are tried in order, so earlier entries in `keys` have higher priority.
+ */
 export function matchKeyToApp(
   keys: DetectedKey[],
   apps: Application[],
@@ -73,7 +84,8 @@ export async function autolink(
   let apps: Application[];
   try {
     apps = await listApplications();
-  } catch {
+  } catch (err) {
+    console.error(`Failed to list applications: ${err}`);
     return undefined;
   }
 
@@ -91,13 +103,17 @@ export async function autolink(
 
   if (!devInstance) return undefined;
 
+  const instances: Profile["instances"] = {
+    development: devInstance.instance_id,
+  };
+  if (prodInstance) {
+    instances.production = prodInstance.instance_id;
+  }
+
   const profile: Profile = {
     workspaceId: "",
     appId: match.app.application_id,
-    instances: {
-      development: devInstance.instance_id,
-      ...(prodInstance ? { production: prodInstance.instance_id } : {}),
-    },
+    instances,
   };
 
   await setProfile(profileKey, profile);
