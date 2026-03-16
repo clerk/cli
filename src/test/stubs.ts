@@ -19,7 +19,14 @@ export const configStubs = {
   moveProfile: noop,
   listProfiles: noop,
   resolveProfile: noop,
+  resolveProfileOrAutolink: noop,
   resolveInstanceId: () => ({ id: "", label: "" }),
+};
+
+export const autolinkStubs = {
+  findClerkKeys: async () => [],
+  matchKeyToApp: () => undefined,
+  autolink: async () => undefined,
 };
 
 export const credentialStoreStubs = {
