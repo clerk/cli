@@ -698,7 +698,7 @@ describe("link", () => {
         profile: { workspaceId: "", appId: "app_detected", instances: { development: "ins_1" } },
       });
       consoleSpy = spyOn(console, "log").mockImplementation(() => {});
-      errorSpy = spyOn(console, "error").mockImplementation(() => {});
+      const errorSpy = spyOn(console, "error").mockImplementation(() => {});
 
       await link({ skipIfLinked: true });
 
