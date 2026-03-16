@@ -131,7 +131,7 @@ Every CLI command lives in its own directory under `src/commands/<name>/`. Each 
 - Clerk API endpoints the command calls (method, path, description)
 - Whether the command (or parts of it) is mocked/stubbed — call this out prominently with a blockquote at the top of the README if so
 
-When adding a new command, create its directory and README. When modifying a command's behavior, options, or API calls, update its README to match.
+When adding a new command, create its directory and README. When modifying a command's behavior, options, or API calls, update its README to match. Always add or update tests (`index.test.ts` in the command directory) when introducing new functionality or changing existing behavior.
 
 When creating or modifying a command, evaluate whether it needs an agent mode. Commands with interactive prompts (menus, wizards, multi-step flows) should check `isAgent()` from `src/mode.ts` and, when in agent mode, output a structured prompt that an AI agent can follow instead of running the interactive flow. Commands that are already non-interactive (e.g., single API calls, browser-based OAuth) typically don't need agent mode.
 

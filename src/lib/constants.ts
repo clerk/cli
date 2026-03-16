@@ -41,9 +41,48 @@ export const BAPI_BASE_URL = process.env.CLERK_BACKEND_API_URL ?? "https://api.c
 
 // ── OpenAPI Spec ──────────────────────────────────────────────────────────
 
+export const OPENAPI_SPECS_BASE_URL = "https://raw.githubusercontent.com/clerk/openapi-specs/main";
+
+export interface OpenApiSpecInfo {
+  /** Directory name in the clerk/openapi-specs repo */
+  repoDir: string;
+  latest: string;
+  versions: string[];
+}
+
+export const OPENAPI_SPECS: Record<string, OpenApiSpecInfo> = {
+  backend: {
+    repoDir: "bapi",
+    latest: "2025-11-10",
+    versions: ["2021-02-05", "2024-10-01", "2025-03-12", "2025-04-10", "2025-11-10"],
+  },
+  frontend: {
+    repoDir: "fapi",
+    latest: "2025-11-10",
+    versions: ["2021-02-05", "2024-10-01", "2025-03-12", "2025-04-10", "2025-11-10"],
+  },
+  platform: {
+    repoDir: "platform",
+    latest: "beta",
+    versions: ["beta"],
+  },
+  webhooks: {
+    repoDir: "webhooks",
+    latest: "2025-04-15",
+    versions: ["2025-04-15"],
+  },
+};
+
+/** Short aliases for internal API names */
+export const OPENAPI_SPEC_ALIASES: Record<string, string> = {
+  bapi: "backend",
+  fapi: "frontend",
+};
+
+/** Kept for backward compat with catalog.ts */
 export const OPENAPI_SPEC_URLS = {
-  bapi: "https://raw.githubusercontent.com/clerk/openapi-specs/main/bapi/2025-11-10.yml",
-  platform: "https://raw.githubusercontent.com/clerk/openapi-specs/main/platform/beta.yml",
+  bapi: `${OPENAPI_SPECS_BASE_URL}/bapi/2025-11-10.yml`,
+  platform: `${OPENAPI_SPECS_BASE_URL}/platform/beta.yml`,
 } as const;
 
 // ── Cache ────────────────────────────────────────────────────────────────

@@ -31,6 +31,7 @@ Commands:
   api [options] [endpoint] [filter]  Make authenticated requests to the Clerk API
     ls [filter]        List available API endpoints
     (no args)          Interactive request builder (TTY only)
+  openapi [options] [api]  Fetch the OpenAPI spec for a Clerk API
   doctor [options]     Check your project's Clerk integration health
   deploy [options]     Deploy your Clerk application (hidden)
 
@@ -83,6 +84,12 @@ clerk api [endpoint] [filter]
 
 clerk api ls [filter]    List available API endpoints
 clerk api                Interactive request builder (TTY only)
+
+clerk openapi [api]
+  --spec-version <ver> Spec version (default: latest)
+  --format <format>    Output format: yaml (default) or json
+  --output <file>      Write spec to a file instead of stdout
+  APIs: backend (alias: bapi), frontend (alias: fapi), platform, webhooks
 
 clerk doctor
   --verbose            Show detailed output for each check
