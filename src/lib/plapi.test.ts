@@ -7,8 +7,13 @@ mock.module("./credential-store.ts", () => ({
   getToken: (...args: unknown[]) => mockGetToken(...args),
 }));
 
-const { fetchInstanceConfig, putInstanceConfig, patchInstanceConfig, listApplications } =
-  await import("./plapi.ts");
+const {
+  fetchApplication,
+  fetchInstanceConfig,
+  putInstanceConfig,
+  patchInstanceConfig,
+  listApplications,
+} = await import("./plapi.ts");
 const { PlapiError } = await import("./errors.ts");
 
 describe("plapi", () => {
@@ -236,6 +241,68 @@ describe("plapi", () => {
       } catch (error) {
         expect(error).toBeInstanceOf(PlapiError);
         expect((error as PlapiError).status).toBe(422);
+      }
+    });
+  });
+
+  describe("fetchApplication", () => {
+    const mockApp = {
+      application_id: "app_abc",
+      instances: [
+        { instance_id: "ins_1", environment_type: "development", publishable_key: "pk_test_123" },
+      ],
+    };
+
+    test("constructs correct URL without query params by default", async () => {
+      let requestedUrl = "";
+      stubFetch(async (input) => {
+        requestedUrl = input.toString();
+        return new Response(JSON.stringify(mockApp), { status: 200 });
+      });
+
+      await fetchApplication("app_abc");
+      expect(requestedUrl).toBe("https://api.clerk.com/v1/platform/applications/app_abc");
+    });
+
+    test("appends include_secret_keys=true when requested", async () => {
+      let requestedUrl = "";
+      stubFetch(async (input) => {
+        requestedUrl = input.toString();
+        return new Response(JSON.stringify(mockApp), { status: 200 });
+      });
+
+      await fetchApplication("app_abc", true);
+      const url = new URL(requestedUrl);
+      expect(url.searchParams.get("include_secret_keys")).toBe("true");
+    });
+
+    test("does not include include_secret_keys param when false", async () => {
+      let requestedUrl = "";
+      stubFetch(async (input) => {
+        requestedUrl = input.toString();
+        return new Response(JSON.stringify(mockApp), { status: 200 });
+      });
+
+      await fetchApplication("app_abc", false);
+      expect(requestedUrl).not.toContain("include_secret_keys");
+    });
+
+    test("returns parsed application JSON", async () => {
+      stubFetch(async () => new Response(JSON.stringify(mockApp), { status: 200 }));
+
+      const result = await fetchApplication("app_abc");
+      expect(result).toEqual(mockApp);
+    });
+
+    test("throws PlapiError on non-2xx response", async () => {
+      stubFetch(async () => new Response("Not Found", { status: 404 }));
+
+      try {
+        await fetchApplication("app_bad");
+        expect(true).toBe(false);
+      } catch (error) {
+        expect(error).toBeInstanceOf(PlapiError);
+        expect((error as PlapiError).status).toBe(404);
       }
     });
   });
