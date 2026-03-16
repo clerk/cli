@@ -138,10 +138,10 @@ export function createProgram(): Command {
       "after",
       `
 Examples:
-  $ clerk api ls                              List all available endpoints
-  $ clerk api ls users                        List endpoints matching "users"
-  $ clerk api /users                          GET /v1/users
-  $ clerk api /users -d '{"first_name":"Alice"}'  POST with a JSON body`,
+  $ clerk api ls                                   List all available endpoints
+  $ clerk api ls users                             List endpoints matching "users"
+  $ clerk api /users                               GET /v1/users
+  $ clerk api /users -d '{"first_name":"Alice"}'   POST with a JSON body`,
     )
     .action(api);
 
