@@ -3,7 +3,7 @@ import { startAuthServer } from "../../lib/auth-server.ts";
 import { OAUTH_CONFIG, exchangeCodeForToken, fetchUserInfo } from "../../lib/token-exchange.ts";
 import { storeToken, getToken } from "../../lib/credential-store.ts";
 import { getAuth, setAuth } from "../../lib/config.ts";
-import { CALLBACK_PATH } from "../../lib/constants.ts";
+import { AUTH_TIMEOUT_MS, CALLBACK_PATH } from "../../lib/constants.ts";
 
 export async function login(): Promise<{ userId: string; email: string }> {
   // Check if already authenticated
@@ -48,7 +48,8 @@ export async function login(): Promise<{ userId: string; email: string }> {
   await proc.exited;
 
   // Wait for the OAuth callback
-  console.log("Waiting for authentication...");
+  const timeoutMinutes = Math.round(AUTH_TIMEOUT_MS / 60_000);
+  console.log(`Waiting for authentication (timeout in ${timeoutMinutes}m)...`);
   let callbackResult: { code: string };
   try {
     callbackResult = await authServer.waitForCallback();
