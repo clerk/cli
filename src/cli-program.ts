@@ -132,6 +132,15 @@ export function createProgram() {
     .option("--platform", "Use Platform API instead of Backend API")
     .option("--dry-run", "Show the request without executing it")
     .option("--yes", "Skip confirmation for mutating requests")
+    .addHelpText(
+      "after",
+      `
+Examples:
+  $ clerk api ls                                   List all available endpoints
+  $ clerk api ls users                             List endpoints matching "users"
+  $ clerk api /users                               GET /v1/users
+  $ clerk api /users -d '{"first_name":"Alice"}'   POST with a JSON body`,
+    )
     .action(api);
 
   program
