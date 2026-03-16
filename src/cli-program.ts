@@ -13,7 +13,7 @@ import { api } from "./commands/api/index.js";
 import { link } from "./commands/link/index.js";
 import { unlink } from "./commands/unlink/index.js";
 import { doctor } from "./commands/doctor/index.js";
-import { openapi } from "./commands/openapi/index.js";
+import { schema } from "./commands/schema/index.js";
 import { CliError, UserAbortError, ApiError, EXIT_CODE, throwUsageError } from "./lib/errors.js";
 import { red } from "./lib/color.js";
 
@@ -138,13 +138,13 @@ export function createProgram(): Command {
     .action(api);
 
   program
-    .command("openapi")
+    .command("schema")
     .description("Fetch the OpenAPI spec for a Clerk API")
     .argument("[api]", "API name: backend, frontend, platform, or webhooks")
     .option("--spec-version <version>", "Spec version (default: latest)")
     .option("--format <format>", "Output format: yaml (default) or json")
     .option("--output <file>", "Write spec to a file instead of stdout")
-    .action(openapi);
+    .action(schema);
 
   program
     .command("doctor")

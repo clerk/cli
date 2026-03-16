@@ -1,18 +1,18 @@
-# `clerk openapi`
+# `clerk schema`
 
 Fetch and output the OpenAPI specification for Clerk APIs.
 
 ## Usage
 
 ```
-clerk openapi                                  # List available APIs and versions
-clerk openapi backend                          # Backend API (latest, YAML)
-clerk openapi frontend                         # Frontend API (latest, YAML)
-clerk openapi platform                         # Platform API (latest, YAML)
-clerk openapi webhooks                         # Webhooks spec (latest, YAML)
-clerk openapi backend --format json            # Backend API as JSON
-clerk openapi backend --spec-version 2024-10-01  # Specific version
-clerk openapi platform --output spec.yml       # Write to file
+clerk schema                                  # List available APIs and versions
+clerk schema backend                          # Backend API (latest, YAML)
+clerk schema frontend                         # Frontend API (latest, YAML)
+clerk schema platform                         # Platform API (latest, YAML)
+clerk schema webhooks                         # Webhooks spec (latest, YAML)
+clerk schema backend --format json            # Backend API as JSON
+clerk schema backend --spec-version 2024-10-01  # Specific version
+clerk schema platform --output spec.yml       # Write to file
 ```
 
 ## Options

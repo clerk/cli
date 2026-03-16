@@ -1,5 +1,5 @@
 /**
- * `clerk openapi` — fetch and output the OpenAPI spec for Clerk APIs.
+ * `clerk schema` — fetch and output the OpenAPI spec for Clerk APIs.
  */
 
 import { mkdir } from "node:fs/promises";
@@ -28,7 +28,7 @@ function resolveApiName(name: string): string {
   return OPENAPI_SPEC_ALIASES[name] ?? name;
 }
 
-export async function openapi(apiName: string | undefined, options: OpenApiOptions): Promise<void> {
+export async function schema(apiName: string | undefined, options: OpenApiOptions): Promise<void> {
   if (!apiName) {
     printAvailableApis();
     return;
@@ -75,7 +75,7 @@ function printAvailableApis(): void {
       `  ${name.padEnd(12)} latest: ${info.latest} ${dim(`(${info.versions.length} version${info.versions.length === 1 ? "" : "s"})`)}${aliasStr}`,
     );
   }
-  console.log("\nUsage: clerk openapi <api> [--spec-version <version>] [--format json]");
+  console.log("\nUsage: clerk schema <api> [--spec-version <version>] [--format json]");
 }
 
 // ── Caching ──────────────────────────────────────────────────────────────────
