@@ -1,27 +1,48 @@
 # `clerk schema`
 
-Fetch and output the OpenAPI specification for Clerk APIs.
+Fetch and output the OpenAPI specification for Clerk APIs. Supports full-spec output, path-based introspection, type lookups, and `$ref` resolution.
 
 ## Usage
 
 ```
-clerk schema                                  # List available APIs and versions
-clerk schema backend                          # Backend API (latest, YAML)
-clerk schema frontend                         # Frontend API (latest, YAML)
-clerk schema platform                         # Platform API (latest, YAML)
-clerk schema webhooks                         # Webhooks spec (latest, YAML)
-clerk schema backend --format json            # Backend API as JSON
-clerk schema backend --spec-version 2024-10-01  # Specific version
-clerk schema platform --output spec.yml       # Write to file
+clerk schema                                     # List available APIs and versions
+clerk schema backend                             # Backend API (latest, YAML)
+clerk schema frontend                            # Frontend API (latest, YAML)
+clerk schema platform                            # Platform API (latest, YAML)
+clerk schema webhooks                            # Webhooks spec (latest, YAML)
+clerk schema backend /users                      # Just the /users endpoint
+clerk schema backend User                        # Just the User schema type
+clerk schema backend /users --resolve-refs       # Endpoint with all $refs inlined
+clerk schema backend User --resolve-refs         # Type with all $refs inlined
+clerk schema backend --format json               # Full spec as JSON
+clerk schema backend --spec-version 2024-10-01   # Specific version
+clerk schema platform --output spec.yml          # Write to file
 ```
 
 ## Options
 
-| Option                 | Description                                |
-| ---------------------- | ------------------------------------------ |
-| `--spec-version <ver>` | Spec version (default: latest for the API) |
-| `--format <fmt>`       | Output format: `yaml` (default) or `json`  |
-| `--output <file>`      | Write spec to a file instead of stdout     |
+| Option                 | Description                                         |
+| ---------------------- | --------------------------------------------------- |
+| `[path]`               | Endpoint path (e.g. `/users`) or type (e.g. `User`) |
+| `--spec-version <ver>` | Spec version (default: latest for the API)          |
+| `--format <fmt>`       | Output format: `yaml` (default) or `json`           |
+| `--output <file>`      | Write spec to a file instead of stdout              |
+| `--resolve-refs`       | Inline `$ref` references for self-contained output  |
+
+## Path introspection
+
+When a second argument is provided, the command extracts just the matching portion of the spec:
+
+- **Endpoint paths** start with `/` — e.g. `clerk schema backend /users` looks up the `/users` endpoint. Automatically tries `/v1` and `/v2` prefixes if an exact match isn't found.
+- **Schema types** don't start with `/` — e.g. `clerk schema backend User` looks up the `User` schema in `components.schemas`. Case-insensitive matching is supported.
+
+If no match is found, the command suggests similar paths or types.
+
+## `--resolve-refs`
+
+Inlines all `$ref` references so the output is fully self-contained. Circular references are detected and marked with a `$comment: "circular reference"` annotation instead of causing infinite expansion.
+
+This is especially useful for AI agents that need a complete type definition without chasing references.
 
 ## APIs
 
