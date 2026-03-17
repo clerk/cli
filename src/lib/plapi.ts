@@ -84,15 +84,10 @@ export interface Application {
   instances: ApplicationInstance[];
 }
 
-export async function fetchApplication(
-  applicationId: string,
-  includeSecretKeys = false,
-): Promise<Application> {
+export async function fetchApplication(applicationId: string): Promise<Application> {
   const token = await getAuthToken();
   const url = new URL(`${PLAPI_BASE_URL}/v1/platform/applications/${applicationId}`);
-  if (includeSecretKeys) {
-    url.searchParams.set("include_secret_keys", "true");
-  }
+  url.searchParams.set("include_secret_keys", "true");
   const response = await fetch(url.toString(), {
     headers: {
       Authorization: `Bearer ${token}`,

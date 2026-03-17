@@ -142,10 +142,7 @@ async function resolveSecretKey(options: ApiOptions): Promise<string> {
   const { profile } = resolved;
   const instance = resolveInstanceId(profile, options.instance);
 
-  const app = await withApiContext(
-    fetchApplication(profile.appId, true),
-    "Failed to resolve secret key",
-  );
+  const app = await withApiContext(fetchApplication(profile.appId), "Failed to resolve secret key");
   const matched = app.instances.find((i) => i.instance_id === instance.id);
   if (!matched) {
     throw new CliError(`Instance ${instance.id} not found in application.`, {

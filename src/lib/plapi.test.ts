@@ -253,7 +253,7 @@ describe("plapi", () => {
       ],
     };
 
-    test("constructs correct URL without query params by default", async () => {
+    test("always sends include_secret_keys=true", async () => {
       let requestedUrl = "";
       stubFetch(async (input) => {
         requestedUrl = input.toString();
@@ -261,30 +261,9 @@ describe("plapi", () => {
       });
 
       await fetchApplication("app_abc");
-      expect(requestedUrl).toBe("https://api.clerk.com/v1/platform/applications/app_abc");
-    });
-
-    test("appends include_secret_keys=true when requested", async () => {
-      let requestedUrl = "";
-      stubFetch(async (input) => {
-        requestedUrl = input.toString();
-        return new Response(JSON.stringify(mockApp), { status: 200 });
-      });
-
-      await fetchApplication("app_abc", true);
       const url = new URL(requestedUrl);
+      expect(url.pathname).toBe("/v1/platform/applications/app_abc");
       expect(url.searchParams.get("include_secret_keys")).toBe("true");
-    });
-
-    test("does not include include_secret_keys param when false", async () => {
-      let requestedUrl = "";
-      stubFetch(async (input) => {
-        requestedUrl = input.toString();
-        return new Response(JSON.stringify(mockApp), { status: 200 });
-      });
-
-      await fetchApplication("app_abc", false);
-      expect(requestedUrl).not.toContain("include_secret_keys");
     });
 
     test("returns parsed application JSON", async () => {

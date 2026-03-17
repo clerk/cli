@@ -33,10 +33,7 @@ export async function pull(options: EnvPullOptions): Promise<void> {
 
   console.error(`Pulling env vars from ${instance.label} instance...`);
 
-  const app = await withApiContext(
-    fetchApplication(profile.appId, true),
-    "Failed to fetch API keys",
-  );
+  const app = await withApiContext(fetchApplication(profile.appId), "Failed to fetch API keys");
 
   const matched = app.instances.find((i) => i.instance_id === instance.id);
   if (!matched) {
