@@ -46,7 +46,7 @@ try {
   console.error(
     `Unsupported or missing platform: ${key}\n` +
       `Expected package: ${pkg}\n` +
-      `Try reinstalling with: npm install -g @clerk/cli`,
+      `Try reinstalling with: npm install -g clerk`,
   );
   exit(1);
 }

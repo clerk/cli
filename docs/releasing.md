@@ -24,9 +24,9 @@ PR comment "!snapshot [name]"
 
 ## Architecture
 
-The CLI is distributed as an npm wrapper package (`@clerk/cli`) plus one platform-specific package per target (e.g., `@clerk/cli-darwin-arm64`). The full list of platform targets is defined in [`scripts/releaser/targets.ts`](../scripts/releaser/targets.ts).
+The CLI is distributed as an npm wrapper package (`clerk`) plus one platform-specific package per target (e.g., `@clerk/cli-darwin-arm64`). The full list of platform targets is defined in [`scripts/releaser/targets.ts`](../scripts/releaser/targets.ts).
 
-When a user runs `npm install -g @clerk/cli`, npm installs the wrapper plus the matching platform package via `optionalDependencies`. The wrapper's `bin/clerk` shim resolves the binary from the platform package using `require.resolve()`.
+When a user runs `npm install -g clerk`, npm installs the wrapper plus the matching platform package via `optionalDependencies`. The wrapper's `bin/clerk` shim resolves the binary from the platform package using `require.resolve()`.
 
 Target names follow Node.js's `${process.platform}-${process.arch}` convention so the shim can derive package names without a lookup table.
 
@@ -36,19 +36,19 @@ Target names follow Node.js's `${process.platform}-${process.arch}` convention s
 
 Published when a release-please version PR is merged. Includes full smoke testing on native runners before publishing. Binaries are also attached to the GitHub Release.
 
-Install: `npm install -g @clerk/cli`
+Install: `npm install -g clerk`
 
 ### Canary (`@canary`)
 
 Published automatically on every push to `main` that does **not** trigger a stable release. Canary versions use the format `x.y.z-canary.<short-sha>` (e.g., `0.0.1-canary.abc1234`). A subset of smoke tests (darwin-arm64, linux-x64, linux-x64-musl) runs before publishing.
 
-Install: `npm install -g @clerk/cli@canary`
+Install: `npm install -g clerk@canary`
 
 ### Snapshot (`@snapshot`)
 
 Published on-demand from PR branches by commenting `!snapshot` (or `!snapshot <name>`) on a pull request. The commenter must be a member or owner of the repository's organization. Snapshot versions use the format `x.y.z-<name>.v<YYYYMMDDHHmmss>` (e.g., `0.0.1-snapshot.v20260313145959` or `0.0.1-my-feature.v20260313145959`). The datetime format ensures multiple snapshots from the same PR sort monotonically in semver.
 
-Install: `npm install -g @clerk/cli@<version>` (version is posted as a PR comment after publishing)
+Install: `npm install -g clerk@<version>` (version is posted as a PR comment after publishing)
 
 ## Versioning
 

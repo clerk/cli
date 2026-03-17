@@ -138,12 +138,12 @@ jobs:
 ## Snapshot published
 
 \`\`\`sh
-npm install -g @clerk/cli@${SNAPSHOT_VERSION}
+npm install -g clerk@${SNAPSHOT_VERSION}
 \`\`\`
 
 | Package | Version |
 |---------|---------|
-| \`@clerk/cli\` | \`${SNAPSHOT_VERSION}\` |
+| \`clerk\` | \`${SNAPSHOT_VERSION}\` |
 
 > Published from ${short_sha}
 EOF

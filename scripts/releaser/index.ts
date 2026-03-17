@@ -127,7 +127,7 @@ try {
   delete wrapperPkg.private;
   await Bun.write(WRAPPER_PKG_PATH, JSON.stringify(wrapperPkg, null, 2) + "\n");
 
-  const wrapperName = `${SCOPE}/${PKG_PREFIX}`;
+  const wrapperName = "clerk";
   if (isPublished(wrapperName, version)) {
     console.log(`Skipping ${wrapperName}@${version} (already published)`);
   } else {
