@@ -35,14 +35,6 @@ describe("detectFramework", () => {
     expect(fw!.envVar).toBe("NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY");
   });
 
-  test("detects Expo", async () => {
-    await writePkg(tempDir, { expo: "52.0.0", react: "19.0.0" });
-    const fw = await detectFramework(tempDir);
-    expect(fw!.name).toBe("Expo");
-    expect(fw!.sdk).toBe("@clerk/expo");
-    expect(fw!.envVar).toBe("EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY");
-  });
-
   test("detects Astro", async () => {
     await writePkg(tempDir, { astro: "5.0.0" });
     const fw = await detectFramework(tempDir);
@@ -63,7 +55,7 @@ describe("detectFramework", () => {
     await writePkg(tempDir, { "@tanstack/react-start": "1.0.0", react: "19.0.0" });
     const fw = await detectFramework(tempDir);
     expect(fw!.name).toBe("TanStack Start");
-    expect(fw!.sdk).toBe("@clerk/tanstack-start");
+    expect(fw!.sdk).toBe("@clerk/tanstack-react-start");
     expect(fw!.envVar).toBe("VITE_CLERK_PUBLISHABLE_KEY");
   });
 
@@ -73,22 +65,6 @@ describe("detectFramework", () => {
     expect(fw!.name).toBe("React Router");
     expect(fw!.sdk).toBe("@clerk/react-router");
     expect(fw!.envVar).toBe("VITE_CLERK_PUBLISHABLE_KEY");
-  });
-
-  test("detects Fastify", async () => {
-    await writePkg(tempDir, { fastify: "5.0.0" });
-    const fw = await detectFramework(tempDir);
-    expect(fw!.name).toBe("Fastify");
-    expect(fw!.sdk).toBe("@clerk/fastify");
-    expect(fw!.envVar).toBe("CLERK_PUBLISHABLE_KEY");
-  });
-
-  test("detects Express", async () => {
-    await writePkg(tempDir, { express: "5.0.0" });
-    const fw = await detectFramework(tempDir);
-    expect(fw!.name).toBe("Express");
-    expect(fw!.sdk).toBe("@clerk/express");
-    expect(fw!.envVar).toBe("CLERK_PUBLISHABLE_KEY");
   });
 
   test("detects Vue standalone", async () => {
@@ -103,16 +79,32 @@ describe("detectFramework", () => {
     await writePkg(tempDir, { react: "19.0.0" });
     const fw = await detectFramework(tempDir);
     expect(fw!.name).toBe("React");
-    expect(fw!.sdk).toBe("@clerk/clerk-react");
+    expect(fw!.sdk).toBe("@clerk/react");
     expect(fw!.envVar).toBe("VITE_CLERK_PUBLISHABLE_KEY");
   });
 
-  test("detects Vite (no framework)", async () => {
-    await writePkg(tempDir, {}, { vite: "6.0.0" });
+  test("detects Expo", async () => {
+    await writePkg(tempDir, { expo: "52.0.0", react: "18.0.0" });
     const fw = await detectFramework(tempDir);
-    expect(fw!.name).toBe("Vite");
-    expect(fw!.sdk).toBe("@clerk/clerk-react");
-    expect(fw!.envVar).toBe("VITE_CLERK_PUBLISHABLE_KEY");
+    expect(fw!.name).toBe("Expo");
+    expect(fw!.sdk).toBe("@clerk/expo");
+    expect(fw!.envVar).toBe("EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY");
+  });
+
+  test("detects Express", async () => {
+    await writePkg(tempDir, { express: "4.0.0" });
+    const fw = await detectFramework(tempDir);
+    expect(fw!.name).toBe("Express");
+    expect(fw!.sdk).toBe("@clerk/express");
+    expect(fw!.envVar).toBe("CLERK_PUBLISHABLE_KEY");
+  });
+
+  test("detects Fastify", async () => {
+    await writePkg(tempDir, { fastify: "4.0.0" });
+    const fw = await detectFramework(tempDir);
+    expect(fw!.name).toBe("Fastify");
+    expect(fw!.sdk).toBe("@clerk/fastify");
+    expect(fw!.envVar).toBe("CLERK_PUBLISHABLE_KEY");
   });
 
   // --- Priority / ordering ---
@@ -138,7 +130,7 @@ describe("detectFramework", () => {
   });
 
   test("prefers Expo over React", async () => {
-    await writePkg(tempDir, { expo: "52.0.0", react: "19.0.0" });
+    await writePkg(tempDir, { expo: "52.0.0", react: "18.0.0" });
     expect((await detectFramework(tempDir))!.name).toBe("Expo");
   });
 
@@ -180,8 +172,8 @@ describe("detectPublishableKeyName", () => {
     expect(await detectPublishableKeyName(tempDir)).toBe("NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY");
   });
 
-  test("returns VITE_* for Vite", async () => {
-    await writePkg(tempDir, {}, { vite: "6.0.0" });
+  test("returns VITE_* for React", async () => {
+    await writePkg(tempDir, { react: "19.0.0" });
     expect(await detectPublishableKeyName(tempDir)).toBe("VITE_CLERK_PUBLISHABLE_KEY");
   });
 

@@ -20,13 +20,12 @@ const FRAMEWORK_MAP: FrameworkInfo[] = [
     sdk: "@clerk/nextjs",
     envVar: "NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY",
   },
-  { dep: "expo", name: "Expo", sdk: "@clerk/expo", envVar: "EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY" },
   { dep: "astro", name: "Astro", sdk: "@clerk/astro", envVar: "PUBLIC_CLERK_PUBLISHABLE_KEY" },
   { dep: "nuxt", name: "Nuxt", sdk: "@clerk/nuxt", envVar: "NUXT_PUBLIC_CLERK_PUBLISHABLE_KEY" },
   {
     dep: "@tanstack/react-start",
     name: "TanStack Start",
-    sdk: "@clerk/tanstack-start",
+    sdk: "@clerk/tanstack-react-start",
     envVar: "VITE_CLERK_PUBLISHABLE_KEY",
   },
   {
@@ -35,16 +34,21 @@ const FRAMEWORK_MAP: FrameworkInfo[] = [
     sdk: "@clerk/react-router",
     envVar: "VITE_CLERK_PUBLISHABLE_KEY",
   },
-  { dep: "fastify", name: "Fastify", sdk: "@clerk/fastify", envVar: "CLERK_PUBLISHABLE_KEY" },
-  { dep: "express", name: "Express", sdk: "@clerk/express", envVar: "CLERK_PUBLISHABLE_KEY" },
   { dep: "vue", name: "Vue", sdk: "@clerk/vue", envVar: "VITE_CLERK_PUBLISHABLE_KEY" },
-  { dep: "react", name: "React", sdk: "@clerk/clerk-react", envVar: "VITE_CLERK_PUBLISHABLE_KEY" },
-  { dep: "vite", name: "Vite", sdk: "@clerk/clerk-react", envVar: "VITE_CLERK_PUBLISHABLE_KEY" },
+  {
+    dep: "expo",
+    name: "Expo",
+    sdk: "@clerk/expo",
+    envVar: "EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY",
+  },
+  { dep: "react", name: "React", sdk: "@clerk/react", envVar: "VITE_CLERK_PUBLISHABLE_KEY" },
+  { dep: "express", name: "Express", sdk: "@clerk/express", envVar: "CLERK_PUBLISHABLE_KEY" },
+  { dep: "fastify", name: "Fastify", sdk: "@clerk/fastify", envVar: "CLERK_PUBLISHABLE_KEY" },
 ];
 
 const FALLBACK_KEY = "CLERK_PUBLISHABLE_KEY";
 
-async function readDeps(cwd: string): Promise<Record<string, string> | null> {
+export async function readDeps(cwd: string): Promise<Record<string, string> | null> {
   const file = Bun.file(join(cwd, "package.json"));
   if (!(await file.exists())) return null;
 
