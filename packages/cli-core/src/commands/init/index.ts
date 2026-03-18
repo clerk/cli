@@ -14,7 +14,7 @@ import { scaffold } from "./scaffold.js";
 import { previewAndConfirm } from "./preview.js";
 import { runFormatters } from "./format.js";
 import { detectAuthLibraries, scanForIssues, printFindings } from "./scan.js";
-import { buildAgentPrompt, GENERIC_AGENT_PROMPT } from "./prompts.js";
+import { buildAgentPrompt, GENERIC_AGENT_PROMPT, pmInstallCommand } from "./prompts/index.js";
 import type { ProjectContext, ScaffoldPlan } from "./frameworks/types.js";
 import type { ScanFinding } from "./scan.js";
 
@@ -22,18 +22,8 @@ import type { ScanFinding } from "./scan.js";
 // Helpers
 // ---------------------------------------------------------------------------
 
-function pmAddCommand(pm: ProjectContext["packageManager"]): string {
-  const commands: Record<ProjectContext["packageManager"], string> = {
-    bun: "bun add",
-    yarn: "yarn add",
-    pnpm: "pnpm add",
-    npm: "npm install",
-  };
-  return commands[pm];
-}
-
 async function installSdk(ctx: ProjectContext): Promise<void> {
-  const addCmd = pmAddCommand(ctx.packageManager);
+  const addCmd = pmInstallCommand(ctx.packageManager);
   console.log(`Installing ${cyan(ctx.framework.sdk)} for ${ctx.framework.name}...`);
 
   const proc = Bun.spawn(addCmd.split(" ").concat(ctx.framework.sdk), {
