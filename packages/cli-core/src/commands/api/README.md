@@ -47,6 +47,9 @@ clerk api /users -X DELETE --dry-run
 # Use a specific secret key
 clerk api /users --secret-key sk_test_abc123
 
+# Resolve a secret key from an app directly
+clerk api /users --app app_123 --instance prod
+
 # Target production instance (requires CLERK_PLATFORM_API_KEY)
 clerk api /users --instance prod
 
@@ -62,6 +65,7 @@ clerk api /v1/platform/applications --platform
 | `-d, --data <json>`     | JSON request body (inline)                                        |
 | `--file <path>`         | Read request body from a file                                     |
 | `--include`             | Show response status and headers                                  |
+| `--app <id>`            | Application ID to target when resolving keys                      |
 | `--secret-key <key>`    | Override the secret key                                           |
 | `--instance <id>`       | Instance to target for key resolution (`dev`, `prod`, or full ID) |
 | `--platform`            | Use Platform API instead of Backend API                           |
@@ -74,9 +78,16 @@ Secret key resolution order:
 
 1. `--secret-key` flag (explicit)
 2. `CLERK_SECRET_KEY` environment variable
-3. Auto-resolve from linked project profile (requires `CLERK_PLATFORM_API_KEY`)
+3. Auto-resolve from `--app <id>` plus `CLERK_PLATFORM_API_KEY`
+4. Auto-resolve from linked project profile (requires `CLERK_PLATFORM_API_KEY`)
 
-For `--platform` mode, uses `CLERK_PLATFORM_API_KEY` environment variable.
+`--platform` mode uses the same Platform API auth path as other PLAPI-backed commands:
+
+1. `CLERK_PLATFORM_API_KEY`
+2. Stored `clerk auth login` token
+3. Interactive human-mode prompt for a Platform API key
+
+The CLI validates key prefixes and will warn if you pass an `ak_` key where an `sk_` key is expected, or vice versa.
 
 ## API Endpoints
 
@@ -92,9 +103,9 @@ Base URL: `https://api.clerk.dev` (overridable via `CLERK_BACKEND_API_URL`)
 
 Base URL: `https://api.clerk.com` (overridable via `CLERK_PLATFORM_API_URL`)
 
-| Method | Endpoint     | Description                                                                                         |
-| ------ | ------------ | --------------------------------------------------------------------------------------------------- |
-| Any    | `/v1/{path}` | Pass-through to Clerk Platform API. Authenticated via `Bearer` token from `CLERK_PLATFORM_API_KEY`. |
+| Method | Endpoint     | Description                                                                                                                        |
+| ------ | ------------ | ---------------------------------------------------------------------------------------------------------------------------------- |
+| Any    | `/v1/{path}` | Pass-through to Clerk Platform API. Authenticated via `Bearer` token from `CLERK_PLATFORM_API_KEY`, `clerk auth login`, or prompt. |
 
 ## Subcommands
 

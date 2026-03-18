@@ -44,15 +44,18 @@ clerk unlink
   --yes                Skip confirmation prompt
 
 clerk config pull
+  --app <id>           Application ID to target (works from any directory)
   --instance <id>      Instance to target (dev, prod, or a full instance ID)
   --output <file>      Write config to a file instead of stdout
 
 clerk config schema
+  --app <id>           Application ID to target (works from any directory)
   --instance <id>      Instance to target (dev, prod, or a full instance ID)
   --output <file>      Write schema to a file instead of stdout
   --keys <keys...>     Config keys to retrieve schema for
 
 clerk config patch
+  --app <id>           Application ID to target (works from any directory)
   --instance <id>      Instance to target (dev, prod, or a full instance ID)
   --file <path>        Read config JSON from a file
   --json <string>      Pass config JSON inline
@@ -60,6 +63,7 @@ clerk config patch
   --yes                Skip confirmation prompts
 
 clerk config put
+  --app <id>           Application ID to target (works from any directory)
   --instance <id>      Instance to target (dev, prod, or a full instance ID)
   --file <path>        Read config JSON from a file
   --json <string>      Pass config JSON inline
@@ -67,6 +71,7 @@ clerk config put
   --yes                Skip confirmation prompts
 
 clerk env pull
+  --app <id>           Application ID to target (works from any directory)
   --instance <id>      Instance to target (dev, prod, or a full instance ID)
   --file <path>        Target env file (default: auto-detect)
 
@@ -75,6 +80,7 @@ clerk api [endpoint] [filter]
   -d, --data <json>      JSON request body
   --file <path>          Read request body from a file
   --include              Show response headers
+  --app <id>             Application ID to target when resolving keys
   --secret-key <key>     Override the secret key
   --instance <id>        Instance to target (dev, prod, or instance ID)
   --platform             Use Platform API instead of Backend API
