@@ -34,6 +34,56 @@ mock.module("../../lib/config.ts", () => ({
     if (!id) throw new Error(`No ${env} instance configured. Run \`clerk link\` to set one up.`);
     return { id, label: env };
   },
+  resolveAppContext: async (options: { app?: string; instance?: string }) => {
+    if (options.app) {
+      const app = {
+        application_id: "app_1",
+        instances: [
+          {
+            instance_id: "ins_dev",
+            environment_type: "development",
+            publishable_key: "pk_test_abc123",
+            secret_key: "sk_test_xyz789",
+          },
+          {
+            instance_id: "ins_prod",
+            environment_type: "production",
+            publishable_key: "pk_live_abc123",
+            secret_key: "sk_live_xyz789",
+          },
+        ],
+      };
+      if (options.instance) {
+        const env = INSTANCE_ALIASES[options.instance];
+        if (env) {
+          const matched = app.instances.find((i) => i.environment_type === env);
+          if (!matched) throw new Error(`No ${env} instance found for application ${options.app}.`);
+          return { appId: options.app, instanceId: matched.instance_id, instanceLabel: env };
+        }
+        return {
+          appId: options.app,
+          instanceId: options.instance,
+          instanceLabel: options.instance,
+        };
+      }
+      return { appId: options.app, instanceId: "ins_dev", instanceLabel: "development" };
+    }
+
+    const profile = _profiles[process.cwd()];
+    if (!profile) throw new Error("No Clerk project linked");
+    const instance = !options.instance
+      ? { id: profile.instances.development, label: "development" }
+      : (() => {
+          const env = INSTANCE_ALIASES[options.instance];
+          if (!env) return { id: options.instance, label: options.instance };
+          const id = profile.instances[env];
+          if (!id)
+            throw new Error(`No ${env} instance configured. Run \`clerk link\` to set one up.`);
+          return { id, label: env };
+        })();
+
+    return { appId: profile.appId, instanceId: instance.id, instanceLabel: instance.label };
+  },
 }));
 
 const { _setConfigDir, setProfile } = (await import("../../lib/config.ts")) as any;
@@ -98,7 +148,7 @@ describe("env pull", () => {
     await rm(tempDir, { recursive: true, force: true });
   });
 
-  async function runEnvPull(options: { instance?: string; file?: string } = {}) {
+  async function runEnvPull(options: { app?: string; instance?: string; file?: string } = {}) {
     const { pull } = await import("./pull.ts");
     return pull(options);
   }
@@ -210,6 +260,14 @@ describe("env pull", () => {
     const content = await Bun.file(join(tempDir, ".env.local")).text();
     expect(content).toContain("CLERK_PUBLISHABLE_KEY=pk_live_abc123");
     expect(content).toContain("CLERK_SECRET_KEY=sk_live_xyz789");
+  });
+
+  test("uses --app without a linked profile", async () => {
+    await runEnvPull({ app: "app_1" });
+
+    const content = await Bun.file(join(tempDir, ".env.local")).text();
+    expect(content).toContain("CLERK_PUBLISHABLE_KEY=pk_test_abc123");
+    expect(content).toContain("CLERK_SECRET_KEY=sk_test_xyz789");
   });
 
   test("shows instance label in status message", async () => {

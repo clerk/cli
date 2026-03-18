@@ -47,7 +47,7 @@ describe("config pull", () => {
   });
 
   // Dynamically import to get fresh module state
-  async function runConfigPull(options: { instance?: string; output?: string } = {}) {
+  async function runConfigPull(options: { app?: string; instance?: string; output?: string } = {}) {
     const { configPull } = await import("./pull.ts");
     return configPull(options);
   }
@@ -75,6 +75,24 @@ describe("config pull", () => {
     });
 
     await runConfigPull();
+    expect(logSpy).toHaveBeenCalledWith(JSON.stringify(mockConfig, null, 2));
+  });
+
+  test("supports --app without a linked profile", async () => {
+    const mockApp = {
+      application_id: "app_1",
+      instances: [{ instance_id: "ins_dev", environment_type: "development" }],
+    };
+
+    stubFetch(async (input) => {
+      const url = input.toString();
+      if (url.endsWith("/v1/platform/applications/app_1")) {
+        return new Response(JSON.stringify(mockApp), { status: 200 });
+      }
+      return new Response(JSON.stringify(mockConfig), { status: 200 });
+    });
+
+    await runConfigPull({ app: "app_1" });
     expect(logSpy).toHaveBeenCalledWith(JSON.stringify(mockConfig, null, 2));
   });
 

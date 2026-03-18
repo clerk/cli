@@ -1,25 +1,20 @@
-import { resolveProfile, resolveInstanceId } from "../../lib/config.ts";
+import { resolveAppContext } from "../../lib/config.ts";
 import { fetchInstanceConfig } from "../../lib/plapi.ts";
-import { CliError, withApiContext } from "../../lib/errors.ts";
+import { withApiContext } from "../../lib/errors.ts";
 
 interface ConfigPullOptions {
+  app?: string;
   instance?: string;
   output?: string;
 }
 
 export async function configPull(options: ConfigPullOptions): Promise<void> {
-  const resolved = await resolveProfile(process.cwd());
-  if (!resolved) {
-    throw new CliError("No Clerk project linked to this directory. Run `clerk link` to set up.");
-  }
+  const ctx = await resolveAppContext(options);
 
-  const { profile } = resolved;
-  const instance = resolveInstanceId(profile, options.instance);
-
-  console.error(`Pulling config from ${instance.label} instance...`);
+  console.error(`Pulling config from ${ctx.instanceLabel} instance...`);
 
   const config = await withApiContext(
-    fetchInstanceConfig(profile.appId, instance.id),
+    fetchInstanceConfig(ctx.appId, ctx.instanceId),
     "Failed to fetch config",
   );
   const json = JSON.stringify(config, null, 2);

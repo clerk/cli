@@ -180,4 +180,68 @@ export function resolveInstanceId(profile: Profile, flag?: string): { id: string
   return { id, label: env };
 }
 
+/**
+ * Resolve app context from explicit flags or linked profile.
+ * This is the isomorphic resolution chain used by profile-dependent commands:
+ *   1. Explicit --app flag (works from any directory)
+ *   2. resolveProfile(cwd) (project-aware, existing behavior)
+ *   3. Error with helpful message
+ */
+export async function resolveAppContext(options: {
+  app?: string;
+  instance?: string;
+}): Promise<{ appId: string; instanceId: string; instanceLabel: string }> {
+  if (options.app) {
+    const { fetchApplication } = await import("./plapi.ts");
+    const app = await fetchApplication(options.app);
+
+    if (options.instance) {
+      const env = INSTANCE_ALIASES[options.instance];
+      if (env) {
+        const matched = app.instances.find((instance) => instance.environment_type === env);
+        if (!matched) {
+          throw new CliError(`No ${env} instance found for application ${options.app}.`);
+        }
+        return { appId: options.app, instanceId: matched.instance_id, instanceLabel: env };
+      }
+
+      return {
+        appId: options.app,
+        instanceId: options.instance,
+        instanceLabel: options.instance,
+      };
+    }
+
+    const development = app.instances.find(
+      (instance) => instance.environment_type === "development",
+    );
+    if (!development) {
+      throw new CliError(`No development instance found for application ${options.app}.`);
+    }
+
+    return {
+      appId: options.app,
+      instanceId: development.instance_id,
+      instanceLabel: "development",
+    };
+  }
+
+  const resolved = await resolveProfile(process.cwd());
+  if (!resolved) {
+    throw new CliError(
+      "No Clerk project linked to this directory.\n" +
+        "Either:\n" +
+        "  - Run `clerk link` from your project directory\n" +
+        "  - Pass --app <app_id> to target an app directly",
+    );
+  }
+
+  const instance = resolveInstanceId(resolved.profile, options.instance);
+  return {
+    appId: resolved.profile.appId,
+    instanceId: instance.id,
+    instanceLabel: instance.label,
+  };
+}
+
 export type { Auth, Profile, ClerkConfig };

@@ -21,6 +21,7 @@ export const configStubs = {
   resolveProfile: noop,
   resolveProfileOrAutolink: noop,
   resolveInstanceId: () => ({ id: "", label: "" }),
+  resolveAppContext: async () => ({ appId: "", instanceId: "", instanceLabel: "" }),
 };
 
 export const autolinkStubs = {

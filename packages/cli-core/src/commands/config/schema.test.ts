@@ -52,7 +52,7 @@ describe("config schema", () => {
   });
 
   async function runConfigSchema(
-    options: { instance?: string; output?: string; keys?: string[] } = {},
+    options: { app?: string; instance?: string; output?: string; keys?: string[] } = {},
   ) {
     const { configSchema } = await import("./schema.ts");
     return configSchema(options);
@@ -81,6 +81,24 @@ describe("config schema", () => {
     });
 
     await runConfigSchema();
+    expect(logSpy).toHaveBeenCalledWith(JSON.stringify(mockSchema, null, 2));
+  });
+
+  test("supports --app without a linked profile", async () => {
+    const mockApp = {
+      application_id: "app_1",
+      instances: [{ instance_id: "ins_dev", environment_type: "development" }],
+    };
+
+    stubFetch(async (input) => {
+      const url = input.toString();
+      if (url.endsWith("/v1/platform/applications/app_1")) {
+        return new Response(JSON.stringify(mockApp), { status: 200 });
+      }
+      return new Response(JSON.stringify(mockSchema), { status: 200 });
+    });
+
+    await runConfigSchema({ app: "app_1" });
     expect(logSpy).toHaveBeenCalledWith(JSON.stringify(mockSchema, null, 2));
   });
 

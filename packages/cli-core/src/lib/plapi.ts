@@ -7,10 +7,32 @@ import { PLAPI_BASE_URL } from "./constants.ts";
 import { getToken } from "./credential-store.ts";
 import { CliError, PlapiError } from "./errors.ts";
 
-async function getAuthToken(): Promise<string> {
+/**
+ * Validate that a key has the expected prefix and suggest the correct key type
+ * if the user mixed them up.
+ */
+export function validateKeyPrefix(key: string, expected: "ak_" | "sk_"): void {
+  if (key.startsWith(expected)) return;
+
+  const wrongPrefix = expected === "ak_" ? "sk_" : "ak_";
+  const expectedLabel = expected === "ak_" ? "Platform API key (ak_...)" : "Secret key (sk_...)";
+  const wrongLabel = expected === "ak_" ? "secret key (sk_...)" : "Platform API key (ak_...)";
+
+  if (key.startsWith(wrongPrefix)) {
+    throw new CliError(
+      `Expected a ${expectedLabel}, but received a ${wrongLabel}.\n` +
+        "Get the correct key from: https://dashboard.clerk.com/last-active?path=api-keys",
+    );
+  }
+}
+
+export async function getAuthToken(): Promise<string> {
   // Prefer platform API key (OAuth token doesn't have platform scopes yet)
   const key = process.env.CLERK_PLATFORM_API_KEY;
-  if (key) return key;
+  if (key) {
+    validateKeyPrefix(key, "ak_");
+    return key;
+  }
 
   // Fall back to OAuth access token from `clerk auth login`
   const oauthToken = await getToken();

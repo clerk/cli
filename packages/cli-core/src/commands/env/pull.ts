@@ -1,11 +1,12 @@
 import { join } from "node:path";
-import { resolveProfile, resolveInstanceId } from "../../lib/config.ts";
+import { resolveAppContext } from "../../lib/config.ts";
 import { fetchApplication } from "../../lib/plapi.ts";
 import { parseEnvFile, mergeEnvVars, serializeEnvFile } from "../../lib/dotenv.ts";
 import { detectPublishableKeyName } from "../../lib/framework.ts";
 import { CliError, withApiContext } from "../../lib/errors.ts";
 
 interface EnvPullOptions {
+  app?: string;
   instance?: string;
   file?: string;
 }
@@ -23,21 +24,15 @@ async function resolveTargetFile(cwd: string, flag?: string): Promise<string> {
 }
 
 export async function pull(options: EnvPullOptions): Promise<void> {
-  const resolved = await resolveProfile(process.cwd());
-  if (!resolved) {
-    throw new CliError("No Clerk project linked to this directory. Run `clerk link` to set up.");
-  }
+  const ctx = await resolveAppContext(options);
 
-  const { profile } = resolved;
-  const instance = resolveInstanceId(profile, options.instance);
+  console.error(`Pulling env vars from ${ctx.instanceLabel} instance...`);
 
-  console.error(`Pulling env vars from ${instance.label} instance...`);
+  const app = await withApiContext(fetchApplication(ctx.appId), "Failed to fetch API keys");
 
-  const app = await withApiContext(fetchApplication(profile.appId), "Failed to fetch API keys");
-
-  const matched = app.instances.find((i) => i.instance_id === instance.id);
+  const matched = app.instances.find((i) => i.instance_id === ctx.instanceId);
   if (!matched) {
-    throw new CliError(`Instance ${instance.id} not found in application response.`, {
+    throw new CliError(`Instance ${ctx.instanceId} not found in application response.`, {
       docsUrl: "https://clerk.com/docs/guides/development/managing-environments",
     });
   }

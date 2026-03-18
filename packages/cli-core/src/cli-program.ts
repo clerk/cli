@@ -74,6 +74,7 @@ export function createProgram() {
   env
     .command("pull")
     .description("Pull environment variables from Clerk to .env.local")
+    .option("--app <id>", "Application ID to target (works from any directory)")
     .option("--instance <id>", "Instance to target (dev, prod, or a full instance ID)")
     .option("--file <path>", "Target env file (default: auto-detect)")
     .action(pull);
@@ -83,6 +84,7 @@ export function createProgram() {
   config
     .command("pull")
     .description("Pull instance configuration from Clerk")
+    .option("--app <id>", "Application ID to target (works from any directory)")
     .option("--instance <id>", "Instance to target (dev, prod, or a full instance ID)")
     .option("--output <file>", "Write config to a file instead of stdout")
     .action(configPull);
@@ -90,6 +92,7 @@ export function createProgram() {
   config
     .command("schema")
     .description("Pull instance config schema from Clerk")
+    .option("--app <id>", "Application ID to target (works from any directory)")
     .option("--instance <id>", "Instance to target (dev, prod, or a full instance ID)")
     .option("--output <file>", "Write schema to a file instead of stdout")
     .option("--keys <keys...>", "Config keys to retrieve schema for")
@@ -98,6 +101,7 @@ export function createProgram() {
   config
     .command("patch")
     .description("Partially update instance configuration (PATCH)")
+    .option("--app <id>", "Application ID to target (works from any directory)")
     .option("--instance <id>", "Instance to target (dev, prod, or a full instance ID)")
     .option("--file <path>", "Read config JSON from a file")
     .option("--json <string>", "Pass config JSON inline")
@@ -108,6 +112,7 @@ export function createProgram() {
   config
     .command("put")
     .description("Replace entire instance configuration (PUT)")
+    .option("--app <id>", "Application ID to target (works from any directory)")
     .option("--instance <id>", "Instance to target (dev, prod, or a full instance ID)")
     .option("--file <path>", "Read config JSON from a file")
     .option("--json <string>", "Pass config JSON inline")
@@ -127,6 +132,7 @@ export function createProgram() {
     .option("-d, --data <json>", "JSON request body")
     .option("--file <path>", "Read request body from a file")
     .option("--include", "Show response headers")
+    .option("--app <id>", "Application ID to target when resolving keys")
     .option("--secret-key <key>", "Override the secret key")
     .option("--instance <id>", "Instance to target (dev, prod, or instance ID)")
     .option("--platform", "Use Platform API instead of Backend API")
