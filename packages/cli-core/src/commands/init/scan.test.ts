@@ -201,7 +201,7 @@ describe("scanForIssues", () => {
     expect(findings).toEqual([]);
   });
 
-  test("caps findings at 10", async () => {
+  test("returns all findings without a cap", async () => {
     await mkdir(join(tempDir, "src"), { recursive: true });
     // Create 12 files with hardcoded keys
     for (let i = 0; i < 12; i++) {
@@ -209,7 +209,7 @@ describe("scanForIssues", () => {
     }
 
     const findings = await scanForIssues(tempDir, "next");
-    expect(findings.length).toBeLessThanOrEqual(10);
+    expect(findings.length).toBe(12);
   });
 
   test("ignores node_modules", async () => {
