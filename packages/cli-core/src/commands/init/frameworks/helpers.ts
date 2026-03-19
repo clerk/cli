@@ -2,6 +2,16 @@ import { join } from "node:path";
 import { parseModule } from "magicast";
 import type { FileAction } from "./types.js";
 
+/**
+ * Parse the major version from a semver-like string.
+ * Handles: "15.0.0", "^15.0.0", "~15.0.0", ">=15", etc.
+ * Returns null for non-numeric versions like "latest", "canary", "*".
+ */
+export function parseMajorVersion(version: string): number | null {
+  const match = version.match(/(\d+)/);
+  return match ? parseInt(match[1]!, 10) : null;
+}
+
 /** Check if file content already imports from a @clerk/ package. */
 export function hasClerkImport(content: string): boolean {
   return content.includes("@clerk/");
@@ -27,6 +37,31 @@ export function safeAddImport(content: string, source: string, imported: string)
   } catch {
     return `import { ${imported} } from "${source}";\n${content}`;
   }
+}
+
+/** Insert a snippet after the last import statement in a source file. */
+export function insertAfterLastImport(source: string, snippet: string): string {
+  const lastImportIdx = source.lastIndexOf("import ");
+  const lineEnd = source.indexOf("\n", lastImportIdx);
+  if (lineEnd === -1) return source;
+  return source.slice(0, lineEnd + 1) + snippet + source.slice(lineEnd + 1);
+}
+
+/** Wrap the contents of a `<body>` tag with a provider component (e.g. `<ClerkProvider>`). */
+export function wrapBodyWithProvider(content: string, provider: string): string {
+  let result = content.replace(/(<body[^>]*>)(\s*)/, `$1$2<${provider}>\n`);
+  result = result.replace(/(\s*)(<\/body>)/, `\n</${provider}>$1$2`);
+  return result;
+}
+
+/** Resolve the middleware basename from a Next.js version string. >=16 uses proxy, <=15 uses middleware. */
+export function resolveNextjsMiddlewareBasename(
+  nextVersion: string | undefined,
+): "proxy" | "middleware" {
+  if (!nextVersion) return "proxy";
+  const major = parseMajorVersion(nextVersion);
+  if (major === null) return "proxy";
+  return major >= 16 ? "proxy" : "middleware";
 }
 
 /** Next.js clerkMiddleware with route protection and matcher config. */
@@ -77,25 +112,25 @@ export default function SignUpPage() {
 export function composeWithExistingMiddleware(existing: string): string {
   const clerkImport = `import { clerkMiddleware, createRouteMatcher } from "@clerk/nextjs/server";\n`;
   const routeMatcher = `\nconst isPublicRoute = createRouteMatcher(["/sign-in(.*)", "/sign-up(.*)"]);\n`;
+  const preamble = clerkImport + routeMatcher + "\n";
 
-  const hasDefaultExport = /export\s+default\s+/.test(existing);
+  if (!/export\s+default\s+/.test(existing)) {
+    return preamble + existing + "\n" + nextjsMiddlewareContent();
+  }
 
-  if (hasDefaultExport) {
-    let content = existing.replace(
-      /export\s+default\s+(?:async\s+)?function\s+(\w+)?/,
-      "async function existingMiddleware",
-    );
-    content = content.replace(
-      /export\s+default\s+(?:async\s+)?(\([^)]*\)\s*=>)/,
-      "const existingMiddleware = async $1",
-    );
+  let content = existing.replace(
+    /export\s+default\s+(?:async\s+)?function\s+(\w+)?/,
+    "async function existingMiddleware",
+  );
+  content = content.replace(
+    /export\s+default\s+(?:async\s+)?(\([^)]*\)\s*=>)/,
+    "const existingMiddleware = async $1",
+  );
 
-    return (
-      clerkImport +
-      routeMatcher +
-      "\n" +
-      content +
-      `\nexport default clerkMiddleware(async (auth, request) => {
+  return (
+    preamble +
+    content +
+    `\nexport default clerkMiddleware(async (auth, request) => {
   if (!isPublicRoute(request)) {
     await auth.protect();
   }
@@ -109,10 +144,7 @@ export const config = {
   ],
 };
 `
-    );
-  }
-
-  return clerkImport + routeMatcher + "\n" + existing + "\n" + nextjsMiddlewareContent();
+  );
 }
 
 /**
@@ -124,39 +156,35 @@ export async function scaffoldNextjsMiddleware(ctx: {
   cwd: string;
   srcDir: boolean;
   typescript: boolean;
-  middlewareBasename: "proxy" | "middleware";
+  deps?: Record<string, string>;
+  middlewareBasename?: "proxy" | "middleware";
 }): Promise<FileAction> {
   const base = ctx.srcDir ? "src/" : "";
   const ext = ctx.typescript ? "ts" : "js";
-  const path = `${base}${ctx.middlewareBasename}.${ext}`;
-  const fullPath = join(ctx.cwd, path);
+  const basename = ctx.middlewareBasename ?? resolveNextjsMiddlewareBasename(ctx.deps?.["next"]);
+  const path = `${base}${basename}.${ext}`;
+  const file = Bun.file(join(ctx.cwd, path));
 
-  const file = Bun.file(fullPath);
-  if (await file.exists()) {
-    const content = await file.text();
-    if (hasClerkImport(content)) {
-      return {
-        path,
-        type: "modify",
-        content: "",
-        description: "Create Clerk middleware",
-        skipReason: "Already has Clerk middleware",
-      };
-    }
-
+  if (!(await file.exists())) {
     return {
       path,
-      type: "modify",
-      content: composeWithExistingMiddleware(content),
-      description: "Add clerkMiddleware to existing middleware",
+      type: "create",
+      content: nextjsMiddlewareContent(),
+      description: "Create Clerk middleware with route protection",
     };
+  }
+
+  const content = await file.text();
+
+  if (hasClerkImport(content)) {
+    return { type: "skip", path, skipReason: "Already has Clerk middleware" };
   }
 
   return {
     path,
-    type: "create",
-    content: nextjsMiddlewareContent(),
-    description: "Create Clerk middleware with route protection",
+    type: "modify",
+    content: composeWithExistingMiddleware(content),
+    description: "Add clerkMiddleware to existing middleware",
   };
 }
 
@@ -181,13 +209,7 @@ export async function scaffoldAuthPage(
   const capitalizedLabel = capitalize(label);
 
   if (await Bun.file(join(cwd, path)).exists()) {
-    return {
-      path,
-      type: "create",
-      content: "",
-      description: `Create ${label}`,
-      skipReason: `${capitalizedLabel} already exists`,
-    };
+    return { type: "skip", path, skipReason: `${capitalizedLabel} already exists` };
   }
 
   const component = label.includes("sign-in") ? "SignIn" : "SignUp";
