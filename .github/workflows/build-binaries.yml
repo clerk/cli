@@ -18,35 +18,6 @@ jobs:
   build:
     runs-on: blacksmith-2vcpu-ubuntu-2404
     timeout-minutes: 10
-    strategy:
-      fail-fast: false
-      matrix:
-        # Keep in sync with scripts/releaser/targets.ts
-        include:
-          - target: darwin-arm64
-            bun_target: bun-darwin-arm64
-            ext: ""
-          - target: darwin-x64
-            bun_target: bun-darwin-x64
-            ext: ""
-          - target: linux-arm64
-            bun_target: bun-linux-arm64
-            ext: ""
-          - target: linux-arm64-musl
-            bun_target: bun-linux-arm64-musl
-            ext: ""
-          - target: linux-x64
-            bun_target: bun-linux-x64
-            ext: ""
-          - target: linux-x64-musl
-            bun_target: bun-linux-x64-musl
-            ext: ""
-          - target: win32-arm64
-            bun_target: bun-windows-arm64
-            ext: ".exe"
-          - target: win32-x64
-            bun_target: bun-windows-x64
-            ext: ".exe"
     steps:
       - uses: actions/checkout@v4
         with:
@@ -54,36 +25,55 @@ jobs:
       - uses: oven-sh/setup-bun@v2
       - run: bun install --frozen-lockfile
 
-      - name: Build compiled binary
+      - name: Build all targets
         env:
           CLI_VERSION: ${{ inputs.version }}
-        run: |
-          bun build --compile \
-            --no-compile-autoload-dotenv \
-            --target=${{ matrix.bun_target }} \
-            --define "CLI_VERSION=\"$CLI_VERSION\"" \
-            ./packages/cli-core/src/cli.ts \
-            --outfile clerk${{ matrix.ext }}
-
-      - name: Verify binary format
-        run: |
-          expected_format="${{ matrix.target }}"
-          binary="clerk${{ matrix.ext }}"
-          file_output=$(file "$binary")
-          echo "Binary: $file_output"
-          case "$expected_format" in
-            darwin-arm64)       echo "$file_output" | grep -q "Mach-O.*arm64" ;;
-            darwin-x64)         echo "$file_output" | grep -q "Mach-O.*x86_64" ;;
-            linux-arm64*)       echo "$file_output" | grep -q "ELF.*ARM aarch64" ;;
-            linux-x64*)         echo "$file_output" | grep -q "ELF.*x86-64" ;;
-            win32-arm64)        echo "$file_output" | grep -q "PE32+.*Aarch64" ;;
-            win32-x64)          echo "$file_output" | grep -q "PE32+.*x86-64" ;;
-            *)                  echo "Unknown target: $expected_format" && exit 1 ;;
-          esac
-          echo "Binary format verified for $expected_format"
+        run: bun run scripts/build.ts --version="${CLI_VERSION}"
 
       - uses: actions/upload-artifact@v4
         with:
-          name: ${{ inputs.artifact-prefix }}-${{ matrix.target }}
-          path: clerk${{ matrix.ext }}
+          name: ${{ inputs.artifact-prefix }}-darwin-arm64
+          path: dist/artifacts/darwin-arm64/clerk
+          retention-days: 1
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ inputs.artifact-prefix }}-darwin-x64
+          path: dist/artifacts/darwin-x64/clerk
+          retention-days: 1
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ inputs.artifact-prefix }}-linux-arm64
+          path: dist/artifacts/linux-arm64/clerk
+          retention-days: 1
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ inputs.artifact-prefix }}-linux-arm64-musl
+          path: dist/artifacts/linux-arm64-musl/clerk
+          retention-days: 1
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ inputs.artifact-prefix }}-linux-x64
+          path: dist/artifacts/linux-x64/clerk
+          retention-days: 1
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ inputs.artifact-prefix }}-linux-x64-musl
+          path: dist/artifacts/linux-x64-musl/clerk
+          retention-days: 1
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ inputs.artifact-prefix }}-win32-arm64
+          path: dist/artifacts/win32-arm64/clerk.exe
+          retention-days: 1
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ inputs.artifact-prefix }}-win32-x64
+          path: dist/artifacts/win32-x64/clerk.exe
           retention-days: 1
