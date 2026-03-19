@@ -53,7 +53,7 @@ async function generatePlatformPackage(target: Target, version: string): Promise
 
   await mkdir(binDir, { recursive: true });
 
-  const ext = target.os === "win32" ? ".exe" : "";
+  const ext = target.ext;
   const binaryName = `clerk${ext}`;
   const artifactPath = join(ARTIFACTS_DIR, `clerk-${target.name}`, binaryName);
   const destPath = join(binDir, binaryName);
