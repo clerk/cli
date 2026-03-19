@@ -12,46 +12,59 @@ permissions:
   contents: read
 
 jobs:
-  release-please:
+  versioning:
     runs-on: blacksmith-2vcpu-ubuntu-2404
     timeout-minutes: 5
     permissions:
       contents: write
       pull-requests: write
     outputs:
-      release_created: ${{ steps.release.outputs['packages/cli--release_created'] }}
-      tag_name: ${{ steps.release.outputs['packages/cli--tag_name'] }}
-      version: ${{ steps.release.outputs['packages/cli--version'] }}
+      release_created: ${{ steps.check.outputs.release_created }}
+      version: ${{ steps.check.outputs.version }}
     steps:
-      - id: release
-        uses: googleapis/release-please-action@v4
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+      - run: bun install --frozen-lockfile
+
+      - id: changesets
+        uses: changesets/action@v1
+        with:
+          version: bun run version-packages
+          commit: "ci(repo): version packages"
+          title: "ci(repo): Version Packages"
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+
+      - name: Check if release needed
+        id: check
+        run: bun run scripts/check-release.ts
 
   # ─── Stable release ────────────────────────────────────────────────
 
   build:
-    needs: release-please
-    if: ${{ needs.release-please.outputs.release_created == 'true' }}
+    needs: versioning
+    if: ${{ needs.versioning.outputs.release_created == 'true' }}
     uses: ./.github/workflows/build-binaries.yml
     with:
-      version: ${{ needs.release-please.outputs.version }}
+      version: ${{ needs.versioning.outputs.version }}
       ref: ${{ github.sha }}
       artifact-prefix: clerk
 
   smoke-test:
-    needs: [release-please, build]
+    needs: [versioning, build]
     uses: ./.github/workflows/smoke-test.yml
     with:
-      version: ${{ needs.release-please.outputs.version }}
+      version: ${{ needs.versioning.outputs.version }}
       artifact-prefix: clerk
       preset: stable
 
   publish-npm:
-    needs: [release-please, build, smoke-test]
+    needs: [versioning, build, smoke-test]
     # Must run on GitHub-hosted runner for npm OIDC trusted publishing
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
-      contents: read
+      contents: write
       id-token: write
     steps:
       - uses: actions/checkout@v4
@@ -70,12 +83,13 @@ jobs:
           path: dist/artifacts
 
       - name: Publish packages
-        run: bun run scripts/releaser/index.ts
+        run: bun run release
         env:
           ARTIFACTS_DIR: ${{ github.workspace }}/dist/artifacts
+          GH_TOKEN: ${{ github.token }}
 
   upload-github-assets:
-    needs: [release-please, build, smoke-test, publish-npm]
+    needs: [versioning, build, smoke-test, publish-npm]
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
@@ -91,7 +105,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
         run: |
-          tag="${{ needs.release-please.outputs.tag_name }}"
+          tag="v${{ needs.versioning.outputs.version }}"
           for dir in dist/artifacts/clerk-*/; do
             target=${dir#dist/artifacts/clerk-} && target=${target%/}
             ext=""; [[ "$target" == win32-* ]] && ext=".exe"
@@ -101,24 +115,27 @@ jobs:
   # ─── Canary release ────────────────────────────────────────────────
 
   canary-version:
-    needs: release-please
-    if: ${{ needs.release-please.outputs.release_created != 'true' }}
+    needs: versioning
+    if: ${{ needs.versioning.outputs.release_created != 'true' }}
     runs-on: blacksmith-2vcpu-ubuntu-2404
     timeout-minutes: 5
     outputs:
       version: ${{ steps.version.outputs.version }}
     steps:
       - uses: actions/checkout@v4
-      - name: Compute canary version
+      - uses: oven-sh/setup-bun@v2
+      - run: bun install --frozen-lockfile
+
+      - name: Version packages for canary
         id: version
         run: |
-          base=$(jq -r '.["packages/cli"]' .release-please-manifest.json)
-          if [ -z "$base" ] || [ "$base" = "null" ]; then
-            echo "::error::Could not read base version from .release-please-manifest.json"
+          output=$(bun run version-packages:canary)
+          if echo "$output" | grep -q "success=0"; then
+            echo "::error::Canary versioning failed"
             exit 1
           fi
-          sha=$(git rev-parse --short=7 HEAD)
-          echo "version=${base}-canary.${sha}" >> "$GITHUB_OUTPUT"
+          version=$(jq -r '.version' packages/cli/package.json)
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
 
   canary-build:
     needs: canary-version
@@ -169,7 +186,7 @@ jobs:
           done
 
       - name: Publish canary packages
-        run: bun run scripts/releaser/index.ts --tag canary --version "$CANARY_VERSION"
+        run: bun run release:canary --version "$CANARY_VERSION"
         env:
           CANARY_VERSION: ${{ needs.canary-version.outputs.version }}
           ARTIFACTS_DIR: ${{ github.workspace }}/dist/artifacts
