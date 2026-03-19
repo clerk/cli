@@ -9,14 +9,15 @@ concurrency:
   cancel-in-progress: false
 
 permissions:
-  contents: write
-  pull-requests: write
-  id-token: write
+  contents: read
 
 jobs:
   release-please:
     runs-on: blacksmith-2vcpu-ubuntu-2404
     timeout-minutes: 5
+    permissions:
+      contents: write
+      pull-requests: write
     outputs:
       release_created: ${{ steps.release.outputs['packages/cli--release_created'] }}
       tag_name: ${{ steps.release.outputs['packages/cli--tag_name'] }}

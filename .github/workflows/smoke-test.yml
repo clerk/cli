@@ -59,7 +59,11 @@ jobs:
               exit 1
               ;;
           esac
-          echo "matrix=${matrix}" >> "$GITHUB_OUTPUT"
+          {
+            echo "matrix<<EOF"
+            echo "$matrix"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
 
   smoke-test:
     needs: resolve-matrix
