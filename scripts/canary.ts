@@ -30,13 +30,11 @@ try {
   });
 
   if (result.exitCode !== 0) {
-    console.error(`changeset version failed: ${result.stderr.toString().trim()}`);
-    console.log("success=0");
-  } else {
-    const pkg = await Bun.file(WRAPPER_PKG).json();
-    console.log(`Canary version: ${pkg.version}`);
-    console.log("success=1");
+    throw new Error(`changeset version failed: ${result.stderr.toString().trim()}`);
   }
+
+  const pkg = await Bun.file(WRAPPER_PKG).json();
+  console.log(`Canary version: ${pkg.version}`);
 } finally {
   // Step 6: Restore original config from git
   Bun.spawnSync(["git", "checkout", "HEAD", "--", CHANGESET_CONFIG], {

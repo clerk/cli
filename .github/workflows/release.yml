@@ -129,11 +129,7 @@ jobs:
       - name: Version packages for canary
         id: version
         run: |
-          output=$(bun run version-packages:canary)
-          if echo "$output" | grep -q "success=0"; then
-            echo "::error::Canary versioning failed"
-            exit 1
-          fi
+          bun run version-packages:canary
           version=$(jq -r '.version' packages/cli/package.json)
           echo "version=${version}" >> "$GITHUB_OUTPUT"
 

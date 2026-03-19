@@ -49,13 +49,11 @@ try {
   });
 
   if (result.exitCode !== 0) {
-    console.error(`changeset version failed: ${result.stderr.toString().trim()}`);
-    console.log("success=0");
-  } else {
-    const pkg = await Bun.file(WRAPPER_PKG).json();
-    console.log(`Snapshot version: ${pkg.version}`);
-    console.log("success=1");
+    throw new Error(`changeset version failed: ${result.stderr.toString().trim()}`);
   }
+
+  const pkg = await Bun.file(WRAPPER_PKG).json();
+  console.log(`Snapshot version: ${pkg.version}`);
 } finally {
   // Restore config
   Bun.spawnSync(["git", "checkout", "HEAD", "--", CHANGESET_CONFIG], {

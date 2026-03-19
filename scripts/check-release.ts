@@ -12,7 +12,18 @@ const result = Bun.spawnSync(["npm", "view", `clerk@${version}`, "version"], {
   stdio: ["ignore", "pipe", "pipe"],
 });
 
-const isPublished = result.exitCode === 0 && result.stdout.toString().trim() === version;
+let isPublished: boolean;
+if (result.exitCode === 0) {
+  isPublished = result.stdout.toString().trim() === version;
+} else {
+  // Distinguish "not found" (E404) from real errors (network, auth)
+  const stderr = result.stderr.toString();
+  if (stderr.includes("E404") || stderr.includes("is not in this registry")) {
+    isPublished = false;
+  } else {
+    throw new Error(`npm view clerk@${version} failed (exit ${result.exitCode}): ${stderr.trim()}`);
+  }
+}
 
 if (!isPublished) {
   console.log(`Version ${version} is not published — triggering stable release.`);

@@ -54,11 +54,7 @@ jobs:
           # Extract optional name from "!snapshot <name>" — default to "snapshot"
           name=$(echo "$COMMENT_BODY" | sed 's/^!snapshot[[:space:]]*//' | tr -cd 'a-zA-Z0-9-')
           if [ -z "$name" ]; then name="snapshot"; fi
-          output=$(bun run version-packages:snapshot -- "$name")
-          if echo "$output" | grep -q "success=0"; then
-            echo "::error::Snapshot versioning failed"
-            exit 1
-          fi
+          bun run version-packages:snapshot -- "$name"
           version=$(jq -r '.version' packages/cli/package.json)
           echo "version=${version}" >> "$GITHUB_OUTPUT"
 
