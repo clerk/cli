@@ -22,10 +22,12 @@ const CLERK_LOGO = `<svg width="48" height="48" viewBox="0 0 160 160" fill="none
 </svg>
 `;
 
+const PAGE_STYLE = `body { font-family: system-ui, sans-serif; display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0; background: #fff; color: #000; } @media (prefers-color-scheme: dark) { body { background: #111; color: #fff; } }`;
+
 const SUCCESS_HTML = `<!DOCTYPE html>
 <html>
-<head><title>Clerk CLI</title></head>
-<body style="font-family: system-ui, sans-serif; display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0;">
+<head><title>Clerk CLI</title><style>${PAGE_STYLE}</style></head>
+<body>
   <div style="text-align: center;">
     ${CLERK_LOGO}
     <h1>Authentication successful</h1>
@@ -36,8 +38,8 @@ const SUCCESS_HTML = `<!DOCTYPE html>
 
 const ERROR_HTML = (message: string) => `<!DOCTYPE html>
 <html>
-<head><title>Clerk CLI</title></head>
-<body style="font-family: system-ui, sans-serif; display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0;">
+<head><title>Clerk CLI</title><style>${PAGE_STYLE}</style></head>
+<body>
   <div style="text-align: center;">
     ${CLERK_LOGO}
     <h1>Authentication failed</h1>
