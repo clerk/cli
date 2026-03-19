@@ -5,26 +5,26 @@ import { yellow, dim, cyan } from "../../lib/color.js";
 // Types
 // ---------------------------------------------------------------------------
 
-export interface AuthLibraryScan {
+type AuthLibraryScan = {
   packages: string[];
   name: string;
   docsUrl: string;
-}
+};
 
-export interface CodeScan {
+type CodeScan = {
   pattern: string;
   flags?: string;
   message: string;
   docsUrl?: string;
   frameworks?: string[];
-}
+};
 
-export interface ScanFinding {
+export type ScanFinding = {
   file: string;
   line: number;
   message: string;
   docsUrl?: string;
-}
+};
 
 // ---------------------------------------------------------------------------
 // Pre-scaffold: auth library detection
@@ -129,31 +129,29 @@ const CODE_SCANS: CodeScan[] = [
   },
 ];
 
-const IGNORE_DIRS = ["node_modules", ".next", "dist", ".git", "build", ".output", ".nuxt"];
+const IGNORE_DIRS = new Set(["node_modules", ".next", "dist", ".git", "build", ".output", ".nuxt"]);
 
-const MAX_FINDINGS = 10;
+// Precompile regexes once instead of per-file
+const COMPILED_CODE_SCANS = CODE_SCANS.map((scan) => ({
+  ...scan,
+  regex: new RegExp(scan.pattern, scan.flags ?? "m"),
+}));
 
 function findLineNumber(content: string, matchIndex: number): number {
   return content.slice(0, matchIndex).split("\n").length;
 }
 
-function matchesFramework(scan: CodeScan, frameworkDep: string): boolean {
-  if (!scan.frameworks) return true;
-  return scan.frameworks.includes(frameworkDep);
-}
-
 function isIgnored(relPath: string): boolean {
-  return relPath.split("/").some((seg) => IGNORE_DIRS.includes(seg));
+  return relPath.split("/").some((seg) => IGNORE_DIRS.has(seg));
 }
 
 function scanFileContent(content: string, relPath: string, frameworkDep: string): ScanFinding[] {
   const results: ScanFinding[] = [];
 
-  for (const scan of CODE_SCANS) {
-    if (!matchesFramework(scan, frameworkDep)) continue;
+  for (const scan of COMPILED_CODE_SCANS) {
+    if (scan.frameworks && !scan.frameworks.includes(frameworkDep)) continue;
 
-    const regex = new RegExp(scan.pattern, scan.flags ?? "m");
-    const match = regex.exec(content);
+    const match = scan.regex.exec(content);
     if (!match) continue;
 
     results.push({
@@ -173,15 +171,9 @@ export async function scanForIssues(cwd: string, frameworkDep: string): Promise<
 
   for await (const relPath of glob.scan({ cwd })) {
     if (isIgnored(relPath)) continue;
-    if (findings.length >= MAX_FINDINGS) break;
 
     const content = await Bun.file(join(cwd, relPath)).text();
-    const fileFindings = scanFileContent(content, relPath, frameworkDep);
-
-    for (const finding of fileFindings) {
-      if (findings.length >= MAX_FINDINGS) break;
-      findings.push(finding);
-    }
+    findings.push(...scanFileContent(content, relPath, frameworkDep));
   }
 
   return findings;
