@@ -4,11 +4,28 @@ import type { FileAction, FrameworkScaffold, ProjectContext, ScaffoldPlan } from
 
 async function findEntryFile(ctx: ProjectContext): Promise<string | null> {
   const base = ctx.srcDir ? "src/" : "";
-  const ext = ctx.typescript ? "tsx" : "jsx";
-  return findFirstFile(ctx.cwd, [
-    `${base}main.${ext}`,
-    `${base}main.${ctx.typescript ? "ts" : "js"}`,
-  ]);
+  const jsx = ctx.typescript ? "tsx" : "jsx";
+  const ext = ctx.typescript ? "ts" : "js";
+  return findFirstFile(ctx.cwd, [`${base}main.${jsx}`, `${base}main.${ext}`]);
+}
+
+function wrapWithClerkProvider(content: string): string {
+  if (content.includes("<StrictMode>")) {
+    let result = content.replace(
+      /(<StrictMode>)(\s*)/,
+      '$1$2<ClerkProvider afterSignOutUrl="/">\n',
+    );
+    return result.replace(/(\s*)(<\/StrictMode>)/, "\n</ClerkProvider>$1$2");
+  }
+
+  if (content.includes("<App")) {
+    return content.replace(
+      /(<App\s*\/>)/,
+      '<ClerkProvider afterSignOutUrl="/">\n      $1\n    </ClerkProvider>',
+    );
+  }
+
+  return content;
 }
 
 async function scaffoldEntry(ctx: ProjectContext): Promise<FileAction | null> {
@@ -18,29 +35,11 @@ async function scaffoldEntry(ctx: ProjectContext): Promise<FileAction | null> {
   const content = await Bun.file(join(ctx.cwd, entryPath)).text();
 
   if (content.includes("ClerkProvider")) {
-    return {
-      path: entryPath,
-      type: "modify",
-      content,
-      description: "Add ClerkProvider to entry",
-      skipReason: "Already has ClerkProvider",
-    };
+    return { type: "skip", path: entryPath, skipReason: "Already has ClerkProvider" };
   }
 
-  let newContent = safeAddImport(content, "@clerk/react", "ClerkProvider");
-
-  if (newContent.includes("<StrictMode>")) {
-    newContent = newContent.replace(
-      /(<StrictMode>)(\s*)/,
-      '$1$2<ClerkProvider afterSignOutUrl="/">\n',
-    );
-    newContent = newContent.replace(/(\s*)(<\/StrictMode>)/, "\n</ClerkProvider>$1$2");
-  } else if (newContent.includes("<App")) {
-    newContent = newContent.replace(
-      /(<App\s*\/>)/,
-      '<ClerkProvider afterSignOutUrl="/">\n      $1\n    </ClerkProvider>',
-    );
-  }
+  const imported = safeAddImport(content, "@clerk/react", "ClerkProvider");
+  const newContent = wrapWithClerkProvider(imported);
 
   return {
     path: entryPath,
@@ -52,6 +51,10 @@ async function scaffoldEntry(ctx: ProjectContext): Promise<FileAction | null> {
 
 export const reactVite: FrameworkScaffold = {
   name: "React (Vite)",
+  dep: "react",
+  minMajorVersion: 18,
+
+  matches: (ctx) => ctx.framework.dep === "react",
 
   async scaffold(ctx: ProjectContext): Promise<ScaffoldPlan> {
     const actions: FileAction[] = [];

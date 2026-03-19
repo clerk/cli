@@ -6,47 +6,49 @@ import {
   safeAddImport,
   scaffoldAuthPage,
   scaffoldNextjsMiddleware,
+  wrapBodyWithProvider,
 } from "./helpers.js";
+import { enrichNextjsContext } from "./nextjs-context.js";
 import type { FileAction, FrameworkScaffold, ProjectContext, ScaffoldPlan } from "./types.js";
 
-async function scaffoldLayout(ctx: ProjectContext): Promise<FileAction | null> {
-  if (!ctx.layoutPath) return null;
+async function scaffoldLayout(ctx: ProjectContext): Promise<FileAction> {
+  const base = ctx.srcDir ? "src/" : "";
+  const jsx = ctx.typescript ? "tsx" : "jsx";
+  const expectedPath = ctx.layoutPath ?? `${base}app/layout.${jsx}`;
+
+  if (!ctx.layoutPath) {
+    return { type: "skip", path: expectedPath, skipReason: "Layout file not found" };
+  }
 
   const fullPath = join(ctx.cwd, ctx.layoutPath);
   const file = Bun.file(fullPath);
-  if (!(await file.exists())) return null;
+  if (!(await file.exists())) {
+    return { type: "skip", path: ctx.layoutPath, skipReason: "Layout file not found" };
+  }
 
   const content = await file.text();
 
   if (content.includes("ClerkProvider")) {
-    return {
-      path: ctx.layoutPath,
-      type: "modify",
-      content,
-      description: "Add ClerkProvider to layout",
-      skipReason: "Already has ClerkProvider",
-    };
+    return { type: "skip", path: ctx.layoutPath, skipReason: "Already has ClerkProvider" };
   }
 
   let newContent = safeAddImport(content, "@clerk/nextjs", "ClerkProvider");
 
-  if (newContent.includes("<body")) {
-    newContent = newContent.replace(/(<body[^>]*>)(\s*)/, "$1$2<ClerkProvider>\n");
-    newContent = newContent.replace(/(\s*)(<\/body>)/, "\n</ClerkProvider>$1$2");
-  } else {
-    return {
-      path: ctx.layoutPath,
-      type: "modify",
-      content: newContent,
-      description: "Add ClerkProvider import (manual wrapping needed)",
-    };
+  // TODO: Consider using AST (e.g. ts-morph) for JSX manipulation to enforce
+  // modifying the default export. Magicast does not support JSX/TSX.
+  const hasBody = newContent.includes("<body");
+
+  if (hasBody) {
+    newContent = wrapBodyWithProvider(newContent, "ClerkProvider");
   }
 
   return {
     path: ctx.layoutPath,
     type: "modify",
     content: newContent,
-    description: "Add ClerkProvider import and wrap body contents",
+    description: hasBody
+      ? "Add ClerkProvider import and wrap body contents"
+      : "Add ClerkProvider import (manual wrapping needed)",
   };
 }
 
@@ -64,21 +66,20 @@ function signUpPath(ctx: ProjectContext): string {
 
 export const nextjsApp: FrameworkScaffold = {
   name: "Next.js (App Router)",
+  dep: "next",
+  variant: "app-router",
+  minMajorVersion: 13,
+
+  enrichContext: enrichNextjsContext,
+
+  matches: (ctx) => ctx.framework.dep === "next" && ctx.variant !== "pages-router",
 
   async scaffold(ctx: ProjectContext): Promise<ScaffoldPlan> {
     const actions: FileAction[] = [];
     const postInstructions: string[] = [];
 
     actions.push(await scaffoldNextjsMiddleware(ctx));
-
-    const layoutAction = await scaffoldLayout(ctx);
-    if (layoutAction) {
-      actions.push(layoutAction);
-    } else {
-      postInstructions.push(
-        "Wrap your root layout with <ClerkProvider> from @clerk/nextjs. See: https://clerk.com/docs/quickstarts/nextjs",
-      );
-    }
+    actions.push(await scaffoldLayout(ctx));
 
     actions.push(
       await scaffoldAuthPage(ctx.cwd, signInPath(ctx), nextjsSignInPageContent(), "sign-in page"),

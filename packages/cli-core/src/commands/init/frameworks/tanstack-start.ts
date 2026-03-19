@@ -1,5 +1,11 @@
 import { join } from "node:path";
-import { hasClerkImport, safeAddImport, findFirstFile, scaffoldAuthPage } from "./helpers.js";
+import {
+  findFirstFile,
+  hasClerkImport,
+  safeAddImport,
+  scaffoldAuthPage,
+  wrapBodyWithProvider,
+} from "./helpers.js";
 import type { FileAction, FrameworkScaffold, ProjectContext, ScaffoldPlan } from "./types.js";
 
 function signInRouteContent(): string {
@@ -41,13 +47,7 @@ async function scaffoldStartServer(ctx: ProjectContext): Promise<FileAction | nu
   const content = await Bun.file(join(ctx.cwd, serverPath)).text();
 
   if (hasClerkImport(content)) {
-    return {
-      path: serverPath,
-      type: "modify",
-      content,
-      description: "Add clerkMiddleware to start server",
-      skipReason: "Already has Clerk middleware",
-    };
+    return { type: "skip", path: serverPath, skipReason: "Already has Clerk middleware" };
   }
 
   let newContent = safeAddImport(content, "@clerk/tanstack-react-start/server", "clerkMiddleware");
@@ -79,21 +79,13 @@ async function scaffoldRoot(ctx: ProjectContext): Promise<FileAction | null> {
   const content = await Bun.file(join(ctx.cwd, rootPath)).text();
 
   if (content.includes("ClerkProvider")) {
-    return {
-      path: rootPath,
-      type: "modify",
-      content,
-      description: "Add ClerkProvider to root route",
-      skipReason: "Already has ClerkProvider",
-    };
+    return { type: "skip", path: rootPath, skipReason: "Already has ClerkProvider" };
   }
 
   let newContent = safeAddImport(content, "@clerk/tanstack-react-start", "ClerkProvider");
 
-  // Wrap children or body content with <ClerkProvider>
   if (newContent.includes("<body")) {
-    newContent = newContent.replace(/(<body[^>]*>)(\s*)/, "$1$2<ClerkProvider>\n");
-    newContent = newContent.replace(/(\s*)(<\/body>)/, "\n</ClerkProvider>$1$2");
+    newContent = wrapBodyWithProvider(newContent, "ClerkProvider");
   }
 
   return {
@@ -106,6 +98,9 @@ async function scaffoldRoot(ctx: ProjectContext): Promise<FileAction | null> {
 
 export const tanstackStart: FrameworkScaffold = {
   name: "TanStack Start",
+  dep: "@tanstack/react-start",
+
+  matches: (ctx) => ctx.framework.dep === "@tanstack/react-start",
 
   async scaffold(ctx: ProjectContext): Promise<ScaffoldPlan> {
     const actions: FileAction[] = [];

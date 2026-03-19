@@ -34,20 +34,21 @@ function addNuxtModule(content: string): string {
   }
 }
 
-async function scaffoldConfig(ctx: ProjectContext): Promise<FileAction | null> {
+async function scaffoldConfig(ctx: ProjectContext): Promise<FileAction> {
   const configPath = await findFirstFile(ctx.cwd, ["nuxt.config.ts", "nuxt.config.js"]);
-  if (!configPath) return null;
+
+  if (!configPath) {
+    return {
+      type: "skip",
+      path: "nuxt.config.ts",
+      skipReason: "No Nuxt config file found — create one and add @clerk/nuxt to modules",
+    };
+  }
 
   const content = await Bun.file(join(ctx.cwd, configPath)).text();
 
   if (content.includes("@clerk/nuxt")) {
-    return {
-      path: configPath,
-      type: "modify",
-      content,
-      description: "Add @clerk/nuxt to modules",
-      skipReason: "Already has @clerk/nuxt module",
-    };
+    return { type: "skip", path: configPath, skipReason: "Already has @clerk/nuxt module" };
   }
 
   const newContent = addNuxtModule(content);
@@ -62,19 +63,16 @@ async function scaffoldConfig(ctx: ProjectContext): Promise<FileAction | null> {
 
 export const nuxt: FrameworkScaffold = {
   name: "Nuxt",
+  dep: "nuxt",
+  minMajorVersion: 3,
+
+  matches: (ctx) => ctx.framework.dep === "nuxt",
 
   async scaffold(ctx: ProjectContext): Promise<ScaffoldPlan> {
     const actions: FileAction[] = [];
     const postInstructions: string[] = [];
 
-    const configAction = await scaffoldConfig(ctx);
-    if (configAction) {
-      actions.push(configAction);
-    } else {
-      postInstructions.push(
-        "Add '@clerk/nuxt' to the modules array in your nuxt.config.ts. See: https://clerk.com/docs/quickstarts/nuxt",
-      );
-    }
+    actions.push(await scaffoldConfig(ctx));
 
     actions.push(
       await scaffoldAuthPage(ctx.cwd, "pages/sign-in.vue", signInPageContent(), "sign-in page"),

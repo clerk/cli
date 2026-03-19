@@ -7,6 +7,7 @@ import {
   scaffoldAuthPage,
   scaffoldNextjsMiddleware,
 } from "./helpers.js";
+import { enrichNextjsContext } from "./nextjs-context.js";
 import type { FileAction, FrameworkScaffold, ProjectContext, ScaffoldPlan } from "./types.js";
 
 function appWrapperContent(typescript: boolean): string {
@@ -40,43 +41,37 @@ async function scaffoldApp(ctx: ProjectContext): Promise<FileAction> {
   const base = ctx.srcDir ? "src/" : "";
   const ext = ctx.typescript ? "tsx" : "jsx";
   const path = `${base}pages/_app.${ext}`;
-  const fullPath = join(ctx.cwd, path);
+  const file = Bun.file(join(ctx.cwd, path));
 
-  const file = Bun.file(fullPath);
-  if (await file.exists()) {
-    const content = await file.text();
-    if (content.includes("ClerkProvider")) {
-      return {
-        path,
-        type: "modify",
-        content,
-        description: "Wrap _app with ClerkProvider",
-        skipReason: "Already has ClerkProvider",
-      };
-    }
-
-    let newContent = safeAddImport(content, "@clerk/nextjs", "ClerkProvider");
-
-    if (newContent.includes("<Component")) {
-      newContent = newContent.replace(
-        /(<Component\s[^/]*\/>)/,
-        "<ClerkProvider {...pageProps}>\n      $1\n    </ClerkProvider>",
-      );
-    }
-
+  if (!(await file.exists())) {
     return {
       path,
-      type: "modify",
-      content: newContent,
-      description: "Add ClerkProvider import and wrap Component",
+      type: "create",
+      content: appWrapperContent(ctx.typescript),
+      description: "Create _app with ClerkProvider wrapper",
     };
+  }
+
+  const content = await file.text();
+
+  if (content.includes("ClerkProvider")) {
+    return { type: "skip", path, skipReason: "Already has ClerkProvider" };
+  }
+
+  let newContent = safeAddImport(content, "@clerk/nextjs", "ClerkProvider");
+
+  if (newContent.includes("<Component")) {
+    newContent = newContent.replace(
+      /(<Component\s[^/]*\/>)/,
+      "<ClerkProvider {...pageProps}>\n      $1\n    </ClerkProvider>",
+    );
   }
 
   return {
     path,
-    type: "create",
-    content: appWrapperContent(ctx.typescript),
-    description: "Create _app with ClerkProvider wrapper",
+    type: "modify",
+    content: newContent,
+    description: "Add ClerkProvider import and wrap Component",
   };
 }
 
@@ -94,6 +89,13 @@ function signUpPath(ctx: ProjectContext): string {
 
 export const nextjsPages: FrameworkScaffold = {
   name: "Next.js (Pages Router)",
+  dep: "next",
+  variant: "pages-router",
+  minMajorVersion: 13,
+
+  enrichContext: enrichNextjsContext,
+
+  matches: (ctx) => ctx.framework.dep === "next" && ctx.variant === "pages-router",
 
   async scaffold(ctx: ProjectContext): Promise<ScaffoldPlan> {
     const actions: FileAction[] = [];

@@ -1,5 +1,5 @@
 import { join } from "node:path";
-import { parseModule } from "magicast";
+import { parseModule, builders } from "magicast";
 import { findFirstFile, hasClerkImport, scaffoldAuthPage } from "./helpers.js";
 import type { FileAction, FrameworkScaffold, ProjectContext, ScaffoldPlan } from "./types.js";
 
@@ -38,7 +38,26 @@ function addClerkImport(content: string): string {
   }
 }
 
+function addClerkToIntegrationsViaAst(content: string): string | null {
+  try {
+    const mod = parseModule(content);
+    const defaultExport = mod.exports.default;
+    if (!defaultExport || typeof defaultExport !== "object") return null;
+    if (!defaultExport.integrations) defaultExport.integrations = [];
+    if (!Array.isArray(defaultExport.integrations)) return null;
+
+    defaultExport.integrations.push(builders.raw("clerk()"));
+    return mod.generate().code;
+  } catch {
+    return null;
+  }
+}
+
 function addClerkToIntegrations(content: string): string {
+  const astResult = addClerkToIntegrationsViaAst(content);
+  if (astResult) return astResult;
+
+  // String fallback for non-standard config shapes
   if (content.includes("integrations:")) {
     return content.replace(/(integrations:\s*\[)/, "$1clerk(), ");
   }
@@ -52,24 +71,25 @@ function addClerkIntegration(content: string): string {
   return addClerkToIntegrations(addClerkImport(content));
 }
 
-async function scaffoldConfig(ctx: ProjectContext): Promise<FileAction | null> {
+async function scaffoldConfig(ctx: ProjectContext): Promise<FileAction> {
   const configPath = await findFirstFile(ctx.cwd, [
     "astro.config.mjs",
     "astro.config.ts",
     "astro.config.js",
   ]);
-  if (!configPath) return null;
+
+  if (!configPath) {
+    return {
+      type: "skip",
+      path: "astro.config.mjs",
+      skipReason: "No Astro config file found — create one and add clerk() integration manually",
+    };
+  }
 
   const content = await Bun.file(join(ctx.cwd, configPath)).text();
 
   if (content.includes("@clerk/astro")) {
-    return {
-      path: configPath,
-      type: "modify",
-      content,
-      description: "Add clerk() integration",
-      skipReason: "Already has @clerk/astro integration",
-    };
+    return { type: "skip", path: configPath, skipReason: "Already has @clerk/astro integration" };
   }
 
   const newContent = addClerkIntegration(content);
@@ -85,55 +105,43 @@ async function scaffoldConfig(ctx: ProjectContext): Promise<FileAction | null> {
 async function scaffoldMiddleware(ctx: ProjectContext): Promise<FileAction> {
   const ext = ctx.typescript ? "ts" : "js";
   const path = `src/middleware.${ext}`;
-  const fullPath = join(ctx.cwd, path);
+  const file = Bun.file(join(ctx.cwd, path));
 
-  const file = Bun.file(fullPath);
-  if (await file.exists()) {
-    const content = await file.text();
-    if (hasClerkImport(content)) {
-      return {
-        path,
-        type: "modify",
-        content: "",
-        description: "Create Clerk middleware",
-        skipReason: "Already has Clerk middleware",
-      };
-    }
-
-    // Existing non-Clerk middleware — skip to avoid overwriting user code
+  if (!(await file.exists())) {
     return {
       path,
-      type: "modify",
-      content: "",
-      description: "Create Clerk middleware",
-      skipReason: "Existing middleware found — add clerkMiddleware() manually",
+      type: "create",
+      content: middlewareContent(),
+      description: "Create Clerk middleware with onRequest export",
     };
   }
 
+  const content = await file.text();
+
+  if (hasClerkImport(content)) {
+    return { type: "skip", path, skipReason: "Already has Clerk middleware" };
+  }
+
+  // Existing non-Clerk middleware — skip to avoid overwriting user code
   return {
+    type: "skip",
     path,
-    type: "create",
-    content: middlewareContent(),
-    description: "Create Clerk middleware with onRequest export",
+    skipReason: "Existing middleware found — add clerkMiddleware() manually",
   };
 }
 
 export const astro: FrameworkScaffold = {
   name: "Astro",
+  dep: "astro",
+  minMajorVersion: 3,
+
+  matches: (ctx) => ctx.framework.dep === "astro",
 
   async scaffold(ctx: ProjectContext): Promise<ScaffoldPlan> {
     const actions: FileAction[] = [];
     const postInstructions: string[] = [];
 
-    const configAction = await scaffoldConfig(ctx);
-    if (configAction) {
-      actions.push(configAction);
-    } else {
-      postInstructions.push(
-        "Add `import clerk from '@clerk/astro'` and `clerk()` to integrations in astro.config.mjs. See: https://clerk.com/docs/quickstarts/astro",
-      );
-    }
-
+    actions.push(await scaffoldConfig(ctx));
     actions.push(await scaffoldMiddleware(ctx));
     actions.push(
       await scaffoldAuthPage(

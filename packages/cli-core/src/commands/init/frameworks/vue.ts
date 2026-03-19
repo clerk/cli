@@ -1,5 +1,5 @@
 import { join } from "node:path";
-import { findFirstFile, safeAddImport } from "./helpers.js";
+import { findFirstFile, insertAfterLastImport, safeAddImport } from "./helpers.js";
 import type { FileAction, FrameworkScaffold, ProjectContext, ScaffoldPlan } from "./types.js";
 
 async function findEntryFile(ctx: ProjectContext): Promise<string | null> {
@@ -11,17 +11,12 @@ function addClerkPluginSetup(source: string): string {
   const keyBlock = `\nconst PUBLISHABLE_KEY = import.meta.env.VITE_CLERK_PUBLISHABLE_KEY;\n\nif (!PUBLISHABLE_KEY) {\n  throw new Error("Add your Clerk Publishable Key to the .env file");\n}\n`;
 
   // Insert app.use(clerkPlugin, ...) before app.mount()
-  let result = source.replace(
+  const result = source.replace(
     /((\w+)\.mount\s*\()/,
     `$2.use(clerkPlugin, { publishableKey: PUBLISHABLE_KEY });\n$1`,
   );
 
-  // Insert key block after last import
-  const lastImportIdx = result.lastIndexOf("import ");
-  const lineEnd = result.indexOf("\n", lastImportIdx);
-  if (lineEnd === -1) return result;
-
-  return result.slice(0, lineEnd + 1) + keyBlock + result.slice(lineEnd + 1);
+  return insertAfterLastImport(result, keyBlock);
 }
 
 async function scaffoldEntry(ctx: ProjectContext): Promise<FileAction | null> {
@@ -31,13 +26,7 @@ async function scaffoldEntry(ctx: ProjectContext): Promise<FileAction | null> {
   const content = await Bun.file(join(ctx.cwd, entryPath)).text();
 
   if (content.includes("clerkPlugin") || content.includes("@clerk/vue")) {
-    return {
-      path: entryPath,
-      type: "modify",
-      content,
-      description: "Add clerkPlugin to Vue app",
-      skipReason: "Already has Clerk plugin",
-    };
+    return { type: "skip", path: entryPath, skipReason: "Already has Clerk plugin" };
   }
 
   let newContent = safeAddImport(content, "@clerk/vue", "clerkPlugin");
@@ -57,6 +46,10 @@ async function scaffoldEntry(ctx: ProjectContext): Promise<FileAction | null> {
 
 export const vue: FrameworkScaffold = {
   name: "Vue",
+  dep: "vue",
+  minMajorVersion: 3,
+
+  matches: (ctx) => ctx.framework.dep === "vue",
 
   async scaffold(ctx: ProjectContext): Promise<ScaffoldPlan> {
     const actions: FileAction[] = [];

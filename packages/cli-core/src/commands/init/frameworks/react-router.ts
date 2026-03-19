@@ -1,6 +1,11 @@
 import { join } from "node:path";
 import { parseModule } from "magicast";
-import { findFirstFile, safeAddImport, scaffoldAuthPage } from "./helpers.js";
+import {
+  findFirstFile,
+  insertAfterLastImport,
+  safeAddImport,
+  scaffoldAuthPage,
+} from "./helpers.js";
 import type { FileAction, FrameworkScaffold, ProjectContext, ScaffoldPlan } from "./types.js";
 
 function signInRouteContent(): string {
@@ -27,13 +32,6 @@ function addServerImports(source: string): string {
   let result = safeAddImport(source, "@clerk/react-router/server", "clerkMiddleware");
   result = safeAddImport(result, "@clerk/react-router/server", "rootAuthLoader");
   return result;
-}
-
-function insertAfterLastImport(source: string, snippet: string): string {
-  const lastImportIdx = source.lastIndexOf("import ");
-  const lineEnd = source.indexOf("\n", lastImportIdx);
-  if (lineEnd === -1) return source;
-  return source.slice(0, lineEnd + 1) + snippet + source.slice(lineEnd + 1);
 }
 
 function addMiddlewareExport(source: string, typescript: boolean): string {
@@ -77,13 +75,7 @@ async function scaffoldRoot(ctx: ProjectContext): Promise<FileAction | null> {
   const content = await Bun.file(join(ctx.cwd, rootPath)).text();
 
   if (content.includes("ClerkProvider")) {
-    return {
-      path: rootPath,
-      type: "modify",
-      content,
-      description: "Add ClerkProvider to root",
-      skipReason: "Already has ClerkProvider",
-    };
+    return { type: "skip", path: rootPath, skipReason: "Already has ClerkProvider" };
   }
 
   let result = addServerImports(content);
@@ -130,13 +122,7 @@ async function scaffoldConfig(ctx: ProjectContext): Promise<FileAction | null> {
   const content = await Bun.file(join(ctx.cwd, configPath)).text();
 
   if (content.includes("v8_middleware")) {
-    return {
-      path: configPath,
-      type: "modify",
-      content,
-      description: "Enable v8_middleware future flag",
-      skipReason: "Already has v8_middleware flag",
-    };
+    return { type: "skip", path: configPath, skipReason: "Already has v8_middleware flag" };
   }
 
   const newContent = enableV8Middleware(content);
@@ -151,6 +137,10 @@ async function scaffoldConfig(ctx: ProjectContext): Promise<FileAction | null> {
 
 export const reactRouter: FrameworkScaffold = {
   name: "React Router",
+  dep: "react-router",
+  minMajorVersion: 7,
+
+  matches: (ctx) => ctx.framework.dep === "react-router",
 
   async scaffold(ctx: ProjectContext): Promise<ScaffoldPlan> {
     const actions: FileAction[] = [];
