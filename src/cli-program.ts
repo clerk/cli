@@ -13,6 +13,7 @@ import { api } from "./commands/api/index.js";
 import { link } from "./commands/link/index.js";
 import { unlink } from "./commands/unlink/index.js";
 import { doctor } from "./commands/doctor/index.js";
+import { schema } from "./commands/schema/index.js";
 import { CliError, UserAbortError, ApiError, EXIT_CODE, throwUsageError } from "./lib/errors.js";
 import { red } from "./lib/color.js";
 
@@ -142,6 +143,17 @@ Examples:
   $ clerk api /users -d '{"first_name":"Alice"}'   POST with a JSON body`,
     )
     .action(api);
+
+  program
+    .command("schema")
+    .description("Fetch the OpenAPI spec for a Clerk API")
+    .argument("[api]", "API name: backend, frontend, platform, or webhooks")
+    .argument("[path]", "Endpoint path (e.g. /users) or schema type (e.g. User)")
+    .option("--spec-version <version>", "Spec version (default: latest)")
+    .option("--format <format>", "Output format: yaml (default) or json")
+    .option("--output <file>", "Write spec to a file instead of stdout")
+    .option("--resolve-refs", "Inline $ref references for self-contained output")
+    .action(schema);
 
   program
     .command("doctor")
