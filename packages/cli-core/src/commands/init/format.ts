@@ -1,27 +1,31 @@
 import { readDeps } from "./context.js";
 
+type FormatterConfig = {
+  pkg: string;
+  args: (files: string[]) => string[];
+};
+
+const FORMATTERS: FormatterConfig[] = [
+  {
+    pkg: "prettier",
+    args: (files) => ["npx", "prettier", "--ignore-unknown", "--write", ...files],
+  },
+  {
+    pkg: "@biomejs/biome",
+    args: (files) => ["npx", "@biomejs/biome", "format", "--write", ...files],
+  },
+];
+
 export async function runFormatters(cwd: string, files: string[]): Promise<void> {
   if (files.length === 0) return;
 
   const deps = await readDeps(cwd);
   if (!deps) return;
 
-  const hasPrettier = "prettier" in deps;
-  const hasBiome = "@biomejs/biome" in deps;
+  for (const formatter of FORMATTERS) {
+    if (!(formatter.pkg in deps)) continue;
 
-  if (!hasPrettier && !hasBiome) return;
-
-  if (hasPrettier) {
-    const proc = Bun.spawn(["npx", "prettier", "--ignore-unknown", "--write", ...files], {
-      cwd,
-      stdout: "ignore",
-      stderr: "ignore",
-    });
-    await proc.exited;
-  }
-
-  if (hasBiome) {
-    const proc = Bun.spawn(["npx", "@biomejs/biome", "format", "--write", ...files], {
+    const proc = Bun.spawn(formatter.args(files), {
       cwd,
       stdout: "ignore",
       stderr: "ignore",
