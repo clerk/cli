@@ -258,6 +258,49 @@ describe("env pull", () => {
     await expect(runEnvPull()).rejects.toThrow("API error");
   });
 
+  test("sends include_secret_keys=true in API request", async () => {
+    let requestedUrl = "";
+    stubFetch(async (input) => {
+      requestedUrl = input.toString();
+      return new Response(JSON.stringify(mockApplication), { status: 200 });
+    });
+
+    await setProfile(tempDir, {
+      workspaceId: "org_1",
+      appId: "app_1",
+      instances: { development: "ins_dev" },
+    });
+
+    await runEnvPull();
+    expect(requestedUrl).toContain("include_secret_keys=true");
+  });
+
+  test("omits CLERK_SECRET_KEY when API does not return it", async () => {
+    const appWithoutSecret = {
+      application_id: "app_1",
+      instances: [
+        {
+          instance_id: "ins_dev",
+          environment_type: "development",
+          publishable_key: "pk_test_abc123",
+        },
+      ],
+    };
+    stubFetch(async () => new Response(JSON.stringify(appWithoutSecret), { status: 200 }));
+
+    await setProfile(tempDir, {
+      workspaceId: "org_1",
+      appId: "app_1",
+      instances: { development: "ins_dev" },
+    });
+
+    await runEnvPull();
+
+    const content = await Bun.file(join(tempDir, ".env.local")).text();
+    expect(content).toContain("CLERK_PUBLISHABLE_KEY=pk_test_abc123");
+    expect(content).not.toContain("CLERK_SECRET_KEY");
+  });
+
   test("detects Next.js and uses NEXT_PUBLIC_* key name", async () => {
     await setProfile(tempDir, {
       workspaceId: "org_1",
