@@ -6,7 +6,7 @@ export async function previewAndConfirm(plan: ScaffoldPlan): Promise<boolean> {
   console.log("\nclerk init will make the following changes:\n");
 
   for (const action of plan.actions) {
-    if (action.skipReason) {
+    if (action.type === "skip") {
       console.log(`  ${dim("SKIP")}    ${dim(action.path)} — ${dim(action.skipReason)}`);
     } else if (action.type === "create") {
       console.log(`  ${green("CREATE")}  ${cyan(action.path)}`);

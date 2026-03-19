@@ -10,7 +10,7 @@ import { getToken } from "../../lib/credential-store.js";
 import { resolveProfile } from "../../lib/config.js";
 import { fetchUserInfo } from "../../lib/token-exchange.js";
 import { gatherContext } from "./context.js";
-import { scaffold } from "./scaffold.js";
+import { scaffold, enrichProjectContext } from "./scaffold.js";
 import { previewAndConfirm } from "./preview.js";
 import { runFormatters } from "./format.js";
 import { detectAuthLibraries, scanForIssues, printFindings } from "./scan.js";
@@ -46,7 +46,7 @@ async function writePlan(cwd: string, plan: ScaffoldPlan): Promise<string[]> {
   const written: string[] = [];
 
   for (const action of plan.actions) {
-    if (action.skipReason) continue;
+    if (action.type === "skip") continue;
 
     const fullPath = join(cwd, action.path);
 
@@ -77,9 +77,9 @@ async function checkGitDirty(cwd: string): Promise<boolean> {
 }
 
 function printOutro(plan: ScaffoldPlan, findings: ScanFinding[]): void {
-  const created = plan.actions.filter((a) => a.type === "create" && !a.skipReason);
-  const modified = plan.actions.filter((a) => a.type === "modify" && !a.skipReason);
-  const skipped = plan.actions.filter((a) => a.skipReason);
+  const created = plan.actions.filter((a) => a.type === "create");
+  const modified = plan.actions.filter((a) => a.type === "modify");
+  const skipped = plan.actions.filter((a) => a.type === "skip");
 
   console.log(bold(green("\n✓ Clerk has been set up in your project!\n")));
 
@@ -127,6 +127,9 @@ async function getAuthenticatedEmail(): Promise<string | null> {
 export async function init() {
   const cwd = process.cwd();
   const ctx = await gatherContext(cwd);
+
+  // Populate framework-specific context (variant, layoutPath, middlewareBasename)
+  if (ctx) await enrichProjectContext(ctx);
 
   if (isAgent()) {
     console.log(ctx ? buildAgentPrompt(ctx) : GENERIC_AGENT_PROMPT);
@@ -187,7 +190,7 @@ async function detectAndInstall(cwd: string, ctx: ProjectContext | null): Promis
 
 async function scaffoldAndWrite(cwd: string, ctx: ProjectContext): Promise<void> {
   const plan = await scaffold(ctx);
-  const hasChanges = plan.actions.some((a) => !a.skipReason);
+  const hasChanges = plan.actions.some((a) => a.type !== "skip");
 
   if (!hasChanges && plan.postInstructions.length === 0) {
     console.log(green("\nClerk is already set up in this project."));

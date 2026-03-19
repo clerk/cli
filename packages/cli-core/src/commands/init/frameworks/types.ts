@@ -3,27 +3,24 @@ import type { FrameworkInfo } from "../../../lib/framework.js";
 export interface ProjectContext {
   cwd: string;
   framework: FrameworkInfo;
-  variant: "app-router" | "pages-router" | null;
   typescript: boolean;
   srcDir: boolean;
   packageManager: "bun" | "yarn" | "pnpm" | "npm";
   existingClerk: boolean;
   deps: Record<string, string>;
-  layoutPath: string | null;
   envFile: string;
-  /** Next.js middleware basename: "proxy" for Next.js 16+, "middleware" for ≤15 */
-  middlewareBasename: "proxy" | "middleware";
+  /** Framework-specific variant (e.g., "app-router" | "pages-router"). Populated by enrichContext. */
+  variant?: "app-router" | "pages-router" | null;
+  /** Path to the layout/entry file. Populated by enrichContext. */
+  layoutPath?: string | null;
+  /** Next.js middleware basename: "proxy" for Next.js 16+, "middleware" for ≤15. Populated by enrichContext. */
+  middlewareBasename?: "proxy" | "middleware";
 }
 
-export interface FileAction {
-  /** Relative path from cwd */
-  path: string;
-  type: "create" | "modify";
-  content: string;
-  description: string;
-  /** If set, this action is skipped and the reason is shown in the preview */
-  skipReason?: string;
-}
+export type FileAction =
+  | { type: "create"; path: string; content: string; description: string }
+  | { type: "modify"; path: string; content: string; description: string }
+  | { type: "skip"; path: string; skipReason: string };
 
 export interface ScaffoldPlan {
   actions: FileAction[];
@@ -32,5 +29,15 @@ export interface ScaffoldPlan {
 
 export interface FrameworkScaffold {
   name: string;
+  /** The npm dependency name this scaffolder targets (e.g., "next", "react", "astro"). */
+  dep: string;
+  /** Optional variant label (e.g., "app-router", "pages-router"). */
+  variant?: string;
+  /** Minimum major version of the framework dependency required for scaffolding. */
+  minMajorVersion?: number;
+  /** Return true if this scaffolder handles the given project context. */
+  matches(ctx: ProjectContext): boolean;
+  /** Populate framework-specific fields on the context before scaffolding. */
+  enrichContext?(ctx: ProjectContext): Promise<void>;
   scaffold(ctx: ProjectContext): Promise<ScaffoldPlan>;
 }
