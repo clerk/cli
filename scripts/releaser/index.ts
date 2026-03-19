@@ -1,5 +1,6 @@
 import { mkdir, cp, rm, chmod, copyFile } from "node:fs/promises";
 import { join } from "node:path";
+import { parseArgs } from "node:util";
 import { type Target, targets, SCOPE, PKG_PREFIX } from "./targets.ts";
 import { isPublished } from "../lib/npm.ts";
 
@@ -20,19 +21,16 @@ function run(cmd: string[], opts?: { cwd?: string }): void {
   }
 }
 
-function parseArgs(): { dryRun: boolean; tag?: string; versionOverride?: string } {
-  const args = process.argv.slice(2);
-  const dryRun = args.includes("--dry-run");
-
-  const tagIdx = args.indexOf("--tag");
-  const tag = tagIdx !== -1 ? args[tagIdx + 1] : undefined;
-  if (tagIdx !== -1 && !tag) throw new Error("--tag requires a value");
-
-  const versionIdx = args.indexOf("--version");
-  const versionOverride = versionIdx !== -1 ? args[versionIdx + 1] : undefined;
-  if (versionIdx !== -1 && !versionOverride) throw new Error("--version requires a value");
-
-  return { dryRun, tag, versionOverride };
+function parseCliArgs(): { dryRun: boolean; tag?: string; versionOverride?: string } {
+  const { values } = parseArgs({
+    args: Bun.argv.slice(2),
+    options: {
+      "dry-run": { type: "boolean", default: false },
+      tag: { type: "string" },
+      version: { type: "string" },
+    },
+  });
+  return { dryRun: values["dry-run"]!, tag: values.tag, versionOverride: values.version };
 }
 
 function packageName(targetName: string): string {
@@ -82,7 +80,7 @@ function publish(dir: string, dryRun: boolean, tag?: string): void {
   run(flags, { cwd: dir });
 }
 
-const { dryRun, tag, versionOverride } = parseArgs();
+const { dryRun, tag, versionOverride } = parseCliArgs();
 const version = versionOverride ?? (await Bun.file(WRAPPER_PKG_PATH).json()).version;
 console.log(
   `Publishing version ${version}${tag ? ` (tag: ${tag})` : ""}${dryRun ? " (dry run)" : ""}`,

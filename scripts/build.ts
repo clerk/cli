@@ -1,37 +1,18 @@
 import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
+import { parseArgs } from "node:util";
 import { targets } from "./releaser/targets.ts";
 
-const VERIFY_PATTERNS: Record<string, RegExp> = {
-  "darwin-arm64": /Mach-O.*arm64/,
-  "darwin-x64": /Mach-O.*x86_64/,
-  "linux-arm64": /ELF.*ARM aarch64/,
-  "linux-arm64-musl": /ELF.*ARM aarch64/,
-  "linux-x64": /ELF.*x86-64/,
-  "linux-x64-musl": /ELF.*x86-64/,
-  "win32-arm64": /PE32\+.*Aarch64/,
-  "win32-x64": /PE32\+.*x86-64/,
-};
+const { values } = parseArgs({
+  args: Bun.argv.slice(2),
+  options: {
+    target: { type: "string" },
+    version: { type: "string", default: "0.0.0-dev" },
+  },
+});
 
-function getArg(args: string[], name: string): string | undefined {
-  for (const arg of args) {
-    if (arg.startsWith(`${name}=`)) return arg.slice(name.length + 1);
-  }
-  const idx = args.indexOf(name);
-  if (idx === -1) return undefined;
-  const value = args[idx + 1];
-  if (!value || value.startsWith("--")) throw new Error(`${name} requires a value`);
-  return value;
-}
-
-function parseArgs(): { targetFilter?: string; version: string } {
-  const args = process.argv.slice(2);
-  const targetFilter = getArg(args, "--target");
-  const version = getArg(args, "--version") ?? "0.0.0-dev";
-  return { targetFilter, version };
-}
-
-const { targetFilter, version } = parseArgs();
+const targetFilter = values.target;
+const version = values.version!;
 
 const selectedTargets = targetFilter
   ? targets.filter((t) => t.bunTarget === targetFilter || t.name === targetFilter)
@@ -78,8 +59,7 @@ for (const target of selectedTargets) {
   // Verify binary format
   const fileResult = Bun.spawnSync(["file", outFile], { stdio: ["ignore", "pipe", "pipe"] });
   const fileOutput = fileResult.stdout.toString();
-  const pattern = VERIFY_PATTERNS[target.name];
-  if (!pattern || !pattern.test(fileOutput)) {
+  if (!target.verifyPattern.test(fileOutput)) {
     console.error(`  FAIL: binary format mismatch for ${target.name}`);
     console.error(`  file output: ${fileOutput.trim()}`);
     failed = true;

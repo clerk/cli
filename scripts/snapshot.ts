@@ -1,21 +1,18 @@
 import { join } from "node:path";
+import { parseArgs } from "node:util";
 
 const CHANGESET_CONFIG = join(import.meta.dir, "../.changeset/config.json");
 const WRAPPER_PKG = join(import.meta.dir, "../packages/cli/package.json");
 
-// Parse --name flag
-function parseName(): string {
-  const args = process.argv.slice(2);
-  const nameIdx = args.indexOf("--name");
-  if (nameIdx !== -1 && args[nameIdx + 1]) {
-    return args[nameIdx + 1];
-  }
-  // Also accept positional: bun run scripts/snapshot.ts my-feature
-  const positional = args.find((a) => !a.startsWith("-"));
-  return positional || "snapshot";
-}
+const { values, positionals } = parseArgs({
+  args: Bun.argv.slice(2),
+  options: {
+    name: { type: "string" },
+  },
+  allowPositionals: true,
+});
 
-const name = parseName();
+const name = values.name || positionals[0] || "snapshot";
 
 // Validate kebab-case
 if (!/^[a-z][a-z0-9]*(-[a-z0-9]+)*$/.test(name)) {
