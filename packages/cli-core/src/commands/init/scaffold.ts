@@ -6,29 +6,32 @@ import { nuxt } from "./frameworks/nuxt.js";
 import { tanstackStart } from "./frameworks/tanstack-start.js";
 import { astro } from "./frameworks/astro.js";
 import { vue } from "./frameworks/vue.js";
+import { parseMajorVersion } from "./frameworks/helpers.js";
 import type { FrameworkScaffold, ProjectContext, ScaffoldPlan } from "./frameworks/types.js";
 
-const SCAFFOLDS: Record<string, FrameworkScaffold> = {
-  "next:app-router": nextjsApp,
-  "next:pages-router": nextjsPages,
-  react: reactVite,
-  "react-router": reactRouter,
-  nuxt: nuxt,
-  "@tanstack/react-start": tanstackStart,
-  astro: astro,
-  vue: vue,
-};
+const SCAFFOLDERS = [
+  nextjsApp,
+  nextjsPages,
+  reactVite,
+  reactRouter,
+  nuxt,
+  tanstackStart,
+  astro,
+  vue,
+] satisfies FrameworkScaffold[];
 
-export function getScaffoldKey(ctx: ProjectContext): string {
-  if (ctx.framework.dep === "next") {
-    return `next:${ctx.variant ?? "app-router"}`;
-  }
-  return ctx.framework.dep;
+/**
+ * Run the matching scaffolder's enrichContext to populate framework-specific
+ * fields (variant, layoutPath, middlewareBasename) on the context.
+ * Must be called before scaffold() or buildAgentPrompt().
+ */
+export async function enrichProjectContext(ctx: ProjectContext): Promise<void> {
+  const scaffolder = SCAFFOLDERS.find((s) => s.dep === ctx.framework.dep);
+  if (scaffolder?.enrichContext) await scaffolder.enrichContext(ctx);
 }
 
 export async function scaffold(ctx: ProjectContext): Promise<ScaffoldPlan> {
-  const key = getScaffoldKey(ctx);
-  const scaffolder = SCAFFOLDS[key];
+  const scaffolder = SCAFFOLDERS.find((s) => s.matches(ctx));
 
   if (!scaffolder) {
     return {
@@ -37,6 +40,22 @@ export async function scaffold(ctx: ProjectContext): Promise<ScaffoldPlan> {
         `Scaffolding is not yet supported for ${ctx.framework.name}. Visit https://clerk.com/docs/quickstarts for setup instructions.`,
       ],
     };
+  }
+
+  const { minMajorVersion } = scaffolder;
+
+  if (minMajorVersion !== undefined) {
+    const version = ctx.deps[scaffolder.dep];
+    const major = version ? parseMajorVersion(version) : null;
+
+    if (major !== null && major < minMajorVersion) {
+      return {
+        actions: [],
+        postInstructions: [
+          `${ctx.framework.name} v${major} is below the minimum supported version (v${minMajorVersion}+). Visit https://clerk.com/docs/quickstarts for manual setup instructions.`,
+        ],
+      };
+    }
   }
 
   return scaffolder.scaffold(ctx);
