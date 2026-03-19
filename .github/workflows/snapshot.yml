@@ -170,7 +170,6 @@ EOF
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
         run: |
-          gh pr comment "${{ github.event.issue.number }}" --repo "${GH_REPO}" --body \
-            "## Snapshot failed
+          gh pr comment "${{ github.event.issue.number }}" --repo "${GH_REPO}" --body "## Snapshot failed
 
           The snapshot publish workflow failed. [View the workflow run](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}) for details."
