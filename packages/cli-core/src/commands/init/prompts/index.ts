@@ -1,24 +1,46 @@
-import { readFileSync } from "node:fs";
-import { join } from "node:path";
 import type { ProjectContext } from "../frameworks/types.js";
+
+// Static text imports — embedded at build time, safe for compiled binaries.
+import genericMd from "./generic.md" with { type: "text" };
+import genericFallbackMd from "./generic-fallback.md" with { type: "text" };
+import nextjsAppRouterMd from "./nextjs-app-router.md" with { type: "text" };
+import nextjsPagesRouterMd from "./nextjs-pages-router.md" with { type: "text" };
+import reactMd from "./react.md" with { type: "text" };
+import reactRouterMd from "./react-router.md" with { type: "text" };
+import nuxtMd from "./nuxt.md" with { type: "text" };
+import tanstackStartMd from "./tanstack-start.md" with { type: "text" };
+import astroMd from "./astro.md" with { type: "text" };
+import vueMd from "./vue.md" with { type: "text" };
+import expoMd from "./expo.md" with { type: "text" };
+import expressMd from "./express.md" with { type: "text" };
+import fastifyMd from "./fastify.md" with { type: "text" };
 
 // ---------------------------------------------------------------------------
 // Template loading
 // ---------------------------------------------------------------------------
 
-const PROMPTS_DIR = import.meta.dir;
-
-const templateCache = new Map<string, string>();
+const TEMPLATES: Record<string, string> = {
+  generic: genericMd,
+  "generic-fallback": genericFallbackMd,
+  "nextjs-app-router": nextjsAppRouterMd,
+  "nextjs-pages-router": nextjsPagesRouterMd,
+  react: reactMd,
+  "react-router": reactRouterMd,
+  nuxt: nuxtMd,
+  "tanstack-start": tanstackStartMd,
+  astro: astroMd,
+  vue: vueMd,
+  expo: expoMd,
+  express: expressMd,
+  fastify: fastifyMd,
+};
 
 function loadTemplate(name: string): string {
-  const cached = templateCache.get(name);
-  if (cached) return cached;
-
+  const template = TEMPLATES[name];
+  if (!template) throw new Error(`Unknown prompt template: ${name}`);
   // The project formatter escapes underscores in markdown headings (e.g. `_app` → `\_app`).
   // These templates are output as plain text, so undo that escaping.
-  const template = readFileSync(join(PROMPTS_DIR, `${name}.md`), "utf-8").replaceAll("\\_", "_");
-  templateCache.set(name, template);
-  return template;
+  return template.replaceAll("\\_", "_");
 }
 
 function interpolate(template: string, vars: Record<string, string>): string {
