@@ -13,7 +13,7 @@
     "format:check": "bun run --filter @clerk/cli-core format:check && oxfmt --check scripts/",
     "build:compile": "bun run --filter @clerk/cli-core build:compile",
     "version-packages": "bunx changeset version",
-    "version-packages:canary": "bun run scripts/canary.ts",
+    "version-packages:canary": "bun run scripts/snapshot.ts -- canary",
     "version-packages:snapshot": "bun run scripts/snapshot.ts",
     "release": "bun run scripts/releaser/index.ts",
     "release:canary": "bun run scripts/releaser/index.ts --tag canary",
