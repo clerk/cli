@@ -12,6 +12,14 @@
     "format": "bun run --filter @clerk/cli-core format && oxfmt --write scripts/",
     "format:check": "bun run --filter @clerk/cli-core format:check && oxfmt --check scripts/",
     "build:compile": "bun run --filter @clerk/cli-core build:compile",
+    "version-packages": "bunx changeset version",
+    "version-packages:canary": "bun run scripts/canary.ts",
+    "version-packages:snapshot": "bun run scripts/snapshot.ts",
+    "release": "bun run scripts/releaser/index.ts",
+    "release:canary": "bun run scripts/releaser/index.ts --tag canary",
+    "release:snapshot": "bun run scripts/releaser/index.ts --tag snapshot",
+    "build:compile:all": "bun run scripts/build.ts",
+    "start": "bun run build:compile && ./packages/cli-core/dist/clerk",
     "prepare": "git config core.hooksPath .hooks"
   },
   "devDependencies": {
