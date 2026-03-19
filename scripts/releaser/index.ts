@@ -138,4 +138,42 @@ try {
   await Bun.write(WRAPPER_PKG_PATH, wrapperRaw);
 }
 
+// Create git tag and GitHub Release for stable releases (no --tag flag).
+// Canary (--tag canary) and snapshot (--tag snapshot) skip this.
+if (!tag && !dryRun) {
+  const tagName = `v${version}`;
+
+  // Check if tag already exists (idempotency)
+  const tagCheck = Bun.spawnSync(["git", "rev-parse", tagName], {
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+
+  if (tagCheck.exitCode === 0) {
+    console.log(`Tag ${tagName} already exists, skipping.`);
+  } else {
+    console.log(`Creating tag ${tagName}...`);
+    const tagResult = Bun.spawnSync(["git", "tag", tagName], {
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    if (tagResult.exitCode !== 0) {
+      throw new Error(`git tag failed: ${tagResult.stderr.toString().trim()}`);
+    }
+
+    const pushResult = Bun.spawnSync(["git", "push", "origin", tagName], {
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    if (pushResult.exitCode !== 0) {
+      throw new Error(`git push tag failed: ${pushResult.stderr.toString().trim()}`);
+    }
+
+    console.log(`Creating GitHub Release for ${tagName}...`);
+    const releaseResult = Bun.spawnSync(["gh", "release", "create", tagName, "--generate-notes"], {
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    if (releaseResult.exitCode !== 0) {
+      throw new Error(`gh release create failed: ${releaseResult.stderr.toString().trim()}`);
+    }
+  }
+}
+
 console.log("Done!");
