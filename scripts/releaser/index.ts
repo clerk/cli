@@ -1,10 +1,24 @@
 import { mkdir, cp, rm, chmod, copyFile } from "node:fs/promises";
 import { join } from "node:path";
 import { type Target, targets, SCOPE, PKG_PREFIX } from "./targets.ts";
+import { isPublished } from "../lib/npm.ts";
 
 const DIST_DIR = join(import.meta.dir, "../../dist/platform-packages");
 const ARTIFACTS_DIR = process.env.ARTIFACTS_DIR ?? join(import.meta.dir, "../../dist/artifacts");
 const WRAPPER_PKG_PATH = join(import.meta.dir, "../../packages/cli/package.json");
+
+function run(cmd: string[], opts?: { cwd?: string }): void {
+  const result = Bun.spawnSync(cmd, {
+    cwd: opts?.cwd,
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  if (result.exitCode !== 0) {
+    const stderr = result.stderr.toString().trim();
+    throw new Error(
+      `${cmd.join(" ")} failed (exit ${result.exitCode})${stderr ? `: ${stderr}` : ""}`,
+    );
+  }
+}
 
 function parseArgs(): { dryRun: boolean; tag?: string; versionOverride?: string } {
   const args = process.argv.slice(2);
@@ -21,30 +35,8 @@ function parseArgs(): { dryRun: boolean; tag?: string; versionOverride?: string 
   return { dryRun, tag, versionOverride };
 }
 
-async function readVersion(): Promise<string> {
-  const pkg = await Bun.file(WRAPPER_PKG_PATH).json();
-  return pkg.version;
-}
-
 function packageName(targetName: string): string {
   return `${SCOPE}/${PKG_PREFIX}-${targetName}`;
-}
-
-function isPublished(name: string, version: string): boolean {
-  const result = Bun.spawnSync(["npm", "view", `${name}@${version}`, "version"], {
-    stdio: ["ignore", "pipe", "pipe"],
-  });
-
-  if (result.exitCode === 0) return true;
-
-  // "npm view" exits non-zero for both "not found" and real errors (network, auth).
-  // Treat only E404 / "not found" as unpublished; propagate everything else.
-  const stderr = result.stderr.toString();
-  if (stderr.includes("E404") || stderr.includes("is not in this registry")) {
-    return false;
-  }
-
-  throw new Error(`npm view ${name}@${version} failed (exit ${result.exitCode}): ${stderr.trim()}`);
 }
 
 async function generatePlatformPackage(target: Target, version: string): Promise<string> {
@@ -53,8 +45,7 @@ async function generatePlatformPackage(target: Target, version: string): Promise
 
   await mkdir(binDir, { recursive: true });
 
-  const ext = target.ext;
-  const binaryName = `clerk${ext}`;
+  const binaryName = `clerk${target.ext}`;
   const artifactPath = join(ARTIFACTS_DIR, `clerk-${target.name}`, binaryName);
   const destPath = join(binDir, binaryName);
   await cp(artifactPath, destPath);
@@ -88,15 +79,11 @@ function publish(dir: string, dryRun: boolean, tag?: string): void {
   const flags = ["npm", "publish", "--access", "public", "--provenance", "--ignore-scripts"];
   if (tag) flags.push("--tag", tag);
   if (dryRun) flags.push("--dry-run");
-  const result = Bun.spawnSync(flags, { cwd: dir, stdio: ["ignore", "pipe", "pipe"] });
-  if (result.exitCode !== 0) {
-    const stderr = result.stderr.toString().trim();
-    throw new Error(`npm publish failed (exit ${result.exitCode})${stderr ? `: ${stderr}` : ""}`);
-  }
+  run(flags, { cwd: dir });
 }
 
 const { dryRun, tag, versionOverride } = parseArgs();
-const version = versionOverride ?? (await readVersion());
+const version = versionOverride ?? (await Bun.file(WRAPPER_PKG_PATH).json()).version;
 console.log(
   `Publishing version ${version}${tag ? ` (tag: ${tag})` : ""}${dryRun ? " (dry run)" : ""}`,
 );
@@ -152,27 +139,11 @@ if (!tag && !dryRun) {
     console.log(`Tag ${tagName} already exists, skipping.`);
   } else {
     console.log(`Creating tag ${tagName}...`);
-    const tagResult = Bun.spawnSync(["git", "tag", tagName], {
-      stdio: ["ignore", "pipe", "pipe"],
-    });
-    if (tagResult.exitCode !== 0) {
-      throw new Error(`git tag failed: ${tagResult.stderr.toString().trim()}`);
-    }
-
-    const pushResult = Bun.spawnSync(["git", "push", "origin", tagName], {
-      stdio: ["ignore", "pipe", "pipe"],
-    });
-    if (pushResult.exitCode !== 0) {
-      throw new Error(`git push tag failed: ${pushResult.stderr.toString().trim()}`);
-    }
+    run(["git", "tag", tagName]);
+    run(["git", "push", "origin", tagName]);
 
     console.log(`Creating GitHub Release for ${tagName}...`);
-    const releaseResult = Bun.spawnSync(["gh", "release", "create", tagName, "--generate-notes"], {
-      stdio: ["ignore", "pipe", "pipe"],
-    });
-    if (releaseResult.exitCode !== 0) {
-      throw new Error(`gh release create failed: ${releaseResult.stderr.toString().trim()}`);
-    }
+    run(["gh", "release", "create", tagName, "--generate-notes"]);
   }
 }
 
