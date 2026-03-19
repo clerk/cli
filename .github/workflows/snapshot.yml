@@ -133,22 +133,23 @@ jobs:
           GH_REPO: ${{ github.repository }}
           SNAPSHOT_VERSION: ${{ needs.snapshot.outputs.version }}
           SNAPSHOT_SHA: ${{ needs.snapshot.outputs.sha }}
+          PR_NUMBER: ${{ github.event.issue.number }}
         run: |
           short_sha=$(echo "${SNAPSHOT_SHA}" | cut -c1-7)
-          gh pr comment "${{ github.event.issue.number }}" --repo "${GH_REPO}" --body "$(cat <<EOF
-## Snapshot published
-
-\`\`\`sh
-npm install -g clerk@${SNAPSHOT_VERSION}
-\`\`\`
-
-| Package | Version |
-|---------|---------|
-| \`clerk\` | \`${SNAPSHOT_VERSION}\` |
-
-> Published from ${short_sha}
-EOF
-          )"
+          {
+            echo '## Snapshot published'
+            echo ''
+            echo '```sh'
+            echo "npm install -g clerk@${SNAPSHOT_VERSION}"
+            echo '```'
+            echo ''
+            echo '| Package | Version |'
+            echo '|---------|---------|'
+            echo "| \`clerk\` | \`${SNAPSHOT_VERSION}\` |"
+            echo ''
+            echo "> Published from ${short_sha}"
+          } > /tmp/comment-body.md
+          gh pr comment "${PR_NUMBER}" --repo "${GH_REPO}" --body-file /tmp/comment-body.md
 
   notify-failure:
     needs: [snapshot, build, smoke-test, publish]
@@ -171,10 +172,12 @@ EOF
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.issue.number }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
-          gh pr comment "${{ github.event.issue.number }}" --repo "${GH_REPO}" --body "$(cat <<EOF
-## Snapshot failed
-
-The snapshot publish workflow failed. [View the workflow run](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}) for details.
-EOF
-          )"
+          {
+            echo '## Snapshot failed'
+            echo ''
+            echo "The snapshot publish workflow failed. [View the workflow run](${RUN_URL}) for details."
+          } > /tmp/comment-body.md
+          gh pr comment "${PR_NUMBER}" --repo "${GH_REPO}" --body-file /tmp/comment-body.md
