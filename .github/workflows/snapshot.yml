@@ -43,6 +43,8 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: ${{ steps.pr.outputs.sha }}
+      - uses: oven-sh/setup-bun@v2
+      - run: bun install --frozen-lockfile
 
       - name: Compute snapshot version
         id: version
@@ -52,13 +54,13 @@ jobs:
           # Extract optional name from "!snapshot <name>" — default to "snapshot"
           name=$(echo "$COMMENT_BODY" | sed 's/^!snapshot[[:space:]]*//' | tr -cd 'a-zA-Z0-9-')
           if [ -z "$name" ]; then name="snapshot"; fi
-          base=$(jq -r '.["packages/cli"]' .release-please-manifest.json)
-          if [ -z "$base" ] || [ "$base" = "null" ]; then
-            echo "::error::Could not read base version from .release-please-manifest.json"
+          output=$(bun run version-packages:snapshot -- "$name")
+          if echo "$output" | grep -q "success=0"; then
+            echo "::error::Snapshot versioning failed"
             exit 1
           fi
-          datetime=$(date -u +%Y%m%d%H%M%S)
-          echo "version=${base}-${name}.v${datetime}" >> "$GITHUB_OUTPUT"
+          version=$(jq -r '.version' packages/cli/package.json)
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
 
   build:
     needs: snapshot
@@ -112,7 +114,7 @@ jobs:
           done
 
       - name: Publish snapshot packages
-        run: bun run scripts/releaser/index.ts --tag snapshot --version "$SNAPSHOT_VERSION"
+        run: bun run release:snapshot --version "$SNAPSHOT_VERSION"
         env:
           SNAPSHOT_VERSION: ${{ needs.snapshot.outputs.version }}
           ARTIFACTS_DIR: ${{ github.workspace }}/dist/artifacts
@@ -170,6 +172,9 @@ EOF
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
         run: |
-          gh pr comment "${{ github.event.issue.number }}" --repo "${GH_REPO}" --body "## Snapshot failed
+          gh pr comment "${{ github.event.issue.number }}" --repo "${GH_REPO}" --body "$(cat <<EOF
+## Snapshot failed
 
-          The snapshot publish workflow failed. [View the workflow run](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}) for details."
+The snapshot publish workflow failed. [View the workflow run](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}) for details.
+EOF
+          )"
