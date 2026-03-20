@@ -1,6 +1,18 @@
 import { join } from "node:path";
 import { parseModule } from "magicast";
-import type { FileAction } from "./types.js";
+import type { FileAction, ProjectContext } from "./types.js";
+
+export type AuthKind = "sign-in" | "sign-up";
+type AuthSurface = "page" | "route";
+
+/** Clerk SDK packages that export JSX auth components (SignIn, SignUp). */
+type JsxClerkPackage = "@clerk/nextjs" | "@clerk/react-router";
+type AuthFileSpec = {
+  path: string;
+  content: string;
+  kind: AuthKind;
+  surface: AuthSurface;
+};
 
 /**
  * Parse the major version from a semver-like string.
@@ -15,6 +27,18 @@ export function parseMajorVersion(version: string): number | null {
 /** Check if file content already imports from a @clerk/ package. */
 export function hasClerkImport(content: string): boolean {
   return content.includes("@clerk/");
+}
+
+export function srcPrefix(ctx: Pick<ProjectContext, "srcDir">): string {
+  return ctx.srcDir ? "src/" : "";
+}
+
+export function scriptExt(ctx: Pick<ProjectContext, "typescript">): "ts" | "js" {
+  return ctx.typescript ? "ts" : "js";
+}
+
+export function jsxExt(ctx: Pick<ProjectContext, "typescript">): "tsx" | "jsx" {
+  return ctx.typescript ? "tsx" : "jsx";
 }
 
 /** Find the first existing file from a list of candidates relative to cwd. */
@@ -68,39 +92,50 @@ export function resolveNextjsMiddlewareBasename(
 export function nextjsMiddlewareContent(): string {
   return `import { clerkMiddleware, createRouteMatcher } from "@clerk/nextjs/server";
 
-const isPublicRoute = createRouteMatcher(["/sign-in(.*)", "/sign-up(.*)"]);
+${nextjsPublicRouteMatcher()}
 
-export default clerkMiddleware(async (auth, request) => {
+${nextjsMiddlewareHandler()}
+
+${nextjsMiddlewareConfig()}
+`;
+}
+
+function nextjsPublicRouteMatcher(): string {
+  return `const isPublicRoute = createRouteMatcher(["/sign-in(.*)", "/sign-up(.*)"]);`;
+}
+
+function nextjsMiddlewareHandler(returnStatement = ""): string {
+  const returnLine = returnStatement ? `\n  return ${returnStatement};` : "";
+
+  return `export default clerkMiddleware(async (auth, request) => {
   if (!isPublicRoute(request)) {
     await auth.protect();
-  }
-});
+  }${returnLine}
+});`;
+}
 
-export const config = {
+function nextjsMiddlewareConfig(): string {
+  return `export const config = {
   matcher: [
     "/((?!_next|[^?]*\\\\.(?:html?|css|js(?!on)|jpe?g|webp|png|gif|svg|ttf|woff2?|ico|csv|docx?|xlsx?|zip|webmanifest)).*)",
     "/(api|trpc)(.*)",
   ],
-};
-`;
+};`;
 }
 
-/** Next.js sign-in page component. */
-export function nextjsSignInPageContent(): string {
-  return `import { SignIn } from "@clerk/nextjs";
-
-export default function SignInPage() {
-  return <SignIn />;
-}
-`;
+export function authComponentName(kind: AuthKind): "SignIn" | "SignUp" {
+  return kind === "sign-in" ? "SignIn" : "SignUp";
 }
 
-/** Next.js sign-up page component. */
-export function nextjsSignUpPageContent(): string {
-  return `import { SignUp } from "@clerk/nextjs";
+/** Generate a JSX auth page component for a Clerk framework SDK that exports SignIn/SignUp. */
+export function jsxAuthPageContent(kind: AuthKind, clerkPackage: JsxClerkPackage): string {
+  const component = authComponentName(kind);
+  const pageName = component === "SignIn" ? "SignInPage" : "SignUpPage";
 
-export default function SignUpPage() {
-  return <SignUp />;
+  return `import { ${component} } from "${clerkPackage}";
+
+export default function ${pageName}() {
+  return <${component} />;
 }
 `;
 }
@@ -109,41 +144,44 @@ export default function SignUpPage() {
  * Compose Clerk middleware with existing non-Clerk middleware.
  * Renames the existing default export and wraps it inside clerkMiddleware.
  */
-export function composeWithExistingMiddleware(existing: string): string {
-  const clerkImport = `import { clerkMiddleware, createRouteMatcher } from "@clerk/nextjs/server";\n`;
-  const routeMatcher = `\nconst isPublicRoute = createRouteMatcher(["/sign-in(.*)", "/sign-up(.*)"]);\n`;
-  const preamble = clerkImport + routeMatcher + "\n";
-
-  if (!/export\s+default\s+/.test(existing)) {
-    return preamble + existing + "\n" + nextjsMiddlewareContent();
+function renameDefaultMiddlewareExport(existing: string): string | null {
+  const functionExportPattern = /export\s+default\s+(?:async\s+)?function(?:\s+\w+)?/;
+  if (functionExportPattern.test(existing)) {
+    return existing.replace(functionExportPattern, "async function existingMiddleware");
   }
 
-  let content = existing.replace(
-    /export\s+default\s+(?:async\s+)?function\s+(\w+)?/,
-    "async function existingMiddleware",
-  );
-  content = content.replace(
-    /export\s+default\s+(?:async\s+)?(\([^)]*\)\s*=>)/,
-    "const existingMiddleware = async $1",
-  );
+  const arrowExportPattern = /export\s+default\s+(?:async\s+)?(\([^)]*\)\s*=>)/;
+  if (arrowExportPattern.test(existing)) {
+    return existing.replace(arrowExportPattern, "const existingMiddleware = async $1");
+  }
+
+  return null;
+}
+
+function hasMiddlewareConfigExport(existing: string): boolean {
+  return /export\s+const\s+config\s*=/.test(existing);
+}
+
+export function composeWithExistingMiddleware(existing: string): string | null {
+  const clerkImport = `import { clerkMiddleware, createRouteMatcher } from "@clerk/nextjs/server";\n`;
+  const routeMatcher = `\n${nextjsPublicRouteMatcher()}\n`;
+  const preamble = clerkImport + routeMatcher + "\n";
+
+  if (hasMiddlewareConfigExport(existing)) {
+    return null;
+  }
+
+  if (!/export\s+default\s+/.test(existing)) {
+    return `${preamble}${existing}\n${nextjsMiddlewareHandler()}\n\n${nextjsMiddlewareConfig()}\n`;
+  }
+
+  const content = renameDefaultMiddlewareExport(existing);
+  if (!content) return null;
 
   return (
     preamble +
     content +
-    `\nexport default clerkMiddleware(async (auth, request) => {
-  if (!isPublicRoute(request)) {
-    await auth.protect();
-  }
-  return existingMiddleware(request);
-});
-
-export const config = {
-  matcher: [
-    "/((?!_next|[^?]*\\\\.(?:html?|css|js(?!on)|jpe?g|webp|png|gif|svg|ttf|woff2?|ico|csv|docx?|xlsx?|zip|webmanifest)).*)",
-    "/(api|trpc)(.*)",
-  ],
-};
-`
+    `\n${nextjsMiddlewareHandler("existingMiddleware(request)")}\n\n${nextjsMiddlewareConfig()}\n`
   );
 }
 
@@ -159,8 +197,8 @@ export async function scaffoldNextjsMiddleware(ctx: {
   deps?: Record<string, string>;
   middlewareBasename?: "proxy" | "middleware";
 }): Promise<FileAction> {
-  const base = ctx.srcDir ? "src/" : "";
-  const ext = ctx.typescript ? "ts" : "js";
+  const base = srcPrefix(ctx);
+  const ext = scriptExt(ctx);
   const basename = ctx.middlewareBasename ?? resolveNextjsMiddlewareBasename(ctx.deps?.["next"]);
   const path = `${base}${basename}.${ext}`;
   const file = Bun.file(join(ctx.cwd, path));
@@ -180,10 +218,19 @@ export async function scaffoldNextjsMiddleware(ctx: {
     return { type: "skip", path, skipReason: "Already has Clerk middleware" };
   }
 
+  const composedContent = composeWithExistingMiddleware(content);
+  if (!composedContent) {
+    return {
+      type: "skip",
+      path,
+      skipReason: "Existing middleware uses an unsupported shape for automatic Clerk composition",
+    };
+  }
+
   return {
     path,
     type: "modify",
-    content: composeWithExistingMiddleware(content),
+    content: composedContent,
     description: "Add clerkMiddleware to existing middleware",
   };
 }
@@ -192,31 +239,71 @@ export async function scaffoldNextjsMiddleware(ctx: {
 export const NEXTJS_SIGN_ROUTES_INSTRUCTION =
   "Add to your .env.local: NEXT_PUBLIC_CLERK_SIGN_IN_URL=/sign-in, NEXT_PUBLIC_CLERK_SIGN_UP_URL=/sign-up, NEXT_PUBLIC_CLERK_SIGN_IN_FALLBACK_REDIRECT_URL=/, NEXT_PUBLIC_CLERK_SIGN_UP_FALLBACK_REDIRECT_URL=/";
 
-function capitalize(s: string): string {
-  return s.charAt(0).toUpperCase() + s.slice(1);
+/**
+ * Generic helper for scaffolding a framework config file.
+ * Handles the common find → check → modify → return pattern used by Astro, Nuxt, and React Router.
+ * The generic preserves the return type: when missingAction is a FileAction, the return is FileAction;
+ * when missingAction is null, the return is FileAction | null.
+ */
+export async function scaffoldConfigFile<TMissing extends FileAction | null>(
+  cwd: string,
+  options: {
+    candidates: string[];
+    existsCheck: string;
+    modify: (content: string) => string;
+    description: string;
+    existingSkipReason: string;
+    missingAction: TMissing;
+  },
+): Promise<FileAction | TMissing> {
+  const configPath = await findFirstFile(cwd, options.candidates);
+  if (!configPath) return options.missingAction;
+
+  const content = await Bun.file(join(cwd, configPath)).text();
+  if (content.includes(options.existsCheck)) {
+    return { type: "skip", path: configPath, skipReason: options.existingSkipReason };
+  }
+
+  return {
+    path: configPath,
+    type: "modify",
+    content: options.modify(content),
+    description: options.description,
+  };
 }
 
 /**
  * Generic helper for scaffolding an auth page (sign-in or sign-up).
  * Handles the common create-or-skip pattern used by every framework scaffolder.
  */
-export async function scaffoldAuthPage(
+export async function scaffoldAuthFile(
   cwd: string,
   path: string,
   content: string,
-  label: string,
+  kind: AuthKind,
+  surface: AuthSurface,
 ): Promise<FileAction> {
-  const capitalizedLabel = capitalize(label);
+  const label = `${kind} ${surface}`;
+  const capitalizedLabel = `${label[0]!.toUpperCase()}${label.slice(1)}`;
 
   if (await Bun.file(join(cwd, path)).exists()) {
     return { type: "skip", path, skipReason: `${capitalizedLabel} already exists` };
   }
 
-  const component = label.includes("sign-in") ? "SignIn" : "SignUp";
+  const component = authComponentName(kind);
   return {
     path,
     type: "create",
     content,
     description: `Create ${label} with <${component} /> component`,
   };
+}
+
+export async function scaffoldAuthFiles(
+  cwd: string,
+  specs: readonly AuthFileSpec[],
+): Promise<FileAction[]> {
+  return Promise.all(
+    specs.map((spec) => scaffoldAuthFile(cwd, spec.path, spec.content, spec.kind, spec.surface)),
+  );
 }
