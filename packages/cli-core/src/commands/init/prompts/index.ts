@@ -1,4 +1,5 @@
 import type { ProjectContext } from "../frameworks/types.js";
+import { jsxExt, scriptExt, srcPrefix } from "../frameworks/helpers.js";
 
 // Static text imports — embedded at build time, safe for compiled binaries.
 import genericMd from "./generic.md" with { type: "text" };
@@ -19,7 +20,7 @@ import fastifyMd from "./fastify.md" with { type: "text" };
 // Template loading
 // ---------------------------------------------------------------------------
 
-const TEMPLATES: Record<string, string> = {
+const TEMPLATES = {
   generic: genericMd,
   "generic-fallback": genericFallbackMd,
   "nextjs-app-router": nextjsAppRouterMd,
@@ -33,11 +34,14 @@ const TEMPLATES: Record<string, string> = {
   expo: expoMd,
   express: expressMd,
   fastify: fastifyMd,
-};
+} satisfies Record<string, string>;
 
-function loadTemplate(name: string): string {
+type TemplateName = keyof typeof TEMPLATES;
+type FrameworkTemplateName = Exclude<TemplateName, "generic" | "generic-fallback">;
+type FrameworkPromptInfo = { template: FrameworkTemplateName; docsUrl: string };
+
+function loadTemplate(name: TemplateName): string {
   const template = TEMPLATES[name];
-  if (!template) throw new Error(`Unknown prompt template: ${name}`);
   // The project formatter escapes underscores in markdown headings (e.g. `_app` → `\_app`).
   // These templates are output as plain text, so undo that escaping.
   return template.replaceAll("\\_", "_");
@@ -51,12 +55,12 @@ function interpolate(template: string, vars: Record<string, string>): string {
 // Helpers
 // ---------------------------------------------------------------------------
 
-const PM_COMMANDS: Record<ProjectContext["packageManager"], string> = {
+const PM_COMMANDS = {
   bun: "bun add",
   yarn: "yarn add",
   pnpm: "pnpm add",
   npm: "npm install",
-};
+} satisfies Record<ProjectContext["packageManager"], string>;
 
 export function pmInstallCommand(pm: ProjectContext["packageManager"]): string {
   return PM_COMMANDS[pm];
@@ -64,7 +68,7 @@ export function pmInstallCommand(pm: ProjectContext["packageManager"]): string {
 
 // Maps framework dep to its template filename and docs URL.
 // Next.js defaults to app-router; pages-router variant is handled in resolveTemplate.
-const FRAMEWORK_PROMPTS: Record<string, { template: string; docsUrl: string }> = {
+const FRAMEWORK_PROMPTS: Record<string, FrameworkPromptInfo> = {
   next: {
     template: "nextjs-app-router",
     docsUrl: "https://clerk.com/docs/nextjs/getting-started/quickstart",
@@ -98,20 +102,36 @@ const DEFAULT_DOCS_URL = "https://clerk.com/docs";
 // Variable builders
 // ---------------------------------------------------------------------------
 
+type RequiredPromptVar =
+  | "SDK"
+  | "ENV_VAR"
+  | "INSTALL_CMD"
+  | "BASE"
+  | "BASE_DISPLAY"
+  | "EXT"
+  | "JSX"
+  | "MIDDLEWARE_BASENAME"
+  | "LAYOUT_PATH"
+  | "ENV_FILE"
+  | "PM"
+  | "DOCS_URL"
+  | "FRAMEWORK_NAME";
+
+type OptionalPromptVar = "INSTALL_CMD_EXTRA";
+type PromptVars = Record<RequiredPromptVar, string> & Partial<Record<OptionalPromptVar, string>>;
+
 // NOTE: The agent prompts show simple `clerkMiddleware()` (matching official docs).
 // The scaffold code in `frameworks/helpers.ts` uses `createRouteMatcher` + `auth.protect()`
 // which is more opinionated. This divergence is intentional — agents should follow the
 // docs pattern; scaffolded code provides a production-ready starting point.
 
-function buildVars(
-  ctx: ProjectContext,
-  base: string,
-  ext: string,
-  jsx: string,
-): Record<string, string> {
+function buildVars(ctx: ProjectContext): PromptVars {
+  const base = srcPrefix(ctx);
+  const ext = scriptExt(ctx);
+  const jsx = jsxExt(ctx);
   const installCmd = `${pmInstallCommand(ctx.packageManager)} ${ctx.framework.sdk}`;
 
-  const vars: Record<string, string> = {
+  const vars: PromptVars = {
     SDK: ctx.framework.sdk,
     ENV_VAR: ctx.framework.envVar,
     INSTALL_CMD: installCmd,
@@ -119,7 +139,7 @@ function buildVars(
     BASE_DISPLAY: base || "project root",
     EXT: ext,
     JSX: jsx,
-    MIDDLEWARE_BASENAME: ctx.middlewareBasename,
+    MIDDLEWARE_BASENAME: ctx.middlewareBasename ?? "proxy",
     LAYOUT_PATH: ctx.layoutPath ?? `${base}app/layout.${jsx}`,
     ENV_FILE: ctx.envFile,
     PM: ctx.packageManager,
@@ -134,7 +154,7 @@ function buildVars(
   return vars;
 }
 
-function resolveTemplate(ctx: ProjectContext): string {
+function resolveTemplate(ctx: ProjectContext): TemplateName {
   if (ctx.framework.dep === "next" && ctx.variant === "pages-router") {
     return "nextjs-pages-router";
   }
@@ -148,9 +168,5 @@ function resolveTemplate(ctx: ProjectContext): string {
 export const GENERIC_AGENT_PROMPT = loadTemplate("generic");
 
 export function buildAgentPrompt(ctx: ProjectContext): string {
-  const base = ctx.srcDir ? "src/" : "";
-  const ext = ctx.typescript ? "ts" : "js";
-  const jsx = ctx.typescript ? "tsx" : "jsx";
-
-  return interpolate(loadTemplate(resolveTemplate(ctx)), buildVars(ctx, base, ext, jsx));
+  return interpolate(loadTemplate(resolveTemplate(ctx)), buildVars(ctx));
 }

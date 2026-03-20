@@ -166,7 +166,7 @@ function scanFileContent(content: string, relPath: string, frameworkDep: string)
 }
 
 export async function scanForIssues(cwd: string, frameworkDep: string): Promise<ScanFinding[]> {
-  const glob = new Bun.Glob("**/*.{ts,tsx,js,jsx}");
+  const glob = new Bun.Glob("**/*.{ts,tsx,js,jsx,mjs,cjs,vue,astro}");
   const findings: ScanFinding[] = [];
 
   for await (const relPath of glob.scan({ cwd })) {
