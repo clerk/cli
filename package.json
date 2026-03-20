@@ -8,11 +8,13 @@
   "type": "module",
   "scripts": {
     "build": "bun build ./src/cli.ts --outfile ./dist/cli.js --target node --external @napi-rs/keyring",
+    "build:bin": "bun build ./src/cli.ts --compile --outfile ./dist/clerk --external @napi-rs/keyring",
     "dev": "bun run ./src/cli.ts",
     "test": "bun test",
     "lint": "oxlint src/",
     "format": "oxfmt --write src/",
     "format:check": "oxfmt --check src/",
+    "install:bin": "bun run build:bin && mkdir -p \"$HOME/.local/bin\" && install -m 755 ./dist/clerk \"$HOME/.local/bin/clerk\"",
     "prepare": "git config core.hooksPath .hooks"
   },
   "dependencies": {
