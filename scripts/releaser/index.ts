@@ -1,4 +1,4 @@
-import { mkdir, cp, rm, chmod } from "node:fs/promises";
+import { mkdir, cp, rm, chmod, copyFile } from "node:fs/promises";
 import { join } from "node:path";
 import { parseArgs } from "node:util";
 import { type Target, targets, SCOPE, PKG_PREFIX } from "./targets.ts";
@@ -65,6 +65,10 @@ async function generatePlatformPackage(target: Target, version: string): Promise
     pkg.libc = [target.libc];
   }
   await Bun.write(join(dir, "package.json"), JSON.stringify(pkg, null, 2) + "\n");
+
+  // Include the LICENSE file in each platform package.
+  const licensePath = join(import.meta.dir, "../../LICENSE");
+  await copyFile(licensePath, join(dir, "LICENSE"));
 
   return dir;
 }
