@@ -1,11 +1,11 @@
 import { join } from "node:path";
-import { findFirstFile, safeAddImport } from "./helpers.js";
+import { findFirstFile, jsxExt, safeAddImport, scriptExt, srcPrefix } from "./helpers.js";
 import type { FileAction, FrameworkScaffold, ProjectContext, ScaffoldPlan } from "./types.js";
 
 async function findEntryFile(ctx: ProjectContext): Promise<string | null> {
-  const base = ctx.srcDir ? "src/" : "";
-  const jsx = ctx.typescript ? "tsx" : "jsx";
-  const ext = ctx.typescript ? "ts" : "js";
+  const base = srcPrefix(ctx);
+  const jsx = jsxExt(ctx);
+  const ext = scriptExt(ctx);
   return findFirstFile(ctx.cwd, [`${base}main.${jsx}`, `${base}main.${ext}`]);
 }
 

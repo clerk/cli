@@ -1,6 +1,6 @@
 import { join } from "node:path";
 import { fileExists, dirExists } from "../context.js";
-import { findFirstFile, resolveNextjsMiddlewareBasename } from "./helpers.js";
+import { findFirstFile, resolveNextjsMiddlewareBasename, scriptExt, srcPrefix } from "./helpers.js";
 import type { ProjectContext } from "./types.js";
 
 /**
@@ -15,7 +15,7 @@ async function detectMiddlewareBasename(
   ext: string,
   nextVersion: string | undefined,
 ): Promise<NonNullable<ProjectContext["middlewareBasename"]>> {
-  const base = srcDir ? "src/" : "";
+  const base = srcPrefix({ srcDir });
 
   // Existing file takes precedence
   if (await fileExists(join(cwd, `${base}proxy.${ext}`))) return "proxy";
@@ -46,7 +46,7 @@ async function detectLayoutPath(
   srcDir: boolean,
   ext: string,
 ): Promise<string | null> {
-  const base = srcDir ? "src/" : "";
+  const base = srcPrefix({ srcDir });
 
   if (variant === "pages-router") {
     return findFirstFile(cwd, [`${base}pages/_app.${ext}x`, `${base}pages/_app.${ext}`]);
@@ -59,7 +59,7 @@ async function detectLayoutPath(
  * variant, layoutPath, middlewareBasename.
  */
 export async function enrichNextjsContext(ctx: ProjectContext): Promise<void> {
-  const ext = ctx.typescript ? "ts" : "js";
+  const ext = scriptExt(ctx);
 
   const [srcAppDir, srcPagesDir, rootAppDir, rootPagesDir] = await Promise.all([
     dirExists(join(ctx.cwd, "src/app")),

@@ -1,9 +1,9 @@
 import { join } from "node:path";
-import { findFirstFile, insertAfterLastImport, safeAddImport } from "./helpers.js";
+import { findFirstFile, insertAfterLastImport, safeAddImport, srcPrefix } from "./helpers.js";
 import type { FileAction, FrameworkScaffold, ProjectContext, ScaffoldPlan } from "./types.js";
 
 async function findEntryFile(ctx: ProjectContext): Promise<string | null> {
-  const base = ctx.srcDir ? "src/" : "";
+  const base = srcPrefix(ctx);
   return findFirstFile(ctx.cwd, [`${base}main.ts`, `${base}main.js`]);
 }
 

@@ -1,19 +1,20 @@
 import { join } from "node:path";
 import {
+  jsxAuthPageContent,
+  jsxExt,
   NEXTJS_SIGN_ROUTES_INSTRUCTION,
-  nextjsSignInPageContent,
-  nextjsSignUpPageContent,
   safeAddImport,
-  scaffoldAuthPage,
+  scaffoldAuthFiles,
   scaffoldNextjsMiddleware,
+  srcPrefix,
   wrapBodyWithProvider,
 } from "./helpers.js";
 import { enrichNextjsContext } from "./nextjs-context.js";
 import type { FileAction, FrameworkScaffold, ProjectContext, ScaffoldPlan } from "./types.js";
 
 async function scaffoldLayout(ctx: ProjectContext): Promise<FileAction> {
-  const base = ctx.srcDir ? "src/" : "";
-  const jsx = ctx.typescript ? "tsx" : "jsx";
+  const base = srcPrefix(ctx);
+  const jsx = jsxExt(ctx);
   const expectedPath = ctx.layoutPath ?? `${base}app/layout.${jsx}`;
 
   if (!ctx.layoutPath) {
@@ -52,16 +53,25 @@ async function scaffoldLayout(ctx: ProjectContext): Promise<FileAction> {
   };
 }
 
-function signInPath(ctx: ProjectContext): string {
-  const base = ctx.srcDir ? "src/" : "";
-  const ext = ctx.typescript ? "tsx" : "jsx";
-  return `${base}app/sign-in/[[...sign-in]]/page.${ext}`;
+function authPagePath(ctx: ProjectContext, kind: "sign-in" | "sign-up"): string {
+  return `${srcPrefix(ctx)}app/${kind}/[[...${kind}]]/page.${jsxExt(ctx)}`;
 }
 
-function signUpPath(ctx: ProjectContext): string {
-  const base = ctx.srcDir ? "src/" : "";
-  const ext = ctx.typescript ? "tsx" : "jsx";
-  return `${base}app/sign-up/[[...sign-up]]/page.${ext}`;
+async function scaffoldAuthPages(ctx: ProjectContext): Promise<FileAction[]> {
+  return scaffoldAuthFiles(ctx.cwd, [
+    {
+      path: authPagePath(ctx, "sign-in"),
+      content: jsxAuthPageContent("sign-in", "@clerk/nextjs"),
+      kind: "sign-in",
+      surface: "page",
+    },
+    {
+      path: authPagePath(ctx, "sign-up"),
+      content: jsxAuthPageContent("sign-up", "@clerk/nextjs"),
+      kind: "sign-up",
+      surface: "page",
+    },
+  ]);
 }
 
 export const nextjsApp: FrameworkScaffold = {
@@ -75,21 +85,15 @@ export const nextjsApp: FrameworkScaffold = {
   matches: (ctx) => ctx.framework.dep === "next" && ctx.variant !== "pages-router",
 
   async scaffold(ctx: ProjectContext): Promise<ScaffoldPlan> {
-    const actions: FileAction[] = [];
-    const postInstructions: string[] = [];
+    const [middlewareAction, layoutAction, authActions] = await Promise.all([
+      scaffoldNextjsMiddleware(ctx),
+      scaffoldLayout(ctx),
+      scaffoldAuthPages(ctx),
+    ]);
 
-    actions.push(await scaffoldNextjsMiddleware(ctx));
-    actions.push(await scaffoldLayout(ctx));
-
-    actions.push(
-      await scaffoldAuthPage(ctx.cwd, signInPath(ctx), nextjsSignInPageContent(), "sign-in page"),
-    );
-    actions.push(
-      await scaffoldAuthPage(ctx.cwd, signUpPath(ctx), nextjsSignUpPageContent(), "sign-up page"),
-    );
-
-    postInstructions.push(NEXTJS_SIGN_ROUTES_INSTRUCTION);
-
-    return { actions, postInstructions };
+    return {
+      actions: [middlewareAction, layoutAction, ...authActions],
+      postInstructions: [NEXTJS_SIGN_ROUTES_INSTRUCTION],
+    };
   },
 };

@@ -1,18 +1,11 @@
-import { join } from "node:path";
 import { parseModule } from "magicast";
-import { findFirstFile, scaffoldAuthPage } from "./helpers.js";
+import { authComponentName, scaffoldAuthFiles, scaffoldConfigFile } from "./helpers.js";
 import type { FileAction, FrameworkScaffold, ProjectContext, ScaffoldPlan } from "./types.js";
 
-function signInPageContent(): string {
+function authPageContent(kind: "sign-in" | "sign-up"): string {
+  const component = authComponentName(kind);
   return `<template>
-  <SignIn />
-</template>
-`;
-}
-
-function signUpPageContent(): string {
-  return `<template>
-  <SignUp />
+  <${component} />
 </template>
 `;
 }
@@ -34,31 +27,19 @@ function addNuxtModule(content: string): string {
   }
 }
 
-async function scaffoldConfig(ctx: ProjectContext): Promise<FileAction> {
-  const configPath = await findFirstFile(ctx.cwd, ["nuxt.config.ts", "nuxt.config.js"]);
-
-  if (!configPath) {
-    return {
+function scaffoldConfig(ctx: ProjectContext): Promise<FileAction> {
+  return scaffoldConfigFile(ctx.cwd, {
+    candidates: ["nuxt.config.ts", "nuxt.config.js"],
+    existsCheck: "@clerk/nuxt",
+    modify: addNuxtModule,
+    description: "Add @clerk/nuxt to modules array",
+    existingSkipReason: "Already has @clerk/nuxt module",
+    missingAction: {
       type: "skip",
       path: "nuxt.config.ts",
       skipReason: "No Nuxt config file found — create one and add @clerk/nuxt to modules",
-    };
-  }
-
-  const content = await Bun.file(join(ctx.cwd, configPath)).text();
-
-  if (content.includes("@clerk/nuxt")) {
-    return { type: "skip", path: configPath, skipReason: "Already has @clerk/nuxt module" };
-  }
-
-  const newContent = addNuxtModule(content);
-
-  return {
-    path: configPath,
-    type: "modify",
-    content: newContent,
-    description: "Add @clerk/nuxt to modules array",
-  };
+    },
+  });
 }
 
 export const nuxt: FrameworkScaffold = {
@@ -69,22 +50,29 @@ export const nuxt: FrameworkScaffold = {
   matches: (ctx) => ctx.framework.dep === "nuxt",
 
   async scaffold(ctx: ProjectContext): Promise<ScaffoldPlan> {
-    const actions: FileAction[] = [];
-    const postInstructions: string[] = [];
+    const [configAction, authActions] = await Promise.all([
+      scaffoldConfig(ctx),
+      scaffoldAuthFiles(ctx.cwd, [
+        {
+          path: "pages/sign-in.vue",
+          content: authPageContent("sign-in"),
+          kind: "sign-in",
+          surface: "page",
+        },
+        {
+          path: "pages/sign-up.vue",
+          content: authPageContent("sign-up"),
+          kind: "sign-up",
+          surface: "page",
+        },
+      ]),
+    ]);
 
-    actions.push(await scaffoldConfig(ctx));
-
-    actions.push(
-      await scaffoldAuthPage(ctx.cwd, "pages/sign-in.vue", signInPageContent(), "sign-in page"),
-    );
-    actions.push(
-      await scaffoldAuthPage(ctx.cwd, "pages/sign-up.vue", signUpPageContent(), "sign-up page"),
-    );
-
-    postInstructions.push(
-      'Use <Show when="signed-in"> and <Show when="signed-out"> components in your app.vue for conditional rendering (auto-imported)',
-    );
-
-    return { actions, postInstructions };
+    return {
+      actions: [configAction, ...authActions],
+      postInstructions: [
+        'Use <Show when="signed-in"> and <Show when="signed-out"> components in your app.vue for conditional rendering (auto-imported)',
+      ],
+    };
   },
 };

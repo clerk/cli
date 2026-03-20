@@ -3,48 +3,45 @@ import { parseModule } from "magicast";
 import {
   findFirstFile,
   insertAfterLastImport,
+  jsxAuthPageContent,
+  jsxExt,
   safeAddImport,
-  scaffoldAuthPage,
+  scaffoldAuthFiles,
+  scaffoldConfigFile,
 } from "./helpers.js";
 import type { FileAction, FrameworkScaffold, ProjectContext, ScaffoldPlan } from "./types.js";
 
-function signInRouteContent(): string {
-  return `import { SignIn } from "@clerk/react-router";
+type RootScaffoldResult = {
+  action: FileAction | null;
+  needsManualLoaderMerge: boolean;
+};
 
-export default function SignInPage() {
-  return <SignIn />;
-}
-`;
-}
-
-function signUpRouteContent(): string {
-  return `import { SignUp } from "@clerk/react-router";
-
-export default function SignUpPage() {
-  return <SignUp />;
-}
-`;
+function addServerImport(source: string, imported: "clerkMiddleware" | "rootAuthLoader"): string {
+  if (source.includes(imported)) return source;
+  return safeAddImport(source, "@clerk/react-router/server", imported);
 }
 
-function addServerImports(source: string): string {
-  if (source.includes("@clerk/react-router/server")) return source;
-
-  let result = safeAddImport(source, "@clerk/react-router/server", "clerkMiddleware");
-  result = safeAddImport(result, "@clerk/react-router/server", "rootAuthLoader");
-  return result;
+function addServerImports(source: string, includeRootAuthLoader: boolean): string {
+  const withMiddleware = addServerImport(source, "clerkMiddleware");
+  return includeRootAuthLoader ? addServerImport(withMiddleware, "rootAuthLoader") : withMiddleware;
 }
 
-function addMiddlewareExport(source: string, typescript: boolean): string {
+function addClientImport(source: string, imported: string): string {
+  if (source.includes(imported)) return source;
+  return safeAddImport(source, "react-router", imported);
+}
+
+function hasLoaderExport(source: string): boolean {
+  return source.includes("export const loader");
+}
+
+function addMiddlewareExport(source: string): string {
   if (source.includes("export const middleware")) return source;
-  const typeAnnotation = typescript ? ": Route.MiddlewareFunction[]" : "";
-  return insertAfterLastImport(
-    source,
-    `\nexport const middleware${typeAnnotation} = [clerkMiddleware()];\n`,
-  );
+  return insertAfterLastImport(source, "\nexport const middleware = [clerkMiddleware()];\n");
 }
 
 function addLoaderExport(source: string, typescript: boolean): string {
-  if (source.includes("rootAuthLoader")) return source;
+  if (hasLoaderExport(source)) return source;
 
   const middlewareIdx = source.indexOf("export const middleware");
   if (middlewareIdx === -1) return source;
@@ -52,7 +49,7 @@ function addLoaderExport(source: string, typescript: boolean): string {
   const lineEnd = source.indexOf("\n", middlewareIdx);
   if (lineEnd === -1) return source;
 
-  const argsParam = typescript ? "(args: Route.LoaderArgs)" : "(args)";
+  const argsParam = typescript ? "(args: Parameters<typeof rootAuthLoader>[0])" : "(args)";
   return (
     source.slice(0, lineEnd + 1) +
     `\nexport const loader = ${argsParam} => rootAuthLoader(args);\n` +
@@ -60,38 +57,119 @@ function addLoaderExport(source: string, typescript: boolean): string {
   );
 }
 
-function wrapOutletWithProvider(source: string): string {
+function addLoaderDataBinding(source: string): { content: string; hasLoaderData: boolean } {
+  if (source.includes("loaderData }: Route.ComponentProps")) {
+    return { content: source, hasLoaderData: true };
+  }
+
+  if (source.includes("const loaderData = useLoaderData<typeof loader>()")) {
+    return { content: source, hasLoaderData: true };
+  }
+
+  const withImport = addClientImport(source, "useLoaderData");
+  const updated = withImport.replace(
+    /(export\s+default\s+function\s+\w+\([^)]*\)\s*\{)/,
+    "$1\n  const loaderData = useLoaderData<typeof loader>();",
+  );
+
+  return {
+    content: updated,
+    hasLoaderData: updated !== withImport,
+  };
+}
+
+function describeRootAction(options: {
+  hasLoaderData: boolean;
+  needsManualLoaderMerge: boolean;
+}): string {
+  if (options.needsManualLoaderMerge) {
+    return "Add ClerkProvider and clerkMiddleware (manual rootAuthLoader merge still required)";
+  }
+
+  if (options.hasLoaderData) {
+    return "Add ClerkProvider, clerkMiddleware, rootAuthLoader, and loaderData wiring";
+  }
+
+  return "Add ClerkProvider, clerkMiddleware, and rootAuthLoader (manual loaderData wiring may be needed)";
+}
+
+function wrapOutletWithProvider(source: string, hasLoaderData: boolean): string {
   if (!source.includes("<Outlet") || source.includes("<ClerkProvider")) return source;
+
+  const providerProps = hasLoaderData ? " loaderData={loaderData}" : "";
   return source.replace(
     /(<Outlet\s*\/>)/,
-    "<ClerkProvider loaderData={loaderData}>\n        $1\n      </ClerkProvider>",
+    `<ClerkProvider${providerProps}>\n        $1\n      </ClerkProvider>`,
   );
 }
 
-async function scaffoldRoot(ctx: ProjectContext): Promise<FileAction | null> {
+function authRoutePath(ctx: ProjectContext, kind: "sign-in" | "sign-up"): string {
+  return `app/routes/${kind}.${jsxExt(ctx)}`;
+}
+
+async function scaffoldAuthRoutes(ctx: ProjectContext): Promise<FileAction[]> {
+  return scaffoldAuthFiles(ctx.cwd, [
+    {
+      path: authRoutePath(ctx, "sign-in"),
+      content: jsxAuthPageContent("sign-in", "@clerk/react-router"),
+      kind: "sign-in",
+      surface: "route",
+    },
+    {
+      path: authRoutePath(ctx, "sign-up"),
+      content: jsxAuthPageContent("sign-up", "@clerk/react-router"),
+      kind: "sign-up",
+      surface: "route",
+    },
+  ]);
+}
+
+async function scaffoldRoot(ctx: ProjectContext): Promise<RootScaffoldResult> {
   const rootPath = await findFirstFile(ctx.cwd, ["app/root.tsx", "app/root.jsx"]);
-  if (!rootPath) return null;
+  if (!rootPath) {
+    return { action: null, needsManualLoaderMerge: false };
+  }
 
   const content = await Bun.file(join(ctx.cwd, rootPath)).text();
 
   if (content.includes("ClerkProvider")) {
-    return { type: "skip", path: rootPath, skipReason: "Already has ClerkProvider" };
+    return {
+      action: { type: "skip", path: rootPath, skipReason: "Already has ClerkProvider" },
+      needsManualLoaderMerge: false,
+    };
   }
 
-  let result = addServerImports(content);
+  const hasExistingLoader = hasLoaderExport(content);
+  const needsManualLoaderMerge = hasExistingLoader && !content.includes("rootAuthLoader");
+
+  let result = addServerImports(content, !needsManualLoaderMerge);
   result = safeAddImport(result, "@clerk/react-router", "ClerkProvider");
-  result = addMiddlewareExport(result, ctx.typescript);
-  result = addLoaderExport(result, ctx.typescript);
-  result = wrapOutletWithProvider(result);
+  result = addMiddlewareExport(result);
+  result = hasExistingLoader ? result : addLoaderExport(result, ctx.typescript);
+  const loaderDataResult = needsManualLoaderMerge
+    ? { content: result, hasLoaderData: false }
+    : addLoaderDataBinding(result);
+  result = wrapOutletWithProvider(loaderDataResult.content, loaderDataResult.hasLoaderData);
 
   return {
-    path: rootPath,
-    type: "modify",
-    content: result,
-    description: "Add ClerkProvider, clerkMiddleware, and rootAuthLoader",
+    action: {
+      path: rootPath,
+      type: "modify",
+      content: result,
+      description: describeRootAction({
+        hasLoaderData: loaderDataResult.hasLoaderData,
+        needsManualLoaderMerge,
+      }),
+    },
+    needsManualLoaderMerge,
   };
 }
 
+/**
+ * Enable the `future.v8_middleware` flag in react-router.config.
+ * React Router v7 requires this opt-in flag to activate the middleware API
+ * that clerkMiddleware() depends on. It becomes the default in v8.
+ */
 function enableV8Middleware(content: string): string {
   try {
     const mod = parseModule(content);
@@ -112,27 +190,15 @@ function enableV8Middleware(content: string): string {
   }
 }
 
-async function scaffoldConfig(ctx: ProjectContext): Promise<FileAction | null> {
-  const configPath = await findFirstFile(ctx.cwd, [
-    "react-router.config.ts",
-    "react-router.config.js",
-  ]);
-  if (!configPath) return null;
-
-  const content = await Bun.file(join(ctx.cwd, configPath)).text();
-
-  if (content.includes("v8_middleware")) {
-    return { type: "skip", path: configPath, skipReason: "Already has v8_middleware flag" };
-  }
-
-  const newContent = enableV8Middleware(content);
-
-  return {
-    path: configPath,
-    type: "modify",
-    content: newContent,
+function scaffoldConfig(ctx: ProjectContext): Promise<FileAction | null> {
+  return scaffoldConfigFile(ctx.cwd, {
+    candidates: ["react-router.config.ts", "react-router.config.js"],
+    existsCheck: "v8_middleware",
+    modify: enableV8Middleware,
     description: "Enable v8_middleware future flag for Clerk middleware",
-  };
+    existingSkipReason: "Already has v8_middleware flag",
+    missingAction: null,
+  });
 }
 
 export const reactRouter: FrameworkScaffold = {
@@ -143,44 +209,36 @@ export const reactRouter: FrameworkScaffold = {
   matches: (ctx) => ctx.framework.dep === "react-router",
 
   async scaffold(ctx: ProjectContext): Promise<ScaffoldPlan> {
-    const actions: FileAction[] = [];
+    const [configAction, rootResult, authActions] = await Promise.all([
+      scaffoldConfig(ctx),
+      scaffoldRoot(ctx),
+      scaffoldAuthRoutes(ctx),
+    ]);
+
+    const rootAction = rootResult.action;
+    const actions = [configAction, rootAction, ...authActions].filter(
+      (action): action is FileAction => action !== null,
+    );
     const postInstructions: string[] = [];
 
-    const configAction = await scaffoldConfig(ctx);
-    if (configAction) {
-      actions.push(configAction);
-    }
-
-    const rootAction = await scaffoldRoot(ctx);
     if (rootAction) {
-      actions.push(rootAction);
+      postInstructions.push(
+        "Add sign-in and sign-up routes to app/routes.ts: route('sign-in/*', 'routes/sign-in.tsx') and route('sign-up/*', 'routes/sign-up.tsx')",
+      );
     } else {
       postInstructions.push(
         "Add ClerkProvider, clerkMiddleware(), and rootAuthLoader() to your app/root.tsx. See: https://clerk.com/docs/quickstarts/react-router",
       );
+      postInstructions.push(
+        "Add sign-in and sign-up routes to app/routes.ts: route('sign-in/*', 'routes/sign-in.tsx') and route('sign-up/*', 'routes/sign-up.tsx')",
+      );
     }
 
-    const ext = ctx.typescript ? "tsx" : "jsx";
-    actions.push(
-      await scaffoldAuthPage(
-        ctx.cwd,
-        `app/routes/sign-in.${ext}`,
-        signInRouteContent(),
-        "sign-in route",
-      ),
-    );
-    actions.push(
-      await scaffoldAuthPage(
-        ctx.cwd,
-        `app/routes/sign-up.${ext}`,
-        signUpRouteContent(),
-        "sign-up route",
-      ),
-    );
-
-    postInstructions.push(
-      "Add sign-in and sign-up routes to app/routes.ts: route('sign-in/*', 'routes/sign-in.tsx') and route('sign-up/*', 'routes/sign-up.tsx')",
-    );
+    if (rootAction?.type === "modify" && rootResult.needsManualLoaderMerge) {
+      postInstructions.push(
+        "Update your existing app/root.tsx loader to import and call rootAuthLoader(args), then pass that loaderData to <ClerkProvider>.",
+      );
+    }
 
     return { actions, postInstructions };
   },

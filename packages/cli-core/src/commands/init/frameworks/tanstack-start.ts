@@ -1,47 +1,99 @@
 import { join } from "node:path";
 import {
+  authComponentName,
   findFirstFile,
   hasClerkImport,
+  jsxExt,
   safeAddImport,
-  scaffoldAuthPage,
+  scaffoldAuthFiles,
   wrapBodyWithProvider,
 } from "./helpers.js";
 import type { FileAction, FrameworkScaffold, ProjectContext, ScaffoldPlan } from "./types.js";
 
-function signInRouteContent(): string {
-  return `import { SignIn } from "@clerk/tanstack-react-start";
+type TanstackBaseDir = "app" | "src";
+
+const START_FILE_CANDIDATES = [
+  "src/start.ts",
+  "src/start.tsx",
+  "src/start.js",
+  "src/start.jsx",
+  "app/start.ts",
+  "app/start.tsx",
+  "app/start.js",
+  "app/start.jsx",
+] as const;
+
+const ROOT_ROUTE_CANDIDATES = [
+  "src/routes/__root.tsx",
+  "src/routes/__root.jsx",
+  "app/routes/__root.tsx",
+  "app/routes/__root.jsx",
+] as const;
+
+function authRouteContent(kind: "sign-in" | "sign-up"): string {
+  const component = authComponentName(kind);
+
+  return `import { ${component} } from "@clerk/tanstack-react-start";
 import { createFileRoute } from "@tanstack/react-router";
 
-export const Route = createFileRoute("/sign-in/$")({
+export const Route = createFileRoute("/${kind}/$")({
   component: Page,
 });
 
 function Page() {
-  return <SignIn />;
+  return <${component} />;
 }
 `;
 }
 
-function signUpRouteContent(): string {
-  return `import { SignUp } from "@clerk/tanstack-react-start";
-import { createFileRoute } from "@tanstack/react-router";
-
-export const Route = createFileRoute("/sign-up/$")({
-  component: Page,
-});
-
-function Page() {
-  return <SignUp />;
+function baseDirFromPath(path: string | null): TanstackBaseDir | null {
+  if (!path) return null;
+  return path.startsWith("app/") ? "app" : "src";
 }
-`;
+
+async function findStartFile(ctx: ProjectContext): Promise<string | null> {
+  return findFirstFile(ctx.cwd, [...START_FILE_CANDIDATES]);
+}
+
+async function findRootRouteFile(ctx: ProjectContext): Promise<string | null> {
+  return findFirstFile(ctx.cwd, [...ROOT_ROUTE_CANDIDATES]);
+}
+
+async function detectBaseDir(ctx: ProjectContext): Promise<TanstackBaseDir> {
+  const [rootPath, startPath] = await Promise.all([findRootRouteFile(ctx), findStartFile(ctx)]);
+  return baseDirFromPath(rootPath) ?? baseDirFromPath(startPath) ?? "src";
+}
+
+function authRoutePath(
+  ctx: ProjectContext,
+  baseDir: TanstackBaseDir,
+  kind: "sign-in" | "sign-up",
+): string {
+  return `${baseDir}/routes/${kind}.$.${jsxExt(ctx)}`;
+}
+
+async function scaffoldAuthRoutes(
+  ctx: ProjectContext,
+  baseDir: TanstackBaseDir,
+): Promise<FileAction[]> {
+  return scaffoldAuthFiles(ctx.cwd, [
+    {
+      path: authRoutePath(ctx, baseDir, "sign-in"),
+      content: authRouteContent("sign-in"),
+      kind: "sign-in",
+      surface: "route",
+    },
+    {
+      path: authRoutePath(ctx, baseDir, "sign-up"),
+      content: authRouteContent("sign-up"),
+      kind: "sign-up",
+      surface: "route",
+    },
+  ]);
 }
 
 async function scaffoldStartServer(ctx: ProjectContext): Promise<FileAction | null> {
-  const serverPath = await findFirstFile(ctx.cwd, [
-    "src/start.ts",
-    "src/start.tsx",
-    "app/start.ts",
-  ]);
+  const serverPath = await findStartFile(ctx);
   if (!serverPath) return null;
 
   const content = await Bun.file(join(ctx.cwd, serverPath)).text();
@@ -69,11 +121,7 @@ async function scaffoldStartServer(ctx: ProjectContext): Promise<FileAction | nu
 }
 
 async function scaffoldRoot(ctx: ProjectContext): Promise<FileAction | null> {
-  const rootPath = await findFirstFile(ctx.cwd, [
-    "src/routes/__root.tsx",
-    "src/routes/__root.jsx",
-    "app/routes/__root.tsx",
-  ]);
+  const rootPath = await findRootRouteFile(ctx);
   if (!rootPath) return null;
 
   const content = await Bun.file(join(ctx.cwd, rootPath)).text();
@@ -103,44 +151,29 @@ export const tanstackStart: FrameworkScaffold = {
   matches: (ctx) => ctx.framework.dep === "@tanstack/react-start",
 
   async scaffold(ctx: ProjectContext): Promise<ScaffoldPlan> {
-    const actions: FileAction[] = [];
+    const [serverAction, rootAction, baseDir] = await Promise.all([
+      scaffoldStartServer(ctx),
+      scaffoldRoot(ctx),
+      detectBaseDir(ctx),
+    ]);
+    const authActions = await scaffoldAuthRoutes(ctx, baseDir);
+
+    const actions = [serverAction, rootAction, ...authActions].filter(
+      (action): action is FileAction => action !== null,
+    );
     const postInstructions: string[] = [];
 
-    const serverAction = await scaffoldStartServer(ctx);
-    if (serverAction) {
-      actions.push(serverAction);
-    } else {
+    if (!serverAction) {
       postInstructions.push(
         "Add clerkMiddleware() to your start server's requestMiddleware. See: https://clerk.com/docs/quickstarts/tanstack-start",
       );
     }
 
-    const rootAction = await scaffoldRoot(ctx);
-    if (rootAction) {
-      actions.push(rootAction);
-    } else {
+    if (!rootAction) {
       postInstructions.push(
         "Wrap your root route with <ClerkProvider> from @clerk/tanstack-react-start",
       );
     }
-
-    const ext = ctx.typescript ? "tsx" : "jsx";
-    actions.push(
-      await scaffoldAuthPage(
-        ctx.cwd,
-        `src/routes/sign-in.$.${ext}`,
-        signInRouteContent(),
-        "sign-in route",
-      ),
-    );
-    actions.push(
-      await scaffoldAuthPage(
-        ctx.cwd,
-        `src/routes/sign-up.$.${ext}`,
-        signUpRouteContent(),
-        "sign-up route",
-      ),
-    );
 
     return { actions, postInstructions };
   },
