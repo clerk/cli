@@ -1,0 +1,79 @@
+name: Build Binaries
+
+on:
+  workflow_call:
+    inputs:
+      version:
+        required: true
+        type: string
+      ref:
+        required: true
+        type: string
+      artifact-prefix:
+        required: true
+        type: string
+        description: "Prefix for artifact names (e.g. 'clerk', 'clerk-canary', 'clerk-snapshot')"
+
+jobs:
+  build:
+    runs-on: blacksmith-2vcpu-ubuntu-2404
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
+      - uses: oven-sh/setup-bun@v2
+      - run: bun install --frozen-lockfile
+
+      - name: Build all targets
+        env:
+          CLI_VERSION: ${{ inputs.version }}
+        run: bun run scripts/build.ts --version="${CLI_VERSION}"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ inputs.artifact-prefix }}-darwin-arm64
+          path: dist/artifacts/darwin-arm64/clerk
+          retention-days: 1
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ inputs.artifact-prefix }}-darwin-x64
+          path: dist/artifacts/darwin-x64/clerk
+          retention-days: 1
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ inputs.artifact-prefix }}-linux-arm64
+          path: dist/artifacts/linux-arm64/clerk
+          retention-days: 1
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ inputs.artifact-prefix }}-linux-arm64-musl
+          path: dist/artifacts/linux-arm64-musl/clerk
+          retention-days: 1
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ inputs.artifact-prefix }}-linux-x64
+          path: dist/artifacts/linux-x64/clerk
+          retention-days: 1
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ inputs.artifact-prefix }}-linux-x64-musl
+          path: dist/artifacts/linux-x64-musl/clerk
+          retention-days: 1
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ inputs.artifact-prefix }}-win32-arm64
+          path: dist/artifacts/win32-arm64/clerk.exe
+          retention-days: 1
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ inputs.artifact-prefix }}-win32-x64
+          path: dist/artifacts/win32-x64/clerk.exe
+          retention-days: 1

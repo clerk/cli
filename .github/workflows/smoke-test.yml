@@ -1,0 +1,96 @@
+name: Smoke Test
+
+on:
+  workflow_call:
+    inputs:
+      version:
+        required: true
+        type: string
+      artifact-prefix:
+        required: true
+        type: string
+      preset:
+        required: true
+        type: string
+        description: >
+          Matrix preset name. One of: stable (all 7 testable targets),
+          canary (darwin-arm64 + linux-x64 + linux-x64-musl), or
+          snapshot (linux-x64 only).
+
+jobs:
+  resolve-matrix:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      matrix: ${{ steps.resolve.outputs.matrix }}
+    steps:
+      - id: resolve
+        run: |
+          case "${{ inputs.preset }}" in
+            stable)
+              # All testable targets. win32-arm64 is excluded — no GitHub-hosted
+              # ARM Windows runner available. Build-time format verification
+              # confirms it is a valid PE32+/Aarch64 binary.
+              matrix='[
+                {"target":"darwin-arm64","runner":"macos-latest","bin":"./clerk"},
+                {"target":"darwin-x64","runner":"macos-15-large","bin":"./clerk"},
+                {"target":"linux-arm64","runner":"ubuntu-24.04-arm","bin":"./clerk"},
+                {"target":"linux-arm64-musl","runner":"ubuntu-24.04-arm","bin":"./clerk","docker":"alpine"},
+                {"target":"linux-x64","runner":"ubuntu-latest","bin":"./clerk"},
+                {"target":"linux-x64-musl","runner":"ubuntu-latest","bin":"./clerk","docker":"alpine"},
+                {"target":"win32-x64","runner":"windows-latest","bin":"./clerk.exe"}
+              ]'
+              ;;
+            canary)
+              # Subset for speed/cost. darwin-arm64 + linux-x64 cover the two
+              # most common dev platforms; musl is included since it runs on the
+              # same ubuntu-latest runner.
+              matrix='[
+                {"target":"darwin-arm64","runner":"macos-latest","bin":"./clerk"},
+                {"target":"linux-x64","runner":"ubuntu-latest","bin":"./clerk"},
+                {"target":"linux-x64-musl","runner":"ubuntu-latest","bin":"./clerk","docker":"alpine"}
+              ]'
+              ;;
+            snapshot)
+              matrix='[{"target":"linux-x64","runner":"ubuntu-latest","bin":"./clerk"}]'
+              ;;
+            *)
+              echo "::error::Unknown preset: ${{ inputs.preset }}"
+              exit 1
+              ;;
+          esac
+          {
+            echo "matrix<<EOF"
+            echo "$matrix"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
+  smoke-test:
+    needs: resolve-matrix
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(needs.resolve-matrix.outputs.matrix) }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 10
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: ${{ inputs.artifact-prefix }}-${{ matrix.target }}
+      - name: Make executable
+        if: runner.os != 'Windows'
+        run: chmod +x ${{ matrix.bin }}
+      - name: Smoke test
+        shell: bash
+        run: |
+          expected="${{ inputs.version }}"
+          if [ -n "${{ matrix.docker }}" ]; then
+            actual=$(docker run --rm -v "$PWD:/work" ${{ matrix.docker }} /work/${{ matrix.bin }} --version)
+          else
+            actual=$(${{ matrix.bin }} --version)
+          fi
+          echo "Binary reports $actual (expected $expected)"
+          if [ "$actual" != "$expected" ]; then
+            echo "::error::Version mismatch: expected $expected, got $actual"
+            exit 1
+          fi
