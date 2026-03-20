@@ -1,0 +1,62 @@
+#!/usr/bin/env node
+
+"use strict";
+
+const { spawnSync } = require("node:child_process");
+const { constants } = require("node:os");
+const { platform, arch, argv, exit } = require("node:process");
+
+// Detect musl vs glibc to select the correct prebuilt binary.
+// Approach based on detect-libc: https://github.com/lovell/detect-libc
+function isMusl() {
+  if (platform !== "linux") return false;
+  // On musl systems, ldd is a shell script (or the dynamic linker itself)
+  // containing "musl". Similar to rustup's `ldd --version | grep musl`.
+  // Check common ldd locations; on musl systems the file contains "musl".
+  for (const p of ["/usr/bin/ldd", "/bin/ldd"]) {
+    try {
+      if (require("fs").readFileSync(p, "utf-8").includes("musl")) return true;
+    } catch {}
+  }
+  // Fallback: Node's diagnostic report exposes libc info without child processes.
+  // https://nodejs.org/api/report.html#reportgetreport
+  try {
+    const report = process.report.getReport();
+    if (report.header && report.header.glibcVersionRuntime) return false;
+    if (Array.isArray(report.sharedObjects)) {
+      return report.sharedObjects.some((f) => f.includes("libc.musl-") || f.includes("ld-musl-"));
+    }
+  } catch {}
+  console.warn(
+    "Warning: Could not detect libc variant on Linux. Defaulting to glibc. " +
+      "If the binary fails to start, try installing the musl variant manually.",
+  );
+  return false;
+}
+
+const suffix = isMusl() ? "-musl" : "";
+const key = `${platform}-${arch}${suffix}`;
+const pkg = `@clerk/cli-${key}`;
+const ext = platform === "win32" ? ".exe" : "";
+
+let binPath;
+try {
+  binPath = require.resolve(`${pkg}/bin/clerk${ext}`);
+} catch {
+  console.error(
+    `Unsupported or missing platform: ${key}\n` +
+      `Expected package: ${pkg}\n` +
+      `Try reinstalling with: npm install -g clerk`,
+  );
+  exit(1);
+}
+
+const { status, signal, error } = spawnSync(binPath, argv.slice(2), { stdio: "inherit" });
+if (error) {
+  console.error(`Failed to start Clerk CLI: ${error.message}`);
+  exit(1);
+}
+if (signal) {
+  exit(128 + (constants.signals[signal] ?? 1));
+}
+exit(status ?? 1);

@@ -4,6 +4,18 @@ globs: "*.ts, *.tsx, *.html, *.css, *.js, *.jsx, package.json"
 alwaysApply: false
 ---
 
+## Project Structure
+
+This is a Bun workspace monorepo:
+
+- `packages/cli-core/` — CLI source code, commands, and tests
+- `packages/cli/` — npm wrapper package with platform binary shim (not run directly during development; do not add command logic here)
+- `scripts/releaser/` — release publishing script that generates platform packages and publishes to npm
+
+See [docs/releasing.md](docs/releasing.md) for the full release flow, channels, and safeguards.
+
+## Bun
+
 Default to using Bun instead of Node.js.
 
 - Use `bun <file>` instead of `node <file>` or `ts-node <file>`
@@ -122,9 +134,13 @@ bun test             # Run all tests
 
 CI runs `bun run format:check` (fails if unformatted), `bun run lint`, and `bun test` on every PR to `main`.
 
+## Versioning
+
+The `CLI_VERSION` global is injected at compile time via `bun build --compile --define "CLI_VERSION=..."`. Local `build:compile` omits it, so the binary reports `0.0.0-dev`. The CI release workflow injects the real version.
+
 ## Commands
 
-Every CLI command lives in its own directory under `src/commands/<name>/`. Each directory must contain a `README.md` that documents:
+Every CLI command lives in its own directory under `packages/cli-core/src/commands/<name>/`. Each directory must contain a `README.md` that documents:
 
 - What the command does
 - Usage and options
@@ -133,15 +149,15 @@ Every CLI command lives in its own directory under `src/commands/<name>/`. Each 
 
 When adding a new command, create its directory and README. When modifying a command's behavior, options, or API calls, update its README to match.
 
-When creating or modifying a command, evaluate whether it needs an agent mode. Commands with interactive prompts (menus, wizards, multi-step flows) should check `isAgent()` from `src/mode.ts` and, when in agent mode, output a structured prompt that an AI agent can follow instead of running the interactive flow. Commands that are already non-interactive (e.g., single API calls, browser-based OAuth) typically don't need agent mode.
+When creating or modifying a command, evaluate whether it needs an agent mode. Commands with interactive prompts (menus, wizards, multi-step flows) should check `isAgent()` from `packages/cli-core/src/mode.ts` and, when in agent mode, output a structured prompt that an AI agent can follow instead of running the interactive flow. Commands that are already non-interactive (e.g., single API calls, browser-based OAuth) typically don't need agent mode.
 
 ### Root README
 
-`README.md` at the project root contains the CLI help output. When commands are added, removed, or their options change, update the help output in `README.md` to stay in sync. You can regenerate it by running `bun run src/cli.ts --help`.
+`README.md` at the project root contains the CLI help output. When commands are added, removed, or their options change, update the help output in `README.md` to stay in sync. You can regenerate it by running `bun run dev -- --help`.
 
 ## Error Handling
 
-All error classes and helpers live in `src/lib/errors.ts`. The global error handler in `src/cli.ts` catches thrown errors and formats them for the user. **Never call `console.error` + `process.exit` directly in commands** — throw an error instead and let the global handler deal with output and exit codes.
+All error classes and helpers live in `packages/cli-core/src/lib/errors.ts`. The global error handler in `packages/cli-core/src/cli.ts` catches thrown errors and formats them for the user. **Never call `console.error` + `process.exit` directly in commands** — throw an error instead and let the global handler deal with output and exit codes.
 
 ### Known failures — `CliError`
 
@@ -196,4 +212,4 @@ const config = await withApiContext(
 
 ### API error classes
 
-`BapiError` and `PlapiError` (both extend `ApiError`) are thrown by the API helpers in `src/commands/api/bapi.ts` and `src/lib/plapi.ts` respectively. Don't construct these in commands — they're thrown automatically by the fetch wrappers. Use `withApiContext` to add context when calling those helpers.
+`BapiError` and `PlapiError` (both extend `ApiError`) are thrown by the API helpers in `packages/cli-core/src/commands/api/bapi.ts` and `packages/cli-core/src/lib/plapi.ts` respectively. Don't construct these in commands — they're thrown automatically by the fetch wrappers. Use `withApiContext` to add context when calling those helpers.
