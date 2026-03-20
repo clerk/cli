@@ -70,6 +70,7 @@ jobs:
 
   build:
     needs: snapshot
+    if: needs.snapshot.outputs.is_fork != 'true'
     uses: ./.github/workflows/build-binaries.yml
     with:
       version: ${{ needs.snapshot.outputs.version }}
@@ -78,6 +79,7 @@ jobs:
 
   smoke-test:
     needs: [snapshot, build]
+    if: needs.snapshot.outputs.is_fork != 'true'
     uses: ./.github/workflows/smoke-test.yml
     with:
       version: ${{ needs.snapshot.outputs.version }}
