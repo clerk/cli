@@ -1,0 +1,14 @@
+{
+  "$schema": "https://unpkg.com/@changesets/config@2.3.0/schema.json",
+  "changelog": "@changesets/cli/changelog",
+  "commit": false,
+  "linked": [],
+  "access": "public",
+  "baseBranch": "origin/main",
+  "updateInternalDependencies": "patch",
+  "ignore": ["@clerk/cli-core"],
+  "snapshot": {
+    "useCalculatedVersion": true,
+    "prereleaseTemplate": "{tag}.v{datetime}"
+  }
+}

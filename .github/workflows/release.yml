@@ -1,0 +1,188 @@
+name: Release
+
+on:
+  push:
+    branches: [main]
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  versioning:
+    runs-on: blacksmith-2vcpu-ubuntu-2404
+    timeout-minutes: 5
+    permissions:
+      contents: write
+      pull-requests: write
+    outputs:
+      release_created: ${{ steps.check.outputs.release_created }}
+      version: ${{ steps.check.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+      - run: bun install --frozen-lockfile
+
+      - id: changesets
+        uses: changesets/action@v1
+        with:
+          version: bun run version-packages
+          commit: "ci(repo): version packages"
+          title: "ci(repo): Version Packages"
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+
+      - name: Check if release needed
+        id: check
+        run: bun run scripts/check-release.ts
+
+  # ─── Stable release ────────────────────────────────────────────────
+
+  build:
+    needs: versioning
+    if: ${{ needs.versioning.outputs.release_created == 'true' }}
+    uses: ./.github/workflows/build-binaries.yml
+    with:
+      version: ${{ needs.versioning.outputs.version }}
+      ref: ${{ github.sha }}
+      artifact-prefix: clerk
+
+  smoke-test:
+    needs: [versioning, build]
+    uses: ./.github/workflows/smoke-test.yml
+    with:
+      version: ${{ needs.versioning.outputs.version }}
+      artifact-prefix: clerk
+      preset: stable
+
+  publish-npm:
+    needs: [versioning, build, smoke-test]
+    # Must run on GitHub-hosted runner for npm OIDC trusted publishing
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          registry-url: "https://registry.npmjs.org"
+      - name: Upgrade npm for OIDC trusted publishing
+        run: npm install -g npm@11
+      - run: bun install --frozen-lockfile
+
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: clerk-*
+          path: dist/artifacts
+
+      - name: Publish packages
+        run: bun run release
+        env:
+          ARTIFACTS_DIR: ${{ github.workspace }}/dist/artifacts
+          GH_TOKEN: ${{ github.token }}
+
+  upload-github-assets:
+    needs: [versioning, build, smoke-test, publish-npm]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: clerk-*
+          path: dist/artifacts
+
+      - name: Upload binaries to GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          tag="v${{ needs.versioning.outputs.version }}"
+          for dir in dist/artifacts/clerk-*/; do
+            target=${dir#dist/artifacts/clerk-} && target=${target%/}
+            ext=""; [[ "$target" == win32-* ]] && ext=".exe"
+            gh release upload "$tag" "${dir}clerk${ext}#clerk-${target}${ext}"
+          done
+
+  # ─── Canary release ────────────────────────────────────────────────
+
+  canary-version:
+    needs: versioning
+    if: ${{ needs.versioning.outputs.release_created != 'true' }}
+    runs-on: blacksmith-2vcpu-ubuntu-2404
+    timeout-minutes: 5
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+      - run: bun install --frozen-lockfile
+
+      - name: Version packages for canary
+        id: version
+        run: |
+          bun run version-packages:canary
+          version=$(jq -r '.version' packages/cli/package.json)
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+
+  canary-build:
+    needs: canary-version
+    uses: ./.github/workflows/build-binaries.yml
+    with:
+      version: ${{ needs.canary-version.outputs.version }}
+      ref: ${{ github.sha }}
+      artifact-prefix: clerk-canary
+
+  canary-smoke-test:
+    needs: [canary-version, canary-build]
+    uses: ./.github/workflows/smoke-test.yml
+    with:
+      version: ${{ needs.canary-version.outputs.version }}
+      artifact-prefix: clerk-canary
+      preset: canary
+
+  canary-publish:
+    needs: [canary-version, canary-build, canary-smoke-test]
+    # Must run on GitHub-hosted runner for npm OIDC trusted publishing
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          registry-url: "https://registry.npmjs.org"
+      - name: Upgrade npm for OIDC trusted publishing
+        run: npm install -g npm@11
+      - run: bun install --frozen-lockfile
+
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: clerk-canary-*
+          path: dist/artifacts
+
+      - name: Rename artifact directories
+        run: |
+          cd dist/artifacts
+          for dir in clerk-canary-*/; do
+            target=${dir#clerk-canary-} && target=${target%/}
+            mv "$dir" "clerk-${target}"
+          done
+
+      - name: Publish canary packages
+        run: bun run release:canary --version "$CANARY_VERSION"
+        env:
+          CANARY_VERSION: ${{ needs.canary-version.outputs.version }}
+          ARTIFACTS_DIR: ${{ github.workspace }}/dist/artifacts
