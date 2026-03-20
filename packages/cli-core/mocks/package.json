@@ -1,0 +1,12 @@
+{
+  "name": "clerk-cli-mock-auth",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite"
+  },
+  "devDependencies": {
+    "typescript": "^5",
+    "vite": "^6.3.5"
+  }
+}
