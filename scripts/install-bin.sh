@@ -18,10 +18,15 @@ bun run build:bin
 mkdir -p "${LOCAL_BIN}"
 install -m 755 "${REPO_ROOT}/dist/clerk" "${LOCAL_BIN}/clerk"
 
+# Login shell name (used to pick config file and fish vs POSIX syntax).
+shell_name() {
+  basename "${SHELL:-/bin/zsh}"
+}
+
 # Return true if we (or the user) already wired ~/.local/bin into shell startup files.
 path_snippet_present() {
   local f
-  for f in "${HOME}/.zshrc" "${HOME}/.bash_profile" "${HOME}/.bashrc" "${HOME}/.profile"; do
+  for f in "${HOME}/.config/fish/config.fish" "${HOME}/.zshrc" "${HOME}/.bash_profile" "${HOME}/.bashrc" "${HOME}/.profile"; do
     [[ -f "${f}" ]] || continue
     grep -qF "${MARKER}" "${f}" && return 0
     grep -qF ".local/bin" "${f}" && return 0
@@ -29,12 +34,36 @@ path_snippet_present() {
   return 1
 }
 
-# Pick the startup file that matches the user’s login shell (macOS default is zsh).
-pick_rc() {
-  case "$(basename "${SHELL:-/bin/zsh}")" in
+# Pick the startup file for the user’s login shell (fish, zsh, bash, or POSIX fallback).
+pick_shell_config() {
+  case "$(shell_name)" in
+    fish) echo "${HOME}/.config/fish/config.fish" ;;
     zsh) echo "${HOME}/.zshrc" ;;
     bash) echo "${HOME}/.bash_profile" ;;
     *) echo "${HOME}/.profile" ;;
+  esac
+}
+
+# Append a PATH snippet: fish uses fish_add_path; other shells use a POSIX export.
+append_path_snippet() {
+  local config="$1"
+  mkdir -p "$(dirname "${config}")"
+  case "$(shell_name)" in
+    fish)
+      {
+        echo ""
+        echo "${MARKER}"
+        # fish_add_path is built into fish 3.2+ and updates PATH for new sessions.
+        echo "fish_add_path \$HOME/.local/bin"
+      } >>"${config}"
+      ;;
+    *)
+      {
+        echo ""
+        echo "${MARKER}"
+        echo "export PATH=\"\${HOME}/.local/bin:\${PATH}\""
+      } >>"${config}"
+      ;;
   esac
 }
 
@@ -44,12 +73,8 @@ rc=""
 if path_snippet_present; then
   :
 else
-  rc="$(pick_rc)"
-  {
-    echo ""
-    echo "${MARKER}"
-    echo "export PATH=\"\${HOME}/.local/bin:\${PATH}\""
-  } >>"${rc}"
+  rc="$(pick_shell_config)"
+  append_path_snippet "${rc}"
   added_path_to_rc=true
 fi
 
