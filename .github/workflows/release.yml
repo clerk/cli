@@ -109,7 +109,7 @@ jobs:
           for dir in dist/artifacts/clerk-*/; do
             target=${dir#dist/artifacts/clerk-} && target=${target%/}
             ext=""; [[ "$target" == win32-* ]] && ext=".exe"
-            gh release upload "$tag" "${dir}clerk${ext}#clerk-${target}${ext}"
+            gh release upload "$tag" "${dir}clerk${ext}#clerk-${target}${ext}" --clobber
           done
 
   # ─── Canary release ────────────────────────────────────────────────

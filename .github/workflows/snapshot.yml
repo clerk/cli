@@ -22,6 +22,7 @@ jobs:
     outputs:
       version: ${{ steps.version.outputs.version }}
       sha: ${{ steps.pr.outputs.sha }}
+      is_fork: ${{ steps.pr.outputs.is_fork }}
     steps:
       - name: React to comment
         env:
@@ -37,8 +38,17 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
         run: |
-          sha=$(gh api "repos/${GH_REPO}/pulls/${{ github.event.issue.number }}" --jq '.head.sha')
+          pr_json=$(gh api "repos/${GH_REPO}/pulls/${{ github.event.issue.number }}")
+          sha=$(echo "$pr_json" | jq -r '.head.sha')
+          head_repo=$(echo "$pr_json" | jq -r '.head.repo.full_name')
+          base_repo=$(echo "$pr_json" | jq -r '.base.repo.full_name')
+          is_fork="false"
+          if [ "$head_repo" != "$base_repo" ]; then
+            is_fork="true"
+            echo "::warning::Snapshot requested on fork PR (head: ${head_repo}) — publish will be skipped."
+          fi
           echo "sha=${sha}" >> "$GITHUB_OUTPUT"
+          echo "is_fork=${is_fork}" >> "$GITHUB_OUTPUT"
 
       - uses: actions/checkout@v4
         with:
@@ -76,6 +86,7 @@ jobs:
 
   publish:
     needs: [snapshot, build, smoke-test]
+    if: needs.snapshot.outputs.is_fork != 'true'
     # Must run on GitHub-hosted runner for npm OIDC trusted publishing
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -149,7 +160,9 @@ jobs:
 
   notify-failure:
     needs: [snapshot, build, smoke-test, publish]
-    if: failure()
+    if: >-
+      always() &&
+      contains(needs.*.result, 'failure')
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:

@@ -1,4 +1,4 @@
-import { mkdir, cp, rm, chmod, copyFile } from "node:fs/promises";
+import { mkdir, cp, rm, chmod } from "node:fs/promises";
 import { join } from "node:path";
 import { parseArgs } from "node:util";
 import { type Target, targets, SCOPE, PKG_PREFIX } from "./targets.ts";
@@ -66,10 +66,6 @@ async function generatePlatformPackage(target: Target, version: string): Promise
   }
   await Bun.write(join(dir, "package.json"), JSON.stringify(pkg, null, 2) + "\n");
 
-  // Include the LICENSE file in each platform package.
-  const licensePath = join(import.meta.dir, "../../LICENSE");
-  await copyFile(licensePath, join(dir, "LICENSE"));
-
   return dir;
 }
 
@@ -128,18 +124,35 @@ try {
 if (!tag && !dryRun) {
   const tagName = `v${version}`;
 
-  // Check if tag already exists (idempotency)
-  const tagCheck = Bun.spawnSync(["git", "rev-parse", tagName], {
+  // Check if tag exists on remote (not just locally)
+  const remoteTagCheck = Bun.spawnSync(
+    ["git", "ls-remote", "--tags", "origin", `refs/tags/${tagName}`],
+    { stdio: ["ignore", "pipe", "pipe"] },
+  );
+  const remoteTagExists =
+    remoteTagCheck.exitCode === 0 && remoteTagCheck.stdout.toString().trim().length > 0;
+
+  if (remoteTagExists) {
+    console.log(`Tag ${tagName} already exists on remote, skipping tag push.`);
+  } else {
+    console.log(`Creating and pushing tag ${tagName}...`);
+    // Create locally if it doesn't exist yet
+    const localTagCheck = Bun.spawnSync(["git", "rev-parse", tagName], {
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    if (localTagCheck.exitCode !== 0) {
+      run(["git", "tag", tagName]);
+    }
+    run(["git", "push", "origin", tagName]);
+  }
+
+  // Create GitHub Release idempotently — skip if it already exists.
+  const releaseViewCheck = Bun.spawnSync(["gh", "release", "view", tagName], {
     stdio: ["ignore", "pipe", "pipe"],
   });
-
-  if (tagCheck.exitCode === 0) {
-    console.log(`Tag ${tagName} already exists, skipping.`);
+  if (releaseViewCheck.exitCode === 0) {
+    console.log(`GitHub Release for ${tagName} already exists, skipping.`);
   } else {
-    console.log(`Creating tag ${tagName}...`);
-    run(["git", "tag", tagName]);
-    run(["git", "push", "origin", tagName]);
-
     console.log(`Creating GitHub Release for ${tagName}...`);
     run(["gh", "release", "create", tagName, "--generate-notes"]);
   }
