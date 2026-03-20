@@ -26,6 +26,10 @@ jobs:
       - uses: oven-sh/setup-bun@v2
       - run: bun install --frozen-lockfile
 
+      - name: Check if release needed
+        id: check
+        run: bun run scripts/check-release.ts
+
       - id: changesets
         uses: changesets/action@v1
         with:
@@ -34,10 +38,6 @@ jobs:
           title: "ci(repo): Version Packages"
         env:
           GITHUB_TOKEN: ${{ github.token }}
-
-      - name: Check if release needed
-        id: check
-        run: bun run scripts/check-release.ts
 
   # ─── Stable release ────────────────────────────────────────────────
 
