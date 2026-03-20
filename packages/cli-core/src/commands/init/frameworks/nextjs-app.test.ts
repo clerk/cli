@@ -183,6 +183,73 @@ export default function middleware(request) {
   expect(plan.actions[0]!.type).not.toBe("skip");
 });
 
+test("skips unsupported middleware export shapes", async () => {
+  await Bun.write(
+    join(tempDir, "middleware.ts"),
+    `const middleware = createMiddleware();
+export default middleware;
+`,
+  );
+  await mkdir(join(tempDir, "app"), { recursive: true });
+  await Bun.write(join(tempDir, "app/layout.tsx"), "<html><body>{children}</body></html>");
+
+  const plan = await nextjsApp.scaffold(makeCtx());
+
+  expect(plan.actions[0]).toMatchObject({
+    type: "skip",
+    skipReason: "Existing middleware uses an unsupported shape for automatic Clerk composition",
+  });
+});
+
+test("skips middleware composition when config export already exists", async () => {
+  await Bun.write(
+    join(tempDir, "middleware.ts"),
+    `export default function middleware() {
+  return Response.redirect("https://example.com");
+}
+
+export const config = {
+  matcher: ["/foo"],
+};
+`,
+  );
+  await mkdir(join(tempDir, "app"), { recursive: true });
+  await Bun.write(join(tempDir, "app/layout.tsx"), "<html><body>{children}</body></html>");
+
+  const plan = await nextjsApp.scaffold(makeCtx());
+
+  expect(plan.actions[0]).toMatchObject({
+    type: "skip",
+    skipReason: "Existing middleware uses an unsupported shape for automatic Clerk composition",
+  });
+});
+
+test("adds Clerk middleware once when existing middleware has no default export", async () => {
+  await Bun.write(
+    join(tempDir, "middleware.ts"),
+    `export function trace() {
+  return "ok";
+}
+`,
+  );
+  await mkdir(join(tempDir, "app"), { recursive: true });
+  await Bun.write(join(tempDir, "app/layout.tsx"), "<html><body>{children}</body></html>");
+
+  const plan = await nextjsApp.scaffold(makeCtx());
+  const middlewareAction = plan.actions[0];
+
+  expect(middlewareAction).toBeDefined();
+  expect(middlewareAction?.type).toBe("modify");
+
+  if (middlewareAction?.type !== "modify") {
+    throw new Error("Expected middleware action to modify middleware.ts");
+  }
+
+  expect(middlewareAction.content.match(/@clerk\/nextjs\/server/g)?.length).toBe(1);
+  expect(middlewareAction.content.match(/const isPublicRoute/g)?.length).toBe(1);
+  expect(middlewareAction.content.match(/export const config/g)?.length).toBe(1);
+});
+
 test("uses proxy.ts when middlewareBasename is proxy", async () => {
   await mkdir(join(tempDir, "app"), { recursive: true });
   await Bun.write(join(tempDir, "app/layout.tsx"), "<html><body>{children}</body></html>");

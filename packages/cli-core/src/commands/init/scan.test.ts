@@ -169,6 +169,14 @@ describe("scanForIssues", () => {
     expect(findings.some((f) => f.message.includes("Better Auth"))).toBe(true);
   });
 
+  test("detects Better Auth import in Vue files", async () => {
+    await mkdir(join(tempDir, "src"), { recursive: true });
+    await Bun.write(join(tempDir, "src/auth.vue"), 'import { auth } from "better-auth";\n');
+
+    const findings = await scanForIssues(tempDir, "vue");
+    expect(findings.some((f) => f.message.includes("Better Auth"))).toBe(true);
+  });
+
   test("detects Passport import", async () => {
     await mkdir(join(tempDir, "src"), { recursive: true });
     await Bun.write(join(tempDir, "src/auth.ts"), 'import passport from "passport";\n');
