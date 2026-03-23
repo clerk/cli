@@ -10,18 +10,20 @@ push to main
     → merge "Version Packages" PR
       → check-release.ts detects unpublished version
         → build job: cross-compile all 8 targets (~5.5s total)
-          → smoke-test job: verify binaries on native runners
-            → publish-npm: generate platform packages + publish wrapper
-            → upload-github-assets: attach binaries to the GitHub Release
+          → sign-macos job: code sign + notarize darwin binaries
+            → smoke-test job: verify binaries on native runners
+              → publish-npm: generate platform packages + publish wrapper
+              → upload-github-assets: attach binaries to the GitHub Release
   → (if no stable release needed) canary.ts versions packages
-    → build → smoke-test subset → upload GitHub pre-release → publish @canary (npm)
+    → build → sign-macos → smoke-test subset → upload GitHub pre-release → publish @canary (npm)
 
 PR comment "!snapshot [name]"
   → snapshot.ts versions packages from PR branch
     → build job: cross-compile binaries
-      → smoke-test job: verify linux-x64 binary
-        → publish-npm: publish @snapshot packages
-          → post installation comment on PR
+      → sign-macos job: code sign + notarize darwin binaries
+        → smoke-test job: verify linux-x64 binary
+          → publish-npm: publish @snapshot packages
+            → post installation comment on PR
 ```
 
 ## Architecture
@@ -109,7 +111,43 @@ Defined in [`.github/workflows/build-binaries.yml`](../.github/workflows/build-b
 3. Verifies the binary format using `file` output
 4. The workflow then uploads each binary as a separate GitHub Actions artifact
 
-### 2. Smoke Test Job (matrix)
+### 2. Sign macOS Job
+
+Defined in [`.github/workflows/sign-macos.yml`](../.github/workflows/sign-macos.yml) and called by the release, canary, and snapshot pipelines. Runs on a macOS runner (one job per darwin architecture) using `scripts/sign-macos.ts`. For each target, the script:
+
+1. Creates a temporary macOS Keychain and imports the Developer ID Application certificate
+2. Signs the binary with `codesign --options runtime` (hardened runtime, required for notarization) and [entitlements](../scripts/entitlements.plist) for Bun's JIT engine
+3. Creates a ZIP archive via `ditto` and submits it to Apple's notary service via `xcrun notarytool submit --wait`
+4. On success, re-uploads the signed binary as a GitHub Actions artifact (overwriting the unsigned one)
+
+Standalone CLI binaries **cannot be stapled** — `xcrun stapler` only works on `.app` bundles, `.dmg`, and `.pkg` files. The notarization ticket lives online; Gatekeeper checks Apple's servers on first execution. This requires internet on first run (standard for CLI tools distributed via npm).
+
+On notarization failure, the script fetches and displays the notarization log for debugging.
+
+#### Required Secrets
+
+The signing workflow requires these GitHub Actions secrets:
+
+| Secret                       | Description                                                                                    |
+| ---------------------------- | ---------------------------------------------------------------------------------------------- |
+| `APPLE_CERTIFICATE_BASE64`   | Base64-encoded `.p12` file containing the Developer ID Application certificate and private key |
+| `APPLE_CERTIFICATE_PASSWORD` | Password that unlocks the `.p12` file                                                          |
+| `APPLE_API_KEY_BASE64`       | Base64-encoded `.p8` App Store Connect API key (for `notarytool`)                              |
+| `APPLE_API_KEY_ID`           | 10-character App Store Connect API key ID                                                      |
+| `APPLE_API_ISSUER_ID`        | App Store Connect issuer UUID                                                                  |
+
+**Certificate expiration:** Developer ID Application certificates are valid for 5 years. When the certificate expires, generate a new one via the Apple Developer portal and update `APPLE_CERTIFICATE_BASE64` and `APPLE_CERTIFICATE_PASSWORD`.
+
+**Local testing:** You can test signing locally (requires macOS with the certificate in your Keychain):
+
+```sh
+bun run scripts/build.ts --target darwin-arm64
+APPLE_CERTIFICATE_BASE64="..." APPLE_CERTIFICATE_PASSWORD="..." \
+APPLE_API_KEY_BASE64="..." APPLE_API_KEY_ID="..." APPLE_API_ISSUER_ID="..." \
+bun run scripts/sign-macos.ts --target darwin-arm64 --artifacts-dir dist/artifacts
+```
+
+### 3. Smoke Test Job (matrix)
 
 Downloads each compiled binary and runs `--version` to verify the binary actually executes. Smoke testing is handled by a reusable workflow (`.github/workflows/smoke-test.yml`) shared across stable, canary, and snapshot pipelines. Each caller passes a preset name (`stable`, `canary`, or `snapshot`); the reusable workflow resolves the preset to a target matrix internally. glibc targets run natively on a platform-matched GitHub-hosted runner; musl targets run inside an Alpine Docker container on a Linux runner.
 
@@ -117,7 +155,7 @@ Not all targets have a native runner available. `win32-arm64` is published as be
 
 Publishing and GitHub Release upload are gated on all smoke tests passing.
 
-### 3. Publish npm Job
+### 4. Publish npm Job
 
 Runs the releaser script (`scripts/releaser/index.ts`) via `bun run release` (stable), `bun run release:canary` (canary), or `bun run release:snapshot` (snapshot):
 
@@ -150,7 +188,7 @@ Publishing uses [npm OIDC trusted publishing](https://docs.npmjs.com/trusted-pub
 
 > **First publish**: New packages cannot use trusted publishing until they exist on npm. The very first stable release requires a one-time `NODE_AUTH_TOKEN` with a granular access token. After that, configure trusted publishers for all packages and remove the token.
 
-### 4. Upload GitHub Assets Job
+### 5. Upload GitHub Assets Job
 
 Attaches the compiled binaries to the GitHub Release for direct download. Binaries are uploaded with display names following the `clerk-<target>` convention (e.g., `clerk-darwin-arm64`, `clerk-win32-x64.exe`).
 
@@ -166,11 +204,14 @@ Attaches the compiled binaries to the GitHub Release for direct download. Binari
 | `scripts/releaser/index.ts`            | Generates platform packages and publishes everything to npm                    |
 | `scripts/releaser/targets.ts`          | Target definitions (used by both releaser and build.ts)                        |
 | `scripts/build.ts`                     | Cross-compiles CLI binaries for all 8 platform targets                         |
+| `scripts/sign-macos.ts`                | Signs and notarizes macOS binaries (keychain, codesign, notarytool)            |
+| `scripts/entitlements.plist`           | macOS entitlements for Bun's JIT engine (used by codesign)                     |
 | `scripts/canary.ts`                    | Versions packages for canary channel using Changesets snapshots                |
 | `scripts/snapshot.ts`                  | Versions packages for snapshot channel using Changesets snapshots              |
 | `scripts/check-release.ts`             | Detects if a stable release is needed (compares version to npm registry)       |
 | `.changeset/config.json`               | Changesets configuration                                                       |
 | `.github/workflows/build-binaries.yml` | Reusable workflow for cross-compiling binaries (called by release + snapshot)  |
+| `.github/workflows/sign-macos.yml`     | Reusable workflow for macOS code signing and notarization                      |
 | `.github/workflows/smoke-test.yml`     | Reusable workflow for smoke-testing binaries (called by release + snapshot)    |
 | `.github/workflows/release.yml`        | GitHub Actions release + canary workflow                                       |
 | `.github/workflows/snapshot.yml`       | GitHub Actions snapshot workflow (triggered by PR comments)                    |
@@ -230,4 +271,5 @@ If your change is internal-only (CI, tests, docs, refactoring), you can skip the
 - **Native smoke tests**: Each binary is executed on a native runner for its platform before publishing. This catches cross-compilation issues that format checks alone would miss.
 - **Org membership check**: Snapshot releases require the commenter to be a `MEMBER` or `OWNER` of the repository's organization, verified via `author_association`.
 - **OIDC trusted publishing**: Publish jobs authenticate via GitHub's OIDC provider instead of stored npm tokens. This eliminates secret rotation, prevents token exfiltration, and scopes publish permissions to specific workflow files.
+- **macOS code signing and notarization**: macOS binaries are signed with a Developer ID Application certificate and notarized by Apple before publishing. Gatekeeper checks the notarization ticket online on first execution.
 - **CI build check**: Every PR to `main` runs a JS bundle build to catch bundler-specific failures before merge.
