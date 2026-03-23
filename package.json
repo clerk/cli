@@ -12,6 +12,12 @@
     "format": "bun run --filter @clerk/cli-core format && oxfmt --write scripts/",
     "format:check": "bun run --filter @clerk/cli-core format:check && oxfmt --check scripts/",
     "build:compile": "bun run --filter @clerk/cli-core build:compile",
+    "version-packages": "bun changeset version",
+    "version-packages:canary": "bun run scripts/snapshot.ts -- canary",
+    "version-packages:snapshot": "bun run scripts/snapshot.ts",
+    "release": "bun run scripts/releaser/index.ts",
+    "release:canary": "bun run scripts/releaser/index.ts --tag canary",
+    "release:snapshot": "bun run scripts/releaser/index.ts --tag snapshot",
     "build:compile:all": "bun run scripts/build.ts",
     "global:link": "bun link --cwd packages/cli-core",
     "global:unlink": "bun unlink --cwd packages/cli-core",
@@ -19,6 +25,7 @@
     "prepare": "git config core.hooksPath .hooks"
   },
   "devDependencies": {
+    "@changesets/cli": "^2.29.4",
     "@types/bun": "^1.3.9",
     "nano-staged": "^0.9.0",
     "oxfmt": "^0.36.0",
