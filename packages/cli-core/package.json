@@ -2,6 +2,9 @@
   "name": "@clerk/cli-core",
   "version": "0.0.0",
   "private": true,
+  "bin": {
+    "clerk": "./src/cli.ts"
+  },
   "type": "module",
   "scripts": {
     "build": "bun build ./src/cli.ts --outfile ./dist/cli.js --target node --external @napi-rs/keyring",
