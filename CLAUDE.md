@@ -13,6 +13,7 @@ This is a Bun workspace monorepo:
 - `scripts/releaser/` — release publishing script that generates platform packages and publishes to npm
 
 See [docs/releasing.md](docs/releasing.md) for the full release flow, channels, and safeguards.
+See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup, pre-release install methods, and PR guidelines.
 
 ## Bun
 

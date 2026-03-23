@@ -2,6 +2,14 @@
 
 The Clerk command-line interface.
 
+## Installation
+
+```sh
+npm install -g clerk
+```
+
+## Usage
+
 ```
 Usage: clerk [options] [command]
 
