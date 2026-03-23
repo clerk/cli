@@ -16,6 +16,7 @@ import { doctor } from "./commands/doctor/index.ts";
 import { switchEnv } from "./commands/switch-env/index.ts";
 import { getEnvironment } from "./lib/config.ts";
 import { setCurrentEnv, isValidEnv, getCurrentEnvName } from "./lib/environment.ts";
+import { completion, SUPPORTED_SHELLS } from "./commands/completion/index.ts";
 import { CliError, UserAbortError, ApiError, EXIT_CODE, throwUsageError } from "./lib/errors.ts";
 import { red } from "./lib/color.ts";
 import { isAgent } from "./mode.ts";
@@ -337,6 +338,24 @@ Examples:
   $ clerk switch-env production        Switch back to production`,
     )
     .action(switchEnv);
+
+  program
+    .command("completion")
+    .description("Generate shell autocompletion script")
+    .addArgument(
+      program
+        .createArgument("<shell>", `Shell type (${SUPPORTED_SHELLS.join(", ")})`)
+        .choices(SUPPORTED_SHELLS),
+    )
+    .addHelpText(
+      "after",
+      `
+Examples:
+  $ clerk completion bash       # Output bash completion script
+  $ clerk completion zsh        # Output zsh completion script
+  $ eval "$(clerk completion bash)"  # Enable completions in current session`,
+    )
+    .action(completion);
 
   program
     .command("deploy", { hidden: true })
