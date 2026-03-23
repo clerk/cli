@@ -77,8 +77,21 @@ jobs:
       ref: ${{ needs.snapshot.outputs.sha }}
       artifact-prefix: clerk-snapshot
 
-  smoke-test:
+  sign-macos:
     needs: [snapshot, build]
+    if: needs.snapshot.outputs.is_fork != 'true'
+    uses: ./.github/workflows/sign-macos.yml
+    with:
+      artifact-prefix: clerk-snapshot
+    secrets:
+      APPLE_CERTIFICATE_BASE64: ${{ secrets.APPLE_CERTIFICATE_BASE64 }}
+      APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+      APPLE_API_KEY_BASE64: ${{ secrets.APPLE_API_KEY_BASE64 }}
+      APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+      APPLE_API_ISSUER_ID: ${{ secrets.APPLE_API_ISSUER_ID }}
+
+  smoke-test:
+    needs: [snapshot, build, sign-macos]
     if: needs.snapshot.outputs.is_fork != 'true'
     uses: ./.github/workflows/smoke-test.yml
     with:
@@ -87,7 +100,7 @@ jobs:
       preset: snapshot
 
   publish:
-    needs: [snapshot, build, smoke-test]
+    needs: [snapshot, build, sign-macos, smoke-test]
     if: needs.snapshot.outputs.is_fork != 'true'
     # Must run on GitHub-hosted runner for npm OIDC trusted publishing
     runs-on: ubuntu-latest
@@ -161,7 +174,7 @@ jobs:
           gh pr comment "${PR_NUMBER}" --repo "${GH_REPO}" --body-file /tmp/comment-body.md
 
   notify-failure:
-    needs: [snapshot, build, smoke-test, publish]
+    needs: [snapshot, build, sign-macos, smoke-test, publish]
     if: >-
       always() &&
       contains(needs.*.result, 'failure')
