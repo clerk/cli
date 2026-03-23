@@ -6,7 +6,7 @@
   ],
   "scripts": {
     "build": "bun run --filter @clerk/cli-core build",
-    "dev": "bun run --filter @clerk/cli-core dev",
+    "dev": "bun run --cwd packages/cli-core dev",
     "test": "bun run --filter @clerk/cli-core test",
     "lint": "bun run --filter @clerk/cli-core lint && oxlint scripts/",
     "format": "bun run --filter @clerk/cli-core format && oxfmt --write scripts/",
