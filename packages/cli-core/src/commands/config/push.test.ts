@@ -49,6 +49,7 @@ describe("config push", () => {
 
   async function runConfigPatch(
     options: {
+      app?: string;
       instance?: string;
       file?: string;
       json?: string;
@@ -62,6 +63,7 @@ describe("config push", () => {
 
   async function runConfigPut(
     options: {
+      app?: string;
       instance?: string;
       file?: string;
       json?: string;
@@ -157,6 +159,26 @@ describe("config push", () => {
     await runConfigPatch({ json: '{"session":{"lifetime":3600}}', yes: true });
     expect(capturedMethod).toBe("PATCH");
     expect(JSON.parse(capturedBody)).toEqual({ session: { lifetime: 3600 } });
+  });
+
+  test("patch supports --app without a linked profile", async () => {
+    let capturedUrl = "";
+    stubFetch(async (input, init) => {
+      capturedUrl = input.toString();
+      if (init?.method === undefined) {
+        return new Response(
+          JSON.stringify({
+            application_id: "app_1",
+            instances: [{ instance_id: "ins_dev", environment_type: "development" }],
+          }),
+          { status: 200 },
+        );
+      }
+      return new Response(JSON.stringify(mockResponse), { status: 200 });
+    });
+
+    await runConfigPatch({ app: "app_1", json: '{"session":{"lifetime":3600}}', yes: true });
+    expect(capturedUrl).toContain("/instances/ins_dev/");
   });
 
   test("patch reads config from --file", async () => {

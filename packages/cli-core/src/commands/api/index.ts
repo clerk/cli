@@ -1,6 +1,6 @@
 import { confirm } from "@inquirer/prompts";
-import { resolveProfile, resolveInstanceId } from "../../lib/config.ts";
-import { fetchApplication } from "../../lib/plapi.ts";
+import { resolveAppContext } from "../../lib/config.ts";
+import { fetchApplication, getAuthToken, validateKeyPrefix } from "../../lib/plapi.ts";
 import { BAPI_BASE_URL, PLAPI_BASE_URL } from "../../lib/constants.ts";
 import { bapiRequest } from "./bapi.ts";
 import {
@@ -17,6 +17,7 @@ export interface ApiOptions {
   data?: string;
   file?: string;
   include?: boolean;
+  app?: string;
   secretKey?: string;
   instance?: string;
   platform?: boolean;
@@ -54,14 +55,7 @@ export async function api(
   let baseUrl: string;
 
   if (options.platform) {
-    const key = process.env.CLERK_PLATFORM_API_KEY;
-    if (!key) {
-      throwUsageError(
-        "CLERK_PLATFORM_API_KEY environment variable is required for --platform mode.",
-        "https://clerk.com/docs/guides/development/clerk-environment-variables",
-      );
-    }
-    secretKey = key;
+    secretKey = await getAuthToken();
     baseUrl = PLAPI_BASE_URL;
   } else {
     secretKey = await resolveSecretKey(options);
@@ -119,34 +113,43 @@ export async function api(
 }
 
 async function resolveSecretKey(options: ApiOptions): Promise<string> {
-  if (options.secretKey) return options.secretKey;
-
-  if (process.env.CLERK_SECRET_KEY) return process.env.CLERK_SECRET_KEY;
-
-  // Resolve from linked profile via Platform API
-  const resolved = await resolveProfile(process.cwd());
-  const platformKey = process.env.CLERK_PLATFORM_API_KEY;
-
-  if (!resolved || !platformKey) {
-    throwUsageError(
-      "No secret key found. Provide one via:\n" +
-        "  --secret-key <key>\n" +
-        "  CLERK_SECRET_KEY environment variable\n" +
-        (resolved
-          ? "  Set CLERK_PLATFORM_API_KEY to auto-resolve from your linked project"
-          : "  Link a project with `clerk link` and set CLERK_PLATFORM_API_KEY"),
-      "https://clerk.com/docs/guides/development/clerk-environment-variables",
-    );
+  if (options.secretKey) {
+    validateKeyPrefix(options.secretKey, "sk_");
+    return options.secretKey;
   }
 
-  const { profile } = resolved;
-  const instance = resolveInstanceId(profile, options.instance);
+  if (process.env.CLERK_SECRET_KEY) {
+    validateKeyPrefix(process.env.CLERK_SECRET_KEY, "sk_");
+    return process.env.CLERK_SECRET_KEY;
+  }
 
-  const app = await withApiContext(fetchApplication(profile.appId), "Failed to resolve secret key");
-  const matched = app.instances.find((i) => i.instance_id === instance.id);
+  // Resolve from linked profile via Platform API
+  let ctx: Awaited<ReturnType<typeof resolveAppContext>>;
+  try {
+    ctx = await resolveAppContext({ app: options.app, instance: options.instance });
+  } catch (error) {
+    if (error instanceof Error && error.message.startsWith("No Clerk project linked")) {
+      throwUsageError(
+        "No secret key found. Provide one via:\n" +
+          "  --secret-key <key>\n" +
+          "  CLERK_SECRET_KEY environment variable\n" +
+          "  Link a project with `clerk link`, or pass --app <app_id>",
+        "https://clerk.com/docs/guides/development/clerk-environment-variables",
+      );
+    }
+    throw error;
+  }
+
+  const app = await withApiContext(fetchApplication(ctx.appId), "Failed to resolve secret key");
+  const matched = app.instances.find((i) => i.instance_id === ctx.instanceId);
   if (!matched) {
-    throw new CliError(`Instance ${instance.id} not found in application.`, {
+    throw new CliError(`Instance ${ctx.instanceId} not found in application.`, {
       docsUrl: "https://clerk.com/docs/guides/development/managing-environments",
+    });
+  }
+  if (!matched.secret_key) {
+    throw new CliError(`No secret key found for ${ctx.instanceLabel} instance.`, {
+      docsUrl: "https://clerk.com/docs/guides/development/clerk-environment-variables",
     });
   }
   return matched.secret_key;

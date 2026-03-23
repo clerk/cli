@@ -4,16 +4,17 @@ Pulls Clerk API keys for the linked instance and merges them into the project's 
 
 ## Usage
 
-```
-clerk env pull [--instance dev|prod|<instance_id>] [--file <path>]
+```sh
+clerk env pull [--app <app_id>] [--instance dev|prod|<instance_id>] [--file <path>]
 ```
 
 ### Options
 
-| Option            | Description                                               |
-| ----------------- | --------------------------------------------------------- |
-| `--instance <id>` | Instance to target (`dev`, `prod`, or a full instance ID) |
-| `--file <path>`   | Target env file (default: auto-detect)                    |
+| Option            | Description                                                  |
+| ----------------- | ------------------------------------------------------------ |
+| `--app <id>`      | Application ID to target directly (works from any directory) |
+| `--instance <id>` | Instance to target (`dev`, `prod`, or a full instance ID)    |
+| `--file <path>`   | Target env file (default: auto-detect)                       |
 
 ## Sequence Diagram
 
@@ -24,11 +25,15 @@ sequenceDiagram
     participant API as Clerk Platform API
     participant FS as File System
 
-    Note over CLI: clerk env pull [--instance dev|prod] [--file .env]
+    Note over CLI: clerk env pull [--app app_123] [--instance dev|prod] [--file .env]
 
-    %% Resolve project profile
-    CLI->>FS: Read ~/.clerk/config.json
-    FS-->>CLI: { appId, instances }
+    alt --app flag provided
+        CLI->>API: GET /v1/platform/applications/{appId}
+        API-->>CLI: { instances }
+    else Resolve project profile
+        CLI->>FS: Read ~/.clerk/config.json
+        FS-->>CLI: { appId, instances }
+    end
 
     %% Fetch application with keys
     CLI->>API: GET /v1/platform/applications/{appId}
@@ -62,10 +67,10 @@ sequenceDiagram
 
 ## API Endpoints
 
-| Step              | Method | Endpoint                            | Notes                                       |
-| ----------------- | ------ | ----------------------------------- | ------------------------------------------- |
-| Auth              | —      | Local config                        | Token from `CLERK_PLATFORM_API_KEY` env var |
-| Fetch application | `GET`  | `/v1/platform/applications/{appId}` | Returns all instances with keys             |
+| Step              | Method | Endpoint                            | Notes                                                                   |
+| ----------------- | ------ | ----------------------------------- | ----------------------------------------------------------------------- |
+| Auth              | —      | Local config                        | Uses `CLERK_PLATFORM_API_KEY`, `clerk auth login`, or human-mode prompt |
+| Fetch application | `GET`  | `/v1/platform/applications/{appId}` | Returns all instances with keys                                         |
 
 ## Framework Detection
 

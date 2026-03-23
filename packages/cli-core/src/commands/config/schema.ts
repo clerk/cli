@@ -1,27 +1,22 @@
-import { resolveProfile, resolveInstanceId } from "../../lib/config.ts";
+import { resolveAppContext } from "../../lib/config.ts";
 import { fetchInstanceConfigSchema } from "../../lib/plapi.ts";
-import { CliError, withApiContext } from "../../lib/errors.ts";
+import { withApiContext } from "../../lib/errors.ts";
 
 interface ConfigSchemaOptions {
+  app?: string;
   instance?: string;
   output?: string;
   keys?: string[];
 }
 
 export async function configSchema(options: ConfigSchemaOptions): Promise<void> {
-  const resolved = await resolveProfile(process.cwd());
-  if (!resolved) {
-    throw new CliError("No Clerk project linked to this directory. Run `clerk link` to set up.");
-  }
-
-  const { profile } = resolved;
-  const instance = resolveInstanceId(profile, options.instance);
+  const ctx = await resolveAppContext(options);
 
   // Use `console.error` for informational messages so stdout is just the JSON response.
-  console.error(`Pulling config schema from ${instance.label} instance...`);
+  console.error(`Pulling config schema from ${ctx.instanceLabel} instance...`);
 
   const schema = await withApiContext(
-    fetchInstanceConfigSchema(profile.appId, instance.id, options.keys),
+    fetchInstanceConfigSchema(ctx.appId, ctx.instanceId, options.keys),
     "Failed to fetch config schema",
   );
 

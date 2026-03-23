@@ -10,7 +10,11 @@ import {
   stubFetch,
 } from "../../test/stubs.ts";
 
-mock.module("../../lib/credential-store.ts", () => credentialStoreStubs);
+let mockStoredToken: string | null = null;
+mock.module("../../lib/credential-store.ts", () => ({
+  ...credentialStoreStubs,
+  getToken: async () => mockStoredToken,
+}));
 mock.module("../../lib/git.ts", () => gitStubs);
 
 let _mode = "human";
@@ -49,6 +53,52 @@ mock.module("../../lib/config.ts", () => ({
     if (!id) throw new Error(`No ${env} instance configured.`);
     return { id, label: env };
   },
+  resolveAppContext: async (options: { app?: string; instance?: string }) => {
+    if (options.app) {
+      const aliases: Record<string, string> = {
+        dev: "development",
+        development: "development",
+        prod: "production",
+        production: "production",
+      };
+      if (!options.instance) {
+        return { appId: options.app, instanceId: "ins_dev", instanceLabel: "development" };
+      }
+      const env = aliases[options.instance];
+      if (!env) {
+        return {
+          appId: options.app,
+          instanceId: options.instance,
+          instanceLabel: options.instance,
+        };
+      }
+      return {
+        appId: options.app,
+        instanceId: env === "production" ? "ins_prod" : "ins_dev",
+        instanceLabel: env,
+      };
+    }
+
+    const profile = _profiles[process.cwd()];
+    if (!profile) throw new Error("No Clerk project linked");
+    const instance = !options.instance
+      ? { id: profile.instances.development, label: "development" }
+      : (() => {
+          const aliases: Record<string, string> = {
+            dev: "development",
+            development: "development",
+            prod: "production",
+            production: "production",
+          };
+          const env = aliases[options.instance];
+          if (!env) return { id: options.instance, label: options.instance };
+          const id = profile.instances[env];
+          if (!id) throw new Error(`No ${env} instance configured.`);
+          return { id, label: env };
+        })();
+
+    return { appId: profile.appId, instanceId: instance.id, instanceLabel: instance.label };
+  },
 }));
 
 mock.module("@inquirer/prompts", () => promptsStubs);
@@ -70,6 +120,7 @@ describe("api command", () => {
 
   beforeEach(async () => {
     Object.keys(_profiles).forEach((k) => delete _profiles[k]);
+    mockStoredToken = null;
     _mode = "human";
     tempDir = await mkdtemp(join(tmpdir(), "clerk-api-test-"));
     _setConfigDir(tempDir);
@@ -252,6 +303,76 @@ describe("api command", () => {
     expect(capturedHeaders?.get("Authorization")).toBe("Bearer sk_live_override");
   });
 
+  test("rejects a platform key passed as --secret-key", async () => {
+    await expect(runApi("/users", { secretKey: "ak_test_wrong" })).rejects.toThrow(
+      "Expected a Secret key",
+    );
+  });
+
+  test("uses --app to resolve a secret key without a linked profile", async () => {
+    delete process.env.CLERK_SECRET_KEY;
+    process.env.CLERK_PLATFORM_API_KEY = "ak_test_platform";
+    let capturedHeaders: Headers | undefined;
+
+    stubFetch(async (input, init) => {
+      const url = input.toString();
+      if (url.includes("/v1/platform/applications/app_1")) {
+        return new Response(
+          JSON.stringify({
+            application_id: "app_1",
+            instances: [
+              {
+                instance_id: "ins_dev",
+                environment_type: "development",
+                secret_key: "sk_test_derived",
+              },
+            ],
+          }),
+          { status: 200 },
+        );
+      }
+
+      capturedHeaders = new Headers(init?.headers);
+      return new Response(JSON.stringify({}), { status: 200 });
+    });
+
+    await runApi("/users", { app: "app_1" });
+    expect(capturedHeaders?.get("Authorization")).toBe("Bearer sk_test_derived");
+  });
+
+  test("uses stored auth token to resolve a secret key for --app", async () => {
+    delete process.env.CLERK_SECRET_KEY;
+    delete process.env.CLERK_PLATFORM_API_KEY;
+    mockStoredToken = "oauth_token_123";
+    let capturedHeaders: Headers | undefined;
+
+    stubFetch(async (input, init) => {
+      const url = input.toString();
+      if (url.includes("/v1/platform/applications/app_1")) {
+        expect(new Headers(init?.headers).get("Authorization")).toBe("Bearer oauth_token_123");
+        return new Response(
+          JSON.stringify({
+            application_id: "app_1",
+            instances: [
+              {
+                instance_id: "ins_dev",
+                environment_type: "development",
+                secret_key: "sk_test_oauth",
+              },
+            ],
+          }),
+          { status: 200 },
+        );
+      }
+
+      capturedHeaders = new Headers(init?.headers);
+      return new Response(JSON.stringify({}), { status: 200 });
+    });
+
+    await runApi("/users", { app: "app_1" });
+    expect(capturedHeaders?.get("Authorization")).toBe("Bearer sk_test_oauth");
+  });
+
   // --- --platform mode ---
 
   test("--platform uses Platform API URL and key", async () => {
@@ -275,7 +396,7 @@ describe("api command", () => {
     delete process.env.CLERK_PLATFORM_API_KEY;
 
     await expect(runApi("/v1/platform/applications", { platform: true })).rejects.toThrow(
-      "CLERK_PLATFORM_API_KEY",
+      "Not authenticated",
     );
   });
 

@@ -10,6 +10,7 @@ Fetches the instance configuration from the Clerk Platform API and outputs it as
 
 ```sh
 clerk config pull
+clerk config pull --app app_123
 clerk config pull --instance prod
 clerk config pull --output clerk-config.json
 ```
@@ -18,13 +19,16 @@ clerk config pull --output clerk-config.json
 
 | Flag              | Description                                                                         |
 | ----------------- | ----------------------------------------------------------------------------------- |
+| `--app <id>`      | Application ID to target directly (works from any directory)                        |
 | `--instance <id>` | Instance to target (`dev`, `prod`, or a full instance ID). Defaults to development. |
 | `--output <file>` | Write config to a file instead of stdout                                            |
 
 #### Requirements
 
-- Must have a Clerk project linked to the current directory (via `clerk init`)
-- Requires the `CLERK_PLATFORM_API_KEY` environment variable
+- Requires either:
+  - a linked Clerk project in the current directory, or
+  - `--app <id>` to target an application directly
+- Authenticated via `CLERK_PLATFORM_API_KEY`, `clerk auth login`, or the interactive human-mode prompt
 
 #### API Endpoints
 
@@ -42,6 +46,7 @@ Fetches the JSON Schema for an instance's configuration from the Clerk Platform 
 
 ```sh
 clerk config schema
+clerk config schema --app app_123
 clerk config schema --instance prod
 clerk config schema --output config-schema.json
 clerk config schema --keys session sign_up
@@ -51,14 +56,17 @@ clerk config schema --keys session sign_up
 
 | Flag               | Description                                                                         |
 | ------------------ | ----------------------------------------------------------------------------------- |
+| `--app <id>`       | Application ID to target directly (works from any directory)                        |
 | `--instance <id>`  | Instance to target (`dev`, `prod`, or a full instance ID). Defaults to development. |
 | `--output <file>`  | Write schema to a file instead of stdout                                            |
 | `--keys <keys...>` | Config keys to retrieve schema for                                                  |
 
 #### Requirements
 
-- Must have a Clerk project linked to the current directory (via `clerk init`)
-- Requires the `CLERK_PLATFORM_API_KEY` environment variable
+- Requires either:
+  - a linked Clerk project in the current directory, or
+  - `--app <id>` to target an application directly
+- Authenticated via `CLERK_PLATFORM_API_KEY`, `clerk auth login`, or the interactive human-mode prompt
 
 #### API Endpoints
 
@@ -76,6 +84,7 @@ Input can be provided via `--json` (inline), `--file` (path to a JSON file), or 
 
 ```sh
 clerk config patch --json '{"session":{"lifetime":3600}}'
+clerk config patch --app app_123 --json '{"session":{"lifetime":3600}}'
 clerk config patch --file partial-config.json
 cat partial-config.json | clerk config patch
 clerk config patch --file partial-config.json --dry-run
@@ -85,6 +94,7 @@ clerk config patch --file partial-config.json --dry-run
 
 | Flag              | Description                                                                         |
 | ----------------- | ----------------------------------------------------------------------------------- |
+| `--app <id>`      | Application ID to target directly (works from any directory)                        |
 | `--instance <id>` | Instance to target (`dev`, `prod`, or a full instance ID). Defaults to development. |
 | `--file <path>`   | Read config JSON from a file                                                        |
 | `--json <string>` | Pass config JSON inline (takes priority over `--file`)                              |
@@ -93,8 +103,10 @@ clerk config patch --file partial-config.json --dry-run
 
 #### Requirements
 
-- Must have a Clerk project linked to the current directory (via `clerk init`)
-- Requires the `CLERK_PLATFORM_API_KEY` environment variable
+- Requires either:
+  - a linked Clerk project in the current directory, or
+  - `--app <id>` to target an application directly
+- Authenticated via `CLERK_PLATFORM_API_KEY`, `clerk auth login`, or the interactive human-mode prompt
 
 #### API Endpoints
 
@@ -112,6 +124,7 @@ Input can be provided via `--json` (inline), `--file` (path to a JSON file), or 
 
 ```sh
 clerk config put --file full-config.json
+clerk config put --app app_123 --file full-config.json
 clerk config put --json '{"session":{"lifetime":3600},"sign_in":{"enabled":true}}'
 cat full-config.json | clerk config put
 clerk config put --file full-config.json --dry-run
@@ -121,6 +134,7 @@ clerk config put --file full-config.json --dry-run
 
 | Flag              | Description                                                                         |
 | ----------------- | ----------------------------------------------------------------------------------- |
+| `--app <id>`      | Application ID to target directly (works from any directory)                        |
 | `--instance <id>` | Instance to target (`dev`, `prod`, or a full instance ID). Defaults to development. |
 | `--file <path>`   | Read config JSON from a file                                                        |
 | `--json <string>` | Pass config JSON inline (takes priority over `--file`)                              |
@@ -129,8 +143,10 @@ clerk config put --file full-config.json --dry-run
 
 #### Requirements
 
-- Must have a Clerk project linked to the current directory (via `clerk init`)
-- Requires the `CLERK_PLATFORM_API_KEY` environment variable
+- Requires either:
+  - a linked Clerk project in the current directory, or
+  - `--app <id>` to target an application directly
+- Authenticated via `CLERK_PLATFORM_API_KEY`, `clerk auth login`, or the interactive human-mode prompt
 
 #### API Endpoints
 
