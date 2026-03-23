@@ -3,7 +3,7 @@ import { resolveAppContext } from "../../lib/config.ts";
 import { fetchApplication } from "../../lib/plapi.ts";
 import { parseEnvFile, mergeEnvVars, serializeEnvFile } from "../../lib/dotenv.ts";
 import { detectPublishableKeyName } from "../../lib/framework.ts";
-import { CliError, withApiContext } from "../../lib/errors.ts";
+import { CliError, ERROR_CODE, withApiContext } from "../../lib/errors.ts";
 
 interface EnvPullOptions {
   app?: string;
@@ -33,6 +33,7 @@ export async function pull(options: EnvPullOptions): Promise<void> {
   const matched = app.instances.find((i) => i.instance_id === ctx.instanceId);
   if (!matched) {
     throw new CliError(`Instance ${ctx.instanceId} not found in application response.`, {
+      code: ERROR_CODE.INSTANCE_NOT_FOUND,
       docsUrl: "https://clerk.com/docs/guides/development/managing-environments",
     });
   }
