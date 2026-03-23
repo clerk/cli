@@ -314,3 +314,63 @@ function getConfigFile(): string {
   const homeDir = process.env.CLERK_CONFIG_DIR ?? join(homedir(), ".clerk");
   return join(homeDir, "config.json");
 }
+
+// ── Shell completion check ───────────────────────────────────────────────────
+
+type DetectedShell = "bash" | "zsh" | "fish";
+
+export async function checkShellCompletion(): Promise<CheckResult> {
+  const check = defineCheck("Shell completion");
+  const shell = detectShell();
+
+  if (!shell) {
+    return check.pass("Shell completion (could not detect shell, skipped)");
+  }
+
+  const installed = await isCompletionInstalled(shell);
+  if (installed) {
+    return check.pass(`Shell completion installed for ${shell}`);
+  }
+
+  return check.warn(`Shell completion not installed for ${shell}`, {
+    remedy: completionRemedy(shell),
+  });
+}
+
+function detectShell(): DetectedShell | null {
+  const shellPath = process.env.SHELL;
+  if (!shellPath) return null;
+
+  const name = shellPath.split("/").pop();
+  if (name === "zsh") return "zsh";
+  if (name === "bash") return "bash";
+  if (name === "fish") return "fish";
+  return null;
+}
+
+async function isCompletionInstalled(shell: DetectedShell): Promise<boolean> {
+  const home = process.env.HOME ?? homedir();
+
+  if (shell === "fish") {
+    return Bun.file(join(home, ".config/fish/completions/clerk.fish")).exists();
+  }
+
+  const configFiles =
+    shell === "zsh" ? [join(home, ".zshrc")] : [join(home, ".bashrc"), join(home, ".bash_profile")];
+
+  for (const path of configFiles) {
+    const file = Bun.file(path);
+    if (!(await file.exists())) continue;
+    const content = await file.text();
+    if (content.includes("clerk completion")) return true;
+  }
+
+  return false;
+}
+
+function completionRemedy(shell: DetectedShell): string {
+  if (shell === "fish") {
+    return "Run `clerk completion fish > ~/.config/fish/completions/clerk.fish`";
+  }
+  return `Add \`eval "$(clerk completion ${shell})"\` to your ~/.${shell}rc`;
+}

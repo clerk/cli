@@ -10,6 +10,7 @@ import {
   checkInstances,
   checkEnvVars,
   checkConfigFile,
+  checkShellCompletion,
 } from "./checks.ts";
 import { formatCheckResult, formatJson } from "./format.ts";
 import type { CheckFn, CheckResult, DoctorContext, DoctorOptions } from "./types.ts";
@@ -22,6 +23,7 @@ const CHECKS: CheckFn[] = [
   checkInstances,
   checkEnvVars,
   checkConfigFile,
+  checkShellCompletion,
 ];
 
 async function runChecks(ctx: DoctorContext, options: DoctorOptions): Promise<CheckResult[]> {
