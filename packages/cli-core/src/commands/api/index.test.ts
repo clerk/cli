@@ -316,7 +316,7 @@ describe("api command", () => {
 
     stubFetch(async (input, init) => {
       const url = input.toString();
-      if (url.endsWith("/v1/platform/applications/app_1")) {
+      if (url.includes("/v1/platform/applications/app_1")) {
         return new Response(
           JSON.stringify({
             application_id: "app_1",
@@ -348,7 +348,7 @@ describe("api command", () => {
 
     stubFetch(async (input, init) => {
       const url = input.toString();
-      if (url.endsWith("/v1/platform/applications/app_1")) {
+      if (url.includes("/v1/platform/applications/app_1")) {
         expect(new Headers(init?.headers).get("Authorization")).toBe("Bearer oauth_token_123");
         return new Response(
           JSON.stringify({

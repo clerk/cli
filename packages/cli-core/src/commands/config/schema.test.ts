@@ -92,10 +92,13 @@ describe("config schema", () => {
 
     stubFetch(async (input) => {
       const url = input.toString();
-      if (url.endsWith("/v1/platform/applications/app_1")) {
+      if (url.includes("/instances/") && url.includes("/config")) {
+        return new Response(JSON.stringify(mockSchema), { status: 200 });
+      }
+      if (url.includes("/v1/platform/applications/app_1")) {
         return new Response(JSON.stringify(mockApp), { status: 200 });
       }
-      return new Response(JSON.stringify(mockSchema), { status: 200 });
+      throw new Error(`Unexpected fetch: ${url}`);
     });
 
     await runConfigSchema({ app: "app_1" });
