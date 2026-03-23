@@ -2,7 +2,7 @@ import { confirm } from "@inquirer/prompts";
 import { resolveAppContext } from "../../lib/config.ts";
 import { putInstanceConfig, patchInstanceConfig } from "../../lib/plapi.ts";
 import { isHuman } from "../../mode.ts";
-import { throwUsageError, throwUserAbort, withApiContext } from "../../lib/errors.ts";
+import { throwUsageError, throwUserAbort, withApiContext, ERROR_CODE } from "../../lib/errors.ts";
 
 interface ConfigPushOptions {
   app?: string;
@@ -53,11 +53,15 @@ async function configPush(options: ConfigPushOptions, op: Operation): Promise<vo
   try {
     configPayload = JSON.parse(rawInput);
   } catch {
-    throwUsageError("Invalid JSON input. Please provide valid JSON.");
+    throwUsageError(
+      "Invalid JSON input. Please provide valid JSON.",
+      undefined,
+      ERROR_CODE.INVALID_JSON,
+    );
   }
 
   if (typeof configPayload !== "object" || configPayload === null || Array.isArray(configPayload)) {
-    throwUsageError("Config must be a JSON object.");
+    throwUsageError("Config must be a JSON object.", undefined, ERROR_CODE.INVALID_JSON);
   }
 
   if (options.dryRun) {
@@ -96,7 +100,7 @@ export async function readInput(options: { file?: string; json?: string }): Prom
   if (options.file) {
     const file = Bun.file(options.file);
     if (!(await file.exists())) {
-      throwUsageError(`File not found: ${options.file}`);
+      throwUsageError(`File not found: ${options.file}`, undefined, ERROR_CODE.FILE_NOT_FOUND);
     }
     return file.text();
   }

@@ -3,7 +3,7 @@ import { isAgent, isHuman } from "../../mode.ts";
 import { resolveProfile, removeProfile } from "../../lib/config.ts";
 import { getGitRepoRoot } from "../../lib/git.ts";
 import { dim, cyan } from "../../lib/color.ts";
-import { CliError, throwUserAbort } from "../../lib/errors.ts";
+import { CliError, ERROR_CODE, throwUserAbort } from "../../lib/errors.ts";
 
 const AGENT_PROMPT = `You are unlinking a Clerk application from the current project directory.
 
@@ -34,7 +34,9 @@ export async function unlink(options: UnlinkOptions = {}): Promise<void> {
   const existing = await resolveProfile(cwd);
 
   if (!existing) {
-    throw new CliError("This directory is not linked to a Clerk application.");
+    throw new CliError("This directory is not linked to a Clerk application.", {
+      code: ERROR_CODE.NOT_LINKED,
+    });
   }
 
   const label = existing.profile.appId;

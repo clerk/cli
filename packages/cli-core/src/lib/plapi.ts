@@ -5,7 +5,7 @@
 
 import { PLAPI_BASE_URL } from "./constants.ts";
 import { getToken } from "./credential-store.ts";
-import { CliError, PlapiError } from "./errors.ts";
+import { CliError, PlapiError, ERROR_CODE } from "./errors.ts";
 
 /**
  * Validate that a key has the expected prefix and suggest the correct key type
@@ -22,6 +22,7 @@ export function validateKeyPrefix(key: string, expected: "ak_" | "sk_"): void {
     throw new CliError(
       `Expected a ${expectedLabel}, but received a ${wrongLabel}.\n` +
         "Get the correct key from: https://dashboard.clerk.com/last-active?path=api-keys",
+      { code: ERROR_CODE.INVALID_KEY_FORMAT },
     );
   }
 }
@@ -39,6 +40,7 @@ export async function getAuthToken(): Promise<string> {
   if (oauthToken) return oauthToken;
 
   throw new CliError("Not authenticated. Run `clerk auth login` or set CLERK_PLATFORM_API_KEY.", {
+    code: ERROR_CODE.AUTH_REQUIRED,
     docsUrl: "https://clerk.com/docs/guides/development/clerk-environment-variables",
   });
 }

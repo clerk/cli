@@ -7,7 +7,7 @@ import { dirname, join } from "node:path";
 import { mkdir } from "node:fs/promises";
 import { CONFIG_FILE } from "./constants.ts";
 import { getGitRepoIdentifier, getGitNormalizedRemote } from "./git.ts";
-import { CliError } from "./errors.ts";
+import { CliError, ERROR_CODE } from "./errors.ts";
 
 let overrideConfigFile: string | undefined;
 
@@ -174,6 +174,7 @@ export function resolveInstanceId(profile: Profile, flag?: string): { id: string
   const id = profile.instances[env];
   if (!id) {
     throw new CliError(`No ${env} instance configured. Run \`clerk link\` to set one up.`, {
+      code: ERROR_CODE.INSTANCE_NOT_FOUND,
       docsUrl: "https://clerk.com/docs/guides/development/managing-environments",
     });
   }
@@ -200,7 +201,9 @@ export async function resolveAppContext(options: {
       if (env) {
         const matched = app.instances.find((instance) => instance.environment_type === env);
         if (!matched) {
-          throw new CliError(`No ${env} instance found for application ${options.app}.`);
+          throw new CliError(`No ${env} instance found for application ${options.app}.`, {
+            code: ERROR_CODE.INSTANCE_NOT_FOUND,
+          });
         }
         return { appId: options.app, instanceId: matched.instance_id, instanceLabel: env };
       }
@@ -216,7 +219,9 @@ export async function resolveAppContext(options: {
       (instance) => instance.environment_type === "development",
     );
     if (!development) {
-      throw new CliError(`No development instance found for application ${options.app}.`);
+      throw new CliError(`No development instance found for application ${options.app}.`, {
+        code: ERROR_CODE.INSTANCE_NOT_FOUND,
+      });
     }
 
     return {
@@ -233,6 +238,7 @@ export async function resolveAppContext(options: {
         "Either:\n" +
         "  - Run `clerk link` from your project directory\n" +
         "  - Pass --app <app_id> to target an app directly",
+      { code: ERROR_CODE.NOT_LINKED },
     );
   }
 

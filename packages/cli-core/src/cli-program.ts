@@ -13,8 +13,16 @@ import { api } from "./commands/api/index.ts";
 import { link } from "./commands/link/index.ts";
 import { unlink } from "./commands/unlink/index.ts";
 import { doctor } from "./commands/doctor/index.ts";
-import { CliError, UserAbortError, ApiError, EXIT_CODE, throwUsageError } from "./lib/errors.ts";
+import {
+  CliError,
+  UserAbortError,
+  ApiError,
+  EXIT_CODE,
+  throwUsageError,
+  type ErrorCode,
+} from "./lib/errors.ts";
 import { red } from "./lib/color.ts";
+import { isAgent } from "./mode.ts";
 
 export function createProgram() {
   const program = new Command()
@@ -208,11 +216,15 @@ export async function runProgram(
     }
 
     if (error instanceof CliError) {
-      if (error.message) {
-        console.error(red(`error: ${error.message}`));
-      }
-      if (error.docsUrl) {
-        console.error(`\nFor more information, see: ${error.docsUrl}`);
+      if (isAgent() && error.code) {
+        outputJsonError(error.code, error.message, error.docsUrl);
+      } else {
+        if (error.message) {
+          console.error(red(`error: ${error.message}`));
+        }
+        if (error.docsUrl) {
+          console.error(`\nFor more information, see: ${error.docsUrl}`);
+        }
       }
       process.exit(error.exitCode);
     }
@@ -220,16 +232,48 @@ export async function runProgram(
     if (error instanceof ApiError) {
       const detail = formatApiBody(error.body, verbose);
       const prefix = error.context ?? "Request failed";
-      console.error(red(`error: ${prefix} (${error.status}): ${detail}`));
+      if (isAgent()) {
+        const apiCode = extractApiErrorCode(error.body);
+        outputJsonError(apiCode ?? "api_error", `${prefix} (${error.status}): ${detail}`);
+      } else {
+        console.error(red(`error: ${prefix} (${error.status}): ${detail}`));
+      }
       process.exit(EXIT_CODE.GENERAL);
     }
 
     if (error instanceof Error) {
-      console.error(red(`error: ${error.message}`));
+      if (isAgent()) {
+        outputJsonError("unexpected_error", error.message);
+      } else {
+        console.error(red(`error: ${error.message}`));
+      }
       process.exit(EXIT_CODE.GENERAL);
     }
 
-    console.error(red("error: An unexpected error occurred"));
+    if (isAgent()) {
+      outputJsonError("unexpected_error", "An unexpected error occurred");
+    } else {
+      console.error(red("error: An unexpected error occurred"));
+    }
     process.exit(EXIT_CODE.GENERAL);
+  }
+}
+
+/** Output a structured JSON error to stderr for agent/CI consumption. */
+function outputJsonError(code: string, message: string, docsUrl?: string): void {
+  const payload: { error: { code: string; message: string; docsUrl?: string } } = {
+    error: { code, message },
+  };
+  if (docsUrl) payload.error.docsUrl = docsUrl;
+  console.error(JSON.stringify(payload));
+}
+
+/** Extract the error code from a Clerk API JSON response body, if present. */
+function extractApiErrorCode(body: string): string | undefined {
+  try {
+    const parsed = JSON.parse(body);
+    return parsed.errors?.[0]?.code;
+  } catch {
+    return undefined;
   }
 }

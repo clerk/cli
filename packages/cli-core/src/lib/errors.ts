@@ -14,7 +14,42 @@ export const EXIT_CODE = {
 
 type ExitCode = (typeof EXIT_CODE)[keyof typeof EXIT_CODE];
 
+/**
+ * Machine-readable error codes for programmatic consumption.
+ *
+ * Agents and CI scripts can branch on these codes instead of regex-matching
+ * error messages. Every {@link CliError} should include a code from this list.
+ */
+export const ERROR_CODE = {
+  /** Not authenticated — run `clerk auth login` or set an API key. */
+  AUTH_REQUIRED: "auth_required",
+  /** No project linked to this directory. */
+  NOT_LINKED: "not_linked",
+  /** API key has wrong prefix (e.g. sk_ where ak_ expected). */
+  INVALID_KEY_FORMAT: "invalid_key_format",
+  /** Invalid command arguments or options. */
+  USAGE_ERROR: "usage_error",
+  /** Referenced instance not found. */
+  INSTANCE_NOT_FOUND: "instance_not_found",
+  /** Referenced application not found or has no matching resources. */
+  APP_NOT_FOUND: "app_not_found",
+  /** Secret key unavailable for the target instance. */
+  NO_SECRET_KEY: "no_secret_key",
+  /** File not found on disk. */
+  FILE_NOT_FOUND: "file_not_found",
+  /** Input is not valid JSON or not an object. */
+  INVALID_JSON: "invalid_json",
+  /** Failed to fetch or parse the OpenAPI catalog. */
+  CATALOG_ERROR: "catalog_error",
+  /** Doctor checks found issues. */
+  DOCTOR_FAILED: "doctor_failed",
+} as const;
+
+export type ErrorCode = (typeof ERROR_CODE)[keyof typeof ERROR_CODE];
+
 interface CliErrorOptions {
+  /** Machine-readable error code for programmatic consumption. */
+  code?: ErrorCode;
   /** Process exit code. Defaults to {@link EXIT_CODE.GENERAL}. */
   exitCode?: ExitCode;
   /** URL to relevant documentation, printed after the error message. */
@@ -35,16 +70,20 @@ interface CliErrorOptions {
  *
  * @example
  * ```ts
- * throw new CliError("No Clerk project linked. Run `clerk link` first.");
+ * throw new CliError("No Clerk project linked.", {
+ *   code: ERROR_CODE.NOT_LINKED,
+ * });
  * ```
  */
 export class CliError extends Error {
+  public code?: ErrorCode;
   public exitCode: ExitCode;
   public docsUrl?: string;
 
   constructor(message: string, options?: CliErrorOptions) {
     super(message);
     this.name = "CliError";
+    this.code = options?.code;
     this.exitCode = options?.exitCode ?? EXIT_CODE.GENERAL;
 
     if (options?.docsUrl) {
@@ -157,8 +196,12 @@ export class BapiError extends ApiError {
  * }
  * ```
  */
-export function throwUsageError(message: string, docsUrl?: string): never {
-  throw new CliError(message, { exitCode: EXIT_CODE.USAGE, docsUrl });
+export function throwUsageError(message: string, docsUrl?: string, code?: ErrorCode): never {
+  throw new CliError(message, {
+    code: code ?? ERROR_CODE.USAGE_ERROR,
+    exitCode: EXIT_CODE.USAGE,
+    docsUrl,
+  });
 }
 
 /**

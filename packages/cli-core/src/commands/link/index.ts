@@ -8,7 +8,7 @@ import { setProfile, resolveProfile, moveProfile } from "../../lib/config.ts";
 import { autolink, findClerkKeys, matchKeyToApp } from "../../lib/autolink.ts";
 import { getGitRepoIdentifier, getGitRepoRoot, getGitNormalizedRemote } from "../../lib/git.ts";
 import { dim, cyan } from "../../lib/color.ts";
-import { CliError } from "../../lib/errors.ts";
+import { CliError, ERROR_CODE } from "../../lib/errors.ts";
 
 const AGENT_PROMPT = `You are linking a Clerk application to the current project directory.
 
@@ -76,7 +76,9 @@ export async function link(options: LinkOptions = {}): Promise<void> {
   const prodInstance = app.instances.find((i) => i.environment_type === "production");
 
   if (!devInstance) {
-    throw new CliError("Application has no development instance.");
+    throw new CliError("Application has no development instance.", {
+      code: ERROR_CODE.INSTANCE_NOT_FOUND,
+    });
   }
 
   await setProfile(profileKey, {
@@ -150,7 +152,9 @@ async function resolveApp(
   const apps = await listApplications();
 
   if (apps.length === 0) {
-    throw new CliError("No applications found. Create one at https://dashboard.clerk.com first.");
+    throw new CliError("No applications found. Create one at https://dashboard.clerk.com first.", {
+      code: ERROR_CODE.APP_NOT_FOUND,
+    });
   }
 
   if (detectKeys) {
@@ -188,7 +192,9 @@ async function pickApp(apps: Application[], displayPath: string): Promise<Applic
 
   const found = apps.find((a) => a.application_id === selectedId);
   if (!found) {
-    throw new CliError("Selected application not found.");
+    throw new CliError("Selected application not found.", {
+      code: ERROR_CODE.APP_NOT_FOUND,
+    });
   }
   return found;
 }

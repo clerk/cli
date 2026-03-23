@@ -6,6 +6,7 @@ import { bapiRequest } from "./bapi.ts";
 import {
   BapiError,
   CliError,
+  ERROR_CODE,
   throwUsageError,
   throwUserAbort,
   withApiContext,
@@ -135,6 +136,7 @@ async function resolveSecretKey(options: ApiOptions): Promise<string> {
           "  CLERK_SECRET_KEY environment variable\n" +
           "  Link a project with `clerk link`, or pass --app <app_id>",
         "https://clerk.com/docs/guides/development/clerk-environment-variables",
+        ERROR_CODE.NO_SECRET_KEY,
       );
     }
     throw error;
@@ -144,11 +146,13 @@ async function resolveSecretKey(options: ApiOptions): Promise<string> {
   const matched = app.instances.find((i) => i.instance_id === ctx.instanceId);
   if (!matched) {
     throw new CliError(`Instance ${ctx.instanceId} not found in application.`, {
+      code: ERROR_CODE.INSTANCE_NOT_FOUND,
       docsUrl: "https://clerk.com/docs/guides/development/managing-environments",
     });
   }
   if (!matched.secret_key) {
     throw new CliError(`No secret key found for ${ctx.instanceLabel} instance.`, {
+      code: ERROR_CODE.NO_SECRET_KEY,
       docsUrl: "https://clerk.com/docs/guides/development/clerk-environment-variables",
     });
   }
@@ -161,7 +165,7 @@ async function resolveBody(options: { data?: string; file?: string }): Promise<s
   if (options.file) {
     const file = Bun.file(options.file);
     if (!(await file.exists())) {
-      throwUsageError(`File not found: ${options.file}`);
+      throwUsageError(`File not found: ${options.file}`, undefined, ERROR_CODE.FILE_NOT_FOUND);
     }
     return file.text();
   }
