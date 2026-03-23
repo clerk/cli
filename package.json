@@ -13,8 +13,8 @@
     "format:check": "bun run --filter @clerk/cli-core format:check && oxfmt --check scripts/",
     "build:compile": "bun run --filter @clerk/cli-core build:compile",
     "build:compile:all": "bun run scripts/build.ts",
-    "dev:global": "bun link --cwd packages/cli-core",
-    "dev:global:unlink": "bun unlink --cwd packages/cli-core",
+    "global:link": "bun link --cwd packages/cli-core",
+    "global:unlink": "bun unlink --cwd packages/cli-core",
     "start": "bun run build:compile && ./packages/cli-core/dist/clerk",
     "prepare": "git config core.hooksPath .hooks"
   },
