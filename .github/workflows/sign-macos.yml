@@ -1,0 +1,67 @@
+name: Sign macOS Binaries
+
+on:
+  workflow_call:
+    inputs:
+      artifact-prefix:
+        required: true
+        type: string
+        description: "Prefix for artifact names (e.g. 'clerk', 'clerk-canary', 'clerk-snapshot')"
+    secrets:
+      APPLE_CERTIFICATE_BASE64:
+        required: true
+      APPLE_CERTIFICATE_PASSWORD:
+        required: true
+      APPLE_API_KEY_BASE64:
+        required: true
+      APPLE_API_KEY_ID:
+        required: true
+      APPLE_API_ISSUER_ID:
+        required: true
+
+jobs:
+  sign:
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - target: darwin-arm64
+          - target: darwin-x64
+    runs-on: macos-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: |
+            scripts/sign-macos.ts
+            scripts/entitlements.plist
+            scripts/releaser/targets.ts
+            bun.lock
+            package.json
+            packages/cli-core/package.json
+          sparse-checkout-cone-mode: false
+
+      - uses: oven-sh/setup-bun@v2
+      - run: bun install --frozen-lockfile
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: ${{ inputs.artifact-prefix }}-${{ matrix.target }}
+          path: dist/artifacts/${{ matrix.target }}
+
+      - name: Sign and notarize
+        env:
+          APPLE_CERTIFICATE_BASE64: ${{ secrets.APPLE_CERTIFICATE_BASE64 }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_API_KEY_BASE64: ${{ secrets.APPLE_API_KEY_BASE64 }}
+          APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          APPLE_API_ISSUER_ID: ${{ secrets.APPLE_API_ISSUER_ID }}
+        run: bun run scripts/sign-macos.ts --target ${{ matrix.target }} --artifacts-dir dist/artifacts
+
+      - name: Re-upload signed artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ inputs.artifact-prefix }}-${{ matrix.target }}
+          path: dist/artifacts/${{ matrix.target }}/clerk
+          overwrite: true
+          retention-days: 1
