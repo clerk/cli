@@ -51,8 +51,21 @@ jobs:
       artifact-prefix: clerk
     secrets: inherit
 
-  smoke-test:
+  sign-macos:
     needs: [versioning, build]
+    if: ${{ needs.versioning.outputs.release_created == 'true' }}
+    uses: ./.github/workflows/sign-macos.yml
+    with:
+      artifact-prefix: clerk
+    secrets:
+      APPLE_CERTIFICATE_BASE64: ${{ secrets.APPLE_CERTIFICATE_BASE64 }}
+      APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+      APPLE_API_KEY_BASE64: ${{ secrets.APPLE_API_KEY_BASE64 }}
+      APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+      APPLE_API_ISSUER_ID: ${{ secrets.APPLE_API_ISSUER_ID }}
+
+  smoke-test:
+    needs: [versioning, build, sign-macos]
     uses: ./.github/workflows/smoke-test.yml
     with:
       version: ${{ needs.versioning.outputs.version }}
@@ -60,7 +73,7 @@ jobs:
       preset: stable
 
   publish-npm:
-    needs: [versioning, build, smoke-test]
+    needs: [versioning, build, sign-macos, smoke-test]
     # Must run on GitHub-hosted runner for npm OIDC trusted publishing
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -90,7 +103,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
 
   publish-github:
-    needs: [versioning, build, smoke-test, publish-npm]
+    needs: [versioning, build, sign-macos, smoke-test, publish-npm]
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
@@ -144,8 +157,20 @@ jobs:
       artifact-prefix: clerk-canary
     secrets: inherit
 
-  canary-smoke-test:
+  canary-sign-macos:
     needs: [canary-version, canary-build]
+    uses: ./.github/workflows/sign-macos.yml
+    with:
+      artifact-prefix: clerk-canary
+    secrets:
+      APPLE_CERTIFICATE_BASE64: ${{ secrets.APPLE_CERTIFICATE_BASE64 }}
+      APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+      APPLE_API_KEY_BASE64: ${{ secrets.APPLE_API_KEY_BASE64 }}
+      APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+      APPLE_API_ISSUER_ID: ${{ secrets.APPLE_API_ISSUER_ID }}
+
+  canary-smoke-test:
+    needs: [canary-version, canary-build, canary-sign-macos]
     uses: ./.github/workflows/smoke-test.yml
     with:
       version: ${{ needs.canary-version.outputs.version }}
@@ -153,7 +178,7 @@ jobs:
       preset: canary
 
   canary-publish-github:
-    needs: [canary-version, canary-build, canary-smoke-test]
+    needs: [canary-version, canary-build, canary-sign-macos, canary-smoke-test]
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
