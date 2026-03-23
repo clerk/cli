@@ -1,11 +1,11 @@
 import { join } from "node:path";
 import { mkdir, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { parseArgs } from "node:util";
 import { targets } from "./releaser/targets.ts";
 
 const ENTITLEMENTS_PATH = join(import.meta.dir, "entitlements.plist");
 const KEYCHAIN_NAME = "clerk-signing.keychain-db";
-const KEYCHAIN_PASSWORD = "clerk-signing-temp";
 
 // ---------------------------------------------------------------------------
 // Helpers (exported for testing)
@@ -116,20 +116,23 @@ if (import.meta.main) {
     `Signing ${selectedTargets.length} target(s): ${selectedTargets.map((t) => t.name).join(", ")}\n`,
   );
 
-  // Write the API key to a temp file (shared across targets)
-  const apiKeyDir = join(import.meta.dir, ".tmp-api-key");
+  // Use OS temp dir for secrets — never write them to the source tree
+  const tempDir = process.env.RUNNER_TEMP ?? tmpdir();
+  const apiKeyDir = join(tempDir, "clerk-sign-keys");
   const apiKeyPath = join(apiKeyDir, `AuthKey_${apiKeyId}.p8`);
+  const certPath = join(tempDir, "clerk-sign-cert.p12");
+  const keychainPassword = crypto.randomUUID();
 
   try {
     await mkdir(apiKeyDir, { recursive: true });
     await Bun.write(apiKeyPath, Buffer.from(apiKeyBase64, "base64"));
+
     // -- Create temporary keychain and import certificate --
-    const certPath = join(import.meta.dir, ".tmp-cert.p12");
     await Bun.write(certPath, Buffer.from(certificateBase64, "base64"));
 
-    run(["security", "create-keychain", "-p", KEYCHAIN_PASSWORD, KEYCHAIN_NAME]);
+    run(["security", "create-keychain", "-p", keychainPassword, KEYCHAIN_NAME]);
     run(["security", "set-keychain-settings", "-lut", "21600", KEYCHAIN_NAME]);
-    run(["security", "unlock-keychain", "-p", KEYCHAIN_PASSWORD, KEYCHAIN_NAME]);
+    run(["security", "unlock-keychain", "-p", keychainPassword, KEYCHAIN_NAME]);
 
     run([
       "security",
@@ -148,10 +151,10 @@ if (import.meta.main) {
       "security",
       "set-key-partition-list",
       "-S",
-      "apple-tool:,apple:",
+      "apple-tool:,apple:,codesign:",
       "-s",
       "-k",
-      KEYCHAIN_PASSWORD,
+      keychainPassword,
       KEYCHAIN_NAME,
     ]);
 
@@ -162,9 +165,6 @@ if (import.meta.main) {
       .map((k) => k.trim().replace(/^"|"$/g, ""))
       .filter(Boolean);
     run(["security", "list-keychains", "-d", "user", "-s", KEYCHAIN_NAME, ...keychainList]);
-
-    // Clean up temp cert file
-    await Bun.file(certPath).delete();
 
     // -- Extract signing identity --
     const identityOutput = run([
@@ -192,6 +192,8 @@ if (import.meta.main) {
         "codesign",
         "--sign",
         identity,
+        "--keychain",
+        KEYCHAIN_NAME,
         "--entitlements",
         ENTITLEMENTS_PATH,
         "--options",
@@ -225,6 +227,8 @@ if (import.meta.main) {
         "--output-format",
         "json",
         "--wait",
+        "--timeout",
+        "10m",
       ];
       console.log(`$ ${notaryCmd.join(" ")}`);
       const notaryProc = Bun.spawnSync(notaryCmd, {
@@ -280,10 +284,9 @@ if (import.meta.main) {
 
     console.log("\nAll targets signed and notarized successfully.");
   } finally {
-    // -- Keychain cleanup --
+    // -- Cleanup: keychain, certificate, and API key --
     runMaybe(["security", "delete-keychain", KEYCHAIN_NAME]);
-
-    // Clean up API key
+    await rm(certPath, { force: true });
     await rm(apiKeyDir, { recursive: true, force: true });
   }
 }

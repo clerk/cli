@@ -22,7 +22,7 @@ on:
 jobs:
   sign:
     strategy:
-      fail-fast: true
+      fail-fast: false
       matrix:
         include:
           - target: darwin-arm64
@@ -35,10 +35,11 @@ jobs:
           sparse-checkout: |
             scripts/sign-macos.ts
             scripts/entitlements.plist
-            scripts/releaser/targets.ts
+            scripts/releaser/
             bun.lock
             package.json
             packages/cli-core/package.json
+            packages/cli/package.json
           sparse-checkout-cone-mode: false
 
       - uses: oven-sh/setup-bun@v2
