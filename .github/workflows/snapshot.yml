@@ -1,0 +1,194 @@
+name: Snapshot Release
+
+on:
+  issue_comment:
+    types: [created]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  snapshot:
+    # Intentionally restricted to MEMBER and OWNER — external collaborators
+    # (COLLABORATOR association) cannot trigger snapshots. This is a deliberate
+    # security boundary: snapshot publishing has npm write access via OIDC.
+    if: >-
+      github.event.issue.pull_request &&
+      startsWith(github.event.comment.body, '!snapshot') &&
+      contains(fromJSON('["MEMBER","OWNER"]'), github.event.comment.author_association)
+    runs-on: blacksmith-2vcpu-ubuntu-2404
+    timeout-minutes: 5
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      sha: ${{ steps.pr.outputs.sha }}
+      is_fork: ${{ steps.pr.outputs.is_fork }}
+    steps:
+      - name: React to comment
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          gh api "repos/${GH_REPO}/issues/comments/${{ github.event.comment.id }}/reactions" \
+            -f content=eyes --silent
+
+      - name: Get PR head SHA
+        id: pr
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          pr_json=$(gh api "repos/${GH_REPO}/pulls/${{ github.event.issue.number }}")
+          sha=$(echo "$pr_json" | jq -r '.head.sha')
+          head_repo=$(echo "$pr_json" | jq -r '.head.repo.full_name')
+          base_repo=$(echo "$pr_json" | jq -r '.base.repo.full_name')
+          is_fork="false"
+          if [ "$head_repo" != "$base_repo" ]; then
+            is_fork="true"
+            echo "::warning::Snapshot requested on fork PR (head: ${head_repo}) — publish will be skipped."
+          fi
+          echo "sha=${sha}" >> "$GITHUB_OUTPUT"
+          echo "is_fork=${is_fork}" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.pr.outputs.sha }}
+      - uses: oven-sh/setup-bun@v2
+      - run: bun install --frozen-lockfile
+
+      - name: Compute snapshot version
+        id: version
+        env:
+          COMMENT_BODY: ${{ github.event.comment.body }}
+        run: |
+          # Extract optional name from "!snapshot <name>" — default to "snapshot"
+          name=$(echo "$COMMENT_BODY" | sed 's/^!snapshot[[:space:]]*//' | tr -cd 'a-zA-Z0-9-')
+          if [ -z "$name" ]; then name="snapshot"; fi
+          bun run version-packages:snapshot -- "$name"
+          version=$(jq -r '.version' packages/cli/package.json)
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+
+  build:
+    needs: snapshot
+    if: needs.snapshot.outputs.is_fork != 'true'
+    uses: ./.github/workflows/build-binaries.yml
+    with:
+      version: ${{ needs.snapshot.outputs.version }}
+      ref: ${{ needs.snapshot.outputs.sha }}
+      artifact-prefix: clerk-snapshot
+
+  smoke-test:
+    needs: [snapshot, build]
+    if: needs.snapshot.outputs.is_fork != 'true'
+    uses: ./.github/workflows/smoke-test.yml
+    with:
+      version: ${{ needs.snapshot.outputs.version }}
+      artifact-prefix: clerk-snapshot
+      preset: snapshot
+
+  publish:
+    needs: [snapshot, build, smoke-test]
+    if: needs.snapshot.outputs.is_fork != 'true'
+    # Must run on GitHub-hosted runner for npm OIDC trusted publishing
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      pull-requests: write
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.snapshot.outputs.sha }}
+      - uses: oven-sh/setup-bun@v2
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          registry-url: "https://registry.npmjs.org"
+      - name: Upgrade npm for OIDC trusted publishing
+        run: npm install -g npm@11
+      - run: bun install --frozen-lockfile
+
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: clerk-snapshot-*
+          path: dist/artifacts
+
+      - name: Rename artifact directories
+        run: |
+          cd dist/artifacts
+          for dir in clerk-snapshot-*/; do
+            target=${dir#clerk-snapshot-} && target=${target%/}
+            mv "$dir" "clerk-${target}"
+          done
+
+      - name: Publish snapshot packages
+        run: bun run release:snapshot --version "$SNAPSHOT_VERSION"
+        env:
+          SNAPSHOT_VERSION: ${{ needs.snapshot.outputs.version }}
+          ARTIFACTS_DIR: ${{ github.workspace }}/dist/artifacts
+
+      - name: React with rocket
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          gh api "repos/${GH_REPO}/issues/comments/${{ github.event.comment.id }}/reactions" \
+            -f content=rocket --silent
+
+      - name: Post installation comment
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          SNAPSHOT_VERSION: ${{ needs.snapshot.outputs.version }}
+          SNAPSHOT_SHA: ${{ needs.snapshot.outputs.sha }}
+          PR_NUMBER: ${{ github.event.issue.number }}
+        run: |
+          short_sha=$(echo "${SNAPSHOT_SHA}" | cut -c1-7)
+          {
+            echo '## Snapshot published'
+            echo ''
+            echo '```sh'
+            echo "npm install -g clerk@${SNAPSHOT_VERSION}"
+            echo '```'
+            echo ''
+            echo '| Package | Version |'
+            echo '|---------|---------|'
+            echo "| \`clerk\` | \`${SNAPSHOT_VERSION}\` |"
+            echo ''
+            echo "> Published from ${short_sha}"
+          } > /tmp/comment-body.md
+          gh pr comment "${PR_NUMBER}" --repo "${GH_REPO}" --body-file /tmp/comment-body.md
+
+  notify-failure:
+    needs: [snapshot, build, smoke-test, publish]
+    if: >-
+      always() &&
+      contains(needs.*.result, 'failure')
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - name: React with confused emoji
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          gh api "repos/${GH_REPO}/issues/comments/${{ github.event.comment.id }}/reactions" \
+            -f content=confused --silent
+
+      - name: Post failure comment
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.issue.number }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          {
+            echo '## Snapshot failed'
+            echo ''
+            echo "The snapshot publish workflow failed. [View the workflow run](${RUN_URL}) for details."
+          } > /tmp/comment-body.md
+          gh pr comment "${PR_NUMBER}" --repo "${GH_REPO}" --body-file /tmp/comment-body.md
