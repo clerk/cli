@@ -55,8 +55,40 @@ async function detectLayoutPath(
 }
 
 /**
+ * Common i18n locale directory names used by next-intl and similar libraries.
+ * These are checked in order — "[locale]" is the most common convention.
+ */
+const I18N_DIR_NAMES = ["[locale]", "[lang]"] as const;
+
+/**
+ * Detect an i18n locale directory directly under the app folder.
+ * Returns the directory name (e.g., "[locale]") if found, null otherwise.
+ *
+ * A directory qualifies when it matches a known i18n segment name AND
+ * contains a layout file — confirming it's the routing root for localized pages,
+ * not an unrelated dynamic route.
+ */
+async function detectI18nLocaleDir(
+  cwd: string,
+  srcDir: boolean,
+  ext: string,
+): Promise<string | null> {
+  const base = srcPrefix({ srcDir });
+
+  for (const dirName of I18N_DIR_NAMES) {
+    const hasLayout = await findFirstFile(cwd, [
+      `${base}app/${dirName}/layout.${ext}x`,
+      `${base}app/${dirName}/layout.${ext}`,
+    ]);
+    if (hasLayout) return dirName;
+  }
+
+  return null;
+}
+
+/**
  * Enrich a ProjectContext with Next.js-specific fields:
- * variant, layoutPath, middlewareBasename.
+ * variant, layoutPath, middlewareBasename, i18nLocaleDir.
  */
 export async function enrichNextjsContext(ctx: ProjectContext): Promise<void> {
   const ext = scriptExt(ctx);
@@ -76,12 +108,13 @@ export async function enrichNextjsContext(ctx: ProjectContext): Promise<void> {
     rootPagesDir,
   });
 
-  ctx.layoutPath = await detectLayoutPath(ctx.cwd, ctx.variant, ctx.srcDir, ext);
+  const [layoutPath, middlewareBasename, i18nLocaleDir] = await Promise.all([
+    detectLayoutPath(ctx.cwd, ctx.variant, ctx.srcDir, ext),
+    detectMiddlewareBasename(ctx.cwd, ctx.srcDir, ext, ctx.deps[ctx.framework.dep]),
+    ctx.variant === "app-router" ? detectI18nLocaleDir(ctx.cwd, ctx.srcDir, ext) : null,
+  ]);
 
-  ctx.middlewareBasename = await detectMiddlewareBasename(
-    ctx.cwd,
-    ctx.srcDir,
-    ext,
-    ctx.deps[ctx.framework.dep],
-  );
+  ctx.layoutPath = layoutPath;
+  ctx.middlewareBasename = middlewareBasename;
+  if (i18nLocaleDir) ctx.i18nLocaleDir = i18nLocaleDir;
 }
