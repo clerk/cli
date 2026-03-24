@@ -18,7 +18,7 @@ const GENERATORS: Record<SupportedShell, CompletionGenerator> = {
 };
 
 function isSupportedShell(shell: string): shell is SupportedShell {
-  return SUPPORTED_SHELLS.includes(shell as SupportedShell);
+  return (SUPPORTED_SHELLS as readonly string[]).includes(shell);
 }
 
 function resolveShell(shell: string): SupportedShell {

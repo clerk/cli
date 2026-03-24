@@ -17,6 +17,13 @@ interface CompletionResult {
   directive: Directive;
 }
 
+const EMPTY_NO_FILE: CompletionResult = { completions: [], directive: DIRECTIVE.NO_FILE_COMP };
+const EMPTY_DEFAULT: CompletionResult = { completions: [], directive: DIRECTIVE.DEFAULT };
+
+function noFileComp(completions: Completion[]): CompletionResult {
+  return { completions, directive: DIRECTIVE.NO_FILE_COMP };
+}
+
 const HTTP_METHOD_COMPLETIONS: Completion[] = [
   { name: "GET", description: "Read resource" },
   { name: "POST", description: "Create resource" },
@@ -65,7 +72,7 @@ export function completeHandler(program: CommandUnknownOpts, args: string[]): vo
  */
 export function generateCompletions(root: CommandUnknownOpts, args: string[]): CompletionResult {
   const partial = args.at(-1) ?? "";
-  const preceding = args.length > 0 ? args.slice(0, -1) : [];
+  const preceding = args.slice(0, -1);
   const { command, usedOptions, positionalCount } = walkCommandTree(root, preceding);
   const pendingValue = findPendingOptionValue(command, preceding);
 
@@ -85,7 +92,7 @@ export function generateCompletions(root: CommandUnknownOpts, args: string[]): C
     ...completeOptions(command, "", usedOptions).completions,
   ];
 
-  return { completions, directive: DIRECTIVE.NO_FILE_COMP };
+  return noFileComp(completions);
 }
 
 // ── Tree walking ─────────────────────────────────────────────────────────────
@@ -161,13 +168,13 @@ function completeSubcommands(cmd: CommandUnknownOpts, partial: string): Completi
     if (isHidden(sub)) continue;
 
     const desc = sub.description();
-    pushIfMatch(completions, sub.name(), desc, partial);
+    pushCompletion(completions, sub.name(), desc, partial);
     for (const alias of sub.aliases()) {
-      pushIfMatch(completions, alias, desc, partial);
+      pushCompletion(completions, alias, desc, partial);
     }
   }
 
-  return { completions, directive: DIRECTIVE.NO_FILE_COMP };
+  return noFileComp(completions);
 }
 
 function completeArguments(
@@ -177,19 +184,19 @@ function completeArguments(
 ): CompletionResult {
   const registeredArgs = cmd.registeredArguments;
   if (consumedCount >= registeredArgs.length) {
-    return { completions: [], directive: DIRECTIVE.NO_FILE_COMP };
+    return EMPTY_NO_FILE;
   }
 
   const arg = registeredArgs[consumedCount];
   if (!arg?.argChoices) {
-    return { completions: [], directive: DIRECTIVE.DEFAULT };
+    return EMPTY_DEFAULT;
   }
 
   const completions = arg.argChoices
     .filter((c) => c.startsWith(partial))
     .map((c) => ({ name: c, description: arg.description ?? "" }));
 
-  return { completions, directive: DIRECTIVE.NO_FILE_COMP };
+  return noFileComp(completions);
 }
 
 function completeOptions(
@@ -205,29 +212,29 @@ function completeOptions(
     for (const opt of current.options) {
       if (opt.hidden || isOptionUsed(opt, usedOptions)) continue;
 
-      if (opt.long) pushIfNew(completions, seen, opt.long, opt.description, partial);
+      if (opt.long) pushCompletion(completions, opt.long, opt.description, partial, seen);
     }
     current = current.parent;
   }
 
-  return { completions, directive: DIRECTIVE.NO_FILE_COMP };
+  return noFileComp(completions);
 }
 
 function completeOptionValue(opt: Option, flag: string, partial: string): CompletionResult {
   const candidates = resolveOptionValues(opt, flag);
-  if (!candidates) return { completions: [], directive: DIRECTIVE.DEFAULT };
+  if (!candidates) return EMPTY_DEFAULT;
 
-  return {
-    completions: candidates.filter((c) => c.name.startsWith(partial)),
-    directive: DIRECTIVE.NO_FILE_COMP,
-  };
+  return noFileComp(candidates.filter((c) => c.name.startsWith(partial)));
 }
 
 function resolveOptionValues(opt: Option, flag: string): Completion[] | undefined {
   if (opt.argChoices) {
     return opt.argChoices.map((c) => ({ name: c, description: "" }));
   }
-  return KNOWN_OPTION_VALUES[flag] ?? (opt.long ? KNOWN_OPTION_VALUES[opt.long] : undefined);
+  const byFlag = KNOWN_OPTION_VALUES[flag];
+  if (byFlag) return byFlag;
+  if (opt.long) return KNOWN_OPTION_VALUES[opt.long];
+  return undefined;
 }
 
 // ── Small utilities ──────────────────────────────────────────────────────────
@@ -237,7 +244,7 @@ function optionTakesValue(opt: Option): boolean {
 }
 
 function isHidden(cmd: CommandUnknownOpts): boolean {
-  return Boolean((cmd as CommandUnknownOpts & { _hidden?: boolean })._hidden);
+  return "_hidden" in cmd && Boolean(cmd._hidden);
 }
 
 function isOptionUsed(opt: Option, used: Set<string>): boolean {
@@ -252,25 +259,15 @@ function markOptionUsed(used: Set<string>, opt: Option): void {
   if (opt.short) used.add(opt.short);
 }
 
-function pushIfMatch(
+function pushCompletion(
   completions: Completion[],
   name: string,
   description: string,
   partial: string,
+  seen?: Set<string>,
 ): void {
-  if (name.startsWith(partial)) {
-    completions.push({ name, description });
-  }
-}
-
-function pushIfNew(
-  completions: Completion[],
-  seen: Set<string>,
-  name: string,
-  description: string,
-  partial: string,
-): void {
-  if (seen.has(name) || !name.startsWith(partial)) return;
-  seen.add(name);
+  if (!name.startsWith(partial)) return;
+  if (seen?.has(name)) return;
+  seen?.add(name);
   completions.push({ name, description });
 }

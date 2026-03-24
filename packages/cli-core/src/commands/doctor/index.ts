@@ -11,6 +11,7 @@ import {
   checkEnvVars,
   checkConfigFile,
   checkShellCompletion,
+  errorMessage,
 } from "./checks.ts";
 import { formatCheckResult, formatJson } from "./format.ts";
 import type { CheckFn, CheckResult, DoctorContext, DoctorOptions } from "./types.ts";
@@ -35,7 +36,7 @@ async function runChecks(ctx: DoctorContext, options: DoctorOptions): Promise<Ch
         return {
           name: "Unknown check",
           status: "fail" as const,
-          message: `Check crashed: ${(error as Error).message}`,
+          message: `Check crashed: ${errorMessage(error)}`,
         };
       }
     }),
@@ -97,7 +98,7 @@ export async function doctor(options: DoctorOptions = {}): Promise<void> {
             await fix.run();
             console.log(`  ${green("✓")} ${result.name} fixed`);
           } catch (error) {
-            console.log(`  ${red("✗")} Fix failed: ${(error as Error).message}`);
+            console.log(`  ${red("✗")} Fix failed: ${errorMessage(error)}`);
           }
         }
       }
