@@ -13,7 +13,7 @@ export interface FrameworkInfo {
 }
 
 // Order matters: more specific frameworks first (e.g. next before react, nuxt before vue)
-const FRAMEWORK_MAP: FrameworkInfo[] = [
+export const FRAMEWORK_MAP: FrameworkInfo[] = [
   {
     dep: "next",
     name: "Next.js",
@@ -45,6 +45,20 @@ const FRAMEWORK_MAP: FrameworkInfo[] = [
   { dep: "express", name: "Express", sdk: "@clerk/express", envVar: "CLERK_PUBLISHABLE_KEY" },
   { dep: "fastify", name: "Fastify", sdk: "@clerk/fastify", envVar: "CLERK_PUBLISHABLE_KEY" },
 ];
+
+const FRAMEWORK_ALIASES: Record<string, string> = {
+  "tanstack-start": "@tanstack/react-start",
+};
+
+export function lookupFramework(name: string): FrameworkInfo | null {
+  const dep = FRAMEWORK_ALIASES[name] ?? name;
+  return FRAMEWORK_MAP.find((fw) => fw.dep === dep) ?? null;
+}
+
+export const FRAMEWORK_NAMES = FRAMEWORK_MAP.map((fw) => {
+  const alias = Object.entries(FRAMEWORK_ALIASES).find(([, v]) => v === fw.dep);
+  return alias ? alias[0] : fw.dep;
+});
 
 const FALLBACK_KEY = "CLERK_PUBLISHABLE_KEY";
 
