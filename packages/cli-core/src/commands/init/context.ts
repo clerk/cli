@@ -1,6 +1,7 @@
 import { join } from "node:path";
 import { stat } from "node:fs/promises";
 import { detectFramework, readDeps } from "../../lib/framework.js";
+import type { FrameworkInfo } from "../../lib/framework.js";
 import type { ProjectContext } from "./frameworks/types.js";
 
 export async function fileExists(path: string): Promise<boolean> {
@@ -34,8 +35,11 @@ async function detectPackageManager(cwd: string): Promise<ProjectContext["packag
 // Re-export for modules that import readDeps from context (e.g., format.ts)
 export { readDeps } from "../../lib/framework.js";
 
-export async function gatherContext(cwd: string): Promise<ProjectContext | null> {
-  const framework = await detectFramework(cwd);
+export async function gatherContext(
+  cwd: string,
+  frameworkOverride?: FrameworkInfo,
+): Promise<ProjectContext | null> {
+  const framework = frameworkOverride ?? (await detectFramework(cwd));
   if (!framework) return null;
 
   const typescript = await fileExists(join(cwd, "tsconfig.json"));
