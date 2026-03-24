@@ -6,7 +6,19 @@ Initializes Clerk in a project by authenticating the user, linking a Clerk appli
 
 ```sh
 clerk init
+clerk init --framework next
+clerk init --prompt
+clerk init -y
+clerk init --yes
 ```
+
+## Options
+
+| Option               | Description                                                                                                                                                       |
+| -------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `--framework <name>` | Framework to set up (skips auto-detection). Valid values: `next`, `astro`, `nuxt`, `tanstack-start`, `react-router`, `vue`, `expo`, `react`, `express`, `fastify` |
+| `--prompt`           | Output a prompt for an AI agent to integrate Clerk, then exit                                                                                                     |
+| `-y, --yes`          | Skip confirmation prompts                                                                                                                                         |
 
 ## Agent Mode
 

@@ -11,6 +11,7 @@ Options:
   -V, --version        Display version
   --mode <mode>        Force interaction mode (human or agent).
                        Defaults to auto-detect based on TTY.
+  --verbose            Show detailed error output
   -h, --help           Display help for command
 
 Commands:
@@ -35,7 +36,9 @@ Commands:
   deploy [options]     Deploy your Clerk application (hidden)
 
 clerk init
+  --framework <name>   Framework to set up (skips auto-detection)
   --prompt             Output a prompt for an AI agent to integrate Clerk
+  --yes                Skip confirmation prompts
 
 clerk link
   --app <id>           Application ID to link (skips interactive picker)
