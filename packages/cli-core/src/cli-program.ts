@@ -45,7 +45,13 @@ export function createProgram() {
     }
   });
 
-  program.command("init").description("Initialize Clerk in your project").action(init);
+  program
+    .command("init")
+    .description("Initialize Clerk in your project")
+    .option("--framework <name>", "Framework to set up (skips auto-detection)")
+    .option("--prompt", "Output a prompt for an AI agent to integrate Clerk")
+    .option("-y, --yes", "Skip confirmation prompts")
+    .action(init);
 
   const auth = program.command("auth").description("Manage authentication");
 

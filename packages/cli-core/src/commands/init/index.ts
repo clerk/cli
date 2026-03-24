@@ -5,13 +5,14 @@ import { link } from "../link/index.js";
 import { pull } from "../env/pull.js";
 import { isAgent } from "../../mode.js";
 import { dim, cyan, green, yellow, bold } from "../../lib/color.js";
-import { throwUserAbort } from "../../lib/errors.js";
+import { CliError, throwUserAbort } from "../../lib/errors.js";
+import { lookupFramework, FRAMEWORK_NAMES } from "../../lib/framework.js";
 import { getToken } from "../../lib/credential-store.js";
 import { resolveProfile } from "../../lib/config.js";
 import { fetchUserInfo } from "../../lib/token-exchange.js";
 import { gatherContext } from "./context.js";
 import { scaffold, enrichProjectContext } from "./scaffold.js";
-import { previewAndConfirm } from "./preview.js";
+import { previewPlan, previewAndConfirm } from "./preview.js";
 import { runFormatters } from "./format.js";
 import { detectAuthLibraries, scanForIssues, printFindings } from "./scan.js";
 import { buildAgentPrompt, GENERIC_AGENT_PROMPT, pmInstallCommand } from "./prompts/index.js";
@@ -124,20 +125,38 @@ async function getAuthenticatedEmail(): Promise<string | null> {
 // Main entry point
 // ---------------------------------------------------------------------------
 
-export async function init() {
+interface InitOptions {
+  framework?: string;
+  yes?: boolean;
+  prompt?: boolean;
+}
+
+export async function init(options: InitOptions = {}) {
   const cwd = process.cwd();
-  const ctx = await gatherContext(cwd);
+
+  // Resolve --framework override
+  let frameworkOverride;
+  if (options.framework) {
+    frameworkOverride = lookupFramework(options.framework);
+    if (!frameworkOverride) {
+      throw new CliError(
+        `Unknown framework "${options.framework}". Valid values: ${FRAMEWORK_NAMES.join(", ")}`,
+      );
+    }
+  }
+
+  const ctx = await gatherContext(cwd, frameworkOverride);
 
   // Populate framework-specific context (variant, layoutPath, middlewareBasename)
   if (ctx) await enrichProjectContext(ctx);
 
-  if (isAgent()) {
+  if (options.prompt || isAgent()) {
     console.log(ctx ? buildAgentPrompt(ctx) : GENERIC_AGENT_PROMPT);
     return;
   }
 
   await authenticateAndLink(cwd);
-  await detectAndInstall(cwd, ctx);
+  await detectAndInstall(cwd, ctx, options);
 }
 
 async function authenticateAndLink(cwd: string): Promise<void> {
@@ -162,7 +181,11 @@ async function authenticateAndLink(cwd: string): Promise<void> {
   await link({ skipIfLinked: true });
 }
 
-async function detectAndInstall(cwd: string, ctx: ProjectContext | null): Promise<void> {
+async function detectAndInstall(
+  cwd: string,
+  ctx: ProjectContext | null,
+  options: InitOptions,
+): Promise<void> {
   if (!ctx) {
     console.log(
       `Could not detect a framework. Install the appropriate Clerk SDK manually: ${dim("https://clerk.com/docs")}`,
@@ -185,10 +208,14 @@ async function detectAndInstall(cwd: string, ctx: ProjectContext | null): Promis
   }
 
   await pull({});
-  await scaffoldAndWrite(cwd, ctx);
+  await scaffoldAndWrite(cwd, ctx, options);
 }
 
-async function scaffoldAndWrite(cwd: string, ctx: ProjectContext): Promise<void> {
+async function scaffoldAndWrite(
+  cwd: string,
+  ctx: ProjectContext,
+  options: InitOptions,
+): Promise<void> {
   const plan = await scaffold(ctx);
   const hasChanges = plan.actions.some((a) => a.type !== "skip");
 
@@ -210,8 +237,12 @@ async function scaffoldAndWrite(cwd: string, ctx: ProjectContext): Promise<void>
     console.log(dim("Consider committing first so you can review what clerk init creates.\n"));
   }
 
-  const proceed = await previewAndConfirm(plan);
-  if (!proceed) throwUserAbort();
+  if (options.yes) {
+    previewPlan(plan);
+  } else {
+    const proceed = await previewAndConfirm(plan);
+    if (!proceed) throwUserAbort();
+  }
 
   const writtenFiles = await writePlan(cwd, plan);
   await runFormatters(cwd, writtenFiles);
