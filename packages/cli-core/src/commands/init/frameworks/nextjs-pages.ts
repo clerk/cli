@@ -1,11 +1,14 @@
 import { join } from "node:path";
 import {
+  authFileSpecs,
+  hasTailwindStyles,
   jsxAuthPageContent,
   jsxExt,
-  NEXTJS_SIGN_ROUTES_INSTRUCTION,
   safeAddImport,
   scaffoldAuthFiles,
+  scaffoldEnvVars,
   scaffoldNextjsMiddleware,
+  SIGN_ROUTE_ENV_VARS,
   srcPrefix,
 } from "./helpers.js";
 import { enrichNextjsContext } from "./nextjs-context.js";
@@ -81,20 +84,15 @@ function authPagePath(ctx: ProjectContext, kind: "sign-in" | "sign-up"): string 
 }
 
 async function scaffoldAuthPages(ctx: ProjectContext): Promise<FileAction[]> {
-  return scaffoldAuthFiles(ctx.cwd, [
-    {
-      path: authPagePath(ctx, "sign-in"),
-      content: jsxAuthPageContent("sign-in", "@clerk/nextjs"),
-      kind: "sign-in",
+  const tailwind = hasTailwindStyles(ctx);
+  return scaffoldAuthFiles(
+    ctx.cwd,
+    authFileSpecs({
+      path: (kind) => authPagePath(ctx, kind),
+      content: (kind) => jsxAuthPageContent(kind, "@clerk/nextjs", tailwind),
       surface: "page",
-    },
-    {
-      path: authPagePath(ctx, "sign-up"),
-      content: jsxAuthPageContent("sign-up", "@clerk/nextjs"),
-      kind: "sign-up",
-      surface: "page",
-    },
-  ]);
+    }),
+  );
 }
 
 export const nextjsPages: FrameworkScaffold = {
@@ -108,15 +106,25 @@ export const nextjsPages: FrameworkScaffold = {
   matches: (ctx) => ctx.framework.dep === "next" && ctx.variant === "pages-router",
 
   async scaffold(ctx: ProjectContext): Promise<ScaffoldPlan> {
-    const [middlewareAction, appAction, authActions] = await Promise.all([
+    const [middlewareAction, appAction, authActions, envAction] = await Promise.all([
       scaffoldNextjsMiddleware(ctx),
       scaffoldApp(ctx),
       scaffoldAuthPages(ctx),
+      scaffoldEnvVars(ctx, SIGN_ROUTE_ENV_VARS.nextjs),
     ]);
 
+    const postInstructions: string[] = [];
+
+    const hasI18n = Boolean(ctx.deps["next-intl"] || ctx.deps["next-i18next"]);
+    if (hasI18n) {
+      postInstructions.push(
+        "Next.js Pages Router handles i18n routing automatically via next.config.js — no additional page placement needed for sign-in/sign-up",
+      );
+    }
+
     return {
-      actions: [middlewareAction, appAction, ...authActions],
-      postInstructions: [NEXTJS_SIGN_ROUTES_INSTRUCTION],
+      actions: [middlewareAction, appAction, ...authActions, envAction],
+      postInstructions,
     };
   },
 };

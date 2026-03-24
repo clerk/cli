@@ -1,13 +1,18 @@
 import { join } from "node:path";
 import { parseModule } from "magicast";
 import {
+  authFileSpecs,
+  findFirstDirMatch,
   findFirstFile,
+  hasTailwindStyles,
   insertAfterLastImport,
   jsxAuthPageContent,
   jsxExt,
   safeAddImport,
   scaffoldAuthFiles,
   scaffoldConfigFile,
+  scaffoldEnvVars,
+  SIGN_ROUTE_ENV_VARS,
 } from "./helpers.js";
 import type { FileAction, FrameworkScaffold, ProjectContext, ScaffoldPlan } from "./types.js";
 
@@ -103,25 +108,41 @@ function wrapOutletWithProvider(source: string, hasLoaderData: boolean): string 
   );
 }
 
-function authRoutePath(ctx: ProjectContext, kind: "sign-in" | "sign-up"): string {
-  return `app/routes/${kind}.${jsxExt(ctx)}`;
+/**
+ * Detect an i18n optional locale segment in existing React Router route files.
+ * React Router uses `($locale).` or `($lang).` prefix for optional locale params.
+ */
+function matchLocalePrefix(entry: string): string | null {
+  const match = entry.match(/^(\(\$(?:locale|lang)\))\./);
+  return match?.[1] ?? null;
 }
 
-async function scaffoldAuthRoutes(ctx: ProjectContext): Promise<FileAction[]> {
-  return scaffoldAuthFiles(ctx.cwd, [
-    {
-      path: authRoutePath(ctx, "sign-in"),
-      content: jsxAuthPageContent("sign-in", "@clerk/react-router"),
-      kind: "sign-in",
+async function detectLocalePrefix(cwd: string): Promise<string | null> {
+  return findFirstDirMatch(cwd, "app/routes", matchLocalePrefix);
+}
+
+function authRoutePath(
+  ctx: ProjectContext,
+  kind: "sign-in" | "sign-up",
+  localePrefix: string | null,
+): string {
+  const prefix = localePrefix ? `${localePrefix}.` : "";
+  return `app/routes/${prefix}${kind}.${jsxExt(ctx)}`;
+}
+
+async function scaffoldAuthRoutes(
+  ctx: ProjectContext,
+  localePrefix: string | null,
+): Promise<FileAction[]> {
+  const tailwind = hasTailwindStyles(ctx);
+  return scaffoldAuthFiles(
+    ctx.cwd,
+    authFileSpecs({
+      path: (kind) => authRoutePath(ctx, kind, localePrefix),
+      content: (kind) => jsxAuthPageContent(kind, "@clerk/react-router", tailwind),
       surface: "route",
-    },
-    {
-      path: authRoutePath(ctx, "sign-up"),
-      content: jsxAuthPageContent("sign-up", "@clerk/react-router"),
-      kind: "sign-up",
-      surface: "route",
-    },
-  ]);
+    }),
+  );
 }
 
 async function scaffoldRoot(ctx: ProjectContext): Promise<RootScaffoldResult> {
@@ -209,14 +230,16 @@ export const reactRouter: FrameworkScaffold = {
   matches: (ctx) => ctx.framework.dep === "react-router",
 
   async scaffold(ctx: ProjectContext): Promise<ScaffoldPlan> {
-    const [configAction, rootResult, authActions] = await Promise.all([
+    const [configAction, rootResult, localePrefix, envAction] = await Promise.all([
       scaffoldConfig(ctx),
       scaffoldRoot(ctx),
-      scaffoldAuthRoutes(ctx),
+      detectLocalePrefix(ctx.cwd),
+      scaffoldEnvVars(ctx, SIGN_ROUTE_ENV_VARS.vite),
     ]);
+    const authActions = await scaffoldAuthRoutes(ctx, localePrefix);
 
     const rootAction = rootResult.action;
-    const actions = [configAction, rootAction, ...authActions].filter(
+    const actions = [configAction, rootAction, ...authActions, envAction].filter(
       (action): action is FileAction => action !== null,
     );
     const postInstructions: string[] = [];

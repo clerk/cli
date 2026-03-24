@@ -1,11 +1,18 @@
 import { join } from "node:path";
 import {
   authComponentName,
+  authFileSpecs,
   findFirstFile,
+  findFirstDirMatch,
+  hasTailwindStyles,
   hasClerkImport,
+  indentBlock,
+  jsxAuthComponentMarkup,
   jsxExt,
   safeAddImport,
   scaffoldAuthFiles,
+  scaffoldEnvVars,
+  SIGN_ROUTE_ENV_VARS,
   wrapBodyWithProvider,
 } from "./helpers.js";
 import type { FileAction, FrameworkScaffold, ProjectContext, ScaffoldPlan } from "./types.js";
@@ -30,8 +37,9 @@ const ROOT_ROUTE_CANDIDATES = [
   "app/routes/__root.jsx",
 ] as const;
 
-function authRouteContent(kind: "sign-in" | "sign-up"): string {
+function authRouteContent(kind: "sign-in" | "sign-up", tailwind: boolean): string {
   const component = authComponentName(kind);
+  const content = indentBlock(jsxAuthComponentMarkup(component, tailwind), "    ");
 
   return `import { ${component} } from "@clerk/tanstack-react-start";
 import { createFileRoute } from "@tanstack/react-router";
@@ -41,7 +49,9 @@ export const Route = createFileRoute("/${kind}/$")({
 });
 
 function Page() {
-  return <${component} />;
+  return (
+${content}
+  );
 }
 `;
 }
@@ -64,32 +74,43 @@ async function detectBaseDir(ctx: ProjectContext): Promise<TanstackBaseDir> {
   return baseDirFromPath(rootPath) ?? baseDirFromPath(startPath) ?? "src";
 }
 
+/**
+ * Detect a TanStack Router i18n locale directory in the routes folder.
+ * TanStack Router uses `{-$locale}` or `{-$lang}` for optional locale params.
+ */
+function matchLocaleDir(entry: string): string | null {
+  if (/^\{-\$(?:locale|lang)\}$/.test(entry)) return entry;
+  return null;
+}
+
+async function detectLocaleDir(cwd: string, baseDir: TanstackBaseDir): Promise<string | null> {
+  return findFirstDirMatch(cwd, `${baseDir}/routes`, matchLocaleDir);
+}
+
 function authRoutePath(
   ctx: ProjectContext,
   baseDir: TanstackBaseDir,
   kind: "sign-in" | "sign-up",
+  localeDir: string | null,
 ): string {
-  return `${baseDir}/routes/${kind}.$.${jsxExt(ctx)}`;
+  const localePart = localeDir ? `${localeDir}/` : "";
+  return `${baseDir}/routes/${localePart}${kind}.$.${jsxExt(ctx)}`;
 }
 
 async function scaffoldAuthRoutes(
   ctx: ProjectContext,
   baseDir: TanstackBaseDir,
+  localeDir: string | null,
 ): Promise<FileAction[]> {
-  return scaffoldAuthFiles(ctx.cwd, [
-    {
-      path: authRoutePath(ctx, baseDir, "sign-in"),
-      content: authRouteContent("sign-in"),
-      kind: "sign-in",
+  const tailwind = hasTailwindStyles(ctx);
+  return scaffoldAuthFiles(
+    ctx.cwd,
+    authFileSpecs({
+      path: (kind) => authRoutePath(ctx, baseDir, kind, localeDir),
+      content: (kind) => authRouteContent(kind, tailwind),
       surface: "route",
-    },
-    {
-      path: authRoutePath(ctx, baseDir, "sign-up"),
-      content: authRouteContent("sign-up"),
-      kind: "sign-up",
-      surface: "route",
-    },
-  ]);
+    }),
+  );
 }
 
 async function scaffoldStartServer(ctx: ProjectContext): Promise<FileAction | null> {
@@ -151,14 +172,16 @@ export const tanstackStart: FrameworkScaffold = {
   matches: (ctx) => ctx.framework.dep === "@tanstack/react-start",
 
   async scaffold(ctx: ProjectContext): Promise<ScaffoldPlan> {
-    const [serverAction, rootAction, baseDir] = await Promise.all([
+    const [serverAction, rootAction, baseDir, envAction] = await Promise.all([
       scaffoldStartServer(ctx),
       scaffoldRoot(ctx),
       detectBaseDir(ctx),
+      scaffoldEnvVars(ctx, SIGN_ROUTE_ENV_VARS.vite),
     ]);
-    const authActions = await scaffoldAuthRoutes(ctx, baseDir);
+    const localeDir = await detectLocaleDir(ctx.cwd, baseDir);
+    const authActions = await scaffoldAuthRoutes(ctx, baseDir, localeDir);
 
-    const actions = [serverAction, rootAction, ...authActions].filter(
+    const actions = [serverAction, rootAction, ...authActions, envAction].filter(
       (action): action is FileAction => action !== null,
     );
     const postInstructions: string[] = [];

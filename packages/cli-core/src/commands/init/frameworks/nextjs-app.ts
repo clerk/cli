@@ -1,11 +1,14 @@
 import { join } from "node:path";
 import {
+  authFileSpecs,
+  hasTailwindStyles,
   jsxAuthPageContent,
   jsxExt,
-  NEXTJS_SIGN_ROUTES_INSTRUCTION,
   safeAddImport,
   scaffoldAuthFiles,
+  scaffoldEnvVars,
   scaffoldNextjsMiddleware,
+  SIGN_ROUTE_ENV_VARS,
   srcPrefix,
   wrapBodyWithProvider,
 } from "./helpers.js";
@@ -54,24 +57,20 @@ async function scaffoldLayout(ctx: ProjectContext): Promise<FileAction> {
 }
 
 function authPagePath(ctx: ProjectContext, kind: "sign-in" | "sign-up"): string {
-  return `${srcPrefix(ctx)}app/${kind}/[[...${kind}]]/page.${jsxExt(ctx)}`;
+  const localeSegment = ctx.i18nLocaleDir ? `${ctx.i18nLocaleDir}/` : "";
+  return `${srcPrefix(ctx)}app/${localeSegment}${kind}/[[...${kind}]]/page.${jsxExt(ctx)}`;
 }
 
 async function scaffoldAuthPages(ctx: ProjectContext): Promise<FileAction[]> {
-  return scaffoldAuthFiles(ctx.cwd, [
-    {
-      path: authPagePath(ctx, "sign-in"),
-      content: jsxAuthPageContent("sign-in", "@clerk/nextjs"),
-      kind: "sign-in",
+  const tailwind = hasTailwindStyles(ctx);
+  return scaffoldAuthFiles(
+    ctx.cwd,
+    authFileSpecs({
+      path: (kind) => authPagePath(ctx, kind),
+      content: (kind) => jsxAuthPageContent(kind, "@clerk/nextjs", tailwind),
       surface: "page",
-    },
-    {
-      path: authPagePath(ctx, "sign-up"),
-      content: jsxAuthPageContent("sign-up", "@clerk/nextjs"),
-      kind: "sign-up",
-      surface: "page",
-    },
-  ]);
+    }),
+  );
 }
 
 export const nextjsApp: FrameworkScaffold = {
@@ -85,15 +84,16 @@ export const nextjsApp: FrameworkScaffold = {
   matches: (ctx) => ctx.framework.dep === "next" && ctx.variant !== "pages-router",
 
   async scaffold(ctx: ProjectContext): Promise<ScaffoldPlan> {
-    const [middlewareAction, layoutAction, authActions] = await Promise.all([
+    const [middlewareAction, layoutAction, authActions, envAction] = await Promise.all([
       scaffoldNextjsMiddleware(ctx),
       scaffoldLayout(ctx),
       scaffoldAuthPages(ctx),
+      scaffoldEnvVars(ctx, SIGN_ROUTE_ENV_VARS.nextjs),
     ]);
 
     return {
-      actions: [middlewareAction, layoutAction, ...authActions],
-      postInstructions: [NEXTJS_SIGN_ROUTES_INSTRUCTION],
+      actions: [middlewareAction, layoutAction, ...authActions, envAction],
+      postInstructions: [],
     };
   },
 };

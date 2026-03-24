@@ -2,10 +2,16 @@ import { join } from "node:path";
 import { parseModule, builders } from "magicast";
 import {
   authComponentName,
+  authFileSpecs,
+  findFirstFile,
   hasClerkImport,
+  hasTailwindStyles,
+  htmlAuthComponentMarkup,
   scaffoldAuthFiles,
   scaffoldConfigFile,
+  scaffoldEnvVars,
   scriptExt,
+  SIGN_ROUTE_ENV_VARS,
 } from "./helpers.js";
 import type { FileAction, FrameworkScaffold, ProjectContext, ScaffoldPlan } from "./types.js";
 
@@ -16,14 +22,14 @@ export const onRequest = clerkMiddleware();
 `;
 }
 
-function authPageContent(kind: "sign-in" | "sign-up"): string {
+function authPageContent(kind: "sign-in" | "sign-up", tailwind: boolean): string {
   const component = authComponentName(kind);
 
   return `---
 import { ${component} } from "@clerk/astro/components";
 ---
 
-<${component} />
+${htmlAuthComponentMarkup(component, tailwind)}
 `;
 }
 
@@ -113,6 +119,21 @@ async function scaffoldMiddleware(ctx: ProjectContext): Promise<FileAction> {
   };
 }
 
+/** Check if the Astro config contains an i18n configuration. */
+async function hasAstroI18n(cwd: string): Promise<boolean> {
+  const configPath = await findFirstFile(cwd, [
+    "astro.config.mjs",
+    "astro.config.ts",
+    "astro.config.js",
+  ]);
+  if (!configPath) return false;
+
+  const content = await Bun.file(join(cwd, configPath)).text();
+  // Strip comments before matching to avoid false positives on commented-out config
+  const stripped = content.replace(/\/\/[^\n]*/g, "").replace(/\/\*[\s\S]*?\*\//g, "");
+  return /\bi18n\s*:/.test(stripped);
+}
+
 export const astro: FrameworkScaffold = {
   name: "Astro",
   dep: "astro",
@@ -121,30 +142,35 @@ export const astro: FrameworkScaffold = {
   matches: (ctx) => ctx.framework.dep === "astro",
 
   async scaffold(ctx: ProjectContext): Promise<ScaffoldPlan> {
-    const [configAction, middlewareAction, authActions] = await Promise.all([
+    const tailwind = hasTailwindStyles(ctx);
+    const [configAction, middlewareAction, authActions, envAction, i18n] = await Promise.all([
       scaffoldConfig(ctx),
       scaffoldMiddleware(ctx),
-      scaffoldAuthFiles(ctx.cwd, [
-        {
-          path: "src/pages/sign-in.astro",
-          content: authPageContent("sign-in"),
-          kind: "sign-in",
+      scaffoldAuthFiles(
+        ctx.cwd,
+        authFileSpecs({
+          path: (kind) => `src/pages/${kind}.astro`,
+          content: (kind) => authPageContent(kind, tailwind),
           surface: "page",
-        },
-        {
-          path: "src/pages/sign-up.astro",
-          content: authPageContent("sign-up"),
-          kind: "sign-up",
-          surface: "page",
-        },
-      ]),
+        }),
+      ),
+      scaffoldEnvVars(ctx, SIGN_ROUTE_ENV_VARS.astro),
+      hasAstroI18n(ctx.cwd),
     ]);
 
+    const postInstructions = [
+      "Ensure your Astro config has `output: 'server'` and an SSR adapter (e.g., @astrojs/node)",
+    ];
+
+    if (i18n) {
+      postInstructions.push(
+        "Your project uses i18n routing — create sign-in/sign-up pages in each locale folder (e.g., src/pages/en/sign-in.astro)",
+      );
+    }
+
     return {
-      actions: [configAction, middlewareAction, ...authActions],
-      postInstructions: [
-        "Ensure your Astro config has `output: 'server'` and an SSR adapter (e.g., @astrojs/node)",
-      ],
+      actions: [configAction, middlewareAction, ...authActions, envAction],
+      postInstructions,
     };
   },
 };
