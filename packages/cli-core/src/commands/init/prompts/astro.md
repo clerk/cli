@@ -93,7 +93,7 @@ NEVER:
 import { authMiddleware } from '@clerk/astro' // WRONG — use clerkMiddleware
 <SignedIn>                                    // WRONG — use <Show when="signed-in">
 <SignedOut>                                   // WRONG — use <Show when="signed-out">
-output: 'static'                             // WRONG — Clerk requires SSR
+output: 'static'                              // WRONG — Clerk requires SSR
 ```
 
 ## Verify Before Responding

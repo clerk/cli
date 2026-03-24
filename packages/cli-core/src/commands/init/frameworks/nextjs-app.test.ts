@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { mkdtemp, rm, mkdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { nextjsApp } from "./nextjs-app.ts";
-import type { ProjectContext } from "./types.ts";
+import type { FileAction, ProjectContext } from "./types.ts";
 
 let tempDir: string;
 
@@ -29,6 +29,16 @@ function makeCtx(overrides?: Partial<ProjectContext>): ProjectContext {
   };
 }
 
+/** Find a scaffold action by its exact path. Throws with a clear message if not found. */
+function findAction(actions: FileAction[], path: string): FileAction {
+  const action = actions.find((a) => a.path === path);
+  if (!action) {
+    const paths = actions.map((a) => a.path).join(", ");
+    throw new Error(`No action found for path "${path}". Available: ${paths}`);
+  }
+  return action;
+}
+
 beforeEach(async () => {
   tempDir = await mkdtemp(join(tmpdir(), "clerk-nextjs-app-"));
 });
@@ -37,7 +47,7 @@ afterEach(async () => {
   await rm(tempDir, { recursive: true, force: true });
 });
 
-test("scaffolds all 4 files for a fresh Next.js App Router project", async () => {
+test("scaffolds all 5 actions for a fresh Next.js App Router project", async () => {
   await mkdir(join(tempDir, "app"), { recursive: true });
   await Bun.write(
     join(tempDir, "app/layout.tsx"),
@@ -56,29 +66,28 @@ test("scaffolds all 4 files for a fresh Next.js App Router project", async () =>
   expect(plan.actions).toHaveLength(5);
 
   // Middleware
-  expect(plan.actions[0]!.path).toBe("middleware.ts");
-  expect(plan.actions[0]!.type).toBe("create");
-  expect(plan.actions[0]!.type).not.toBe("skip");
-  if (plan.actions[0]!.type === "create") {
+  const mw = findAction(plan.actions, "middleware.ts");
+  expect(mw.type).toBe("create");
+  if (mw.type === "create") {
     // Non-i18n: should NOT have locale-prefixed patterns
-    expect(plan.actions[0]!.content).not.toContain("/:locale/");
+    expect(mw.content).not.toContain("/:locale/");
   }
 
   // Layout
-  expect(plan.actions[1]!.path).toBe("app/layout.tsx");
-  expect(plan.actions[1]!.type).toBe("modify");
+  const layout = findAction(plan.actions, "app/layout.tsx");
+  expect(layout.type).toBe("modify");
 
   // Sign-in
-  expect(plan.actions[2]!.path).toBe("app/sign-in/[[...sign-in]]/page.tsx");
-  expect(plan.actions[2]!.type).toBe("create");
+  const signIn = findAction(plan.actions, "app/sign-in/[[...sign-in]]/page.tsx");
+  expect(signIn.type).toBe("create");
 
   // Sign-up
-  expect(plan.actions[3]!.path).toBe("app/sign-up/[[...sign-up]]/page.tsx");
-  expect(plan.actions[3]!.type).toBe("create");
+  const signUp = findAction(plan.actions, "app/sign-up/[[...sign-up]]/page.tsx");
+  expect(signUp.type).toBe("create");
 
   // Env vars
-  expect(plan.actions[4]!.path).toBe(".env.local");
-  expect(plan.actions[4]!.type).toBe("modify");
+  const env = findAction(plan.actions, ".env.local");
+  expect(env.type).toBe("modify");
 });
 
 test("skips middleware when already has Clerk", async () => {
@@ -91,7 +100,7 @@ test("skips middleware when already has Clerk", async () => {
 
   const plan = await nextjsApp.scaffold(makeCtx());
 
-  expect(plan.actions[0]).toMatchObject({
+  expect(findAction(plan.actions, "middleware.ts")).toMatchObject({
     type: "skip",
     skipReason: "Already has Clerk middleware",
   });
@@ -106,7 +115,7 @@ test("skips layout when already has ClerkProvider", async () => {
 
   const plan = await nextjsApp.scaffold(makeCtx());
 
-  expect(plan.actions[1]).toMatchObject({
+  expect(findAction(plan.actions, "app/layout.tsx")).toMatchObject({
     type: "skip",
     skipReason: "Already has ClerkProvider",
   });
@@ -123,7 +132,7 @@ test("skips sign-in page when it already exists", async () => {
 
   const plan = await nextjsApp.scaffold(makeCtx());
 
-  expect(plan.actions[2]).toMatchObject({
+  expect(findAction(plan.actions, "app/sign-in/[[...sign-in]]/page.tsx")).toMatchObject({
     type: "skip",
     skipReason: "Sign-in page already exists",
   });
@@ -137,9 +146,9 @@ test("uses src/ paths when srcDir is true", async () => {
     makeCtx({ srcDir: true, layoutPath: "src/app/layout.tsx" }),
   );
 
-  expect(plan.actions[0]!.path).toBe("src/middleware.ts");
-  expect(plan.actions[2]!.path).toBe("src/app/sign-in/[[...sign-in]]/page.tsx");
-  expect(plan.actions[3]!.path).toBe("src/app/sign-up/[[...sign-up]]/page.tsx");
+  findAction(plan.actions, "src/middleware.ts");
+  findAction(plan.actions, "src/app/sign-in/[[...sign-in]]/page.tsx");
+  findAction(plan.actions, "src/app/sign-up/[[...sign-up]]/page.tsx");
 });
 
 test("uses .jsx extension when typescript is false", async () => {
@@ -150,8 +159,8 @@ test("uses .jsx extension when typescript is false", async () => {
     makeCtx({ typescript: false, layoutPath: "app/layout.jsx" }),
   );
 
-  expect(plan.actions[0]!.path).toBe("middleware.js");
-  expect(plan.actions[2]!.path).toBe("app/sign-in/[[...sign-in]]/page.jsx");
+  findAction(plan.actions, "middleware.js");
+  findAction(plan.actions, "app/sign-in/[[...sign-in]]/page.jsx");
 });
 
 test("writes sign-in/sign-up route env vars to env file", async () => {
@@ -160,14 +169,13 @@ test("writes sign-in/sign-up route env vars to env file", async () => {
 
   const plan = await nextjsApp.scaffold(makeCtx());
 
-  const envAction = plan.actions.find((a) => a.path === ".env.local");
-  expect(envAction).toBeDefined();
-  expect(envAction!.type).toBe("modify");
-  if (envAction!.type === "modify") {
-    expect(envAction!.content).toContain("NEXT_PUBLIC_CLERK_SIGN_IN_URL=/sign-in");
-    expect(envAction!.content).toContain("NEXT_PUBLIC_CLERK_SIGN_UP_URL=/sign-up");
-    expect(envAction!.content).toContain("NEXT_PUBLIC_CLERK_SIGN_IN_FALLBACK_REDIRECT_URL=/");
-    expect(envAction!.content).toContain("NEXT_PUBLIC_CLERK_SIGN_UP_FALLBACK_REDIRECT_URL=/");
+  const envAction = findAction(plan.actions, ".env.local");
+  expect(envAction.type).toBe("modify");
+  if (envAction.type === "modify") {
+    expect(envAction.content).toContain("NEXT_PUBLIC_CLERK_SIGN_IN_URL=/sign-in");
+    expect(envAction.content).toContain("NEXT_PUBLIC_CLERK_SIGN_UP_URL=/sign-up");
+    expect(envAction.content).toContain("NEXT_PUBLIC_CLERK_SIGN_IN_FALLBACK_REDIRECT_URL=/");
+    expect(envAction.content).toContain("NEXT_PUBLIC_CLERK_SIGN_UP_FALLBACK_REDIRECT_URL=/");
   }
   expect(plan.postInstructions).toHaveLength(0);
 });
@@ -175,10 +183,51 @@ test("writes sign-in/sign-up route env vars to env file", async () => {
 test("returns skip action when no layout found", async () => {
   const plan = await nextjsApp.scaffold(makeCtx({ layoutPath: null }));
 
-  expect(plan.actions[1]).toMatchObject({
+  // When layoutPath is null, the expected path is derived from the default convention
+  const layoutAction = findAction(plan.actions, "app/layout.tsx");
+  expect(layoutAction).toMatchObject({
     type: "skip",
     skipReason: "Layout file not found",
   });
+});
+
+test("properly indents ClerkProvider wrapping in layout", async () => {
+  await mkdir(join(tempDir, "app"), { recursive: true });
+  await Bun.write(
+    join(tempDir, "app/layout.tsx"),
+    `export default function RootLayout({ children }: { children: React.ReactNode }) {
+  return (
+    <html lang="en">
+      <body className="min-h-full flex flex-col">
+        {children}
+      </body>
+    </html>
+  );
+}
+`,
+  );
+
+  const plan = await nextjsApp.scaffold(makeCtx());
+  const layout = findAction(plan.actions, "app/layout.tsx");
+
+  expect(layout.type).toBe("modify");
+  if (layout.type === "modify") {
+    // ClerkProvider should be on its own line after <body>, not inline
+    expect(layout.content).not.toContain("<body><ClerkProvider>");
+    expect(layout.content).not.toContain("</ClerkProvider></body>");
+    // Proper nesting: <body> → <ClerkProvider> → {children} → </ClerkProvider> → </body>
+    expect(layout.content).toContain("<ClerkProvider>");
+    expect(layout.content).toContain("</ClerkProvider>");
+    // {children} should be indented deeper than <ClerkProvider>
+    const lines = layout.content.split("\n");
+    const providerLine = lines.find((l) => l.includes("<ClerkProvider>"));
+    const childrenLine = lines.find((l) => l.includes("{children}"));
+    expect(providerLine).toBeDefined();
+    expect(childrenLine).toBeDefined();
+    const providerIndent = providerLine!.search(/\S/);
+    const childrenIndent = childrenLine!.search(/\S/);
+    expect(childrenIndent).toBeGreaterThan(providerIndent);
+  }
 });
 
 test("composes with existing non-Clerk middleware", async () => {
@@ -195,8 +244,8 @@ export default function middleware(request) {
 
   const plan = await nextjsApp.scaffold(makeCtx());
 
-  expect(plan.actions[0]!.type).toBe("modify");
-  expect(plan.actions[0]!.type).not.toBe("skip");
+  const mw = findAction(plan.actions, "middleware.ts");
+  expect(mw.type).toBe("modify");
 });
 
 test("composes with expression export middleware (variable default export)", async () => {
@@ -211,13 +260,14 @@ export default middleware;
 
   const plan = await nextjsApp.scaffold(makeCtx());
 
-  expect(plan.actions[0]!.type).toBe("modify");
-  if (plan.actions[0]!.type === "modify") {
+  const mw = findAction(plan.actions, "middleware.ts");
+  expect(mw.type).toBe("modify");
+  if (mw.type === "modify") {
     // `export default middleware` is stripped (variable already named `middleware`)
-    expect(plan.actions[0]!.content).not.toContain("export default middleware");
-    expect(plan.actions[0]!.content).toContain("const middleware = createMiddleware()");
-    expect(plan.actions[0]!.content).toContain("clerkMiddleware");
-    expect(plan.actions[0]!.content).toContain("middleware(request)");
+    expect(mw.content).not.toContain("export default middleware");
+    expect(mw.content).toContain("const middleware = createMiddleware()");
+    expect(mw.content).toContain("clerkMiddleware");
+    expect(mw.content).toContain("middleware(request)");
   }
 });
 
@@ -238,7 +288,7 @@ export const config = {
 
   const plan = await nextjsApp.scaffold(makeCtx());
 
-  expect(plan.actions[0]).toMatchObject({
+  expect(findAction(plan.actions, "middleware.ts")).toMatchObject({
     type: "skip",
     skipReason: "Existing middleware uses an unsupported shape for automatic Clerk composition",
   });
@@ -256,18 +306,16 @@ test("adds Clerk middleware once when existing middleware has no default export"
   await Bun.write(join(tempDir, "app/layout.tsx"), "<html><body>{children}</body></html>");
 
   const plan = await nextjsApp.scaffold(makeCtx());
-  const middlewareAction = plan.actions[0];
+  const mw = findAction(plan.actions, "middleware.ts");
 
-  expect(middlewareAction).toBeDefined();
-  expect(middlewareAction?.type).toBe("modify");
-
-  if (middlewareAction?.type !== "modify") {
+  expect(mw.type).toBe("modify");
+  if (mw.type !== "modify") {
     throw new Error("Expected middleware action to modify middleware.ts");
   }
 
-  expect(middlewareAction.content.match(/@clerk\/nextjs\/server/g)?.length).toBe(1);
-  expect(middlewareAction.content.match(/const isPublicRoute/g)?.length).toBe(1);
-  expect(middlewareAction.content.match(/export const config/g)?.length).toBe(1);
+  expect(mw.content.match(/@clerk\/nextjs\/server/g)?.length).toBe(1);
+  expect(mw.content.match(/const isPublicRoute/g)?.length).toBe(1);
+  expect(mw.content.match(/export const config/g)?.length).toBe(1);
 });
 
 test("uses proxy.ts when middlewareBasename is proxy", async () => {
@@ -276,7 +324,7 @@ test("uses proxy.ts when middlewareBasename is proxy", async () => {
 
   const plan = await nextjsApp.scaffold(makeCtx({ middlewareBasename: "proxy" }));
 
-  expect(plan.actions[0]!.path).toBe("proxy.ts");
+  findAction(plan.actions, "proxy.ts");
 });
 
 test("uses src/proxy.ts when srcDir and middlewareBasename is proxy", async () => {
@@ -287,7 +335,7 @@ test("uses src/proxy.ts when srcDir and middlewareBasename is proxy", async () =
     makeCtx({ srcDir: true, layoutPath: "src/app/layout.tsx", middlewareBasename: "proxy" }),
   );
 
-  expect(plan.actions[0]!.path).toBe("src/proxy.ts");
+  findAction(plan.actions, "src/proxy.ts");
 });
 
 test("places auth pages inside [locale] when i18n locale dir is set", async () => {
@@ -297,8 +345,8 @@ test("places auth pages inside [locale] when i18n locale dir is set", async () =
 
   const plan = await nextjsApp.scaffold(makeCtx({ i18nLocaleDir: "[locale]" }));
 
-  expect(plan.actions[2]!.path).toBe("app/[locale]/sign-in/[[...sign-in]]/page.tsx");
-  expect(plan.actions[3]!.path).toBe("app/[locale]/sign-up/[[...sign-up]]/page.tsx");
+  findAction(plan.actions, "app/[locale]/sign-in/[[...sign-in]]/page.tsx");
+  findAction(plan.actions, "app/[locale]/sign-up/[[...sign-up]]/page.tsx");
 });
 
 test("places auth pages inside [lang] when i18n locale dir uses [lang]", async () => {
@@ -308,8 +356,8 @@ test("places auth pages inside [lang] when i18n locale dir uses [lang]", async (
 
   const plan = await nextjsApp.scaffold(makeCtx({ i18nLocaleDir: "[lang]" }));
 
-  expect(plan.actions[2]!.path).toBe("app/[lang]/sign-in/[[...sign-in]]/page.tsx");
-  expect(plan.actions[3]!.path).toBe("app/[lang]/sign-up/[[...sign-up]]/page.tsx");
+  findAction(plan.actions, "app/[lang]/sign-in/[[...sign-in]]/page.tsx");
+  findAction(plan.actions, "app/[lang]/sign-up/[[...sign-up]]/page.tsx");
 });
 
 test("places auth pages inside src/app/[locale] when srcDir and i18n", async () => {
@@ -321,8 +369,8 @@ test("places auth pages inside src/app/[locale] when srcDir and i18n", async () 
     makeCtx({ srcDir: true, layoutPath: "src/app/layout.tsx", i18nLocaleDir: "[locale]" }),
   );
 
-  expect(plan.actions[2]!.path).toBe("src/app/[locale]/sign-in/[[...sign-in]]/page.tsx");
-  expect(plan.actions[3]!.path).toBe("src/app/[locale]/sign-up/[[...sign-up]]/page.tsx");
+  findAction(plan.actions, "src/app/[locale]/sign-in/[[...sign-in]]/page.tsx");
+  findAction(plan.actions, "src/app/[locale]/sign-up/[[...sign-up]]/page.tsx");
 });
 
 test("skips i18n auth page when it already exists inside [locale]", async () => {
@@ -336,7 +384,7 @@ test("skips i18n auth page when it already exists inside [locale]", async () => 
 
   const plan = await nextjsApp.scaffold(makeCtx({ i18nLocaleDir: "[locale]" }));
 
-  expect(plan.actions[2]).toMatchObject({
+  expect(findAction(plan.actions, "app/[locale]/sign-in/[[...sign-in]]/page.tsx")).toMatchObject({
     type: "skip",
     skipReason: "Sign-in page already exists",
   });
@@ -347,7 +395,7 @@ test("creates composed Clerk + next-intl middleware when next-intl is a dep", as
   await Bun.write(join(tempDir, "app/layout.tsx"), "<html><body>{children}</body></html>");
 
   const plan = await nextjsApp.scaffold(makeCtx({ deps: { "next-intl": "4.0.0" } }));
-  const mw = plan.actions[0]!;
+  const mw = findAction(plan.actions, "middleware.ts");
 
   expect(mw.type).toBe("create");
   if (mw.type !== "create") throw new Error("Expected create action");
@@ -366,7 +414,7 @@ test("imports routing config in composed middleware when next-intl routing file 
   await Bun.write(join(tempDir, "i18n/routing.ts"), "export const routing = {};");
 
   const plan = await nextjsApp.scaffold(makeCtx({ deps: { "next-intl": "4.0.0" } }));
-  const mw = plan.actions[0]!;
+  const mw = findAction(plan.actions, "middleware.ts");
 
   expect(mw.type).toBe("create");
   if (mw.type !== "create") throw new Error("Expected create action");
@@ -391,7 +439,7 @@ export const config = {
   await Bun.write(join(tempDir, "app/layout.tsx"), "<html><body>{children}</body></html>");
 
   const plan = await nextjsApp.scaffold(makeCtx());
-  const mw = plan.actions[0]!;
+  const mw = findAction(plan.actions, "middleware.ts");
 
   expect(mw.type).toBe("modify");
   if (mw.type !== "modify") throw new Error("Expected modify action");
@@ -428,7 +476,7 @@ export const config = {
   await Bun.write(join(tempDir, "app/layout.tsx"), "<html><body>{children}</body></html>");
 
   const plan = await nextjsApp.scaffold(makeCtx());
-  const mw = plan.actions[0]!;
+  const mw = findAction(plan.actions, "middleware.ts");
 
   expect(mw.type).toBe("modify");
   if (mw.type !== "modify") throw new Error("Expected modify action");
@@ -462,7 +510,7 @@ export default wrapped;
   await Bun.write(join(tempDir, "app/layout.tsx"), "<html><body>{children}</body></html>");
 
   const plan = await nextjsApp.scaffold(makeCtx());
-  const mw = plan.actions[0]!;
+  const mw = findAction(plan.actions, "middleware.ts");
 
   expect(mw.type).toBe("modify");
   if (mw.type !== "modify") throw new Error("Expected modify action");

@@ -4,10 +4,6 @@ import { mkdtemp, rm, mkdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { detectAuthLibraries, scanForIssues } from "./scan.ts";
 
-// ---------------------------------------------------------------------------
-// detectAuthLibraries
-// ---------------------------------------------------------------------------
-
 describe("detectAuthLibraries", () => {
   let consoleSpy: ReturnType<typeof spyOn>;
 
@@ -80,10 +76,6 @@ describe("detectAuthLibraries", () => {
     expect(consoleSpy).not.toHaveBeenCalled();
   });
 });
-
-// ---------------------------------------------------------------------------
-// scanForIssues
-// ---------------------------------------------------------------------------
 
 describe("scanForIssues", () => {
   let tempDir: string;

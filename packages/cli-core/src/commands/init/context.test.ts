@@ -420,5 +420,5 @@ test("scaffold proceeds for Next.js 16 and uses proxy.ts", async () => {
   const plan = await scaffold(ctx!);
 
   expect(plan.actions.length).toBeGreaterThan(0);
-  expect(plan.actions[0]!.path).toBe("proxy.ts");
+  expect(plan.actions.find((a) => a.path === "proxy.ts")).toBeDefined();
 });

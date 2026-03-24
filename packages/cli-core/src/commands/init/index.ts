@@ -1,129 +1,25 @@
-import { join, dirname } from "node:path";
-import { mkdir } from "node:fs/promises";
 import { login } from "../auth/login.js";
 import { link } from "../link/index.js";
 import { pull } from "../env/pull.js";
 import { isAgent } from "../../mode.js";
-import { dim, cyan, green, yellow, bold } from "../../lib/color.js";
+import { dim, green, yellow, bold } from "../../lib/color.js";
 import { CliError, throwUserAbort } from "../../lib/errors.js";
 import { lookupFramework, FRAMEWORK_NAMES } from "../../lib/framework.js";
-import { getToken } from "../../lib/credential-store.js";
 import { resolveProfile } from "../../lib/config.js";
-import { fetchUserInfo } from "../../lib/token-exchange.js";
 import { gatherContext } from "./context.js";
 import { scaffold, enrichProjectContext } from "./scaffold.js";
 import { previewPlan, previewAndConfirm } from "./preview.js";
 import { runFormatters } from "./format.js";
-import { detectAuthLibraries, scanForIssues, printFindings } from "./scan.js";
-import { buildAgentPrompt, GENERIC_AGENT_PROMPT, pmInstallCommand } from "./prompts/index.js";
-import type { ProjectContext, ScaffoldPlan } from "./frameworks/types.js";
-import type { ScanFinding } from "./scan.js";
-
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
-async function installSdk(ctx: ProjectContext): Promise<void> {
-  const addCmd = pmInstallCommand(ctx.packageManager);
-  console.log(`Installing ${cyan(ctx.framework.sdk)} for ${ctx.framework.name}...`);
-
-  const proc = Bun.spawn(addCmd.split(" ").concat(ctx.framework.sdk), {
-    cwd: ctx.cwd,
-    stdout: "inherit",
-    stderr: "inherit",
-  });
-  const exitCode = await proc.exited;
-
-  if (exitCode !== 0) {
-    console.log(
-      yellow(
-        `Failed to install ${ctx.framework.sdk}. You can install it manually: ${addCmd} ${ctx.framework.sdk}`,
-      ),
-    );
-  }
-}
-
-async function writePlan(cwd: string, plan: ScaffoldPlan): Promise<string[]> {
-  const written: string[] = [];
-
-  for (const action of plan.actions) {
-    if (action.type === "skip") continue;
-
-    const fullPath = join(cwd, action.path);
-
-    if (action.type === "create") {
-      await mkdir(dirname(fullPath), { recursive: true });
-    }
-
-    await Bun.write(fullPath, action.content);
-    written.push(action.path);
-  }
-
-  return written;
-}
-
-async function checkGitDirty(cwd: string): Promise<boolean> {
-  try {
-    const proc = Bun.spawn(["git", "status", "--porcelain"], {
-      cwd,
-      stdout: "pipe",
-      stderr: "ignore",
-    });
-    const output = await new Response(proc.stdout).text();
-    await proc.exited;
-    return output.trim().length > 0;
-  } catch {
-    return false;
-  }
-}
-
-function printOutro(plan: ScaffoldPlan, findings: ScanFinding[]): void {
-  const created = plan.actions.filter((a) => a.type === "create");
-  const modified = plan.actions.filter((a) => a.type === "modify");
-  const skipped = plan.actions.filter((a) => a.type === "skip");
-
-  console.log(bold(green("\n✓ Clerk has been set up in your project!\n")));
-
-  for (const a of created) {
-    console.log(`  ${green("+")} ${a.path}`);
-  }
-  for (const a of modified) {
-    console.log(`  ${yellow("~")} ${a.path}`);
-  }
-  for (const a of skipped) {
-    console.log(`  ${dim("-")} ${dim(a.path)} ${dim(`(${a.skipReason})`)}`);
-  }
-
-  if (plan.postInstructions.length > 0) {
-    console.log(dim("\nNext steps:"));
-    for (const instr of plan.postInstructions) {
-      console.log(dim(`  • ${instr}`));
-    }
-  }
-
-  printFindings(findings);
-
-  console.log();
-}
-
-/**
- * Try to get the currently authenticated user's email without triggering login.
- * Returns null if not authenticated or token is expired.
- */
-async function getAuthenticatedEmail(): Promise<string | null> {
-  try {
-    const token = await getToken();
-    if (!token) return null;
-    const userInfo = await fetchUserInfo(token);
-    return userInfo.email;
-  } catch {
-    return null;
-  }
-}
-
-// ---------------------------------------------------------------------------
-// Main entry point
-// ---------------------------------------------------------------------------
+import { detectAuthLibraries, scanForIssues } from "./scan.js";
+import { buildAgentPrompt, GENERIC_AGENT_PROMPT } from "./prompts/index.js";
+import {
+  installSdk,
+  writePlan,
+  checkGitDirty,
+  printOutro,
+  getAuthenticatedEmail,
+} from "./heuristics.js";
+import type { ProjectContext } from "./frameworks/types.js";
 
 interface InitOptions {
   framework?: string;

@@ -1,10 +1,6 @@
 import { join } from "node:path";
 import { yellow, dim, cyan } from "../../lib/color.js";
 
-// ---------------------------------------------------------------------------
-// Types
-// ---------------------------------------------------------------------------
-
 type AuthLibraryScan = {
   packages: string[];
   name: string;
@@ -25,10 +21,6 @@ export type ScanFinding = {
   message: string;
   docsUrl?: string;
 };
-
-// ---------------------------------------------------------------------------
-// Pre-scaffold: auth library detection
-// ---------------------------------------------------------------------------
 
 const AUTH_LIBRARY_SCANS: AuthLibraryScan[] = [
   {
@@ -77,10 +69,6 @@ export function detectAuthLibraries(deps: Record<string, string>): void {
     console.log(dim(`  Migration guide: ${scan.docsUrl}`));
   }
 }
-
-// ---------------------------------------------------------------------------
-// Post-scaffold: code scans
-// ---------------------------------------------------------------------------
 
 const CODE_SCANS: CodeScan[] = [
   {

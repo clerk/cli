@@ -1,8 +1,22 @@
+/**
+ * Shared helpers used by both framework scaffolders (app code) and their tests.
+ * Contains utilities for file detection, scaffolding patterns (auth pages, config files,
+ * env vars, middleware), and re-exports text transformations from `transformations.ts`.
+ */
 import { join } from "node:path";
 import { readdir } from "node:fs/promises";
-import { parseModule } from "magicast";
 import { parseEnvFile, mergeEnvVars, serializeEnvFile } from "../../../lib/dotenv.js";
 import type { FileAction, ProjectContext } from "./types.js";
+import { hasClerkImport, indentBlock } from "./transformations.js";
+
+// Re-export text transformations so existing imports from helpers.ts keep working.
+export {
+  hasClerkImport,
+  indentBlock,
+  safeAddImport,
+  insertAfterLastImport,
+  wrapBodyWithProvider,
+} from "./transformations.js";
 
 export type AuthKind = "sign-in" | "sign-up";
 type AuthSurface = "page" | "route";
@@ -41,11 +55,6 @@ export function parseMajorVersion(version: string): number | null {
   return match ? parseInt(match[1]!, 10) : null;
 }
 
-/** Check if file content already imports from a @clerk/ package. */
-export function hasClerkImport(content: string): boolean {
-  return content.includes("@clerk/");
-}
-
 export function srcPrefix(ctx: Pick<ProjectContext, "srcDir">): string {
   return ctx.srcDir ? "src/" : "";
 }
@@ -60,13 +69,6 @@ export function jsxExt(ctx: Pick<ProjectContext, "typescript">): "tsx" | "jsx" {
 
 export function hasTailwindStyles(ctx: Pick<ProjectContext, "deps">): boolean {
   return Boolean(ctx.deps["tailwindcss"]);
-}
-
-export function indentBlock(content: string, indent: string): string {
-  return content
-    .split("\n")
-    .map((line) => `${indent}${line}`)
-    .join("\n");
 }
 
 function authWrapper(markup: AuthWrapperMarkup, tailwind: boolean): string {
@@ -141,35 +143,6 @@ export async function findFirstDirMatch<T>(
   }
 
   return null;
-}
-
-/**
- * Add an import to a file using magicast AST, with a string-prepend fallback.
- * Returns the modified source code.
- */
-export function safeAddImport(content: string, source: string, imported: string): string {
-  try {
-    const mod = parseModule(content);
-    mod.imports.$add({ from: source, imported, local: imported });
-    return mod.generate().code;
-  } catch {
-    return `import { ${imported} } from "${source}";\n${content}`;
-  }
-}
-
-/** Insert a snippet after the last import statement in a source file. */
-export function insertAfterLastImport(source: string, snippet: string): string {
-  const lastImportIdx = source.lastIndexOf("import ");
-  const lineEnd = source.indexOf("\n", lastImportIdx);
-  if (lineEnd === -1) return source;
-  return source.slice(0, lineEnd + 1) + snippet + source.slice(lineEnd + 1);
-}
-
-/** Wrap the contents of a `<body>` tag with a provider component (e.g. `<ClerkProvider>`). */
-export function wrapBodyWithProvider(content: string, provider: string): string {
-  let result = content.replace(/(<body[^>]*>)(\s*)/, `$1$2<${provider}>\n`);
-  result = result.replace(/(\s*)(<\/body>)/, `\n</${provider}>$1$2`);
-  return result;
 }
 
 /** Resolve the middleware basename from a Next.js version string. >=16 uses proxy, <=15 uses middleware. */

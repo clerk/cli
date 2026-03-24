@@ -16,10 +16,6 @@ import expoMd from "./expo.md" with { type: "text" };
 import expressMd from "./express.md" with { type: "text" };
 import fastifyMd from "./fastify.md" with { type: "text" };
 
-// ---------------------------------------------------------------------------
-// Template loading
-// ---------------------------------------------------------------------------
-
 const TEMPLATES = {
   generic: genericMd,
   "generic-fallback": genericFallbackMd,
@@ -50,10 +46,6 @@ function loadTemplate(name: TemplateName): string {
 function interpolate(template: string, vars: Record<string, string>): string {
   return template.replace(/\{\{(\w+)\}\}/g, (_, key) => vars[key] ?? `{{${key}}}`);
 }
-
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
 
 const PM_COMMANDS = {
   bun: "bun add",
@@ -97,10 +89,6 @@ const FRAMEWORK_PROMPTS: Record<string, FrameworkPromptInfo> = {
 };
 
 const DEFAULT_DOCS_URL = "https://clerk.com/docs";
-
-// ---------------------------------------------------------------------------
-// Variable builders
-// ---------------------------------------------------------------------------
 
 type RequiredPromptVar =
   | "SDK"
@@ -160,10 +148,6 @@ function resolveTemplate(ctx: ProjectContext): TemplateName {
   }
   return FRAMEWORK_PROMPTS[ctx.framework.dep]?.template ?? "generic-fallback";
 }
-
-// ---------------------------------------------------------------------------
-// Exports
-// ---------------------------------------------------------------------------
 
 export const GENERIC_AGENT_PROMPT = loadTemplate("generic");
 
