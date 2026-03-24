@@ -263,6 +263,103 @@ test("prefers existing middleware.ts over version detection", async () => {
   expect(ctx!.middlewareBasename).toBe("middleware");
 });
 
+test("detects [locale] directory for i18n in App Router", async () => {
+  await Bun.write(
+    join(tempDir, "package.json"),
+    JSON.stringify({ dependencies: { next: "15.0.0", react: "19.0.0", "next-intl": "4.0.0" } }),
+  );
+  await mkdir(join(tempDir, "app/[locale]"), { recursive: true });
+  await Bun.write(join(tempDir, "app/layout.tsx"), "<html><body>{children}</body></html>");
+  await Bun.write(join(tempDir, "app/[locale]/layout.tsx"), "<NextIntlClientProvider>");
+  await Bun.write(join(tempDir, "tsconfig.json"), "{}");
+
+  const ctx = await gatherContext(tempDir);
+  await enrichProjectContext(ctx!);
+
+  expect(ctx!.variant).toBe("app-router");
+  expect(ctx!.i18nLocaleDir).toBe("[locale]");
+});
+
+test("detects [lang] directory for i18n in App Router", async () => {
+  await Bun.write(
+    join(tempDir, "package.json"),
+    JSON.stringify({ dependencies: { next: "15.0.0", react: "19.0.0" } }),
+  );
+  await mkdir(join(tempDir, "app/[lang]"), { recursive: true });
+  await Bun.write(join(tempDir, "app/layout.tsx"), "<html><body>{children}</body></html>");
+  await Bun.write(join(tempDir, "app/[lang]/layout.tsx"), "export default function() {}");
+  await Bun.write(join(tempDir, "tsconfig.json"), "{}");
+
+  const ctx = await gatherContext(tempDir);
+  await enrichProjectContext(ctx!);
+
+  expect(ctx!.i18nLocaleDir).toBe("[lang]");
+});
+
+test("does not set i18nLocaleDir when no locale directory exists", async () => {
+  await Bun.write(
+    join(tempDir, "package.json"),
+    JSON.stringify({ dependencies: { next: "15.0.0", react: "19.0.0" } }),
+  );
+  await mkdir(join(tempDir, "app"), { recursive: true });
+  await Bun.write(join(tempDir, "app/layout.tsx"), "<html><body>{children}</body></html>");
+  await Bun.write(join(tempDir, "tsconfig.json"), "{}");
+
+  const ctx = await gatherContext(tempDir);
+  await enrichProjectContext(ctx!);
+
+  expect(ctx!.i18nLocaleDir).toBeUndefined();
+});
+
+test("does not set i18nLocaleDir for [locale] without layout", async () => {
+  await Bun.write(
+    join(tempDir, "package.json"),
+    JSON.stringify({ dependencies: { next: "15.0.0", react: "19.0.0" } }),
+  );
+  await mkdir(join(tempDir, "app/[locale]"), { recursive: true });
+  await Bun.write(join(tempDir, "app/layout.tsx"), "<html><body>{children}</body></html>");
+  // No layout inside [locale] — could be a non-i18n dynamic route
+  await Bun.write(join(tempDir, "tsconfig.json"), "{}");
+
+  const ctx = await gatherContext(tempDir);
+  await enrichProjectContext(ctx!);
+
+  expect(ctx!.i18nLocaleDir).toBeUndefined();
+});
+
+test("detects i18n locale dir with src/ convention", async () => {
+  await Bun.write(
+    join(tempDir, "package.json"),
+    JSON.stringify({ dependencies: { next: "15.0.0", react: "19.0.0" } }),
+  );
+  await mkdir(join(tempDir, "src/app/[locale]"), { recursive: true });
+  await Bun.write(join(tempDir, "src/app/layout.tsx"), "<html><body>{children}</body></html>");
+  await Bun.write(join(tempDir, "src/app/[locale]/layout.tsx"), "<NextIntlClientProvider>");
+  await Bun.write(join(tempDir, "tsconfig.json"), "{}");
+
+  const ctx = await gatherContext(tempDir);
+  await enrichProjectContext(ctx!);
+
+  expect(ctx!.srcDir).toBe(true);
+  expect(ctx!.i18nLocaleDir).toBe("[locale]");
+});
+
+test("does not set i18nLocaleDir for Pages Router", async () => {
+  await Bun.write(
+    join(tempDir, "package.json"),
+    JSON.stringify({ dependencies: { next: "15.0.0", react: "19.0.0" } }),
+  );
+  await mkdir(join(tempDir, "pages"), { recursive: true });
+  await Bun.write(join(tempDir, "pages/_app.tsx"), "export default function App() {}");
+  await Bun.write(join(tempDir, "tsconfig.json"), "{}");
+
+  const ctx = await gatherContext(tempDir);
+  await enrichProjectContext(ctx!);
+
+  expect(ctx!.variant).toBe("pages-router");
+  expect(ctx!.i18nLocaleDir).toBeUndefined();
+});
+
 test("parseMajorVersion handles various formats", () => {
   expect(parseMajorVersion("15.0.0")).toBe(15);
   expect(parseMajorVersion("^16.1.0")).toBe(16);

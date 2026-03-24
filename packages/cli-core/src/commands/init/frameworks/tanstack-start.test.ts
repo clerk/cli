@@ -52,3 +52,27 @@ export const start = createStart(() => {
   expect(plan.actions.some((action) => action.path === "app/routes/sign-up.$.tsx")).toBe(true);
   expect(plan.actions.some((action) => action.path === "src/routes/sign-in.$.tsx")).toBe(false);
 });
+
+test("places auth routes inside {-$locale} when locale dir detected", async () => {
+  await mkdir(join(tempDir, "src/routes/{-$locale}"), { recursive: true });
+  await Bun.write(join(tempDir, "src/routes/{-$locale}/index.tsx"), "export default function() {}");
+
+  const plan = await tanstackStart.scaffold(makeCtx());
+
+  expect(plan.actions.some((action) => action.path === "src/routes/{-$locale}/sign-in.$.tsx")).toBe(
+    true,
+  );
+  expect(plan.actions.some((action) => action.path === "src/routes/{-$locale}/sign-up.$.tsx")).toBe(
+    true,
+  );
+});
+
+test("does not use locale dir when none detected", async () => {
+  await mkdir(join(tempDir, "src/routes"), { recursive: true });
+  await Bun.write(join(tempDir, "src/routes/index.tsx"), "export default function() {}");
+
+  const plan = await tanstackStart.scaffold(makeCtx());
+
+  expect(plan.actions.some((action) => action.path === "src/routes/sign-in.$.tsx")).toBe(true);
+  expect(plan.actions.some((action) => action.path === "src/routes/sign-up.$.tsx")).toBe(true);
+});

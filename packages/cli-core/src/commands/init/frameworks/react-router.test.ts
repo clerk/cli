@@ -66,6 +66,43 @@ export default function Root() {
   expect(rootAction.content).toContain("<ClerkProvider loaderData={loaderData}>");
 });
 
+test("prefixes auth routes with ($locale) when locale routes detected", async () => {
+  await mkdir(join(tempDir, "app/routes"), { recursive: true });
+  // Create an existing route with ($locale) prefix to simulate i18n setup
+  await Bun.write(join(tempDir, "app/routes/($locale)._index.tsx"), "export default function() {}");
+  await Bun.write(
+    join(tempDir, "app/root.tsx"),
+    `import { Outlet } from "react-router";
+export default function Root() { return <Outlet />; }
+`,
+  );
+
+  const plan = await reactRouter.scaffold(makeCtx());
+
+  expect(plan.actions.some((action) => action.path === "app/routes/($locale).sign-in.tsx")).toBe(
+    true,
+  );
+  expect(plan.actions.some((action) => action.path === "app/routes/($locale).sign-up.tsx")).toBe(
+    true,
+  );
+});
+
+test("does not prefix auth routes when no locale routes detected", async () => {
+  await mkdir(join(tempDir, "app/routes"), { recursive: true });
+  await Bun.write(join(tempDir, "app/routes/_index.tsx"), "export default function() {}");
+  await Bun.write(
+    join(tempDir, "app/root.tsx"),
+    `import { Outlet } from "react-router";
+export default function Root() { return <Outlet />; }
+`,
+  );
+
+  const plan = await reactRouter.scaffold(makeCtx());
+
+  expect(plan.actions.some((action) => action.path === "app/routes/sign-in.tsx")).toBe(true);
+  expect(plan.actions.some((action) => action.path === "app/routes/sign-up.tsx")).toBe(true);
+});
+
 test("keeps an existing loader manual when rootAuthLoader is not present", async () => {
   await mkdir(join(tempDir, "app"), { recursive: true });
   await Bun.write(
