@@ -13,7 +13,7 @@ function formatAction(action: FileAction): string {
   }
 }
 
-export async function previewAndConfirm(plan: ScaffoldPlan): Promise<boolean> {
+export function previewPlan(plan: ScaffoldPlan): void {
   console.log("\nclerk init will make the following changes:\n");
 
   for (const action of plan.actions) {
@@ -28,5 +28,9 @@ export async function previewAndConfirm(plan: ScaffoldPlan): Promise<boolean> {
   }
 
   console.log();
+}
+
+export async function previewAndConfirm(plan: ScaffoldPlan): Promise<boolean> {
+  previewPlan(plan);
   return confirm({ message: "Proceed?" });
 }
