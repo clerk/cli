@@ -1,9 +1,12 @@
 import { join } from "node:path";
+import { readdir } from "node:fs/promises";
 import { parseModule } from "magicast";
+import { parseEnvFile, mergeEnvVars, serializeEnvFile } from "../../../lib/dotenv.js";
 import type { FileAction, ProjectContext } from "./types.js";
 
 export type AuthKind = "sign-in" | "sign-up";
 type AuthSurface = "page" | "route";
+const AUTH_KINDS = ["sign-in", "sign-up"] as const satisfies readonly AuthKind[];
 
 /** Clerk SDK packages that export JSX auth components (SignIn, SignUp). */
 type JsxClerkPackage = "@clerk/nextjs" | "@clerk/react-router";
@@ -12,6 +15,20 @@ type AuthFileSpec = {
   content: string;
   kind: AuthKind;
   surface: AuthSurface;
+};
+type AuthWrapperMarkup = {
+  tailwind: string;
+  plain: string;
+};
+
+const HTML_AUTH_WRAPPER: AuthWrapperMarkup = {
+  tailwind: `<div class="flex min-h-screen items-center justify-center">`,
+  plain: `<div style="display:flex;min-height:100vh;align-items:center;justify-content:center">`,
+};
+
+const JSX_AUTH_WRAPPER: AuthWrapperMarkup = {
+  tailwind: `<div className="flex min-h-screen items-center justify-center">`,
+  plain: `<div style={{ display: "flex", minHeight: "100vh", alignItems: "center", justifyContent: "center" }}>`,
 };
 
 /**
@@ -41,11 +58,88 @@ export function jsxExt(ctx: Pick<ProjectContext, "typescript">): "tsx" | "jsx" {
   return ctx.typescript ? "tsx" : "jsx";
 }
 
+export function hasTailwindStyles(ctx: Pick<ProjectContext, "deps">): boolean {
+  return Boolean(ctx.deps["tailwindcss"]);
+}
+
+export function indentBlock(content: string, indent: string): string {
+  return content
+    .split("\n")
+    .map((line) => `${indent}${line}`)
+    .join("\n");
+}
+
+function authWrapper(markup: AuthWrapperMarkup, tailwind: boolean): string {
+  if (tailwind) return markup.tailwind;
+  return markup.plain;
+}
+
+function renderCenteredAuthComponent(
+  component: string,
+  markup: AuthWrapperMarkup,
+  tailwind: boolean,
+): string {
+  const wrapper = authWrapper(markup, tailwind);
+  return `${wrapper}
+  <${component} />
+</div>`;
+}
+
+export function htmlAuthComponentMarkup(component: string, tailwind: boolean): string {
+  return renderCenteredAuthComponent(component, HTML_AUTH_WRAPPER, tailwind);
+}
+
+export function jsxAuthComponentMarkup(component: string, tailwind: boolean): string {
+  return renderCenteredAuthComponent(component, JSX_AUTH_WRAPPER, tailwind);
+}
+
+function buildAuthFileSpec(
+  kind: AuthKind,
+  options: {
+    path: (kind: AuthKind) => string;
+    content: (kind: AuthKind) => string;
+    surface: AuthSurface;
+  },
+): AuthFileSpec {
+  return {
+    path: options.path(kind),
+    content: options.content(kind),
+    kind,
+    surface: options.surface,
+  };
+}
+
+export function authFileSpecs(options: {
+  path: (kind: AuthKind) => string;
+  content: (kind: AuthKind) => string;
+  surface: AuthSurface;
+}): readonly AuthFileSpec[] {
+  return AUTH_KINDS.map((kind) => buildAuthFileSpec(kind, options));
+}
+
 /** Find the first existing file from a list of candidates relative to cwd. */
 export async function findFirstFile(cwd: string, candidates: string[]): Promise<string | null> {
   for (const candidate of candidates) {
     if (await Bun.file(join(cwd, candidate)).exists()) return candidate;
   }
+  return null;
+}
+
+export async function findFirstDirMatch<T>(
+  cwd: string,
+  dir: string,
+  matcher: (entry: string) => T | null,
+): Promise<T | null> {
+  try {
+    const entries = await readdir(join(cwd, dir));
+    for (const entry of entries) {
+      const match = matcher(entry);
+      if (match !== null) return match;
+    }
+  } catch {
+    return null;
+  }
+
   return null;
 }
 
@@ -88,6 +182,49 @@ export function resolveNextjsMiddlewareBasename(
   return major >= 16 ? "proxy" : "middleware";
 }
 
+// ─── i18n Middleware Library Detection ────────────────────────────
+
+/**
+ * Known Next.js i18n libraries that use middleware.
+ * Listed in priority order — the first match in deps wins.
+ *
+ * Libraries from https://nextjs.org/docs/app/guides/internationalization:
+ * next-intl, next-international, next-i18n-router, paraglide-next, next-intlayer
+ */
+type I18nMiddlewareLib = {
+  dep: string;
+  importFrom: string;
+  varName: string;
+};
+
+const I18N_MIDDLEWARE_LIBS: readonly I18nMiddlewareLib[] = [
+  { dep: "next-intl", importFrom: "next-intl/middleware", varName: "intlMiddleware" },
+  {
+    dep: "next-international",
+    importFrom: "next-international/middleware",
+    varName: "i18nMiddleware",
+  },
+  { dep: "next-i18n-router", importFrom: "next-i18n-router", varName: "i18nMiddleware" },
+  {
+    dep: "@inlang/paraglide-next",
+    importFrom: "@inlang/paraglide-next",
+    varName: "paraglideMiddleware",
+  },
+  { dep: "next-intlayer", importFrom: "next-intlayer/middleware", varName: "intlayerMiddleware" },
+];
+
+/** Detect which i18n middleware library is used based on project dependencies. */
+function detectI18nMiddlewareLib(deps: Record<string, string>): I18nMiddlewareLib | null {
+  return I18N_MIDDLEWARE_LIBS.find((lib) => deps[lib.dep]) ?? null;
+}
+
+/** Check if middleware content imports from a known i18n middleware package. */
+function detectI18nMiddlewareImport(content: string): I18nMiddlewareLib | null {
+  return I18N_MIDDLEWARE_LIBS.find((lib) => content.includes(lib.importFrom)) ?? null;
+}
+
+// ─── Middleware Content Generation ────────────────────────────────
+
 /** Next.js clerkMiddleware with route protection and matcher config. */
 export function nextjsMiddlewareContent(): string {
   return `import { clerkMiddleware, createRouteMatcher } from "@clerk/nextjs/server";
@@ -100,7 +237,42 @@ ${nextjsMiddlewareConfig()}
 `;
 }
 
-function nextjsPublicRouteMatcher(): string {
+/**
+ * Generate composed Clerk + i18n middleware content.
+ * When routingImport is provided (e.g., next-intl routing config found),
+ * the middleware is fully configured. Otherwise, a placeholder setup is generated.
+ */
+function nextjsI18nMiddlewareContent(lib: I18nMiddlewareLib, routingImport: string | null): string {
+  const i18nImport = routingImport
+    ? `import createMiddleware from "${lib.importFrom}";\n${routingImport}`
+    : `import createMiddleware from "${lib.importFrom}";`;
+
+  const setup = routingImport
+    ? `const ${lib.varName} = createMiddleware(routing);`
+    : `const ${lib.varName} = createMiddleware({\n  locales: ["en"],\n  defaultLocale: "en",\n});`;
+
+  return `import { clerkMiddleware, createRouteMatcher } from "@clerk/nextjs/server";
+${i18nImport}
+
+${setup}
+
+${nextjsPublicRouteMatcher(true)}
+
+${nextjsMiddlewareHandler(`${lib.varName}(request)`)}
+
+${nextjsMiddlewareConfig()}
+`;
+}
+
+function nextjsPublicRouteMatcher(i18n = false): string {
+  if (i18n) {
+    return `const isPublicRoute = createRouteMatcher([
+  "/sign-in(.*)",
+  "/sign-up(.*)",
+  "/:locale/sign-in(.*)",
+  "/:locale/sign-up(.*)",
+]);`;
+  }
   return `const isPublicRoute = createRouteMatcher(["/sign-in(.*)", "/sign-up(.*)"]);`;
 }
 
@@ -128,14 +300,21 @@ export function authComponentName(kind: AuthKind): "SignIn" | "SignUp" {
 }
 
 /** Generate a JSX auth page component for a Clerk framework SDK that exports SignIn/SignUp. */
-export function jsxAuthPageContent(kind: AuthKind, clerkPackage: JsxClerkPackage): string {
+export function jsxAuthPageContent(
+  kind: AuthKind,
+  clerkPackage: JsxClerkPackage,
+  tailwind: boolean,
+): string {
   const component = authComponentName(kind);
   const pageName = component === "SignIn" ? "SignInPage" : "SignUpPage";
+  const content = indentBlock(jsxAuthComponentMarkup(component, tailwind), "    ");
 
   return `import { ${component} } from "${clerkPackage}";
 
 export default function ${pageName}() {
-  return <${component} />;
+  return (
+${content}
+  );
 }
 `;
 }
@@ -147,12 +326,22 @@ export default function ${pageName}() {
 function renameDefaultMiddlewareExport(existing: string): string | null {
   const functionExportPattern = /export\s+default\s+(?:async\s+)?function(?:\s+\w+)?/;
   if (functionExportPattern.test(existing)) {
-    return existing.replace(functionExportPattern, "async function existingMiddleware");
+    return existing.replace(functionExportPattern, "async function middleware");
   }
 
   const arrowExportPattern = /export\s+default\s+(?:async\s+)?(\([^)]*\)\s*=>)/;
   if (arrowExportPattern.test(existing)) {
-    return existing.replace(arrowExportPattern, "const existingMiddleware = async $1");
+    return existing.replace(arrowExportPattern, "const middleware = async $1");
+  }
+
+  // Expression: export default someIdentifier or export default someCall(...)
+  // Catches patterns like `export default wrapped` or `export default createMiddleware(routing)`
+  if (/export\s+default\s+/.test(existing)) {
+    // If already exporting a variable named `middleware`, just strip the export line
+    if (/export\s+default\s+middleware\s*[;\n]/.test(existing)) {
+      return existing.replace(/export\s+default\s+middleware\s*;?\s*\n?/, "");
+    }
+    return existing.replace(/export\s+default\s+/, "const middleware = ");
   }
 
   return null;
@@ -162,9 +351,9 @@ function hasMiddlewareConfigExport(existing: string): boolean {
   return /export\s+const\s+config\s*=/.test(existing);
 }
 
-export function composeWithExistingMiddleware(existing: string): string | null {
+export function composeWithExistingMiddleware(existing: string, i18n = false): string | null {
   const clerkImport = `import { clerkMiddleware, createRouteMatcher } from "@clerk/nextjs/server";\n`;
-  const routeMatcher = `\n${nextjsPublicRouteMatcher()}\n`;
+  const routeMatcher = `\n${nextjsPublicRouteMatcher(i18n)}\n`;
   const preamble = clerkImport + routeMatcher + "\n";
 
   if (hasMiddlewareConfigExport(existing)) {
@@ -181,14 +370,80 @@ export function composeWithExistingMiddleware(existing: string): string | null {
   return (
     preamble +
     content +
-    `\n${nextjsMiddlewareHandler("existingMiddleware(request)")}\n\n${nextjsMiddlewareConfig()}\n`
+    `\n${nextjsMiddlewareHandler("middleware(request)")}\n\n${nextjsMiddlewareConfig()}\n`
   );
+}
+
+/**
+ * Compose Clerk middleware with an existing i18n middleware.
+ *
+ * Only handles the common i18n pattern `export default createMiddleware(...)` —
+ * a bare expression export. Function declarations and arrow functions are left
+ * to the general-purpose composer (via `composeWithExistingMiddleware`) because
+ * they typically represent user-customized middleware that already calls the
+ * i18n middleware internally.
+ *
+ * Also strips the existing `export const config` since Clerk's matcher replaces it.
+ */
+export function composeWithI18nMiddleware(existing: string): string | null {
+  const lib = detectI18nMiddlewareImport(existing);
+  if (!lib) return null;
+
+  // Only handle expression exports (e.g., `export default createMiddleware(routing)`).
+  // Function declarations / arrow functions are handled by the general-purpose composer.
+  if (/export\s+default\s+(?:async\s+)?function/.test(existing)) return null;
+  if (/export\s+default\s+(?:async\s+)?\(/.test(existing)) return null;
+
+  // Bail if the varName is already used (would create a duplicate declaration)
+  if (existing.includes(`const ${lib.varName}`)) return null;
+
+  const clerkImport = `import { clerkMiddleware, createRouteMatcher } from "@clerk/nextjs/server";\n`;
+
+  // Strip existing config export (Clerk's matcher replaces it)
+  let content = existing.replace(/\n*export\s+const\s+config\s*=[\s\S]*$/, "");
+
+  // Rename `export default <expression>` to `const <varName> = <expression>`
+  content = content.replace(/export\s+default\s+/, `const ${lib.varName} = `);
+
+  // Verify the rename succeeded — if export default is still present, bail
+  if (/export\s+default\s+/.test(content)) return null;
+
+  return (
+    clerkImport +
+    content +
+    `\n\n${nextjsPublicRouteMatcher(true)}\n\n${nextjsMiddlewareHandler(`${lib.varName}(request)`)}\n\n${nextjsMiddlewareConfig()}\n`
+  );
+}
+
+/**
+ * Find a next-intl routing config file for importing in composed middleware.
+ * Returns an import statement like `import { routing } from "./i18n/routing"` or null.
+ */
+async function findI18nRoutingImport(
+  cwd: string,
+  srcDir: boolean,
+  lib: I18nMiddlewareLib,
+): Promise<string | null> {
+  if (lib.dep !== "next-intl") return null;
+
+  const base = srcPrefix({ srcDir });
+  const hasRoutingFile = await findFirstFile(cwd, [
+    `${base}i18n/routing.ts`,
+    `${base}i18n/routing.js`,
+  ]);
+
+  if (!hasRoutingFile) return null;
+
+  // Middleware and routing are co-located under the same base (root or src/),
+  // so the relative import path is always the same regardless of srcDir.
+  return `import { routing } from "./i18n/routing";`;
 }
 
 /**
  * Scaffold Next.js middleware — shared between App Router and Pages Router.
  * Checks for existing middleware and returns skip/create/compose action accordingly.
  * When existing non-Clerk middleware is found, it composes rather than overwriting.
+ * When an i18n library is detected, generates composed Clerk + i18n middleware.
  */
 export async function scaffoldNextjsMiddleware(ctx: {
   cwd: string;
@@ -204,6 +459,18 @@ export async function scaffoldNextjsMiddleware(ctx: {
   const file = Bun.file(join(ctx.cwd, path));
 
   if (!(await file.exists())) {
+    // Check for i18n library — generate composed middleware if detected
+    const i18nLib = detectI18nMiddlewareLib(ctx.deps ?? {});
+    if (i18nLib) {
+      const routingImport = await findI18nRoutingImport(ctx.cwd, ctx.srcDir, i18nLib);
+      return {
+        path,
+        type: "create",
+        content: nextjsI18nMiddlewareContent(i18nLib, routingImport),
+        description: `Create Clerk middleware composed with ${i18nLib.dep}`,
+      };
+    }
+
     return {
       path,
       type: "create",
@@ -218,7 +485,27 @@ export async function scaffoldNextjsMiddleware(ctx: {
     return { type: "skip", path, skipReason: "Already has Clerk middleware" };
   }
 
-  const composedContent = composeWithExistingMiddleware(content);
+  // Try i18n-specific composition first (handles expression exports like `export default createMiddleware(...)`)
+  const i18nComposed = composeWithI18nMiddleware(content);
+  if (i18nComposed) {
+    return {
+      path,
+      type: "modify",
+      content: i18nComposed,
+      description: "Add clerkMiddleware composing with existing i18n middleware",
+    };
+  }
+
+  // For i18n middleware with function exports (user already composed their own middleware),
+  // strip the config export first — Clerk's matcher replaces it — then use the general composer.
+  const isI18nMiddleware = detectI18nMiddlewareImport(content) !== null;
+  const contentForComposition =
+    isI18nMiddleware && hasMiddlewareConfigExport(content)
+      ? content.replace(/\n*export\s+const\s+config\s*=[\s\S]*$/, "")
+      : content;
+
+  // Fall through to general-purpose composition
+  const composedContent = composeWithExistingMiddleware(contentForComposition, isI18nMiddleware);
   if (!composedContent) {
     return {
       type: "skip",
@@ -231,13 +518,69 @@ export async function scaffoldNextjsMiddleware(ctx: {
     path,
     type: "modify",
     content: composedContent,
-    description: "Add clerkMiddleware to existing middleware",
+    description: isI18nMiddleware
+      ? "Add clerkMiddleware wrapping existing i18n middleware"
+      : "Add clerkMiddleware to existing middleware",
   };
 }
 
-/** Shared post-instruction for Next.js sign-in/sign-up env vars. Used by both App and Pages Router. */
-export const NEXTJS_SIGN_ROUTES_INSTRUCTION =
-  "Add to your .env.local: NEXT_PUBLIC_CLERK_SIGN_IN_URL=/sign-in, NEXT_PUBLIC_CLERK_SIGN_UP_URL=/sign-up, NEXT_PUBLIC_CLERK_SIGN_IN_FALLBACK_REDIRECT_URL=/, NEXT_PUBLIC_CLERK_SIGN_UP_FALLBACK_REDIRECT_URL=/";
+/**
+ * Create a scaffold action that merges env vars into the project's env file.
+ * Skips if all vars are already present.
+ */
+export async function scaffoldEnvVars(
+  ctx: ProjectContext,
+  vars: Record<string, string>,
+): Promise<FileAction> {
+  const envPath = join(ctx.cwd, ctx.envFile);
+  const file = Bun.file(envPath);
+  const existing = (await file.exists()) ? await file.text() : "";
+
+  const lines = parseEnvFile(existing);
+
+  const allPresent = Object.keys(vars).every((key) =>
+    lines.some((l) => l.type === "entry" && l.key === key),
+  );
+  if (allPresent) {
+    return {
+      type: "skip",
+      path: ctx.envFile,
+      skipReason: "Sign-in/sign-up route vars already set",
+    };
+  }
+
+  const merged = mergeEnvVars(lines, vars);
+  return {
+    path: ctx.envFile,
+    type: "modify",
+    content: serializeEnvFile(merged),
+    description: "Add sign-in/sign-up route env vars",
+  };
+}
+
+/** Sign-in/sign-up route env vars per framework prefix. */
+export const SIGN_ROUTE_ENV_VARS = {
+  nextjs: {
+    NEXT_PUBLIC_CLERK_SIGN_IN_URL: "/sign-in",
+    NEXT_PUBLIC_CLERK_SIGN_UP_URL: "/sign-up",
+    NEXT_PUBLIC_CLERK_SIGN_IN_FALLBACK_REDIRECT_URL: "/",
+    NEXT_PUBLIC_CLERK_SIGN_UP_FALLBACK_REDIRECT_URL: "/",
+  },
+  vite: {
+    VITE_CLERK_SIGN_IN_URL: "/sign-in",
+    VITE_CLERK_SIGN_UP_URL: "/sign-up",
+    VITE_CLERK_SIGN_IN_FALLBACK_REDIRECT_URL: "/",
+    VITE_CLERK_SIGN_UP_FALLBACK_REDIRECT_URL: "/",
+  },
+  astro: {
+    PUBLIC_CLERK_SIGN_IN_URL: "/sign-in",
+    PUBLIC_CLERK_SIGN_UP_URL: "/sign-up",
+  },
+  nuxt: {
+    NUXT_PUBLIC_CLERK_SIGN_IN_URL: "/sign-in",
+    NUXT_PUBLIC_CLERK_SIGN_UP_URL: "/sign-up",
+  },
+} as const;
 
 /**
  * Generic helper for scaffolding a framework config file.
