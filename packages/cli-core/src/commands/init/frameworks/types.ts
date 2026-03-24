@@ -15,6 +15,8 @@ export interface ProjectContext {
   layoutPath?: string | null;
   /** Next.js middleware basename: "proxy" for Next.js 16+, "middleware" for ≤15. Populated by enrichContext. */
   middlewareBasename?: "proxy" | "middleware";
+  /** i18n locale directory segment (e.g., "[locale]"). Set by enrichContext when detected. */
+  i18nLocaleDir?: string;
 }
 
 export type FileAction =
