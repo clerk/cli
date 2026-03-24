@@ -253,6 +253,48 @@ describe("config push", () => {
     expect(errorSpy).toHaveBeenCalledWith("Replacing config on development instance...");
   });
 
+  // --- config_version stripping ---
+
+  test("put strips config_version from payload before sending", async () => {
+    let capturedBody = "";
+    stubFetch(async (_input, init) => {
+      capturedBody = init?.body as string;
+      return new Response(JSON.stringify(mockResponse), { status: 200 });
+    });
+
+    await setProfile(process.cwd(), {
+      workspaceId: "org_1",
+      appId: "app_1",
+      instances: { development: "ins_dev" },
+    });
+
+    await runConfigPut({
+      json: '{"config_version":42,"session":{"lifetime":3600}}',
+      yes: true,
+    });
+    expect(JSON.parse(capturedBody)).toEqual({ session: { lifetime: 3600 } });
+  });
+
+  test("patch strips config_version from payload before sending", async () => {
+    let capturedBody = "";
+    stubFetch(async (_input, init) => {
+      capturedBody = init?.body as string;
+      return new Response(JSON.stringify(mockResponse), { status: 200 });
+    });
+
+    await setProfile(process.cwd(), {
+      workspaceId: "org_1",
+      appId: "app_1",
+      instances: { development: "ins_dev" },
+    });
+
+    await runConfigPatch({
+      json: '{"config_version":42,"session":{"lifetime":3600}}',
+      yes: true,
+    });
+    expect(JSON.parse(capturedBody)).toEqual({ session: { lifetime: 3600 } });
+  });
+
   // --- Instance targeting ---
 
   test("targets development instance by default", async () => {
