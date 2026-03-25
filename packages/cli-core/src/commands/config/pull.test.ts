@@ -47,7 +47,9 @@ describe("config pull", () => {
   });
 
   // Dynamically import to get fresh module state
-  async function runConfigPull(options: { app?: string; instance?: string; output?: string } = {}) {
+  async function runConfigPull(
+    options: { app?: string; instance?: string; output?: string; keys?: string[] } = {},
+  ) {
     const { configPull } = await import("./pull.ts");
     return configPull(options);
   }
@@ -196,6 +198,39 @@ describe("config pull", () => {
     await expect(runConfigPull({ instance: "prod" })).rejects.toThrow(
       "No production instance configured",
     );
+  });
+
+  test("--keys filters output to requested keys", async () => {
+    await setProfile(process.cwd(), {
+      workspaceId: "org_1",
+      appId: "app_1",
+      instances: { development: "ins_dev" },
+    });
+
+    await runConfigPull({ keys: ["session"] });
+    expect(logSpy).toHaveBeenCalledWith(JSON.stringify({ session: { lifetime: 604800 } }, null, 2));
+  });
+
+  test("--keys silently omits keys not present in config", async () => {
+    await setProfile(process.cwd(), {
+      workspaceId: "org_1",
+      appId: "app_1",
+      instances: { development: "ins_dev" },
+    });
+
+    await runConfigPull({ keys: ["session", "nonexistent"] });
+    expect(logSpy).toHaveBeenCalledWith(JSON.stringify({ session: { lifetime: 604800 } }, null, 2));
+  });
+
+  test("--keys with no matching keys outputs empty object", async () => {
+    await setProfile(process.cwd(), {
+      workspaceId: "org_1",
+      appId: "app_1",
+      instances: { development: "ins_dev" },
+    });
+
+    await runConfigPull({ keys: ["nonexistent"] });
+    expect(logSpy).toHaveBeenCalledWith(JSON.stringify({}, null, 2));
   });
 
   test("handles API errors gracefully", async () => {

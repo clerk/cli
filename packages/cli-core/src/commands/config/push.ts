@@ -1,8 +1,8 @@
-import { confirm } from "@inquirer/prompts";
 import { resolveAppContext } from "../../lib/config.ts";
 import { putInstanceConfig, patchInstanceConfig } from "../../lib/plapi.ts";
 import { isHuman } from "../../mode.ts";
 import { throwUsageError, throwUserAbort, withApiContext, ERROR_CODE } from "../../lib/errors.ts";
+import { confirm } from "../../lib/prompts.ts";
 
 interface ConfigPushOptions {
   app?: string;

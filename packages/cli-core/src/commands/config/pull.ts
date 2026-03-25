@@ -6,6 +6,7 @@ interface ConfigPullOptions {
   app?: string;
   instance?: string;
   output?: string;
+  keys?: string[];
 }
 
 export async function configPull(options: ConfigPullOptions): Promise<void> {
@@ -13,10 +14,15 @@ export async function configPull(options: ConfigPullOptions): Promise<void> {
 
   console.error(`Pulling config from ${ctx.instanceLabel} instance...`);
 
-  const config = await withApiContext(
+  let config = await withApiContext(
     fetchInstanceConfig(ctx.appId, ctx.instanceId),
     "Failed to fetch config",
   );
+
+  if (options.keys?.length) {
+    config = Object.fromEntries(options.keys.filter((k) => k in config).map((k) => [k, config[k]]));
+  }
+
   const json = JSON.stringify(config, null, 2);
 
   if (options.output) {

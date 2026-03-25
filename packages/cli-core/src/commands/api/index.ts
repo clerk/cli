@@ -1,4 +1,3 @@
-import { confirm } from "@inquirer/prompts";
 import { resolveAppContext } from "../../lib/config.ts";
 import { fetchApplication, getAuthToken, validateKeyPrefix } from "../../lib/plapi.ts";
 import { BAPI_BASE_URL, PLAPI_BASE_URL } from "../../lib/constants.ts";
@@ -12,6 +11,7 @@ import {
   withApiContext,
 } from "../../lib/errors.ts";
 import { isHuman } from "../../mode.ts";
+import { confirm } from "../../lib/prompts.ts";
 
 export interface ApiOptions {
   method?: string;
