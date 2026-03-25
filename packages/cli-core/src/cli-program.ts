@@ -121,6 +121,10 @@ export function createProgram() {
     .option("--json <string>", "Pass config JSON inline")
     .option("--dry-run", "Show what would be sent without making the API call")
     .option("--yes", "Skip confirmation prompts")
+    .option(
+      "--destructive",
+      "Allow destructive changes that delete resources (e.g. session templates, custom OAuth providers) rather than just resetting config to defaults",
+    )
     .action(configPatch);
 
   config
@@ -132,6 +136,10 @@ export function createProgram() {
     .option("--json <string>", "Pass config JSON inline")
     .option("--dry-run", "Show what would be sent without making the API call")
     .option("--yes", "Skip confirmation prompts")
+    .option(
+      "--destructive",
+      "Allow destructive changes that delete resources (e.g. session templates, custom OAuth providers) rather than just resetting config to defaults",
+    )
     .action(configPut);
 
   program

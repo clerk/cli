@@ -132,9 +132,13 @@ async function sendInstanceConfig(
   applicationId: string,
   instanceId: string,
   config: Record<string, unknown>,
+  options?: { destructive?: boolean },
 ): Promise<Record<string, unknown>> {
   const token = await getAuthToken();
-  const url = `${PLAPI_BASE_URL}/v1/platform/applications/${applicationId}/instances/${instanceId}/config`;
+  let url = `${PLAPI_BASE_URL}/v1/platform/applications/${applicationId}/instances/${instanceId}/config`;
+  if (options?.destructive) {
+    url += "?destructive=true";
+  }
   const response = await fetch(url, {
     method,
     headers: {
@@ -157,13 +161,15 @@ export const putInstanceConfig = (
   applicationId: string,
   instanceId: string,
   config: Record<string, unknown>,
-) => sendInstanceConfig("PUT", applicationId, instanceId, config);
+  options?: { destructive?: boolean },
+) => sendInstanceConfig("PUT", applicationId, instanceId, config, options);
 
 export const patchInstanceConfig = (
   applicationId: string,
   instanceId: string,
   config: Record<string, unknown>,
-) => sendInstanceConfig("PATCH", applicationId, instanceId, config);
+  options?: { destructive?: boolean },
+) => sendInstanceConfig("PATCH", applicationId, instanceId, config, options);
 
 export async function listApplications(): Promise<Application[]> {
   const token = await getAuthToken();

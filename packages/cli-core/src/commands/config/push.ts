@@ -11,6 +11,7 @@ interface ConfigPushOptions {
   json?: string;
   dryRun?: boolean;
   yes?: boolean;
+  destructive?: boolean;
 }
 
 type Operation = {
@@ -21,6 +22,7 @@ type Operation = {
     appId: string,
     instId: string,
     config: Record<string, unknown>,
+    options?: { destructive?: boolean },
   ) => Promise<Record<string, unknown>>;
 };
 
@@ -88,7 +90,7 @@ async function configPush(options: ConfigPushOptions, op: Operation): Promise<vo
   console.error(`${op.verb} config on ${ctx.instanceLabel} instance...`);
 
   const result = await withApiContext(
-    op.apiFn(ctx.appId, ctx.instanceId, configPayload),
+    op.apiFn(ctx.appId, ctx.instanceId, configPayload, { destructive: options.destructive }),
     "Failed to push config",
   );
   console.log(JSON.stringify(result, null, 2));
