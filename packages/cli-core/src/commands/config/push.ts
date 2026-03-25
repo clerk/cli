@@ -1,8 +1,9 @@
 import { confirm } from "@inquirer/prompts";
 import { resolveAppContext } from "../../lib/config.ts";
-import { putInstanceConfig, patchInstanceConfig } from "../../lib/plapi.ts";
+import { fetchInstanceConfig, putInstanceConfig, patchInstanceConfig } from "../../lib/plapi.ts";
 import { isHuman } from "../../mode.ts";
 import { throwUsageError, throwUserAbort, withApiContext, ERROR_CODE } from "../../lib/errors.ts";
+import { dim, bold } from "../../lib/color.ts";
 
 interface ConfigPushOptions {
   app?: string;
@@ -74,8 +75,14 @@ async function configPush(options: ConfigPushOptions, op: Operation): Promise<vo
   }
 
   if (isHuman() && !options.yes) {
-    console.error(`\n${op.verb} config on ${ctx.instanceLabel} instance:`);
-    console.error(JSON.stringify(configPayload, null, 2));
+    const currentConfig = await withApiContext(
+      fetchInstanceConfig(ctx.appId, ctx.instanceId),
+      "Failed to fetch current config",
+    );
+
+    console.error(`\n${op.verb} config on ${ctx.instanceLabel} instance:\n`);
+    printDiff(currentConfig, configPayload, op.method === "PATCH");
+
     if (op.warning) {
       console.error(`\nWARNING: ${op.warning}`);
     }
@@ -126,4 +133,81 @@ export async function readInput(options: { file?: string; json?: string }): Prom
       '  Example: clerk config patch --json \'{"session":{"lifetime":3600}}\'\n' +
       "  Example: cat config.json | clerk config patch",
   );
+}
+
+/**
+ * Prints a diff showing only leaf values that actually changed,
+ * grouped by top-level config key.
+ *
+ * When `patchMode` is true, only keys present in the payload are walked.
+ * When false (PUT), all keys from both current and payload are walked
+ * so removed keys are visible too.
+ */
+export function printDiff(
+  current: Record<string, unknown>,
+  payload: Record<string, unknown>,
+  patchMode: boolean,
+): void {
+  type Change = { path: string; oldVal?: unknown; newVal?: unknown };
+
+  function collectChanges(oldObj: unknown, newObj: unknown, path: string, out: Change[]): void {
+    if (JSON.stringify(oldObj) === JSON.stringify(newObj)) return;
+
+    const bothObjects =
+      oldObj != null &&
+      newObj != null &&
+      typeof oldObj === "object" &&
+      typeof newObj === "object" &&
+      !Array.isArray(oldObj) &&
+      !Array.isArray(newObj);
+
+    if (bothObjects) {
+      // In patch mode, only walk keys from the new object (the patch payload).
+      // In put mode, walk both sides so deletions are visible.
+      const keys = patchMode
+        ? Object.keys(newObj as Record<string, unknown>)
+        : [
+            ...new Set([
+              ...Object.keys(oldObj as Record<string, unknown>),
+              ...Object.keys(newObj as Record<string, unknown>),
+            ]),
+          ];
+      for (const key of keys) {
+        collectChanges(
+          (oldObj as Record<string, unknown>)[key],
+          (newObj as Record<string, unknown>)[key],
+          path ? `${path}.${key}` : key,
+          out,
+        );
+      }
+      return;
+    }
+
+    out.push({ path, oldVal: oldObj, newVal: newObj });
+  }
+
+  // In put mode, walk all keys from both sides so removed top-level keys show up.
+  const topLevelKeys = patchMode
+    ? Object.keys(payload)
+    : [...new Set([...Object.keys(current), ...Object.keys(payload)])];
+
+  for (const key of topLevelKeys) {
+    const changes: Change[] = [];
+    collectChanges(current[key], payload[key], "", changes);
+    if (changes.length === 0) continue;
+
+    console.error(`  ${key}:`);
+    for (const { path, oldVal, newVal } of changes) {
+      if (path) {
+        console.error(`    ${path}:`);
+      }
+      const indent = path ? "      " : "    ";
+      if (oldVal !== undefined) {
+        console.error(dim(`${indent}- ${JSON.stringify(oldVal)}`));
+      }
+      if (newVal !== undefined) {
+        console.error(bold(`${indent}+ ${JSON.stringify(newVal)}`));
+      }
+    }
+  }
 }

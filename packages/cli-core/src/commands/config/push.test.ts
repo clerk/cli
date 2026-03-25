@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { _setConfigDir, setProfile } from "../../lib/config.ts";
 import { credentialStoreStubs, gitStubs, promptsStubs, stubFetch } from "../../test/stubs.ts";
+import { printDiff } from "./push.ts";
 
 mock.module("../../lib/credential-store.ts", () => credentialStoreStubs);
 mock.module("../../lib/git.ts", () => gitStubs);
@@ -425,5 +426,99 @@ describe("config push", () => {
 
     await runConfigPatch({ json: '{"from":"json"}', file: configFile, yes: true });
     expect(JSON.parse(capturedBody)).toEqual({ from: "json" });
+  });
+});
+
+describe("printDiff", () => {
+  let errorSpy: ReturnType<typeof spyOn>;
+  let lines: string[];
+
+  beforeEach(() => {
+    lines = [];
+    errorSpy = spyOn(console, "error").mockImplementation((...args: unknown[]) => {
+      // Strip ANSI codes for easier assertion
+      lines.push(String(args[0]).replace(/\x1b\[[0-9;]*m/g, ""));
+    });
+  });
+
+  afterEach(() => {
+    errorSpy.mockRestore();
+  });
+
+  test("patch mode: shows only changed leaf values", () => {
+    const current = { session: { lifetime: 604800, cookie: "__session" } };
+    const patch = { session: { lifetime: 3600 } };
+
+    printDiff(current, patch, true);
+
+    expect(lines).toEqual(["  session:", "    lifetime:", "      - 604800", "      + 3600"]);
+  });
+
+  test("patch mode: skips unchanged keys", () => {
+    const current = { session: { lifetime: 3600 }, sign_up: { mode: "public" } };
+    const patch = { session: { lifetime: 3600 } };
+
+    printDiff(current, patch, true);
+
+    expect(lines).toEqual([]);
+  });
+
+  test("patch mode: shows new keys being added", () => {
+    const current = {};
+    const patch = { session: { lifetime: 3600 } };
+
+    printDiff(current, patch, true);
+
+    expect(lines).toEqual(["  session:", '    + {"lifetime":3600}']);
+  });
+
+  test("patch mode: ignores keys not in patch", () => {
+    const current = { session: { lifetime: 604800 }, sign_up: { mode: "public" } };
+    const patch = { session: { lifetime: 3600 } };
+
+    printDiff(current, patch, true);
+
+    // sign_up should not appear
+    expect(lines.some((l) => l.includes("sign_up"))).toBe(false);
+  });
+
+  test("put mode: shows removed keys", () => {
+    const current = { session: { lifetime: 604800 }, sign_up: { mode: "public" } };
+    const payload = { session: { lifetime: 604800 } };
+
+    printDiff(current, payload, false);
+
+    // session is unchanged, sign_up is being removed
+    expect(lines.some((l) => l.includes("sign_up"))).toBe(true);
+    expect(lines.some((l) => l.includes("- {"))).toBe(true);
+  });
+
+  test("put mode: shows both old and new for changed values", () => {
+    const current = { session: { lifetime: 604800 } };
+    const payload = { session: { lifetime: 3600 } };
+
+    printDiff(current, payload, false);
+
+    expect(lines).toContainEqual(expect.stringContaining("- 604800"));
+    expect(lines).toContainEqual(expect.stringContaining("+ 3600"));
+  });
+
+  test("handles deeply nested changes", () => {
+    const current = { a: { b: { c: { d: 1 } } } };
+    const patch = { a: { b: { c: { d: 2 } } } };
+
+    printDiff(current, patch, true);
+
+    expect(lines).toEqual(["  a:", "    b.c.d:", "      - 1", "      + 2"]);
+  });
+
+  test("handles array value changes", () => {
+    const current = { allowed: { origins: ["a.com", "b.com"] } };
+    const patch = { allowed: { origins: ["a.com", "c.com"] } };
+
+    printDiff(current, patch, true);
+
+    expect(lines).toContainEqual(expect.stringContaining('- ["a.com","b.com"]'));
+    expect(lines).toContainEqual(expect.stringContaining('+ ["a.com","c.com"]'));
   });
 });
