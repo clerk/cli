@@ -35,6 +35,21 @@ describe("formatApiBody", () => {
     expect(result).toContain("Parameter: sesion");
   });
 
+  test("surfaces feature name from feature_not_enabled meta", () => {
+    const body = JSON.stringify({
+      errors: [
+        {
+          code: "feature_not_enabled",
+          message: "This feature is not enabled on this instance",
+          meta: { param_name: "organizations" },
+        },
+      ],
+    });
+    const result = formatApiBody(body, false);
+    expect(result).toContain("This feature is not enabled on this instance");
+    expect(result).toContain("Feature: organizations");
+  });
+
   test("surfaces param_name for config_validation_error", () => {
     const body = JSON.stringify({
       errors: [

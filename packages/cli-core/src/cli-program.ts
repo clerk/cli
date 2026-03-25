@@ -222,6 +222,12 @@ function formatSingleError(err: {
       }
       break;
     }
+    case "feature_not_enabled": {
+      if (meta.param_name) {
+        msg += `\n  Feature: ${meta.param_name}`;
+      }
+      break;
+    }
     case "unknown_config_key": {
       const suggestions = meta.suggestions;
       if (Array.isArray(suggestions) && suggestions.length > 0) {
