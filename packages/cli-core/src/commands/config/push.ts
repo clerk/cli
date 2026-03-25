@@ -64,6 +64,9 @@ async function configPush(options: ConfigPushOptions, op: Operation): Promise<vo
     throwUsageError("Config must be a JSON object.", undefined, ERROR_CODE.INVALID_JSON);
   }
 
+  // Strip config_version — it's returned by pull but not accepted by the backend
+  delete configPayload.config_version;
+
   if (options.dryRun) {
     console.error(`[dry-run] Would ${op.method} config on ${ctx.instanceLabel} instance:`);
     console.log(JSON.stringify(configPayload, null, 2));
