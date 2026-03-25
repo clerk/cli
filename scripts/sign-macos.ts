@@ -11,6 +11,11 @@ const KEYCHAIN_NAME = "clerk-signing.keychain-db";
 // Helpers (exported for testing)
 // ---------------------------------------------------------------------------
 
+/**
+ * Resolves a configuration value from either a CLI flag or an environment
+ * variable, preferring the flag when both are present. Throws if neither
+ * source provides a value.
+ */
 export function requireEnvOrFlag(
   flagValue: string | undefined,
   envVar: string,
@@ -23,6 +28,10 @@ export function requireEnvOrFlag(
   return value;
 }
 
+/**
+ * Returns the list of macOS (darwin) build targets. When `targetFilter` is
+ * provided, returns only the matching target or throws if it does not exist.
+ */
 export function getDarwinTargets(targetFilter?: string) {
   const darwinTargets = targets.filter((t) => t.os === "darwin");
 
@@ -40,6 +49,7 @@ export function getDarwinTargets(targetFilter?: string) {
   return matched;
 }
 
+/** Executes a command synchronously and returns its stdout. Throws on non-zero exit. */
 function run(cmd: string[]): string {
   console.log(`$ ${cmd.join(" ")}`);
   const result = Bun.spawnSync(cmd, {
@@ -54,6 +64,7 @@ function run(cmd: string[]): string {
   return result.stdout.toString().trim();
 }
 
+/** Like `run`, but returns `undefined` instead of throwing on failure. */
 function runMaybe(cmd: string[]): string | undefined {
   console.log(`$ ${cmd.join(" ")} (non-fatal)`);
   const result = Bun.spawnSync(cmd, {
