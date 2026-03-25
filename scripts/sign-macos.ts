@@ -49,31 +49,39 @@ export function getDarwinTargets(targetFilter?: string) {
   return matched;
 }
 
-/** Executes a command synchronously and returns its stdout. Throws on non-zero exit. */
-function run(cmd: string[]): string {
-  console.log(`$ ${cmd.join(" ")}`);
+/**
+ * Executes a command synchronously and returns its stdout. Throws on non-zero
+ * exit. When `displayCmd` is provided it is used for logging and error messages
+ * instead of `cmd`, so that secrets passed in argv are never printed.
+ */
+function run(cmd: string[], displayCmd = cmd): string {
+  console.log(`$ ${displayCmd.join(" ")}`);
   const result = Bun.spawnSync(cmd, {
     stdio: ["ignore", "pipe", "pipe"],
   });
   if (result.exitCode !== 0) {
     const stderr = result.stderr.toString().trim();
     throw new Error(
-      `${cmd.join(" ")} failed (exit ${result.exitCode})${stderr ? `:\n${stderr}` : ""}`,
+      `${displayCmd.join(" ")} failed (exit ${result.exitCode})${stderr ? `:\n${stderr}` : ""}`,
     );
   }
   return result.stdout.toString().trim();
 }
 
-/** Like `run`, but returns `undefined` instead of throwing on failure. */
-function runMaybe(cmd: string[]): string | undefined {
-  console.log(`$ ${cmd.join(" ")} (non-fatal)`);
+/**
+ * Like `run`, but returns `undefined` instead of throwing on failure. When
+ * `displayCmd` is provided it is used for logging and warning messages instead
+ * of `cmd`, so that secrets passed in argv are never printed.
+ */
+function runMaybe(cmd: string[], displayCmd = cmd): string | undefined {
+  console.log(`$ ${displayCmd.join(" ")} (non-fatal)`);
   const result = Bun.spawnSync(cmd, {
     stdio: ["ignore", "pipe", "pipe"],
   });
   if (result.exitCode !== 0) {
     const stderr = result.stderr.toString().trim();
     console.warn(
-      `Warning: ${cmd.join(" ")} failed (exit ${result.exitCode})${stderr ? `: ${stderr}` : ""}`,
+      `Warning: ${displayCmd.join(" ")} failed (exit ${result.exitCode})${stderr ? `: ${stderr}` : ""}`,
     );
     return undefined;
   }
@@ -141,33 +149,26 @@ if (import.meta.main) {
     // -- Create temporary keychain and import certificate --
     await Bun.write(certPath, Buffer.from(certificateBase64, "base64"));
 
-    run(["security", "create-keychain", "-p", keychainPassword, KEYCHAIN_NAME]);
+    run(
+      ["security", "create-keychain", "-p", keychainPassword, KEYCHAIN_NAME],
+      ["security", "create-keychain", "-p", "***", KEYCHAIN_NAME],
+    );
     run(["security", "set-keychain-settings", "-lut", "21600", KEYCHAIN_NAME]);
-    run(["security", "unlock-keychain", "-p", keychainPassword, KEYCHAIN_NAME]);
+    run(
+      ["security", "unlock-keychain", "-p", keychainPassword, KEYCHAIN_NAME],
+      ["security", "unlock-keychain", "-p", "***", KEYCHAIN_NAME],
+    );
 
-    run([
-      "security",
-      "import",
-      certPath,
-      "-k",
-      KEYCHAIN_NAME,
-      "-P",
-      certificatePassword,
-      "-T",
-      "/usr/bin/codesign",
-    ]);
+    run(
+      ["security", "import", certPath, "-k", KEYCHAIN_NAME, "-P", certificatePassword, "-T", "/usr/bin/codesign"],
+      ["security", "import", certPath, "-k", KEYCHAIN_NAME, "-P", "***", "-T", "/usr/bin/codesign"],
+    );
 
     // Allow codesign to access the keychain without UI prompts
-    run([
-      "security",
-      "set-key-partition-list",
-      "-S",
-      "apple-tool:,apple:,codesign:",
-      "-s",
-      "-k",
-      keychainPassword,
-      KEYCHAIN_NAME,
-    ]);
+    run(
+      ["security", "set-key-partition-list", "-S", "apple-tool:,apple:,codesign:", "-s", "-k", keychainPassword, KEYCHAIN_NAME],
+      ["security", "set-key-partition-list", "-S", "apple-tool:,apple:,codesign:", "-s", "-k", "***", KEYCHAIN_NAME],
+    );
 
     // Prepend our keychain to the search list
     const existingKeychains = run(["security", "list-keychains", "-d", "user"]);
