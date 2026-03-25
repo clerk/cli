@@ -160,14 +160,42 @@ if (import.meta.main) {
     );
 
     run(
-      ["security", "import", certPath, "-k", KEYCHAIN_NAME, "-P", certificatePassword, "-T", "/usr/bin/codesign"],
+      [
+        "security",
+        "import",
+        certPath,
+        "-k",
+        KEYCHAIN_NAME,
+        "-P",
+        certificatePassword,
+        "-T",
+        "/usr/bin/codesign",
+      ],
       ["security", "import", certPath, "-k", KEYCHAIN_NAME, "-P", "***", "-T", "/usr/bin/codesign"],
     );
 
     // Allow codesign to access the keychain without UI prompts
     run(
-      ["security", "set-key-partition-list", "-S", "apple-tool:,apple:,codesign:", "-s", "-k", keychainPassword, KEYCHAIN_NAME],
-      ["security", "set-key-partition-list", "-S", "apple-tool:,apple:,codesign:", "-s", "-k", "***", KEYCHAIN_NAME],
+      [
+        "security",
+        "set-key-partition-list",
+        "-S",
+        "apple-tool:,apple:,codesign:",
+        "-s",
+        "-k",
+        keychainPassword,
+        KEYCHAIN_NAME,
+      ],
+      [
+        "security",
+        "set-key-partition-list",
+        "-S",
+        "apple-tool:,apple:,codesign:",
+        "-s",
+        "-k",
+        "***",
+        KEYCHAIN_NAME,
+      ],
     );
 
     // Prepend our keychain to the search list
