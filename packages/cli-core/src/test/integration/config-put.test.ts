@@ -73,6 +73,11 @@ test("config put requires confirmation in human mode without --yes", async () =>
 });
 
 test("config put aborted when user declines confirmation", async () => {
+  // Mock the current config endpoint (needed for the diff preview)
+  http.mock({
+    "/config": { session: { lifetime: 604800 } },
+  });
+
   // Queue a "no" confirmation
   mockPrompts.confirm(false);
 
