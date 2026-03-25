@@ -220,7 +220,7 @@ describe("config push", () => {
     });
 
     await runConfigPatch({ json: '{"session":{"lifetime":3600}}', yes: true });
-    expect(errorSpy).toHaveBeenCalledWith("Updating config on development instance...");
+    expect(errorSpy).toHaveBeenCalledWith("Updating config on app_1 (development)...");
   });
 
   // --- PUT happy paths ---
@@ -250,7 +250,7 @@ describe("config push", () => {
     });
 
     await runConfigPut({ json: '{"session":{"lifetime":3600}}', yes: true });
-    expect(errorSpy).toHaveBeenCalledWith("Replacing config on development instance...");
+    expect(errorSpy).toHaveBeenCalledWith("Replacing config on app_1 (development)...");
   });
 
   // --- config_version stripping ---

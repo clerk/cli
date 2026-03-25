@@ -11,7 +11,7 @@ interface ConfigPullOptions {
 export async function configPull(options: ConfigPullOptions): Promise<void> {
   const ctx = await resolveAppContext(options);
 
-  console.error(`Pulling config from ${ctx.instanceLabel} instance...`);
+  console.error(`Pulling config from ${ctx.appLabel} (${ctx.instanceLabel})...`);
 
   const config = await withApiContext(
     fetchInstanceConfig(ctx.appId, ctx.instanceId),

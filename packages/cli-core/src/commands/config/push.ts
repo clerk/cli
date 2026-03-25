@@ -68,13 +68,13 @@ async function configPush(options: ConfigPushOptions, op: Operation): Promise<vo
   delete configPayload.config_version;
 
   if (options.dryRun) {
-    console.error(`[dry-run] Would ${op.method} config on ${ctx.instanceLabel} instance:`);
+    console.error(`[dry-run] Would ${op.method} config on ${ctx.appLabel} (${ctx.instanceLabel}):`);
     console.log(JSON.stringify(configPayload, null, 2));
     return;
   }
 
   if (isHuman() && !options.yes) {
-    console.error(`\n${op.verb} config on ${ctx.instanceLabel} instance:`);
+    console.error(`\n${op.verb} config on ${ctx.appLabel} (${ctx.instanceLabel}):`);
     console.error(JSON.stringify(configPayload, null, 2));
     if (op.warning) {
       console.error(`\nWARNING: ${op.warning}`);
@@ -85,7 +85,7 @@ async function configPush(options: ConfigPushOptions, op: Operation): Promise<vo
     }
   }
 
-  console.error(`${op.verb} config on ${ctx.instanceLabel} instance...`);
+  console.error(`${op.verb} config on ${ctx.appLabel} (${ctx.instanceLabel})...`);
 
   const result = await withApiContext(
     op.apiFn(ctx.appId, ctx.instanceId, configPayload),

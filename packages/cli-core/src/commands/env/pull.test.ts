@@ -58,15 +58,26 @@ mock.module("../../lib/config.ts", () => ({
         if (env) {
           const matched = app.instances.find((i) => i.environment_type === env);
           if (!matched) throw new Error(`No ${env} instance found for application ${options.app}.`);
-          return { appId: options.app, instanceId: matched.instance_id, instanceLabel: env };
+          return {
+            appId: options.app,
+            appLabel: options.app,
+            instanceId: matched.instance_id,
+            instanceLabel: env,
+          };
         }
         return {
           appId: options.app,
+          appLabel: options.app,
           instanceId: options.instance,
           instanceLabel: options.instance,
         };
       }
-      return { appId: options.app, instanceId: "ins_dev", instanceLabel: "development" };
+      return {
+        appId: options.app,
+        appLabel: options.app,
+        instanceId: "ins_dev",
+        instanceLabel: "development",
+      };
     }
 
     const profile = _profiles[process.cwd()];
@@ -82,7 +93,12 @@ mock.module("../../lib/config.ts", () => ({
           return { id, label: env };
         })();
 
-    return { appId: profile.appId, instanceId: instance.id, instanceLabel: instance.label };
+    return {
+      appId: profile.appId,
+      appLabel: profile.appId,
+      instanceId: instance.id,
+      instanceLabel: instance.label,
+    };
   },
 }));
 

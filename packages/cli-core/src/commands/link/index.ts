@@ -84,6 +84,7 @@ export async function link(options: LinkOptions = {}): Promise<void> {
   await setProfile(profileKey, {
     workspaceId: "",
     appId: app.application_id,
+    appName: app.name,
     instances: {
       development: devInstance.instance_id,
       ...(prodInstance ? { production: prodInstance.instance_id } : {}),

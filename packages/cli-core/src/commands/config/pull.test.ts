@@ -121,7 +121,19 @@ describe("config pull", () => {
     });
 
     await runConfigPull();
-    expect(errorSpy).toHaveBeenCalledWith("Pulling config from development instance...");
+    expect(errorSpy).toHaveBeenCalledWith("Pulling config from app_1 (development)...");
+  });
+
+  test("shows app name when stored in profile", async () => {
+    await setProfile(process.cwd(), {
+      workspaceId: "org_1",
+      appId: "app_1",
+      appName: "My SaaS App",
+      instances: { development: "ins_dev" },
+    });
+
+    await runConfigPull();
+    expect(errorSpy).toHaveBeenCalledWith("Pulling config from My SaaS App (development)...");
   });
 
   test("shows production label when --instance prod", async () => {
@@ -132,7 +144,7 @@ describe("config pull", () => {
     });
 
     await runConfigPull({ instance: "prod" });
-    expect(errorSpy).toHaveBeenCalledWith("Pulling config from production instance...");
+    expect(errorSpy).toHaveBeenCalledWith("Pulling config from app_1 (production)...");
   });
 
   test("uses development instance by default", async () => {
