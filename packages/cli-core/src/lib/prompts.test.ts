@@ -22,11 +22,13 @@ mock.module("@inquirer/prompts", () => ({
 const { confirm } = await import("./prompts.ts");
 
 const originalIsTTY = process.stdin.isTTY;
+const originalPlatform = process.platform;
 
 beforeEach(() => {
   lastConfirmArgs = [];
   confirmResult = true;
   process.stdin.isTTY = originalIsTTY;
+  Object.defineProperty(process, "platform", { value: originalPlatform, writable: true });
 });
 
 test("passes config through to inquirer confirm", async () => {
@@ -44,7 +46,7 @@ test("returns false when user declines", async () => {
   expect(result).toBe(false);
 });
 
-test("does not open /dev/tty when stdin is a TTY", async () => {
+test("does not open tty when stdin is a TTY", async () => {
   process.stdin.isTTY = true;
   await confirm({ message: "Continue?" });
 
@@ -52,7 +54,7 @@ test("does not open /dev/tty when stdin is a TTY", async () => {
   expect(lastConfirmArgs[1]).toBeUndefined();
 });
 
-test("opens /dev/tty as input when stdin is not a TTY", async () => {
+test("opens controlling terminal as input when stdin is not a TTY", async () => {
   process.stdin.isTTY = false;
 
   const mockStream = { close: mock(() => {}) };
@@ -62,14 +64,16 @@ test("opens /dev/tty as input when stdin is not a TTY", async () => {
 
   await confirm({ message: "Continue?" });
 
-  expect(createReadStreamSpy).toHaveBeenCalledWith("/dev/tty");
+  // Should use the platform-appropriate TTY path
+  const expectedPath = process.platform === "win32" ? "CONIN$" : "/dev/tty";
+  expect(createReadStreamSpy).toHaveBeenCalledWith(expectedPath);
   expect(lastConfirmArgs[1]).toEqual({ input: mockStream });
   expect(mockStream.close).toHaveBeenCalled();
 
   createReadStreamSpy.mockRestore();
 });
 
-test("closes /dev/tty stream even when confirm throws", async () => {
+test("closes tty stream even when confirm throws", async () => {
   process.stdin.isTTY = false;
   confirmResult = new Error("user cancelled");
 
