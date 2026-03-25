@@ -240,7 +240,7 @@ if (import.meta.main) {
         "json",
         "--wait",
         "--timeout",
-        "10m",
+        "30m",
       ];
       console.log(`$ ${notaryCmd.join(" ")}`);
       const notaryProc = Bun.spawnSync(notaryCmd, {
