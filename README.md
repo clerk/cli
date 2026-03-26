@@ -47,23 +47,47 @@ clerk init
   --framework <name>   Framework to set up (skips auto-detection)
   --prompt             Output a prompt for an AI agent to integrate Clerk
   --yes                Skip confirmation prompts
+  Examples:
+    $ clerk init                       Auto-detect framework and set up Clerk
+    $ clerk init --framework next      Set up for Next.js (skips detection)
+    $ clerk init --prompt              Output a setup prompt for an AI agent
+    $ clerk init -y                    Skip all confirmation prompts
+
+clerk auth login         Log in via browser (OAuth)
+clerk auth logout        Remove stored credentials
 
 clerk link
   --app <id>           Application ID to link (skips interactive picker)
+  Examples:
+    $ clerk link                       Pick an app interactively
+    $ clerk link --app app_abc123      Link directly by application ID
 
 clerk unlink
   --yes                Skip confirmation prompt
+  Examples:
+    $ clerk unlink                     Unlink with confirmation prompt
+    $ clerk unlink --yes               Skip confirmation
+
+clerk whoami             Show your email address
 
 clerk config pull
   --app <id>           Application ID to target (works from any directory)
   --instance <id>      Instance to target (dev, prod, or a full instance ID)
   --output <file>      Write config to a file instead of stdout
+  Examples:
+    $ clerk config pull                          Print dev config to stdout
+    $ clerk config pull --instance prod          Pull production config
+    $ clerk config pull --output config.json     Save config to a file
 
 clerk config schema
   --app <id>           Application ID to target (works from any directory)
   --instance <id>      Instance to target (dev, prod, or a full instance ID)
   --output <file>      Write schema to a file instead of stdout
   --keys <keys...>     Config keys to retrieve schema for
+  Examples:
+    $ clerk config schema                          Print full config schema
+    $ clerk config schema --keys social_login      Schema for specific keys
+    $ clerk config schema --output schema.json     Save schema to a file
 
 clerk config patch
   --app <id>           Application ID to target (works from any directory)
@@ -72,6 +96,11 @@ clerk config patch
   --json <string>      Pass config JSON inline
   --dry-run            Show what would be sent without making the API call
   --yes                Skip confirmation prompts
+  Examples:
+    $ clerk config patch --file config.json                Apply partial update from file
+    $ clerk config patch --json '{"key":"value"}'          Inline JSON patch
+    $ clerk config patch --file config.json --dry-run      Preview without applying
+    $ clerk config patch --instance prod --file config.json  Patch production config
 
 clerk config put
   --app <id>           Application ID to target (works from any directory)
@@ -80,11 +109,21 @@ clerk config put
   --json <string>      Pass config JSON inline
   --dry-run            Show what would be sent without making the API call
   --yes                Skip confirmation prompts
+  Examples:
+    $ clerk config put --file config.json                  Replace entire config from file
+    $ clerk config put --file config.json --dry-run        Preview the replacement
+    $ clerk config put --instance prod --file config.json  Replace production config
+    $ clerk config put --file config.json --yes            Skip confirmation prompt
 
 clerk env pull
   --app <id>           Application ID to target (works from any directory)
   --instance <id>      Instance to target (dev, prod, or a full instance ID)
   --file <path>        Target env file (default: auto-detect)
+  Examples:
+    $ clerk env pull                             Pull dev keys to .env.local
+    $ clerk env pull --instance prod             Pull production keys
+    $ clerk env pull --file .env                 Write to a specific file
+    $ clerk env pull --app app_abc123            Target a specific application
 
 clerk api [endpoint] [filter]
   -X, --method <method>  HTTP method (default: GET, or POST if body provided)
@@ -97,6 +136,11 @@ clerk api [endpoint] [filter]
   --platform             Use Platform API instead of Backend API
   --dry-run              Show the request without executing it
   --yes                  Skip confirmation for mutating requests
+  Examples:
+    $ clerk api ls                                   List all available endpoints
+    $ clerk api ls users                             List endpoints matching "users"
+    $ clerk api /users                               GET /v1/users
+    $ clerk api /users -d '{"first_name":"Alice"}'   POST with a JSON body
 
 clerk api ls [filter]    List available API endpoints
 clerk api                Interactive request builder (TTY only)
@@ -106,6 +150,12 @@ clerk doctor
   --json               Output results as JSON
   --spotlight           Only show warnings and failures
   --fix                Attempt to auto-fix issues
+  Examples:
+    $ clerk doctor                     Run all health checks
+    $ clerk doctor --verbose           Show detailed output for each check
+    $ clerk doctor --json              Output results as machine-readable JSON
+    $ clerk doctor --fix               Auto-fix detected issues
+    $ clerk doctor --spotlight         Only show warnings and failures
 
 clerk deploy
   --debug              Show debug output
