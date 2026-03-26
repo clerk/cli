@@ -3,7 +3,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { parseSpec, _setCacheDir } from "./catalog.ts";
-import { stubFetch } from "../../test/stubs.ts";
+import { stubFetch } from "../../test/lib/stubs.ts";
 import { apiLs } from "./ls.ts";
 
 const MINIMAL_SPEC = `

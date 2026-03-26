@@ -1,5 +1,5 @@
 import { test, expect, describe, mock, beforeEach, afterEach } from "bun:test";
-import { credentialStoreStubs, configStubs, gitStubs, stubFetch } from "../../test/stubs.ts";
+import { credentialStoreStubs, configStubs, gitStubs, stubFetch } from "../../test/lib/stubs.ts";
 import type { Application } from "../../lib/plapi.ts";
 
 const mockGetToken = mock();

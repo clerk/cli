@@ -13,7 +13,7 @@ import {
   MOCK_APP,
   MOCK_CONFIG,
   MOCK_SCHEMA,
-} from "../lib/setup.ts";
+} from "./lib/harness.ts";
 
 useIntegrationTestHarness();
 

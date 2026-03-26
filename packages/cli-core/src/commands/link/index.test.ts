@@ -6,7 +6,7 @@ import {
   autolinkStubs,
   gitStubs,
   promptsStubs,
-} from "../../test/stubs.ts";
+} from "../../test/lib/stubs.ts";
 
 const mockIsAgent = mock();
 let _modeOverride: string | undefined;

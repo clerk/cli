@@ -4,7 +4,7 @@
  */
 
 import { test, expect } from "bun:test";
-import { useIntegrationTestHarness, http, clerk } from "../lib/setup.ts";
+import { useIntegrationTestHarness, http, clerk } from "./lib/harness.ts";
 
 useIntegrationTestHarness();
 

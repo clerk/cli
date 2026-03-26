@@ -14,7 +14,7 @@ import {
   getInstance,
   MOCK_APP,
   MOCK_APP_DEV_ONLY,
-} from "../lib/setup.ts";
+} from "./lib/harness.ts";
 
 const h = useIntegrationTestHarness();
 

@@ -1,5 +1,5 @@
 import { test, expect, describe, beforeEach, afterEach, mock } from "bun:test";
-import { credentialStoreStubs, stubFetch } from "../test/stubs.ts";
+import { credentialStoreStubs, stubFetch } from "../test/lib/stubs.ts";
 
 const mockGetToken = mock();
 mock.module("./credential-store.ts", () => ({
