@@ -1,6 +1,7 @@
 import { join, dirname } from "node:path";
 import { mkdir } from "node:fs/promises";
 import { dim, cyan, green, yellow, bold } from "../../lib/color.js";
+import { printNextSteps } from "../../lib/next-steps.js";
 import { getToken } from "../../lib/credential-store.js";
 import { fetchUserInfo } from "../../lib/token-exchange.js";
 import { printFindings } from "./scan.js";
@@ -79,12 +80,7 @@ export function printOutro(plan: ScaffoldPlan, findings: ScanFinding[]): void {
     console.log(`  ${dim("-")} ${dim(a.path)} ${dim(`(${a.skipReason})`)}`);
   }
 
-  if (plan.postInstructions.length > 0) {
-    console.log(dim("\nNext steps:"));
-    for (const instr of plan.postInstructions) {
-      console.log(dim(`  • ${instr}`));
-    }
-  }
+  printNextSteps(plan.postInstructions);
 
   printFindings(findings);
 
