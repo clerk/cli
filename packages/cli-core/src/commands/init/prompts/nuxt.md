@@ -18,7 +18,7 @@ export default defineNuxtConfig({
 });
 ```
 
-## pages/sign-in.vue
+## pages/sign-in/[...slug].vue
 
 ```vue
 <template>
@@ -26,7 +26,7 @@ export default defineNuxtConfig({
 </template>
 ```
 
-## pages/sign-up.vue
+## pages/sign-up/[...slug].vue
 
 ```vue
 <template>

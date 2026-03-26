@@ -62,14 +62,14 @@ test("scaffolds all actions for a fresh Nuxt project", async () => {
     expect(config.content).toContain("@clerk/nuxt");
   }
 
-  const signIn = findAction(plan.actions, "pages/sign-in.vue");
+  const signIn = findAction(plan.actions, "pages/sign-in/[...slug].vue");
   expect(signIn.type).toBe("create");
   if (signIn.type === "create") {
     expect(signIn.content).toContain("<template>");
     expect(signIn.content).toContain("SignIn");
   }
 
-  const signUp = findAction(plan.actions, "pages/sign-up.vue");
+  const signUp = findAction(plan.actions, "pages/sign-up/[...slug].vue");
   expect(signUp.type).toBe("create");
 
   const env = findAction(plan.actions, ".env");
@@ -116,12 +116,15 @@ test("skips auth page when it already exists", async () => {
     join(tempDir, "nuxt.config.ts"),
     `export default defineNuxtConfig({ modules: [] });`,
   );
-  await mkdir(join(tempDir, "pages"), { recursive: true });
-  await Bun.write(join(tempDir, "pages/sign-in.vue"), "<template><div>existing</div></template>");
+  await mkdir(join(tempDir, "pages/sign-in"), { recursive: true });
+  await Bun.write(
+    join(tempDir, "pages/sign-in/[...slug].vue"),
+    "<template><div>existing</div></template>",
+  );
 
   const plan = await nuxt.scaffold(makeCtx());
 
-  expect(findAction(plan.actions, "pages/sign-in.vue")).toMatchObject({
+  expect(findAction(plan.actions, "pages/sign-in/[...slug].vue")).toMatchObject({
     type: "skip",
     skipReason: "Sign-in page already exists",
   });

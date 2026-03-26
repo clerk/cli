@@ -67,7 +67,7 @@ export const nuxt: FrameworkScaffold = {
       scaffoldAuthFiles(
         ctx.cwd,
         authFileSpecs({
-          path: (kind) => `pages/${kind}.vue`,
+          path: (kind) => `pages/${kind}/[...slug].vue`,
           content: (kind) => authPageContent(kind, tailwind),
           surface: "page",
         }),
