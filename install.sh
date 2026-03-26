@@ -1,0 +1,202 @@
+#!/usr/bin/env bash
+# Install script for the Clerk CLI.
+# Downloads a pre-compiled binary from GitHub Releases.
+#
+# Usage:
+#   curl -fsSL https://raw.githubusercontent.com/clerk/cli/main/install.sh | bash
+#   curl -fsSL https://raw.githubusercontent.com/clerk/cli/main/install.sh | bash -s -- --canary
+#   curl -fsSL https://raw.githubusercontent.com/clerk/cli/main/install.sh | bash -s -- --version v0.1.0-canary.v20260313145959
+#
+# Environment variables:
+#   CLERK_INSTALL_DIR  — directory to install to (default: /usr/local/bin, or ~/.local/bin if not writable)
+
+set -euo pipefail
+
+REPO="clerk/cli"
+BINARY_NAME="clerk"
+INSTALL_DIR="${CLERK_INSTALL_DIR:-}"
+CHANNEL=""
+VERSION=""
+
+# ─── Parse arguments ───────────────────────────────────────────────────────────
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --canary)
+      CHANNEL="canary"
+      shift
+      ;;
+    --version)
+      VERSION="$2"
+      shift 2
+      ;;
+    --version=*)
+      VERSION="${1#--version=}"
+      shift
+      ;;
+    --install-dir)
+      INSTALL_DIR="$2"
+      shift 2
+      ;;
+    --install-dir=*)
+      INSTALL_DIR="${1#--install-dir=}"
+      shift
+      ;;
+    --help|-h)
+      echo "Install the Clerk CLI"
+      echo ""
+      echo "Usage:"
+      echo "  install.sh [options]"
+      echo ""
+      echo "Options:"
+      echo "  --canary              Install the latest canary release"
+      echo "  --version <tag>       Install a specific version (e.g. v0.1.0)"
+      echo "  --install-dir <path>  Directory to install to"
+      echo "  -h, --help            Show this help"
+      exit 0
+      ;;
+    *)
+      echo "Unknown option: $1" >&2
+      exit 1
+      ;;
+  esac
+done
+
+# ─── Detect platform ──────────────────────────────────────────────────────────
+
+detect_target() {
+  local os arch libc=""
+
+  case "$(uname -s)" in
+    Darwin) os="darwin" ;;
+    Linux)  os="linux" ;;
+    MINGW*|MSYS*|CYGWIN*) os="win32" ;;
+    *)
+      echo "Error: unsupported operating system: $(uname -s)" >&2
+      exit 1
+      ;;
+  esac
+
+  case "$(uname -m)" in
+    x86_64|amd64) arch="x64" ;;
+    arm64|aarch64) arch="arm64" ;;
+    *)
+      echo "Error: unsupported architecture: $(uname -m)" >&2
+      exit 1
+      ;;
+  esac
+
+  # Detect musl on Linux
+  if [ "$os" = "linux" ]; then
+    if ldd --version 2>&1 | grep -qi musl; then
+      libc="-musl"
+    elif command -v ldd >/dev/null 2>&1; then
+      libc=""  # glibc
+    elif [ -f /etc/alpine-release ]; then
+      libc="-musl"
+    fi
+
+    # The musl binary requires libstdc++ and libgcc_s (not shipped by default on Alpine)
+    if [ "$libc" = "-musl" ] && [ -f /etc/alpine-release ]; then
+      if ! [ -f /usr/lib/libstdc++.so.6 ]; then
+        echo "Installing required dependencies (libstdc++, libgcc)..."
+        apk add --no-cache libstdc++ libgcc >/dev/null 2>&1 || \
+          echo "Warning: could not install libstdc++/libgcc — the binary may fail to run."
+      fi
+    fi
+  fi
+
+  echo "${os}-${arch}${libc}"
+}
+
+TARGET="$(detect_target)"
+EXT=""
+if [[ "$TARGET" == win32-* ]]; then
+  EXT=".exe"
+fi
+
+echo "Detected platform: ${TARGET}"
+
+# ─── Resolve version ──────────────────────────────────────────────────────────
+
+if [ -n "$VERSION" ]; then
+  # Use the explicitly provided version tag
+  TAG="$VERSION"
+  # Ensure it starts with 'v'
+  if [[ "$TAG" != v* ]]; then
+    TAG="v${TAG}"
+  fi
+elif [ "$CHANNEL" = "canary" ]; then
+  # Find the latest canary pre-release
+  TAG=$(gh release list --repo "$REPO" --limit 20 --json tagName,isPrerelease \
+    --jq '[.[] | select(.isPrerelease and (.tagName | contains("canary")))][0].tagName' 2>/dev/null || true)
+
+  if [ -z "$TAG" ]; then
+    # Fallback: use the GitHub API directly (no gh CLI required)
+    TAG=$(curl -fsSL "https://api.github.com/repos/${REPO}/releases" \
+      | grep -o '"tag_name":"[^"]*canary[^"]*"' \
+      | head -1 \
+      | cut -d'"' -f4 || true)
+  fi
+
+  if [ -z "$TAG" ]; then
+    echo "Error: no canary release found" >&2
+    exit 1
+  fi
+else
+  # Find the latest stable release (non-prerelease)
+  TAG=$(curl -fsSL "https://api.github.com/repos/${REPO}/releases/latest" \
+    | grep -o '"tag_name":"[^"]*"' \
+    | cut -d'"' -f4 || true)
+
+  if [ -z "$TAG" ]; then
+    echo "Error: no stable release found" >&2
+    exit 1
+  fi
+fi
+
+echo "Installing Clerk CLI ${TAG}..."
+
+# ─── Download binary ──────────────────────────────────────────────────────────
+
+ASSET_NAME="clerk-${TARGET}${EXT}"
+DOWNLOAD_URL="https://github.com/${REPO}/releases/download/${TAG}/${ASSET_NAME}"
+
+TMPDIR=$(mktemp -d)
+trap 'rm -rf "$TMPDIR"' EXIT
+
+echo "Downloading ${DOWNLOAD_URL}..."
+if ! curl -fsSL -o "${TMPDIR}/${BINARY_NAME}${EXT}" "$DOWNLOAD_URL"; then
+  echo "Error: failed to download binary for ${TARGET} from release ${TAG}" >&2
+  echo "Check that this platform is supported and the release exists." >&2
+  exit 1
+fi
+
+chmod +x "${TMPDIR}/${BINARY_NAME}${EXT}"
+
+# ─── Install binary ───────────────────────────────────────────────────────────
+
+if [ -z "$INSTALL_DIR" ]; then
+  if [ -w /usr/local/bin ]; then
+    INSTALL_DIR="/usr/local/bin"
+  else
+    INSTALL_DIR="${HOME}/.local/bin"
+    mkdir -p "$INSTALL_DIR"
+  fi
+fi
+
+mv "${TMPDIR}/${BINARY_NAME}${EXT}" "${INSTALL_DIR}/${BINARY_NAME}${EXT}"
+
+echo ""
+echo "Clerk CLI ${TAG} installed to ${INSTALL_DIR}/${BINARY_NAME}${EXT}"
+
+# Check if install dir is in PATH
+if ! echo "$PATH" | tr ':' '\n' | grep -qx "$INSTALL_DIR"; then
+  echo ""
+  echo "Warning: ${INSTALL_DIR} is not in your PATH."
+  echo "Add it to your shell profile:"
+  echo "  export PATH=\"${INSTALL_DIR}:\$PATH\""
+fi
+
+echo ""
+"${INSTALL_DIR}/${BINARY_NAME}${EXT}" --version

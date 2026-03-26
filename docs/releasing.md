@@ -14,7 +14,7 @@ push to main
             → publish-npm: generate platform packages + publish wrapper
             → upload-github-assets: attach binaries to the GitHub Release
   → (if no stable release needed) canary.ts versions packages
-    → build → smoke-test subset → publish @canary
+    → build → smoke-test subset → upload GitHub pre-release → publish @canary (npm, optional)
 
 PR comment "!snapshot [name]"
   → snapshot.ts versions packages from PR branch
@@ -44,13 +44,35 @@ Install: `npm install -g clerk`
 
 Published automatically on every push to `main` that does **not** trigger a stable release. `scripts/canary.ts` uses Changesets snapshot mode to produce versions in the format `x.y.z-canary.v<YYYYMMDDHHmmss>` (e.g., `0.0.1-canary.v20260313145959`). A subset of smoke tests (darwin-arm64, linux-x64, linux-x64-musl) runs before publishing.
 
-Install: `npm install -g clerk@canary`
+Install via script: `curl -fsSL https://raw.githubusercontent.com/clerk/cli/main/install.sh | bash -s -- --canary`
+
+Install via npm: `npm install -g clerk@canary`
 
 ### Snapshot (`@snapshot`)
 
 Published on-demand from PR branches by commenting `!snapshot` (or `!snapshot <name>`) on a pull request. The commenter must be a member or owner of the repository's organization. `scripts/snapshot.ts` uses Changesets snapshot mode to produce versions in the format `x.y.z-<name>.v<YYYYMMDDHHmmss>` (e.g., `0.0.1-snapshot.v20260313145959` or `0.0.1-my-feature.v20260313145959`). The datetime format ensures multiple snapshots from the same PR sort monotonically in semver.
 
 Install: `npm install -g clerk@<version>` (version is posted as a PR comment after publishing)
+
+## Install Script
+
+The repository includes an install script (`install.sh`) that downloads pre-compiled binaries directly from GitHub Releases. This works independently of npm.
+
+```sh
+# Install latest stable release
+curl -fsSL https://raw.githubusercontent.com/clerk/cli/main/install.sh | bash
+
+# Install latest canary release
+curl -fsSL https://raw.githubusercontent.com/clerk/cli/main/install.sh | bash -s -- --canary
+
+# Install a specific version
+curl -fsSL https://raw.githubusercontent.com/clerk/cli/main/install.sh | bash -s -- --version v0.1.0
+
+# Install to a custom directory
+curl -fsSL https://raw.githubusercontent.com/clerk/cli/main/install.sh | bash -s -- --install-dir ~/bin
+```
+
+The script detects the current OS, architecture, and libc (glibc vs musl on Linux), then downloads and installs the matching binary. By default it installs to `/usr/local/bin` (or `~/.local/bin` if `/usr/local/bin` is not writable).
 
 ## Versioning
 
@@ -134,6 +156,7 @@ Attaches the compiled binaries to the GitHub Release for direct download. Binari
 | `packages/cli/package.json`            | Wrapper package (has `prepublishOnly` guard against accidental direct publish) |
 | `packages/cli-core/src/cli.ts`         | CLI entrypoint (reads `CLI_VERSION` global at runtime)                         |
 | `packages/cli-core/src/globals.d.ts`   | TypeScript declaration for the `CLI_VERSION` compile-time define               |
+| `install.sh`                           | Shell install script — downloads binary from GitHub Releases                   |
 | `scripts/releaser/index.ts`            | Generates platform packages and publishes everything to npm                    |
 | `scripts/releaser/targets.ts`          | Target definitions (used by both releaser and build.ts)                        |
 | `scripts/build.ts`                     | Cross-compiles CLI binaries for all 8 platform targets                         |

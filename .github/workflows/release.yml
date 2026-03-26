@@ -88,7 +88,7 @@ jobs:
           ARTIFACTS_DIR: ${{ github.workspace }}/dist/artifacts
           GH_TOKEN: ${{ github.token }}
 
-  upload-github-assets:
+  publish-github:
     needs: [versioning, build, smoke-test, publish-npm]
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -149,9 +149,46 @@ jobs:
       artifact-prefix: clerk-canary
       preset: canary
 
-  canary-publish:
+  canary-publish-github:
     needs: [canary-version, canary-build, canary-smoke-test]
-    # Must run on GitHub-hosted runner for npm OIDC trusted publishing
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: clerk-canary-*
+          path: dist/artifacts
+
+      - name: Create pre-release and upload binaries
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          tag="v${{ needs.canary-version.outputs.version }}"
+
+          # Create GitHub Release as a pre-release
+          gh release view "$tag" --repo "$GH_REPO" 2>/dev/null || \
+            gh release create "$tag" \
+              --repo "$GH_REPO" \
+              --title "$tag" \
+              --target "${{ github.sha }}" \
+              --prerelease \
+              --notes "Canary release \`$tag\`"
+
+          # Upload binaries
+          for dir in dist/artifacts/clerk-canary-*/; do
+            target=${dir#dist/artifacts/clerk-canary-} && target=${target%/}
+            ext=""; [[ "$target" == win32-* ]] && ext=".exe"
+            gh release upload "$tag" "${dir}clerk${ext}#clerk-${target}${ext}" \
+              --repo "$GH_REPO" --clobber
+          done
+
+  canary-publish-npm:
+    needs:
+      [canary-version, canary-build, canary-smoke-test, canary-publish-github]
+    # Must run on GitHub-hosted runner for npm OIDC trusted publishing.
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
