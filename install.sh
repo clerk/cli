@@ -31,6 +31,10 @@ while [[ $# -gt 0 ]]; do
       shift
       ;;
     --version)
+      if [ $# -lt 2 ] || [[ "$2" == -* ]]; then
+        echo "Error: --version requires a value (e.g. --version v0.1.0)" >&2
+        exit 1
+      fi
       VERSION="$2"
       shift 2
       ;;
@@ -39,6 +43,10 @@ while [[ $# -gt 0 ]]; do
       shift
       ;;
     --install-dir)
+      if [ $# -lt 2 ] || [[ "$2" == -* ]]; then
+        echo "Error: --install-dir requires a value (e.g. --install-dir /usr/local/bin)" >&2
+        exit 1
+      fi
       INSTALL_DIR="$2"
       shift 2
       ;;
@@ -51,6 +59,10 @@ while [[ $# -gt 0 ]]; do
       shift
       ;;
     --artifacts-dir)
+      if [ $# -lt 2 ] || [[ "$2" == -* ]]; then
+        echo "Error: --artifacts-dir requires a value (e.g. --artifacts-dir ./build)" >&2
+        exit 1
+      fi
       ARTIFACTS_DIR="$2"
       LOCAL=true
       shift 2
