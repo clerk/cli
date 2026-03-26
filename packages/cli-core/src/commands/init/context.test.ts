@@ -115,6 +115,19 @@ test("detects existing Clerk SDK in dependencies", async () => {
   expect(ctx!.existingClerk).toBe(true);
 });
 
+test("existingClerk is false when a different @clerk package is installed", async () => {
+  await Bun.write(
+    join(tempDir, "package.json"),
+    JSON.stringify({ dependencies: { nuxt: "3.12.0", "@clerk/themes": "2.0.0" } }),
+  );
+
+  const ctx = await gatherContext(tempDir);
+
+  expect(ctx).not.toBeNull();
+  expect(ctx!.framework.sdk).toBe("@clerk/nuxt");
+  expect(ctx!.existingClerk).toBe(false);
+});
+
 test("detects package manager from bun.lockb", async () => {
   await Bun.write(
     join(tempDir, "package.json"),
