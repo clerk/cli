@@ -323,7 +323,7 @@ Examples:
   return program;
 }
 
-function formatApiBody(body: string, verbose: boolean): string {
+export function formatApiBody(body: string, verbose: boolean): string {
   if (verbose) {
     try {
       return "\n" + JSON.stringify(JSON.parse(body), null, 2);
@@ -334,7 +334,9 @@ function formatApiBody(body: string, verbose: boolean): string {
 
   try {
     const parsed = JSON.parse(body);
-    if (parsed.errors?.[0]?.message) return parsed.errors[0].message;
+    if (Array.isArray(parsed.errors) && parsed.errors.length > 0) {
+      return parsed.errors.map(formatSingleError).join("\n");
+    }
     if (parsed.error) return parsed.error;
     if (parsed.message) return parsed.message;
   } catch {
@@ -343,6 +345,50 @@ function formatApiBody(body: string, verbose: boolean): string {
 
   if (body.length > 200) return body.slice(0, 200) + "...";
   return body;
+}
+
+function formatSingleError(err: {
+  message?: string;
+  code?: string;
+  meta?: Record<string, unknown>;
+}): string {
+  let msg = err.message ?? "Unknown error";
+  const meta = err.meta;
+  if (!meta) return msg;
+
+  switch (err.code) {
+    case "unsupported_subscription_plan_features": {
+      const features = meta.unsupported_features;
+      if (Array.isArray(features) && features.length > 0) {
+        msg += `\n  Unsupported features: ${features.join(", ")}`;
+      }
+      break;
+    }
+    case "feature_not_enabled": {
+      if (meta.param_name) {
+        msg += `\n  Feature: ${meta.param_name}`;
+      }
+      break;
+    }
+    case "unknown_config_key": {
+      const suggestions = meta.suggestions;
+      if (Array.isArray(suggestions) && suggestions.length > 0) {
+        msg += `\n  Did you mean: ${suggestions.join(", ")}`;
+      }
+      if (meta.param_name) {
+        msg += `\n  Parameter: ${meta.param_name}`;
+      }
+      break;
+    }
+    default: {
+      if (meta.param_name) {
+        msg += `\n  Parameter: ${meta.param_name}`;
+      }
+      break;
+    }
+  }
+
+  return msg;
 }
 
 /**
@@ -382,7 +428,13 @@ export async function runProgram(
       const prefix = error.context ?? "Request failed";
       if (isAgent()) {
         const apiCode = extractApiErrorCode(error.body);
-        outputJsonError(apiCode ?? "api_error", `${prefix} (${error.status}): ${detail}`);
+        const apiErrors = extractApiErrors(error.body);
+        outputJsonError(
+          apiCode ?? "api_error",
+          `${prefix} (${error.status}): ${detail}`,
+          undefined,
+          apiErrors,
+        );
       } else {
         console.error(red(`error: ${prefix} (${error.status}): ${detail}`));
       }
@@ -407,12 +459,26 @@ export async function runProgram(
   }
 }
 
+interface ApiErrorEntry {
+  code?: string;
+  message?: string;
+  meta?: Record<string, unknown>;
+}
+
 /** Output a structured JSON error to stderr for agent/CI consumption. */
-function outputJsonError(code: string, message: string, docsUrl?: string): void {
-  const payload: { error: { code: string; message: string; docsUrl?: string } } = {
+function outputJsonError(
+  code: string,
+  message: string,
+  docsUrl?: string,
+  errors?: ApiErrorEntry[],
+): void {
+  const payload: {
+    error: { code: string; message: string; docsUrl?: string; errors?: ApiErrorEntry[] };
+  } = {
     error: { code, message },
   };
   if (docsUrl) payload.error.docsUrl = docsUrl;
+  if (errors?.length) payload.error.errors = errors;
   console.error(JSON.stringify(payload));
 }
 
@@ -424,4 +490,23 @@ function extractApiErrorCode(body: string): string | undefined {
   } catch {
     return undefined;
   }
+}
+
+/** Extract the full errors array from a Clerk API JSON response body, if present. */
+function extractApiErrors(body: string): ApiErrorEntry[] | undefined {
+  try {
+    const parsed = JSON.parse(body);
+    if (Array.isArray(parsed.errors) && parsed.errors.length > 0) {
+      return parsed.errors.map((e: ApiErrorEntry) => {
+        const entry: ApiErrorEntry = {};
+        if (e.code) entry.code = e.code;
+        if (e.message) entry.message = e.message;
+        if (e.meta && Object.keys(e.meta).length > 0) entry.meta = e.meta;
+        return entry;
+      });
+    }
+  } catch {
+    // not JSON
+  }
+  return undefined;
 }
