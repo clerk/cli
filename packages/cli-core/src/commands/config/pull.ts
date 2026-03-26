@@ -14,14 +14,10 @@ export async function configPull(options: ConfigPullOptions): Promise<void> {
 
   console.error(`Pulling config from ${ctx.instanceLabel} instance...`);
 
-  let config = await withApiContext(
-    fetchInstanceConfig(ctx.appId, ctx.instanceId),
+  const config = await withApiContext(
+    fetchInstanceConfig(ctx.appId, ctx.instanceId, options.keys),
     "Failed to fetch config",
   );
-
-  if (options.keys?.length) {
-    config = Object.fromEntries(options.keys.filter((k) => k in config).map((k) => [k, config[k]]));
-  }
 
   const json = JSON.stringify(config, null, 2);
 

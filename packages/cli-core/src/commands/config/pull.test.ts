@@ -200,7 +200,13 @@ describe("config pull", () => {
     );
   });
 
-  test("--keys filters output to requested keys", async () => {
+  test("--keys passes keys as query params to the API", async () => {
+    let requestedUrl = "";
+    stubFetch(async (input) => {
+      requestedUrl = input.toString();
+      return new Response(JSON.stringify({ session: { lifetime: 604800 } }), { status: 200 });
+    });
+
     await setProfile(process.cwd(), {
       workspaceId: "org_1",
       appId: "app_1",
@@ -208,29 +214,31 @@ describe("config pull", () => {
     });
 
     await runConfigPull({ keys: ["session"] });
+    expect(requestedUrl).toContain("keys=session");
     expect(logSpy).toHaveBeenCalledWith(JSON.stringify({ session: { lifetime: 604800 } }, null, 2));
   });
 
-  test("--keys silently omits keys not present in config", async () => {
+  test("--keys passes multiple keys as repeated query params", async () => {
+    let requestedUrl = "";
+    stubFetch(async (input) => {
+      requestedUrl = input.toString();
+      return new Response(
+        JSON.stringify({ session: { lifetime: 604800 }, sign_up: { mode: "public" } }),
+        {
+          status: 200,
+        },
+      );
+    });
+
     await setProfile(process.cwd(), {
       workspaceId: "org_1",
       appId: "app_1",
       instances: { development: "ins_dev" },
     });
 
-    await runConfigPull({ keys: ["session", "nonexistent"] });
-    expect(logSpy).toHaveBeenCalledWith(JSON.stringify({ session: { lifetime: 604800 } }, null, 2));
-  });
-
-  test("--keys with no matching keys outputs empty object", async () => {
-    await setProfile(process.cwd(), {
-      workspaceId: "org_1",
-      appId: "app_1",
-      instances: { development: "ins_dev" },
-    });
-
-    await runConfigPull({ keys: ["nonexistent"] });
-    expect(logSpy).toHaveBeenCalledWith(JSON.stringify({}, null, 2));
+    await runConfigPull({ keys: ["session", "sign_up"] });
+    expect(requestedUrl).toContain("keys=session");
+    expect(requestedUrl).toContain("keys=sign_up");
   });
 
   test("handles API errors gracefully", async () => {
