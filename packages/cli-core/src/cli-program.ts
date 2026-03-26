@@ -1,4 +1,4 @@
-import { Command } from "@commander-js/extra-typings";
+import { Command, createOption, createArgument } from "@commander-js/extra-typings";
 import { setMode, type Mode } from "./mode.ts";
 import { init } from "./commands/init/index.ts";
 import { login } from "./commands/auth/login.ts";
@@ -17,6 +17,7 @@ import { switchEnv } from "./commands/switch-env/index.ts";
 import { getEnvironment } from "./lib/config.ts";
 import { setCurrentEnv, isValidEnv, getCurrentEnvName } from "./lib/environment.ts";
 import { completion, SUPPORTED_SHELLS } from "./commands/completion/index.ts";
+import { FRAMEWORK_NAMES } from "./lib/framework.ts";
 import { CliError, UserAbortError, ApiError, EXIT_CODE, throwUsageError } from "./lib/errors.ts";
 import { red } from "./lib/color.ts";
 import { isAgent } from "./mode.ts";
@@ -58,7 +59,11 @@ export function createProgram() {
   program
     .command("init")
     .description("Initialize Clerk in your project")
-    .option("--framework <name>", "Framework to set up (skips auto-detection)")
+    .addOption(
+      createOption("--framework <name>", "Framework to set up (skips auto-detection)").choices(
+        FRAMEWORK_NAMES,
+      ),
+    )
     .option("--prompt", "Output a prompt for an AI agent to integrate Clerk")
     .option("-y, --yes", "Skip confirmation prompts")
     .addHelpText(
@@ -343,9 +348,9 @@ Examples:
     .command("completion")
     .description("Generate shell autocompletion script")
     .addArgument(
-      program
-        .createArgument("<shell>", `Shell type (${SUPPORTED_SHELLS.join(", ")})`)
-        .choices(SUPPORTED_SHELLS),
+      createArgument("<shell>", `Shell type (${SUPPORTED_SHELLS.join(", ")})`).choices(
+        SUPPORTED_SHELLS,
+      ),
     )
     .addHelpText(
       "after",

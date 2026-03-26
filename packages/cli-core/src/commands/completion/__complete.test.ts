@@ -1,5 +1,5 @@
 import { test, expect, describe } from "bun:test";
-import { Command } from "@commander-js/extra-typings";
+import { Command, createOption, createArgument } from "@commander-js/extra-typings";
 import { generateCompletions } from "./__complete.ts";
 
 function buildTestProgram(): Command {
@@ -42,12 +42,28 @@ function buildTestProgram(): Command {
   program.command("deploy", { hidden: true }).description("Deploy application");
 
   program
+    .command("init")
+    .description("Initialize Clerk in your project")
+    .addOption(
+      createOption("--framework <name>", "Framework to set up").choices([
+        "next",
+        "astro",
+        "nuxt",
+        "react",
+        "vue",
+        "expo",
+        "express",
+        "fastify",
+      ]),
+    )
+    .option("--prompt", "Output a prompt for an AI agent")
+    .option("-y, --yes", "Skip confirmation prompts");
+
+  program
     .command("completion")
     .description("Generate completion script")
     .addArgument(
-      new (Command as any)()
-        .createArgument("<shell>", "Shell type")
-        .choices(["bash", "zsh", "fish", "powershell"]),
+      createArgument("<shell>", "Shell type").choices(["bash", "zsh", "fish", "powershell"]),
     );
 
   return program;
@@ -67,6 +83,7 @@ describe("generateCompletions", () => {
       const names = completionNames("");
       // Subcommands
       expect(names).toContain("auth");
+      expect(names).toContain("init");
       expect(names).toContain("link");
       expect(names).toContain("whoami");
       expect(names).toContain("config");
@@ -193,6 +210,21 @@ describe("generateCompletions", () => {
       const names = completionNames("--mode", "h");
       expect(names).toContain("human");
       expect(names).not.toContain("agent");
+    });
+
+    test("completes --framework values for init", () => {
+      const names = completionNames("init", "--framework", "");
+      expect(names).toContain("next");
+      expect(names).toContain("astro");
+      expect(names).toContain("react");
+      expect(names).toContain("vue");
+    });
+
+    test("completes partial --framework value", () => {
+      const names = completionNames("init", "--framework", "n");
+      expect(names).toContain("next");
+      expect(names).toContain("nuxt");
+      expect(names).not.toContain("react");
     });
 
     test("completes --instance values", () => {

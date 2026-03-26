@@ -21,14 +21,9 @@ function isSupportedShell(shell: string): shell is SupportedShell {
   return (SUPPORTED_SHELLS as readonly string[]).includes(shell);
 }
 
-function resolveShell(shell: string): SupportedShell {
-  if (isSupportedShell(shell)) {
-    return shell;
-  }
-
-  throwUsageError(`Unsupported shell: ${shell}. Supported: ${SUPPORTED_SHELLS.join(", ")}`);
-}
-
 export function completion(shell: string): void {
-  process.stdout.write(GENERATORS[resolveShell(shell)]("clerk"));
+  if (!isSupportedShell(shell)) {
+    throwUsageError(`Unsupported shell: ${shell}. Supported: ${SUPPORTED_SHELLS.join(", ")}`);
+  }
+  process.stdout.write(GENERATORS[shell]("clerk"));
 }
