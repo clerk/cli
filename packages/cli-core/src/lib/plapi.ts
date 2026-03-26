@@ -52,14 +52,15 @@ export async function fetchInstanceConfigSchema(
 ): Promise<Record<string, unknown>> {
   const token = await getAuthToken();
   const url = new URL(
-    `${PLAPI_BASE_URL}/v1/platform/applications/${applicationId}/instances/${instanceId}/config/schema`,
+    `/v1/platform/applications/${applicationId}/instances/${instanceId}/config/schema`,
+    PLAPI_BASE_URL,
   );
   if (keys?.length) {
     for (const key of keys) {
       url.searchParams.append("keys", key);
     }
   }
-  const response = await fetch(url.toString(), {
+  const response = await fetch(url, {
     headers: {
       Authorization: `Bearer ${token}`,
       Accept: "application/json",
@@ -81,7 +82,8 @@ export async function fetchInstanceConfig(
 ): Promise<Record<string, unknown>> {
   const token = await getAuthToken();
   const url = new URL(
-    `${PLAPI_BASE_URL}/v1/platform/applications/${applicationId}/instances/${instanceId}/config`,
+    `/v1/platform/applications/${applicationId}/instances/${instanceId}/config`,
+    PLAPI_BASE_URL,
   );
   if (keys?.length) {
     for (const key of keys) {
@@ -118,9 +120,9 @@ export interface Application {
 
 export async function fetchApplication(applicationId: string): Promise<Application> {
   const token = await getAuthToken();
-  const url = new URL(`${PLAPI_BASE_URL}/v1/platform/applications/${applicationId}`);
+  const url = new URL(`/v1/platform/applications/${applicationId}`, PLAPI_BASE_URL);
   url.searchParams.set("include_secret_keys", "true");
-  const response = await fetch(url.toString(), {
+  const response = await fetch(url, {
     headers: {
       Authorization: `Bearer ${token}`,
       Accept: "application/json",
@@ -140,9 +142,16 @@ async function sendInstanceConfig(
   applicationId: string,
   instanceId: string,
   config: Record<string, unknown>,
+  options?: { destructive?: boolean },
 ): Promise<Record<string, unknown>> {
   const token = await getAuthToken();
-  const url = `${PLAPI_BASE_URL}/v1/platform/applications/${applicationId}/instances/${instanceId}/config`;
+  const url = new URL(
+    `/v1/platform/applications/${applicationId}/instances/${instanceId}/config`,
+    PLAPI_BASE_URL,
+  );
+  if (options?.destructive) {
+    url.searchParams.set("destructive", "true");
+  }
   const response = await fetch(url, {
     method,
     headers: {
@@ -165,17 +174,19 @@ export const putInstanceConfig = (
   applicationId: string,
   instanceId: string,
   config: Record<string, unknown>,
-) => sendInstanceConfig("PUT", applicationId, instanceId, config);
+  options?: { destructive?: boolean },
+) => sendInstanceConfig("PUT", applicationId, instanceId, config, options);
 
 export const patchInstanceConfig = (
   applicationId: string,
   instanceId: string,
   config: Record<string, unknown>,
-) => sendInstanceConfig("PATCH", applicationId, instanceId, config);
+  options?: { destructive?: boolean },
+) => sendInstanceConfig("PATCH", applicationId, instanceId, config, options);
 
 export async function listApplications(): Promise<Application[]> {
   const token = await getAuthToken();
-  const url = `${PLAPI_BASE_URL}/v1/platform/applications`;
+  const url = new URL("/v1/platform/applications", PLAPI_BASE_URL);
   const response = await fetch(url, {
     headers: {
       Authorization: `Bearer ${token}`,
