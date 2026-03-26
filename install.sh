@@ -1,11 +1,13 @@
 #!/usr/bin/env bash
 # Install script for the Clerk CLI.
-# Downloads a pre-compiled binary from GitHub Releases.
+# Downloads a pre-compiled binary from GitHub Releases, or installs from local build artifacts.
 #
 # Usage:
 #   curl -fsSL https://raw.githubusercontent.com/clerk/cli/main/install.sh | bash
 #   curl -fsSL https://raw.githubusercontent.com/clerk/cli/main/install.sh | bash -s -- --canary
 #   curl -fsSL https://raw.githubusercontent.com/clerk/cli/main/install.sh | bash -s -- --version v0.1.0-canary.v20260313145959
+#   ./install.sh --local                          # install from dist/artifacts/
+#   ./install.sh --local --artifacts-dir ./build   # install from custom path
 #
 # Environment variables:
 #   CLERK_INSTALL_DIR  — directory to install to (default: /usr/local/bin, or ~/.local/bin if not writable)
@@ -17,6 +19,8 @@ BINARY_NAME="clerk"
 INSTALL_DIR="${CLERK_INSTALL_DIR:-}"
 CHANNEL=""
 VERSION=""
+LOCAL=false
+ARTIFACTS_DIR=""
 
 # ─── Parse arguments ───────────────────────────────────────────────────────────
 
@@ -42,6 +46,20 @@ while [[ $# -gt 0 ]]; do
       INSTALL_DIR="${1#--install-dir=}"
       shift
       ;;
+    --local)
+      LOCAL=true
+      shift
+      ;;
+    --artifacts-dir)
+      ARTIFACTS_DIR="$2"
+      LOCAL=true
+      shift 2
+      ;;
+    --artifacts-dir=*)
+      ARTIFACTS_DIR="${1#--artifacts-dir=}"
+      LOCAL=true
+      shift
+      ;;
     --help|-h)
       echo "Install the Clerk CLI"
       echo ""
@@ -49,10 +67,12 @@ while [[ $# -gt 0 ]]; do
       echo "  install.sh [options]"
       echo ""
       echo "Options:"
-      echo "  --canary              Install the latest canary release"
-      echo "  --version <tag>       Install a specific version (e.g. v0.1.0)"
-      echo "  --install-dir <path>  Directory to install to"
-      echo "  -h, --help            Show this help"
+      echo "  --canary                Install the latest canary release"
+      echo "  --version <tag>         Install a specific version (e.g. v0.1.0)"
+      echo "  --install-dir <path>    Directory to install to"
+      echo "  --local                 Install from local build artifacts (dist/artifacts/)"
+      echo "  --artifacts-dir <path>  Path to local artifacts directory (implies --local)"
+      echo "  -h, --help              Show this help"
       exit 0
       ;;
     *)
@@ -117,62 +137,77 @@ fi
 
 echo "Detected platform: ${TARGET}"
 
-# ─── Resolve version ──────────────────────────────────────────────────────────
-
-if [ -n "$VERSION" ]; then
-  # Use the explicitly provided version tag
-  TAG="$VERSION"
-  # Ensure it starts with 'v'
-  if [[ "$TAG" != v* ]]; then
-    TAG="v${TAG}"
-  fi
-elif [ "$CHANNEL" = "canary" ]; then
-  # Find the latest canary pre-release
-  TAG=$(gh release list --repo "$REPO" --limit 20 --json tagName,isPrerelease \
-    --jq '[.[] | select(.isPrerelease and (.tagName | contains("canary")))][0].tagName' 2>/dev/null || true)
-
-  if [ -z "$TAG" ]; then
-    # Fallback: use the GitHub API directly (no gh CLI required)
-    TAG=$(curl -fsSL "https://api.github.com/repos/${REPO}/releases" \
-      | grep -o '"tag_name":"[^"]*canary[^"]*"' \
-      | head -1 \
-      | cut -d'"' -f4 || true)
-  fi
-
-  if [ -z "$TAG" ]; then
-    echo "Error: no canary release found" >&2
-    exit 1
-  fi
-else
-  # Find the latest stable release (non-prerelease)
-  TAG=$(curl -fsSL "https://api.github.com/repos/${REPO}/releases/latest" \
-    | grep -o '"tag_name":"[^"]*"' \
-    | cut -d'"' -f4 || true)
-
-  if [ -z "$TAG" ]; then
-    echo "Error: no stable release found" >&2
-    exit 1
-  fi
-fi
-
-echo "Installing Clerk CLI ${TAG}..."
-
-# ─── Download binary ──────────────────────────────────────────────────────────
-
-ASSET_NAME="clerk-${TARGET}${EXT}"
-DOWNLOAD_URL="https://github.com/${REPO}/releases/download/${TAG}/${ASSET_NAME}"
+# ─── Resolve source ───────────────────────────────────────────────────────────
 
 TMPDIR=$(mktemp -d)
 trap 'rm -rf "$TMPDIR"' EXIT
 
-echo "Downloading ${DOWNLOAD_URL}..."
-if ! curl -fsSL -o "${TMPDIR}/${BINARY_NAME}${EXT}" "$DOWNLOAD_URL"; then
-  echo "Error: failed to download binary for ${TARGET} from release ${TAG}" >&2
-  echo "Check that this platform is supported and the release exists." >&2
-  exit 1
-fi
+if [ "$LOCAL" = true ]; then
+  # ─── Local artifacts ─────────────────────────────────────────────────────────
+  if [ -z "$ARTIFACTS_DIR" ]; then
+    ARTIFACTS_DIR="dist/artifacts"
+  fi
 
-chmod +x "${TMPDIR}/${BINARY_NAME}${EXT}"
+  LOCAL_BINARY="${ARTIFACTS_DIR}/${TARGET}/${BINARY_NAME}${EXT}"
+  if [ ! -f "$LOCAL_BINARY" ]; then
+    echo "Error: no binary found at ${LOCAL_BINARY}" >&2
+    echo "Run 'bun run build:compile:all' or 'bun run scripts/build.ts --target=${TARGET}' first." >&2
+    exit 1
+  fi
+
+  cp "$LOCAL_BINARY" "${TMPDIR}/${BINARY_NAME}${EXT}"
+  chmod +x "${TMPDIR}/${BINARY_NAME}${EXT}"
+
+  # Read version from the binary itself
+  TAG=$("${TMPDIR}/${BINARY_NAME}${EXT}" --version 2>/dev/null || echo "local")
+  echo "Installing Clerk CLI ${TAG} from local artifacts..."
+else
+  # ─── GitHub Releases ─────────────────────────────────────────────────────────
+  if [ -n "$VERSION" ]; then
+    TAG="$VERSION"
+    if [[ "$TAG" != v* ]]; then
+      TAG="v${TAG}"
+    fi
+  elif [ "$CHANNEL" = "canary" ]; then
+    TAG=$(gh release list --repo "$REPO" --limit 20 --json tagName,isPrerelease \
+      --jq '[.[] | select(.isPrerelease and (.tagName | contains("canary")))][0].tagName' 2>/dev/null || true)
+
+    if [ -z "$TAG" ]; then
+      TAG=$(curl -fsSL "https://api.github.com/repos/${REPO}/releases" \
+        | grep -o '"tag_name":"[^"]*canary[^"]*"' \
+        | head -1 \
+        | cut -d'"' -f4 || true)
+    fi
+
+    if [ -z "$TAG" ]; then
+      echo "Error: no canary release found" >&2
+      exit 1
+    fi
+  else
+    TAG=$(curl -fsSL "https://api.github.com/repos/${REPO}/releases/latest" \
+      | grep -o '"tag_name":"[^"]*"' \
+      | cut -d'"' -f4 || true)
+
+    if [ -z "$TAG" ]; then
+      echo "Error: no stable release found" >&2
+      exit 1
+    fi
+  fi
+
+  echo "Installing Clerk CLI ${TAG}..."
+
+  ASSET_NAME="clerk-${TARGET}${EXT}"
+  DOWNLOAD_URL="https://github.com/${REPO}/releases/download/${TAG}/${ASSET_NAME}"
+
+  echo "Downloading ${DOWNLOAD_URL}..."
+  if ! curl -fsSL -o "${TMPDIR}/${BINARY_NAME}${EXT}" "$DOWNLOAD_URL"; then
+    echo "Error: failed to download binary for ${TARGET} from release ${TAG}" >&2
+    echo "Check that this platform is supported and the release exists." >&2
+    exit 1
+  fi
+
+  chmod +x "${TMPDIR}/${BINARY_NAME}${EXT}"
+fi
 
 # ─── Install binary ───────────────────────────────────────────────────────────
 

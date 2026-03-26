@@ -70,9 +70,15 @@ curl -fsSL https://raw.githubusercontent.com/clerk/cli/main/install.sh | bash -s
 
 # Install to a custom directory
 curl -fsSL https://raw.githubusercontent.com/clerk/cli/main/install.sh | bash -s -- --install-dir ~/bin
+
+# Install from local build artifacts (after running bun run build:compile:all)
+./install.sh --local
+
+# Install from a custom artifacts directory
+./install.sh --artifacts-dir ./my-build/artifacts
 ```
 
-The script detects the current OS, architecture, and libc (glibc vs musl on Linux), then downloads and installs the matching binary. By default it installs to `/usr/local/bin` (or `~/.local/bin` if `/usr/local/bin` is not writable).
+The script detects the current OS, architecture, and libc (glibc vs musl on Linux), then downloads and installs the matching binary. With `--local`, it copies from `dist/artifacts/<target>/` instead of downloading from GitHub. By default it installs to `/usr/local/bin` (or `~/.local/bin` if `/usr/local/bin` is not writable).
 
 ## Versioning
 
