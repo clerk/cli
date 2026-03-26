@@ -14,7 +14,7 @@
 
 set -euo pipefail
 
-REPO="clerk/cli"
+REPO="clerk/cli-new"
 BINARY_NAME="clerk"
 INSTALL_DIR="${CLERK_INSTALL_DIR:-}"
 CHANNEL=""
