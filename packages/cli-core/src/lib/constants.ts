@@ -1,10 +1,15 @@
 /**
  * Shared constants for the Clerk CLI.
  * Centralizes configuration values that are used across multiple modules.
+ *
+ * Environment-dependent values (OAuth, API URLs) are resolved via functions
+ * so they reflect the active environment set by `clerk switch-env`.
+ * Process env vars always take highest priority for per-value overrides.
  */
 
 import { join } from "node:path";
 import envPaths from "env-paths";
+import { getCurrentEnv } from "./environment.ts";
 
 // ── File paths ──────────────────────────────────────────────────────────────
 
@@ -16,15 +21,17 @@ export const CREDENTIALS_FILE = join(clerkConfigDir ?? paths.data, "credentials"
 
 // ── OAuth ───────────────────────────────────────────────────────────────────
 
-const OAUTH_BASE_URL = process.env.CLERK_OAUTH_BASE_URL ?? "https://clerk.clerk.com";
-
-export const OAUTH = {
-  clientId: process.env.CLERK_OAUTH_CLIENT_ID ?? "ins_1lyWDZiobr600AKUeQDoSlrEmoM",
-  scopes: process.env.CLERK_OAUTH_SCOPES ?? "profile email",
-  authorizeUrl: new URL("/oauth/authorize", OAUTH_BASE_URL).href,
-  tokenUrl: new URL("/oauth/token", OAUTH_BASE_URL).href,
-  userinfoUrl: new URL("/oauth/userinfo", OAUTH_BASE_URL).href,
-} as const;
+export function getOAuthConfig() {
+  const env = getCurrentEnv();
+  const baseUrl = process.env.CLERK_OAUTH_BASE_URL ?? env.oauthBaseUrl;
+  return {
+    clientId: process.env.CLERK_OAUTH_CLIENT_ID ?? env.oauthClientId,
+    scopes: process.env.CLERK_OAUTH_SCOPES ?? "profile email",
+    authorizeUrl: new URL("/oauth/authorize", baseUrl).href,
+    tokenUrl: new URL("/oauth/token", baseUrl).href,
+    userinfoUrl: new URL("/oauth/userinfo", baseUrl).href,
+  };
+}
 
 // ── Auth server ─────────────────────────────────────────────────────────────
 
@@ -33,11 +40,15 @@ export const AUTH_TIMEOUT_MS = Number(process.env.CLERK_AUTH_TIMEOUT_MS) || 2 * 
 
 // ── Platform API ────────────────────────────────────────────────────────────
 
-export const PLAPI_BASE_URL = process.env.CLERK_PLATFORM_API_URL ?? "https://api.clerk.com";
+export function getPlapiBaseUrl(): string {
+  return process.env.CLERK_PLATFORM_API_URL ?? getCurrentEnv().platformApiUrl;
+}
 
 // ── Backend API ────────────────────────────────────────────────────────────
 
-export const BAPI_BASE_URL = process.env.CLERK_BACKEND_API_URL ?? "https://api.clerk.dev";
+export function getBapiBaseUrl(): string {
+  return process.env.CLERK_BACKEND_API_URL ?? getCurrentEnv().backendApiUrl;
+}
 
 // ── OpenAPI Spec ──────────────────────────────────────────────────────────
 

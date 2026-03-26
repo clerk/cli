@@ -55,7 +55,6 @@ export const promptsStubs = {
 export const tokenExchangeStubs = {
   exchangeCodeForToken: async () => ({}),
   fetchUserInfo: async () => ({}),
-  OAUTH_CONFIG: {},
 };
 
 type FetchImpl = (input: string | URL | Request, init?: RequestInit) => Promise<Response>;

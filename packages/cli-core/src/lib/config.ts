@@ -1,11 +1,12 @@
 /**
  * Config file management for the Clerk CLI config file.
- * Stores auth identity and path-keyed project profiles.
+ * Stores auth identity (per environment) and path-keyed project profiles.
  */
 
 import { dirname, join } from "node:path";
 import { mkdir } from "node:fs/promises";
 import { CONFIG_FILE } from "./constants.ts";
+import { getCurrentEnvName } from "./environment.ts";
 import { getGitRepoIdentifier, getGitNormalizedRemote } from "./git.ts";
 import { CliError, ERROR_CODE } from "./errors.ts";
 
@@ -34,7 +35,8 @@ interface Profile {
 }
 
 interface ClerkConfig {
-  auth?: Auth;
+  environment?: string;
+  auth?: Record<string, Auth>;
   profiles: Record<string, Profile>;
 }
 
@@ -42,11 +44,35 @@ function defaultConfig(): ClerkConfig {
   return { profiles: {} };
 }
 
+/**
+ * Migrate legacy config format where `auth` was a bare `{ userId }` object
+ * into the new per-environment format `{ [envName]: { userId } }`.
+ */
+function migrateRawConfig(raw: Record<string, unknown>): ClerkConfig {
+  const config: ClerkConfig = {
+    environment: raw.environment as string | undefined,
+    profiles: (raw.profiles as Record<string, Profile>) ?? {},
+  };
+
+  if (raw.auth && typeof raw.auth === "object") {
+    const auth = raw.auth as Record<string, unknown>;
+    if (typeof auth.userId === "string") {
+      // Old format: bare Auth object → assign to production
+      config.auth = { production: { userId: auth.userId } };
+    } else {
+      config.auth = auth as Record<string, Auth>;
+    }
+  }
+
+  return config;
+}
+
 export async function readConfig(): Promise<ClerkConfig> {
   const file = Bun.file(configFile());
   if (!(await file.exists())) return defaultConfig();
   try {
-    return (await file.json()) as ClerkConfig;
+    const raw = (await file.json()) as Record<string, unknown>;
+    return migrateRawConfig(raw);
   } catch {
     return defaultConfig();
   }
@@ -59,18 +85,36 @@ export async function writeConfig(config: ClerkConfig): Promise<void> {
 
 export async function getAuth(): Promise<Auth | undefined> {
   const config = await readConfig();
-  return config.auth;
+  const envName = getCurrentEnvName();
+  return config.auth?.[envName];
 }
 
 export async function setAuth(auth: Auth): Promise<void> {
   const config = await readConfig();
-  config.auth = auth;
+  if (!config.auth) config.auth = {};
+  config.auth[getCurrentEnvName()] = auth;
   await writeConfig(config);
 }
 
 export async function clearAuth(): Promise<void> {
   const config = await readConfig();
-  delete config.auth;
+  if (config.auth) {
+    delete config.auth[getCurrentEnvName()];
+    if (Object.keys(config.auth).length === 0) {
+      delete config.auth;
+    }
+  }
+  await writeConfig(config);
+}
+
+export async function getEnvironment(): Promise<string | undefined> {
+  const config = await readConfig();
+  return config.environment;
+}
+
+export async function setEnvironment(envName: string): Promise<void> {
+  const config = await readConfig();
+  config.environment = envName;
   await writeConfig(config);
 }
 

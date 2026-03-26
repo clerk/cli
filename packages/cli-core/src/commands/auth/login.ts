@@ -1,6 +1,7 @@
 import { generateCodeVerifier, generateCodeChallenge, generateState } from "../../lib/pkce.ts";
 import { startAuthServer } from "../../lib/auth-server.ts";
-import { OAUTH_CONFIG, exchangeCodeForToken, fetchUserInfo } from "../../lib/token-exchange.ts";
+import { exchangeCodeForToken, fetchUserInfo } from "../../lib/token-exchange.ts";
+import { getOAuthConfig } from "../../lib/constants.ts";
 import { storeToken, getToken } from "../../lib/credential-store.ts";
 import { getAuth, setAuth } from "../../lib/config.ts";
 import { AUTH_TIMEOUT_MS, CALLBACK_PATH } from "../../lib/constants.ts";
@@ -32,11 +33,12 @@ export async function login(): Promise<{ userId: string; email: string }> {
   const redirectUri = `http://127.0.0.1:${authServer.port}${CALLBACK_PATH}`;
 
   // Build authorization URL
-  const authorizeUrl = new URL(OAUTH_CONFIG.authorizeUrl);
-  authorizeUrl.searchParams.set("client_id", OAUTH_CONFIG.clientId);
+  const oauth = getOAuthConfig();
+  const authorizeUrl = new URL(oauth.authorizeUrl);
+  authorizeUrl.searchParams.set("client_id", oauth.clientId);
   authorizeUrl.searchParams.set("redirect_uri", redirectUri);
   authorizeUrl.searchParams.set("response_type", "code");
-  authorizeUrl.searchParams.set("scope", OAUTH_CONFIG.scopes);
+  authorizeUrl.searchParams.set("scope", oauth.scopes);
   authorizeUrl.searchParams.set("state", state);
   authorizeUrl.searchParams.set("code_challenge", codeChallenge);
   authorizeUrl.searchParams.set("code_challenge_method", "S256");

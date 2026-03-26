@@ -3,7 +3,7 @@
  * Thin HTTP wrapper for Clerk's Platform API endpoints.
  */
 
-import { PLAPI_BASE_URL } from "./constants.ts";
+import { getPlapiBaseUrl } from "./constants.ts";
 import { getToken } from "./credential-store.ts";
 import { CliError, PlapiError, ERROR_CODE } from "./errors.ts";
 
@@ -53,7 +53,7 @@ export async function fetchInstanceConfigSchema(
   const token = await getAuthToken();
   const url = new URL(
     `/v1/platform/applications/${applicationId}/instances/${instanceId}/config/schema`,
-    PLAPI_BASE_URL,
+    getPlapiBaseUrl(),
   );
   if (keys?.length) {
     for (const key of keys) {
@@ -83,7 +83,7 @@ export async function fetchInstanceConfig(
   const token = await getAuthToken();
   const url = new URL(
     `/v1/platform/applications/${applicationId}/instances/${instanceId}/config`,
-    PLAPI_BASE_URL,
+    getPlapiBaseUrl(),
   );
   if (keys?.length) {
     for (const key of keys) {
@@ -120,7 +120,7 @@ export interface Application {
 
 export async function fetchApplication(applicationId: string): Promise<Application> {
   const token = await getAuthToken();
-  const url = new URL(`/v1/platform/applications/${applicationId}`, PLAPI_BASE_URL);
+  const url = new URL(`/v1/platform/applications/${applicationId}`, getPlapiBaseUrl());
   url.searchParams.set("include_secret_keys", "true");
   const response = await fetch(url, {
     headers: {
@@ -147,7 +147,7 @@ async function sendInstanceConfig(
   const token = await getAuthToken();
   const url = new URL(
     `/v1/platform/applications/${applicationId}/instances/${instanceId}/config`,
-    PLAPI_BASE_URL,
+    getPlapiBaseUrl(),
   );
   if (options?.destructive) {
     url.searchParams.set("destructive", "true");
@@ -186,7 +186,7 @@ export const patchInstanceConfig = (
 
 export async function listApplications(): Promise<Application[]> {
   const token = await getAuthToken();
-  const url = new URL("/v1/platform/applications", PLAPI_BASE_URL);
+  const url = new URL("/v1/platform/applications", getPlapiBaseUrl());
   const response = await fetch(url, {
     headers: {
       Authorization: `Bearer ${token}`,

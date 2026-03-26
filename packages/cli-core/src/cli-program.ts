@@ -13,14 +13,10 @@ import { api } from "./commands/api/index.ts";
 import { link } from "./commands/link/index.ts";
 import { unlink } from "./commands/unlink/index.ts";
 import { doctor } from "./commands/doctor/index.ts";
-import {
-  CliError,
-  UserAbortError,
-  ApiError,
-  EXIT_CODE,
-  throwUsageError,
-  type ErrorCode,
-} from "./lib/errors.ts";
+import { switchEnv } from "./commands/switch-env/index.ts";
+import { getEnvironment } from "./lib/config.ts";
+import { setCurrentEnv, isValidEnv, getCurrentEnvName } from "./lib/environment.ts";
+import { CliError, UserAbortError, ApiError, EXIT_CODE, throwUsageError } from "./lib/errors.ts";
 import { red } from "./lib/color.ts";
 import { isAgent } from "./mode.ts";
 
@@ -35,13 +31,26 @@ export function createProgram() {
     )
     .option("--verbose", "Show detailed error output");
 
-  program.hook("preAction", () => {
+  program.hook("preAction", async () => {
     const opts = program.opts();
     if (opts.mode) {
       if (opts.mode !== "human" && opts.mode !== "agent") {
         throwUsageError(`Invalid mode "${opts.mode}". Must be "human" or "agent".`);
       }
       setMode(opts.mode as Mode);
+    }
+
+    // Initialize the active environment from persisted config
+    const envName = await getEnvironment();
+    if (envName && isValidEnv(envName)) {
+      setCurrentEnv(envName);
+    }
+
+    // Print environment banner to stderr when not on production,
+    // so it doesn't pollute stdout for piped commands.
+    const activeEnv = getCurrentEnvName();
+    if (activeEnv !== "production") {
+      process.stderr.write(`[${activeEnv.toUpperCase()}]\n`);
     }
   });
 
@@ -314,6 +323,20 @@ Examples:
   $ clerk doctor --spotlight         Only show warnings and failures`,
     )
     .action(doctor);
+
+  program
+    .command("switch-env")
+    .description("Switch the active Clerk CLI environment")
+    .argument("[environment]", "Environment to switch to (e.g. production, staging)")
+    .addHelpText(
+      "after",
+      `
+Examples:
+  $ clerk switch-env                   Show current environment
+  $ clerk switch-env staging           Switch to staging
+  $ clerk switch-env production        Switch back to production`,
+    )
+    .action(switchEnv);
 
   program
     .command("deploy", { hidden: true })
