@@ -51,14 +51,38 @@ export function createProgram() {
     .option("--framework <name>", "Framework to set up (skips auto-detection)")
     .option("--prompt", "Output a prompt for an AI agent to integrate Clerk")
     .option("-y, --yes", "Skip confirmation prompts")
+    .addHelpText(
+      "after",
+      `
+Examples:
+  $ clerk init                       Auto-detect framework and set up Clerk
+  $ clerk init --framework next      Set up for Next.js (skips detection)
+  $ clerk init --prompt              Output a setup prompt for an AI agent
+  $ clerk init -y                    Skip all confirmation prompts`,
+    )
     .action(init);
 
-  const auth = program.command("auth").description("Manage authentication");
+  const auth = program
+    .command("auth")
+    .description("Manage authentication")
+    .addHelpText(
+      "after",
+      `
+Examples:
+  $ clerk auth login                 Log in via browser (OAuth)
+  $ clerk auth logout                Remove stored credentials`,
+    );
 
   auth
     .command("login")
     .aliases(["signup", "signin", "sign-in"])
     .description("Log in to your Clerk account")
+    .addHelpText(
+      "after",
+      `
+Examples:
+  $ clerk auth login                 Log in via browser (OAuth)`,
+    )
     .action(async () => {
       await login();
     });
@@ -67,23 +91,63 @@ export function createProgram() {
     .command("logout")
     .aliases(["signout", "sign-out"])
     .description("Log out of your Clerk account")
+    .addHelpText(
+      "after",
+      `
+Examples:
+  $ clerk auth logout                Remove stored credentials`,
+    )
     .action(logout);
 
   program
     .command("link")
     .description("Link this project to a Clerk application")
     .option("--app <id>", "Application ID to link (skips interactive picker)")
+    .addHelpText(
+      "after",
+      `
+Examples:
+  $ clerk link                       Pick an app interactively
+  $ clerk link --app app_abc123      Link directly by application ID`,
+    )
     .action(link);
 
   program
     .command("unlink")
     .description("Unlink this project from its Clerk application")
     .option("--yes", "Skip confirmation prompt")
+    .addHelpText(
+      "after",
+      `
+Examples:
+  $ clerk unlink                     Unlink with confirmation prompt
+  $ clerk unlink --yes               Skip confirmation`,
+    )
     .action(unlink);
 
-  program.command("whoami").description("Show the current logged-in user").action(whoami);
+  program
+    .command("whoami")
+    .description("Show the current logged-in user")
+    .addHelpText(
+      "after",
+      `
+Examples:
+  $ clerk whoami                     Show your email address`,
+    )
+    .action(whoami);
 
-  const env = program.command("env").description("Manage environment variables");
+  const env = program
+    .command("env")
+    .description("Manage environment variables")
+    .addHelpText(
+      "after",
+      `
+Examples:
+  $ clerk env pull                             Pull dev keys to .env.local
+  $ clerk env pull --instance prod             Pull production keys
+  $ clerk env pull --file .env                 Write to a specific file
+  $ clerk env pull --app app_abc123            Target a specific application`,
+    );
 
   env
     .command("pull")
@@ -91,9 +155,35 @@ export function createProgram() {
     .option("--app <id>", "Application ID to target (works from any directory)")
     .option("--instance <id>", "Instance to target (dev, prod, or a full instance ID)")
     .option("--file <path>", "Target env file (default: auto-detect)")
+    .addHelpText(
+      "after",
+      `
+Examples:
+  $ clerk env pull                             Pull dev keys to .env.local
+  $ clerk env pull --instance prod             Pull production keys
+  $ clerk env pull --file .env                 Write to a specific file
+  $ clerk env pull --app app_abc123            Target a specific application`,
+    )
     .action(pull);
 
-  const config = program.command("config").description("Manage instance configuration");
+  const config = program
+    .command("config")
+    .description("Manage instance configuration")
+    .addHelpText(
+      "after",
+      `
+Examples:
+  $ clerk config pull                                      Print dev config to stdout
+  $ clerk config pull --instance prod                      Pull production config
+  $ clerk config pull --output config.json                 Save config to a file
+  $ clerk config schema                                    Print full config schema
+  $ clerk config schema --keys social_login                Schema for specific keys
+  $ clerk config patch --file config.json                  Apply partial update from file
+  $ clerk config patch --json '{"key":"value"}'            Inline JSON patch
+  $ clerk config patch --file config.json --dry-run        Preview without applying
+  $ clerk config put --file config.json                    Replace entire config from file
+  $ clerk config put --instance prod --file config.json    Replace production config`,
+    );
 
   config
     .command("pull")
@@ -101,6 +191,14 @@ export function createProgram() {
     .option("--app <id>", "Application ID to target (works from any directory)")
     .option("--instance <id>", "Instance to target (dev, prod, or a full instance ID)")
     .option("--output <file>", "Write config to a file instead of stdout")
+    .addHelpText(
+      "after",
+      `
+Examples:
+  $ clerk config pull                          Print dev config to stdout
+  $ clerk config pull --instance prod          Pull production config
+  $ clerk config pull --output config.json     Save config to a file`,
+    )
     .action(configPull);
 
   config
@@ -110,6 +208,14 @@ export function createProgram() {
     .option("--instance <id>", "Instance to target (dev, prod, or a full instance ID)")
     .option("--output <file>", "Write schema to a file instead of stdout")
     .option("--keys <keys...>", "Config keys to retrieve schema for")
+    .addHelpText(
+      "after",
+      `
+Examples:
+  $ clerk config schema                          Print full config schema
+  $ clerk config schema --keys social_login      Schema for specific keys
+  $ clerk config schema --output schema.json     Save schema to a file`,
+    )
     .action(configSchema);
 
   config
@@ -125,6 +231,15 @@ export function createProgram() {
       "--destructive",
       "Allow destructive changes that delete resources (e.g. session templates, custom OAuth providers) rather than just resetting config to defaults",
     )
+    .addHelpText(
+      "after",
+      `
+Examples:
+  $ clerk config patch --file config.json                Apply partial update from file
+  $ clerk config patch --json '{"key":"value"}'          Inline JSON patch
+  $ clerk config patch --file config.json --dry-run      Preview without applying
+  $ clerk config patch --instance prod --file config.json  Patch production config`,
+    )
     .action(configPatch);
 
   config
@@ -139,6 +254,15 @@ export function createProgram() {
     .option(
       "--destructive",
       "Allow destructive changes that delete resources (e.g. session templates, custom OAuth providers) rather than just resetting config to defaults",
+    )
+    .addHelpText(
+      "after",
+      `
+Examples:
+  $ clerk config put --file config.json                  Replace entire config from file
+  $ clerk config put --file config.json --dry-run        Preview the replacement
+  $ clerk config put --instance prod --file config.json  Replace production config
+  $ clerk config put --file config.json --yes            Skip confirmation prompt`,
     )
     .action(configPut);
 
@@ -178,6 +302,16 @@ Examples:
     .option("--json", "Output results as JSON")
     .option("--spotlight", "Only show warnings and failures")
     .option("--fix", "Attempt to auto-fix issues")
+    .addHelpText(
+      "after",
+      `
+Examples:
+  $ clerk doctor                     Run all health checks
+  $ clerk doctor --verbose           Show detailed output for each check
+  $ clerk doctor --json              Output results as machine-readable JSON
+  $ clerk doctor --fix               Auto-fix detected issues
+  $ clerk doctor --spotlight         Only show warnings and failures`,
+    )
     .action(doctor);
 
   program
