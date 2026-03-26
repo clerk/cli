@@ -150,13 +150,11 @@ Examples:
     .command("apps")
     .description("List your Clerk applications")
     .option("--json", "Output as JSON")
-    .option("--detailed", "Show full instance details including secret keys")
     .addHelpText(
       "after",
       `
 Examples:
   $ clerk apps                         List all applications
-  $ clerk apps --detailed              Show instance details with keys
   $ clerk apps --json                  Output as JSON`,
     )
     .action(apps);

@@ -136,40 +136,6 @@ describe("apps", () => {
     });
   });
 
-  describe("detailed view", () => {
-    test("shows instance details including secret keys", async () => {
-      mockIsAgent.mockReturnValue(false);
-      mockListApplications.mockResolvedValue(mockApps);
-      logSpy = spyOn(console, "log").mockImplementation(() => {});
-      errorSpy = spyOn(console, "error").mockImplementation(() => {});
-
-      await apps({ detailed: true });
-
-      const output = capturedOutput(logSpy);
-      expect(output).toContain("My SaaS App");
-      expect(output).toContain("app_abc123");
-      expect(output).toContain("ins_dev1");
-      expect(output).toContain("pk_test_xxx");
-      expect(output).toContain("sk_test_xxx");
-      expect(output).toContain("ins_prod1");
-      expect(output).toContain("pk_live_xxx");
-      expect(output).toContain("sk_live_xxx");
-    });
-
-    test("omits secret key line when not present", async () => {
-      mockIsAgent.mockReturnValue(false);
-      mockListApplications.mockResolvedValue([mockApps[1]]);
-      logSpy = spyOn(console, "log").mockImplementation(() => {});
-      errorSpy = spyOn(console, "error").mockImplementation(() => {});
-
-      await apps({ detailed: true });
-
-      const output = capturedOutput(logSpy);
-      expect(output).toContain("pk_test_yyy");
-      expect(output).not.toContain("Secret key:");
-    });
-  });
-
   describe("JSON output", () => {
     test("outputs JSON when --json flag is set", async () => {
       mockIsAgent.mockReturnValue(false);
@@ -197,7 +163,7 @@ describe("apps", () => {
       expect(parsed).toHaveLength(2);
     });
 
-    test("strips secret_key from JSON by default", async () => {
+    test("strips secret_key from JSON", async () => {
       mockIsAgent.mockReturnValue(false);
       mockListApplications.mockResolvedValue(mockApps);
       logSpy = spyOn(console, "log").mockImplementation(() => {});
@@ -208,18 +174,6 @@ describe("apps", () => {
       expect(output).not.toContain("sk_test_xxx");
       expect(output).not.toContain("sk_live_xxx");
       expect(output).not.toContain("secret_key");
-    });
-
-    test("includes secret_key in JSON when --detailed is set", async () => {
-      mockIsAgent.mockReturnValue(false);
-      mockListApplications.mockResolvedValue(mockApps);
-      logSpy = spyOn(console, "log").mockImplementation(() => {});
-
-      await apps({ json: true, detailed: true });
-
-      const output = capturedOutput(logSpy);
-      const parsed = JSON.parse(output);
-      expect(parsed[0].instances[0].secret_key).toBe("sk_test_xxx");
     });
   });
 

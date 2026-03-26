@@ -1,11 +1,10 @@
 import { listApplications, type Application } from "../../lib/plapi.ts";
 import { withApiContext } from "../../lib/errors.ts";
 import { isAgent } from "../../mode.ts";
-import { bold, dim, cyan } from "../../lib/color.ts";
+import { dim, cyan } from "../../lib/color.ts";
 
 interface AppsOptions {
   json?: boolean;
-  detailed?: boolean;
 }
 
 function stripSecrets(apps: Application[]) {
@@ -31,25 +30,6 @@ function formatAppsTable(apps: Application[]): void {
   }
 }
 
-function formatAppsDetailed(apps: Application[]): void {
-  for (let i = 0; i < apps.length; i++) {
-    const app = apps[i]!;
-    if (i > 0) console.log("");
-
-    console.log(bold(app.name ?? app.application_id));
-    console.log(`  ${dim("App ID:")}  ${app.application_id}`);
-
-    for (const inst of app.instances) {
-      console.log(`  ${dim("Instance:")} ${inst.environment_type}`);
-      console.log(`    ${dim("ID:")}              ${inst.instance_id}`);
-      console.log(`    ${dim("Publishable key:")} ${inst.publishable_key}`);
-      if (inst.secret_key) {
-        console.log(`    ${dim("Secret key:")}      ${inst.secret_key}`);
-      }
-    }
-  }
-}
-
 export async function apps(options: AppsOptions = {}): Promise<void> {
   const result = await withApiContext(listApplications(), "Failed to list applications");
 
@@ -59,16 +39,11 @@ export async function apps(options: AppsOptions = {}): Promise<void> {
   }
 
   if (options.json || isAgent()) {
-    const output = options.detailed ? result : stripSecrets(result);
-    console.log(JSON.stringify(output, null, 2));
+    console.log(JSON.stringify(stripSecrets(result), null, 2));
     return;
   }
 
-  if (options.detailed) {
-    formatAppsDetailed(result);
-  } else {
-    formatAppsTable(result);
-  }
+  formatAppsTable(result);
 
   const count = result.length;
   console.error(`\n${count} application${count === 1 ? "" : "s"}`);
