@@ -116,12 +116,27 @@ detect_target() {
       libc="-musl"
     fi
 
-    # The musl binary requires libstdc++ and libgcc_s (not shipped by default on Alpine)
-    if [ "$libc" = "-musl" ] && [ -f /etc/alpine-release ]; then
-      if ! [ -f /usr/lib/libstdc++.so.6 ]; then
-        echo "Installing required dependencies (libstdc++, libgcc)..."
-        apk add --no-cache libstdc++ libgcc >/dev/null 2>&1 || \
-          echo "Warning: could not install libstdc++/libgcc — the binary may fail to run."
+    # The musl binary dynamically links libstdc++ and libgcc_s (Bun embeds
+    # JavaScriptCore which is C++).  These are not shipped by default on
+    # Alpine and other minimal musl distros.
+    if [ "$libc" = "-musl" ]; then
+      local missing=""
+      if ! ldconfig -p 2>/dev/null | grep -q libstdc++ && ! [ -f /usr/lib/libstdc++.so.6 ]; then
+        missing="libstdc++"
+      fi
+      if ! ldconfig -p 2>/dev/null | grep -q libgcc_s && ! [ -f /usr/lib/libgcc_s.so.1 ]; then
+        missing="${missing:+$missing, }libgcc"
+      fi
+      if [ -n "$missing" ]; then
+        echo "Error: missing required shared libraries: ${missing}" >&2
+        echo "" >&2
+        echo "The Clerk CLI binary requires libstdc++ and libgcc to run." >&2
+        if [ -f /etc/alpine-release ]; then
+          echo "Install them with:  apk add libstdc++ libgcc" >&2
+        else
+          echo "Install the libstdc++ and libgcc packages for your distribution." >&2
+        fi
+        exit 1
       fi
     fi
   fi
