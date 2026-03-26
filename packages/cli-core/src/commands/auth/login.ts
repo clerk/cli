@@ -1,3 +1,4 @@
+import { printNextSteps } from "../../lib/next-steps.ts";
 import { generateCodeVerifier, generateCodeChallenge, generateState } from "../../lib/pkce.ts";
 import { startAuthServer } from "../../lib/auth-server.ts";
 import { OAUTH_CONFIG, exchangeCodeForToken, fetchUserInfo } from "../../lib/token-exchange.ts";
@@ -73,5 +74,11 @@ export async function login(): Promise<{ userId: string; email: string }> {
   await setAuth({ userId: userInfo.userId });
 
   console.log(`Logged in as ${userInfo.email}`);
+
+  printNextSteps([
+    "Run `clerk link` to connect a Clerk application to this project",
+    "Run `clerk init` to set up Clerk in an existing project",
+  ]);
+
   return userInfo;
 }

@@ -3,6 +3,7 @@ import { isAgent, isHuman } from "../../mode.ts";
 import { resolveProfile, removeProfile } from "../../lib/config.ts";
 import { getGitRepoRoot } from "../../lib/git.ts";
 import { dim, cyan } from "../../lib/color.ts";
+import { printNextSteps } from "../../lib/next-steps.ts";
 import { CliError, ERROR_CODE, throwUserAbort } from "../../lib/errors.ts";
 
 const AGENT_PROMPT = `You are unlinking a Clerk application from the current project directory.
@@ -55,4 +56,6 @@ export async function unlink(options: UnlinkOptions = {}): Promise<void> {
 
   await removeProfile(existing.path);
   console.log(`\nUnlinked ${cyan(label)} from ${dim(displayPath)}`);
+
+  printNextSteps(["Run `clerk link` to connect a different application"]);
 }
