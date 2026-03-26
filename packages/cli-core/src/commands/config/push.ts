@@ -2,6 +2,7 @@ import { confirm } from "@inquirer/prompts";
 import { resolveAppContext } from "../../lib/config.ts";
 import { putInstanceConfig, patchInstanceConfig } from "../../lib/plapi.ts";
 import { isHuman } from "../../mode.ts";
+import { printNextSteps } from "../../lib/next-steps.ts";
 import { throwUsageError, throwUserAbort, withApiContext, ERROR_CODE } from "../../lib/errors.ts";
 
 interface ConfigPushOptions {
@@ -95,6 +96,8 @@ async function configPush(options: ConfigPushOptions, op: Operation): Promise<vo
   );
   console.log(JSON.stringify(result, null, 2));
   console.error("Config pushed successfully.");
+
+  printNextSteps(["Run `clerk config pull` to verify the updated configuration"]);
 }
 
 export async function readInput(options: { file?: string; json?: string }): Promise<string> {

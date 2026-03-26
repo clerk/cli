@@ -1,5 +1,6 @@
 import { resolveAppContext } from "../../lib/config.ts";
 import { fetchInstanceConfig } from "../../lib/plapi.ts";
+import { printNextSteps } from "../../lib/next-steps.ts";
 import { withApiContext } from "../../lib/errors.ts";
 
 interface ConfigPullOptions {
@@ -22,6 +23,10 @@ export async function configPull(options: ConfigPullOptions): Promise<void> {
   if (options.output) {
     await Bun.write(options.output, json + "\n");
     console.error(`Config written to ${options.output}`);
+
+    printNextSteps([
+      `Run \`clerk config patch --file ${options.output}\` to update config after editing`,
+    ]);
   } else {
     console.log(json);
   }
