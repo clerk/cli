@@ -132,9 +132,13 @@ Nuxt's module system auto-configures middleware and auto-imports components.
 
 ### Vue
 
-| Action | File      | Description                                        |
-| ------ | --------- | -------------------------------------------------- |
-| MODIFY | `main.ts` | Add `clerkPlugin` with `publishableKey` to Vue app |
+| Action        | File                    | Description                                        |
+| ------------- | ----------------------- | -------------------------------------------------- |
+| CREATE/MODIFY | `main.ts`               | Add `clerkPlugin` with `publishableKey` to Vue app |
+| CREATE        | `src/views/sign-in.vue` | Sign-in page with `<SignIn />` component           |
+| CREATE        | `src/views/sign-up.vue` | Sign-up page with `<SignUp />` component           |
+| MODIFY        | `src/router/index.ts`   | Add sign-in and sign-up routes (if router exists)  |
+| MODIFY        | `.env`                  | Add sign-in/sign-up route env vars (VITE\_ prefix) |
 
 ## API Endpoints
 
