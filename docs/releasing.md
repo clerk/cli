@@ -14,7 +14,7 @@ push to main
             → publish-npm: generate platform packages + publish wrapper
             → upload-github-assets: attach binaries to the GitHub Release
   → (if no stable release needed) canary.ts versions packages
-    → build → smoke-test subset → upload GitHub pre-release → publish @canary (npm, optional)
+    → build → smoke-test subset → upload GitHub pre-release → publish @canary (npm)
 
 PR comment "!snapshot [name]"
   → snapshot.ts versions packages from PR branch
