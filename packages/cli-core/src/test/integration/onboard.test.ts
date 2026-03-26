@@ -52,6 +52,7 @@ test.each([
     framework: "Nuxt",
     deps: { nuxt: "3.0.0" },
     expectedKey: "NUXT_PUBLIC_CLERK_PUBLISHABLE_KEY",
+    expectedSecretKey: "NUXT_CLERK_SECRET_KEY",
   },
   {
     framework: "TanStack Start",
@@ -78,7 +79,7 @@ test.each([
     deps: { lodash: "4.0.0" },
     expectedKey: "CLERK_PUBLISHABLE_KEY",
   },
-])("$framework", async ({ deps, devDeps, expectedKey }) => {
+])("$framework", async ({ deps, devDeps, expectedKey, expectedSecretKey }) => {
   const pkg = {
     name: "test-project",
     dependencies: deps,
@@ -106,8 +107,9 @@ test.each([
   // Verify .env.local has correct key=value pairs with no duplicates
   const envContent = await Bun.file(join(h.tempDir, ".env.local")).text();
   const env = parseEnvFile(envContent, ".env.local");
+  const secretKey = expectedSecretKey ?? "CLERK_SECRET_KEY";
   expect(env.get(expectedKey)).toBe(devInstance.publishable_key);
-  expect(env.get("CLERK_SECRET_KEY")).toBe(devInstance.secret_key);
+  expect(env.get(secretKey)).toBe(devInstance.secret_key);
 
   // Verify Platform API calls included auth header
   const plapiCalls = http.requests.filter((r) => r.url.includes("/applications/"));
