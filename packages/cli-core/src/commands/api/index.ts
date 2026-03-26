@@ -1,6 +1,6 @@
 import { resolveAppContext } from "../../lib/config.ts";
 import { fetchApplication, getAuthToken, validateKeyPrefix } from "../../lib/plapi.ts";
-import { getBapiBaseUrl, getPlapiBaseUrl } from "../../lib/constants.ts";
+import { getBapiBaseUrl, getPlapiBaseUrl } from "../../lib/environment.ts";
 import { bapiRequest } from "./bapi.ts";
 import {
   BapiError,

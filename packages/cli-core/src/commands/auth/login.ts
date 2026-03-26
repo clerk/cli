@@ -1,7 +1,7 @@
 import { generateCodeVerifier, generateCodeChallenge, generateState } from "../../lib/pkce.ts";
 import { startAuthServer } from "../../lib/auth-server.ts";
 import { exchangeCodeForToken, fetchUserInfo } from "../../lib/token-exchange.ts";
-import { getOAuthConfig } from "../../lib/constants.ts";
+import { getOAuthConfig } from "../../lib/environment.ts";
 import { storeToken, getToken } from "../../lib/credential-store.ts";
 import { getAuth, setAuth } from "../../lib/config.ts";
 import { AUTH_TIMEOUT_MS, CALLBACK_PATH } from "../../lib/constants.ts";

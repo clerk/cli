@@ -3,7 +3,7 @@
  * Thin HTTP wrapper for Clerk's Platform API endpoints.
  */
 
-import { getPlapiBaseUrl } from "./constants.ts";
+import { getPlapiBaseUrl } from "./environment.ts";
 import { getToken } from "./credential-store.ts";
 import { CliError, PlapiError, ERROR_CODE } from "./errors.ts";
 

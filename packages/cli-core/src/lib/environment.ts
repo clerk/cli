@@ -88,3 +88,25 @@ export function getAvailableEnvs(): string[] {
 export function isValidEnv(name: string): boolean {
   return name in getProfiles();
 }
+
+// ── Derived config from the active environment profile ──────────────────────
+
+export function getOAuthConfig() {
+  const env = getCurrentEnv();
+  const baseUrl = process.env.CLERK_OAUTH_BASE_URL ?? env.oauthBaseUrl;
+  return {
+    clientId: process.env.CLERK_OAUTH_CLIENT_ID ?? env.oauthClientId,
+    scopes: process.env.CLERK_OAUTH_SCOPES ?? "profile email",
+    authorizeUrl: new URL("/oauth/authorize", baseUrl).href,
+    tokenUrl: new URL("/oauth/token", baseUrl).href,
+    userinfoUrl: new URL("/oauth/userinfo", baseUrl).href,
+  };
+}
+
+export function getPlapiBaseUrl(): string {
+  return process.env.CLERK_PLATFORM_API_URL ?? getCurrentEnv().platformApiUrl;
+}
+
+export function getBapiBaseUrl(): string {
+  return process.env.CLERK_BACKEND_API_URL ?? getCurrentEnv().backendApiUrl;
+}

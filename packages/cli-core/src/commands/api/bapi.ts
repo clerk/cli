@@ -3,7 +3,7 @@
  * Thin HTTP wrapper for Clerk's Backend API endpoints.
  */
 
-import { getBapiBaseUrl } from "../../lib/constants.ts";
+import { getBapiBaseUrl } from "../../lib/environment.ts";
 import { BapiError } from "../../lib/errors.ts";
 
 export interface BapiResponse {

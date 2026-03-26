@@ -9,7 +9,7 @@
  *   CLERK_OAUTH_SCOPES=profile email
  */
 
-import { getOAuthConfig } from "./constants.ts";
+import { getOAuthConfig } from "./environment.ts";
 import { ApiError, withApiContext } from "./errors.ts";
 
 interface TokenResponse {

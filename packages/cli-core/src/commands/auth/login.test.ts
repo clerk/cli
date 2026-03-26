@@ -26,7 +26,7 @@ mock.module("../../lib/token-exchange.ts", () => ({
   fetchUserInfo: (...args: unknown[]) => mockFetchUserInfo(...args),
 }));
 
-mock.module("../../lib/constants.ts", () => ({
+mock.module("../../lib/environment.ts", () => ({
   getOAuthConfig: () => ({
     clientId: "test-client-id",
     scopes: "profile email",
@@ -34,6 +34,9 @@ mock.module("../../lib/constants.ts", () => ({
     tokenUrl: "https://test.example.com/oauth/token",
     userinfoUrl: "https://test.example.com/oauth/userinfo",
   }),
+}));
+
+mock.module("../../lib/constants.ts", () => ({
   CALLBACK_PATH: "/callback",
   AUTH_TIMEOUT_MS: 120000,
 }));
