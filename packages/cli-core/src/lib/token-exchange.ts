@@ -19,7 +19,7 @@ interface TokenResponse {
   refresh_token?: string;
 }
 
-interface UserInfo {
+export interface UserInfo {
   userId: string;
   email: string;
 }
