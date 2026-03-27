@@ -3,7 +3,6 @@ import { resolveAppContext } from "../../lib/config.ts";
 import { fetchApplication } from "../../lib/plapi.ts";
 import { parseEnvFile, mergeEnvVars, serializeEnvFile } from "../../lib/dotenv.ts";
 import { detectPublishableKeyName } from "../../lib/framework.ts";
-import { printNextSteps } from "../../lib/next-steps.ts";
 import { CliError, ERROR_CODE, withApiContext } from "../../lib/errors.ts";
 
 interface EnvPullOptions {
@@ -59,6 +58,4 @@ export async function pull(options: EnvPullOptions): Promise<void> {
 
   const displayPath = options.file ?? targetFile.split("/").pop()!;
   console.error(`Environment variables written to ${displayPath}`);
-
-  printNextSteps(["Run `clerk doctor` to verify your integration"]);
 }
