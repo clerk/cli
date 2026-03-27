@@ -148,21 +148,80 @@ export async function readInput(options: { file?: string; json?: string }): Prom
   );
 }
 
+type Change = { path: string; oldVal?: unknown; newVal?: unknown };
+
+/**
+ * Recursively collects leaf-level differences between two values.
+ *
+ * When `patchMode` is true, only keys present in the new (payload) side
+ * are walked, so extra keys on the old side are ignored.
+ * When false (PUT), keys from both sides are walked so deletions are visible.
+ */
+function collectChanges(
+  oldObj: unknown,
+  newObj: unknown,
+  path: string,
+  out: Change[],
+  patchMode: boolean,
+): void {
+  if (JSON.stringify(oldObj) === JSON.stringify(newObj)) return;
+
+  const bothObjects =
+    oldObj != null &&
+    newObj != null &&
+    typeof oldObj === "object" &&
+    typeof newObj === "object" &&
+    !Array.isArray(oldObj) &&
+    !Array.isArray(newObj);
+
+  if (bothObjects) {
+    const keys = patchMode
+      ? Object.keys(newObj as Record<string, unknown>)
+      : [
+          ...new Set([
+            ...Object.keys(oldObj as Record<string, unknown>),
+            ...Object.keys(newObj as Record<string, unknown>),
+          ]),
+        ];
+    for (const key of keys) {
+      collectChanges(
+        (oldObj as Record<string, unknown>)[key],
+        (newObj as Record<string, unknown>)[key],
+        path ? `${path}.${key}` : key,
+        out,
+        patchMode,
+      );
+    }
+    return;
+  }
+
+  out.push({ path, oldVal: oldObj, newVal: newObj });
+}
+
+function topLevelKeys(
+  current: Record<string, unknown>,
+  payload: Record<string, unknown>,
+  patchMode: boolean,
+): string[] {
+  return patchMode
+    ? Object.keys(payload)
+    : [...new Set([...Object.keys(current), ...Object.keys(payload)])];
+}
+
 /**
  * Returns true if the payload would change any config values.
- * In patch mode only keys in the payload are compared;
- * in put mode all keys from both sides are compared.
+ * Uses the same recursive walker as printDiff so partial nested
+ * payloads (e.g. patching only session.lifetime) are compared correctly.
  */
 export function hasConfigChanges(
   current: Record<string, unknown>,
   payload: Record<string, unknown>,
   patchMode: boolean,
 ): boolean {
-  const keys = patchMode
-    ? Object.keys(payload)
-    : [...new Set([...Object.keys(current), ...Object.keys(payload)])];
-  for (const key of keys) {
-    if (JSON.stringify(current[key]) !== JSON.stringify(payload[key])) return true;
+  for (const key of topLevelKeys(current, payload, patchMode)) {
+    const changes: Change[] = [];
+    collectChanges(current[key], payload[key], "", changes, patchMode);
+    if (changes.length > 0) return true;
   }
   return false;
 }
@@ -180,52 +239,11 @@ export function printDiff(
   payload: Record<string, unknown>,
   patchMode: boolean,
 ): void {
-  type Change = { path: string; oldVal?: unknown; newVal?: unknown };
+  const keys = topLevelKeys(current, payload, patchMode);
 
-  function collectChanges(oldObj: unknown, newObj: unknown, path: string, out: Change[]): void {
-    if (JSON.stringify(oldObj) === JSON.stringify(newObj)) return;
-
-    const bothObjects =
-      oldObj != null &&
-      newObj != null &&
-      typeof oldObj === "object" &&
-      typeof newObj === "object" &&
-      !Array.isArray(oldObj) &&
-      !Array.isArray(newObj);
-
-    if (bothObjects) {
-      // In patch mode, only walk keys from the new object (the patch payload).
-      // In put mode, walk both sides so deletions are visible.
-      const keys = patchMode
-        ? Object.keys(newObj as Record<string, unknown>)
-        : [
-            ...new Set([
-              ...Object.keys(oldObj as Record<string, unknown>),
-              ...Object.keys(newObj as Record<string, unknown>),
-            ]),
-          ];
-      for (const key of keys) {
-        collectChanges(
-          (oldObj as Record<string, unknown>)[key],
-          (newObj as Record<string, unknown>)[key],
-          path ? `${path}.${key}` : key,
-          out,
-        );
-      }
-      return;
-    }
-
-    out.push({ path, oldVal: oldObj, newVal: newObj });
-  }
-
-  // In put mode, walk all keys from both sides so removed top-level keys show up.
-  const topLevelKeys = patchMode
-    ? Object.keys(payload)
-    : [...new Set([...Object.keys(current), ...Object.keys(payload)])];
-
-  for (const key of topLevelKeys) {
+  for (const key of keys) {
     const changes: Change[] = [];
-    collectChanges(current[key], payload[key], "", changes);
+    collectChanges(current[key], payload[key], "", changes, patchMode);
     if (changes.length === 0) continue;
 
     console.error(`  ${key}:`);

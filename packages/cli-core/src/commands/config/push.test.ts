@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { _setConfigDir, setProfile } from "../../lib/config.ts";
 import { credentialStoreStubs, gitStubs, promptsStubs, stubFetch } from "../../test/stubs.ts";
-import { printDiff } from "./push.ts";
+import { printDiff, hasConfigChanges } from "./push.ts";
 
 mock.module("../../lib/credential-store.ts", () => credentialStoreStubs);
 mock.module("../../lib/git.ts", () => gitStubs);
@@ -693,5 +693,35 @@ describe("printDiff", () => {
 
     expect(lines).toContainEqual(expect.stringContaining('- ["a.com","b.com"]'));
     expect(lines).toContainEqual(expect.stringContaining('+ ["a.com","c.com"]'));
+  });
+});
+
+describe("hasConfigChanges", () => {
+  test("patch mode: no change when partial payload matches nested values", () => {
+    const current = { session: { lifetime: 604800, cookie: "__session" } };
+    const payload = { session: { lifetime: 604800 } };
+
+    expect(hasConfigChanges(current, payload, true)).toBe(false);
+  });
+
+  test("patch mode: detects change in nested value", () => {
+    const current = { session: { lifetime: 604800, cookie: "__session" } };
+    const payload = { session: { lifetime: 3600 } };
+
+    expect(hasConfigChanges(current, payload, true)).toBe(true);
+  });
+
+  test("put mode: detects removal of keys not in payload", () => {
+    const current = { session: { lifetime: 604800 }, sign_up: { mode: "public" } };
+    const payload = { session: { lifetime: 604800 } };
+
+    expect(hasConfigChanges(current, payload, false)).toBe(true);
+  });
+
+  test("put mode: no change when both sides match", () => {
+    const current = { session: { lifetime: 604800 } };
+    const payload = { session: { lifetime: 604800 } };
+
+    expect(hasConfigChanges(current, payload, false)).toBe(false);
   });
 });
