@@ -85,7 +85,7 @@ jobs:
         run: |
           expected="${{ inputs.version }}"
           if [ -n "${{ matrix.docker }}" ]; then
-            actual=$(docker run --rm -v "$PWD:/work" ${{ matrix.docker }} /work/${{ matrix.bin }} --version)
+            actual=$(docker run --rm -v "$PWD:/work" ${{ matrix.docker }} sh -c "apk add --no-cache libstdc++ libgcc >/dev/null 2>&1; /work/${{ matrix.bin }} --version")
           else
             actual=$(${{ matrix.bin }} --version)
           fi
