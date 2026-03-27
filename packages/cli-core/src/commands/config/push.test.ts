@@ -23,6 +23,13 @@ describe("config push", () => {
     sign_up: { mode: "public" },
   };
 
+  // The "current" config returned by the GET /config call before push.
+  // Must differ from mockResponse payloads so hasConfigChanges detects changes.
+  const currentConfig = {
+    session: { lifetime: 604800 },
+    sign_up: { mode: "restricted" },
+  };
+
   beforeEach(async () => {
     tempDir = await mkdtemp(join(tmpdir(), "clerk-config-push-test-"));
     _setConfigDir(tempDir);
@@ -35,7 +42,11 @@ describe("config push", () => {
       throw new Error("process.exit");
     });
 
-    stubFetch(async () => new Response(JSON.stringify(mockResponse), { status: 200 }));
+    stubFetch(async (_input, init) => {
+      const isGet = !init?.method || init.method === "GET";
+      const body = isGet ? currentConfig : mockResponse;
+      return new Response(JSON.stringify(body), { status: 200 });
+    });
   });
 
   afterEach(async () => {
@@ -148,9 +159,12 @@ describe("config push", () => {
     let capturedMethod = "";
     let capturedBody = "";
     stubFetch(async (_input, init) => {
-      capturedMethod = init?.method ?? "GET";
-      capturedBody = init?.body as string;
-      return new Response(JSON.stringify(mockResponse), { status: 200 });
+      if (init?.method) {
+        capturedMethod = init.method;
+        capturedBody = init.body as string;
+      }
+      const body = init?.method ? mockResponse : currentConfig;
+      return new Response(JSON.stringify(body), { status: 200 });
     });
 
     await setProfile(process.cwd(), {
@@ -167,17 +181,21 @@ describe("config push", () => {
   test("patch supports --app without a linked profile", async () => {
     let capturedUrl = "";
     stubFetch(async (input, init) => {
-      capturedUrl = input.toString();
-      if (init?.method === undefined) {
-        return new Response(
-          JSON.stringify({
-            application_id: "app_1",
-            instances: [{ instance_id: "ins_dev", environment_type: "development" }],
-          }),
-          { status: 200 },
-        );
+      const url = input.toString();
+      if (init?.method) {
+        capturedUrl = url;
+        return new Response(JSON.stringify(mockResponse), { status: 200 });
       }
-      return new Response(JSON.stringify(mockResponse), { status: 200 });
+      if (url.includes("/config")) {
+        return new Response(JSON.stringify(currentConfig), { status: 200 });
+      }
+      return new Response(
+        JSON.stringify({
+          application_id: "app_1",
+          instances: [{ instance_id: "ins_dev", environment_type: "development" }],
+        }),
+        { status: 200 },
+      );
     });
 
     await runConfigPatch({
@@ -191,8 +209,9 @@ describe("config push", () => {
   test("patch reads config from --file", async () => {
     let capturedBody = "";
     stubFetch(async (_input, init) => {
-      capturedBody = init?.body as string;
-      return new Response(JSON.stringify(mockResponse), { status: 200 });
+      if (init?.method) capturedBody = init.body as string;
+      const body = init?.method ? mockResponse : currentConfig;
+      return new Response(JSON.stringify(body), { status: 200 });
     });
 
     const configFile = join(tempDir, "input.json");
@@ -235,8 +254,9 @@ describe("config push", () => {
   test("put sends PUT method", async () => {
     let capturedMethod = "";
     stubFetch(async (_input, init) => {
-      capturedMethod = init?.method ?? "GET";
-      return new Response(JSON.stringify(mockResponse), { status: 200 });
+      if (init?.method) capturedMethod = init.method;
+      const body = init?.method ? mockResponse : currentConfig;
+      return new Response(JSON.stringify(body), { status: 200 });
     });
 
     await setProfile(process.cwd(), {
@@ -265,8 +285,9 @@ describe("config push", () => {
   test("put strips config_version from payload before sending", async () => {
     let capturedBody = "";
     stubFetch(async (_input, init) => {
-      capturedBody = init?.body as string;
-      return new Response(JSON.stringify(mockResponse), { status: 200 });
+      if (init?.method) capturedBody = init.body as string;
+      const body = init?.method ? mockResponse : currentConfig;
+      return new Response(JSON.stringify(body), { status: 200 });
     });
 
     await setProfile(process.cwd(), {
@@ -285,8 +306,9 @@ describe("config push", () => {
   test("patch strips config_version from payload before sending", async () => {
     let capturedBody = "";
     stubFetch(async (_input, init) => {
-      capturedBody = init?.body as string;
-      return new Response(JSON.stringify(mockResponse), { status: 200 });
+      if (init?.method) capturedBody = init.body as string;
+      const body = init?.method ? mockResponse : currentConfig;
+      return new Response(JSON.stringify(body), { status: 200 });
     });
 
     await setProfile(process.cwd(), {
@@ -306,9 +328,10 @@ describe("config push", () => {
 
   test("patch sends ?destructive=true when --destructive is set", async () => {
     let capturedUrl = "";
-    stubFetch(async (input) => {
-      capturedUrl = input.toString();
-      return new Response(JSON.stringify(mockResponse), { status: 200 });
+    stubFetch(async (input, init) => {
+      if (init?.method) capturedUrl = input.toString();
+      const body = init?.method ? mockResponse : currentConfig;
+      return new Response(JSON.stringify(body), { status: 200 });
     });
 
     await setProfile(process.cwd(), {
@@ -327,9 +350,10 @@ describe("config push", () => {
 
   test("put sends ?destructive=true when --destructive is set", async () => {
     let capturedUrl = "";
-    stubFetch(async (input) => {
-      capturedUrl = input.toString();
-      return new Response(JSON.stringify(mockResponse), { status: 200 });
+    stubFetch(async (input, init) => {
+      if (init?.method) capturedUrl = input.toString();
+      const body = init?.method ? mockResponse : currentConfig;
+      return new Response(JSON.stringify(body), { status: 200 });
     });
 
     await setProfile(process.cwd(), {
@@ -348,9 +372,10 @@ describe("config push", () => {
 
   test("does not send ?destructive=true by default", async () => {
     let capturedUrl = "";
-    stubFetch(async (input) => {
-      capturedUrl = input.toString();
-      return new Response(JSON.stringify(mockResponse), { status: 200 });
+    stubFetch(async (input, init) => {
+      if (init?.method) capturedUrl = input.toString();
+      const body = init?.method ? mockResponse : currentConfig;
+      return new Response(JSON.stringify(body), { status: 200 });
     });
 
     await setProfile(process.cwd(), {
@@ -363,13 +388,57 @@ describe("config push", () => {
     expect(capturedUrl).not.toContain("destructive");
   });
 
+  // --- No-op when unchanged ---
+
+  test("patch skips API call when payload matches current config", async () => {
+    let mutatingCallMade = false;
+    stubFetch(async (_input, init) => {
+      if (init?.method) mutatingCallMade = true;
+      const body = init?.method ? mockResponse : currentConfig;
+      return new Response(JSON.stringify(body), { status: 200 });
+    });
+
+    await setProfile(process.cwd(), {
+      workspaceId: "org_1",
+      appId: "app_1",
+      instances: { development: "ins_dev" },
+    });
+
+    // Send a payload that matches the current config for the patched key
+    await runConfigPatch({ json: '{"session":{"lifetime":604800}}', yes: true });
+    expect(mutatingCallMade).toBe(false);
+    expect(errorSpy).toHaveBeenCalledWith("No changes detected.");
+  });
+
+  test("put skips API call when payload matches current config", async () => {
+    let mutatingCallMade = false;
+    stubFetch(async (_input, init) => {
+      if (init?.method) mutatingCallMade = true;
+      return new Response(JSON.stringify(currentConfig), { status: 200 });
+    });
+
+    await setProfile(process.cwd(), {
+      workspaceId: "org_1",
+      appId: "app_1",
+      instances: { development: "ins_dev" },
+    });
+
+    await runConfigPut({
+      json: JSON.stringify(currentConfig),
+      yes: true,
+    });
+    expect(mutatingCallMade).toBe(false);
+    expect(errorSpy).toHaveBeenCalledWith("No changes detected.");
+  });
+
   // --- Instance targeting ---
 
   test("targets development instance by default", async () => {
     let requestedUrl = "";
-    stubFetch(async (input) => {
-      requestedUrl = input.toString();
-      return new Response(JSON.stringify(mockResponse), { status: 200 });
+    stubFetch(async (input, init) => {
+      if (init?.method) requestedUrl = input.toString();
+      const body = init?.method ? mockResponse : currentConfig;
+      return new Response(JSON.stringify(body), { status: 200 });
     });
 
     await setProfile(process.cwd(), {
@@ -384,9 +453,10 @@ describe("config push", () => {
 
   test("--instance prod targets production instance", async () => {
     let requestedUrl = "";
-    stubFetch(async (input) => {
-      requestedUrl = input.toString();
-      return new Response(JSON.stringify(mockResponse), { status: 200 });
+    stubFetch(async (input, init) => {
+      if (init?.method) requestedUrl = input.toString();
+      const body = init?.method ? mockResponse : currentConfig;
+      return new Response(JSON.stringify(body), { status: 200 });
     });
 
     await setProfile(process.cwd(), {
@@ -401,9 +471,10 @@ describe("config push", () => {
 
   test("--instance with literal ID passes through", async () => {
     let requestedUrl = "";
-    stubFetch(async (input) => {
-      requestedUrl = input.toString();
-      return new Response(JSON.stringify(mockResponse), { status: 200 });
+    stubFetch(async (input, init) => {
+      if (init?.method) requestedUrl = input.toString();
+      const body = init?.method ? mockResponse : currentConfig;
+      return new Response(JSON.stringify(body), { status: 200 });
     });
 
     await setProfile(process.cwd(), {
@@ -458,7 +529,10 @@ describe("config push", () => {
   // --- API error handling ---
 
   test("handles API errors gracefully", async () => {
-    stubFetch(async () => new Response("Bad Request", { status: 400 }));
+    stubFetch(async (_input, init) => {
+      if (!init?.method) return new Response(JSON.stringify(currentConfig), { status: 200 });
+      return new Response("Bad Request", { status: 400 });
+    });
 
     await setProfile(process.cwd(), {
       workspaceId: "org_1",
@@ -485,8 +559,9 @@ describe("config push", () => {
   test("--json takes priority over --file", async () => {
     let capturedBody = "";
     stubFetch(async (_input, init) => {
-      capturedBody = init?.body as string;
-      return new Response(JSON.stringify(mockResponse), { status: 200 });
+      if (init?.method) capturedBody = init.body as string;
+      const body = init?.method ? mockResponse : currentConfig;
+      return new Response(JSON.stringify(body), { status: 200 });
     });
 
     const configFile = join(tempDir, "should-not-read.json");

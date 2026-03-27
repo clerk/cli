@@ -36,8 +36,10 @@ test.each([{ mode: "human" }, { mode: "agent" }])(
       sign_in: { enabled: true },
     };
 
-    http.mock({
-      "/config": fullConfig,
+    // GET returns a different config so hasConfigChanges detects changes
+    http.stub(async (_url, init) => {
+      const body = init?.method ? fullConfig : { session: { lifetime: 3600 } };
+      return new Response(JSON.stringify(body), { status: 200 });
     });
 
     await clerk("--mode", mode, "config", "put", "--json", JSON.stringify(fullConfig), "--yes");
@@ -59,8 +61,10 @@ test.each([{ mode: "human" }, { mode: "agent" }])(
 test("config put requires confirmation in human mode without --yes", async () => {
   const fullConfig = { session: { lifetime: 3600 } };
 
-  http.mock({
-    "/config": fullConfig,
+  // GET returns different config so changes are detected
+  http.stub(async (_url, init) => {
+    const body = init?.method ? fullConfig : { session: { lifetime: 604800 } };
+    return new Response(JSON.stringify(body), { status: 200 });
   });
 
   // Queue a "yes" confirmation response

@@ -89,10 +89,10 @@ async function configPush(options: ConfigPushOptions, op: Operation): Promise<vo
     return;
   }
 
-  if (isHuman() && !options.yes) {
-    console.error(`\n${op.verb} config on ${ctx.instanceLabel} instance:\n`);
-    printDiff(currentConfig, configPayload, isPatch);
+  console.error(`\n${op.verb} config on ${ctx.instanceLabel} instance:\n`);
+  printDiff(currentConfig, configPayload, isPatch);
 
+  if (isHuman() && !options.yes) {
     if (op.warning) {
       console.error(`\nWARNING: ${op.warning}`);
     }
@@ -231,11 +231,14 @@ export function printDiff(
         console.error(`    ${path}:`);
       }
       const indent = path ? "      " : "    ";
+      const useColor = isHuman();
       if (oldVal !== undefined) {
-        console.error(dim(`${indent}- ${JSON.stringify(oldVal)}`));
+        const line = `${indent}- ${JSON.stringify(oldVal)}`;
+        console.error(useColor ? dim(line) : line);
       }
       if (newVal !== undefined) {
-        console.error(bold(`${indent}+ ${JSON.stringify(newVal)}`));
+        const line = `${indent}+ ${JSON.stringify(newVal)}`;
+        console.error(useColor ? bold(line) : line);
       }
     }
   }
