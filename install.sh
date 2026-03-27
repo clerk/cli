@@ -197,7 +197,8 @@ else
     fi
   elif [ "$CHANNEL" = "canary" ]; then
     TAG=$(gh release list --repo "$REPO" --limit 20 --json tagName,isPrerelease \
-      --jq '[.[] | select(.isPrerelease and (.tagName | contains("canary")))][0].tagName' 2>/dev/null || true)
+      TAG=$(gh release list --repo "$REPO" --limit 20 --json tagName,isPrerelease \
+        --jq '[.[] | select(.isPrerelease and (.tagName | contains("canary")))][0].tagName // empty' 2>/dev/null || true)
 
     if [ -z "$TAG" ]; then
       TAG=$(curl -fsSL "https://api.github.com/repos/${REPO}/releases" \
