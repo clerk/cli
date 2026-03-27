@@ -431,6 +431,26 @@ describe("config push", () => {
     expect(errorSpy).toHaveBeenCalledWith("No changes detected.");
   });
 
+  test("put detects no changes when current config has config_version (pull→put roundtrip)", async () => {
+    let mutatingCallMade = false;
+    const configWithVersion = { ...currentConfig, config_version: 42 };
+    stubFetch(async (_input, init) => {
+      if (init?.method) mutatingCallMade = true;
+      return new Response(JSON.stringify(configWithVersion), { status: 200 });
+    });
+
+    await setProfile(process.cwd(), {
+      workspaceId: "org_1",
+      appId: "app_1",
+      instances: { development: "ins_dev" },
+    });
+
+    // Simulate pull→put: payload includes config_version from the pull output
+    await runConfigPut({ json: JSON.stringify(configWithVersion), yes: true });
+    expect(mutatingCallMade).toBe(false);
+    expect(errorSpy).toHaveBeenCalledWith("No changes detected.");
+  });
+
   // --- Instance targeting ---
 
   test("targets development instance by default", async () => {

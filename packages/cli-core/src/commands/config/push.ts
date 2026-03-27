@@ -3,7 +3,7 @@ import { fetchInstanceConfig, putInstanceConfig, patchInstanceConfig } from "../
 import { isHuman } from "../../mode.ts";
 import { throwUsageError, throwUserAbort, withApiContext, ERROR_CODE } from "../../lib/errors.ts";
 import { confirm } from "../../lib/prompts.ts";
-import { dim, bold } from "../../lib/color.ts";
+import { dim, bold, red, green } from "../../lib/color.ts";
 
 interface ConfigPushOptions {
   app?: string;
@@ -80,6 +80,9 @@ async function configPush(options: ConfigPushOptions, op: Operation): Promise<vo
     fetchInstanceConfig(ctx.appId, ctx.instanceId),
     "Failed to fetch current config",
   );
+
+  // Strip config_version from current config to match the payload normalization above
+  delete currentConfig.config_version;
 
   const isPatch = op.method === "PATCH";
   const hasChanges = hasConfigChanges(currentConfig, configPayload, isPatch);
@@ -234,11 +237,11 @@ export function printDiff(
       const useColor = isHuman();
       if (oldVal !== undefined) {
         const line = `${indent}- ${JSON.stringify(oldVal)}`;
-        console.error(useColor ? dim(line) : line);
+        console.error(useColor ? dim(red(line)) : line);
       }
       if (newVal !== undefined) {
         const line = `${indent}+ ${JSON.stringify(newVal)}`;
-        console.error(useColor ? bold(line) : line);
+        console.error(useColor ? bold(green(line)) : line);
       }
     }
   }
