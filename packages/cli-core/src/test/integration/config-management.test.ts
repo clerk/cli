@@ -28,8 +28,6 @@ test.each([{ mode: "human" }, { mode: "agent" }])(
       instances: { development: devInstance.instance_id },
     });
 
-    const updatedConfig = { session: { lifetime: 86400 }, sign_up: { mode: "public" } };
-
     http.mock({
       "/config": MOCK_CONFIG,
     });
@@ -38,16 +36,21 @@ test.each([{ mode: "human" }, { mode: "agent" }])(
     const { stdout: pullOutput } = await clerk("--mode", mode, "config", "pull");
     expect(pullOutput).toContain(`"lifetime": ${MOCK_CONFIG.session.lifetime}`);
 
-    // Pull schema, then patch config
+    // Pull schema
     http.mock({
       "/config/schema": MOCK_SCHEMA,
-      "/config": updatedConfig,
     });
 
     const { stdout: schemaOutput } = await clerk("--mode", mode, "config", "schema");
     expect(schemaOutput).toContain(`"type": "${MOCK_SCHEMA.type}"`);
 
-    // Patch config
+    // Patch config — GET returns current (different) config so changes are detected
+    const updatedConfig = { session: { lifetime: 86400 }, sign_up: { mode: "public" } };
+    http.stub(async (_url, init) => {
+      const body = init?.method ? updatedConfig : MOCK_CONFIG;
+      return new Response(JSON.stringify(body), { status: 200 });
+    });
+
     await clerk(
       "--mode",
       mode,

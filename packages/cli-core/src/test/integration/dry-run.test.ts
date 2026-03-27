@@ -66,7 +66,11 @@ test.each([{ mode: "human" }, { mode: "agent" }])(
   "config patch without dry-run sends PATCH ($mode mode)",
   async ({ mode }) => {
     const updatedConfig = { session: { lifetime: 3600 } };
-    http.mock({ "/config": updatedConfig });
+    // GET returns different config so hasConfigChanges detects changes
+    http.stub(async (_url, init) => {
+      const body = init?.method ? updatedConfig : { session: { lifetime: 604800 } };
+      return new Response(JSON.stringify(body), { status: 200 });
+    });
 
     await clerk(
       "--mode",

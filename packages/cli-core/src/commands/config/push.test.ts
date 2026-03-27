@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { _setConfigDir, setProfile } from "../../lib/config.ts";
 import { credentialStoreStubs, gitStubs, promptsStubs, stubFetch } from "../../test/stubs.ts";
+import { printDiff, hasConfigChanges } from "./push.ts";
 
 mock.module("../../lib/credential-store.ts", () => credentialStoreStubs);
 mock.module("../../lib/git.ts", () => gitStubs);
@@ -22,6 +23,13 @@ describe("config push", () => {
     sign_up: { mode: "public" },
   };
 
+  // The "current" config returned by the GET /config call before push.
+  // Must differ from mockResponse payloads so hasConfigChanges detects changes.
+  const currentConfig = {
+    session: { lifetime: 604800 },
+    sign_up: { mode: "restricted" },
+  };
+
   beforeEach(async () => {
     tempDir = await mkdtemp(join(tmpdir(), "clerk-config-push-test-"));
     _setConfigDir(tempDir);
@@ -34,7 +42,11 @@ describe("config push", () => {
       throw new Error("process.exit");
     });
 
-    stubFetch(async () => new Response(JSON.stringify(mockResponse), { status: 200 }));
+    stubFetch(async (_input, init) => {
+      const isGet = !init?.method || init.method === "GET";
+      const body = isGet ? currentConfig : mockResponse;
+      return new Response(JSON.stringify(body), { status: 200 });
+    });
   });
 
   afterEach(async () => {
@@ -147,9 +159,12 @@ describe("config push", () => {
     let capturedMethod = "";
     let capturedBody = "";
     stubFetch(async (_input, init) => {
-      capturedMethod = init?.method ?? "GET";
-      capturedBody = init?.body as string;
-      return new Response(JSON.stringify(mockResponse), { status: 200 });
+      if (init?.method) {
+        capturedMethod = init.method;
+        capturedBody = init.body as string;
+      }
+      const body = init?.method ? mockResponse : currentConfig;
+      return new Response(JSON.stringify(body), { status: 200 });
     });
 
     await setProfile(process.cwd(), {
@@ -166,17 +181,21 @@ describe("config push", () => {
   test("patch supports --app without a linked profile", async () => {
     let capturedUrl = "";
     stubFetch(async (input, init) => {
-      capturedUrl = input.toString();
-      if (init?.method === undefined) {
-        return new Response(
-          JSON.stringify({
-            application_id: "app_1",
-            instances: [{ instance_id: "ins_dev", environment_type: "development" }],
-          }),
-          { status: 200 },
-        );
+      const url = input.toString();
+      if (init?.method) {
+        capturedUrl = url;
+        return new Response(JSON.stringify(mockResponse), { status: 200 });
       }
-      return new Response(JSON.stringify(mockResponse), { status: 200 });
+      if (url.includes("/config")) {
+        return new Response(JSON.stringify(currentConfig), { status: 200 });
+      }
+      return new Response(
+        JSON.stringify({
+          application_id: "app_1",
+          instances: [{ instance_id: "ins_dev", environment_type: "development" }],
+        }),
+        { status: 200 },
+      );
     });
 
     await runConfigPatch({
@@ -190,8 +209,9 @@ describe("config push", () => {
   test("patch reads config from --file", async () => {
     let capturedBody = "";
     stubFetch(async (_input, init) => {
-      capturedBody = init?.body as string;
-      return new Response(JSON.stringify(mockResponse), { status: 200 });
+      if (init?.method) capturedBody = init.body as string;
+      const body = init?.method ? mockResponse : currentConfig;
+      return new Response(JSON.stringify(body), { status: 200 });
     });
 
     const configFile = join(tempDir, "input.json");
@@ -234,8 +254,9 @@ describe("config push", () => {
   test("put sends PUT method", async () => {
     let capturedMethod = "";
     stubFetch(async (_input, init) => {
-      capturedMethod = init?.method ?? "GET";
-      return new Response(JSON.stringify(mockResponse), { status: 200 });
+      if (init?.method) capturedMethod = init.method;
+      const body = init?.method ? mockResponse : currentConfig;
+      return new Response(JSON.stringify(body), { status: 200 });
     });
 
     await setProfile(process.cwd(), {
@@ -264,8 +285,9 @@ describe("config push", () => {
   test("put strips config_version from payload before sending", async () => {
     let capturedBody = "";
     stubFetch(async (_input, init) => {
-      capturedBody = init?.body as string;
-      return new Response(JSON.stringify(mockResponse), { status: 200 });
+      if (init?.method) capturedBody = init.body as string;
+      const body = init?.method ? mockResponse : currentConfig;
+      return new Response(JSON.stringify(body), { status: 200 });
     });
 
     await setProfile(process.cwd(), {
@@ -284,8 +306,9 @@ describe("config push", () => {
   test("patch strips config_version from payload before sending", async () => {
     let capturedBody = "";
     stubFetch(async (_input, init) => {
-      capturedBody = init?.body as string;
-      return new Response(JSON.stringify(mockResponse), { status: 200 });
+      if (init?.method) capturedBody = init.body as string;
+      const body = init?.method ? mockResponse : currentConfig;
+      return new Response(JSON.stringify(body), { status: 200 });
     });
 
     await setProfile(process.cwd(), {
@@ -305,9 +328,10 @@ describe("config push", () => {
 
   test("patch sends ?destructive=true when --destructive is set", async () => {
     let capturedUrl = "";
-    stubFetch(async (input) => {
-      capturedUrl = input.toString();
-      return new Response(JSON.stringify(mockResponse), { status: 200 });
+    stubFetch(async (input, init) => {
+      if (init?.method) capturedUrl = input.toString();
+      const body = init?.method ? mockResponse : currentConfig;
+      return new Response(JSON.stringify(body), { status: 200 });
     });
 
     await setProfile(process.cwd(), {
@@ -326,9 +350,10 @@ describe("config push", () => {
 
   test("put sends ?destructive=true when --destructive is set", async () => {
     let capturedUrl = "";
-    stubFetch(async (input) => {
-      capturedUrl = input.toString();
-      return new Response(JSON.stringify(mockResponse), { status: 200 });
+    stubFetch(async (input, init) => {
+      if (init?.method) capturedUrl = input.toString();
+      const body = init?.method ? mockResponse : currentConfig;
+      return new Response(JSON.stringify(body), { status: 200 });
     });
 
     await setProfile(process.cwd(), {
@@ -347,9 +372,10 @@ describe("config push", () => {
 
   test("does not send ?destructive=true by default", async () => {
     let capturedUrl = "";
-    stubFetch(async (input) => {
-      capturedUrl = input.toString();
-      return new Response(JSON.stringify(mockResponse), { status: 200 });
+    stubFetch(async (input, init) => {
+      if (init?.method) capturedUrl = input.toString();
+      const body = init?.method ? mockResponse : currentConfig;
+      return new Response(JSON.stringify(body), { status: 200 });
     });
 
     await setProfile(process.cwd(), {
@@ -362,13 +388,77 @@ describe("config push", () => {
     expect(capturedUrl).not.toContain("destructive");
   });
 
+  // --- No-op when unchanged ---
+
+  test("patch skips API call when payload matches current config", async () => {
+    let mutatingCallMade = false;
+    stubFetch(async (_input, init) => {
+      if (init?.method) mutatingCallMade = true;
+      const body = init?.method ? mockResponse : currentConfig;
+      return new Response(JSON.stringify(body), { status: 200 });
+    });
+
+    await setProfile(process.cwd(), {
+      workspaceId: "org_1",
+      appId: "app_1",
+      instances: { development: "ins_dev" },
+    });
+
+    // Send a payload that matches the current config for the patched key
+    await runConfigPatch({ json: '{"session":{"lifetime":604800}}', yes: true });
+    expect(mutatingCallMade).toBe(false);
+    expect(errorSpy).toHaveBeenCalledWith("No changes detected.");
+  });
+
+  test("put skips API call when payload matches current config", async () => {
+    let mutatingCallMade = false;
+    stubFetch(async (_input, init) => {
+      if (init?.method) mutatingCallMade = true;
+      return new Response(JSON.stringify(currentConfig), { status: 200 });
+    });
+
+    await setProfile(process.cwd(), {
+      workspaceId: "org_1",
+      appId: "app_1",
+      instances: { development: "ins_dev" },
+    });
+
+    await runConfigPut({
+      json: JSON.stringify(currentConfig),
+      yes: true,
+    });
+    expect(mutatingCallMade).toBe(false);
+    expect(errorSpy).toHaveBeenCalledWith("No changes detected.");
+  });
+
+  test("put detects no changes when current config has config_version (pull→put roundtrip)", async () => {
+    let mutatingCallMade = false;
+    const configWithVersion = { ...currentConfig, config_version: 42 };
+    stubFetch(async (_input, init) => {
+      if (init?.method) mutatingCallMade = true;
+      return new Response(JSON.stringify(configWithVersion), { status: 200 });
+    });
+
+    await setProfile(process.cwd(), {
+      workspaceId: "org_1",
+      appId: "app_1",
+      instances: { development: "ins_dev" },
+    });
+
+    // Simulate pull→put: payload includes config_version from the pull output
+    await runConfigPut({ json: JSON.stringify(configWithVersion), yes: true });
+    expect(mutatingCallMade).toBe(false);
+    expect(errorSpy).toHaveBeenCalledWith("No changes detected.");
+  });
+
   // --- Instance targeting ---
 
   test("targets development instance by default", async () => {
     let requestedUrl = "";
-    stubFetch(async (input) => {
-      requestedUrl = input.toString();
-      return new Response(JSON.stringify(mockResponse), { status: 200 });
+    stubFetch(async (input, init) => {
+      if (init?.method) requestedUrl = input.toString();
+      const body = init?.method ? mockResponse : currentConfig;
+      return new Response(JSON.stringify(body), { status: 200 });
     });
 
     await setProfile(process.cwd(), {
@@ -383,9 +473,10 @@ describe("config push", () => {
 
   test("--instance prod targets production instance", async () => {
     let requestedUrl = "";
-    stubFetch(async (input) => {
-      requestedUrl = input.toString();
-      return new Response(JSON.stringify(mockResponse), { status: 200 });
+    stubFetch(async (input, init) => {
+      if (init?.method) requestedUrl = input.toString();
+      const body = init?.method ? mockResponse : currentConfig;
+      return new Response(JSON.stringify(body), { status: 200 });
     });
 
     await setProfile(process.cwd(), {
@@ -400,9 +491,10 @@ describe("config push", () => {
 
   test("--instance with literal ID passes through", async () => {
     let requestedUrl = "";
-    stubFetch(async (input) => {
-      requestedUrl = input.toString();
-      return new Response(JSON.stringify(mockResponse), { status: 200 });
+    stubFetch(async (input, init) => {
+      if (init?.method) requestedUrl = input.toString();
+      const body = init?.method ? mockResponse : currentConfig;
+      return new Response(JSON.stringify(body), { status: 200 });
     });
 
     await setProfile(process.cwd(), {
@@ -457,7 +549,10 @@ describe("config push", () => {
   // --- API error handling ---
 
   test("handles API errors gracefully", async () => {
-    stubFetch(async () => new Response("Bad Request", { status: 400 }));
+    stubFetch(async (_input, init) => {
+      if (!init?.method) return new Response(JSON.stringify(currentConfig), { status: 200 });
+      return new Response("Bad Request", { status: 400 });
+    });
 
     await setProfile(process.cwd(), {
       workspaceId: "org_1",
@@ -484,8 +579,9 @@ describe("config push", () => {
   test("--json takes priority over --file", async () => {
     let capturedBody = "";
     stubFetch(async (_input, init) => {
-      capturedBody = init?.body as string;
-      return new Response(JSON.stringify(mockResponse), { status: 200 });
+      if (init?.method) capturedBody = init.body as string;
+      const body = init?.method ? mockResponse : currentConfig;
+      return new Response(JSON.stringify(body), { status: 200 });
     });
 
     const configFile = join(tempDir, "should-not-read.json");
@@ -503,5 +599,129 @@ describe("config push", () => {
       yes: true,
     });
     expect(JSON.parse(capturedBody)).toEqual({ from: "json" });
+  });
+});
+
+describe("printDiff", () => {
+  let errorSpy: ReturnType<typeof spyOn>;
+  let lines: string[];
+
+  beforeEach(() => {
+    lines = [];
+    errorSpy = spyOn(console, "error").mockImplementation((...args: unknown[]) => {
+      // Strip ANSI codes for easier assertion
+      lines.push(String(args[0]).replace(/\x1b\[[0-9;]*m/g, ""));
+    });
+  });
+
+  afterEach(() => {
+    errorSpy.mockRestore();
+  });
+
+  test("patch mode: shows only changed leaf values", () => {
+    const current = { session: { lifetime: 604800, cookie: "__session" } };
+    const patch = { session: { lifetime: 3600 } };
+
+    printDiff(current, patch, true);
+
+    expect(lines).toEqual(["  session:", "    lifetime:", "      - 604800", "      + 3600"]);
+  });
+
+  test("patch mode: skips unchanged keys", () => {
+    const current = { session: { lifetime: 3600 }, sign_up: { mode: "public" } };
+    const patch = { session: { lifetime: 3600 } };
+
+    printDiff(current, patch, true);
+
+    expect(lines).toEqual([]);
+  });
+
+  test("patch mode: shows new keys being added", () => {
+    const current = {};
+    const patch = { session: { lifetime: 3600 } };
+
+    printDiff(current, patch, true);
+
+    expect(lines).toEqual(["  session:", '    + {"lifetime":3600}']);
+  });
+
+  test("patch mode: ignores keys not in patch", () => {
+    const current = { session: { lifetime: 604800 }, sign_up: { mode: "public" } };
+    const patch = { session: { lifetime: 3600 } };
+
+    printDiff(current, patch, true);
+
+    // sign_up should not appear
+    expect(lines.some((l) => l.includes("sign_up"))).toBe(false);
+  });
+
+  test("put mode: shows removed keys", () => {
+    const current = { session: { lifetime: 604800 }, sign_up: { mode: "public" } };
+    const payload = { session: { lifetime: 604800 } };
+
+    printDiff(current, payload, false);
+
+    // session is unchanged, sign_up is being removed
+    expect(lines.some((l) => l.includes("sign_up"))).toBe(true);
+    expect(lines.some((l) => l.includes("- {"))).toBe(true);
+  });
+
+  test("put mode: shows both old and new for changed values", () => {
+    const current = { session: { lifetime: 604800 } };
+    const payload = { session: { lifetime: 3600 } };
+
+    printDiff(current, payload, false);
+
+    expect(lines).toContainEqual(expect.stringContaining("- 604800"));
+    expect(lines).toContainEqual(expect.stringContaining("+ 3600"));
+  });
+
+  test("handles deeply nested changes", () => {
+    const current = { a: { b: { c: { d: 1 } } } };
+    const patch = { a: { b: { c: { d: 2 } } } };
+
+    printDiff(current, patch, true);
+
+    expect(lines).toEqual(["  a:", "    b.c.d:", "      - 1", "      + 2"]);
+  });
+
+  test("handles array value changes", () => {
+    const current = { allowed: { origins: ["a.com", "b.com"] } };
+    const patch = { allowed: { origins: ["a.com", "c.com"] } };
+
+    printDiff(current, patch, true);
+
+    expect(lines).toContainEqual(expect.stringContaining('- ["a.com","b.com"]'));
+    expect(lines).toContainEqual(expect.stringContaining('+ ["a.com","c.com"]'));
+  });
+});
+
+describe("hasConfigChanges", () => {
+  test("patch mode: no change when partial payload matches nested values", () => {
+    const current = { session: { lifetime: 604800, cookie: "__session" } };
+    const payload = { session: { lifetime: 604800 } };
+
+    expect(hasConfigChanges(current, payload, true)).toBe(false);
+  });
+
+  test("patch mode: detects change in nested value", () => {
+    const current = { session: { lifetime: 604800, cookie: "__session" } };
+    const payload = { session: { lifetime: 3600 } };
+
+    expect(hasConfigChanges(current, payload, true)).toBe(true);
+  });
+
+  test("put mode: detects removal of keys not in payload", () => {
+    const current = { session: { lifetime: 604800 }, sign_up: { mode: "public" } };
+    const payload = { session: { lifetime: 604800 } };
+
+    expect(hasConfigChanges(current, payload, false)).toBe(true);
+  });
+
+  test("put mode: no change when both sides match", () => {
+    const current = { session: { lifetime: 604800 } };
+    const payload = { session: { lifetime: 604800 } };
+
+    expect(hasConfigChanges(current, payload, false)).toBe(false);
   });
 });
