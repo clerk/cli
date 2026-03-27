@@ -1,14 +1,31 @@
 /**
  * Credential store for persisting the OAuth access token.
  * Uses platform keyring as primary (via @napi-rs/keyring), falls back to a plaintext file with chmod 600.
+ *
+ * Tokens are stored per-environment so switching environments preserves auth state.
+ * Keychain account: "oauth-access-token:<envName>"
+ * File fallback: "credentials.<envName>"
  */
 
 import { dirname } from "node:path";
 import { mkdir, chmod, unlink } from "node:fs/promises";
 import { CREDENTIALS_FILE } from "./constants.ts";
+import { getCurrentEnvName } from "./environment.ts";
 
 export const KEYCHAIN_SERVICE = "clerk-cli";
 export const KEYCHAIN_ACCOUNT = "oauth-access-token";
+
+function keychainAccount(): string {
+  const envName = getCurrentEnvName();
+  if (envName === "production") return KEYCHAIN_ACCOUNT;
+  return `${KEYCHAIN_ACCOUNT}:${envName}`;
+}
+
+function credentialsFile(): string {
+  const envName = getCurrentEnvName();
+  if (envName === "production") return CREDENTIALS_FILE;
+  return `${CREDENTIALS_FILE}.${envName}`;
+}
 
 let keyringModule: typeof import("@napi-rs/keyring") | null | undefined;
 
@@ -27,7 +44,7 @@ async function keyringStore(token: string): Promise<boolean> {
   const mod = await getKeyring();
   if (!mod) return false;
   try {
-    const entry = new mod.Entry(KEYCHAIN_SERVICE, KEYCHAIN_ACCOUNT);
+    const entry = new mod.Entry(KEYCHAIN_SERVICE, keychainAccount());
     entry.setPassword(token);
     return true;
   } catch {
@@ -39,7 +56,7 @@ async function keyringGet(): Promise<string | null> {
   const mod = await getKeyring();
   if (!mod) return null;
   try {
-    const entry = new mod.Entry(KEYCHAIN_SERVICE, KEYCHAIN_ACCOUNT);
+    const entry = new mod.Entry(KEYCHAIN_SERVICE, keychainAccount());
     return entry.getPassword();
   } catch {
     return null;
@@ -50,7 +67,7 @@ async function keyringDelete(): Promise<boolean> {
   const mod = await getKeyring();
   if (!mod) return false;
   try {
-    const entry = new mod.Entry(KEYCHAIN_SERVICE, KEYCHAIN_ACCOUNT);
+    const entry = new mod.Entry(KEYCHAIN_SERVICE, keychainAccount());
     entry.deletePassword();
     return true;
   } catch {
@@ -59,13 +76,14 @@ async function keyringDelete(): Promise<boolean> {
 }
 
 async function fileStore(token: string): Promise<void> {
-  await mkdir(dirname(CREDENTIALS_FILE), { recursive: true });
-  await Bun.write(CREDENTIALS_FILE, token);
-  await chmod(CREDENTIALS_FILE, 0o600);
+  const file = credentialsFile();
+  await mkdir(dirname(file), { recursive: true });
+  await Bun.write(file, token);
+  await chmod(file, 0o600);
 }
 
 async function fileGet(): Promise<string | null> {
-  const file = Bun.file(CREDENTIALS_FILE);
+  const file = Bun.file(credentialsFile());
   if (!(await file.exists())) return null;
   const content = await file.text();
   return content.trim() || null;
@@ -73,7 +91,7 @@ async function fileGet(): Promise<string | null> {
 
 async function fileDelete(): Promise<void> {
   try {
-    await unlink(CREDENTIALS_FILE);
+    await unlink(credentialsFile());
   } catch {
     // File doesn't exist, nothing to delete
   }
@@ -99,8 +117,10 @@ export function _setTokenOverride(value: string | null | undefined): void {
 
 export async function getToken(): Promise<string | null> {
   if (tokenOverride !== undefined) return tokenOverride;
+
   const token = await keyringGet();
   if (token) return token;
+
   return fileGet();
 }
 

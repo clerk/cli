@@ -24,13 +24,21 @@ mock.module("../../lib/config.ts", () => ({
 mock.module("../../lib/token-exchange.ts", () => ({
   exchangeCodeForToken: (...args: unknown[]) => mockExchangeCodeForToken(...args),
   fetchUserInfo: (...args: unknown[]) => mockFetchUserInfo(...args),
-  OAUTH_CONFIG: {
+}));
+
+mock.module("../../lib/environment.ts", () => ({
+  getOAuthConfig: () => ({
     clientId: "test-client-id",
     scopes: "profile email",
     authorizeUrl: "https://test.example.com/oauth/authorize",
     tokenUrl: "https://test.example.com/oauth/token",
     userinfoUrl: "https://test.example.com/oauth/userinfo",
-  },
+  }),
+}));
+
+mock.module("../../lib/constants.ts", () => ({
+  CALLBACK_PATH: "/callback",
+  AUTH_TIMEOUT_MS: 120000,
 }));
 
 mock.module("../../lib/pkce.ts", () => ({

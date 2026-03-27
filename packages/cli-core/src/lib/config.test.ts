@@ -37,7 +37,7 @@ describe("config", () => {
 
   test("writeConfig and readConfig roundtrip", async () => {
     const config = {
-      auth: { userId: "user_123" },
+      auth: { production: { userId: "user_123" } },
       profiles: {
         "/path/to/project": {
           workspaceId: "org_abc",
@@ -48,7 +48,19 @@ describe("config", () => {
     };
     await writeConfig(config);
     const result = await readConfig();
-    expect(result).toEqual(config);
+    expect(result.auth).toEqual(config.auth);
+    expect(result.profiles).toEqual(config.profiles);
+  });
+
+  test("readConfig migrates legacy auth format", async () => {
+    // Write old-format config directly
+    const legacyConfig = {
+      auth: { userId: "user_legacy" },
+      profiles: {},
+    };
+    await Bun.write(`${tempDir}/config.json`, JSON.stringify(legacyConfig));
+    const result = await readConfig();
+    expect(result.auth).toEqual({ production: { userId: "user_legacy" } });
   });
 
   test("setAuth and getAuth", async () => {

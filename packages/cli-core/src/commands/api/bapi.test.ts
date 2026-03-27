@@ -1,13 +1,23 @@
-import { test, expect, describe, afterEach } from "bun:test";
+import { test, expect, describe, beforeEach, afterEach } from "bun:test";
 import { stubFetch } from "../../test/stubs.ts";
 import { bapiRequest } from "./bapi.ts";
 import { BapiError } from "../../lib/errors.ts";
 
 describe("bapi", () => {
   const originalFetch = globalThis.fetch;
+  const originalBapiUrl = process.env.CLERK_BACKEND_API_URL;
+
+  beforeEach(() => {
+    process.env.CLERK_BACKEND_API_URL = "https://api.clerk.dev";
+  });
 
   afterEach(() => {
     globalThis.fetch = originalFetch;
+    if (originalBapiUrl === undefined) {
+      delete process.env.CLERK_BACKEND_API_URL;
+    } else {
+      process.env.CLERK_BACKEND_API_URL = originalBapiUrl;
+    }
   });
 
   test("constructs correct URL with /v1/ prefix", async () => {

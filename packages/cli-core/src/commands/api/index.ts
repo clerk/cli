@@ -1,6 +1,6 @@
 import { resolveAppContext } from "../../lib/config.ts";
 import { fetchApplication, getAuthToken, validateKeyPrefix } from "../../lib/plapi.ts";
-import { BAPI_BASE_URL, PLAPI_BASE_URL } from "../../lib/constants.ts";
+import { getBapiBaseUrl, getPlapiBaseUrl } from "../../lib/environment.ts";
 import { bapiRequest } from "./bapi.ts";
 import {
   BapiError,
@@ -57,10 +57,10 @@ export async function api(
 
   if (options.platform) {
     secretKey = await getAuthToken();
-    baseUrl = PLAPI_BASE_URL;
+    baseUrl = getPlapiBaseUrl();
   } else {
     secretKey = await resolveSecretKey(options);
-    baseUrl = BAPI_BASE_URL;
+    baseUrl = getBapiBaseUrl();
   }
 
   // 4. Dry run

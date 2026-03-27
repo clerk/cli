@@ -172,13 +172,6 @@ mock.module(
         if (!token || token === "expired_token") throw new Error("Unauthorized");
         return { userId: "user_123", email: "test@example.com" };
       },
-      OAUTH_CONFIG: {
-        clientId: "test_client",
-        scopes: "profile email",
-        authorizeUrl: "https://test.clerk.com/oauth/authorize",
-        tokenUrl: "https://test.clerk.com/oauth/token",
-        userinfoUrl: "https://test.clerk.com/oauth/userinfo",
-      },
     }) satisfies typeof import("../../lib/token-exchange.ts"),
 );
 
