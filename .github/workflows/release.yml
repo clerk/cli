@@ -49,6 +49,7 @@ jobs:
       version: ${{ needs.versioning.outputs.version }}
       ref: ${{ github.sha }}
       artifact-prefix: clerk
+    secrets: inherit
 
   smoke-test:
     needs: [versioning, build]
@@ -141,6 +142,7 @@ jobs:
       version: ${{ needs.canary-version.outputs.version }}
       ref: ${{ github.sha }}
       artifact-prefix: clerk-canary
+    secrets: inherit
 
   canary-smoke-test:
     needs: [canary-version, canary-build]
