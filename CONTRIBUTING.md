@@ -14,7 +14,7 @@ When contributing to this repository, please first discuss the change you wish t
 1. Clone the repo
 
 ```sh
-git clone https://github.com/clerk/cli-new
+git clone https://github.com/clerk/cli
 ```
 
 2. Install dependencies
@@ -76,13 +76,13 @@ Check for existing `*.test.ts` files near the code you're modifying.
 
 ## Opening a pull request
 
-1. Search for open or closed [pull requests](https://github.com/clerk/cli-new/pulls) that relate to your submission to avoid duplicating effort
+1. Search for open or closed [pull requests](https://github.com/clerk/cli/pulls) that relate to your submission to avoid duplicating effort
 2. Create your feature branch (`git checkout -b feat/amazing_feature`)
 3. Write tests to verify your change
 4. If your change affects user-facing behavior, add a changeset (`bunx changeset`)
 5. Commit your changes using [conventional commits](https://www.conventionalcommits.org/) (`git commit -m 'feat: add amazing feature'`)
 6. Push to the branch (`git push origin feat/amazing_feature`)
-7. [Open a pull request](https://github.com/clerk/cli-new/compare?expand=1)
+7. [Open a pull request](https://github.com/clerk/cli/compare?expand=1)
 
 ### Changesets
 
@@ -116,7 +116,7 @@ Common types: `feat`, `fix`, `chore`, `docs`, `refactor`, `test`, `ci`, `build`,
 
 ## Issues and feature requests
 
-Found a bug or want to suggest a feature? [Submit an issue on GitHub](https://github.com/clerk/cli-new/issues). Before creating an issue, search the issue archive to avoid duplicates.
+Found a bug or want to suggest a feature? [Submit an issue on GitHub](https://github.com/clerk/cli/issues). Before creating an issue, search the issue archive to avoid duplicates.
 
 ## Publishing packages
 
