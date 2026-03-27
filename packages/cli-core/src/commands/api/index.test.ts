@@ -62,18 +62,25 @@ mock.module("../../lib/config.ts", () => ({
         production: "production",
       };
       if (!options.instance) {
-        return { appId: options.app, instanceId: "ins_dev", instanceLabel: "development" };
+        return {
+          appId: options.app,
+          appLabel: options.app,
+          instanceId: "ins_dev",
+          instanceLabel: "development",
+        };
       }
       const env = aliases[options.instance];
       if (!env) {
         return {
           appId: options.app,
+          appLabel: options.app,
           instanceId: options.instance,
           instanceLabel: options.instance,
         };
       }
       return {
         appId: options.app,
+        appLabel: options.app,
         instanceId: env === "production" ? "ins_prod" : "ins_dev",
         instanceLabel: env,
       };
@@ -97,7 +104,12 @@ mock.module("../../lib/config.ts", () => ({
           return { id, label: env };
         })();
 
-    return { appId: profile.appId, instanceId: instance.id, instanceLabel: instance.label };
+    return {
+      appId: profile.appId,
+      appLabel: profile.appId,
+      instanceId: instance.id,
+      instanceLabel: instance.label,
+    };
   },
 }));
 

@@ -127,7 +127,7 @@ describe("config schema", () => {
     });
 
     await runConfigSchema();
-    expect(errorSpy).toHaveBeenCalledWith("Pulling config schema from development instance...");
+    expect(errorSpy).toHaveBeenCalledWith("Pulling config schema from app_1 (development)...");
   });
 
   test("shows production label when --instance prod", async () => {
@@ -138,7 +138,7 @@ describe("config schema", () => {
     });
 
     await runConfigSchema({ instance: "prod" });
-    expect(errorSpy).toHaveBeenCalledWith("Pulling config schema from production instance...");
+    expect(errorSpy).toHaveBeenCalledWith("Pulling config schema from app_1 (production)...");
   });
 
   test("uses development instance by default", async () => {

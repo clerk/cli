@@ -14,7 +14,7 @@
 
 set -euo pipefail
 
-REPO="clerk/cli-new"
+REPO="clerk/cli"
 BINARY_NAME="clerk"
 INSTALL_DIR="${CLERK_INSTALL_DIR:-}"
 CHANNEL=""
@@ -190,6 +190,14 @@ if [ "$LOCAL" = true ]; then
   echo "Installing Clerk CLI ${TAG} from local artifacts..."
 else
   # ─── GitHub Releases ─────────────────────────────────────────────────────────
+
+  # TODO: remove token/auth header once the repo is public
+  _TOKEN=$(gh auth token 2>/dev/null || true)
+  _AUTH=()
+  if [ -n "$_TOKEN" ]; then
+    _AUTH=(-H "Authorization: token ${_TOKEN}")
+  fi
+
   if [ -n "$VERSION" ]; then
     TAG="$VERSION"
     if [[ "$TAG" != v* ]]; then
@@ -200,7 +208,7 @@ else
       --jq '[.[] | select(.isPrerelease and (.tagName | contains("canary")))][0].tagName // empty' 2>/dev/null || true)
 
     if [ -z "$TAG" ]; then
-      TAG=$(curl -fsSL "https://api.github.com/repos/${REPO}/releases" \
+      TAG=$(curl -fsSL "${_AUTH[@]}" "https://api.github.com/repos/${REPO}/releases" \
         | grep -o '"tag_name":"[^"]*canary[^"]*"' \
         | head -1 \
         | cut -d'"' -f4 || true)
@@ -211,7 +219,7 @@ else
       exit 1
     fi
   else
-    TAG=$(curl -fsSL "https://api.github.com/repos/${REPO}/releases/latest" \
+    TAG=$(curl -fsSL "${_AUTH[@]}" "https://api.github.com/repos/${REPO}/releases/latest" \
       | grep -o '"tag_name":"[^"]*"' \
       | cut -d'"' -f4 || true)
 
@@ -224,12 +232,24 @@ else
   echo "Installing Clerk CLI ${TAG}..."
 
   ASSET_NAME="clerk-${TARGET}${EXT}"
-  DOWNLOAD_URL="https://github.com/${REPO}/releases/download/${TAG}/${ASSET_NAME}"
 
-  echo "Downloading ${DOWNLOAD_URL}..."
-  if ! curl -fsSL -o "${TMPDIR}/${BINARY_NAME}${EXT}" "$DOWNLOAD_URL"; then
-    echo "Error: failed to download binary for ${TARGET} from release ${TAG}" >&2
+  # TODO: switch to the direct URL once the repo is public:
+  #   curl -fsSL -o ... "https://github.com/${REPO}/releases/download/${TAG}/${ASSET_NAME}"
+  ASSET_URL=$(curl -fsSL "${_AUTH[@]}" \
+    "https://api.github.com/repos/${REPO}/releases/tags/${TAG}" \
+    | grep -B20 "\"name\": \"${ASSET_NAME}\"" \
+    | grep '"url"' | tail -1 | grep -o 'https://[^"]*')
+
+  if [ -z "$ASSET_URL" ]; then
+    echo "Error: asset ${ASSET_NAME} not found in release ${TAG}" >&2
     echo "Check that this platform is supported and the release exists." >&2
+    exit 1
+  fi
+
+  echo "Downloading ${ASSET_NAME} from release ${TAG}..."
+  if ! curl -fsSL "${_AUTH[@]}" -H "Accept: application/octet-stream" \
+    -o "${TMPDIR}/${BINARY_NAME}${EXT}" "$ASSET_URL"; then
+    echo "Error: failed to download binary for ${TARGET} from release ${TAG}" >&2
     exit 1
   fi
 
