@@ -13,7 +13,7 @@ export async function configSchema(options: ConfigSchemaOptions): Promise<void> 
   const ctx = await resolveAppContext(options);
 
   // Use `console.error` for informational messages so stdout is just the JSON response.
-  console.error(`Pulling config schema from ${ctx.instanceLabel} instance...`);
+  console.error(`Pulling config schema from ${ctx.appLabel} (${ctx.instanceLabel})...`);
 
   const schema = await withApiContext(
     fetchInstanceConfigSchema(ctx.appId, ctx.instanceId, options.keys),

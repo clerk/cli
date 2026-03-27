@@ -113,6 +113,7 @@ export async function autolink(
   const profile: Profile = {
     workspaceId: "",
     appId: match.app.application_id,
+    appName: match.app.name,
     instances,
   };
 

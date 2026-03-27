@@ -28,6 +28,7 @@ interface Auth {
 interface Profile {
   workspaceId: string;
   appId: string;
+  appName?: string;
   instances: {
     development: string;
     production?: string;
@@ -235,10 +236,11 @@ export function resolveInstanceId(profile: Profile, flag?: string): { id: string
 export async function resolveAppContext(options: {
   app?: string;
   instance?: string;
-}): Promise<{ appId: string; instanceId: string; instanceLabel: string }> {
+}): Promise<{ appId: string; appLabel: string; instanceId: string; instanceLabel: string }> {
   if (options.app) {
     const { fetchApplication } = await import("./plapi.ts");
     const app = await fetchApplication(options.app);
+    const appLabel = app.name || options.app;
 
     if (options.instance) {
       const env = INSTANCE_ALIASES[options.instance];
@@ -249,11 +251,17 @@ export async function resolveAppContext(options: {
             code: ERROR_CODE.INSTANCE_NOT_FOUND,
           });
         }
-        return { appId: options.app, instanceId: matched.instance_id, instanceLabel: env };
+        return {
+          appId: options.app,
+          appLabel,
+          instanceId: matched.instance_id,
+          instanceLabel: env,
+        };
       }
 
       return {
         appId: options.app,
+        appLabel,
         instanceId: options.instance,
         instanceLabel: options.instance,
       };
@@ -270,6 +278,7 @@ export async function resolveAppContext(options: {
 
     return {
       appId: options.app,
+      appLabel,
       instanceId: development.instance_id,
       instanceLabel: "development",
     };
@@ -289,6 +298,7 @@ export async function resolveAppContext(options: {
   const instance = resolveInstanceId(resolved.profile, options.instance);
   return {
     appId: resolved.profile.appId,
+    appLabel: resolved.profile.appName || resolved.profile.appId,
     instanceId: instance.id,
     instanceLabel: instance.label,
   };
