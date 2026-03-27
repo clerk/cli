@@ -10,6 +10,7 @@ import {
   listProfiles,
   resolveProfile,
   resolveInstanceId,
+  resolveAppContext,
   _setConfigDir,
   type Profile,
 } from "./config.ts";
@@ -162,6 +163,34 @@ describe("config", () => {
         instances: { development: "ins_dev" },
       };
       expect(() => resolveInstanceId(devOnly, "prod")).toThrow("No production instance configured");
+    });
+  });
+
+  describe("resolveAppContext (linked profile)", () => {
+    test("uses appName as appLabel when available", async () => {
+      const cwd = process.cwd();
+      await setProfile(cwd, {
+        workspaceId: "org_1",
+        appId: "app_1",
+        appName: "My Cool App",
+        instances: { development: "ins_dev" },
+      });
+
+      const ctx = await resolveAppContext({});
+      expect(ctx.appLabel).toBe("My Cool App");
+      expect(ctx.appId).toBe("app_1");
+    });
+
+    test("falls back to appId when appName is not set", async () => {
+      const cwd = process.cwd();
+      await setProfile(cwd, {
+        workspaceId: "org_1",
+        appId: "app_1",
+        instances: { development: "ins_dev" },
+      });
+
+      const ctx = await resolveAppContext({});
+      expect(ctx.appLabel).toBe("app_1");
     });
   });
 });
