@@ -8,11 +8,26 @@ const { values } = parseArgs({
   options: {
     target: { type: "string" },
     version: { type: "string", default: "0.0.0-dev" },
+    "env-profiles": { type: "string" },
   },
 });
 
 const targetFilter = values.target;
 const version = values.version!;
+
+// Read environment profiles from a JSON file path (--env-profiles or CLI_ENV_PROFILES_FILE env var)
+let envProfilesJson: string | undefined;
+const envProfilesPath = values["env-profiles"] ?? process.env.CLI_ENV_PROFILES_FILE;
+if (envProfilesPath) {
+  const file = Bun.file(envProfilesPath);
+  if (!(await file.exists())) {
+    throw new Error(`Environment profiles file not found: ${envProfilesPath}`);
+  }
+  // Parse to validate, then re-stringify compactly for --define injection
+  const parsed = await file.json();
+  envProfilesJson = JSON.stringify(parsed);
+  console.log(`Loaded environment profiles from ${envProfilesPath}`);
+}
 
 const selectedTargets = targetFilter
   ? targets.filter((t) => t.bunTarget === targetFilter || t.name === targetFilter)
@@ -34,21 +49,23 @@ for (const target of selectedTargets) {
   await mkdir(outDir, { recursive: true });
 
   console.log(`Building ${target.name} (${target.bunTarget})...`);
-  const buildResult = Bun.spawnSync(
-    [
-      "bun",
-      "build",
-      "--compile",
-      "--no-compile-autoload-dotenv",
-      `--target=${target.bunTarget}`,
-      `--define`,
-      `CLI_VERSION="${version}"`,
-      "./packages/cli-core/src/cli.ts",
-      "--outfile",
-      outFile,
-    ],
-    { stdio: ["ignore", "pipe", "pipe"] },
-  );
+  const buildArgs = [
+    "bun",
+    "build",
+    "--compile",
+    "--no-compile-autoload-dotenv",
+    `--target=${target.bunTarget}`,
+    `--define`,
+    `CLI_VERSION="${version}"`,
+  ];
+
+  if (envProfilesJson) {
+    buildArgs.push("--define", `CLI_ENV_PROFILES=${envProfilesJson}`);
+  }
+
+  buildArgs.push("./packages/cli-core/src/cli.ts", "--outfile", outFile);
+
+  const buildResult = Bun.spawnSync(buildArgs, { stdio: ["ignore", "pipe", "pipe"] });
 
   if (buildResult.exitCode !== 0) {
     console.error(`  FAIL: ${buildResult.stderr.toString().trim()}`);

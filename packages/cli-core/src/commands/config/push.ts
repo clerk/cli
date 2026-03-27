@@ -1,8 +1,8 @@
-import { confirm } from "@inquirer/prompts";
 import { resolveAppContext } from "../../lib/config.ts";
 import { fetchInstanceConfig, putInstanceConfig, patchInstanceConfig } from "../../lib/plapi.ts";
 import { isHuman } from "../../mode.ts";
 import { throwUsageError, throwUserAbort, withApiContext, ERROR_CODE } from "../../lib/errors.ts";
+import { confirm } from "../../lib/prompts.ts";
 import { dim, bold } from "../../lib/color.ts";
 
 interface ConfigPushOptions {
@@ -12,6 +12,7 @@ interface ConfigPushOptions {
   json?: string;
   dryRun?: boolean;
   yes?: boolean;
+  destructive?: boolean;
 }
 
 type Operation = {
@@ -22,6 +23,7 @@ type Operation = {
     appId: string,
     instId: string,
     config: Record<string, unknown>,
+    options?: { destructive?: boolean },
   ) => Promise<Record<string, unknown>>;
 };
 
@@ -74,14 +76,22 @@ async function configPush(options: ConfigPushOptions, op: Operation): Promise<vo
     return;
   }
 
-  if (isHuman() && !options.yes) {
-    const currentConfig = await withApiContext(
-      fetchInstanceConfig(ctx.appId, ctx.instanceId),
-      "Failed to fetch current config",
-    );
+  const currentConfig = await withApiContext(
+    fetchInstanceConfig(ctx.appId, ctx.instanceId),
+    "Failed to fetch current config",
+  );
 
+  const isPatch = op.method === "PATCH";
+  const hasChanges = hasConfigChanges(currentConfig, configPayload, isPatch);
+
+  if (!hasChanges) {
+    console.error("No changes detected.");
+    return;
+  }
+
+  if (isHuman() && !options.yes) {
     console.error(`\n${op.verb} config on ${ctx.instanceLabel} instance:\n`);
-    printDiff(currentConfig, configPayload, op.method === "PATCH");
+    printDiff(currentConfig, configPayload, isPatch);
 
     if (op.warning) {
       console.error(`\nWARNING: ${op.warning}`);
@@ -95,7 +105,7 @@ async function configPush(options: ConfigPushOptions, op: Operation): Promise<vo
   console.error(`${op.verb} config on ${ctx.instanceLabel} instance...`);
 
   const result = await withApiContext(
-    op.apiFn(ctx.appId, ctx.instanceId, configPayload),
+    op.apiFn(ctx.appId, ctx.instanceId, configPayload, { destructive: options.destructive }),
     "Failed to push config",
   );
   console.log(JSON.stringify(result, null, 2));
@@ -133,6 +143,25 @@ export async function readInput(options: { file?: string; json?: string }): Prom
       '  Example: clerk config patch --json \'{"session":{"lifetime":3600}}\'\n' +
       "  Example: cat config.json | clerk config patch",
   );
+}
+
+/**
+ * Returns true if the payload would change any config values.
+ * In patch mode only keys in the payload are compared;
+ * in put mode all keys from both sides are compared.
+ */
+export function hasConfigChanges(
+  current: Record<string, unknown>,
+  payload: Record<string, unknown>,
+  patchMode: boolean,
+): boolean {
+  const keys = patchMode
+    ? Object.keys(payload)
+    : [...new Set([...Object.keys(current), ...Object.keys(payload)])];
+  for (const key of keys) {
+    if (JSON.stringify(current[key]) !== JSON.stringify(payload[key])) return true;
+  }
+  return false;
 }
 
 /**

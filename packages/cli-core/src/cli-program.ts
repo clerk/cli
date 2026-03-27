@@ -13,14 +13,10 @@ import { api } from "./commands/api/index.ts";
 import { link } from "./commands/link/index.ts";
 import { unlink } from "./commands/unlink/index.ts";
 import { doctor } from "./commands/doctor/index.ts";
-import {
-  CliError,
-  UserAbortError,
-  ApiError,
-  EXIT_CODE,
-  throwUsageError,
-  type ErrorCode,
-} from "./lib/errors.ts";
+import { switchEnv } from "./commands/switch-env/index.ts";
+import { getEnvironment } from "./lib/config.ts";
+import { setCurrentEnv, isValidEnv, getCurrentEnvName } from "./lib/environment.ts";
+import { CliError, UserAbortError, ApiError, EXIT_CODE, throwUsageError } from "./lib/errors.ts";
 import { red } from "./lib/color.ts";
 import { isAgent } from "./mode.ts";
 
@@ -35,13 +31,26 @@ export function createProgram() {
     )
     .option("--verbose", "Show detailed error output");
 
-  program.hook("preAction", () => {
+  program.hook("preAction", async () => {
     const opts = program.opts();
     if (opts.mode) {
       if (opts.mode !== "human" && opts.mode !== "agent") {
         throwUsageError(`Invalid mode "${opts.mode}". Must be "human" or "agent".`);
       }
       setMode(opts.mode as Mode);
+    }
+
+    // Initialize the active environment from persisted config
+    const envName = await getEnvironment();
+    if (envName && isValidEnv(envName)) {
+      setCurrentEnv(envName);
+    }
+
+    // Print environment banner to stderr when not on production,
+    // so it doesn't pollute stdout for piped commands.
+    const activeEnv = getCurrentEnvName();
+    if (activeEnv !== "production") {
+      process.stderr.write(`[${activeEnv.toUpperCase()}]\n`);
     }
   });
 
@@ -51,14 +60,38 @@ export function createProgram() {
     .option("--framework <name>", "Framework to set up (skips auto-detection)")
     .option("--prompt", "Output a prompt for an AI agent to integrate Clerk")
     .option("-y, --yes", "Skip confirmation prompts")
+    .addHelpText(
+      "after",
+      `
+Examples:
+  $ clerk init                       Auto-detect framework and set up Clerk
+  $ clerk init --framework next      Set up for Next.js (skips detection)
+  $ clerk init --prompt              Output a setup prompt for an AI agent
+  $ clerk init -y                    Skip all confirmation prompts`,
+    )
     .action(init);
 
-  const auth = program.command("auth").description("Manage authentication");
+  const auth = program
+    .command("auth")
+    .description("Manage authentication")
+    .addHelpText(
+      "after",
+      `
+Examples:
+  $ clerk auth login                 Log in via browser (OAuth)
+  $ clerk auth logout                Remove stored credentials`,
+    );
 
   auth
     .command("login")
     .aliases(["signup", "signin", "sign-in"])
     .description("Log in to your Clerk account")
+    .addHelpText(
+      "after",
+      `
+Examples:
+  $ clerk auth login                 Log in via browser (OAuth)`,
+    )
     .action(async () => {
       await login();
     });
@@ -67,23 +100,63 @@ export function createProgram() {
     .command("logout")
     .aliases(["signout", "sign-out"])
     .description("Log out of your Clerk account")
+    .addHelpText(
+      "after",
+      `
+Examples:
+  $ clerk auth logout                Remove stored credentials`,
+    )
     .action(logout);
 
   program
     .command("link")
     .description("Link this project to a Clerk application")
     .option("--app <id>", "Application ID to link (skips interactive picker)")
+    .addHelpText(
+      "after",
+      `
+Examples:
+  $ clerk link                       Pick an app interactively
+  $ clerk link --app app_abc123      Link directly by application ID`,
+    )
     .action(link);
 
   program
     .command("unlink")
     .description("Unlink this project from its Clerk application")
     .option("--yes", "Skip confirmation prompt")
+    .addHelpText(
+      "after",
+      `
+Examples:
+  $ clerk unlink                     Unlink with confirmation prompt
+  $ clerk unlink --yes               Skip confirmation`,
+    )
     .action(unlink);
 
-  program.command("whoami").description("Show the current logged-in user").action(whoami);
+  program
+    .command("whoami")
+    .description("Show the current logged-in user")
+    .addHelpText(
+      "after",
+      `
+Examples:
+  $ clerk whoami                     Show your email address`,
+    )
+    .action(whoami);
 
-  const env = program.command("env").description("Manage environment variables");
+  const env = program
+    .command("env")
+    .description("Manage environment variables")
+    .addHelpText(
+      "after",
+      `
+Examples:
+  $ clerk env pull                             Pull dev keys to .env.local
+  $ clerk env pull --instance prod             Pull production keys
+  $ clerk env pull --file .env                 Write to a specific file
+  $ clerk env pull --app app_abc123            Target a specific application`,
+    );
 
   env
     .command("pull")
@@ -91,9 +164,35 @@ export function createProgram() {
     .option("--app <id>", "Application ID to target (works from any directory)")
     .option("--instance <id>", "Instance to target (dev, prod, or a full instance ID)")
     .option("--file <path>", "Target env file (default: auto-detect)")
+    .addHelpText(
+      "after",
+      `
+Examples:
+  $ clerk env pull                             Pull dev keys to .env.local
+  $ clerk env pull --instance prod             Pull production keys
+  $ clerk env pull --file .env                 Write to a specific file
+  $ clerk env pull --app app_abc123            Target a specific application`,
+    )
     .action(pull);
 
-  const config = program.command("config").description("Manage instance configuration");
+  const config = program
+    .command("config")
+    .description("Manage instance configuration")
+    .addHelpText(
+      "after",
+      `
+Examples:
+  $ clerk config pull                                      Print dev config to stdout
+  $ clerk config pull --instance prod                      Pull production config
+  $ clerk config pull --output config.json                 Save config to a file
+  $ clerk config schema                                    Print full config schema
+  $ clerk config schema --keys social_login                Schema for specific keys
+  $ clerk config patch --file config.json                  Apply partial update from file
+  $ clerk config patch --json '{"key":"value"}'            Inline JSON patch
+  $ clerk config patch --file config.json --dry-run        Preview without applying
+  $ clerk config put --file config.json                    Replace entire config from file
+  $ clerk config put --instance prod --file config.json    Replace production config`,
+    );
 
   config
     .command("pull")
@@ -101,6 +200,15 @@ export function createProgram() {
     .option("--app <id>", "Application ID to target (works from any directory)")
     .option("--instance <id>", "Instance to target (dev, prod, or a full instance ID)")
     .option("--output <file>", "Write config to a file instead of stdout")
+    .option("--keys <keys...>", "Config keys to retrieve")
+    .addHelpText(
+      "after",
+      `
+Examples:
+  $ clerk config pull                          Print dev config to stdout
+  $ clerk config pull --instance prod          Pull production config
+  $ clerk config pull --output config.json     Save config to a file`,
+    )
     .action(configPull);
 
   config
@@ -110,6 +218,14 @@ export function createProgram() {
     .option("--instance <id>", "Instance to target (dev, prod, or a full instance ID)")
     .option("--output <file>", "Write schema to a file instead of stdout")
     .option("--keys <keys...>", "Config keys to retrieve schema for")
+    .addHelpText(
+      "after",
+      `
+Examples:
+  $ clerk config schema                          Print full config schema
+  $ clerk config schema --keys social_login      Schema for specific keys
+  $ clerk config schema --output schema.json     Save schema to a file`,
+    )
     .action(configSchema);
 
   config
@@ -121,6 +237,19 @@ export function createProgram() {
     .option("--json <string>", "Pass config JSON inline")
     .option("--dry-run", "Show what would be sent without making the API call")
     .option("--yes", "Skip confirmation prompts")
+    .option(
+      "--destructive",
+      "Allow destructive changes that delete resources (e.g. session templates, custom OAuth providers) rather than just resetting config to defaults",
+    )
+    .addHelpText(
+      "after",
+      `
+Examples:
+  $ clerk config patch --file config.json                Apply partial update from file
+  $ clerk config patch --json '{"key":"value"}'          Inline JSON patch
+  $ clerk config patch --file config.json --dry-run      Preview without applying
+  $ clerk config patch --instance prod --file config.json  Patch production config`,
+    )
     .action(configPatch);
 
   config
@@ -132,6 +261,19 @@ export function createProgram() {
     .option("--json <string>", "Pass config JSON inline")
     .option("--dry-run", "Show what would be sent without making the API call")
     .option("--yes", "Skip confirmation prompts")
+    .option(
+      "--destructive",
+      "Allow destructive changes that delete resources (e.g. session templates, custom OAuth providers) rather than just resetting config to defaults",
+    )
+    .addHelpText(
+      "after",
+      `
+Examples:
+  $ clerk config put --file config.json                  Replace entire config from file
+  $ clerk config put --file config.json --dry-run        Preview the replacement
+  $ clerk config put --instance prod --file config.json  Replace production config
+  $ clerk config put --file config.json --yes            Skip confirmation prompt`,
+    )
     .action(configPut);
 
   program
@@ -170,7 +312,31 @@ Examples:
     .option("--json", "Output results as JSON")
     .option("--spotlight", "Only show warnings and failures")
     .option("--fix", "Attempt to auto-fix issues")
+    .addHelpText(
+      "after",
+      `
+Examples:
+  $ clerk doctor                     Run all health checks
+  $ clerk doctor --verbose           Show detailed output for each check
+  $ clerk doctor --json              Output results as machine-readable JSON
+  $ clerk doctor --fix               Auto-fix detected issues
+  $ clerk doctor --spotlight         Only show warnings and failures`,
+    )
     .action(doctor);
+
+  program
+    .command("switch-env")
+    .description("Switch the active Clerk CLI environment")
+    .argument("[environment]", "Environment to switch to (e.g. production, staging)")
+    .addHelpText(
+      "after",
+      `
+Examples:
+  $ clerk switch-env                   Show current environment
+  $ clerk switch-env staging           Switch to staging
+  $ clerk switch-env production        Switch back to production`,
+    )
+    .action(switchEnv);
 
   program
     .command("deploy", { hidden: true })
@@ -181,7 +347,7 @@ Examples:
   return program;
 }
 
-function formatApiBody(body: string, verbose: boolean): string {
+export function formatApiBody(body: string, verbose: boolean): string {
   if (verbose) {
     try {
       return "\n" + JSON.stringify(JSON.parse(body), null, 2);
@@ -192,7 +358,9 @@ function formatApiBody(body: string, verbose: boolean): string {
 
   try {
     const parsed = JSON.parse(body);
-    if (parsed.errors?.[0]?.message) return parsed.errors[0].message;
+    if (Array.isArray(parsed.errors) && parsed.errors.length > 0) {
+      return parsed.errors.map(formatSingleError).join("\n");
+    }
     if (parsed.error) return parsed.error;
     if (parsed.message) return parsed.message;
   } catch {
@@ -201,6 +369,50 @@ function formatApiBody(body: string, verbose: boolean): string {
 
   if (body.length > 200) return body.slice(0, 200) + "...";
   return body;
+}
+
+function formatSingleError(err: {
+  message?: string;
+  code?: string;
+  meta?: Record<string, unknown>;
+}): string {
+  let msg = err.message ?? "Unknown error";
+  const meta = err.meta;
+  if (!meta) return msg;
+
+  switch (err.code) {
+    case "unsupported_subscription_plan_features": {
+      const features = meta.unsupported_features;
+      if (Array.isArray(features) && features.length > 0) {
+        msg += `\n  Unsupported features: ${features.join(", ")}`;
+      }
+      break;
+    }
+    case "feature_not_enabled": {
+      if (meta.param_name) {
+        msg += `\n  Feature: ${meta.param_name}`;
+      }
+      break;
+    }
+    case "unknown_config_key": {
+      const suggestions = meta.suggestions;
+      if (Array.isArray(suggestions) && suggestions.length > 0) {
+        msg += `\n  Did you mean: ${suggestions.join(", ")}`;
+      }
+      if (meta.param_name) {
+        msg += `\n  Parameter: ${meta.param_name}`;
+      }
+      break;
+    }
+    default: {
+      if (meta.param_name) {
+        msg += `\n  Parameter: ${meta.param_name}`;
+      }
+      break;
+    }
+  }
+
+  return msg;
 }
 
 /**
@@ -240,7 +452,13 @@ export async function runProgram(
       const prefix = error.context ?? "Request failed";
       if (isAgent()) {
         const apiCode = extractApiErrorCode(error.body);
-        outputJsonError(apiCode ?? "api_error", `${prefix} (${error.status}): ${detail}`);
+        const apiErrors = extractApiErrors(error.body);
+        outputJsonError(
+          apiCode ?? "api_error",
+          `${prefix} (${error.status}): ${detail}`,
+          undefined,
+          apiErrors,
+        );
       } else {
         console.error(red(`error: ${prefix} (${error.status}): ${detail}`));
       }
@@ -265,12 +483,26 @@ export async function runProgram(
   }
 }
 
+interface ApiErrorEntry {
+  code?: string;
+  message?: string;
+  meta?: Record<string, unknown>;
+}
+
 /** Output a structured JSON error to stderr for agent/CI consumption. */
-function outputJsonError(code: string, message: string, docsUrl?: string): void {
-  const payload: { error: { code: string; message: string; docsUrl?: string } } = {
+function outputJsonError(
+  code: string,
+  message: string,
+  docsUrl?: string,
+  errors?: ApiErrorEntry[],
+): void {
+  const payload: {
+    error: { code: string; message: string; docsUrl?: string; errors?: ApiErrorEntry[] };
+  } = {
     error: { code, message },
   };
   if (docsUrl) payload.error.docsUrl = docsUrl;
+  if (errors?.length) payload.error.errors = errors;
   console.error(JSON.stringify(payload));
 }
 
@@ -282,4 +514,23 @@ function extractApiErrorCode(body: string): string | undefined {
   } catch {
     return undefined;
   }
+}
+
+/** Extract the full errors array from a Clerk API JSON response body, if present. */
+function extractApiErrors(body: string): ApiErrorEntry[] | undefined {
+  try {
+    const parsed = JSON.parse(body);
+    if (Array.isArray(parsed.errors) && parsed.errors.length > 0) {
+      return parsed.errors.map((e: ApiErrorEntry) => {
+        const entry: ApiErrorEntry = {};
+        if (e.code) entry.code = e.code;
+        if (e.message) entry.message = e.message;
+        if (e.meta && Object.keys(e.meta).length > 0) entry.meta = e.meta;
+        return entry;
+      });
+    }
+  } catch {
+    // not JSON
+  }
+  return undefined;
 }

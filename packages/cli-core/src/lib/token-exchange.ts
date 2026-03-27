@@ -9,10 +9,8 @@
  *   CLERK_OAUTH_SCOPES=profile email
  */
 
-import { OAUTH } from "./constants.ts";
+import { getOAuthConfig } from "./environment.ts";
 import { ApiError, withApiContext } from "./errors.ts";
-
-export const OAUTH_CONFIG = OAUTH;
 
 interface TokenResponse {
   access_token: string;
@@ -31,17 +29,18 @@ export async function exchangeCodeForToken(params: {
   codeVerifier: string;
   redirectUri: string;
 }): Promise<TokenResponse> {
+  const oauth = getOAuthConfig();
   const body = new URLSearchParams({
     grant_type: "authorization_code",
     code: params.code,
-    client_id: OAUTH_CONFIG.clientId,
+    client_id: oauth.clientId,
     code_verifier: params.codeVerifier,
     redirect_uri: params.redirectUri,
   });
 
   return withApiContext(
     (async () => {
-      const response = await fetch(OAUTH_CONFIG.tokenUrl, {
+      const response = await fetch(oauth.tokenUrl, {
         method: "POST",
         headers: { "Content-Type": "application/x-www-form-urlencoded" },
         body: body.toString(),
@@ -59,9 +58,10 @@ export async function exchangeCodeForToken(params: {
 }
 
 export async function fetchUserInfo(accessToken: string): Promise<UserInfo> {
+  const oauth = getOAuthConfig();
   return withApiContext(
     (async () => {
-      const response = await fetch(OAUTH_CONFIG.userinfoUrl, {
+      const response = await fetch(oauth.userinfoUrl, {
         headers: { Authorization: `Bearer ${accessToken}` },
       });
 

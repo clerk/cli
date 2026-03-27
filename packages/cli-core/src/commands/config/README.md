@@ -13,15 +13,17 @@ clerk config pull
 clerk config pull --app app_123
 clerk config pull --instance prod
 clerk config pull --output clerk-config.json
+clerk config pull --keys session sign_up
 ```
 
 #### Options
 
-| Flag              | Description                                                                         |
-| ----------------- | ----------------------------------------------------------------------------------- |
-| `--app <id>`      | Application ID to target directly (works from any directory)                        |
-| `--instance <id>` | Instance to target (`dev`, `prod`, or a full instance ID). Defaults to development. |
-| `--output <file>` | Write config to a file instead of stdout                                            |
+| Flag               | Description                                                                         |
+| ------------------ | ----------------------------------------------------------------------------------- |
+| `--app <id>`       | Application ID to target directly (works from any directory)                        |
+| `--instance <id>`  | Instance to target (`dev`, `prod`, or a full instance ID). Defaults to development. |
+| `--output <file>`  | Write config to a file instead of stdout                                            |
+| `--keys <keys...>` | Config keys to retrieve                                                             |
 
 #### Requirements
 

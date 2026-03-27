@@ -35,3 +35,6 @@ report.[0-9]_.[0-9]_.[0-9]_.[0-9]_.json
 
 # Bun compile artifacts
 *.bun-build
+
+# Environment profiles
+.env-profiles.json

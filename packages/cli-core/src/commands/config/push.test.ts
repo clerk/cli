@@ -56,6 +56,7 @@ describe("config push", () => {
       json?: string;
       dryRun?: boolean;
       yes?: boolean;
+      destructive?: boolean;
     } = {},
   ) {
     const { configPatch } = await import("./push.ts");
@@ -70,6 +71,7 @@ describe("config push", () => {
       json?: string;
       dryRun?: boolean;
       yes?: boolean;
+      destructive?: boolean;
     } = {},
   ) {
     const { configPut } = await import("./push.ts");
@@ -178,7 +180,11 @@ describe("config push", () => {
       return new Response(JSON.stringify(mockResponse), { status: 200 });
     });
 
-    await runConfigPatch({ app: "app_1", json: '{"session":{"lifetime":3600}}', yes: true });
+    await runConfigPatch({
+      app: "app_1",
+      json: '{"session":{"lifetime":3600}}',
+      yes: true,
+    });
     expect(capturedUrl).toContain("/instances/ins_dev/");
   });
 
@@ -296,6 +302,67 @@ describe("config push", () => {
     expect(JSON.parse(capturedBody)).toEqual({ session: { lifetime: 3600 } });
   });
 
+  // --- --destructive flag ---
+
+  test("patch sends ?destructive=true when --destructive is set", async () => {
+    let capturedUrl = "";
+    stubFetch(async (input) => {
+      capturedUrl = input.toString();
+      return new Response(JSON.stringify(mockResponse), { status: 200 });
+    });
+
+    await setProfile(process.cwd(), {
+      workspaceId: "org_1",
+      appId: "app_1",
+      instances: { development: "ins_dev" },
+    });
+
+    await runConfigPatch({
+      json: '{"session":null}',
+      yes: true,
+      destructive: true,
+    });
+    expect(capturedUrl).toContain("?destructive=true");
+  });
+
+  test("put sends ?destructive=true when --destructive is set", async () => {
+    let capturedUrl = "";
+    stubFetch(async (input) => {
+      capturedUrl = input.toString();
+      return new Response(JSON.stringify(mockResponse), { status: 200 });
+    });
+
+    await setProfile(process.cwd(), {
+      workspaceId: "org_1",
+      appId: "app_1",
+      instances: { development: "ins_dev" },
+    });
+
+    await runConfigPut({
+      json: '{"session":null}',
+      yes: true,
+      destructive: true,
+    });
+    expect(capturedUrl).toContain("?destructive=true");
+  });
+
+  test("does not send ?destructive=true by default", async () => {
+    let capturedUrl = "";
+    stubFetch(async (input) => {
+      capturedUrl = input.toString();
+      return new Response(JSON.stringify(mockResponse), { status: 200 });
+    });
+
+    await setProfile(process.cwd(), {
+      workspaceId: "org_1",
+      appId: "app_1",
+      instances: { development: "ins_dev" },
+    });
+
+    await runConfigPatch({ json: '{"session":{"lifetime":3600}}', yes: true });
+    expect(capturedUrl).not.toContain("destructive");
+  });
+
   // --- Instance targeting ---
 
   test("targets development instance by default", async () => {
@@ -345,7 +412,11 @@ describe("config push", () => {
       instances: { development: "ins_dev" },
     });
 
-    await runConfigPut({ json: '{"a":1}', instance: "ins_custom_123", yes: true });
+    await runConfigPut({
+      json: '{"a":1}',
+      instance: "ins_custom_123",
+      yes: true,
+    });
     expect(requestedUrl).toContain("/instances/ins_custom_123/");
   });
 
@@ -364,7 +435,10 @@ describe("config push", () => {
       instances: { development: "ins_dev" },
     });
 
-    await runConfigPatch({ json: '{"session":{"lifetime":3600}}', dryRun: true });
+    await runConfigPatch({
+      json: '{"session":{"lifetime":3600}}',
+      dryRun: true,
+    });
     expect(fetchCalled).toBe(false);
     expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining("[dry-run]"));
     expect(logSpy).toHaveBeenCalledWith(JSON.stringify({ session: { lifetime: 3600 } }, null, 2));
@@ -424,7 +498,11 @@ describe("config push", () => {
       instances: { development: "ins_dev" },
     });
 
-    await runConfigPatch({ json: '{"from":"json"}', file: configFile, yes: true });
+    await runConfigPatch({
+      json: '{"from":"json"}',
+      file: configFile,
+      yes: true,
+    });
     expect(JSON.parse(capturedBody)).toEqual({ from: "json" });
   });
 });
