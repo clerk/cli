@@ -36,14 +36,14 @@ export async function switchEnv(environment: string | undefined): Promise<void> 
 
   const previousEnv = getCurrentEnvName();
 
-  // Update the in-memory state and persist
-  setCurrentEnv(environment);
-  await setEnvironment(environment);
-
   if (previousEnv === environment) {
     console.log(`Already on ${environment} environment.`);
     return;
   }
+
+  // Update the in-memory state and persist
+  setCurrentEnv(environment);
+  await setEnvironment(environment);
 
   console.log(`Switched from ${previousEnv} to ${environment}.`);
 
