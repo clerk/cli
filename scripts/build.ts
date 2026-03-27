@@ -8,17 +8,25 @@ const { values } = parseArgs({
   options: {
     target: { type: "string" },
     version: { type: "string", default: "0.0.0-dev" },
-    "env-profiles": { type: "string" },
+    "env-profiles-path": { type: "string" },
   },
 });
 
 const targetFilter = values.target;
 const version = values.version!;
 
-// Read environment profiles from a JSON file path (--env-profiles or CLI_ENV_PROFILES_FILE env var)
 let envProfilesJson: string | undefined;
-const envProfilesPath = values["env-profiles"] ?? process.env.CLI_ENV_PROFILES_FILE;
-if (envProfilesPath) {
+const envProfilesRaw = process.env.ENV_PROFILES;
+const envProfilesPath = values["env-profiles-path"];
+
+if (envProfilesRaw) {
+  try {
+    envProfilesJson = JSON.stringify(JSON.parse(envProfilesRaw));
+  } catch (error) {
+    throw new Error(`Error parsing ENV_PROFILES: ${error}`);
+  }
+  console.log(`Loaded environment profiles from ENV_PROFILES`);
+} else if (envProfilesPath) {
   const file = Bun.file(envProfilesPath);
   if (!(await file.exists())) {
     throw new Error(`Environment profiles file not found: ${envProfilesPath}`);
@@ -65,7 +73,9 @@ for (const target of selectedTargets) {
 
   buildArgs.push("./packages/cli-core/src/cli.ts", "--outfile", outFile);
 
-  const buildResult = Bun.spawnSync(buildArgs, { stdio: ["ignore", "pipe", "pipe"] });
+  const buildResult = Bun.spawnSync(buildArgs, {
+    stdio: ["ignore", "pipe", "pipe"],
+  });
 
   if (buildResult.exitCode !== 0) {
     console.error(`  FAIL: ${buildResult.stderr.toString().trim()}`);
@@ -74,7 +84,9 @@ for (const target of selectedTargets) {
   }
 
   // Verify binary format
-  const fileResult = Bun.spawnSync(["file", outFile], { stdio: ["ignore", "pipe", "pipe"] });
+  const fileResult = Bun.spawnSync(["file", outFile], {
+    stdio: ["ignore", "pipe", "pipe"],
+  });
   const fileOutput = fileResult.stdout.toString();
   if (!target.verifyPattern.test(fileOutput)) {
     console.error(`  FAIL: binary format mismatch for ${target.name}`);
