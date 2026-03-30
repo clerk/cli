@@ -391,4 +391,23 @@ describe("env pull", () => {
     const content = await Bun.file(join(tempDir, ".env.local")).text();
     expect(content).toContain("NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=pk_test_abc123");
   });
+
+  test("detects Nuxt and uses NUXT_CLERK_SECRET_KEY", async () => {
+    await setProfile(tempDir, {
+      workspaceId: "org_1",
+      appId: "app_1",
+      instances: { development: "ins_dev" },
+    });
+    await Bun.write(
+      join(tempDir, "package.json"),
+      JSON.stringify({ dependencies: { nuxt: "4.0.0" } }),
+    );
+
+    await runEnvPull();
+
+    const content = await Bun.file(join(tempDir, ".env.local")).text();
+    expect(content).toContain("NUXT_PUBLIC_CLERK_PUBLISHABLE_KEY=pk_test_abc123");
+    expect(content).toContain("NUXT_CLERK_SECRET_KEY=sk_test_xyz789");
+    expect(content).not.toMatch(/^CLERK_SECRET_KEY=/m);
+  });
 });

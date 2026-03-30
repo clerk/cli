@@ -2,7 +2,7 @@ import { join } from "node:path";
 import { resolveAppContext } from "../../lib/config.ts";
 import { fetchApplication } from "../../lib/plapi.ts";
 import { parseEnvFile, mergeEnvVars, serializeEnvFile } from "../../lib/dotenv.ts";
-import { detectPublishableKeyName } from "../../lib/framework.ts";
+import { detectPublishableKeyName, detectSecretKeyName } from "../../lib/framework.ts";
 import { CliError, ERROR_CODE, withApiContext } from "../../lib/errors.ts";
 
 interface EnvPullOptions {
@@ -38,8 +38,10 @@ export async function pull(options: EnvPullOptions): Promise<void> {
     });
   }
 
-  const publishableKeyName = await detectPublishableKeyName(process.cwd());
-  const targetFile = await resolveTargetFile(process.cwd(), options.file);
+  const cwd = process.cwd();
+  const publishableKeyName = await detectPublishableKeyName(cwd);
+  const secretKeyName = await detectSecretKeyName(cwd);
+  const targetFile = await resolveTargetFile(cwd, options.file);
 
   const file = Bun.file(targetFile);
   const existingContent = (await file.exists()) ? await file.text() : "";
@@ -49,7 +51,7 @@ export async function pull(options: EnvPullOptions): Promise<void> {
     [publishableKeyName]: matched.publishable_key,
   };
   if (matched.secret_key) {
-    vars.CLERK_SECRET_KEY = matched.secret_key;
+    vars[secretKeyName] = matched.secret_key;
   }
   const merged = mergeEnvVars(lines, vars);
   const output = serializeEnvFile(merged);

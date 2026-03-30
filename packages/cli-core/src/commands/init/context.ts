@@ -59,7 +59,7 @@ export async function gatherContext(
   const packageManager = await detectPackageManager(cwd);
 
   const deps = await readDeps(cwd);
-  const existingClerk = deps ? Object.keys(deps).some((d) => d.startsWith("@clerk/")) : false;
+  const existingClerk = deps ? framework.sdk in deps : false;
 
   const envFile = (await fileExists(join(cwd, ".env.local"))) ? ".env.local" : ".env";
 

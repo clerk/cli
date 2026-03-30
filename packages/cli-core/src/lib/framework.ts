@@ -10,6 +10,8 @@ export interface FrameworkInfo {
   name: string;
   sdk: string;
   envVar: string;
+  /** Override for secret key env var name. Defaults to CLERK_SECRET_KEY when omitted. */
+  secretKeyEnvVar?: string;
 }
 
 // Order matters: more specific frameworks first (e.g. next before react, nuxt before vue)
@@ -21,7 +23,13 @@ export const FRAMEWORK_MAP: FrameworkInfo[] = [
     envVar: "NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY",
   },
   { dep: "astro", name: "Astro", sdk: "@clerk/astro", envVar: "PUBLIC_CLERK_PUBLISHABLE_KEY" },
-  { dep: "nuxt", name: "Nuxt", sdk: "@clerk/nuxt", envVar: "NUXT_PUBLIC_CLERK_PUBLISHABLE_KEY" },
+  {
+    dep: "nuxt",
+    name: "Nuxt",
+    sdk: "@clerk/nuxt",
+    envVar: "NUXT_PUBLIC_CLERK_PUBLISHABLE_KEY",
+    secretKeyEnvVar: "NUXT_CLERK_SECRET_KEY",
+  },
   {
     dep: "@tanstack/react-start",
     name: "TanStack Start",
@@ -61,6 +69,7 @@ export const FRAMEWORK_NAMES = FRAMEWORK_MAP.map((fw) => {
 });
 
 const FALLBACK_KEY = "CLERK_PUBLISHABLE_KEY";
+const FALLBACK_SECRET_KEY = "CLERK_SECRET_KEY";
 
 export async function readDeps(cwd: string): Promise<Record<string, string> | null> {
   const file = Bun.file(join(cwd, "package.json"));
@@ -88,4 +97,9 @@ export async function detectFramework(cwd: string): Promise<FrameworkInfo | null
 export async function detectPublishableKeyName(cwd: string): Promise<string> {
   const fw = await detectFramework(cwd);
   return fw?.envVar ?? FALLBACK_KEY;
+}
+
+export async function detectSecretKeyName(cwd: string): Promise<string> {
+  const fw = await detectFramework(cwd);
+  return fw?.secretKeyEnvVar ?? FALLBACK_SECRET_KEY;
 }

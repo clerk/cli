@@ -2,7 +2,7 @@ import { join } from "node:path";
 import { homedir } from "node:os";
 import { fetchUserInfo } from "../../lib/token-exchange.ts";
 import { PlapiError } from "../../lib/errors.ts";
-import { detectPublishableKeyName } from "../../lib/framework.ts";
+import { detectPublishableKeyName, detectSecretKeyName } from "../../lib/framework.ts";
 import { parseEnvFile } from "../../lib/dotenv.ts";
 import type { CheckResult, DoctorContext, FixAction } from "./types.ts";
 
@@ -231,13 +231,14 @@ export async function checkEnvVars(ctx: DoctorContext): Promise<CheckResult> {
   }
 
   const publishableKeyName = await detectPublishableKeyName(cwd);
+  const secretKeyName = await detectSecretKeyName(cwd);
   const hasPublishable = publishableKeyName in entries && entries[publishableKeyName] !== "";
-  const hasSecret = "CLERK_SECRET_KEY" in entries && entries["CLERK_SECRET_KEY"] !== "";
+  const hasSecret = secretKeyName in entries && entries[secretKeyName] !== "";
 
   if (!hasPublishable || !hasSecret) {
     const missing: string[] = [];
     if (!hasPublishable) missing.push(publishableKeyName);
-    if (!hasSecret) missing.push("CLERK_SECRET_KEY");
+    if (!hasSecret) missing.push(secretKeyName);
 
     return check.warn(`${foundFile} is missing: ${missing.join(", ")}`, {
       remedy: "Run `clerk env pull` to populate your environment variables.",
@@ -248,16 +249,16 @@ export async function checkEnvVars(ctx: DoctorContext): Promise<CheckResult> {
   const envLabel = await identifyEnvironment(
     ctx,
     entries[publishableKeyName]!,
-    entries["CLERK_SECRET_KEY"]!,
+    entries[secretKeyName]!,
   );
 
   if (envLabel) {
     return check.pass(
-      `${foundFile} contains ${publishableKeyName} and CLERK_SECRET_KEY (${envLabel} instance)`,
+      `${foundFile} contains ${publishableKeyName} and ${secretKeyName} (${envLabel} instance)`,
     );
   }
 
-  return check.pass(`${foundFile} contains ${publishableKeyName} and CLERK_SECRET_KEY`);
+  return check.pass(`${foundFile} contains ${publishableKeyName} and ${secretKeyName}`);
 }
 
 async function identifyEnvironment(

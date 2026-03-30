@@ -104,11 +104,11 @@ The middleware filename is version-aware: `proxy.ts` for Next.js 16+, `middlewar
 
 ### Nuxt
 
-| Action | File                | Description                              |
-| ------ | ------------------- | ---------------------------------------- |
-| MODIFY | `nuxt.config.ts`    | Add `@clerk/nuxt` to modules array       |
-| CREATE | `pages/sign-in.vue` | Sign-in page with `<SignIn />` component |
-| CREATE | `pages/sign-up.vue` | Sign-up page with `<SignUp />` component |
+| Action | File                          | Description                              |
+| ------ | ----------------------------- | ---------------------------------------- |
+| MODIFY | `nuxt.config.ts`              | Add `@clerk/nuxt` to modules array       |
+| CREATE | `pages/sign-in/[...slug].vue` | Sign-in page with `<SignIn />` component |
+| CREATE | `pages/sign-up/[...slug].vue` | Sign-up page with `<SignUp />` component |
 
 Nuxt's module system auto-configures middleware and auto-imports components.
 
