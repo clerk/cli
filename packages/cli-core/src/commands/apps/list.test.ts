@@ -1,4 +1,4 @@
-import { test, expect, describe, afterEach, mock, spyOn } from "bun:test";
+import { test, expect, describe, beforeEach, afterEach, mock, spyOn } from "bun:test";
 import { capturedOutput } from "../../test/stubs.ts";
 
 const mockListApplications = mock();
@@ -15,7 +15,7 @@ mock.module("../../mode.ts", () => ({
   getMode: () => "human",
 }));
 
-const { apps } = await import("./index.ts");
+const { list } = await import("./list.ts");
 
 const mockApps = [
   {
@@ -49,26 +49,28 @@ const mockApps = [
   },
 ];
 
-describe("apps", () => {
+describe("apps list", () => {
   let logSpy: ReturnType<typeof spyOn>;
   let errorSpy: ReturnType<typeof spyOn>;
+
+  beforeEach(() => {
+    mockIsAgent.mockReturnValue(false);
+    logSpy = spyOn(console, "log").mockImplementation(() => {});
+    errorSpy = spyOn(console, "error").mockImplementation(() => {});
+  });
 
   afterEach(() => {
     mockListApplications.mockReset();
     mockIsAgent.mockReset();
-    mockIsAgent.mockReturnValue(false);
-    logSpy?.mockRestore();
-    errorSpy?.mockRestore();
+    logSpy.mockRestore();
+    errorSpy.mockRestore();
   });
 
   describe("compact table (default)", () => {
     test("lists apps with name, id, and environments", async () => {
-      mockIsAgent.mockReturnValue(false);
       mockListApplications.mockResolvedValue(mockApps);
-      logSpy = spyOn(console, "log").mockImplementation(() => {});
-      errorSpy = spyOn(console, "error").mockImplementation(() => {});
 
-      await apps();
+      await list();
 
       const output = capturedOutput(logSpy);
       expect(output).toContain("My SaaS App");
@@ -79,7 +81,6 @@ describe("apps", () => {
     });
 
     test("shows app id as name when name is absent", async () => {
-      mockIsAgent.mockReturnValue(false);
       mockListApplications.mockResolvedValue([
         {
           application_id: "app_noname",
@@ -88,22 +89,17 @@ describe("apps", () => {
           ],
         },
       ]);
-      logSpy = spyOn(console, "log").mockImplementation(() => {});
-      errorSpy = spyOn(console, "error").mockImplementation(() => {});
 
-      await apps();
+      await list();
 
       const output = capturedOutput(logSpy);
       expect(output).toContain("app_noname");
     });
 
     test("does not show secret keys", async () => {
-      mockIsAgent.mockReturnValue(false);
       mockListApplications.mockResolvedValue(mockApps);
-      logSpy = spyOn(console, "log").mockImplementation(() => {});
-      errorSpy = spyOn(console, "error").mockImplementation(() => {});
 
-      await apps();
+      await list();
 
       const output = capturedOutput(logSpy);
       expect(output).not.toContain("sk_test_xxx");
@@ -111,24 +107,18 @@ describe("apps", () => {
     });
 
     test("shows count summary on stderr", async () => {
-      mockIsAgent.mockReturnValue(false);
       mockListApplications.mockResolvedValue(mockApps);
-      logSpy = spyOn(console, "log").mockImplementation(() => {});
-      errorSpy = spyOn(console, "error").mockImplementation(() => {});
 
-      await apps();
+      await list();
 
       const summary = capturedOutput(errorSpy);
       expect(summary).toContain("2 applications");
     });
 
     test("shows singular count for one app", async () => {
-      mockIsAgent.mockReturnValue(false);
       mockListApplications.mockResolvedValue([mockApps[0]]);
-      logSpy = spyOn(console, "log").mockImplementation(() => {});
-      errorSpy = spyOn(console, "error").mockImplementation(() => {});
 
-      await apps();
+      await list();
 
       const summary = capturedOutput(errorSpy);
       expect(summary).toContain("1 application");
@@ -138,11 +128,9 @@ describe("apps", () => {
 
   describe("JSON output", () => {
     test("outputs JSON when --json flag is set", async () => {
-      mockIsAgent.mockReturnValue(false);
       mockListApplications.mockResolvedValue(mockApps);
-      logSpy = spyOn(console, "log").mockImplementation(() => {});
 
-      await apps({ json: true });
+      await list({ json: true });
 
       const output = capturedOutput(logSpy);
       const parsed = JSON.parse(output);
@@ -154,9 +142,8 @@ describe("apps", () => {
     test("outputs JSON in agent mode", async () => {
       mockIsAgent.mockReturnValue(true);
       mockListApplications.mockResolvedValue(mockApps);
-      logSpy = spyOn(console, "log").mockImplementation(() => {});
 
-      await apps();
+      await list();
 
       const output = capturedOutput(logSpy);
       const parsed = JSON.parse(output);
@@ -164,11 +151,9 @@ describe("apps", () => {
     });
 
     test("strips secret_key from JSON", async () => {
-      mockIsAgent.mockReturnValue(false);
       mockListApplications.mockResolvedValue(mockApps);
-      logSpy = spyOn(console, "log").mockImplementation(() => {});
 
-      await apps({ json: true });
+      await list({ json: true });
 
       const output = capturedOutput(logSpy);
       expect(output).not.toContain("sk_test_xxx");
@@ -179,11 +164,9 @@ describe("apps", () => {
 
   describe("empty state", () => {
     test("shows helpful message when no apps found", async () => {
-      mockIsAgent.mockReturnValue(false);
       mockListApplications.mockResolvedValue([]);
-      logSpy = spyOn(console, "log").mockImplementation(() => {});
 
-      await apps();
+      await list();
 
       const output = capturedOutput(logSpy);
       expect(output).toContain("No applications found");

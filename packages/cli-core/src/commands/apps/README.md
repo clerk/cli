@@ -1,24 +1,30 @@
 # `clerk apps`
 
+Manage your Clerk applications.
+
+## Subcommands
+
+### `clerk apps list`
+
 List all Clerk applications associated with the authenticated account.
 
-## Usage
+#### Usage
 
 ```
-clerk apps [options]
+clerk apps list [options]
 ```
 
-### Options
+#### Options
 
 | Option   | Description    |
 | -------- | -------------- |
 | `--json` | Output as JSON |
 
-### Examples
+#### Examples
 
 ```sh
-clerk apps                         # List all applications
-clerk apps --json                  # Output as JSON
+clerk apps list                    # List all applications
+clerk apps list --json             # Output as JSON
 ```
 
 ## API Endpoints
