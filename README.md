@@ -30,6 +30,8 @@ Commands:
   link [options]       Link this project to a Clerk application
   unlink [options]     Unlink this project from its Clerk application
   whoami               Show the current logged-in user
+  apps                 Manage your Clerk applications
+    list [options]     List your Clerk applications
   config               Manage instance configuration
     pull [options]     Pull instance configuration from Clerk
     schema [options]   Pull instance config schema from Clerk
@@ -144,6 +146,9 @@ clerk api [endpoint] [filter]
 
 clerk api ls [filter]    List available API endpoints
 clerk api                Interactive request builder (TTY only)
+
+clerk apps list
+  --json               Output as JSON
 
 clerk doctor
   --verbose            Show detailed output for each check

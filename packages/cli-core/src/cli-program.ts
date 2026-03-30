@@ -12,6 +12,7 @@ import { configSchema } from "./commands/config/schema.ts";
 import { api } from "./commands/api/index.ts";
 import { link } from "./commands/link/index.ts";
 import { unlink } from "./commands/unlink/index.ts";
+import { list as appsList } from "./commands/apps/list.ts";
 import { doctor } from "./commands/doctor/index.ts";
 import { switchEnv } from "./commands/switch-env/index.ts";
 import { getEnvironment } from "./lib/config.ts";
@@ -144,6 +145,21 @@ Examples:
   $ clerk whoami                     Show your email address`,
     )
     .action(whoami);
+
+  const apps = program.command("apps").description("Manage your Clerk applications");
+
+  apps
+    .command("list")
+    .description("List your Clerk applications")
+    .option("--json", "Output as JSON")
+    .addHelpText(
+      "after",
+      `
+Examples:
+  $ clerk apps list                    List all applications
+  $ clerk apps list --json             Output as JSON`,
+    )
+    .action(appsList);
 
   const env = program
     .command("env")
