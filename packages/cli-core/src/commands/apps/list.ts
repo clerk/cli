@@ -38,13 +38,13 @@ function formatAppsTable(apps: Application[]): void {
 export async function list(options: AppsListOptions = {}): Promise<void> {
   const result = await withApiContext(listApplications(), "Failed to list applications");
 
-  if (result.length === 0) {
-    console.log("No applications found. Create one at https://dashboard.clerk.com");
+  if (options.json || isAgent()) {
+    console.log(JSON.stringify(stripSecrets(result), null, 2));
     return;
   }
 
-  if (options.json || isAgent()) {
-    console.log(JSON.stringify(stripSecrets(result), null, 2));
+  if (result.length === 0) {
+    console.log("No applications found. Create one at https://dashboard.clerk.com");
     return;
   }
 

@@ -172,5 +172,26 @@ describe("apps list", () => {
       expect(output).toContain("No applications found");
       expect(output).toContain("dashboard.clerk.com");
     });
+
+    test("outputs empty JSON array when --json flag is set", async () => {
+      mockListApplications.mockResolvedValue([]);
+
+      await list({ json: true });
+
+      const output = capturedOutput(logSpy);
+      const parsed = JSON.parse(output);
+      expect(parsed).toEqual([]);
+    });
+
+    test("outputs empty JSON array in agent mode", async () => {
+      mockIsAgent.mockReturnValue(true);
+      mockListApplications.mockResolvedValue([]);
+
+      await list();
+
+      const output = capturedOutput(logSpy);
+      const parsed = JSON.parse(output);
+      expect(parsed).toEqual([]);
+    });
   });
 });
