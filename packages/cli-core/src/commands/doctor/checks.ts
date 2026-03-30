@@ -8,6 +8,10 @@ import type { CheckResult, DoctorContext, FixAction } from "./types.ts";
 
 const AUTH_ERROR_STATUS = /\((401|403)\)/;
 
+export function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
 interface CheckOptions {
   remedy?: string;
   detail?: string;
@@ -75,7 +79,7 @@ export async function checkTokenValid(ctx: DoctorContext): Promise<CheckResult> 
     const userInfo = await fetchUserInfo(token);
     return check.pass(`Authenticated as ${userInfo.email}`);
   } catch (error) {
-    const message = (error as Error).message ?? "";
+    const message = errorMessage(error);
     if (AUTH_ERROR_STATUS.test(message)) {
       return check.fail("Token is expired or invalid", {
         remedy: "Run `clerk auth login` to re-authenticate.",
@@ -101,12 +105,12 @@ export async function checkProjectLinked(ctx: DoctorContext): Promise<CheckResul
     });
   }
 
-  const via =
-    resolved.resolvedVia === "remote"
-      ? `via git remote (${resolved.path})`
-      : resolved.resolvedVia === "git-common-dir"
-        ? `via git repo (${resolved.path})`
-        : `via directory (${resolved.path})`;
+  const RESOLUTION_LABELS: Record<string, string> = {
+    remote: "git remote",
+    "git-common-dir": "git repo",
+    directory: "directory",
+  };
+  const via = `via ${RESOLUTION_LABELS[resolved.resolvedVia] ?? resolved.resolvedVia} (${resolved.path})`;
 
   return check.pass(
     `Linked ${via}`,
@@ -134,7 +138,7 @@ export async function checkLinkedAppExists(ctx: DoctorContext): Promise<CheckRes
           "The application doesn't exist or may have been deleted from the Clerk Dashboard. Run `clerk link` to link to a different application, or `clerk unlink` to remove the stale link.",
       });
     }
-    return check.fail(`Could not reach Clerk to verify application: ${(error as Error).message}`, {
+    return check.fail(`Could not reach Clerk to verify application: ${errorMessage(error)}`, {
       remedy: "Check your network connection and authentication.",
       fixable: false,
     });
@@ -157,25 +161,16 @@ export async function checkInstances(ctx: DoctorContext): Promise<CheckResult> {
     const devId = resolved.profile.instances.development;
     const prodId = resolved.profile.instances.production;
 
-    const devValid = apiInstanceIds.has(devId);
-    const prodValid = prodId ? apiInstanceIds.has(prodId) : undefined;
-
     const parts: string[] = [];
     const stale: string[] = [];
 
-    if (devValid) {
-      parts.push(`development (${devId})`);
-    } else {
-      stale.push(`development (${devId})`);
-    }
+    const classify = (label: string, id: string) => {
+      const target = apiInstanceIds.has(id) ? parts : stale;
+      target.push(`${label} (${id})`);
+    };
 
-    if (prodId) {
-      if (prodValid) {
-        parts.push(`production (${prodId})`);
-      } else {
-        stale.push(`production (${prodId})`);
-      }
-    }
+    classify("development", devId);
+    if (prodId) classify("production", prodId);
 
     if (stale.length > 0) {
       return check.fail(`Instance ID mismatch: ${stale.join(", ")} not found in application`, {
@@ -192,7 +187,7 @@ export async function checkInstances(ctx: DoctorContext): Promise<CheckResult> {
 
     return check.pass(`Instance IDs: ${parts.join(", ")}`);
   } catch (error) {
-    return check.fail(`Could not verify instances: ${(error as Error).message}`, {
+    return check.fail(`Could not verify instances: ${errorMessage(error)}`, {
       remedy: "Check your network connection and authentication.",
       fixable: false,
     });
@@ -304,7 +299,7 @@ export async function checkConfigFile(ctx: DoctorContext): Promise<CheckResult> 
     );
   } catch (error) {
     return check.fail(`${configFile} failed to parse`, {
-      detail: (error as Error).message,
+      detail: errorMessage(error),
       remedy: `Check the JSON syntax in ${configFile}, or delete it and re-run \`clerk auth login\`.`,
     });
   }
@@ -313,4 +308,60 @@ export async function checkConfigFile(ctx: DoctorContext): Promise<CheckResult> 
 function getConfigFile(): string {
   const homeDir = process.env.CLERK_CONFIG_DIR ?? join(homedir(), ".clerk");
   return join(homeDir, "config.json");
+}
+
+// ── Shell completion check ───────────────────────────────────────────────────
+
+type DetectedShell = "bash" | "zsh" | "fish";
+
+function detectShell(): DetectedShell | null {
+  const name = process.env.SHELL?.split("/").pop();
+  if (name === "zsh" || name === "bash" || name === "fish") return name;
+  return null;
+}
+
+async function fileContains(paths: string[], needle: string): Promise<boolean> {
+  for (const path of paths) {
+    const file = Bun.file(path);
+    if (!(await file.exists())) continue;
+    if ((await file.text()).includes(needle)) return true;
+  }
+  return false;
+}
+
+const SHELL_COMPLETION: Record<
+  DetectedShell,
+  {
+    isInstalled: (home: string) => Promise<boolean>;
+    remedy: string;
+  }
+> = {
+  fish: {
+    isInstalled: (home) => Bun.file(join(home, ".config/fish/completions/clerk.fish")).exists(),
+    remedy: "Run `clerk completion fish > ~/.config/fish/completions/clerk.fish`",
+  },
+  bash: {
+    isInstalled: (home) =>
+      fileContains([join(home, ".bashrc"), join(home, ".bash_profile")], "clerk completion"),
+    remedy: 'Add `eval "$(clerk completion bash)"` to your ~/.bashrc',
+  },
+  zsh: {
+    isInstalled: async (home) =>
+      (await fileContains([join(home, ".zshrc")], "clerk completion")) ||
+      (await Bun.file(join(home, ".zfunc/_clerk")).exists()),
+    remedy:
+      'Add `eval "$(clerk completion zsh)"` to your ~/.zshrc, or run `clerk completion zsh > ~/.zfunc/_clerk`',
+  },
+};
+
+export async function checkShellCompletion(): Promise<CheckResult> {
+  const check = defineCheck("Shell completion");
+  const shell = detectShell();
+  if (!shell) return check.pass("Shell completion (could not detect shell, skipped)");
+
+  const home = process.env.HOME ?? homedir();
+  const { isInstalled, remedy } = SHELL_COMPLETION[shell];
+
+  if (await isInstalled(home)) return check.pass(`Shell completion installed for ${shell}`);
+  return check.warn(`Shell completion not installed for ${shell}`, { remedy });
 }

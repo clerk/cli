@@ -10,8 +10,7 @@ useIntegrationTestHarness();
 
 test("init outputs structured agent prompt without API calls", async () => {
   const { stdout } = await clerk("--mode", "agent", "init");
-  expect(stdout).toContain("# Add Clerk Authentication");
-  expect(stdout).toContain("clerk auth login");
+  expect(stdout).toContain("clerk init -y");
   expect(http.requests.length).toBe(0);
 });
 

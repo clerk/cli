@@ -43,6 +43,7 @@ Commands:
     ls [filter]        List available API endpoints
     (no args)          Interactive request builder (TTY only)
   doctor [options]     Check your project's Clerk integration health
+  completion <shell>   Generate shell autocompletion script
   deploy [options]     Deploy your Clerk application (hidden)
 
 clerk init
@@ -161,6 +162,9 @@ clerk doctor
     $ clerk doctor --json              Output results as machine-readable JSON
     $ clerk doctor --fix               Auto-fix detected issues
     $ clerk doctor --spotlight         Only show warnings and failures
+
+clerk completion <shell>
+  shell: bash, zsh, fish, powershell
 
 clerk deploy
   --debug              Show debug output

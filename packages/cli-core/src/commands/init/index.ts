@@ -3,15 +3,14 @@ import { link } from "../link/index.js";
 import { pull } from "../env/pull.js";
 import { isAgent } from "../../mode.js";
 import { dim, green, yellow, bold } from "../../lib/color.js";
-import { CliError, throwUserAbort } from "../../lib/errors.js";
-import { lookupFramework, FRAMEWORK_NAMES } from "../../lib/framework.js";
+import { throwUserAbort } from "../../lib/errors.js";
+import { lookupFramework, type FrameworkInfo } from "../../lib/framework.js";
 import { resolveProfile } from "../../lib/config.js";
 import { gatherContext } from "./context.js";
 import { scaffold, enrichProjectContext } from "./scaffold.js";
 import { previewPlan, previewAndConfirm } from "./preview.js";
 import { runFormatters } from "./format.js";
 import { detectAuthLibraries, scanForIssues } from "./scan.js";
-import { buildAgentPrompt, GENERIC_AGENT_PROMPT } from "./prompts/index.js";
 import {
   installSdk,
   writePlan,
@@ -30,24 +29,20 @@ interface InitOptions {
 export async function init(options: InitOptions = {}) {
   const cwd = process.cwd();
 
-  // Resolve --framework override
-  let frameworkOverride;
+  // Commander validates --framework against FRAMEWORK_NAMES choices
+  let frameworkOverride: FrameworkInfo | undefined;
   if (options.framework) {
-    frameworkOverride = lookupFramework(options.framework);
-    if (!frameworkOverride) {
-      throw new CliError(
-        `Unknown framework "${options.framework}". Valid values: ${FRAMEWORK_NAMES.join(", ")}`,
-      );
-    }
+    frameworkOverride = lookupFramework(options.framework) ?? undefined;
   }
-
   const ctx = await gatherContext(cwd, frameworkOverride);
 
   // Populate framework-specific context (variant, layoutPath, middlewareBasename)
   if (ctx) await enrichProjectContext(ctx);
 
   if (options.prompt || isAgent()) {
-    console.log(ctx ? buildAgentPrompt(ctx) : GENERIC_AGENT_PROMPT);
+    console.log(
+      "Run `clerk init -y` to automatically detect the framework, install the Clerk SDK, and scaffold authentication files without interactive prompts.",
+    );
     return;
   }
 

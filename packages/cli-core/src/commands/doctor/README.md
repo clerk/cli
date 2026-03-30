@@ -34,6 +34,7 @@ clerk doctor --fix       # Offer to auto-fix issues
 | Instances             | Project        | Configured dev/prod instance IDs match the application's instances |
 | Environment variables | Environment    | .env.local or .env has Clerk keys                                  |
 | CLI configuration     | Configuration  | ~/.clerk/config.json exists and parses                             |
+| Shell completion      | Configuration  | Shell autocompletion is installed for the detected shell           |
 
 ## Auto-Fix (`--fix`)
 

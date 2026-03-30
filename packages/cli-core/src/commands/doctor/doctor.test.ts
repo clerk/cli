@@ -27,6 +27,7 @@ const {
   checkInstances,
   checkEnvVars,
   checkConfigFile,
+  checkShellCompletion,
 } = await import("./checks.ts");
 
 const originalCwd = process.cwd;
@@ -556,6 +557,114 @@ describe("checkConfigFile", () => {
       status: "fail",
       message: "failed to parse",
       fix: true,
+    });
+  });
+});
+
+describe("checkShellCompletion", () => {
+  test("pass when shell cannot be detected", async () => {
+    process.env.SHELL = "";
+    const result = await checkShellCompletion();
+    expectCheck(result, {
+      name: "Shell completion",
+      status: "pass",
+      message: "skipped",
+    });
+  });
+
+  test("warn when zsh completion not installed", async () => {
+    process.env.SHELL = "/bin/zsh";
+    process.env.HOME = tempDir;
+    const result = await checkShellCompletion();
+    expectCheck(result, {
+      name: "Shell completion",
+      status: "warn",
+      message: "zsh",
+      remedy: "clerk completion zsh",
+    });
+  });
+
+  test("pass when zsh completion is installed via zshrc", async () => {
+    process.env.SHELL = "/bin/zsh";
+    process.env.HOME = tempDir;
+    await Bun.write(join(tempDir, ".zshrc"), 'eval "$(clerk completion zsh)"\n');
+    const result = await checkShellCompletion();
+    expectCheck(result, {
+      name: "Shell completion",
+      status: "pass",
+      message: "zsh",
+    });
+  });
+
+  test("pass when zsh completion is installed via fpath", async () => {
+    process.env.SHELL = "/bin/zsh";
+    process.env.HOME = tempDir;
+    await Bun.write(join(tempDir, ".zfunc/_clerk"), "#compdef clerk\n");
+    const result = await checkShellCompletion();
+    expectCheck(result, {
+      name: "Shell completion",
+      status: "pass",
+      message: "zsh",
+    });
+  });
+
+  test("warn when bash completion not installed", async () => {
+    process.env.SHELL = "/bin/bash";
+    process.env.HOME = tempDir;
+    const result = await checkShellCompletion();
+    expectCheck(result, {
+      name: "Shell completion",
+      status: "warn",
+      message: "bash",
+      remedy: "clerk completion bash",
+    });
+  });
+
+  test("pass when bash completion is in bashrc", async () => {
+    process.env.SHELL = "/bin/bash";
+    process.env.HOME = tempDir;
+    await Bun.write(join(tempDir, ".bashrc"), 'eval "$(clerk completion bash)"\n');
+    const result = await checkShellCompletion();
+    expectCheck(result, {
+      name: "Shell completion",
+      status: "pass",
+      message: "bash",
+    });
+  });
+
+  test("warn when fish completion file missing", async () => {
+    process.env.SHELL = "/usr/bin/fish";
+    process.env.HOME = tempDir;
+    const result = await checkShellCompletion();
+    expectCheck(result, {
+      name: "Shell completion",
+      status: "warn",
+      message: "fish",
+      remedy: "clerk completion fish",
+    });
+  });
+
+  test("pass when fish completion file exists", async () => {
+    process.env.SHELL = "/usr/bin/fish";
+    process.env.HOME = tempDir;
+    const fishDir = join(tempDir, ".config/fish/completions");
+    await Bun.write(join(fishDir, "clerk.fish"), "# completion script\n");
+    const result = await checkShellCompletion();
+    expectCheck(result, {
+      name: "Shell completion",
+      status: "pass",
+      message: "fish",
+    });
+  });
+
+  test("no fix action attached (completions are not auto-fixable)", async () => {
+    process.env.SHELL = "/bin/zsh";
+    process.env.HOME = tempDir;
+    const result = await checkShellCompletion();
+    expectCheck(result, {
+      name: "Shell completion",
+      status: "warn",
+      fix: false,
     });
   });
 });
