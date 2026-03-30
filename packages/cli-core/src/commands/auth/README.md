@@ -8,7 +8,7 @@ Manage authentication with Clerk.
 
 Authenticates the user via an OAuth 2.0 PKCE flow.
 
-1. Checks for an existing valid token and skips login if found
+1. Checks for an existing valid token — if found, prompts to re-authenticate (in agent mode, skips login silently)
 2. Generates PKCE parameters (code verifier, challenge, state)
 3. Starts a local HTTP callback server on `127.0.0.1`
 4. Opens the browser to the Clerk OAuth authorization URL

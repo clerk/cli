@@ -1,39 +1,48 @@
 import { printNextSteps } from "../../lib/next-steps.ts";
 import { generateCodeVerifier, generateCodeChallenge, generateState } from "../../lib/pkce.ts";
 import { startAuthServer } from "../../lib/auth-server.ts";
-import { exchangeCodeForToken, fetchUserInfo } from "../../lib/token-exchange.ts";
+import { exchangeCodeForToken, fetchUserInfo, type UserInfo } from "../../lib/token-exchange.ts";
 import { getOAuthConfig } from "../../lib/environment.ts";
 import { storeToken, getToken } from "../../lib/credential-store.ts";
 import { getAuth, setAuth } from "../../lib/config.ts";
 import { AUTH_TIMEOUT_MS, CALLBACK_PATH } from "../../lib/constants.ts";
+import { confirm } from "../../lib/prompts.ts";
+import { isHuman } from "../../mode.ts";
+import { throwUserAbort } from "../../lib/errors.ts";
 
-export async function login(): Promise<{ userId: string; email: string }> {
-  // Check if already authenticated
-  const existingToken = await getToken();
-  if (existingToken) {
-    const auth = await getAuth();
-    if (auth) {
-      try {
-        const userInfo = await fetchUserInfo(existingToken);
-        console.log(`Logged in as ${userInfo.email}`);
-        return userInfo;
-      } catch {
-        // Token expired or invalid — continue with fresh login
-      }
-    }
+const BROWSER_COMMANDS: Partial<Record<NodeJS.Platform, string>> = {
+  darwin: "open",
+  win32: "start",
+};
+
+async function getExistingSession(): Promise<UserInfo | null> {
+  const token = await getToken();
+  if (!token) return null;
+
+  const auth = await getAuth();
+  if (!auth) return null;
+
+  try {
+    return await fetchUserInfo(token);
+  } catch {
+    return null;
   }
+}
 
-  // Generate PKCE parameters
+function openBrowser(url: string) {
+  const command = BROWSER_COMMANDS[process.platform] ?? "xdg-open";
+  return Bun.spawn([command, url]);
+}
+
+async function performOAuthFlow(): Promise<UserInfo> {
   const codeVerifier = generateCodeVerifier();
   const codeChallenge = await generateCodeChallenge(codeVerifier);
   const state = generateState();
 
-  // Start local callback server
   const authServer = startAuthServer(state);
   // Use `http://127.0.0.1` (not localhost) so the backend permits any port https://datatracker.ietf.org/doc/html/rfc8252#section-7.3
   const redirectUri = `http://127.0.0.1:${authServer.port}${CALLBACK_PATH}`;
 
-  // Build authorization URL
   const oauth = getOAuthConfig();
   const authorizeUrl = new URL(oauth.authorizeUrl);
   authorizeUrl.searchParams.set("client_id", oauth.clientId);
@@ -44,36 +53,50 @@ export async function login(): Promise<{ userId: string; email: string }> {
   authorizeUrl.searchParams.set("code_challenge", codeChallenge);
   authorizeUrl.searchParams.set("code_challenge_method", "S256");
 
-  // Open browser (platform-aware)
-  const openCmd =
-    process.platform === "darwin" ? "open" : process.platform === "win32" ? "start" : "xdg-open";
-  const proc = Bun.spawn([openCmd, authorizeUrl.toString()]);
+  const proc = openBrowser(authorizeUrl.toString());
   await proc.exited;
 
-  // Wait for the OAuth callback
   const timeoutMinutes = Math.round(AUTH_TIMEOUT_MS / 60_000);
   console.log(`Waiting for authentication (timeout in ${timeoutMinutes}m)...`);
-  let callbackResult: { code: string };
-  try {
-    callbackResult = await authServer.waitForCallback();
-  } catch (error) {
+
+  const { code } = await authServer.waitForCallback().catch((error: unknown) => {
     authServer.stop();
     throw error;
-  }
+  });
 
-  // Exchange authorization code for access token
   const tokenResponse = await exchangeCodeForToken({
-    code: callbackResult.code,
+    code,
     codeVerifier,
     redirectUri,
   });
 
-  // Store the access token
   await storeToken(tokenResponse.access_token);
 
-  // Fetch user info and save to config
   const userInfo = await fetchUserInfo(tokenResponse.access_token);
   await setAuth({ userId: userInfo.userId });
+
+  return userInfo;
+}
+
+export async function login(): Promise<UserInfo> {
+  const existingSession = await getExistingSession();
+
+  if (existingSession && !isHuman()) {
+    console.log(`Logged in as ${existingSession.email}`);
+    return existingSession;
+  }
+
+  if (existingSession) {
+    const reauthenticate = await confirm({
+      message: `You're already logged in as ${existingSession.email}. Re-authenticate?`,
+      default: false,
+    });
+    if (!reauthenticate) {
+      throwUserAbort();
+    }
+  }
+
+  const userInfo = await performOAuthFlow();
 
   console.log(`Logged in as ${userInfo.email}`);
 
