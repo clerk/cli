@@ -136,12 +136,17 @@ function findSubcommand(cmd: CommandUnknownOpts, word: string): CommandUnknownOp
   return cmd.commands.find((c) => c.name() === word || c.aliases().includes(word));
 }
 
-function findOption(cmd: CommandUnknownOpts, word: string): Option | undefined {
+function* walkOptions(cmd: CommandUnknownOpts): Generator<Option> {
   let current: CommandUnknownOpts | null = cmd;
   while (current) {
-    const match = current.options.find((o) => o.long === word || o.short === word);
-    if (match) return match;
+    yield* current.options;
     current = current.parent;
+  }
+}
+
+function findOption(cmd: CommandUnknownOpts, word: string): Option | undefined {
+  for (const opt of walkOptions(cmd)) {
+    if (opt.long === word || opt.short === word) return opt;
   }
   return undefined;
 }
@@ -207,14 +212,9 @@ function completeOptions(
   const completions: Completion[] = [];
   const seen = new Set<string>();
 
-  let current: CommandUnknownOpts | null = cmd;
-  while (current) {
-    for (const opt of current.options) {
-      if (opt.hidden || isOptionUsed(opt, usedOptions)) continue;
-
-      if (opt.long) pushCompletion(completions, opt.long, opt.description, partial, seen);
-    }
-    current = current.parent;
+  for (const opt of walkOptions(cmd)) {
+    if (opt.hidden || isOptionUsed(opt, usedOptions)) continue;
+    if (opt.long) pushCompletion(completions, opt.long, opt.description, partial, seen);
   }
 
   return noFileComp(completions);

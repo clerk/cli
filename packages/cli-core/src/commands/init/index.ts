@@ -4,7 +4,7 @@ import { pull } from "../env/pull.js";
 import { isAgent } from "../../mode.js";
 import { dim, green, yellow, bold } from "../../lib/color.js";
 import { throwUserAbort } from "../../lib/errors.js";
-import { lookupFramework } from "../../lib/framework.js";
+import { lookupFramework, type FrameworkInfo } from "../../lib/framework.js";
 import { resolveProfile } from "../../lib/config.js";
 import { gatherContext } from "./context.js";
 import { scaffold, enrichProjectContext } from "./scaffold.js";
@@ -30,9 +30,10 @@ export async function init(options: InitOptions = {}) {
   const cwd = process.cwd();
 
   // Commander validates --framework against FRAMEWORK_NAMES choices
-  const frameworkOverride = options.framework
-    ? (lookupFramework(options.framework) ?? undefined)
-    : undefined;
+  let frameworkOverride: FrameworkInfo | undefined;
+  if (options.framework) {
+    frameworkOverride = lookupFramework(options.framework) ?? undefined;
+  }
   const ctx = await gatherContext(cwd, frameworkOverride);
 
   // Populate framework-specific context (variant, layoutPath, middlewareBasename)

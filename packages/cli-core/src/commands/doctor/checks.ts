@@ -346,8 +346,11 @@ const SHELL_COMPLETION: Record<
     remedy: 'Add `eval "$(clerk completion bash)"` to your ~/.bashrc',
   },
   zsh: {
-    isInstalled: (home) => fileContains([join(home, ".zshrc")], "clerk completion"),
-    remedy: 'Add `eval "$(clerk completion zsh)"` to your ~/.zshrc',
+    isInstalled: async (home) =>
+      (await fileContains([join(home, ".zshrc")], "clerk completion")) ||
+      (await Bun.file(join(home, ".zfunc/_clerk")).exists()),
+    remedy:
+      'Add `eval "$(clerk completion zsh)"` to your ~/.zshrc, or run `clerk completion zsh > ~/.zfunc/_clerk`',
   },
 };
 

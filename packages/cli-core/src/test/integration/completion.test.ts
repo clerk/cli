@@ -1,87 +1,29 @@
+/**
+ * Shell completion integration tests
+ * Tests generateCompletions against the real CLI command tree from createProgram().
+ */
+
 import { test, expect, describe } from "bun:test";
-import { Command, createOption, createArgument } from "@commander-js/extra-typings";
-import { generateCompletions } from "./__complete.ts";
+import { useIntegrationTestHarness } from "../lib/setup.ts";
+import { generateCompletions } from "../../commands/completion/__complete.ts";
+import { createProgram } from "../../cli-program.ts";
 
-function buildTestProgram(): Command {
-  const program = new Command("clerk");
-  program.option("--verbose", "Show detailed output");
-  program.option("--mode <mode>", "Force interaction mode");
+useIntegrationTestHarness();
 
-  const auth = program.command("auth").description("Manage authentication");
-  auth
-    .command("login")
-    .aliases(["signup", "signin", "sign-in"])
-    .description("Log in to your Clerk account");
-  auth
-    .command("logout")
-    .aliases(["signout", "sign-out"])
-    .description("Log out of your Clerk account");
-
-  program
-    .command("link")
-    .description("Link this project")
-    .option("--app <id>", "Application ID")
-    .option("--yes", "Skip confirmation");
-
-  program.command("whoami").description("Show current user");
-
-  const config = program.command("config").description("Manage configuration");
-  config
-    .command("pull")
-    .description("Pull configuration")
-    .option("--instance <id>", "Instance to target")
-    .option("--output <file>", "Write to file");
-
-  program
-    .command("api")
-    .description("Make API requests")
-    .argument("[endpoint]", "API endpoint path")
-    .argument("[filter]", "Filter keyword")
-    .option("-X, --method <method>", "HTTP method");
-
-  program.command("deploy", { hidden: true }).description("Deploy application");
-
-  program
-    .command("init")
-    .description("Initialize Clerk in your project")
-    .addOption(
-      createOption("--framework <name>", "Framework to set up").choices([
-        "next",
-        "astro",
-        "nuxt",
-        "react",
-        "vue",
-        "expo",
-        "express",
-        "fastify",
-      ]),
-    )
-    .option("--prompt", "Output a prompt for an AI agent")
-    .option("-y, --yes", "Skip confirmation prompts");
-
-  program
-    .command("completion")
-    .description("Generate completion script")
-    .addArgument(
-      createArgument("<shell>", "Shell type").choices(["bash", "zsh", "fish", "powershell"]),
-    );
-
-  return program;
-}
+const program = createProgram();
 
 function completionNames(...args: string[]): string[] {
-  return generateCompletions(buildTestProgram(), args).completions.map((c) => c.name);
+  return generateCompletions(program, args).completions.map((c) => c.name);
 }
 
 function complete(...args: string[]) {
-  return generateCompletions(buildTestProgram(), args);
+  return generateCompletions(program, args);
 }
 
 describe("generateCompletions", () => {
   describe("subcommand completion", () => {
     test("completes root subcommands alongside options", () => {
       const names = completionNames("");
-      // Subcommands
       expect(names).toContain("auth");
       expect(names).toContain("init");
       expect(names).toContain("link");
@@ -89,6 +31,8 @@ describe("generateCompletions", () => {
       expect(names).toContain("config");
       expect(names).toContain("api");
       expect(names).toContain("completion");
+      expect(names).toContain("env");
+      expect(names).toContain("doctor");
       // Options are also included
       expect(names).toContain("--verbose");
       expect(names).toContain("--mode");
@@ -108,7 +52,6 @@ describe("generateCompletions", () => {
       const names = completionNames("auth", "");
       expect(names).toContain("login");
       expect(names).toContain("logout");
-      // Options are also shown
       expect(names).toContain("--verbose");
       expect(names).toContain("--mode");
     });
@@ -128,7 +71,11 @@ describe("generateCompletions", () => {
     });
 
     test("completes deeply nested subcommands", () => {
-      expect(completionNames("config", "")).toContain("pull");
+      const names = completionNames("config", "");
+      expect(names).toContain("pull");
+      expect(names).toContain("schema");
+      expect(names).toContain("patch");
+      expect(names).toContain("put");
     });
   });
 
@@ -170,7 +117,6 @@ describe("generateCompletions", () => {
     test("completes subcommand-specific options", () => {
       const names = completionNames("link", "--");
       expect(names).toContain("--app");
-      expect(names).toContain("--yes");
     });
 
     test("includes global options in subcommands", () => {
@@ -186,10 +132,10 @@ describe("generateCompletions", () => {
       expect(names).toContain("--verbose");
     });
 
-    test("excludes already-used options", () => {
-      const names = completionNames("link", "--yes", "--");
+    test("excludes already-used boolean options", () => {
+      const names = completionNames("init", "--yes", "--");
       expect(names).not.toContain("--yes");
-      expect(names).toContain("--app");
+      expect(names).toContain("--framework");
     });
 
     test("completes partial option name", () => {
@@ -250,7 +196,7 @@ describe("generateCompletions", () => {
 
     test("skips option values when walking", () => {
       const names = completionNames("link", "--app", "some-id", "--");
-      expect(names).toContain("--yes");
+      expect(names).toContain("--verbose");
       expect(names).not.toContain("--app");
     });
   });
@@ -258,12 +204,10 @@ describe("generateCompletions", () => {
   describe("positional argument completion", () => {
     test("completes argument choices alongside options", () => {
       const names = completionNames("completion", "");
-      // Argument choices
       expect(names).toContain("bash");
       expect(names).toContain("zsh");
       expect(names).toContain("fish");
       expect(names).toContain("powershell");
-      // Options are also included
       expect(names).toContain("--verbose");
     });
 
@@ -274,16 +218,13 @@ describe("generateCompletions", () => {
     });
 
     test("falls back to flags for commands with free-form args", () => {
-      // api has [endpoint] with no choices — falls back to showing flags
       const names = completionNames("api", "");
       expect(names).toContain("--method");
       expect(names).toContain("--verbose");
     });
 
     test("tracks positional argument position", () => {
-      // After consuming first arg, should not offer first arg's choices again
       const names = completionNames("api", "/users", "");
-      // Second arg [filter] has no choices either — falls back to flags
       expect(names).toContain("--method");
     });
 
@@ -332,7 +273,6 @@ describe("generateCompletions", () => {
 
     test("leaf command without -- shows global flags as fallback", () => {
       const names = completionNames("whoami", "");
-      // whoami has no subcommands, no registered arguments — falls back to flags
       expect(names).toContain("--verbose");
     });
   });

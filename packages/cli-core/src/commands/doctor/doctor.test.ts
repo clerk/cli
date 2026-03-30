@@ -584,10 +584,22 @@ describe("checkShellCompletion", () => {
     });
   });
 
-  test("pass when zsh completion is installed", async () => {
+  test("pass when zsh completion is installed via zshrc", async () => {
     process.env.SHELL = "/bin/zsh";
     process.env.HOME = tempDir;
     await Bun.write(join(tempDir, ".zshrc"), 'eval "$(clerk completion zsh)"\n');
+    const result = await checkShellCompletion();
+    expectCheck(result, {
+      name: "Shell completion",
+      status: "pass",
+      message: "zsh",
+    });
+  });
+
+  test("pass when zsh completion is installed via fpath", async () => {
+    process.env.SHELL = "/bin/zsh";
+    process.env.HOME = tempDir;
+    await Bun.write(join(tempDir, ".zfunc/_clerk"), "#compdef clerk\n");
     const result = await checkShellCompletion();
     expectCheck(result, {
       name: "Shell completion",
