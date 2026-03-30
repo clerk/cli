@@ -8,6 +8,8 @@ const mockSetAuth = mock();
 const mockExchangeCodeForToken = mock();
 const mockFetchUserInfo = mock();
 const mockStartAuthServer = mock();
+const mockIsHuman = mock();
+const mockConfirm = mock();
 
 mock.module("../../lib/credential-store.ts", () => ({
   ...credentialStoreStubs,
@@ -51,6 +53,17 @@ mock.module("../../lib/auth-server.ts", () => ({
   startAuthServer: (...args: unknown[]) => mockStartAuthServer(...args),
 }));
 
+mock.module("../../mode.ts", () => ({
+  isHuman: (...args: unknown[]) => mockIsHuman(...args),
+  isAgent: () => !mockIsHuman(),
+  getMode: () => (mockIsHuman() ? "human" : "agent"),
+  setMode: () => {},
+}));
+
+mock.module("../../lib/prompts.ts", () => ({
+  confirm: (...args: unknown[]) => mockConfirm(...args),
+}));
+
 const { login } = await import("./login.ts");
 
 describe("login", () => {
@@ -65,6 +78,9 @@ describe("login", () => {
     mockExchangeCodeForToken.mockReset();
     mockFetchUserInfo.mockReset();
     mockStartAuthServer.mockReset();
+    mockIsHuman.mockReset();
+    mockConfirm.mockReset();
+    mockIsHuman.mockReturnValue(false);
     consoleSpy?.mockRestore();
     try {
       (Bun as any).spawn = origSpawn;
@@ -214,5 +230,76 @@ describe("login", () => {
 
     expect(result).toEqual({ userId: "user_brand_new", email: "brandnew@example.com" });
     expect(mockStartAuthServer).toHaveBeenCalled();
+  });
+
+  test("in agent mode, returns early without prompting when already authenticated", async () => {
+    mockIsHuman.mockReturnValue(false);
+    mockGetToken.mockResolvedValue("existing-token");
+    mockGetAuth.mockResolvedValue({ userId: "user_123" });
+    mockFetchUserInfo.mockResolvedValue({
+      userId: "user_123",
+      email: "agent@example.com",
+    });
+
+    consoleSpy = spyOn(console, "log").mockImplementation(() => {});
+    const result = await login();
+
+    expect(result).toEqual({ userId: "user_123", email: "agent@example.com" });
+    expect(consoleSpy).toHaveBeenCalledWith("Logged in as agent@example.com");
+    expect(mockConfirm).not.toHaveBeenCalled();
+    expect(mockStartAuthServer).not.toHaveBeenCalled();
+  });
+
+  test("in human mode, prompts and runs OAuth when user accepts re-auth", async () => {
+    mockIsHuman.mockReturnValue(true);
+    mockGetToken.mockResolvedValue("existing-token");
+    mockGetAuth.mockResolvedValue({ userId: "user_123" });
+    mockFetchUserInfo
+      .mockResolvedValueOnce({ userId: "user_123", email: "old@example.com" })
+      .mockResolvedValueOnce({ userId: "user_new", email: "new@example.com" });
+    mockConfirm.mockResolvedValue(true);
+    mockBunSpawn();
+
+    const mockServer = {
+      port: 54321,
+      waitForCallback: mock().mockResolvedValue({ code: "reauth-code" }),
+      stop: mock(),
+    };
+    mockStartAuthServer.mockReturnValue(mockServer);
+
+    mockExchangeCodeForToken.mockResolvedValue({
+      access_token: "new-token",
+      token_type: "Bearer",
+      expires_in: 3600,
+    });
+    mockStoreToken.mockResolvedValue(undefined);
+    mockSetAuth.mockResolvedValue(undefined);
+
+    consoleSpy = spyOn(console, "log").mockImplementation(() => {});
+    const result = await login();
+
+    expect(mockConfirm).toHaveBeenCalledWith({
+      message: "You're already logged in as old@example.com. Re-authenticate?",
+      default: false,
+    });
+    expect(result).toEqual({ userId: "user_new", email: "new@example.com" });
+    expect(mockStartAuthServer).toHaveBeenCalled();
+  });
+
+  test("in human mode, throws UserAbortError when user declines re-auth", async () => {
+    mockIsHuman.mockReturnValue(true);
+    mockGetToken.mockResolvedValue("existing-token");
+    mockGetAuth.mockResolvedValue({ userId: "user_123" });
+    mockFetchUserInfo.mockResolvedValue({
+      userId: "user_123",
+      email: "current@example.com",
+    });
+    mockConfirm.mockResolvedValue(false);
+
+    consoleSpy = spyOn(console, "log").mockImplementation(() => {});
+
+    await expect(login()).rejects.toThrow("User aborted");
+    expect(mockConfirm).toHaveBeenCalled();
+    expect(mockStartAuthServer).not.toHaveBeenCalled();
   });
 });
