@@ -70,7 +70,3 @@ The `completion` command outputs a shell script to stdout. The script registers 
 ### Internal: `__complete`
 
 The hidden `__complete` subcommand is invoked by the shell completion scripts. It is not intended for direct use. It outputs tab-separated `candidate\tdescription` lines followed by a Cobra-style directive on the final line.
-
-## Clerk API Endpoints
-
-This command makes no API calls.

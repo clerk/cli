@@ -17,56 +17,6 @@ mock.module("../../lib/credential-store.ts", () => ({
 }));
 mock.module("../../lib/git.ts", () => gitStubs);
 
-// Re-implement plapi functions here because link/index.test.ts uses
-// mock.module on plapi which leaks globally in Bun's test runner.
-// These delegate to fetch (already stubbed) and getToken (already mocked above).
-const PLAPI_BASE = process.env.CLERK_PLATFORM_API_URL ?? "https://api.clerk.com";
-
-mock.module("../../lib/plapi.ts", () => {
-  const { CliError, PlapiError, ERROR_CODE } = require("../../lib/errors.ts");
-
-  function validateKeyPrefix(key: string, expected: string): void {
-    if (key.startsWith(expected)) return;
-    const wrongPrefix = expected === "ak_" ? "sk_" : "ak_";
-    if (!key.startsWith(wrongPrefix)) return;
-    const label = expected === "sk_" ? "Secret key (sk_...)" : "Platform API key (ak_...)";
-    throw new CliError(`Expected a ${label}`, { code: ERROR_CODE.INVALID_KEY_FORMAT });
-  }
-
-  async function getAuthToken(): Promise<string> {
-    const key = process.env.CLERK_PLATFORM_API_KEY;
-    if (key) {
-      validateKeyPrefix(key, "ak_");
-      return key;
-    }
-    if (mockStoredToken) return mockStoredToken;
-    throw new CliError("Not authenticated.", { code: ERROR_CODE.AUTH_REQUIRED });
-  }
-
-  async function fetchApplication(applicationId: string) {
-    const token = await getAuthToken();
-    const url = new URL(`/v1/platform/applications/${applicationId}`, PLAPI_BASE);
-    url.searchParams.set("include_secret_keys", "true");
-    const response = await fetch(url, {
-      headers: { Authorization: `Bearer ${token}`, Accept: "application/json" },
-    });
-    if (!response.ok) throw new PlapiError(response.status, await response.text());
-    return response.json();
-  }
-
-  return {
-    validateKeyPrefix,
-    getAuthToken,
-    fetchApplication,
-    PlapiError,
-    listApplications: async () => [],
-    fetchInstanceConfig: async () => ({}),
-    fetchInstanceConfigSchema: async () => ({}),
-    putInstanceConfig: async () => ({}),
-    patchInstanceConfig: async () => ({}),
-  };
-});
-
 let _mode = "human";
 mock.module("../../mode.ts", () => ({
   setMode: (m: string) => {
