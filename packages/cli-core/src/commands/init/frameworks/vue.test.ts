@@ -308,3 +308,27 @@ export default router;
     skipReason: "Already has sign-in/sign-up routes",
   });
 });
+
+test("skips router when only one sign route exists (no duplication)", async () => {
+  await mkdir(join(tempDir, "src/router"), { recursive: true });
+  await Bun.write(
+    join(tempDir, "src/router/index.ts"),
+    `import { createRouter, createWebHistory } from "vue-router";
+
+const router = createRouter({
+  routes: [
+    { path: "/sign-in", component: () => import("../views/sign-in.vue") },
+  ],
+});
+
+export default router;
+`,
+  );
+
+  const plan = await vue.scaffold(makeCtx({ deps: { "vue-router": "^4.0.0" } }));
+
+  expect(findAction(plan.actions, "src/router/index.ts")).toMatchObject({
+    type: "skip",
+    skipReason: "Already has sign-in/sign-up routes",
+  });
+});

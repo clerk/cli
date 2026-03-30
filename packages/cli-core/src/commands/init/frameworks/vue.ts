@@ -105,7 +105,7 @@ async function findRouterFile(ctx: ProjectContext): Promise<string | null> {
 }
 
 function addSignRoutes(source: string, viewPrefix: string): string {
-  if (source.includes("/sign-in") && source.includes("/sign-up")) {
+  if (source.includes("/sign-in") || source.includes("/sign-up")) {
     return source;
   }
 
@@ -122,7 +122,7 @@ async function scaffoldRouter(ctx: ProjectContext): Promise<FileAction | null> {
 
   const content = await Bun.file(join(ctx.cwd, routerPath)).text();
 
-  if (content.includes("/sign-in") && content.includes("/sign-up")) {
+  if (content.includes("/sign-in") || content.includes("/sign-up")) {
     return { type: "skip", path: routerPath, skipReason: "Already has sign-in/sign-up routes" };
   }
 
