@@ -107,8 +107,8 @@ export async function login(options: LoginOptions = {}): Promise<UserInfo> {
 
   if (showNextSteps) {
     printNextSteps([
-      "Run `clerk link` to connect a Clerk application to this project",
-      "Run `clerk init` to set up Clerk in an existing project",
+      "Run `clerk init` to set up Clerk in your project",
+      "Run `clerk link` to connect an existing Clerk application",
     ]);
   }
 
