@@ -51,16 +51,29 @@ export async function init(options: InitOptions = {}) {
 }
 
 async function authenticateAndLink(cwd: string): Promise<void> {
+  // If Platform API key is set, skip OAuth entirely
+  const hasApiKey = Boolean(process.env.CLERK_PLATFORM_API_KEY);
+  const profile = await resolveProfile(cwd);
+
+  if (hasApiKey && profile) {
+    console.log(dim(`Using API key · Linked to ${profile.profile.appId}`));
+    return;
+  }
+
+  if (hasApiKey) {
+    await link({ skipIfLinked: true });
+    return;
+  }
+
   // Check if fully ready (authenticated + linked)
   const email = await getAuthenticatedEmail();
-  const profile = await resolveProfile(cwd);
 
   if (email && profile) {
     console.log(dim(`Logged in as ${email} · Linked to ${profile.profile.appId}`));
     return;
   }
 
-  // Authenticated but not linked — skip login, just link
+  // Authenticated but not linked
   if (email) {
     console.log(dim(`Logged in as ${email}`));
     await link({ skipIfLinked: true });

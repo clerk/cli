@@ -102,6 +102,10 @@ export async function link(options: LinkOptions = {}): Promise<void> {
 }
 
 async function ensureAuth() {
+  // CLERK_PLATFORM_API_KEY is a valid non-interactive auth mechanism.
+  // The PLAPI fetch helpers use it directly for API calls, so no OAuth
+  // token is needed when this key is present.
+  if (process.env.CLERK_PLATFORM_API_KEY) return;
   const token = await getToken();
   if (!token) {
     console.log("Not logged in. Authenticating first...");
