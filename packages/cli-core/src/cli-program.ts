@@ -67,6 +67,7 @@ export function createProgram() {
     )
     .option("--prompt", "Output a prompt for an AI agent to integrate Clerk")
     .option("-y, --yes", "Skip confirmation prompts")
+    .option("--no-skills", "Skip agent skill installation")
     .addHelpText(
       "after",
       `
@@ -74,7 +75,8 @@ Examples:
   $ clerk init                       Auto-detect framework and set up Clerk
   $ clerk init --framework next      Set up for Next.js (skips detection)
   $ clerk init --prompt              Output a setup prompt for an AI agent
-  $ clerk init -y                    Skip all confirmation prompts`,
+  $ clerk init -y                    Skip all confirmation prompts
+  $ clerk init --no-skills           Skip installing agent skills`,
     )
     .action(init);
 

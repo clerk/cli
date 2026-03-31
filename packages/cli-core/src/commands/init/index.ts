@@ -18,12 +18,14 @@ import {
   printOutro,
   getAuthenticatedEmail,
 } from "./heuristics.js";
+import { installSkills } from "./skills.js";
 import type { ProjectContext } from "./frameworks/types.js";
 
 interface InitOptions {
   framework?: string;
   yes?: boolean;
   prompt?: boolean;
+  noSkills?: boolean;
 }
 
 export async function init(options: InitOptions = {}) {
@@ -48,6 +50,10 @@ export async function init(options: InitOptions = {}) {
 
   await authenticateAndLink(cwd);
   await detectAndInstall(cwd, ctx, options);
+
+  if (!options.noSkills) {
+    await installSkills(cwd, ctx?.framework.dep, options.yes ?? false);
+  }
 }
 
 async function authenticateAndLink(cwd: string): Promise<void> {
