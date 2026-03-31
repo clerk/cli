@@ -1,4 +1,5 @@
 import { join } from "node:path";
+import { stat } from "node:fs/promises";
 import { parseModule } from "magicast";
 import {
   authComponentName,
@@ -27,11 +28,13 @@ ${content}
  * Determine the pages directory root for a Nuxt project.
  * Nuxt 4 moved the default srcDir to `app/`, so pages live at `app/pages/`.
  * Nuxt 3 (and Nuxt 4 with explicit srcDir overrides) keeps pages at `pages/`.
- * We detect this by checking for the presence of `app/app.vue`.
+ * We detect this by checking whether the `app/` directory itself exists.
  */
 async function pagesDir(cwd: string): Promise<"app/pages" | "pages"> {
-  const appVueExists = await Bun.file(join(cwd, "app/app.vue")).exists();
-  return appVueExists ? "app/pages" : "pages";
+  const appDirExists = await stat(join(cwd, "app"))
+    .then((s) => s.isDirectory())
+    .catch(() => false);
+  return appDirExists ? "app/pages" : "pages";
 }
 
 function addNuxtModule(content: string): string {
