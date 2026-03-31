@@ -7,8 +7,8 @@ import { isHuman } from "../mode.ts";
  */
 export function printNextSteps(steps: string[]): void {
   if (!isHuman() || steps.length === 0) return;
-  console.error(`\n${dim("Next steps:")}`);
+  console.log(`\n${dim("Next steps:")}`);
   for (const step of steps) {
-    console.error(`  ${cyan("\u2192")} ${step}`);
+    console.log(`  ${cyan("\u2192")} ${step}`);
   }
 }
