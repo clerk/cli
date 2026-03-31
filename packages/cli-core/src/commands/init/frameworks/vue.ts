@@ -24,11 +24,22 @@ async function findEntryFile(ctx: ProjectContext): Promise<string | null> {
 function addClerkPluginSetup(source: string): string {
   const keyBlock = `\nconst PUBLISHABLE_KEY = import.meta.env.VITE_CLERK_PUBLISHABLE_KEY;\n\nif (!PUBLISHABLE_KEY) {\n  throw new Error("Add your Clerk Publishable Key to the .env file");\n}\n`;
 
-  // Insert app.use(clerkPlugin, ...) before app.mount()
-  const result = source.replace(
-    /((\w+)\.mount\s*\()/,
-    `$2.use(clerkPlugin, { publishableKey: PUBLISHABLE_KEY });\n$1`,
-  );
+  let result = source;
+
+  // Handle chained pattern: createApp(App).mount(...) -> split into separate statements
+  const chainedPattern = /(createApp\([^)]*\))\.mount\s*\(([^)]*)\)/;
+  if (chainedPattern.test(result)) {
+    result = result.replace(
+      chainedPattern,
+      `const app = $1;\napp.use(clerkPlugin, { publishableKey: PUBLISHABLE_KEY });\napp.mount($2)`,
+    );
+  } else {
+    // Handle variable pattern: app.mount(...) -> insert app.use() before it
+    result = result.replace(
+      /((\w+)\.mount\s*\()/,
+      `$2.use(clerkPlugin, { publishableKey: PUBLISHABLE_KEY });\n$1`,
+    );
+  }
 
   return insertAfterLastImport(result, keyBlock);
 }
