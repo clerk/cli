@@ -1,9 +1,14 @@
 import { basename } from "node:path";
-import { search, confirm } from "@inquirer/prompts";
+import { search, confirm, input } from "@inquirer/prompts";
 import { isAgent } from "../../mode.ts";
 import { getToken } from "../../lib/credential-store.ts";
 import { login } from "../auth/login.ts";
-import { listApplications, fetchApplication, type Application } from "../../lib/plapi.ts";
+import {
+  listApplications,
+  fetchApplication,
+  createApplication,
+  type Application,
+} from "../../lib/plapi.ts";
 import { setProfile, resolveProfile, moveProfile } from "../../lib/config.ts";
 import { autolink, findClerkKeys, matchKeyToApp } from "../../lib/autolink.ts";
 import { getGitRepoIdentifier, getGitRepoRoot, getGitNormalizedRemote } from "../../lib/git.ts";
@@ -18,6 +23,7 @@ const AGENT_PROMPT = `You are linking a Clerk application to the current project
 1. Ensure the user is authenticated. If not, run \`clerk auth login\` first.
 2. Determine which application to link:
    - If the user provides an app ID: \`clerk link --app <app_id>\`
+   - To create a new application: \`clerk link --create-app "My App"\`
    - Otherwise, list available applications with \`GET /v1/platform/applications\` and ask the user to select one.
 3. The link is stored in ~/.clerk/config.json as a profile keyed by the git repository root (shared across worktrees).
 
@@ -26,10 +32,14 @@ const AGENT_PROMPT = `You are linking a Clerk application to the current project
 | Method | Endpoint | Purpose |
 |--------|----------|---------|
 | GET | /v1/platform/applications | List all applications |
-| GET | /v1/platform/applications/{appId} | Fetch application with instance details |`;
+| GET | /v1/platform/applications/{appId} | Fetch application with instance details |
+| POST | /v1/platform/applications | Create a new application |`;
+
+const CREATE_NEW_APP = "__create_new__" as const;
 
 interface LinkOptions {
   app?: string;
+  createApp?: string;
   skipIfLinked?: boolean;
 }
 
@@ -71,7 +81,9 @@ export async function link(options: LinkOptions = {}): Promise<void> {
 
   const app = options.app
     ? await fetchApplication(options.app)
-    : await resolveApp(cwd, displayPath, !existing);
+    : options.createApp
+      ? await createAndFetchApp(options.createApp)
+      : await resolveApp(cwd, displayPath, !existing);
 
   const devInstance = app.instances.find((i) => i.environment_type === "development");
   const prodInstance = app.instances.find((i) => i.environment_type === "production");
@@ -155,6 +167,12 @@ async function handleExistingProfile(
   return confirm({ message: "Re-link to a different application?", default: false });
 }
 
+async function createAndFetchApp(name: string): Promise<Application> {
+  const created = await createApplication(name);
+  console.log(`\nCreated ${cyan(created.name ?? created.application_id)}`);
+  return fetchApplication(created.application_id);
+}
+
 async function resolveApp(
   cwd: string,
   displayPath: string,
@@ -162,13 +180,7 @@ async function resolveApp(
 ): Promise<Application> {
   const apps = await listApplications();
 
-  if (apps.length === 0) {
-    throw new CliError("No applications found. Create one at https://dashboard.clerk.com first.", {
-      code: ERROR_CODE.APP_NOT_FOUND,
-    });
-  }
-
-  if (detectKeys) {
+  if (apps.length > 0 && detectKeys) {
     const detectedKeys = await findClerkKeys(cwd);
     const match = detectedKeys.length > 0 ? matchKeyToApp(detectedKeys, apps) : undefined;
 
@@ -183,14 +195,14 @@ async function resolveApp(
     }
   }
 
-  return pickApp(apps, displayPath);
+  return pickOrCreateApp(apps, displayPath);
 }
 
-async function pickApp(apps: Application[], displayPath: string): Promise<Application> {
-  const choices = apps.map((a) => ({
-    name: appLabel(a),
-    value: a.application_id,
-  }));
+async function pickOrCreateApp(apps: Application[], displayPath: string): Promise<Application> {
+  const choices = [
+    ...apps.map((a) => ({ name: appLabel(a), value: a.application_id })),
+    { name: dim("+ Create a new application"), value: CREATE_NEW_APP },
+  ];
 
   const selectedId = await search({
     message: `Select a Clerk application to link ${dim(`(repo: ${basename(displayPath)})`)}`,
@@ -201,11 +213,17 @@ async function pickApp(apps: Application[], displayPath: string): Promise<Applic
     },
   });
 
-  const found = apps.find((a) => a.application_id === selectedId);
-  if (!found) {
-    throw new CliError("Selected application not found.", {
-      code: ERROR_CODE.APP_NOT_FOUND,
-    });
+  if (selectedId !== CREATE_NEW_APP) {
+    const found = apps.find((a) => a.application_id === selectedId);
+    if (!found) {
+      throw new CliError("Selected application not found.", {
+        code: ERROR_CODE.APP_NOT_FOUND,
+      });
+    }
+    return found;
   }
-  return found;
+
+  const name = await input({ message: "Application name:" });
+  if (!name.trim()) throw new CliError("Application name cannot be empty.");
+  return createAndFetchApp(name.trim());
 }

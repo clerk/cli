@@ -8,15 +8,17 @@ automatically shared across all clones and worktrees of the same repository.
 ## Usage
 
 ```sh
-clerk link                    # Interactive app picker
-clerk link --app app_abc123   # Link directly by app ID
+clerk link                              # Interactive app picker
+clerk link --app app_abc123             # Link directly by app ID
+clerk link --create-app "My App"        # Create a new app and link it
 ```
 
 ## Options
 
-| Flag         | Description                                       |
-| ------------ | ------------------------------------------------- |
-| `--app <id>` | Application ID to link (skips interactive picker) |
+| Flag                  | Description                                               |
+| --------------------- | --------------------------------------------------------- |
+| `--app <id>`          | Application ID to link (skips interactive picker)         |
+| `--create-app <name>` | Create a new Clerk application with this name and link it |
 
 ## Agent Mode
 
@@ -37,7 +39,7 @@ interactive flow.
 7. If a key matches an application, suggests it: "We found \<app\>. Link to this application?"
    - If the user confirms (default), links to the detected app
    - If the user declines, falls through to the interactive picker
-8. If no match, presents a searchable picker (type to filter by name)
+8. If no match, presents a searchable picker (type to filter by name) with a "+ Create new application" option at the bottom. When selected, prompts for a name and creates the app via the API. If the user has zero apps, the picker shows only the "Create new" option
 9. Stores the profile in the config file keyed by the normalized remote URL
 10. Falls back to git-common-dir or the current directory path if no remote is configured
 
@@ -72,3 +74,4 @@ Detected publishable keys are matched against all applications returned by
 | ------ | ----------------------------------- | ------------------------------------------------ |
 | `GET`  | `/v1/platform/applications`         | List all applications for the authenticated user |
 | `GET`  | `/v1/platform/applications/{appId}` | Fetch application details with instance IDs      |
+| `POST` | `/v1/platform/applications`         | Create a new application                         |

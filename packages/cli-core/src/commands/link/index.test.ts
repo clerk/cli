@@ -34,9 +34,11 @@ mock.module("../auth/login.ts", () => ({
 
 const mockListApplications = mock();
 const mockFetchApplication = mock();
+const mockCreateApplication = mock();
 mock.module("../../lib/plapi.ts", () => ({
   listApplications: (...args: unknown[]) => mockListApplications(...args),
   fetchApplication: (...args: unknown[]) => mockFetchApplication(...args),
+  createApplication: (...args: unknown[]) => mockCreateApplication(...args),
   PlapiError: class PlapiError extends Error {},
   fetchInstanceConfig: async () => ({}),
   putInstanceConfig: async () => ({}),
@@ -75,10 +77,12 @@ mock.module("../../lib/git.ts", () => ({
 
 const mockSearch = mock();
 const mockConfirm = mock();
+const mockInput = mock();
 mock.module("@inquirer/prompts", () => ({
   ...promptsStubs,
   search: (...args: unknown[]) => mockSearch(...args),
   confirm: (...args: unknown[]) => mockConfirm(...args),
+  input: (...args: unknown[]) => mockInput(...args),
 }));
 
 const { link } = await import("./index.ts");
@@ -111,6 +115,7 @@ describe("link", () => {
     mockLogin.mockReset();
     mockListApplications.mockReset();
     mockFetchApplication.mockReset();
+    mockCreateApplication.mockReset();
     mockSetProfile.mockReset();
     mockResolveProfile.mockReset();
     mockResolveProfile.mockResolvedValue(undefined);
@@ -129,6 +134,7 @@ describe("link", () => {
     mockGetGitNormalizedRemote.mockResolvedValue("github.com/org/repo");
     mockSearch.mockReset();
     mockConfirm.mockReset();
+    mockInput.mockReset();
     consoleSpy?.mockRestore();
   });
 
@@ -294,7 +300,7 @@ describe("link", () => {
       mockSearch.mockImplementation(
         async (config: { source: (term: string | undefined) => unknown[] }) => {
           const results = config.source(undefined);
-          expect(results).toHaveLength(2);
+          expect(results).toHaveLength(3); // 2 apps + "Create new"
           return "app_a";
         },
       );
@@ -374,12 +380,37 @@ describe("link", () => {
       await link();
     });
 
-    test("exits when no apps found", async () => {
+    test("shows picker with create option when no apps found", async () => {
       mockIsAgent.mockReturnValue(false);
       mockGetToken.mockResolvedValue("token");
       mockListApplications.mockResolvedValue([]);
+      mockSearch.mockResolvedValue("__create_new__");
+      mockInput.mockResolvedValue("My New App");
+      mockCreateApplication.mockResolvedValue({
+        application_id: "app_new",
+        name: "My New App",
+        instances: [
+          { instance_id: "ins_dev", environment_type: "development", publishable_key: "pk_test" },
+        ],
+      });
+      mockFetchApplication.mockResolvedValue({
+        application_id: "app_new",
+        name: "My New App",
+        instances: [
+          {
+            instance_id: "ins_dev",
+            environment_type: "development",
+            secret_key: "sk_test",
+            publishable_key: "pk_test",
+          },
+        ],
+      });
+      consoleSpy = spyOn(console, "log").mockImplementation(() => {});
 
-      await expect(link()).rejects.toThrow("No applications found");
+      await link();
+
+      expect(mockSearch).toHaveBeenCalled();
+      expect(mockCreateApplication).toHaveBeenCalledWith("My New App");
     });
   });
 
