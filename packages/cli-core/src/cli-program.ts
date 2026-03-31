@@ -364,7 +364,7 @@ Examples:
     .command("completion")
     .description("Generate shell autocompletion script")
     .addArgument(
-      createArgument("<shell>", `Shell type (${SUPPORTED_SHELLS.join(", ")})`).choices(
+      createArgument("[shell]", `Shell type (${SUPPORTED_SHELLS.join(", ")})`).choices(
         SUPPORTED_SHELLS,
       ),
     )
@@ -372,9 +372,29 @@ Examples:
       "after",
       `
 Examples:
-  $ clerk completion bash       # Output bash completion script
-  $ clerk completion zsh        # Output zsh completion script
-  $ eval "$(clerk completion bash)"  # Enable completions in current session`,
+  $ clerk completion bash              Output bash completion script
+  $ clerk completion zsh               Output zsh completion script
+  $ clerk completion fish              Output fish completion script
+  $ clerk completion powershell        Output PowerShell completion script
+
+Tutorial — enable completions for your shell:
+
+  Bash:
+    $ eval "$(clerk completion bash)"                          # Current session only
+    $ clerk completion bash > /etc/bash_completion.d/clerk     # Permanent (Linux)
+    $ echo 'eval "$(clerk completion bash)"' >> ~/.bashrc      # Permanent (append)
+
+  Zsh:
+    $ eval "$(clerk completion zsh)"                           # Current session only
+    $ mkdir -p ~/.zfunc && clerk completion zsh > ~/.zfunc/_clerk  # Permanent
+    # Then add to ~/.zshrc: fpath=(~/.zfunc $fpath); autoload -Uz compinit && compinit
+
+  Fish:
+    $ clerk completion fish > ~/.config/fish/completions/clerk.fish  # Auto-discovered
+
+  PowerShell:
+    $ clerk completion powershell | Out-String | Invoke-Expression  # Current session
+    $ clerk completion powershell >> $PROFILE                       # Permanent`,
     )
     .action(completion);
 

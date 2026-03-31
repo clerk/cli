@@ -21,7 +21,22 @@ function isSupportedShell(shell: string): shell is SupportedShell {
   return (SUPPORTED_SHELLS as readonly string[]).includes(shell);
 }
 
-export function completion(shell: string): void {
+export function completion(shell?: string): void {
+  if (!shell) {
+    throwUsageError(
+      `Missing required shell argument. Supported shells: ${SUPPORTED_SHELLS.join(", ")}
+
+Usage:
+  $ clerk completion <shell>
+
+Examples:
+  $ clerk completion bash              Output bash completion script
+  $ clerk completion zsh               Output zsh completion script
+  $ eval "$(clerk completion bash)"    Enable completions in current session
+
+Run 'clerk completion --help' for full setup instructions.`,
+    );
+  }
   if (!isSupportedShell(shell)) {
     throwUsageError(`Unsupported shell: ${shell}. Supported: ${SUPPORTED_SHELLS.join(", ")}`);
   }
