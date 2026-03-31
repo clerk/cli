@@ -53,6 +53,42 @@ export const start = createStart(() => {
   expect(plan.actions.some((action) => action.path === "src/routes/sign-in.$.tsx")).toBe(false);
 });
 
+test("creates src/start.ts with clerkMiddleware when no start file exists", async () => {
+  const plan = await tanstackStart.scaffold(makeCtx());
+
+  const serverAction = plan.actions.find((action) => action.path === "src/start.ts");
+  expect(serverAction).toBeDefined();
+  expect(serverAction?.type).toBe("create");
+  if (serverAction?.type === "create") {
+    expect(serverAction.content).toContain("clerkMiddleware");
+    expect(serverAction.content).toContain("@clerk/tanstack-react-start/server");
+    expect(serverAction.content).toContain("requestMiddleware");
+  }
+});
+
+test("creates app/start.ts when no start file exists and app base dir is detected", async () => {
+  await mkdir(join(tempDir, "app/routes"), { recursive: true });
+  await Bun.write(join(tempDir, "app/routes/__root.tsx"), "export default function Root() {}");
+
+  const plan = await tanstackStart.scaffold(makeCtx());
+
+  const serverAction = plan.actions.find((action) => action.path === "app/start.ts");
+  expect(serverAction).toBeDefined();
+  expect(serverAction?.type).toBe("create");
+  if (serverAction?.type === "create") {
+    expect(serverAction.content).toContain("clerkMiddleware");
+    expect(serverAction.content).toContain("requestMiddleware");
+  }
+});
+
+test("does not emit a post-instruction to add middleware when start file is missing", async () => {
+  const plan = await tanstackStart.scaffold(makeCtx());
+
+  expect(plan.postInstructions.some((msg) => msg.toLowerCase().includes("requestmiddleware"))).toBe(
+    false,
+  );
+});
+
 test("places auth routes inside {-$locale} when locale dir detected", async () => {
   await mkdir(join(tempDir, "src/routes/{-$locale}"), { recursive: true });
   await Bun.write(join(tempDir, "src/routes/{-$locale}/index.tsx"), "export default function() {}");
