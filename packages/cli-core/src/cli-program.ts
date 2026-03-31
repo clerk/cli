@@ -116,6 +116,18 @@ Examples:
     .action(logout);
 
   program
+    .command("login", { hidden: true })
+    .description("Log in to your Clerk account")
+    .action(async () => {
+      await login();
+    });
+
+  program
+    .command("logout", { hidden: true })
+    .description("Log out of your Clerk account")
+    .action(logout);
+
+  program
     .command("link")
     .description("Link this project to a Clerk application")
     .option("--app <id>", "Application ID to link (skips interactive picker)")
