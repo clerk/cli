@@ -3,6 +3,8 @@ import { generate as generateBash } from "./shells/bash.ts";
 import { generate as generateZsh } from "./shells/zsh.ts";
 import { generate as generateFish } from "./shells/fish.ts";
 import { generate as generatePowershell } from "./shells/powershell.ts";
+import { completion } from "./index.ts";
+import { CliError } from "../../lib/errors.ts";
 
 const BINARY = "clerk";
 
@@ -12,6 +14,18 @@ const SHELLS = [
   { name: "fish", generate: generateFish },
   { name: "powershell", generate: generatePowershell },
 ];
+
+describe("completion()", () => {
+  test("throws a helpful error when shell is not provided", () => {
+    expect(() => completion()).toThrow(CliError);
+    expect(() => completion()).toThrow(/Missing required shell argument/);
+  });
+
+  test("throws a helpful error for unsupported shells", () => {
+    expect(() => completion("nushell")).toThrow(CliError);
+    expect(() => completion("nushell")).toThrow(/Unsupported shell: nushell/);
+  });
+});
 
 describe("shell script generators", () => {
   describe.each(SHELLS)("$name", ({ generate }) => {
