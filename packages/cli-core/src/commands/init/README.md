@@ -10,30 +10,47 @@ clerk init --framework next
 clerk init --prompt
 clerk init -y
 clerk init --yes
+clerk init --app app_123 --framework next
+clerk init --app app_123 --instance dev --framework next
+clerk init --create-app "My App" --framework next
+CLERK_PLATFORM_API_KEY=ak_... clerk init --app app_123 --framework next
 ```
 
 ## Options
 
-| Option               | Description                                                                                                                                                       |
-| -------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `--framework <name>` | Framework to set up (skips auto-detection). Valid values: `next`, `astro`, `nuxt`, `tanstack-start`, `react-router`, `vue`, `expo`, `react`, `express`, `fastify` |
-| `--prompt`           | Output a prompt for an AI agent to integrate Clerk, then exit                                                                                                     |
-| `-y, --yes`          | Skip confirmation prompts                                                                                                                                         |
+| Option                | Description                                                                                                                                                       |
+| --------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `--framework <name>`  | Framework to set up (skips auto-detection). Valid values: `next`, `astro`, `nuxt`, `tanstack-start`, `react-router`, `vue`, `expo`, `react`, `express`, `fastify` |
+| `--prompt`            | Output a prompt for an AI agent to integrate Clerk, then exit                                                                                                     |
+| `-y, --yes`           | Skip confirmation prompts                                                                                                                                         |
+| `--app <id>`          | Application ID. Skips login/link prompts, enables non-interactive mode (implies `--yes`). Authenticates via existing OAuth token or `CLERK_PLATFORM_API_KEY`      |
+| `--instance <id>`     | Instance to target (`dev`, `prod`, or full instance ID). Used with `--app` to select which instance's environment variables to pull                               |
+| `--create-app <name>` | Create a new Clerk application with this name                                                                                                                     |
 
 ## Agent Mode
 
-When running in agent mode (`--mode agent` or non-TTY), outputs a framework-specific prompt with exact file paths and code snippets, then exits without modifying the project.
+When running in agent mode (`--mode agent` or non-TTY), outputs a framework-specific prompt with exact file paths and code snippets, then exits without modifying the project. However, when `--app` or `--create-app` is provided in agent mode, the command performs actual scaffolding instead of outputting a prompt.
+
+## Non-Interactive / Agent Usage
+
+```sh
+clerk init --app app_123 --framework next
+clerk init --app app_123 --instance dev --framework next
+clerk init --create-app "My App" --framework next
+CLERK_PLATFORM_API_KEY=ak_... clerk init --app app_123 --framework next
+```
 
 ## Flow
 
 1. Gathers project context (framework, router variant, TypeScript, `src/` directory, package manager)
-2. **Agent mode**: outputs a framework-specific prompt, then exits
+2. **Agent mode**: outputs a framework-specific prompt, then exits (unless `--app` or `--create-app` is provided, in which case scaffolding proceeds)
 3. **Human mode**: determines auth mode:
-   - If already authenticated and linked: uses authenticated mode automatically
+   - If already authenticated (via `CLERK_PLATFORM_API_KEY` or OAuth token) and linked: uses authenticated mode automatically
    - If authenticated but not linked: uses authenticated mode (runs `clerk link`)
-   - If not authenticated: asks user — "Continue with temporary keys (connect your account later)" or "Log in to an existing Clerk account"
+   - If `--app` is provided: skips login/link entirely (authenticates via existing OAuth token or `CLERK_PLATFORM_API_KEY`)
+   - If not authenticated: defaults to keyless mode
    - With `--yes` and not authenticated: defaults to keyless mode
-4. **Authenticated mode only**: authenticates via `clerk auth login` (skipped if already authenticated) and links the project via `clerk link` (skipped if already linked)
+4. **Authenticated mode only**: links the project via `clerk link` (skipped if already linked; when `--create-app` is provided, creates a new app during this step)
 5. Displays detected framework and variant
 6. Detects existing auth libraries (NextAuth, Auth0, Supabase, Firebase, Passport, Better Auth, Kinde) and shows migration guidance
 7. Installs the appropriate Clerk SDK (skips if already present)

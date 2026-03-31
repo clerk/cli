@@ -24,6 +24,9 @@ interface InitOptions {
   framework?: string;
   yes?: boolean;
   prompt?: boolean;
+  app?: string;
+  instance?: string;
+  createApp?: string;
 }
 
 export async function init(options: InitOptions = {}) {
@@ -38,23 +41,34 @@ export async function init(options: InitOptions = {}) {
   // Populate framework-specific context (variant, layoutPath, middlewareBasename)
   if (ctx) await enrichProjectContext(ctx);
 
-  if (options.prompt || isAgent()) {
+  // In agent mode, output a hint unless --app/--create-app is provided (which means: actually scaffold)
+  const nonInteractive = options.app || options.createApp;
+  if ((options.prompt || isAgent()) && !nonInteractive) {
     console.log(
       "Run `clerk init -y` to automatically detect the framework, install the Clerk SDK, and scaffold authentication files without interactive prompts.",
     );
     return;
   }
 
-  const authenticated = await resolveAuth(cwd);
+  let authenticated: boolean;
 
-  if (authenticated) {
-    await link({ skipIfLinked: true });
+  // --app bypasses auth+link entirely; API calls authenticate via token/env var
+  if (options.app) {
+    authenticated = true;
+  } else {
+    authenticated = await resolveAuth(cwd);
+    if (authenticated) {
+      await link({
+        skipIfLinked: !options.createApp,
+        ...(options.createApp ? { createApp: options.createApp } : {}),
+      });
+    }
   }
 
   await detectAndInstall(cwd, ctx, options);
 
   if (authenticated) {
-    await pull({});
+    await pull({ app: options.app, instance: options.instance });
     return;
   }
 
@@ -127,7 +141,8 @@ async function scaffoldAndWrite(
     console.log(dim("Consider committing first so you can review what clerk init creates.\n"));
   }
 
-  if (options.yes) {
+  // --app implies non-interactive mode (skip confirmation like --yes)
+  if (options.yes || options.app) {
     previewPlan(plan);
   } else {
     const proceed = await previewAndConfirm(plan);

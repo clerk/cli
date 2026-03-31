@@ -65,6 +65,9 @@ export function createProgram() {
         FRAMEWORK_NAMES,
       ),
     )
+    .option("--app <id>", "Application ID (skips login/link, enables non-interactive mode)")
+    .option("--instance <id>", "Instance to target (dev, prod, or instance ID; used with --app)")
+    .option("--create-app <name>", "Create a new Clerk application with this name")
     .option("--prompt", "Output a prompt for an AI agent to integrate Clerk")
     .option("-y, --yes", "Skip confirmation prompts")
     .addHelpText(
@@ -73,6 +76,8 @@ export function createProgram() {
 Examples:
   $ clerk init                       Auto-detect framework and set up Clerk
   $ clerk init --framework next      Set up for Next.js (skips detection)
+  $ clerk init --app app_123         Non-interactive init with a specific app
+  $ clerk init --create-app "My App" Create a new app and initialize
   $ clerk init --prompt              Output a setup prompt for an AI agent
   $ clerk init -y                    Skip all confirmation prompts`,
     )
@@ -131,12 +136,14 @@ Examples:
     .command("link")
     .description("Link this project to a Clerk application")
     .option("--app <id>", "Application ID to link (skips interactive picker)")
+    .option("--create-app <name>", "Create a new Clerk application and link it")
     .addHelpText(
       "after",
       `
 Examples:
   $ clerk link                       Pick an app interactively
-  $ clerk link --app app_abc123      Link directly by application ID`,
+  $ clerk link --app app_abc123      Link directly by application ID
+  $ clerk link --create-app "My App" Create a new app and link it`,
     )
     .action(link);
 
