@@ -140,3 +140,116 @@ export default function Root() {
     ),
   ).toBe(true);
 });
+
+test("wires sign-in and sign-up routes into app/routes.ts (canonical pattern)", async () => {
+  await mkdir(join(tempDir, "app"), { recursive: true });
+  await Bun.write(
+    join(tempDir, "app/root.tsx"),
+    `import { Outlet } from "react-router";
+export default function Root() { return <Outlet />; }
+`,
+  );
+  await Bun.write(
+    join(tempDir, "app/routes.ts"),
+    `import { type RouteConfig, index } from "@react-router/dev/routes";
+
+export default [index("routes/home.tsx")] satisfies RouteConfig;
+`,
+  );
+
+  const plan = await reactRouter.scaffold(makeCtx());
+  const routesAction = plan.actions.find((action) => action.path === "app/routes.ts");
+
+  expect(routesAction).toBeDefined();
+  expect(routesAction?.type).toBe("modify");
+
+  if (routesAction?.type !== "modify") {
+    throw new Error("Expected routes action to modify app/routes.ts");
+  }
+
+  expect(routesAction.content).toContain("route");
+  expect(routesAction.content).toContain('route("sign-in/*", "routes/sign-in.tsx")');
+  expect(routesAction.content).toContain('route("sign-up/*", "routes/sign-up.tsx")');
+  // `route` should be added to the import
+  expect(routesAction.content).toMatch(/import\s*\{[^}]*\broute\b[^}]*\}/);
+});
+
+test("does not duplicate routes when app/routes.ts already has them wired", async () => {
+  await mkdir(join(tempDir, "app"), { recursive: true });
+  await Bun.write(
+    join(tempDir, "app/root.tsx"),
+    `import { Outlet } from "react-router";
+export default function Root() { return <Outlet />; }
+`,
+  );
+  await Bun.write(
+    join(tempDir, "app/routes.ts"),
+    `import { type RouteConfig, index, route } from "@react-router/dev/routes";
+
+export default [
+  index("routes/home.tsx"),
+  route("sign-in/*", "routes/sign-in.tsx"),
+  route("sign-up/*", "routes/sign-up.tsx"),
+] satisfies RouteConfig;
+`,
+  );
+
+  const plan = await reactRouter.scaffold(makeCtx());
+  const routesAction = plan.actions.find((action) => action.path === "app/routes.ts");
+
+  // Should be skipped, not modified again
+  expect(routesAction?.type).toBe("skip");
+});
+
+test("emits manual route wiring instruction when app/routes.ts is absent", async () => {
+  await mkdir(join(tempDir, "app"), { recursive: true });
+  await Bun.write(
+    join(tempDir, "app/root.tsx"),
+    `import { Outlet } from "react-router";
+export default function Root() { return <Outlet />; }
+`,
+  );
+
+  const plan = await reactRouter.scaffold(makeCtx());
+
+  // No routes.ts means no routes action
+  expect(plan.actions.find((a) => a.path?.includes("routes.ts"))).toBeUndefined();
+  // And no manual wiring instruction since there's nothing to wire
+  expect(plan.postInstructions.some((i) => i.includes("Add sign-in and sign-up routes"))).toBe(
+    false,
+  );
+});
+
+test("wires locale-prefixed routes into app/routes.ts", async () => {
+  await mkdir(join(tempDir, "app/routes"), { recursive: true });
+  await Bun.write(join(tempDir, "app/routes/($locale)._index.tsx"), "export default function() {}");
+  await Bun.write(
+    join(tempDir, "app/root.tsx"),
+    `import { Outlet } from "react-router";
+export default function Root() { return <Outlet />; }
+`,
+  );
+  await Bun.write(
+    join(tempDir, "app/routes.ts"),
+    `import { type RouteConfig, index } from "@react-router/dev/routes";
+
+export default [index("routes/home.tsx")] satisfies RouteConfig;
+`,
+  );
+
+  const plan = await reactRouter.scaffold(makeCtx());
+  const routesAction = plan.actions.find((action) => action.path === "app/routes.ts");
+
+  expect(routesAction?.type).toBe("modify");
+
+  if (routesAction?.type !== "modify") {
+    throw new Error("Expected routes action to modify app/routes.ts");
+  }
+
+  expect(routesAction.content).toContain(
+    'route("($locale)/sign-in/*", "routes/($locale).sign-in.tsx")',
+  );
+  expect(routesAction.content).toContain(
+    'route("($locale)/sign-up/*", "routes/($locale).sign-up.tsx")',
+  );
+});

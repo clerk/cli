@@ -21,6 +21,12 @@ type RootScaffoldResult = {
   needsManualLoaderMerge: boolean;
 };
 
+type RoutesScaffoldResult = {
+  action: FileAction | null;
+  /** True when the routes file exists but couldn't be parsed — user must wire manually. */
+  needsManualRouteWire: boolean;
+};
+
 function addServerImport(source: string, imported: "clerkMiddleware" | "rootAuthLoader"): string {
   if (source.includes(imported)) return source;
   return safeAddImport(source, "@clerk/react-router/server", imported);
@@ -211,6 +217,108 @@ function enableV8Middleware(content: string): string {
   }
 }
 
+/**
+ * Ensure `route` is included in the import from `@react-router/dev/routes`.
+ * Handles the common pattern: `import { ..., index } from "@react-router/dev/routes"`.
+ */
+function ensureRouteImported(source: string): string {
+  // Check whether `route` is already a named import from the routes package.
+  const importMatch = source.match(
+    /import\s*\{([^}]*)\}\s*from\s*["']@react-router\/dev\/routes["']/,
+  );
+  if (!importMatch || /\broute\b/.test(importMatch[1])) return source;
+
+  return source.replace(
+    /(\bimport\s*\{[^}]*)(\}\s*from\s*["']@react-router\/dev\/routes["'])/,
+    (_, imports, rest) => `${imports.trimEnd()}, route${rest}`,
+  );
+}
+
+/**
+ * Build the two route() call strings for sign-in and sign-up,
+ * accounting for an optional locale prefix.
+ */
+function buildRouteEntries(localePrefix: string | null): { signIn: string; signUp: string } {
+  const prefix = localePrefix ? `${localePrefix}/` : "";
+  const signInFile = localePrefix ? `routes/${localePrefix}.sign-in.tsx` : "routes/sign-in.tsx";
+  const signUpFile = localePrefix ? `routes/${localePrefix}.sign-up.tsx` : "routes/sign-up.tsx";
+
+  return {
+    signIn: `route("${prefix}sign-in/*", "${signInFile}")`,
+    signUp: `route("${prefix}sign-up/*", "${signUpFile}")`,
+  };
+}
+
+/**
+ * Inject sign-in/sign-up route() calls into `app/routes.ts`.
+ *
+ * Strategy (in order):
+ *  1. Try to find the canonical `export default [...] satisfies RouteConfig` pattern
+ *     and append entries inside the array literal.
+ *  2. If not found, attempt a simpler append before the closing `]` of any default export array.
+ *  3. Return null (unmodified) when neither strategy can safely apply.
+ */
+function injectRouteEntries(source: string, localePrefix: string | null): string | null {
+  const { signIn, signUp } = buildRouteEntries(localePrefix);
+
+  if (source.includes(signIn) && source.includes(signUp)) return source;
+
+  // Strategy 1: canonical create-react-router pattern.
+  const canonicalPattern = /export default \[([^\]]*)\]\s*satisfies\s*RouteConfig\s*;/s;
+  const canonical = source.match(canonicalPattern);
+  if (canonical) {
+    const innerContent = canonical[1].trimEnd();
+    const separator = innerContent.length > 0 && !innerContent.endsWith(",") ? "," : "";
+    const newInner = `${innerContent}${separator}\n  ${signIn},\n  ${signUp},\n`;
+    return source.replace(canonicalPattern, `export default [${newInner}] satisfies RouteConfig;`);
+  }
+
+  // Strategy 2: any `export default [...]` array (no satisfies).
+  const simplePattern = /(export\s+default\s+\[)([\s\S]*?)(\]\s*;)/;
+  const simple = source.match(simplePattern);
+  if (simple) {
+    const innerContent = simple[2].trimEnd();
+    const separator = innerContent.length > 0 && !innerContent.endsWith(",") ? "," : "";
+    const newInner = `${innerContent}${separator}\n  ${signIn},\n  ${signUp},\n`;
+    return source.replace(simplePattern, `$1${newInner}$3`);
+  }
+
+  return null;
+}
+
+async function scaffoldRoutes(
+  ctx: ProjectContext,
+  localePrefix: string | null,
+): Promise<RoutesScaffoldResult> {
+  const routesPath = await findFirstFile(ctx.cwd, ["app/routes.ts", "app/routes.js"]);
+  if (!routesPath) return { action: null, needsManualRouteWire: false };
+
+  const content = await Bun.file(join(ctx.cwd, routesPath)).text();
+
+  const updated = injectRouteEntries(content, localePrefix);
+  if (updated === null) {
+    return { action: null, needsManualRouteWire: true };
+  }
+
+  if (updated === content) {
+    return {
+      action: { type: "skip", path: routesPath, skipReason: "Routes already wired" },
+      needsManualRouteWire: false,
+    };
+  }
+
+  const withImport = ensureRouteImported(updated);
+  return {
+    action: {
+      path: routesPath,
+      type: "modify",
+      content: withImport,
+      description: "Wire sign-in and sign-up routes into app/routes.ts",
+    },
+    needsManualRouteWire: false,
+  };
+}
+
 function scaffoldConfig(ctx: ProjectContext): Promise<FileAction | null> {
   return scaffoldConfigFile(ctx.cwd, {
     candidates: ["react-router.config.ts", "react-router.config.js"],
@@ -236,22 +344,28 @@ export const reactRouter: FrameworkScaffold = {
       detectLocalePrefix(ctx.cwd),
       scaffoldEnvVars(ctx, SIGN_ROUTE_ENV_VARS.vite),
     ]);
-    const authActions = await scaffoldAuthRoutes(ctx, localePrefix);
+    const [authActions, routesResult] = await Promise.all([
+      scaffoldAuthRoutes(ctx, localePrefix),
+      scaffoldRoutes(ctx, localePrefix),
+    ]);
 
     const rootAction = rootResult.action;
-    const actions = [configAction, rootAction, ...authActions, envAction].filter(
-      (action): action is FileAction => action !== null,
-    );
+    const actions = [
+      configAction,
+      rootAction,
+      ...authActions,
+      routesResult.action,
+      envAction,
+    ].filter((action): action is FileAction => action !== null);
     const postInstructions: string[] = [];
 
-    if (rootAction) {
-      postInstructions.push(
-        "Add sign-in and sign-up routes to app/routes.ts: route('sign-in/*', 'routes/sign-in.tsx') and route('sign-up/*', 'routes/sign-up.tsx')",
-      );
-    } else {
+    if (!rootAction) {
       postInstructions.push(
         "Add ClerkProvider, clerkMiddleware(), and rootAuthLoader() to your app/root.tsx. See: https://clerk.com/docs/quickstarts/react-router",
       );
+    }
+
+    if (routesResult.needsManualRouteWire) {
       postInstructions.push(
         "Add sign-in and sign-up routes to app/routes.ts: route('sign-in/*', 'routes/sign-in.tsx') and route('sign-up/*', 'routes/sign-up.tsx')",
       );
