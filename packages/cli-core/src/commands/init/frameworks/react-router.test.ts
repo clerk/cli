@@ -220,6 +220,93 @@ export default function Root() { return <Outlet />; }
   );
 });
 
+test("uses .jsx extension for routes in a JavaScript project", async () => {
+  await mkdir(join(tempDir, "app"), { recursive: true });
+  await Bun.write(
+    join(tempDir, "app/root.tsx"),
+    `import { Outlet } from "react-router";
+export default function Root() { return <Outlet />; }
+`,
+  );
+  await Bun.write(
+    join(tempDir, "app/routes.ts"),
+    `import { type RouteConfig, index } from "@react-router/dev/routes";
+
+export default [index("routes/home.jsx")] satisfies RouteConfig;
+`,
+  );
+
+  const plan = await reactRouter.scaffold(makeCtx({ typescript: false }));
+  const routesAction = plan.actions.find((action) => action.path === "app/routes.ts");
+
+  expect(routesAction?.type).toBe("modify");
+  if (routesAction?.type !== "modify") throw new Error("Expected modify");
+
+  expect(routesAction.content).toContain('route("sign-in/*", "routes/sign-in.jsx")');
+  expect(routesAction.content).toContain('route("sign-up/*", "routes/sign-up.jsx")');
+  expect(routesAction.content).not.toContain(".tsx");
+});
+
+test("does not duplicate routes on re-run for JS project (dedup is extension-agnostic)", async () => {
+  await mkdir(join(tempDir, "app"), { recursive: true });
+  await Bun.write(
+    join(tempDir, "app/root.tsx"),
+    `import { Outlet } from "react-router";
+export default function Root() { return <Outlet />; }
+`,
+  );
+  // Simulate a routes.ts already containing .jsx entries (written by a previous JS run)
+  await Bun.write(
+    join(tempDir, "app/routes.ts"),
+    `import { type RouteConfig, index, route } from "@react-router/dev/routes";
+
+export default [
+  index("routes/home.jsx"),
+  route("sign-in/*", "routes/sign-in.jsx"),
+  route("sign-up/*", "routes/sign-up.jsx"),
+] satisfies RouteConfig;
+`,
+  );
+
+  const plan = await reactRouter.scaffold(makeCtx({ typescript: false }));
+  const routesAction = plan.actions.find((action) => action.path === "app/routes.ts");
+
+  expect(routesAction?.type).toBe("skip");
+});
+
+test("only injects missing route when one auth route already exists", async () => {
+  await mkdir(join(tempDir, "app"), { recursive: true });
+  await Bun.write(
+    join(tempDir, "app/root.tsx"),
+    `import { Outlet } from "react-router";
+export default function Root() { return <Outlet />; }
+`,
+  );
+  await Bun.write(
+    join(tempDir, "app/routes.ts"),
+    `import { type RouteConfig, index, route } from "@react-router/dev/routes";
+
+export default [
+  index("routes/home.tsx"),
+  route("sign-in/*", "routes/sign-in.tsx"),
+] satisfies RouteConfig;
+`,
+  );
+
+  const plan = await reactRouter.scaffold(makeCtx());
+  const routesAction = plan.actions.find((action) => action.path === "app/routes.ts");
+
+  expect(routesAction?.type).toBe("modify");
+  if (routesAction?.type !== "modify") throw new Error("Expected modify");
+
+  // sign-in already present — only sign-up injected, no duplicate sign-in.
+  // A single route("sign-in/*", "routes/sign-in.tsx") entry contains "sign-in" twice
+  // (once in the URL path, once in the file path), so 2 is the expected count.
+  const occurrences = (routesAction.content.match(/sign-in/g) ?? []).length;
+  expect(occurrences).toBe(2);
+  expect(routesAction.content).toContain('route("sign-up/*", "routes/sign-up.tsx")');
+});
+
 test("wires locale-prefixed routes into app/routes.ts", async () => {
   await mkdir(join(tempDir, "app/routes"), { recursive: true });
   await Bun.write(join(tempDir, "app/routes/($locale)._index.tsx"), "export default function() {}");

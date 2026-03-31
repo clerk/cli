@@ -236,12 +236,20 @@ function ensureRouteImported(source: string): string {
 
 /**
  * Build the two route() call strings for sign-in and sign-up,
- * accounting for an optional locale prefix.
+ * accounting for an optional locale prefix and the project's JS/TS extension.
  */
-function buildRouteEntries(localePrefix: string | null): { signIn: string; signUp: string } {
+function buildRouteEntries(
+  ctx: ProjectContext,
+  localePrefix: string | null,
+): { signIn: string; signUp: string } {
+  const ext = jsxExt(ctx);
   const prefix = localePrefix ? `${localePrefix}/` : "";
-  const signInFile = localePrefix ? `routes/${localePrefix}.sign-in.tsx` : "routes/sign-in.tsx";
-  const signUpFile = localePrefix ? `routes/${localePrefix}.sign-up.tsx` : "routes/sign-up.tsx";
+  const signInFile = localePrefix
+    ? `routes/${localePrefix}.sign-in.${ext}`
+    : `routes/sign-in.${ext}`;
+  const signUpFile = localePrefix
+    ? `routes/${localePrefix}.sign-up.${ext}`
+    : `routes/sign-up.${ext}`;
 
   return {
     signIn: `route("${prefix}sign-in/*", "${signInFile}")`,
@@ -250,7 +258,19 @@ function buildRouteEntries(localePrefix: string | null): { signIn: string; signU
 }
 
 /**
+ * Check whether a route() call for the given URL path already exists in source.
+ * Matches any quote style and is file-extension-agnostic.
+ */
+function hasRouteForPath(source: string, urlPath: string): boolean {
+  const escaped = urlPath.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return new RegExp(`route\\s*\\(\\s*["'\`]${escaped}["'\`]`).test(source);
+}
+
+/**
  * Inject sign-in/sign-up route() calls into `app/routes.ts`.
+ *
+ * Only injects routes that are not already present (checked by URL path,
+ * not by file reference — so the check is extension-agnostic and idempotent).
  *
  * Strategy (in order):
  *  1. Try to find the canonical `export default [...] satisfies RouteConfig` pattern
@@ -258,10 +278,25 @@ function buildRouteEntries(localePrefix: string | null): { signIn: string; signU
  *  2. If not found, attempt a simpler append before the closing `]` of any default export array.
  *  3. Return null (unmodified) when neither strategy can safely apply.
  */
-function injectRouteEntries(source: string, localePrefix: string | null): string | null {
-  const { signIn, signUp } = buildRouteEntries(localePrefix);
+function injectRouteEntries(
+  source: string,
+  ctx: ProjectContext,
+  localePrefix: string | null,
+): string | null {
+  const prefix = localePrefix ? `${localePrefix}/` : "";
+  const signInPath = `${prefix}sign-in/*`;
+  const signUpPath = `${prefix}sign-up/*`;
 
-  if (source.includes(signIn) && source.includes(signUp)) return source;
+  const hasSignIn = hasRouteForPath(source, signInPath);
+  const hasSignUp = hasRouteForPath(source, signUpPath);
+
+  if (hasSignIn && hasSignUp) return source;
+
+  const { signIn, signUp } = buildRouteEntries(ctx, localePrefix);
+  const missing = [!hasSignIn && signIn, !hasSignUp && signUp].filter(
+    (e): e is string => e !== false,
+  );
+  const newEntries = missing.join(",\n  ");
 
   // Strategy 1: canonical create-react-router pattern.
   const canonicalPattern = /export default \[([^\]]*)\]\s*satisfies\s*RouteConfig\s*;/s;
@@ -269,7 +304,7 @@ function injectRouteEntries(source: string, localePrefix: string | null): string
   if (canonical) {
     const innerContent = canonical[1].trimEnd();
     const separator = innerContent.length > 0 && !innerContent.endsWith(",") ? "," : "";
-    const newInner = `${innerContent}${separator}\n  ${signIn},\n  ${signUp},\n`;
+    const newInner = `${innerContent}${separator}\n  ${newEntries},\n`;
     return source.replace(canonicalPattern, `export default [${newInner}] satisfies RouteConfig;`);
   }
 
@@ -279,7 +314,7 @@ function injectRouteEntries(source: string, localePrefix: string | null): string
   if (simple) {
     const innerContent = simple[2].trimEnd();
     const separator = innerContent.length > 0 && !innerContent.endsWith(",") ? "," : "";
-    const newInner = `${innerContent}${separator}\n  ${signIn},\n  ${signUp},\n`;
+    const newInner = `${innerContent}${separator}\n  ${newEntries},\n`;
     return source.replace(simplePattern, `$1${newInner}$3`);
   }
 
@@ -295,7 +330,7 @@ async function scaffoldRoutes(
 
   const content = await Bun.file(join(ctx.cwd, routesPath)).text();
 
-  const updated = injectRouteEntries(content, localePrefix);
+  const updated = injectRouteEntries(content, ctx, localePrefix);
   if (updated === null) {
     return { action: null, needsManualRouteWire: true };
   }
@@ -366,8 +401,9 @@ export const reactRouter: FrameworkScaffold = {
     }
 
     if (routesResult.needsManualRouteWire) {
+      const ext = jsxExt(ctx);
       postInstructions.push(
-        "Add sign-in and sign-up routes to app/routes.ts: route('sign-in/*', 'routes/sign-in.tsx') and route('sign-up/*', 'routes/sign-up.tsx')",
+        `Add sign-in and sign-up routes to app/routes.ts: route('sign-in/*', 'routes/sign-in.${ext}') and route('sign-up/*', 'routes/sign-up.${ext}')`,
       );
     }
 
