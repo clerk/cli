@@ -160,6 +160,46 @@ describe("link", () => {
       expect(mockGetToken).not.toHaveBeenCalled();
       expect(mockListApplications).not.toHaveBeenCalled();
     });
+
+    test("bypasses agent prompt when --app is provided", async () => {
+      mockIsAgent.mockReturnValue(true);
+      mockGetToken.mockResolvedValue("token");
+      mockFetchApplication.mockResolvedValue(mockApp);
+      consoleSpy = spyOn(console, "log").mockImplementation(() => {});
+
+      await link({ app: "app_123" });
+
+      expect(mockFetchApplication).toHaveBeenCalledWith("app_123");
+      expect(mockSetProfile).toHaveBeenCalled();
+    });
+
+    test("bypasses agent prompt when --create-app is provided", async () => {
+      mockIsAgent.mockReturnValue(true);
+      mockGetToken.mockResolvedValue("token");
+      mockCreateApplication.mockResolvedValue({
+        application_id: "app_new",
+        name: "Agent App",
+        instances: [],
+      });
+      mockFetchApplication.mockResolvedValue({
+        application_id: "app_new",
+        name: "Agent App",
+        instances: [
+          {
+            instance_id: "ins_dev",
+            environment_type: "development",
+            secret_key: "sk_test",
+            publishable_key: "pk_test",
+          },
+        ],
+      });
+      consoleSpy = spyOn(console, "log").mockImplementation(() => {});
+
+      await link({ createApp: "Agent App" });
+
+      expect(mockCreateApplication).toHaveBeenCalledWith("Agent App");
+      expect(mockSetProfile).toHaveBeenCalled();
+    });
   });
 
   describe("already linked", () => {
@@ -333,11 +373,12 @@ describe("link", () => {
           source: (term: string | undefined) => { name: string; value: string }[];
         }) => {
           const results = config.source("my");
-          expect(results).toHaveLength(1);
+          expect(results).toHaveLength(2); // "My App" + pinned "Create new"
           expect(results[0]!.value).toBe("app_a");
 
           const noMatch = config.source("zzz");
-          expect(noMatch).toHaveLength(0);
+          expect(noMatch).toHaveLength(1); // only pinned "Create new"
+          expect(noMatch[0]!.value).toBe("__create_new__");
 
           return "app_a";
         },
@@ -370,7 +411,7 @@ describe("link", () => {
           source: (term: string | undefined) => { name: string; value: string }[];
         }) => {
           const results = config.source("abc");
-          expect(results).toHaveLength(1);
+          expect(results).toHaveLength(2); // "app_abc" + pinned "Create new"
           expect(results[0]!.value).toBe("app_abc");
           return "app_abc";
         },
@@ -378,6 +419,19 @@ describe("link", () => {
       consoleSpy = spyOn(console, "log").mockImplementation(() => {});
 
       await link();
+    });
+
+    test("rejects --app and --create-app used together", async () => {
+      await expect(link({ app: "app_123", createApp: "My App" })).rejects.toThrow(
+        "Cannot use --app and --create-app together",
+      );
+    });
+
+    test("throws when --create-app name is empty", async () => {
+      mockIsAgent.mockReturnValue(false);
+      mockGetToken.mockResolvedValue("token");
+
+      await expect(link({ createApp: "  " })).rejects.toThrow("Application name cannot be empty");
     });
 
     test("shows picker with create option when no apps found", async () => {
@@ -411,6 +465,47 @@ describe("link", () => {
 
       expect(mockSearch).toHaveBeenCalled();
       expect(mockCreateApplication).toHaveBeenCalledWith("My New App");
+      expect(mockSetProfile).toHaveBeenCalledWith(
+        "github.com/org/repo",
+        expect.objectContaining({
+          appId: "app_new",
+          appName: "My New App",
+        }),
+      );
+    });
+
+    test("--create-app skips re-link prompt on already-linked project", async () => {
+      mockIsAgent.mockReturnValue(false);
+      mockGetToken.mockResolvedValue("token");
+      mockResolveProfile.mockResolvedValue({
+        path: "github.com/org/repo",
+        profile: { workspaceId: "", appId: "app_existing", instances: { development: "ins_1" } },
+      });
+      mockCreateApplication.mockResolvedValue({
+        application_id: "app_new",
+        name: "New App",
+        instances: [],
+      });
+      mockFetchApplication.mockResolvedValue({
+        application_id: "app_new",
+        name: "New App",
+        instances: [
+          {
+            instance_id: "ins_dev",
+            environment_type: "development",
+            secret_key: "sk_test",
+            publishable_key: "pk_test",
+          },
+        ],
+      });
+      consoleSpy = spyOn(console, "log").mockImplementation(() => {});
+
+      await link({ createApp: "New App" });
+
+      // Should NOT prompt for re-link confirmation
+      expect(mockConfirm).not.toHaveBeenCalled();
+      expect(mockCreateApplication).toHaveBeenCalledWith("New App");
+      expect(mockSetProfile).toHaveBeenCalled();
     });
   });
 

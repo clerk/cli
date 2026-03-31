@@ -14,7 +14,7 @@ import { autolink, findClerkKeys, matchKeyToApp } from "../../lib/autolink.ts";
 import { getGitRepoIdentifier, getGitRepoRoot, getGitNormalizedRemote } from "../../lib/git.ts";
 import { dim, cyan } from "../../lib/color.ts";
 import { printNextSteps } from "../../lib/next-steps.ts";
-import { CliError, ERROR_CODE } from "../../lib/errors.ts";
+import { CliError, ERROR_CODE, throwUsageError } from "../../lib/errors.ts";
 
 const AGENT_PROMPT = `You are linking a Clerk application to the current project directory.
 
@@ -48,7 +48,11 @@ function appLabel(app: Application): string {
 }
 
 export async function link(options: LinkOptions = {}): Promise<void> {
-  if (isAgent()) {
+  if (options.app && options.createApp) {
+    throwUsageError("Cannot use --app and --create-app together.");
+  }
+
+  if (isAgent() && !options.app && !options.createApp) {
     console.log(AGENT_PROMPT);
     return;
   }
@@ -72,7 +76,7 @@ export async function link(options: LinkOptions = {}): Promise<void> {
     if (autolinked) return;
   }
 
-  if (existing) {
+  if (existing && !options.createApp) {
     const shouldRelink = await handleExistingProfile(existing, normalizedRemote, options);
     if (!shouldRelink) return;
   }
@@ -208,17 +212,15 @@ async function resolveApp(
 }
 
 async function pickOrCreateApp(apps: Application[], displayPath: string): Promise<Application> {
-  const choices = [
-    ...apps.map((a) => ({ name: appLabel(a), value: a.application_id })),
-    { name: dim("+ Create a new application"), value: CREATE_NEW_APP },
-  ];
+  const appChoices = apps.map((a) => ({ name: appLabel(a), value: a.application_id }));
+  const createChoice = { name: dim("+ Create a new application"), value: CREATE_NEW_APP };
 
   const selectedId = await search({
     message: `Select a Clerk application to link ${dim(`(repo: ${basename(displayPath)})`)}`,
     source: (term) => {
-      if (!term) return choices;
+      if (!term) return [...appChoices, createChoice];
       const lower = term.toLowerCase();
-      return choices.filter((c) => c.name.toLowerCase().includes(lower));
+      return [...appChoices.filter((c) => c.name.toLowerCase().includes(lower)), createChoice];
     },
   });
 

@@ -34,6 +34,10 @@ export async function init(options: InitOptions = {}) {
     throwUsageError("Cannot use --app and --create-app together.");
   }
 
+  if (options.instance && !options.app) {
+    throwUsageError("--instance requires --app.");
+  }
+
   const cwd = process.cwd();
 
   // Commander validates --framework against FRAMEWORK_NAMES choices
@@ -145,8 +149,8 @@ async function scaffoldAndWrite(
     console.log(dim("Consider committing first so you can review what clerk init creates.\n"));
   }
 
-  // --app implies non-interactive mode (skip confirmation like --yes)
-  if (options.yes || options.app) {
+  // --app/--create-app imply non-interactive mode (skip confirmation like --yes)
+  if (options.yes || options.app || options.createApp) {
     previewPlan(plan);
   } else {
     const proceed = await previewAndConfirm(plan);
