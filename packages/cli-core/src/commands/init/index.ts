@@ -20,14 +20,14 @@ import {
 } from "./heuristics.js";
 import type { ProjectContext } from "./frameworks/types.js";
 
-interface InitOptions {
+type InitOptions = {
   framework?: string;
   yes?: boolean;
   prompt?: boolean;
   app?: string;
   instance?: string;
   createApp?: string;
-}
+};
 
 export async function init(options: InitOptions = {}) {
   const cwd = process.cwd();

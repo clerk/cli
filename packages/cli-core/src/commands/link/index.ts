@@ -37,11 +37,11 @@ const AGENT_PROMPT = `You are linking a Clerk application to the current project
 
 const CREATE_NEW_APP = "__create_new__" as const;
 
-interface LinkOptions {
+type LinkOptions = {
   app?: string;
   createApp?: string;
   skipIfLinked?: boolean;
-}
+};
 
 function appLabel(app: Application): string {
   return app.name ? `${app.name} (${app.application_id})` : app.application_id;
@@ -79,11 +79,7 @@ export async function link(options: LinkOptions = {}): Promise<void> {
 
   await ensureAuth();
 
-  const app = options.app
-    ? await fetchApplication(options.app)
-    : options.createApp
-      ? await createAndFetchApp(options.createApp)
-      : await resolveApp(cwd, displayPath, !existing);
+  const app = await resolveApplication(options, cwd, displayPath, !existing);
 
   const devInstance = app.instances.find((i) => i.environment_type === "development");
   const prodInstance = app.instances.find((i) => i.environment_type === "production");
@@ -165,6 +161,17 @@ async function handleExistingProfile(
   }
 
   return confirm({ message: "Re-link to a different application?", default: false });
+}
+
+async function resolveApplication(
+  options: LinkOptions,
+  cwd: string,
+  displayPath: string,
+  detectKeys: boolean,
+): Promise<Application> {
+  if (options.app) return fetchApplication(options.app);
+  if (options.createApp) return createAndFetchApp(options.createApp);
+  return resolveApp(cwd, displayPath, detectKeys);
 }
 
 async function createAndFetchApp(name: string): Promise<Application> {
