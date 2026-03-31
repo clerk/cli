@@ -2,7 +2,11 @@ import { join } from "node:path";
 import { resolveAppContext } from "../../lib/config.ts";
 import { fetchApplication } from "../../lib/plapi.ts";
 import { parseEnvFile, mergeEnvVars, serializeEnvFile } from "../../lib/dotenv.ts";
-import { detectPublishableKeyName, detectSecretKeyName } from "../../lib/framework.ts";
+import {
+  detectPublishableKeyName,
+  detectSecretKeyName,
+  detectEnvFile,
+} from "../../lib/framework.ts";
 import { CliError, ERROR_CODE, withApiContext } from "../../lib/errors.ts";
 
 interface EnvPullOptions {
@@ -11,16 +15,31 @@ interface EnvPullOptions {
   file?: string;
 }
 
-async function resolveTargetFile(cwd: string, flag?: string): Promise<string> {
+/** Check whether a file contains Clerk keys (for backwards compat detection). */
+async function hasClerkKeys(path: string): Promise<boolean> {
+  const file = Bun.file(path);
+  if (!(await file.exists())) return false;
+  const content = await file.text();
+  return /CLERK_(?:SECRET_KEY|PUBLISHABLE_KEY)=/.test(content);
+}
+
+async function resolveTargetFile(
+  cwd: string,
+  flag?: string,
+  preferredFile: string = ".env.local",
+): Promise<string> {
   if (flag) return join(cwd, flag);
 
-  const envLocal = Bun.file(join(cwd, ".env.local"));
-  if (await envLocal.exists()) return join(cwd, ".env.local");
+  const preferred = join(cwd, preferredFile);
+  if (await Bun.file(preferred).exists()) return preferred;
 
-  const envFile = Bun.file(join(cwd, ".env"));
-  if (await envFile.exists()) return join(cwd, ".env");
+  // Backwards compat: if the non-preferred file already has Clerk keys,
+  // keep writing there so we don't leave stale keys behind.
+  const other = preferredFile === ".env" ? ".env.local" : ".env";
+  const otherPath = join(cwd, other);
+  if (await hasClerkKeys(otherPath)) return otherPath;
 
-  return join(cwd, ".env.local");
+  return preferred;
 }
 
 export async function pull(options: EnvPullOptions): Promise<void> {
@@ -41,7 +60,8 @@ export async function pull(options: EnvPullOptions): Promise<void> {
   const cwd = process.cwd();
   const publishableKeyName = await detectPublishableKeyName(cwd);
   const secretKeyName = await detectSecretKeyName(cwd);
-  const targetFile = await resolveTargetFile(cwd, options.file);
+  const preferredEnvFile = await detectEnvFile(cwd);
+  const targetFile = await resolveTargetFile(cwd, options.file, preferredEnvFile);
 
   const file = Bun.file(targetFile);
   const existingContent = (await file.exists()) ? await file.text() : "";
