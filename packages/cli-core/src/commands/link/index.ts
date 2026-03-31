@@ -175,7 +175,9 @@ async function resolveApplication(
 }
 
 async function createAndFetchApp(name: string): Promise<Application> {
-  const created = await createApplication(name);
+  const trimmed = name.trim();
+  if (!trimmed) throw new CliError("Application name cannot be empty.");
+  const created = await createApplication(trimmed);
   console.log(`\nCreated ${cyan(created.name ?? created.application_id)}`);
   return fetchApplication(created.application_id);
 }
@@ -231,6 +233,5 @@ async function pickOrCreateApp(apps: Application[], displayPath: string): Promis
   }
 
   const name = await input({ message: "Application name:" });
-  if (!name.trim()) throw new CliError("Application name cannot be empty.");
-  return createAndFetchApp(name.trim());
+  return createAndFetchApp(name);
 }

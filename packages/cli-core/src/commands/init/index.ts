@@ -2,8 +2,8 @@ import { link } from "../link/index.js";
 import { pull } from "../env/pull.js";
 import { isAgent } from "../../mode.js";
 import { dim, green, yellow, bold } from "../../lib/color.js";
-import { throwUserAbort } from "../../lib/errors.js";
-import { lookupFramework } from "../../lib/framework.js";
+import { throwUserAbort, throwUsageError } from "../../lib/errors.js";
+import { lookupFramework, type FrameworkInfo } from "../../lib/framework.js";
 import { resolveProfile } from "../../lib/config.js";
 import { gatherContext } from "./context.js";
 import { scaffold, enrichProjectContext } from "./scaffold.js";
@@ -30,6 +30,10 @@ type InitOptions = {
 };
 
 export async function init(options: InitOptions = {}) {
+  if (options.app && options.createApp) {
+    throwUsageError("Cannot use --app and --create-app together.");
+  }
+
   const cwd = process.cwd();
 
   // Commander validates --framework against FRAMEWORK_NAMES choices
