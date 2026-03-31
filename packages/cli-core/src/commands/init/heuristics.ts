@@ -101,3 +101,16 @@ export async function getAuthenticatedEmail(): Promise<string | null> {
     return null;
   }
 }
+
+export function printKeylessInfo(): void {
+  console.log(
+    dim("\n  Your app will work immediately — Clerk generates temporary dev keys automatically."),
+  );
+  console.log(
+    dim(`  Look for the ${bold('"Configure your application"')} banner to claim your account.\n`),
+  );
+  console.log(dim("  To connect a Clerk account later:"));
+  console.log(dim("    clerk auth login"));
+  console.log(dim("    clerk link"));
+  console.log(dim("    clerk env pull"));
+}
