@@ -1,10 +1,11 @@
+import { select } from "@inquirer/prompts";
 import { login } from "../auth/login.js";
 import { link } from "../link/index.js";
 import { pull } from "../env/pull.js";
 import { isAgent } from "../../mode.js";
 import { dim, green, yellow, bold } from "../../lib/color.js";
 import { throwUserAbort } from "../../lib/errors.js";
-import { lookupFramework, type FrameworkInfo } from "../../lib/framework.js";
+import { lookupFramework } from "../../lib/framework.js";
 import { resolveProfile } from "../../lib/config.js";
 import { gatherContext } from "./context.js";
 import { scaffold, enrichProjectContext } from "./scaffold.js";
@@ -16,24 +17,31 @@ import {
   writePlan,
   checkGitDirty,
   printOutro,
+  printKeylessInfo,
   getAuthenticatedEmail,
 } from "./heuristics.js";
 import type { ProjectContext } from "./frameworks/types.js";
 
-interface InitOptions {
+type AuthMode = "keyless" | "authenticated";
+
+type AuthResolution = {
+  mode: AuthMode;
+  email: string | null;
+};
+
+type InitOptions = {
   framework?: string;
   yes?: boolean;
   prompt?: boolean;
-}
+};
 
 export async function init(options: InitOptions = {}) {
   const cwd = process.cwd();
 
   // Commander validates --framework against FRAMEWORK_NAMES choices
-  let frameworkOverride: FrameworkInfo | undefined;
-  if (options.framework) {
-    frameworkOverride = lookupFramework(options.framework) ?? undefined;
-  }
+  const frameworkOverride = options.framework
+    ? (lookupFramework(options.framework) ?? undefined)
+    : undefined;
   const ctx = await gatherContext(cwd, frameworkOverride);
 
   // Populate framework-specific context (variant, layoutPath, middlewareBasename)
@@ -46,42 +54,54 @@ export async function init(options: InitOptions = {}) {
     return;
   }
 
-  await authenticateAndLink(cwd);
-  await detectAndInstall(cwd, ctx, options);
+  const { mode, email } = await resolveAuthMode(cwd, options.yes);
+
+  if (mode === "authenticated") {
+    await ensureAuthenticated(email);
+  }
+
+  await detectAndInstall(cwd, ctx, options, mode);
 }
 
-async function authenticateAndLink(cwd: string): Promise<void> {
-  // If Platform API key is set, skip OAuth entirely
+async function resolveAuthMode(cwd: string, yes?: boolean): Promise<AuthResolution> {
+  // Platform API key — skip OAuth entirely
   const hasApiKey = Boolean(process.env.CLERK_PLATFORM_API_KEY);
-  const profile = await resolveProfile(cwd);
-
-  if (hasApiKey && profile) {
-    console.log(dim(`Using API key · Linked to ${profile.profile.appId}`));
-    return;
-  }
 
   if (hasApiKey) {
-    await link({ skipIfLinked: true });
-    return;
+    const profile = await resolveProfile(cwd);
+    if (profile) {
+      console.log(dim(`Using API key · Linked to ${profile.profile.appId}`));
+    }
+    return { mode: "authenticated", email: null };
   }
 
-  // Check if fully ready (authenticated + linked)
   const email = await getAuthenticatedEmail();
 
-  if (email && profile) {
-    console.log(dim(`Logged in as ${email} · Linked to ${profile.profile.appId}`));
-    return;
-  }
-
-  // Authenticated but not linked
   if (email) {
-    console.log(dim(`Logged in as ${email}`));
-    await link({ skipIfLinked: true });
-    return;
+    const profile = await resolveProfile(cwd);
+    const linkedInfo = profile ? ` · Linked to ${profile.profile.appId}` : "";
+    console.log(dim(`Logged in as ${email}${linkedInfo}`));
+    return { mode: "authenticated", email };
   }
 
-  // Not authenticated — full flow
-  await login({ showNextSteps: false });
+  // Not authenticated + --yes flag: default to keyless (fastest path, no browser)
+  if (yes) return { mode: "keyless", email: null };
+
+  const mode = await select<AuthMode>({
+    message: "How would you like to set up Clerk?",
+    choices: [
+      { name: "Continue with temporary keys (connect your account later)", value: "keyless" },
+      { name: "Log in to an existing Clerk account", value: "authenticated" },
+    ],
+  });
+
+  return { mode, email: null };
+}
+
+async function ensureAuthenticated(email: string | null): Promise<void> {
+  if (!email) {
+    await login({ showNextSteps: false });
+  }
   await link({ skipIfLinked: true });
 }
 
@@ -89,6 +109,7 @@ async function detectAndInstall(
   cwd: string,
   ctx: ProjectContext | null,
   options: InitOptions,
+  authMode: AuthMode,
 ): Promise<void> {
   if (!ctx) {
     console.log(
@@ -100,9 +121,7 @@ async function detectAndInstall(
   const variantLabel = ctx.variant ? ` (${ctx.variant})` : "";
   console.log(`\nDetected ${bold(ctx.framework.name)}${variantLabel}`);
 
-  // Pre-scaffold: detect existing auth libraries
   detectAuthLibraries(ctx.deps);
-
   console.log();
 
   if (ctx.existingClerk) {
@@ -111,8 +130,14 @@ async function detectAndInstall(
     await installSdk(ctx);
   }
 
-  await pull({});
   await scaffoldAndWrite(cwd, ctx, options);
+
+  if (authMode === "authenticated") {
+    await pull({});
+    return;
+  }
+
+  printKeylessInfo();
 }
 
 async function scaffoldAndWrite(
