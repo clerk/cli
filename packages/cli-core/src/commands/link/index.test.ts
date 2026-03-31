@@ -483,8 +483,8 @@ describe("link", () => {
 
       await link({ app: "app_123" });
 
-      const lastCall = consoleSpy.mock.calls[consoleSpy.mock.calls.length - 1][0] as string;
-      expect(lastCall).toContain("Linked to");
+      const output = capturedOutput(consoleSpy);
+      expect(output).toContain("Linked to");
     });
   });
 
