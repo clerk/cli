@@ -1,4 +1,4 @@
-import { cyan, dim } from "./color.ts";
+import { cyan, dimNeutral } from "./color.ts";
 import { isHuman } from "../mode.ts";
 
 /**
@@ -7,8 +7,8 @@ import { isHuman } from "../mode.ts";
  */
 export function printNextSteps(steps: string[]): void {
   if (!isHuman() || steps.length === 0) return;
-  console.log(`\n${dim("Next steps:")}`);
+  console.error(`\n${dimNeutral("Next steps:")}`);
   for (const step of steps) {
-    console.log(`  ${cyan("\u2192")} ${step}`);
+    console.error(`  ${cyan("\u2192")} ${step}`);
   }
 }
