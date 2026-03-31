@@ -20,7 +20,7 @@ async function hasClerkKeys(path: string): Promise<boolean> {
   const file = Bun.file(path);
   if (!(await file.exists())) return false;
   const content = await file.text();
-  return /CLERK_(?:SECRET_KEY|PUBLISHABLE_KEY)=/.test(content);
+  return /(?:CLERK_SECRET_KEY|(?:\w+_)?CLERK_PUBLISHABLE_KEY)=/.test(content);
 }
 
 async function resolveTargetFile(
