@@ -15,6 +15,10 @@ const BROWSER_COMMANDS: Partial<Record<NodeJS.Platform, string>> = {
   win32: "start",
 };
 
+interface LoginOptions {
+  showNextSteps?: boolean;
+}
+
 async function getExistingSession(): Promise<UserInfo | null> {
   const token = await getToken();
   if (!token) return null;
@@ -78,7 +82,8 @@ async function performOAuthFlow(): Promise<UserInfo> {
   return userInfo;
 }
 
-export async function login(): Promise<UserInfo> {
+export async function login(options: LoginOptions = {}): Promise<UserInfo> {
+  const { showNextSteps = true } = options;
   const existingSession = await getExistingSession();
 
   if (existingSession && !isHuman()) {
@@ -100,10 +105,12 @@ export async function login(): Promise<UserInfo> {
 
   console.log(`Logged in as ${userInfo.email}`);
 
-  printNextSteps([
-    "Run `clerk link` to connect a Clerk application to this project",
-    "Run `clerk init` to set up Clerk in an existing project",
-  ]);
+  if (showNextSteps) {
+    printNextSteps([
+      "Run `clerk link` to connect a Clerk application to this project",
+      "Run `clerk init` to set up Clerk in an existing project",
+    ]);
+  }
 
   return userInfo;
 }

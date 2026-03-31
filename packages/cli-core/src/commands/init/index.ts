@@ -80,8 +80,8 @@ async function authenticateAndLink(cwd: string): Promise<void> {
     return;
   }
 
-  // Not authenticated
-  await login();
+  // Not authenticated — full flow
+  await login({ showNextSteps: false });
   await link({ skipIfLinked: true });
 }
 

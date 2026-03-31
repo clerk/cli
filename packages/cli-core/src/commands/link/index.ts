@@ -109,7 +109,7 @@ async function ensureAuth() {
   const token = await getToken();
   if (!token) {
     console.log("Not logged in. Authenticating first...");
-    await login();
+    await login({ showNextSteps: false });
   }
 }
 

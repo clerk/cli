@@ -68,6 +68,7 @@ const { login } = await import("./login.ts");
 
 describe("login", () => {
   let consoleSpy: ReturnType<typeof spyOn>;
+  let consoleErrorSpy: ReturnType<typeof spyOn>;
   const origSpawn = Bun.spawn;
 
   afterEach(() => {
@@ -82,6 +83,7 @@ describe("login", () => {
     mockConfirm.mockReset();
     mockIsHuman.mockReturnValue(false);
     consoleSpy?.mockRestore();
+    consoleErrorSpy?.mockRestore();
     try {
       (Bun as any).spawn = origSpawn;
     } catch {
@@ -301,5 +303,40 @@ describe("login", () => {
     await expect(login()).rejects.toThrow("User aborted");
     expect(mockConfirm).toHaveBeenCalled();
     expect(mockStartAuthServer).not.toHaveBeenCalled();
+  });
+
+  test("suppresses auth next-steps when requested", async () => {
+    mockGetToken.mockResolvedValue(null);
+    mockBunSpawn();
+
+    const mockServer = {
+      port: 54321,
+      waitForCallback: mock().mockResolvedValue({ code: "fresh-auth-code" }),
+      stop: mock(),
+    };
+    mockStartAuthServer.mockReturnValue(mockServer);
+
+    mockExchangeCodeForToken.mockResolvedValue({
+      access_token: "new-access-token",
+      token_type: "Bearer",
+      expires_in: 3600,
+    });
+    mockStoreToken.mockResolvedValue(undefined);
+    mockFetchUserInfo.mockResolvedValue({
+      userId: "user_new",
+      email: "new@example.com",
+    });
+    mockSetAuth.mockResolvedValue(undefined);
+
+    consoleSpy = spyOn(console, "log").mockImplementation(() => {});
+    consoleErrorSpy = spyOn(console, "error").mockImplementation(() => {});
+
+    await login({ showNextSteps: false });
+
+    expect(
+      consoleErrorSpy.mock.calls.some(
+        (c) => typeof c[0] === "string" && (c[0] as string).includes("Next steps:"),
+      ),
+    ).toBe(false);
   });
 });

@@ -217,6 +217,18 @@ describe("link", () => {
 
       expect(mockLogin).not.toHaveBeenCalled();
     });
+
+    test("suppresses auth next-steps when login runs during link", async () => {
+      mockIsAgent.mockReturnValue(false);
+      mockGetToken.mockResolvedValue(null);
+      mockLogin.mockResolvedValue({ userId: "user_1", email: "test@test.com" });
+      mockFetchApplication.mockResolvedValue(mockApp);
+      consoleSpy = spyOn(console, "log").mockImplementation(() => {});
+
+      await link({ app: "app_123" });
+
+      expect(mockLogin).toHaveBeenCalledWith({ showNextSteps: false });
+    });
   });
 
   describe("app selection", () => {
