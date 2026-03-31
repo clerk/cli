@@ -13,6 +13,7 @@ const {
   putInstanceConfig,
   patchInstanceConfig,
   listApplications,
+  createApplication,
 } = await import("./plapi.ts");
 const { PlapiError } = await import("./errors.ts");
 
@@ -318,6 +319,76 @@ describe("plapi", () => {
       } catch (error) {
         expect(error).toBeInstanceOf(PlapiError);
         expect((error as PlapiError).status).toBe(403);
+      }
+    });
+  });
+
+  describe("createApplication", () => {
+    test("sends POST method with correct URL and body", async () => {
+      let capturedMethod = "";
+      let capturedUrl = "";
+      let capturedBody = "";
+      const mockApp = {
+        application_id: "app_new",
+        name: "My New App",
+        instances: [],
+      };
+      stubFetch(async (input, init) => {
+        capturedUrl = input.toString();
+        capturedMethod = init?.method ?? "GET";
+        capturedBody = init?.body as string;
+        return new Response(JSON.stringify(mockApp), { status: 200 });
+      });
+
+      const result = await createApplication("My New App");
+      expect(capturedMethod).toBe("POST");
+      expect(capturedUrl).toBe("https://api.clerk.com/v1/platform/applications");
+      expect(JSON.parse(capturedBody)).toEqual({ name: "My New App" });
+      expect(result).toEqual(mockApp);
+    });
+
+    test("sends Content-Type and Authorization headers", async () => {
+      let capturedHeaders: Headers | undefined;
+      stubFetch(async (_input, init) => {
+        capturedHeaders = new Headers(init?.headers);
+        return new Response(JSON.stringify({ application_id: "app_1", instances: [] }), {
+          status: 200,
+        });
+      });
+
+      await createApplication("Test App");
+      expect(capturedHeaders?.get("Authorization")).toBe("Bearer test_key_123");
+      expect(capturedHeaders?.get("Content-Type")).toBe("application/json");
+      expect(capturedHeaders?.get("Accept")).toBe("application/json");
+    });
+
+    test("returns parsed Application object", async () => {
+      const mockApp = {
+        application_id: "app_created",
+        name: "Created App",
+        instances: [
+          {
+            instance_id: "ins_dev",
+            environment_type: "development",
+            publishable_key: "pk_test_new",
+          },
+        ],
+      };
+      stubFetch(async () => new Response(JSON.stringify(mockApp), { status: 200 }));
+
+      const result = await createApplication("Created App");
+      expect(result).toEqual(mockApp);
+    });
+
+    test("throws PlapiError on non-2xx response", async () => {
+      stubFetch(async () => new Response("Bad Request", { status: 400 }));
+
+      try {
+        await createApplication("Bad App");
+        expect(true).toBe(false);
+      } catch (error) {
+        expect(error).toBeInstanceOf(PlapiError);
+        expect((error as PlapiError).status).toBe(400);
       }
     });
   });
