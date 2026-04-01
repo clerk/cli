@@ -28,19 +28,24 @@ When running in agent mode (`--mode agent` or non-TTY), outputs a framework-spec
 
 1. Gathers project context (framework, router variant, TypeScript, `src/` directory, package manager)
 2. **Agent mode**: outputs a framework-specific prompt, then exits
-3. **Human mode**: authenticates via `clerk auth login` (skipped if already authenticated)
-4. Links the project via `clerk link` (skipped if already linked)
+3. **Human mode**: determines auth mode:
+   - If already authenticated and linked: uses authenticated mode automatically
+   - If authenticated but not linked: uses authenticated mode (runs `clerk link`)
+   - If not authenticated: asks user — "Continue with temporary keys (connect your account later)" or "Log in to an existing Clerk account"
+   - With `--yes` and not authenticated: defaults to keyless mode
+4. **Authenticated mode only**: authenticates via `clerk auth login` (skipped if already authenticated) and links the project via `clerk link` (skipped if already linked)
 5. Displays detected framework and variant
 6. Detects existing auth libraries (NextAuth, Auth0, Supabase, Firebase, Passport, Better Auth, Kinde) and shows migration guidance
 7. Installs the appropriate Clerk SDK (skips if already present)
-8. Pulls development instance API keys via `clerk env pull`
-9. Generates a scaffold plan for the detected framework
-10. Warns if the git working tree has uncommitted changes
-11. Previews planned file changes and asks for confirmation
-12. Writes scaffold files to disk
-13. Runs project formatters (Prettier/Biome) on generated files
-14. Scans for issues: hardcoded keys, leftover auth-library imports, stale API calls
-15. Prints a summary of created, modified, and skipped files with recommendations
+8. Generates a scaffold plan for the detected framework
+9. Warns if the git working tree has uncommitted changes
+10. Previews planned file changes and asks for confirmation
+11. Writes scaffold files to disk
+12. Runs project formatters (Prettier/Biome) on generated files
+13. Scans for issues: hardcoded keys, leftover auth-library imports, stale API calls
+14. Prints a summary of created, modified, and skipped files with recommendations
+15. **Authenticated mode**: pulls development instance API keys via `clerk env pull`
+16. **Keyless mode**: prints instructions for keyless development and how to connect a Clerk account later
 
 ## Framework Detection
 

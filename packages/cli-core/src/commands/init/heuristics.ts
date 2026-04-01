@@ -6,7 +6,7 @@ import { getToken } from "../../lib/credential-store.js";
 import { fetchUserInfo } from "../../lib/token-exchange.js";
 import { printFindings } from "./scan.js";
 import { pmInstallCommand } from "./prompts/index.js";
-import type { ProjectContext, ScaffoldPlan } from "./frameworks/types.js";
+import type { FileAction, ProjectContext, ScaffoldPlan } from "./frameworks/types.js";
 import type { ScanFinding } from "./scan.js";
 
 export async function installSdk(ctx: ProjectContext): Promise<void> {
@@ -63,27 +63,21 @@ export async function checkGitDirty(cwd: string): Promise<boolean> {
   }
 }
 
-export function printOutro(plan: ScaffoldPlan, findings: ScanFinding[]): void {
-  const created = plan.actions.filter((a) => a.type === "create");
-  const modified = plan.actions.filter((a) => a.type === "modify");
-  const skipped = plan.actions.filter((a) => a.type === "skip");
+function formatAction(action: FileAction): string {
+  if (action.type === "create") return `  ${green("+")} ${action.path}`;
+  if (action.type === "modify") return `  ${yellow("~")} ${action.path}`;
+  return `  ${dim("-")} ${dim(action.path)} ${dim(`(${action.skipReason})`)}`;
+}
 
+export function printOutro(plan: ScaffoldPlan, findings: ScanFinding[]): void {
   console.log(bold(green("\n✓ Clerk has been set up in your project!\n")));
 
-  for (const a of created) {
-    console.log(`  ${green("+")} ${a.path}`);
-  }
-  for (const a of modified) {
-    console.log(`  ${yellow("~")} ${a.path}`);
-  }
-  for (const a of skipped) {
-    console.log(`  ${dim("-")} ${dim(a.path)} ${dim(`(${a.skipReason})`)}`);
+  for (const action of plan.actions) {
+    console.log(formatAction(action));
   }
 
   printNextSteps(plan.postInstructions);
-
   printFindings(findings);
-
   console.log();
 }
 
@@ -100,4 +94,16 @@ export async function getAuthenticatedEmail(): Promise<string | null> {
   } catch {
     return null;
   }
+}
+
+export function printKeylessInfo(): void {
+  const lines = [
+    "\n  Your app will work immediately — Clerk generates temporary dev keys automatically.",
+    `  Look for the ${bold('"Configure your application"')} banner to claim your account.\n`,
+    "  To connect a Clerk account later:",
+    "    clerk auth login",
+    "    clerk link",
+    "    clerk env pull",
+  ];
+  console.log(lines.map(dim).join("\n"));
 }
