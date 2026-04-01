@@ -18,7 +18,7 @@ clerk init --yes
 | -------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `--framework <name>` | Framework to set up (skips auto-detection). Valid values: `next`, `astro`, `nuxt`, `tanstack-start`, `react-router`, `vue`, `expo`, `react`, `express`, `fastify` |
 | `--prompt`           | Output a prompt for an AI agent to integrate Clerk, then exit                                                                                                     |
-| `-y, --yes`          | Skip confirmation prompts. Defaults to keyless mode if not already authenticated and linked.                                                                      |
+| `-y, --yes`          | Skip confirmation prompts                                                                                                                                         |
 
 ## Agent Mode
 
@@ -31,7 +31,7 @@ When running in agent mode (`--mode agent` or non-TTY), outputs a framework-spec
 3. **Human mode**: determines auth mode:
    - If already authenticated and linked: uses authenticated mode automatically
    - If authenticated but not linked: uses authenticated mode (runs `clerk link`)
-   - If not authenticated: asks user — "Continue with temporary keys" (keyless) or "Log in to an existing Clerk account"
+   - If not authenticated: asks user — "Continue with temporary keys (connect your account later)" or "Log in to an existing Clerk account"
    - With `--yes` and not authenticated: defaults to keyless mode
 4. **Authenticated mode only**: authenticates via `clerk auth login` (skipped if already authenticated) and links the project via `clerk link` (skipped if already linked)
 5. Displays detected framework and variant
