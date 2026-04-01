@@ -61,8 +61,14 @@ function baseDirFromPath(path: string | null): TanstackBaseDir | null {
   return path.startsWith("app/") ? "app" : "src";
 }
 
-async function findStartFile(ctx: ProjectContext): Promise<string | null> {
-  return findFirstFile(ctx.cwd, [...START_FILE_CANDIDATES]);
+async function findStartFile(
+  ctx: ProjectContext,
+  baseDir?: TanstackBaseDir,
+): Promise<string | null> {
+  const candidates = baseDir
+    ? START_FILE_CANDIDATES.filter((c) => c.startsWith(`${baseDir}/`))
+    : [...START_FILE_CANDIDATES];
+  return findFirstFile(ctx.cwd, candidates);
 }
 
 async function findRootRouteFile(ctx: ProjectContext): Promise<string | null> {
@@ -129,7 +135,7 @@ async function scaffoldStartServer(
   ctx: ProjectContext,
   baseDir: TanstackBaseDir,
 ): Promise<FileAction> {
-  const serverPath = await findStartFile(ctx);
+  const serverPath = await findStartFile(ctx, baseDir);
 
   if (!serverPath) {
     const newPath = `${baseDir}/start.ts`;

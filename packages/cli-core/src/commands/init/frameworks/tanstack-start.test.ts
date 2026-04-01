@@ -103,6 +103,30 @@ test("places auth routes inside {-$locale} when locale dir detected", async () =
   );
 });
 
+test("prefers start file in baseDir over other directories", async () => {
+  // Both src/start.ts and app/routes/__root.tsx exist.
+  // baseDir resolves to "app" from __root.tsx, so app/start.ts should be
+  // patched (or created), not src/start.ts.
+  await mkdir(join(tempDir, "app/routes"), { recursive: true });
+  await mkdir(join(tempDir, "src"), { recursive: true });
+  await Bun.write(join(tempDir, "app/routes/__root.tsx"), "export default function Root() {}");
+  await Bun.write(
+    join(tempDir, "src/start.ts"),
+    `import { createStart } from "@tanstack/react-start";
+export const start = createStart(() => { return {}; });
+`,
+  );
+
+  const plan = await tanstackStart.scaffold(makeCtx());
+
+  // Should create app/start.ts, not modify src/start.ts
+  const appStart = plan.actions.find((a) => a.path === "app/start.ts");
+  const srcStart = plan.actions.find((a) => a.path === "src/start.ts");
+  expect(appStart).toBeDefined();
+  expect(appStart?.type).toBe("create");
+  expect(srcStart).toBeUndefined();
+});
+
 test("does not use locale dir when none detected", async () => {
   await mkdir(join(tempDir, "src/routes"), { recursive: true });
   await Bun.write(join(tempDir, "src/routes/index.tsx"), "export default function() {}");
