@@ -86,6 +86,19 @@ test("detects src/ directory convention", async () => {
   expect(ctx!.layoutPath).toBe("src/app/layout.tsx");
 });
 
+test("sets srcDir true for bare src/ directory (no src/app or src/pages)", async () => {
+  await Bun.write(
+    join(tempDir, "package.json"),
+    JSON.stringify({ dependencies: { react: "19.0.0", vite: "6.0.0" } }),
+  );
+  await mkdir(join(tempDir, "src"), { recursive: true });
+
+  const ctx = await gatherContext(tempDir);
+
+  expect(ctx).not.toBeNull();
+  expect(ctx!.srcDir).toBe(true);
+});
+
 test("detects JavaScript projects (no tsconfig)", async () => {
   await Bun.write(
     join(tempDir, "package.json"),

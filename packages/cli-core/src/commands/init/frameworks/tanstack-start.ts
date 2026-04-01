@@ -61,8 +61,14 @@ function baseDirFromPath(path: string | null): TanstackBaseDir | null {
   return path.startsWith("app/") ? "app" : "src";
 }
 
-async function findStartFile(ctx: ProjectContext): Promise<string | null> {
-  return findFirstFile(ctx.cwd, [...START_FILE_CANDIDATES]);
+async function findStartFile(
+  ctx: ProjectContext,
+  baseDir?: TanstackBaseDir,
+): Promise<string | null> {
+  const candidates = baseDir
+    ? START_FILE_CANDIDATES.filter((c) => c.startsWith(`${baseDir}/`))
+    : [...START_FILE_CANDIDATES];
+  return findFirstFile(ctx.cwd, candidates);
 }
 
 async function findRootRouteFile(ctx: ProjectContext): Promise<string | null> {
@@ -113,9 +119,33 @@ async function scaffoldAuthRoutes(
   );
 }
 
-async function scaffoldStartServer(ctx: ProjectContext): Promise<FileAction | null> {
-  const serverPath = await findStartFile(ctx);
-  if (!serverPath) return null;
+function newStartFileContent(): string {
+  return `import { clerkMiddleware } from "@clerk/tanstack-react-start/server";
+import { createStart } from "@tanstack/react-start";
+
+export const startInstance = createStart(() => {
+  return {
+    requestMiddleware: [clerkMiddleware()],
+  };
+});
+`;
+}
+
+async function scaffoldStartServer(
+  ctx: ProjectContext,
+  baseDir: TanstackBaseDir,
+): Promise<FileAction> {
+  const serverPath = await findStartFile(ctx, baseDir);
+
+  if (!serverPath) {
+    const newPath = `${baseDir}/start.ts`;
+    return {
+      path: newPath,
+      type: "create",
+      content: newStartFileContent(),
+      description: "Create start.ts with clerkMiddleware",
+    };
+  }
 
   const content = await Bun.file(join(ctx.cwd, serverPath)).text();
 
@@ -172,25 +202,21 @@ export const tanstackStart: FrameworkScaffold = {
   matches: (ctx) => ctx.framework.dep === "@tanstack/react-start",
 
   async scaffold(ctx: ProjectContext): Promise<ScaffoldPlan> {
-    const [serverAction, rootAction, baseDir, envAction] = await Promise.all([
-      scaffoldStartServer(ctx),
+    const [rootAction, baseDir, envAction] = await Promise.all([
       scaffoldRoot(ctx),
       detectBaseDir(ctx),
       scaffoldEnvVars(ctx, SIGN_ROUTE_ENV_VARS.vite),
     ]);
-    const localeDir = await detectLocaleDir(ctx.cwd, baseDir);
+    const [serverAction, localeDir] = await Promise.all([
+      scaffoldStartServer(ctx, baseDir),
+      detectLocaleDir(ctx.cwd, baseDir),
+    ]);
     const authActions = await scaffoldAuthRoutes(ctx, baseDir, localeDir);
 
     const actions = [serverAction, rootAction, ...authActions, envAction].filter(
       (action): action is FileAction => action !== null,
     );
     const postInstructions: string[] = [];
-
-    if (!serverAction) {
-      postInstructions.push(
-        "Add clerkMiddleware() to your start server's requestMiddleware. See: https://clerk.com/docs/quickstarts/tanstack-start",
-      );
-    }
 
     if (!rootAction) {
       postInstructions.push(

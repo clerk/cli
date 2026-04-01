@@ -44,17 +44,17 @@ export async function gatherContext(
 
   const typescript = await fileExists(join(cwd, "tsconfig.json"));
 
-  const [srcAppDir, srcPagesDir, rootAppDir, rootPagesDir] = await Promise.all([
-    dirExists(join(cwd, "src/app")),
-    dirExists(join(cwd, "src/pages")),
+  const [rootAppDir, rootPagesDir, srcDirExists] = await Promise.all([
     dirExists(join(cwd, "app")),
     dirExists(join(cwd, "pages")),
+    dirExists(join(cwd, "src")),
   ]);
 
-  // Use src/ convention only when app/pages dirs exist in src/ but NOT in root
-  const hasSrcStructure = srcAppDir || srcPagesDir;
+  // Use src/ convention when a src/ directory exists and no root-level app/pages dirs are present.
+  // Works for both Next.js-style (src/app, src/pages) and React/Vite-style (bare src/) projects
+  // because src/app or src/pages existing implies src/ exists.
   const hasRootStructure = rootAppDir || rootPagesDir;
-  const srcDir = hasSrcStructure && !hasRootStructure;
+  const srcDir = srcDirExists && !hasRootStructure;
 
   const packageManager = await detectPackageManager(cwd);
 

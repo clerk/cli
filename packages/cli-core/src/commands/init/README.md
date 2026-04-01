@@ -104,11 +104,14 @@ The middleware filename is version-aware: `proxy.ts` for Next.js 16+, `middlewar
 
 ### Nuxt
 
-| Action | File                          | Description                              |
-| ------ | ----------------------------- | ---------------------------------------- |
-| MODIFY | `nuxt.config.ts`              | Add `@clerk/nuxt` to modules array       |
-| CREATE | `pages/sign-in/[...slug].vue` | Sign-in page with `<SignIn />` component |
-| CREATE | `pages/sign-up/[...slug].vue` | Sign-up page with `<SignUp />` component |
+| Action | File                                | Description                                               |
+| ------ | ----------------------------------- | --------------------------------------------------------- |
+| MODIFY | `nuxt.config.ts`                    | Add `@clerk/nuxt` to modules array                        |
+| MODIFY | `app/app.vue` or `app.vue`          | Replace `<NuxtWelcome />` with `<NuxtPage />` (if needed) |
+| CREATE | `[app/]pages/sign-in/[...slug].vue` | Sign-in page with `<SignIn />` component                  |
+| CREATE | `[app/]pages/sign-up/[...slug].vue` | Sign-up page with `<SignUp />` component                  |
+
+The pages directory is `app/pages/` for Nuxt 4 projects (which use `app/` as the default srcDir) and `pages/` for Nuxt 3 projects. Catch-all routes (`[...slug].vue`) are used so Clerk can handle sign-in sub-paths such as `/sign-in/factor-one`.
 
 Nuxt's module system auto-configures middleware and auto-imports components.
 
