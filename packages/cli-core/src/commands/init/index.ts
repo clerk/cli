@@ -1,5 +1,3 @@
-import { select } from "@inquirer/prompts";
-import { login } from "../auth/login.js";
 import { link } from "../link/index.js";
 import { pull } from "../env/pull.js";
 import { isAgent } from "../../mode.js";
@@ -21,13 +19,6 @@ import {
   getAuthenticatedEmail,
 } from "./heuristics.js";
 import type { ProjectContext } from "./frameworks/types.js";
-
-type AuthMode = "keyless" | "authenticated";
-
-type AuthResolution = {
-  mode: AuthMode;
-  email: string | null;
-};
 
 type InitOptions = {
   framework?: string;
@@ -54,62 +45,39 @@ export async function init(options: InitOptions = {}) {
     return;
   }
 
-  const { mode, email } = await resolveAuthMode(cwd, options.yes);
+  const authenticated = await resolveAuth(cwd);
 
-  if (mode === "authenticated") {
-    await ensureAuthenticated(email);
+  if (authenticated) {
+    await link({ skipIfLinked: true });
   }
 
-  await detectAndInstall(cwd, ctx, options, mode);
+  await detectAndInstall(cwd, ctx, options);
+
+  if (authenticated) {
+    await pull({});
+    return;
+  }
+
+  printKeylessInfo();
 }
 
-async function resolveAuthMode(cwd: string, yes?: boolean): Promise<AuthResolution> {
-  // Platform API key — skip OAuth entirely
+async function resolveAuth(cwd: string): Promise<boolean> {
   const hasApiKey = Boolean(process.env.CLERK_PLATFORM_API_KEY);
+  const email = hasApiKey ? null : await getAuthenticatedEmail();
 
-  if (hasApiKey) {
-    const profile = await resolveProfile(cwd);
-    if (profile) {
-      console.log(dim(`Using API key · Linked to ${profile.profile.appId}`));
-    }
-    return { mode: "authenticated", email: null };
-  }
+  if (!hasApiKey && !email) return false;
 
-  const email = await getAuthenticatedEmail();
-
-  if (email) {
-    const profile = await resolveProfile(cwd);
-    const linkedInfo = profile ? ` · Linked to ${profile.profile.appId}` : "";
-    console.log(dim(`Logged in as ${email}${linkedInfo}`));
-    return { mode: "authenticated", email };
-  }
-
-  // Not authenticated + --yes flag: default to keyless (fastest path, no browser)
-  if (yes) return { mode: "keyless", email: null };
-
-  const mode = await select<AuthMode>({
-    message: "How would you like to set up Clerk?",
-    choices: [
-      { name: "Continue with temporary keys (connect your account later)", value: "keyless" },
-      { name: "Log in to an existing Clerk account", value: "authenticated" },
-    ],
-  });
-
-  return { mode, email: null };
-}
-
-async function ensureAuthenticated(email: string | null): Promise<void> {
-  if (!email) {
-    await login({ showNextSteps: false });
-  }
-  await link({ skipIfLinked: true });
+  const profile = await resolveProfile(cwd);
+  const linkedInfo = profile ? ` · Linked to ${profile.profile.appId}` : "";
+  const authLabel = hasApiKey ? "Using API key" : `Logged in as ${email}`;
+  console.log(dim(`${authLabel}${linkedInfo}`));
+  return true;
 }
 
 async function detectAndInstall(
   cwd: string,
   ctx: ProjectContext | null,
   options: InitOptions,
-  authMode: AuthMode,
 ): Promise<void> {
   if (!ctx) {
     console.log(
@@ -131,13 +99,6 @@ async function detectAndInstall(
   }
 
   await scaffoldAndWrite(cwd, ctx, options);
-
-  if (authMode === "authenticated") {
-    await pull({});
-    return;
-  }
-
-  printKeylessInfo();
 }
 
 async function scaffoldAndWrite(
