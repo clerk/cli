@@ -7,6 +7,13 @@ import { credentialStoreStubs, gitStubs, stubFetch } from "../../test/stubs.ts";
 
 mock.module("../../lib/credential-store.ts", () => credentialStoreStubs);
 mock.module("../../lib/git.ts", () => gitStubs);
+mock.module("../../lib/spinner.ts", () => ({
+  withSpinner: async (msg: string, fn: () => Promise<unknown>) => {
+    console.error(msg);
+    const result = await fn();
+    return result;
+  },
+}));
 
 describe("config pull", () => {
   const originalEnv = { ...process.env };
@@ -123,7 +130,9 @@ describe("config pull", () => {
     });
 
     await runConfigPull();
-    expect(errorSpy).toHaveBeenCalledWith("Pulling config from app_1 (development)...");
+    expect(errorSpy).toHaveBeenCalledWith(
+      expect.stringContaining("Pulling config from app_1 (development)"),
+    );
   });
 
   test("shows app name when stored in profile", async () => {
@@ -135,7 +144,9 @@ describe("config pull", () => {
     });
 
     await runConfigPull();
-    expect(errorSpy).toHaveBeenCalledWith("Pulling config from My SaaS App (development)...");
+    expect(errorSpy).toHaveBeenCalledWith(
+      expect.stringContaining("Pulling config from My SaaS App (development)"),
+    );
   });
 
   test("shows production label when --instance prod", async () => {
@@ -146,7 +157,9 @@ describe("config pull", () => {
     });
 
     await runConfigPull({ instance: "prod" });
-    expect(errorSpy).toHaveBeenCalledWith("Pulling config from app_1 (production)...");
+    expect(errorSpy).toHaveBeenCalledWith(
+      expect.stringContaining("Pulling config from app_1 (production)"),
+    );
   });
 
   test("uses development instance by default", async () => {
