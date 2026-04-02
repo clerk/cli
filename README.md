@@ -16,7 +16,7 @@ Usage: clerk [options] [command]
 Clerk CLI
 
 Options:
-  -V, --version        Display version
+  -v, --version        Output the version number
   --mode <mode>        Force interaction mode (human or agent).
                        Defaults to auto-detect based on TTY.
   --verbose            Show detailed error output

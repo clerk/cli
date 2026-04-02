@@ -28,7 +28,13 @@ export function createProgram() {
   const program = new Command()
     .name("clerk")
     .description("Clerk CLI")
-    .version(typeof CLI_VERSION !== "undefined" ? CLI_VERSION : "0.0.0-dev", "-v, --version")
+    .version(
+      typeof CLI_VERSION !== "undefined" ? CLI_VERSION : "0.0.0-dev",
+      "-v, --version",
+      "Output the version number",
+    )
+    .helpOption("-h, --help", "Display help for command")
+    .addHelpCommand("help [command]", "Display help for command")
     .option(
       "--mode <mode>",
       "Force interaction mode (human or agent). Defaults to auto-detect based on TTY.",
