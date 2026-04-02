@@ -20,6 +20,7 @@ import { setCurrentEnv, isValidEnv, getCurrentEnvName } from "./lib/environment.
 import { completion, SUPPORTED_SHELLS } from "./commands/completion/index.ts";
 import { FRAMEWORK_NAMES } from "./lib/framework.ts";
 import { CliError, UserAbortError, ApiError, EXIT_CODE, throwUsageError } from "./lib/errors.ts";
+import { ExitPromptError } from "@inquirer/core";
 import { red } from "./lib/color.ts";
 import { isAgent } from "./mode.ts";
 
@@ -501,7 +502,7 @@ export async function runProgram(
   } catch (error) {
     const verbose = program.opts().verbose ?? false;
 
-    if (error instanceof UserAbortError) {
+    if (error instanceof UserAbortError || error instanceof ExitPromptError) {
       process.exit(EXIT_CODE.SUCCESS);
     }
 
