@@ -58,13 +58,23 @@ export function intro(title?: string) {
   patchConsole();
 }
 
-/** Print outro bracket: └  message — restores normal console output. */
-export function outro(message?: string) {
+/** Print outro bracket: └  message — restores normal console output.
+ *  Pass a string[] to render as next steps after the bracket. */
+export function outro(messageOrSteps?: string | readonly string[]) {
   if (!isHuman()) return;
   unpatchConsole();
   stream.write(`${dim(S_BAR)}\n`);
-  const line = message ? `${dim(S_BAR_END)}  ${message}` : dim(S_BAR_END);
-  stream.write(`${line}\n\n`);
+
+  if (Array.isArray(messageOrSteps)) {
+    stream.write(`${dim(S_BAR_END)}  ${dim("Next steps")}\n`);
+    for (const step of messageOrSteps) {
+      stream.write(`   ${cyan("\u2192")} ${step}\n`);
+    }
+    stream.write("\n");
+  } else {
+    const label = messageOrSteps ?? "Done";
+    stream.write(`${dim(S_BAR_END)}  ${label}\n\n`);
+  }
 }
 
 /** Print a bar separator: │ */

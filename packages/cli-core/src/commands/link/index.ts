@@ -8,7 +8,7 @@ import { setProfile, resolveProfile, moveProfile } from "../../lib/config.ts";
 import { autolink, findClerkKeys, matchKeyToApp } from "../../lib/autolink.ts";
 import { getGitRepoIdentifier, getGitRepoRoot, getGitNormalizedRemote } from "../../lib/git.ts";
 import { dim, cyan } from "../../lib/color.ts";
-import { printNextSteps } from "../../lib/next-steps.ts";
+import { printNextSteps, NEXT_STEPS } from "../../lib/next-steps.ts";
 import { CliError, ERROR_CODE } from "../../lib/errors.ts";
 import { withSpinner } from "../../lib/spinner.ts";
 
@@ -96,10 +96,7 @@ export async function link(options: LinkOptions = {}): Promise<void> {
   const label = app.name || app.application_id;
   console.log(`\nLinked to ${cyan(label)} in ${dim(displayPath)}`);
 
-  printNextSteps([
-    "Run `clerk env pull` to fetch your environment variables",
-    "Run `clerk doctor` to verify your setup",
-  ]);
+  printNextSteps(NEXT_STEPS.LINK);
 }
 
 async function ensureAuth() {

@@ -48,6 +48,7 @@ export async function init(options: InitOptions = {}) {
     console.log(
       "Run `clerk init -y` to automatically detect the framework, install the Clerk SDK, and scaffold authentication files without interactive prompts.",
     );
+    outro();
     return;
   }
 

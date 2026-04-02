@@ -1,4 +1,3 @@
-import { printNextSteps } from "../../lib/next-steps.ts";
 import { generateCodeVerifier, generateCodeChallenge, generateState } from "../../lib/pkce.ts";
 import { startAuthServer } from "../../lib/auth-server.ts";
 import { exchangeCodeForToken, fetchUserInfo, type UserInfo } from "../../lib/token-exchange.ts";
@@ -10,6 +9,7 @@ import { confirm } from "../../lib/prompts.ts";
 import { isHuman } from "../../mode.ts";
 import { throwUserAbort } from "../../lib/errors.ts";
 import { intro, outro, bar, withSpinner } from "../../lib/spinner.ts";
+import { NEXT_STEPS } from "../../lib/next-steps.ts";
 
 const BROWSER_COMMANDS: Partial<Record<NodeJS.Platform, string>> = {
   darwin: "open",
@@ -112,13 +112,6 @@ export async function login(options: LoginOptions = {}): Promise<UserInfo> {
   bar();
   console.log(`Logged in as ${userInfo.email}`);
 
-  if (showNextSteps) {
-    printNextSteps([
-      "Run `clerk init` to set up Clerk in your project",
-      "Run `clerk link` to connect an existing Clerk application",
-    ]);
-  }
-
-  outro("Done");
+  outro(showNextSteps ? NEXT_STEPS.LOGIN : "Done");
   return userInfo;
 }
