@@ -20,6 +20,7 @@ import { setCurrentEnv, isValidEnv, getCurrentEnvName } from "./lib/environment.
 import { completion, SUPPORTED_SHELLS } from "./commands/completion/index.ts";
 import { FRAMEWORK_NAMES } from "./lib/framework.ts";
 import { CliError, UserAbortError, ApiError, EXIT_CODE, throwUsageError } from "./lib/errors.ts";
+import { clerkHelpConfig } from "./lib/help.ts";
 import { ExitPromptError } from "@inquirer/core";
 import { red } from "./lib/color.ts";
 import { isAgent } from "./mode.ts";
@@ -28,6 +29,7 @@ export function createProgram() {
   const program = new Command()
     .name("clerk")
     .description("Clerk CLI")
+    .configureHelp(clerkHelpConfig())
     .version(
       typeof CLI_VERSION !== "undefined" ? CLI_VERSION : "0.0.0-dev",
       "-v, --version",
