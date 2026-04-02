@@ -10,6 +10,7 @@ import { getGitRepoIdentifier, getGitRepoRoot, getGitNormalizedRemote } from "..
 import { dim, cyan } from "../../lib/color.ts";
 import { printNextSteps } from "../../lib/next-steps.ts";
 import { CliError, ERROR_CODE } from "../../lib/errors.ts";
+import { withSpinner } from "../../lib/spinner.ts";
 
 const AGENT_PROMPT = `You are linking a Clerk application to the current project directory.
 
@@ -160,7 +161,7 @@ async function resolveApp(
   displayPath: string,
   detectKeys: boolean,
 ): Promise<Application> {
-  const apps = await listApplications();
+  const apps = await withSpinner("Fetching applications...", () => listApplications());
 
   if (apps.length === 0) {
     throw new CliError("No applications found. Create one at https://dashboard.clerk.com first.", {

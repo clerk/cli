@@ -1,6 +1,7 @@
 import { isHuman } from "../../mode.ts";
 import { bold, green, red } from "../../lib/color.ts";
 import { CliError, ERROR_CODE } from "../../lib/errors.ts";
+import { withSpinner } from "../../lib/spinner.ts";
 import { createDoctorContext } from "./context.ts";
 import {
   checkLoggedIn,
@@ -60,7 +61,7 @@ export async function doctor(options: DoctorOptions = {}): Promise<void> {
   }
 
   const ctx = createDoctorContext();
-  const allResults = await runChecks(ctx, options);
+  const allResults = await withSpinner("Running diagnostics...", () => runChecks(ctx, options));
 
   if (options.json) {
     const output = options.spotlight ? allResults.filter((r) => r.status !== "pass") : allResults;
@@ -104,15 +105,15 @@ export async function doctor(options: DoctorOptions = {}): Promise<void> {
       }
 
       console.log("");
-      console.log(bold("Verifying fixes..."));
-      console.log("");
 
       const verifyCtx = createDoctorContext();
-      const verifyResults = await runChecks(verifyCtx, {
-        ...options,
-        fix: false,
-        spotlight: false,
-      });
+      const verifyResults = await withSpinner("Verifying fixes...", () =>
+        runChecks(verifyCtx, {
+          ...options,
+          fix: false,
+          spotlight: false,
+        }),
+      );
 
       const hasVerifyFailure = verifyResults.some((r) => r.status === "fail");
       if (hasVerifyFailure) {

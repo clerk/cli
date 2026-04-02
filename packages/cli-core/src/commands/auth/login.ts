@@ -9,6 +9,7 @@ import { AUTH_TIMEOUT_MS, CALLBACK_PATH } from "../../lib/constants.ts";
 import { confirm } from "../../lib/prompts.ts";
 import { isHuman } from "../../mode.ts";
 import { throwUserAbort } from "../../lib/errors.ts";
+import { withSpinner } from "../../lib/spinner.ts";
 
 const BROWSER_COMMANDS: Partial<Record<NodeJS.Platform, string>> = {
   darwin: "open",
@@ -63,16 +64,20 @@ async function performOAuthFlow(): Promise<UserInfo> {
   const timeoutMinutes = Math.round(AUTH_TIMEOUT_MS / 60_000);
   console.log(`Waiting for authentication (timeout in ${timeoutMinutes}m)...`);
 
-  const { code } = await authServer.waitForCallback().catch((error: unknown) => {
-    authServer.stop();
-    throw error;
-  });
+  const { code } = await withSpinner("Waiting for authentication...", () =>
+    authServer.waitForCallback().catch((error: unknown) => {
+      authServer.stop();
+      throw error;
+    }),
+  );
 
-  const tokenResponse = await exchangeCodeForToken({
-    code,
-    codeVerifier,
-    redirectUri,
-  });
+  const tokenResponse = await withSpinner("Completing authentication...", () =>
+    exchangeCodeForToken({
+      code,
+      codeVerifier,
+      redirectUri,
+    }),
+  );
 
   await storeToken(tokenResponse.access_token);
 
@@ -84,7 +89,7 @@ async function performOAuthFlow(): Promise<UserInfo> {
 
 export async function login(options: LoginOptions = {}): Promise<UserInfo> {
   const { showNextSteps = true } = options;
-  const existingSession = await getExistingSession();
+  const existingSession = await withSpinner("Checking session...", () => getExistingSession());
 
   if (existingSession && !isHuman()) {
     console.log(`Logged in as ${existingSession.email}`);

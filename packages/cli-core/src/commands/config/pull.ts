@@ -1,6 +1,7 @@
 import { resolveAppContext } from "../../lib/config.ts";
 import { fetchInstanceConfig } from "../../lib/plapi.ts";
 import { withApiContext } from "../../lib/errors.ts";
+import { withSpinner } from "../../lib/spinner.ts";
 
 interface ConfigPullOptions {
   app?: string;
@@ -12,11 +13,13 @@ interface ConfigPullOptions {
 export async function configPull(options: ConfigPullOptions): Promise<void> {
   const ctx = await resolveAppContext(options);
 
-  console.error(`Pulling config from ${ctx.appLabel} (${ctx.instanceLabel})...`);
-
-  const config = await withApiContext(
-    fetchInstanceConfig(ctx.appId, ctx.instanceId, options.keys),
-    "Failed to fetch config",
+  const config = await withSpinner(
+    `Pulling config from ${ctx.appLabel} (${ctx.instanceLabel})...`,
+    () =>
+      withApiContext(
+        fetchInstanceConfig(ctx.appId, ctx.instanceId, options.keys),
+        "Failed to fetch config",
+      ),
   );
 
   const json = JSON.stringify(config, null, 2);

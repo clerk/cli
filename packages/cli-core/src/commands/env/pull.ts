@@ -8,6 +8,7 @@ import {
   detectEnvFile,
 } from "../../lib/framework.ts";
 import { CliError, ERROR_CODE, withApiContext } from "../../lib/errors.ts";
+import { withSpinner } from "../../lib/spinner.ts";
 
 interface EnvPullOptions {
   app?: string;
@@ -45,9 +46,9 @@ async function resolveTargetFile(
 export async function pull(options: EnvPullOptions): Promise<void> {
   const ctx = await resolveAppContext(options);
 
-  console.error(`Pulling env vars from ${ctx.instanceLabel} instance...`);
-
-  const app = await withApiContext(fetchApplication(ctx.appId), "Failed to fetch API keys");
+  const app = await withSpinner(`Pulling env vars from ${ctx.instanceLabel} instance...`, () =>
+    withApiContext(fetchApplication(ctx.appId), "Failed to fetch API keys"),
+  );
 
   const matched = app.instances.find((i) => i.instance_id === ctx.instanceId);
   if (!matched) {
@@ -79,5 +80,5 @@ export async function pull(options: EnvPullOptions): Promise<void> {
   await Bun.write(targetFile, output);
 
   const displayPath = options.file ?? targetFile.split("/").pop()!;
-  console.error(`Environment variables written to ${displayPath}`);
+  console.log(`Environment variables written to ${displayPath}`);
 }

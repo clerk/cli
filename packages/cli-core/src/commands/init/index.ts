@@ -18,6 +18,7 @@ import {
   printKeylessInfo,
   getAuthenticatedEmail,
 } from "./heuristics.js";
+import { withSpinner } from "../../lib/spinner.js";
 import type { ProjectContext } from "./frameworks/types.js";
 
 interface InitOptions {
@@ -33,7 +34,9 @@ export async function init(options: InitOptions = {}) {
   const frameworkOverride = options.framework
     ? (lookupFramework(options.framework) ?? undefined)
     : undefined;
-  const ctx = await gatherContext(cwd, frameworkOverride);
+  const ctx = await withSpinner("Detecting framework...", () =>
+    gatherContext(cwd, frameworkOverride),
+  );
 
   // Populate framework-specific context (variant, layoutPath, middlewareBasename)
   if (ctx) await enrichProjectContext(ctx);
@@ -138,6 +141,8 @@ async function scaffoldAndWrite(
   await runFormatters(cwd, writtenFiles);
 
   // Post-scaffold: scan for issues
-  const findings = await scanForIssues(cwd, ctx.framework.dep);
+  const findings = await withSpinner("Scanning for issues...", () =>
+    scanForIssues(cwd, ctx.framework.dep),
+  );
   printOutro(plan, findings);
 }
