@@ -1,13 +1,31 @@
-import type { Help } from "@commander-js/extra-typings";
+import { Command, type Help } from "@commander-js/extra-typings";
+
+export interface Example {
+  command: string;
+  description: string;
+}
+
+const examplesMap = new WeakMap<object, Example[]>();
+
+// Augment Commander's Command type with .setExamples()
+declare module "@commander-js/extra-typings" {
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars -- generics required for declaration merging
+  interface Command<Args, Opts, GlobalOpts> {
+    setExamples(examples: Example[]): this;
+  }
+}
+
+Command.prototype.setExamples = function (examples: Example[]) {
+  examplesMap.set(this, examples);
+  return this;
+};
 
 /**
- * Custom help formatter with two improvements over Commander defaults:
+ * Custom help formatter with three improvements over Commander defaults:
  *
  * 1. Commands display in three aligned columns: name | args | description
- *    (instead of concatenating name+args into one column)
- *
  * 2. Each section (Arguments, Options, Commands) computes its own column width
- *    (instead of sharing one width across all sections)
+ * 3. Examples are a first-class section with auto `$ ` prefix and aligned columns
  */
 export function clerkHelpConfig(): Partial<Help> {
   return {
@@ -93,6 +111,16 @@ export function clerkHelpConfig(): Partial<Help> {
           ),
         );
         output = output.concat(helper.formatItemList("Commands:", items, helper));
+      }
+
+      // Examples — auto `$ ` prefix and aligned columns
+      const examples = examplesMap.get(cmd);
+      if (examples && examples.length > 0) {
+        const maxTermLen = Math.max(...examples.map((e) => helper.displayWidth(`$ ${e.command}`)));
+        const items = examples.map((e) =>
+          helper.formatItem(`$ ${e.command}`, maxTermLen, e.description, helper),
+        );
+        output = output.concat(helper.formatItemList("Examples:", items, helper));
       }
 
       return output.join("\n");
