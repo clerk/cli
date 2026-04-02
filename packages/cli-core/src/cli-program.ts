@@ -20,6 +20,7 @@ import { setCurrentEnv, isValidEnv, getCurrentEnvName } from "./lib/environment.
 import { completion, SUPPORTED_SHELLS } from "./commands/completion/index.ts";
 import { FRAMEWORK_NAMES } from "./lib/framework.ts";
 import { CliError, UserAbortError, ApiError, EXIT_CODE, throwUsageError } from "./lib/errors.ts";
+import { clerkHelpConfig } from "./lib/help.ts";
 import { ExitPromptError } from "@inquirer/core";
 import { red } from "./lib/color.ts";
 import { isAgent } from "./mode.ts";
@@ -28,7 +29,14 @@ export function createProgram() {
   const program = new Command()
     .name("clerk")
     .description("Clerk CLI")
-    .version(typeof CLI_VERSION !== "undefined" ? CLI_VERSION : "0.0.0-dev", "-v, --version")
+    .configureHelp(clerkHelpConfig())
+    .version(
+      typeof CLI_VERSION !== "undefined" ? CLI_VERSION : "0.0.0-dev",
+      "-v, --version",
+      "Output the version number",
+    )
+    .helpOption("-h, --help", "Display help for command")
+    .addHelpCommand("help [command]", "Display help for command")
     .option(
       "--mode <mode>",
       "Force interaction mode (human or agent). Defaults to auto-detect based on TTY.",
@@ -68,38 +76,30 @@ export function createProgram() {
     )
     .option("--prompt", "Output a prompt for an AI agent to integrate Clerk")
     .option("-y, --yes", "Skip confirmation prompts")
-    .addHelpText(
-      "after",
-      `
-Examples:
-  $ clerk init                       Auto-detect framework and set up Clerk
-  $ clerk init --framework next      Set up for Next.js (skips detection)
-  $ clerk init --prompt              Output a setup prompt for an AI agent
-  $ clerk init -y                    Skip all confirmation prompts`,
-    )
+    .setExamples([
+      { command: "clerk init", description: "Auto-detect framework and set up Clerk" },
+      {
+        command: "clerk init --framework next",
+        description: "Set up for Next.js (skips detection)",
+      },
+      { command: "clerk init --prompt", description: "Output a setup prompt for an AI agent" },
+      { command: "clerk init -y", description: "Skip all confirmation prompts" },
+    ])
     .action(init);
 
   const auth = program
     .command("auth")
     .description("Manage authentication")
-    .addHelpText(
-      "after",
-      `
-Examples:
-  $ clerk auth login                 Log in via browser (OAuth)
-  $ clerk auth logout                Remove stored credentials`,
-    );
+    .setExamples([
+      { command: "clerk auth login", description: "Log in via browser (OAuth)" },
+      { command: "clerk auth logout", description: "Remove stored credentials" },
+    ]);
 
   auth
     .command("login")
     .aliases(["signup", "signin", "sign-in"])
     .description("Log in to your Clerk account")
-    .addHelpText(
-      "after",
-      `
-Examples:
-  $ clerk auth login                 Log in via browser (OAuth)`,
-    )
+    .setExamples([{ command: "clerk auth login", description: "Log in via browser (OAuth)" }])
     .action(async () => {
       await login();
     });
@@ -108,12 +108,7 @@ Examples:
     .command("logout")
     .aliases(["signout", "sign-out"])
     .description("Log out of your Clerk account")
-    .addHelpText(
-      "after",
-      `
-Examples:
-  $ clerk auth logout                Remove stored credentials`,
-    )
+    .setExamples([{ command: "clerk auth logout", description: "Remove stored credentials" }])
     .action(logout);
 
   program
@@ -132,37 +127,26 @@ Examples:
     .command("link")
     .description("Link this project to a Clerk application")
     .option("--app <id>", "Application ID to link (skips interactive picker)")
-    .addHelpText(
-      "after",
-      `
-Examples:
-  $ clerk link                       Pick an app interactively
-  $ clerk link --app app_abc123      Link directly by application ID`,
-    )
+    .setExamples([
+      { command: "clerk link", description: "Pick an app interactively" },
+      { command: "clerk link --app app_abc123", description: "Link directly by application ID" },
+    ])
     .action(link);
 
   program
     .command("unlink")
     .description("Unlink this project from its Clerk application")
     .option("--yes", "Skip confirmation prompt")
-    .addHelpText(
-      "after",
-      `
-Examples:
-  $ clerk unlink                     Unlink with confirmation prompt
-  $ clerk unlink --yes               Skip confirmation`,
-    )
+    .setExamples([
+      { command: "clerk unlink", description: "Unlink with confirmation prompt" },
+      { command: "clerk unlink --yes", description: "Skip confirmation" },
+    ])
     .action(unlink);
 
   program
     .command("whoami")
     .description("Show the current logged-in user")
-    .addHelpText(
-      "after",
-      `
-Examples:
-  $ clerk whoami                     Show your email address`,
-    )
+    .setExamples([{ command: "clerk whoami", description: "Show your email address" }])
     .action(whoami);
 
   const apps = program.command("apps").description("Manage your Clerk applications");
@@ -171,27 +155,21 @@ Examples:
     .command("list")
     .description("List your Clerk applications")
     .option("--json", "Output as JSON")
-    .addHelpText(
-      "after",
-      `
-Examples:
-  $ clerk apps list                    List all applications
-  $ clerk apps list --json             Output as JSON`,
-    )
+    .setExamples([
+      { command: "clerk apps list", description: "List all applications" },
+      { command: "clerk apps list --json", description: "Output as JSON" },
+    ])
     .action(appsList);
 
   const env = program
     .command("env")
     .description("Manage environment variables")
-    .addHelpText(
-      "after",
-      `
-Examples:
-  $ clerk env pull                             Pull dev keys to .env.local
-  $ clerk env pull --instance prod             Pull production keys
-  $ clerk env pull --file .env                 Write to a specific file
-  $ clerk env pull --app app_abc123            Target a specific application`,
-    );
+    .setExamples([
+      { command: "clerk env pull", description: "Pull dev keys to .env.local" },
+      { command: "clerk env pull --instance prod", description: "Pull production keys" },
+      { command: "clerk env pull --file .env", description: "Write to a specific file" },
+      { command: "clerk env pull --app app_abc123", description: "Target a specific application" },
+    ]);
 
   env
     .command("pull")
@@ -199,35 +177,47 @@ Examples:
     .option("--app <id>", "Application ID to target (works from any directory)")
     .option("--instance <id>", "Instance to target (dev, prod, or a full instance ID)")
     .option("--file <path>", "Target env file (default: auto-detect)")
-    .addHelpText(
-      "after",
-      `
-Examples:
-  $ clerk env pull                             Pull dev keys to .env.local
-  $ clerk env pull --instance prod             Pull production keys
-  $ clerk env pull --file .env                 Write to a specific file
-  $ clerk env pull --app app_abc123            Target a specific application`,
-    )
+    .setExamples([
+      { command: "clerk env pull", description: "Pull dev keys to .env.local" },
+      { command: "clerk env pull --instance prod", description: "Pull production keys" },
+      { command: "clerk env pull --file .env", description: "Write to a specific file" },
+      { command: "clerk env pull --app app_abc123", description: "Target a specific application" },
+    ])
     .action(pull);
 
   const config = program
     .command("config")
     .description("Manage instance configuration")
-    .addHelpText(
-      "after",
-      `
-Examples:
-  $ clerk config pull                                      Print dev config to stdout
-  $ clerk config pull --instance prod                      Pull production config
-  $ clerk config pull --output config.json                 Save config to a file
-  $ clerk config schema                                    Print full config schema
-  $ clerk config schema --keys social_login                Schema for specific keys
-  $ clerk config patch --file config.json                  Apply partial update from file
-  $ clerk config patch --json '{"key":"value"}'            Inline JSON patch
-  $ clerk config patch --file config.json --dry-run        Preview without applying
-  $ clerk config put --file config.json                    Replace entire config from file
-  $ clerk config put --instance prod --file config.json    Replace production config`,
-    );
+    .setExamples([
+      { command: "clerk config pull", description: "Print dev config to stdout" },
+      { command: "clerk config pull --instance prod", description: "Pull production config" },
+      { command: "clerk config pull --output config.json", description: "Save config to a file" },
+      { command: "clerk config schema", description: "Print full config schema" },
+      {
+        command: "clerk config schema --keys social_login",
+        description: "Schema for specific keys",
+      },
+      {
+        command: "clerk config patch --file config.json",
+        description: "Apply partial update from file",
+      },
+      {
+        command: 'clerk config patch --json \'{"key":"value"}\'',
+        description: "Inline JSON patch",
+      },
+      {
+        command: "clerk config patch --file config.json --dry-run",
+        description: "Preview without applying",
+      },
+      {
+        command: "clerk config put --file config.json",
+        description: "Replace entire config from file",
+      },
+      {
+        command: "clerk config put --instance prod --file config.json",
+        description: "Replace production config",
+      },
+    ]);
 
   config
     .command("pull")
@@ -236,14 +226,11 @@ Examples:
     .option("--instance <id>", "Instance to target (dev, prod, or a full instance ID)")
     .option("--output <file>", "Write config to a file instead of stdout")
     .option("--keys <keys...>", "Config keys to retrieve")
-    .addHelpText(
-      "after",
-      `
-Examples:
-  $ clerk config pull                          Print dev config to stdout
-  $ clerk config pull --instance prod          Pull production config
-  $ clerk config pull --output config.json     Save config to a file`,
-    )
+    .setExamples([
+      { command: "clerk config pull", description: "Print dev config to stdout" },
+      { command: "clerk config pull --instance prod", description: "Pull production config" },
+      { command: "clerk config pull --output config.json", description: "Save config to a file" },
+    ])
     .action(configPull);
 
   config
@@ -253,14 +240,14 @@ Examples:
     .option("--instance <id>", "Instance to target (dev, prod, or a full instance ID)")
     .option("--output <file>", "Write schema to a file instead of stdout")
     .option("--keys <keys...>", "Config keys to retrieve schema for")
-    .addHelpText(
-      "after",
-      `
-Examples:
-  $ clerk config schema                          Print full config schema
-  $ clerk config schema --keys social_login      Schema for specific keys
-  $ clerk config schema --output schema.json     Save schema to a file`,
-    )
+    .setExamples([
+      { command: "clerk config schema", description: "Print full config schema" },
+      {
+        command: "clerk config schema --keys social_login",
+        description: "Schema for specific keys",
+      },
+      { command: "clerk config schema --output schema.json", description: "Save schema to a file" },
+    ])
     .action(configSchema);
 
   config
@@ -276,15 +263,24 @@ Examples:
       "--destructive",
       "Allow destructive changes that delete resources (e.g. session templates, custom OAuth providers) rather than just resetting config to defaults",
     )
-    .addHelpText(
-      "after",
-      `
-Examples:
-  $ clerk config patch --file config.json                Apply partial update from file
-  $ clerk config patch --json '{"key":"value"}'          Inline JSON patch
-  $ clerk config patch --file config.json --dry-run      Preview without applying
-  $ clerk config patch --instance prod --file config.json  Patch production config`,
-    )
+    .setExamples([
+      {
+        command: "clerk config patch --file config.json",
+        description: "Apply partial update from file",
+      },
+      {
+        command: 'clerk config patch --json \'{"key":"value"}\'',
+        description: "Inline JSON patch",
+      },
+      {
+        command: "clerk config patch --file config.json --dry-run",
+        description: "Preview without applying",
+      },
+      {
+        command: "clerk config patch --instance prod --file config.json",
+        description: "Patch production config",
+      },
+    ])
     .action(configPatch);
 
   config
@@ -300,15 +296,24 @@ Examples:
       "--destructive",
       "Allow destructive changes that delete resources (e.g. session templates, custom OAuth providers) rather than just resetting config to defaults",
     )
-    .addHelpText(
-      "after",
-      `
-Examples:
-  $ clerk config put --file config.json                  Replace entire config from file
-  $ clerk config put --file config.json --dry-run        Preview the replacement
-  $ clerk config put --instance prod --file config.json  Replace production config
-  $ clerk config put --file config.json --yes            Skip confirmation prompt`,
-    )
+    .setExamples([
+      {
+        command: "clerk config put --file config.json",
+        description: "Replace entire config from file",
+      },
+      {
+        command: "clerk config put --file config.json --dry-run",
+        description: "Preview the replacement",
+      },
+      {
+        command: "clerk config put --instance prod --file config.json",
+        description: "Replace production config",
+      },
+      {
+        command: "clerk config put --file config.json --yes",
+        description: "Skip confirmation prompt",
+      },
+    ])
     .action(configPut);
 
   program
@@ -329,15 +334,15 @@ Examples:
     .option("--platform", "Use Platform API instead of Backend API")
     .option("--dry-run", "Show the request without executing it")
     .option("--yes", "Skip confirmation for mutating requests")
-    .addHelpText(
-      "after",
-      `
-Examples:
-  $ clerk api ls                                   List all available endpoints
-  $ clerk api ls users                             List endpoints matching "users"
-  $ clerk api /users                               GET /v1/users
-  $ clerk api /users -d '{"first_name":"Alice"}'   POST with a JSON body`,
-    )
+    .setExamples([
+      { command: "clerk api ls", description: "List all available endpoints" },
+      { command: "clerk api ls users", description: 'List endpoints matching "users"' },
+      { command: "clerk api /users", description: "GET /v1/users" },
+      {
+        command: 'clerk api /users -d \'{"first_name":"Alice"}\'',
+        description: "POST with a JSON body",
+      },
+    ])
     .action(api);
 
   program
@@ -347,30 +352,24 @@ Examples:
     .option("--json", "Output results as JSON")
     .option("--spotlight", "Only show warnings and failures")
     .option("--fix", "Attempt to auto-fix issues")
-    .addHelpText(
-      "after",
-      `
-Examples:
-  $ clerk doctor                     Run all health checks
-  $ clerk doctor --verbose           Show detailed output for each check
-  $ clerk doctor --json              Output results as machine-readable JSON
-  $ clerk doctor --fix               Auto-fix detected issues
-  $ clerk doctor --spotlight         Only show warnings and failures`,
-    )
+    .setExamples([
+      { command: "clerk doctor", description: "Run all health checks" },
+      { command: "clerk doctor --verbose", description: "Show detailed output for each check" },
+      { command: "clerk doctor --json", description: "Output results as machine-readable JSON" },
+      { command: "clerk doctor --fix", description: "Auto-fix detected issues" },
+      { command: "clerk doctor --spotlight", description: "Only show warnings and failures" },
+    ])
     .action(doctor);
 
   program
     .command("switch-env")
     .description("Switch the active Clerk CLI environment")
     .argument("[environment]", "Environment to switch to (e.g. production, staging)")
-    .addHelpText(
-      "after",
-      `
-Examples:
-  $ clerk switch-env                   Show current environment
-  $ clerk switch-env staging           Switch to staging
-  $ clerk switch-env production        Switch back to production`,
-    )
+    .setExamples([
+      { command: "clerk switch-env", description: "Show current environment" },
+      { command: "clerk switch-env staging", description: "Switch to staging" },
+      { command: "clerk switch-env production", description: "Switch back to production" },
+    ])
     .action(switchEnv);
 
   program
@@ -381,15 +380,18 @@ Examples:
         SUPPORTED_SHELLS,
       ),
     )
+    .setExamples([
+      { command: "clerk completion bash", description: "Output bash completion script" },
+      { command: "clerk completion zsh", description: "Output zsh completion script" },
+      { command: "clerk completion fish", description: "Output fish completion script" },
+      {
+        command: "clerk completion powershell",
+        description: "Output PowerShell completion script",
+      },
+    ])
     .addHelpText(
       "after",
       `
-Examples:
-  $ clerk completion bash              Output bash completion script
-  $ clerk completion zsh               Output zsh completion script
-  $ clerk completion fish              Output fish completion script
-  $ clerk completion powershell        Output PowerShell completion script
-
 Tutorial — enable completions for your shell:
 
   Bash:
