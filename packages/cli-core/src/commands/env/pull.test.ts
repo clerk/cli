@@ -7,11 +7,9 @@ import { credentialStoreStubs, gitStubs, configStubs, stubFetch } from "../../te
 mock.module("../../lib/credential-store.ts", () => credentialStoreStubs);
 mock.module("../../lib/git.ts", () => gitStubs);
 mock.module("../../lib/spinner.ts", () => ({
-  withSpinner: async (msg: string, fn: () => Promise<unknown>, doneMsg?: string) => {
+  withSpinner: async (msg: string, fn: () => Promise<unknown>) => {
     console.error(msg);
-    const result = await fn();
-    if (doneMsg) console.error(doneMsg);
-    return result;
+    return fn();
   },
 }));
 
@@ -118,6 +116,7 @@ describe("env pull", () => {
   const originalCwd = process.cwd;
   let tempDir: string;
   let errorSpy: ReturnType<typeof spyOn>;
+  let logSpy: ReturnType<typeof spyOn>;
   let exitSpy: ReturnType<typeof spyOn>;
 
   const mockApplication = {
@@ -155,6 +154,7 @@ describe("env pull", () => {
     process.cwd = () => tempDir;
 
     errorSpy = spyOn(console, "error").mockImplementation(() => {});
+    logSpy = spyOn(console, "log").mockImplementation(() => {});
     exitSpy = spyOn(process, "exit").mockImplementation(() => {
       throw new Error("process.exit");
     });
@@ -168,6 +168,7 @@ describe("env pull", () => {
     process.cwd = originalCwd;
     globalThis.fetch = originalFetch;
     errorSpy.mockRestore();
+    logSpy.mockRestore();
     exitSpy.mockRestore();
     await rm(tempDir, { recursive: true, force: true });
   });
