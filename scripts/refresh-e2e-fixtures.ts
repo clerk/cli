@@ -22,7 +22,7 @@ const force = args.includes("--force");
 const onlyIndex = args.indexOf("--only");
 const onlyName = onlyIndex !== -1 ? args[onlyIndex + 1] : null;
 
-const E2E_DIR = join(import.meta.dir, "../src/test/e2e");
+const E2E_DIR = join(import.meta.dir, "../test/e2e");
 const FIXTURES_DIR = join(E2E_DIR, "fixtures");
 
 // Ensure fixtures directory exists
@@ -46,7 +46,7 @@ for (const testFile of testFiles) {
   matchedOnly = true;
 
   const { config } = (await import(testFile)) as {
-    config: import("../src/test/e2e/lib/types.ts").FixtureConfig;
+    config: import("../test/e2e/lib/types.ts").FixtureConfig;
   };
 
   if (config.pinned && !force) {

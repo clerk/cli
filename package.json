@@ -8,7 +8,7 @@
     "build": "bun run --filter @clerk/cli-core build",
     "dev": "bun run --cwd packages/cli-core dev",
     "test": "bun run --filter @clerk/cli-core test",
-    "test:e2e": "bun run scripts/run-e2e.ts",
+    "test:e2e": "bun run scripts/run-e2e.ts --concurrency 4",
     "test:all": "bun run test && bun run test:e2e",
     "e2e:refresh-fixtures": "bun run scripts/refresh-e2e-fixtures.ts",
     "lint": "bun run --filter @clerk/cli-core lint && oxlint scripts/",

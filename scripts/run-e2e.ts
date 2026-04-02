@@ -30,7 +30,7 @@ if (!Number.isFinite(concurrency) || concurrency < 1) {
 const filter = values.filter;
 
 // Discover test files
-const glob = new Glob("src/test/e2e/*.test.ts");
+const glob = new Glob("test/e2e/*.test.ts");
 let files = [...glob.scanSync(".")].sort();
 if (filter) {
   files = files.filter((f) => f.includes(filter));
@@ -54,7 +54,7 @@ let failed = 0;
 
 async function runTest(file: string): Promise<Result> {
   const start = Date.now();
-  const name = file.replace("src/test/e2e/", "").replace(".test.ts", "");
+  const name = file.replace("test/e2e/", "").replace(".test.ts", "");
   console.log(`▶ ${name}`);
 
   const proc = Bun.spawn(["bun", "test", file], {
@@ -79,7 +79,7 @@ async function worker(): Promise<void> {
     let result = await runTest(file);
     if (result.exitCode !== 0) {
       // Single retry for transient failures (FAPI throttling, Playwright timeouts)
-      const name = file.replace("src/test/e2e/", "").replace(".test.ts", "");
+      const name = file.replace("test/e2e/", "").replace(".test.ts", "");
       console.log(`↻ ${name} (retrying)\n`);
       result = await runTest(file);
     }

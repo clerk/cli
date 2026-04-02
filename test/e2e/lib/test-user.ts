@@ -2,7 +2,7 @@ import { join } from "node:path";
 import { randomBytes } from "node:crypto";
 import { log } from "./logger.ts";
 
-const CLI_PATH = join(import.meta.dir, "../../../../packages/cli-core/src/cli.ts");
+const CLI_PATH = join(import.meta.dir, "../../../packages/cli-core/src/cli.ts");
 
 export interface TestUser {
   id: string;

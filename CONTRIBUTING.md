@@ -88,7 +88,7 @@ bun run e2e:refresh-fixtures              # Re-scaffold fixture projects from up
 
 Playwright chromium is required: `bunx playwright install chromium`
 
-E2E test files live in `src/test/e2e/`, with fixture projects in `src/test/e2e/fixtures/`. Each test file exports a `FixtureConfig` and calls `runFixtureTest()` and `runBrowserTest()` from `src/test/e2e/lib/`. See `.claude/rules/e2e.md` for full details on adding fixtures and required env vars.
+E2E test files live in `test/e2e/`, with fixture projects in `test/e2e/fixtures/`. Each test file exports a `FixtureConfig` and calls `runFixtureTest()` and `runBrowserTest()` from `test/e2e/lib/`. See `.claude/rules/e2e.md` for full details on adding fixtures and required env vars.
 
 ## Opening a pull request
 

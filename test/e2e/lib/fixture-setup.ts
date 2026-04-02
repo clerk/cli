@@ -10,10 +10,10 @@ import { parseEnv } from "node:util";
 import {
   detectPublishableKeyName,
   detectSecretKeyName,
-} from "../../../../packages/cli-core/src/lib/framework.ts";
+} from "../../../packages/cli-core/src/lib/framework.ts";
 import { log } from "./logger.ts";
-// Path to CLI entry point relative to this file (src/test/e2e/lib/ -> packages/cli-core/src/cli.ts)
-const CLI_PATH = join(import.meta.dir, "../../../../packages/cli-core/src/cli.ts");
+// Path to CLI entry point relative to this file (test/e2e/lib/ -> packages/cli-core/src/cli.ts)
+const CLI_PATH = join(import.meta.dir, "../../../packages/cli-core/src/cli.ts");
 
 function requireEnv(name: string): string {
   const val = process.env[name];

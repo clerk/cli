@@ -1,13 +1,13 @@
 ---
 description: E2E test instructions and required env vars
 paths:
-  - "src/test/e2e/**"
+  - "test/e2e/**"
   - "scripts/run-e2e.ts"
   - "scripts/refresh-e2e-fixtures.ts"
 alwaysApply: false
 ---
 
-E2E tests verify that `clerk init` produces a buildable, type-safe project with working auth for each supported framework. They live in `src/test/e2e/`, with fixture directories under `src/test/e2e/fixtures/`.
+E2E tests verify that `clerk init` produces a buildable, type-safe project with working auth for each supported framework. They live in `test/e2e/`, with fixture directories under `test/e2e/fixtures/`.
 
 ## Supported frameworks
 
@@ -61,7 +61,7 @@ Each fixture directory contains:
 
 ### FixtureConfig
 
-Defined in `src/test/e2e/lib/types.ts`:
+Defined in `test/e2e/lib/types.ts`:
 
 - `description` - human-readable name
 - `scaffoldCmd` - command the refresh script uses to scaffold the project
@@ -113,12 +113,12 @@ Within each test file, `useFixture()` runs `setupFixture()` once in `beforeAll` 
 
 ## Adding a new fixture
 
-1. Create `src/test/e2e/fixtures/<name>/`
+1. Create `test/e2e/fixtures/<name>/`
 2. Scaffold the framework manually or via `bun run e2e:refresh-fixtures`
 3. Add a `<name>.test.ts` exporting `config: FixtureConfig` and calling `runFixtureTest()` and `runBrowserTest()`
 4. Add a `README.md` in the fixture directory describing the project
 
-Helper functions are in `src/test/e2e/lib/`:
+Helper functions are in `test/e2e/lib/`:
 
 - `fixture-setup.ts` - `setupFixture`
 - `fixture-test.ts` - `useFixture`, `runFixtureTest`, `runBrowserTest`
