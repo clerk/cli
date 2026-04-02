@@ -3,7 +3,7 @@ import { pull } from "../env/pull.js";
 import { isAgent } from "../../mode.js";
 import { dim, green, yellow, bold } from "../../lib/color.js";
 import { throwUserAbort, throwUsageError } from "../../lib/errors.js";
-import { lookupFramework, type FrameworkInfo } from "../../lib/framework.js";
+import { lookupFramework } from "../../lib/framework.js";
 import { resolveProfile } from "../../lib/config.js";
 import { gatherContext } from "./context.js";
 import { scaffold, enrichProjectContext } from "./scaffold.js";

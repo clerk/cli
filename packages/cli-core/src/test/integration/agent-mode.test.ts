@@ -64,7 +64,7 @@ test("init --app in agent mode scaffolds instead of outputting prompt", async ()
   expect(stderr).toContain("Pulling env vars");
 });
 
-test("init --app --instance prod uses production keys in .env.local", async () => {
+test("init --app --instance prod uses production keys in .env", async () => {
   const prodInstance = getInstance(MOCK_APP, "production");
 
   await Bun.write(
@@ -81,8 +81,8 @@ test("init --app --instance prod uses production keys in .env.local", async () =
 
   await clerk("--mode", "agent", "init", "--app", MOCK_APP.application_id, "--instance", "prod");
 
-  const envContent = await Bun.file(join(h.tempDir, ".env.local")).text();
-  const env = parseEnvFile(envContent, ".env.local");
+  const envContent = await Bun.file(join(h.tempDir, ".env")).text();
+  const env = parseEnvFile(envContent, ".env");
   expect(env.get("NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY")).toBe(prodInstance.publishable_key);
   expect(env.get("CLERK_SECRET_KEY")).toBe(prodInstance.secret_key);
 });
