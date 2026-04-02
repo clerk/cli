@@ -70,7 +70,7 @@ function formatAction(action: FileAction): string {
 }
 
 export function printOutro(plan: ScaffoldPlan, findings: ScanFinding[]): void {
-  console.log(bold(green("\n✓ Clerk has been set up in your project!\n")));
+  console.log(bold(green("\n✓ Clerk has been set up in your project\n")));
 
   for (const action of plan.actions) {
     console.log(formatAction(action));
