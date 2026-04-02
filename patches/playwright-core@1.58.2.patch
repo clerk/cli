@@ -1,0 +1,23 @@
+diff --git a/lib/server/fetch.js b/lib/server/fetch.js
+index 2f8ec3c955579ee62ddf45afa84b8d3751f20fc0..840d07508cdbda9d874628ec7fd095d7958b54cd 100644
+--- a/lib/server/fetch.js
++++ b/lib/server/fetch.js
+@@ -270,7 +270,8 @@ ${text}`;
+         progress.log(`\u2190 ${response.statusCode} ${response.statusMessage}`);
+         for (const [name, value] of Object.entries(response.headers))
+           progress.log(`  ${name}: ${value}`);
+-        const cookies = this._parseSetCookieHeader(response.url || url.toString(), response.headers["set-cookie"]);
++        const resolvedResponseUrl = response.url && response.url.startsWith("http") ? response.url : url.toString();
++        const cookies = this._parseSetCookieHeader(resolvedResponseUrl, response.headers["set-cookie"]);
+         if (cookies.length) {
+           try {
+             await this._addCookies(cookies);
+@@ -343,7 +344,7 @@ ${text}`;
+           const body2 = Buffer.concat(chunks);
+           notifyRequestFinished(body2);
+           fulfill({
+-            url: response.url || url.toString(),
++            url: response.url && response.url.startsWith("http") ? response.url : url.toString(),
+             status: response.statusCode || 0,
+             statusText: response.statusMessage || "",
+             headers: toHeadersArray(response.rawHeaders),

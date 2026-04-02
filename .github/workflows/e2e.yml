@@ -1,0 +1,27 @@
+name: E2E Tests
+
+on:
+  pull_request:
+    branches: [main]
+
+jobs:
+  e2e:
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: blacksmith-8vcpu-ubuntu-2404
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: oven-sh/setup-bun@v2
+      - run: bun install --frozen-lockfile
+
+      - name: Run E2E tests
+        run: bun run test:e2e
+        env:
+          TEST_CLERK_APP_ID: ${{ secrets.E2E_APP_ID }}
+          CLERK_PLATFORM_API_KEY: ${{ secrets.CLERK_PLATFORM_API_KEY }}
+          CLERK_PLATFORM_API_URL: 'https://api.clerkstage.dev'
+          CLERK_BACKEND_API_URL: 'https://api.clerkstage.dev'
+          CLERK_E2E_DEBUG: '1'

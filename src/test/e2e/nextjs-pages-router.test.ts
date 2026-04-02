@@ -1,0 +1,27 @@
+import { join } from "node:path";
+import { useFixture, runFixtureTest, runBrowserTest } from "./lib/fixture-test.ts";
+import type { FixtureConfig } from "./lib/types.ts";
+
+const fixtureDir = join(import.meta.dir, "fixtures/nextjs-pages-router");
+
+export const config = {
+  description: "Next.js Pages Router with TypeScript",
+  scaffoldCmd: [
+    "bunx",
+    "create-next-app@latest",
+    ".",
+    "--ts",
+    "--no-app",
+    "--no-tailwind",
+    "--no-eslint",
+    "--yes",
+  ],
+  clerkSdk: "@clerk/nextjs",
+  buildCmd: ["next", "build"],
+  devCmd: ["next", "dev"],
+  pinned: false,
+} satisfies FixtureConfig;
+
+const getFixture = useFixture(fixtureDir, config);
+runFixtureTest(getFixture, config);
+runBrowserTest(getFixture, config);
