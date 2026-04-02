@@ -27,7 +27,7 @@ export function createProgram() {
   const program = new Command()
     .name("clerk")
     .description("Clerk CLI")
-    .version(typeof CLI_VERSION !== "undefined" ? CLI_VERSION : "0.0.0-dev")
+    .version(typeof CLI_VERSION !== "undefined" ? CLI_VERSION : "0.0.0-dev", "-v, --version")
     .option(
       "--mode <mode>",
       "Force interaction mode (human or agent). Defaults to auto-detect based on TTY.",
@@ -569,7 +569,12 @@ function outputJsonError(
   errors?: ApiErrorEntry[],
 ): void {
   const payload: {
-    error: { code: string; message: string; docsUrl?: string; errors?: ApiErrorEntry[] };
+    error: {
+      code: string;
+      message: string;
+      docsUrl?: string;
+      errors?: ApiErrorEntry[];
+    };
   } = {
     error: { code, message },
   };
