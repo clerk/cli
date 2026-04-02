@@ -6,6 +6,7 @@ import { getToken } from "../../lib/credential-store.js";
 import { fetchUserInfo } from "../../lib/token-exchange.js";
 import { printFindings } from "./scan.js";
 import { pmInstallCommand } from "./prompts/index.js";
+import { withSpinner } from "../../lib/spinner.js";
 import type { FileAction, ProjectContext, ScaffoldPlan } from "./frameworks/types.js";
 import type { ScanFinding } from "./scan.js";
 
@@ -30,22 +31,24 @@ export async function installSdk(ctx: ProjectContext): Promise<void> {
 }
 
 export async function writePlan(cwd: string, plan: ScaffoldPlan): Promise<string[]> {
-  const written: string[] = [];
+  return withSpinner("Writing files...", async () => {
+    const written: string[] = [];
 
-  for (const action of plan.actions) {
-    if (action.type === "skip") continue;
+    for (const action of plan.actions) {
+      if (action.type === "skip") continue;
 
-    const fullPath = join(cwd, action.path);
+      const fullPath = join(cwd, action.path);
 
-    if (action.type === "create") {
-      await mkdir(dirname(fullPath), { recursive: true });
+      if (action.type === "create") {
+        await mkdir(dirname(fullPath), { recursive: true });
+      }
+
+      await Bun.write(fullPath, action.content);
+      written.push(action.path);
     }
 
-    await Bun.write(fullPath, action.content);
-    written.push(action.path);
-  }
-
-  return written;
+    return written;
+  });
 }
 
 export async function checkGitDirty(cwd: string): Promise<boolean> {

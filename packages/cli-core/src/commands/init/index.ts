@@ -18,6 +18,7 @@ import {
   printKeylessInfo,
   getAuthenticatedEmail,
 } from "./heuristics.js";
+import { intro, outro, bar, withSpinner } from "../../lib/spinner.js";
 import type { ProjectContext } from "./frameworks/types.js";
 
 interface InitOptions {
@@ -33,7 +34,12 @@ export async function init(options: InitOptions = {}) {
   const frameworkOverride = options.framework
     ? (lookupFramework(options.framework) ?? undefined)
     : undefined;
-  const ctx = await gatherContext(cwd, frameworkOverride);
+
+  intro("clerk init");
+
+  const ctx = await withSpinner("Detecting framework...", () =>
+    gatherContext(cwd, frameworkOverride),
+  );
 
   // Populate framework-specific context (variant, layoutPath, middlewareBasename)
   if (ctx) await enrichProjectContext(ctx);
@@ -42,9 +48,11 @@ export async function init(options: InitOptions = {}) {
     console.log(
       "Run `clerk init -y` to automatically detect the framework, install the Clerk SDK, and scaffold authentication files without interactive prompts.",
     );
+    outro();
     return;
   }
 
+  bar();
   const authenticated = await resolveAuth(cwd);
 
   if (authenticated) {
@@ -53,12 +61,14 @@ export async function init(options: InitOptions = {}) {
 
   await detectAndInstall(cwd, ctx, options);
 
+  bar();
   if (authenticated) {
     await pull({});
-    return;
+  } else {
+    printKeylessInfo();
   }
 
-  printKeylessInfo();
+  outro("Done");
 }
 
 async function resolveAuth(cwd: string): Promise<boolean> {
@@ -138,6 +148,8 @@ async function scaffoldAndWrite(
   await runFormatters(cwd, writtenFiles);
 
   // Post-scaffold: scan for issues
-  const findings = await scanForIssues(cwd, ctx.framework.dep);
+  const findings = await withSpinner("Scanning for issues...", () =>
+    scanForIssues(cwd, ctx.framework.dep),
+  );
   printOutro(plan, findings);
 }

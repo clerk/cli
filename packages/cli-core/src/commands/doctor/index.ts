@@ -1,6 +1,7 @@
 import { isHuman } from "../../mode.ts";
 import { bold, green, red } from "../../lib/color.ts";
 import { CliError, ERROR_CODE } from "../../lib/errors.ts";
+import { intro, outro, bar, withSpinner } from "../../lib/spinner.ts";
 import { createDoctorContext } from "./context.ts";
 import {
   checkLoggedIn,
@@ -56,11 +57,11 @@ async function runChecks(ctx: DoctorContext, options: DoctorOptions): Promise<Ch
 
 export async function doctor(options: DoctorOptions = {}): Promise<void> {
   if (!options.json) {
-    console.log("");
+    intro("clerk doctor");
   }
 
   const ctx = createDoctorContext();
-  const allResults = await runChecks(ctx, options);
+  const allResults = await withSpinner("Running diagnostics...", () => runChecks(ctx, options));
 
   if (options.json) {
     const output = options.spotlight ? allResults.filter((r) => r.status !== "pass") : allResults;
@@ -103,16 +104,16 @@ export async function doctor(options: DoctorOptions = {}): Promise<void> {
         }
       }
 
-      console.log("");
-      console.log(bold("Verifying fixes..."));
-      console.log("");
+      bar();
 
       const verifyCtx = createDoctorContext();
-      const verifyResults = await runChecks(verifyCtx, {
-        ...options,
-        fix: false,
-        spotlight: false,
-      });
+      const verifyResults = await withSpinner("Verifying fixes...", () =>
+        runChecks(verifyCtx, {
+          ...options,
+          fix: false,
+          spotlight: false,
+        }),
+      );
 
       const hasVerifyFailure = verifyResults.some((r) => r.status === "fail");
       if (hasVerifyFailure) {
@@ -120,6 +121,7 @@ export async function doctor(options: DoctorOptions = {}): Promise<void> {
           code: ERROR_CODE.DOCTOR_FAILED,
         });
       }
+      outro("All checks passing");
       return;
     }
   }
@@ -130,4 +132,5 @@ export async function doctor(options: DoctorOptions = {}): Promise<void> {
       code: ERROR_CODE.DOCTOR_FAILED,
     });
   }
+  outro("All checks passing");
 }

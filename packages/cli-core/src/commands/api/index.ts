@@ -12,6 +12,7 @@ import {
 } from "../../lib/errors.ts";
 import { isHuman } from "../../mode.ts";
 import { confirm } from "../../lib/prompts.ts";
+import { withSpinner } from "../../lib/spinner.ts";
 
 export interface ApiOptions {
   method?: string;
@@ -86,13 +87,15 @@ export async function api(
 
   // 6. Execute request
   try {
-    const response = await bapiRequest({
-      method,
-      path: endpoint,
-      secretKey,
-      body: body ?? undefined,
-      baseUrl,
-    });
+    const response = await withSpinner("Executing request...", () =>
+      bapiRequest({
+        method,
+        path: endpoint,
+        secretKey,
+        body: body ?? undefined,
+        baseUrl,
+      }),
+    );
 
     if (options.include) {
       printHeaders(response.status, response.headers);

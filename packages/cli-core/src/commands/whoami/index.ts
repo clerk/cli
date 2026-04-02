@@ -1,5 +1,6 @@
 import { getToken } from "../../lib/credential-store.ts";
 import { fetchUserInfo } from "../../lib/token-exchange.ts";
+import { withSpinner } from "../../lib/spinner.ts";
 
 export async function whoami() {
   const token = await getToken();
@@ -9,7 +10,7 @@ export async function whoami() {
   }
 
   try {
-    const userInfo = await fetchUserInfo(token);
+    const userInfo = await withSpinner("Fetching account info...", () => fetchUserInfo(token));
     console.log(userInfo.email);
   } catch {
     console.log("Session expired. Run `clerk auth login` to re-authenticate.");

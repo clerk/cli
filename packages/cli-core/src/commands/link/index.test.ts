@@ -81,6 +81,13 @@ mock.module("@inquirer/prompts", () => ({
   confirm: (...args: unknown[]) => mockConfirm(...args),
 }));
 
+mock.module("../../lib/spinner.ts", () => ({
+  intro: () => {},
+  outro: () => {},
+  bar: () => {},
+  withSpinner: async (_msg: string, fn: () => Promise<unknown>) => fn(),
+}));
+
 const { link } = await import("./index.ts");
 
 const mockApp = {

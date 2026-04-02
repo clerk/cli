@@ -8,6 +8,7 @@ import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import { CLERK_CACHE_DIR, CACHE_TTL_MS, OPENAPI_SPEC_URLS } from "../../lib/constants.ts";
 import { CliError, ERROR_CODE } from "../../lib/errors.ts";
+import { withSpinner } from "../../lib/spinner.ts";
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
@@ -125,13 +126,16 @@ export async function loadCatalog(options: { platform?: boolean } = {}): Promise
   // Fetch spec
   const url = platform ? OPENAPI_SPEC_URLS.platform : OPENAPI_SPEC_URLS.bapi;
   try {
-    const response = await fetch(url);
-    if (!response.ok) {
-      throw new Error(`HTTP ${response.status}`);
-    }
-    const yamlText = await response.text();
-    const catalog = parseSpec(yamlText);
-    await writeCache(platform, catalog);
+    const catalog = await withSpinner("Fetching API catalog...", async () => {
+      const response = await fetch(url);
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}`);
+      }
+      const yamlText = await response.text();
+      const parsed = parseSpec(yamlText);
+      await writeCache(platform, parsed);
+      return parsed;
+    });
     return catalog;
   } catch (error) {
     // Fall back to stale cache

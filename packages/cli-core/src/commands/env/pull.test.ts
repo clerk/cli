@@ -6,6 +6,12 @@ import { credentialStoreStubs, gitStubs, configStubs, stubFetch } from "../../te
 
 mock.module("../../lib/credential-store.ts", () => credentialStoreStubs);
 mock.module("../../lib/git.ts", () => gitStubs);
+mock.module("../../lib/spinner.ts", () => ({
+  withSpinner: async (msg: string, fn: () => Promise<unknown>) => {
+    console.error(msg);
+    return fn();
+  },
+}));
 
 type Profile = { workspaceId: string; appId: string; instances: Record<string, string> };
 const _profiles: Record<string, Profile> = {};
@@ -110,6 +116,7 @@ describe("env pull", () => {
   const originalCwd = process.cwd;
   let tempDir: string;
   let errorSpy: ReturnType<typeof spyOn>;
+  let logSpy: ReturnType<typeof spyOn>;
   let exitSpy: ReturnType<typeof spyOn>;
 
   const mockApplication = {
@@ -147,6 +154,7 @@ describe("env pull", () => {
     process.cwd = () => tempDir;
 
     errorSpy = spyOn(console, "error").mockImplementation(() => {});
+    logSpy = spyOn(console, "log").mockImplementation(() => {});
     exitSpy = spyOn(process, "exit").mockImplementation(() => {
       throw new Error("process.exit");
     });
@@ -160,6 +168,7 @@ describe("env pull", () => {
     process.cwd = originalCwd;
     globalThis.fetch = originalFetch;
     errorSpy.mockRestore();
+    logSpy.mockRestore();
     exitSpy.mockRestore();
     await rm(tempDir, { recursive: true, force: true });
   });
@@ -354,7 +363,9 @@ describe("env pull", () => {
     });
 
     await runEnvPull();
-    expect(errorSpy).toHaveBeenCalledWith("Pulling env vars from development instance...");
+    expect(errorSpy).toHaveBeenCalledWith(
+      expect.stringContaining("Pulling env vars from development instance"),
+    );
   });
 
   test("shows written file in status message", async () => {
