@@ -22,7 +22,28 @@ const CLERK_LOGO = `<svg width="48" height="48" viewBox="0 0 160 160" fill="none
 </svg>
 `;
 
-const PAGE_STYLE = `body { font-family: system-ui, sans-serif; display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0; background: #fff; color: #000; } @media (prefers-color-scheme: dark) { body { background: #111; color: #fff; } }`;
+const PAGE_STYLE = `
+  body { font-family: system-ui, sans-serif; display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0; background: #fff; color: #000; }
+  @media (prefers-color-scheme: dark) { body { background: #111; color: #fff; } }
+  @keyframes roll-in { from { transform: rotateX(90deg); opacity: 0; } to { transform: rotateX(0deg); opacity: 1; } }
+  @keyframes fade-in { from { opacity: 0; filter: blur(2px); } to { opacity: 1; filter: blur(0px); } }
+`;
+
+function animatedText(text: string): string {
+  return (
+    text
+      .split("")
+      .map((letter, i) => {
+        const delay = (i * 0.015).toFixed(3);
+        const char = letter === " " ? "&nbsp;" : escapeHtml(letter);
+        return `<span style="display:inline-block;perspective:800px;">\
+<span style="display:inline-block;backface-visibility:hidden;transform-origin:50% 100%;\
+animation:roll-in 0.15s ease-out ${delay}s both;">${char}</span></span>`;
+      })
+      .join("") +
+    `<span style="clip-path:inset(50%);white-space:nowrap;border-width:0;width:1px;height:1px;margin:-1px;padding:0;position:absolute;overflow:hidden;">${escapeHtml(text)}</span>`
+  );
+}
 
 const SUCCESS_HTML = `<!DOCTYPE html>
 <html>
@@ -30,8 +51,8 @@ const SUCCESS_HTML = `<!DOCTYPE html>
 <body>
   <div style="text-align: center;">
     ${CLERK_LOGO}
-    <h1>Authentication successful</h1>
-    <p>You can close this window and return to your terminal.</p>
+    <h1>${animatedText("Authentication successful")}</h1>
+    <p style="color: #9394a1; opacity:0;animation:fade-in 0.4s ease-out 0.5s forwards;">You can close this window and return to your terminal.</p>
   </div>
 </body>
 </html>`;
