@@ -133,7 +133,7 @@ async function scaffoldAndWrite(
   }
 
   if (await checkGitDirty(cwd)) {
-    console.log(yellow("Warning: You have uncommitted changes."));
+    console.log(yellow("Warning: You have uncommitted changes"));
     console.log(dim("Consider committing first so you can review what clerk init creates.\n"));
   }
 

@@ -418,7 +418,7 @@ describe("config push", () => {
     // Send a payload that matches the current config for the patched key
     await runConfigPatch({ json: '{"session":{"lifetime":604800}}', yes: true });
     expect(mutatingCallMade).toBe(false);
-    expect(errorSpy).toHaveBeenCalledWith("No changes detected.");
+    expect(errorSpy).toHaveBeenCalledWith("No changes detected");
   });
 
   test("put skips API call when payload matches current config", async () => {
@@ -439,7 +439,7 @@ describe("config push", () => {
       yes: true,
     });
     expect(mutatingCallMade).toBe(false);
-    expect(errorSpy).toHaveBeenCalledWith("No changes detected.");
+    expect(errorSpy).toHaveBeenCalledWith("No changes detected");
   });
 
   test("put detects no changes when current config has config_version (pull→put roundtrip)", async () => {
@@ -459,7 +459,7 @@ describe("config push", () => {
     // Simulate pull→put: payload includes config_version from the pull output
     await runConfigPut({ json: JSON.stringify(configWithVersion), yes: true });
     expect(mutatingCallMade).toBe(false);
-    expect(errorSpy).toHaveBeenCalledWith("No changes detected.");
+    expect(errorSpy).toHaveBeenCalledWith("No changes detected");
   });
 
   // --- Instance targeting ---
@@ -582,7 +582,7 @@ describe("config push", () => {
     });
 
     await runConfigPatch({ json: '{"a":1}', yes: true });
-    expect(errorSpy).toHaveBeenCalledWith("Config pushed successfully.");
+    expect(errorSpy).toHaveBeenCalledWith("Config pushed successfully");
   });
 
   // --- --json takes priority over --file ---

@@ -117,7 +117,7 @@ export async function doctor(options: DoctorOptions = {}): Promise<void> {
 
       const hasVerifyFailure = verifyResults.some((r) => r.status === "fail");
       if (hasVerifyFailure) {
-        throw new CliError("Some checks still failing after auto-fix.", {
+        throw new CliError("Some checks still failing after auto-fix", {
           code: ERROR_CODE.DOCTOR_FAILED,
         });
       }
@@ -128,7 +128,7 @@ export async function doctor(options: DoctorOptions = {}): Promise<void> {
 
   const hasFailure = allResults.some((r) => r.status === "fail");
   if (hasFailure) {
-    throw new CliError("Doctor found issues with your Clerk integration.", {
+    throw new CliError("Doctor found issues with your Clerk integration", {
       code: ERROR_CODE.DOCTOR_FAILED,
     });
   }

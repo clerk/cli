@@ -91,7 +91,7 @@ async function configPush(options: ConfigPushOptions, op: Operation): Promise<vo
   const hasChanges = hasConfigChanges(currentConfig, configPayload, isPatch);
 
   if (!hasChanges) {
-    console.error("No changes detected.");
+    console.error("No changes detected");
     return;
   }
 
@@ -117,7 +117,7 @@ async function configPush(options: ConfigPushOptions, op: Operation): Promise<vo
       ),
   );
   console.log(JSON.stringify(result, null, 2));
-  console.error("Config pushed successfully.");
+  console.error("Config pushed successfully");
 }
 
 export async function readInput(options: { file?: string; json?: string }): Promise<string> {
@@ -140,7 +140,7 @@ export async function readInput(options: { file?: string; json?: string }): Prom
     }
     const text = Buffer.concat(chunks).toString("utf-8").trim();
     if (!text) {
-      throwUsageError("No input received from stdin.");
+      throwUsageError("No input received from stdin");
     }
     return text;
   }

@@ -83,7 +83,7 @@ export async function link(options: LinkOptions = {}): Promise<void> {
   const prodInstance = app.instances.find((i) => i.environment_type === "production");
 
   if (!devInstance) {
-    throw new CliError("Application has no development instance.", {
+    throw new CliError("Application has no development instance", {
       code: ERROR_CODE.INSTANCE_NOT_FOUND,
     });
   }
@@ -206,7 +206,7 @@ async function pickApp(apps: Application[], displayPath: string): Promise<Applic
 
   const found = apps.find((a) => a.application_id === selectedId);
   if (!found) {
-    throw new CliError("Selected application not found.", {
+    throw new CliError("Selected application not found", {
       code: ERROR_CODE.APP_NOT_FOUND,
     });
   }
