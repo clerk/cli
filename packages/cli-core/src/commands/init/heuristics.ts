@@ -68,7 +68,7 @@ export function printOutro(plan: ScaffoldPlan, findings: ScanFinding[]): void {
   const modified = plan.actions.filter((a) => a.type === "modify");
   const skipped = plan.actions.filter((a) => a.type === "skip");
 
-  console.log(bold(green("\n✓ Clerk has been set up in your project!\n")));
+  console.log(bold(green("\n✓ Clerk has been set up in your project\n")));
 
   for (const a of created) {
     console.log(`  ${green("+")} ${a.path}`);
