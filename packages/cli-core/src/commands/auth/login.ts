@@ -103,6 +103,7 @@ export async function login(options: LoginOptions = {}): Promise<UserInfo> {
       default: false,
     });
     if (!reauthenticate) {
+      outro();
       throwUserAbort();
     }
   }
