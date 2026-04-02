@@ -43,6 +43,6 @@ describe("logout", () => {
     consoleSpy = spyOn(console, "log").mockImplementation(() => {});
     await logout();
 
-    expect(consoleSpy).toHaveBeenCalledWith("Logged out successfully.");
+    expect(consoleSpy).toHaveBeenCalledWith("Logged out successfully");
   });
 });

@@ -140,7 +140,7 @@ export async function loadCatalog(options: { platform?: boolean } = {}): Promise
   } catch (error) {
     // Fall back to stale cache
     if (cached) {
-      console.error("Warning: Unable to refresh API catalog, using cached version.");
+      console.error("Warning: Unable to refresh API catalog, using cached version");
       return cached;
     }
     throw new CliError(
