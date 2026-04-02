@@ -80,6 +80,6 @@ jobs:
       - name: Run E2E tests
         run: bun run test:e2e
         env:
-          TEST_CLERK_APP_ID: ${{ secrets.E2E_APP_ID }}
+          TEST_CLERK_APP_ID: ${{ secrets.TEST_CLERK_APP_ID }}
           CLERK_PLATFORM_API_KEY: ${{ secrets.CLERK_PLATFORM_API_KEY }}
           CLERK_E2E_DEBUG: "1"
