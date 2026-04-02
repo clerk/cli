@@ -23,6 +23,10 @@ const { values } = parseArgs({
 });
 
 const concurrency = parseInt(values.concurrency, 10);
+if (!Number.isFinite(concurrency) || concurrency < 1) {
+  console.error(`Invalid --concurrency "${values.concurrency}". Expected an integer >= 1.`);
+  process.exit(1);
+}
 const filter = values.filter;
 
 // Discover test files
