@@ -1,7 +1,7 @@
 import { isHuman } from "../../mode.ts";
 import { bold, green, red } from "../../lib/color.ts";
 import { CliError, ERROR_CODE } from "../../lib/errors.ts";
-import { withSpinner } from "../../lib/spinner.ts";
+import { intro, outro, bar, withSpinner } from "../../lib/spinner.ts";
 import { createDoctorContext } from "./context.ts";
 import {
   checkLoggedIn,
@@ -57,7 +57,7 @@ async function runChecks(ctx: DoctorContext, options: DoctorOptions): Promise<Ch
 
 export async function doctor(options: DoctorOptions = {}): Promise<void> {
   if (!options.json) {
-    console.log("");
+    intro("clerk doctor");
   }
 
   const ctx = createDoctorContext();
@@ -104,7 +104,7 @@ export async function doctor(options: DoctorOptions = {}): Promise<void> {
         }
       }
 
-      console.log("");
+      bar();
 
       const verifyCtx = createDoctorContext();
       const verifyResults = await withSpinner("Verifying fixes...", () =>
@@ -121,6 +121,7 @@ export async function doctor(options: DoctorOptions = {}): Promise<void> {
           code: ERROR_CODE.DOCTOR_FAILED,
         });
       }
+      outro("All checks passing");
       return;
     }
   }
@@ -131,4 +132,5 @@ export async function doctor(options: DoctorOptions = {}): Promise<void> {
       code: ERROR_CODE.DOCTOR_FAILED,
     });
   }
+  outro("All checks passing");
 }

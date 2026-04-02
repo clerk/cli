@@ -9,7 +9,7 @@ import { AUTH_TIMEOUT_MS, CALLBACK_PATH } from "../../lib/constants.ts";
 import { confirm } from "../../lib/prompts.ts";
 import { isHuman } from "../../mode.ts";
 import { throwUserAbort } from "../../lib/errors.ts";
-import { withSpinner } from "../../lib/spinner.ts";
+import { intro, outro, bar, withSpinner } from "../../lib/spinner.ts";
 
 const BROWSER_COMMANDS: Partial<Record<NodeJS.Platform, string>> = {
   darwin: "open",
@@ -89,6 +89,7 @@ async function performOAuthFlow(): Promise<UserInfo> {
 
 export async function login(options: LoginOptions = {}): Promise<UserInfo> {
   const { showNextSteps = true } = options;
+  intro("clerk login");
   const existingSession = await withSpinner("Checking session...", () => getExistingSession());
 
   if (existingSession && !isHuman()) {
@@ -108,6 +109,7 @@ export async function login(options: LoginOptions = {}): Promise<UserInfo> {
 
   const userInfo = await performOAuthFlow();
 
+  bar();
   console.log(`Logged in as ${userInfo.email}`);
 
   if (showNextSteps) {
@@ -117,5 +119,6 @@ export async function login(options: LoginOptions = {}): Promise<UserInfo> {
     ]);
   }
 
+  outro("Done");
   return userInfo;
 }

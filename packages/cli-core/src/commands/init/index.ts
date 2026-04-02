@@ -18,7 +18,7 @@ import {
   printKeylessInfo,
   getAuthenticatedEmail,
 } from "./heuristics.js";
-import { withSpinner } from "../../lib/spinner.js";
+import { intro, outro, bar, withSpinner } from "../../lib/spinner.js";
 import type { ProjectContext } from "./frameworks/types.js";
 
 interface InitOptions {
@@ -34,6 +34,9 @@ export async function init(options: InitOptions = {}) {
   const frameworkOverride = options.framework
     ? (lookupFramework(options.framework) ?? undefined)
     : undefined;
+
+  intro("clerk init");
+
   const ctx = await withSpinner("Detecting framework...", () =>
     gatherContext(cwd, frameworkOverride),
   );
@@ -48,6 +51,7 @@ export async function init(options: InitOptions = {}) {
     return;
   }
 
+  bar();
   const authenticated = await resolveAuth(cwd);
 
   if (authenticated) {
@@ -56,12 +60,14 @@ export async function init(options: InitOptions = {}) {
 
   await detectAndInstall(cwd, ctx, options);
 
+  bar();
   if (authenticated) {
     await pull({});
-    return;
+  } else {
+    printKeylessInfo();
   }
 
-  printKeylessInfo();
+  outro("Done");
 }
 
 async function resolveAuth(cwd: string): Promise<boolean> {
