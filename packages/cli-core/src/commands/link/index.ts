@@ -1,9 +1,14 @@
 import { basename } from "node:path";
-import { search, confirm } from "@inquirer/prompts";
+import { search, confirm, input } from "@inquirer/prompts";
 import { isAgent } from "../../mode.ts";
 import { getToken } from "../../lib/credential-store.ts";
 import { login } from "../auth/login.ts";
-import { listApplications, fetchApplication, type Application } from "../../lib/plapi.ts";
+import {
+  listApplications,
+  fetchApplication,
+  createApplication,
+  type Application,
+} from "../../lib/plapi.ts";
 import { setProfile, resolveProfile, moveProfile } from "../../lib/config.ts";
 import { autolink, findClerkKeys, matchKeyToApp } from "../../lib/autolink.ts";
 import { getGitRepoIdentifier, getGitRepoRoot, getGitNormalizedRemote } from "../../lib/git.ts";
@@ -27,7 +32,10 @@ const AGENT_PROMPT = `You are linking a Clerk application to the current project
 | Method | Endpoint | Purpose |
 |--------|----------|---------|
 | GET | /v1/platform/applications | List all applications |
-| GET | /v1/platform/applications/{appId} | Fetch application with instance details |`;
+| GET | /v1/platform/applications/{appId} | Fetch application with instance details |
+| POST | /v1/platform/applications | Create a new application |`;
+
+const CREATE_NEW_APP = "__create_new__";
 
 interface LinkOptions {
   app?: string;
@@ -116,6 +124,18 @@ async function ensureAuth() {
   }
 }
 
+async function createAndFetchApp(name: string): Promise<Application> {
+  const trimmed = name.trim();
+  if (!trimmed) {
+    throw new CliError("Application name cannot be empty.", {
+      docsUrl: "https://clerk.com/docs/getting-started/quickstart/setup-clerk",
+    });
+  }
+  const created = await createApplication(trimmed);
+  console.log(`\nCreated ${cyan(created.name ?? created.application_id)}`);
+  return fetchApplication(created.application_id);
+}
+
 function printExistingStatus(
   existing: Awaited<ReturnType<typeof resolveProfile>> & {},
   normalizedRemote: string | undefined,
@@ -158,6 +178,18 @@ async function handleExistingProfile(
   return confirm({ message: "Re-link to a different application?", default: false });
 }
 
+async function tryDetectApp(cwd: string, apps: Application[]): Promise<Application | undefined> {
+  const detectedKeys = await findClerkKeys(cwd);
+  if (!detectedKeys.length) return undefined;
+
+  const match = matchKeyToApp(detectedKeys, apps);
+  if (!match) return undefined;
+
+  console.log(`We found ${cyan(appLabel(match.app))} from ${dim(match.source)}.`);
+  const useDetected = await confirm({ message: "Link to this application?", default: true });
+  return useDetected ? match.app : undefined;
+}
+
 async function resolveApp(
   cwd: string,
   displayPath: string,
@@ -165,44 +197,32 @@ async function resolveApp(
 ): Promise<Application> {
   const apps = await withSpinner("Fetching applications...", () => listApplications());
 
-  if (apps.length === 0) {
-    throw new CliError("No applications found. Create one at https://dashboard.clerk.com first.", {
-      code: ERROR_CODE.APP_NOT_FOUND,
-    });
+  if (apps.length > 0 && detectKeys) {
+    const detected = await tryDetectApp(cwd, apps);
+    if (detected) return detected;
   }
 
-  if (detectKeys) {
-    const detectedKeys = await findClerkKeys(cwd);
-    const match = detectedKeys.length > 0 ? matchKeyToApp(detectedKeys, apps) : undefined;
-
-    if (match) {
-      const label = appLabel(match.app);
-      console.log(`We found ${cyan(label)} from ${dim(match.source)}.`);
-      const useDetected = await confirm({
-        message: "Link to this application?",
-        default: true,
-      });
-      if (useDetected) return match.app;
-    }
-  }
-
-  return pickApp(apps, displayPath);
+  return pickOrCreateApp(apps, displayPath);
 }
 
-async function pickApp(apps: Application[], displayPath: string): Promise<Application> {
-  const choices = apps.map((a) => ({
-    name: appLabel(a),
-    value: a.application_id,
-  }));
+async function pickOrCreateApp(apps: Application[], displayPath: string): Promise<Application> {
+  const appChoices = apps.map((a) => ({ name: appLabel(a), value: a.application_id }));
+  const createChoice = { name: dim("+ Create a new application"), value: CREATE_NEW_APP };
 
   const selectedId = await search({
     message: `Select a Clerk application to link ${dim(`(repo: ${basename(displayPath)})`)}`,
-    source: (term) => {
-      if (!term) return choices;
-      const lower = term.toLowerCase();
-      return choices.filter((c) => c.name.toLowerCase().includes(lower));
+    source: (term: string | undefined) => {
+      const filtered = term
+        ? appChoices.filter((c) => c.name.toLowerCase().includes(term.toLowerCase()))
+        : appChoices;
+      return [...filtered, createChoice];
     },
   });
+
+  if (selectedId === CREATE_NEW_APP) {
+    const name = await input({ message: "Application name:" });
+    return createAndFetchApp(name);
+  }
 
   const found = apps.find((a) => a.application_id === selectedId);
   if (!found) {

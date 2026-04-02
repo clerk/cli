@@ -184,6 +184,27 @@ export const patchInstanceConfig = (
   options?: { destructive?: boolean },
 ) => sendInstanceConfig("PATCH", applicationId, instanceId, config, options);
 
+export async function createApplication(name: string): Promise<Application> {
+  const token = await getAuthToken();
+  const url = new URL("/v1/platform/applications", getPlapiBaseUrl());
+  const response = await fetch(url, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${token}`,
+      "Content-Type": "application/json",
+      Accept: "application/json",
+    },
+    body: JSON.stringify({ name }),
+  });
+
+  if (!response.ok) {
+    const body = await response.text();
+    throw new PlapiError(response.status, body);
+  }
+
+  return response.json() as Promise<Application>;
+}
+
 export async function listApplications(): Promise<Application[]> {
   const token = await getAuthToken();
   const url = new URL("/v1/platform/applications", getPlapiBaseUrl());

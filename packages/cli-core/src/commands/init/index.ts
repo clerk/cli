@@ -127,7 +127,7 @@ async function detectAndInstall(
   console.log();
 
   if (ctx.existingClerk) {
-    console.log(dim(`${ctx.framework.sdk} is already installed.`));
+    console.log(dim(`${ctx.framework.sdk} is already installed`));
   } else {
     await installSdk(ctx);
   }
