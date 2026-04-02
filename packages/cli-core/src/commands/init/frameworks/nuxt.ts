@@ -1,4 +1,5 @@
 import { join } from "node:path";
+import { stat } from "node:fs/promises";
 import { parseModule } from "magicast";
 import {
   authComponentName,
@@ -21,6 +22,19 @@ function authPageContent(kind: "sign-in" | "sign-up", tailwind: boolean): string
 ${content}
 </template>
 `;
+}
+
+/**
+ * Determine the pages directory root for a Nuxt project.
+ * Nuxt 4 moved the default srcDir to `app/`, so pages live at `app/pages/`.
+ * Nuxt 3 (and Nuxt 4 with explicit srcDir overrides) keeps pages at `pages/`.
+ * We detect this by checking whether the `app/` directory itself exists.
+ */
+async function pagesDir(cwd: string): Promise<"app/pages" | "pages"> {
+  const appDirExists = await stat(join(cwd, "app"))
+    .then((s) => s.isDirectory())
+    .catch(() => false);
+  return appDirExists ? "app/pages" : "pages";
 }
 
 function addNuxtModule(content: string): string {
@@ -90,13 +104,16 @@ export const nuxt: FrameworkScaffold = {
 
   async scaffold(ctx: ProjectContext): Promise<ScaffoldPlan> {
     const tailwind = hasTailwindStyles(ctx);
+    const pagesRoot = await pagesDir(ctx.cwd);
     const [configAction, appVueAction, authActions, envAction] = await Promise.all([
       scaffoldConfig(ctx),
       scaffoldAppVue(ctx),
       scaffoldAuthFiles(
         ctx.cwd,
         authFileSpecs({
-          path: (kind) => `pages/${kind}/[...slug].vue`,
+          // Use catch-all routes so Clerk can handle sub-paths (e.g. /sign-in/factor-one).
+          // Place pages under app/pages/ for Nuxt 4's app/ directory layout, or pages/ for Nuxt 3.
+          path: (kind) => `${pagesRoot}/${kind}/[...slug].vue`,
           content: (kind) => authPageContent(kind, tailwind),
           surface: "page",
         }),

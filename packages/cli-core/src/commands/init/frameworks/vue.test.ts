@@ -107,6 +107,32 @@ app.mount("#app");
   });
 });
 
+test("handles chained createApp().mount() pattern from create-vite", async () => {
+  await mkdir(join(tempDir, "src"), { recursive: true });
+  await Bun.write(
+    join(tempDir, "src/main.ts"),
+    `import { createApp } from "vue";
+import "./style.css";
+import App from "./App.vue";
+
+createApp(App).mount("#app");
+`,
+  );
+
+  const plan = await vue.scaffold(makeCtx());
+
+  const entry = findAction(plan.actions, "src/main.ts");
+  expect(entry.type).toBe("modify");
+  if (entry.type === "modify") {
+    expect(entry.content).toContain("clerkPlugin");
+    expect(entry.content).toContain("app.use(clerkPlugin");
+    expect(entry.content).toContain('.mount("#app")');
+    // Should split chained call into separate statements
+    expect(entry.content).toContain("const app = createApp(App)");
+    expect(entry.content).not.toContain("createApp(App).mount");
+  }
+});
+
 test("creates entry file when none exists", async () => {
   const plan = await vue.scaffold(makeCtx());
 
