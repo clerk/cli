@@ -16,6 +16,7 @@ jobs:
           node-version: 22
       - uses: oven-sh/setup-bun@v2
       - run: bun install --frozen-lockfile
+      - run: bunx playwright install chromium --with-deps
 
       - name: Run E2E tests
         run: bun run test:e2e
