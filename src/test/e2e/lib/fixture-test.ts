@@ -1,5 +1,5 @@
 import { join } from "node:path";
-import { test, beforeAll, afterAll } from "bun:test";
+import { test, expect, beforeAll, afterAll } from "bun:test";
 import { setupFixture } from "./fixture-setup.ts";
 import type { FixtureConfig } from "./types.ts";
 import { chromium } from "playwright";
@@ -132,6 +132,36 @@ export function runFixtureTest(getFixture: () => FixtureState, config: FixtureCo
 }
 
 /**
+ * Register a bun test that verifies `clerk init` created one of the
+ * expected files (e.g. `middleware.ts` or `proxy.ts`) in the project root
+ * or `src/` directory.
+ *
+ * @param expectedFiles - filenames to look for (relative to projectDir).
+ *   The test passes if at least one exists.
+ */
+export function runFileExistsTest(
+  getFixture: () => FixtureState,
+  config: FixtureConfig,
+  expectedFiles: string[],
+): void {
+  if (process.env.CLERK_REFRESH_FIXTURES) return;
+
+  const label = expectedFiles.join(" or ");
+  test(`clerk init [${config.description}]: creates ${label}`, async () => {
+    const { projectDir } = getFixture();
+    const found = await Promise.all(
+      expectedFiles.map(async (f) => {
+        const file = Bun.file(join(projectDir, f));
+        return (await file.exists()) ? f : null;
+      }),
+    );
+    const existing = found.filter(Boolean);
+    expect(existing.length).toBeGreaterThanOrEqual(1);
+    log(config.description, `found: ${existing.join(", ")}`);
+  });
+}
+
+/**
  * Register a bun test that starts a dev server, creates a test user,
  * and verifies sign-in works via @clerk/testing in a real browser.
  */
@@ -215,11 +245,11 @@ export function runBrowserTest(getFixture: () => FixtureState, config: FixtureCo
         log(fixtureName, "clerk has been loaded");
 
         // NOTE: disabled currently as this is very flakey during e2e testing.
-        // // 7. Check to see that the user is now on the window object.
-        // await page.waitForFunction(() => window.Clerk?.user !== null, null, {
-        //   timeout: 10_000,
-        // });
-        // log(fixtureName, "auth flow passed");
+        // 7. Check to see that the user is now on the window object.
+        await page.waitForFunction(() => window.Clerk?.user !== null, null, {
+          timeout: 10_000,
+        });
+        log(fixtureName, "auth flow passed");
 
         // Log any console errors as warnings (non-fatal)
         if (consoleErrors.length > 0) {

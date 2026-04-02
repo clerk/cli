@@ -7,7 +7,7 @@
  *
  * Usage:
  *   bun run scripts/run-e2e.ts                  # concurrency 1 (default)
- *   bun run scripts/run-e2e.ts --concurrency 2  # 2 at a time
+ *   bun run scripts/run-e2e.ts --concurrency 4  # 4 at a time
  *   bun run scripts/run-e2e.ts --filter react   # only files matching "react"
  */
 

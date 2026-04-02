@@ -1,5 +1,10 @@
 import { join } from "node:path";
-import { useFixture, runFixtureTest, runBrowserTest } from "./lib/fixture-test.ts";
+import {
+  useFixture,
+  runFixtureTest,
+  runFileExistsTest,
+  runBrowserTest,
+} from "./lib/fixture-test.ts";
 import type { FixtureConfig } from "./lib/types.ts";
 
 const fixtureDir = join(import.meta.dir, "fixtures/nextjs-app-router-next14");
@@ -27,4 +32,5 @@ export const config = {
 
 const getFixture = useFixture(fixtureDir, config);
 runFixtureTest(getFixture, config);
+runFileExistsTest(getFixture, config, ["middleware.ts"]);
 runBrowserTest(getFixture, config);

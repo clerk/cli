@@ -130,10 +130,11 @@ After modifying files, run these commands to match what CI enforces on pull requ
 ```sh
 bun run format       # Format with oxfmt (writes changes)
 bun run lint         # Lint with oxlint
-bun test             # Run all tests
+bun test             # Run unit tests
+bun run test:e2e     # Run E2E tests (requires env vars, see .claude/rules/e2e.md)
 ```
 
-CI runs `bun run format:check` (fails if unformatted), `bun run lint`, and `bun test` on every PR to `main`.
+CI runs `bun run format:check` (fails if unformatted), `bun run lint`, `bun test`, and `bun run test:e2e` on every PR to `main`. E2E tests only run for PRs from the same repository (not external forks) and target a staging Clerk application.
 
 ## Versioning
 

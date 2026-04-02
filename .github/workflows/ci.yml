@@ -10,6 +10,7 @@ concurrency:
 
 jobs:
   build:
+    name: Build
     runs-on: blacksmith-2vcpu-ubuntu-2404
     timeout-minutes: 10
     steps:
@@ -24,6 +25,7 @@ jobs:
       - run: bun run build
 
   lint:
+    name: Lint
     needs: [build]
     runs-on: blacksmith-2vcpu-ubuntu-2404
     timeout-minutes: 10
@@ -40,6 +42,7 @@ jobs:
       - run: bun run lint
 
   test:
+    name: Test
     needs: [build]
     runs-on: blacksmith-2vcpu-ubuntu-2404
     timeout-minutes: 10
@@ -55,6 +58,7 @@ jobs:
       - run: bun run --filter @clerk/cli-core test
 
   test-e2e:
+    name: E2E Test
     needs: [build]
     if: github.event.pull_request.head.repo.full_name == github.repository
     runs-on: blacksmith-8vcpu-ubuntu-2404
@@ -78,6 +82,4 @@ jobs:
         env:
           TEST_CLERK_APP_ID: ${{ secrets.E2E_APP_ID }}
           CLERK_PLATFORM_API_KEY: ${{ secrets.CLERK_PLATFORM_API_KEY }}
-          CLERK_PLATFORM_API_URL: "https://api.clerkstage.dev"
-          CLERK_BACKEND_API_URL: "https://api.clerkstage.dev"
           CLERK_E2E_DEBUG: "1"
