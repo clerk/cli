@@ -29,8 +29,8 @@ const CHECKS: CheckFn[] = [
   checkShellCompletion,
 ];
 
-async function runChecks(ctx: DoctorContext, options: DoctorOptions): Promise<CheckResult[]> {
-  const results = await Promise.all(
+async function runChecks(ctx: DoctorContext): Promise<CheckResult[]> {
+  return Promise.all(
     CHECKS.map(async (check) => {
       try {
         return await check(ctx);
@@ -43,17 +43,15 @@ async function runChecks(ctx: DoctorContext, options: DoctorOptions): Promise<Ch
       }
     }),
   );
+}
 
-  if (!options.json) {
-    for (const result of results) {
-      if (!options.spotlight || result.status !== "pass") {
-        log.info(formatCheckResult(result, options.verbose ?? false));
-      }
+function printResults(results: CheckResult[], options: DoctorOptions): void {
+  for (const result of results) {
+    if (!options.spotlight || result.status !== "pass") {
+      log.info(formatCheckResult(result, options.verbose ?? false));
     }
-    log.blank();
   }
-
-  return results;
+  log.blank();
 }
 
 export async function doctor(options: DoctorOptions = {}): Promise<void> {
@@ -62,7 +60,11 @@ export async function doctor(options: DoctorOptions = {}): Promise<void> {
   }
 
   const ctx = createDoctorContext();
-  const allResults = await withSpinner("Running diagnostics...", () => runChecks(ctx, options));
+  const allResults = await withSpinner("Running diagnostics...", () => runChecks(ctx));
+
+  if (!options.json) {
+    printResults(allResults, options);
+  }
 
   if (options.json) {
     const output = options.spotlight ? allResults.filter((r) => r.status !== "pass") : allResults;
@@ -108,13 +110,8 @@ export async function doctor(options: DoctorOptions = {}): Promise<void> {
       bar();
 
       const verifyCtx = createDoctorContext();
-      const verifyResults = await withSpinner("Verifying fixes...", () =>
-        runChecks(verifyCtx, {
-          ...options,
-          fix: false,
-          spotlight: false,
-        }),
-      );
+      const verifyResults = await withSpinner("Verifying fixes...", () => runChecks(verifyCtx));
+      printResults(verifyResults, { ...options, fix: false, spotlight: false });
 
       const hasVerifyFailure = verifyResults.some((r) => r.status === "fail");
       if (hasVerifyFailure) {
