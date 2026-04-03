@@ -3,7 +3,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { _setConfigDir, setProfile } from "../../lib/config.ts";
-import { credentialStoreStubs, gitStubs, stubFetch } from "../../test/lib/stubs.ts";
+import { credentialStoreStubs, gitStubs, stubFetch, captureLog } from "../../test/lib/stubs.ts";
 
 mock.module("../../lib/credential-store.ts", () => credentialStoreStubs);
 mock.module("../../lib/git.ts", () => gitStubs);
@@ -15,6 +15,7 @@ describe("config schema", () => {
   let logSpy: ReturnType<typeof spyOn>;
   let errorSpy: ReturnType<typeof spyOn>;
   let exitSpy: ReturnType<typeof spyOn>;
+  let captured: ReturnType<typeof captureLog>;
 
   const mockSchema = {
     type: "object",
@@ -37,11 +38,13 @@ describe("config schema", () => {
     exitSpy = spyOn(process, "exit").mockImplementation(() => {
       throw new Error("process.exit");
     });
+    captured = captureLog();
 
     stubFetch(async () => new Response(JSON.stringify(mockSchema), { status: 200 }));
   });
 
   afterEach(async () => {
+    captured.teardown();
     _setConfigDir(undefined);
     process.env = { ...originalEnv };
     globalThis.fetch = originalFetch;
@@ -81,7 +84,7 @@ describe("config schema", () => {
     });
 
     await runConfigSchema();
-    expect(logSpy).toHaveBeenCalledWith(JSON.stringify(mockSchema, null, 2));
+    expect(captured.out).toBe(JSON.stringify(mockSchema, null, 2));
   });
 
   test("supports --app without a linked profile", async () => {
@@ -102,7 +105,7 @@ describe("config schema", () => {
     });
 
     await runConfigSchema({ app: "app_1" });
-    expect(logSpy).toHaveBeenCalledWith(JSON.stringify(mockSchema, null, 2));
+    expect(captured.out).toBe(JSON.stringify(mockSchema, null, 2));
   });
 
   test("writes schema to file with --output", async () => {
@@ -116,7 +119,7 @@ describe("config schema", () => {
     await runConfigSchema({ output: outFile });
     const written = await Bun.file(outFile).json();
     expect(written).toEqual(mockSchema);
-    expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining("Schema written to"));
+    expect(captured.err).toContain("Schema written to");
   });
 
   test("shows which environment is being pulled", async () => {
@@ -127,7 +130,7 @@ describe("config schema", () => {
     });
 
     await runConfigSchema();
-    expect(errorSpy).toHaveBeenCalledWith("Pulling config schema from app_1 (development)...");
+    expect(captured.err).toContain("Pulling config schema from app_1 (development)...");
   });
 
   test("shows production label when --instance prod", async () => {
@@ -138,7 +141,7 @@ describe("config schema", () => {
     });
 
     await runConfigSchema({ instance: "prod" });
-    expect(errorSpy).toHaveBeenCalledWith("Pulling config schema from app_1 (production)...");
+    expect(captured.err).toContain("Pulling config schema from app_1 (production)...");
   });
 
   test("uses development instance by default", async () => {

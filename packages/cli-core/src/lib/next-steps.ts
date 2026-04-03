@@ -1,5 +1,6 @@
-import { cyan, dimNeutral } from "./color.ts";
+import { cyan } from "./color.ts";
 import { isHuman } from "../mode.ts";
+import { log } from "./log.ts";
 
 export const NEXT_STEPS = {
   LOGIN: [
@@ -27,7 +28,7 @@ export const NEXT_STEPS = {
 export function printNextSteps(steps: readonly string[]): void {
   if (!isHuman() || steps.length === 0) return;
   for (const step of steps) {
-    console.error(`   ${cyan("\u2192")} ${step}`);
+    log.info(`   ${cyan("\u2192")} ${step}`);
   }
-  console.error();
+  log.blank();
 }

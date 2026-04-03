@@ -29,8 +29,8 @@ import {
 } from "./lib/errors.ts";
 import { clerkHelpConfig } from "./lib/help.ts";
 import { ExitPromptError } from "@inquirer/core";
-import { red } from "./lib/color.ts";
 import { isAgent } from "./mode.ts";
+import { log } from "./lib/log.ts";
 
 export function createProgram() {
   const program = new Command()
@@ -535,10 +535,10 @@ export async function runProgram(
         outputJsonError(error.code, error.message, error.docsUrl);
       } else {
         if (error.message) {
-          console.error(red(`error: ${error.message}`));
+          log.error(error.message);
         }
         if (error.docsUrl) {
-          console.error(`\nFor more information, see: ${error.docsUrl}`);
+          log.info(`\nFor more information, see: ${error.docsUrl}`);
         }
       }
       process.exit(error.exitCode);
@@ -557,9 +557,9 @@ export async function runProgram(
           apiErrors,
         );
       } else {
-        console.error(red(`error: ${prefix} (${error.status}): ${detail}`));
+        log.error(`${prefix} (${error.status}): ${detail}`);
         if (verbose && error instanceof PlapiError && error.url) {
-          console.error(`       URL: ${error.url}`);
+          log.error(`       URL: ${error.url}`);
         }
       }
       process.exit(EXIT_CODE.GENERAL);
@@ -569,7 +569,7 @@ export async function runProgram(
       if (isAgent()) {
         outputJsonError("unexpected_error", error.message);
       } else {
-        console.error(red(`error: ${error.message}`));
+        log.error(error.message);
       }
       process.exit(EXIT_CODE.GENERAL);
     }
@@ -577,7 +577,7 @@ export async function runProgram(
     if (isAgent()) {
       outputJsonError("unexpected_error", "An unexpected error occurred");
     } else {
-      console.error(red("error: An unexpected error occurred"));
+      log.error("An unexpected error occurred");
     }
     process.exit(EXIT_CODE.GENERAL);
   }
@@ -608,7 +608,7 @@ function outputJsonError(
   };
   if (docsUrl) payload.error.docsUrl = docsUrl;
   if (errors?.length) payload.error.errors = errors;
-  console.error(JSON.stringify(payload));
+  log.raw(JSON.stringify(payload));
 }
 
 /** Extract the error code from a Clerk API JSON response body, if present. */

@@ -2,7 +2,13 @@ import { test, expect, describe, beforeEach, afterEach, spyOn, mock } from "bun:
 import { mkdtemp, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { credentialStoreStubs, gitStubs, configStubs, stubFetch } from "../../test/lib/stubs.ts";
+import {
+  credentialStoreStubs,
+  gitStubs,
+  configStubs,
+  stubFetch,
+  captureLog,
+} from "../../test/lib/stubs.ts";
 
 mock.module("../../lib/credential-store.ts", () => credentialStoreStubs);
 mock.module("../../lib/git.ts", () => gitStubs);
@@ -118,6 +124,7 @@ describe("env pull", () => {
   let errorSpy: ReturnType<typeof spyOn>;
   let logSpy: ReturnType<typeof spyOn>;
   let exitSpy: ReturnType<typeof spyOn>;
+  let captured: ReturnType<typeof captureLog>;
 
   const mockApplication = {
     application_id: "app_1",
@@ -158,11 +165,13 @@ describe("env pull", () => {
     exitSpy = spyOn(process, "exit").mockImplementation(() => {
       throw new Error("process.exit");
     });
+    captured = captureLog();
 
     stubFetch(async () => new Response(JSON.stringify(mockApplication), { status: 200 }));
   });
 
   afterEach(async () => {
+    captured.teardown();
     _setConfigDir(undefined);
     process.env = { ...originalEnv };
     process.cwd = originalCwd;
@@ -408,9 +417,7 @@ describe("env pull", () => {
     });
 
     await runEnvPull();
-    expect(errorSpy).toHaveBeenCalledWith(
-      expect.stringContaining("Environment variables written to"),
-    );
+    expect(captured.err).toContain("Environment variables written to");
   });
 
   test("errors when instance not found in API response", async () => {

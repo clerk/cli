@@ -1,5 +1,5 @@
 import { test, expect, describe, beforeEach, afterEach, mock, spyOn } from "bun:test";
-import { capturedOutput } from "../../test/lib/stubs.ts";
+import { capturedOutput, captureLog } from "../../test/lib/stubs.ts";
 
 const mockListApplications = mock();
 mock.module("../../lib/plapi.ts", () => ({
@@ -52,14 +52,17 @@ const mockApps = [
 describe("apps list", () => {
   let logSpy: ReturnType<typeof spyOn>;
   let errorSpy: ReturnType<typeof spyOn>;
+  let captured: ReturnType<typeof captureLog>;
 
   beforeEach(() => {
     mockIsAgent.mockReturnValue(false);
     logSpy = spyOn(console, "log").mockImplementation(() => {});
     errorSpy = spyOn(console, "error").mockImplementation(() => {});
+    captured = captureLog();
   });
 
   afterEach(() => {
+    captured.teardown();
     mockListApplications.mockReset();
     mockIsAgent.mockReset();
     logSpy.mockRestore();
@@ -72,12 +75,11 @@ describe("apps list", () => {
 
       await list();
 
-      const output = capturedOutput(logSpy);
-      expect(output).toContain("My SaaS App");
-      expect(output).toContain("app_abc123");
-      expect(output).toContain("development, production");
-      expect(output).toContain("Side Project");
-      expect(output).toContain("app_xyz789");
+      expect(captured.out).toContain("My SaaS App");
+      expect(captured.out).toContain("app_abc123");
+      expect(captured.out).toContain("development, production");
+      expect(captured.out).toContain("Side Project");
+      expect(captured.out).toContain("app_xyz789");
     });
 
     test("shows app id as name when name is absent", async () => {
@@ -92,8 +94,7 @@ describe("apps list", () => {
 
       await list();
 
-      const output = capturedOutput(logSpy);
-      expect(output).toContain("app_noname");
+      expect(captured.out).toContain("app_noname");
     });
 
     test("does not show secret keys", async () => {
@@ -101,9 +102,8 @@ describe("apps list", () => {
 
       await list();
 
-      const output = capturedOutput(logSpy);
-      expect(output).not.toContain("sk_test_xxx");
-      expect(output).not.toContain("sk_live_xxx");
+      expect(captured.out).not.toContain("sk_test_xxx");
+      expect(captured.out).not.toContain("sk_live_xxx");
     });
 
     test("shows count summary on stderr", async () => {
@@ -111,8 +111,7 @@ describe("apps list", () => {
 
       await list();
 
-      const summary = capturedOutput(errorSpy);
-      expect(summary).toContain("2 applications");
+      expect(captured.err).toContain("2 applications");
     });
 
     test("shows singular count for one app", async () => {
@@ -120,9 +119,8 @@ describe("apps list", () => {
 
       await list();
 
-      const summary = capturedOutput(errorSpy);
-      expect(summary).toContain("1 application");
-      expect(summary).not.toContain("1 applications");
+      expect(captured.err).toContain("1 application");
+      expect(captured.err).not.toContain("1 applications");
     });
   });
 
@@ -132,8 +130,7 @@ describe("apps list", () => {
 
       await list({ json: true });
 
-      const output = capturedOutput(logSpy);
-      const parsed = JSON.parse(output);
+      const parsed = JSON.parse(captured.out);
       expect(parsed).toHaveLength(2);
       expect(parsed[0].application_id).toBe("app_abc123");
       expect(parsed[0].name).toBe("My SaaS App");
@@ -145,8 +142,7 @@ describe("apps list", () => {
 
       await list();
 
-      const output = capturedOutput(logSpy);
-      const parsed = JSON.parse(output);
+      const parsed = JSON.parse(captured.out);
       expect(parsed).toHaveLength(2);
     });
 
@@ -155,10 +151,9 @@ describe("apps list", () => {
 
       await list({ json: true });
 
-      const output = capturedOutput(logSpy);
-      expect(output).not.toContain("sk_test_xxx");
-      expect(output).not.toContain("sk_live_xxx");
-      expect(output).not.toContain("secret_key");
+      expect(captured.out).not.toContain("sk_test_xxx");
+      expect(captured.out).not.toContain("sk_live_xxx");
+      expect(captured.out).not.toContain("secret_key");
     });
   });
 
@@ -168,9 +163,8 @@ describe("apps list", () => {
 
       await list();
 
-      const output = capturedOutput(logSpy);
-      expect(output).toContain("No applications found");
-      expect(output).toContain("dashboard.clerk.com");
+      expect(captured.out).toContain("No applications found");
+      expect(captured.out).toContain("dashboard.clerk.com");
     });
 
     test("outputs empty JSON array when --json flag is set", async () => {
@@ -178,8 +172,7 @@ describe("apps list", () => {
 
       await list({ json: true });
 
-      const output = capturedOutput(logSpy);
-      const parsed = JSON.parse(output);
+      const parsed = JSON.parse(captured.out);
       expect(parsed).toEqual([]);
     });
 
@@ -189,8 +182,7 @@ describe("apps list", () => {
 
       await list();
 
-      const output = capturedOutput(logSpy);
-      const parsed = JSON.parse(output);
+      const parsed = JSON.parse(captured.out);
       expect(parsed).toEqual([]);
     });
   });

@@ -1,5 +1,6 @@
 import { isHuman } from "../mode.ts";
 import { dim, cyan, green, red } from "./color.ts";
+import { pushPrefix, popPrefix } from "./log.ts";
 
 const FRAMES = ["◒", "◐", "◓", "◑"];
 const INTERVAL = 80;
@@ -13,56 +14,21 @@ const S_STEP_ERROR = "■";
 const stream = process.stderr;
 const isInteractive = () => stream.isTTY && !process.env.CI;
 
-// --- Console pipe (auto-prefix console.log/error with │ inside intro/outro flow) ---
-
-const _log = console.log;
-const _error = console.error;
-let flowDepth = 0;
-
-function pipedFn(original: typeof console.log): typeof console.log {
-  return (...args: unknown[]) => {
-    const msg = args.map((a) => (typeof a === "string" ? a : String(a))).join(" ");
-    if (!msg) {
-      stream.write(`${dim(S_BAR)}\n`);
-      return;
-    }
-    for (const line of msg.split("\n")) {
-      stream.write(`${dim(S_BAR)}  ${line}\n`);
-    }
-  };
-}
-
-function patchConsole() {
-  if (flowDepth === 0) {
-    console.log = pipedFn(_log);
-    console.error = pipedFn(_error);
-  }
-  flowDepth++;
-}
-
-function unpatchConsole() {
-  flowDepth = Math.max(0, flowDepth - 1);
-  if (flowDepth === 0) {
-    console.log = _log;
-    console.error = _error;
-  }
-}
-
 // --- Public API ---
 
-/** Print intro bracket: ┌  title — pipes all console output until outro(). */
+/** Print intro bracket: ┌  title — prefixes log output with │ until outro(). */
 export function intro(title?: string) {
   if (!isHuman()) return;
   const line = title ? `${dim(S_BAR_START)}  ${title}` : dim(S_BAR_START);
   stream.write(`${line}\n`);
-  patchConsole();
+  pushPrefix();
 }
 
-/** Print outro bracket: └  message — restores normal console output.
+/** Print outro bracket: └  message — restores normal log output.
  *  Pass a string[] to render as next steps after the bracket. */
 export function outro(messageOrSteps?: string | readonly string[]) {
   if (!isHuman()) return;
-  unpatchConsole();
+  popPrefix();
   stream.write(`${dim(S_BAR)}\n`);
 
   if (Array.isArray(messageOrSteps)) {

@@ -17,6 +17,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { capturedOutput } from "../../lib/stubs.ts";
+import { setCaptureHook } from "../../../lib/log.ts";
 import { http } from "../../lib/http.ts";
 import type { Application, ApplicationInstance } from "../../../lib/plapi.ts";
 
@@ -384,6 +385,8 @@ async function execCLI(...args: string[]): Promise<CLIResult> {
   currentHarness.logSpy.mockClear();
   currentHarness.errorSpy.mockClear();
   currentHarness.exitSpy.mockClear();
+  currentHarness.captured.stdout.length = 0;
+  currentHarness.captured.stderr.length = 0;
 
   let exitCode = 0;
 
@@ -400,9 +403,15 @@ async function execCLI(...args: string[]): Promise<CLIResult> {
     }
   }
 
+  // Merge output from both console spies (non-migrated code) and capture hook (migrated code)
+  const consoleStdout = capturedOutput(currentHarness.logSpy);
+  const consoleStderr = capturedOutput(currentHarness.errorSpy);
+  const hookStdout = currentHarness.captured.stdout.join("\n");
+  const hookStderr = currentHarness.captured.stderr.join("\n");
+
   return {
-    stdout: capturedOutput(currentHarness.logSpy),
-    stderr: capturedOutput(currentHarness.errorSpy),
+    stdout: [consoleStdout, hookStdout].filter(Boolean).join("\n"),
+    stderr: [consoleStderr, hookStderr].filter(Boolean).join("\n"),
     exitCode,
   };
 }
@@ -436,6 +445,8 @@ export interface TestHarness {
   logSpy: ReturnType<typeof spyOn>;
   errorSpy: ReturnType<typeof spyOn>;
   exitSpy: ReturnType<typeof spyOn>;
+  /** Output captured from log.* calls via the capture hook. */
+  captured: { stdout: string[]; stderr: string[] };
 }
 
 const originalCwd = process.cwd;
@@ -478,7 +489,12 @@ export async function setupTest(): Promise<TestHarness> {
     throw new Error("process.exit");
   });
 
-  const harness = { tempDir, logSpy, errorSpy, exitSpy };
+  const captured = { stdout: [] as string[], stderr: [] as string[] };
+  setCaptureHook((stream, msg) => {
+    captured[stream].push(msg);
+  });
+
+  const harness = { tempDir, logSpy, errorSpy, exitSpy, captured };
   currentHarness = harness;
   return harness;
 }
@@ -491,6 +507,7 @@ export async function setupTest(): Promise<TestHarness> {
  */
 export async function teardownTest(harness: TestHarness): Promise<void> {
   currentHarness = null;
+  setCaptureHook(null);
   assertPromptQueuesEmpty();
   http.assertRoutesConsumed();
   _setConfigDir(undefined);

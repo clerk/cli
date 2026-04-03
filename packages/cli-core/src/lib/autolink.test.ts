@@ -2,7 +2,7 @@ import { test, expect, describe, beforeEach, afterEach, mock, spyOn } from "bun:
 import { mkdtemp, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { credentialStoreStubs, gitStubs, stubFetch } from "../test/lib/stubs.ts";
+import { credentialStoreStubs, gitStubs, stubFetch, captureLog } from "../test/lib/stubs.ts";
 
 mock.module("./credential-store.ts", () => credentialStoreStubs);
 
@@ -223,6 +223,7 @@ describe("autolink", () => {
   let tempDir: string;
   let errorSpy: ReturnType<typeof spyOn>;
   let debugSpy: ReturnType<typeof spyOn>;
+  let captured: ReturnType<typeof captureLog>;
 
   beforeEach(async () => {
     tempDir = await mkdtemp(join(tmpdir(), "clerk-autolink-test-"));
@@ -237,11 +238,13 @@ describe("autolink", () => {
     mockGetGitNormalizedRemote.mockResolvedValue(undefined);
     errorSpy = spyOn(console, "error").mockImplementation(() => {});
     debugSpy = spyOn(console, "debug").mockImplementation(() => {});
+    captured = captureLog();
 
     stubFetch(async () => new Response(JSON.stringify(mockApps), { status: 200 }));
   });
 
   afterEach(async () => {
+    captured.teardown();
     _setConfigDir(undefined);
     process.env = { ...originalEnv };
     globalThis.fetch = originalFetch;
@@ -340,10 +343,9 @@ describe("autolink", () => {
 
     await autolink(tempDir);
 
-    const output = errorSpy.mock.calls.map((c: unknown[]) => c[0]).join("\n");
-    expect(output).toContain("Auto-linked to");
-    expect(output).toContain("My App");
-    expect(output).toContain("CLERK_PUBLISHABLE_KEY env var");
+    expect(captured.err).toContain("Auto-linked to");
+    expect(captured.err).toContain("My App");
+    expect(captured.err).toContain("CLERK_PUBLISHABLE_KEY env var");
   });
 
   test("returns undefined when matched app has no development instance", async () => {
