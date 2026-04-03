@@ -9,7 +9,6 @@ import {
 } from "../../lib/framework.ts";
 import { CliError, ERROR_CODE, withApiContext } from "../../lib/errors.ts";
 import { withSpinner } from "../../lib/spinner.ts";
-import { dim } from "../../lib/color.ts";
 import { log } from "../../lib/log.ts";
 
 const DEV_LOCAL_ENV_FILE = ".env.development.local";
@@ -86,5 +85,5 @@ export async function pull(options: EnvPullOptions): Promise<void> {
     await Bun.write(targetFile, output);
   });
 
-  log.info(dim(`Environment variables written to ${displayPath}`));
+  log.info(`Environment variables written to ${displayPath}`);
 }
