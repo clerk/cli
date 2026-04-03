@@ -2,7 +2,7 @@
 description: E2E test instructions and required env vars
 paths:
   - "test/e2e/**"
-  - "scripts/run-e2e.ts"
+  - "scripts/run-tests.ts"
   - "scripts/refresh-e2e-fixtures.ts"
 alwaysApply: false
 ---
@@ -61,13 +61,15 @@ bun run e2e:refresh-fixtures -- --force      # Include pinned fixtures
 bun run e2e:refresh-fixtures -- --only nextjs-app-router  # Refresh one fixture
 ```
 
-## Test runner (`scripts/run-e2e.ts`)
+## Test runner (`scripts/run-tests.ts`)
 
-Each test file runs as a separate `bun test` subprocess to avoid shared process state (env vars, module singletons). The runner supports:
+A single test runner used by both `bun run test` and `bun run test:e2e`. Each test file runs as a separate `bun test` subprocess to avoid shared process state (env vars, module singletons). The runner supports:
 
-- `--concurrency <n>` (default 4): how many test files run in parallel
+- `--pattern <glob>` (required, repeatable): glob patterns to discover test files
+- `--exclude <glob>` (repeatable): glob patterns to exclude matched files
+- `--concurrency <n>` (default: CPU count): how many test files run in parallel
 - `--filter <string>`: only run files whose path contains the string
-- Automatic single retry on failure (handles transient FAPI throttling, Playwright timeouts)
+- `--retries <n>` (default 0): automatic retries on failure (e2e uses 1 for transient FAPI throttling, Playwright timeouts)
 
 ## How fixtures work
 

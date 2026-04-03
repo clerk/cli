@@ -10,7 +10,6 @@
     "build": "bun build ./src/cli.ts --outfile ./dist/cli.js --target node --external @napi-rs/keyring",
     "build:compile": "bun build --compile --no-compile-autoload-dotenv ./src/cli.ts --outfile ./dist/clerk",
     "dev": "bun run ./src/cli.ts",
-    "test": "for f in $(find src -name '*.test.ts' | sort); do bun test \"$f\" || exit 1; done; # Runs each test file individually to work around Bun mock.module state leaking between files (see 1e85a13)",
     "lint": "oxlint src/",
     "format": "oxfmt --write src/",
     "format:check": "oxfmt --check src/"
