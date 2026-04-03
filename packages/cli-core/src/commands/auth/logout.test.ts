@@ -31,12 +31,16 @@ describe("logout", () => {
     consoleSpy?.mockRestore();
   });
 
+  function runLogout() {
+    return captured.run(() => logout());
+  }
+
   test("deletes token and clears auth config", async () => {
     mockDeleteToken.mockResolvedValue(undefined);
     mockClearAuth.mockResolvedValue(undefined);
 
     consoleSpy = spyOn(console, "log").mockImplementation(() => {});
-    await logout();
+    await runLogout();
 
     expect(mockDeleteToken).toHaveBeenCalledTimes(1);
     expect(mockClearAuth).toHaveBeenCalledTimes(1);
@@ -47,7 +51,7 @@ describe("logout", () => {
     mockClearAuth.mockResolvedValue(undefined);
 
     consoleSpy = spyOn(console, "log").mockImplementation(() => {});
-    await logout();
+    await runLogout();
 
     expect(captured.out).toContain("Logged out successfully");
   });

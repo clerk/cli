@@ -1,3 +1,4 @@
+import { AsyncLocalStorage } from "node:async_hooks";
 import { dim, red, yellow, green } from "./color.ts";
 
 // ── Pipe prefix state (for intro/outro flow) ──────────────────────────────
@@ -23,18 +24,23 @@ function applyPrefix(msg: string): string {
     .join("\n");
 }
 
-// ── Capture hook (for testing) ────────────────────────────────────────────
+// ── Capture context (for testing) ─────────────────────────────────────────
 
-type CaptureHook = (stream: "stdout" | "stderr", msg: string) => void;
-let captureHook: CaptureHook | null = null;
+export type CapturedLogs = {
+  stdout: string[];
+  stderr: string[];
+};
 
-export function setCaptureHook(hook: CaptureHook | null) {
-  captureHook = hook;
+const captureStorage = new AsyncLocalStorage<CapturedLogs>();
+
+export function withCapturedLogs<T>(captured: CapturedLogs, fn: () => T): T {
+  return captureStorage.run(captured, fn);
 }
 
 function writeln(stream: NodeJS.WriteStream, channel: "stdout" | "stderr", msg: string) {
-  if (captureHook) {
-    captureHook(channel, msg);
+  const captured = captureStorage.getStore();
+  if (captured) {
+    captured[channel].push(msg);
   } else {
     stream.write(msg + "\n");
   }
@@ -61,8 +67,9 @@ export const log = {
   },
   /** Blank line to stderr. */
   blank() {
-    if (captureHook) {
-      captureHook("stderr", "");
+    const captured = captureStorage.getStore();
+    if (captured) {
+      captured.stderr.push("");
     } else {
       process.stderr.write("\n");
     }

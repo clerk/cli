@@ -31,6 +31,10 @@ describe("whoami", () => {
     consoleSpy?.mockRestore();
   });
 
+  function runWhoami() {
+    return captured.run(() => whoami());
+  }
+
   test("prints email when authenticated", async () => {
     mockGetToken.mockResolvedValue("valid-token");
     mockFetchUserInfo.mockResolvedValue({
@@ -39,7 +43,7 @@ describe("whoami", () => {
     });
 
     consoleSpy = spyOn(console, "log").mockImplementation(() => {});
-    await whoami();
+    await runWhoami();
 
     expect(captured.out).toContain("alice@example.com");
   });
@@ -48,7 +52,7 @@ describe("whoami", () => {
     mockGetToken.mockResolvedValue(null);
 
     consoleSpy = spyOn(console, "log").mockImplementation(() => {});
-    await whoami();
+    await runWhoami();
 
     expect(captured.out).toContain("Not logged in");
     expect(mockFetchUserInfo).not.toHaveBeenCalled();
@@ -59,7 +63,7 @@ describe("whoami", () => {
     mockFetchUserInfo.mockRejectedValue(new Error("Unauthorized"));
 
     consoleSpy = spyOn(console, "log").mockImplementation(() => {});
-    await whoami();
+    await runWhoami();
 
     expect(captured.out).toContain("Session expired");
   });

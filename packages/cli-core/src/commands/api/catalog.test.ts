@@ -196,6 +196,10 @@ describe("loadCatalog", () => {
     await rm(tempDir, { recursive: true, force: true });
   });
 
+  function runLoadCatalog(options?: Parameters<typeof loadCatalog>[0]) {
+    return captured.run(() => loadCatalog(options));
+  }
+
   test("fetches and caches on first load", async () => {
     let fetchCalled = false;
     stubFetch(async () => {
@@ -203,7 +207,7 @@ describe("loadCatalog", () => {
       return new Response(MINIMAL_SPEC, { status: 200 });
     });
 
-    const catalog = await loadCatalog();
+    const catalog = await runLoadCatalog();
     expect(fetchCalled).toBe(true);
     expect(catalog.endpoints.length).toBe(6);
 
@@ -224,7 +228,7 @@ describe("loadCatalog", () => {
       return new Response(MINIMAL_SPEC, { status: 200 });
     });
 
-    const catalog = await loadCatalog();
+    const catalog = await runLoadCatalog();
     expect(fetchCalled).toBe(false);
     expect(catalog.endpoints.length).toBe(6);
   });
@@ -241,7 +245,7 @@ describe("loadCatalog", () => {
       return new Response(MINIMAL_SPEC, { status: 200 });
     });
 
-    await loadCatalog();
+    await runLoadCatalog();
     expect(fetchCalled).toBe(true);
   });
 
@@ -255,7 +259,7 @@ describe("loadCatalog", () => {
       throw new Error("Network error");
     });
 
-    const catalog = await loadCatalog();
+    const catalog = await runLoadCatalog();
     expect(catalog.endpoints.length).toBe(6);
     expect(captured.err).toContain("Unable to refresh");
   });
@@ -265,7 +269,7 @@ describe("loadCatalog", () => {
       throw new Error("Network error");
     });
 
-    await expect(loadCatalog()).rejects.toThrow("Unable to fetch API catalog");
+    await expect(runLoadCatalog()).rejects.toThrow("Unable to fetch API catalog");
   });
 
   test("uses platform URL when platform flag set", async () => {
@@ -275,7 +279,7 @@ describe("loadCatalog", () => {
       return new Response(MINIMAL_SPEC, { status: 200 });
     });
 
-    await loadCatalog({ platform: true });
+    await runLoadCatalog({ platform: true });
     expect(capturedUrl).toContain("platform");
 
     // Cache uses platform filename

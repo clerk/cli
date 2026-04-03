@@ -83,7 +83,7 @@ describe("config push", () => {
     } = {},
   ) {
     const { configPatch } = await import("./push.ts");
-    return configPatch(options);
+    return captured.run(() => configPatch(options));
   }
 
   async function runConfigPut(
@@ -98,7 +98,7 @@ describe("config push", () => {
     } = {},
   ) {
     const { configPut } = await import("./push.ts");
-    return configPut(options);
+    return captured.run(() => configPut(options));
   }
 
   // --- Shared error cases ---
@@ -616,10 +616,11 @@ describe("config push", () => {
 
 describe("printDiff", () => {
   let captured: ReturnType<typeof captureLog>;
+  const ANSI_ESCAPE_PATTERN = new RegExp(String.raw`\u001b\[[0-9;]*m`, "g");
 
   /** Return captured stderr lines with ANSI codes stripped. */
   function lines(): string[] {
-    return captured.stderr.map((l) => l.replace(/\x1b\[[0-9;]*m/g, ""));
+    return captured.stderr.map((l) => l.replace(ANSI_ESCAPE_PATTERN, ""));
   }
 
   beforeEach(() => {
@@ -634,7 +635,7 @@ describe("printDiff", () => {
     const current = { session: { lifetime: 604800, cookie: "__session" } };
     const patch = { session: { lifetime: 3600 } };
 
-    printDiff(current, patch, true);
+    captured.run(() => printDiff(current, patch, true));
 
     expect(lines()).toEqual(["  session:", "    lifetime:", "      - 604800", "      + 3600"]);
   });
@@ -643,7 +644,7 @@ describe("printDiff", () => {
     const current = { session: { lifetime: 3600 }, sign_up: { mode: "public" } };
     const patch = { session: { lifetime: 3600 } };
 
-    printDiff(current, patch, true);
+    captured.run(() => printDiff(current, patch, true));
 
     expect(lines()).toEqual([]);
   });
@@ -652,7 +653,7 @@ describe("printDiff", () => {
     const current = {};
     const patch = { session: { lifetime: 3600 } };
 
-    printDiff(current, patch, true);
+    captured.run(() => printDiff(current, patch, true));
 
     expect(lines()).toEqual(["  session:", '    + {"lifetime":3600}']);
   });
@@ -661,7 +662,7 @@ describe("printDiff", () => {
     const current = { session: { lifetime: 604800 }, sign_up: { mode: "public" } };
     const patch = { session: { lifetime: 3600 } };
 
-    printDiff(current, patch, true);
+    captured.run(() => printDiff(current, patch, true));
 
     // sign_up should not appear
     expect(lines().some((l) => l.includes("sign_up"))).toBe(false);
@@ -671,7 +672,7 @@ describe("printDiff", () => {
     const current = { session: { lifetime: 604800 }, sign_up: { mode: "public" } };
     const payload = { session: { lifetime: 604800 } };
 
-    printDiff(current, payload, false);
+    captured.run(() => printDiff(current, payload, false));
 
     // session is unchanged, sign_up is being removed
     expect(lines().some((l) => l.includes("sign_up"))).toBe(true);
@@ -682,7 +683,7 @@ describe("printDiff", () => {
     const current = { session: { lifetime: 604800 } };
     const payload = { session: { lifetime: 3600 } };
 
-    printDiff(current, payload, false);
+    captured.run(() => printDiff(current, payload, false));
 
     expect(lines()).toContainEqual(expect.stringContaining("- 604800"));
     expect(lines()).toContainEqual(expect.stringContaining("+ 3600"));
@@ -692,7 +693,7 @@ describe("printDiff", () => {
     const current = { a: { b: { c: { d: 1 } } } };
     const patch = { a: { b: { c: { d: 2 } } } };
 
-    printDiff(current, patch, true);
+    captured.run(() => printDiff(current, patch, true));
 
     expect(lines()).toEqual(["  a:", "    b.c.d:", "      - 1", "      + 2"]);
   });
@@ -701,7 +702,7 @@ describe("printDiff", () => {
     const current = { allowed: { origins: ["a.com", "b.com"] } };
     const patch = { allowed: { origins: ["a.com", "c.com"] } };
 
-    printDiff(current, patch, true);
+    captured.run(() => printDiff(current, patch, true));
 
     expect(lines()).toContainEqual(expect.stringContaining('- ["a.com","b.com"]'));
     expect(lines()).toContainEqual(expect.stringContaining('+ ["a.com","c.com"]'));

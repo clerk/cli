@@ -1,5 +1,5 @@
 import { test, expect, describe, beforeEach, afterEach, mock, spyOn } from "bun:test";
-import { capturedOutput, captureLog } from "../../test/lib/stubs.ts";
+import { captureLog } from "../../test/lib/stubs.ts";
 
 const mockListApplications = mock();
 mock.module("../../lib/plapi.ts", () => ({
@@ -69,11 +69,15 @@ describe("apps list", () => {
     errorSpy.mockRestore();
   });
 
+  function runList(options: Parameters<typeof list>[0] = {}) {
+    return captured.run(() => list(options));
+  }
+
   describe("compact table (default)", () => {
     test("lists apps with name, id, and environments", async () => {
       mockListApplications.mockResolvedValue(mockApps);
 
-      await list();
+      await runList();
 
       expect(captured.out).toContain("My SaaS App");
       expect(captured.out).toContain("app_abc123");
@@ -92,7 +96,7 @@ describe("apps list", () => {
         },
       ]);
 
-      await list();
+      await runList();
 
       expect(captured.out).toContain("app_noname");
     });
@@ -100,7 +104,7 @@ describe("apps list", () => {
     test("does not show secret keys", async () => {
       mockListApplications.mockResolvedValue(mockApps);
 
-      await list();
+      await runList();
 
       expect(captured.out).not.toContain("sk_test_xxx");
       expect(captured.out).not.toContain("sk_live_xxx");
@@ -109,7 +113,7 @@ describe("apps list", () => {
     test("shows count summary on stderr", async () => {
       mockListApplications.mockResolvedValue(mockApps);
 
-      await list();
+      await runList();
 
       expect(captured.err).toContain("2 applications");
     });
@@ -117,7 +121,7 @@ describe("apps list", () => {
     test("shows singular count for one app", async () => {
       mockListApplications.mockResolvedValue([mockApps[0]]);
 
-      await list();
+      await runList();
 
       expect(captured.err).toContain("1 application");
       expect(captured.err).not.toContain("1 applications");
@@ -128,7 +132,7 @@ describe("apps list", () => {
     test("outputs JSON when --json flag is set", async () => {
       mockListApplications.mockResolvedValue(mockApps);
 
-      await list({ json: true });
+      await runList({ json: true });
 
       const parsed = JSON.parse(captured.out);
       expect(parsed).toHaveLength(2);
@@ -140,7 +144,7 @@ describe("apps list", () => {
       mockIsAgent.mockReturnValue(true);
       mockListApplications.mockResolvedValue(mockApps);
 
-      await list();
+      await runList();
 
       const parsed = JSON.parse(captured.out);
       expect(parsed).toHaveLength(2);
@@ -149,7 +153,7 @@ describe("apps list", () => {
     test("strips secret_key from JSON", async () => {
       mockListApplications.mockResolvedValue(mockApps);
 
-      await list({ json: true });
+      await runList({ json: true });
 
       expect(captured.out).not.toContain("sk_test_xxx");
       expect(captured.out).not.toContain("sk_live_xxx");
@@ -161,7 +165,7 @@ describe("apps list", () => {
     test("shows helpful message when no apps found", async () => {
       mockListApplications.mockResolvedValue([]);
 
-      await list();
+      await runList();
 
       expect(captured.out).toContain("No applications found");
       expect(captured.out).toContain("dashboard.clerk.com");
@@ -170,7 +174,7 @@ describe("apps list", () => {
     test("outputs empty JSON array when --json flag is set", async () => {
       mockListApplications.mockResolvedValue([]);
 
-      await list({ json: true });
+      await runList({ json: true });
 
       const parsed = JSON.parse(captured.out);
       expect(parsed).toEqual([]);
@@ -180,7 +184,7 @@ describe("apps list", () => {
       mockIsAgent.mockReturnValue(true);
       mockListApplications.mockResolvedValue([]);
 
-      await list();
+      await runList();
 
       const parsed = JSON.parse(captured.out);
       expect(parsed).toEqual([]);

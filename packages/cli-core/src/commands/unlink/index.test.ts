@@ -67,12 +67,16 @@ describe("unlink", () => {
     exitSpy?.mockRestore();
   });
 
+  function runUnlink(options?: Parameters<typeof unlink>[0]) {
+    return captured.run(() => unlink(options));
+  }
+
   describe("agent mode", () => {
     test("outputs prompt and returns", async () => {
       mockIsAgent.mockReturnValue(true);
       consoleSpy = spyOn(console, "log").mockImplementation(() => {});
 
-      await unlink();
+      await runUnlink();
 
       expect(captured.out).toContain("unlinking a Clerk application");
     });
@@ -81,7 +85,7 @@ describe("unlink", () => {
       mockIsAgent.mockReturnValue(true);
       consoleSpy = spyOn(console, "log").mockImplementation(() => {});
 
-      await unlink();
+      await runUnlink();
 
       expect(mockResolveProfile).not.toHaveBeenCalled();
       expect(mockRemoveProfile).not.toHaveBeenCalled();
@@ -98,7 +102,7 @@ describe("unlink", () => {
         throw new Error("exit");
       });
 
-      await expect(unlink()).rejects.toThrow("not linked");
+      await expect(runUnlink()).rejects.toThrow("not linked");
     });
   });
 
@@ -110,7 +114,7 @@ describe("unlink", () => {
       mockRemoveProfile.mockResolvedValue(undefined);
       consoleSpy = spyOn(console, "log").mockImplementation(() => {});
 
-      await unlink({ yes: true });
+      await runUnlink({ yes: true });
 
       expect(mockConfirm).not.toHaveBeenCalled();
       expect(mockRemoveProfile).toHaveBeenCalledWith(process.cwd());
@@ -124,7 +128,7 @@ describe("unlink", () => {
       mockRemoveProfile.mockResolvedValue(undefined);
       consoleSpy = spyOn(console, "log").mockImplementation(() => {});
 
-      await unlink();
+      await runUnlink();
 
       expect(mockConfirm).toHaveBeenCalledWith(
         expect.objectContaining({ message: expect.stringContaining("/repo") }),
@@ -139,7 +143,7 @@ describe("unlink", () => {
       mockConfirm.mockResolvedValue(false);
       consoleSpy = spyOn(console, "log").mockImplementation(() => {});
 
-      await expect(unlink()).rejects.toThrow("User aborted");
+      await expect(runUnlink()).rejects.toThrow("User aborted");
       expect(mockRemoveProfile).not.toHaveBeenCalled();
     });
   });
@@ -152,7 +156,7 @@ describe("unlink", () => {
       mockRemoveProfile.mockResolvedValue(undefined);
       consoleSpy = spyOn(console, "log").mockImplementation(() => {});
 
-      await unlink({ yes: true });
+      await runUnlink({ yes: true });
 
       expect(captured.out).toContain("Unlinked");
     });

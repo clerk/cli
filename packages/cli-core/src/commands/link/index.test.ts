@@ -152,12 +152,16 @@ describe("link", () => {
     consoleSpy?.mockRestore();
   });
 
+  function runLink(options?: Parameters<typeof link>[0]) {
+    return captured.run(() => link(options));
+  }
+
   describe("agent mode", () => {
     test("outputs prompt and returns", async () => {
       mockIsAgent.mockReturnValue(true);
       consoleSpy = spyOn(console, "log").mockImplementation(() => {});
 
-      await link();
+      await runLink();
 
       expect(captured.out).toContain("linking a Clerk application");
     });
@@ -166,7 +170,7 @@ describe("link", () => {
       mockIsAgent.mockReturnValue(true);
       consoleSpy = spyOn(console, "log").mockImplementation(() => {});
 
-      await link();
+      await runLink();
 
       expect(mockSearch).not.toHaveBeenCalled();
       expect(mockGetToken).not.toHaveBeenCalled();
@@ -195,7 +199,7 @@ describe("link", () => {
       mockConfirm.mockResolvedValue(false);
       consoleSpy = spyOn(console, "log").mockImplementation(() => {});
 
-      await link();
+      await runLink();
 
       const output = captured.out;
       expect(output).toContain("Already linked");
@@ -216,7 +220,7 @@ describe("link", () => {
       mockFetchApplication.mockResolvedValue(mockApp);
       consoleSpy = spyOn(console, "log").mockImplementation(() => {});
 
-      await link({ app: "app_123" });
+      await runLink({ app: "app_123" });
 
       expect(mockConfirm).toHaveBeenCalled();
       expect(mockSetProfile).toHaveBeenCalled();
@@ -231,7 +235,7 @@ describe("link", () => {
       mockFetchApplication.mockResolvedValue(mockApp);
       consoleSpy = spyOn(console, "log").mockImplementation(() => {});
 
-      await link({ app: "app_123" });
+      await runLink({ app: "app_123" });
 
       expect(mockLogin).toHaveBeenCalled();
     });
@@ -242,7 +246,7 @@ describe("link", () => {
       mockFetchApplication.mockResolvedValue(mockApp);
       consoleSpy = spyOn(console, "log").mockImplementation(() => {});
 
-      await link({ app: "app_123" });
+      await runLink({ app: "app_123" });
 
       expect(mockLogin).not.toHaveBeenCalled();
     });
@@ -254,7 +258,7 @@ describe("link", () => {
       mockFetchApplication.mockResolvedValue(mockApp);
       consoleSpy = spyOn(console, "log").mockImplementation(() => {});
 
-      await link({ app: "app_123" });
+      await runLink({ app: "app_123" });
 
       expect(mockLogin).toHaveBeenCalledWith({ showNextSteps: false });
     });
@@ -267,7 +271,7 @@ describe("link", () => {
       mockFetchApplication.mockResolvedValue(mockApp);
       consoleSpy = spyOn(console, "log").mockImplementation(() => {});
 
-      await link({ app: "app_123" });
+      await runLink({ app: "app_123" });
 
       expect(mockListApplications).not.toHaveBeenCalled();
       expect(mockSearch).not.toHaveBeenCalled();
@@ -294,7 +298,7 @@ describe("link", () => {
       mockSearch.mockResolvedValue("app_a");
       consoleSpy = spyOn(console, "log").mockImplementation(() => {});
 
-      await link();
+      await runLink();
 
       expect(mockListApplications).toHaveBeenCalled();
       expect(mockSearch).toHaveBeenCalled();
@@ -329,7 +333,7 @@ describe("link", () => {
       );
       consoleSpy = spyOn(console, "log").mockImplementation(() => {});
 
-      await link();
+      await runLink();
     });
 
     test("source filters choices by name substring (case-insensitive), keeps create option", async () => {
@@ -369,7 +373,7 @@ describe("link", () => {
       );
       consoleSpy = spyOn(console, "log").mockImplementation(() => {});
 
-      await link();
+      await runLink();
     });
 
     test("source filters by app ID when name is absent", async () => {
@@ -403,7 +407,7 @@ describe("link", () => {
       );
       consoleSpy = spyOn(console, "log").mockImplementation(() => {});
 
-      await link();
+      await runLink();
     });
 
     test("shows picker with create option when no apps found", async () => {
@@ -435,7 +439,7 @@ describe("link", () => {
       });
       consoleSpy = spyOn(console, "log").mockImplementation(() => {});
 
-      await link();
+      await runLink();
 
       expect(mockCreateApplication).toHaveBeenCalledWith("New App");
       expect(mockFetchApplication).toHaveBeenCalledWith("app_created");
@@ -471,7 +475,7 @@ describe("link", () => {
       });
       consoleSpy = spyOn(console, "log").mockImplementation(() => {});
 
-      await link();
+      await runLink();
 
       expect(mockCreateApplication).toHaveBeenCalledWith("My App");
       expect(mockSetProfile).toHaveBeenCalled();
@@ -482,7 +486,7 @@ describe("link", () => {
       mockGetToken.mockResolvedValue("token");
       mockListApplications.mockRejectedValue(new PlapiError(401, "Unauthorized"));
 
-      await expect(link()).rejects.toBeInstanceOf(PlapiError);
+      await expect(runLink()).rejects.toBeInstanceOf(PlapiError);
     });
   });
 
@@ -495,7 +499,7 @@ describe("link", () => {
       mockGetGitRepoIdentifier.mockResolvedValue("/repo/.git");
       consoleSpy = spyOn(console, "log").mockImplementation(() => {});
 
-      await link({ app: "app_123" });
+      await runLink({ app: "app_123" });
 
       expect(mockSetProfile).toHaveBeenCalledWith("github.com/org/repo", {
         workspaceId: "",
@@ -515,7 +519,7 @@ describe("link", () => {
       mockGetGitRepoIdentifier.mockResolvedValue("/repo/.git");
       consoleSpy = spyOn(console, "log").mockImplementation(() => {});
 
-      await link({ app: "app_123" });
+      await runLink({ app: "app_123" });
 
       expect(mockSetProfile).toHaveBeenCalledWith("/repo/.git", {
         workspaceId: "",
@@ -536,7 +540,7 @@ describe("link", () => {
       mockGetGitRepoRoot.mockResolvedValue(undefined);
       consoleSpy = spyOn(console, "log").mockImplementation(() => {});
 
-      await link({ app: "app_123" });
+      await runLink({ app: "app_123" });
 
       expect(mockSetProfile).toHaveBeenCalledWith(process.cwd(), {
         workspaceId: "",
@@ -564,7 +568,7 @@ describe("link", () => {
       });
       consoleSpy = spyOn(console, "log").mockImplementation(() => {});
 
-      await link({ app: "app_123" });
+      await runLink({ app: "app_123" });
 
       const storedProfile = mockSetProfile.mock.calls[0]![1];
       expect(storedProfile.instances.production).toBeUndefined();
@@ -585,7 +589,7 @@ describe("link", () => {
         ],
       });
 
-      await expect(link({ app: "app_123" })).rejects.toThrow(
+      await expect(runLink({ app: "app_123" })).rejects.toThrow(
         "Application has no development instance",
       );
     });
@@ -596,7 +600,7 @@ describe("link", () => {
       mockFetchApplication.mockResolvedValue(mockApp);
       consoleSpy = spyOn(console, "log").mockImplementation(() => {});
 
-      await link({ app: "app_123" });
+      await runLink({ app: "app_123" });
 
       expect(captured.out).toContain("Linked to");
     });
@@ -614,7 +618,7 @@ describe("link", () => {
       mockConfirm.mockResolvedValue(false);
       consoleSpy = spyOn(console, "log").mockImplementation(() => {});
 
-      await link();
+      await runLink();
 
       const output = captured.out;
       expect(output).toContain("Auto-linked via git remote");
@@ -631,7 +635,7 @@ describe("link", () => {
       });
       consoleSpy = spyOn(console, "log").mockImplementation(() => {});
 
-      await link({ skipIfLinked: true });
+      await runLink({ skipIfLinked: true });
 
       const output = captured.out;
       expect(output).toContain("Auto-linked via git remote");
@@ -649,7 +653,7 @@ describe("link", () => {
       mockConfirm.mockResolvedValue(false);
       consoleSpy = spyOn(console, "log").mockImplementation(() => {});
 
-      await link();
+      await runLink();
 
       const output = captured.out;
       expect(output).not.toContain("Auto-linked via git remote");
@@ -672,7 +676,7 @@ describe("link", () => {
       mockConfirm.mockResolvedValueOnce(true); // accept upgrade
       consoleSpy = spyOn(console, "log").mockImplementation(() => {});
 
-      await link();
+      await runLink();
 
       const output = captured.out;
       expect(output).toContain("git repository with remote");
@@ -689,7 +693,7 @@ describe("link", () => {
         .mockResolvedValueOnce(false); // decline re-link
       consoleSpy = spyOn(console, "log").mockImplementation(() => {});
 
-      await link();
+      await runLink();
 
       expect(mockMoveProfile).not.toHaveBeenCalled();
       expect(mockGetToken).not.toHaveBeenCalled();
@@ -701,7 +705,7 @@ describe("link", () => {
       mockResolveProfile.mockResolvedValue(dirProfile);
       consoleSpy = spyOn(console, "log").mockImplementation(() => {});
 
-      await link({ skipIfLinked: true });
+      await runLink({ skipIfLinked: true });
 
       expect(mockConfirm).not.toHaveBeenCalled();
       expect(mockMoveProfile).not.toHaveBeenCalled();
@@ -719,7 +723,7 @@ describe("link", () => {
       mockConfirm.mockResolvedValueOnce(true); // accept upgrade
       consoleSpy = spyOn(console, "log").mockImplementation(() => {});
 
-      await link();
+      await runLink();
 
       expect(mockMoveProfile).toHaveBeenCalledWith("/repo/.git", "github.com/org/repo");
     });
@@ -741,7 +745,7 @@ describe("link", () => {
       mockConfirm.mockResolvedValue(true);
       consoleSpy = spyOn(console, "log").mockImplementation(() => {});
 
-      await link();
+      await runLink();
 
       expect(mockFindClerkKeys).toHaveBeenCalled();
       expect(mockMatchKeyToApp).toHaveBeenCalled();
@@ -784,7 +788,7 @@ describe("link", () => {
       mockSearch.mockResolvedValue("app_other");
       consoleSpy = spyOn(console, "log").mockImplementation(() => {});
 
-      await link();
+      await runLink();
 
       expect(mockSearch).toHaveBeenCalled();
       expect(mockSetProfile).toHaveBeenCalledWith(
@@ -799,7 +803,7 @@ describe("link", () => {
       mockFetchApplication.mockResolvedValue(mockApp);
       consoleSpy = spyOn(console, "log").mockImplementation(() => {});
 
-      await link({ app: "app_123" });
+      await runLink({ app: "app_123" });
 
       expect(mockFindClerkKeys).not.toHaveBeenCalled();
       expect(mockMatchKeyToApp).not.toHaveBeenCalled();
@@ -814,7 +818,7 @@ describe("link", () => {
       consoleSpy = spyOn(console, "log").mockImplementation(() => {});
       spyOn(console, "error").mockImplementation(() => {});
 
-      await link({ skipIfLinked: true });
+      await runLink({ skipIfLinked: true });
 
       expect(mockAutolink).toHaveBeenCalled();
       expect(mockConfirm).not.toHaveBeenCalled();
@@ -829,7 +833,7 @@ describe("link", () => {
       mockSearch.mockResolvedValue("app_123");
       consoleSpy = spyOn(console, "log").mockImplementation(() => {});
 
-      await link();
+      await runLink();
 
       expect(mockFindClerkKeys).toHaveBeenCalled();
       expect(mockMatchKeyToApp).not.toHaveBeenCalled();
@@ -845,7 +849,7 @@ describe("link", () => {
       mockSearch.mockResolvedValue("app_123");
       consoleSpy = spyOn(console, "log").mockImplementation(() => {});
 
-      await link();
+      await runLink();
 
       expect(mockMatchKeyToApp).toHaveBeenCalled();
       expect(mockConfirm).not.toHaveBeenCalled();
@@ -866,7 +870,7 @@ describe("link", () => {
       mockSearch.mockResolvedValue("app_123");
       consoleSpy = spyOn(console, "log").mockImplementation(() => {});
 
-      await link();
+      await runLink();
 
       expect(mockFindClerkKeys).not.toHaveBeenCalled();
       expect(mockMatchKeyToApp).not.toHaveBeenCalled();
@@ -886,7 +890,7 @@ describe("link", () => {
       mockSearch.mockResolvedValue("app_123");
       consoleSpy = spyOn(console, "log").mockImplementation(() => {});
 
-      await link();
+      await runLink();
 
       const output = captured.out;
       expect(output).toContain("Auto-linked via git remote");
@@ -905,7 +909,7 @@ describe("link", () => {
       mockFetchApplication.mockResolvedValue(mockApp);
       consoleSpy = spyOn(console, "log").mockImplementation(() => {});
 
-      await link({ app: "app_123" });
+      await runLink({ app: "app_123" });
 
       expect(mockFindClerkKeys).not.toHaveBeenCalled();
       expect(mockSearch).not.toHaveBeenCalled();
@@ -924,7 +928,7 @@ describe("link", () => {
       mockConfirm.mockResolvedValue(true);
       consoleSpy = spyOn(console, "log").mockImplementation(() => {});
 
-      await link({ app: "app_123" });
+      await runLink({ app: "app_123" });
 
       const confirmCall = mockConfirm.mock.calls.find((c: unknown[]) =>
         (c[0] as { message: string }).message.includes("Re-link"),
@@ -945,7 +949,7 @@ describe("link", () => {
       mockSearch.mockResolvedValue("app_123");
       consoleSpy = spyOn(console, "log").mockImplementation(() => {});
 
-      await link();
+      await runLink();
 
       const confirmCall = mockConfirm.mock.calls.find((c: unknown[]) =>
         (c[0] as { message: string }).message.includes("Re-link"),
@@ -971,7 +975,7 @@ describe("link", () => {
       mockConfirm.mockResolvedValue(true);
       consoleSpy = spyOn(console, "log").mockImplementation(() => {});
 
-      await link();
+      await runLink();
 
       expect(mockFindClerkKeys).toHaveBeenCalled();
       expect(mockMatchKeyToApp).toHaveBeenCalled();
@@ -995,7 +999,7 @@ describe("link", () => {
       mockSearch.mockResolvedValue("app_123");
       consoleSpy = spyOn(console, "log").mockImplementation(() => {});
 
-      await link();
+      await runLink();
 
       expect(mockFindClerkKeys).not.toHaveBeenCalled();
       expect(mockSearch).toHaveBeenCalled();

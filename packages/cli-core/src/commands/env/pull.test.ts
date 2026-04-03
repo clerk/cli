@@ -184,7 +184,7 @@ describe("env pull", () => {
 
   async function runEnvPull(options: { app?: string; instance?: string; file?: string } = {}) {
     const { pull } = await import("./pull.ts");
-    return pull(options);
+    return captured.run(() => pull(options));
   }
 
   test("errors when no profile is linked", async () => {

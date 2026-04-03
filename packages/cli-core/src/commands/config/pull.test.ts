@@ -61,7 +61,7 @@ describe("config pull", () => {
     options: { app?: string; instance?: string; output?: string; keys?: string[] } = {},
   ) {
     const { configPull } = await import("./pull.ts");
-    return configPull(options);
+    return captured.run(() => configPull(options));
   }
 
   test("errors when no profile is linked", async () => {

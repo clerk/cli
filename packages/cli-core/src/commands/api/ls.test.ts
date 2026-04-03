@@ -74,8 +74,12 @@ describe("apiLs", () => {
     await rm(tempDir, { recursive: true, force: true });
   });
 
+  function runApiLs(filter: string | undefined, options: Parameters<typeof apiLs>[1]) {
+    return captured.run(() => apiLs(filter, options));
+  }
+
   test("prints all endpoints in table format", async () => {
-    await apiLs(undefined, {});
+    await runApiLs(undefined, {});
 
     // Check that output contains method, path, and summary
     expect(captured.out).toContain("GET");
@@ -87,7 +91,7 @@ describe("apiLs", () => {
   });
 
   test("filters endpoints by keyword", async () => {
-    await apiLs("organizations", {});
+    await runApiLs("organizations", {});
 
     expect(captured.out).toContain("/organizations");
 
@@ -95,7 +99,7 @@ describe("apiLs", () => {
   });
 
   test("shows message when no matches", async () => {
-    await apiLs("zzzzz", {});
+    await runApiLs("zzzzz", {});
 
     expect(captured.out).toBe("");
     expect(captured.err).toContain('No endpoints matching "zzzzz"');
@@ -107,7 +111,7 @@ describe("apiLs", () => {
     cached.fetchedAt = Date.now();
     await Bun.write(join(tempDir, "plapi-catalog.json"), JSON.stringify(cached));
 
-    await apiLs(undefined, { platform: true });
+    await runApiLs(undefined, { platform: true });
     expect(captured.out).not.toBe("");
   });
 });

@@ -19,64 +19,68 @@ describe("detectAuthLibraries", () => {
     consoleSpy.mockRestore();
   });
 
+  function runDetectAuthLibraries(deps: Parameters<typeof detectAuthLibraries>[0]) {
+    return captured.run(() => detectAuthLibraries(deps));
+  }
+
   test("detects NextAuth", () => {
-    detectAuthLibraries({ "next-auth": "5.0.0", next: "15.0.0" });
+    runDetectAuthLibraries({ "next-auth": "5.0.0", next: "15.0.0" });
     const output = captured.out;
     expect(output).toContain("NextAuth");
     expect(output).toContain("clerk.com/docs/migrations/nextauth");
   });
 
   test("detects Auth0 via @auth0/nextjs-auth0", () => {
-    detectAuthLibraries({ "@auth0/nextjs-auth0": "3.0.0" });
+    runDetectAuthLibraries({ "@auth0/nextjs-auth0": "3.0.0" });
     const output = captured.out;
     expect(output).toContain("Auth0");
   });
 
   test("detects Auth0 via auth0 package", () => {
-    detectAuthLibraries({ auth0: "4.0.0" });
+    runDetectAuthLibraries({ auth0: "4.0.0" });
     const output = captured.out;
     expect(output).toContain("Auth0");
   });
 
   test("detects Supabase Auth via @supabase/ssr", () => {
-    detectAuthLibraries({ "@supabase/ssr": "0.5.0" });
+    runDetectAuthLibraries({ "@supabase/ssr": "0.5.0" });
     const output = captured.out;
     expect(output).toContain("Supabase Auth");
   });
 
   test("detects Firebase", () => {
-    detectAuthLibraries({ firebase: "11.0.0" });
+    runDetectAuthLibraries({ firebase: "11.0.0" });
     const output = captured.out;
     expect(output).toContain("Firebase");
   });
 
   test("detects Passport.js", () => {
-    detectAuthLibraries({ passport: "0.7.0" });
+    runDetectAuthLibraries({ passport: "0.7.0" });
     const output = captured.out;
     expect(output).toContain("Passport.js");
   });
 
   test("detects Better Auth", () => {
-    detectAuthLibraries({ "better-auth": "1.0.0" });
+    runDetectAuthLibraries({ "better-auth": "1.0.0" });
     const output = captured.out;
     expect(output).toContain("Better Auth");
   });
 
   test("detects Kinde", () => {
-    detectAuthLibraries({ "@kinde-oss/kinde-auth-nextjs": "2.0.0" });
+    runDetectAuthLibraries({ "@kinde-oss/kinde-auth-nextjs": "2.0.0" });
     const output = captured.out;
     expect(output).toContain("Kinde");
   });
 
   test("detects multiple auth libraries", () => {
-    detectAuthLibraries({ "next-auth": "5.0.0", firebase: "11.0.0" });
+    runDetectAuthLibraries({ "next-auth": "5.0.0", firebase: "11.0.0" });
     const output = captured.out;
     expect(output).toContain("NextAuth");
     expect(output).toContain("Firebase");
   });
 
   test("does not warn when no auth library found", () => {
-    detectAuthLibraries({ react: "19.0.0", next: "15.0.0" });
+    runDetectAuthLibraries({ react: "19.0.0", next: "15.0.0" });
     expect(captured.out).toBe("");
   });
 });

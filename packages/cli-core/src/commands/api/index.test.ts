@@ -175,7 +175,7 @@ describe("api command", () => {
 
   async function runApi(endpoint: string, options: Record<string, unknown> = {}) {
     const { api } = await import("./index.ts");
-    return api(endpoint, undefined, options);
+    return captured.run(() => api(endpoint, undefined, options));
   }
 
   // --- GET requests ---

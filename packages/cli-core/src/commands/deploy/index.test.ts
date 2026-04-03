@@ -49,12 +49,16 @@ describe("deploy", () => {
     consoleSpy?.mockRestore();
   });
 
+  function runDeploy(options: Parameters<typeof deploy>[0]) {
+    return captured.run(() => deploy(options));
+  }
+
   describe("agent mode", () => {
     test("outputs deploy prompt and returns", async () => {
       mockIsAgent.mockReturnValue(true);
       consoleSpy = spyOn(console, "log").mockImplementation(() => {});
 
-      await deploy({});
+      await runDeploy({});
 
       expect(captured.out).toContain("deploying a Clerk application to production");
     });
@@ -63,7 +67,7 @@ describe("deploy", () => {
       mockIsAgent.mockReturnValue(true);
       consoleSpy = spyOn(console, "log").mockImplementation(() => {});
 
-      await deploy({});
+      await runDeploy({});
 
       const output = captured.out;
       expect(output).toContain("Prerequisites");
@@ -78,7 +82,7 @@ describe("deploy", () => {
       mockIsAgent.mockReturnValue(true);
       consoleSpy = spyOn(console, "log").mockImplementation(() => {});
 
-      await deploy({});
+      await runDeploy({});
 
       const output = captured.out;
       expect(output).toContain("/v1/platform/applications");
@@ -90,7 +94,7 @@ describe("deploy", () => {
       mockIsAgent.mockReturnValue(true);
       consoleSpy = spyOn(console, "log").mockImplementation(() => {});
 
-      await deploy({});
+      await runDeploy({});
 
       const output = captured.out;
       expect(output).toContain("accounts.{domain}/v1/oauth_callback");
@@ -100,7 +104,7 @@ describe("deploy", () => {
       mockIsAgent.mockReturnValue(true);
       consoleSpy = spyOn(console, "log").mockImplementation(() => {});
 
-      await deploy({ debug: true });
+      await runDeploy({ debug: true });
 
       expect(mockSelect).not.toHaveBeenCalled();
       expect(mockInput).not.toHaveBeenCalled();
@@ -122,7 +126,7 @@ describe("deploy", () => {
       mockHumanFlow();
       consoleSpy = spyOn(console, "log").mockImplementation(() => {});
 
-      await deploy({});
+      await runDeploy({});
 
       const allOutput = captured.out;
       expect(allOutput).not.toContain("deploying a Clerk application to production");
@@ -132,7 +136,7 @@ describe("deploy", () => {
       mockHumanFlow();
       consoleSpy = spyOn(console, "log").mockImplementation(() => {});
 
-      await deploy({});
+      await runDeploy({});
 
       const allOutput = captured.out;
       expect(allOutput).toContain("[mock]");

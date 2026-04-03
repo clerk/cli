@@ -44,9 +44,13 @@ describe("switch-env", () => {
     logSpy?.mockRestore();
   });
 
+  function runSwitchEnv(environment: string | undefined) {
+    return captured.run(() => switchEnv(environment));
+  }
+
   test("prints current environment when no argument given", async () => {
     logSpy = spyOn(console, "log").mockImplementation(() => {});
-    await switchEnv(undefined);
+    await runSwitchEnv(undefined);
 
     expect(captured.out).toContain("Current environment: production");
     expect(captured.out).toContain("Available environments: production, staging");
@@ -57,7 +61,7 @@ describe("switch-env", () => {
     mockGetToken.mockResolvedValue("some-token");
 
     logSpy = spyOn(console, "log").mockImplementation(() => {});
-    await switchEnv("staging");
+    await runSwitchEnv("staging");
 
     expect(mockCurrentEnv).toBe("staging");
     expect(mockSetEnvironment).toHaveBeenCalledWith("staging");
@@ -69,13 +73,13 @@ describe("switch-env", () => {
     mockGetToken.mockResolvedValue("some-token");
 
     logSpy = spyOn(console, "log").mockImplementation(() => {});
-    await switchEnv("production");
+    await runSwitchEnv("production");
 
     expect(captured.out).toContain("Already on production environment.");
   });
 
   test("throws on invalid environment", async () => {
-    await expect(switchEnv("nonexistent")).rejects.toThrow(
+    await expect(runSwitchEnv("nonexistent")).rejects.toThrow(
       'Unknown environment "nonexistent". Available environments: production, staging',
     );
   });
@@ -85,7 +89,7 @@ describe("switch-env", () => {
     mockGetToken.mockResolvedValue(null);
 
     logSpy = spyOn(console, "log").mockImplementation(() => {});
-    await switchEnv("staging");
+    await runSwitchEnv("staging");
 
     expect(captured.out).toContain(
       "No credentials found for staging. Run `clerk auth login` to authenticate.",
@@ -97,7 +101,7 @@ describe("switch-env", () => {
     mockGetToken.mockResolvedValue("valid-token");
 
     logSpy = spyOn(console, "log").mockImplementation(() => {});
-    await switchEnv("staging");
+    await runSwitchEnv("staging");
 
     expect(captured.out).not.toContain("No credentials found");
   });

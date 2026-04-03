@@ -58,7 +58,7 @@ describe("config schema", () => {
     options: { app?: string; instance?: string; output?: string; keys?: string[] } = {},
   ) {
     const { configSchema } = await import("./schema.ts");
-    return configSchema(options);
+    return captured.run(() => configSchema(options));
   }
 
   test("errors when no profile is linked", async () => {
