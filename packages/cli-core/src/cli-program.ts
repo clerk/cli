@@ -1,4 +1,5 @@
 import { Command, createOption, createArgument } from "@commander-js/extra-typings";
+import { setLogLevel } from "./lib/log.ts";
 import { setMode, type Mode } from "./mode.ts";
 import { init } from "./commands/init/index.ts";
 import { login } from "./commands/auth/login.ts";
@@ -48,10 +49,13 @@ export function createProgram() {
       "--mode <mode>",
       "Force interaction mode (human or agent). Defaults to auto-detect based on TTY.",
     )
-    .option("--verbose", "Show detailed error output");
+    .option("--verbose", "Show detailed output (enables debug messages)");
 
   program.hook("preAction", async () => {
     const opts = program.opts();
+    if (opts.verbose) {
+      setLogLevel("debug");
+    }
     if (opts.mode) {
       if (opts.mode !== "human" && opts.mode !== "agent") {
         throwUsageError(`Invalid mode "${opts.mode}". Must be "human" or "agent".`);
