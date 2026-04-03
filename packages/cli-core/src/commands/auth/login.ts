@@ -62,7 +62,7 @@ async function performOAuthFlow(): Promise<UserInfo> {
   }
 
   const timeoutMinutes = Math.round(AUTH_TIMEOUT_MS / 60_000);
-  log.data(`Waiting for authentication (timeout in ${timeoutMinutes}m)...`);
+  log.info(`Waiting for authentication (timeout in ${timeoutMinutes}m)...`);
 
   const { code } = await withSpinner("Waiting for authentication...", () =>
     authServer.waitForCallback().catch((error: unknown) => {
@@ -93,7 +93,7 @@ export async function login(options: LoginOptions = {}): Promise<UserInfo> {
   const existingSession = await withSpinner("Checking session...", () => getExistingSession());
 
   if (existingSession && !isHuman()) {
-    log.data(`Logged in as ${existingSession.email}`);
+    log.info(`Logged in as ${existingSession.email}`);
     return existingSession;
   }
 
@@ -111,7 +111,7 @@ export async function login(options: LoginOptions = {}): Promise<UserInfo> {
   const userInfo = await performOAuthFlow();
 
   bar();
-  log.data(`Logged in as ${userInfo.email}`);
+  log.info(`Logged in as ${userInfo.email}`);
 
   outro(showNextSteps ? NEXT_STEPS.LOGIN : "Done");
   return userInfo;

@@ -121,7 +121,7 @@ describe("login", () => {
     const result = await runLogin();
 
     expect(result).toEqual({ userId: "user_123", email: "existing@example.com" });
-    expect(captured.out).toContain("Logged in as existing@example.com");
+    expect(captured.err).toContain("Logged in as existing@example.com");
     expect(mockStartAuthServer).not.toHaveBeenCalled();
   });
 
@@ -160,7 +160,7 @@ describe("login", () => {
     });
     expect(mockStoreToken).toHaveBeenCalledWith("new-access-token");
     expect(mockSetAuth).toHaveBeenCalledWith({ userId: "user_new" });
-    expect(captured.out).toContain("Logged in as new@example.com");
+    expect(captured.err).toContain("Logged in as new@example.com");
   });
 
   test("re-authenticates when existing token is expired", async () => {
@@ -257,7 +257,7 @@ describe("login", () => {
     const result = await runLogin();
 
     expect(result).toEqual({ userId: "user_123", email: "agent@example.com" });
-    expect(captured.out).toContain("Logged in as agent@example.com");
+    expect(captured.err).toContain("Logged in as agent@example.com");
     expect(mockConfirm).not.toHaveBeenCalled();
     expect(mockStartAuthServer).not.toHaveBeenCalled();
   });

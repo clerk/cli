@@ -109,7 +109,7 @@ export async function link(options: LinkOptions = {}): Promise<void> {
   });
 
   const label = app.name || app.application_id;
-  log.data(`Linked to ${cyan(label)} in ${dim(displayPath)}`);
+  log.info(`Linked to ${cyan(label)} in ${dim(displayPath)}`);
 
   outro(NEXT_STEPS.LINK);
 }
@@ -121,7 +121,7 @@ async function ensureAuth() {
   if (process.env.CLERK_PLATFORM_API_KEY) return;
   const token = await getToken();
   if (!token) {
-    log.data("Not logged in. Authenticating first...");
+    log.info("Not logged in. Authenticating first...");
     await login({ showNextSteps: false });
   }
 }
@@ -136,9 +136,9 @@ function printExistingStatus(
   normalizedRemote: string | undefined,
 ) {
   if (existing.resolvedVia === "remote") {
-    log.data(`Auto-linked via git remote (${dim(normalizedRemote ?? existing.path)})`);
+    log.info(`Auto-linked via git remote (${dim(normalizedRemote ?? existing.path)})`);
   } else {
-    log.data(`Already linked to ${cyan(existing.profile.appId)} in ${dim(existing.path)}`);
+    log.info(`Already linked to ${cyan(existing.profile.appId)} in ${dim(existing.path)}`);
   }
 }
 
@@ -150,7 +150,7 @@ async function handleExistingProfile(
   printExistingStatus(existing, normalizedRemote);
 
   if (existing.availableRemote) {
-    log.data(
+    log.info(
       `We detected this is now a git repository with remote ${dim(existing.availableRemote)}.`,
     );
     const upgrade = await confirm({
@@ -159,7 +159,7 @@ async function handleExistingProfile(
     });
     if (upgrade) {
       await moveProfile(existing.path, existing.availableRemote);
-      log.data(`\nLink updated to use git remote (${cyan(existing.availableRemote)})`);
+      log.info(`\nLink updated to use git remote (${cyan(existing.availableRemote)})`);
       return false;
     }
   }

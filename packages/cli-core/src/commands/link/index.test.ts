@@ -201,7 +201,7 @@ describe("link", () => {
 
       await runLink();
 
-      const output = captured.out;
+      const output = captured.err;
       expect(output).toContain("Already linked");
       expect(output).toContain("app_existing");
       expect(mockConfirm).toHaveBeenCalled();
@@ -602,7 +602,7 @@ describe("link", () => {
 
       await runLink({ app: "app_123" });
 
-      expect(captured.out).toContain("Linked to");
+      expect(captured.err).toContain("Linked to");
     });
   });
 
@@ -620,7 +620,7 @@ describe("link", () => {
 
       await runLink();
 
-      const output = captured.out;
+      const output = captured.err;
       expect(output).toContain("Auto-linked via git remote");
       expect(output).toContain("github.com/org/repo");
     });
@@ -637,7 +637,7 @@ describe("link", () => {
 
       await runLink({ skipIfLinked: true });
 
-      const output = captured.out;
+      const output = captured.err;
       expect(output).toContain("Auto-linked via git remote");
       expect(mockConfirm).not.toHaveBeenCalled();
       expect(mockGetToken).not.toHaveBeenCalled();
@@ -655,7 +655,7 @@ describe("link", () => {
 
       await runLink();
 
-      const output = captured.out;
+      const output = captured.err;
       expect(output).not.toContain("Auto-linked via git remote");
       expect(output).toContain("Already linked");
     });
@@ -678,7 +678,7 @@ describe("link", () => {
 
       await runLink();
 
-      const output = captured.out;
+      const output = captured.err;
       expect(output).toContain("git repository with remote");
       expect(output).toContain("Link updated");
       expect(mockMoveProfile).toHaveBeenCalledWith("/projects/myapp", "github.com/org/repo");
@@ -892,7 +892,7 @@ describe("link", () => {
 
       await runLink();
 
-      const output = captured.out;
+      const output = captured.err;
       expect(output).toContain("Auto-linked via git remote");
       expect(mockFindClerkKeys).not.toHaveBeenCalled();
       expect(mockSearch).toHaveBeenCalled();
@@ -979,7 +979,7 @@ describe("link", () => {
 
       expect(mockFindClerkKeys).toHaveBeenCalled();
       expect(mockMatchKeyToApp).toHaveBeenCalled();
-      const output = captured.out;
+      const output = captured.err;
       expect(output).toContain("We found");
     });
 
