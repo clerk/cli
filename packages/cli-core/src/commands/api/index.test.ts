@@ -3,6 +3,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import {
+  captureLog,
   credentialStoreStubs,
   gitStubs,
   configStubs,
@@ -125,6 +126,7 @@ describe("api command", () => {
   let logSpy: ReturnType<typeof spyOn>;
   let errorSpy: ReturnType<typeof spyOn>;
   let exitSpy: ReturnType<typeof spyOn>;
+  let captured: ReturnType<typeof captureLog>;
 
   const mockUsers = { data: [{ id: "user_1", email: "test@example.com" }] };
 
@@ -149,11 +151,13 @@ describe("api command", () => {
     exitSpy = spyOn(process, "exit").mockImplementation(() => {
       throw new Error("process.exit");
     });
+    captured = captureLog();
 
     stubFetch(async () => new Response(JSON.stringify(mockUsers), { status: 200 }));
   });
 
   afterEach(async () => {
+    captured.teardown();
     _setConfigDir(undefined);
     process.env = { ...originalEnv };
     globalThis.fetch = originalFetch;
@@ -191,7 +195,7 @@ describe("api command", () => {
     expect(capturedUrl).toContain("/v1/users");
     expect(capturedMethod).toBe("GET");
     expect(capturedHeaders?.get("Authorization")).toBe("Bearer sk_test_123");
-    expect(logSpy).toHaveBeenCalledWith(JSON.stringify(mockUsers, null, 2));
+    expect(captured.out).toContain(JSON.stringify(mockUsers, null, 2));
   });
 
   test("defaults to GET when no body provided", async () => {
@@ -279,8 +283,8 @@ describe("api command", () => {
     );
 
     await runApi("/users", { include: true });
-    expect(errorSpy).toHaveBeenCalledWith("HTTP 200");
-    expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining("x-request-id: req_123"));
+    expect(captured.err).toContain("HTTP 200");
+    expect(captured.err).toContain("x-request-id: req_123");
   });
 
   // --- --dry-run option ---
@@ -294,12 +298,12 @@ describe("api command", () => {
 
     await runApi("/users", { dryRun: true });
     expect(fetchCalled).toBe(false);
-    expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining("[dry-run] GET"));
+    expect(captured.err).toContain("[dry-run] GET");
   });
 
   test("--dry-run shows body when present", async () => {
     await runApi("/users", { dryRun: true, data: '{"email":"a@b.com"}' });
-    expect(logSpy).toHaveBeenCalledWith(JSON.stringify({ email: "a@b.com" }, null, 2));
+    expect(captured.out).toContain(JSON.stringify({ email: "a@b.com" }, null, 2));
   });
 
   // --- --secret-key override ---
@@ -426,7 +430,7 @@ describe("api command", () => {
 
     await runApi("/users/bad_id");
     expect(process.exitCode).toBe(1);
-    expect(logSpy).toHaveBeenCalledWith(JSON.stringify(errorBody, null, 2));
+    expect(captured.out).toContain(JSON.stringify(errorBody, null, 2));
   });
 
   test("--include shows headers on error responses too", async () => {
@@ -440,8 +444,8 @@ describe("api command", () => {
 
     await runApi("/users", { include: true });
     expect(process.exitCode).toBe(1);
-    expect(errorSpy).toHaveBeenCalledWith("HTTP 400");
-    expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining("x-request-id: req_err"));
+    expect(captured.err).toContain("HTTP 400");
+    expect(captured.err).toContain("x-request-id: req_err");
   });
 
   // --- -d takes priority over --file ---

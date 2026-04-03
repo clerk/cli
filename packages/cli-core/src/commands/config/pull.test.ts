@@ -3,15 +3,15 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { _setConfigDir, setProfile } from "../../lib/config.ts";
-import { credentialStoreStubs, gitStubs, stubFetch } from "../../test/lib/stubs.ts";
+import { captureLog, credentialStoreStubs, gitStubs, stubFetch } from "../../test/lib/stubs.ts";
 
 mock.module("../../lib/credential-store.ts", () => credentialStoreStubs);
 mock.module("../../lib/git.ts", () => gitStubs);
 mock.module("../../lib/spinner.ts", () => ({
   withSpinner: async (msg: string, fn: () => Promise<unknown>) => {
-    console.error(msg);
-    const result = await fn();
-    return result;
+    const { log } = await import("../../lib/log.ts");
+    log.info(msg);
+    return fn();
   },
 }));
 
@@ -22,6 +22,7 @@ describe("config pull", () => {
   let logSpy: ReturnType<typeof spyOn>;
   let errorSpy: ReturnType<typeof spyOn>;
   let exitSpy: ReturnType<typeof spyOn>;
+  let captured: ReturnType<typeof captureLog>;
 
   const mockConfig = {
     session: { lifetime: 604800 },
@@ -39,11 +40,13 @@ describe("config pull", () => {
     exitSpy = spyOn(process, "exit").mockImplementation(() => {
       throw new Error("process.exit");
     });
+    captured = captureLog();
 
     stubFetch(async () => new Response(JSON.stringify(mockConfig), { status: 200 }));
   });
 
   afterEach(async () => {
+    captured.teardown();
     _setConfigDir(undefined);
     process.env = { ...originalEnv };
     globalThis.fetch = originalFetch;
@@ -84,7 +87,7 @@ describe("config pull", () => {
     });
 
     await runConfigPull();
-    expect(logSpy).toHaveBeenCalledWith(JSON.stringify(mockConfig, null, 2));
+    expect(captured.out).toContain(JSON.stringify(mockConfig, null, 2));
   });
 
   test("supports --app without a linked profile", async () => {
@@ -105,7 +108,7 @@ describe("config pull", () => {
     });
 
     await runConfigPull({ app: "app_1" });
-    expect(logSpy).toHaveBeenCalledWith(JSON.stringify(mockConfig, null, 2));
+    expect(captured.out).toContain(JSON.stringify(mockConfig, null, 2));
   });
 
   test("writes config to file with --output", async () => {
@@ -119,7 +122,7 @@ describe("config pull", () => {
     await runConfigPull({ output: outFile });
     const written = await Bun.file(outFile).json();
     expect(written).toEqual(mockConfig);
-    expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining("Config written to"));
+    expect(captured.err).toContain("Config written to");
   });
 
   test("shows which environment is being pulled", async () => {
@@ -130,9 +133,7 @@ describe("config pull", () => {
     });
 
     await runConfigPull();
-    expect(errorSpy).toHaveBeenCalledWith(
-      expect.stringContaining("Pulling config from app_1 (development)"),
-    );
+    expect(captured.err).toContain("Pulling config from app_1 (development)");
   });
 
   test("shows app name when stored in profile", async () => {
@@ -144,9 +145,7 @@ describe("config pull", () => {
     });
 
     await runConfigPull();
-    expect(errorSpy).toHaveBeenCalledWith(
-      expect.stringContaining("Pulling config from My SaaS App (development)"),
-    );
+    expect(captured.err).toContain("Pulling config from My SaaS App (development)");
   });
 
   test("shows production label when --instance prod", async () => {
@@ -157,9 +156,7 @@ describe("config pull", () => {
     });
 
     await runConfigPull({ instance: "prod" });
-    expect(errorSpy).toHaveBeenCalledWith(
-      expect.stringContaining("Pulling config from app_1 (production)"),
-    );
+    expect(captured.err).toContain("Pulling config from app_1 (production)");
   });
 
   test("uses development instance by default", async () => {
@@ -240,7 +237,7 @@ describe("config pull", () => {
 
     await runConfigPull({ keys: ["session"] });
     expect(requestedUrl).toContain("keys=session");
-    expect(logSpy).toHaveBeenCalledWith(JSON.stringify({ session: { lifetime: 604800 } }, null, 2));
+    expect(captured.out).toContain(JSON.stringify({ session: { lifetime: 604800 } }, null, 2));
   });
 
   test("--keys passes multiple keys as repeated query params", async () => {

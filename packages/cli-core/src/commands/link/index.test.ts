@@ -1,6 +1,6 @@
-import { test, expect, describe, afterEach, mock, spyOn } from "bun:test";
+import { test, expect, describe, beforeEach, afterEach, mock, spyOn } from "bun:test";
 import {
-  capturedOutput,
+  captureLog,
   configStubs,
   credentialStoreStubs,
   autolinkStubs,
@@ -115,8 +115,14 @@ const mockApp = {
 
 describe("link", () => {
   let consoleSpy: ReturnType<typeof spyOn>;
+  let captured: ReturnType<typeof captureLog>;
+
+  beforeEach(() => {
+    captured = captureLog();
+  });
 
   afterEach(() => {
+    captured.teardown();
     _modeOverride = undefined;
     mockIsAgent.mockReset();
     mockGetToken.mockReset();
@@ -153,9 +159,7 @@ describe("link", () => {
 
       await link();
 
-      expect(consoleSpy).toHaveBeenCalledTimes(1);
-      const output = consoleSpy.mock.calls[0][0] as string;
-      expect(output).toContain("linking a Clerk application");
+      expect(captured.out).toContain("linking a Clerk application");
     });
 
     test("does not trigger interactive prompts", async () => {
@@ -193,7 +197,7 @@ describe("link", () => {
 
       await link();
 
-      const output = capturedOutput(consoleSpy);
+      const output = captured.out;
       expect(output).toContain("Already linked");
       expect(output).toContain("app_existing");
       expect(mockConfirm).toHaveBeenCalled();
@@ -594,8 +598,7 @@ describe("link", () => {
 
       await link({ app: "app_123" });
 
-      const lastCall = consoleSpy.mock.calls[consoleSpy.mock.calls.length - 1][0] as string;
-      expect(lastCall).toContain("Linked to");
+      expect(captured.out).toContain("Linked to");
     });
   });
 
@@ -613,7 +616,7 @@ describe("link", () => {
 
       await link();
 
-      const output = capturedOutput(consoleSpy);
+      const output = captured.out;
       expect(output).toContain("Auto-linked via git remote");
       expect(output).toContain("github.com/org/repo");
     });
@@ -630,7 +633,7 @@ describe("link", () => {
 
       await link({ skipIfLinked: true });
 
-      const output = capturedOutput(consoleSpy);
+      const output = captured.out;
       expect(output).toContain("Auto-linked via git remote");
       expect(mockConfirm).not.toHaveBeenCalled();
       expect(mockGetToken).not.toHaveBeenCalled();
@@ -648,7 +651,7 @@ describe("link", () => {
 
       await link();
 
-      const output = capturedOutput(consoleSpy);
+      const output = captured.out;
       expect(output).not.toContain("Auto-linked via git remote");
       expect(output).toContain("Already linked");
     });
@@ -671,7 +674,7 @@ describe("link", () => {
 
       await link();
 
-      const output = capturedOutput(consoleSpy);
+      const output = captured.out;
       expect(output).toContain("git repository with remote");
       expect(output).toContain("Link updated");
       expect(mockMoveProfile).toHaveBeenCalledWith("/projects/myapp", "github.com/org/repo");
@@ -885,7 +888,7 @@ describe("link", () => {
 
       await link();
 
-      const output = capturedOutput(consoleSpy);
+      const output = captured.out;
       expect(output).toContain("Auto-linked via git remote");
       expect(mockFindClerkKeys).not.toHaveBeenCalled();
       expect(mockSearch).toHaveBeenCalled();
@@ -972,7 +975,7 @@ describe("link", () => {
 
       expect(mockFindClerkKeys).toHaveBeenCalled();
       expect(mockMatchKeyToApp).toHaveBeenCalled();
-      const output = capturedOutput(consoleSpy);
+      const output = captured.out;
       expect(output).toContain("We found");
     });
 

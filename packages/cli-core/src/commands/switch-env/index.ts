@@ -16,6 +16,7 @@ import {
   setCurrentEnv,
 } from "../../lib/environment.ts";
 import { CliError } from "../../lib/errors.ts";
+import { log } from "../../lib/log.ts";
 
 export async function switchEnv(environment: string | undefined): Promise<void> {
   const available = getAvailableEnvs();
@@ -23,8 +24,8 @@ export async function switchEnv(environment: string | undefined): Promise<void> 
   // No argument: print current environment
   if (!environment) {
     const current = getCurrentEnvName();
-    console.log(`Current environment: ${current}`);
-    console.log(`Available environments: ${available.join(", ")}`);
+    log.data(`Current environment: ${current}`);
+    log.data(`Available environments: ${available.join(", ")}`);
     return;
   }
 
@@ -37,7 +38,7 @@ export async function switchEnv(environment: string | undefined): Promise<void> 
   const previousEnv = getCurrentEnvName();
 
   if (previousEnv === environment) {
-    console.log(`Already on ${environment} environment.`);
+    log.data(`Already on ${environment} environment.`);
     return;
   }
 
@@ -45,13 +46,11 @@ export async function switchEnv(environment: string | undefined): Promise<void> 
   setCurrentEnv(environment);
   await setEnvironment(environment);
 
-  console.log(`Switched from ${previousEnv} to ${environment}.`);
+  log.data(`Switched from ${previousEnv} to ${environment}.`);
 
   // Check if there's a stored token for the target environment
   const token = await getToken();
   if (!token) {
-    console.log(
-      `No credentials found for ${environment}. Run \`clerk auth login\` to authenticate.`,
-    );
+    log.data(`No credentials found for ${environment}. Run \`clerk auth login\` to authenticate.`);
   }
 }

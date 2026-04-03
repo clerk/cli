@@ -9,6 +9,7 @@ import { join } from "node:path";
 import { CLERK_CACHE_DIR, CACHE_TTL_MS, OPENAPI_SPEC_URLS } from "../../lib/constants.ts";
 import { CliError, ERROR_CODE } from "../../lib/errors.ts";
 import { withSpinner } from "../../lib/spinner.ts";
+import { log } from "../../lib/log.ts";
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
@@ -140,7 +141,7 @@ export async function loadCatalog(options: { platform?: boolean } = {}): Promise
   } catch (error) {
     // Fall back to stale cache
     if (cached) {
-      console.error("Warning: Unable to refresh API catalog, using cached version");
+      log.warn("Unable to refresh API catalog, using cached version");
       return cached;
     }
     throw new CliError(

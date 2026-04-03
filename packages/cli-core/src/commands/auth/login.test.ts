@@ -1,5 +1,5 @@
-import { test, expect, describe, afterEach, mock, spyOn } from "bun:test";
-import { credentialStoreStubs, configStubs } from "../../test/lib/stubs.ts";
+import { test, expect, describe, beforeEach, afterEach, mock, spyOn } from "bun:test";
+import { captureLog, credentialStoreStubs, configStubs } from "../../test/lib/stubs.ts";
 
 const mockGetToken = mock();
 const mockStoreToken = mock();
@@ -69,9 +69,15 @@ const { login } = await import("./login.ts");
 describe("login", () => {
   let consoleSpy: ReturnType<typeof spyOn>;
   let consoleErrorSpy: ReturnType<typeof spyOn>;
+  let captured: ReturnType<typeof captureLog>;
   const origSpawn = Bun.spawn;
 
+  beforeEach(() => {
+    captured = captureLog();
+  });
+
   afterEach(() => {
+    captured.teardown();
     mockGetToken.mockReset();
     mockStoreToken.mockReset();
     mockGetAuth.mockReset();
@@ -111,7 +117,7 @@ describe("login", () => {
     const result = await login();
 
     expect(result).toEqual({ userId: "user_123", email: "existing@example.com" });
-    expect(consoleSpy).toHaveBeenCalledWith("Logged in as existing@example.com");
+    expect(captured.out).toContain("Logged in as existing@example.com");
     expect(mockStartAuthServer).not.toHaveBeenCalled();
   });
 
@@ -150,7 +156,7 @@ describe("login", () => {
     });
     expect(mockStoreToken).toHaveBeenCalledWith("new-access-token");
     expect(mockSetAuth).toHaveBeenCalledWith({ userId: "user_new" });
-    expect(consoleSpy).toHaveBeenCalledWith("Logged in as new@example.com");
+    expect(captured.out).toContain("Logged in as new@example.com");
   });
 
   test("re-authenticates when existing token is expired", async () => {
@@ -247,7 +253,7 @@ describe("login", () => {
     const result = await login();
 
     expect(result).toEqual({ userId: "user_123", email: "agent@example.com" });
-    expect(consoleSpy).toHaveBeenCalledWith("Logged in as agent@example.com");
+    expect(captured.out).toContain("Logged in as agent@example.com");
     expect(mockConfirm).not.toHaveBeenCalled();
     expect(mockStartAuthServer).not.toHaveBeenCalled();
   });
@@ -333,10 +339,6 @@ describe("login", () => {
 
     await login({ showNextSteps: false });
 
-    expect(
-      consoleErrorSpy.mock.calls.some(
-        (c) => typeof c[0] === "string" && (c[0] as string).includes("Next steps:"),
-      ),
-    ).toBe(false);
+    expect(captured.err).not.toContain("Next steps:");
   });
 });

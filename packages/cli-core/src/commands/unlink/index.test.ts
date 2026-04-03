@@ -1,5 +1,5 @@
-import { test, expect, describe, afterEach, mock, spyOn } from "bun:test";
-import { capturedOutput, configStubs, gitStubs, promptsStubs } from "../../test/lib/stubs.ts";
+import { test, expect, describe, beforeEach, afterEach, mock, spyOn } from "bun:test";
+import { captureLog, configStubs, gitStubs, promptsStubs } from "../../test/lib/stubs.ts";
 
 const mockIsAgent = mock();
 const mockIsHuman = mock();
@@ -46,8 +46,14 @@ describe("unlink", () => {
   let consoleSpy: ReturnType<typeof spyOn>;
   let errorSpy: ReturnType<typeof spyOn>;
   let exitSpy: ReturnType<typeof spyOn>;
+  let captured: ReturnType<typeof captureLog>;
+
+  beforeEach(() => {
+    captured = captureLog();
+  });
 
   afterEach(() => {
+    captured.teardown();
     _modeOverride = undefined;
     mockIsAgent.mockReset();
     mockIsHuman.mockReset();
@@ -68,9 +74,7 @@ describe("unlink", () => {
 
       await unlink();
 
-      expect(consoleSpy).toHaveBeenCalledTimes(1);
-      const output = consoleSpy.mock.calls[0][0] as string;
-      expect(output).toContain("unlinking a Clerk application");
+      expect(captured.out).toContain("unlinking a Clerk application");
     });
 
     test("does not trigger side effects", async () => {
@@ -150,8 +154,7 @@ describe("unlink", () => {
 
       await unlink({ yes: true });
 
-      const output = capturedOutput(consoleSpy);
-      expect(output).toContain("Unlinked");
+      expect(captured.out).toContain("Unlinked");
     });
   });
 });

@@ -1,5 +1,6 @@
 import { isHuman } from "../../mode.ts";
 import { bold, green, red } from "../../lib/color.ts";
+import { log } from "../../lib/log.ts";
 import { CliError, ERROR_CODE } from "../../lib/errors.ts";
 import { intro, outro, bar, withSpinner } from "../../lib/spinner.ts";
 import { createDoctorContext } from "./context.ts";
@@ -46,10 +47,10 @@ async function runChecks(ctx: DoctorContext, options: DoctorOptions): Promise<Ch
   if (!options.json) {
     for (const result of results) {
       if (!options.spotlight || result.status !== "pass") {
-        console.log(formatCheckResult(result, options.verbose ?? false));
+        log.info(formatCheckResult(result, options.verbose ?? false));
       }
     }
-    console.log("");
+    log.blank();
   }
 
   return results;
@@ -65,7 +66,7 @@ export async function doctor(options: DoctorOptions = {}): Promise<void> {
 
   if (options.json) {
     const output = options.spotlight ? allResults.filter((r) => r.status !== "pass") : allResults;
-    console.log(formatJson(output));
+    log.data(formatJson(output));
   }
 
   if (options.fix && !options.json && isHuman()) {
@@ -80,9 +81,9 @@ export async function doctor(options: DoctorOptions = {}): Promise<void> {
     });
 
     if (uniqueFixable.length > 0) {
-      console.log("");
-      console.log(bold("Auto-fix"));
-      console.log("");
+      log.blank();
+      log.info(bold("Auto-fix"));
+      log.blank();
 
       const { confirm } = await import("@inquirer/prompts");
 
@@ -97,9 +98,9 @@ export async function doctor(options: DoctorOptions = {}): Promise<void> {
         if (proceed) {
           try {
             await fix.run();
-            console.log(`  ${green("✓")} ${result.name} fixed`);
+            log.info(`  ${green("✓")} ${result.name} fixed`);
           } catch (error) {
-            console.log(`  ${red("✗")} Fix failed: ${errorMessage(error)}`);
+            log.info(`  ${red("✗")} Fix failed: ${errorMessage(error)}`);
           }
         }
       }

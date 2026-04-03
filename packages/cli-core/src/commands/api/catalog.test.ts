@@ -1,5 +1,5 @@
 import { test, expect, describe, beforeEach, afterEach, spyOn } from "bun:test";
-import { stubFetch } from "../../test/lib/stubs.ts";
+import { captureLog, stubFetch } from "../../test/lib/stubs.ts";
 import { mkdtemp, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
@@ -179,14 +179,17 @@ describe("loadCatalog", () => {
   const originalFetch = globalThis.fetch;
   let tempDir: string;
   let errorSpy: ReturnType<typeof spyOn>;
+  let captured: ReturnType<typeof captureLog>;
 
   beforeEach(async () => {
     tempDir = await mkdtemp(join(tmpdir(), "clerk-catalog-test-"));
     _setCacheDir(tempDir);
     errorSpy = spyOn(console, "error").mockImplementation(() => {});
+    captured = captureLog();
   });
 
   afterEach(async () => {
+    captured.teardown();
     _setCacheDir(undefined);
     globalThis.fetch = originalFetch;
     errorSpy.mockRestore();
@@ -254,7 +257,7 @@ describe("loadCatalog", () => {
 
     const catalog = await loadCatalog();
     expect(catalog.endpoints.length).toBe(6);
-    expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining("Unable to refresh"));
+    expect(captured.err).toContain("Unable to refresh");
   });
 
   test("errors when offline with no cache", async () => {

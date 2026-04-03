@@ -1,8 +1,9 @@
 import { select, input, confirm, password } from "@inquirer/prompts";
 import { isAgent } from "../../mode.ts";
-import { dim, bold, cyan, green, blue, yellow } from "../../lib/color.ts";
+import { dim, bold, cyan, green, blue } from "../../lib/color.ts";
 import { printNextSteps, NEXT_STEPS } from "../../lib/next-steps.ts";
 import { openBrowser } from "../../lib/open.ts";
+import { log } from "../../lib/log.ts";
 
 const DEPLOY_PROMPT = `You are deploying a Clerk application to production. Follow these steps:
 
@@ -86,14 +87,14 @@ Refer to the Clerk Platform API docs for detailed request/response schemas.`;
 
 export async function deploy(options: { debug?: boolean }) {
   if (isAgent()) {
-    console.log(DEPLOY_PROMPT);
+    log.data(DEPLOY_PROMPT);
     return;
   }
-  const debug = options.debug ? (...args: unknown[]) => console.log("[debug]", ...args) : () => {};
+  const debug = options.debug
+    ? (...args: unknown[]) => log.data(`[debug] ${args.join(" ")}`)
+    : () => {};
 
-  console.log(
-    yellow("[mock] This command uses mocked data and is not yet wired up to real APIs.") + "\n",
-  );
+  log.data("[mock] This command uses mocked data and is not yet wired up to real APIs.\n");
 
   debug("Checking for authenticated user and linked application...");
 
@@ -205,23 +206,23 @@ export async function deploy(options: { debug?: boolean }) {
       });
 
       if (credentialChoice === "walkthrough") {
-        console.log(
+        log.data(
           `\n${bold(`When configuring your ${displayName} OAuth app, use these values:`)}\n`,
         );
-        console.log(`  ${dim("Authorized JavaScript origins:")}`);
-        console.log(`    ${cyan(`https://${domain}`)}`);
-        console.log(`    ${cyan(`https://www.${domain}`)}`);
-        console.log(`\n  ${dim("Authorized redirect URI:")}`);
-        console.log(`    ${cyan(`https://accounts.${domain}/v1/oauth_callback`)}`);
-        console.log();
+        log.data(`  ${dim("Authorized JavaScript origins:")}`);
+        log.data(`    ${cyan(`https://${domain}`)}`);
+        log.data(`    ${cyan(`https://www.${domain}`)}`);
+        log.data(`\n  ${dim("Authorized redirect URI:")}`);
+        log.data(`    ${cyan(`https://accounts.${domain}/v1/oauth_callback`)}`);
+        log.data("");
 
         debug(`Opening ${displayName} OAuth setup guide in browser...`);
         const openResult = await openBrowser(docsUrl);
         if (!openResult.ok) {
-          console.log(dim(`(Could not open browser automatically, visit ${docsUrl})`));
+          log.info(dim(`(Could not open browser automatically, visit ${docsUrl})`));
         }
 
-        console.log("Once you've created your credentials, enter them below:\n");
+        log.data("Once you've created your credentials, enter them below:\n");
       }
 
       const clientId = await input({
@@ -240,10 +241,10 @@ export async function deploy(options: { debug?: boolean }) {
 
   debug("Deploy complete.");
 
-  console.log(
+  log.data(
     `\n${bold(green(`Your production application is set up and ready at ${blue(`https://${domain}`)}`))}`,
   );
-  console.log(
+  log.data(
     dim(
       "If your application is not loading correctly, you may need to redeploy with your updated Clerk secret keys.",
     ),

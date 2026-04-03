@@ -1,5 +1,5 @@
 import { test, expect, describe, afterEach, spyOn } from "bun:test";
-import { configStubs, capturedOutput } from "../../test/lib/stubs.ts";
+import { captureLog, configStubs, capturedOutput } from "../../test/lib/stubs.ts";
 
 // Pure spyOn approach — Bun's mock.module globally replaces modules for the
 // entire test run, which pollutes other test files (link, env/pull, config,
@@ -44,14 +44,18 @@ const FAKE_BOOTSTRAP = {
 
 describe("init", () => {
   let spies: ReturnType<typeof spyOn>[];
+  let captured: ReturnType<typeof captureLog>;
 
   afterEach(() => {
+    captured.teardown();
     for (const s of spies) s.mockRestore();
   });
 
   function setup(overrides: { email?: string | null; isAgent?: boolean } = {}) {
     const email = overrides.email ?? null;
     const agent = overrides.isAgent ?? false;
+
+    captured = captureLog();
 
     const gatherContextSpy = spyOn(context, "gatherContext").mockResolvedValue(null);
 

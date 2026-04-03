@@ -5,6 +5,7 @@ import { throwUsageError, throwUserAbort, withApiContext, ERROR_CODE } from "../
 import { confirm } from "../../lib/prompts.ts";
 import { dim, bold, red, green } from "../../lib/color.ts";
 import { withSpinner } from "../../lib/spinner.ts";
+import { log } from "../../lib/log.ts";
 
 interface ConfigPushOptions {
   app?: string;
@@ -72,8 +73,8 @@ async function configPush(options: ConfigPushOptions, op: Operation): Promise<vo
   delete configPayload.config_version;
 
   if (options.dryRun) {
-    console.error(`[dry-run] Would ${op.method} config on ${ctx.appLabel} (${ctx.instanceLabel}):`);
-    console.log(JSON.stringify(configPayload, null, 2));
+    log.info(`[dry-run] Would ${op.method} config on ${ctx.appLabel} (${ctx.instanceLabel}):`);
+    log.data(JSON.stringify(configPayload, null, 2));
     return;
   }
 
@@ -91,16 +92,16 @@ async function configPush(options: ConfigPushOptions, op: Operation): Promise<vo
   const hasChanges = hasConfigChanges(currentConfig, configPayload, isPatch);
 
   if (!hasChanges) {
-    console.error("No changes detected");
+    log.info("No changes detected");
     return;
   }
 
-  console.error(`\n${op.verb} config on ${ctx.appLabel} (${ctx.instanceLabel}):\n`);
+  log.info(`\n${op.verb} config on ${ctx.appLabel} (${ctx.instanceLabel}):\n`);
   printDiff(currentConfig, configPayload, isPatch);
 
   if (isHuman() && !options.yes) {
     if (op.warning) {
-      console.error(`\nWARNING: ${op.warning}`);
+      log.warn(`${op.warning}`);
     }
     const ok = await confirm({ message: "Proceed?" });
     if (!ok) {
@@ -116,8 +117,8 @@ async function configPush(options: ConfigPushOptions, op: Operation): Promise<vo
         "Failed to push config",
       ),
   );
-  console.log(JSON.stringify(result, null, 2));
-  console.error("Config pushed successfully");
+  log.data(JSON.stringify(result, null, 2));
+  log.info("Config pushed successfully");
 }
 
 export async function readInput(options: { file?: string; json?: string }): Promise<string> {
@@ -251,20 +252,20 @@ export function printDiff(
     collectChanges(current[key], payload[key], "", changes, patchMode);
     if (changes.length === 0) continue;
 
-    console.error(`  ${key}:`);
+    log.raw(`  ${key}:`);
     for (const { path, oldVal, newVal } of changes) {
       if (path) {
-        console.error(`    ${path}:`);
+        log.raw(`    ${path}:`);
       }
       const indent = path ? "      " : "    ";
       const useColor = isHuman();
       if (oldVal !== undefined) {
         const line = `${indent}- ${JSON.stringify(oldVal)}`;
-        console.error(useColor ? dim(red(line)) : line);
+        log.raw(useColor ? dim(red(line)) : line);
       }
       if (newVal !== undefined) {
         const line = `${indent}+ ${JSON.stringify(newVal)}`;
-        console.error(useColor ? bold(green(line)) : line);
+        log.raw(useColor ? bold(green(line)) : line);
       }
     }
   }

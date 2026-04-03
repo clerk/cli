@@ -2,6 +2,7 @@ import { resolveAppContext } from "../../lib/config.ts";
 import { fetchInstanceConfig } from "../../lib/plapi.ts";
 import { withApiContext } from "../../lib/errors.ts";
 import { withSpinner } from "../../lib/spinner.ts";
+import { log } from "../../lib/log.ts";
 
 interface ConfigPullOptions {
   app?: string;
@@ -26,8 +27,8 @@ export async function configPull(options: ConfigPullOptions): Promise<void> {
 
   if (options.output) {
     await Bun.write(options.output, json + "\n");
-    console.error(`Config written to ${options.output}`);
+    log.info(`Config written to ${options.output}`);
   } else {
-    console.log(json);
+    log.data(json);
   }
 }

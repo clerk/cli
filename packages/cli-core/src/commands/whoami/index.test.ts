@@ -1,5 +1,5 @@
-import { test, expect, describe, afterEach, mock, spyOn } from "bun:test";
-import { credentialStoreStubs, tokenExchangeStubs } from "../../test/lib/stubs.ts";
+import { test, expect, describe, beforeEach, afterEach, mock, spyOn } from "bun:test";
+import { captureLog, credentialStoreStubs, tokenExchangeStubs } from "../../test/lib/stubs.ts";
 
 const mockGetToken = mock();
 const mockFetchUserInfo = mock();
@@ -18,8 +18,14 @@ const { whoami } = await import("./index.ts");
 
 describe("whoami", () => {
   let consoleSpy: ReturnType<typeof spyOn>;
+  let captured: ReturnType<typeof captureLog>;
+
+  beforeEach(() => {
+    captured = captureLog();
+  });
 
   afterEach(() => {
+    captured.teardown();
     mockGetToken.mockReset();
     mockFetchUserInfo.mockReset();
     consoleSpy?.mockRestore();
@@ -35,7 +41,7 @@ describe("whoami", () => {
     consoleSpy = spyOn(console, "log").mockImplementation(() => {});
     await whoami();
 
-    expect(consoleSpy).toHaveBeenCalledWith("alice@example.com");
+    expect(captured.out).toContain("alice@example.com");
   });
 
   test("prompts to login when no token exists", async () => {
@@ -44,7 +50,7 @@ describe("whoami", () => {
     consoleSpy = spyOn(console, "log").mockImplementation(() => {});
     await whoami();
 
-    expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining("Not logged in"));
+    expect(captured.out).toContain("Not logged in");
     expect(mockFetchUserInfo).not.toHaveBeenCalled();
   });
 
@@ -55,6 +61,6 @@ describe("whoami", () => {
     consoleSpy = spyOn(console, "log").mockImplementation(() => {});
     await whoami();
 
-    expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining("Session expired"));
+    expect(captured.out).toContain("Session expired");
   });
 });

@@ -1,4 +1,5 @@
 import { test, expect, describe, beforeEach, afterEach, spyOn } from "bun:test";
+import { captureLog } from "../../test/stubs.ts";
 import { join } from "node:path";
 import { mkdtemp, rm, mkdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -6,74 +7,77 @@ import { detectAuthLibraries, scanForIssues } from "./scan.ts";
 
 describe("detectAuthLibraries", () => {
   let consoleSpy: ReturnType<typeof spyOn>;
+  let captured: ReturnType<typeof captureLog>;
 
   beforeEach(() => {
+    captured = captureLog();
     consoleSpy = spyOn(console, "log").mockImplementation(() => {});
   });
 
   afterEach(() => {
+    captured.teardown();
     consoleSpy.mockRestore();
   });
 
   test("detects NextAuth", () => {
     detectAuthLibraries({ "next-auth": "5.0.0", next: "15.0.0" });
-    const output = consoleSpy.mock.calls.map((c: unknown[]) => c[0]).join("\n");
+    const output = captured.out;
     expect(output).toContain("NextAuth");
     expect(output).toContain("clerk.com/docs/migrations/nextauth");
   });
 
   test("detects Auth0 via @auth0/nextjs-auth0", () => {
     detectAuthLibraries({ "@auth0/nextjs-auth0": "3.0.0" });
-    const output = consoleSpy.mock.calls.map((c: unknown[]) => c[0]).join("\n");
+    const output = captured.out;
     expect(output).toContain("Auth0");
   });
 
   test("detects Auth0 via auth0 package", () => {
     detectAuthLibraries({ auth0: "4.0.0" });
-    const output = consoleSpy.mock.calls.map((c: unknown[]) => c[0]).join("\n");
+    const output = captured.out;
     expect(output).toContain("Auth0");
   });
 
   test("detects Supabase Auth via @supabase/ssr", () => {
     detectAuthLibraries({ "@supabase/ssr": "0.5.0" });
-    const output = consoleSpy.mock.calls.map((c: unknown[]) => c[0]).join("\n");
+    const output = captured.out;
     expect(output).toContain("Supabase Auth");
   });
 
   test("detects Firebase", () => {
     detectAuthLibraries({ firebase: "11.0.0" });
-    const output = consoleSpy.mock.calls.map((c: unknown[]) => c[0]).join("\n");
+    const output = captured.out;
     expect(output).toContain("Firebase");
   });
 
   test("detects Passport.js", () => {
     detectAuthLibraries({ passport: "0.7.0" });
-    const output = consoleSpy.mock.calls.map((c: unknown[]) => c[0]).join("\n");
+    const output = captured.out;
     expect(output).toContain("Passport.js");
   });
 
   test("detects Better Auth", () => {
     detectAuthLibraries({ "better-auth": "1.0.0" });
-    const output = consoleSpy.mock.calls.map((c: unknown[]) => c[0]).join("\n");
+    const output = captured.out;
     expect(output).toContain("Better Auth");
   });
 
   test("detects Kinde", () => {
     detectAuthLibraries({ "@kinde-oss/kinde-auth-nextjs": "2.0.0" });
-    const output = consoleSpy.mock.calls.map((c: unknown[]) => c[0]).join("\n");
+    const output = captured.out;
     expect(output).toContain("Kinde");
   });
 
   test("detects multiple auth libraries", () => {
     detectAuthLibraries({ "next-auth": "5.0.0", firebase: "11.0.0" });
-    const output = consoleSpy.mock.calls.map((c: unknown[]) => c[0]).join("\n");
+    const output = captured.out;
     expect(output).toContain("NextAuth");
     expect(output).toContain("Firebase");
   });
 
   test("does not warn when no auth library found", () => {
     detectAuthLibraries({ react: "19.0.0", next: "15.0.0" });
-    expect(consoleSpy).not.toHaveBeenCalled();
+    expect(captured.out).toBe("");
   });
 });
 

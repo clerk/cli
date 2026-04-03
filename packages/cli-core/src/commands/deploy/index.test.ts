@@ -1,5 +1,5 @@
-import { test, expect, describe, afterEach, mock, spyOn } from "bun:test";
-import { capturedOutput, promptsStubs } from "../../test/lib/stubs.ts";
+import { test, expect, describe, beforeEach, afterEach, mock, spyOn } from "bun:test";
+import { captureLog, promptsStubs } from "../../test/lib/stubs.ts";
 
 const mockIsAgent = mock();
 let _modeOverride: string | undefined;
@@ -32,8 +32,14 @@ const { deploy } = await import("./index.ts");
 
 describe("deploy", () => {
   let consoleSpy: ReturnType<typeof spyOn>;
+  let captured: ReturnType<typeof captureLog>;
+
+  beforeEach(() => {
+    captured = captureLog();
+  });
 
   afterEach(() => {
+    captured.teardown();
     _modeOverride = undefined;
     mockIsAgent.mockReset();
     mockSelect.mockReset();
@@ -50,9 +56,7 @@ describe("deploy", () => {
 
       await deploy({});
 
-      expect(consoleSpy).toHaveBeenCalledTimes(1);
-      const output = consoleSpy.mock.calls[0][0] as string;
-      expect(output).toContain("deploying a Clerk application to production");
+      expect(captured.out).toContain("deploying a Clerk application to production");
     });
 
     test("prompt includes all deployment steps", async () => {
@@ -61,7 +65,7 @@ describe("deploy", () => {
 
       await deploy({});
 
-      const output = consoleSpy.mock.calls[0][0] as string;
+      const output = captured.out;
       expect(output).toContain("Prerequisites");
       expect(output).toContain("Verify Subscription Compatibility");
       expect(output).toContain("Choose a Production Domain");
@@ -76,7 +80,7 @@ describe("deploy", () => {
 
       await deploy({});
 
-      const output = consoleSpy.mock.calls[0][0] as string;
+      const output = captured.out;
       expect(output).toContain("/v1/platform/applications");
       expect(output).toContain("instances/production/config");
       expect(output).toContain("instances/development/config");
@@ -88,7 +92,7 @@ describe("deploy", () => {
 
       await deploy({});
 
-      const output = consoleSpy.mock.calls[0][0] as string;
+      const output = captured.out;
       expect(output).toContain("accounts.{domain}/v1/oauth_callback");
     });
 
@@ -120,7 +124,7 @@ describe("deploy", () => {
 
       await deploy({});
 
-      const allOutput = capturedOutput(consoleSpy);
+      const allOutput = captured.out;
       expect(allOutput).not.toContain("deploying a Clerk application to production");
     });
 
@@ -130,7 +134,7 @@ describe("deploy", () => {
 
       await deploy({});
 
-      const allOutput = capturedOutput(consoleSpy);
+      const allOutput = captured.out;
       expect(allOutput).toContain("[mock]");
     });
   });
