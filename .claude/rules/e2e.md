@@ -70,6 +70,9 @@ A single test runner used by both `bun run test` and `bun run test:e2e`. Each te
 - `--concurrency <n>` (default: CPU count): how many test files run in parallel
 - `--filter <string>`: only run files whose path contains the string
 - `--retries <n>` (default 0): automatic retries on failure (e2e uses 1 for transient FAPI throttling, Playwright timeouts)
+- `--debug`: forwards `CLERK_E2E_DEBUG=1` to each test subprocess
+- `--har`: forwards `E2E_HAR_DIR=test/e2e/.har` to each test subprocess (creates the dir if missing)
+- `--har-dir <path>`: same as `--har` but writes HAR files to a custom directory
 
 ## How fixtures work
 

@@ -9,13 +9,19 @@
  *   bun run scripts/run-tests.ts --pattern "**\/*.test.ts" --exclude "test/e2e/**"
  *   bun run scripts/run-tests.ts --pattern "test/e2e/*.test.ts" --concurrency 4 --retries 1
  *   bun run scripts/run-tests.ts --pattern "**\/*.test.ts" --filter auth
+ *   bun run scripts/run-tests.ts --pattern "test/e2e/*.test.ts" --debug
+ *   bun run scripts/run-tests.ts --pattern "test/e2e/*.test.ts" --har
+ *   bun run scripts/run-tests.ts --pattern "test/e2e/*.test.ts" --har-dir ./out
  */
 
-import { parseArgs } from "node:util";
+import { mkdirSync } from "node:fs";
 import { availableParallelism } from "node:os";
+import { resolve } from "node:path";
+import { parseArgs } from "node:util";
 import { Glob } from "bun";
 
 const defaultConcurrency = String(availableParallelism());
+const DEFAULT_HAR_DIR = "test/e2e/.har";
 
 const { values } = parseArgs({
   options: {
@@ -24,6 +30,9 @@ const { values } = parseArgs({
     concurrency: { type: "string", short: "c", default: defaultConcurrency },
     filter: { type: "string", short: "f", default: "" },
     retries: { type: "string", short: "r", default: "0" },
+    debug: { type: "boolean", default: false },
+    har: { type: "boolean", default: false },
+    "har-dir": { type: "string" },
   },
   strict: true,
 });
@@ -44,6 +53,16 @@ if (!Number.isFinite(retries) || retries < 0) {
   console.error(`Invalid --retries "${values.retries}". Expected an integer >= 0.`);
   process.exit(1);
 }
+
+let harDir: string | undefined;
+if (values.har || values["har-dir"] !== undefined) {
+  harDir = resolve(values["har-dir"] ?? DEFAULT_HAR_DIR);
+  mkdirSync(harDir, { recursive: true });
+}
+
+const childEnv: Record<string, string> = { ...(process.env as Record<string, string>) };
+if (values.debug) childEnv.CLERK_E2E_DEBUG = "1";
+if (harDir) childEnv.E2E_HAR_DIR = harDir;
 
 // Discover test files from all patterns
 const seen = new Set<string>();
@@ -68,7 +87,10 @@ if (files.length === 0) {
   process.exit(1);
 }
 
-console.log(`Running ${files.length} test files (concurrency: ${concurrency})\n`);
+console.log(`Running ${files.length} test files (concurrency: ${concurrency})`);
+if (values.debug) console.log("Debug logging enabled (CLERK_E2E_DEBUG=1)");
+if (harDir) console.log(`HAR output: ${harDir}`);
+console.log();
 
 // -------------------------------------------------------------------
 // Runner
@@ -97,6 +119,7 @@ async function runTest(file: string): Promise<Result> {
 
   const proc = Bun.spawn(["bun", "test", file], {
     stdio: ["ignore", streaming ? "inherit" : "pipe", streaming ? "inherit" : "pipe"],
+    env: childEnv,
   });
 
   let output = "";
