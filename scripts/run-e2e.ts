@@ -6,8 +6,8 @@
  * runs multiple files in a single process.
  *
  * Usage:
- *   bun run scripts/run-e2e.ts                  # concurrency 1 (default)
- *   bun run scripts/run-e2e.ts --concurrency 4  # 4 at a time
+ *   bun run scripts/run-e2e.ts                  # concurrency 4 (default)
+ *   bun run scripts/run-e2e.ts --concurrency 1  # serialize
  *   bun run scripts/run-e2e.ts --filter react   # only files matching "react"
  *   bun run scripts/run-e2e.ts --debug          # verbose helper logging (sets CLERK_E2E_DEBUG=1)
  *   bun run scripts/run-e2e.ts --har            # write HAR files to ./test/e2e/.har
@@ -23,7 +23,7 @@ const DEFAULT_HAR_DIR = "test/e2e/.har";
 
 const { values } = parseArgs({
   options: {
-    concurrency: { type: "string", short: "c", default: "1" },
+    concurrency: { type: "string", short: "c", default: "4" },
     filter: { type: "string", short: "f", default: "" },
     debug: { type: "boolean", default: false },
     har: { type: "boolean", default: false },

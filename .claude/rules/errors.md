@@ -1,8 +1,8 @@
 ---
 description: Error handling conventions — CliError, throwUsageError, throwUserAbort, withApiContext
 paths:
-  - "src/commands/**"
-  - "src/lib/**"
+  - "packages/cli-core/src/commands/**"
+  - "packages/cli-core/src/lib/**"
 alwaysApply: false
 ---
 

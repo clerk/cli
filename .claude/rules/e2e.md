@@ -39,8 +39,8 @@ E2E_HAR_DIR=<path>                   # Directory to write HAR files per fixture 
 Preferred (secrets resolved from 1Password, no plaintext on disk):
 
 ```sh
-bun run test:e2e:op                          # Run all fixture tests (concurrency 2)
-bun run test:e2e:op -- --concurrency 4       # Run with 4 concurrent workers
+bun run test:e2e:op                          # Run all fixture tests (concurrency 4)
+bun run test:e2e:op -- --concurrency 1       # Serialize
 bun run test:e2e:op -- --filter react        # Only files matching "react"
 bun run test:e2e:op -- --debug               # Verbose helper logging (CLERK_E2E_DEBUG=1)
 bun run test:e2e:op -- --har                 # Capture HAR files to test/e2e/.har
@@ -65,7 +65,7 @@ bun run e2e:refresh-fixtures -- --only nextjs-app-router  # Refresh one fixture
 
 Each test file runs as a separate `bun test` subprocess to avoid shared process state (env vars, module singletons). The runner supports:
 
-- `--concurrency <n>` (default 2): how many test files run in parallel
+- `--concurrency <n>` (default 4): how many test files run in parallel
 - `--filter <string>`: only run files whose path contains the string
 - Automatic single retry on failure (handles transient FAPI throttling, Playwright timeouts)
 
@@ -124,7 +124,7 @@ In CI, use `bunx playwright install chromium --with-deps` to include system-leve
 
 ## Concurrency
 
-Fixture files run in parallel (concurrency controlled by the runner, default 2). Each fixture uses an isolated temp directory and `CLERK_CONFIG_DIR`, so there is no shared mutable state. Do not use `test.concurrent` within individual fixture files.
+Fixture files run in parallel (concurrency controlled by the runner, default 4). Each fixture uses an isolated temp directory and `CLERK_CONFIG_DIR`, so there is no shared mutable state. Do not use `test.concurrent` within individual fixture files.
 
 Within each test file, `useFixture()` runs `setupFixture()` once in `beforeAll` and shares the result with both the build test and browser test. This avoids duplicating the expensive setup.
 
@@ -139,7 +139,7 @@ Helper functions are in `test/e2e/lib/`:
 
 - `fixture-setup.ts` - `setupFixture`
 - `fixture-test.ts` - `useFixture`, `runFixtureTest`, `runBrowserTest`
-- `dev-server.ts` - `getAvailablePort`, `startDevServer`, `killDevServer`, `buildDevCommand`
+- `dev-server.ts` - `startDevServer` (allocates a port internally and retries on collision), `killDevServer`, `buildDevCommand`
 - `test-user.ts` - `createTestUser`, `deleteTestUser`
 - `logger.ts` - `log`, `debug` (shared logging; set `CLERK_E2E_DEBUG=1` for verbose output)
 - `types.ts` - `FixtureConfig`
@@ -151,5 +151,5 @@ E2E tests run in the `test-e2e` job in `.github/workflows/ci.yml`. Key details:
 - Only runs for PRs from the same repository (skipped for external forks)
 - Runs on `blacksmith-8vcpu-ubuntu-2404` with a 30-minute timeout
 - Requires Node.js 22 (for Playwright) alongside Bun
-- Secrets `E2E_APP_ID`, `CLERK_PLATFORM_API_KEY` are injected from GitHub Actions secrets
-- Points at the staging API (`CLERK_PLATFORM_API_URL`, `CLERK_BACKEND_API_URL` set to `https://api.clerkstage.dev`)
+- Secrets `CLERK_CLI_TEST_APP_ID`, `CLERK_PLATFORM_API_KEY` are injected from GitHub Actions secrets
+- Targets the production Clerk API (no `CLERK_PLATFORM_API_URL` / `CLERK_BACKEND_API_URL` overrides are set, so the defaults in `packages/cli-core/src/lib/environment.ts` apply). The local `bun run test:e2e:op` flow likewise resolves secrets from the `Clerk CLI - E2E Production Secrets` 1Password item. Test users are created with the `+clerk_test` email suffix and torn down at the end of each fixture run.

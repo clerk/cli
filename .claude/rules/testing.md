@@ -24,4 +24,6 @@ bun run test
 
 This runs `bun test src/commands/ src/lib/ src/mode.test.ts src/test/integration/` — it excludes e2e fixtures, which require separate setup. See `rules/e2e.md` for e2e instructions.
 
-Use `spyOn()` for mocking, not `mock.module()`. In Bun 1.x, `mock.module()` registrations are process-lifetime and will pollute the module registry for all subsequent test files run in the same process. Always restore spies in `afterAll` with `mockRestore()`.
+Prefer `spyOn()` for mocking, and always restore spies in `afterAll` with `mockRestore()`.
+
+`mock.module()` is acceptable only when registered at file top, before any consumer of the mocked module is loaded (the integration harness at `packages/cli-core/src/test/integration/lib/harness.ts` and `packages/cli-core/src/lib/credential-store.test.ts` both follow this pattern). In Bun 1.x, `mock.module()` registrations are process-lifetime and will pollute the module registry for any later test file that imports the same module via a non-mocked path, so do not call `mock.module()` from inside `beforeEach`/`describe`/`test`, and do not introduce it in test files that will run alongside files importing the real module.

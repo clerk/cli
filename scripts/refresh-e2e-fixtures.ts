@@ -20,7 +20,15 @@ process.env.CLERK_REFRESH_FIXTURES = "1";
 const args = process.argv.slice(2);
 const force = args.includes("--force");
 const onlyIndex = args.indexOf("--only");
-const onlyName = onlyIndex !== -1 ? args[onlyIndex + 1] : null;
+let onlyName: string | null = null;
+if (onlyIndex !== -1) {
+  const value = args[onlyIndex + 1];
+  if (!value || value.startsWith("--")) {
+    console.error("--only requires a fixture name (e.g. `--only nextjs-app-router`).");
+    process.exit(1);
+  }
+  onlyName = value;
+}
 
 const E2E_DIR = join(import.meta.dir, "../test/e2e");
 const FIXTURES_DIR = join(E2E_DIR, "fixtures");

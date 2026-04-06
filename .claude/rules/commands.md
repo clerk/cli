@@ -1,7 +1,7 @@
 ---
 description: Command authoring conventions — directory structure, READMEs, agent mode
 paths:
-  - "src/commands/**"
+  - "packages/cli-core/src/commands/**"
 alwaysApply: false
 ---
 
