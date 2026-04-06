@@ -1,13 +1,21 @@
 version: 2
 updates:
   # Root workspace dependencies (Bun workspaces under packages/*).
-  # Fixture projects under test/e2e/fixtures/*/package.json are intentionally
-  # NOT configured here. They are pinned snapshots of scaffolded framework
-  # output and are regenerated via `bun run e2e:refresh-fixtures`. Letting
-  # Dependabot bump them would defeat the point of testing against specific
-  # framework versions.
+  #
+  # Fixture projects under test/e2e/fixtures/*/package.json are pinned
+  # snapshots of scaffolded framework output, regenerated via
+  # `bun run e2e:refresh-fixtures`. Letting Dependabot bump them would
+  # defeat the point of testing against specific framework versions.
+  #
+  # Two layers of protection:
+  #   1. `directory: "/"` only configures the root, and Dependabot does
+  #      not auto-discover manifests in unlisted paths.
+  #   2. `exclude-paths` is a defensive backstop in case the configured
+  #      directory ever expands (e.g. to a glob via `directories`).
   - package-ecosystem: "bun"
     directory: "/"
+    exclude-paths:
+      - "test/e2e/fixtures/**"
     schedule:
       interval: "weekly"
     open-pull-requests-limit: 5
