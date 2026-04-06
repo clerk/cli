@@ -1,5 +1,5 @@
 import { AsyncLocalStorage } from "node:async_hooks";
-import { cyan, dim, green, red, yellow } from "./color.ts";
+import { dim, green, red, yellow } from "./color.ts";
 
 // ── Log level ────────────────────────────────────────────────────────────
 
@@ -61,17 +61,18 @@ let lastLogTime = 0;
 let throttleTimer: ReturnType<typeof setTimeout> | undefined;
 
 function flushThrottle() {
-  if (lastLogCount > THROTTLE_MIN) {
-    const repeated = lastLogCount - THROTTLE_MIN;
+  const repeated = lastLogCount - THROTTLE_MIN;
+  // Reset state before writing to avoid re-entering shouldWrite → flushThrottle
+  lastLogKey = "";
+  lastLogCount = 0;
+  throttleTimer = undefined;
+  if (repeated > 0) {
     writeln(
       process.stderr,
       "stderr",
       applyPrefix(dim(`  (repeated ${repeated} more time${repeated === 1 ? "" : "s"})`)),
     );
   }
-  lastLogKey = "";
-  lastLogCount = 0;
-  throttleTimer = undefined;
 }
 
 /**
@@ -115,7 +116,9 @@ function shouldWrite(channel: "stdout" | "stderr", msg: string): boolean {
  * Highlights `backtick` spans in cyan within a message.
  */
 function highlight(msg: string): string {
-  return msg.replace(/`([^`]+)`/g, (_, content) => cyan(`\`${content}\``));
+  // Use targeted foreground color set/reset (\x1b[39m = default fg) instead of
+  // cyan() which uses \x1b[0m (full reset) and kills surrounding styles.
+  return msg.replace(/`([^`]+)`/g, (_, content) => `\x1b[36m\`${content}\`\x1b[39m`);
 }
 
 // ── Capture context (for testing) ─────────────────────────────────────────
@@ -150,7 +153,9 @@ export type Logger = typeof log & {
 function createLogger(tag?: string): Logger {
   function formatTag(msg: string): string {
     if (!tag) return msg;
-    return `${dim(`[${tag}]`)} ${msg}`;
+    // Use targeted dim on/off (\x1b[22m = normal intensity) instead of dim()
+    // which uses \x1b[0m (full reset) and kills surrounding color styles.
+    return `\x1b[2m[${tag}]\x1b[22m ${msg}`;
   }
 
   const logger = {
@@ -179,18 +184,24 @@ function createLogger(tag?: string): Logger {
       if (!isLevelEnabled("debug")) return;
       writeln(process.stderr, "stderr", applyPrefix(dim(formatTag(msg))));
     },
-    /** Blank line to stderr. */
+    /** Blank line to stderr. Preserves pipe prefix inside intro/outro flow. */
     blank() {
+      const prefix = applyPrefix("");
       const captured = captureStorage.getStore();
       if (captured) {
-        captured.stderr.push("");
+        captured.stderr.push(prefix);
       } else {
-        process.stderr.write("\n");
+        process.stderr.write(prefix + "\n");
       }
     },
-    /** Raw stderr — no color, no prefix. For machine-readable output (agent JSON). */
+    /** Raw stderr — no color, no prefix, no throttle. For machine-readable output (agent JSON). */
     raw(msg: string) {
-      writeln(process.stderr, "stderr", msg);
+      const captured = captureStorage.getStore();
+      if (captured) {
+        captured.stderr.push(msg);
+      } else {
+        process.stderr.write(msg + "\n");
+      }
     },
     /** Primary data output to stdout (pipeable, never prefixed). */
     data(msg: string) {

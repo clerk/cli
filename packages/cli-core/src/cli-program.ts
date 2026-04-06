@@ -52,6 +52,9 @@ export function createProgram() {
     .option("--verbose", "Show detailed output (enables debug messages)");
 
   program.hook("preAction", async () => {
+    // Reset log level at the start of each command invocation so a previous
+    // --verbose or --debug flag doesn't leak into subsequent runs.
+    setLogLevel("info");
     const opts = program.opts();
     if (opts.verbose) {
       setLogLevel("debug");
