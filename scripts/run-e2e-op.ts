@@ -17,7 +17,8 @@ await ensureOpInstalled();
 const exitCode = await runWithOpSecrets(["bun", "run", "test:e2e", ...process.argv.slice(2)], {
   CLERK_PLATFORM_API_KEY:
     "op://AI Enablement/Clerk CLI - E2E Production Secrets/CLERK_PLATFORM_API_KEY",
-  TEST_CLERK_APP_ID: "op://AI Enablement/Clerk CLI - E2E Production Secrets/TEST_CLERK_APP_ID",
+  CLERK_CLI_TEST_APP_ID:
+    "op://AI Enablement/Clerk CLI - E2E Production Secrets/CLERK_CLI_TEST_APP_ID",
 });
 
 process.exit(exitCode);

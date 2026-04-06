@@ -21,11 +21,11 @@ function requireEnv(name: string): string {
   return val;
 }
 
-/** Build a shared env object for CLI commands. Requires either CLERK_PLATFORM_API_KEY or CLERK_CLI_TOKEN. */
+/** Build a shared env object for CLI commands. Requires CLERK_PLATFORM_API_KEY. */
 function clerkEnv(configDir?: string): Record<string, string | undefined> {
-  if (!process.env.CLERK_PLATFORM_API_KEY && !process.env.CLERK_CLI_TOKEN) {
+  if (!process.env.CLERK_PLATFORM_API_KEY) {
     throw new Error(
-      "Missing required env var: set CLERK_PLATFORM_API_KEY or CLERK_CLI_TOKEN before running e2e tests.",
+      "Missing required env var: set CLERK_PLATFORM_API_KEY before running e2e tests.",
     );
   }
   return {
@@ -57,7 +57,7 @@ async function copyFixture(fixtureDir: string, projectDir: string): Promise<void
  * interactive app picker.
  */
 async function linkProject(projectDir: string, configDir: string): Promise<void> {
-  const appId = requireEnv("TEST_CLERK_APP_ID");
+  const appId = requireEnv("CLERK_CLI_TEST_APP_ID");
 
   const result = await Bun.$`bun ${CLI_PATH} --mode human link --app ${appId}`
     .cwd(projectDir)

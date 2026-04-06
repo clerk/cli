@@ -94,7 +94,7 @@ bun run e2e:refresh-fixtures                 # Re-scaffold fixture projects from
 If you already have the required env vars exported (e.g. in CI, or you don't have access to the 1Password vault), use `bun run test:e2e` directly instead. The flags are identical:
 
 ```sh
-# Required env vars: set CLERK_PLATFORM_API_KEY or CLERK_CLI_TOKEN, plus TEST_CLERK_APP_ID
+# Required env vars: CLERK_PLATFORM_API_KEY and CLERK_CLI_TEST_APP_ID
 bun run test:e2e -- --filter react
 ```
 

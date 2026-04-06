@@ -16,14 +16,13 @@ Astro, Next.js App Router, Next.js App Router (Next 14, pinned), Next.js Pages R
 ## Required env vars
 
 ```sh
-CLERK_PLATFORM_API_KEY=<key>  # Platform API key (ak_* format), OR
-CLERK_CLI_TOKEN=<token>       # CLI access token (non-interactive auth)
-TEST_CLERK_APP_ID=<app-id>    # Clerk application ID to run tests against
+CLERK_PLATFORM_API_KEY=<key>    # Platform API key (ak_* format)
+CLERK_CLI_TEST_APP_ID=<app-id>  # Clerk application ID to run tests against
 ```
 
-Set either `CLERK_PLATFORM_API_KEY` or `CLERK_CLI_TOKEN`. Without at least one, all fixture tests will fail immediately.
+Both are required. Without `CLERK_PLATFORM_API_KEY` set, all fixture tests will fail immediately.
 
-**Locally, prefer `bun run test:e2e:op`** (see Scripts below). It wraps `test:e2e` in `op run` and resolves `CLERK_PLATFORM_API_KEY` and `TEST_CLERK_APP_ID` from 1Password in-memory, so no plaintext secrets touch disk. Use `bun run test:e2e` directly only when those env vars are already exported (CI, or contributors without 1Password access).
+**Locally, prefer `bun run test:e2e:op`** (see Scripts below). It wraps `test:e2e` in `op run` and resolves `CLERK_PLATFORM_API_KEY` and `CLERK_CLI_TEST_APP_ID` from 1Password in-memory, so no plaintext secrets touch disk. Use `bun run test:e2e` directly only when those env vars are already exported (CI, or contributors without 1Password access).
 
 ### Optional env vars
 
@@ -93,7 +92,7 @@ Defined in `test/e2e/lib/types.ts`:
 
 1. Copy fixture to a temp directory
 2. Git init and commit (so the CLI profile key is stable)
-3. `clerk link --app $TEST_CLERK_APP_ID` with an isolated `CLERK_CONFIG_DIR`
+3. `clerk link --app $CLERK_CLI_TEST_APP_ID` with an isolated `CLERK_CONFIG_DIR`
 4. `clerk init --yes`
 5. Parse `.env` / `.env.local` for publishable and secret keys (uses `detectPublishableKeyName` / `detectSecretKeyName` from CLI source)
 6. `bun install`
