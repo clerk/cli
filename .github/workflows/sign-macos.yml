@@ -40,6 +40,7 @@ jobs:
             package.json
             packages/cli-core/package.json
             packages/cli/package.json
+            patches/
           sparse-checkout-cone-mode: false
 
       - uses: oven-sh/setup-bun@v2
