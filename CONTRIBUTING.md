@@ -15,12 +15,12 @@ When contributing to this repository, please first discuss the change you wish t
 
 ```sh
 git clone https://github.com/clerk/cli
+cd cli
 ```
 
 2. Install dependencies
 
 ```sh
-cd cli-new
 bun install
 ```
 
