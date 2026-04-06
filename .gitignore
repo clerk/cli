@@ -38,3 +38,6 @@ report.[0-9]_.[0-9]_.[0-9]_.[0-9]_.json
 
 # Environment profiles
 .env-profiles.json
+
+# E2E HAR output
+test/e2e/.har
