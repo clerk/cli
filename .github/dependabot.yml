@@ -1,0 +1,18 @@
+version: 2
+updates:
+  # Root workspace dependencies (Bun workspaces under packages/*).
+  # Fixture projects under test/e2e/fixtures/*/package.json are intentionally
+  # NOT configured here. They are pinned snapshots of scaffolded framework
+  # output and are regenerated via `bun run e2e:refresh-fixtures`. Letting
+  # Dependabot bump them would defeat the point of testing against specific
+  # framework versions.
+  - package-ecosystem: "bun"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
