@@ -60,6 +60,7 @@ jobs:
   test-e2e:
     name: E2E Test
     needs: [build]
+    # Prevent fork PRs from running E2E tests and using this repo's secrets
     if: github.event.pull_request.head.repo.full_name == github.repository
     runs-on: blacksmith-8vcpu-ubuntu-2404
     timeout-minutes: 30
