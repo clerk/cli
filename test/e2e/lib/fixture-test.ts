@@ -4,7 +4,7 @@ import { setupFixture } from "./fixture-setup.ts";
 import type { FixtureConfig } from "./types.ts";
 import { chromium } from "playwright";
 import { clerkSetup, setupClerkTestingToken, clerk } from "@clerk/testing/playwright";
-import { getAvailablePort, startDevServer, killDevServer } from "./dev-server.ts";
+import { startDevServer, killDevServer } from "./dev-server.ts";
 import { createTestUser, deleteTestUser } from "./test-user.ts";
 import { log } from "./logger.ts";
 
@@ -188,15 +188,14 @@ export function runBrowserTest(getFixture: () => FixtureState, config: FixtureCo
         // 1. Create test user
         testUser = await createTestUser(configDir, secretKey, fixtureName);
 
-        // 2. Start dev server
-        port = await getAvailablePort();
+        // 2. Start dev server (port is allocated inside, with retries on collision)
         const server = await startDevServer({
           devCmd: config.devCmd,
-          port,
           projectDir,
           fixtureName,
         });
         proc = server.proc;
+        port = server.port;
         stderrLines = server.stderr;
         stdoutLines = server.stdout;
 
