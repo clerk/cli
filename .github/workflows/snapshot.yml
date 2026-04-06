@@ -122,7 +122,7 @@ jobs:
         run: npm install -g npm@11
       - run: bun install --frozen-lockfile
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           pattern: clerk-snapshot-*
           path: dist/artifacts
