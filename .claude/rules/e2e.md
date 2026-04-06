@@ -39,7 +39,7 @@ E2E_HAR_DIR=<path>                   # Directory to write HAR files per fixture 
 Preferred (secrets resolved from 1Password, no plaintext on disk):
 
 ```sh
-bun run test:e2e:op                          # Run all fixture tests (concurrency 4)
+bun run test:e2e:op                          # Run all fixture tests (concurrency defaults to CPU count)
 bun run test:e2e:op -- --concurrency 1       # Serialize
 bun run test:e2e:op -- --filter react        # Only files matching "react"
 bun run test:e2e:op -- --debug               # Verbose helper logging (CLERK_E2E_DEBUG=1)
@@ -129,7 +129,7 @@ In CI, use `bunx playwright install chromium --with-deps` to include system-leve
 
 ## Concurrency
 
-Fixture files run in parallel (concurrency controlled by the runner, default 4). Each fixture uses an isolated temp directory and `CLERK_CONFIG_DIR`, so there is no shared mutable state. Do not use `test.concurrent` within individual fixture files.
+Fixture files run in parallel (concurrency controlled by the runner, defaults to CPU count). Each fixture uses an isolated temp directory and `CLERK_CONFIG_DIR`, so there is no shared mutable state. Do not use `test.concurrent` within individual fixture files.
 
 Within each test file, `useFixture()` runs `setupFixture()` once in `beforeAll` and shares the result with both the build test and browser test. This avoids duplicating the expensive setup.
 
