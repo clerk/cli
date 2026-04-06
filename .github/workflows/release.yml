@@ -91,7 +91,7 @@ jobs:
         run: npm install -g npm@11
       - run: bun install --frozen-lockfile
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           pattern: clerk-*
           path: dist/artifacts
@@ -109,7 +109,7 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           pattern: clerk-*
           path: dist/artifacts
@@ -184,7 +184,7 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           pattern: clerk-canary-*
           path: dist/artifacts
@@ -234,7 +234,7 @@ jobs:
         run: npm install -g npm@11
       - run: bun install --frozen-lockfile
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           pattern: clerk-canary-*
           path: dist/artifacts
