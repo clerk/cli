@@ -1,5 +1,5 @@
 import type { spyOn } from "bun:test";
-import { withCapturedLogs } from "../lib/log.ts";
+import { withCapturedLogs } from "../../lib/log.ts";
 
 export function capturedOutput(spy: ReturnType<typeof spyOn>): string {
   return spy.mock.calls.map((c: unknown[]) => c[0]).join("\n");

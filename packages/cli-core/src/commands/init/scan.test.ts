@@ -1,5 +1,5 @@
 import { test, expect, describe, beforeEach, afterEach, spyOn } from "bun:test";
-import { captureLog } from "../../test/stubs.ts";
+import { captureLog } from "../../test/lib/stubs.ts";
 import { join } from "node:path";
 import { mkdtemp, rm, mkdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
