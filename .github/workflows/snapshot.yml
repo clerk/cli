@@ -50,7 +50,7 @@ jobs:
           echo "sha=${sha}" >> "$GITHUB_OUTPUT"
           echo "is_fork=${is_fork}" >> "$GITHUB_OUTPUT"
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           ref: ${{ steps.pr.outputs.sha }}
       - uses: oven-sh/setup-bun@v2
@@ -110,7 +110,7 @@ jobs:
       pull-requests: write
       id-token: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           ref: ${{ needs.snapshot.outputs.sha }}
       - uses: oven-sh/setup-bun@v2
