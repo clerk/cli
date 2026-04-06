@@ -4,7 +4,7 @@
  */
 
 import { test, expect, describe } from "bun:test";
-import { useIntegrationTestHarness } from "../lib/setup.ts";
+import { useIntegrationTestHarness } from "./lib/harness.ts";
 import { generateCompletions } from "../../commands/completion/__complete.ts";
 import { createProgram } from "../../cli-program.ts";
 
