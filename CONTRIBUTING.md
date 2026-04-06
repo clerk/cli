@@ -83,6 +83,9 @@ E2E tests verify that `clerk init` produces a buildable, type-safe project with 
 **Locally, prefer `bun run test:e2e:op`.** It wraps `test:e2e` in `op run`, which resolves the required secrets from 1Password in-memory so nothing ever lands on disk. Any flags you pass are forwarded to the underlying runner:
 
 ```sh
+# Install browser (only required once)
+bunx playwright install chromium
+
 bun run test:e2e:op                          # Run all E2E tests (secrets from 1Password)
 bun run test:e2e:op -- --filter react        # Run only tests matching "react"
 bun run test:e2e:op -- --debug               # Verbose helper logging (sets CLERK_E2E_DEBUG=1)
@@ -97,8 +100,6 @@ If you already have the required env vars exported (e.g. in CI, or you don't hav
 # Required env vars: CLERK_PLATFORM_API_KEY and CLERK_CLI_TEST_APP_ID
 bun run test:e2e -- --filter react
 ```
-
-Playwright chromium is required: `bunx playwright install chromium`
 
 E2E test files live in `test/e2e/`, with fixture projects in `test/e2e/fixtures/`. Each test file exports a `FixtureConfig` and calls `runFixtureTest()` and `runBrowserTest()` from `test/e2e/lib/`. See `.claude/rules/e2e.md` for full details on adding fixtures and required env vars.
 
