@@ -2,7 +2,7 @@
 description: E2E test instructions and required env vars
 paths:
   - "test/e2e/**"
-  - "scripts/run-e2e.ts"
+  - "scripts/run-tests.ts"
   - "scripts/refresh-e2e-fixtures.ts"
 alwaysApply: false
 ---
@@ -39,7 +39,7 @@ E2E_HAR_DIR=<path>                   # Directory to write HAR files per fixture 
 Preferred (secrets resolved from 1Password, no plaintext on disk):
 
 ```sh
-bun run test:e2e:op                          # Run all fixture tests (concurrency 4)
+bun run test:e2e:op                          # Run all fixture tests (concurrency defaults to CPU count)
 bun run test:e2e:op -- --concurrency 1       # Serialize
 bun run test:e2e:op -- --filter react        # Only files matching "react"
 bun run test:e2e:op -- --debug               # Verbose helper logging (CLERK_E2E_DEBUG=1)
@@ -61,13 +61,18 @@ bun run e2e:refresh-fixtures -- --force      # Include pinned fixtures
 bun run e2e:refresh-fixtures -- --only nextjs-app-router  # Refresh one fixture
 ```
 
-## Test runner (`scripts/run-e2e.ts`)
+## Test runner (`scripts/run-tests.ts`)
 
-Each test file runs as a separate `bun test` subprocess to avoid shared process state (env vars, module singletons). The runner supports:
+A single test runner used by both `bun run test` and `bun run test:e2e`. Each test file runs as a separate `bun test` subprocess to avoid shared process state (env vars, module singletons). The runner supports:
 
-- `--concurrency <n>` (default 4): how many test files run in parallel
+- `--pattern <glob>` (required, repeatable): glob patterns to discover test files
+- `--exclude <glob>` (repeatable): glob patterns to exclude matched files
+- `--concurrency <n>` (default: CPU count): how many test files run in parallel
 - `--filter <string>`: only run files whose path contains the string
-- Automatic single retry on failure (handles transient FAPI throttling, Playwright timeouts)
+- `--retries <n>` (default 0): automatic retries on failure (e2e uses 1 for transient FAPI throttling, Playwright timeouts)
+- `--debug`: forwards `CLERK_E2E_DEBUG=1` to each test subprocess
+- `--har`: forwards `E2E_HAR_DIR=test/e2e/.har` to each test subprocess (creates the dir if missing)
+- `--har-dir <path>`: same as `--har` but writes HAR files to a custom directory
 
 ## How fixtures work
 
@@ -124,7 +129,7 @@ In CI, use `bunx playwright install chromium --with-deps` to include system-leve
 
 ## Concurrency
 
-Fixture files run in parallel (concurrency controlled by the runner, default 4). Each fixture uses an isolated temp directory and `CLERK_CONFIG_DIR`, so there is no shared mutable state. Do not use `test.concurrent` within individual fixture files.
+Fixture files run in parallel (concurrency controlled by the runner, defaults to CPU count). Each fixture uses an isolated temp directory and `CLERK_CONFIG_DIR`, so there is no shared mutable state. Do not use `test.concurrent` within individual fixture files.
 
 Within each test file, `useFixture()` runs `setupFixture()` once in `beforeAll` and shares the result with both the build test and browser test. This avoids duplicating the expensive setup.
 

@@ -22,7 +22,7 @@ Run the unit and integration test suite with:
 bun run test
 ```
 
-This runs `bun test src/commands/ src/lib/ src/mode.test.ts src/test/integration/` — it excludes e2e fixtures, which require separate setup. See `rules/e2e.md` for e2e instructions.
+This runs each unit and integration test file as a separate `bun test` subprocess via `scripts/run-tests.ts`, isolating module state between files. E2E fixtures are excluded and require separate setup (see `rules/e2e.md`).
 
 Prefer `spyOn()` for mocking, and always restore spies in `afterAll` with `mockRestore()`.
 
