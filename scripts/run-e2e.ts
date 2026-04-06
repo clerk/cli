@@ -9,15 +9,25 @@
  *   bun run scripts/run-e2e.ts                  # concurrency 1 (default)
  *   bun run scripts/run-e2e.ts --concurrency 4  # 4 at a time
  *   bun run scripts/run-e2e.ts --filter react   # only files matching "react"
+ *   bun run scripts/run-e2e.ts --debug          # verbose helper logging (sets CLERK_E2E_DEBUG=1)
+ *   bun run scripts/run-e2e.ts --har            # write HAR files to ./test/e2e/.har
+ *   bun run scripts/run-e2e.ts --har-dir ./out  # write HAR files to a custom directory
  */
 
+import { mkdirSync } from "node:fs";
+import { resolve } from "node:path";
 import { parseArgs } from "node:util";
 import { Glob } from "bun";
+
+const DEFAULT_HAR_DIR = "test/e2e/.har";
 
 const { values } = parseArgs({
   options: {
     concurrency: { type: "string", short: "c", default: "1" },
     filter: { type: "string", short: "f", default: "" },
+    debug: { type: "boolean", default: false },
+    har: { type: "boolean", default: false },
+    "har-dir": { type: "string" },
   },
   strict: true,
 });
@@ -28,6 +38,13 @@ if (!Number.isFinite(concurrency) || concurrency < 1) {
   process.exit(1);
 }
 const filter = values.filter;
+const debugEnabled = values.debug;
+
+let harDir: string | undefined;
+if (values.har || values["har-dir"] !== undefined) {
+  harDir = resolve(values["har-dir"] ?? DEFAULT_HAR_DIR);
+  mkdirSync(harDir, { recursive: true });
+}
 
 // Discover test files
 const glob = new Glob("test/e2e/*.test.ts");
@@ -41,7 +58,14 @@ if (files.length === 0) {
   process.exit(1);
 }
 
-console.log(`Running ${files.length} e2e test files (concurrency: ${concurrency})\n`);
+const childEnv: Record<string, string> = { ...(process.env as Record<string, string>) };
+if (debugEnabled) childEnv.CLERK_E2E_DEBUG = "1";
+if (harDir) childEnv.E2E_HAR_DIR = harDir;
+
+console.log(`Running ${files.length} e2e test files (concurrency: ${concurrency})`);
+if (debugEnabled) console.log("Debug logging enabled (CLERK_E2E_DEBUG=1)");
+if (harDir) console.log(`HAR output: ${harDir}`);
+console.log();
 
 interface Result {
   file: string;
@@ -59,7 +83,7 @@ async function runTest(file: string): Promise<Result> {
 
   const proc = Bun.spawn(["bun", "test", file], {
     stdio: ["ignore", "inherit", "inherit"],
-    // env: process.env,
+    env: childEnv,
   });
 
   const exitCode = await proc.exited;

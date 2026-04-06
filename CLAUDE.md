@@ -55,8 +55,11 @@ After modifying files, run these commands to match what CI enforces on pull requ
 bun run format       # Format with oxfmt (writes changes)
 bun run lint         # Lint with oxlint
 bun run test         # Run unit tests
-bun run test:e2e     # Run E2E tests (requires env vars, see .claude/rules/e2e.md)
+bun run test:e2e:op  # Run E2E tests with secrets resolved from 1Password (preferred locally)
+bun run test:e2e     # Run E2E tests with env vars already set (used by CI; see .claude/rules/e2e.md)
 ```
+
+Locally, prefer `bun run test:e2e:op` so secrets are injected from 1Password in-memory and never written to disk. `bun run test:e2e` is for CI or for cases where the required env vars are already exported.
 
 CI runs `bun run format:check` (fails if unformatted), `bun run lint`, `bun test`, and `bun run test:e2e` on every PR to `main`. E2E tests only run for PRs from the same repository (not external forks) and target a staging Clerk application.
 

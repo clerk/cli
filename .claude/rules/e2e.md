@@ -23,6 +23,8 @@ TEST_CLERK_APP_ID=<app-id>    # Clerk application ID to run tests against
 
 Set either `CLERK_PLATFORM_API_KEY` or `CLERK_CLI_TOKEN`. Without at least one, all fixture tests will fail immediately.
 
+**Locally, prefer `bun run test:e2e:op`** (see Scripts below). It wraps `test:e2e` in `op run` and resolves `CLERK_PLATFORM_API_KEY` and `TEST_CLERK_APP_ID` from 1Password in-memory, so no plaintext secrets touch disk. Use `bun run test:e2e` directly only when those env vars are already exported (CI, or contributors without 1Password access).
+
 ### Optional env vars
 
 ```sh
@@ -35,12 +37,28 @@ E2E_HAR_DIR=<path>                   # Directory to write HAR files per fixture 
 
 ## Scripts
 
+Preferred (secrets resolved from 1Password, no plaintext on disk):
+
 ```sh
-bun run test:e2e                          # Run all fixture tests (concurrency 2)
-bun run test:e2e -- --concurrency 4       # Run with 4 concurrent workers
-bun run test:e2e -- --filter react        # Only files matching "react"
-bun run e2e:refresh-fixtures              # Re-scaffold all non-pinned fixtures
-bun run e2e:refresh-fixtures -- --force   # Include pinned fixtures
+bun run test:e2e:op                          # Run all fixture tests (concurrency 2)
+bun run test:e2e:op -- --concurrency 4       # Run with 4 concurrent workers
+bun run test:e2e:op -- --filter react        # Only files matching "react"
+bun run test:e2e:op -- --debug               # Verbose helper logging (CLERK_E2E_DEBUG=1)
+bun run test:e2e:op -- --har                 # Capture HAR files to test/e2e/.har
+bun run test:e2e:op -- --har-dir ./out       # Capture HAR files to a custom directory
+```
+
+Direct (CI / contributors without 1Password — env vars must already be set):
+
+```sh
+bun run test:e2e                             # Same flags as above
+```
+
+Fixture maintenance:
+
+```sh
+bun run e2e:refresh-fixtures                 # Re-scaffold all non-pinned fixtures
+bun run e2e:refresh-fixtures -- --force      # Include pinned fixtures
 bun run e2e:refresh-fixtures -- --only nextjs-app-router  # Refresh one fixture
 ```
 
