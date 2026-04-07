@@ -222,3 +222,43 @@ export async function listApplications(): Promise<Application[]> {
 
   return response.json() as Promise<Application[]>;
 }
+
+export interface Plapi {
+  validateKeyPrefix(key: string, expected: "ak_" | "sk_"): void;
+  getAuthToken(): Promise<string>;
+  fetchInstanceConfigSchema(
+    applicationId: string,
+    instanceId: string,
+    keys?: string[],
+  ): Promise<Record<string, unknown>>;
+  fetchInstanceConfig(
+    applicationId: string,
+    instanceId: string,
+    keys?: string[],
+  ): Promise<Record<string, unknown>>;
+  fetchApplication(applicationId: string): Promise<Application>;
+  putInstanceConfig(
+    applicationId: string,
+    instanceId: string,
+    config: Record<string, unknown>,
+    options?: { destructive?: boolean },
+  ): Promise<Record<string, unknown>>;
+  patchInstanceConfig(
+    applicationId: string,
+    instanceId: string,
+    config: Record<string, unknown>,
+    options?: { destructive?: boolean },
+  ): Promise<Record<string, unknown>>;
+  listApplications(): Promise<Application[]>;
+}
+
+export const plapi: Plapi = {
+  validateKeyPrefix,
+  getAuthToken,
+  fetchInstanceConfigSchema,
+  fetchInstanceConfig,
+  fetchApplication,
+  putInstanceConfig,
+  patchInstanceConfig,
+  listApplications,
+};
