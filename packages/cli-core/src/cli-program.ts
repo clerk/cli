@@ -166,13 +166,17 @@ export function createProgram() {
   open
     .command("dashboard", { isDefault: true })
     .description("Open the linked app's dashboard in your browser")
+    .addArgument(
+      createArgument("[subpath]", "Optional dashboard subpath (e.g. users, api-keys, settings)"),
+    )
     .option("--print", "Print the URL without opening the browser")
     .setExamples([
       { command: "clerk open", description: "Open the linked app's dashboard" },
-      { command: "clerk open dashboard", description: "Same as `clerk open`" },
+      { command: "clerk open users", description: "Open the users page" },
+      { command: "clerk open api-keys", description: "Open the API keys page" },
       { command: "clerk open --print", description: "Print the dashboard URL" },
     ])
-    .action(openDashboard);
+    .action((subpath, options) => openDashboard(subpath, options));
 
   const apps = program.command("apps").description("Manage your Clerk applications");
 

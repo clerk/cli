@@ -29,9 +29,23 @@ describe("buildDashboardUrl", () => {
     setCurrentEnv("production");
   });
 
-  test("builds production URL", () => {
-    setCurrentEnv("production");
+  test("builds production URL without subpath", () => {
     const url = buildDashboardUrl("app_abc", "ins_xyz");
+    expect(url).toBe("https://dashboard.clerk.com/apps/app_abc/instances/ins_xyz");
+  });
+
+  test("appends subpath", () => {
+    const url = buildDashboardUrl("app_abc", "ins_xyz", "users");
+    expect(url).toBe("https://dashboard.clerk.com/apps/app_abc/instances/ins_xyz/users");
+  });
+
+  test("strips leading and trailing slashes from subpath", () => {
+    const url = buildDashboardUrl("app_abc", "ins_xyz", "/api-keys/");
+    expect(url).toBe("https://dashboard.clerk.com/apps/app_abc/instances/ins_xyz/api-keys");
+  });
+
+  test("empty subpath behaves like no subpath", () => {
+    const url = buildDashboardUrl("app_abc", "ins_xyz", "");
     expect(url).toBe("https://dashboard.clerk.com/apps/app_abc/instances/ins_xyz");
   });
 });
@@ -54,7 +68,7 @@ describe("openDashboard", () => {
     mockResolveProfile.mockResolvedValue(PROFILE);
     consoleSpy = spyOn(console, "log").mockImplementation(() => {});
 
-    await openDashboard();
+    await openDashboard(undefined);
 
     expect(consoleSpy).toHaveBeenCalledWith(
       "https://dashboard.clerk.com/apps/app_abc123/instances/ins_dev789",
@@ -69,7 +83,7 @@ describe("openDashboard", () => {
     mockResolveProfile.mockResolvedValue(PROFILE);
     consoleSpy = spyOn(console, "log").mockImplementation(() => {});
 
-    await openDashboard({ print: true });
+    await openDashboard(undefined, { print: true });
 
     expect(consoleSpy).toHaveBeenCalledTimes(1);
     expect(mockOpenBrowser).not.toHaveBeenCalled();
@@ -80,16 +94,45 @@ describe("openDashboard", () => {
     mockResolveProfile.mockResolvedValue(PROFILE);
     consoleSpy = spyOn(console, "log").mockImplementation(() => {});
 
-    await openDashboard();
+    await openDashboard(undefined);
 
     expect(consoleSpy).toHaveBeenCalledTimes(1);
     expect(mockOpenBrowser).not.toHaveBeenCalled();
   });
 
+  test("known subpath builds the correct URL without warning", async () => {
+    mockResolveProfile.mockResolvedValue(PROFILE);
+    consoleSpy = spyOn(console, "log").mockImplementation(() => {});
+    const errSpy = spyOn(console, "error").mockImplementation(() => {});
+
+    await openDashboard("users", { print: true });
+
+    expect(consoleSpy).toHaveBeenCalledWith(
+      "https://dashboard.clerk.com/apps/app_abc123/instances/ins_dev789/users",
+    );
+    expect(errSpy).not.toHaveBeenCalled();
+    errSpy.mockRestore();
+  });
+
+  test("unknown subpath warns to stderr but still prints URL", async () => {
+    mockResolveProfile.mockResolvedValue(PROFILE);
+    consoleSpy = spyOn(console, "log").mockImplementation(() => {});
+    const errSpy = spyOn(console, "error").mockImplementation(() => {});
+
+    await openDashboard("not-a-real-page", { print: true });
+
+    expect(errSpy).toHaveBeenCalledTimes(1);
+    expect(errSpy.mock.calls[0]?.[0]).toContain("not a known dashboard path");
+    expect(consoleSpy).toHaveBeenCalledWith(
+      "https://dashboard.clerk.com/apps/app_abc123/instances/ins_dev789/not-a-real-page",
+    );
+    errSpy.mockRestore();
+  });
+
   test("throws NOT_LINKED when no profile", async () => {
     mockResolveProfile.mockResolvedValue(null);
 
-    await expect(openDashboard()).rejects.toThrow(/clerk link/);
+    await expect(openDashboard(undefined)).rejects.toThrow(/clerk link/);
     expect(mockOpenBrowser).not.toHaveBeenCalled();
   });
 
@@ -102,7 +145,7 @@ describe("openDashboard", () => {
       },
     });
 
-    await expect(openDashboard()).rejects.toThrow(/development instance/);
+    await expect(openDashboard(undefined)).rejects.toThrow(/development instance/);
     expect(mockOpenBrowser).not.toHaveBeenCalled();
   });
 });
