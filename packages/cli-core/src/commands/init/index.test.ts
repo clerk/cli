@@ -111,7 +111,7 @@ describe("init", () => {
     await init({ yes: true });
 
     expect(loginMod.login).toHaveBeenCalledWith(expect.anything(), { showNextSteps: false });
-    expect(linkMod.link).toHaveBeenCalledWith({ skipIfLinked: true, app: undefined });
+    expect(linkMod.link).toHaveBeenCalledWith(expect.any(Object), { skipIfLinked: true, app: undefined });
   });
 
   test("forwards --app to link when provided", async () => {
@@ -123,7 +123,7 @@ describe("init", () => {
 
     await init({ yes: true, app: "app_abc" });
 
-    expect(linkMod.link).toHaveBeenCalledWith({ skipIfLinked: true, app: "app_abc" });
+    expect(linkMod.link).toHaveBeenCalledWith(expect.any(Object), { skipIfLinked: true, app: "app_abc" });
   });
 
   test("forwards --app to link when no profile exists", async () => {
@@ -133,7 +133,7 @@ describe("init", () => {
 
     await init({ yes: true, app: "app_abc" });
 
-    expect(linkMod.link).toHaveBeenCalledWith({ skipIfLinked: true, app: "app_abc" });
+    expect(linkMod.link).toHaveBeenCalledWith(expect.any(Object), { skipIfLinked: true, app: "app_abc" });
   });
 
   test("agent mode runs existing-project flow without prompts", async () => {
@@ -359,7 +359,7 @@ describe("init", () => {
 
     await init({ yes: true });
 
-    expect(linkMod.link).toHaveBeenCalledWith({ skipIfLinked: true });
+    expect(linkMod.link).toHaveBeenCalledWith(expect.any(Object), { skipIfLinked: true });
     expect(pullMod.pull).not.toHaveBeenCalled();
     expect(heuristics.printKeylessInfo).not.toHaveBeenCalled();
     expect(skillsMod.installSkills).not.toHaveBeenCalled();

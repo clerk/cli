@@ -132,7 +132,7 @@ export function createProgram(root: Root) {
       { command: "clerk link", description: "Pick an app interactively" },
       { command: "clerk link --app app_abc123", description: "Link directly by application ID" },
     ])
-    .action((opts) => link(opts));
+    .action((opts) => link(root, opts));
 
   program
     .command("unlink")
@@ -142,7 +142,7 @@ export function createProgram(root: Root) {
       { command: "clerk unlink", description: "Unlink with confirmation prompt" },
       { command: "clerk unlink --yes", description: "Skip confirmation" },
     ])
-    .action((opts) => unlink(opts));
+    .action((opts) => unlink(root, opts));
 
   program
     .command("whoami")

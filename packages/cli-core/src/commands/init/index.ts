@@ -1,6 +1,7 @@
 import { login } from "../auth/login.js";
 import { createRoot } from "../../lib/root.ts";
 import { link } from "../link/index.js";
+import { createRoot } from "../../lib/root.js";
 import { pull } from "../env/pull.js";
 import { isAgent } from "../../mode.js";
 import { dim, bold } from "../../lib/color.js";
@@ -259,7 +260,11 @@ async function authenticateAndLink(cwd: string, app: string | undefined): Promis
     log.info(dim(label));
   }
 
-  await link({ skipIfLinked: true, app });
+  // init has not yet been ported to dependency injection (PR 8). Until
+  // it is, construct the production root inline so the ported `link`
+  // command can be invoked from this unported caller. This bridge will
+  // disappear when init is ported to take `deps` itself.
+  await link(createRoot(), { skipIfLinked: true, app });
 }
 
 // --- Detect & install ---

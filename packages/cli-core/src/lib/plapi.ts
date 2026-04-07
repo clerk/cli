@@ -237,6 +237,7 @@ export interface Plapi {
     keys?: string[],
   ): Promise<Record<string, unknown>>;
   fetchApplication(applicationId: string): Promise<Application>;
+  createApplication(name: string): Promise<Application>;
   putInstanceConfig(
     applicationId: string,
     instanceId: string,
@@ -258,6 +259,7 @@ export const plapi: Plapi = {
   fetchInstanceConfigSchema,
   fetchInstanceConfig,
   fetchApplication,
+  createApplication,
   putInstanceConfig,
   patchInstanceConfig,
   listApplications,

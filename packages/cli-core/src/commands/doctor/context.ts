@@ -49,9 +49,11 @@ export function createDoctorContext(): DoctorContext {
         label: "Link project with clerk link",
         run: async () => {
           const { link } = await import("../link/index.ts");
-          await link();
+          const { createRoot } = await import("../../lib/root.ts");
+          await link(createRoot());
         },
       }),
+      // NOTE: pull is still unported (PR 6); leave as-is below.
       envPull: () => ({
         label: "Pull env vars with clerk env pull",
         run: async () => {
