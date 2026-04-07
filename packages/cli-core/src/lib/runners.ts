@@ -63,6 +63,21 @@ export function detectAvailableRunners(): Runner[] {
 }
 
 /**
+ * Returns the {@link Runner} spec matching a project's package manager,
+ * regardless of whether it's installed on PATH. Useful for building
+ * suggested-install messages when no runner is available locally yet.
+ * Falls back to the first entry in {@link RUNNERS} when `packageManager`
+ * is undefined.
+ */
+export function runnerForPackageManager(
+  packageManager: ProjectContext["packageManager"] | undefined,
+): Runner {
+  if (!packageManager) return RUNNERS[0];
+  const id = PM_TO_RUNNER[packageManager];
+  return RUNNERS.find((r) => r.id === id) ?? RUNNERS[0];
+}
+
+/**
  * Pick the best runner from a set of available runners. Prefers the project's
  * own package-manager runner if it's installed (e.g. bun project + bunx →
  * bunx). Otherwise falls back to the first available runner in {@link RUNNERS}

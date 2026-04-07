@@ -19,6 +19,7 @@ import {
   detectAvailableRunners,
   preferredRunner,
   runnerCommand,
+  runnerForPackageManager,
 } from "../../lib/runners.js";
 import type { ProjectContext } from "./frameworks/types.js";
 
@@ -86,10 +87,11 @@ export async function installSkills(
   // Detect runners after the user accepts — no point probing PATH if they decline.
   const available = detectAvailableRunners();
   if (available.length === 0) {
+    const suggested = runnerForPackageManager(packageManager);
     console.log(
       yellow(
         "\nNo package runner found on PATH (looked for bunx, npx, pnpm, yarn). " +
-          `Install one and run \`npx skills add ${SKILLS_SOURCE}\` manually.`,
+          `Install one and run \`${suggested.display} skills add ${SKILLS_SOURCE}\` manually.`,
       ),
     );
     return;
@@ -100,9 +102,10 @@ export async function installSkills(
     // Defensive: detectAvailableRunners returned a non-empty array above, so
     // preferredRunner should always find something. This guards against any
     // future change that decouples the two.
+    const suggested = runnerForPackageManager(packageManager);
     console.log(
       yellow(
-        `\nCould not select a package runner. Run \`npx skills add ${SKILLS_SOURCE}\` manually.`,
+        `\nCould not select a package runner. Run \`${suggested.display} skills add ${SKILLS_SOURCE}\` manually.`,
       ),
     );
     return;

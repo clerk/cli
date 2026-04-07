@@ -51,7 +51,7 @@ When running in agent mode (`--mode agent` or non-TTY), outputs a framework-spec
 14. Prints a summary of created, modified, and skipped files with recommendations
 15. **Authenticated mode**: pulls development instance API keys via `clerk env pull`
 16. **Unauthenticated mode**: prints instructions for development without API keys and how to connect a Clerk account later
-17. Optionally installs framework-specific Clerk agent skills via `npx skills add` (see [Agent skills install](#agent-skills-install))
+17. Optionally installs framework-specific Clerk agent skills via the project's package runner (see [Agent skills install](#agent-skills-install))
 
 ## Framework Detection
 
@@ -165,10 +165,10 @@ If no entry file is found, a post-instruction is printed pointing to the Clerk J
 
 ## Agent skills install
 
-After scaffolding (and after env keys are pulled or keyless instructions are printed), `clerk init` offers to install Clerk's framework-specific agent skills from [`clerk/skills`](https://github.com/clerk/skills) via `npx skills add`. This step is optional and non-fatal: if `npx` is missing or the install command exits non-zero, init prints a yellow warning with the manual install command and still exits successfully.
+After scaffolding (and after env keys are pulled or keyless instructions are printed), `clerk init` offers to install Clerk's framework-specific agent skills from [`clerk/skills`](https://github.com/clerk/skills) via the [`skills`](https://www.npmjs.com/package/skills) CLI. The runner is detected from the project's package manager (`bunx`, `npx`, `pnpm dlx`, or `yarn dlx`), so a Bun project installs via `bunx skills add clerk/skills`, a pnpm project via `pnpm dlx skills add clerk/skills`, and so on. This step is optional and non-fatal: if no package runner is available on PATH or the install command exits non-zero, init prints a yellow warning with a runner-appropriate manual command and still exits successfully.
 
-- **Human mode**: prompts `Install agent skills? (...)` defaulting to yes. Pass `--no-skills` to suppress the prompt entirely, or `-y/--yes` to accept it without confirmation.
-- **Agent mode / `--prompt`**: `clerk init` exits early before the skills step runs (see the `if (options.prompt || isAgent()) { ... return }` branch in [`index.ts`](./index.ts)), so nothing is installed. Agent users should run `npx skills add clerk/skills` manually, or have their agent do it.
+- **Human mode**: prompts `Install agent skills? (...)` defaulting to yes. Pass `--no-skills` to suppress the prompt entirely, or `-y/--yes` to accept it without confirmation. When more than one runner is available, a second prompt picks which one to use (the project's package manager wins by default).
+- **Agent mode / `--prompt`**: `clerk init` exits early before the skills step runs (see the `if (options.prompt || isAgent()) { ... return }` branch in [`index.ts`](./index.ts)), so nothing is installed. Agent users should run `skills add clerk/skills` via their preferred runner manually, or have their agent do it.
 
 The base skills `clerk` and `clerk-setup` are always included. The detected framework dependency adds a matching skill:
 

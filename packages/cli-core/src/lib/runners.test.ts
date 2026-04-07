@@ -5,6 +5,7 @@ import {
   detectAvailableRunners,
   preferredRunner,
   runnerCommand,
+  runnerForPackageManager,
 } from "./runners.ts";
 
 // Bun.which is a native global. We patch it directly the same way
@@ -118,6 +119,25 @@ describe("preferredRunner", () => {
 
   test("preserves RUNNERS preference order in fallback", () => {
     expect(preferredRunner(undefined, RUNNERS)?.id).toBe("bunx");
+  });
+});
+
+describe("runnerForPackageManager", () => {
+  test("returns the matching runner for each package manager", () => {
+    expect(runnerForPackageManager("bun").id).toBe("bunx");
+    expect(runnerForPackageManager("npm").id).toBe("npx");
+    expect(runnerForPackageManager("pnpm").id).toBe("pnpm");
+    expect(runnerForPackageManager("yarn").id).toBe("yarn");
+  });
+
+  test("falls back to the first runner when packageManager is undefined", () => {
+    expect(runnerForPackageManager(undefined).id).toBe("bunx");
+  });
+
+  test("does not consult PATH (returns a Runner regardless of installed binaries)", () => {
+    mockWhich(new Set());
+    expect(runnerForPackageManager("pnpm").id).toBe("pnpm");
+    restoreWhich();
   });
 });
 
