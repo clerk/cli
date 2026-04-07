@@ -78,6 +78,8 @@ jobs:
       - uses: actions/setup-node@v6
         with:
           node-version: 22
+      - name: Mark workspace as safe for git
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
       - uses: oven-sh/setup-bun@v2
       - uses: actions/cache/restore@v5
         with:
