@@ -1,12 +1,12 @@
 import { test, expect, describe, afterEach } from "bun:test";
 import {
   KNOWN_RUNNERS,
-  type Runner,
   detectAvailableRunners,
   preferredRunner,
   runnerCommand,
   runnerForPackageManager,
 } from "./runners.ts";
+import { isNonEmpty } from "./helpers/arrays.ts";
 
 // Bun.which / Bun.spawnSync are native globals. We patch them directly the
 // same way commands/auth/login.test.ts patches Bun.spawn — wrapped in
@@ -121,31 +121,35 @@ describe("preferredRunner", () => {
   const pnpm = KNOWN_RUNNERS.find((r) => r.id === "pnpm")!;
   const yarn = KNOWN_RUNNERS.find((r) => r.id === "yarn")!;
 
-  test("returns undefined when no runners are available", () => {
-    expect(preferredRunner("bun", [])).toBeUndefined();
-    expect(preferredRunner(undefined, [])).toBeUndefined();
-  });
+  // preferredRunner now requires a NonEmptyArray<Runner>, so the empty-array
+  // case is unrepresentable in the type system and doesn't need a runtime test.
 
   test("returns the runner matching the project's package manager", () => {
-    const all = [bunx, npx, pnpm, yarn];
-    expect(preferredRunner("bun", all)?.id).toBe("bunx");
-    expect(preferredRunner("npm", all)?.id).toBe("npx");
-    expect(preferredRunner("pnpm", all)?.id).toBe("pnpm");
-    expect(preferredRunner("yarn", all)?.id).toBe("yarn");
+    const all = [bunx, npx, pnpm, yarn] as const;
+    expect(preferredRunner("bun", all).id).toBe("bunx");
+    expect(preferredRunner("npm", all).id).toBe("npx");
+    expect(preferredRunner("pnpm", all).id).toBe("pnpm");
+    expect(preferredRunner("yarn", all).id).toBe("yarn");
   });
 
   test("falls back to first available when the preferred pm runner is missing", () => {
-    expect(preferredRunner("bun", [npx, pnpm])?.id).toBe("npx");
-    expect(preferredRunner("yarn", [pnpm])?.id).toBe("pnpm");
+    // Project is bun but only npx is on PATH → fall back to npx (first
+    // available, which RUNNERS orders as bunx > npx > pnpm > yarn).
+    expect(preferredRunner("bun", [npx, pnpm] as const).id).toBe("npx");
+    // Project is yarn but only pnpm is on PATH → fall back to pnpm.
+    expect(preferredRunner("yarn", [pnpm] as const).id).toBe("pnpm");
   });
 
   test("returns first available when no package manager is given", () => {
-    expect(preferredRunner(undefined, [npx, pnpm, yarn])?.id).toBe("npx");
-    expect(preferredRunner(undefined, [yarn])?.id).toBe("yarn");
+    expect(preferredRunner(undefined, [npx, pnpm, yarn] as const).id).toBe("npx");
+    expect(preferredRunner(undefined, [yarn] as const).id).toBe("yarn");
   });
 
   test("preserves KNOWN_RUNNERS preference order in fallback", () => {
-    expect(preferredRunner(undefined, KNOWN_RUNNERS)?.id).toBe("bunx");
+    // Even with all four available, no pm hint → bunx wins (it's first in KNOWN_RUNNERS).
+    // KNOWN_RUNNERS isn't typed as NonEmptyArray, so we narrow via isNonEmpty.
+    if (!isNonEmpty(KNOWN_RUNNERS)) throw new Error("unreachable");
+    expect(preferredRunner(undefined, KNOWN_RUNNERS).id).toBe("bunx");
   });
 });
 
@@ -186,6 +190,8 @@ describe("detectAvailableRunners", () => {
   });
 
   test("preserves KNOWN_RUNNERS order in the output", () => {
+    // Even though we list yarn first in the set, the result should still
+    // be in KNOWN_RUNNERS preference order (bunx > npx > pnpm > yarn).
     mockWhich(new Set(["yarn", "bunx", "npx"]));
     mockSpawnSync(0);
     const result = detectAvailableRunners();
@@ -217,10 +223,13 @@ describe("detectAvailableRunners", () => {
   test("integrates cleanly with preferredRunner + runnerCommand", () => {
     mockWhich(new Set(["npx", "pnpm"]));
     const available = detectAvailableRunners();
+    if (!isNonEmpty(available)) throw new Error("expected at least one runner");
+    // After the isNonEmpty narrowing, preferredRunner returns Runner (no
+    // undefined) and `runner` doesn't need a cast.
     const runner = preferredRunner("pnpm", available);
-    expect(runner?.id).toBe("pnpm");
+    expect(runner.id).toBe("pnpm");
 
-    const command = runnerCommand(runner as Runner, ["prettier", "--write", "src/x.ts"]);
+    const command = runnerCommand(runner, ["prettier", "--write", "src/x.ts"]);
     expect(command).toEqual(["pnpm", "dlx", "prettier", "--write", "src/x.ts"]);
   });
 });
