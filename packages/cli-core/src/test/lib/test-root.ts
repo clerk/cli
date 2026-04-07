@@ -188,6 +188,7 @@ const defaults: Root = {
   // ── projectDetector (filesystem) ───────────────────────────────────
   projectDetector: {
     gather: strict("projectDetector.gather"),
+    hasPackageJson: strict("projectDetector.hasPackageJson"),
   },
 };
 

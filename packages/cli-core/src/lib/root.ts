@@ -22,7 +22,7 @@ import { spinner } from "./spinner.ts";
 import { logger } from "./logger.ts";
 import { env } from "./env.ts";
 import { environment } from "./environment.ts";
-import { projectDetector } from "./project-detector.ts";
+import { projectDetector } from "./project-detector/index.ts";
 import type { Root } from "./deps.ts";
 
 export function createRoot(): Root {

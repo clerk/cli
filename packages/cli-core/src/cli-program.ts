@@ -86,7 +86,7 @@ export function createProgram(root: Root) {
       { command: "clerk init -y", description: "Skip all confirmation prompts" },
       { command: "clerk init --no-skills", description: "Skip the agent skills install prompt" },
     ])
-    .action((opts) => init(opts));
+    .action((opts) => init(root, opts));
 
   const auth = program
     .command("auth")

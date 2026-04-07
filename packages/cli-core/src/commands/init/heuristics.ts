@@ -2,34 +2,29 @@ import { join, dirname } from "node:path";
 import { mkdir } from "node:fs/promises";
 import { dim, cyan, green, yellow, bold } from "../../lib/color.js";
 import { printNextSteps } from "../../lib/next-steps.js";
-import { log } from "../../lib/log.js";
-import { getToken } from "../../lib/credential-store.js";
-import { fetchUserInfo } from "../../lib/token-exchange.js";
 import { printFindings } from "./scan.js";
 import { pmInstallCommand } from "./prompts/index.js";
 import { withSpinner } from "../../lib/spinner.js";
+import type { Need } from "../../lib/deps.ts";
 import type { FileAction, ProjectContext, ScaffoldPlan } from "./frameworks/types.js";
 import type { ScanFinding } from "./scan.js";
 
-async function runPmInstall(
-  cwd: string,
-  addCmd: string,
-  packages: string[],
-  label: string,
-  { fromLockfile = false }: { fromLockfile?: boolean } = {},
-): Promise<void> {
-  const pmBinary = addCmd.split(" ")[0]!;
-  const manualCmd = `${addCmd} ${packages.join(" ")}`;
+export type InstallSdkDeps = Need<{ log: "info" | "warn" }>;
+
+export async function installSdk(deps: InstallSdkDeps, ctx: ProjectContext): Promise<void> {
+  const addCmd = pmInstallCommand(ctx.packageManager);
 
   if (Bun.which(pmBinary) === null) {
-    const hint = fromLockfile
-      ? ` (detected from lockfile — install ${pmBinary} or switch package managers)`
-      : "";
-    log.warn(`${pmBinary} is not installed${hint}. Install manually: ${manualCmd}`);
+    deps.log.warn(
+      yellow(
+        `${pmBinary} is not installed but the project's lockfile suggests it. ` +
+          `Install ${pmBinary} or run \`${addCmd} ${ctx.framework.sdk}\` manually with another package manager.`,
+      ),
+    );
     return;
   }
 
-  log.info(`Installing ${label}...`);
+  deps.log.info(`Installing ${cyan(ctx.framework.sdk)} for ${ctx.framework.name}...`);
 
   let exitCode: number;
   try {
@@ -41,12 +36,20 @@ async function runPmInstall(
     exitCode = await proc.exited;
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    log.warn(`Failed to spawn ${addCmd}: ${message}. Install manually: ${manualCmd}`);
+    deps.log.warn(
+      yellow(
+        `Failed to spawn ${addCmd}: ${message}. You can install manually: ${addCmd} ${ctx.framework.sdk}`,
+      ),
+    );
     return;
   }
 
   if (exitCode !== 0) {
-    log.warn(`Failed to install ${packages.join(", ")}. Install manually: ${manualCmd}`);
+    deps.log.warn(
+      yellow(
+        `Failed to install ${ctx.framework.sdk}. You can install it manually: ${addCmd} ${ctx.framework.sdk}`,
+      ),
+    );
   }
 }
 
@@ -109,34 +112,49 @@ function formatAction(action: FileAction): string {
   return `  ${dim("-")} ${dim(action.path)} ${dim(`(${action.skipReason})`)}`;
 }
 
-export function printOutro(plan: ScaffoldPlan, findings: ScanFinding[]): void {
-  log.info(bold(green("\n✓ Clerk has been set up in your project\n")));
+export type PrintOutroDeps = Need<{ log: "info" }>;
+
+export function printOutro(
+  deps: PrintOutroDeps,
+  plan: ScaffoldPlan,
+  findings: ScanFinding[],
+): void {
+  deps.log.info(bold(green("\n✓ Clerk has been set up in your project\n")));
 
   for (const action of plan.actions) {
-    log.info(formatAction(action));
+    deps.log.info(formatAction(action));
   }
 
   printNextSteps(plan.postInstructions);
   printFindings(findings);
-  log.blank();
+  deps.log.info("");
 }
+
+export type GetAuthenticatedEmailDeps = Need<{
+  credentialStore: "getToken";
+  tokenExchange: "fetchUserInfo";
+}>;
 
 /**
  * Try to get the currently authenticated user's email without triggering login.
  * Returns null if not authenticated or token is expired.
  */
-export async function getAuthenticatedEmail(): Promise<string | null> {
+export async function getAuthenticatedEmail(
+  deps: GetAuthenticatedEmailDeps,
+): Promise<string | null> {
   try {
-    const token = await getToken();
+    const token = await deps.credentialStore.getToken();
     if (!token) return null;
-    const userInfo = await fetchUserInfo(token);
+    const userInfo = await deps.tokenExchange.fetchUserInfo(token);
     return userInfo.email;
   } catch {
     return null;
   }
 }
 
-export function printKeylessInfo(): void {
+export type PrintKeylessInfoDeps = Need<{ log: "info" }>;
+
+export function printKeylessInfo(deps: PrintKeylessInfoDeps): void {
   const lines = [
     "\n  Your app will work immediately — Clerk generates temporary dev keys automatically.",
     `  Look for the ${bold('"Configure your application"')} banner to claim your account.\n`,
@@ -145,5 +163,5 @@ export function printKeylessInfo(): void {
     "    clerk link",
     "    clerk env pull",
   ];
-  log.info(lines.map(dim).join("\n"));
+  deps.log.info(lines.map(dim).join("\n"));
 }

@@ -1,9 +1,17 @@
 /**
- * Framework detection for determining the correct Clerk SDK and env var name.
- * Reads package.json to identify the project's framework.
+ * Framework metadata for determining the correct Clerk SDK and env var name.
+ *
+ * Pure types and the framework table live here. The I/O-bound detection logic
+ * (`readDeps`, `detectFramework`) lives in `lib/project-detector/`. The
+ * thin wrappers `detectPublishableKeyName`, `detectSecretKeyName`, and
+ * `detectEnvFile` stay here so existing import sites (`pull-default`, doctor's
+ * checks, etc.) keep working without churn; they delegate to project-detector
+ * for the underlying filesystem read.
  */
 
-import { join } from "node:path";
+import { detectFramework } from "./project-detector/index.ts";
+
+export { detectFramework, readDeps } from "./project-detector/index.ts";
 
 export interface FrameworkInfo {
   dep: string;
@@ -130,29 +138,6 @@ export const FRAMEWORK_NAMES = FRAMEWORK_MAP.map((fw) => {
 
 const FALLBACK_KEY = "CLERK_PUBLISHABLE_KEY";
 const FALLBACK_SECRET_KEY = "CLERK_SECRET_KEY";
-
-export async function readDeps(cwd: string): Promise<Record<string, string> | null> {
-  const file = Bun.file(join(cwd, "package.json"));
-  if (!(await file.exists())) return null;
-
-  try {
-    const pkg = await file.json();
-    return { ...pkg.dependencies, ...pkg.devDependencies };
-  } catch {
-    return null;
-  }
-}
-
-export async function detectFramework(cwd: string): Promise<FrameworkInfo | null> {
-  const allDeps = await readDeps(cwd);
-  if (!allDeps) return null;
-
-  for (const fw of FRAMEWORK_MAP) {
-    if (fw.dep in allDeps) return fw;
-  }
-
-  return null;
-}
 
 export async function detectPublishableKeyName(cwd: string): Promise<string> {
   const fw = await detectFramework(cwd);

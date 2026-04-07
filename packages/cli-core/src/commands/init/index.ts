@@ -1,19 +1,15 @@
-import { login } from "../auth/login.js";
-import { link } from "../link/index.js";
-import { createRoot } from "../../lib/root.js";
-import { pull } from "../env/pull.js";
-import { isAgent } from "../../mode.js";
-import { dim, bold } from "../../lib/color.js";
-import { throwUserAbort, CliError } from "../../lib/errors.js";
-import { lookupFramework, type FrameworkInfo } from "../../lib/framework.js";
-import { resolveProfile } from "../../lib/config.js";
-import { log } from "../../lib/log.js";
-import { printNextSteps } from "../../lib/next-steps.js";
-import { gatherContext, hasPackageJson } from "./context.js";
-import { scaffold, enrichProjectContext } from "./scaffold.js";
-import { previewPlan, previewAndConfirm } from "./preview.js";
-import { runFormatters } from "./format.js";
-import { detectAuthLibraries, scanForIssues } from "./scan.js";
+import type { Need } from "../../lib/deps.ts";
+import { login } from "../auth/login.ts";
+import { linkIfNeeded, type LinkIfNeededDeps } from "../link/helpers/link-if-needed.ts";
+import { pullDefault, type PullDefaultDeps } from "../env/helpers/pull-default.ts";
+import { dim, green, yellow, bold } from "../../lib/color.ts";
+import { throwUserAbort, CliError } from "../../lib/errors.ts";
+import { lookupFramework, type FrameworkInfo } from "../../lib/framework.ts";
+import { printNextSteps } from "../../lib/next-steps.ts";
+import { scaffold, enrichProjectContext } from "./scaffold.ts";
+import { previewPlan, previewAndConfirm } from "./preview.ts";
+import { runFormatters } from "./format.ts";
+import { detectAuthLibraries, scanForIssues } from "./scan.ts";
 import {
   installSdk,
   installDeps,
@@ -22,21 +18,18 @@ import {
   printOutro,
   printKeylessInfo,
   getAuthenticatedEmail,
-} from "./heuristics.js";
-import { installSkills } from "./skills.js";
-import { intro, outro, bar, withSpinner } from "../../lib/spinner.js";
+} from "./heuristics.ts";
+import { installSkills } from "./skills.ts";
 import {
   promptAndBootstrap,
   confirmOverwrite,
   askSkipAuth,
   type BootstrapOverrides,
   type BootstrapResult,
-} from "./bootstrap.js";
-import type { ProjectContext } from "./frameworks/types.js";
-import type { PackageManager } from "./bootstrap-registry.js";
+} from "./bootstrap.ts";
+import type { ProjectContext } from "./frameworks/types.ts";
 
-type InitOptions = {
-  /** Framework to set up (skips auto-detection). */
+export interface InitOptions {
   framework?: string;
   pm?: PackageManager;
   name?: string;
@@ -47,36 +40,45 @@ type InitOptions = {
   skills?: boolean;
   /** Create a new project from a starter template. */
   starter?: boolean;
-  /** Link to a specific Clerk application by ID (skips the interactive picker). */
-  app?: string;
-};
+}
 
-export async function init(options: InitOptions = {}) {
+/**
+ * Init's slice. The link-if-needed and pull-default helpers cover the
+ * collaborator surface for the linking + env-pull subflows; the rest
+ * (projectDetector, mode, configStore, env, spinner) are touched directly.
+ */
+export type InitDeps = Need<{
+  projectDetector: "gather" | "hasPackageJson";
+  mode: "isAgent";
+  configStore: "resolveProfile";
+  credentialStore: "getToken";
+  tokenExchange: "fetchUserInfo";
+  env: "get";
+  spinner: "intro" | "outro" | "bar" | "withSpinner";
+  log: "info" | "warn" | "data";
+}> &
+  LinkIfNeededDeps &
+  PullDefaultDeps;
+
+export async function init(deps: InitDeps, options: InitOptions = {}): Promise<void> {
   const cwd = process.cwd();
 
   const frameworkOverride = options.framework
     ? (lookupFramework(options.framework) ?? undefined)
     : undefined;
 
-  if (options.prompt) {
-    log.data(
+  if (options.prompt || deps.mode.isAgent()) {
+    deps.log.data(
       "Run `clerk init -y` to automatically detect the framework, install the Clerk SDK, and scaffold authentication files without interactive prompts.",
     );
     return;
   }
 
-  // In agent mode, implicitly enable --yes to skip all confirmation prompts.
-  const overrides: BootstrapOverrides = {
-    skipConfirm: options.yes || isAgent(),
-    pmOverride: options.pm,
-    nameOverride: options.name,
-  };
-
-  intro("clerk init");
+  deps.spinner.intro("clerk init");
 
   const resolved = options.starter
-    ? await handleStarter(cwd, frameworkOverride, overrides)
-    : await resolveProjectContext(cwd, frameworkOverride, overrides);
+    ? await handleStarter(deps, cwd, frameworkOverride, options.yes)
+    : await resolveProjectContext(deps, cwd, frameworkOverride, options.yes);
 
   if (!resolved) return;
 
@@ -88,37 +90,29 @@ export async function init(options: InitOptions = {}) {
 
   await enrichProjectContext(ctx);
 
-  const keyless = await resolveKeylessMode(bootstrap, ctx, overrides.skipConfirm);
+  const keyless = bootstrap ? options.yes || (await askSkipAuth(deps)) : false;
   ctx.keyless = keyless;
 
-  const skipAuth = !keyless && bootstrap != null && overrides.skipConfirm;
-
-  if (!keyless && !skipAuth) {
-    bar();
-    await authenticateAndLink(ctx.cwd, options.app);
+  if (!keyless) {
+    deps.spinner.bar();
+    await authenticateAndLink(deps, ctx.cwd);
   }
 
   // Short-circuit on a fully-clean re-run so env pull / skills prompt don't
   // execute when there's nothing to do.
-  const { alreadySetUp } = await detectAndInstall(ctx.cwd, ctx, overrides.skipConfirm);
+  const { alreadySetUp } = await detectAndInstall(deps, ctx.cwd, ctx, options);
 
   if (alreadySetUp) {
-    log.success("\nClerk is already set up in this project.");
-    outro("Done");
+    deps.log.info(green("\nClerk is already set up in this project."));
+    deps.spinner.outro("Done");
     return;
   }
 
-  bar();
-  if (skipAuth) {
-    printBootstrapManualSetupInfo(ctx.framework.name);
-  } else if (!keyless) {
-    // init has not yet been ported to dependency injection (PR 8). Until
-    // it is, construct the production root inline so the ported `pull`
-    // command can be invoked from this unported caller. This bridge will
-    // disappear when init is ported to take `deps` itself.
-    await pull(createRoot(), { file: ctx.envFile });
+  deps.spinner.bar();
+  if (!keyless) {
+    await pullDefault(deps, { file: ctx.envFile });
   } else {
-    printKeylessInfo();
+    printKeylessInfo(deps);
   }
 
   if (bootstrap) {
@@ -126,11 +120,11 @@ export async function init(options: InitOptions = {}) {
   }
 
   if (options.skills !== false) {
-    bar();
-    await installSkills(ctx.cwd, ctx.framework.dep, ctx.packageManager, overrides.skipConfirm);
+    deps.spinner.bar();
+    await installSkills(cwd, ctx?.framework.dep, options.yes ?? false);
   }
 
-  outro("Done");
+  deps.spinner.outro("Done");
 }
 
 type ResolvedContext = {
@@ -138,16 +132,23 @@ type ResolvedContext = {
   bootstrap: BootstrapResult | null;
 };
 
+type ResolveContextDeps = Need<{
+  projectDetector: "gather" | "hasPackageJson";
+  spinner: "withSpinner";
+  prompts: "confirm" | "search" | "input";
+}>;
+
 // --- Bootstrap paths ---
 
 async function bootstrapAndDetect(
+  deps: ResolveContextDeps,
   cwd: string,
   frameworkOverride: FrameworkInfo | undefined,
   overrides: BootstrapOverrides,
 ): Promise<ResolvedContext> {
-  const bootstrap = await promptAndBootstrap(cwd, frameworkOverride, overrides);
+  const bootstrap = await promptAndBootstrap(deps, cwd, frameworkOverride, { skipConfirm });
 
-  const ctx = await gatherContext(bootstrap.projectDir);
+  const ctx = await deps.projectDetector.gather(bootstrap.projectDir);
   if (!ctx) {
     throw new CliError("Project generation did not produce a detectable framework.");
   }
@@ -155,28 +156,30 @@ async function bootstrapAndDetect(
 }
 
 async function handleStarter(
+  deps: ResolveContextDeps,
   cwd: string,
   frameworkOverride: FrameworkInfo | undefined,
   overrides: BootstrapOverrides,
 ): Promise<ResolvedContext> {
-  if (!overrides.skipConfirm) {
-    await confirmOverwrite(cwd);
+  if (!skipConfirm) {
+    await confirmOverwrite(deps, cwd);
   }
 
-  return bootstrapAndDetect(cwd, frameworkOverride, { ...overrides, skipConfirm: true });
+  return bootstrapAndDetect(deps, cwd, frameworkOverride, true);
 }
 
 async function resolveProjectContext(
+  deps: ResolveContextDeps,
   cwd: string,
   frameworkOverride: FrameworkInfo | undefined,
   overrides: BootstrapOverrides,
 ): Promise<ResolvedContext> {
-  const ctx = await withSpinner("Detecting framework...", () =>
-    gatherContext(cwd, frameworkOverride, overrides.pmOverride),
+  const ctx = await deps.spinner.withSpinner("Detecting framework...", () =>
+    deps.projectDetector.gather(cwd, frameworkOverride),
   );
   if (ctx) return { ctx, bootstrap: null };
 
-  const isBlank = !(await hasPackageJson(cwd));
+  const isBlank = !(await deps.projectDetector.hasPackageJson(cwd));
 
   if (!isBlank) {
     throw new CliError(
@@ -184,7 +187,7 @@ async function resolveProjectContext(
     );
   }
 
-  return bootstrapAndDetect(cwd, frameworkOverride, overrides);
+  return bootstrapAndDetect(deps, cwd, frameworkOverride, skipConfirm);
 }
 
 // --- Next steps ---
@@ -199,7 +202,7 @@ function printBootstrapNextSteps(
 ): void {
   const steps = [`cd ${projectName}`, devCommand(packageManager)];
   if (keyless) {
-    steps.push("clerk auth login  (when you're ready to connect your Clerk account)");
+    steps.push("clerk login  (when you're ready to connect your Clerk account)");
   }
   printNextSteps(steps);
 }
@@ -237,62 +240,77 @@ async function resolveKeylessMode(
 
 // --- Auth ---
 
-async function resolveAuthLabel(): Promise<string> {
-  const hasApiKey = Boolean(process.env.CLERK_PLATFORM_API_KEY);
+type ResolveAuthLabelDeps = Need<{
+  env: "get";
+  credentialStore: "getToken";
+  tokenExchange: "fetchUserInfo";
+}> &
+  LinkIfNeededDeps;
+
+async function resolveAuthLabel(deps: ResolveAuthLabelDeps): Promise<string> {
+  const hasApiKey = Boolean(deps.env.get("CLERK_PLATFORM_API_KEY"));
   if (hasApiKey) return "Using API key";
 
-  const email = await getAuthenticatedEmail();
+  const email = await getAuthenticatedEmail(deps);
   if (email) return `Logged in as ${email}`;
 
-  await login(createRoot(), { showNextSteps: false });
+  await login(deps, { showNextSteps: false });
   return "";
 }
 
-async function authenticateAndLink(cwd: string, app: string | undefined): Promise<void> {
-  const label = await resolveAuthLabel();
-  const profile = await resolveProfile(cwd);
+type AuthenticateAndLinkDeps = Need<{
+  configStore: "resolveProfile";
+  log: "info";
+}> &
+  ResolveAuthLabelDeps;
 
-  const alreadyOnRequestedApp = profile && (!app || profile.profile.appId === app);
+async function authenticateAndLink(deps: AuthenticateAndLinkDeps, cwd: string): Promise<void> {
+  const label = await resolveAuthLabel(deps);
+  const profile = await deps.configStore.resolveProfile(cwd);
 
-  if (label && alreadyOnRequestedApp) {
-    log.info(dim(`${label} · Linked to ${profile.profile.appId}`));
+  if (label && profile) {
+    deps.log.info(dim(`${label} · Linked to ${profile.profile.appId}`));
     return;
   }
 
   if (label) {
-    log.info(dim(label));
+    deps.log.info(dim(label));
   }
 
-  // init has not yet been ported to dependency injection (PR 8). Until
-  // it is, construct the production root inline so the ported `link`
-  // command can be invoked from this unported caller. This bridge will
-  // disappear when init is ported to take `deps` itself.
-  await link(createRoot(), { skipIfLinked: true, app });
+  await linkIfNeeded(deps, { skipIfLinked: true });
 }
 
 // --- Detect & install ---
 
+type DetectAndInstallDeps = Need<{
+  spinner: "withSpinner";
+  prompts: "confirm";
+  log: "info" | "warn";
+}>;
+
 async function detectAndInstall(
+  deps: DetectAndInstallDeps,
   cwd: string,
   ctx: ProjectContext,
   skipConfirm: boolean,
 ): Promise<{ alreadySetUp: boolean }> {
   const variantLabel = ctx.variant ? ` (${ctx.variant})` : "";
-  log.info(`\nDetected ${bold(ctx.framework.name)}${variantLabel}`);
+  deps.log.info(`\nDetected ${bold(ctx.framework.name)}${variantLabel}`);
 
   detectAuthLibraries(ctx.deps);
-  log.blank();
+  deps.log.info("");
 
   if (ctx.existingClerk) {
-    log.info(dim(`${ctx.framework.sdk} is already installed`));
+    deps.log.info(dim(`${ctx.framework.sdk} is already installed`));
   } else {
-    await installSdk(ctx);
+    await installSdk(deps, ctx);
   }
 
-  return await scaffoldAndWrite(cwd, ctx, skipConfirm);
+  return await scaffoldAndWrite(deps, cwd, ctx, options);
 }
 
 async function scaffoldAndWrite(
+  deps: DetectAndInstallDeps,
   cwd: string,
   ctx: ProjectContext,
   skipConfirm: boolean,
@@ -306,22 +324,22 @@ async function scaffoldAndWrite(
   }
 
   if (!hasChanges) {
-    log.info(dim("\nNo files to scaffold, but:"));
+    deps.log.info(dim("\nNo files to scaffold, but:"));
     for (const instr of plan.postInstructions) {
-      log.info(dim(`  • ${instr}`));
+      deps.log.info(dim(`  • ${instr}`));
     }
     return { alreadySetUp: false };
   }
 
   if (await checkGitDirty(cwd)) {
-    log.warn("You have uncommitted changes");
-    log.info(dim("Consider committing first so you can review what clerk init creates.\n"));
+    deps.log.warn(yellow("You have uncommitted changes"));
+    deps.log.info(dim("Consider committing first so you can review what clerk init creates.\n"));
   }
 
   if (skipConfirm) {
     previewPlan(plan);
   } else {
-    const proceed = await previewAndConfirm(plan);
+    const proceed = await previewAndConfirm(deps, plan);
     if (!proceed) throwUserAbort();
   }
 
@@ -332,10 +350,10 @@ async function scaffoldAndWrite(
   const writtenFiles = await writePlan(cwd, plan);
   await runFormatters(ctx, writtenFiles);
 
-  const findings = await withSpinner("Scanning for issues...", () =>
+  const findings = await deps.spinner.withSpinner("Scanning for issues...", () =>
     scanForIssues(cwd, ctx.framework.dep),
   );
-  printOutro(plan, findings);
+  printOutro(deps, plan, findings);
 
   return { alreadySetUp: false };
 }

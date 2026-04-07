@@ -14,7 +14,7 @@ import type { Spinner } from "./spinner.ts";
 import type { Logger } from "./logger.ts";
 import type { Env } from "./env.ts";
 import type { Environment } from "./environment.ts";
-import type { ProjectDetector } from "./project-detector.ts";
+import type { ProjectDetector } from "./project-detector/index.ts";
 
 /**
  * Single source of truth for every injectable collaborator.

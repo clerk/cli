@@ -1,9 +1,9 @@
 import { join } from "node:path";
-import { search, confirm, input } from "@inquirer/prompts";
-import { throwUserAbort, throwUsageError, CliError } from "../../lib/errors.js";
-import { log } from "../../lib/log.js";
+import type { Need } from "../../lib/deps.ts";
+import { cyan, yellow } from "../../lib/color.js";
+import { throwUserAbort, CliError } from "../../lib/errors.js";
 import type { FrameworkInfo } from "../../lib/framework.js";
-import { dirExists, hasPackageJson } from "./context.js";
+import { hasPackageJson } from "../../lib/project-detector/index.ts";
 import {
   BOOTSTRAP_REGISTRY,
   PM_INSTALL_COMMANDS,
@@ -38,9 +38,14 @@ function filterChoices<T extends { name: string }>(choices: T[], term: string | 
   return choices.filter((c) => c.name.toLowerCase().includes(lower));
 }
 
-async function pickFramework(frameworkOverride?: FrameworkInfo): Promise<BootstrapEntry> {
+type PickFrameworkDeps = Need<{ prompts: "search" }>;
+
+async function pickFramework(
+  deps: PickFrameworkDeps,
+  frameworkOverride?: FrameworkInfo,
+): Promise<BootstrapEntry> {
   if (!frameworkOverride) {
-    const chosen = await search({
+    const chosen = await deps.prompts.search<string>({
       message: "Which framework?",
       source: (term) => filterChoices(FRAMEWORK_CHOICES, term),
     });
@@ -56,8 +61,10 @@ async function pickFramework(frameworkOverride?: FrameworkInfo): Promise<Bootstr
   );
 }
 
-async function pickPackageManager(): Promise<PackageManager> {
-  return search<PackageManager>({
+type PickPackageManagerDeps = Need<{ prompts: "search" }>;
+
+async function pickPackageManager(deps: PickPackageManagerDeps): Promise<PackageManager> {
+  return deps.prompts.search<PackageManager>({
     message: "Which package manager?",
     source: (term) => filterChoices(PM_CHOICES, term),
   });
@@ -85,8 +92,10 @@ function validateProjectName(value: string): string | true {
   return true;
 }
 
-async function askProjectName(entry: BootstrapEntry): Promise<string> {
-  const name = await input({
+type AskProjectNameDeps = Need<{ prompts: "input" }>;
+
+async function askProjectName(deps: AskProjectNameDeps, entry: BootstrapEntry): Promise<string> {
+  const name = await deps.prompts.input({
     message: "Project name:",
     default: entry.defaultProjectName,
     validate: validateProjectName,
@@ -94,10 +103,13 @@ async function askProjectName(entry: BootstrapEntry): Promise<string> {
   return name.trim();
 }
 
-async function generateProject(label: string, command: string[], cwd: string): Promise<void> {
-  log.blank();
-  log.info(`Creating \`${label}\` project...`);
-  log.blank();
+async function generateProject(
+  deps: Need<{ log: "info" }>,
+  label: string,
+  command: string[],
+  cwd: string,
+): Promise<void> {
+  deps.log.info(`\nCreating ${cyan(label)} project...\n`);
 
   const exitCode = await spawnInherited(command, cwd);
   if (exitCode !== 0) {
@@ -105,35 +117,40 @@ async function generateProject(label: string, command: string[], cwd: string): P
   }
 }
 
-async function installDependencies(pm: PackageManager, cwd: string): Promise<void> {
-  log.blank();
-  log.info("Installing dependencies...");
-  log.blank();
+async function installDependencies(
+  deps: Need<{ log: "info" | "warn" }>,
+  pm: PackageManager,
+  cwd: string,
+): Promise<void> {
+  deps.log.info(`\nInstalling dependencies...\n`);
 
   const exitCode = await spawnInherited(PM_INSTALL_COMMANDS[pm], cwd);
   if (exitCode !== 0) {
-    log.blank();
-    log.warn(
-      `Dependency installation failed. Run manually: \`${PM_INSTALL_COMMANDS[pm].join(" ")}\``,
+    deps.log.warn(
+      yellow(`Dependency installation failed. Run manually: ${PM_INSTALL_COMMANDS[pm].join(" ")}`),
     );
   }
 }
 
+export type ConfirmOverwriteDeps = Need<{ prompts: "confirm" }>;
+
 /**
  * Warn if a package.json already exists (for --starter in non-blank dirs).
  */
-export async function confirmOverwrite(cwd: string): Promise<void> {
+export async function confirmOverwrite(deps: ConfirmOverwriteDeps, cwd: string): Promise<void> {
   if (!(await hasPackageJson(cwd))) return;
 
-  const proceed = await confirm({
+  const proceed = await deps.prompts.confirm({
     message: "This directory already has a package.json. Proceed anyway?",
     default: false,
   });
   if (!proceed) throwUserAbort();
 }
 
-export async function askSkipAuth(): Promise<boolean> {
-  return confirm({
+export type AskSkipAuthDeps = Need<{ prompts: "confirm" }>;
+
+export async function askSkipAuth(deps: AskSkipAuthDeps): Promise<boolean> {
+  return deps.prompts.confirm({
     message:
       "Skip authentication for now? (you can connect your Clerk account later with `clerk auth login`)",
     default: true,
@@ -152,55 +169,43 @@ export type BootstrapResult = {
   packageManager: PackageManager;
 };
 
+export type PromptAndBootstrapDeps = Need<{
+  prompts: "confirm" | "search" | "input";
+  log: "info" | "warn";
+}>;
+
 /**
  * Interactive bootstrap flow.
  * When skipConfirm is true (e.g. --starter flag, -y, or agent mode), skips the
  * "create a new one?" prompt and auto-resolves PM/project name when not overridden.
  */
 export async function promptAndBootstrap(
+  deps: PromptAndBootstrapDeps,
   cwd: string,
   frameworkOverride: FrameworkInfo | undefined,
   { skipConfirm = false, pmOverride, nameOverride }: BootstrapOverrides = { skipConfirm: false },
 ): Promise<BootstrapResult> {
   if (!skipConfirm) {
-    const wantBootstrap = await confirm({
+    const wantBootstrap = await deps.prompts.confirm({
       message: "No project detected. Would you like to create a new one?",
       default: true,
     });
     if (!wantBootstrap) throwUserAbort();
   }
 
-  if (skipConfirm && !frameworkOverride) {
-    throwUsageError(
-      "Non-interactive mode requires --framework for new projects. Example: clerk init --starter --framework next",
-    );
-  }
-
-  if (nameOverride) {
-    const valid = validateProjectName(nameOverride);
-    if (valid !== true) throwUsageError(`Invalid --name "${nameOverride}": ${valid}`);
-  }
-
-  const entry = await pickFramework(frameworkOverride);
-  const pm = pmOverride ?? (skipConfirm ? resolvePackageManager() : await pickPackageManager());
-  const projectName =
-    nameOverride ?? (skipConfirm ? entry.defaultProjectName : await askProjectName(entry));
+  const entry = await pickFramework(deps, frameworkOverride);
+  const pm = await pickPackageManager(deps);
+  const projectName = await askProjectName(deps, entry);
   const projectDir = join(cwd, projectName);
 
-  if (await dirExists(projectDir)) {
-    throw new CliError(
-      `Directory '${projectName}' already exists. Pick a different name or remove it first.`,
-    );
-  }
-
-  await generateProject(entry.label, entry.buildCommand(pm, projectName), cwd);
+  await generateProject(deps, entry.label, entry.buildCommand(pm, projectName), cwd);
 
   if (!(await hasPackageJson(projectDir))) {
     throw new CliError("Generator did not create a package.json.");
   }
 
-  await installDependencies(pm, projectDir);
+  await installDependencies(deps, pm, projectDir);
 
-  log.blank();
+  deps.log.info("");
   return { projectDir, projectName, packageManager: pm };
 }

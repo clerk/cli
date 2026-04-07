@@ -1,5 +1,5 @@
 import { join } from "node:path";
-import { fileExists, dirExists } from "../context.js";
+import { fileExists, dirExists } from "../../../lib/project-detector/index.js";
 import { findFirstFile, resolveNextjsMiddlewareBasename, scriptExt, srcPrefix } from "./helpers.js";
 import type { ProjectContext } from "./types.js";
 

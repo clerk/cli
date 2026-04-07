@@ -6,10 +6,13 @@
  * test harness setup/teardown functions.
  *
  * WARNING: Do NOT add static imports of modules that transitively import any
- * mocked module (credential-store, git, mode, inquirer, token-exchange,
- * auth-server, pkce). Bun's `mock.module()` must be registered before any
- * consumer loads the real module. All consuming imports must use dynamic
- * `await import(...)` AFTER the mock.module() calls below.
+ * mocked module (credential-store, git, mode, inquirer). Bun's `mock.module()`
+ * must be registered before any consumer loads the real module. All consuming
+ * imports must use dynamic `await import(...)` AFTER the mock.module() calls
+ * below.
+ *
+ * Ported (DI) commands no longer rely on `mock.module()` for token-exchange,
+ * auth-server, or pkce; their stubs are inlined into `testRoot()` below.
  */
 
 import { mock, spyOn, beforeEach, afterEach } from "bun:test";
@@ -41,52 +44,56 @@ export const mockState = {
 // ── Module mocks (executed at import time) ───────────────────────────────────
 
 mock.module("../../../lib/credential-store.ts", () => {
-  const getToken = async () => mockState.storedToken;
-  const storeToken = async (token: string) => {
-    mockState.storedToken = token;
-  };
-  const deleteToken = async () => {
-    mockState.storedToken = null;
+  const stubs = {
+    getToken: async () => mockState.storedToken,
+    storeToken: async (token: string) => {
+      mockState.storedToken = token;
+    },
+    deleteToken: async () => {
+      mockState.storedToken = null;
+    },
   };
   return {
-    getToken,
-    storeToken,
-    deleteToken,
+    ...stubs,
     _setTokenOverride: () => {},
     KEYCHAIN_SERVICE: "clerk-cli",
     KEYCHAIN_ACCOUNT: "oauth-access-token",
-    credentialStore: { getToken, storeToken, deleteToken },
+    // The `credentialStore` namespace export is consumed by `lib/root.ts`.
+    credentialStore: stubs,
   } satisfies typeof import("../../../lib/credential-store.ts");
 });
 
 mock.module("../../../lib/git.ts", () => {
-  const getGitRepoRoot = async () => mockState.gitRepoRoot;
-  const getGitRepoIdentifier = async () => mockState.gitRepoIdentifier;
-  const getGitNormalizedRemote = async () => mockState.gitNormalizedRemote;
-  const normalizeGitRemoteUrl = (url: string) => url;
+  const stubs = {
+    getGitRepoRoot: async () => mockState.gitRepoRoot,
+    getGitRepoIdentifier: async () => mockState.gitRepoIdentifier,
+    getGitNormalizedRemote: async () => mockState.gitNormalizedRemote,
+    normalizeGitRemoteUrl: (url: string) => url,
+  };
   return {
-    getGitRepoRoot,
-    getGitRepoIdentifier,
-    getGitNormalizedRemote,
-    normalizeGitRemoteUrl,
-    git: { getGitRepoRoot, getGitRepoIdentifier, getGitNormalizedRemote, normalizeGitRemoteUrl },
+    ...stubs,
+    // The `git` namespace export is consumed by `lib/root.ts` and unported
+    // command code paths (lib/config.ts, lib/autolink.ts) still import git
+    // helpers directly. The mock.module entry will be removable once those
+    // last raw consumers are ported.
+    git: stubs,
   } satisfies typeof import("../../../lib/git.ts");
 });
 
 let _mode: "human" | "agent" = "human";
 mock.module("../../../mode.ts", () => {
-  const getMode = () => _mode;
-  const setMode = (m: "human" | "agent") => {
-    _mode = m;
+  const stubs = {
+    getMode: () => _mode,
+    isHuman: () => _mode === "human",
+    isAgent: () => _mode === "agent",
   };
-  const isHuman = () => _mode === "human";
-  const isAgent = () => _mode === "agent";
   return {
-    getMode,
-    setMode,
-    isHuman,
-    isAgent,
-    modeService: { getMode, isHuman, isAgent },
+    ...stubs,
+    setMode: (m: "human" | "agent") => {
+      _mode = m;
+    },
+    // The `modeService` namespace export is consumed by `lib/root.ts`.
+    modeService: stubs,
   } satisfies typeof import("../../../mode.ts");
 });
 
@@ -169,47 +176,6 @@ mock.module("@inquirer/prompts", () => ({
   password: dequeuePrompt("password"),
   editor: dequeuePrompt("editor"),
 }));
-
-mock.module("../../../lib/token-exchange.ts", () => {
-  const exchangeCodeForToken = async () => ({
-    access_token: "mock_access_token",
-    token_type: "Bearer",
-    expires_in: 3600,
-  });
-  const fetchUserInfo = async (token: string) => {
-    if (!token || token === "expired_token") throw new Error("Unauthorized");
-    return { userId: "user_123", email: "test@example.com" };
-  };
-  return {
-    exchangeCodeForToken,
-    fetchUserInfo,
-    tokenExchange: { exchangeCodeForToken, fetchUserInfo },
-  } satisfies typeof import("../../../lib/token-exchange.ts");
-});
-
-mock.module("../../../lib/auth-server.ts", () => {
-  const startAuthServer = () => ({
-    port: 12345,
-    waitForCallback: async () => ({ code: "mock_code" }),
-    stop: () => {},
-  });
-  return {
-    startAuthServer,
-    authServer: { startAuthServer },
-  } satisfies typeof import("../../../lib/auth-server.ts");
-});
-
-mock.module("../../../lib/pkce.ts", () => {
-  const generateCodeVerifier = () => "mock_verifier";
-  const generateCodeChallenge = async () => "mock_challenge";
-  const generateState = () => "mock_state";
-  return {
-    generateCodeVerifier,
-    generateCodeChallenge,
-    generateState,
-    pkce: { generateCodeVerifier, generateCodeChallenge, generateState },
-  } satisfies typeof import("../../../lib/pkce.ts");
-});
 
 // ── Real config module ───────────────────────────────────────────────────────
 
@@ -386,9 +352,179 @@ export interface CLIResult {
 
 async function execCLI(...args: string[]): Promise<CLIResult> {
   const { createProgram, runProgram } = await import("../../../cli-program.ts");
-  const { createRoot } = await import("../../../lib/root.ts");
+  const { testRoot } = await import("../../lib/test-root.ts");
   const { bootstrap } = await import("../../../lib/bootstrap.ts");
-  const program = createProgram(createRoot());
+
+  // Bridge mocked module state into the Root for ported commands. As more
+  // commands move to dependency injection, ported code paths read through
+  // deps instead of the file-level mock.module() registrations. This wiring
+  // keeps both worlds in sync until every command is ported and the
+  // mock.module() shims can be deleted.
+  const credentialStoreMock = await import("../../../lib/credential-store.ts");
+  const configModule = await import("../../../lib/config.ts");
+  const gitMock = await import("../../../lib/git.ts");
+  const modeMock = await import("../../../mode.ts");
+  const projectDetectorModule = await import("../../../lib/project-detector/index.ts");
+  const promptsModule = await import("../../../lib/prompts.ts");
+  const spinnerModule = await import("../../../lib/spinner.ts");
+  const plapiModule = await import("../../../lib/plapi.ts");
+  const bapiModule = await import("../../../commands/api/bapi.ts");
+  const environmentModule = await import("../../../lib/environment.ts");
+  const root = testRoot({
+    credentialStore: {
+      getToken: credentialStoreMock.getToken,
+      storeToken: credentialStoreMock.storeToken,
+      deleteToken: credentialStoreMock.deleteToken,
+    },
+    // configStore is backed by the real config module writing to the
+    // per-test temporary CLERK_CONFIG_DIR set by setupTest.
+    configStore: {
+      readConfig: configModule.readConfig,
+      writeConfig: configModule.writeConfig,
+      getAuth: configModule.getAuth,
+      setAuth: configModule.setAuth,
+      clearAuth: configModule.clearAuth,
+      getEnvironment: configModule.getEnvironment,
+      setEnvironment: configModule.setEnvironment,
+      getProfile: configModule.getProfile,
+      setProfile: configModule.setProfile,
+      removeProfile: configModule.removeProfile,
+      moveProfile: configModule.moveProfile,
+      listProfiles: configModule.listProfiles,
+      resolveProfile: configModule.resolveProfile,
+      resolveAppContext: configModule.resolveAppContext,
+    },
+    // tokenExchange is no longer file-level mocked. Inline the same stub
+    // values the deleted mock.module() block previously provided.
+    tokenExchange: {
+      exchangeCodeForToken: async () => ({
+        access_token: "mock_access_token",
+        token_type: "Bearer",
+        expires_in: 3600,
+      }),
+      fetchUserInfo: async (token: string) => {
+        if (!token || token === "expired_token") throw new Error("Unauthorized");
+        return { userId: "user_123", email: "test@example.com" };
+      },
+    },
+    // authServer was also a file-level mock; inline the deterministic stub
+    // so ported commands (e.g. login) can run end-to-end through clerk().
+    authServer: {
+      startAuthServer: () => ({
+        port: 12345,
+        waitForCallback: async () => ({ code: "mock_code" }),
+        stop: () => {},
+      }),
+    },
+    // pkce was also file-level mocked; inline the deterministic values.
+    pkce: {
+      generateCodeVerifier: () => "mock_verifier",
+      generateCodeChallenge: async () => "mock_challenge",
+      generateState: () => "mock_state",
+    },
+    // Browser launches a subprocess in the real implementation; stub it.
+    browser: {
+      open: async () => ({ ok: true }),
+    },
+    // Provide a deterministic OAuth config so login's URL construction is
+    // independent of the real environment module's defaults, and bridge the
+    // base URL getters so ported commands (api) honor the CLERK_*_API_URL
+    // overrides set by setupTest.
+    environment: {
+      getOAuthConfig: () => ({
+        clientId: "test-client-id",
+        scopes: "profile email",
+        authorizeUrl: "https://test.example.com/oauth/authorize",
+        tokenUrl: "https://test.example.com/oauth/token",
+        userinfoUrl: "https://test.example.com/oauth/userinfo",
+      }),
+      getPlapiBaseUrl: environmentModule.getPlapiBaseUrl,
+      getBapiBaseUrl: environmentModule.getBapiBaseUrl,
+    },
+    // Route logger output through console so the harness's logSpy/errorSpy
+    // observe what ported commands write. Unported commands still use bare
+    // console.* directly, so this only matters for the DI'd code paths.
+    log: {
+      // `log.data` is the pipeable-stdout method (e.g. `clerk apps list`,
+      // agent prompts) so it routes to console.log → stdout in the harness.
+      data: (msg) => console.log(msg),
+      // Every other method is stderr-oriented; route to console.error so
+      // the harness stderr capture sees it.
+      info: (msg) => console.error(msg),
+      success: (msg) => console.error(msg),
+      warn: (msg) => console.error(msg),
+      error: (msg) => console.error(msg),
+      debug: (msg) => console.error(msg),
+      raw: (msg) => console.error(msg),
+      blank: () => console.error(""),
+    },
+    // git is mock.module()-overridden at file load time. Bridge those stubs
+    // through the testRoot shim so ported commands (link, unlink) read git
+    // state via deps.git instead of touching the real git module.
+    git: {
+      getGitRepoRoot: gitMock.getGitRepoRoot,
+      getGitRepoIdentifier: gitMock.getGitRepoIdentifier,
+      getGitNormalizedRemote: gitMock.getGitNormalizedRemote,
+      normalizeGitRemoteUrl: gitMock.normalizeGitRemoteUrl,
+    },
+    // projectDetector reads the temp dir directly, which is exactly what we
+    // want in integration tests since setupTest sets process.cwd to a fresh
+    // temp dir per test.
+    projectDetector: {
+      gather: projectDetectorModule.gather,
+      fileExists: projectDetectorModule.fileExists,
+      dirExists: projectDetectorModule.dirExists,
+      readDeps: projectDetectorModule.readDeps,
+      detectFramework: projectDetectorModule.detectFramework,
+    },
+    // mode is mock.module()-overridden so the global --mode flag set in argv
+    // is reflected through deps.mode.* for ported commands.
+    mode: {
+      getMode: modeMock.getMode,
+      isHuman: modeMock.isHuman,
+      isAgent: modeMock.isAgent,
+    },
+    // prompts.confirm calls @inquirer/prompts.confirm internally, which is
+    // already mock.module()-overridden in this harness to dequeue from the
+    // mockPrompts queue. Bridging here lets ported commands use deps.prompts.
+    prompts: {
+      confirm: promptsModule.confirm,
+      search: promptsModule.search,
+      select: promptsModule.select,
+      input: promptsModule.input,
+      password: promptsModule.password,
+    },
+    // spinner methods are no-op-friendly in tests; the real implementations
+    // print to stderr (captured) and run callbacks synchronously enough.
+    spinner: {
+      intro: spinnerModule.intro,
+      outro: spinnerModule.outro,
+      bar: spinnerModule.bar,
+      withSpinner: spinnerModule.withSpinner,
+    },
+    // plapi makes real fetch calls; the http capture in setupTest mocks
+    // global fetch so plapi calls hit the harness http fixture.
+    plapi: {
+      validateKeyPrefix: plapiModule.validateKeyPrefix,
+      getAuthToken: plapiModule.getAuthToken,
+      fetchInstanceConfigSchema: plapiModule.fetchInstanceConfigSchema,
+      fetchInstanceConfig: plapiModule.fetchInstanceConfig,
+      fetchApplication: plapiModule.fetchApplication,
+      putInstanceConfig: plapiModule.putInstanceConfig,
+      patchInstanceConfig: plapiModule.patchInstanceConfig,
+      listApplications: plapiModule.listApplications,
+    },
+    // bapi also makes real fetch calls; the http fixture covers it too.
+    bapi: {
+      bapiRequest: bapiModule.bapiRequest,
+    },
+    // env wraps process.env reads. The harness sets CLERK_PLATFORM_API_KEY
+    // and friends via setEnv() in setupTest, so the real getter is fine.
+    env: {
+      get: (name: string) => process.env[name],
+    },
+  });
+  const program = createProgram(root);
   program.exitOverride();
 
   if (!currentHarness) {

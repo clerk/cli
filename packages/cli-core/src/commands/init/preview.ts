@@ -1,4 +1,4 @@
-import { confirm } from "@inquirer/prompts";
+import type { Need } from "../../lib/deps.ts";
 import { cyan, dim, green, yellow } from "../../lib/color.js";
 import { log } from "../../lib/log.js";
 import type { FileAction, ScaffoldPlan } from "./frameworks/types.js";
@@ -6,11 +6,11 @@ import type { FileAction, ScaffoldPlan } from "./frameworks/types.js";
 function formatAction(action: FileAction): string {
   switch (action.type) {
     case "skip":
-      return `  ${dim("SKIP")}    ${dim(action.path)} — ${dim(action.skipReason)}`;
+      return `  ${dim("SKIP")}    ${dim(action.path)} (${dim(action.skipReason)})`;
     case "create":
       return `  ${green("CREATE")}  ${cyan(action.path)}`;
     case "modify":
-      return `  ${yellow("MODIFY")}  ${cyan(action.path)} — ${action.description}`;
+      return `  ${yellow("MODIFY")}  ${cyan(action.path)} (${action.description})`;
   }
 }
 
@@ -31,7 +31,12 @@ export function previewPlan(plan: ScaffoldPlan): void {
   log.blank();
 }
 
-export async function previewAndConfirm(plan: ScaffoldPlan): Promise<boolean> {
+export type PreviewAndConfirmDeps = Need<{ prompts: "confirm" }>;
+
+export async function previewAndConfirm(
+  deps: PreviewAndConfirmDeps,
+  plan: ScaffoldPlan,
+): Promise<boolean> {
   previewPlan(plan);
-  return confirm({ message: "Proceed?" });
+  return deps.prompts.confirm({ message: "Proceed?" });
 }
