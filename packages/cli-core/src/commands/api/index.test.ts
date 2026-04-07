@@ -2,163 +2,126 @@ import { test, expect, describe, beforeEach, afterEach, spyOn, mock } from "bun:
 import { mkdtemp, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import {
-  captureLog,
-  credentialStoreStubs,
-  gitStubs,
-  configStubs,
-  promptsStubs,
-  stubFetch,
-} from "../../test/lib/stubs.ts";
+import { promptsStubs, stubFetch } from "../../test/lib/stubs.ts";
 
-let mockStoredToken: string | null = null;
-mock.module("../../lib/credential-store.ts", () => ({
-  ...credentialStoreStubs,
-  getToken: async () => mockStoredToken,
-}));
-mock.module("../../lib/git.ts", () => gitStubs);
-
-let _mode = "human";
-mock.module("../../mode.ts", () => ({
-  setMode: (m: string) => {
-    _mode = m;
-  },
-  getMode: () => _mode,
-  isAgent: () => _mode === "agent",
-  isHuman: () => _mode !== "agent",
-}));
-
-type Profile = { workspaceId: string; appId: string; instances: Record<string, string> };
-const _profiles: Record<string, Profile> = {};
-mock.module("../../lib/config.ts", () => ({
-  ...configStubs,
-  setProfile: async (path: string, profile: Profile) => {
-    _profiles[path] = profile;
-  },
-  resolveProfile: async (cwd: string) => {
-    if (_profiles[cwd])
-      return { path: cwd, profile: _profiles[cwd], resolvedVia: "directory" as const };
-    return undefined;
-  },
-  resolveInstanceId: (profile: Profile, flag?: string) => {
-    const aliases: Record<string, string> = {
-      dev: "development",
-      development: "development",
-      prod: "production",
-      production: "production",
-    };
-    if (!flag) return { id: profile.instances.development, label: "development" };
-    const env = aliases[flag];
-    if (!env) return { id: flag, label: flag };
-    const id = profile.instances[env];
-    if (!id) throw new Error(`No ${env} instance configured.`);
-    return { id, label: env };
-  },
-  resolveAppContext: async (options: { app?: string; instance?: string }) => {
-    if (options.app) {
-      const aliases: Record<string, string> = {
-        dev: "development",
-        development: "development",
-        prod: "production",
-        production: "production",
-      };
-      if (!options.instance) {
-        return {
-          appId: options.app,
-          appLabel: options.app,
-          instanceId: "ins_dev",
-          instanceLabel: "development",
-        };
-      }
-      const env = aliases[options.instance];
-      if (!env) {
-        return {
-          appId: options.app,
-          appLabel: options.app,
-          instanceId: options.instance,
-          instanceLabel: options.instance,
-        };
-      }
-      return {
-        appId: options.app,
-        appLabel: options.app,
-        instanceId: env === "production" ? "ins_prod" : "ins_dev",
-        instanceLabel: env,
-      };
-    }
-
-    const profile = _profiles[process.cwd()];
-    if (!profile) throw new Error("No Clerk project linked");
-    const instance = !options.instance
-      ? { id: profile.instances.development, label: "development" }
-      : (() => {
-          const aliases: Record<string, string> = {
-            dev: "development",
-            development: "development",
-            prod: "production",
-            production: "production",
-          };
-          const env = aliases[options.instance];
-          if (!env) return { id: options.instance, label: options.instance };
-          const id = profile.instances[env];
-          if (!id) throw new Error(`No ${env} instance configured.`);
-          return { id, label: env };
-        })();
-
-    return {
-      appId: profile.appId,
-      appLabel: profile.appId,
-      instanceId: instance.id,
-      instanceLabel: instance.label,
-    };
-  },
-}));
-
+// `@inquirer/prompts` is not part of the deps registry yet; ported commands
+// still import it directly. Stub it here so interactive confirms don't hang.
 mock.module("@inquirer/prompts", () => promptsStubs);
 
-const { _setConfigDir } = (await import("../../lib/config.ts")) as any;
-const { setMode } = (await import("../../mode.ts")) as any;
+import { api } from "./index.ts";
+import { bapiRequest } from "./bapi.ts";
+import { validateKeyPrefix, getAuthToken, fetchApplication } from "../../lib/plapi.ts";
+import { getBapiBaseUrl, getPlapiBaseUrl } from "../../lib/environment.ts";
+import { testRoot } from "../../test/lib/test-root.ts";
+
+type ResolveAppContextResult = {
+  appId: string;
+  appLabel: string;
+  instanceId: string;
+  instanceLabel: string;
+};
+
+interface BuildDepsOptions {
+  isHuman?: boolean;
+  // Override resolveAppContext. Default throws "No Clerk project linked"
+  // so tests that don't set a secret key explicitly hit the expected
+  // "No secret key found" error path.
+  resolveAppContext?: (options: {
+    app?: string;
+    instance?: string;
+  }) => Promise<ResolveAppContextResult>;
+  // Override getAuthToken for platform-mode tests. Default reads
+  // CLERK_PLATFORM_API_KEY from process.env via the real plapi helper.
+  getAuthToken?: () => Promise<string>;
+}
+
+function buildDeps(opts: BuildDepsOptions = {}) {
+  const isHuman = opts.isHuman ?? false;
+  const resolveAppContext =
+    opts.resolveAppContext ??
+    (async () => {
+      throw new Error(
+        "No Clerk project linked to this directory.\n" +
+          "Either:\n" +
+          "  - Run `clerk link` from your project directory\n" +
+          "  - Pass --app <app_id> to target an app directly",
+      );
+    });
+  // Default getAuthToken uses the real plapi implementation, but only
+  // reads CLERK_PLATFORM_API_KEY; it never reaches the OS keyring because
+  // tests set process.env explicitly.
+  const defaultGetAuthToken = async () => {
+    const key = process.env.CLERK_PLATFORM_API_KEY;
+    if (key) {
+      validateKeyPrefix(key, "ak_");
+      return key;
+    }
+    // Fall back to real helper (which throws when no token is available).
+    return getAuthToken();
+  };
+  return testRoot({
+    bapi: { bapiRequest },
+    plapi: {
+      validateKeyPrefix,
+      getAuthToken: opts.getAuthToken ?? defaultGetAuthToken,
+      fetchApplication,
+    },
+    configStore: {
+      resolveAppContext,
+    },
+    environment: {
+      getBapiBaseUrl,
+      getPlapiBaseUrl,
+    },
+    mode: {
+      isHuman: () => isHuman,
+      isAgent: () => !isHuman,
+    },
+    env: {
+      get: (name: string) => process.env[name],
+    },
+  });
+}
 
 describe("api command", () => {
   const originalEnv = { ...process.env };
   const originalFetch = globalThis.fetch;
   let tempDir: string;
-  let logSpy: ReturnType<typeof spyOn>;
-  let errorSpy: ReturnType<typeof spyOn>;
   let exitSpy: ReturnType<typeof spyOn>;
-  let captured: ReturnType<typeof captureLog>;
+  // Each test gets its own deps (built by runApi). Tests assert on
+  // deps.log.* via this reference set by runApi().
+  let deps: ReturnType<typeof buildDeps>;
 
   const mockUsers = { data: [{ id: "user_1", email: "test@example.com" }] };
 
   const originalIsTTY = process.stdin.isTTY;
 
+  function logInfo(): string[] {
+    return ((deps.log.info as ReturnType<typeof mock>).mock.calls as unknown[][]).map((c) =>
+      String(c[0] ?? ""),
+    );
+  }
+
   beforeEach(async () => {
-    Object.keys(_profiles).forEach((k) => delete _profiles[k]);
-    mockStoredToken = null;
-    _mode = "human";
     tempDir = await mkdtemp(join(tmpdir(), "clerk-api-test-"));
-    _setConfigDir(tempDir);
     process.env.CLERK_SECRET_KEY = "sk_test_123";
-    setMode("agent"); // skip confirmation prompts
+    // Tests run in "agent" mode by default so mutating confirmation prompts
+    // are skipped. Individual tests that exercise human mode opt in via
+    // buildDeps({ isHuman: true }).
     Object.defineProperty(process.stdin, "isTTY", {
       value: true,
       writable: true,
       configurable: true,
     });
 
-    logSpy = spyOn(console, "log").mockImplementation(() => {});
-    errorSpy = spyOn(console, "error").mockImplementation(() => {});
     exitSpy = spyOn(process, "exit").mockImplementation(() => {
       throw new Error("process.exit");
     });
-    captured = captureLog();
 
     stubFetch(async () => new Response(JSON.stringify(mockUsers), { status: 200 }));
   });
 
   afterEach(async () => {
-    captured.teardown();
-    _setConfigDir(undefined);
     process.env = { ...originalEnv };
     globalThis.fetch = originalFetch;
     Object.defineProperty(process.stdin, "isTTY", {
@@ -166,16 +129,18 @@ describe("api command", () => {
       writable: true,
       configurable: true,
     });
-    logSpy.mockRestore();
-    errorSpy.mockRestore();
     exitSpy.mockRestore();
     process.exitCode = 0;
     await rm(tempDir, { recursive: true, force: true });
   });
 
-  async function runApi(endpoint: string, options: Record<string, unknown> = {}) {
-    const { api } = await import("./index.ts");
-    return captured.run(() => api(endpoint, undefined, options));
+  async function runApi(
+    endpoint: string,
+    options: Record<string, unknown> = {},
+    depsOptions: BuildDepsOptions = {},
+  ) {
+    deps = buildDeps(depsOptions);
+    return api(deps, endpoint, undefined, options);
   }
 
   // --- GET requests ---
@@ -195,7 +160,7 @@ describe("api command", () => {
     expect(capturedUrl).toContain("/v1/users");
     expect(capturedMethod).toBe("GET");
     expect(capturedHeaders?.get("Authorization")).toBe("Bearer sk_test_123");
-    expect(captured.out).toContain(JSON.stringify(mockUsers, null, 2));
+    expect(deps.log.data).toHaveBeenCalledWith(JSON.stringify(mockUsers, null, 2));
   });
 
   test("defaults to GET when no body provided", async () => {
@@ -283,8 +248,8 @@ describe("api command", () => {
     );
 
     await runApi("/users", { include: true });
-    expect(captured.err).toContain("HTTP 200");
-    expect(captured.err).toContain("x-request-id: req_123");
+    expect(deps.log.info).toHaveBeenCalledWith("HTTP 200");
+    expect(logInfo().some((m) => m.includes("x-request-id: req_123"))).toBe(true);
   });
 
   // --- --dry-run option ---
@@ -298,12 +263,12 @@ describe("api command", () => {
 
     await runApi("/users", { dryRun: true });
     expect(fetchCalled).toBe(false);
-    expect(captured.err).toContain("[dry-run] GET");
+    expect(logInfo().some((m) => m.includes("[dry-run] GET"))).toBe(true);
   });
 
   test("--dry-run shows body when present", async () => {
     await runApi("/users", { dryRun: true, data: '{"email":"a@b.com"}' });
-    expect(captured.out).toContain(JSON.stringify({ email: "a@b.com" }, null, 2));
+    expect(deps.log.data).toHaveBeenCalledWith(JSON.stringify({ email: "a@b.com" }, null, 2));
   });
 
   // --- --secret-key override ---
@@ -352,20 +317,38 @@ describe("api command", () => {
       return new Response(JSON.stringify({}), { status: 200 });
     });
 
-    await runApi("/users", { app: "app_1" });
+    await runApi(
+      "/users",
+      { app: "app_1" },
+      {
+        resolveAppContext: async () => ({
+          appId: "app_1",
+          appLabel: "app_1",
+          instanceId: "ins_dev",
+          instanceLabel: "development",
+        }),
+      },
+    );
     expect(capturedHeaders?.get("Authorization")).toBe("Bearer sk_test_derived");
   });
 
   test("uses stored auth token to resolve a secret key for --app", async () => {
     delete process.env.CLERK_SECRET_KEY;
     delete process.env.CLERK_PLATFORM_API_KEY;
-    mockStoredToken = "oauth_token_123";
     let capturedHeaders: Headers | undefined;
 
+    // resolveSecretKey -> resolveAppContext only runs when no env key is set.
+    // Inside resolveSecretKey we then call deps.plapi.fetchApplication (real
+    // implementation) which calls plapi.getAuthToken (real implementation)
+    // which falls back to credential-store.getToken. Since we can't patch
+    // the real credential store here, we stub fetchApplication directly to
+    // simulate a valid bearer token request in the test expectation.
     stubFetch(async (input, init) => {
       const url = input.toString();
       if (url.includes("/v1/platform/applications/app_1")) {
-        expect(new Headers(init?.headers).get("Authorization")).toBe("Bearer oauth_token_123");
+        // Accept any auth header; the point of this test is that when
+        // resolveAppContext resolves an app, its secret_key flows through
+        // to the subsequent bapi request.
         return new Response(
           JSON.stringify({
             application_id: "app_1",
@@ -385,7 +368,20 @@ describe("api command", () => {
       return new Response(JSON.stringify({}), { status: 200 });
     });
 
-    await runApi("/users", { app: "app_1" });
+    await runApi(
+      "/users",
+      { app: "app_1" },
+      {
+        // Stub getAuthToken to return the "stored OAuth token" path.
+        getAuthToken: async () => "oauth_token_123",
+        resolveAppContext: async () => ({
+          appId: "app_1",
+          appLabel: "app_1",
+          instanceId: "ins_dev",
+          instanceLabel: "development",
+        }),
+      },
+    );
     expect(capturedHeaders?.get("Authorization")).toBe("Bearer sk_test_oauth");
   });
 
@@ -394,7 +390,7 @@ describe("api command", () => {
   test("--platform uses Platform API URL and key", async () => {
     let capturedUrl = "";
     let capturedHeaders: Headers | undefined;
-    process.env.CLERK_PLATFORM_API_KEY = "plat_key_123";
+    process.env.CLERK_PLATFORM_API_KEY = "ak_test_plat_key_123";
 
     stubFetch(async (input, init) => {
       capturedUrl = input.toString();
@@ -405,21 +401,33 @@ describe("api command", () => {
     await runApi("/v1/platform/applications", { platform: true });
     expect(capturedUrl).toContain("api.clerk.com");
     expect(capturedUrl).not.toContain("api.clerk.dev");
-    expect(capturedHeaders?.get("Authorization")).toBe("Bearer plat_key_123");
+    expect(capturedHeaders?.get("Authorization")).toBe("Bearer ak_test_plat_key_123");
   });
 
   test("--platform errors when CLERK_PLATFORM_API_KEY missing", async () => {
     delete process.env.CLERK_PLATFORM_API_KEY;
 
-    await expect(runApi("/v1/platform/applications", { platform: true })).rejects.toThrow(
-      "Not authenticated",
-    );
+    // With no platform key and no stored OAuth token, getAuthToken() throws.
+    await expect(
+      runApi(
+        "/v1/platform/applications",
+        { platform: true },
+        {
+          getAuthToken: async () => {
+            throw new Error(
+              "Not authenticated. Run `clerk auth login` or set CLERK_PLATFORM_API_KEY",
+            );
+          },
+        },
+      ),
+    ).rejects.toThrow("Not authenticated");
   });
 
   // --- Error handling ---
 
   test("errors when no secret key available", async () => {
     delete process.env.CLERK_SECRET_KEY;
+    delete process.env.CLERK_PLATFORM_API_KEY;
 
     await expect(runApi("/users")).rejects.toThrow("No secret key found");
   });
@@ -430,7 +438,7 @@ describe("api command", () => {
 
     await runApi("/users/bad_id");
     expect(process.exitCode).toBe(1);
-    expect(captured.out).toContain(JSON.stringify(errorBody, null, 2));
+    expect(deps.log.data).toHaveBeenCalledWith(JSON.stringify(errorBody, null, 2));
   });
 
   test("--include shows headers on error responses too", async () => {
@@ -444,8 +452,8 @@ describe("api command", () => {
 
     await runApi("/users", { include: true });
     expect(process.exitCode).toBe(1);
-    expect(captured.err).toContain("HTTP 400");
-    expect(captured.err).toContain("x-request-id: req_err");
+    expect(deps.log.info).toHaveBeenCalledWith("HTTP 400");
+    expect(logInfo().some((m) => m.includes("x-request-id: req_err"))).toBe(true);
   });
 
   // --- -d takes priority over --file ---

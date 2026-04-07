@@ -6,10 +6,9 @@
 import { parse as parseYaml } from "yaml";
 import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
+import type { Need } from "../../lib/deps.ts";
 import { CLERK_CACHE_DIR, CACHE_TTL_MS, OPENAPI_SPEC_URLS } from "../../lib/constants.ts";
 import { CliError, ERROR_CODE } from "../../lib/errors.ts";
-import { withSpinner } from "../../lib/spinner.ts";
-import { log } from "../../lib/log.ts";
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
@@ -33,6 +32,11 @@ export interface Catalog {
   tags: string[];
   fetchedAt: number;
 }
+
+export type LoadCatalogDeps = Need<{
+  spinner: "withSpinner";
+  log: "warn";
+}>;
 
 // ── Test helper ────────────────────────────────────────────────────────────
 
@@ -115,7 +119,10 @@ export function parseSpec(yamlText: string): Catalog {
 
 // ── Loading ────────────────────────────────────────────────────────────────
 
-export async function loadCatalog(options: { platform?: boolean } = {}): Promise<Catalog> {
+export async function loadCatalog(
+  deps: LoadCatalogDeps,
+  options: { platform?: boolean } = {},
+): Promise<Catalog> {
   const platform = options.platform ?? false;
 
   // Check cache
@@ -127,7 +134,7 @@ export async function loadCatalog(options: { platform?: boolean } = {}): Promise
   // Fetch spec
   const url = platform ? OPENAPI_SPEC_URLS.platform : OPENAPI_SPEC_URLS.bapi;
   try {
-    const catalog = await withSpinner("Fetching API catalog...", async () => {
+    const catalog = await deps.spinner.withSpinner("Fetching API catalog...", async () => {
       const response = await fetch(url);
       if (!response.ok) {
         throw new Error(`HTTP ${response.status}`);
@@ -141,7 +148,7 @@ export async function loadCatalog(options: { platform?: boolean } = {}): Promise
   } catch (error) {
     // Fall back to stale cache
     if (cached) {
-      log.warn("Unable to refresh API catalog, using cached version");
+      deps.log.warn("Unable to refresh API catalog, using cached version");
       return cached;
     }
     throw new CliError(

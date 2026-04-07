@@ -2,20 +2,13 @@ import { test, expect, describe, beforeEach, afterEach, spyOn, mock } from "bun:
 import { mkdtemp, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { captureLog, promptsStubs, stubFetch } from "../../test/lib/stubs.ts";
-
-let _mode = "human";
-mock.module("../../mode.ts", () => ({
-  setMode: (m: string) => {
-    _mode = m;
-  },
-  getMode: () => _mode,
-  isAgent: () => _mode === "agent",
-  isHuman: () => _mode !== "agent",
-}));
-
-const { parseSpec, _setCacheDir } = (await import("./catalog.ts")) as any;
-const { setMode } = (await import("../../mode.ts")) as any;
+import { promptsStubs, stubFetch } from "../../test/lib/stubs.ts";
+import { parseSpec, _setCacheDir } from "./catalog.ts";
+import { bapiRequest } from "./bapi.ts";
+import { validateKeyPrefix } from "../../lib/plapi.ts";
+import { getBapiBaseUrl, getPlapiBaseUrl } from "../../lib/environment.ts";
+import { testRoot } from "../../test/lib/test-root.ts";
+import { apiInteractive } from "./interactive.ts";
 
 const MINIMAL_SPEC = `
 openapi: "3.0.0"
@@ -63,12 +56,29 @@ mock.module("@inquirer/prompts", () => ({
   confirm: async () => confirmResponses.shift(),
 }));
 
+function buildDeps(opts: { isHuman: boolean }) {
+  return testRoot({
+    mode: {
+      isHuman: () => opts.isHuman,
+      isAgent: () => !opts.isHuman,
+    },
+    bapi: { bapiRequest },
+    plapi: { validateKeyPrefix },
+    environment: {
+      getBapiBaseUrl,
+      getPlapiBaseUrl,
+    },
+    env: {
+      get: (name: string) => process.env[name],
+    },
+  });
+}
+
 describe("apiInteractive", () => {
   let tempDir: string;
   let errorSpy: ReturnType<typeof spyOn>;
   let logSpy: ReturnType<typeof spyOn>;
   let exitSpy: ReturnType<typeof spyOn>;
-  let captured: ReturnType<typeof captureLog>;
   const originalFetch = globalThis.fetch;
   const originalIsTTY = process.stdin.isTTY;
 
@@ -96,7 +106,6 @@ describe("apiInteractive", () => {
     exitSpy = spyOn(process, "exit").mockImplementation(() => {
       throw new Error("process.exit");
     });
-    captured = captureLog();
     // Capture fetch calls from the real api handler
     stubFetch(async (input, init) => {
       fetchCalls.push({ url: input.toString(), method: init?.method ?? "GET" });
@@ -111,7 +120,6 @@ describe("apiInteractive", () => {
   });
 
   afterEach(async () => {
-    captured.teardown();
     _setCacheDir(undefined);
     process.env = { ...originalEnv };
     globalThis.fetch = originalFetch;
@@ -126,20 +134,18 @@ describe("apiInteractive", () => {
     await rm(tempDir, { recursive: true, force: true });
   });
 
-  async function runApiInteractive(options: Record<string, unknown> = {}) {
-    const { apiInteractive } = await import("./interactive.ts");
-    return captured.run(() => apiInteractive(options));
-  }
-
   test("shows help and returns in agent mode", async () => {
-    setMode("agent");
-    await runApiInteractive({});
-    expect(captured.err).toContain("Interactive mode requires a TTY");
-    setMode("human");
+    const deps = buildDeps({ isHuman: false });
+
+    await apiInteractive(deps, {});
+    expect(deps.log.info).toHaveBeenCalledWith(
+      expect.stringContaining("Interactive mode requires a TTY"),
+    );
   });
 
   test("completes full flow for GET endpoint (no body, no params)", async () => {
-    setMode("human");
+    const deps = buildDeps({ isHuman: true });
+
     // Step 1: select tag "Users"
     selectResponses.push("Users");
     // Step 2: select endpoint GET /users
@@ -155,7 +161,7 @@ describe("apiInteractive", () => {
     // Step 5: confirm execution
     confirmResponses.push(true);
 
-    await runApiInteractive({});
+    await apiInteractive(deps, {});
 
     expect(fetchCalls.length).toBe(1);
     expect(fetchCalls[0]!.url).toContain("/v1/users");
@@ -163,7 +169,8 @@ describe("apiInteractive", () => {
   });
 
   test("prompts for path parameters", async () => {
-    setMode("human");
+    const deps = buildDeps({ isHuman: true });
+
     selectResponses.push("Users");
     selectResponses.push({
       method: "GET",
@@ -177,14 +184,15 @@ describe("apiInteractive", () => {
     inputResponses.push("user_abc123");
     confirmResponses.push(true);
 
-    await runApiInteractive({});
+    await apiInteractive(deps, {});
 
     expect(fetchCalls.length).toBe(1);
     expect(fetchCalls[0]!.url).toContain("/v1/users/user_abc123");
   });
 
   test("aborts when user declines confirmation", async () => {
-    setMode("human");
+    const deps = buildDeps({ isHuman: true });
+
     selectResponses.push("Users");
     selectResponses.push({
       method: "GET",
@@ -197,7 +205,7 @@ describe("apiInteractive", () => {
     });
     confirmResponses.push(false); // decline
 
-    await expect(runApiInteractive({})).rejects.toThrow("User aborted");
+    await expect(apiInteractive(deps, {})).rejects.toThrow("User aborted");
 
     expect(fetchCalls.length).toBe(0);
   });

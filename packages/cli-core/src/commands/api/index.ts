@@ -1,7 +1,6 @@
-import { resolveAppContext } from "../../lib/config.ts";
-import { fetchApplication, getAuthToken, validateKeyPrefix } from "../../lib/plapi.ts";
-import { getBapiBaseUrl, getPlapiBaseUrl } from "../../lib/environment.ts";
-import { bapiRequest } from "./bapi.ts";
+import type { Need } from "../../lib/deps.ts";
+import type { ApiLsDeps } from "./ls.ts";
+import type { ApiInteractiveDeps } from "./interactive.ts";
 import {
   BapiError,
   CliError,
@@ -10,10 +9,6 @@ import {
   throwUserAbort,
   withApiContext,
 } from "../../lib/errors.ts";
-import { isHuman } from "../../mode.ts";
-import { confirm } from "../../lib/prompts.ts";
-import { withSpinner } from "../../lib/spinner.ts";
-import { log } from "../../lib/log.ts";
 
 export interface ApiOptions {
   method?: string;
@@ -28,9 +23,33 @@ export interface ApiOptions {
   yes?: boolean;
 }
 
+/**
+ * Slice for the `clerk api` command itself (i.e. the `clerk api <endpoint>`
+ * execution path, not the ls/interactive dispatch branches).
+ */
+export type ApiDeps = Need<{
+  bapi: "bapiRequest";
+  plapi: "validateKeyPrefix" | "getAuthToken" | "fetchApplication";
+  configStore: "resolveAppContext";
+  environment: "getBapiBaseUrl" | "getPlapiBaseUrl";
+  mode: "isHuman";
+  prompts: "confirm";
+  spinner: "withSpinner";
+  env: "get";
+  log: "info" | "data";
+}>;
+
+/**
+ * The top-level `api` command dispatches to `apiLs` or `apiInteractive`
+ * depending on its arguments, so its combined slice is the union of every
+ * downstream slice.
+ */
+export type ApiCommandDeps = ApiDeps & ApiLsDeps & ApiInteractiveDeps;
+
 const MUTATING_METHODS = new Set(["POST", "PUT", "PATCH", "DELETE"]);
 
 export async function api(
+  deps: ApiCommandDeps,
   endpoint: string | undefined,
   filter: string | undefined,
   options: ApiOptions,
@@ -38,13 +57,13 @@ export async function api(
   // Route: no args → interactive builder
   if (!endpoint) {
     const { apiInteractive } = await import("./interactive.ts");
-    return apiInteractive(options);
+    return apiInteractive(deps, options);
   }
 
   // Route: "ls" → list endpoints
   if (endpoint === "ls") {
     const { apiLs } = await import("./ls.ts");
-    return apiLs(filter, options);
+    return apiLs(deps, filter, options);
   }
 
   // 1. Resolve the request body
@@ -58,29 +77,29 @@ export async function api(
   let baseUrl: string;
 
   if (options.platform) {
-    secretKey = await getAuthToken();
-    baseUrl = getPlapiBaseUrl();
+    secretKey = await deps.plapi.getAuthToken();
+    baseUrl = deps.environment.getPlapiBaseUrl();
   } else {
-    secretKey = await resolveSecretKey(options);
-    baseUrl = getBapiBaseUrl();
+    secretKey = await resolveSecretKey(deps, options);
+    baseUrl = deps.environment.getBapiBaseUrl();
   }
 
   // 4. Dry run
   if (options.dryRun) {
-    log.info(`[dry-run] ${method} ${baseUrl}${normalizePath(endpoint)}`);
+    deps.log.info(`[dry-run] ${method} ${baseUrl}${normalizePath(endpoint)}`);
     if (body) {
-      prettyPrint(body);
+      prettyPrint(deps, body);
     }
     return;
   }
 
   // 5. Confirmation for mutating methods
-  if (MUTATING_METHODS.has(method) && isHuman() && !options.yes) {
-    log.info(`\nAbout to ${method} ${endpoint}`);
+  if (MUTATING_METHODS.has(method) && deps.mode.isHuman() && !options.yes) {
+    deps.log.info(`\nAbout to ${method} ${endpoint}`);
     if (body) {
-      prettyPrintToStderr(body);
+      prettyPrintToStderr(deps, body);
     }
-    const ok = await confirm({ message: "Proceed?" });
+    const ok = await deps.prompts.confirm({ message: "Proceed?" });
     if (!ok) {
       throwUserAbort();
     }
@@ -88,8 +107,8 @@ export async function api(
 
   // 6. Execute request
   try {
-    const response = await withSpinner("Executing request...", () =>
-      bapiRequest({
+    const response = await deps.spinner.withSpinner("Executing request...", () =>
+      deps.bapi.bapiRequest({
         method,
         path: endpoint,
         secretKey,
@@ -99,17 +118,17 @@ export async function api(
     );
 
     if (options.include) {
-      printHeaders(response.status, response.headers);
+      printHeaders(deps, response.status, response.headers);
     }
-    printBody(response.body);
+    printBody(deps, response.body);
   } catch (error) {
     // Handle BapiError locally to print the raw API response body to stdout
     // (for piping), rather than propagating to the global error handler.
     if (error instanceof BapiError) {
       if (options.include) {
-        printHeaders(error.status, error.headers);
+        printHeaders(deps, error.status, error.headers);
       }
-      prettyPrint(error.body);
+      prettyPrint(deps, error.body);
       process.exitCode = 1;
       return;
     }
@@ -117,21 +136,31 @@ export async function api(
   }
 }
 
-async function resolveSecretKey(options: ApiOptions): Promise<string> {
+type ResolveSecretKeyDeps = Need<{
+  plapi: "validateKeyPrefix" | "fetchApplication";
+  configStore: "resolveAppContext";
+  env: "get";
+}>;
+
+async function resolveSecretKey(deps: ResolveSecretKeyDeps, options: ApiOptions): Promise<string> {
   if (options.secretKey) {
-    validateKeyPrefix(options.secretKey, "sk_");
+    deps.plapi.validateKeyPrefix(options.secretKey, "sk_");
     return options.secretKey;
   }
 
-  if (process.env.CLERK_SECRET_KEY) {
-    validateKeyPrefix(process.env.CLERK_SECRET_KEY, "sk_");
-    return process.env.CLERK_SECRET_KEY;
+  const envKey = deps.env.get("CLERK_SECRET_KEY");
+  if (envKey) {
+    deps.plapi.validateKeyPrefix(envKey, "sk_");
+    return envKey;
   }
 
   // Resolve from linked profile via Platform API
-  let ctx: Awaited<ReturnType<typeof resolveAppContext>>;
+  let ctx: Awaited<ReturnType<ResolveSecretKeyDeps["configStore"]["resolveAppContext"]>>;
   try {
-    ctx = await resolveAppContext({ app: options.app, instance: options.instance });
+    ctx = await deps.configStore.resolveAppContext({
+      app: options.app,
+      instance: options.instance,
+    });
   } catch (error) {
     if (error instanceof Error && error.message.startsWith("No Clerk project linked")) {
       throwUsageError(
@@ -146,7 +175,10 @@ async function resolveSecretKey(options: ApiOptions): Promise<string> {
     throw error;
   }
 
-  const app = await withApiContext(fetchApplication(ctx.appId), "Failed to resolve secret key");
+  const app = await withApiContext(
+    deps.plapi.fetchApplication(ctx.appId),
+    "Failed to resolve secret key",
+  );
   const matched = app.instances.find((i) => i.instance_id === ctx.instanceId);
   if (!matched) {
     throw new CliError(`Instance ${ctx.instanceId} not found in application.`, {
@@ -194,36 +226,36 @@ function normalizePath(path: string): string {
   return p;
 }
 
-function printHeaders(status: number, headers: Headers): void {
-  log.raw(`HTTP ${status}`);
+function printHeaders(deps: Need<{ log: "info" }>, status: number, headers: Headers): void {
+  deps.log.info(`HTTP ${status}`);
   headers.forEach((value, key) => {
-    log.raw(`${key}: ${value}`);
+    deps.log.info(`${key}: ${value}`);
   });
-  log.blank();
+  deps.log.info("");
 }
 
-function printBody(body: unknown): void {
+function printBody(deps: Need<{ log: "data" }>, body: unknown): void {
   if (typeof body === "string") {
-    log.data(body);
+    deps.log.data(body);
   } else {
-    log.data(JSON.stringify(body, null, 2));
+    deps.log.data(JSON.stringify(body, null, 2));
   }
 }
 
 /** Pretty-print a string as JSON to stdout if possible, otherwise print raw. */
-function prettyPrint(text: string): void {
+function prettyPrint(deps: Need<{ log: "data" }>, text: string): void {
   try {
-    log.data(JSON.stringify(JSON.parse(text), null, 2));
+    deps.log.data(JSON.stringify(JSON.parse(text), null, 2));
   } catch {
-    log.data(text);
+    deps.log.data(text);
   }
 }
 
 /** Pretty-print a string as JSON to stderr if possible, otherwise print raw. */
-function prettyPrintToStderr(text: string): void {
+function prettyPrintToStderr(deps: Need<{ log: "info" }>, text: string): void {
   try {
-    log.raw(JSON.stringify(JSON.parse(text), null, 2));
+    deps.log.info(JSON.stringify(JSON.parse(text), null, 2));
   } catch {
-    log.raw(text);
+    deps.log.info(text);
   }
 }

@@ -1,5 +1,5 @@
-import { test, expect, describe, beforeEach, afterEach, spyOn } from "bun:test";
-import { captureLog, stubFetch } from "../../test/lib/stubs.ts";
+import { test, expect, describe, beforeEach, afterEach } from "bun:test";
+import { stubFetch } from "../../test/lib/stubs.ts";
 import { mkdtemp, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
@@ -10,6 +10,9 @@ import {
   endpointsByTag,
   _setCacheDir,
 } from "./catalog.ts";
+import { testRoot } from "../../test/lib/test-root.ts";
+
+const deps = testRoot();
 
 const MINIMAL_SPEC = `
 openapi: "3.0.0"
@@ -178,27 +181,17 @@ describe("endpointsByTag", () => {
 describe("loadCatalog", () => {
   const originalFetch = globalThis.fetch;
   let tempDir: string;
-  let errorSpy: ReturnType<typeof spyOn>;
-  let captured: ReturnType<typeof captureLog>;
 
   beforeEach(async () => {
     tempDir = await mkdtemp(join(tmpdir(), "clerk-catalog-test-"));
     _setCacheDir(tempDir);
-    errorSpy = spyOn(console, "error").mockImplementation(() => {});
-    captured = captureLog();
   });
 
   afterEach(async () => {
-    captured.teardown();
     _setCacheDir(undefined);
     globalThis.fetch = originalFetch;
-    errorSpy.mockRestore();
     await rm(tempDir, { recursive: true, force: true });
   });
-
-  function runLoadCatalog(options?: Parameters<typeof loadCatalog>[0]) {
-    return captured.run(() => loadCatalog(options));
-  }
 
   test("fetches and caches on first load", async () => {
     let fetchCalled = false;
@@ -207,7 +200,7 @@ describe("loadCatalog", () => {
       return new Response(MINIMAL_SPEC, { status: 200 });
     });
 
-    const catalog = await runLoadCatalog();
+    const catalog = await loadCatalog(deps);
     expect(fetchCalled).toBe(true);
     expect(catalog.endpoints.length).toBe(6);
 
@@ -228,7 +221,7 @@ describe("loadCatalog", () => {
       return new Response(MINIMAL_SPEC, { status: 200 });
     });
 
-    const catalog = await runLoadCatalog();
+    const catalog = await loadCatalog(deps);
     expect(fetchCalled).toBe(false);
     expect(catalog.endpoints.length).toBe(6);
   });
@@ -245,7 +238,7 @@ describe("loadCatalog", () => {
       return new Response(MINIMAL_SPEC, { status: 200 });
     });
 
-    await runLoadCatalog();
+    await loadCatalog(deps);
     expect(fetchCalled).toBe(true);
   });
 
@@ -259,9 +252,10 @@ describe("loadCatalog", () => {
       throw new Error("Network error");
     });
 
-    const catalog = await runLoadCatalog();
+    const staleDeps = testRoot();
+    const catalog = await loadCatalog(staleDeps);
     expect(catalog.endpoints.length).toBe(6);
-    expect(captured.err).toContain("Unable to refresh");
+    expect(staleDeps.log.warn).toHaveBeenCalledWith(expect.stringContaining("Unable to refresh"));
   });
 
   test("errors when offline with no cache", async () => {
@@ -269,7 +263,7 @@ describe("loadCatalog", () => {
       throw new Error("Network error");
     });
 
-    await expect(runLoadCatalog()).rejects.toThrow("Unable to fetch API catalog");
+    await expect(loadCatalog(deps)).rejects.toThrow("Unable to fetch API catalog");
   });
 
   test("uses platform URL when platform flag set", async () => {
@@ -279,7 +273,7 @@ describe("loadCatalog", () => {
       return new Response(MINIMAL_SPEC, { status: 200 });
     });
 
-    await runLoadCatalog({ platform: true });
+    await loadCatalog(deps, { platform: true });
     expect(capturedUrl).toContain("platform");
 
     // Cache uses platform filename

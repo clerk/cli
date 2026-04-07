@@ -372,7 +372,7 @@ export function createProgram(root: Root) {
         description: "POST with a JSON body",
       },
     ])
-    .action((endpoint, filter, opts) => api(endpoint, filter, opts));
+    .action((endpoint, filter, opts) => api(root, endpoint, filter, opts));
 
   program
     .command("doctor")

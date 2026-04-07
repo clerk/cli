@@ -1,10 +1,15 @@
-import { test, expect, describe, beforeEach, afterEach, spyOn } from "bun:test";
+import { test, expect, describe, beforeEach, afterEach, mock } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { parseSpec, _setCacheDir } from "./catalog.ts";
-import { captureLog, stubFetch } from "../../test/lib/stubs.ts";
+import { stubFetch } from "../../test/lib/stubs.ts";
 import { apiLs } from "./ls.ts";
+import { testRoot } from "../../test/lib/test-root.ts";
+
+function joinCalls(fn: unknown): string[] {
+  return ((fn as ReturnType<typeof mock>).mock.calls as unknown[][]).map((c) => String(c[0] ?? ""));
+}
 
 const MINIMAL_SPEC = `
 openapi: "3.0.0"
@@ -43,9 +48,6 @@ paths:
 
 describe("apiLs", () => {
   let tempDir: string;
-  let logSpy: ReturnType<typeof spyOn>;
-  let errorSpy: ReturnType<typeof spyOn>;
-  let captured: ReturnType<typeof captureLog>;
   const originalFetch = globalThis.fetch;
 
   beforeEach(async () => {
@@ -57,52 +59,50 @@ describe("apiLs", () => {
     cached.fetchedAt = Date.now();
     await Bun.write(join(tempDir, "bapi-catalog.json"), JSON.stringify(cached));
 
-    logSpy = spyOn(console, "log").mockImplementation(() => {});
-    errorSpy = spyOn(console, "error").mockImplementation(() => {});
-    captured = captureLog();
     stubFetch(async () => {
       throw new Error("Should not fetch");
     });
   });
 
   afterEach(async () => {
-    captured.teardown();
     _setCacheDir(undefined);
     globalThis.fetch = originalFetch;
-    logSpy.mockRestore();
-    errorSpy.mockRestore();
     await rm(tempDir, { recursive: true, force: true });
   });
 
-  function runApiLs(filter: string | undefined, options: Parameters<typeof apiLs>[1]) {
-    return captured.run(() => apiLs(filter, options));
-  }
-
   test("prints all endpoints in table format", async () => {
-    await runApiLs(undefined, {});
+    const deps = testRoot();
+    await apiLs(deps, undefined, {});
 
-    // Check that output contains method, path, and summary
-    expect(captured.out).toContain("GET");
-    expect(captured.out).toContain("/users");
-    expect(captured.out).toContain("List all users");
+    const dataCalls = joinCalls(deps.log.data);
+    expect(dataCalls.length).toBe(4);
+    expect(dataCalls[0]).toContain("GET");
+    expect(dataCalls[0]).toContain("/users");
+    expect(dataCalls[0]).toContain("List all users");
 
-    // Footer
-    expect(captured.err).toContain("4 endpoints");
+    const infoCalls = joinCalls(deps.log.info);
+    expect(infoCalls.some((m) => m.includes("4 endpoints"))).toBe(true);
   });
 
   test("filters endpoints by keyword", async () => {
-    await runApiLs("organizations", {});
+    const deps = testRoot();
+    await apiLs(deps, "organizations", {});
 
-    expect(captured.out).toContain("/organizations");
+    const dataCalls = joinCalls(deps.log.data);
+    expect(dataCalls.length).toBe(1);
+    expect(dataCalls[0]).toContain("/organizations");
 
-    expect(captured.err).toContain('1 endpoint matching "organizations"');
+    const infoCalls = joinCalls(deps.log.info);
+    expect(infoCalls.some((m) => m.includes('1 endpoint matching "organizations"'))).toBe(true);
   });
 
   test("shows message when no matches", async () => {
-    await runApiLs("zzzzz", {});
+    const deps = testRoot();
+    await apiLs(deps, "zzzzz", {});
 
-    expect(captured.out).toBe("");
-    expect(captured.err).toContain('No endpoints matching "zzzzz"');
+    expect(deps.log.data).not.toHaveBeenCalled();
+    const infoCalls = joinCalls(deps.log.info);
+    expect(infoCalls.some((m) => m.includes('No endpoints matching "zzzzz"'))).toBe(true);
   });
 
   test("uses platform catalog when --platform set", async () => {
@@ -111,7 +111,8 @@ describe("apiLs", () => {
     cached.fetchedAt = Date.now();
     await Bun.write(join(tempDir, "plapi-catalog.json"), JSON.stringify(cached));
 
-    await runApiLs(undefined, { platform: true });
-    expect(captured.out).not.toBe("");
+    const deps = testRoot();
+    await apiLs(deps, undefined, { platform: true });
+    expect(deps.log.data).toHaveBeenCalled();
   });
 });

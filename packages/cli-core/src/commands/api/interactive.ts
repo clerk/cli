@@ -3,15 +3,20 @@
  */
 
 import { select, input, confirm, editor } from "@inquirer/prompts";
-import { isHuman } from "../../mode.ts";
-import { loadCatalog, endpointsByTag, type EndpointInfo } from "./catalog.ts";
-import type { ApiOptions } from "./index.ts";
+import type { Need } from "../../lib/deps.ts";
+import { loadCatalog, endpointsByTag, type EndpointInfo, type LoadCatalogDeps } from "./catalog.ts";
+import type { ApiDeps, ApiOptions } from "./index.ts";
 import { throwUserAbort } from "../../lib/errors.ts";
-import { log } from "../../lib/log.ts";
 
-export async function apiInteractive(options: ApiOptions): Promise<void> {
-  if (!isHuman()) {
-    log.info(
+export type ApiInteractiveDeps = Need<{
+  mode: "isHuman";
+}> &
+  LoadCatalogDeps &
+  ApiDeps;
+
+export async function apiInteractive(deps: ApiInteractiveDeps, options: ApiOptions): Promise<void> {
+  if (!deps.mode.isHuman()) {
+    deps.log.info(
       "Interactive mode requires a TTY.\n\n" +
         "Usage:\n" +
         "  clerk api <endpoint>        Make an API request\n" +
@@ -24,7 +29,7 @@ export async function apiInteractive(options: ApiOptions): Promise<void> {
   }
 
   // 1. Load catalog and group by tag
-  const catalog = await loadCatalog({ platform: options.platform });
+  const catalog = await loadCatalog(deps, { platform: options.platform });
   const grouped = endpointsByTag(catalog);
 
   // 2. Select category
@@ -83,12 +88,12 @@ export async function apiInteractive(options: ApiOptions): Promise<void> {
   }
 
   // 6. Preview and confirm
-  log.info(`\n${endpoint.method} ${resolvedPath}`);
+  deps.log.info(`\n${endpoint.method} ${resolvedPath}`);
   if (body) {
     try {
-      log.raw(JSON.stringify(JSON.parse(body), null, 2));
+      deps.log.info(JSON.stringify(JSON.parse(body), null, 2));
     } catch {
-      log.raw(body);
+      deps.log.info(body);
     }
   }
 
@@ -99,7 +104,7 @@ export async function apiInteractive(options: ApiOptions): Promise<void> {
 
   // 7. Delegate to the main api handler
   const { api } = await import("./index.ts");
-  await api(resolvedPath, undefined, {
+  await api(deps, resolvedPath, undefined, {
     ...options,
     method: endpoint.method,
     data: body,
