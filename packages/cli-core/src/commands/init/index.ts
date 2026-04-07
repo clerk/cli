@@ -18,6 +18,7 @@ import {
   printKeylessInfo,
   getAuthenticatedEmail,
 } from "./heuristics.js";
+import { installSkills } from "./skills.js";
 import { intro, outro, bar, withSpinner } from "../../lib/spinner.js";
 import type { ProjectContext } from "./frameworks/types.js";
 
@@ -25,6 +26,7 @@ interface InitOptions {
   framework?: string;
   yes?: boolean;
   prompt?: boolean;
+  skills?: boolean;
 }
 
 export async function init(options: InitOptions = {}) {
@@ -66,6 +68,11 @@ export async function init(options: InitOptions = {}) {
     await pull({});
   } else {
     printKeylessInfo();
+  }
+
+  if (options.skills !== false) {
+    bar();
+    await installSkills(cwd, ctx?.framework.dep, options.yes ?? false);
   }
 
   outro("Done");

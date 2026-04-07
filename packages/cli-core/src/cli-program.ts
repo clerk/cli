@@ -76,6 +76,7 @@ export function createProgram() {
     )
     .option("--prompt", "Output a prompt for an AI agent to integrate Clerk")
     .option("-y, --yes", "Skip confirmation prompts")
+    .option("--no-skills", "Skip the optional agent skills install prompt")
     .setExamples([
       { command: "clerk init", description: "Auto-detect framework and set up Clerk" },
       {
@@ -84,6 +85,7 @@ export function createProgram() {
       },
       { command: "clerk init --prompt", description: "Output a setup prompt for an AI agent" },
       { command: "clerk init -y", description: "Skip all confirmation prompts" },
+      { command: "clerk init --no-skills", description: "Skip the agent skills install prompt" },
     ])
     .action(init);
 
