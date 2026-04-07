@@ -109,3 +109,17 @@ export async function withSpinner<T>(
     throw error;
   }
 }
+
+export interface Spinner {
+  intro(title?: string): void;
+  outro(messageOrSteps?: string | readonly string[]): void;
+  bar(): void;
+  withSpinner<T>(message: string, fn: () => Promise<T>, doneMessage?: string): Promise<T>;
+}
+
+export const spinner: Spinner = {
+  intro,
+  outro,
+  bar,
+  withSpinner,
+};
