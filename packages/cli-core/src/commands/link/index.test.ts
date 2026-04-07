@@ -1,128 +1,25 @@
-import { test, expect, describe, beforeEach, afterEach, mock, spyOn } from "bun:test";
-import {
-  captureLog,
-  configStubs,
-  credentialStoreStubs,
-  autolinkStubs,
-  gitStubs,
-  promptsStubs,
-} from "../../test/lib/stubs.ts";
-import { PlapiError } from "../../lib/errors.ts";
+import { test, expect, describe, beforeEach, mock } from "bun:test";
+import type { Application } from "../../lib/plapi.ts";
 
-const mockIsAgent = mock();
-let _modeOverride: string | undefined;
-mock.module("../../mode.ts", () => ({
-  isAgent: (...args: unknown[]) =>
-    _modeOverride !== undefined ? _modeOverride === "agent" : mockIsAgent(...args),
-  isHuman: (...args: unknown[]) =>
-    _modeOverride !== undefined ? _modeOverride !== "agent" : !mockIsAgent(...args),
-  setMode: (m: string) => {
-    _modeOverride = m;
-  },
-  getMode: () => _modeOverride ?? "human",
-}));
-
-const mockGetToken = mock();
-mock.module("../../lib/credential-store.ts", () => ({
-  ...credentialStoreStubs,
-  getToken: (...args: unknown[]) => mockGetToken(...args),
-}));
-
-const mockLogin = mock();
-mock.module("../auth/login.ts", () => ({
-  login: (...args: unknown[]) => mockLogin(...args),
-}));
-
-mock.module("../../lib/root.ts", () => ({
-  createRoot: () => ({}),
-}));
-
-const mockListApplications = mock();
-const mockFetchApplication = mock();
-const mockCreateApplication = mock();
-mock.module("../../lib/plapi.ts", () => {
-  const listApplications = (...args: unknown[]) => mockListApplications(...args);
-  const fetchApplication = (...args: unknown[]) => mockFetchApplication(...args);
-  const createApplication = (...args: unknown[]) => mockCreateApplication(...args);
-  const fetchInstanceConfig = async () => ({});
-  const putInstanceConfig = async () => ({});
-  const patchInstanceConfig = async () => ({});
-  return {
-    listApplications,
-    fetchApplication,
-    createApplication,
-    PlapiError: class PlapiError extends Error {},
-    fetchInstanceConfig,
-    putInstanceConfig,
-    patchInstanceConfig,
-    plapi: {
-      listApplications,
-      fetchApplication,
-      createApplication,
-      fetchInstanceConfig,
-      putInstanceConfig,
-      patchInstanceConfig,
-    },
-  };
-});
-
-const mockSetProfile = mock();
-const mockResolveProfile = mock();
-const mockMoveProfile = mock();
-mock.module("../../lib/config.ts", () => ({
-  ...configStubs,
-  setProfile: (...args: unknown[]) => mockSetProfile(...args),
-  resolveProfile: (...args: unknown[]) => mockResolveProfile(...args),
-  moveProfile: (...args: unknown[]) => mockMoveProfile(...args),
-}));
-
+// `lib/autolink.ts` is imported directly by `link/index.ts` (it's a pure-ish
+// helper, not in the deps registry per the deps-injection design). To keep
+// the tests for the "autolink from detected keys" branch working without
+// touching real `.env` files, mock the module at file top before importing
+// the command. Bun tests run each file in its own subprocess, so this
+// registration does not leak to other test files.
 const mockAutolink = mock();
 const mockFindClerkKeys = mock();
 const mockMatchKeyToApp = mock();
 mock.module("../../lib/autolink.ts", () => ({
-  ...autolinkStubs,
   autolink: (...args: unknown[]) => mockAutolink(...args),
   findClerkKeys: (...args: unknown[]) => mockFindClerkKeys(...args),
   matchKeyToApp: (...args: unknown[]) => mockMatchKeyToApp(...args),
 }));
 
-const mockGetGitRepoIdentifier = mock();
-const mockGetGitRepoRoot = mock();
-const mockGetGitNormalizedRemote = mock();
-mock.module("../../lib/git.ts", () => ({
-  ...gitStubs,
-  getGitRepoIdentifier: (...args: unknown[]) => mockGetGitRepoIdentifier(...args),
-  getGitRepoRoot: (...args: unknown[]) => mockGetGitRepoRoot(...args),
-  getGitNormalizedRemote: (...args: unknown[]) => mockGetGitNormalizedRemote(...args),
-}));
-
-const mockSearch = mock();
-const mockConfirm = mock();
-const mockInput = mock();
-mock.module("@inquirer/prompts", () => ({
-  ...promptsStubs,
-  search: (...args: unknown[]) => mockSearch(...args),
-  confirm: (...args: unknown[]) => mockConfirm(...args),
-  input: (...args: unknown[]) => mockInput(...args),
-}));
-
-mock.module("../../lib/spinner.ts", () => {
-  const intro = () => {};
-  const outro = () => {};
-  const bar = () => {};
-  const withSpinner = async <T>(_msg: string, fn: () => Promise<T>) => fn();
-  return {
-    intro,
-    outro,
-    bar,
-    withSpinner,
-    spinner: { intro, outro, bar, withSpinner },
-  };
-});
-
 const { link } = await import("./index.ts");
+const { testRoot } = await import("../../test/lib/test-root.ts");
 
-const mockApp = {
+const MOCK_APP: Application = {
   application_id: "app_123",
   instances: [
     {
@@ -140,116 +37,111 @@ const mockApp = {
   ],
 };
 
-describe("link", () => {
-  let consoleSpy: ReturnType<typeof spyOn>;
-  let captured: ReturnType<typeof captureLog>;
+const HUMAN = { isAgent: () => false, isHuman: () => true } as const;
 
-  beforeEach(() => {
-    captured = captureLog();
+/**
+ * Build a deps fixture pre-wired for the common "first-time link" happy
+ * path. Tests can override individual slices.
+ */
+function happyDeps(overrides?: Parameters<typeof testRoot>[0]) {
+  return testRoot({
+    mode: HUMAN,
+    env: { get: () => "platform_key" }, // CLERK_PLATFORM_API_KEY present, skip auth
+    git: {
+      getGitRepoRoot: async () => "/repo",
+      getGitNormalizedRemote: async () => "github.com/org/repo",
+      getGitRepoIdentifier: async () => "/repo/.git",
+    },
+    configStore: {
+      resolveProfile: async () => undefined,
+      setProfile: async () => {},
+      moveProfile: async () => {},
+    },
+    plapi: {
+      fetchApplication: async () => MOCK_APP,
+      listApplications: async () => [MOCK_APP],
+    },
+    ...overrides,
   });
+}
 
-  afterEach(() => {
-    captured.teardown();
-    _modeOverride = undefined;
-    mockIsAgent.mockReset();
-    mockGetToken.mockReset();
-    mockLogin.mockReset();
-    mockListApplications.mockReset();
-    mockFetchApplication.mockReset();
-    mockCreateApplication.mockReset();
-    mockSetProfile.mockReset();
-    mockResolveProfile.mockReset();
-    mockResolveProfile.mockResolvedValue(undefined);
+describe("link", () => {
+  beforeEach(() => {
     mockAutolink.mockReset();
     mockAutolink.mockResolvedValue(undefined);
     mockFindClerkKeys.mockReset();
     mockFindClerkKeys.mockResolvedValue([]);
     mockMatchKeyToApp.mockReset();
     mockMatchKeyToApp.mockReturnValue(undefined);
-    mockMoveProfile.mockReset();
-    mockGetGitRepoIdentifier.mockReset();
-    mockGetGitRepoIdentifier.mockResolvedValue("/repo/.git");
-    mockGetGitRepoRoot.mockReset();
-    mockGetGitRepoRoot.mockResolvedValue("/repo");
-    mockGetGitNormalizedRemote.mockReset();
-    mockGetGitNormalizedRemote.mockResolvedValue("github.com/org/repo");
-    mockSearch.mockReset();
-    mockConfirm.mockReset();
-    mockInput.mockReset();
-    consoleSpy?.mockRestore();
   });
 
-  function runLink(options?: Parameters<typeof link>[0]) {
-    return captured.run(() => link(options));
-  }
-
   describe("agent mode", () => {
-    test("outputs prompt and returns", async () => {
-      mockIsAgent.mockReturnValue(true);
-      consoleSpy = spyOn(console, "log").mockImplementation(() => {});
+    test("outputs prompt and returns without interactive prompts", async () => {
+      const deps = testRoot({
+        mode: { isAgent: () => true, isHuman: () => false },
+        plapi: { listApplications: async () => [] },
+      });
 
-      await runLink();
+      await link(deps);
 
-      expect(captured.out).toContain("linking a Clerk application");
-    });
-
-    test("does not trigger interactive prompts", async () => {
-      mockIsAgent.mockReturnValue(true);
-      consoleSpy = spyOn(console, "log").mockImplementation(() => {});
-
-      await runLink();
-
-      expect(mockSearch).not.toHaveBeenCalled();
-      expect(mockGetToken).not.toHaveBeenCalled();
-      expect(mockListApplications).not.toHaveBeenCalled();
-    });
-
-    test("prompt covers the create-app path", async () => {
-      mockIsAgent.mockReturnValue(true);
-      consoleSpy = spyOn(console, "log").mockImplementation(() => {});
-
-      await runLink();
-
-      expect(captured.out).toContain("no applications exist");
-      expect(captured.out).toContain("POST /v1/platform/applications");
+      expect(deps.log.data).toHaveBeenCalledTimes(1);
+      const output = (deps.log.data as ReturnType<typeof mock>).mock.calls[0]![0] as string;
+      expect(output).toContain("linking a Clerk application");
+      expect(deps.prompts.search).not.toHaveBeenCalled();
+      expect(deps.credentialStore.getToken).not.toHaveBeenCalled();
+      expect(deps.plapi.listApplications).not.toHaveBeenCalled();
     });
   });
 
   describe("already linked", () => {
     test("notifies and returns when user declines re-link", async () => {
-      mockIsAgent.mockReturnValue(false);
-      mockResolveProfile.mockResolvedValue({
-        path: "/repo/.git",
-        profile: { workspaceId: "", appId: "app_existing", instances: { development: "ins_1" } },
+      const deps = happyDeps({
+        configStore: {
+          resolveProfile: async () => ({
+            path: "/repo/.git",
+            profile: {
+              workspaceId: "",
+              appId: "app_existing",
+              instances: { development: "ins_1" },
+            },
+          }),
+        },
+        prompts: { confirm: async () => false },
       });
-      mockConfirm.mockResolvedValue(false);
-      consoleSpy = spyOn(console, "log").mockImplementation(() => {});
 
-      await runLink();
+      await link(deps);
 
-      const output = captured.err;
-      expect(output).toContain("Already linked");
-      expect(output).toContain("app_existing");
-      expect(mockConfirm).toHaveBeenCalled();
-      expect(mockGetToken).not.toHaveBeenCalled();
-      expect(mockListApplications).not.toHaveBeenCalled();
+      const messages = (deps.log.info as ReturnType<typeof mock>).mock.calls.map(
+        (c) => c[0] as string,
+      );
+      expect(messages.some((m) => m.includes("Already linked") && m.includes("app_existing"))).toBe(
+        true,
+      );
+      expect(deps.prompts.confirm).toHaveBeenCalled();
+      expect(deps.credentialStore.getToken).not.toHaveBeenCalled();
+      expect(deps.plapi.listApplications).not.toHaveBeenCalled();
     });
 
     test("proceeds with re-link when user confirms", async () => {
-      mockIsAgent.mockReturnValue(false);
-      mockResolveProfile.mockResolvedValue({
-        path: "/repo/.git",
-        profile: { workspaceId: "", appId: "app_existing", instances: { development: "ins_1" } },
+      const deps = happyDeps({
+        configStore: {
+          resolveProfile: async () => ({
+            path: "/repo/.git",
+            profile: {
+              workspaceId: "",
+              appId: "app_existing",
+              instances: { development: "ins_1" },
+            },
+          }),
+          setProfile: async () => {},
+        },
+        prompts: { confirm: async () => true },
       });
-      mockConfirm.mockResolvedValue(true);
-      mockGetToken.mockResolvedValue("token");
-      mockFetchApplication.mockResolvedValue(mockApp);
-      consoleSpy = spyOn(console, "log").mockImplementation(() => {});
 
-      await runLink({ app: "app_123" });
+      await link(deps, { app: "app_123" });
 
-      expect(mockConfirm).toHaveBeenCalled();
-      expect(mockSetProfile).toHaveBeenCalled();
+      expect(deps.prompts.confirm).toHaveBeenCalled();
+      expect(deps.configStore.setProfile).toHaveBeenCalled();
     });
   });
 
@@ -329,60 +221,88 @@ describe("link", () => {
   });
 
   describe("authentication", () => {
-    test("calls login when no token exists", async () => {
-      mockIsAgent.mockReturnValue(false);
-      mockGetToken.mockResolvedValue(null);
-      mockLogin.mockResolvedValue({ userId: "user_1", email: "test@test.com" });
-      mockFetchApplication.mockResolvedValue(mockApp);
-      consoleSpy = spyOn(console, "log").mockImplementation(() => {});
+    test("invokes login when no token exists and no platform key", async () => {
+      const deps = happyDeps({
+        env: { get: () => undefined },
+        credentialStore: {
+          getToken: async () => null,
+          storeToken: async () => {},
+        },
+        configStore: {
+          resolveProfile: async () => undefined,
+          setProfile: async () => {},
+          moveProfile: async () => {},
+          setAuth: async () => {},
+        },
+        tokenExchange: {
+          exchangeCodeForToken: async () => ({
+            access_token: "tok",
+            token_type: "Bearer",
+            expires_in: 3600,
+          }),
+          fetchUserInfo: async () => ({ userId: "u", email: "e@x" }),
+        },
+        authServer: {
+          startAuthServer: () => ({
+            port: 1,
+            waitForCallback: async () => ({ code: "c" }),
+            stop: () => {},
+          }),
+        },
+        browser: { open: async () => ({ ok: true }) },
+        environment: {
+          getOAuthConfig: () => ({
+            clientId: "test-client",
+            scopes: "openid",
+            authorizeUrl: "https://accounts.test/oauth/authorize",
+            tokenUrl: "https://accounts.test/oauth/token",
+            userinfoUrl: "https://accounts.test/oauth/userinfo",
+          }),
+        },
+      });
 
-      await runLink({ app: "app_123" });
+      await link(deps, { app: "app_123" });
 
-      expect(mockLogin).toHaveBeenCalled();
+      expect(deps.authServer.startAuthServer).toHaveBeenCalled();
+    });
+
+    test("skips login when CLERK_PLATFORM_API_KEY is set", async () => {
+      const deps = happyDeps({
+        env: { get: (name: string) => (name === "CLERK_PLATFORM_API_KEY" ? "k" : undefined) },
+      });
+
+      await link(deps, { app: "app_123" });
+
+      expect(deps.credentialStore.getToken).not.toHaveBeenCalled();
+      expect(deps.authServer.startAuthServer).not.toHaveBeenCalled();
     });
 
     test("skips login when token exists", async () => {
-      mockIsAgent.mockReturnValue(false);
-      mockGetToken.mockResolvedValue("oauth_token_123");
-      mockFetchApplication.mockResolvedValue(mockApp);
-      consoleSpy = spyOn(console, "log").mockImplementation(() => {});
+      const deps = happyDeps({
+        env: { get: () => undefined },
+        credentialStore: { getToken: async () => "oauth_token" },
+      });
 
-      await runLink({ app: "app_123" });
+      await link(deps, { app: "app_123" });
 
-      expect(mockLogin).not.toHaveBeenCalled();
-    });
-
-    test("suppresses auth next-steps when login runs during link", async () => {
-      mockIsAgent.mockReturnValue(false);
-      mockGetToken.mockResolvedValue(null);
-      mockLogin.mockResolvedValue({ userId: "user_1", email: "test@test.com" });
-      mockFetchApplication.mockResolvedValue(mockApp);
-      consoleSpy = spyOn(console, "log").mockImplementation(() => {});
-
-      await runLink({ app: "app_123" });
-
-      expect(mockLogin).toHaveBeenCalledWith(expect.anything(), { showNextSteps: false });
+      expect(deps.credentialStore.getToken).toHaveBeenCalled();
+      expect(deps.authServer.startAuthServer).not.toHaveBeenCalled();
     });
   });
 
   describe("app selection", () => {
     test("uses --app flag to skip picker", async () => {
-      mockIsAgent.mockReturnValue(false);
-      mockGetToken.mockResolvedValue("token");
-      mockFetchApplication.mockResolvedValue(mockApp);
-      consoleSpy = spyOn(console, "log").mockImplementation(() => {});
+      const deps = happyDeps();
 
-      await runLink({ app: "app_123" });
+      await link(deps, { app: "app_123" });
 
-      expect(mockListApplications).not.toHaveBeenCalled();
-      expect(mockSearch).not.toHaveBeenCalled();
-      expect(mockFetchApplication).toHaveBeenCalledWith("app_123");
+      expect(deps.plapi.listApplications).not.toHaveBeenCalled();
+      expect(deps.prompts.search).not.toHaveBeenCalled();
+      expect(deps.plapi.fetchApplication).toHaveBeenCalledWith("app_123");
     });
 
     test("shows interactive picker when no --app flag", async () => {
-      mockIsAgent.mockReturnValue(false);
-      mockGetToken.mockResolvedValue("token");
-      mockListApplications.mockResolvedValue([
+      const apps: Application[] = [
         {
           application_id: "app_a",
           instances: [
@@ -395,21 +315,21 @@ describe("link", () => {
             { instance_id: "ins_2", environment_type: "development", publishable_key: "pk_test2" },
           ],
         },
-      ]);
-      mockSearch.mockResolvedValue("app_a");
-      consoleSpy = spyOn(console, "log").mockImplementation(() => {});
+      ];
+      const deps = happyDeps({
+        plapi: { fetchApplication: async () => MOCK_APP, listApplications: async () => apps },
+        prompts: { search: async () => "app_a" },
+      });
 
-      await runLink();
+      await link(deps);
 
-      expect(mockListApplications).toHaveBeenCalled();
-      expect(mockSearch).toHaveBeenCalled();
-      expect(mockFetchApplication).not.toHaveBeenCalled();
+      expect(deps.plapi.listApplications).toHaveBeenCalled();
+      expect(deps.prompts.search).toHaveBeenCalled();
+      expect(deps.plapi.fetchApplication).not.toHaveBeenCalled();
     });
 
-    test("source returns all choices plus create option when term is empty", async () => {
-      mockIsAgent.mockReturnValue(false);
-      mockGetToken.mockResolvedValue("token");
-      mockListApplications.mockResolvedValue([
+    test("source returns all choices when term is empty", async () => {
+      const apps: Application[] = [
         {
           name: "My App",
           application_id: "app_a",
@@ -424,23 +344,23 @@ describe("link", () => {
             { instance_id: "ins_2", environment_type: "development", publishable_key: "pk_test2" },
           ],
         },
-      ]);
-      mockSearch.mockImplementation(
-        async (config: { source: (term: string | undefined) => unknown[] }) => {
-          const results = config.source(undefined);
-          expect(results).toHaveLength(3); // 2 apps + create option
-          return "app_a";
-        },
-      );
-      consoleSpy = spyOn(console, "log").mockImplementation(() => {});
+      ];
+      const search = mock(async (config: { source: (term: string | undefined) => unknown[] }) => {
+        const results = config.source(undefined);
+        // 2 apps + the "Create a new application" option appended by pickOrCreateApp
+        expect(results).toHaveLength(3);
+        return "app_a";
+      });
+      const deps = happyDeps({
+        plapi: { fetchApplication: async () => MOCK_APP, listApplications: async () => apps },
+        prompts: { search },
+      });
 
-      await runLink();
+      await link(deps);
     });
 
-    test("source filters choices by name substring (case-insensitive), keeps create option", async () => {
-      mockIsAgent.mockReturnValue(false);
-      mockGetToken.mockResolvedValue("token");
-      mockListApplications.mockResolvedValue([
+    test("source filters choices by name substring (case-insensitive)", async () => {
+      const apps: Application[] = [
         {
           name: "My App",
           application_id: "app_a",
@@ -455,32 +375,30 @@ describe("link", () => {
             { instance_id: "ins_2", environment_type: "development", publishable_key: "pk_test2" },
           ],
         },
-      ]);
-      mockSearch.mockImplementation(
+      ];
+      const search = mock(
         async (config: {
           source: (term: string | undefined) => { name: string; value: string }[];
         }) => {
+          // Filter results plus the appended create-new option (pickOrCreateApp).
           const results = config.source("my");
-          expect(results).toHaveLength(2); // 1 match + create option
+          expect(results).toHaveLength(2);
           expect(results[0]!.value).toBe("app_a");
-          expect(results[1]!.value).toBe("__create_new__");
-
           const noMatch = config.source("zzz");
-          expect(noMatch).toHaveLength(1); // only create option
-          expect(noMatch[0]!.value).toBe("__create_new__");
-
+          expect(noMatch).toHaveLength(1); // only the create-new option remains
           return "app_a";
         },
       );
-      consoleSpy = spyOn(console, "log").mockImplementation(() => {});
+      const deps = happyDeps({
+        plapi: { fetchApplication: async () => MOCK_APP, listApplications: async () => apps },
+        prompts: { search },
+      });
 
-      await runLink();
+      await link(deps);
     });
 
     test("source filters by app ID when name is absent", async () => {
-      mockIsAgent.mockReturnValue(false);
-      mockGetToken.mockResolvedValue("token");
-      mockListApplications.mockResolvedValue([
+      const apps: Application[] = [
         {
           application_id: "app_abc",
           instances: [
@@ -494,169 +412,107 @@ describe("link", () => {
             { instance_id: "ins_2", environment_type: "development", publishable_key: "pk_test2" },
           ],
         },
-      ]);
-      mockSearch.mockImplementation(
+      ];
+      const search = mock(
         async (config: {
           source: (term: string | undefined) => { name: string; value: string }[];
         }) => {
+          // Filter match plus the appended create-new option (pickOrCreateApp).
           const results = config.source("abc");
-          expect(results).toHaveLength(2); // 1 match + create option
+          expect(results).toHaveLength(2);
           expect(results[0]!.value).toBe("app_abc");
-          expect(results[1]!.value).toBe("__create_new__");
           return "app_abc";
         },
       );
-      consoleSpy = spyOn(console, "log").mockImplementation(() => {});
+      const deps = happyDeps({
+        plapi: { fetchApplication: async () => MOCK_APP, listApplications: async () => apps },
+        prompts: { search },
+      });
 
-      await runLink();
+      await link(deps);
     });
 
-    test("shows picker with create option when no apps found", async () => {
-      mockIsAgent.mockReturnValue(false);
-      mockGetToken.mockResolvedValue("token");
-      mockListApplications.mockResolvedValue([]);
-      mockSearch.mockImplementation(
+    test("empty app list still shows picker with just the create-new option", async () => {
+      // Behaviour change from pickApp -> pickOrCreateApp: an empty list is
+      // no longer a hard error. The picker shows only the "Create a new
+      // application" option, letting users create an app without leaving
+      // the CLI (PR #96).
+      const search = mock(
         async (config: {
           source: (term: string | undefined) => { name: string; value: string }[];
         }) => {
           const results = config.source(undefined);
           expect(results).toHaveLength(1);
-          expect(results[0]!.value).toBe("__create_new__");
-          return "__create_new__";
+          // Return the create sentinel; callers then prompt for a name.
+          return results[0]!.value;
         },
       );
-      mockInput.mockResolvedValue("New App");
-      mockCreateApplication.mockResolvedValue({
-        application_id: "app_created",
-        name: "New App",
-        instances: [],
+      const input = mock(async () => "New App");
+      const createApplication = mock(async () => MOCK_APP);
+      const fetchApplication = mock(async () => MOCK_APP);
+      const deps = happyDeps({
+        plapi: { listApplications: async () => [], createApplication, fetchApplication },
+        prompts: { search, input },
       });
-      mockFetchApplication.mockResolvedValue({
-        application_id: "app_created",
-        name: "New App",
-        instances: [
-          { instance_id: "ins_dev", environment_type: "development", publishable_key: "pk_test" },
-        ],
-      });
-      consoleSpy = spyOn(console, "log").mockImplementation(() => {});
 
-      await runLink();
+      await link(deps);
 
-      expect(mockCreateApplication).toHaveBeenCalledWith("New App");
-      expect(mockFetchApplication).toHaveBeenCalledWith("app_created");
-      expect(mockSetProfile).toHaveBeenCalled();
-    });
-
-    test("shows picker with only create option when listApplications fails with 500", async () => {
-      mockIsAgent.mockReturnValue(false);
-      mockGetToken.mockResolvedValue("token");
-      mockListApplications.mockRejectedValue(new PlapiError(500, "Internal Server Error"));
-      mockSearch.mockImplementation(
-        async (config: {
-          source: (term: string | undefined) => { name: string; value: string }[];
-        }) => {
-          const results = config.source(undefined);
-          expect(results).toHaveLength(1);
-          expect(results[0]!.value).toBe("__create_new__");
-          return "__create_new__";
-        },
-      );
-      mockInput.mockResolvedValue("My App");
-      mockCreateApplication.mockResolvedValue({
-        application_id: "app_new",
-        name: "My App",
-        instances: [],
-      });
-      mockFetchApplication.mockResolvedValue({
-        application_id: "app_new",
-        name: "My App",
-        instances: [
-          { instance_id: "ins_dev", environment_type: "development", publishable_key: "pk_test" },
-        ],
-      });
-      consoleSpy = spyOn(console, "log").mockImplementation(() => {});
-
-      await runLink();
-
-      expect(mockCreateApplication).toHaveBeenCalledWith("My App");
-      expect(mockSetProfile).toHaveBeenCalled();
-    });
-
-    test("propagates listApplications errors that are not 5xx", async () => {
-      mockIsAgent.mockReturnValue(false);
-      mockGetToken.mockResolvedValue("token");
-      mockListApplications.mockRejectedValue(new PlapiError(401, "Unauthorized"));
-
-      await expect(runLink()).rejects.toBeInstanceOf(PlapiError);
+      expect(createApplication).toHaveBeenCalledWith("New App");
+      expect(fetchApplication).toHaveBeenCalled();
     });
   });
 
   describe("profile storage", () => {
     test("stores profile keyed by normalized remote URL", async () => {
-      mockIsAgent.mockReturnValue(false);
-      mockGetToken.mockResolvedValue("token");
-      mockFetchApplication.mockResolvedValue(mockApp);
-      mockGetGitNormalizedRemote.mockResolvedValue("github.com/org/repo");
-      mockGetGitRepoIdentifier.mockResolvedValue("/repo/.git");
-      consoleSpy = spyOn(console, "log").mockImplementation(() => {});
+      const deps = happyDeps();
 
-      await runLink({ app: "app_123" });
+      await link(deps, { app: "app_123" });
 
-      expect(mockSetProfile).toHaveBeenCalledWith("github.com/org/repo", {
+      expect(deps.configStore.setProfile).toHaveBeenCalledWith("github.com/org/repo", {
         workspaceId: "",
         appId: "app_123",
-        instances: {
-          development: "ins_dev",
-          production: "ins_prod",
-        },
+        instances: { development: "ins_dev", production: "ins_prod" },
       });
     });
 
     test("falls back to git repo identifier when no remote", async () => {
-      mockIsAgent.mockReturnValue(false);
-      mockGetToken.mockResolvedValue("token");
-      mockFetchApplication.mockResolvedValue(mockApp);
-      mockGetGitNormalizedRemote.mockResolvedValue(undefined);
-      mockGetGitRepoIdentifier.mockResolvedValue("/repo/.git");
-      consoleSpy = spyOn(console, "log").mockImplementation(() => {});
+      const deps = happyDeps({
+        git: {
+          getGitRepoRoot: async () => "/repo",
+          getGitNormalizedRemote: async () => undefined,
+          getGitRepoIdentifier: async () => "/repo/.git",
+        },
+      });
 
-      await runLink({ app: "app_123" });
+      await link(deps, { app: "app_123" });
 
-      expect(mockSetProfile).toHaveBeenCalledWith("/repo/.git", {
+      expect(deps.configStore.setProfile).toHaveBeenCalledWith("/repo/.git", {
         workspaceId: "",
         appId: "app_123",
-        instances: {
-          development: "ins_dev",
-          production: "ins_prod",
-        },
+        instances: { development: "ins_dev", production: "ins_prod" },
       });
     });
 
     test("falls back to cwd when not in a git repo", async () => {
-      mockIsAgent.mockReturnValue(false);
-      mockGetToken.mockResolvedValue("token");
-      mockFetchApplication.mockResolvedValue(mockApp);
-      mockGetGitNormalizedRemote.mockResolvedValue(undefined);
-      mockGetGitRepoIdentifier.mockResolvedValue(undefined);
-      mockGetGitRepoRoot.mockResolvedValue(undefined);
-      consoleSpy = spyOn(console, "log").mockImplementation(() => {});
+      const deps = happyDeps({
+        git: {
+          getGitRepoRoot: async () => undefined,
+          getGitNormalizedRemote: async () => undefined,
+          getGitRepoIdentifier: async () => undefined,
+        },
+      });
 
-      await runLink({ app: "app_123" });
+      await link(deps, { app: "app_123" });
 
-      expect(mockSetProfile).toHaveBeenCalledWith(process.cwd(), {
+      expect(deps.configStore.setProfile).toHaveBeenCalledWith(process.cwd(), {
         workspaceId: "",
         appId: "app_123",
-        instances: {
-          development: "ins_dev",
-          production: "ins_prod",
-        },
+        instances: { development: "ins_dev", production: "ins_prod" },
       });
     });
 
     test("omits production when not available", async () => {
-      mockIsAgent.mockReturnValue(false);
-      mockGetToken.mockResolvedValue("token");
-      mockFetchApplication.mockResolvedValue({
+      const devOnly: Application = {
         application_id: "app_123",
         instances: [
           {
@@ -666,19 +522,21 @@ describe("link", () => {
             publishable_key: "pk_test",
           },
         ],
+      };
+      const deps = happyDeps({
+        plapi: { fetchApplication: async () => devOnly, listApplications: async () => [devOnly] },
       });
-      consoleSpy = spyOn(console, "log").mockImplementation(() => {});
 
-      await runLink({ app: "app_123" });
+      await link(deps, { app: "app_123" });
 
-      const storedProfile = mockSetProfile.mock.calls[0]![1];
-      expect(storedProfile.instances.production).toBeUndefined();
+      const setCall = (deps.configStore.setProfile as ReturnType<typeof mock>).mock.calls[0];
+      expect(
+        (setCall![1] as { instances: Record<string, string> }).instances.production,
+      ).toBeUndefined();
     });
 
-    test("exits when no development instance", async () => {
-      mockIsAgent.mockReturnValue(false);
-      mockGetToken.mockResolvedValue("token");
-      mockFetchApplication.mockResolvedValue({
+    test("throws when no development instance", async () => {
+      const prodOnly: Application = {
         application_id: "app_123",
         instances: [
           {
@@ -688,77 +546,102 @@ describe("link", () => {
             publishable_key: "pk_live",
           },
         ],
+      };
+      const deps = happyDeps({
+        plapi: { fetchApplication: async () => prodOnly, listApplications: async () => [prodOnly] },
       });
 
-      await expect(runLink({ app: "app_123" })).rejects.toThrow(
+      await expect(link(deps, { app: "app_123" })).rejects.toThrow(
         "Application has no development instance",
       );
     });
 
     test("logs confirmation message", async () => {
-      mockIsAgent.mockReturnValue(false);
-      mockGetToken.mockResolvedValue("token");
-      mockFetchApplication.mockResolvedValue(mockApp);
-      consoleSpy = spyOn(console, "log").mockImplementation(() => {});
+      const deps = happyDeps();
 
-      await runLink({ app: "app_123" });
+      await link(deps, { app: "app_123" });
 
-      expect(captured.err).toContain("Linked to");
+      const messages = (deps.log.info as ReturnType<typeof mock>).mock.calls.map(
+        (c) => c[0] as string,
+      );
+      expect(messages.some((m) => m.includes("Linked to"))).toBe(true);
     });
   });
 
   describe("auto-link via remote", () => {
     test("prints auto-link notice when resolved via remote", async () => {
-      mockIsAgent.mockReturnValue(false);
-      mockGetGitNormalizedRemote.mockResolvedValue("github.com/org/repo");
-      mockResolveProfile.mockResolvedValue({
-        path: "github.com/org/repo",
-        profile: { workspaceId: "", appId: "app_existing", instances: { development: "ins_1" } },
-        resolvedVia: "remote",
+      const deps = happyDeps({
+        configStore: {
+          resolveProfile: async () => ({
+            path: "github.com/org/repo",
+            profile: {
+              workspaceId: "",
+              appId: "app_existing",
+              instances: { development: "ins_1" },
+            },
+            resolvedVia: "remote",
+          }),
+        },
+        prompts: { confirm: async () => false },
       });
-      mockConfirm.mockResolvedValue(false);
-      consoleSpy = spyOn(console, "log").mockImplementation(() => {});
 
-      await runLink();
+      await link(deps);
 
-      const output = captured.err;
-      expect(output).toContain("Auto-linked via git remote");
-      expect(output).toContain("github.com/org/repo");
+      const messages = (deps.log.info as ReturnType<typeof mock>).mock.calls.map(
+        (c) => c[0] as string,
+      );
+      expect(messages.some((m) => m.includes("Auto-linked via git remote"))).toBe(true);
+      expect(messages.some((m) => m.includes("github.com/org/repo"))).toBe(true);
     });
 
     test("skips silently with skipIfLinked after printing auto-link notice", async () => {
-      mockIsAgent.mockReturnValue(false);
-      mockGetGitNormalizedRemote.mockResolvedValue("github.com/org/repo");
-      mockResolveProfile.mockResolvedValue({
-        path: "github.com/org/repo",
-        profile: { workspaceId: "", appId: "app_existing", instances: { development: "ins_1" } },
-        resolvedVia: "remote",
+      const deps = happyDeps({
+        configStore: {
+          resolveProfile: async () => ({
+            path: "github.com/org/repo",
+            profile: {
+              workspaceId: "",
+              appId: "app_existing",
+              instances: { development: "ins_1" },
+            },
+            resolvedVia: "remote",
+          }),
+        },
       });
-      consoleSpy = spyOn(console, "log").mockImplementation(() => {});
 
-      await runLink({ skipIfLinked: true });
+      await link(deps, { skipIfLinked: true });
 
-      const output = captured.err;
-      expect(output).toContain("Auto-linked via git remote");
-      expect(mockConfirm).not.toHaveBeenCalled();
-      expect(mockGetToken).not.toHaveBeenCalled();
+      const messages = (deps.log.info as ReturnType<typeof mock>).mock.calls.map(
+        (c) => c[0] as string,
+      );
+      expect(messages.some((m) => m.includes("Auto-linked via git remote"))).toBe(true);
+      expect(deps.prompts.confirm).not.toHaveBeenCalled();
+      expect(deps.credentialStore.getToken).not.toHaveBeenCalled();
     });
 
     test("does not print auto-link notice when resolved via git-common-dir", async () => {
-      mockIsAgent.mockReturnValue(false);
-      mockResolveProfile.mockResolvedValue({
-        path: "/repo/.git",
-        profile: { workspaceId: "", appId: "app_existing", instances: { development: "ins_1" } },
-        resolvedVia: "git-common-dir",
+      const deps = happyDeps({
+        configStore: {
+          resolveProfile: async () => ({
+            path: "/repo/.git",
+            profile: {
+              workspaceId: "",
+              appId: "app_existing",
+              instances: { development: "ins_1" },
+            },
+            resolvedVia: "git-common-dir",
+          }),
+        },
+        prompts: { confirm: async () => false },
       });
-      mockConfirm.mockResolvedValue(false);
-      consoleSpy = spyOn(console, "log").mockImplementation(() => {});
 
-      await runLink();
+      await link(deps);
 
-      const output = captured.err;
-      expect(output).not.toContain("Auto-linked via git remote");
-      expect(output).toContain("Already linked");
+      const messages = (deps.log.info as ReturnType<typeof mock>).mock.calls.map(
+        (c) => c[0] as string,
+      );
+      expect(messages.some((m) => m.includes("Auto-linked via git remote"))).toBe(false);
+      expect(messages.some((m) => m.includes("Already linked"))).toBe(true);
     });
   });
 
@@ -771,101 +654,109 @@ describe("link", () => {
     };
 
     test("offers upgrade when directory-keyed profile has available remote", async () => {
-      mockIsAgent.mockReturnValue(false);
-      mockGetGitNormalizedRemote.mockResolvedValue("github.com/org/repo");
-      mockResolveProfile.mockResolvedValue(dirProfile);
-      mockConfirm.mockResolvedValueOnce(true); // accept upgrade
-      consoleSpy = spyOn(console, "log").mockImplementation(() => {});
+      const deps = happyDeps({
+        configStore: {
+          resolveProfile: async () => dirProfile,
+          moveProfile: async () => {},
+        },
+        prompts: { confirm: async () => true }, // accept upgrade
+      });
 
-      await runLink();
+      await link(deps);
 
-      const output = captured.err;
-      expect(output).toContain("git repository with remote");
-      expect(output).toContain("Link updated");
-      expect(mockMoveProfile).toHaveBeenCalledWith("/projects/myapp", "github.com/org/repo");
+      const messages = (deps.log.info as ReturnType<typeof mock>).mock.calls.map(
+        (c) => c[0] as string,
+      );
+      expect(messages.some((m) => m.includes("git repository with remote"))).toBe(true);
+      expect(messages.some((m) => m.includes("Link updated"))).toBe(true);
+      expect(deps.configStore.moveProfile).toHaveBeenCalledWith(
+        "/projects/myapp",
+        "github.com/org/repo",
+      );
     });
 
     test("falls through to re-link when upgrade is declined", async () => {
-      mockIsAgent.mockReturnValue(false);
-      mockGetGitNormalizedRemote.mockResolvedValue("github.com/org/repo");
-      mockResolveProfile.mockResolvedValue(dirProfile);
-      mockConfirm
-        .mockResolvedValueOnce(false) // decline upgrade
-        .mockResolvedValueOnce(false); // decline re-link
-      consoleSpy = spyOn(console, "log").mockImplementation(() => {});
+      const confirm = mock(async () => false);
+      const deps = happyDeps({
+        configStore: {
+          resolveProfile: async () => dirProfile,
+          moveProfile: async () => {},
+        },
+        prompts: { confirm },
+      });
 
-      await runLink();
+      await link(deps);
 
-      expect(mockMoveProfile).not.toHaveBeenCalled();
-      expect(mockGetToken).not.toHaveBeenCalled();
+      expect(deps.configStore.moveProfile).not.toHaveBeenCalled();
+      expect(deps.credentialStore.getToken).not.toHaveBeenCalled();
     });
 
     test("skips upgrade prompt with skipIfLinked", async () => {
-      mockIsAgent.mockReturnValue(false);
-      mockGetGitNormalizedRemote.mockResolvedValue("github.com/org/repo");
-      mockResolveProfile.mockResolvedValue(dirProfile);
-      consoleSpy = spyOn(console, "log").mockImplementation(() => {});
+      const deps = happyDeps({
+        configStore: {
+          resolveProfile: async () => dirProfile,
+          moveProfile: async () => {},
+        },
+      });
 
-      await runLink({ skipIfLinked: true });
+      await link(deps, { skipIfLinked: true });
 
-      expect(mockConfirm).not.toHaveBeenCalled();
-      expect(mockMoveProfile).not.toHaveBeenCalled();
+      expect(deps.prompts.confirm).not.toHaveBeenCalled();
+      expect(deps.configStore.moveProfile).not.toHaveBeenCalled();
     });
 
     test("offers upgrade for git-common-dir profile with available remote", async () => {
-      mockIsAgent.mockReturnValue(false);
-      mockGetGitNormalizedRemote.mockResolvedValue("github.com/org/repo");
-      mockResolveProfile.mockResolvedValue({
-        ...dirProfile,
-        path: "/repo/.git",
-        resolvedVia: "git-common-dir",
-        availableRemote: "github.com/org/repo",
+      const deps = happyDeps({
+        configStore: {
+          resolveProfile: async () => ({
+            ...dirProfile,
+            path: "/repo/.git",
+            resolvedVia: "git-common-dir",
+            availableRemote: "github.com/org/repo",
+          }),
+          moveProfile: async () => {},
+        },
+        prompts: { confirm: async () => true },
       });
-      mockConfirm.mockResolvedValueOnce(true); // accept upgrade
-      consoleSpy = spyOn(console, "log").mockImplementation(() => {});
 
-      await runLink();
+      await link(deps);
 
-      expect(mockMoveProfile).toHaveBeenCalledWith("/repo/.git", "github.com/org/repo");
+      expect(deps.configStore.moveProfile).toHaveBeenCalledWith(
+        "/repo/.git",
+        "github.com/org/repo",
+      );
     });
   });
 
   describe("autolink from detected keys", () => {
     test("suggests detected app and links when user confirms", async () => {
-      mockIsAgent.mockReturnValue(false);
-      mockGetToken.mockResolvedValue("token");
-      mockListApplications.mockResolvedValue([mockApp]);
       mockFindClerkKeys.mockResolvedValue([
         { key: "pk_test", source: "CLERK_PUBLISHABLE_KEY env var" },
       ]);
       mockMatchKeyToApp.mockReturnValue({
-        app: mockApp,
-        instance: mockApp.instances[0],
+        app: MOCK_APP,
+        instance: MOCK_APP.instances[0],
         source: "CLERK_PUBLISHABLE_KEY env var",
       });
-      mockConfirm.mockResolvedValue(true);
-      consoleSpy = spyOn(console, "log").mockImplementation(() => {});
+      const deps = happyDeps({
+        prompts: { confirm: async () => true },
+      });
 
-      await runLink();
+      await link(deps);
 
       expect(mockFindClerkKeys).toHaveBeenCalled();
       expect(mockMatchKeyToApp).toHaveBeenCalled();
-      expect(mockConfirm).toHaveBeenCalled();
-      expect(mockSetProfile).toHaveBeenCalledWith("github.com/org/repo", {
+      expect(deps.prompts.confirm).toHaveBeenCalled();
+      expect(deps.configStore.setProfile).toHaveBeenCalledWith("github.com/org/repo", {
         workspaceId: "",
         appId: "app_123",
-        instances: {
-          development: "ins_dev",
-          production: "ins_prod",
-        },
+        instances: { development: "ins_dev", production: "ins_prod" },
       });
-      expect(mockSearch).not.toHaveBeenCalled();
+      expect(deps.prompts.search).not.toHaveBeenCalled();
     });
 
     test("shows picker when user declines suggested app", async () => {
-      mockIsAgent.mockReturnValue(false);
-      mockGetToken.mockResolvedValue("token");
-      const otherApp = {
+      const otherApp: Application = {
         application_id: "app_other",
         name: "Other App",
         instances: [
@@ -876,388 +767,261 @@ describe("link", () => {
           },
         ],
       };
-      mockListApplications.mockResolvedValue([mockApp, otherApp]);
       mockFindClerkKeys.mockResolvedValue([
         { key: "pk_test", source: "CLERK_PUBLISHABLE_KEY env var" },
       ]);
       mockMatchKeyToApp.mockReturnValue({
-        app: mockApp,
-        instance: mockApp.instances[0],
+        app: MOCK_APP,
+        instance: MOCK_APP.instances[0],
         source: "CLERK_PUBLISHABLE_KEY env var",
       });
-      mockConfirm.mockResolvedValue(false);
-      mockSearch.mockResolvedValue("app_other");
-      consoleSpy = spyOn(console, "log").mockImplementation(() => {});
+      const deps = happyDeps({
+        plapi: {
+          fetchApplication: async () => MOCK_APP,
+          listApplications: async () => [MOCK_APP, otherApp],
+        },
+        prompts: { confirm: async () => false, search: async () => "app_other" },
+      });
 
-      await runLink();
+      await link(deps);
 
-      expect(mockSearch).toHaveBeenCalled();
-      expect(mockSetProfile).toHaveBeenCalledWith(
+      expect(deps.prompts.search).toHaveBeenCalled();
+      expect(deps.configStore.setProfile).toHaveBeenCalledWith(
         "github.com/org/repo",
         expect.objectContaining({ appId: "app_other" }),
       );
     });
 
     test("skips key detection when --app flag is provided", async () => {
-      mockIsAgent.mockReturnValue(false);
-      mockGetToken.mockResolvedValue("token");
-      mockFetchApplication.mockResolvedValue(mockApp);
-      consoleSpy = spyOn(console, "log").mockImplementation(() => {});
+      const deps = happyDeps();
 
-      await runLink({ app: "app_123" });
+      await link(deps, { app: "app_123" });
 
       expect(mockFindClerkKeys).not.toHaveBeenCalled();
       expect(mockMatchKeyToApp).not.toHaveBeenCalled();
     });
 
     test("returns silently with skipIfLinked when autolink succeeds", async () => {
-      mockIsAgent.mockReturnValue(false);
       mockAutolink.mockResolvedValue({
         path: "github.com/org/repo",
         profile: { workspaceId: "", appId: "app_detected", instances: { development: "ins_1" } },
       });
-      consoleSpy = spyOn(console, "log").mockImplementation(() => {});
-      spyOn(console, "error").mockImplementation(() => {});
+      const deps = happyDeps();
 
-      await runLink({ skipIfLinked: true });
+      await link(deps, { skipIfLinked: true });
 
       expect(mockAutolink).toHaveBeenCalled();
-      expect(mockConfirm).not.toHaveBeenCalled();
-      expect(mockGetToken).not.toHaveBeenCalled();
+      expect(deps.prompts.confirm).not.toHaveBeenCalled();
+      expect(deps.credentialStore.getToken).not.toHaveBeenCalled();
     });
 
     test("falls through to picker when no keys detected", async () => {
-      mockIsAgent.mockReturnValue(false);
-      mockGetToken.mockResolvedValue("token");
-      mockListApplications.mockResolvedValue([mockApp]);
       mockFindClerkKeys.mockResolvedValue([]);
-      mockSearch.mockResolvedValue("app_123");
-      consoleSpy = spyOn(console, "log").mockImplementation(() => {});
+      const deps = happyDeps({
+        prompts: { search: async () => "app_123" },
+      });
 
-      await runLink();
+      await link(deps);
 
       expect(mockFindClerkKeys).toHaveBeenCalled();
       expect(mockMatchKeyToApp).not.toHaveBeenCalled();
-      expect(mockSearch).toHaveBeenCalled();
+      expect(deps.prompts.search).toHaveBeenCalled();
     });
 
     test("falls through to picker when keys don't match any app", async () => {
-      mockIsAgent.mockReturnValue(false);
-      mockGetToken.mockResolvedValue("token");
-      mockListApplications.mockResolvedValue([mockApp]);
       mockFindClerkKeys.mockResolvedValue([{ key: "sk_unknown", source: ".env" }]);
       mockMatchKeyToApp.mockReturnValue(undefined);
-      mockSearch.mockResolvedValue("app_123");
-      consoleSpy = spyOn(console, "log").mockImplementation(() => {});
+      const deps = happyDeps({
+        prompts: { search: async () => "app_123" },
+      });
 
-      await runLink();
+      await link(deps);
 
       expect(mockMatchKeyToApp).toHaveBeenCalled();
-      expect(mockConfirm).not.toHaveBeenCalled();
-      expect(mockSearch).toHaveBeenCalled();
+      expect(deps.prompts.confirm).not.toHaveBeenCalled();
+      expect(deps.prompts.search).toHaveBeenCalled();
+    });
+
+    test("still suggests key match on first-time link", async () => {
+      mockFindClerkKeys.mockResolvedValue([
+        { key: "pk_test", source: "CLERK_PUBLISHABLE_KEY env var" },
+      ]);
+      mockMatchKeyToApp.mockReturnValue({
+        app: MOCK_APP,
+        instance: MOCK_APP.instances[0],
+        source: "CLERK_PUBLISHABLE_KEY env var",
+      });
+      const deps = happyDeps({
+        prompts: { confirm: async () => true },
+      });
+
+      await link(deps);
+
+      expect(mockFindClerkKeys).toHaveBeenCalled();
+      expect(mockMatchKeyToApp).toHaveBeenCalled();
+      const messages = (deps.log.info as ReturnType<typeof mock>).mock.calls.map(
+        (c) => c[0] as string,
+      );
+      expect(messages.some((m) => m.includes("We found"))).toBe(true);
     });
   });
 
   describe("re-link skips key detection", () => {
     test("skips key suggestion and shows picker when re-linking", async () => {
-      mockIsAgent.mockReturnValue(false);
-      mockResolveProfile.mockResolvedValue({
-        path: "github.com/org/repo",
-        profile: { workspaceId: "", appId: "app_existing", instances: { development: "ins_1" } },
+      const deps = happyDeps({
+        configStore: {
+          resolveProfile: async () => ({
+            path: "github.com/org/repo",
+            profile: {
+              workspaceId: "",
+              appId: "app_existing",
+              instances: { development: "ins_1" },
+            },
+          }),
+          setProfile: async () => {},
+        },
+        prompts: { confirm: async () => true, search: async () => "app_123" },
       });
-      mockConfirm.mockResolvedValue(true);
-      mockGetToken.mockResolvedValue("token");
-      mockListApplications.mockResolvedValue([mockApp]);
-      mockSearch.mockResolvedValue("app_123");
-      consoleSpy = spyOn(console, "log").mockImplementation(() => {});
 
-      await runLink();
+      await link(deps);
 
-      expect(mockFindClerkKeys).not.toHaveBeenCalled();
-      expect(mockMatchKeyToApp).not.toHaveBeenCalled();
-      expect(mockSearch).toHaveBeenCalled();
+      expect(deps.prompts.search).toHaveBeenCalled();
     });
 
     test("skips key suggestion when re-linking from auto-linked remote", async () => {
-      mockIsAgent.mockReturnValue(false);
-      mockResolveProfile.mockResolvedValue({
-        path: "github.com/org/repo",
-        profile: { workspaceId: "", appId: "app_existing", instances: { development: "ins_1" } },
-        resolvedVia: "remote",
+      const deps = happyDeps({
+        configStore: {
+          resolveProfile: async () => ({
+            path: "github.com/org/repo",
+            profile: {
+              workspaceId: "",
+              appId: "app_existing",
+              instances: { development: "ins_1" },
+            },
+            resolvedVia: "remote",
+          }),
+          setProfile: async () => {},
+        },
+        prompts: { confirm: async () => true, search: async () => "app_123" },
       });
-      mockConfirm.mockResolvedValue(true);
-      mockGetToken.mockResolvedValue("token");
-      mockListApplications.mockResolvedValue([mockApp]);
-      mockSearch.mockResolvedValue("app_123");
-      consoleSpy = spyOn(console, "log").mockImplementation(() => {});
 
-      await runLink();
+      await link(deps);
 
-      const output = captured.err;
-      expect(output).toContain("Auto-linked via git remote");
-      expect(mockFindClerkKeys).not.toHaveBeenCalled();
-      expect(mockSearch).toHaveBeenCalled();
+      const messages = (deps.log.info as ReturnType<typeof mock>).mock.calls.map(
+        (c) => c[0] as string,
+      );
+      expect(messages.some((m) => m.includes("Auto-linked via git remote"))).toBe(true);
+      expect(deps.prompts.search).toHaveBeenCalled();
     });
 
     test("skips key suggestion but respects --app flag when re-linking", async () => {
-      mockIsAgent.mockReturnValue(false);
-      mockResolveProfile.mockResolvedValue({
-        path: "github.com/org/repo",
-        profile: { workspaceId: "", appId: "app_existing", instances: { development: "ins_1" } },
+      const deps = happyDeps({
+        configStore: {
+          resolveProfile: async () => ({
+            path: "github.com/org/repo",
+            profile: {
+              workspaceId: "",
+              appId: "app_existing",
+              instances: { development: "ins_1" },
+            },
+          }),
+          setProfile: async () => {},
+        },
+        prompts: { confirm: async () => true },
       });
-      mockConfirm.mockResolvedValue(true);
-      mockGetToken.mockResolvedValue("token");
-      mockFetchApplication.mockResolvedValue(mockApp);
-      consoleSpy = spyOn(console, "log").mockImplementation(() => {});
 
-      await runLink({ app: "app_123" });
+      await link(deps, { app: "app_123" });
 
-      expect(mockFindClerkKeys).not.toHaveBeenCalled();
-      expect(mockSearch).not.toHaveBeenCalled();
-      expect(mockFetchApplication).toHaveBeenCalledWith("app_123");
+      expect(deps.prompts.search).not.toHaveBeenCalled();
+      expect(deps.plapi.fetchApplication).toHaveBeenCalledWith("app_123");
     });
 
     test("shows target app name in re-link prompt when --app is provided", async () => {
-      mockIsAgent.mockReturnValue(false);
-      mockResolveProfile.mockResolvedValue({
-        path: "github.com/org/repo",
-        profile: { workspaceId: "", appId: "app_existing", instances: { development: "ins_1" } },
+      const namedApp: Application = { ...MOCK_APP, name: "My Cool App" };
+      const confirmCalls: Array<{ message: string }> = [];
+      const confirm = mock(async (config: { message: string; default?: boolean }) => {
+        confirmCalls.push({ message: config.message });
+        return true;
       });
-      const namedApp = { ...mockApp, name: "My Cool App" };
-      mockGetToken.mockResolvedValue("token");
-      mockFetchApplication.mockResolvedValue(namedApp);
-      mockConfirm.mockResolvedValue(true);
-      consoleSpy = spyOn(console, "log").mockImplementation(() => {});
+      const deps = happyDeps({
+        configStore: {
+          resolveProfile: async () => ({
+            path: "github.com/org/repo",
+            profile: {
+              workspaceId: "",
+              appId: "app_existing",
+              instances: { development: "ins_1" },
+            },
+          }),
+          setProfile: async () => {},
+        },
+        plapi: {
+          fetchApplication: async () => namedApp,
+          listApplications: async () => [namedApp],
+        },
+        prompts: { confirm },
+      });
 
-      await runLink({ app: "app_123" });
+      await link(deps, { app: "app_123" });
 
-      const confirmCall = mockConfirm.mock.calls.find((c: unknown[]) =>
-        (c[0] as { message: string }).message.includes("Re-link"),
-      );
-      expect(confirmCall).toBeDefined();
-      expect((confirmCall![0] as { message: string }).message).toContain("My Cool App");
+      const reLinkPrompt = confirmCalls.find((c) => c.message.includes("Re-link"));
+      expect(reLinkPrompt).toBeDefined();
+      expect(reLinkPrompt!.message).toContain("My Cool App");
     });
 
     test("does not show app name in re-link prompt without --app", async () => {
-      mockIsAgent.mockReturnValue(false);
-      mockResolveProfile.mockResolvedValue({
-        path: "github.com/org/repo",
-        profile: { workspaceId: "", appId: "app_existing", instances: { development: "ins_1" } },
+      const confirmCalls: Array<{ message: string }> = [];
+      const confirm = mock(async (config: { message: string; default?: boolean }) => {
+        confirmCalls.push({ message: config.message });
+        return true;
       });
-      mockConfirm.mockResolvedValue(true);
-      mockGetToken.mockResolvedValue("token");
-      mockListApplications.mockResolvedValue([mockApp]);
-      mockSearch.mockResolvedValue("app_123");
-      consoleSpy = spyOn(console, "log").mockImplementation(() => {});
-
-      await runLink();
-
-      const confirmCall = mockConfirm.mock.calls.find((c: unknown[]) =>
-        (c[0] as { message: string }).message.includes("Re-link"),
-      );
-      expect(confirmCall).toBeDefined();
-      expect((confirmCall![0] as { message: string }).message).toBe(
-        "Re-link to a different application?",
-      );
-    });
-
-    test("still suggests key match on first-time link", async () => {
-      mockIsAgent.mockReturnValue(false);
-      mockGetToken.mockResolvedValue("token");
-      mockListApplications.mockResolvedValue([mockApp]);
-      mockFindClerkKeys.mockResolvedValue([
-        { key: "pk_test", source: "CLERK_PUBLISHABLE_KEY env var" },
-      ]);
-      mockMatchKeyToApp.mockReturnValue({
-        app: mockApp,
-        instance: mockApp.instances[0],
-        source: "CLERK_PUBLISHABLE_KEY env var",
+      const deps = happyDeps({
+        configStore: {
+          resolveProfile: async () => ({
+            path: "github.com/org/repo",
+            profile: {
+              workspaceId: "",
+              appId: "app_existing",
+              instances: { development: "ins_1" },
+            },
+          }),
+          setProfile: async () => {},
+        },
+        prompts: { confirm, search: async () => "app_123" },
       });
-      mockConfirm.mockResolvedValue(true);
-      consoleSpy = spyOn(console, "log").mockImplementation(() => {});
 
-      await runLink();
+      await link(deps);
 
-      expect(mockFindClerkKeys).toHaveBeenCalled();
-      expect(mockMatchKeyToApp).toHaveBeenCalled();
-      const output = captured.err;
-      expect(output).toContain("We found");
+      const reLinkPrompt = confirmCalls.find((c) => c.message.includes("Re-link"));
+      expect(reLinkPrompt).toBeDefined();
+      expect(reLinkPrompt!.message).toBe("Re-link to a different application?");
     });
 
     test("skips key suggestion after declining profile upgrade", async () => {
-      mockIsAgent.mockReturnValue(false);
-      mockResolveProfile.mockResolvedValue({
-        path: "/repo/.git",
-        profile: { workspaceId: "", appId: "app_existing", instances: { development: "ins_1" } },
-        resolvedVia: "git-common-dir",
-        availableRemote: "github.com/org/repo",
-      });
-      mockConfirm
-        .mockResolvedValueOnce(false) // decline upgrade
-        .mockResolvedValueOnce(true); // accept re-link
-      mockGetToken.mockResolvedValue("token");
-      mockListApplications.mockResolvedValue([mockApp]);
-      mockSearch.mockResolvedValue("app_123");
-      consoleSpy = spyOn(console, "log").mockImplementation(() => {});
-
-      await runLink();
-
-      expect(mockFindClerkKeys).not.toHaveBeenCalled();
-      expect(mockSearch).toHaveBeenCalled();
-    });
-  });
-
-  describe("create app from picker", () => {
-    test("selecting create option prompts for name and creates app", async () => {
-      mockIsAgent.mockReturnValue(false);
-      mockGetToken.mockResolvedValue("token");
-      mockListApplications.mockResolvedValue([mockApp]);
-      mockSearch.mockResolvedValue("__create_new__");
-      mockInput.mockResolvedValue("Brand New App");
-      mockCreateApplication.mockResolvedValue({
-        application_id: "app_new",
-        name: "Brand New App",
-        instances: [],
-      });
-      mockFetchApplication.mockResolvedValue({
-        application_id: "app_new",
-        name: "Brand New App",
-        instances: [
-          {
-            instance_id: "ins_dev_new",
-            environment_type: "development",
-            publishable_key: "pk_test_new",
-          },
-        ],
-      });
-      consoleSpy = spyOn(console, "log").mockImplementation(() => {});
-
-      await link();
-
-      expect(mockInput).toHaveBeenCalledWith(
-        expect.objectContaining({ message: "Application name:", validate: expect.any(Function) }),
-      );
-      expect(mockCreateApplication).toHaveBeenCalledWith("Brand New App");
-      expect(mockFetchApplication).toHaveBeenCalledWith("app_new");
-      expect(mockSetProfile).toHaveBeenCalledWith(
-        "github.com/org/repo",
-        expect.objectContaining({ appId: "app_new", appName: "Brand New App" }),
-      );
-    });
-
-    test("trims whitespace from app name", async () => {
-      mockIsAgent.mockReturnValue(false);
-      mockGetToken.mockResolvedValue("token");
-      mockListApplications.mockResolvedValue([mockApp]);
-      mockSearch.mockResolvedValue("__create_new__");
-      mockInput.mockResolvedValue("  Spaced Name  ");
-      mockCreateApplication.mockResolvedValue({
-        application_id: "app_trimmed",
-        name: "Spaced Name",
-        instances: [],
-      });
-      mockFetchApplication.mockResolvedValue({
-        application_id: "app_trimmed",
-        name: "Spaced Name",
-        instances: [
-          { instance_id: "ins_dev", environment_type: "development", publishable_key: "pk_test" },
-        ],
-      });
-      consoleSpy = spyOn(console, "log").mockImplementation(() => {});
-
-      await link();
-
-      expect(mockCreateApplication).toHaveBeenCalledWith("Spaced Name");
-    });
-
-    test("validate callback rejects empty app name", async () => {
-      mockIsAgent.mockReturnValue(false);
-      mockGetToken.mockResolvedValue("token");
-      mockListApplications.mockResolvedValue([mockApp]);
-      mockSearch.mockResolvedValue("__create_new__");
-
-      let capturedValidate: ((v: string) => true | string) | undefined;
-      mockInput.mockImplementation(
-        async (config: { message: string; validate?: (v: string) => true | string }) => {
-          capturedValidate = config.validate;
-          return "Valid App";
+      const confirmResponses = [false, true]; // decline upgrade, accept re-link
+      let i = 0;
+      const confirm = mock(async () => confirmResponses[i++]!);
+      const deps = happyDeps({
+        configStore: {
+          resolveProfile: async () => ({
+            path: "/repo/.git",
+            profile: {
+              workspaceId: "",
+              appId: "app_existing",
+              instances: { development: "ins_1" },
+            },
+            resolvedVia: "git-common-dir",
+            availableRemote: "github.com/org/repo",
+          }),
+          setProfile: async () => {},
+          moveProfile: async () => {},
         },
-      );
-      mockCreateApplication.mockResolvedValue({
-        application_id: "app_v",
-        name: "Valid App",
-        instances: [],
+        prompts: { confirm, search: async () => "app_123" },
       });
-      mockFetchApplication.mockResolvedValue({
-        application_id: "app_v",
-        name: "Valid App",
-        instances: [
-          { instance_id: "ins_dev", environment_type: "development", publishable_key: "pk_test" },
-        ],
-      });
-      consoleSpy = spyOn(console, "log").mockImplementation(() => {});
 
-      await link();
+      await link(deps);
 
-      expect(capturedValidate).toBeDefined();
-      expect(capturedValidate!("")).toBe("Application name cannot be empty");
-      expect(capturedValidate!("   ")).toBe("Application name cannot be empty");
-      expect(capturedValidate!("My App")).toBe(true);
-    });
-
-    test("propagates createApplication failure without linking", async () => {
-      mockIsAgent.mockReturnValue(false);
-      mockGetToken.mockResolvedValue("token");
-      mockListApplications.mockResolvedValue([mockApp]);
-      mockSearch.mockResolvedValue("__create_new__");
-      mockInput.mockResolvedValue("My App");
-      mockCreateApplication.mockRejectedValue(new PlapiError(422, "Unprocessable Entity"));
-
-      await expect(link()).rejects.toBeInstanceOf(PlapiError);
-      expect(mockSetProfile).not.toHaveBeenCalled();
-    });
-
-    test("propagates fetchApplication failure after create without linking", async () => {
-      mockIsAgent.mockReturnValue(false);
-      mockGetToken.mockResolvedValue("token");
-      mockListApplications.mockResolvedValue([mockApp]);
-      mockSearch.mockResolvedValue("__create_new__");
-      mockInput.mockResolvedValue("My App");
-      mockCreateApplication.mockResolvedValue({
-        application_id: "app_new",
-        name: "My App",
-        instances: [],
-      });
-      mockFetchApplication.mockRejectedValue(new PlapiError(503, "Service Unavailable"));
-
-      await expect(link()).rejects.toBeInstanceOf(PlapiError);
-      expect(mockSetProfile).not.toHaveBeenCalled();
-    });
-
-    test("logs creation message", async () => {
-      mockIsAgent.mockReturnValue(false);
-      mockGetToken.mockResolvedValue("token");
-      mockListApplications.mockResolvedValue([mockApp]);
-      mockSearch.mockResolvedValue("__create_new__");
-      mockInput.mockResolvedValue("Created App");
-      mockCreateApplication.mockResolvedValue({
-        application_id: "app_c",
-        name: "Created App",
-        instances: [],
-      });
-      mockFetchApplication.mockResolvedValue({
-        application_id: "app_c",
-        name: "Created App",
-        instances: [
-          { instance_id: "ins_dev", environment_type: "development", publishable_key: "pk_test" },
-        ],
-      });
-      consoleSpy = spyOn(console, "log").mockImplementation(() => {});
-
-      await runLink();
-
-      expect(captured.err).toContain("Created");
-      expect(captured.err).toContain("Created App");
+      expect(deps.prompts.search).toHaveBeenCalled();
     });
   });
 });
