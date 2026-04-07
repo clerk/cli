@@ -112,7 +112,11 @@ export async function init(options: InitOptions = {}) {
   if (skipAuth) {
     printBootstrapManualSetupInfo(ctx.framework.name);
   } else if (!keyless) {
-    await pull({ file: ctx.envFile });
+    // init has not yet been ported to dependency injection (PR 8). Until
+    // it is, construct the production root inline so the ported `pull`
+    // command can be invoked from this unported caller. This bridge will
+    // disappear when init is ported to take `deps` itself.
+    await pull(createRoot(), { file: ctx.envFile });
   } else {
     printKeylessInfo();
   }

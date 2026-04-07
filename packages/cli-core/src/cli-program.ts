@@ -212,7 +212,7 @@ export function createProgram(root: Root) {
       { command: "clerk env pull --file .env", description: "Write to a specific file" },
       { command: "clerk env pull --app app_abc123", description: "Target a specific application" },
     ])
-    .action((opts) => pull(opts));
+    .action((opts) => pull(root, opts));
 
   const config = program
     .command("config")
@@ -260,7 +260,7 @@ export function createProgram(root: Root) {
       { command: "clerk config pull --instance prod", description: "Pull production config" },
       { command: "clerk config pull --output config.json", description: "Save config to a file" },
     ])
-    .action((opts) => configPull(opts));
+    .action((opts) => configPull(root, opts));
 
   config
     .command("schema")
@@ -277,7 +277,7 @@ export function createProgram(root: Root) {
       },
       { command: "clerk config schema --output schema.json", description: "Save schema to a file" },
     ])
-    .action((opts) => configSchema(opts));
+    .action((opts) => configSchema(root, opts));
 
   config
     .command("patch")
@@ -310,7 +310,7 @@ export function createProgram(root: Root) {
         description: "Patch production config",
       },
     ])
-    .action((opts) => configPatch(opts));
+    .action((opts) => configPatch(root, opts));
 
   config
     .command("put")
@@ -343,7 +343,7 @@ export function createProgram(root: Root) {
         description: "Skip confirmation prompt",
       },
     ])
-    .action((opts) => configPut(opts));
+    .action((opts) => configPut(root, opts));
 
   program
     .command("api")

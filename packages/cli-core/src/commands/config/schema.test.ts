@@ -1,240 +1,181 @@
-import { test, expect, describe, beforeEach, afterEach, spyOn, mock } from "bun:test";
+import { test, expect, describe, beforeEach, afterEach } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { _setConfigDir, setProfile } from "../../lib/config.ts";
-import { credentialStoreStubs, gitStubs, stubFetch, captureLog } from "../../test/lib/stubs.ts";
+import { configSchema } from "./schema.ts";
+import { testRoot } from "../../test/lib/test-root.ts";
 
-mock.module("../../lib/credential-store.ts", () => credentialStoreStubs);
-mock.module("../../lib/git.ts", () => gitStubs);
+const MOCK_SCHEMA = {
+  type: "object",
+  properties: {
+    session: {
+      type: "object",
+      properties: { lifetime: { type: "integer" } },
+    },
+  },
+};
 
-describe("config schema", () => {
-  const originalEnv = { ...process.env };
-  const originalFetch = globalThis.fetch;
-  let tempDir: string;
-  let logSpy: ReturnType<typeof spyOn>;
-  let errorSpy: ReturnType<typeof spyOn>;
-  let exitSpy: ReturnType<typeof spyOn>;
-  let captured: ReturnType<typeof captureLog>;
+type Ctx = {
+  appId: string;
+  appLabel: string;
+  instanceId: string;
+  instanceLabel: string;
+};
 
-  const mockSchema = {
-    type: "object",
-    properties: {
-      session: {
-        type: "object",
-        properties: { lifetime: { type: "integer" } },
+function depsFor({
+  ctx = { appId: "app_1", appLabel: "app_1", instanceId: "ins_dev", instanceLabel: "development" },
+  schema = MOCK_SCHEMA as Record<string, unknown>,
+  resolveError,
+  fetchError,
+}: {
+  ctx?: Ctx;
+  schema?: Record<string, unknown>;
+  resolveError?: Error;
+  fetchError?: Error;
+} = {}) {
+  return testRoot({
+    configStore: {
+      resolveAppContext: async () => {
+        if (resolveError) throw resolveError;
+        return ctx;
       },
     },
-  };
+    plapi: {
+      fetchInstanceConfigSchema: async () => {
+        if (fetchError) throw fetchError;
+        return schema;
+      },
+    },
+  });
+}
+
+describe("config schema", () => {
+  let tempDir: string;
 
   beforeEach(async () => {
     tempDir = await mkdtemp(join(tmpdir(), "clerk-config-schema-test-"));
-    _setConfigDir(tempDir);
-    process.env.CLERK_PLATFORM_API_KEY = "test_key";
-    process.env.CLERK_PLATFORM_API_URL = "https://test-api.clerk.com";
-
-    logSpy = spyOn(console, "log").mockImplementation(() => {});
-    errorSpy = spyOn(console, "error").mockImplementation(() => {});
-    exitSpy = spyOn(process, "exit").mockImplementation(() => {
-      throw new Error("process.exit");
-    });
-    captured = captureLog();
-
-    stubFetch(async () => new Response(JSON.stringify(mockSchema), { status: 200 }));
   });
 
   afterEach(async () => {
-    captured.teardown();
-    _setConfigDir(undefined);
-    process.env = { ...originalEnv };
-    globalThis.fetch = originalFetch;
-    logSpy.mockRestore();
-    errorSpy.mockRestore();
-    exitSpy.mockRestore();
     await rm(tempDir, { recursive: true, force: true });
   });
 
-  async function runConfigSchema(
-    options: { app?: string; instance?: string; output?: string; keys?: string[] } = {},
-  ) {
-    const { configSchema } = await import("./schema.ts");
-    return captured.run(() => configSchema(options));
-  }
-
   test("errors when no profile is linked", async () => {
-    await expect(runConfigSchema()).rejects.toThrow("No Clerk project linked");
+    const deps = depsFor({ resolveError: new Error("No Clerk project linked to this directory.") });
+    await expect(configSchema(deps, {})).rejects.toThrow("No Clerk project linked");
   });
 
   test("errors when CLERK_PLATFORM_API_KEY is missing", async () => {
-    await setProfile(process.cwd(), {
-      workspaceId: "org_1",
-      appId: "app_1",
-      instances: { development: "ins_dev" },
-    });
-    delete process.env.CLERK_PLATFORM_API_KEY;
-
-    await expect(runConfigSchema()).rejects.toThrow("Not authenticated");
+    const deps = depsFor({ fetchError: new Error("Not authenticated. Run `clerk auth login`.") });
+    await expect(configSchema(deps, {})).rejects.toThrow("Not authenticated");
   });
 
   test("prints schema JSON to stdout by default", async () => {
-    await setProfile(process.cwd(), {
-      workspaceId: "org_1",
-      appId: "app_1",
-      instances: { development: "ins_dev" },
-    });
-
-    await runConfigSchema();
-    expect(captured.out).toBe(JSON.stringify(mockSchema, null, 2));
+    const deps = depsFor();
+    await configSchema(deps, {});
+    expect(deps.log.data).toHaveBeenCalledWith(JSON.stringify(MOCK_SCHEMA, null, 2));
   });
 
   test("supports --app without a linked profile", async () => {
-    const mockApp = {
-      application_id: "app_1",
-      instances: [{ instance_id: "ins_dev", environment_type: "development" }],
-    };
-
-    stubFetch(async (input) => {
-      const url = input.toString();
-      if (url.includes("/instances/") && url.includes("/config")) {
-        return new Response(JSON.stringify(mockSchema), { status: 200 });
-      }
-      if (url.includes("/v1/platform/applications/app_1")) {
-        return new Response(JSON.stringify(mockApp), { status: 200 });
-      }
-      throw new Error(`Unexpected fetch: ${url}`);
-    });
-
-    await runConfigSchema({ app: "app_1" });
-    expect(captured.out).toBe(JSON.stringify(mockSchema, null, 2));
+    const deps = depsFor();
+    await configSchema(deps, { app: "app_1" });
+    expect(deps.configStore.resolveAppContext).toHaveBeenCalledWith({ app: "app_1" });
+    expect(deps.log.data).toHaveBeenCalledWith(JSON.stringify(MOCK_SCHEMA, null, 2));
   });
 
   test("writes schema to file with --output", async () => {
-    await setProfile(process.cwd(), {
-      workspaceId: "org_1",
-      appId: "app_1",
-      instances: { development: "ins_dev" },
-    });
+    const deps = depsFor();
     const outFile = join(tempDir, "schema.json");
 
-    await runConfigSchema({ output: outFile });
+    await configSchema(deps, { output: outFile });
     const written = await Bun.file(outFile).json();
-    expect(written).toEqual(mockSchema);
-    expect(captured.err).toContain("Schema written to");
+    expect(written).toEqual(MOCK_SCHEMA);
+    expect(deps.log.success).toHaveBeenCalledWith(expect.stringContaining("Schema written to"));
   });
 
   test("shows which environment is being pulled", async () => {
-    await setProfile(process.cwd(), {
-      workspaceId: "org_1",
-      appId: "app_1",
-      instances: { development: "ins_dev" },
-    });
-
-    await runConfigSchema();
-    expect(captured.err).toContain("Pulling config schema from app_1 (development)...");
+    const deps = depsFor();
+    await configSchema(deps, {});
+    expect(deps.log.info).toHaveBeenCalledWith("Pulling config schema from app_1 (development)...");
   });
 
   test("shows production label when --instance prod", async () => {
-    await setProfile(process.cwd(), {
-      workspaceId: "org_1",
-      appId: "app_1",
-      instances: { development: "ins_dev", production: "ins_prod" },
+    const deps = depsFor({
+      ctx: {
+        appId: "app_1",
+        appLabel: "app_1",
+        instanceId: "ins_prod",
+        instanceLabel: "production",
+      },
     });
-
-    await runConfigSchema({ instance: "prod" });
-    expect(captured.err).toContain("Pulling config schema from app_1 (production)...");
+    await configSchema(deps, { instance: "prod" });
+    expect(deps.log.info).toHaveBeenCalledWith("Pulling config schema from app_1 (production)...");
   });
 
   test("uses development instance by default", async () => {
-    let requestedUrl = "";
-    stubFetch(async (input) => {
-      requestedUrl = input.toString();
-      return new Response(JSON.stringify(mockSchema), { status: 200 });
-    });
-
-    await setProfile(process.cwd(), {
-      workspaceId: "org_1",
-      appId: "app_1",
-      instances: { development: "ins_dev", production: "ins_prod" },
-    });
-
-    await runConfigSchema();
-    expect(requestedUrl).toContain("/instances/ins_dev/");
+    const deps = depsFor();
+    await configSchema(deps, {});
+    expect(deps.plapi.fetchInstanceConfigSchema).toHaveBeenCalledWith(
+      "app_1",
+      "ins_dev",
+      undefined,
+    );
   });
 
   test("--instance prod targets production instance", async () => {
-    let requestedUrl = "";
-    stubFetch(async (input) => {
-      requestedUrl = input.toString();
-      return new Response(JSON.stringify(mockSchema), { status: 200 });
+    const deps = depsFor({
+      ctx: {
+        appId: "app_1",
+        appLabel: "app_1",
+        instanceId: "ins_prod",
+        instanceLabel: "production",
+      },
     });
-
-    await setProfile(process.cwd(), {
-      workspaceId: "org_1",
-      appId: "app_1",
-      instances: { development: "ins_dev", production: "ins_prod" },
-    });
-
-    await runConfigSchema({ instance: "prod" });
-    expect(requestedUrl).toContain("/instances/ins_prod/");
+    await configSchema(deps, { instance: "prod" });
+    expect(deps.plapi.fetchInstanceConfigSchema).toHaveBeenCalledWith(
+      "app_1",
+      "ins_prod",
+      undefined,
+    );
   });
 
   test("--instance with literal ID passes through", async () => {
-    let requestedUrl = "";
-    stubFetch(async (input) => {
-      requestedUrl = input.toString();
-      return new Response(JSON.stringify(mockSchema), { status: 200 });
+    const deps = depsFor({
+      ctx: {
+        appId: "app_1",
+        appLabel: "app_1",
+        instanceId: "ins_custom_123",
+        instanceLabel: "ins_custom_123",
+      },
     });
-
-    await setProfile(process.cwd(), {
-      workspaceId: "org_1",
-      appId: "app_1",
-      instances: { development: "ins_dev" },
-    });
-
-    await runConfigSchema({ instance: "ins_custom_123" });
-    expect(requestedUrl).toContain("/instances/ins_custom_123/");
+    await configSchema(deps, { instance: "ins_custom_123" });
+    expect(deps.plapi.fetchInstanceConfigSchema).toHaveBeenCalledWith(
+      "app_1",
+      "ins_custom_123",
+      undefined,
+    );
   });
 
   test("passes --keys to API as query params", async () => {
-    let requestedUrl = "";
-    stubFetch(async (input) => {
-      requestedUrl = input.toString();
-      return new Response(JSON.stringify(mockSchema), { status: 200 });
-    });
-
-    await setProfile(process.cwd(), {
-      workspaceId: "org_1",
-      appId: "app_1",
-      instances: { development: "ins_dev" },
-    });
-
-    await runConfigSchema({ keys: ["session", "sign_up"] });
-    expect(requestedUrl).toContain("keys=session");
-    expect(requestedUrl).toContain("keys=sign_up");
-    expect(requestedUrl).toContain("/config/schema");
+    const deps = depsFor();
+    await configSchema(deps, { keys: ["session", "sign_up"] });
+    expect(deps.plapi.fetchInstanceConfigSchema).toHaveBeenCalledWith("app_1", "ins_dev", [
+      "session",
+      "sign_up",
+    ]);
   });
 
   test("errors when production instance not configured", async () => {
-    await setProfile(process.cwd(), {
-      workspaceId: "org_1",
-      appId: "app_1",
-      instances: { development: "ins_dev" },
+    const deps = depsFor({
+      resolveError: new Error("No production instance configured. Run `clerk link` to set one up."),
     });
-
-    await expect(runConfigSchema({ instance: "prod" })).rejects.toThrow(
+    await expect(configSchema(deps, { instance: "prod" })).rejects.toThrow(
       "No production instance configured",
     );
   });
 
   test("handles API errors gracefully", async () => {
-    stubFetch(async () => new Response("Unauthorized", { status: 401 }));
-
-    await setProfile(process.cwd(), {
-      workspaceId: "org_1",
-      appId: "app_1",
-      instances: { development: "ins_dev" },
-    });
-
-    await expect(runConfigSchema()).rejects.toThrow("API error");
+    const deps = depsFor({ fetchError: new Error("API error: Unauthorized") });
+    await expect(configSchema(deps, {})).rejects.toThrow("API error");
   });
 });

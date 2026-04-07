@@ -1,277 +1,199 @@
-import { test, expect, describe, beforeEach, afterEach, spyOn, mock } from "bun:test";
+import { test, expect, describe, beforeEach, afterEach } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { _setConfigDir, setProfile } from "../../lib/config.ts";
-import { captureLog, credentialStoreStubs, gitStubs, stubFetch } from "../../test/lib/stubs.ts";
+import { configPull } from "./pull.ts";
+import { testRoot } from "../../test/lib/test-root.ts";
 
-mock.module("../../lib/credential-store.ts", () => credentialStoreStubs);
-mock.module("../../lib/git.ts", () => gitStubs);
-mock.module("../../lib/spinner.ts", () => ({
-  withSpinner: async (msg: string, fn: () => Promise<unknown>) => {
-    const { log } = await import("../../lib/log.ts");
-    log.info(msg);
-    return fn();
-  },
-}));
+const MOCK_CONFIG = {
+  session: { lifetime: 604800 },
+  sign_up: { mode: "public" },
+};
+
+type Ctx = {
+  appId: string;
+  appLabel: string;
+  instanceId: string;
+  instanceLabel: string;
+};
+
+function depsFor({
+  ctx = { appId: "app_1", appLabel: "app_1", instanceId: "ins_dev", instanceLabel: "development" },
+  config = MOCK_CONFIG as Record<string, unknown>,
+  resolveError,
+  fetchError,
+}: {
+  ctx?: Ctx;
+  config?: Record<string, unknown>;
+  resolveError?: Error;
+  fetchError?: Error;
+} = {}) {
+  return testRoot({
+    configStore: {
+      resolveAppContext: async () => {
+        if (resolveError) throw resolveError;
+        return ctx;
+      },
+    },
+    plapi: {
+      fetchInstanceConfig: async () => {
+        if (fetchError) throw fetchError;
+        return config;
+      },
+    },
+  });
+}
 
 describe("config pull", () => {
-  const originalEnv = { ...process.env };
-  const originalFetch = globalThis.fetch;
   let tempDir: string;
-  let logSpy: ReturnType<typeof spyOn>;
-  let errorSpy: ReturnType<typeof spyOn>;
-  let exitSpy: ReturnType<typeof spyOn>;
-  let captured: ReturnType<typeof captureLog>;
-
-  const mockConfig = {
-    session: { lifetime: 604800 },
-    sign_up: { mode: "public" },
-  };
 
   beforeEach(async () => {
     tempDir = await mkdtemp(join(tmpdir(), "clerk-config-pull-test-"));
-    _setConfigDir(tempDir);
-    process.env.CLERK_PLATFORM_API_KEY = "test_key";
-    process.env.CLERK_PLATFORM_API_URL = "https://test-api.clerk.com";
-
-    logSpy = spyOn(console, "log").mockImplementation(() => {});
-    errorSpy = spyOn(console, "error").mockImplementation(() => {});
-    exitSpy = spyOn(process, "exit").mockImplementation(() => {
-      throw new Error("process.exit");
-    });
-    captured = captureLog();
-
-    stubFetch(async () => new Response(JSON.stringify(mockConfig), { status: 200 }));
   });
 
   afterEach(async () => {
-    captured.teardown();
-    _setConfigDir(undefined);
-    process.env = { ...originalEnv };
-    globalThis.fetch = originalFetch;
-    logSpy.mockRestore();
-    errorSpy.mockRestore();
-    exitSpy.mockRestore();
     await rm(tempDir, { recursive: true, force: true });
   });
 
-  // Dynamically import to get fresh module state
-  async function runConfigPull(
-    options: { app?: string; instance?: string; output?: string; keys?: string[] } = {},
-  ) {
-    const { configPull } = await import("./pull.ts");
-    return captured.run(() => configPull(options));
-  }
-
   test("errors when no profile is linked", async () => {
-    await expect(runConfigPull()).rejects.toThrow("No Clerk project linked");
+    const deps = depsFor({ resolveError: new Error("No Clerk project linked to this directory.") });
+    await expect(configPull(deps, {})).rejects.toThrow("No Clerk project linked");
   });
 
   test("errors when CLERK_PLATFORM_API_KEY is missing", async () => {
-    await setProfile(process.cwd(), {
-      workspaceId: "org_1",
-      appId: "app_1",
-      instances: { development: "ins_dev" },
-    });
-    delete process.env.CLERK_PLATFORM_API_KEY;
-
-    await expect(runConfigPull()).rejects.toThrow("Not authenticated");
+    const deps = depsFor({ fetchError: new Error("Not authenticated. Run `clerk auth login`.") });
+    await expect(configPull(deps, {})).rejects.toThrow("Not authenticated");
   });
 
   test("prints config JSON to stdout by default", async () => {
-    await setProfile(process.cwd(), {
-      workspaceId: "org_1",
-      appId: "app_1",
-      instances: { development: "ins_dev" },
-    });
-
-    await runConfigPull();
-    expect(captured.out).toContain(JSON.stringify(mockConfig, null, 2));
+    const deps = depsFor();
+    await configPull(deps, {});
+    expect(deps.log.data).toHaveBeenCalledWith(JSON.stringify(MOCK_CONFIG, null, 2));
   });
 
   test("supports --app without a linked profile", async () => {
-    const mockApp = {
-      application_id: "app_1",
-      instances: [{ instance_id: "ins_dev", environment_type: "development" }],
-    };
-
-    stubFetch(async (input) => {
-      const url = input.toString();
-      if (url.includes("/instances/") && url.includes("/config")) {
-        return new Response(JSON.stringify(mockConfig), { status: 200 });
-      }
-      if (url.includes("/v1/platform/applications/app_1")) {
-        return new Response(JSON.stringify(mockApp), { status: 200 });
-      }
-      throw new Error(`Unexpected fetch: ${url}`);
-    });
-
-    await runConfigPull({ app: "app_1" });
-    expect(captured.out).toContain(JSON.stringify(mockConfig, null, 2));
+    const deps = depsFor();
+    await configPull(deps, { app: "app_1" });
+    expect(deps.configStore.resolveAppContext).toHaveBeenCalledWith({ app: "app_1" });
+    expect(deps.log.data).toHaveBeenCalledWith(JSON.stringify(MOCK_CONFIG, null, 2));
   });
 
   test("writes config to file with --output", async () => {
-    await setProfile(process.cwd(), {
-      workspaceId: "org_1",
-      appId: "app_1",
-      instances: { development: "ins_dev" },
-    });
+    const deps = depsFor();
     const outFile = join(tempDir, "output.json");
 
-    await runConfigPull({ output: outFile });
+    await configPull(deps, { output: outFile });
     const written = await Bun.file(outFile).json();
-    expect(written).toEqual(mockConfig);
-    expect(captured.err).toContain("Config written to");
+    expect(written).toEqual(MOCK_CONFIG);
+    expect(deps.log.info).toHaveBeenCalledWith(expect.stringContaining("Config written to"));
   });
 
   test("shows which environment is being pulled", async () => {
-    await setProfile(process.cwd(), {
-      workspaceId: "org_1",
-      appId: "app_1",
-      instances: { development: "ins_dev" },
-    });
-
-    await runConfigPull();
-    expect(captured.err).toContain("Pulling config from app_1 (development)");
+    const deps = depsFor();
+    await configPull(deps, {});
+    expect(deps.spinner.withSpinner).toHaveBeenCalledWith(
+      expect.stringContaining("Pulling config from app_1 (development)"),
+      expect.any(Function),
+    );
   });
 
   test("shows app name when stored in profile", async () => {
-    await setProfile(process.cwd(), {
-      workspaceId: "org_1",
-      appId: "app_1",
-      appName: "My SaaS App",
-      instances: { development: "ins_dev" },
+    const deps = depsFor({
+      ctx: {
+        appId: "app_1",
+        appLabel: "My SaaS App",
+        instanceId: "ins_dev",
+        instanceLabel: "development",
+      },
     });
-
-    await runConfigPull();
-    expect(captured.err).toContain("Pulling config from My SaaS App (development)");
+    await configPull(deps, {});
+    expect(deps.spinner.withSpinner).toHaveBeenCalledWith(
+      expect.stringContaining("Pulling config from My SaaS App (development)"),
+      expect.any(Function),
+    );
   });
 
   test("shows production label when --instance prod", async () => {
-    await setProfile(process.cwd(), {
-      workspaceId: "org_1",
-      appId: "app_1",
-      instances: { development: "ins_dev", production: "ins_prod" },
+    const deps = depsFor({
+      ctx: {
+        appId: "app_1",
+        appLabel: "app_1",
+        instanceId: "ins_prod",
+        instanceLabel: "production",
+      },
     });
-
-    await runConfigPull({ instance: "prod" });
-    expect(captured.err).toContain("Pulling config from app_1 (production)");
+    await configPull(deps, { instance: "prod" });
+    expect(deps.spinner.withSpinner).toHaveBeenCalledWith(
+      expect.stringContaining("Pulling config from app_1 (production)"),
+      expect.any(Function),
+    );
   });
 
   test("uses development instance by default", async () => {
-    let requestedUrl = "";
-    stubFetch(async (input) => {
-      requestedUrl = input.toString();
-      return new Response(JSON.stringify(mockConfig), { status: 200 });
-    });
-
-    await setProfile(process.cwd(), {
-      workspaceId: "org_1",
-      appId: "app_1",
-      instances: { development: "ins_dev", production: "ins_prod" },
-    });
-
-    await runConfigPull();
-    expect(requestedUrl).toContain("/instances/ins_dev/");
+    const deps = depsFor();
+    await configPull(deps, {});
+    expect(deps.plapi.fetchInstanceConfig).toHaveBeenCalledWith("app_1", "ins_dev", undefined);
   });
 
   test("--instance prod targets production instance", async () => {
-    let requestedUrl = "";
-    stubFetch(async (input) => {
-      requestedUrl = input.toString();
-      return new Response(JSON.stringify(mockConfig), { status: 200 });
+    const deps = depsFor({
+      ctx: {
+        appId: "app_1",
+        appLabel: "app_1",
+        instanceId: "ins_prod",
+        instanceLabel: "production",
+      },
     });
-
-    await setProfile(process.cwd(), {
-      workspaceId: "org_1",
-      appId: "app_1",
-      instances: { development: "ins_dev", production: "ins_prod" },
-    });
-
-    await runConfigPull({ instance: "prod" });
-    expect(requestedUrl).toContain("/instances/ins_prod/");
+    await configPull(deps, { instance: "prod" });
+    expect(deps.plapi.fetchInstanceConfig).toHaveBeenCalledWith("app_1", "ins_prod", undefined);
   });
 
   test("--instance with literal ID passes through", async () => {
-    let requestedUrl = "";
-    stubFetch(async (input) => {
-      requestedUrl = input.toString();
-      return new Response(JSON.stringify(mockConfig), { status: 200 });
+    const deps = depsFor({
+      ctx: {
+        appId: "app_1",
+        appLabel: "app_1",
+        instanceId: "ins_custom_123",
+        instanceLabel: "ins_custom_123",
+      },
     });
-
-    await setProfile(process.cwd(), {
-      workspaceId: "org_1",
-      appId: "app_1",
-      instances: { development: "ins_dev" },
-    });
-
-    await runConfigPull({ instance: "ins_custom_123" });
-    expect(requestedUrl).toContain("/instances/ins_custom_123/");
+    await configPull(deps, { instance: "ins_custom_123" });
+    expect(deps.plapi.fetchInstanceConfig).toHaveBeenCalledWith(
+      "app_1",
+      "ins_custom_123",
+      undefined,
+    );
   });
 
   test("errors when production instance not configured", async () => {
-    await setProfile(process.cwd(), {
-      workspaceId: "org_1",
-      appId: "app_1",
-      instances: { development: "ins_dev" },
+    const deps = depsFor({
+      resolveError: new Error("No production instance configured. Run `clerk link` to set one up."),
     });
-
-    await expect(runConfigPull({ instance: "prod" })).rejects.toThrow(
+    await expect(configPull(deps, { instance: "prod" })).rejects.toThrow(
       "No production instance configured",
     );
   });
 
   test("--keys passes keys as query params to the API", async () => {
-    let requestedUrl = "";
-    stubFetch(async (input) => {
-      requestedUrl = input.toString();
-      return new Response(JSON.stringify({ session: { lifetime: 604800 } }), { status: 200 });
-    });
-
-    await setProfile(process.cwd(), {
-      workspaceId: "org_1",
-      appId: "app_1",
-      instances: { development: "ins_dev" },
-    });
-
-    await runConfigPull({ keys: ["session"] });
-    expect(requestedUrl).toContain("keys=session");
-    expect(captured.out).toContain(JSON.stringify({ session: { lifetime: 604800 } }, null, 2));
+    const deps = depsFor({ config: { session: { lifetime: 604800 } } });
+    await configPull(deps, { keys: ["session"] });
+    expect(deps.plapi.fetchInstanceConfig).toHaveBeenCalledWith("app_1", "ins_dev", ["session"]);
+    expect(deps.log.data).toHaveBeenCalledWith(
+      JSON.stringify({ session: { lifetime: 604800 } }, null, 2),
+    );
   });
 
   test("--keys passes multiple keys as repeated query params", async () => {
-    let requestedUrl = "";
-    stubFetch(async (input) => {
-      requestedUrl = input.toString();
-      return new Response(
-        JSON.stringify({ session: { lifetime: 604800 }, sign_up: { mode: "public" } }),
-        {
-          status: 200,
-        },
-      );
-    });
-
-    await setProfile(process.cwd(), {
-      workspaceId: "org_1",
-      appId: "app_1",
-      instances: { development: "ins_dev" },
-    });
-
-    await runConfigPull({ keys: ["session", "sign_up"] });
-    expect(requestedUrl).toContain("keys=session");
-    expect(requestedUrl).toContain("keys=sign_up");
+    const deps = depsFor();
+    await configPull(deps, { keys: ["session", "sign_up"] });
+    expect(deps.plapi.fetchInstanceConfig).toHaveBeenCalledWith("app_1", "ins_dev", [
+      "session",
+      "sign_up",
+    ]);
   });
 
   test("handles API errors gracefully", async () => {
-    stubFetch(async () => new Response("Unauthorized", { status: 401 }));
-
-    await setProfile(process.cwd(), {
-      workspaceId: "org_1",
-      appId: "app_1",
-      instances: { development: "ins_dev" },
-    });
-
-    await expect(runConfigPull()).rejects.toThrow("API error");
+    const deps = depsFor({ fetchError: new Error("API error: Unauthorized") });
+    await expect(configPull(deps, {})).rejects.toThrow("API error");
   });
 });

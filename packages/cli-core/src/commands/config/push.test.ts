@@ -1,166 +1,166 @@
-import { test, expect, describe, beforeEach, afterEach, spyOn, mock } from "bun:test";
+import { test, expect, describe, beforeEach, afterEach, mock } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { _setConfigDir, setProfile } from "../../lib/config.ts";
-import {
-  captureLog,
-  credentialStoreStubs,
-  gitStubs,
-  promptsStubs,
-  stubFetch,
-} from "../../test/lib/stubs.ts";
-import { printDiff, hasConfigChanges } from "./push.ts";
+import { configPatch, configPut, printDiff, hasConfigChanges } from "./push.ts";
+import { testRoot } from "../../test/lib/test-root.ts";
 
-mock.module("../../lib/credential-store.ts", () => credentialStoreStubs);
-mock.module("../../lib/git.ts", () => gitStubs);
-mock.module("@inquirer/prompts", () => promptsStubs);
-mock.module("../../lib/spinner.ts", () => ({
-  withSpinner: async (_msg: string, fn: () => Promise<unknown>) => fn(),
-}));
+const MOCK_RESPONSE = {
+  session: { lifetime: 3600 },
+  sign_up: { mode: "public" },
+};
+
+// "Current" config returned by GET /config before push.
+// Differs from payloads so hasConfigChanges detects changes.
+const CURRENT_CONFIG = {
+  session: { lifetime: 604800 },
+  sign_up: { mode: "restricted" },
+};
+
+const HUMAN_NO_PROMPT = { isHuman: () => false, isAgent: () => true } as const;
+
+type Ctx = {
+  appId: string;
+  appLabel: string;
+  instanceId: string;
+  instanceLabel: string;
+};
+
+interface DepsOpts {
+  ctx?: Ctx;
+  current?: Record<string, unknown>;
+  resolveError?: Error;
+  fetchCurrentError?: Error;
+  pushError?: Error;
+  pushResponse?: Record<string, unknown>;
+  human?: boolean;
+  confirmResponse?: boolean;
+}
+
+interface PushCapture {
+  put: Array<{
+    appId: string;
+    instanceId: string;
+    config: Record<string, unknown>;
+    options?: { destructive?: boolean };
+  }>;
+  patch: Array<{
+    appId: string;
+    instanceId: string;
+    config: Record<string, unknown>;
+    options?: { destructive?: boolean };
+  }>;
+}
+
+function depsFor(opts: DepsOpts = {}) {
+  const capture: PushCapture = { put: [], patch: [] };
+  const {
+    ctx = {
+      appId: "app_1",
+      appLabel: "app_1",
+      instanceId: "ins_dev",
+      instanceLabel: "development",
+    },
+    current = CURRENT_CONFIG as Record<string, unknown>,
+    resolveError,
+    fetchCurrentError,
+    pushError,
+    pushResponse = MOCK_RESPONSE as Record<string, unknown>,
+    human = false,
+    confirmResponse = true,
+  } = opts;
+
+  const deps = testRoot({
+    mode: human ? { isHuman: () => true, isAgent: () => false } : HUMAN_NO_PROMPT,
+    prompts: {
+      confirm: async () => confirmResponse,
+    },
+    configStore: {
+      resolveAppContext: async () => {
+        if (resolveError) throw resolveError;
+        return ctx;
+      },
+    },
+    plapi: {
+      fetchInstanceConfig: async () => {
+        if (fetchCurrentError) throw fetchCurrentError;
+        // Clone so the implementation's `delete config_version` doesn't mutate
+        // the shared fixture between tests.
+        return JSON.parse(JSON.stringify(current));
+      },
+      putInstanceConfig: async (appId, instanceId, config, options) => {
+        capture.put.push({ appId, instanceId, config, options });
+        if (pushError) throw pushError;
+        return pushResponse;
+      },
+      patchInstanceConfig: async (appId, instanceId, config, options) => {
+        capture.patch.push({ appId, instanceId, config, options });
+        if (pushError) throw pushError;
+        return pushResponse;
+      },
+    },
+  });
+
+  return { deps, capture };
+}
 
 describe("config push", () => {
-  const originalEnv = { ...process.env };
-  const originalFetch = globalThis.fetch;
   let tempDir: string;
-  let logSpy: ReturnType<typeof spyOn>;
-  let errorSpy: ReturnType<typeof spyOn>;
-  let exitSpy: ReturnType<typeof spyOn>;
-  let captured: ReturnType<typeof captureLog>;
 
-  const mockResponse = {
-    session: { lifetime: 3600 },
-    sign_up: { mode: "public" },
-  };
-
-  // The "current" config returned by the GET /config call before push.
-  // Must differ from mockResponse payloads so hasConfigChanges detects changes.
-  const currentConfig = {
-    session: { lifetime: 604800 },
-    sign_up: { mode: "restricted" },
-  };
+  // Helper to read the captured call args off the testRoot's log.info spy.
+  function logInfoCalls(deps: { log: { info: unknown } }): string[] {
+    return ((deps.log.info as ReturnType<typeof mock>).mock.calls as unknown[][]).map((c) =>
+      String(c[0] ?? ""),
+    );
+  }
 
   beforeEach(async () => {
     tempDir = await mkdtemp(join(tmpdir(), "clerk-config-push-test-"));
-    _setConfigDir(tempDir);
-    process.env.CLERK_PLATFORM_API_KEY = "test_key";
-    process.env.CLERK_PLATFORM_API_URL = "https://test-api.clerk.com";
-
-    logSpy = spyOn(console, "log").mockImplementation(() => {});
-    errorSpy = spyOn(console, "error").mockImplementation(() => {});
-    exitSpy = spyOn(process, "exit").mockImplementation(() => {
-      throw new Error("process.exit");
-    });
-    captured = captureLog();
-
-    stubFetch(async (_input, init) => {
-      const isGet = !init?.method || init.method === "GET";
-      const body = isGet ? currentConfig : mockResponse;
-      return new Response(JSON.stringify(body), { status: 200 });
-    });
   });
 
   afterEach(async () => {
-    captured.teardown();
-    _setConfigDir(undefined);
-    process.env = { ...originalEnv };
-    globalThis.fetch = originalFetch;
-    logSpy.mockRestore();
-    errorSpy.mockRestore();
-    exitSpy.mockRestore();
     await rm(tempDir, { recursive: true, force: true });
   });
-
-  async function runConfigPatch(
-    options: {
-      app?: string;
-      instance?: string;
-      file?: string;
-      json?: string;
-      dryRun?: boolean;
-      yes?: boolean;
-      destructive?: boolean;
-    } = {},
-  ) {
-    const { configPatch } = await import("./push.ts");
-    return captured.run(() => configPatch(options));
-  }
-
-  async function runConfigPut(
-    options: {
-      app?: string;
-      instance?: string;
-      file?: string;
-      json?: string;
-      dryRun?: boolean;
-      yes?: boolean;
-      destructive?: boolean;
-    } = {},
-  ) {
-    const { configPut } = await import("./push.ts");
-    return captured.run(() => configPut(options));
-  }
 
   // --- Shared error cases ---
 
   test("errors when no profile is linked", async () => {
-    await expect(runConfigPatch({ json: '{"a":1}' })).rejects.toThrow("No Clerk project linked");
+    const { deps } = depsFor({
+      resolveError: new Error("No Clerk project linked to this directory."),
+    });
+    await expect(configPatch(deps, { json: '{"a":1}' })).rejects.toThrow("No Clerk project linked");
   });
 
   test("errors when CLERK_PLATFORM_API_KEY is missing", async () => {
-    await setProfile(process.cwd(), {
-      workspaceId: "org_1",
-      appId: "app_1",
-      instances: { development: "ins_dev" },
+    const { deps } = depsFor({
+      fetchCurrentError: new Error("Not authenticated. Run `clerk auth login`."),
     });
-    delete process.env.CLERK_PLATFORM_API_KEY;
-
-    await expect(runConfigPatch({ json: '{"a":1}', yes: true })).rejects.toThrow(
+    await expect(configPatch(deps, { json: '{"a":1}', yes: true })).rejects.toThrow(
       "Not authenticated",
     );
   });
 
   test("errors when no input source is provided", async () => {
-    await setProfile(process.cwd(), {
-      workspaceId: "org_1",
-      appId: "app_1",
-      instances: { development: "ins_dev" },
-    });
-
+    const { deps } = depsFor();
     // Without --file or --json, falls through to stdin which yields empty input
-    await expect(runConfigPatch()).rejects.toThrow("No input");
+    await expect(configPatch(deps, {})).rejects.toThrow("No input");
   });
 
   test("errors on invalid JSON input", async () => {
-    await setProfile(process.cwd(), {
-      workspaceId: "org_1",
-      appId: "app_1",
-      instances: { development: "ins_dev" },
-    });
-
-    await expect(runConfigPatch({ json: "not-json" })).rejects.toThrow("Invalid JSON");
+    const { deps } = depsFor();
+    await expect(configPatch(deps, { json: "not-json" })).rejects.toThrow("Invalid JSON");
   });
 
   test("errors when JSON is an array", async () => {
-    await setProfile(process.cwd(), {
-      workspaceId: "org_1",
-      appId: "app_1",
-      instances: { development: "ins_dev" },
-    });
-
-    await expect(runConfigPatch({ json: "[1,2,3]" })).rejects.toThrow(
+    const { deps } = depsFor();
+    await expect(configPatch(deps, { json: "[1,2,3]" })).rejects.toThrow(
       "Config must be a JSON object",
     );
   });
 
   test("errors when --file points to nonexistent file", async () => {
-    await setProfile(process.cwd(), {
-      workspaceId: "org_1",
-      appId: "app_1",
-      instances: { development: "ins_dev" },
-    });
-
-    await expect(runConfigPatch({ file: "/tmp/does-not-exist.json" })).rejects.toThrow(
+    const { deps } = depsFor();
+    await expect(configPatch(deps, { file: "/tmp/does-not-exist.json" })).rejects.toThrow(
       "File not found",
     );
   });
@@ -168,544 +168,346 @@ describe("config push", () => {
   // --- PATCH happy paths ---
 
   test("patch sends PATCH method with --json input", async () => {
-    let capturedMethod = "";
-    let capturedBody = "";
-    stubFetch(async (_input, init) => {
-      if (init?.method) {
-        capturedMethod = init.method;
-        capturedBody = init.body as string;
-      }
-      const body = init?.method ? mockResponse : currentConfig;
-      return new Response(JSON.stringify(body), { status: 200 });
-    });
+    const { deps, capture } = depsFor();
 
-    await setProfile(process.cwd(), {
-      workspaceId: "org_1",
-      appId: "app_1",
-      instances: { development: "ins_dev" },
-    });
-
-    await runConfigPatch({ json: '{"session":{"lifetime":3600}}', yes: true });
-    expect(capturedMethod).toBe("PATCH");
-    expect(JSON.parse(capturedBody)).toEqual({ session: { lifetime: 3600 } });
+    await configPatch(deps, { json: '{"session":{"lifetime":3600}}', yes: true });
+    expect(capture.patch).toHaveLength(1);
+    expect(capture.patch[0]!.config).toEqual({ session: { lifetime: 3600 } });
+    expect(capture.put).toHaveLength(0);
   });
 
   test("patch supports --app without a linked profile", async () => {
-    let capturedUrl = "";
-    stubFetch(async (input, init) => {
-      const url = input.toString();
-      if (init?.method) {
-        capturedUrl = url;
-        return new Response(JSON.stringify(mockResponse), { status: 200 });
-      }
-      if (url.includes("/config")) {
-        return new Response(JSON.stringify(currentConfig), { status: 200 });
-      }
-      return new Response(
-        JSON.stringify({
-          application_id: "app_1",
-          instances: [{ instance_id: "ins_dev", environment_type: "development" }],
-        }),
-        { status: 200 },
-      );
-    });
+    const { deps, capture } = depsFor();
 
-    await runConfigPatch({
+    await configPatch(deps, {
       app: "app_1",
       json: '{"session":{"lifetime":3600}}',
       yes: true,
     });
-    expect(capturedUrl).toContain("/instances/ins_dev/");
+    expect(capture.patch[0]!.appId).toBe("app_1");
+    expect(capture.patch[0]!.instanceId).toBe("ins_dev");
   });
 
   test("patch reads config from --file", async () => {
-    let capturedBody = "";
-    stubFetch(async (_input, init) => {
-      if (init?.method) capturedBody = init.body as string;
-      const body = init?.method ? mockResponse : currentConfig;
-      return new Response(JSON.stringify(body), { status: 200 });
-    });
-
+    const { deps, capture } = depsFor();
     const configFile = join(tempDir, "input.json");
     await Bun.write(configFile, JSON.stringify({ session: { lifetime: 7200 } }));
 
-    await setProfile(process.cwd(), {
-      workspaceId: "org_1",
-      appId: "app_1",
-      instances: { development: "ins_dev" },
-    });
-
-    await runConfigPatch({ file: configFile, yes: true });
-    expect(JSON.parse(capturedBody)).toEqual({ session: { lifetime: 7200 } });
+    await configPatch(deps, { file: configFile, yes: true });
+    expect(capture.patch[0]!.config).toEqual({ session: { lifetime: 7200 } });
   });
 
   test("patch prints returned config to stdout", async () => {
-    await setProfile(process.cwd(), {
-      workspaceId: "org_1",
-      appId: "app_1",
-      instances: { development: "ins_dev" },
-    });
-
-    await runConfigPatch({ json: '{"session":{"lifetime":3600}}', yes: true });
-    expect(captured.out).toContain(JSON.stringify(mockResponse, null, 2));
+    const { deps } = depsFor();
+    await configPatch(deps, { json: '{"session":{"lifetime":3600}}', yes: true });
+    expect(deps.log.data).toHaveBeenCalledWith(JSON.stringify(MOCK_RESPONSE, null, 2));
   });
 
   test("patch shows 'Updating' label", async () => {
-    await setProfile(process.cwd(), {
-      workspaceId: "org_1",
-      appId: "app_1",
-      instances: { development: "ins_dev" },
-    });
-
-    await runConfigPatch({ json: '{"session":{"lifetime":3600}}', yes: true });
-    expect(captured.err).toContain("Updating config on app_1 (development)");
+    const { deps } = depsFor();
+    await configPatch(deps, { json: '{"session":{"lifetime":3600}}', yes: true });
+    expect(
+      logInfoCalls(deps).some((m) => m.includes("Updating config on app_1 (development)")),
+    ).toBe(true);
   });
 
   // --- PUT happy paths ---
 
   test("put sends PUT method", async () => {
-    let capturedMethod = "";
-    stubFetch(async (_input, init) => {
-      if (init?.method) capturedMethod = init.method;
-      const body = init?.method ? mockResponse : currentConfig;
-      return new Response(JSON.stringify(body), { status: 200 });
-    });
+    const { deps, capture } = depsFor();
 
-    await setProfile(process.cwd(), {
-      workspaceId: "org_1",
-      appId: "app_1",
-      instances: { development: "ins_dev" },
-    });
-
-    await runConfigPut({ json: '{"session":{"lifetime":3600}}', yes: true });
-    expect(capturedMethod).toBe("PUT");
+    await configPut(deps, { json: '{"session":{"lifetime":3600}}', yes: true });
+    expect(capture.put).toHaveLength(1);
+    expect(capture.patch).toHaveLength(0);
   });
 
   test("put shows 'Replacing' label", async () => {
-    await setProfile(process.cwd(), {
-      workspaceId: "org_1",
-      appId: "app_1",
-      instances: { development: "ins_dev" },
-    });
-
-    await runConfigPut({ json: '{"session":{"lifetime":3600}}', yes: true });
-    expect(captured.err).toContain("Replacing config on app_1 (development)");
+    const { deps } = depsFor();
+    await configPut(deps, { json: '{"session":{"lifetime":3600}}', yes: true });
+    expect(
+      logInfoCalls(deps).some((m) => m.includes("Replacing config on app_1 (development)")),
+    ).toBe(true);
   });
 
   // --- config_version stripping ---
 
   test("put strips config_version from payload before sending", async () => {
-    let capturedBody = "";
-    stubFetch(async (_input, init) => {
-      if (init?.method) capturedBody = init.body as string;
-      const body = init?.method ? mockResponse : currentConfig;
-      return new Response(JSON.stringify(body), { status: 200 });
-    });
-
-    await setProfile(process.cwd(), {
-      workspaceId: "org_1",
-      appId: "app_1",
-      instances: { development: "ins_dev" },
-    });
-
-    await runConfigPut({
+    const { deps, capture } = depsFor();
+    await configPut(deps, {
       json: '{"config_version":42,"session":{"lifetime":3600}}',
       yes: true,
     });
-    expect(JSON.parse(capturedBody)).toEqual({ session: { lifetime: 3600 } });
+    expect(capture.put[0]!.config).toEqual({ session: { lifetime: 3600 } });
   });
 
   test("patch strips config_version from payload before sending", async () => {
-    let capturedBody = "";
-    stubFetch(async (_input, init) => {
-      if (init?.method) capturedBody = init.body as string;
-      const body = init?.method ? mockResponse : currentConfig;
-      return new Response(JSON.stringify(body), { status: 200 });
-    });
-
-    await setProfile(process.cwd(), {
-      workspaceId: "org_1",
-      appId: "app_1",
-      instances: { development: "ins_dev" },
-    });
-
-    await runConfigPatch({
+    const { deps, capture } = depsFor();
+    await configPatch(deps, {
       json: '{"config_version":42,"session":{"lifetime":3600}}',
       yes: true,
     });
-    expect(JSON.parse(capturedBody)).toEqual({ session: { lifetime: 3600 } });
+    expect(capture.patch[0]!.config).toEqual({ session: { lifetime: 3600 } });
   });
 
   // --- --destructive flag ---
 
-  test("patch sends ?destructive=true when --destructive is set", async () => {
-    let capturedUrl = "";
-    stubFetch(async (input, init) => {
-      if (init?.method) capturedUrl = input.toString();
-      const body = init?.method ? mockResponse : currentConfig;
-      return new Response(JSON.stringify(body), { status: 200 });
-    });
-
-    await setProfile(process.cwd(), {
-      workspaceId: "org_1",
-      appId: "app_1",
-      instances: { development: "ins_dev" },
-    });
-
-    await runConfigPatch({
+  test("patch sends destructive flag when --destructive is set", async () => {
+    const { deps, capture } = depsFor();
+    await configPatch(deps, {
       json: '{"session":null}',
       yes: true,
       destructive: true,
     });
-    expect(capturedUrl).toContain("?destructive=true");
+    expect(capture.patch[0]!.options).toEqual({ destructive: true });
   });
 
-  test("put sends ?destructive=true when --destructive is set", async () => {
-    let capturedUrl = "";
-    stubFetch(async (input, init) => {
-      if (init?.method) capturedUrl = input.toString();
-      const body = init?.method ? mockResponse : currentConfig;
-      return new Response(JSON.stringify(body), { status: 200 });
-    });
-
-    await setProfile(process.cwd(), {
-      workspaceId: "org_1",
-      appId: "app_1",
-      instances: { development: "ins_dev" },
-    });
-
-    await runConfigPut({
+  test("put sends destructive flag when --destructive is set", async () => {
+    const { deps, capture } = depsFor();
+    await configPut(deps, {
       json: '{"session":null}',
       yes: true,
       destructive: true,
     });
-    expect(capturedUrl).toContain("?destructive=true");
+    expect(capture.put[0]!.options).toEqual({ destructive: true });
   });
 
-  test("does not send ?destructive=true by default", async () => {
-    let capturedUrl = "";
-    stubFetch(async (input, init) => {
-      if (init?.method) capturedUrl = input.toString();
-      const body = init?.method ? mockResponse : currentConfig;
-      return new Response(JSON.stringify(body), { status: 200 });
-    });
-
-    await setProfile(process.cwd(), {
-      workspaceId: "org_1",
-      appId: "app_1",
-      instances: { development: "ins_dev" },
-    });
-
-    await runConfigPatch({ json: '{"session":{"lifetime":3600}}', yes: true });
-    expect(capturedUrl).not.toContain("destructive");
+  test("does not send destructive flag by default", async () => {
+    const { deps, capture } = depsFor();
+    await configPatch(deps, { json: '{"session":{"lifetime":3600}}', yes: true });
+    expect(capture.patch[0]!.options).toEqual({ destructive: undefined });
   });
 
   // --- No-op when unchanged ---
 
   test("patch skips API call when payload matches current config", async () => {
-    let mutatingCallMade = false;
-    stubFetch(async (_input, init) => {
-      if (init?.method) mutatingCallMade = true;
-      const body = init?.method ? mockResponse : currentConfig;
-      return new Response(JSON.stringify(body), { status: 200 });
-    });
-
-    await setProfile(process.cwd(), {
-      workspaceId: "org_1",
-      appId: "app_1",
-      instances: { development: "ins_dev" },
-    });
-
+    const { deps, capture } = depsFor();
     // Send a payload that matches the current config for the patched key
-    await runConfigPatch({ json: '{"session":{"lifetime":604800}}', yes: true });
-    expect(mutatingCallMade).toBe(false);
-    expect(captured.err).toContain("No changes detected");
+    await configPatch(deps, { json: '{"session":{"lifetime":604800}}', yes: true });
+    expect(capture.patch).toHaveLength(0);
+    expect(deps.log.info).toHaveBeenCalledWith("No changes detected");
   });
 
   test("put skips API call when payload matches current config", async () => {
-    let mutatingCallMade = false;
-    stubFetch(async (_input, init) => {
-      if (init?.method) mutatingCallMade = true;
-      return new Response(JSON.stringify(currentConfig), { status: 200 });
-    });
-
-    await setProfile(process.cwd(), {
-      workspaceId: "org_1",
-      appId: "app_1",
-      instances: { development: "ins_dev" },
-    });
-
-    await runConfigPut({
-      json: JSON.stringify(currentConfig),
-      yes: true,
-    });
-    expect(mutatingCallMade).toBe(false);
-    expect(captured.err).toContain("No changes detected");
+    const { deps, capture } = depsFor();
+    await configPut(deps, { json: JSON.stringify(CURRENT_CONFIG), yes: true });
+    expect(capture.put).toHaveLength(0);
+    expect(deps.log.info).toHaveBeenCalledWith("No changes detected");
   });
 
   test("put detects no changes when current config has config_version (pull→put roundtrip)", async () => {
-    let mutatingCallMade = false;
-    const configWithVersion = { ...currentConfig, config_version: 42 };
-    stubFetch(async (_input, init) => {
-      if (init?.method) mutatingCallMade = true;
-      return new Response(JSON.stringify(configWithVersion), { status: 200 });
-    });
-
-    await setProfile(process.cwd(), {
-      workspaceId: "org_1",
-      appId: "app_1",
-      instances: { development: "ins_dev" },
-    });
-
+    const configWithVersion = { ...CURRENT_CONFIG, config_version: 42 };
+    const { deps, capture } = depsFor({ current: configWithVersion });
     // Simulate pull→put: payload includes config_version from the pull output
-    await runConfigPut({ json: JSON.stringify(configWithVersion), yes: true });
-    expect(mutatingCallMade).toBe(false);
-    expect(captured.err).toContain("No changes detected");
+    await configPut(deps, { json: JSON.stringify(configWithVersion), yes: true });
+    expect(capture.put).toHaveLength(0);
+    expect(deps.log.info).toHaveBeenCalledWith("No changes detected");
   });
 
   // --- Instance targeting ---
 
   test("targets development instance by default", async () => {
-    let requestedUrl = "";
-    stubFetch(async (input, init) => {
-      if (init?.method) requestedUrl = input.toString();
-      const body = init?.method ? mockResponse : currentConfig;
-      return new Response(JSON.stringify(body), { status: 200 });
-    });
-
-    await setProfile(process.cwd(), {
-      workspaceId: "org_1",
-      appId: "app_1",
-      instances: { development: "ins_dev", production: "ins_prod" },
-    });
-
-    await runConfigPatch({ json: '{"a":1}', yes: true });
-    expect(requestedUrl).toContain("/instances/ins_dev/");
+    const { deps, capture } = depsFor();
+    await configPatch(deps, { json: '{"a":1}', yes: true });
+    expect(capture.patch[0]!.instanceId).toBe("ins_dev");
   });
 
   test("--instance prod targets production instance", async () => {
-    let requestedUrl = "";
-    stubFetch(async (input, init) => {
-      if (init?.method) requestedUrl = input.toString();
-      const body = init?.method ? mockResponse : currentConfig;
-      return new Response(JSON.stringify(body), { status: 200 });
+    const { deps, capture } = depsFor({
+      ctx: {
+        appId: "app_1",
+        appLabel: "app_1",
+        instanceId: "ins_prod",
+        instanceLabel: "production",
+      },
     });
-
-    await setProfile(process.cwd(), {
-      workspaceId: "org_1",
-      appId: "app_1",
-      instances: { development: "ins_dev", production: "ins_prod" },
-    });
-
-    await runConfigPatch({ json: '{"a":1}', instance: "prod", yes: true });
-    expect(requestedUrl).toContain("/instances/ins_prod/");
+    await configPatch(deps, { json: '{"a":1}', instance: "prod", yes: true });
+    expect(capture.patch[0]!.instanceId).toBe("ins_prod");
   });
 
   test("--instance with literal ID passes through", async () => {
-    let requestedUrl = "";
-    stubFetch(async (input, init) => {
-      if (init?.method) requestedUrl = input.toString();
-      const body = init?.method ? mockResponse : currentConfig;
-      return new Response(JSON.stringify(body), { status: 200 });
+    const { deps, capture } = depsFor({
+      ctx: {
+        appId: "app_1",
+        appLabel: "app_1",
+        instanceId: "ins_custom_123",
+        instanceLabel: "ins_custom_123",
+      },
     });
-
-    await setProfile(process.cwd(), {
-      workspaceId: "org_1",
-      appId: "app_1",
-      instances: { development: "ins_dev" },
-    });
-
-    await runConfigPut({
+    await configPut(deps, {
       json: '{"a":1}',
       instance: "ins_custom_123",
       yes: true,
     });
-    expect(requestedUrl).toContain("/instances/ins_custom_123/");
+    expect(capture.put[0]!.instanceId).toBe("ins_custom_123");
   });
 
   // --- Dry run ---
 
   test("dry-run prints payload without calling API", async () => {
-    let fetchCalled = false;
-    stubFetch(async () => {
-      fetchCalled = true;
-      return new Response(JSON.stringify(mockResponse), { status: 200 });
-    });
-
-    await setProfile(process.cwd(), {
-      workspaceId: "org_1",
-      appId: "app_1",
-      instances: { development: "ins_dev" },
-    });
-
-    await runConfigPatch({
+    const { deps, capture } = depsFor();
+    await configPatch(deps, {
       json: '{"session":{"lifetime":3600}}',
       dryRun: true,
     });
-    expect(fetchCalled).toBe(false);
-    expect(captured.err).toContain("[dry-run]");
-    expect(captured.out).toContain(JSON.stringify({ session: { lifetime: 3600 } }, null, 2));
+    expect(capture.patch).toHaveLength(0);
+    expect(deps.plapi.fetchInstanceConfig).not.toHaveBeenCalled();
+    expect(logInfoCalls(deps).some((m) => m.includes("[dry-run]"))).toBe(true);
+    expect(deps.log.data).toHaveBeenCalledWith(
+      JSON.stringify({ session: { lifetime: 3600 } }, null, 2),
+    );
   });
 
   test("dry-run for put shows PUT method", async () => {
-    await setProfile(process.cwd(), {
-      workspaceId: "org_1",
-      appId: "app_1",
-      instances: { development: "ins_dev" },
-    });
-
-    await runConfigPut({ json: '{"a":1}', dryRun: true });
-    expect(captured.err).toContain("[dry-run] Would PUT");
+    const { deps } = depsFor();
+    await configPut(deps, { json: '{"a":1}', dryRun: true });
+    expect(logInfoCalls(deps).some((m) => m.includes("[dry-run] Would PUT"))).toBe(true);
   });
 
   // --- API error handling ---
 
   test("handles API errors gracefully", async () => {
-    stubFetch(async (_input, init) => {
-      if (!init?.method) return new Response(JSON.stringify(currentConfig), { status: 200 });
-      return new Response("Bad Request", { status: 400 });
-    });
-
-    await setProfile(process.cwd(), {
-      workspaceId: "org_1",
-      appId: "app_1",
-      instances: { development: "ins_dev" },
-    });
-
-    await expect(runConfigPatch({ json: '{"a":1}', yes: true })).rejects.toThrow("API error");
+    const { deps } = depsFor({ pushError: new Error("API error: Bad Request") });
+    await expect(configPatch(deps, { json: '{"a":1}', yes: true })).rejects.toThrow("API error");
   });
 
   test("shows success message after push", async () => {
-    await setProfile(process.cwd(), {
-      workspaceId: "org_1",
-      appId: "app_1",
-      instances: { development: "ins_dev" },
-    });
-
-    await runConfigPatch({ json: '{"a":1}', yes: true });
-    expect(captured.err).toContain("Config pushed successfully");
+    const { deps } = depsFor();
+    await configPatch(deps, { json: '{"a":1}', yes: true });
+    expect(deps.log.info).toHaveBeenCalledWith("Config pushed successfully");
   });
 
   // --- --json takes priority over --file ---
 
   test("--json takes priority over --file", async () => {
-    let capturedBody = "";
-    stubFetch(async (_input, init) => {
-      if (init?.method) capturedBody = init.body as string;
-      const body = init?.method ? mockResponse : currentConfig;
-      return new Response(JSON.stringify(body), { status: 200 });
-    });
-
+    const { deps, capture } = depsFor();
     const configFile = join(tempDir, "should-not-read.json");
     await Bun.write(configFile, JSON.stringify({ from: "file" }));
 
-    await setProfile(process.cwd(), {
-      workspaceId: "org_1",
-      appId: "app_1",
-      instances: { development: "ins_dev" },
-    });
-
-    await runConfigPatch({
+    await configPatch(deps, {
       json: '{"from":"json"}',
       file: configFile,
       yes: true,
     });
-    expect(JSON.parse(capturedBody)).toEqual({ from: "json" });
+    expect(capture.patch[0]!.config).toEqual({ from: "json" });
+  });
+
+  // --- Confirmation prompt ---
+
+  test("human mode prompts for confirmation and aborts on no", async () => {
+    const { deps, capture } = depsFor({ human: true, confirmResponse: false });
+    await expect(
+      configPatch(deps, { json: '{"session":{"lifetime":3600}}' }),
+    ).rejects.toBeDefined();
+    expect(capture.patch).toHaveLength(0);
+    expect(deps.prompts.confirm).toHaveBeenCalled();
+  });
+
+  test("--yes skips confirmation prompt", async () => {
+    const { deps, capture } = depsFor({ human: true });
+    await configPatch(deps, { json: '{"session":{"lifetime":3600}}', yes: true });
+    expect(capture.patch).toHaveLength(1);
+    expect(deps.prompts.confirm).not.toHaveBeenCalled();
   });
 });
 
 describe("printDiff", () => {
-  let captured: ReturnType<typeof captureLog>;
-  const ANSI_ESCAPE_PATTERN = new RegExp(String.raw`\u001b\[[0-9;]*m`, "g");
-
-  /** Return captured stderr lines with ANSI codes stripped. */
-  function lines(): string[] {
-    return captured.stderr.map((l) => l.replace(ANSI_ESCAPE_PATTERN, ""));
+  function captureDiff() {
+    const lines: string[] = [];
+    const deps = {
+      log: {
+        info: (msg: string) => {
+          // Strip ANSI codes for easier assertion.
+          // eslint-disable-next-line no-control-regex
+          lines.push(msg.replace(/\x1b\[[0-9;]*m/g, ""));
+        },
+      },
+    };
+    return { deps, lines };
   }
 
-  beforeEach(() => {
-    captured = captureLog();
-  });
-
-  afterEach(() => {
-    captured.teardown();
-  });
-
   test("patch mode: shows only changed leaf values", () => {
+    const { deps, lines } = captureDiff();
     const current = { session: { lifetime: 604800, cookie: "__session" } };
     const patch = { session: { lifetime: 3600 } };
 
-    captured.run(() => printDiff(current, patch, true));
+    printDiff(deps, current, patch, true);
 
-    expect(lines()).toEqual(["  session:", "    lifetime:", "      - 604800", "      + 3600"]);
+    expect(lines).toEqual(["  session:", "    lifetime:", "      - 604800", "      + 3600"]);
   });
 
   test("patch mode: skips unchanged keys", () => {
+    const { deps, lines } = captureDiff();
     const current = { session: { lifetime: 3600 }, sign_up: { mode: "public" } };
     const patch = { session: { lifetime: 3600 } };
 
-    captured.run(() => printDiff(current, patch, true));
+    printDiff(deps, current, patch, true);
 
-    expect(lines()).toEqual([]);
+    expect(lines).toEqual([]);
   });
 
   test("patch mode: shows new keys being added", () => {
+    const { deps, lines } = captureDiff();
     const current = {};
     const patch = { session: { lifetime: 3600 } };
 
-    captured.run(() => printDiff(current, patch, true));
+    printDiff(deps, current, patch, true);
 
-    expect(lines()).toEqual(["  session:", '    + {"lifetime":3600}']);
+    expect(lines).toEqual(["  session:", '    + {"lifetime":3600}']);
   });
 
   test("patch mode: ignores keys not in patch", () => {
+    const { deps, lines } = captureDiff();
     const current = { session: { lifetime: 604800 }, sign_up: { mode: "public" } };
     const patch = { session: { lifetime: 3600 } };
 
-    captured.run(() => printDiff(current, patch, true));
+    printDiff(deps, current, patch, true);
 
     // sign_up should not appear
-    expect(lines().some((l) => l.includes("sign_up"))).toBe(false);
+    expect(lines.some((l) => l.includes("sign_up"))).toBe(false);
   });
 
   test("put mode: shows removed keys", () => {
+    const { deps, lines } = captureDiff();
     const current = { session: { lifetime: 604800 }, sign_up: { mode: "public" } };
     const payload = { session: { lifetime: 604800 } };
 
-    captured.run(() => printDiff(current, payload, false));
+    printDiff(deps, current, payload, false);
 
     // session is unchanged, sign_up is being removed
-    expect(lines().some((l) => l.includes("sign_up"))).toBe(true);
-    expect(lines().some((l) => l.includes("- {"))).toBe(true);
+    expect(lines.some((l) => l.includes("sign_up"))).toBe(true);
+    expect(lines.some((l) => l.includes("- {"))).toBe(true);
   });
 
   test("put mode: shows both old and new for changed values", () => {
+    const { deps, lines } = captureDiff();
     const current = { session: { lifetime: 604800 } };
     const payload = { session: { lifetime: 3600 } };
 
-    captured.run(() => printDiff(current, payload, false));
+    printDiff(deps, current, payload, false);
 
-    expect(lines()).toContainEqual(expect.stringContaining("- 604800"));
-    expect(lines()).toContainEqual(expect.stringContaining("+ 3600"));
+    expect(lines).toContainEqual(expect.stringContaining("- 604800"));
+    expect(lines).toContainEqual(expect.stringContaining("+ 3600"));
   });
 
   test("handles deeply nested changes", () => {
+    const { deps, lines } = captureDiff();
     const current = { a: { b: { c: { d: 1 } } } };
     const patch = { a: { b: { c: { d: 2 } } } };
 
-    captured.run(() => printDiff(current, patch, true));
+    printDiff(deps, current, patch, true);
 
-    expect(lines()).toEqual(["  a:", "    b.c.d:", "      - 1", "      + 2"]);
+    expect(lines).toEqual(["  a:", "    b.c.d:", "      - 1", "      + 2"]);
   });
 
   test("handles array value changes", () => {
+    const { deps, lines } = captureDiff();
     const current = { allowed: { origins: ["a.com", "b.com"] } };
     const patch = { allowed: { origins: ["a.com", "c.com"] } };
 
-    captured.run(() => printDiff(current, patch, true));
+    printDiff(deps, current, patch, true);
 
-    expect(lines()).toContainEqual(expect.stringContaining('- ["a.com","b.com"]'));
-    expect(lines()).toContainEqual(expect.stringContaining('+ ["a.com","c.com"]'));
+    expect(lines).toContainEqual(expect.stringContaining('- ["a.com","b.com"]'));
+    expect(lines).toContainEqual(expect.stringContaining('+ ["a.com","c.com"]'));
   });
 });
 

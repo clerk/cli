@@ -1,7 +1,11 @@
-import { resolveAppContext } from "../../lib/config.ts";
-import { fetchInstanceConfigSchema } from "../../lib/plapi.ts";
+import type { Need } from "../../lib/deps.ts";
 import { withApiContext } from "../../lib/errors.ts";
-import { log } from "../../lib/log.ts";
+
+export type ConfigSchemaDeps = Need<{
+  plapi: "fetchInstanceConfigSchema";
+  configStore: "resolveAppContext";
+  log: "info" | "success" | "data";
+}>;
 
 interface ConfigSchemaOptions {
   app?: string;
@@ -10,13 +14,16 @@ interface ConfigSchemaOptions {
   keys?: string[];
 }
 
-export async function configSchema(options: ConfigSchemaOptions): Promise<void> {
-  const ctx = await resolveAppContext(options);
+export async function configSchema(
+  deps: ConfigSchemaDeps,
+  options: ConfigSchemaOptions,
+): Promise<void> {
+  const ctx = await deps.configStore.resolveAppContext(options);
 
-  log.info(`Pulling config schema from ${ctx.appLabel} (${ctx.instanceLabel})...`);
+  deps.log.info(`Pulling config schema from ${ctx.appLabel} (${ctx.instanceLabel})...`);
 
   const schema = await withApiContext(
-    fetchInstanceConfigSchema(ctx.appId, ctx.instanceId, options.keys),
+    deps.plapi.fetchInstanceConfigSchema(ctx.appId, ctx.instanceId, options.keys),
     "Failed to fetch config schema",
   );
 
@@ -24,8 +31,8 @@ export async function configSchema(options: ConfigSchemaOptions): Promise<void> 
 
   if (options.output) {
     await Bun.write(options.output, json + "\n");
-    log.success(`Schema written to ${options.output}`);
+    deps.log.success(`Schema written to ${options.output}`);
   } else {
-    log.data(json);
+    deps.log.data(json);
   }
 }

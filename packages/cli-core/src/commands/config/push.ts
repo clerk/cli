@@ -1,11 +1,6 @@
-import { resolveAppContext } from "../../lib/config.ts";
-import { fetchInstanceConfig, putInstanceConfig, patchInstanceConfig } from "../../lib/plapi.ts";
-import { isHuman } from "../../mode.ts";
+import type { Need } from "../../lib/deps.ts";
 import { throwUsageError, throwUserAbort, withApiContext, ERROR_CODE } from "../../lib/errors.ts";
-import { confirm } from "../../lib/prompts.ts";
 import { dim, bold, red, green } from "../../lib/color.ts";
-import { withSpinner } from "../../lib/spinner.ts";
-import { log } from "../../lib/log.ts";
 
 interface ConfigPushOptions {
   app?: string;
@@ -17,11 +12,29 @@ interface ConfigPushOptions {
   destructive?: boolean;
 }
 
+/**
+ * Slice for the shared push pipeline. `configPatch` and `configPut` both
+ * funnel through `runConfigPush` which is the source of truth for these
+ * dependencies.
+ */
+export type ConfigPushDeps = Need<{
+  plapi: "fetchInstanceConfig" | "putInstanceConfig" | "patchInstanceConfig";
+  configStore: "resolveAppContext";
+  spinner: "withSpinner";
+  prompts: "confirm";
+  mode: "isHuman";
+  log: "info" | "warn" | "data";
+}>;
+
+export type ConfigPatchDeps = ConfigPushDeps;
+export type ConfigPutDeps = ConfigPushDeps;
+
 type Operation = {
   method: "PUT" | "PATCH";
   verb: string;
   warning?: string;
   apiFn: (
+    deps: ConfigPushDeps,
     appId: string,
     instId: string,
     config: Record<string, unknown>,
@@ -33,25 +46,34 @@ const PUT_OP: Operation = {
   method: "PUT",
   verb: "Replacing",
   warning: "This will overwrite the entire instance configuration.",
-  apiFn: putInstanceConfig,
+  apiFn: (deps, appId, instId, config, options) =>
+    deps.plapi.putInstanceConfig(appId, instId, config, options),
 };
 
 const PATCH_OP: Operation = {
   method: "PATCH",
   verb: "Updating",
-  apiFn: patchInstanceConfig,
+  apiFn: (deps, appId, instId, config, options) =>
+    deps.plapi.patchInstanceConfig(appId, instId, config, options),
 };
 
-export async function configPut(options: ConfigPushOptions): Promise<void> {
-  return configPush(options, PUT_OP);
+export async function configPut(deps: ConfigPutDeps, options: ConfigPushOptions): Promise<void> {
+  return runConfigPush(deps, options, PUT_OP);
 }
 
-export async function configPatch(options: ConfigPushOptions): Promise<void> {
-  return configPush(options, PATCH_OP);
+export async function configPatch(
+  deps: ConfigPatchDeps,
+  options: ConfigPushOptions,
+): Promise<void> {
+  return runConfigPush(deps, options, PATCH_OP);
 }
 
-async function configPush(options: ConfigPushOptions, op: Operation): Promise<void> {
-  const ctx = await resolveAppContext(options);
+async function runConfigPush(
+  deps: ConfigPushDeps,
+  options: ConfigPushOptions,
+  op: Operation,
+): Promise<void> {
+  const ctx = await deps.configStore.resolveAppContext(options);
   const rawInput = await readInput(options);
 
   let configPayload: Record<string, unknown>;
@@ -69,18 +91,18 @@ async function configPush(options: ConfigPushOptions, op: Operation): Promise<vo
     throwUsageError("Config must be a JSON object.", undefined, ERROR_CODE.INVALID_JSON);
   }
 
-  // Strip config_version — it's returned by pull but not accepted by the backend
+  // Strip config_version, it's returned by pull but not accepted by the backend
   delete configPayload.config_version;
 
   if (options.dryRun) {
-    log.info(`[dry-run] Would ${op.method} config on ${ctx.appLabel} (${ctx.instanceLabel}):`);
-    log.data(JSON.stringify(configPayload, null, 2));
+    deps.log.info(`[dry-run] Would ${op.method} config on ${ctx.appLabel} (${ctx.instanceLabel}):`);
+    deps.log.data(JSON.stringify(configPayload, null, 2));
     return;
   }
 
-  const currentConfig = await withSpinner("Fetching current config...", () =>
+  const currentConfig = await deps.spinner.withSpinner("Fetching current config...", () =>
     withApiContext(
-      fetchInstanceConfig(ctx.appId, ctx.instanceId),
+      deps.plapi.fetchInstanceConfig(ctx.appId, ctx.instanceId),
       "Failed to fetch current config",
     ),
   );
@@ -92,33 +114,35 @@ async function configPush(options: ConfigPushOptions, op: Operation): Promise<vo
   const hasChanges = hasConfigChanges(currentConfig, configPayload, isPatch);
 
   if (!hasChanges) {
-    log.info("No changes detected");
+    deps.log.info("No changes detected");
     return;
   }
 
-  log.info(`\n${op.verb} config on ${ctx.appLabel} (${ctx.instanceLabel}):\n`);
-  printDiff(currentConfig, configPayload, isPatch);
+  deps.log.info(`\n${op.verb} config on ${ctx.appLabel} (${ctx.instanceLabel}):\n`);
+  printDiff(deps, currentConfig, configPayload, isPatch, deps.mode.isHuman());
 
-  if (isHuman() && !options.yes) {
+  if (deps.mode.isHuman() && !options.yes) {
     if (op.warning) {
-      log.warn(`${op.warning}`);
+      deps.log.warn(op.warning);
     }
-    const ok = await confirm({ message: "Proceed?" });
+    const ok = await deps.prompts.confirm({ message: "Proceed?" });
     if (!ok) {
       throwUserAbort();
     }
   }
 
-  const result = await withSpinner(
+  const result = await deps.spinner.withSpinner(
     `${op.verb} config on ${ctx.appLabel} (${ctx.instanceLabel})...`,
     () =>
       withApiContext(
-        op.apiFn(ctx.appId, ctx.instanceId, configPayload, { destructive: options.destructive }),
+        op.apiFn(deps, ctx.appId, ctx.instanceId, configPayload, {
+          destructive: options.destructive,
+        }),
         "Failed to push config",
       ),
   );
-  log.data(JSON.stringify(result, null, 2));
-  log.success("Config pushed successfully");
+  deps.log.data(JSON.stringify(result, null, 2));
+  deps.log.info("Config pushed successfully");
 }
 
 export async function readInput(options: { file?: string; json?: string }): Promise<string> {
@@ -239,11 +263,16 @@ export function hasConfigChanges(
  * When `patchMode` is true, only keys present in the payload are walked.
  * When false (PUT), all keys from both current and payload are walked
  * so removed keys are visible too.
+ *
+ * `useColor` controls ANSI styling. Defaults to true so existing tests
+ * (which strip ANSI codes) keep working when called directly.
  */
 export function printDiff(
+  deps: Need<{ log: "info" }>,
   current: Record<string, unknown>,
   payload: Record<string, unknown>,
   patchMode: boolean,
+  useColor: boolean = true,
 ): void {
   const keys = topLevelKeys(current, payload, patchMode);
 
@@ -252,20 +281,19 @@ export function printDiff(
     collectChanges(current[key], payload[key], "", changes, patchMode);
     if (changes.length === 0) continue;
 
-    log.raw(`  ${key}:`);
+    deps.log.info(`  ${key}:`);
     for (const { path, oldVal, newVal } of changes) {
       if (path) {
-        log.raw(`    ${path}:`);
+        deps.log.info(`    ${path}:`);
       }
       const indent = path ? "      " : "    ";
-      const useColor = isHuman();
       if (oldVal !== undefined) {
         const line = `${indent}- ${JSON.stringify(oldVal)}`;
-        log.raw(useColor ? dim(red(line)) : line);
+        deps.log.info(useColor ? dim(red(line)) : line);
       }
       if (newVal !== undefined) {
         const line = `${indent}+ ${JSON.stringify(newVal)}`;
-        log.raw(useColor ? bold(green(line)) : line);
+        deps.log.info(useColor ? bold(green(line)) : line);
       }
     }
   }

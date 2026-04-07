@@ -1,8 +1,12 @@
-import { resolveAppContext } from "../../lib/config.ts";
-import { fetchInstanceConfig } from "../../lib/plapi.ts";
+import type { Need } from "../../lib/deps.ts";
 import { withApiContext } from "../../lib/errors.ts";
-import { withSpinner } from "../../lib/spinner.ts";
-import { log } from "../../lib/log.ts";
+
+export type ConfigPullDeps = Need<{
+  plapi: "fetchInstanceConfig";
+  configStore: "resolveAppContext";
+  spinner: "withSpinner";
+  log: "info" | "data";
+}>;
 
 interface ConfigPullOptions {
   app?: string;
@@ -11,14 +15,14 @@ interface ConfigPullOptions {
   keys?: string[];
 }
 
-export async function configPull(options: ConfigPullOptions): Promise<void> {
-  const ctx = await resolveAppContext(options);
+export async function configPull(deps: ConfigPullDeps, options: ConfigPullOptions): Promise<void> {
+  const ctx = await deps.configStore.resolveAppContext(options);
 
-  const config = await withSpinner(
+  const config = await deps.spinner.withSpinner(
     `Pulling config from ${ctx.appLabel} (${ctx.instanceLabel})...`,
     () =>
       withApiContext(
-        fetchInstanceConfig(ctx.appId, ctx.instanceId, options.keys),
+        deps.plapi.fetchInstanceConfig(ctx.appId, ctx.instanceId, options.keys),
         "Failed to fetch config",
       ),
   );
@@ -27,8 +31,8 @@ export async function configPull(options: ConfigPullOptions): Promise<void> {
 
   if (options.output) {
     await Bun.write(options.output, json + "\n");
-    log.success(`Config written to ${options.output}`);
+    deps.log.info(`Config written to ${options.output}`);
   } else {
-    log.data(json);
+    deps.log.data(json);
   }
 }
