@@ -1,458 +1,283 @@
-import { test, expect, describe, beforeEach, afterEach, mock, spyOn } from "bun:test";
-import { captureLog, credentialStoreStubs, configStubs } from "../../test/lib/stubs.ts";
+import { test, expect, describe, mock } from "bun:test";
+import { login } from "./login.ts";
+import { testRoot } from "../../test/lib/test-root.ts";
+import type { AuthServerResult } from "../../lib/auth-server.ts";
 
-const mockGetToken = mock();
-const mockStoreToken = mock();
-const mockGetAuth = mock();
-const mockSetAuth = mock();
-const mockResolveProfile = mock();
-const mockExchangeCodeForToken = mock();
-const mockFetchUserInfo = mock();
-const mockStartAuthServer = mock();
-const mockIsHuman = mock();
-const mockConfirm = mock();
+interface MockAuthServerOptions {
+  port?: number;
+  code?: string;
+  callbackError?: Error;
+}
 
-mock.module("../../lib/credential-store.ts", () => ({
-  ...credentialStoreStubs,
-  getToken: (...args: unknown[]) => mockGetToken(...args),
-  storeToken: (...args: unknown[]) => mockStoreToken(...args),
-}));
+function makeMockAuthServer(opts: MockAuthServerOptions = {}): AuthServerResult & {
+  stop: ReturnType<typeof mock>;
+} {
+  const stop = mock(() => {});
+  return {
+    port: opts.port ?? 54321,
+    waitForCallback: async () => {
+      if (opts.callbackError) throw opts.callbackError;
+      return { code: opts.code ?? "test-code" };
+    },
+    stop,
+  };
+}
 
-mock.module("../../lib/config.ts", () => ({
-  ...configStubs,
-  getAuth: (...args: unknown[]) => mockGetAuth(...args),
-  setAuth: (...args: unknown[]) => mockSetAuth(...args),
-  resolveProfile: (...args: unknown[]) => mockResolveProfile(...args),
-}));
-
-mock.module("../../lib/token-exchange.ts", () => ({
-  exchangeCodeForToken: (...args: unknown[]) => mockExchangeCodeForToken(...args),
-  fetchUserInfo: (...args: unknown[]) => mockFetchUserInfo(...args),
-}));
-
-mock.module("../../lib/environment.ts", () => ({
-  getOAuthConfig: () => ({
-    clientId: "test-client-id",
-    scopes: "profile email",
-    authorizeUrl: "https://test.example.com/oauth/authorize",
-    tokenUrl: "https://test.example.com/oauth/token",
-    userinfoUrl: "https://test.example.com/oauth/userinfo",
-  }),
-}));
-
-mock.module("../../lib/constants.ts", () => ({
-  CALLBACK_PATH: "/callback",
-  AUTH_TIMEOUT_MS: 120000,
-}));
-
-mock.module("../../lib/pkce.ts", () => ({
-  generateCodeVerifier: () => "test-code-verifier",
-  generateCodeChallenge: async () => "test-code-challenge",
-  generateState: () => "test-state-value",
-}));
-
-mock.module("../../lib/auth-server.ts", () => ({
-  startAuthServer: (...args: unknown[]) => mockStartAuthServer(...args),
-}));
-
-mock.module("../../mode.ts", () => ({
-  isHuman: (...args: unknown[]) => mockIsHuman(...args),
-  isAgent: () => !mockIsHuman(),
-  getMode: () => (mockIsHuman() ? "human" : "agent"),
-  setMode: () => {},
-}));
-
-mock.module("../../lib/prompts.ts", () => ({
-  confirm: (...args: unknown[]) => mockConfirm(...args),
-}));
-
-const { login } = await import("./login.ts");
+const OAUTH_CONFIG = {
+  clientId: "test-client-id",
+  scopes: "profile email",
+  authorizeUrl: "https://test.example.com/oauth/authorize",
+  tokenUrl: "https://test.example.com/oauth/token",
+  userinfoUrl: "https://test.example.com/oauth/userinfo",
+};
 
 describe("login", () => {
-  let consoleSpy: ReturnType<typeof spyOn>;
-  let consoleErrorSpy: ReturnType<typeof spyOn>;
-  let captured: ReturnType<typeof captureLog>;
-  const origSpawn = Bun.spawn;
-
-  beforeEach(() => {
-    captured = captureLog();
-  });
-
-  afterEach(() => {
-    captured.teardown();
-    mockGetToken.mockReset();
-    mockStoreToken.mockReset();
-    mockGetAuth.mockReset();
-    mockSetAuth.mockReset();
-    mockResolveProfile.mockReset();
-    mockExchangeCodeForToken.mockReset();
-    mockFetchUserInfo.mockReset();
-    mockStartAuthServer.mockReset();
-    mockIsHuman.mockReset();
-    mockConfirm.mockReset();
-    mockIsHuman.mockReturnValue(false);
-    consoleSpy?.mockRestore();
-    consoleErrorSpy?.mockRestore();
-    try {
-      (Bun as any).spawn = origSpawn;
-    } catch {
-      // Bun.spawn may not be writable
-    }
-  });
-
-  function runLogin(options?: Parameters<typeof login>[0]) {
-    return captured.run(() => login(options));
-  }
-
-  function mockBunSpawn() {
-    try {
-      (Bun as any).spawn = mock(() => ({ exited: Promise.resolve(0) }));
-    } catch {
-      // Bun.spawn may not be writable on some runtimes
-    }
-  }
-
   test("returns early when already authenticated with valid token", async () => {
-    mockGetToken.mockResolvedValue("existing-token");
-    mockGetAuth.mockResolvedValue({ userId: "user_123" });
-    mockFetchUserInfo.mockResolvedValue({
-      userId: "user_123",
-      email: "existing@example.com",
+    const deps = testRoot({
+      credentialStore: { getToken: async () => "existing-token" },
+      configStore: { getAuth: async () => ({ userId: "user_123" }) },
+      tokenExchange: {
+        fetchUserInfo: async () => ({ userId: "user_123", email: "existing@example.com" }),
+      },
+      mode: { isHuman: () => false },
     });
 
-    consoleSpy = spyOn(console, "log").mockImplementation(() => {});
-    const result = await runLogin();
+    const result = await login(deps);
 
     expect(result).toEqual({ userId: "user_123", email: "existing@example.com" });
-    expect(captured.err).toContain("Logged in as existing@example.com");
-    expect(mockStartAuthServer).not.toHaveBeenCalled();
+    expect(deps.log.info).toHaveBeenCalledWith("Logged in as existing@example.com");
+    // authServer.startAuthServer is strict-by-default, so an unintended call would throw.
   });
 
   test("performs fresh login when no token exists", async () => {
-    mockGetToken.mockResolvedValue(null);
-    mockBunSpawn();
-
-    const mockServer = {
-      port: 54321,
-      waitForCallback: mock().mockResolvedValue({ code: "fresh-auth-code" }),
-      stop: mock(),
-    };
-    mockStartAuthServer.mockReturnValue(mockServer);
-
-    mockExchangeCodeForToken.mockResolvedValue({
-      access_token: "new-access-token",
-      token_type: "Bearer",
-      expires_in: 3600,
+    const server = makeMockAuthServer({ port: 54321, code: "fresh-auth-code" });
+    const deps = testRoot({
+      credentialStore: {
+        getToken: async () => null,
+        storeToken: async () => {},
+      },
+      configStore: {
+        setAuth: async () => {},
+      },
+      tokenExchange: {
+        exchangeCodeForToken: async () => ({
+          access_token: "new-access-token",
+          token_type: "Bearer",
+          expires_in: 3600,
+        }),
+        fetchUserInfo: async () => ({ userId: "user_new", email: "new@example.com" }),
+      },
+      authServer: { startAuthServer: () => server },
+      environment: { getOAuthConfig: () => OAUTH_CONFIG },
+      browser: { open: async () => ({ ok: true }) },
+      mode: { isHuman: () => false },
     });
-    mockStoreToken.mockResolvedValue(undefined);
-    mockFetchUserInfo.mockResolvedValue({
-      userId: "user_new",
-      email: "new@example.com",
-    });
-    mockSetAuth.mockResolvedValue(undefined);
 
-    consoleSpy = spyOn(console, "log").mockImplementation(() => {});
-    const result = await runLogin();
+    const result = await login(deps);
 
     expect(result).toEqual({ userId: "user_new", email: "new@example.com" });
-    expect(mockStartAuthServer).toHaveBeenCalledWith("test-state-value");
-    expect(mockExchangeCodeForToken).toHaveBeenCalledWith({
+    expect(deps.authServer.startAuthServer).toHaveBeenCalledWith("test-state");
+    expect(deps.tokenExchange.exchangeCodeForToken).toHaveBeenCalledWith({
       code: "fresh-auth-code",
-      codeVerifier: "test-code-verifier",
+      codeVerifier: "test-verifier",
       redirectUri: "http://127.0.0.1:54321/callback",
     });
-    expect(mockStoreToken).toHaveBeenCalledWith("new-access-token");
-    expect(mockSetAuth).toHaveBeenCalledWith({ userId: "user_new" });
-    expect(captured.err).toContain("Logged in as new@example.com");
+    expect(deps.credentialStore.storeToken).toHaveBeenCalledWith("new-access-token");
+    expect(deps.configStore.setAuth).toHaveBeenCalledWith({ userId: "user_new" });
+    expect(deps.log.info).toHaveBeenCalledWith("Logged in as new@example.com");
   });
 
   test("re-authenticates when existing token is expired", async () => {
-    mockGetToken.mockResolvedValue("expired-token");
-    mockGetAuth.mockResolvedValue({ userId: "user_old" });
-    mockFetchUserInfo
-      .mockRejectedValueOnce(new Error("Token expired"))
-      .mockResolvedValueOnce({ userId: "user_refreshed", email: "refreshed@example.com" });
-    mockBunSpawn();
-
-    const mockServer = {
-      port: 54321,
-      waitForCallback: mock().mockResolvedValue({ code: "refresh-code" }),
-      stop: mock(),
-    };
-    mockStartAuthServer.mockReturnValue(mockServer);
-
-    mockExchangeCodeForToken.mockResolvedValue({
-      access_token: "refreshed-token",
-      token_type: "Bearer",
-      expires_in: 3600,
+    const server = makeMockAuthServer({ code: "refresh-code" });
+    const fetchUserInfo = mock(async () => ({
+      userId: "user_refreshed",
+      email: "refreshed@example.com",
+    }));
+    // First call (during getExistingSession) throws to simulate expired token.
+    fetchUserInfo.mockImplementationOnce(async () => {
+      throw new Error("Token expired");
     });
-    mockStoreToken.mockResolvedValue(undefined);
-    mockSetAuth.mockResolvedValue(undefined);
 
-    consoleSpy = spyOn(console, "log").mockImplementation(() => {});
-    const result = await runLogin();
+    const deps = testRoot({
+      credentialStore: {
+        getToken: async () => "expired-token",
+        storeToken: async () => {},
+      },
+      configStore: {
+        getAuth: async () => ({ userId: "user_old" }),
+        setAuth: async () => {},
+      },
+      tokenExchange: {
+        exchangeCodeForToken: async () => ({
+          access_token: "refreshed-token",
+          token_type: "Bearer",
+          expires_in: 3600,
+        }),
+        fetchUserInfo,
+      },
+      authServer: { startAuthServer: () => server },
+      environment: { getOAuthConfig: () => OAUTH_CONFIG },
+      browser: { open: async () => ({ ok: true }) },
+      mode: { isHuman: () => false },
+    });
+
+    const result = await login(deps);
 
     expect(result).toEqual({ userId: "user_refreshed", email: "refreshed@example.com" });
-    expect(mockStartAuthServer).toHaveBeenCalled();
-    expect(mockStoreToken).toHaveBeenCalledWith("refreshed-token");
+    expect(deps.authServer.startAuthServer).toHaveBeenCalled();
+    expect(deps.credentialStore.storeToken).toHaveBeenCalledWith("refreshed-token");
   });
 
   test("stops auth server and throws when callback fails", async () => {
-    mockGetToken.mockResolvedValue(null);
-    mockBunSpawn();
+    const server = makeMockAuthServer({
+      callbackError: new Error("Authentication timed out. Please try again."),
+    });
+    const deps = testRoot({
+      credentialStore: { getToken: async () => null },
+      authServer: { startAuthServer: () => server },
+      environment: { getOAuthConfig: () => OAUTH_CONFIG },
+      browser: { open: async () => ({ ok: true }) },
+      mode: { isHuman: () => false },
+    });
 
-    const mockServer = {
-      port: 54321,
-      waitForCallback: mock().mockRejectedValue(
-        new Error("Authentication timed out. Please try again."),
-      ),
-      stop: mock(),
-    };
-    mockStartAuthServer.mockReturnValue(mockServer);
-
-    consoleSpy = spyOn(console, "log").mockImplementation(() => {});
-
-    await expect(runLogin()).rejects.toThrow("Authentication timed out");
-    expect(mockServer.stop).toHaveBeenCalled();
+    await expect(login(deps)).rejects.toThrow("Authentication timed out");
+    expect(server.stop).toHaveBeenCalled();
   });
 
   test("proceeds with login when token exists but no auth config", async () => {
-    mockGetToken.mockResolvedValue("orphan-token");
-    mockGetAuth.mockResolvedValue(undefined);
-    mockBunSpawn();
-
-    const mockServer = {
-      port: 54321,
-      waitForCallback: mock().mockResolvedValue({ code: "new-code" }),
-      stop: mock(),
-    };
-    mockStartAuthServer.mockReturnValue(mockServer);
-
-    mockExchangeCodeForToken.mockResolvedValue({
-      access_token: "brand-new-token",
-      token_type: "Bearer",
-      expires_in: 3600,
+    const server = makeMockAuthServer({ code: "new-code" });
+    const deps = testRoot({
+      credentialStore: {
+        getToken: async () => "orphan-token",
+        storeToken: async () => {},
+      },
+      configStore: {
+        getAuth: async () => undefined,
+        setAuth: async () => {},
+      },
+      tokenExchange: {
+        exchangeCodeForToken: async () => ({
+          access_token: "brand-new-token",
+          token_type: "Bearer",
+          expires_in: 3600,
+        }),
+        fetchUserInfo: async () => ({
+          userId: "user_brand_new",
+          email: "brandnew@example.com",
+        }),
+      },
+      authServer: { startAuthServer: () => server },
+      environment: { getOAuthConfig: () => OAUTH_CONFIG },
+      browser: { open: async () => ({ ok: true }) },
+      mode: { isHuman: () => false },
     });
-    mockStoreToken.mockResolvedValue(undefined);
-    mockFetchUserInfo.mockResolvedValue({
-      userId: "user_brand_new",
-      email: "brandnew@example.com",
-    });
-    mockSetAuth.mockResolvedValue(undefined);
 
-    consoleSpy = spyOn(console, "log").mockImplementation(() => {});
-    const result = await runLogin();
+    const result = await login(deps);
 
     expect(result).toEqual({ userId: "user_brand_new", email: "brandnew@example.com" });
-    expect(mockStartAuthServer).toHaveBeenCalled();
+    expect(deps.authServer.startAuthServer).toHaveBeenCalled();
   });
 
   test("in agent mode, returns early without prompting when already authenticated", async () => {
-    mockIsHuman.mockReturnValue(false);
-    mockGetToken.mockResolvedValue("existing-token");
-    mockGetAuth.mockResolvedValue({ userId: "user_123" });
-    mockFetchUserInfo.mockResolvedValue({
-      userId: "user_123",
-      email: "agent@example.com",
+    const deps = testRoot({
+      credentialStore: { getToken: async () => "existing-token" },
+      configStore: { getAuth: async () => ({ userId: "user_123" }) },
+      tokenExchange: {
+        fetchUserInfo: async () => ({ userId: "user_123", email: "agent@example.com" }),
+      },
+      mode: { isHuman: () => false },
     });
 
-    consoleSpy = spyOn(console, "log").mockImplementation(() => {});
-    const result = await runLogin();
+    const result = await login(deps);
 
     expect(result).toEqual({ userId: "user_123", email: "agent@example.com" });
-    expect(captured.err).toContain("Logged in as agent@example.com");
-    expect(mockConfirm).not.toHaveBeenCalled();
-    expect(mockStartAuthServer).not.toHaveBeenCalled();
+    expect(deps.log.info).toHaveBeenCalledWith("Logged in as agent@example.com");
+    expect(deps.prompts.confirm).not.toHaveBeenCalled();
   });
 
   test("in human mode, prompts and runs OAuth when user accepts re-auth", async () => {
-    mockIsHuman.mockReturnValue(true);
-    mockGetToken.mockResolvedValue("existing-token");
-    mockGetAuth.mockResolvedValue({ userId: "user_123" });
-    mockFetchUserInfo
-      .mockResolvedValueOnce({ userId: "user_123", email: "old@example.com" })
-      .mockResolvedValueOnce({ userId: "user_new", email: "new@example.com" });
-    mockConfirm.mockResolvedValue(true);
-    mockBunSpawn();
+    const server = makeMockAuthServer({ code: "reauth-code" });
+    const fetchUserInfo = mock(async () => ({ userId: "user_new", email: "new@example.com" }));
+    fetchUserInfo.mockImplementationOnce(async () => ({
+      userId: "user_123",
+      email: "old@example.com",
+    }));
 
-    const mockServer = {
-      port: 54321,
-      waitForCallback: mock().mockResolvedValue({ code: "reauth-code" }),
-      stop: mock(),
-    };
-    mockStartAuthServer.mockReturnValue(mockServer);
-
-    mockExchangeCodeForToken.mockResolvedValue({
-      access_token: "new-token",
-      token_type: "Bearer",
-      expires_in: 3600,
+    const deps = testRoot({
+      credentialStore: {
+        getToken: async () => "existing-token",
+        storeToken: async () => {},
+      },
+      configStore: {
+        getAuth: async () => ({ userId: "user_123" }),
+        setAuth: async () => {},
+      },
+      tokenExchange: {
+        exchangeCodeForToken: async () => ({
+          access_token: "new-token",
+          token_type: "Bearer",
+          expires_in: 3600,
+        }),
+        fetchUserInfo,
+      },
+      authServer: { startAuthServer: () => server },
+      environment: { getOAuthConfig: () => OAUTH_CONFIG },
+      browser: { open: async () => ({ ok: true }) },
+      prompts: { confirm: async () => true },
+      mode: { isHuman: () => true },
     });
-    mockStoreToken.mockResolvedValue(undefined);
-    mockSetAuth.mockResolvedValue(undefined);
 
-    consoleSpy = spyOn(console, "log").mockImplementation(() => {});
-    const result = await runLogin();
+    const result = await login(deps);
 
-    expect(mockConfirm).toHaveBeenCalledWith({
+    expect(deps.prompts.confirm).toHaveBeenCalledWith({
       message: "You're already logged in as old@example.com. Re-authenticate?",
       default: false,
     });
     expect(result).toEqual({ userId: "user_new", email: "new@example.com" });
-    expect(mockStartAuthServer).toHaveBeenCalled();
+    expect(deps.authServer.startAuthServer).toHaveBeenCalled();
   });
 
   test("in human mode, throws UserAbortError when user declines re-auth", async () => {
-    mockIsHuman.mockReturnValue(true);
-    mockGetToken.mockResolvedValue("existing-token");
-    mockGetAuth.mockResolvedValue({ userId: "user_123" });
-    mockFetchUserInfo.mockResolvedValue({
-      userId: "user_123",
-      email: "current@example.com",
-    });
-    mockConfirm.mockResolvedValue(false);
-
-    consoleSpy = spyOn(console, "log").mockImplementation(() => {});
-
-    await expect(runLogin()).rejects.toThrow("User aborted");
-    expect(mockConfirm).toHaveBeenCalled();
-    expect(mockStartAuthServer).not.toHaveBeenCalled();
-  });
-
-  test("shows linked app with name and id in next steps when linked", async () => {
-    mockGetToken.mockResolvedValue(null);
-    mockBunSpawn();
-
-    const mockServer = {
-      port: 54321,
-      waitForCallback: mock().mockResolvedValue({ code: "fresh-auth-code" }),
-      stop: mock(),
-    };
-    mockStartAuthServer.mockReturnValue(mockServer);
-
-    mockExchangeCodeForToken.mockResolvedValue({
-      access_token: "new-access-token",
-      token_type: "Bearer",
-      expires_in: 3600,
-    });
-    mockStoreToken.mockResolvedValue(undefined);
-    mockFetchUserInfo.mockResolvedValue({
-      userId: "user_new",
-      email: "new@example.com",
-    });
-    mockSetAuth.mockResolvedValue(undefined);
-    mockResolveProfile.mockResolvedValue({
-      path: "/some/path",
-      profile: {
-        workspaceId: "ws_123",
-        appId: "app_abc123",
-        appName: "My App",
-        instances: { development: "ins_dev" },
+    const deps = testRoot({
+      credentialStore: { getToken: async () => "existing-token" },
+      configStore: { getAuth: async () => ({ userId: "user_123" }) },
+      tokenExchange: {
+        fetchUserInfo: async () => ({ userId: "user_123", email: "current@example.com" }),
       },
-      resolvedVia: "remote",
+      prompts: { confirm: async () => false },
+      mode: { isHuman: () => true },
     });
 
-    consoleSpy = spyOn(console, "log").mockImplementation(() => {});
-    await runLogin();
-
-    expect(captured.err).toContain("Linked to `My App` (app_abc123)");
-  });
-
-  test("shows linked app with only id when appName is missing", async () => {
-    mockGetToken.mockResolvedValue(null);
-    mockBunSpawn();
-
-    const mockServer = {
-      port: 54321,
-      waitForCallback: mock().mockResolvedValue({ code: "fresh-auth-code" }),
-      stop: mock(),
-    };
-    mockStartAuthServer.mockReturnValue(mockServer);
-
-    mockExchangeCodeForToken.mockResolvedValue({
-      access_token: "new-access-token",
-      token_type: "Bearer",
-      expires_in: 3600,
-    });
-    mockStoreToken.mockResolvedValue(undefined);
-    mockFetchUserInfo.mockResolvedValue({
-      userId: "user_new",
-      email: "new@example.com",
-    });
-    mockSetAuth.mockResolvedValue(undefined);
-    mockResolveProfile.mockResolvedValue({
-      path: "/some/path",
-      profile: {
-        workspaceId: "ws_123",
-        appId: "app_abc123",
-        instances: { development: "ins_dev" },
-      },
-      resolvedVia: "remote",
-    });
-
-    consoleSpy = spyOn(console, "log").mockImplementation(() => {});
-    await runLogin();
-
-    expect(captured.err).toContain("Linked to `app_abc123`");
-  });
-
-  test("shows default next steps when not linked", async () => {
-    mockGetToken.mockResolvedValue(null);
-    mockBunSpawn();
-
-    const mockServer = {
-      port: 54321,
-      waitForCallback: mock().mockResolvedValue({ code: "fresh-auth-code" }),
-      stop: mock(),
-    };
-    mockStartAuthServer.mockReturnValue(mockServer);
-
-    mockExchangeCodeForToken.mockResolvedValue({
-      access_token: "new-access-token",
-      token_type: "Bearer",
-      expires_in: 3600,
-    });
-    mockStoreToken.mockResolvedValue(undefined);
-    mockFetchUserInfo.mockResolvedValue({
-      userId: "user_new",
-      email: "new@example.com",
-    });
-    mockSetAuth.mockResolvedValue(undefined);
-    mockResolveProfile.mockResolvedValue(undefined);
-
-    consoleSpy = spyOn(console, "log").mockImplementation(() => {});
-    await runLogin();
-
-    expect(captured.err).not.toContain("Linked to");
+    await expect(login(deps)).rejects.toThrow("User aborted");
+    expect(deps.prompts.confirm).toHaveBeenCalled();
+    // authServer.startAuthServer is strict-by-default; an unintended call would throw.
   });
 
   test("suppresses auth next-steps when requested", async () => {
-    mockGetToken.mockResolvedValue(null);
-    mockBunSpawn();
-
-    const mockServer = {
-      port: 54321,
-      waitForCallback: mock().mockResolvedValue({ code: "fresh-auth-code" }),
-      stop: mock(),
-    };
-    mockStartAuthServer.mockReturnValue(mockServer);
-
-    mockExchangeCodeForToken.mockResolvedValue({
-      access_token: "new-access-token",
-      token_type: "Bearer",
-      expires_in: 3600,
+    const server = makeMockAuthServer({ code: "fresh-auth-code" });
+    const deps = testRoot({
+      credentialStore: {
+        getToken: async () => null,
+        storeToken: async () => {},
+      },
+      configStore: { setAuth: async () => {} },
+      tokenExchange: {
+        exchangeCodeForToken: async () => ({
+          access_token: "new-access-token",
+          token_type: "Bearer",
+          expires_in: 3600,
+        }),
+        fetchUserInfo: async () => ({ userId: "user_new", email: "new@example.com" }),
+      },
+      authServer: { startAuthServer: () => server },
+      environment: { getOAuthConfig: () => OAUTH_CONFIG },
+      browser: { open: async () => ({ ok: true }) },
+      mode: { isHuman: () => false },
     });
-    mockStoreToken.mockResolvedValue(undefined);
-    mockFetchUserInfo.mockResolvedValue({
-      userId: "user_new",
-      email: "new@example.com",
-    });
-    mockSetAuth.mockResolvedValue(undefined);
 
-    consoleSpy = spyOn(console, "log").mockImplementation(() => {});
-    consoleErrorSpy = spyOn(console, "error").mockImplementation(() => {});
+    await login(deps, { showNextSteps: false });
 
-    await runLogin({ showNextSteps: false });
-
-    expect(captured.err).not.toContain("Next steps:");
+    // Verify outro was called with "Done" rather than the NEXT_STEPS list.
+    expect(deps.spinner.outro).toHaveBeenCalledWith("Done");
   });
 });

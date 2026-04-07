@@ -102,7 +102,7 @@ export function createProgram(root: Root) {
     .description("Log in to your Clerk account")
     .setExamples([{ command: "clerk auth login", description: "Log in via browser (OAuth)" }])
     .action(async () => {
-      await login();
+      await login(root);
     });
 
   auth
@@ -116,7 +116,7 @@ export function createProgram(root: Root) {
     .command("login", { hidden: true })
     .description("Log in to your Clerk account")
     .action(async () => {
-      await login();
+      await login(root);
     });
 
   program
