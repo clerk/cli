@@ -38,3 +38,15 @@ function base64UrlEncode(buffer: Uint8Array): string {
   const base64 = Buffer.from(buffer).toString("base64");
   return base64.replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
 }
+
+export interface Pkce {
+  generateCodeVerifier(): string;
+  generateCodeChallenge(verifier: string): Promise<string>;
+  generateState(): string;
+}
+
+export const pkce: Pkce = {
+  generateCodeVerifier,
+  generateCodeChallenge,
+  generateState,
+};
