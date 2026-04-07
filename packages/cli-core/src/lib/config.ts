@@ -305,3 +305,40 @@ export async function resolveAppContext(options: {
 }
 
 export type { Auth, Profile, ClerkConfig };
+
+export interface ConfigStore {
+  readConfig(): Promise<ClerkConfig>;
+  writeConfig(config: ClerkConfig): Promise<void>;
+  getAuth(): Promise<Auth | undefined>;
+  setAuth(auth: Auth): Promise<void>;
+  clearAuth(): Promise<void>;
+  getEnvironment(): Promise<string | undefined>;
+  setEnvironment(envName: string): Promise<void>;
+  getProfile(path: string): Promise<Profile | undefined>;
+  setProfile(path: string, profile: Profile): Promise<void>;
+  removeProfile(path: string): Promise<void>;
+  moveProfile(oldKey: string, newKey: string): Promise<void>;
+  listProfiles(): Promise<Record<string, Profile>>;
+  resolveProfile(cwd: string): ReturnType<typeof resolveProfile>;
+  resolveAppContext(options: {
+    app?: string;
+    instance?: string;
+  }): ReturnType<typeof resolveAppContext>;
+}
+
+export const configStore: ConfigStore = {
+  readConfig,
+  writeConfig,
+  getAuth,
+  setAuth,
+  clearAuth,
+  getEnvironment,
+  setEnvironment,
+  getProfile,
+  setProfile,
+  removeProfile,
+  moveProfile,
+  listProfiles,
+  resolveProfile,
+  resolveAppContext,
+};
