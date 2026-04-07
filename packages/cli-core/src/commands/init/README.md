@@ -10,6 +10,7 @@ clerk init --framework next
 clerk init --prompt
 clerk init -y
 clerk init --yes
+clerk init --no-skills
 ```
 
 ## Options
@@ -19,6 +20,7 @@ clerk init --yes
 | `--framework <name>` | Framework to set up (skips auto-detection). Valid values: `next`, `astro`, `nuxt`, `tanstack-start`, `react-router`, `vue`, `expo`, `react`, `express`, `fastify` |
 | `--prompt`           | Output a prompt for an AI agent to integrate Clerk, then exit                                                                                                     |
 | `-y, --yes`          | Skip confirmation prompts                                                                                                                                         |
+| `--no-skills`        | Skip the optional agent skills install prompt at the end of init                                                                                                  |
 
 ## Agent Mode
 
@@ -46,6 +48,7 @@ When running in agent mode (`--mode agent` or non-TTY), outputs a framework-spec
 14. Prints a summary of created, modified, and skipped files with recommendations
 15. **Authenticated mode**: pulls development instance API keys via `clerk env pull`
 16. **Keyless mode**: prints instructions for keyless development and how to connect a Clerk account later
+17. Optionally installs framework-specific Clerk agent skills via `npx skills add` (see [Agent skills install](#agent-skills-install))
 
 ## Framework Detection
 
@@ -147,6 +150,30 @@ Nuxt's module system auto-configures middleware and auto-imports components.
 | CREATE        | `src/views/sign-up.vue` | Sign-up page with `<SignUp />` component           |
 | MODIFY        | `src/router/index.ts`   | Add sign-in and sign-up routes (if router exists)  |
 | MODIFY        | `.env`                  | Add sign-in/sign-up route env vars (VITE\_ prefix) |
+
+## Agent skills install
+
+After scaffolding (and after env keys are pulled or keyless instructions are printed), `clerk init` offers to install Clerk's framework-specific agent skills from [`clerk/skills`](https://github.com/clerk/skills) via `npx skills add`. This step is optional and non-fatal: if `npx` is missing or the install command exits non-zero, init prints a yellow warning with the manual install command and still exits successfully.
+
+- **Human mode**: prompts `Install agent skills? (...)` defaulting to yes. Pass `--no-skills` to suppress the prompt entirely, or `-y/--yes` to accept it without confirmation.
+- **Agent mode / `--prompt`**: `clerk init` exits early before the skills step runs (see the `if (options.prompt || isAgent()) { ... return }` branch in [`index.ts`](./index.ts)), so nothing is installed. Agent users should run `npx skills add clerk/skills` manually, or have their agent do it.
+
+The base skills `clerk` and `clerk-setup` are always included. The detected framework dependency adds a matching skill:
+
+| Framework dep           | Added skill                   |
+| ----------------------- | ----------------------------- |
+| `next`                  | `clerk-nextjs-patterns`       |
+| `react`                 | `clerk-react-patterns`        |
+| `react-router`          | `clerk-react-router-patterns` |
+| `vue`                   | `clerk-vue-patterns`          |
+| `nuxt`                  | `clerk-nuxt-patterns`         |
+| `astro`                 | `clerk-astro-patterns`        |
+| `@tanstack/react-start` | `clerk-tanstack-patterns`     |
+| `expo`                  | `clerk-expo-patterns`         |
+| `express`               | `clerk-backend-api`           |
+| `fastify`               | `clerk-backend-api`           |
+
+Implementation lives in [`skills.ts`](./skills.ts). Note that the E2E fixture setup runs `clerk init --yes --no-skills` because the skill templates reference framework-generated types (e.g. React Router's `./+types/root`) that don't exist outside a real app directory and would break the fixture's `tsc` step.
 
 ## API Endpoints
 

@@ -51,11 +51,13 @@ clerk init
   --framework <name>   Framework to set up (skips auto-detection)
   --prompt             Output a prompt for an AI agent to integrate Clerk
   --yes                Skip confirmation prompts
+  --no-skills          Skip the optional agent skills install prompt
   Examples:
     $ clerk init                       Auto-detect framework and set up Clerk
     $ clerk init --framework next      Set up for Next.js (skips detection)
     $ clerk init --prompt              Output a setup prompt for an AI agent
     $ clerk init -y                    Skip all confirmation prompts
+    $ clerk init --no-skills           Skip the agent skills install prompt
 
 clerk auth login         Log in via browser (OAuth)
 clerk auth logout        Remove stored credentials
