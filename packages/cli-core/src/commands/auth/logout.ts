@@ -1,9 +1,13 @@
-import { deleteToken } from "../../lib/credential-store.ts";
-import { clearAuth } from "../../lib/config.ts";
-import { log } from "../../lib/log.ts";
+import type { Need } from "../../lib/deps.ts";
 
-export async function logout(): Promise<void> {
-  await deleteToken();
-  await clearAuth();
-  log.success("Logged out successfully");
+export type LogoutDeps = Need<{
+  credentialStore: "deleteToken";
+  configStore: "clearAuth";
+  log: "info";
+}>;
+
+export async function logout(deps: LogoutDeps): Promise<void> {
+  await deps.credentialStore.deleteToken();
+  await deps.configStore.clearAuth();
+  deps.log.info("Logged out successfully");
 }

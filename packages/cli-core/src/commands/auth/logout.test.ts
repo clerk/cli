@@ -1,58 +1,28 @@
-import { test, expect, describe, beforeEach, afterEach, mock, spyOn } from "bun:test";
-import { captureLog, credentialStoreStubs, configStubs } from "../../test/lib/stubs.ts";
-
-const mockDeleteToken = mock();
-const mockClearAuth = mock();
-
-mock.module("../../lib/credential-store.ts", () => ({
-  ...credentialStoreStubs,
-  deleteToken: (...args: unknown[]) => mockDeleteToken(...args),
-}));
-
-mock.module("../../lib/config.ts", () => ({
-  ...configStubs,
-  clearAuth: (...args: unknown[]) => mockClearAuth(...args),
-}));
-
-const { logout } = await import("./logout.ts");
+import { test, expect, describe } from "bun:test";
+import { logout } from "./logout.ts";
+import { testRoot } from "../../test/lib/test-root.ts";
 
 describe("logout", () => {
-  let consoleSpy: ReturnType<typeof spyOn>;
-  let captured: ReturnType<typeof captureLog>;
-
-  beforeEach(() => {
-    captured = captureLog();
-  });
-
-  afterEach(() => {
-    captured.teardown();
-    mockDeleteToken.mockReset();
-    mockClearAuth.mockReset();
-    consoleSpy?.mockRestore();
-  });
-
-  function runLogout() {
-    return captured.run(() => logout());
-  }
-
   test("deletes token and clears auth config", async () => {
-    mockDeleteToken.mockResolvedValue(undefined);
-    mockClearAuth.mockResolvedValue(undefined);
+    const deps = testRoot({
+      credentialStore: { deleteToken: async () => {} },
+      configStore: { clearAuth: async () => {} },
+    });
 
-    consoleSpy = spyOn(console, "log").mockImplementation(() => {});
-    await runLogout();
+    await logout(deps);
 
-    expect(mockDeleteToken).toHaveBeenCalledTimes(1);
-    expect(mockClearAuth).toHaveBeenCalledTimes(1);
+    expect(deps.credentialStore.deleteToken).toHaveBeenCalledTimes(1);
+    expect(deps.configStore.clearAuth).toHaveBeenCalledTimes(1);
   });
 
   test("prints success message", async () => {
-    mockDeleteToken.mockResolvedValue(undefined);
-    mockClearAuth.mockResolvedValue(undefined);
+    const deps = testRoot({
+      credentialStore: { deleteToken: async () => {} },
+      configStore: { clearAuth: async () => {} },
+    });
 
-    consoleSpy = spyOn(console, "log").mockImplementation(() => {});
-    await runLogout();
+    await logout(deps);
 
-    expect(captured.err).toContain("Logged out successfully");
+    expect(deps.log.info).toHaveBeenCalledWith("Logged out successfully");
   });
 });

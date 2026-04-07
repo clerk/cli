@@ -110,7 +110,7 @@ export function createProgram(root: Root) {
     .aliases(["signout", "sign-out"])
     .description("Log out of your Clerk account")
     .setExamples([{ command: "clerk auth logout", description: "Remove stored credentials" }])
-    .action(() => logout());
+    .action(() => logout(root));
 
   program
     .command("login", { hidden: true })
@@ -122,7 +122,7 @@ export function createProgram(root: Root) {
   program
     .command("logout", { hidden: true })
     .description("Log out of your Clerk account")
-    .action(() => logout());
+    .action(() => logout(root));
 
   program
     .command("link")
