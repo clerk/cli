@@ -277,6 +277,44 @@ test("React (Vite): falls back to existing .env when only .env exists", async ()
   expect(ctx!.envFile).toBe(".env");
 });
 
+test("uses .env.development.local when it exists (highest priority)", async () => {
+  await Bun.write(
+    join(tempDir, "package.json"),
+    JSON.stringify({ dependencies: { next: "15.0.0" } }),
+  );
+  await Bun.write(join(tempDir, ".env"), "EXISTING=1");
+  await Bun.write(join(tempDir, ".env.development.local"), "DEV_LOCAL=1");
+
+  const ctx = await gatherContext(tempDir);
+
+  expect(ctx!.envFile).toBe(".env.development.local");
+});
+
+test(".env.development.local beats .env.local", async () => {
+  await Bun.write(
+    join(tempDir, "package.json"),
+    JSON.stringify({ dependencies: { next: "15.0.0" } }),
+  );
+  await Bun.write(join(tempDir, ".env.local"), "LOCAL=1");
+  await Bun.write(join(tempDir, ".env.development.local"), "DEV_LOCAL=1");
+
+  const ctx = await gatherContext(tempDir);
+
+  expect(ctx!.envFile).toBe(".env.development.local");
+});
+
+test("uses .env.development when it exists and no higher-priority file present", async () => {
+  await Bun.write(
+    join(tempDir, "package.json"),
+    JSON.stringify({ dependencies: { next: "15.0.0" } }),
+  );
+  await Bun.write(join(tempDir, ".env.development"), "DEV=1");
+
+  const ctx = await gatherContext(tempDir);
+
+  expect(ctx!.envFile).toBe(".env.development");
+});
+
 test("defaults to app-router when neither app/ nor pages/ exists", async () => {
   await Bun.write(
     join(tempDir, "package.json"),

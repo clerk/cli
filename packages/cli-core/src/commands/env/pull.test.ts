@@ -320,6 +320,38 @@ describe("env pull", () => {
     expect(content).toContain("CLERK_SECRET_KEY=sk_test_xyz789");
   });
 
+  test("writes to .env.development.local when it exists (highest priority)", async () => {
+    await setProfile(tempDir, {
+      workspaceId: "org_1",
+      appId: "app_1",
+      instances: { development: "ins_dev" },
+    });
+    await Bun.write(join(tempDir, ".env.local"), "OTHER=1\n");
+    await Bun.write(join(tempDir, ".env.development.local"), "DEV_LOCAL=1\n");
+
+    await runEnvPull();
+
+    const content = await Bun.file(join(tempDir, ".env.development.local")).text();
+    expect(content).toContain("CLERK_SECRET_KEY=sk_test_xyz789");
+    // .env.local should be untouched
+    expect(await Bun.file(join(tempDir, ".env.local")).text()).toBe("OTHER=1\n");
+  });
+
+  test("writes to .env.development.local even when preferred file does not exist", async () => {
+    await setProfile(tempDir, {
+      workspaceId: "org_1",
+      appId: "app_1",
+      instances: { development: "ins_dev" },
+    });
+    await Bun.write(join(tempDir, ".env.development.local"), "DEV_LOCAL=1\n");
+
+    await runEnvPull();
+
+    const content = await Bun.file(join(tempDir, ".env.development.local")).text();
+    expect(content).toContain("CLERK_SECRET_KEY=sk_test_xyz789");
+    expect(await Bun.file(join(tempDir, ".env.local")).exists()).toBe(false);
+  });
+
   test("uses --file flag to target specific file", async () => {
     await setProfile(tempDir, {
       workspaceId: "org_1",

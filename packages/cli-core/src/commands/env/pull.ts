@@ -1,7 +1,12 @@
 import { join } from "node:path";
 import { resolveAppContext } from "../../lib/config.ts";
 import { fetchApplication } from "../../lib/plapi.ts";
-import { parseEnvFile, mergeEnvVars, serializeEnvFile } from "../../lib/dotenv.ts";
+import {
+  parseEnvFile,
+  mergeEnvVars,
+  serializeEnvFile,
+  ENV_FILE_CANDIDATES,
+} from "../../lib/dotenv.ts";
 import {
   detectPublishableKeyName,
   detectSecretKeyName,
@@ -31,6 +36,11 @@ async function resolveTargetFile(
   preferredFile: string = ".env.local",
 ): Promise<string> {
   if (flag) return join(cwd, flag);
+
+  // .env.development.local is the highest-priority file in the Next.js/Vite dev load order
+  // and is always gitignored, so it's safe for secrets.
+  const devLocal = join(cwd, ENV_FILE_CANDIDATES[0]);
+  if (await Bun.file(devLocal).exists()) return devLocal;
 
   const preferred = join(cwd, preferredFile);
   if (await Bun.file(preferred).exists()) return preferred;

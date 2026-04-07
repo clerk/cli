@@ -3,6 +3,31 @@
  * Preserves comments, blank lines, and key ordering when merging new values.
  */
 
+import { join } from "node:path";
+
+/**
+ * Env file candidates in Next.js/Vite development load order (highest priority first).
+ * Production/test variants (.env.production.local, .env.test.local) are excluded —
+ * the CLI always runs in a development-setup context.
+ */
+export const ENV_FILE_CANDIDATES = [
+  ".env.development.local",
+  ".env.local",
+  ".env.development",
+  ".env",
+] as const;
+
+/**
+ * Returns the first candidate from ENV_FILE_CANDIDATES that exists on disk,
+ * or `fallback` if none do.
+ */
+export async function findExistingEnvFile(cwd: string, fallback: string): Promise<string> {
+  for (const candidate of ENV_FILE_CANDIDATES) {
+    if (await Bun.file(join(cwd, candidate)).exists()) return candidate;
+  }
+  return fallback;
+}
+
 export type EnvLine =
   | { type: "comment"; raw: string }
   | { type: "blank" }
