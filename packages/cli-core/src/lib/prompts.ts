@@ -45,3 +45,17 @@ export async function select<T>(config: {
     ttyInput?.close();
   }
 }
+
+export interface Prompts {
+  confirm(config: { message: string; default?: boolean }): Promise<boolean>;
+  select<T>(config: {
+    message: string;
+    choices: ReadonlyArray<{ name: string; value: T; description?: string }>;
+    default?: T;
+  }): Promise<T>;
+}
+
+export const prompts: Prompts = {
+  confirm,
+  select,
+};
