@@ -1,0 +1,11 @@
+{
+  "extends": ["../../.oxlintrc.json"],
+  "overrides": [
+    {
+      "files": ["src/cli.ts", "src/cli-program.ts"],
+      "rules": {
+        "unicorn/no-process-exit": "off"
+      }
+    }
+  ]
+}

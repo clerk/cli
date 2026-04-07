@@ -386,7 +386,9 @@ export interface CLIResult {
 
 async function execCLI(...args: string[]): Promise<CLIResult> {
   const { createProgram, runProgram } = await import("../../../cli-program.ts");
-  const program = createProgram();
+  const { testRoot } = await import("../../lib/test-root.ts");
+  const { bootstrap } = await import("../../../lib/bootstrap.ts");
+  const program = createProgram(testRoot());
   program.exitOverride();
 
   if (!currentHarness) {
@@ -403,7 +405,10 @@ async function execCLI(...args: string[]): Promise<CLIResult> {
 
   try {
     await withCapturedLogs(currentHarness.captured, () =>
-      runProgram(program, args, { from: "user" }),
+      runProgram(program, args, {
+        from: "user",
+        preParse: () => bootstrap(args),
+      }),
     );
   } catch (error: unknown) {
     if ((error as any)?.code?.startsWith?.("commander.")) {

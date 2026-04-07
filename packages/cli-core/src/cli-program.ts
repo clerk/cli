@@ -1,6 +1,5 @@
 import { Command, createOption, createArgument } from "@commander-js/extra-typings";
-import { setLogLevel } from "./lib/log.ts";
-import { setMode, type Mode } from "./mode.ts";
+import type { Root } from "./lib/deps.ts";
 import { init } from "./commands/init/index.ts";
 import { login } from "./commands/auth/login.ts";
 import { logout } from "./commands/auth/logout.ts";
@@ -16,18 +15,9 @@ import { apps as appsHandlers } from "./commands/apps/index.ts";
 import { doctor } from "./commands/doctor/index.ts";
 import { switchEnv } from "./commands/switch-env/index.ts";
 import { openDashboard } from "./commands/open/index.ts";
-import { getEnvironment } from "./lib/config.ts";
-import { setCurrentEnv, isValidEnv, getCurrentEnvName } from "./lib/environment.ts";
 import { completion, SUPPORTED_SHELLS } from "./commands/completion/index.ts";
 import { FRAMEWORK_NAMES } from "./lib/framework.ts";
-import {
-  CliError,
-  UserAbortError,
-  ApiError,
-  PlapiError,
-  EXIT_CODE,
-  throwUsageError,
-} from "./lib/errors.ts";
+import { CliError, UserAbortError, ApiError, PlapiError, EXIT_CODE } from "./lib/errors.ts";
 import { clerkHelpConfig } from "./lib/help.ts";
 import { ExitPromptError } from "@inquirer/core";
 import { isAgent } from "./mode.ts";
@@ -35,7 +25,7 @@ import { log } from "./lib/log.ts";
 import { maybeNotifyUpdate, getCurrentVersion } from "./lib/update-check.ts";
 import { update } from "./commands/update/index.ts";
 
-export function createProgram() {
+export function createProgram(_root: Root) {
   const program = new Command()
     .name("clerk")
     .description("Clerk CLI")
@@ -48,35 +38,6 @@ export function createProgram() {
       "Force interaction mode (human or agent). Defaults to auto-detect based on TTY.",
     )
     .option("--verbose", "Show detailed output (enables debug messages)");
-
-  program.hook("preAction", async () => {
-    // Reset log level at the start of each command invocation so a previous
-    // --verbose or --debug flag doesn't leak into subsequent runs.
-    setLogLevel("info");
-    const opts = program.opts();
-    if (opts.verbose) {
-      setLogLevel("debug");
-    }
-    if (opts.mode) {
-      if (opts.mode !== "human" && opts.mode !== "agent") {
-        throwUsageError(`Invalid mode "${opts.mode}". Must be "human" or "agent".`);
-      }
-      setMode(opts.mode as Mode);
-    }
-
-    // Initialize the active environment from persisted config
-    const envName = await getEnvironment();
-    if (envName && isValidEnv(envName)) {
-      setCurrentEnv(envName);
-    }
-
-    // Print environment banner to stderr when not on production,
-    // so it doesn't pollute stdout for piped commands.
-    const activeEnv = getCurrentEnvName();
-    if (activeEnv !== "production") {
-      process.stderr.write(`[${activeEnv.toUpperCase()}]\n`);
-    }
-  });
 
   // Show update notification after each command, except for commands that
   // already perform their own version check (doctor, update).
@@ -125,7 +86,7 @@ export function createProgram() {
       { command: "clerk init -y", description: "Skip all confirmation prompts" },
       { command: "clerk init --no-skills", description: "Skip the agent skills install prompt" },
     ])
-    .action(init);
+    .action((opts) => init(opts));
 
   const auth = program
     .command("auth")
@@ -149,7 +110,7 @@ export function createProgram() {
     .aliases(["signout", "sign-out"])
     .description("Log out of your Clerk account")
     .setExamples([{ command: "clerk auth logout", description: "Remove stored credentials" }])
-    .action(logout);
+    .action(() => logout());
 
   program
     .command("login", { hidden: true })
@@ -161,7 +122,7 @@ export function createProgram() {
   program
     .command("logout", { hidden: true })
     .description("Log out of your Clerk account")
-    .action(logout);
+    .action(() => logout());
 
   program
     .command("link")
@@ -171,7 +132,7 @@ export function createProgram() {
       { command: "clerk link", description: "Pick an app interactively" },
       { command: "clerk link --app app_abc123", description: "Link directly by application ID" },
     ])
-    .action(link);
+    .action((opts) => link(opts));
 
   program
     .command("unlink")
@@ -181,7 +142,7 @@ export function createProgram() {
       { command: "clerk unlink", description: "Unlink with confirmation prompt" },
       { command: "clerk unlink --yes", description: "Skip confirmation" },
     ])
-    .action(unlink);
+    .action((opts) => unlink(opts));
 
   program
     .command("whoami")
@@ -216,7 +177,7 @@ export function createProgram() {
       { command: "clerk apps list", description: "List all applications" },
       { command: "clerk apps list --json", description: "Output as JSON" },
     ])
-    .action(appsHandlers.list);
+    .action((opts) => appsHandlers.list(opts));
 
   apps
     .command("create")
@@ -227,7 +188,7 @@ export function createProgram() {
       { command: 'clerk apps create "My App"', description: "Create a new application" },
       { command: 'clerk apps create "My App" --json', description: "Output as JSON" },
     ])
-    .action(appsHandlers.create);
+    .action((name, opts) => appsHandlers.create(name, opts));
 
   const env = program
     .command("env")
@@ -251,7 +212,7 @@ export function createProgram() {
       { command: "clerk env pull --file .env", description: "Write to a specific file" },
       { command: "clerk env pull --app app_abc123", description: "Target a specific application" },
     ])
-    .action(pull);
+    .action((opts) => pull(opts));
 
   const config = program
     .command("config")
@@ -299,7 +260,7 @@ export function createProgram() {
       { command: "clerk config pull --instance prod", description: "Pull production config" },
       { command: "clerk config pull --output config.json", description: "Save config to a file" },
     ])
-    .action(configPull);
+    .action((opts) => configPull(opts));
 
   config
     .command("schema")
@@ -316,7 +277,7 @@ export function createProgram() {
       },
       { command: "clerk config schema --output schema.json", description: "Save schema to a file" },
     ])
-    .action(configSchema);
+    .action((opts) => configSchema(opts));
 
   config
     .command("patch")
@@ -349,7 +310,7 @@ export function createProgram() {
         description: "Patch production config",
       },
     ])
-    .action(configPatch);
+    .action((opts) => configPatch(opts));
 
   config
     .command("put")
@@ -382,7 +343,7 @@ export function createProgram() {
         description: "Skip confirmation prompt",
       },
     ])
-    .action(configPut);
+    .action((opts) => configPut(opts));
 
   program
     .command("api")
@@ -411,7 +372,7 @@ export function createProgram() {
         description: "POST with a JSON body",
       },
     ])
-    .action(api);
+    .action((endpoint, filter, opts) => api(endpoint, filter, opts));
 
   program
     .command("doctor")
@@ -427,7 +388,7 @@ export function createProgram() {
       { command: "clerk doctor --fix", description: "Auto-fix detected issues" },
       { command: "clerk doctor --spotlight", description: "Only show warnings and failures" },
     ])
-    .action(doctor);
+    .action((opts) => doctor(opts));
 
   program
     .command("switch-env", { hidden: true })
@@ -438,7 +399,7 @@ export function createProgram() {
       { command: "clerk switch-env staging", description: "Switch to staging" },
       { command: "clerk switch-env production", description: "Switch back to production" },
     ])
-    .action(switchEnv);
+    .action((environment) => switchEnv(environment));
 
   program
     .command("completion")
@@ -479,7 +440,7 @@ Tutorial — enable completions for your shell:
     $ clerk completion powershell | Out-String | Invoke-Expression  # Current session
     $ clerk completion powershell >> $PROFILE                       # Permanent`,
     )
-    .action(completion);
+    .action((shell) => completion(shell));
 
   program
     .command("update")
@@ -574,10 +535,13 @@ function formatSingleError(err: {
 export async function runProgram(
   program: ReturnType<typeof createProgram>,
   args?: string[],
-  options?: { from: "user" | "node" },
+  options?: { from: "user" | "node"; preParse?: () => void | Promise<void> },
 ): Promise<void> {
   try {
-    await program.parseAsync(args, options);
+    if (options?.preParse) {
+      await options.preParse();
+    }
+    await program.parseAsync(args, options ? { from: options.from } : undefined);
   } catch (error) {
     const verbose = program.opts().verbose ?? false;
 
