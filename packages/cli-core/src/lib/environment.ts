@@ -118,3 +118,27 @@ export function getDashboardUrl(): string {
     process.env.CLERK_DASHBOARD_URL ?? getCurrentEnv().dashboardUrl ?? "https://dashboard.clerk.com"
   );
 }
+
+export interface Environment {
+  setCurrentEnv(name: string): void;
+  getCurrentEnvName(): string;
+  getCurrentEnv(): EnvProfileConfig;
+  getAvailableEnvs(): string[];
+  isValidEnv(name: string): boolean;
+  getOAuthConfig(): ReturnType<typeof getOAuthConfig>;
+  getPlapiBaseUrl(): string;
+  getBapiBaseUrl(): string;
+  getDashboardUrl(): string;
+}
+
+export const environment: Environment = {
+  setCurrentEnv,
+  getCurrentEnvName,
+  getCurrentEnv,
+  getAvailableEnvs,
+  isValidEnv,
+  getOAuthConfig,
+  getPlapiBaseUrl,
+  getBapiBaseUrl,
+  getDashboardUrl,
+};
