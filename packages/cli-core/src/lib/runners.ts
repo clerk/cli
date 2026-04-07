@@ -54,12 +54,35 @@ const PM_TO_RUNNER: Record<ProjectContext["packageManager"], Runner["id"]> = {
 };
 
 /**
+ * Probes the installed `yarn` binary for `dlx` support by running
+ * `yarn dlx --help`. Yarn Berry (>=2) exits 0; Yarn Classic (v1) lacks the
+ * subcommand and exits non-zero with `Command "dlx" not found.`. Returns
+ * `false` on any spawn failure so a broken yarn never gets advertised.
+ */
+function yarnSupportsDlx(): boolean {
+  try {
+    const proc = Bun.spawnSync(["yarn", "dlx", "--help"], {
+      stdout: "ignore",
+      stderr: "ignore",
+    });
+    return proc.exitCode === 0;
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Returns the subset of {@link RUNNERS} that are actually installed on the
  * user's PATH. Uses `Bun.which()`, which returns the resolved binary path
- * or `null`.
+ * or `null`. The `yarn` runner is additionally gated on a `yarn dlx --help`
+ * probe so Yarn Classic (v1, no `dlx`) is not advertised.
  */
 export function detectAvailableRunners(): Runner[] {
-  return RUNNERS.filter((r) => Bun.which(r.binary) !== null);
+  return RUNNERS.filter((r) => {
+    if (Bun.which(r.binary) === null) return false;
+    if (r.id === "yarn") return yarnSupportsDlx();
+    return true;
+  });
 }
 
 /**

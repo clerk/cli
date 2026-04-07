@@ -8,10 +8,11 @@ import {
   runnerForPackageManager,
 } from "./runners.ts";
 
-// Bun.which is a native global. We patch it directly the same way
-// commands/auth/login.test.ts patches Bun.spawn — wrapped in try/catch
-// because some runtimes mark globals as non-writable.
+// Bun.which / Bun.spawnSync are native globals. We patch them directly the
+// same way commands/auth/login.test.ts patches Bun.spawn — wrapped in
+// try/catch because some runtimes mark globals as non-writable.
 const origWhich = Bun.which;
+const origSpawnSync = Bun.spawnSync;
 
 function mockWhich(present: ReadonlySet<string>) {
   try {
@@ -27,6 +28,32 @@ function restoreWhich() {
     (Bun as unknown as { which: typeof Bun.which }).which = origWhich;
   } catch {
     // Bun.which may not be writable on some runtimes
+  }
+}
+
+/**
+ * Stubs `Bun.spawnSync` for the `yarn dlx --help` probe in
+ * `detectAvailableRunners`. `yarnDlxExitCode` controls what the probe sees:
+ * 0 simulates Yarn Berry, non-zero simulates Yarn Classic.
+ */
+function mockSpawnSync(yarnDlxExitCode: number) {
+  try {
+    (Bun as unknown as { spawnSync: (cmd: string[]) => { exitCode: number } }).spawnSync = (
+      cmd,
+    ) => {
+      if (cmd[0] === "yarn" && cmd[1] === "dlx") return { exitCode: yarnDlxExitCode };
+      return { exitCode: 0 };
+    };
+  } catch {
+    // Bun.spawnSync may not be writable on some runtimes
+  }
+}
+
+function restoreSpawnSync() {
+  try {
+    (Bun as unknown as { spawnSync: typeof Bun.spawnSync }).spawnSync = origSpawnSync;
+  } catch {
+    // Bun.spawnSync may not be writable on some runtimes
   }
 }
 
@@ -144,6 +171,7 @@ describe("runnerForPackageManager", () => {
 describe("detectAvailableRunners", () => {
   afterEach(() => {
     restoreWhich();
+    restoreSpawnSync();
   });
 
   test("returns empty when no runner binaries are on PATH", () => {
@@ -159,15 +187,31 @@ describe("detectAvailableRunners", () => {
 
   test("preserves RUNNERS order in the output", () => {
     mockWhich(new Set(["yarn", "bunx", "npx"]));
+    mockSpawnSync(0);
     const result = detectAvailableRunners();
     expect(result.map((r) => r.id)).toEqual(["bunx", "npx", "yarn"]);
   });
 
-  test("returns all four when every binary is present", () => {
+  test("returns all four when every binary is present and yarn supports dlx", () => {
     mockWhich(new Set(["bunx", "npx", "pnpm", "yarn"]));
+    mockSpawnSync(0);
     const result = detectAvailableRunners();
     expect(result).toHaveLength(4);
     expect(result.map((r) => r.id)).toEqual(["bunx", "npx", "pnpm", "yarn"]);
+  });
+
+  test("excludes yarn when `yarn dlx --help` exits non-zero (Yarn Classic)", () => {
+    mockWhich(new Set(["bunx", "npx", "pnpm", "yarn"]));
+    mockSpawnSync(1);
+    const result = detectAvailableRunners();
+    expect(result.map((r) => r.id)).toEqual(["bunx", "npx", "pnpm"]);
+  });
+
+  test("includes yarn when `yarn dlx --help` exits 0 (Yarn Berry)", () => {
+    mockWhich(new Set(["yarn"]));
+    mockSpawnSync(0);
+    const result = detectAvailableRunners();
+    expect(result.map((r) => r.id)).toEqual(["yarn"]);
   });
 
   test("integrates cleanly with preferredRunner + runnerCommand", () => {
