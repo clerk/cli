@@ -52,7 +52,10 @@ async function main() {
   }
 
   // 1. Fetch the app to get the dev instance secret key
-  const app = (await plapiGet(`/v1/platform/applications/${appId}`, platformKey)) as {
+  const app = (await plapiGet(
+    `/v1/platform/applications/${appId}?include_secret_keys=true`,
+    platformKey,
+  )) as {
     instances: { environment_type: string; secret_key?: string }[];
   };
   const devInstance = app.instances?.find((i) => i.environment_type === "development");
