@@ -71,4 +71,29 @@ describe("init command", () => {
     expect(pullMod.pull).toHaveBeenCalled();
     expect(heuristics.printKeylessInfo).not.toHaveBeenCalled();
   });
+
+  test("short-circuits env pull and skills install when already set up", async () => {
+    setup({ email: "test@test.com" });
+
+    // Override the default null gatherContext with a minimal supported-framework
+    // context so detectAndInstall reaches the alreadySetUp path.
+    spies.find((s) => s === (context.gatherContext as unknown))?.mockRestore();
+    spyOn(context, "gatherContext").mockResolvedValue({
+      cwd: "/tmp/fake",
+      framework: { name: "Next.js", dep: "next", sdk: "@clerk/nextjs", publishableKeyEnv: "x" },
+      deps: { next: "15.0.0" },
+      packageManager: "bun",
+      typescript: true,
+      srcDir: false,
+      existingClerk: true,
+    } as never);
+
+    await init({ yes: true });
+
+    // Link still runs (it's before detectAndInstall); env pull and skills are skipped.
+    expect(linkMod.link).toHaveBeenCalledWith({ skipIfLinked: true });
+    expect(pullMod.pull).not.toHaveBeenCalled();
+    expect(heuristics.printKeylessInfo).not.toHaveBeenCalled();
+    expect(skillsMod.installSkills).not.toHaveBeenCalled();
+  });
 });
