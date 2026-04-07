@@ -77,3 +77,17 @@ export function normalizeGitRemoteUrl(raw: string): string {
 
   return url.toLowerCase();
 }
+
+export interface Git {
+  getGitRepoRoot(): Promise<string | undefined>;
+  getGitRepoIdentifier(): Promise<string | undefined>;
+  getGitNormalizedRemote(): Promise<string | undefined>;
+  normalizeGitRemoteUrl(raw: string): string;
+}
+
+export const git: Git = {
+  getGitRepoRoot,
+  getGitRepoIdentifier,
+  getGitNormalizedRemote,
+  normalizeGitRemoteUrl,
+};
