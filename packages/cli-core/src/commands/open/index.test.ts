@@ -9,7 +9,7 @@ mock.module("../../lib/config.ts", () => ({
   resolveProfile: (...args: unknown[]) => mockResolveProfile(...args),
 }));
 
-mock.module("../../lib/browser.ts", () => ({
+mock.module("../../lib/open.ts", () => ({
   openBrowser: (...args: unknown[]) => mockOpenBrowser(...args),
 }));
 
@@ -56,6 +56,7 @@ describe("openDashboard", () => {
   beforeEach(() => {
     setMode("human");
     setCurrentEnv("production");
+    mockOpenBrowser.mockResolvedValue({ ok: true, launcher: "open" });
   });
 
   afterEach(() => {
@@ -64,13 +65,19 @@ describe("openDashboard", () => {
     consoleSpy?.mockRestore();
   });
 
-  test("prints URL and opens browser when human + linked", async () => {
+  test("human mode: prints arrow + app + dim URL, opens browser", async () => {
     mockResolveProfile.mockResolvedValue(PROFILE);
     consoleSpy = spyOn(console, "log").mockImplementation(() => {});
 
     await openDashboard(undefined);
 
-    expect(consoleSpy).toHaveBeenCalledWith(
+    expect(consoleSpy).toHaveBeenCalledTimes(2);
+    const firstLine = consoleSpy.mock.calls[0]?.[0] as string;
+    const secondLine = consoleSpy.mock.calls[1]?.[0] as string;
+    expect(firstLine).toContain("Opening");
+    expect(firstLine).toContain("Test App");
+    expect(firstLine).toContain("development");
+    expect(secondLine).toContain(
       "https://dashboard.clerk.com/apps/app_abc123/instances/ins_dev789",
     );
     expect(mockOpenBrowser).toHaveBeenCalledTimes(1);
@@ -79,42 +86,74 @@ describe("openDashboard", () => {
     );
   });
 
-  test("--print prints URL but does not open browser", async () => {
+  test("human mode with subpath: shows target in header", async () => {
+    mockResolveProfile.mockResolvedValue(PROFILE);
+    consoleSpy = spyOn(console, "log").mockImplementation(() => {});
+
+    await openDashboard("users");
+
+    const firstLine = consoleSpy.mock.calls[0]?.[0] as string;
+    expect(firstLine).toContain("→");
+    expect(firstLine).toContain("users");
+  });
+
+  test("--print: plain URL only on stdout, no browser", async () => {
     mockResolveProfile.mockResolvedValue(PROFILE);
     consoleSpy = spyOn(console, "log").mockImplementation(() => {});
 
     await openDashboard(undefined, { print: true });
 
     expect(consoleSpy).toHaveBeenCalledTimes(1);
+    expect(consoleSpy).toHaveBeenCalledWith(
+      "https://dashboard.clerk.com/apps/app_abc123/instances/ins_dev789",
+    );
     expect(mockOpenBrowser).not.toHaveBeenCalled();
   });
 
-  test("agent mode prints URL but does not open browser", async () => {
+  test("agent mode: emits structured JSON, no browser", async () => {
+    setMode("agent");
+    mockResolveProfile.mockResolvedValue(PROFILE);
+    consoleSpy = spyOn(console, "log").mockImplementation(() => {});
+
+    await openDashboard("users");
+
+    expect(consoleSpy).toHaveBeenCalledTimes(1);
+    const payload = JSON.parse(consoleSpy.mock.calls[0]?.[0] as string);
+    expect(payload).toEqual({
+      url: "https://dashboard.clerk.com/apps/app_abc123/instances/ins_dev789/users",
+      appId: "app_abc123",
+      appName: "Test App",
+      instanceId: "ins_dev789",
+      instanceLabel: "development",
+      subpath: "users",
+      opened: false,
+    });
+    expect(mockOpenBrowser).not.toHaveBeenCalled();
+  });
+
+  test("agent mode without subpath: subpath is null in JSON", async () => {
     setMode("agent");
     mockResolveProfile.mockResolvedValue(PROFILE);
     consoleSpy = spyOn(console, "log").mockImplementation(() => {});
 
     await openDashboard(undefined);
 
-    expect(consoleSpy).toHaveBeenCalledTimes(1);
-    expect(mockOpenBrowser).not.toHaveBeenCalled();
+    const payload = JSON.parse(consoleSpy.mock.calls[0]?.[0] as string);
+    expect(payload.subpath).toBeNull();
   });
 
-  test("known subpath builds the correct URL without warning", async () => {
+  test("known subpath does not warn", async () => {
     mockResolveProfile.mockResolvedValue(PROFILE);
     consoleSpy = spyOn(console, "log").mockImplementation(() => {});
     const errSpy = spyOn(console, "error").mockImplementation(() => {});
 
     await openDashboard("users", { print: true });
 
-    expect(consoleSpy).toHaveBeenCalledWith(
-      "https://dashboard.clerk.com/apps/app_abc123/instances/ins_dev789/users",
-    );
     expect(errSpy).not.toHaveBeenCalled();
     errSpy.mockRestore();
   });
 
-  test("unknown subpath warns to stderr but still prints URL", async () => {
+  test("unknown subpath warns to stderr but still emits URL", async () => {
     mockResolveProfile.mockResolvedValue(PROFILE);
     consoleSpy = spyOn(console, "log").mockImplementation(() => {});
     const errSpy = spyOn(console, "error").mockImplementation(() => {});

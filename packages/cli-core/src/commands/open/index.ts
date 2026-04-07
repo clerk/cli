@@ -1,8 +1,8 @@
 import { resolveProfile } from "../../lib/config.ts";
 import { CliError, ERROR_CODE } from "../../lib/errors.ts";
 import { getDashboardUrl } from "../../lib/environment.ts";
-import { openBrowser } from "../../lib/browser.ts";
-import { yellow } from "../../lib/color.ts";
+import { openBrowser } from "../../lib/open.ts";
+import { dim, yellow, bold, cyan } from "../../lib/color.ts";
 import { isAgent } from "../../mode.ts";
 import { isKnownDashboardPath } from "./dashboard-paths.ts";
 
@@ -35,8 +35,10 @@ export async function openDashboard(
     });
   }
 
-  const { appId } = resolved.profile;
+  const { appId, appName } = resolved.profile;
   const instanceId = resolved.profile.instances.development;
+  const instanceLabel = "development";
+  const appLabel = appName || appId;
 
   if (!instanceId) {
     throw new CliError(
@@ -47,6 +49,7 @@ export async function openDashboard(
 
   // Warn on unknown subpaths but don't block — the dashboard route tree
   // changes faster than this CLI ships, and users may know about new paths.
+  // Warning goes to stderr so stdout stays parseable.
   if (subpath && !isKnownDashboardPath(subpath)) {
     console.error(
       yellow(
@@ -56,14 +59,38 @@ export async function openDashboard(
   }
 
   const url = buildDashboardUrl(appId, instanceId, subpath);
+  const willOpen = !options.print && !isAgent();
 
-  console.log(url);
-
-  // In agent mode or when --print is set, just emit the URL.
-  // Otherwise, also spawn the browser.
-  if (options.print || isAgent()) {
-    return;
+  // Output strategy:
+  //   --print → plain URL on stdout (scriptable)
+  //   agent mode → JSON object with full context (parseable)
+  //   human mode → arrow indicator + app/instance label + dim URL, then open
+  if (options.print) {
+    console.log(url);
+  } else if (isAgent()) {
+    console.log(
+      JSON.stringify({
+        url,
+        appId,
+        appName: appName ?? null,
+        instanceId,
+        instanceLabel,
+        subpath: subpath ?? null,
+        opened: false,
+      }),
+    );
+  } else {
+    const target = subpath ? ` → ${cyan(subpath)}` : "";
+    console.log(`↗ Opening ${bold(appLabel)} (${instanceLabel})${target}`);
+    console.log(`  ${dim(url)}`);
   }
 
-  openBrowser(url);
+  if (willOpen) {
+    const result = await openBrowser(url);
+    if (!result.ok) {
+      console.error(
+        `\n${yellow("Could not open your browser automatically.")} Open this URL to continue:\n  ${cyan(url)}\n${dim(`(Reason: ${result.reason})`)}\n`,
+      );
+    }
+  }
 }
