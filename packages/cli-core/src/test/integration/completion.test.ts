@@ -232,6 +232,20 @@ describe("generateCompletions", () => {
       const names = completionNames("api", "/users", "--");
       expect(names).toContain("--method");
     });
+
+    test("open dashboard: suggests known subpaths", () => {
+      const names = completionNames("open", "dashboard", "");
+      expect(names).toContain("users");
+      expect(names).toContain("api-keys");
+      expect(names).toContain("settings");
+    });
+
+    test("open dashboard: filters subpaths by prefix", () => {
+      const names = completionNames("open", "dashboard", "u");
+      expect(names).toContain("users");
+      expect(names).toContain("user-authentication");
+      expect(names).not.toContain("api-keys");
+    });
   });
 
   describe("directives", () => {
