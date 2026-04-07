@@ -119,8 +119,9 @@ export async function checkPatches(opts: CheckPatchesOptions): Promise<CheckPatc
       .quiet()
       .nothrow();
     if (reverseCheck.exitCode !== 0) {
+      const detail = reverseCheck.stderr.toString().trim();
       failures.push(
-        `${entry.name}: patch file is not currently applied to node_modules/${entry.name}. The patch may have become a no-op against the installed version. Re-create with: bun patch ${entry.name}@${entry.declaredVersion}`,
+        `${entry.name}: patch file is not currently applied to node_modules/${entry.name}. The patch may have become a no-op against the installed version.${detail ? ` git: ${detail}` : ""} Re-create with: bun patch ${entry.name}@${entry.declaredVersion}`,
       );
       continue;
     }
