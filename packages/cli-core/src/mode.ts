@@ -29,3 +29,15 @@ export function isHuman(): boolean {
 export function isAgent(): boolean {
   return getMode() === "agent";
 }
+
+export interface ModeService {
+  getMode(): Mode;
+  isHuman(): boolean;
+  isAgent(): boolean;
+}
+
+export const modeService: ModeService = {
+  getMode,
+  isHuman,
+  isAgent,
+};
