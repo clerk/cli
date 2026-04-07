@@ -192,6 +192,91 @@ test("defaults to npm when no lockfile found", async () => {
   expect(ctx!.packageManager).toBe("npm");
 });
 
+// ─── envFile detection ────────────────────────────────────────────────────────
+
+test("Next.js: uses .env when only .env exists", async () => {
+  await Bun.write(
+    join(tempDir, "package.json"),
+    JSON.stringify({ dependencies: { next: "15.0.0" } }),
+  );
+  await Bun.write(join(tempDir, ".env"), "EXISTING=1");
+
+  const ctx = await gatherContext(tempDir);
+
+  expect(ctx!.envFile).toBe(".env");
+});
+
+test("Next.js: uses .env when neither .env nor .env.local exists", async () => {
+  await Bun.write(
+    join(tempDir, "package.json"),
+    JSON.stringify({ dependencies: { next: "15.0.0" } }),
+  );
+
+  const ctx = await gatherContext(tempDir);
+
+  expect(ctx!.envFile).toBe(".env");
+});
+
+test("Next.js: uses .env.local when both .env and .env.local exist (keep existing setup)", async () => {
+  await Bun.write(
+    join(tempDir, "package.json"),
+    JSON.stringify({ dependencies: { next: "15.0.0" } }),
+  );
+  await Bun.write(join(tempDir, ".env"), "EXISTING=1");
+  await Bun.write(join(tempDir, ".env.local"), "LOCAL=1");
+
+  const ctx = await gatherContext(tempDir);
+
+  expect(ctx!.envFile).toBe(".env.local");
+});
+
+test("Next.js: falls back to .env.local when only .env.local exists", async () => {
+  await Bun.write(
+    join(tempDir, "package.json"),
+    JSON.stringify({ dependencies: { next: "15.0.0" } }),
+  );
+  await Bun.write(join(tempDir, ".env.local"), "LOCAL=1");
+
+  const ctx = await gatherContext(tempDir);
+
+  expect(ctx!.envFile).toBe(".env.local");
+});
+
+test("React (Vite): uses .env.local when only .env.local exists", async () => {
+  await Bun.write(
+    join(tempDir, "package.json"),
+    JSON.stringify({ dependencies: { react: "19.0.0", vite: "6.0.0" } }),
+  );
+  await Bun.write(join(tempDir, ".env.local"), "LOCAL=1");
+
+  const ctx = await gatherContext(tempDir);
+
+  expect(ctx!.envFile).toBe(".env.local");
+});
+
+test("React (Vite): uses .env.local when neither .env nor .env.local exists", async () => {
+  await Bun.write(
+    join(tempDir, "package.json"),
+    JSON.stringify({ dependencies: { react: "19.0.0", vite: "6.0.0" } }),
+  );
+
+  const ctx = await gatherContext(tempDir);
+
+  expect(ctx!.envFile).toBe(".env.local");
+});
+
+test("React (Vite): falls back to existing .env when only .env exists", async () => {
+  await Bun.write(
+    join(tempDir, "package.json"),
+    JSON.stringify({ dependencies: { react: "19.0.0", vite: "6.0.0" } }),
+  );
+  await Bun.write(join(tempDir, ".env"), "EXISTING=1");
+
+  const ctx = await gatherContext(tempDir);
+
+  expect(ctx!.envFile).toBe(".env");
+});
+
 test("defaults to app-router when neither app/ nor pages/ exists", async () => {
   await Bun.write(
     join(tempDir, "package.json"),

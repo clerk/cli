@@ -88,7 +88,7 @@ export async function init(options: InitOptions = {}) {
 
   bar();
   if (!keyless) {
-    await pull({});
+    await pull({ file: ctx.envFile });
   } else {
     printKeylessInfo();
   }
