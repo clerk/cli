@@ -15,14 +15,6 @@ import { join } from "node:path";
 const CLI_PATH = join(import.meta.dir, "../../packages/cli-core/src/cli.ts");
 const TEST_EMAIL_SUFFIX = "+clerk_test@clerkcookie.com";
 
-async function run(
-  args: string,
-  env: Record<string, string | undefined>,
-): Promise<{ exitCode: number; stdout: string }> {
-  const result = await Bun.$`bun ${CLI_PATH} api ${args} --yes`.env(env).quiet().nothrow();
-  return { exitCode: result.exitCode, stdout: result.stdout.toString() };
-}
-
 async function main() {
   const platformKey = process.env.CLERK_PLATFORM_API_KEY;
   const appId = process.env.CLERK_CLI_TEST_APP_ID;
@@ -30,14 +22,19 @@ async function main() {
     throw new Error("CLERK_PLATFORM_API_KEY and CLERK_CLI_TEST_APP_ID are required");
   }
 
+  const env = { ...process.env, CLERK_PLATFORM_API_KEY: platformKey };
+
   // 1. Fetch the app to get the dev instance secret key
-  const platformEnv = { ...process.env, CLERK_PLATFORM_API_KEY: platformKey };
-  const appResult = await run(`/applications/${appId} --platform`, platformEnv);
+  const appResult = await Bun.$`bun ${CLI_PATH} api /applications/${appId} --platform --yes`
+    .env(env)
+    .quiet()
+    .nothrow();
   if (appResult.exitCode !== 0) {
-    throw new Error(`Failed to fetch application: ${appResult.stdout}`);
+    const detail = appResult.stdout.toString().trim() || appResult.stderr.toString().trim();
+    throw new Error(`Failed to fetch application: ${detail}`);
   }
 
-  const app = JSON.parse(appResult.stdout);
+  const app = JSON.parse(appResult.stdout.toString());
   const devInstance = app.instances?.find(
     (i: { environment_type: string }) => i.environment_type === "development",
   );
@@ -54,13 +51,17 @@ async function main() {
   const testUsers: { id: string; email: string }[] = [];
 
   while (true) {
-    const result = await run(`/users?limit=${limit}&offset=${offset}`, bapiEnv);
+    const result = await Bun.$`bun ${CLI_PATH} api /users?limit=${limit}&offset=${offset} --yes`
+      .env(bapiEnv)
+      .quiet()
+      .nothrow();
     if (result.exitCode !== 0) {
-      throw new Error(`Failed to list users: ${result.stdout}`);
+      const detail = result.stdout.toString().trim() || result.stderr.toString().trim();
+      throw new Error(`Failed to list users: ${detail}`);
     }
 
     const users: { id: string; email_addresses: { email_address: string }[] }[] = JSON.parse(
-      result.stdout,
+      result.stdout.toString(),
     );
     if (users.length === 0) break;
 
@@ -86,7 +87,10 @@ async function main() {
 
   let deleted = 0;
   for (const user of testUsers) {
-    const result = await run(`/users/${user.id} -X DELETE`, bapiEnv);
+    const result = await Bun.$`bun ${CLI_PATH} api /users/${user.id} -X DELETE --yes`
+      .env(bapiEnv)
+      .quiet()
+      .nothrow();
     if (result.exitCode === 0) {
       deleted++;
     } else {
