@@ -27,12 +27,14 @@ describe("init command", () => {
   function setup(overrides: { email?: string | null } = {}) {
     const email = overrides.email ?? null;
 
+    const gatherContextSpy = spyOn(context, "gatherContext").mockResolvedValue(null);
+
     spies = [
       spyOn(console, "log").mockImplementation(() => {}),
       spyOn(mode, "isAgent").mockReturnValue(false),
       spyOn(config, "resolveProfile").mockResolvedValue(undefined),
       spyOn(frameworkMod, "lookupFramework").mockReturnValue(null),
-      spyOn(context, "gatherContext").mockResolvedValue(null),
+      gatherContextSpy,
       spyOn(scaffoldMod, "scaffold").mockResolvedValue({ actions: [], postInstructions: [] }),
       spyOn(scaffoldMod, "enrichProjectContext").mockResolvedValue(undefined),
       spyOn(previewMod, "previewPlan").mockReturnValue(undefined),
@@ -50,6 +52,8 @@ describe("init command", () => {
       spyOn(linkMod, "link").mockResolvedValue(undefined),
       spyOn(pullMod, "pull").mockResolvedValue(undefined),
     ];
+
+    return { gatherContextSpy };
   }
 
   test("defaults to keyless mode when not authenticated", async () => {
@@ -73,12 +77,11 @@ describe("init command", () => {
   });
 
   test("short-circuits env pull and skills install when already set up", async () => {
-    setup({ email: "test@test.com" });
+    const { gatherContextSpy } = setup({ email: "test@test.com" });
 
     // Override the default null gatherContext with a minimal supported-framework
     // context so detectAndInstall reaches the alreadySetUp path.
-    spies.find((s) => s === (context.gatherContext as unknown))?.mockRestore();
-    spyOn(context, "gatherContext").mockResolvedValue({
+    gatherContextSpy.mockResolvedValueOnce({
       cwd: "/tmp/fake",
       framework: { name: "Next.js", dep: "next", sdk: "@clerk/nextjs", publishableKeyEnv: "x" },
       deps: { next: "15.0.0" },
