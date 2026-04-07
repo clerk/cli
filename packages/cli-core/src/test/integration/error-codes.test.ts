@@ -4,9 +4,9 @@
  */
 
 import { test, expect } from "bun:test";
-import { useIntegrationTestHarness, clerk, mockState } from "./lib/harness.ts";
+import { useIntegrationTestScenarios, clerk, mockState } from "./lib/scenarios.ts";
 
-useIntegrationTestHarness();
+useIntegrationTestScenarios();
 
 function parseJsonError(stderr: string): { code: string; message: string; docsUrl?: string } {
   const parsed = JSON.parse(stderr);

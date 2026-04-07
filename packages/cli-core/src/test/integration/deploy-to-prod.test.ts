@@ -6,16 +6,16 @@
 import { test, expect } from "bun:test";
 import { join } from "node:path";
 import {
-  useIntegrationTestHarness,
+  useIntegrationTestScenarios,
   http,
   setProfile,
   parseEnvFile,
   clerk,
   getInstance,
   MOCK_APP,
-} from "./lib/harness.ts";
+} from "./lib/scenarios.ts";
 
-const h = useIntegrationTestHarness();
+const h = useIntegrationTestScenarios();
 
 test.each([{ mode: "human" }, { mode: "agent" }])(
   "switch from dev to prod credentials ($mode mode)",

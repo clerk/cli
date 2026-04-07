@@ -8,16 +8,16 @@
 import { test, expect, beforeEach } from "bun:test";
 import { join } from "node:path";
 import {
-  useIntegrationTestHarness,
+  useIntegrationTestScenarios,
   http,
   parseEnvFile,
   setProfile,
   clerk,
   getInstance,
   MOCK_APP,
-} from "./lib/harness.ts";
+} from "./lib/scenarios.ts";
 
-const h = useIntegrationTestHarness();
+const h = useIntegrationTestScenarios();
 
 const devInstance = getInstance(MOCK_APP, "development");
 

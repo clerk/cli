@@ -5,7 +5,7 @@
 
 import { test, expect } from "bun:test";
 import {
-  useIntegrationTestHarness,
+  useIntegrationTestScenarios,
   http,
   setProfile,
   clerk,
@@ -13,9 +13,9 @@ import {
   MOCK_APP,
   MOCK_CONFIG,
   MOCK_SCHEMA,
-} from "./lib/harness.ts";
+} from "./lib/scenarios.ts";
 
-useIntegrationTestHarness();
+useIntegrationTestScenarios();
 
 test.each([{ mode: "human" }, { mode: "agent" }])(
   "pull config, check schema, patch settings ($mode mode)",

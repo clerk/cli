@@ -4,9 +4,9 @@
  */
 
 import { test, expect } from "bun:test";
-import { useIntegrationTestHarness, mockState, clerk } from "./lib/harness.ts";
+import { useIntegrationTestScenarios, mockState, clerk } from "./lib/scenarios.ts";
 
-useIntegrationTestHarness();
+useIntegrationTestScenarios();
 
 test.each([{ mode: "human" }, { mode: "agent" }])(
   "whoami -> logout -> whoami cycle ($mode mode)",

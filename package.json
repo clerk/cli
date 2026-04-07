@@ -7,7 +7,7 @@
   "scripts": {
     "build": "bun run --filter @clerk/cli-core build",
     "dev": "bun run --cwd packages/cli-core dev",
-    "test": "bun run scripts/run-tests.ts --pattern 'packages/cli-core/src/**/*.test.ts' --pattern 'scripts/**/*.test.ts'",
+    "test": "bun test packages/cli-core/src/ scripts/",
     "test:e2e": "bun run scripts/run-tests.ts --pattern 'test/e2e/*.test.ts' --retries 1",
     "test:e2e:op": "bun run scripts/run-e2e-op.ts",
     "e2e:refresh-fixtures": "bun run scripts/refresh-e2e-fixtures.ts",

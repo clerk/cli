@@ -4,12 +4,12 @@
  */
 
 import { test, expect, describe } from "bun:test";
-import { useIntegrationTestHarness } from "./lib/harness.ts";
+import { useIntegrationTestScenarios } from "./lib/scenarios.ts";
 import { generateCompletions } from "../../commands/completion/__complete.ts";
 import { createProgram } from "../../cli-program.ts";
 import { testRoot } from "../lib/test-root.ts";
 
-useIntegrationTestHarness();
+useIntegrationTestScenarios();
 
 const program = createProgram(testRoot());
 

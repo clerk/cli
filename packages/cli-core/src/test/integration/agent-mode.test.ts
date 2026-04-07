@@ -4,9 +4,9 @@
  */
 
 import { test, expect } from "bun:test";
-import { useIntegrationTestHarness, http, clerk } from "./lib/harness.ts";
+import { useIntegrationTestScenarios, http, clerk } from "./lib/scenarios.ts";
 
-useIntegrationTestHarness();
+useIntegrationTestScenarios();
 
 test("init --prompt outputs structured agent prompt without API calls", async () => {
   const { stdout } = await clerk("init", "--prompt");

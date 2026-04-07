@@ -5,15 +5,15 @@
 
 import { test, expect, describe } from "bun:test";
 import {
-  useIntegrationTestHarness,
+  useIntegrationTestScenarios,
   http,
   clerk,
   getInstance,
   MOCK_APP,
   MOCK_USERS,
-} from "./lib/harness.ts";
+} from "./lib/scenarios.ts";
 
-useIntegrationTestHarness();
+useIntegrationTestScenarios();
 
 describe("Query users and create resources via the API", () => {
   const devInstance = getInstance(MOCK_APP, "development");

@@ -10,7 +10,7 @@
 import { test, expect } from "bun:test";
 import { join } from "node:path";
 import {
-  useIntegrationTestHarness,
+  useIntegrationTestScenarios,
   http,
   readConfig,
   parseEnvFile,
@@ -18,9 +18,9 @@ import {
   getInstance,
   MOCK_APP,
   MOCK_APP_B,
-} from "./lib/harness.ts";
+} from "./lib/scenarios.ts";
 
-const h = useIntegrationTestHarness();
+const h = useIntegrationTestScenarios();
 
 test("re-link from one app to another", async () => {
   await Bun.write(

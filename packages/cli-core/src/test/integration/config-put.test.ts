@@ -6,16 +6,16 @@
 
 import { test, expect, beforeEach } from "bun:test";
 import {
-  useIntegrationTestHarness,
+  useIntegrationTestScenarios,
   http,
   mockPrompts,
   setProfile,
   clerk,
   getInstance,
   MOCK_APP,
-} from "./lib/harness.ts";
+} from "./lib/scenarios.ts";
 
-useIntegrationTestHarness();
+useIntegrationTestScenarios();
 
 const devInstance = getInstance(MOCK_APP, "development");
 

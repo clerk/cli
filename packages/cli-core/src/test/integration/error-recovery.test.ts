@@ -6,7 +6,7 @@
 import { test, expect, describe } from "bun:test";
 import { join } from "node:path";
 import {
-  useIntegrationTestHarness,
+  useIntegrationTestScenarios,
   http,
   setProfile,
   parseEnvFile,
@@ -14,9 +14,9 @@ import {
   getInstance,
   MOCK_APP,
   MOCK_APP_DEV_ONLY,
-} from "./lib/harness.ts";
+} from "./lib/scenarios.ts";
 
-const h = useIntegrationTestHarness();
+const h = useIntegrationTestScenarios();
 
 describe("Recover from errors gracefully", () => {
   // TODO: Add agent mode coverage once `link` performs actual work in agent mode.
