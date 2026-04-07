@@ -7,50 +7,54 @@
  * require re-authentication.
  */
 
-import { setEnvironment } from "../../lib/config.ts";
-import { getToken } from "../../lib/credential-store.ts";
-import {
-  getCurrentEnvName,
-  getAvailableEnvs,
-  isValidEnv,
-  setCurrentEnv,
-} from "../../lib/environment.ts";
+import type { Need } from "../../lib/deps.ts";
 import { CliError } from "../../lib/errors.ts";
-import { log } from "../../lib/log.ts";
 
-export async function switchEnv(environment: string | undefined): Promise<void> {
-  const available = getAvailableEnvs();
+export type SwitchEnvDeps = Need<{
+  environment: "isValidEnv" | "setCurrentEnv" | "getAvailableEnvs" | "getCurrentEnvName";
+  configStore: "setEnvironment";
+  credentialStore: "getToken";
+  log: "info";
+}>;
+
+export async function switchEnv(
+  deps: SwitchEnvDeps,
+  environment: string | undefined,
+): Promise<void> {
+  const available = deps.environment.getAvailableEnvs();
 
   // No argument: print current environment
   if (!environment) {
-    const current = getCurrentEnvName();
-    log.info(`Current environment: ${current}`);
-    log.info(`Available environments: ${available.join(", ")}`);
+    const current = deps.environment.getCurrentEnvName();
+    deps.log.info(`Current environment: ${current}`);
+    deps.log.info(`Available environments: ${available.join(", ")}`);
     return;
   }
 
-  if (!isValidEnv(environment)) {
+  if (!deps.environment.isValidEnv(environment)) {
     throw new CliError(
       `Unknown environment "${environment}". Available environments: ${available.join(", ")}`,
     );
   }
 
-  const previousEnv = getCurrentEnvName();
+  const previousEnv = deps.environment.getCurrentEnvName();
 
   if (previousEnv === environment) {
-    log.data(`Already on ${environment} environment.`);
+    deps.log.info(`Already on ${environment} environment.`);
     return;
   }
 
   // Update the in-memory state and persist
-  setCurrentEnv(environment);
-  await setEnvironment(environment);
+  deps.environment.setCurrentEnv(environment);
+  await deps.configStore.setEnvironment(environment);
 
-  log.data(`Switched from ${previousEnv} to ${environment}.`);
+  deps.log.info(`Switched from ${previousEnv} to ${environment}.`);
 
   // Check if there's a stored token for the target environment
-  const token = await getToken();
+  const token = await deps.credentialStore.getToken();
   if (!token) {
-    log.data(`No credentials found for ${environment}. Run \`clerk auth login\` to authenticate.`);
+    deps.log.info(
+      `No credentials found for ${environment}. Run \`clerk auth login\` to authenticate.`,
+    );
   }
 }

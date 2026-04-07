@@ -177,7 +177,7 @@ export function createProgram(root: Root) {
       { command: "clerk apps list", description: "List all applications" },
       { command: "clerk apps list --json", description: "Output as JSON" },
     ])
-    .action((opts) => appsHandlers.list(opts));
+    .action((opts) => appsHandlers.list(root, opts));
 
   apps
     .command("create")
@@ -399,7 +399,7 @@ export function createProgram(root: Root) {
       { command: "clerk switch-env staging", description: "Switch to staging" },
       { command: "clerk switch-env production", description: "Switch back to production" },
     ])
-    .action((environment) => switchEnv(environment));
+    .action((environment) => switchEnv(root, environment));
 
   program
     .command("completion")

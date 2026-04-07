@@ -1,21 +1,6 @@
-import { test, expect, describe, beforeEach, afterEach, mock, spyOn } from "bun:test";
-import { captureLog } from "../../test/lib/stubs.ts";
-
-const mockListApplications = mock();
-mock.module("../../lib/plapi.ts", () => ({
-  listApplications: (...args: unknown[]) => mockListApplications(...args),
-  PlapiError: class PlapiError extends Error {},
-}));
-
-const mockIsAgent = mock();
-mock.module("../../mode.ts", () => ({
-  isAgent: (...args: unknown[]) => mockIsAgent(...args),
-  isHuman: (...args: unknown[]) => !mockIsAgent(...args),
-  setMode: () => {},
-  getMode: () => "human",
-}));
-
-const { list } = await import("./list.ts");
+import { test, expect, describe, mock } from "bun:test";
+import { list } from "./list.ts";
+import { testRoot } from "../../test/lib/test-root.ts";
 
 const mockApps = [
   {
@@ -49,144 +34,139 @@ const mockApps = [
   },
 ];
 
+function depsFor(apps: unknown[], opts?: { isAgent?: boolean }) {
+  return testRoot({
+    plapi: { listApplications: async () => apps as never },
+    mode: {
+      isAgent: () => opts?.isAgent ?? false,
+      isHuman: () => !(opts?.isAgent ?? false),
+    },
+  });
+}
+
+function joinCalls(fn: unknown): string {
+  return ((fn as ReturnType<typeof mock>).mock.calls as unknown[][])
+    .map((c) => String(c[0] ?? ""))
+    .join("\n");
+}
+
 describe("apps list", () => {
-  let logSpy: ReturnType<typeof spyOn>;
-  let errorSpy: ReturnType<typeof spyOn>;
-  let captured: ReturnType<typeof captureLog>;
-
-  beforeEach(() => {
-    mockIsAgent.mockReturnValue(false);
-    logSpy = spyOn(console, "log").mockImplementation(() => {});
-    errorSpy = spyOn(console, "error").mockImplementation(() => {});
-    captured = captureLog();
-  });
-
-  afterEach(() => {
-    captured.teardown();
-    mockListApplications.mockReset();
-    mockIsAgent.mockReset();
-    logSpy.mockRestore();
-    errorSpy.mockRestore();
-  });
-
-  function runList(options: Parameters<typeof list>[0] = {}) {
-    return captured.run(() => list(options));
-  }
-
   describe("compact table (default)", () => {
     test("lists apps with name, id, and environments", async () => {
-      mockListApplications.mockResolvedValue(mockApps);
+      const deps = depsFor(mockApps);
+      await list(deps);
 
-      await runList();
-
-      expect(captured.out).toContain("My SaaS App");
-      expect(captured.out).toContain("app_abc123");
-      expect(captured.out).toContain("development, production");
-      expect(captured.out).toContain("Side Project");
-      expect(captured.out).toContain("app_xyz789");
+      const output = joinCalls(deps.log.data);
+      expect(output).toContain("My SaaS App");
+      expect(output).toContain("app_abc123");
+      expect(output).toContain("development, production");
+      expect(output).toContain("Side Project");
+      expect(output).toContain("app_xyz789");
     });
 
     test("shows app id as name when name is absent", async () => {
-      mockListApplications.mockResolvedValue([
+      const deps = depsFor([
         {
           application_id: "app_noname",
           instances: [
-            { instance_id: "ins_1", environment_type: "development", publishable_key: "pk_test" },
+            {
+              instance_id: "ins_1",
+              environment_type: "development",
+              publishable_key: "pk_test",
+            },
           ],
         },
       ]);
+      await list(deps);
 
-      await runList();
-
-      expect(captured.out).toContain("app_noname");
+      const output = joinCalls(deps.log.data);
+      expect(output).toContain("app_noname");
     });
 
     test("does not show secret keys", async () => {
-      mockListApplications.mockResolvedValue(mockApps);
+      const deps = depsFor(mockApps);
+      await list(deps);
 
-      await runList();
-
-      expect(captured.out).not.toContain("sk_test_xxx");
-      expect(captured.out).not.toContain("sk_live_xxx");
+      const output = joinCalls(deps.log.data);
+      expect(output).not.toContain("sk_test_xxx");
+      expect(output).not.toContain("sk_live_xxx");
     });
 
     test("shows count summary on stderr", async () => {
-      mockListApplications.mockResolvedValue(mockApps);
+      const deps = depsFor(mockApps);
+      await list(deps);
 
-      await runList();
-
-      expect(captured.err).toContain("2 applications");
+      const summary = joinCalls(deps.log.info);
+      expect(summary).toContain("2 applications");
     });
 
     test("shows singular count for one app", async () => {
-      mockListApplications.mockResolvedValue([mockApps[0]]);
+      const deps = depsFor([mockApps[0]]);
+      await list(deps);
 
-      await runList();
-
-      expect(captured.err).toContain("1 application");
-      expect(captured.err).not.toContain("1 applications");
+      const summary = joinCalls(deps.log.info);
+      expect(summary).toContain("1 application");
+      expect(summary).not.toContain("1 applications");
     });
   });
 
   describe("JSON output", () => {
     test("outputs JSON when --json flag is set", async () => {
-      mockListApplications.mockResolvedValue(mockApps);
+      const deps = depsFor(mockApps);
+      await list(deps, { json: true });
 
-      await runList({ json: true });
-
-      const parsed = JSON.parse(captured.out);
+      const output = joinCalls(deps.log.data);
+      const parsed = JSON.parse(output);
       expect(parsed).toHaveLength(2);
       expect(parsed[0].application_id).toBe("app_abc123");
       expect(parsed[0].name).toBe("My SaaS App");
     });
 
     test("outputs JSON in agent mode", async () => {
-      mockIsAgent.mockReturnValue(true);
-      mockListApplications.mockResolvedValue(mockApps);
+      const deps = depsFor(mockApps, { isAgent: true });
+      await list(deps);
 
-      await runList();
-
-      const parsed = JSON.parse(captured.out);
+      const output = joinCalls(deps.log.data);
+      const parsed = JSON.parse(output);
       expect(parsed).toHaveLength(2);
     });
 
     test("strips secret_key from JSON", async () => {
-      mockListApplications.mockResolvedValue(mockApps);
+      const deps = depsFor(mockApps);
+      await list(deps, { json: true });
 
-      await runList({ json: true });
-
-      expect(captured.out).not.toContain("sk_test_xxx");
-      expect(captured.out).not.toContain("sk_live_xxx");
-      expect(captured.out).not.toContain("secret_key");
+      const output = joinCalls(deps.log.data);
+      expect(output).not.toContain("sk_test_xxx");
+      expect(output).not.toContain("sk_live_xxx");
+      expect(output).not.toContain("secret_key");
     });
   });
 
   describe("empty state", () => {
     test("shows helpful message when no apps found", async () => {
-      mockListApplications.mockResolvedValue([]);
+      const deps = depsFor([]);
+      await list(deps);
 
-      await runList();
-
-      expect(captured.err).toContain("No applications found");
-      expect(captured.err).toContain("dashboard.clerk.com");
+      const output = joinCalls(deps.log.info);
+      expect(output).toContain("No applications found");
+      expect(output).toContain("dashboard.clerk.com");
     });
 
     test("outputs empty JSON array when --json flag is set", async () => {
-      mockListApplications.mockResolvedValue([]);
+      const deps = depsFor([]);
+      await list(deps, { json: true });
 
-      await runList({ json: true });
-
-      const parsed = JSON.parse(captured.out);
+      const output = joinCalls(deps.log.data);
+      const parsed = JSON.parse(output);
       expect(parsed).toEqual([]);
     });
 
     test("outputs empty JSON array in agent mode", async () => {
-      mockIsAgent.mockReturnValue(true);
-      mockListApplications.mockResolvedValue([]);
+      const deps = depsFor([], { isAgent: true });
+      await list(deps);
 
-      await runList();
-
-      const parsed = JSON.parse(captured.out);
+      const output = joinCalls(deps.log.data);
+      const parsed = JSON.parse(output);
       expect(parsed).toEqual([]);
     });
   });
