@@ -86,4 +86,49 @@ describe("isolated fixture tests", () => {
     expect(result.failures[0]).toContain("orphaned");
     expect(result.patchesChecked).toBe(0);
   });
+
+  test("reports failure when patch hunks are not currently applied", async () => {
+    const root = makeTempRepo();
+
+    // A minimal real unified diff: one hunk, one file, single-line change.
+    // The patch transforms "old line\n" into "new line\n".
+    // We will populate node_modules/fake-pkg/foo.txt with "old line\n",
+    // which means the patch is NOT currently applied. Check 4 should fire.
+    const patchContents = [
+      "diff --git a/foo.txt b/foo.txt",
+      "--- a/foo.txt",
+      "+++ b/foo.txt",
+      "@@ -1 +1 @@",
+      "-old line",
+      "+new line",
+      "",
+    ].join("\n");
+
+    writeFileSync(
+      resolve(root, "package.json"),
+      JSON.stringify({
+        name: "fixture",
+        patchedDependencies: {
+          "fake-pkg@1.0.0": "patches/fake-pkg@1.0.0.patch",
+        },
+      }),
+    );
+
+    mkdirSync(resolve(root, "patches"));
+    writeFileSync(resolve(root, "patches", "fake-pkg@1.0.0.patch"), patchContents);
+
+    mkdirSync(resolve(root, "node_modules", "fake-pkg"), { recursive: true });
+    writeFileSync(
+      resolve(root, "node_modules", "fake-pkg", "package.json"),
+      JSON.stringify({ name: "fake-pkg", version: "1.0.0" }),
+    );
+    // foo.txt is in the unpatched state, so the patch is not currently applied.
+    writeFileSync(resolve(root, "node_modules", "fake-pkg", "foo.txt"), "old line\n");
+
+    const result = await checkPatches({ repoRoot: root });
+    expect(result.failures).toHaveLength(1);
+    expect(result.failures[0]).toContain("fake-pkg");
+    expect(result.failures[0]).toContain("not currently applied");
+    expect(result.patchesChecked).toBe(0);
+  });
 });

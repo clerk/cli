@@ -113,9 +113,15 @@ export async function checkPatches(opts: CheckPatchesOptions): Promise<CheckPatc
     // byte-for-byte to the installed package. `git apply --reverse --check`
     // is the canonical way to verify this: it dry-runs the reverse of the
     // patch and exits 0 only if every hunk currently matches.
+    //
+    // GIT_DIR=/dev/null neutralizes git's parent-repo discovery. Without
+    // this, when the project is a git repo and node_modules is gitignored,
+    // git apply walks up to the project's .git, treats the patched files
+    // as untracked, and reports success vacuously.
     const installedPkgDir = resolve(repoRoot, "node_modules", entry.name);
     const reverseCheck = await Bun.$`git apply --reverse --check ${absPatchPath}`
       .cwd(installedPkgDir)
+      .env({ ...process.env, GIT_DIR: "/dev/null" })
       .quiet()
       .nothrow();
     if (reverseCheck.exitCode !== 0) {
