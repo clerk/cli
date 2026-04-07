@@ -1,75 +1,44 @@
-import { test, expect, describe, beforeEach, afterEach, mock, spyOn } from "bun:test";
-import { captureLog, promptsStubs } from "../../test/lib/stubs.ts";
+import { test, expect, describe, mock } from "bun:test";
+import { testRoot } from "../../test/lib/test-root.ts";
+import { deploy } from "./index.ts";
 
-const mockIsAgent = mock();
-let _modeOverride: string | undefined;
-
-mock.module("../../mode.ts", () => ({
-  isAgent: (...args: unknown[]) =>
-    _modeOverride !== undefined ? _modeOverride === "agent" : mockIsAgent(...args),
-  isHuman: (...args: unknown[]) =>
-    _modeOverride !== undefined ? _modeOverride !== "agent" : !mockIsAgent(...args),
-  setMode: (m: string) => {
-    _modeOverride = m;
-  },
-  getMode: () => _modeOverride ?? "human",
-}));
-
-const mockSelect = mock();
-const mockInput = mock();
-const mockConfirm = mock();
-const mockPassword = mock();
-
-mock.module("@inquirer/prompts", () => ({
-  ...promptsStubs,
-  select: (...args: unknown[]) => mockSelect(...args),
-  input: (...args: unknown[]) => mockInput(...args),
-  confirm: (...args: unknown[]) => mockConfirm(...args),
-  password: (...args: unknown[]) => mockPassword(...args),
-}));
-
-const { deploy } = await import("./index.ts");
+function dataCalls(deps: { log: { data: unknown } }): string[] {
+  return ((deps.log.data as ReturnType<typeof mock>).mock.calls as unknown[][]).map((c) =>
+    String(c[0] ?? ""),
+  );
+}
+function infoCalls(deps: { log: { info: unknown } }): string[] {
+  return ((deps.log.info as ReturnType<typeof mock>).mock.calls as unknown[][]).map((c) =>
+    String(c[0] ?? ""),
+  );
+}
 
 describe("deploy", () => {
-  let consoleSpy: ReturnType<typeof spyOn>;
-  let captured: ReturnType<typeof captureLog>;
-
-  beforeEach(() => {
-    captured = captureLog();
-  });
-
-  afterEach(() => {
-    captured.teardown();
-    _modeOverride = undefined;
-    mockIsAgent.mockReset();
-    mockSelect.mockReset();
-    mockInput.mockReset();
-    mockConfirm.mockReset();
-    mockPassword.mockReset();
-    consoleSpy?.mockRestore();
-  });
-
-  function runDeploy(options: Parameters<typeof deploy>[0]) {
-    return captured.run(() => deploy(options));
-  }
-
   describe("agent mode", () => {
+    function agentDeps() {
+      return testRoot({
+        mode: {
+          isAgent: () => true,
+          isHuman: () => false,
+          getMode: () => "agent",
+        },
+      });
+    }
+
     test("outputs deploy prompt and returns", async () => {
-      mockIsAgent.mockReturnValue(true);
-      consoleSpy = spyOn(console, "log").mockImplementation(() => {});
+      const deps = agentDeps();
+      await deploy(deps, {});
 
-      await runDeploy({});
-
-      expect(captured.out).toContain("deploying a Clerk application to production");
+      expect(deps.log.data).toHaveBeenCalledTimes(1);
+      const output = dataCalls(deps)[0]!;
+      expect(output).toContain("deploying a Clerk application to production");
     });
 
     test("prompt includes all deployment steps", async () => {
-      mockIsAgent.mockReturnValue(true);
-      consoleSpy = spyOn(console, "log").mockImplementation(() => {});
+      const deps = agentDeps();
+      await deploy(deps, {});
 
-      await runDeploy({});
-
-      const output = captured.out;
+      const output = dataCalls(deps)[0]!;
       expect(output).toContain("Prerequisites");
       expect(output).toContain("Verify Subscription Compatibility");
       expect(output).toContain("Choose a Production Domain");
@@ -79,67 +48,65 @@ describe("deploy", () => {
     });
 
     test("prompt includes API reference", async () => {
-      mockIsAgent.mockReturnValue(true);
-      consoleSpy = spyOn(console, "log").mockImplementation(() => {});
+      const deps = agentDeps();
+      await deploy(deps, {});
 
-      await runDeploy({});
-
-      const output = captured.out;
+      const output = dataCalls(deps)[0]!;
       expect(output).toContain("/v1/platform/applications");
       expect(output).toContain("instances/production/config");
       expect(output).toContain("instances/development/config");
     });
 
     test("prompt includes OAuth redirect URI pattern", async () => {
-      mockIsAgent.mockReturnValue(true);
-      consoleSpy = spyOn(console, "log").mockImplementation(() => {});
+      const deps = agentDeps();
+      await deploy(deps, {});
 
-      await runDeploy({});
-
-      const output = captured.out;
+      const output = dataCalls(deps)[0]!;
       expect(output).toContain("accounts.{domain}/v1/oauth_callback");
     });
 
     test("does not trigger interactive prompts", async () => {
-      mockIsAgent.mockReturnValue(true);
-      consoleSpy = spyOn(console, "log").mockImplementation(() => {});
+      const deps = agentDeps();
 
-      await runDeploy({ debug: true });
+      await deploy(deps, { debug: true });
 
-      expect(mockSelect).not.toHaveBeenCalled();
-      expect(mockInput).not.toHaveBeenCalled();
-      expect(mockConfirm).not.toHaveBeenCalled();
-      expect(mockPassword).not.toHaveBeenCalled();
+      expect(deps.prompts.select).not.toHaveBeenCalled();
+      expect(deps.prompts.input).not.toHaveBeenCalled();
+      expect(deps.prompts.confirm).not.toHaveBeenCalled();
+      expect(deps.prompts.password).not.toHaveBeenCalled();
     });
   });
 
   describe("human mode", () => {
-    function mockHumanFlow() {
-      mockIsAgent.mockReturnValue(false);
-      // Domain selection → OAuth credential choice
-      mockSelect.mockResolvedValueOnce("clerk-subdomain").mockResolvedValueOnce("have-credentials");
-      mockInput.mockResolvedValueOnce("fake-client-id-12345");
-      mockPassword.mockResolvedValueOnce("fake-secret");
+    function humanDeps() {
+      // Domain selection then OAuth credential choice
+      let selectCallCount = 0;
+      return testRoot({
+        prompts: {
+          select: (async () => {
+            selectCallCount += 1;
+            return selectCallCount === 1 ? "clerk-subdomain" : "have-credentials";
+          }) as never,
+          input: (async () => "fake-client-id-12345") as never,
+          password: (async () => "fake-secret") as never,
+        },
+      });
     }
 
     test("does not print deploy prompt", async () => {
-      mockHumanFlow();
-      consoleSpy = spyOn(console, "log").mockImplementation(() => {});
+      const deps = humanDeps();
+      await deploy(deps, {});
 
-      await runDeploy({});
-
-      const allOutput = captured.out;
-      expect(allOutput).not.toContain("deploying a Clerk application to production");
+      expect(dataCalls(deps).join("\n")).not.toContain(
+        "deploying a Clerk application to production",
+      );
     });
 
     test("shows mock banner", async () => {
-      mockHumanFlow();
-      consoleSpy = spyOn(console, "log").mockImplementation(() => {});
+      const deps = humanDeps();
+      await deploy(deps, {});
 
-      await runDeploy({});
-
-      const allOutput = captured.out;
-      expect(allOutput).toContain("[mock]");
+      expect(infoCalls(deps).some((m) => m.includes("[mock]"))).toBe(true);
     });
   });
 });

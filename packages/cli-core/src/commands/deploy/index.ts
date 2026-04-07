@@ -1,9 +1,17 @@
-import { select, input, confirm, password } from "@inquirer/prompts";
-import { isAgent } from "../../mode.ts";
-import { dim, bold, cyan, green, blue } from "../../lib/color.ts";
+import type { Need } from "../../lib/deps.ts";
+import { dim, bold, cyan, green, blue, yellow } from "../../lib/color.ts";
 import { printNextSteps, NEXT_STEPS } from "../../lib/next-steps.ts";
-import { openBrowser } from "../../lib/open.ts";
-import { log } from "../../lib/log.ts";
+
+export type DeployDeps = Need<{
+  mode: "isAgent";
+  prompts: "select" | "input" | "confirm" | "password";
+  browser: "open";
+  log: "info" | "debug" | "data";
+}>;
+
+export interface DeployOptions {
+  debug?: boolean;
+}
 
 const DEPLOY_PROMPT = `You are deploying a Clerk application to production. Follow these steps:
 
@@ -85,45 +93,46 @@ After all configuration is complete:
 
 Refer to the Clerk Platform API docs for detailed request/response schemas.`;
 
-export async function deploy(options: { debug?: boolean }) {
-  if (isAgent()) {
-    log.data(DEPLOY_PROMPT);
+export async function deploy(deps: DeployDeps, options: DeployOptions): Promise<void> {
+  if (deps.mode.isAgent()) {
+    deps.log.data(DEPLOY_PROMPT);
     return;
   }
-  if (options.debug) {
-    const { setLogLevel } = await import("../../lib/log.ts");
-    setLogLevel("debug");
-  }
+  const debug = options.debug
+    ? (...args: unknown[]) => deps.log.debug(["[debug]", ...args].map((a) => String(a)).join(" "))
+    : () => {};
 
-  log.data("[mock] This command uses mocked data and is not yet wired up to real APIs.\n");
+  deps.log.info(
+    yellow("[mock] This command uses mocked data and is not yet wired up to real APIs.") + "\n",
+  );
 
-  log.debug("Checking for authenticated user and linked application...");
+  debug("Checking for authenticated user and linked application...");
 
-  // Mock state — will be replaced with real lookups
+  // Mock state, will be replaced with real lookups
   const user = { id: "user_abc123", email: "kyle@clerk.dev" };
   const application = { id: "app_xyz789", name: "my-saas-app" };
 
-  log.debug(`Found authenticated user: ${user.email} (${user.id})`);
-  log.debug(`Found linked application: ${application.name} (${application.id})`);
+  debug(`Found authenticated user: ${user.email} (${user.id})`);
+  debug(`Found linked application: ${application.name} (${application.id})`);
 
-  log.debug("Checking for production instance...");
-  log.debug("No production instance found.");
+  debug("Checking for production instance...");
+  debug("No production instance found.");
 
-  // Mock state — check subscription vs dev instance features
-  log.debug("Checking development instance features against subscription...");
+  // Mock state, check subscription vs dev instance features
+  debug("Checking development instance features against subscription...");
   const devFeatures = ["email_auth", "social_oauth"];
   const subscriptionFeatures = ["email_auth", "social_oauth"];
   const unsupported = devFeatures.filter((f) => !subscriptionFeatures.includes(f));
 
   if (unsupported.length > 0) {
-    log.debug(`Found features not covered by subscription: ${unsupported.join(", ")}`);
-    log.debug("User must upgrade their plan before deploying.");
+    debug(`Found features not covered by subscription: ${unsupported.join(", ")}`);
+    debug("User must upgrade their plan before deploying.");
     return;
   }
 
-  log.debug("All development features are covered by subscription.");
+  debug("All development features are covered by subscription.");
 
-  const domainChoice = await select({
+  const domainChoice = await deps.prompts.select<"custom-domain" | "clerk-subdomain">({
     message: "How would you like to set up your production domain?",
     choices: [
       {
@@ -140,51 +149,51 @@ export async function deploy(options: { debug?: boolean }) {
   let domain: string;
 
   if (domainChoice === "custom-domain") {
-    domain = await input({
+    domain = await deps.prompts.input({
       message: "Enter your domain:",
     });
-    log.debug(`User provided custom domain: ${domain}`);
+    debug(`User provided custom domain: ${domain}`);
   } else {
     // Mock generated subdomain
     const generatedSubdomain = "sincere-chinchilla-87.clerk.app";
     domain = generatedSubdomain;
-    log.debug(`Using Clerk-provided subdomain: ${domain}`);
+    debug(`Using Clerk-provided subdomain: ${domain}`);
   }
 
-  log.debug("Creating production instance...");
-  log.debug(`Production instance created with domain: ${domain}`);
+  debug("Creating production instance...");
+  debug(`Production instance created with domain: ${domain}`);
 
   // DNS setup for custom domains
   if (domainChoice === "custom-domain") {
-    log.debug(`Looking up DNS provider for ${domain}...`);
+    debug(`Looking up DNS provider for ${domain}...`);
 
-    // Mock state — DNS lookup and Domain Connect check
+    // Mock state, DNS lookup and Domain Connect check
     const dnsProvider = { name: "Cloudflare", supportsDomainConnect: true };
-    log.debug(`DNS hosted by: ${dnsProvider.name}`);
-    log.debug(`Checking Domain Connect support for ${dnsProvider.name}...`);
-    log.debug(`${dnsProvider.name} supports Domain Connect.`);
+    debug(`DNS hosted by: ${dnsProvider.name}`);
+    debug(`Checking Domain Connect support for ${dnsProvider.name}...`);
+    debug(`${dnsProvider.name} supports Domain Connect.`);
 
     const domainConnectUrl = `https://domainconnect.${dnsProvider.name.toLowerCase()}.com/v2/domainTemplates/providers/clerk.com/services/clerk-production/apply?domain=${domain}`;
-    log.debug(`Composed Domain Connect URL: ${domainConnectUrl}`);
+    debug(`Composed Domain Connect URL: ${domainConnectUrl}`);
 
-    await confirm({
+    await deps.prompts.confirm({
       message: `We can automatically configure DNS for ${domain} via ${dnsProvider.name}. Open browser to continue?`,
       default: true,
     });
 
-    log.debug("Opening Domain Connect flow in browser...");
+    debug("Opening Domain Connect flow in browser...");
   }
 
   // Check dev instance settings that require production credentials
-  log.debug("Checking development instance settings for production requirements...");
+  debug("Checking development instance settings for production requirements...");
 
-  // Mock state — dev instance has Google OAuth enabled
+  // Mock state, dev instance has Google OAuth enabled
   const devSettings = {
     socialProviders: ["google"],
   };
 
   if (devSettings.socialProviders.length > 0) {
-    log.debug(
+    debug(
       `Found social providers requiring production credentials: ${devSettings.socialProviders.join(", ")}`,
     );
 
@@ -192,7 +201,7 @@ export async function deploy(options: { debug?: boolean }) {
       const displayName = provider.charAt(0).toUpperCase() + provider.slice(1);
       const docsUrl = `https://clerk.com/docs/guides/configure/auth-strategies/social-connections/${provider}#configure-for-your-production-instance`;
 
-      const credentialChoice = await select({
+      const credentialChoice = await deps.prompts.select<"walkthrough" | "have-credentials">({
         message: `Your app uses ${displayName} OAuth. Do you have your production credentials?`,
         choices: [
           {
@@ -207,45 +216,45 @@ export async function deploy(options: { debug?: boolean }) {
       });
 
       if (credentialChoice === "walkthrough") {
-        log.data(
+        deps.log.info(
           `\n${bold(`When configuring your ${displayName} OAuth app, use these values:`)}\n`,
         );
-        log.data(`  ${dim("Authorized JavaScript origins:")}`);
-        log.data(`    ${cyan(`https://${domain}`)}`);
-        log.data(`    ${cyan(`https://www.${domain}`)}`);
-        log.data(`\n  ${dim("Authorized redirect URI:")}`);
-        log.data(`    ${cyan(`https://accounts.${domain}/v1/oauth_callback`)}`);
-        log.data("");
+        deps.log.info(`  ${dim("Authorized JavaScript origins:")}`);
+        deps.log.info(`    ${cyan(`https://${domain}`)}`);
+        deps.log.info(`    ${cyan(`https://www.${domain}`)}`);
+        deps.log.info(`\n  ${dim("Authorized redirect URI:")}`);
+        deps.log.info(`    ${cyan(`https://accounts.${domain}/v1/oauth_callback`)}`);
+        deps.log.info("");
 
-        log.debug(`Opening ${displayName} OAuth setup guide in browser...`);
-        const openResult = await openBrowser(docsUrl);
+        debug(`Opening ${displayName} OAuth setup guide in browser...`);
+        const openResult = await deps.browser.open(docsUrl);
         if (!openResult.ok) {
-          log.info(dim(`(Could not open browser automatically, visit ${docsUrl})`));
+          deps.log.info(dim(`(Could not open browser automatically, visit ${docsUrl})`));
         }
 
-        log.data("Once you've created your credentials, enter them below:\n");
+        deps.log.info("Once you've created your credentials, enter them below:\n");
       }
 
-      const clientId = await input({
+      const clientId = await deps.prompts.input({
         message: `${displayName} OAuth Client ID:`,
       });
 
-      await password({
+      await deps.prompts.password({
         message: `${displayName} OAuth Client Secret:`,
       });
 
-      log.debug(`Received ${displayName} credentials (client ID: ${clientId.slice(0, 8)}...)`);
+      debug(`Received ${displayName} credentials (client ID: ${clientId.slice(0, 8)}...)`);
     }
 
-    log.debug("All social provider credentials collected.");
+    debug("All social provider credentials collected.");
   }
 
-  log.debug("Deploy complete.");
+  debug("Deploy complete.");
 
-  log.data(
+  deps.log.info(
     `\n${bold(green(`Your production application is set up and ready at ${blue(`https://${domain}`)}`))}`,
   );
-  log.data(
+  deps.log.info(
     dim(
       "If your application is not loading correctly, you may need to redeploy with your updated Clerk secret keys.",
     ),
