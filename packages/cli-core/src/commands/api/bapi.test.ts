@@ -1,5 +1,5 @@
 import { test, expect, describe, beforeEach, afterEach } from "bun:test";
-import { stubFetch } from "../../test/stubs.ts";
+import { stubFetch } from "../../test/lib/stubs.ts";
 import { bapiRequest } from "./bapi.ts";
 import { BapiError } from "../../lib/errors.ts";
 

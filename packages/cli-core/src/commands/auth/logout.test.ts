@@ -1,5 +1,5 @@
 import { test, expect, describe, afterEach, mock, spyOn } from "bun:test";
-import { credentialStoreStubs, configStubs } from "../../test/stubs.ts";
+import { credentialStoreStubs, configStubs } from "../../test/lib/stubs.ts";
 
 const mockDeleteToken = mock();
 const mockClearAuth = mock();
@@ -43,6 +43,6 @@ describe("logout", () => {
     consoleSpy = spyOn(console, "log").mockImplementation(() => {});
     await logout();
 
-    expect(consoleSpy).toHaveBeenCalledWith("Logged out successfully.");
+    expect(consoleSpy).toHaveBeenCalledWith("Logged out successfully");
   });
 });

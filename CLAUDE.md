@@ -20,7 +20,6 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup, pre-release instal
 Default to using Bun instead of Node.js.
 
 - Use `bun <file>` instead of `node <file>` or `ts-node <file>`
-- Use `bun test` instead of `jest` or `vitest`
 - Use `bun build <file.html|file.ts|file.css>` instead of `webpack` or `esbuild`
 - Use `bun install` instead of `npm install` or `yarn install` or `pnpm install`
 - Use `bun run <script>` instead of `npm run <script>` or `yarn run <script>` or `pnpm run <script>`
@@ -48,81 +47,6 @@ test("hello world", () => {
 });
 ```
 
-## Frontend
-
-Use HTML imports with `Bun.serve()`. Don't use `vite`. HTML imports fully support React, CSS, Tailwind.
-
-Server:
-
-```ts#index.ts
-import index from "./index.html"
-
-Bun.serve({
-  routes: {
-    "/": index,
-    "/api/users/:id": {
-      GET: (req) => {
-        return new Response(JSON.stringify({ id: req.params.id }));
-      },
-    },
-  },
-  // optional websocket support
-  websocket: {
-    open: (ws) => {
-      ws.send("Hello, world!");
-    },
-    message: (ws, message) => {
-      ws.send(message);
-    },
-    close: (ws) => {
-      // handle close
-    }
-  },
-  development: {
-    hmr: true,
-    console: true,
-  }
-})
-```
-
-HTML files can import .tsx, .jsx or .js files directly and Bun's bundler will transpile & bundle automatically. `<link>` tags can point to stylesheets and Bun's CSS bundler will bundle.
-
-```html#index.html
-<html>
-  <body>
-    <h1>Hello, world!</h1>
-    <script type="module" src="./frontend.tsx"></script>
-  </body>
-</html>
-```
-
-With the following `frontend.tsx`:
-
-```tsx#frontend.tsx
-import React from "react";
-
-// import .css files directly and it works
-import './index.css';
-
-import { createRoot } from "react-dom/client";
-
-const root = createRoot(document.body);
-
-export default function Frontend() {
-  return <h1>Hello, world!</h1>;
-}
-
-root.render(<Frontend />);
-```
-
-Then, run index.ts
-
-```sh
-bun --hot ./index.ts
-```
-
-For more information, read the Bun API docs in `node_modules/bun-types/docs/**.md`.
-
 ## CI Checks
 
 After modifying files, run these commands to match what CI enforces on pull requests:
@@ -130,10 +54,14 @@ After modifying files, run these commands to match what CI enforces on pull requ
 ```sh
 bun run format       # Format with oxfmt (writes changes)
 bun run lint         # Lint with oxlint
-bun test             # Run all tests
+bun run test         # Run unit tests
+bun run test:e2e:op  # Run E2E tests with secrets resolved from 1Password (preferred locally)
+bun run test:e2e     # Run E2E tests with env vars already set (used by CI; see .claude/rules/e2e.md)
 ```
 
-CI runs `bun run format:check` (fails if unformatted), `bun run lint`, and `bun test` on every PR to `main`.
+Locally, prefer `bun run test:e2e:op` so secrets are injected from 1Password in-memory and never written to disk. `bun run test:e2e` is for CI or for cases where the required env vars are already exported.
+
+CI runs `bun run format:check` (fails if unformatted), `bun run lint`, `bun test`, and `bun run test:e2e` on every PR to `main`. E2E tests only run for PRs from the same repository (not external forks) and target the production Clerk API with a dedicated test application.
 
 ## Versioning
 

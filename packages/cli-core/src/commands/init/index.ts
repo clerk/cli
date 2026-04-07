@@ -1,10 +1,9 @@
-import { login } from "../auth/login.js";
 import { link } from "../link/index.js";
 import { pull } from "../env/pull.js";
 import { isAgent } from "../../mode.js";
 import { dim, green, yellow, bold } from "../../lib/color.js";
 import { throwUserAbort } from "../../lib/errors.js";
-import { lookupFramework, type FrameworkInfo } from "../../lib/framework.js";
+import { lookupFramework } from "../../lib/framework.js";
 import { resolveProfile } from "../../lib/config.js";
 import { gatherContext } from "./context.js";
 import { scaffold, enrichProjectContext } from "./scaffold.js";
@@ -16,27 +15,33 @@ import {
   writePlan,
   checkGitDirty,
   printOutro,
+  printKeylessInfo,
   getAuthenticatedEmail,
 } from "./heuristics.js";
 import { installSkills } from "./skills.js";
+import { intro, outro, bar, withSpinner } from "../../lib/spinner.js";
 import type { ProjectContext } from "./frameworks/types.js";
 
 interface InitOptions {
   framework?: string;
   yes?: boolean;
   prompt?: boolean;
-  noSkills?: boolean;
+  skills?: boolean;
 }
 
 export async function init(options: InitOptions = {}) {
   const cwd = process.cwd();
 
   // Commander validates --framework against FRAMEWORK_NAMES choices
-  let frameworkOverride: FrameworkInfo | undefined;
-  if (options.framework) {
-    frameworkOverride = lookupFramework(options.framework) ?? undefined;
-  }
-  const ctx = await gatherContext(cwd, frameworkOverride);
+  const frameworkOverride = options.framework
+    ? (lookupFramework(options.framework) ?? undefined)
+    : undefined;
+
+  intro("clerk init");
+
+  const ctx = await withSpinner("Detecting framework...", () =>
+    gatherContext(cwd, frameworkOverride),
+  );
 
   // Populate framework-specific context (variant, layoutPath, middlewareBasename)
   if (ctx) await enrichProjectContext(ctx);
@@ -45,50 +50,45 @@ export async function init(options: InitOptions = {}) {
     console.log(
       "Run `clerk init -y` to automatically detect the framework, install the Clerk SDK, and scaffold authentication files without interactive prompts.",
     );
+    outro();
     return;
   }
 
-  await authenticateAndLink(cwd);
+  bar();
+  const authenticated = await resolveAuth(cwd);
+
+  if (authenticated) {
+    await link({ skipIfLinked: true });
+  }
+
   await detectAndInstall(cwd, ctx, options);
 
-  if (!options.noSkills) {
+  bar();
+  if (authenticated) {
+    await pull({});
+  } else {
+    printKeylessInfo();
+  }
+
+  if (options.skills !== false) {
+    bar();
     await installSkills(cwd, ctx?.framework.dep, options.yes ?? false);
   }
+
+  outro("Done");
 }
 
-async function authenticateAndLink(cwd: string): Promise<void> {
-  // If Platform API key is set, skip OAuth entirely
+async function resolveAuth(cwd: string): Promise<boolean> {
   const hasApiKey = Boolean(process.env.CLERK_PLATFORM_API_KEY);
+  const email = hasApiKey ? null : await getAuthenticatedEmail();
+
+  if (!hasApiKey && !email) return false;
+
   const profile = await resolveProfile(cwd);
-
-  if (hasApiKey && profile) {
-    console.log(dim(`Using API key · Linked to ${profile.profile.appId}`));
-    return;
-  }
-
-  if (hasApiKey) {
-    await link({ skipIfLinked: true });
-    return;
-  }
-
-  // Check if fully ready (authenticated + linked)
-  const email = await getAuthenticatedEmail();
-
-  if (email && profile) {
-    console.log(dim(`Logged in as ${email} · Linked to ${profile.profile.appId}`));
-    return;
-  }
-
-  // Authenticated but not linked
-  if (email) {
-    console.log(dim(`Logged in as ${email}`));
-    await link({ skipIfLinked: true });
-    return;
-  }
-
-  // Not authenticated — full flow
-  await login({ showNextSteps: false });
-  await link({ skipIfLinked: true });
+  const linkedInfo = profile ? ` · Linked to ${profile.profile.appId}` : "";
+  const authLabel = hasApiKey ? "Using API key" : `Logged in as ${email}`;
+  console.log(dim(`${authLabel}${linkedInfo}`));
+  return true;
 }
 
 async function detectAndInstall(
@@ -106,9 +106,7 @@ async function detectAndInstall(
   const variantLabel = ctx.variant ? ` (${ctx.variant})` : "";
   console.log(`\nDetected ${bold(ctx.framework.name)}${variantLabel}`);
 
-  // Pre-scaffold: detect existing auth libraries
   detectAuthLibraries(ctx.deps);
-
   console.log();
 
   if (ctx.existingClerk) {
@@ -117,7 +115,6 @@ async function detectAndInstall(
     await installSdk(ctx);
   }
 
-  await pull({});
   await scaffoldAndWrite(cwd, ctx, options);
 }
 
@@ -143,7 +140,7 @@ async function scaffoldAndWrite(
   }
 
   if (await checkGitDirty(cwd)) {
-    console.log(yellow("Warning: You have uncommitted changes."));
+    console.log(yellow("Warning: You have uncommitted changes"));
     console.log(dim("Consider committing first so you can review what clerk init creates.\n"));
   }
 
@@ -158,6 +155,8 @@ async function scaffoldAndWrite(
   await runFormatters(cwd, writtenFiles);
 
   // Post-scaffold: scan for issues
-  const findings = await scanForIssues(cwd, ctx.framework.dep);
+  const findings = await withSpinner("Scanning for issues...", () =>
+    scanForIssues(cwd, ctx.framework.dep),
+  );
   printOutro(plan, findings);
 }

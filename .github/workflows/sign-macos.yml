@@ -30,7 +30,7 @@ jobs:
     runs-on: macos-latest
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           sparse-checkout: |
             scripts/sign-macos.ts
@@ -40,12 +40,13 @@ jobs:
             package.json
             packages/cli-core/package.json
             packages/cli/package.json
+            patches/
           sparse-checkout-cone-mode: false
 
       - uses: oven-sh/setup-bun@v2
       - run: bun install --frozen-lockfile
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: ${{ inputs.artifact-prefix }}-${{ matrix.target }}
           path: dist/artifacts/${{ matrix.target }}
@@ -60,7 +61,7 @@ jobs:
         run: bun run scripts/sign-macos.ts --target ${{ matrix.target }} --artifacts-dir dist/artifacts
 
       - name: Re-upload signed artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: ${{ inputs.artifact-prefix }}-${{ matrix.target }}
           path: dist/artifacts/${{ matrix.target }}/clerk

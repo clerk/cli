@@ -13,7 +13,7 @@ import {
   clerk,
   getInstance,
   MOCK_APP,
-} from "../lib/setup.ts";
+} from "./lib/harness.ts";
 
 useIntegrationTestHarness();
 

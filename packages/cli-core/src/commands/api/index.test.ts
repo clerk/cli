@@ -8,7 +8,7 @@ import {
   configStubs,
   promptsStubs,
   stubFetch,
-} from "../../test/stubs.ts";
+} from "../../test/lib/stubs.ts";
 
 let mockStoredToken: string | null = null;
 mock.module("../../lib/credential-store.ts", () => ({

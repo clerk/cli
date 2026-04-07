@@ -1,5 +1,5 @@
 import { test, expect, describe, afterEach, mock, spyOn } from "bun:test";
-import { capturedOutput, configStubs, gitStubs, promptsStubs } from "../../test/stubs.ts";
+import { capturedOutput, configStubs, gitStubs, promptsStubs } from "../../test/lib/stubs.ts";
 
 const mockIsAgent = mock();
 const mockIsHuman = mock();

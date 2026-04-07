@@ -2,7 +2,7 @@ import { test, expect, describe, beforeEach, afterEach, mock } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { gitStubs, tokenExchangeStubs, stubFetch } from "../../test/stubs.ts";
+import { gitStubs, tokenExchangeStubs, stubFetch } from "../../test/lib/stubs.ts";
 import type { CheckResult, CheckStatus, DoctorContext, ResolvedProfile } from "./types.ts";
 import type { Application } from "../../lib/plapi.ts";
 

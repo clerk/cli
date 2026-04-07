@@ -1,7 +1,7 @@
 import { select, input, confirm, password } from "@inquirer/prompts";
 import { isAgent } from "../../mode.ts";
 import { dim, bold, cyan, green, blue, yellow } from "../../lib/color.ts";
-import { printNextSteps } from "../../lib/next-steps.ts";
+import { printNextSteps, NEXT_STEPS } from "../../lib/next-steps.ts";
 
 const DEPLOY_PROMPT = `You are deploying a Clerk application to production. Follow these steps:
 
@@ -246,8 +246,5 @@ export async function deploy(options: { debug?: boolean }) {
     ),
   );
 
-  printNextSteps([
-    "Run `clerk env pull --instance prod` to fetch production keys",
-    "Run `clerk doctor` to verify your setup",
-  ]);
+  printNextSteps(NEXT_STEPS.DEPLOY);
 }

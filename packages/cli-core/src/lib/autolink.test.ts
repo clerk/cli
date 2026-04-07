@@ -2,7 +2,7 @@ import { test, expect, describe, beforeEach, afterEach, mock, spyOn } from "bun:
 import { mkdtemp, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { credentialStoreStubs, gitStubs, stubFetch } from "../test/stubs.ts";
+import { credentialStoreStubs, gitStubs, stubFetch } from "../test/lib/stubs.ts";
 
 mock.module("./credential-store.ts", () => credentialStoreStubs);
 

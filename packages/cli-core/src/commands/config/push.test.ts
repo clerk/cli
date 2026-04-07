@@ -3,12 +3,19 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { _setConfigDir, setProfile } from "../../lib/config.ts";
-import { credentialStoreStubs, gitStubs, promptsStubs, stubFetch } from "../../test/stubs.ts";
+import { credentialStoreStubs, gitStubs, promptsStubs, stubFetch } from "../../test/lib/stubs.ts";
 import { printDiff, hasConfigChanges } from "./push.ts";
 
 mock.module("../../lib/credential-store.ts", () => credentialStoreStubs);
 mock.module("../../lib/git.ts", () => gitStubs);
 mock.module("@inquirer/prompts", () => promptsStubs);
+mock.module("../../lib/spinner.ts", () => ({
+  withSpinner: async (msg: string, fn: () => Promise<unknown>) => {
+    console.error(msg);
+    const result = await fn();
+    return result;
+  },
+}));
 
 describe("config push", () => {
   const originalEnv = { ...process.env };
@@ -246,7 +253,9 @@ describe("config push", () => {
     });
 
     await runConfigPatch({ json: '{"session":{"lifetime":3600}}', yes: true });
-    expect(errorSpy).toHaveBeenCalledWith("Updating config on app_1 (development)...");
+    expect(errorSpy).toHaveBeenCalledWith(
+      expect.stringContaining("Updating config on app_1 (development)"),
+    );
   });
 
   // --- PUT happy paths ---
@@ -277,7 +286,9 @@ describe("config push", () => {
     });
 
     await runConfigPut({ json: '{"session":{"lifetime":3600}}', yes: true });
-    expect(errorSpy).toHaveBeenCalledWith("Replacing config on app_1 (development)...");
+    expect(errorSpy).toHaveBeenCalledWith(
+      expect.stringContaining("Replacing config on app_1 (development)"),
+    );
   });
 
   // --- config_version stripping ---
@@ -407,7 +418,7 @@ describe("config push", () => {
     // Send a payload that matches the current config for the patched key
     await runConfigPatch({ json: '{"session":{"lifetime":604800}}', yes: true });
     expect(mutatingCallMade).toBe(false);
-    expect(errorSpy).toHaveBeenCalledWith("No changes detected.");
+    expect(errorSpy).toHaveBeenCalledWith("No changes detected");
   });
 
   test("put skips API call when payload matches current config", async () => {
@@ -428,7 +439,7 @@ describe("config push", () => {
       yes: true,
     });
     expect(mutatingCallMade).toBe(false);
-    expect(errorSpy).toHaveBeenCalledWith("No changes detected.");
+    expect(errorSpy).toHaveBeenCalledWith("No changes detected");
   });
 
   test("put detects no changes when current config has config_version (pull→put roundtrip)", async () => {
@@ -448,7 +459,7 @@ describe("config push", () => {
     // Simulate pull→put: payload includes config_version from the pull output
     await runConfigPut({ json: JSON.stringify(configWithVersion), yes: true });
     expect(mutatingCallMade).toBe(false);
-    expect(errorSpy).toHaveBeenCalledWith("No changes detected.");
+    expect(errorSpy).toHaveBeenCalledWith("No changes detected");
   });
 
   // --- Instance targeting ---
@@ -571,7 +582,7 @@ describe("config push", () => {
     });
 
     await runConfigPatch({ json: '{"a":1}', yes: true });
-    expect(errorSpy).toHaveBeenCalledWith("Config pushed successfully.");
+    expect(errorSpy).toHaveBeenCalledWith("Config pushed successfully");
   });
 
   // --- --json takes priority over --file ---

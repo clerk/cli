@@ -14,7 +14,7 @@ import {
   getInstance,
   MOCK_APP,
   MOCK_APP_DEV_ONLY,
-} from "../lib/setup.ts";
+} from "./lib/harness.ts";
 
 const h = useIntegrationTestHarness();
 
@@ -60,7 +60,7 @@ describe("Recover from errors gracefully", () => {
       [`/applications/${MOCK_APP.application_id}`]: MOCK_APP,
     });
     await clerk("--mode", "human", "env", "pull");
-    const env = parseEnvFile(await Bun.file(join(h.tempDir, ".env.local")).text(), ".env.local");
+    const env = parseEnvFile(await Bun.file(join(h.tempDir, ".env")).text(), ".env");
     expect(env.get("NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY")).toBe(devInstance.publishable_key);
     expect(env.get("CLERK_SECRET_KEY")).toBe(devInstance.secret_key);
   });

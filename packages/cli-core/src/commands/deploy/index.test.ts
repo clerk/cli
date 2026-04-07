@@ -1,5 +1,5 @@
 import { test, expect, describe, afterEach, mock, spyOn } from "bun:test";
-import { capturedOutput, promptsStubs } from "../../test/stubs.ts";
+import { capturedOutput, promptsStubs } from "../../test/lib/stubs.ts";
 
 const mockIsAgent = mock();
 let _modeOverride: string | undefined;

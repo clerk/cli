@@ -1,18 +1,19 @@
 import { getToken } from "../../lib/credential-store.ts";
 import { fetchUserInfo } from "../../lib/token-exchange.ts";
+import { withSpinner } from "../../lib/spinner.ts";
 
 export async function whoami() {
   const token = await getToken();
   if (!token) {
-    console.log("Not logged in. Run `clerk auth login` to authenticate.");
+    console.log("Not logged in. Run `clerk auth login` to authenticate");
     return;
   }
 
   try {
-    const userInfo = await fetchUserInfo(token);
+    const userInfo = await withSpinner("Fetching account info...", () => fetchUserInfo(token));
     console.log(userInfo.email);
   } catch {
-    console.log("Session expired. Run `clerk auth login` to re-authenticate.");
+    console.log("Session expired. Run `clerk auth login` to re-authenticate");
     return;
   }
 }

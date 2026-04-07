@@ -15,7 +15,7 @@ import {
   clerk,
   getInstance,
   MOCK_APP,
-} from "../lib/setup.ts";
+} from "./lib/harness.ts";
 
 const h = useIntegrationTestHarness();
 
@@ -107,18 +107,18 @@ test("--file flag writes to specified file instead of .env.local", async () => {
   expect(envLocalExists).toBe(false);
 });
 
-test("falls back to .env when it exists and .env.local does not", async () => {
+test("falls back to .env when it has Clerk keys and .env.local does not exist", async () => {
   await Bun.write(
     join(h.tempDir, "package.json"),
     JSON.stringify({ name: "test", dependencies: { express: "4.21.0" } }),
   );
 
-  // Only .env exists (no .env.local)
-  await Bun.write(join(h.tempDir, ".env"), "EXISTING=value\n");
+  // .env has existing Clerk keys (backwards compat: keep writing there)
+  await Bun.write(join(h.tempDir, ".env"), "EXISTING=value\nCLERK_PUBLISHABLE_KEY=old_pk\n");
 
   await clerk("--mode", "human", "env", "pull");
 
-  // Should write to .env (existing file)
+  // Should write to .env (backwards compat: it already had Clerk keys)
   const content = await Bun.file(join(h.tempDir, ".env")).text();
   const env = parseEnvFile(content, ".env");
   expect(env.get("EXISTING")).toBe("value");

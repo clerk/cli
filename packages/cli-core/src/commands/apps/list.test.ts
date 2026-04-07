@@ -1,5 +1,5 @@
 import { test, expect, describe, beforeEach, afterEach, mock, spyOn } from "bun:test";
-import { capturedOutput } from "../../test/stubs.ts";
+import { capturedOutput } from "../../test/lib/stubs.ts";
 
 const mockListApplications = mock();
 mock.module("../../lib/plapi.ts", () => ({

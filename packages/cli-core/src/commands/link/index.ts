@@ -8,8 +8,9 @@ import { setProfile, resolveProfile, moveProfile } from "../../lib/config.ts";
 import { autolink, findClerkKeys, matchKeyToApp } from "../../lib/autolink.ts";
 import { getGitRepoIdentifier, getGitRepoRoot, getGitNormalizedRemote } from "../../lib/git.ts";
 import { dim, cyan } from "../../lib/color.ts";
-import { printNextSteps } from "../../lib/next-steps.ts";
+import { NEXT_STEPS } from "../../lib/next-steps.ts";
 import { CliError, ERROR_CODE } from "../../lib/errors.ts";
+import { intro, outro, withSpinner } from "../../lib/spinner.ts";
 
 const AGENT_PROMPT = `You are linking a Clerk application to the current project directory.
 
@@ -62,9 +63,14 @@ export async function link(options: LinkOptions = {}): Promise<void> {
     if (autolinked) return;
   }
 
+  intro("clerk link");
+
   if (existing) {
     const shouldRelink = await handleExistingProfile(existing, normalizedRemote, options);
-    if (!shouldRelink) return;
+    if (!shouldRelink) {
+      outro();
+      return;
+    }
   }
 
   await ensureAuth();
@@ -77,7 +83,7 @@ export async function link(options: LinkOptions = {}): Promise<void> {
   const prodInstance = app.instances.find((i) => i.environment_type === "production");
 
   if (!devInstance) {
-    throw new CliError("Application has no development instance.", {
+    throw new CliError("Application has no development instance", {
       code: ERROR_CODE.INSTANCE_NOT_FOUND,
     });
   }
@@ -93,12 +99,9 @@ export async function link(options: LinkOptions = {}): Promise<void> {
   });
 
   const label = app.name || app.application_id;
-  console.log(`\nLinked to ${cyan(label)} in ${dim(displayPath)}`);
+  console.log(`Linked to ${cyan(label)} in ${dim(displayPath)}`);
 
-  printNextSteps([
-    "Run `clerk env pull` to fetch your environment variables",
-    "Run `clerk doctor` to verify your setup",
-  ]);
+  outro(NEXT_STEPS.LINK);
 }
 
 async function ensureAuth() {
@@ -160,7 +163,7 @@ async function resolveApp(
   displayPath: string,
   detectKeys: boolean,
 ): Promise<Application> {
-  const apps = await listApplications();
+  const apps = await withSpinner("Fetching applications...", () => listApplications());
 
   if (apps.length === 0) {
     throw new CliError("No applications found. Create one at https://dashboard.clerk.com first.", {
@@ -203,7 +206,7 @@ async function pickApp(apps: Application[], displayPath: string): Promise<Applic
 
   const found = apps.find((a) => a.application_id === selectedId);
   if (!found) {
-    throw new CliError("Selected application not found.", {
+    throw new CliError("Selected application not found", {
       code: ERROR_CODE.APP_NOT_FOUND,
     });
   }

@@ -11,7 +11,7 @@ import {
   getInstance,
   MOCK_APP,
   MOCK_USERS,
-} from "../lib/setup.ts";
+} from "./lib/harness.ts";
 
 useIntegrationTestHarness();
 

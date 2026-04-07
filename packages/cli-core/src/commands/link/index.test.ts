@@ -6,7 +6,7 @@ import {
   autolinkStubs,
   gitStubs,
   promptsStubs,
-} from "../../test/stubs.ts";
+} from "../../test/lib/stubs.ts";
 
 const mockIsAgent = mock();
 let _modeOverride: string | undefined;
@@ -79,6 +79,13 @@ mock.module("@inquirer/prompts", () => ({
   ...promptsStubs,
   search: (...args: unknown[]) => mockSearch(...args),
   confirm: (...args: unknown[]) => mockConfirm(...args),
+}));
+
+mock.module("../../lib/spinner.ts", () => ({
+  intro: () => {},
+  outro: () => {},
+  bar: () => {},
+  withSpinner: async (_msg: string, fn: () => Promise<unknown>) => fn(),
 }));
 
 const { link } = await import("./index.ts");

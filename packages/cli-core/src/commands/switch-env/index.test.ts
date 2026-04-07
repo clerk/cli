@@ -1,5 +1,5 @@
 import { test, expect, describe, afterEach, mock, spyOn } from "bun:test";
-import { configStubs, credentialStoreStubs } from "../../test/stubs.ts";
+import { configStubs, credentialStoreStubs } from "../../test/lib/stubs.ts";
 
 const mockSetEnvironment = mock();
 const mockGetToken = mock();

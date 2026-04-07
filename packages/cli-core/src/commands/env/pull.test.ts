@@ -2,10 +2,16 @@ import { test, expect, describe, beforeEach, afterEach, spyOn, mock } from "bun:
 import { mkdtemp, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { credentialStoreStubs, gitStubs, configStubs, stubFetch } from "../../test/stubs.ts";
+import { credentialStoreStubs, gitStubs, configStubs, stubFetch } from "../../test/lib/stubs.ts";
 
 mock.module("../../lib/credential-store.ts", () => credentialStoreStubs);
 mock.module("../../lib/git.ts", () => gitStubs);
+mock.module("../../lib/spinner.ts", () => ({
+  withSpinner: async (msg: string, fn: () => Promise<unknown>) => {
+    console.error(msg);
+    return fn();
+  },
+}));
 
 type Profile = { workspaceId: string; appId: string; instances: Record<string, string> };
 const _profiles: Record<string, Profile> = {};
@@ -110,6 +116,7 @@ describe("env pull", () => {
   const originalCwd = process.cwd;
   let tempDir: string;
   let errorSpy: ReturnType<typeof spyOn>;
+  let logSpy: ReturnType<typeof spyOn>;
   let exitSpy: ReturnType<typeof spyOn>;
 
   const mockApplication = {
@@ -147,6 +154,7 @@ describe("env pull", () => {
     process.cwd = () => tempDir;
 
     errorSpy = spyOn(console, "error").mockImplementation(() => {});
+    logSpy = spyOn(console, "log").mockImplementation(() => {});
     exitSpy = spyOn(process, "exit").mockImplementation(() => {
       throw new Error("process.exit");
     });
@@ -160,6 +168,7 @@ describe("env pull", () => {
     process.cwd = originalCwd;
     globalThis.fetch = originalFetch;
     errorSpy.mockRestore();
+    logSpy.mockRestore();
     exitSpy.mockRestore();
     await rm(tempDir, { recursive: true, force: true });
   });
@@ -234,7 +243,68 @@ describe("env pull", () => {
     );
   });
 
-  test("falls back to .env when .env.local does not exist", async () => {
+  test("falls back to .env when .env.local does not exist and .env has Clerk keys", async () => {
+    await setProfile(tempDir, {
+      workspaceId: "org_1",
+      appId: "app_1",
+      instances: { development: "ins_dev" },
+    });
+    await Bun.write(join(tempDir, ".env"), "EXISTING=value\nCLERK_SECRET_KEY=old_sk\n");
+
+    await runEnvPull();
+
+    const content = await Bun.file(join(tempDir, ".env")).text();
+    expect(content).toContain("EXISTING=value");
+    expect(content).toContain("CLERK_SECRET_KEY=sk_test_xyz789");
+    // Should not have created .env.local since .env already had Clerk keys
+    expect(await Bun.file(join(tempDir, ".env.local")).exists()).toBe(false);
+  });
+
+  test("falls back to .env when it contains NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY", async () => {
+    await setProfile(tempDir, {
+      workspaceId: "org_1",
+      appId: "app_1",
+      instances: { development: "ins_dev" },
+    });
+    await Bun.write(
+      join(tempDir, "package.json"),
+      JSON.stringify({ dependencies: { next: "14.0.0" } }),
+    );
+    await Bun.write(
+      join(tempDir, ".env"),
+      "NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=old_pk\nCLERK_SECRET_KEY=old_sk\n",
+    );
+
+    await runEnvPull();
+
+    const content = await Bun.file(join(tempDir, ".env")).text();
+    expect(content).toContain("NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=pk_test_abc123");
+    expect(await Bun.file(join(tempDir, ".env.local")).exists()).toBe(false);
+  });
+
+  test("falls back to .env when it contains VITE_CLERK_PUBLISHABLE_KEY", async () => {
+    await setProfile(tempDir, {
+      workspaceId: "org_1",
+      appId: "app_1",
+      instances: { development: "ins_dev" },
+    });
+    await Bun.write(
+      join(tempDir, "package.json"),
+      JSON.stringify({ dependencies: { react: "19.0.0" } }),
+    );
+    await Bun.write(
+      join(tempDir, ".env"),
+      "VITE_CLERK_PUBLISHABLE_KEY=old_pk\nCLERK_SECRET_KEY=old_sk\n",
+    );
+
+    await runEnvPull();
+
+    const content = await Bun.file(join(tempDir, ".env")).text();
+    expect(content).toContain("VITE_CLERK_PUBLISHABLE_KEY=pk_test_abc123");
+    expect(await Bun.file(join(tempDir, ".env.local")).exists()).toBe(false);
+  });
+
+  test("creates preferred file when .env exists but has no Clerk keys", async () => {
     await setProfile(tempDir, {
       workspaceId: "org_1",
       appId: "app_1",
@@ -244,11 +314,10 @@ describe("env pull", () => {
 
     await runEnvPull();
 
-    const content = await Bun.file(join(tempDir, ".env")).text();
-    expect(content).toContain("EXISTING=value");
+    // Express prefers .env.local; .env exists but has no Clerk keys,
+    // so keys go to the preferred file
+    const content = await Bun.file(join(tempDir, ".env.local")).text();
     expect(content).toContain("CLERK_SECRET_KEY=sk_test_xyz789");
-    // Should not have created .env.local
-    expect(await Bun.file(join(tempDir, ".env.local")).exists()).toBe(false);
   });
 
   test("uses --file flag to target specific file", async () => {
@@ -294,7 +363,9 @@ describe("env pull", () => {
     });
 
     await runEnvPull();
-    expect(errorSpy).toHaveBeenCalledWith("Pulling env vars from development instance...");
+    expect(errorSpy).toHaveBeenCalledWith(
+      expect.stringContaining("Pulling env vars from development instance"),
+    );
   });
 
   test("shows written file in status message", async () => {
@@ -388,8 +459,71 @@ describe("env pull", () => {
 
     await runEnvPull();
 
+    // Next.js prefers .env (gitignored by create-next-app via .env* pattern)
+    const content = await Bun.file(join(tempDir, ".env")).text();
+    expect(content).toContain("NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=pk_test_abc123");
+    // Should NOT have created .env.local
+    expect(await Bun.file(join(tempDir, ".env.local")).exists()).toBe(false);
+  });
+
+  test("Next.js writes to existing .env.local if it already has Clerk keys", async () => {
+    await setProfile(tempDir, {
+      workspaceId: "org_1",
+      appId: "app_1",
+      instances: { development: "ins_dev" },
+    });
+    await Bun.write(
+      join(tempDir, "package.json"),
+      JSON.stringify({ dependencies: { next: "16.0.0" } }),
+    );
+    // Simulate a project that already ran env pull before this change
+    await Bun.write(
+      join(tempDir, ".env.local"),
+      "NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=old_pk\nCLERK_SECRET_KEY=old_sk\n",
+    );
+
+    await runEnvPull();
+
+    // Should update .env.local (backwards compat) not create .env
     const content = await Bun.file(join(tempDir, ".env.local")).text();
     expect(content).toContain("NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=pk_test_abc123");
+    expect(content).toContain("CLERK_SECRET_KEY=sk_test_xyz789");
+  });
+
+  test("Nuxt writes to .env", async () => {
+    await setProfile(tempDir, {
+      workspaceId: "org_1",
+      appId: "app_1",
+      instances: { development: "ins_dev" },
+    });
+    await Bun.write(
+      join(tempDir, "package.json"),
+      JSON.stringify({ dependencies: { nuxt: "4.0.0" } }),
+    );
+
+    await runEnvPull();
+
+    const content = await Bun.file(join(tempDir, ".env")).text();
+    expect(content).toContain("NUXT_PUBLIC_CLERK_PUBLISHABLE_KEY=pk_test_abc123");
+    expect(await Bun.file(join(tempDir, ".env.local")).exists()).toBe(false);
+  });
+
+  test("Vite React writes to .env.local", async () => {
+    await setProfile(tempDir, {
+      workspaceId: "org_1",
+      appId: "app_1",
+      instances: { development: "ins_dev" },
+    });
+    await Bun.write(
+      join(tempDir, "package.json"),
+      JSON.stringify({ dependencies: { react: "19.0.0" } }),
+    );
+
+    await runEnvPull();
+
+    const content = await Bun.file(join(tempDir, ".env.local")).text();
+    expect(content).toContain("VITE_CLERK_PUBLISHABLE_KEY=pk_test_abc123");
+    expect(await Bun.file(join(tempDir, ".env")).exists()).toBe(false);
   });
 
   test("detects Nuxt and uses NUXT_CLERK_SECRET_KEY", async () => {
@@ -405,7 +539,7 @@ describe("env pull", () => {
 
     await runEnvPull();
 
-    const content = await Bun.file(join(tempDir, ".env.local")).text();
+    const content = await Bun.file(join(tempDir, ".env")).text();
     expect(content).toContain("NUXT_PUBLIC_CLERK_PUBLISHABLE_KEY=pk_test_abc123");
     expect(content).toContain("NUXT_CLERK_SECRET_KEY=sk_test_xyz789");
     expect(content).not.toMatch(/^CLERK_SECRET_KEY=/m);

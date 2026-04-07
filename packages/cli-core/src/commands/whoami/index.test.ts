@@ -1,5 +1,5 @@
 import { test, expect, describe, afterEach, mock, spyOn } from "bun:test";
-import { credentialStoreStubs, tokenExchangeStubs } from "../../test/stubs.ts";
+import { credentialStoreStubs, tokenExchangeStubs } from "../../test/lib/stubs.ts";
 
 const mockGetToken = mock();
 const mockFetchUserInfo = mock();

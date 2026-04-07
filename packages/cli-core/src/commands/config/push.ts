@@ -4,6 +4,7 @@ import { isHuman } from "../../mode.ts";
 import { throwUsageError, throwUserAbort, withApiContext, ERROR_CODE } from "../../lib/errors.ts";
 import { confirm } from "../../lib/prompts.ts";
 import { dim, bold, red, green } from "../../lib/color.ts";
+import { withSpinner } from "../../lib/spinner.ts";
 
 interface ConfigPushOptions {
   app?: string;
@@ -76,9 +77,11 @@ async function configPush(options: ConfigPushOptions, op: Operation): Promise<vo
     return;
   }
 
-  const currentConfig = await withApiContext(
-    fetchInstanceConfig(ctx.appId, ctx.instanceId),
-    "Failed to fetch current config",
+  const currentConfig = await withSpinner("Fetching current config...", () =>
+    withApiContext(
+      fetchInstanceConfig(ctx.appId, ctx.instanceId),
+      "Failed to fetch current config",
+    ),
   );
 
   // Strip config_version from current config to match the payload normalization above
@@ -88,7 +91,7 @@ async function configPush(options: ConfigPushOptions, op: Operation): Promise<vo
   const hasChanges = hasConfigChanges(currentConfig, configPayload, isPatch);
 
   if (!hasChanges) {
-    console.error("No changes detected.");
+    console.error("No changes detected");
     return;
   }
 
@@ -105,14 +108,16 @@ async function configPush(options: ConfigPushOptions, op: Operation): Promise<vo
     }
   }
 
-  console.error(`${op.verb} config on ${ctx.appLabel} (${ctx.instanceLabel})...`);
-
-  const result = await withApiContext(
-    op.apiFn(ctx.appId, ctx.instanceId, configPayload, { destructive: options.destructive }),
-    "Failed to push config",
+  const result = await withSpinner(
+    `${op.verb} config on ${ctx.appLabel} (${ctx.instanceLabel})...`,
+    () =>
+      withApiContext(
+        op.apiFn(ctx.appId, ctx.instanceId, configPayload, { destructive: options.destructive }),
+        "Failed to push config",
+      ),
   );
   console.log(JSON.stringify(result, null, 2));
-  console.error("Config pushed successfully.");
+  console.error("Config pushed successfully");
 }
 
 export async function readInput(options: { file?: string; json?: string }): Promise<string> {
@@ -135,7 +140,7 @@ export async function readInput(options: { file?: string; json?: string }): Prom
     }
     const text = Buffer.concat(chunks).toString("utf-8").trim();
     if (!text) {
-      throwUsageError("No input received from stdin.");
+      throwUsageError("No input received from stdin");
     }
     return text;
   }

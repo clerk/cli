@@ -2,6 +2,7 @@ import { listApplications, type Application } from "../../lib/plapi.ts";
 import { withApiContext } from "../../lib/errors.ts";
 import { isAgent } from "../../mode.ts";
 import { dim, cyan } from "../../lib/color.ts";
+import { withSpinner } from "../../lib/spinner.ts";
 
 interface AppsListOptions {
   json?: boolean;
@@ -36,7 +37,9 @@ function formatAppsTable(apps: Application[]): void {
 }
 
 export async function list(options: AppsListOptions = {}): Promise<void> {
-  const result = await withApiContext(listApplications(), "Failed to list applications");
+  const result = await withSpinner("Fetching applications...", () =>
+    withApiContext(listApplications(), "Failed to list applications"),
+  );
 
   if (options.json || isAgent()) {
     console.log(JSON.stringify(stripSecrets(result), null, 2));

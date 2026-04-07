@@ -13,8 +13,7 @@ process.env.CLERK_CONFIG_DIR = tempDir;
 
 // Import constants from the source module to avoid duplication
 const { KEYCHAIN_SERVICE, KEYCHAIN_ACCOUNT } = await import("./credential-store.ts");
-const credFile = () =>
-  join(process.env.CLERK_CONFIG_DIR ?? join(require("os").homedir(), ".clerk"), "credentials");
+const credFile = () => join(tempDir, "credentials");
 
 let keyringModule: typeof import("@napi-rs/keyring") | null;
 try {

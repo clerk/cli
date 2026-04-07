@@ -39,7 +39,7 @@ export async function getAuthToken(): Promise<string> {
   const oauthToken = await getToken();
   if (oauthToken) return oauthToken;
 
-  throw new CliError("Not authenticated. Run `clerk auth login` or set CLERK_PLATFORM_API_KEY.", {
+  throw new CliError("Not authenticated. Run `clerk auth login` or set CLERK_PLATFORM_API_KEY", {
     code: ERROR_CODE.AUTH_REQUIRED,
     docsUrl: "https://clerk.com/docs/guides/development/clerk-environment-variables",
   });

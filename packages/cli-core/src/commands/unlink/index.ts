@@ -34,7 +34,7 @@ export async function unlink(options: UnlinkOptions = {}): Promise<void> {
   const existing = await resolveProfile(cwd);
 
   if (!existing) {
-    throw new CliError("This directory is not linked to a Clerk application.", {
+    throw new CliError("This directory is not linked to a Clerk application", {
       code: ERROR_CODE.NOT_LINKED,
     });
   }

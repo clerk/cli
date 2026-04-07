@@ -2,7 +2,7 @@ import { test, expect, describe, beforeEach, afterEach, spyOn, mock } from "bun:
 import { mkdtemp, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { promptsStubs, stubFetch } from "../../test/stubs.ts";
+import { promptsStubs, stubFetch } from "../../test/lib/stubs.ts";
 
 let _mode = "human";
 mock.module("../../mode.ts", () => ({

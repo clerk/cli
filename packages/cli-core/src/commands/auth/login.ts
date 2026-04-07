@@ -1,4 +1,3 @@
-import { printNextSteps } from "../../lib/next-steps.ts";
 import { generateCodeVerifier, generateCodeChallenge, generateState } from "../../lib/pkce.ts";
 import { startAuthServer } from "../../lib/auth-server.ts";
 import { exchangeCodeForToken, fetchUserInfo, type UserInfo } from "../../lib/token-exchange.ts";
@@ -9,6 +8,8 @@ import { AUTH_TIMEOUT_MS, CALLBACK_PATH } from "../../lib/constants.ts";
 import { confirm } from "../../lib/prompts.ts";
 import { isHuman } from "../../mode.ts";
 import { throwUserAbort } from "../../lib/errors.ts";
+import { intro, outro, bar, withSpinner } from "../../lib/spinner.ts";
+import { NEXT_STEPS } from "../../lib/next-steps.ts";
 
 const BROWSER_COMMANDS: Partial<Record<NodeJS.Platform, string>> = {
   darwin: "open",
@@ -63,16 +64,20 @@ async function performOAuthFlow(): Promise<UserInfo> {
   const timeoutMinutes = Math.round(AUTH_TIMEOUT_MS / 60_000);
   console.log(`Waiting for authentication (timeout in ${timeoutMinutes}m)...`);
 
-  const { code } = await authServer.waitForCallback().catch((error: unknown) => {
-    authServer.stop();
-    throw error;
-  });
+  const { code } = await withSpinner("Waiting for authentication...", () =>
+    authServer.waitForCallback().catch((error: unknown) => {
+      authServer.stop();
+      throw error;
+    }),
+  );
 
-  const tokenResponse = await exchangeCodeForToken({
-    code,
-    codeVerifier,
-    redirectUri,
-  });
+  const tokenResponse = await withSpinner("Completing authentication...", () =>
+    exchangeCodeForToken({
+      code,
+      codeVerifier,
+      redirectUri,
+    }),
+  );
 
   await storeToken(tokenResponse.access_token);
 
@@ -84,7 +89,8 @@ async function performOAuthFlow(): Promise<UserInfo> {
 
 export async function login(options: LoginOptions = {}): Promise<UserInfo> {
   const { showNextSteps = true } = options;
-  const existingSession = await getExistingSession();
+  intro("clerk login");
+  const existingSession = await withSpinner("Checking session...", () => getExistingSession());
 
   if (existingSession && !isHuman()) {
     console.log(`Logged in as ${existingSession.email}`);
@@ -97,20 +103,16 @@ export async function login(options: LoginOptions = {}): Promise<UserInfo> {
       default: false,
     });
     if (!reauthenticate) {
+      outro();
       throwUserAbort();
     }
   }
 
   const userInfo = await performOAuthFlow();
 
+  bar();
   console.log(`Logged in as ${userInfo.email}`);
 
-  if (showNextSteps) {
-    printNextSteps([
-      "Run `clerk link` to connect a Clerk application to this project",
-      "Run `clerk init` to set up Clerk in an existing project",
-    ]);
-  }
-
+  outro(showNextSteps ? NEXT_STEPS.LOGIN : "Done");
   return userInfo;
 }

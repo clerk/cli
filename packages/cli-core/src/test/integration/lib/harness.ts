@@ -16,9 +16,9 @@ import { mock, spyOn, beforeEach, afterEach } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { capturedOutput } from "../stubs.ts";
-import { http } from "./http.ts";
-import type { Application, ApplicationInstance } from "../../lib/plapi.ts";
+import { capturedOutput } from "../../lib/stubs.ts";
+import { http } from "../../lib/http.ts";
+import type { Application, ApplicationInstance } from "../../../lib/plapi.ts";
 
 export { capturedOutput, http };
 
@@ -40,7 +40,7 @@ export const mockState = {
 // ── Module mocks (executed at import time) ───────────────────────────────────
 
 mock.module(
-  "../../lib/credential-store.ts",
+  "../../../lib/credential-store.ts",
   () =>
     ({
       getToken: async () => mockState.storedToken,
@@ -51,23 +51,25 @@ mock.module(
         mockState.storedToken = null;
       },
       _setTokenOverride: () => {},
-    }) satisfies typeof import("../../lib/credential-store.ts"),
+      KEYCHAIN_SERVICE: "clerk-cli",
+      KEYCHAIN_ACCOUNT: "oauth-access-token",
+    }) satisfies typeof import("../../../lib/credential-store.ts"),
 );
 
 mock.module(
-  "../../lib/git.ts",
+  "../../../lib/git.ts",
   () =>
     ({
       getGitRepoRoot: async () => mockState.gitRepoRoot,
       getGitRepoIdentifier: async () => mockState.gitRepoIdentifier,
       getGitNormalizedRemote: async () => mockState.gitNormalizedRemote,
       normalizeGitRemoteUrl: (url: string) => url,
-    }) satisfies typeof import("../../lib/git.ts"),
+    }) satisfies typeof import("../../../lib/git.ts"),
 );
 
 let _mode: "human" | "agent" = "human";
 mock.module(
-  "../../mode.ts",
+  "../../../mode.ts",
   () =>
     ({
       getMode: () => _mode,
@@ -76,7 +78,7 @@ mock.module(
       },
       isHuman: () => _mode === "human",
       isAgent: () => _mode === "agent",
-    }) satisfies typeof import("../../mode.ts"),
+    }) satisfies typeof import("../../../mode.ts"),
 );
 
 // ── Prompt queue (replaces @inquirer/prompts) ────────────────────────────────
@@ -160,7 +162,7 @@ mock.module("@inquirer/prompts", () => ({
 }));
 
 mock.module(
-  "../../lib/token-exchange.ts",
+  "../../../lib/token-exchange.ts",
   () =>
     ({
       exchangeCodeForToken: async () => ({
@@ -172,11 +174,11 @@ mock.module(
         if (!token || token === "expired_token") throw new Error("Unauthorized");
         return { userId: "user_123", email: "test@example.com" };
       },
-    }) satisfies typeof import("../../lib/token-exchange.ts"),
+    }) satisfies typeof import("../../../lib/token-exchange.ts"),
 );
 
 mock.module(
-  "../../lib/auth-server.ts",
+  "../../../lib/auth-server.ts",
   () =>
     ({
       startAuthServer: () => ({
@@ -184,22 +186,22 @@ mock.module(
         waitForCallback: async () => ({ code: "mock_code" }),
         stop: () => {},
       }),
-    }) satisfies typeof import("../../lib/auth-server.ts"),
+    }) satisfies typeof import("../../../lib/auth-server.ts"),
 );
 
 mock.module(
-  "../../lib/pkce.ts",
+  "../../../lib/pkce.ts",
   () =>
     ({
       generateCodeVerifier: () => "mock_verifier",
       generateCodeChallenge: async () => "mock_challenge",
       generateState: () => "mock_state",
-    }) satisfies typeof import("../../lib/pkce.ts"),
+    }) satisfies typeof import("../../../lib/pkce.ts"),
 );
 
 // ── Real config module ───────────────────────────────────────────────────────
 
-export const { _setConfigDir, readConfig, setProfile } = await import("../../lib/config.ts");
+export const { _setConfigDir, readConfig, setProfile } = await import("../../../lib/config.ts");
 
 // ── Mock data ────────────────────────────────────────────────────────────────
 
@@ -371,7 +373,7 @@ export interface CLIResult {
 }
 
 async function execCLI(...args: string[]): Promise<CLIResult> {
-  const { createProgram, runProgram } = await import("../../cli-program.ts");
+  const { createProgram, runProgram } = await import("../../../cli-program.ts");
   const program = createProgram();
   program.exitOverride();
 
