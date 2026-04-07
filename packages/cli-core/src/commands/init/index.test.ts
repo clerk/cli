@@ -14,8 +14,6 @@ import * as previewMod from "./preview.ts";
 import * as formatMod from "./format.ts";
 import * as scanMod from "./scan.ts";
 import * as heuristics from "./heuristics.ts";
-// installSkills must be stubbed — without this spy, init() would shell out
-// to a real `npx skills add` and write real files into the test cwd.
 import * as skillsMod from "./skills.ts";
 import { init } from "./index.ts";
 
