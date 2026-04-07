@@ -72,13 +72,27 @@ export async function installSkills(
   const interactive = isHuman() && !skipPrompt;
   const args = buildSkillsArgs(skills, interactive);
 
-  const proc = Bun.spawn(args, {
-    cwd,
-    stdin: "inherit",
-    stdout: "inherit",
-    stderr: "inherit",
-  });
-  const exitCode = await proc.exited;
+  // Skills are optional — soft-fail with a warning rather than tearing down
+  // a successful scaffold. Bun.spawn can throw synchronously when the binary
+  // is missing (e.g. `npx` not on PATH on a minimal CI image), so the
+  // try/catch is needed in addition to the exit code check below.
+  let exitCode: number;
+  try {
+    const proc = Bun.spawn(args, {
+      cwd,
+      stdin: "inherit",
+      stdout: "inherit",
+      stderr: "inherit",
+    });
+    exitCode = await proc.exited;
+  } catch {
+    console.log(
+      yellow(
+        `\nCould not run \`npx skills add\`. You can install manually later: npx skills add ${SKILLS_SOURCE}`,
+      ),
+    );
+    return;
+  }
 
   if (exitCode !== 0) {
     console.log(
