@@ -2,6 +2,21 @@
 
 Displays the email address of the currently authenticated user.
 
+## Dependency injection
+
+This command uses the `Need<>` dependency injection pattern. Its slice declaration:
+
+```ts
+export type WhoamiDeps = Need<{
+  credentialStore: "getToken";
+  tokenExchange: "fetchUserInfo";
+  spinner: "withSpinner";
+  log: "info";
+}>;
+```
+
+The slice documents the exact I/O surface of `whoami`: it reads tokens, fetches user info, uses the spinner during the fetch, and logs the result. Tests construct deps via `testRoot()` from `src/test/lib/test-root.ts`.
+
 ## Usage
 
 ```sh
