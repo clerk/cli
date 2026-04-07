@@ -48,6 +48,7 @@ Commands:
   doctor      [options]                      Check your project's Clerk integration health
   switch-env  [environment]                  Switch the active Clerk CLI environment
   completion  [shell]                        Generate shell autocompletion script
+  update      [options]                      Update the Clerk CLI to the latest version
   deploy      [options]                      Deploy your Clerk application (hidden)
 
 clerk init

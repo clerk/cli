@@ -33,17 +33,15 @@ import { clerkHelpConfig } from "./lib/help.ts";
 import { ExitPromptError } from "@inquirer/core";
 import { isAgent } from "./mode.ts";
 import { log } from "./lib/log.ts";
+import { maybeNotifyUpdate, getCurrentVersion } from "./lib/update-check.ts";
+import { update } from "./commands/update/index.ts";
 
 export function createProgram() {
   const program = new Command()
     .name("clerk")
     .description("Clerk CLI")
     .configureHelp(clerkHelpConfig())
-    .version(
-      typeof CLI_VERSION !== "undefined" ? CLI_VERSION : "0.0.0-dev",
-      "-v, --version",
-      "Output the version number",
-    )
+    .version(getCurrentVersion(), "-v, --version", "Output the version number")
     .helpOption("-h, --help", "Display help for command")
     .addHelpCommand("help [command]", "Display help for command")
     .option(
@@ -79,6 +77,14 @@ export function createProgram() {
     if (activeEnv !== "production") {
       process.stderr.write(`[${activeEnv.toUpperCase()}]\n`);
     }
+  });
+
+  // Show update notification after each command, except for commands that
+  // already perform their own version check (doctor, update).
+  program.hook("postAction", async (_thisCommand, actionCommand) => {
+    const cmdName = actionCommand.name();
+    if (cmdName === "doctor" || cmdName === "update") return;
+    await maybeNotifyUpdate(getCurrentVersion());
   });
 
   program
@@ -474,6 +480,21 @@ Tutorial — enable completions for your shell:
     $ clerk completion powershell >> $PROFILE                       # Permanent`,
     )
     .action(completion);
+
+  program
+    .command("update")
+    .description("Update the Clerk CLI to the latest version")
+    .option("--channel <tag>", "Release channel to update to (e.g. latest, canary)")
+    .option("-y, --yes", "Skip confirmation prompt")
+    .setExamples([
+      { command: "clerk update", description: "Update to the latest stable release" },
+      {
+        command: "clerk update --channel canary",
+        description: "Update to the latest canary release",
+      },
+      { command: "clerk update --yes", description: "Update without confirmation prompt" },
+    ])
+    .action(update);
 
   program
     .command("deploy", { hidden: true })
