@@ -40,7 +40,7 @@ interactive flow.
 8. If no match (or no apps exist), presents a searchable picker (type to filter by name)
    - The picker always includes a "+ Create a new application" option pinned at the bottom
    - Selecting it prompts for a name and creates the app via the Platform API
-   - For non-interactive/CI flows, create apps with `clerk apps` first, then pass `--app <id>`
+   - For non-interactive/CI flows, create apps from the Clerk Dashboard or via the Platform API, then pass `--app <id>`
 9. Stores the profile in the config file keyed by the normalized remote URL
 10. Falls back to git-common-dir or the current directory path if no remote is configured
 

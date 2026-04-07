@@ -69,7 +69,7 @@ export async function fetchInstanceConfigSchema(
 
   if (!response.ok) {
     const body = await response.text();
-    throw new PlapiError(response.status, body);
+    throw new PlapiError(response.status, body, url.toString());
   }
 
   return response.json() as Promise<Record<string, unknown>>;
@@ -99,7 +99,7 @@ export async function fetchInstanceConfig(
 
   if (!response.ok) {
     const body = await response.text();
-    throw new PlapiError(response.status, body);
+    throw new PlapiError(response.status, body, url.toString());
   }
 
   return response.json() as Promise<Record<string, unknown>>;
@@ -131,7 +131,7 @@ export async function fetchApplication(applicationId: string): Promise<Applicati
 
   if (!response.ok) {
     const body = await response.text();
-    throw new PlapiError(response.status, body);
+    throw new PlapiError(response.status, body, url.toString());
   }
 
   return response.json() as Promise<Application>;
@@ -164,7 +164,7 @@ async function sendInstanceConfig(
 
   if (!response.ok) {
     const body = await response.text();
-    throw new PlapiError(response.status, body);
+    throw new PlapiError(response.status, body, url.toString());
   }
 
   return response.json() as Promise<Record<string, unknown>>;
@@ -199,7 +199,7 @@ export async function createApplication(name: string): Promise<Application> {
 
   if (!response.ok) {
     const body = await response.text();
-    throw new PlapiError(response.status, body);
+    throw new PlapiError(response.status, body, url.toString());
   }
 
   return response.json() as Promise<Application>;
@@ -217,7 +217,7 @@ export async function listApplications(): Promise<Application[]> {
 
   if (!response.ok) {
     const body = await response.text();
-    throw new PlapiError(response.status, body);
+    throw new PlapiError(response.status, body, url.toString());
   }
 
   return response.json() as Promise<Application[]>;

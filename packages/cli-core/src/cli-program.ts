@@ -19,7 +19,14 @@ import { getEnvironment } from "./lib/config.ts";
 import { setCurrentEnv, isValidEnv, getCurrentEnvName } from "./lib/environment.ts";
 import { completion, SUPPORTED_SHELLS } from "./commands/completion/index.ts";
 import { FRAMEWORK_NAMES } from "./lib/framework.ts";
-import { CliError, UserAbortError, ApiError, EXIT_CODE, throwUsageError } from "./lib/errors.ts";
+import {
+  CliError,
+  UserAbortError,
+  ApiError,
+  PlapiError,
+  EXIT_CODE,
+  throwUsageError,
+} from "./lib/errors.ts";
 import { clerkHelpConfig } from "./lib/help.ts";
 import { ExitPromptError } from "@inquirer/core";
 import { red } from "./lib/color.ts";
@@ -538,6 +545,9 @@ export async function runProgram(
         );
       } else {
         console.error(red(`error: ${prefix} (${error.status}): ${detail}`));
+        if (verbose && error instanceof PlapiError && error.url) {
+          console.error(`       URL: ${error.url}`);
+        }
       }
       process.exit(EXIT_CODE.GENERAL);
     }

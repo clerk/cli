@@ -7,6 +7,7 @@ import {
   gitStubs,
   promptsStubs,
 } from "../../test/lib/stubs.ts";
+import { PlapiError } from "../../lib/errors.ts";
 
 const mockIsAgent = mock();
 let _modeOverride: string | undefined;
@@ -166,6 +167,17 @@ describe("link", () => {
       expect(mockSearch).not.toHaveBeenCalled();
       expect(mockGetToken).not.toHaveBeenCalled();
       expect(mockListApplications).not.toHaveBeenCalled();
+    });
+
+    test("prompt covers the create-app path", async () => {
+      mockIsAgent.mockReturnValue(true);
+      consoleSpy = spyOn(console, "log").mockImplementation(() => {});
+
+      await link();
+
+      const output = consoleSpy.mock.calls[0][0] as string;
+      expect(output).toContain("no applications exist");
+      expect(output).toContain("POST /v1/platform/applications");
     });
   });
 
@@ -424,6 +436,49 @@ describe("link", () => {
       expect(mockCreateApplication).toHaveBeenCalledWith("New App");
       expect(mockFetchApplication).toHaveBeenCalledWith("app_created");
       expect(mockSetProfile).toHaveBeenCalled();
+    });
+
+    test("shows picker with only create option when listApplications fails with 500", async () => {
+      mockIsAgent.mockReturnValue(false);
+      mockGetToken.mockResolvedValue("token");
+      mockListApplications.mockRejectedValue(new PlapiError(500, "Internal Server Error"));
+      mockSearch.mockImplementation(
+        async (config: {
+          source: (term: string | undefined) => { name: string; value: string }[];
+        }) => {
+          const results = config.source(undefined);
+          expect(results).toHaveLength(1);
+          expect(results[0]!.value).toBe("__create_new__");
+          return "__create_new__";
+        },
+      );
+      mockInput.mockResolvedValue("My App");
+      mockCreateApplication.mockResolvedValue({
+        application_id: "app_new",
+        name: "My App",
+        instances: [],
+      });
+      mockFetchApplication.mockResolvedValue({
+        application_id: "app_new",
+        name: "My App",
+        instances: [
+          { instance_id: "ins_dev", environment_type: "development", publishable_key: "pk_test" },
+        ],
+      });
+      consoleSpy = spyOn(console, "log").mockImplementation(() => {});
+
+      await link();
+
+      expect(mockCreateApplication).toHaveBeenCalledWith("My App");
+      expect(mockSetProfile).toHaveBeenCalled();
+    });
+
+    test("propagates listApplications errors that are not 5xx", async () => {
+      mockIsAgent.mockReturnValue(false);
+      mockGetToken.mockResolvedValue("token");
+      mockListApplications.mockRejectedValue(new PlapiError(401, "Unauthorized"));
+
+      await expect(link()).rejects.toBeInstanceOf(PlapiError);
     });
   });
 
@@ -971,7 +1026,9 @@ describe("link", () => {
 
       await link();
 
-      expect(mockInput).toHaveBeenCalledWith({ message: "Application name:" });
+      expect(mockInput).toHaveBeenCalledWith(
+        expect.objectContaining({ message: "Application name:", validate: expect.any(Function) }),
+      );
       expect(mockCreateApplication).toHaveBeenCalledWith("Brand New App");
       expect(mockFetchApplication).toHaveBeenCalledWith("app_new");
       expect(mockSetProfile).toHaveBeenCalledWith(
@@ -1005,14 +1062,68 @@ describe("link", () => {
       expect(mockCreateApplication).toHaveBeenCalledWith("Spaced Name");
     });
 
-    test("throws error for empty app name", async () => {
+    test("validate callback rejects empty app name", async () => {
       mockIsAgent.mockReturnValue(false);
       mockGetToken.mockResolvedValue("token");
       mockListApplications.mockResolvedValue([mockApp]);
       mockSearch.mockResolvedValue("__create_new__");
-      mockInput.mockResolvedValue("   ");
 
-      await expect(link()).rejects.toThrow("Application name cannot be empty");
+      let capturedValidate: ((v: string) => true | string) | undefined;
+      mockInput.mockImplementation(
+        async (config: { message: string; validate?: (v: string) => true | string }) => {
+          capturedValidate = config.validate;
+          return "Valid App";
+        },
+      );
+      mockCreateApplication.mockResolvedValue({
+        application_id: "app_v",
+        name: "Valid App",
+        instances: [],
+      });
+      mockFetchApplication.mockResolvedValue({
+        application_id: "app_v",
+        name: "Valid App",
+        instances: [
+          { instance_id: "ins_dev", environment_type: "development", publishable_key: "pk_test" },
+        ],
+      });
+      consoleSpy = spyOn(console, "log").mockImplementation(() => {});
+
+      await link();
+
+      expect(capturedValidate).toBeDefined();
+      expect(capturedValidate!("")).toBe("Application name cannot be empty");
+      expect(capturedValidate!("   ")).toBe("Application name cannot be empty");
+      expect(capturedValidate!("My App")).toBe(true);
+    });
+
+    test("propagates createApplication failure without linking", async () => {
+      mockIsAgent.mockReturnValue(false);
+      mockGetToken.mockResolvedValue("token");
+      mockListApplications.mockResolvedValue([mockApp]);
+      mockSearch.mockResolvedValue("__create_new__");
+      mockInput.mockResolvedValue("My App");
+      mockCreateApplication.mockRejectedValue(new PlapiError(422, "Unprocessable Entity"));
+
+      await expect(link()).rejects.toBeInstanceOf(PlapiError);
+      expect(mockSetProfile).not.toHaveBeenCalled();
+    });
+
+    test("propagates fetchApplication failure after create without linking", async () => {
+      mockIsAgent.mockReturnValue(false);
+      mockGetToken.mockResolvedValue("token");
+      mockListApplications.mockResolvedValue([mockApp]);
+      mockSearch.mockResolvedValue("__create_new__");
+      mockInput.mockResolvedValue("My App");
+      mockCreateApplication.mockResolvedValue({
+        application_id: "app_new",
+        name: "My App",
+        instances: [],
+      });
+      mockFetchApplication.mockRejectedValue(new PlapiError(503, "Service Unavailable"));
+
+      await expect(link()).rejects.toBeInstanceOf(PlapiError);
+      expect(mockSetProfile).not.toHaveBeenCalled();
     });
 
     test("logs creation message", async () => {
