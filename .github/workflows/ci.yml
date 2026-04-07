@@ -69,10 +69,11 @@ jobs:
       github.actor != 'dependabot[bot]'
     runs-on: blacksmith-8vcpu-ubuntu-2404
     container:
-      image: mcr.microsoft.com/playwright:v1.52.0-noble
-      options: --user 1001
+      image: mcr.microsoft.com/playwright:v1.59.1-noble
     timeout-minutes: 30
     steps:
+      - name: Install unzip (required by setup-bun)
+        run: apt-get update && apt-get install -y unzip
       - uses: actions/checkout@v6
       - uses: actions/setup-node@v6
         with:
