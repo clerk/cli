@@ -69,7 +69,7 @@ const ERROR_HTML = (message: string) => `<!DOCTYPE html>
 </body>
 </html>`;
 
-interface AuthServerResult {
+export interface AuthServerResult {
   port: number;
   waitForCallback: () => Promise<{ code: string }>;
   stop: () => void;
@@ -155,3 +155,11 @@ export function startAuthServer(expectedState: string): AuthServerResult {
     },
   };
 }
+
+export interface AuthServer {
+  startAuthServer(expectedState: string): AuthServerResult;
+}
+
+export const authServer: AuthServer = {
+  startAuthServer,
+};
