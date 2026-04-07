@@ -16,6 +16,11 @@ permissions:
 
 jobs:
   refresh:
+    # Guard against workflow_dispatch runs from non-main refs. Without this,
+    # a modified workflow on a feature branch could execute with access to
+    # CLERK_COOKIE_PAT because workflow_dispatch runs the YAML from the
+    # dispatched ref, not from main.
+    if: github.ref == 'refs/heads/main'
     runs-on: blacksmith-2vcpu-ubuntu-2404
     timeout-minutes: 20
     steps:
