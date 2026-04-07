@@ -18,6 +18,10 @@ When adding a new command, create its directory and README. When modifying a com
 
 When creating or modifying a command, evaluate whether it needs an agent mode. Commands with interactive prompts (menus, wizards, multi-step flows) should check `isAgent()` from `src/mode.ts` and, when in agent mode, output a structured prompt that an AI agent can follow instead of running the interactive flow. Commands that are already non-interactive (e.g., single API calls, browser-based OAuth) typically don't need agent mode.
 
+## Shell completion
+
+When adding or modifying a command, ensure tab-completion stays correct. See `.claude/rules/completion.md` for the full guide. Short version: use `.choices()` on arguments and options so completions are automatic; only touch `__complete.ts` when `.choices()` is not suitable.
+
 ## Root README
 
 `README.md` at the project root contains the CLI help output. When commands are added, removed, or their options change, update the help output in `README.md` to stay in sync. You can regenerate it by running `bun run src/cli.ts --help`.
