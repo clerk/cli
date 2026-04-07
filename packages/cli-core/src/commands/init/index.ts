@@ -1,11 +1,13 @@
+import { login } from "../auth/login.js";
 import { link } from "../link/index.js";
 import { pull } from "../env/pull.js";
 import { isAgent } from "../../mode.js";
 import { dim, green, yellow, bold } from "../../lib/color.js";
-import { throwUserAbort } from "../../lib/errors.js";
-import { lookupFramework } from "../../lib/framework.js";
+import { throwUserAbort, CliError } from "../../lib/errors.js";
+import { lookupFramework, type FrameworkInfo } from "../../lib/framework.js";
 import { resolveProfile } from "../../lib/config.js";
-import { gatherContext } from "./context.js";
+import { printNextSteps } from "../../lib/next-steps.js";
+import { gatherContext, hasPackageJson } from "./context.js";
 import { scaffold, enrichProjectContext } from "./scaffold.js";
 import { previewPlan, previewAndConfirm } from "./preview.js";
 import { runFormatters } from "./format.js";
@@ -20,50 +22,63 @@ import {
 } from "./heuristics.js";
 import { installSkills } from "./skills.js";
 import { intro, outro, bar, withSpinner } from "../../lib/spinner.js";
+import {
+  promptAndBootstrap,
+  confirmOverwrite,
+  askSkipAuth,
+  type BootstrapResult,
+} from "./bootstrap.js";
 import type { ProjectContext } from "./frameworks/types.js";
 
-interface InitOptions {
+type InitOptions = {
   framework?: string;
   yes?: boolean;
   prompt?: boolean;
   skills?: boolean;
-}
+  starter?: boolean;
+};
 
 export async function init(options: InitOptions = {}) {
   const cwd = process.cwd();
 
-  // Commander validates --framework against FRAMEWORK_NAMES choices
   const frameworkOverride = options.framework
     ? (lookupFramework(options.framework) ?? undefined)
     : undefined;
-
-  intro("clerk init");
-
-  const ctx = await withSpinner("Detecting framework...", () =>
-    gatherContext(cwd, frameworkOverride),
-  );
-
-  // Populate framework-specific context (variant, layoutPath, middlewareBasename)
-  if (ctx) await enrichProjectContext(ctx);
 
   if (options.prompt || isAgent()) {
     console.log(
       "Run `clerk init -y` to automatically detect the framework, install the Clerk SDK, and scaffold authentication files without interactive prompts.",
     );
-    outro();
     return;
   }
 
-  bar();
-  const authenticated = await resolveAuth(cwd);
+  intro("clerk init");
 
-  if (authenticated) {
-    await link({ skipIfLinked: true });
+  const resolved = options.starter
+    ? await handleStarter(cwd, frameworkOverride, options.yes)
+    : await resolveProjectContext(cwd, frameworkOverride, options.yes);
+
+  if (!resolved) return;
+
+  const { ctx, bootstrap } = resolved;
+
+  if (bootstrap) {
+    ctx.isBootstrap = true;
+  }
+
+  await enrichProjectContext(ctx);
+
+  const keyless = bootstrap ? options.yes || (await askSkipAuth()) : false;
+  ctx.keyless = keyless;
+
+  if (!keyless) {
+    bar();
+    await authenticateAndLink(ctx.cwd);
   }
 
   // Short-circuit on a fully-clean re-run so env pull / skills prompt don't
   // execute when there's nothing to do.
-  const { alreadySetUp } = await detectAndInstall(cwd, ctx, options);
+  const { alreadySetUp } = await detectAndInstall(ctx.cwd, ctx, options);
 
   if (alreadySetUp) {
     console.log(green("\nClerk is already set up in this project."));
@@ -72,10 +87,14 @@ export async function init(options: InitOptions = {}) {
   }
 
   bar();
-  if (authenticated) {
+  if (!keyless) {
     await pull({});
   } else {
     printKeylessInfo();
+  }
+
+  if (bootstrap) {
+    printBootstrapNextSteps(bootstrap, keyless);
   }
 
   if (options.skills !== false) {
@@ -86,40 +105,113 @@ export async function init(options: InitOptions = {}) {
   outro("Done");
 }
 
-async function resolveAuth(cwd: string): Promise<boolean> {
-  const hasApiKey = Boolean(process.env.CLERK_PLATFORM_API_KEY);
-  const email = hasApiKey ? null : await getAuthenticatedEmail();
+type ResolvedContext = {
+  ctx: ProjectContext;
+  bootstrap: BootstrapResult | null;
+};
 
-  if (!hasApiKey && !email) return false;
+// --- Bootstrap paths ---
 
-  const profile = await resolveProfile(cwd);
-  const linkedInfo = profile ? ` · Linked to ${profile.profile.appId}` : "";
-  const authLabel = hasApiKey ? "Using API key" : `Logged in as ${email}`;
-  console.log(dim(`${authLabel}${linkedInfo}`));
-  return true;
+async function bootstrapAndDetect(
+  cwd: string,
+  frameworkOverride?: FrameworkInfo,
+  skipConfirm = false,
+): Promise<ResolvedContext> {
+  const bootstrap = await promptAndBootstrap(cwd, frameworkOverride, { skipConfirm });
+
+  const ctx = await gatherContext(bootstrap.projectDir);
+  if (!ctx) {
+    throw new CliError("Project generation did not produce a detectable framework.");
+  }
+  return { ctx, bootstrap };
 }
 
-/**
- * Run framework detection, SDK install, and scaffolding.
- *
- * Returns `alreadySetUp: true` only when the project has a supported
- * framework, the SDK is installed, all scaffold actions are skips, and there
- * are no postInstructions — i.e. a fully-clean re-run. The "no framework"
- * and "framework detected but unsupported" branches return `false` so the
- * caller still pulls env keys and offers the skills install.
- */
-async function detectAndInstall(
+async function handleStarter(
   cwd: string,
-  ctx: ProjectContext | null,
-  options: InitOptions,
-): Promise<{ alreadySetUp: boolean }> {
-  if (!ctx) {
-    console.log(
-      `Could not detect a framework. Install the appropriate Clerk SDK manually: ${dim("https://clerk.com/docs")}`,
-    );
-    return { alreadySetUp: false };
+  frameworkOverride?: FrameworkInfo,
+  skipConfirm = false,
+): Promise<ResolvedContext> {
+  if (!skipConfirm) {
+    await confirmOverwrite(cwd);
   }
 
+  return bootstrapAndDetect(cwd, frameworkOverride, true);
+}
+
+async function resolveProjectContext(
+  cwd: string,
+  frameworkOverride?: FrameworkInfo,
+  skipConfirm = false,
+): Promise<ResolvedContext> {
+  const ctx = await withSpinner("Detecting framework...", () =>
+    gatherContext(cwd, frameworkOverride),
+  );
+  if (ctx) return { ctx, bootstrap: null };
+
+  const isBlank = !(await hasPackageJson(cwd));
+
+  if (!isBlank) {
+    throw new CliError(
+      `Could not detect a framework. Install the appropriate Clerk SDK manually: https://clerk.com/docs`,
+    );
+  }
+
+  return bootstrapAndDetect(cwd, frameworkOverride, skipConfirm);
+}
+
+// --- Next steps ---
+
+function devCommand(pm: string): string {
+  return pm === "npm" ? "npm run dev" : `${pm} dev`;
+}
+
+function printBootstrapNextSteps(
+  { projectName, packageManager }: BootstrapResult,
+  keyless: boolean,
+): void {
+  const steps = [`cd ${projectName}`, devCommand(packageManager)];
+  if (keyless) {
+    steps.push("clerk login  (when you're ready to connect your Clerk account)");
+  }
+  printNextSteps(steps);
+}
+
+// --- Auth ---
+
+async function resolveAuthLabel(): Promise<string> {
+  const hasApiKey = Boolean(process.env.CLERK_PLATFORM_API_KEY);
+  if (hasApiKey) return "Using API key";
+
+  const email = await getAuthenticatedEmail();
+  if (email) return `Logged in as ${email}`;
+
+  await login({ showNextSteps: false });
+  return "";
+}
+
+async function authenticateAndLink(cwd: string): Promise<void> {
+  const label = await resolveAuthLabel();
+  const profile = await resolveProfile(cwd);
+
+  if (label && profile) {
+    console.log(dim(`${label} · Linked to ${profile.profile.appId}`));
+    return;
+  }
+
+  if (label) {
+    console.log(dim(label));
+  }
+
+  await link({ skipIfLinked: true });
+}
+
+// --- Detect & install ---
+
+async function detectAndInstall(
+  cwd: string,
+  ctx: ProjectContext,
+  options: InitOptions,
+): Promise<{ alreadySetUp: boolean }> {
   const variantLabel = ctx.variant ? ` (${ctx.variant})` : "";
   console.log(`\nDetected ${bold(ctx.framework.name)}${variantLabel}`);
 
@@ -171,7 +263,6 @@ async function scaffoldAndWrite(
   const writtenFiles = await writePlan(cwd, plan);
   await runFormatters(cwd, writtenFiles);
 
-  // Post-scaffold: scan for issues
   const findings = await withSpinner("Scanning for issues...", () =>
     scanForIssues(cwd, ctx.framework.dep),
   );

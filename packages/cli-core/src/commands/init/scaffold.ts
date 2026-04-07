@@ -6,6 +6,7 @@ import { nuxt } from "./frameworks/nuxt.js";
 import { tanstackStart } from "./frameworks/tanstack-start.js";
 import { astro } from "./frameworks/astro.js";
 import { vue } from "./frameworks/vue.js";
+import { javascriptVite } from "./frameworks/javascript.js";
 import { parseMajorVersion } from "./frameworks/helpers.js";
 import type { FrameworkScaffold, ProjectContext, ScaffoldPlan } from "./frameworks/types.js";
 
@@ -18,6 +19,7 @@ const SCAFFOLDERS = [
   tanstackStart,
   astro,
   vue,
+  javascriptVite,
 ] satisfies FrameworkScaffold[];
 
 /**

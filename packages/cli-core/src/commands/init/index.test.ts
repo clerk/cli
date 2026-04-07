@@ -1,8 +1,10 @@
 import { test, expect, describe, afterEach, spyOn } from "bun:test";
+import { configStubs, capturedOutput } from "../../test/lib/stubs.ts";
 
 // Pure spyOn approach — Bun's mock.module globally replaces modules for the
 // entire test run, which pollutes other test files (link, env/pull, config,
 // context, etc.) that import the same modules. spyOn restores cleanly.
+import * as loginMod from "../auth/login.ts";
 import * as linkMod from "../link/index.ts";
 import * as pullMod from "../env/pull.ts";
 import * as mode from "../../mode.ts";
@@ -15,26 +17,52 @@ import * as formatMod from "./format.ts";
 import * as scanMod from "./scan.ts";
 import * as heuristics from "./heuristics.ts";
 import * as skillsMod from "./skills.ts";
+import * as bootstrapMod from "./bootstrap.ts";
 import { init } from "./index.ts";
 
-describe("init command", () => {
+const FAKE_CTX = {
+  cwd: "/tmp/test",
+  framework: {
+    dep: "react",
+    name: "React",
+    sdk: "@clerk/react",
+    envVar: "VITE_CLERK_PUBLISHABLE_KEY",
+  },
+  typescript: true,
+  srcDir: false,
+  packageManager: "npm" as const,
+  existingClerk: true,
+  deps: { react: "^19.0.0" },
+  envFile: ".env",
+};
+
+const FAKE_BOOTSTRAP = {
+  projectDir: "/tmp/test/my-app",
+  projectName: "my-app",
+  packageManager: "npm" as const,
+};
+
+describe("init", () => {
   let spies: ReturnType<typeof spyOn>[];
 
   afterEach(() => {
-    for (const spy of spies) spy.mockRestore();
+    for (const s of spies) s.mockRestore();
   });
 
-  function setup(overrides: { email?: string | null } = {}) {
+  function setup(overrides: { email?: string | null; isAgent?: boolean } = {}) {
     const email = overrides.email ?? null;
+    const agent = overrides.isAgent ?? false;
 
     const gatherContextSpy = spyOn(context, "gatherContext").mockResolvedValue(null);
 
     spies = [
       spyOn(console, "log").mockImplementation(() => {}),
-      spyOn(mode, "isAgent").mockReturnValue(false),
+      spyOn(mode, "isAgent").mockReturnValue(agent),
+      spyOn(mode, "isHuman").mockReturnValue(!agent),
       spyOn(config, "resolveProfile").mockResolvedValue(undefined),
       spyOn(frameworkMod, "lookupFramework").mockReturnValue(null),
       gatherContextSpy,
+      spyOn(context, "hasPackageJson").mockResolvedValue(false),
       spyOn(scaffoldMod, "scaffold").mockResolvedValue({ actions: [], postInstructions: [] }),
       spyOn(scaffoldMod, "enrichProjectContext").mockResolvedValue(undefined),
       spyOn(previewMod, "previewPlan").mockReturnValue(undefined),
@@ -49,38 +77,157 @@ describe("init command", () => {
       spyOn(heuristics, "checkGitDirty").mockResolvedValue(false),
       spyOn(heuristics, "printOutro").mockReturnValue(undefined),
       spyOn(skillsMod, "installSkills").mockResolvedValue(undefined),
+      spyOn(loginMod, "login").mockResolvedValue(undefined as never),
       spyOn(linkMod, "link").mockResolvedValue(undefined),
       spyOn(pullMod, "pull").mockResolvedValue(undefined),
+      spyOn(bootstrapMod, "promptAndBootstrap").mockResolvedValue(FAKE_BOOTSTRAP),
+      spyOn(bootstrapMod, "confirmOverwrite").mockResolvedValue(undefined),
+      spyOn(bootstrapMod, "askSkipAuth").mockResolvedValue(false),
     ];
 
     return { gatherContextSpy };
   }
 
-  test("defaults to keyless mode when not authenticated", async () => {
+  function setupBootstrapSuccess() {
+    const gatherSpy =
+      spies.find((s) => s.getMockName?.() === "gatherContext") ?? spyOn(context, "gatherContext");
+    gatherSpy.mockResolvedValueOnce(null).mockResolvedValueOnce(FAKE_CTX);
+  }
+
+  test("suppresses auth next-steps when login runs during init", async () => {
     setup({ email: null });
+    spyOn(context, "gatherContext").mockResolvedValue(FAKE_CTX);
+    spyOn(heuristics, "getAuthenticatedEmail").mockResolvedValue(null);
+    spyOn(loginMod, "login").mockResolvedValue({
+      userId: "user_1",
+      email: "test@test.com",
+    } as never);
 
     await init({ yes: true });
 
-    expect(linkMod.link).not.toHaveBeenCalled();
-    expect(pullMod.pull).not.toHaveBeenCalled();
-    expect(heuristics.printKeylessInfo).toHaveBeenCalled();
+    expect(loginMod.login).toHaveBeenCalledWith({ showNextSteps: false });
+    expect(linkMod.link).toHaveBeenCalledWith({ skipIfLinked: true });
   });
 
-  test("links and pulls env when authenticated", async () => {
-    setup({ email: "test@test.com" });
+  test("agent mode prints guidance without auth/bootstrap", async () => {
+    setup({ isAgent: true });
+
+    await init({});
+
+    const output = capturedOutput(spies[0] as ReturnType<typeof spyOn>);
+    expect(output).toContain("clerk init -y");
+    expect(loginMod.login).not.toHaveBeenCalled();
+    expect(bootstrapMod.promptAndBootstrap).not.toHaveBeenCalled();
+  });
+
+  test("blank dir in human mode triggers bootstrap flow", async () => {
+    setup();
+    setupBootstrapSuccess();
+
+    await init({});
+
+    expect(bootstrapMod.promptAndBootstrap).toHaveBeenCalled();
+    expect(bootstrapMod.askSkipAuth).toHaveBeenCalled();
+  });
+
+  test("-y flag skips auth prompt and defaults to unauthenticated mode", async () => {
+    setup();
+    setupBootstrapSuccess();
 
     await init({ yes: true });
 
-    expect(linkMod.link).toHaveBeenCalledWith({ skipIfLinked: true });
-    expect(pullMod.pull).toHaveBeenCalled();
-    expect(heuristics.printKeylessInfo).not.toHaveBeenCalled();
+    expect(bootstrapMod.promptAndBootstrap).toHaveBeenCalled();
+    expect(bootstrapMod.askSkipAuth).not.toHaveBeenCalled();
+    expect(heuristics.getAuthenticatedEmail).not.toHaveBeenCalled();
+  });
+
+  test("blank dir bootstrap declined throws UserAbortError", async () => {
+    setup();
+    spyOn(bootstrapMod, "promptAndBootstrap").mockRejectedValue(
+      Object.assign(new Error(), { name: "UserAbortError" }),
+    );
+
+    await expect(init({})).rejects.toMatchObject({ name: "UserAbortError" });
+    expect(bootstrapMod.promptAndBootstrap).toHaveBeenCalled();
+    expect(loginMod.login).not.toHaveBeenCalled();
+  });
+
+  test("non-empty unrecognized dir throws CliError without auth", async () => {
+    setup();
+    spyOn(context, "hasPackageJson").mockResolvedValue(true);
+
+    await expect(init({})).rejects.toThrow("Could not detect a framework");
+    expect(loginMod.login).not.toHaveBeenCalled();
+    expect(bootstrapMod.promptAndBootstrap).not.toHaveBeenCalled();
+  });
+
+  test("existing detected project skips bootstrap", async () => {
+    setup({ email: "test@test.com" });
+    spyOn(context, "gatherContext").mockResolvedValue(FAKE_CTX);
+    spyOn(config, "resolveProfile").mockResolvedValue({ profile: { appId: "app_123" } } as never);
+
+    await init({ yes: true });
+
+    expect(bootstrapMod.promptAndBootstrap).not.toHaveBeenCalled();
+    expect(context.hasPackageJson).not.toHaveBeenCalled();
+  });
+
+  test("passes frameworkOverride to bootstrap when provided", async () => {
+    const fwOverride = {
+      dep: "next",
+      name: "Next.js",
+      sdk: "@clerk/nextjs",
+      envVar: "NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY",
+    };
+    setup({ email: "test@test.com" });
+    spyOn(frameworkMod, "lookupFramework").mockReturnValue(fwOverride);
+    spyOn(config, "resolveProfile").mockResolvedValue({ profile: { appId: "app_123" } } as never);
+    setupBootstrapSuccess();
+
+    await init({ framework: "next", yes: true });
+
+    expect(bootstrapMod.promptAndBootstrap).toHaveBeenCalledWith(expect.any(String), fwOverride, {
+      skipConfirm: true,
+    });
+  });
+
+  test("--starter skips detection and runs bootstrap with skipConfirm", async () => {
+    setup({ email: "test@test.com" });
+    spyOn(context, "gatherContext").mockResolvedValue(FAKE_CTX);
+    spyOn(config, "resolveProfile").mockResolvedValue({ profile: { appId: "app_123" } } as never);
+
+    await init({ starter: true, yes: true });
+
+    expect(bootstrapMod.promptAndBootstrap).toHaveBeenCalledWith(expect.any(String), undefined, {
+      skipConfirm: true,
+    });
+    // --yes skips confirmOverwrite
+    expect(bootstrapMod.confirmOverwrite).not.toHaveBeenCalled();
+  });
+
+  test("--starter without -y calls confirmOverwrite", async () => {
+    setup({ email: "test@test.com" });
+    spyOn(context, "gatherContext").mockResolvedValue(FAKE_CTX);
+    spyOn(config, "resolveProfile").mockResolvedValue({ profile: { appId: "app_123" } } as never);
+
+    await init({ starter: true });
+
+    expect(bootstrapMod.confirmOverwrite).toHaveBeenCalledWith(expect.any(String));
+  });
+
+  test("--starter in agent mode prints guidance without bootstrap", async () => {
+    setup({ isAgent: true });
+
+    await init({ starter: true });
+
+    const output = capturedOutput(spies[0] as ReturnType<typeof spyOn>);
+    expect(output).toContain("clerk init -y");
+    expect(bootstrapMod.promptAndBootstrap).not.toHaveBeenCalled();
   });
 
   test("short-circuits env pull and skills install when already set up", async () => {
     const { gatherContextSpy } = setup({ email: "test@test.com" });
 
-    // Override the default null gatherContext with a minimal supported-framework
-    // context so detectAndInstall reaches the alreadySetUp path.
     gatherContextSpy.mockResolvedValueOnce({
       cwd: "/tmp/fake",
       framework: { name: "Next.js", dep: "next", sdk: "@clerk/nextjs", publishableKeyEnv: "x" },
@@ -93,7 +240,6 @@ describe("init command", () => {
 
     await init({ yes: true });
 
-    // Link still runs (it's before detectAndInstall); env pull and skills are skipped.
     expect(linkMod.link).toHaveBeenCalledWith({ skipIfLinked: true });
     expect(pullMod.pull).not.toHaveBeenCalled();
     expect(heuristics.printKeylessInfo).not.toHaveBeenCalled();

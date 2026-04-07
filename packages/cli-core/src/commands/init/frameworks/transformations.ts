@@ -39,6 +39,38 @@ export function insertAfterLastImport(source: string, snippet: string): string {
   return source.slice(0, lineEnd + 1) + snippet + source.slice(lineEnd + 1);
 }
 
+/**
+ * Inject a navigation header with auth buttons inside `<ClerkProvider>`.
+ * Must be called AFTER `wrapBodyWithProvider` has already wrapped body contents.
+ */
+export function injectHeaderInProvider(content: string, tailwind: boolean): string {
+  const providerPattern = /^( *)<ClerkProvider>/m;
+  const match = providerPattern.exec(content);
+  if (!match) return content;
+
+  const [, indent] = match;
+  const innerIndent = indent + "  ";
+  const deepIndent = innerIndent + "  ";
+
+  const headerAttr = tailwind
+    ? `className="flex h-16 items-center justify-end gap-4 border-b px-4"`
+    : `style={{ display: "flex", height: "64px", alignItems: "center", justifyContent: "flex-end", gap: "16px", borderBottom: "1px solid #e5e7eb", padding: "0 16px" }}`;
+
+  const headerBlock = [
+    `${innerIndent}<header ${headerAttr}>`,
+    `${deepIndent}<Show when="signed-out">`,
+    `${deepIndent}  <SignInButton />`,
+    `${deepIndent}  <SignUpButton />`,
+    `${deepIndent}</Show>`,
+    `${deepIndent}<Show when="signed-in">`,
+    `${deepIndent}  <UserButton />`,
+    `${deepIndent}</Show>`,
+    `${innerIndent}</header>`,
+  ].join("\n");
+
+  return content.replace(providerPattern, `${indent}<ClerkProvider>\n${headerBlock}`);
+}
+
 /** Wrap the contents of a `<body>` tag with a provider component (e.g. `<ClerkProvider>`). */
 export function wrapBodyWithProvider(content: string, provider: string): string {
   const bodyPattern = /^( *)(<body[^>]*>)([\s\S]*?)(<\/body>)/m;

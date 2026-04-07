@@ -16,6 +16,7 @@ export {
   safeAddImport,
   insertAfterLastImport,
   wrapBodyWithProvider,
+  injectHeaderInProvider,
 } from "./transformations.js";
 
 export type AuthKind = "sign-in" | "sign-up";
@@ -198,8 +199,16 @@ function detectI18nMiddlewareImport(content: string): I18nMiddlewareLib | null {
 
 // ─── Middleware Content Generation ────────────────────────────────
 
-/** Next.js clerkMiddleware with route protection and matcher config. */
-export function nextjsMiddlewareContent(): string {
+/** Next.js clerkMiddleware — permissive (unauthenticated) or protective (default). */
+export function nextjsMiddlewareContent(keyless = false): string {
+  if (keyless) {
+    return `import { clerkMiddleware } from "@clerk/nextjs/server";
+
+export default clerkMiddleware();
+
+${nextjsMiddlewareConfig()}
+`;
+  }
   return `import { clerkMiddleware, createRouteMatcher } from "@clerk/nextjs/server";
 
 ${nextjsPublicRouteMatcher()}
@@ -424,6 +433,7 @@ export async function scaffoldNextjsMiddleware(ctx: {
   typescript: boolean;
   deps?: Record<string, string>;
   middlewareBasename?: "proxy" | "middleware";
+  keyless?: boolean;
 }): Promise<FileAction> {
   const base = srcPrefix(ctx);
   const ext = scriptExt(ctx);
@@ -447,8 +457,10 @@ export async function scaffoldNextjsMiddleware(ctx: {
     return {
       path,
       type: "create",
-      content: nextjsMiddlewareContent(),
-      description: "Create Clerk middleware with route protection",
+      content: nextjsMiddlewareContent(ctx.keyless),
+      description: ctx.keyless
+        ? "Create Clerk middleware (permissive — connect your account later)"
+        : "Create Clerk middleware with route protection",
     };
   }
 

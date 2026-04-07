@@ -77,6 +77,13 @@ export const FRAMEWORK_MAP: FrameworkInfo[] = [
     envFile: ".env.local",
   },
   {
+    dep: "vite",
+    name: "JavaScript",
+    sdk: "@clerk/clerk-js",
+    envVar: "VITE_CLERK_PUBLISHABLE_KEY",
+    envFile: ".env.local",
+  },
+  {
     dep: "express",
     name: "Express",
     sdk: "@clerk/express",
@@ -94,6 +101,8 @@ export const FRAMEWORK_MAP: FrameworkInfo[] = [
 
 const FRAMEWORK_ALIASES: Record<string, string> = {
   "tanstack-start": "@tanstack/react-start",
+  javascript: "vite",
+  js: "vite",
 };
 
 export function lookupFramework(name: string): FrameworkInfo | null {

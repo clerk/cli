@@ -65,7 +65,7 @@ export const reactVite: FrameworkScaffold = {
       actions.push(entryAction);
     } else {
       postInstructions.push(
-        `Wrap your app root with <ClerkProvider> from @clerk/react in your entry file (e.g., main.tsx). See: https://clerk.com/docs/quickstarts/react`,
+        `Wrap your app root with <ClerkProvider> from @clerk/react in your entry file (e.g., main.tsx). See: https://clerk.com/docs/react/getting-started/quickstart`,
       );
     }
 

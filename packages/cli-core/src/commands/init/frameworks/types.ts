@@ -17,6 +17,10 @@ export interface ProjectContext {
   middlewareBasename?: "proxy" | "middleware";
   /** i18n locale directory segment (e.g., "[locale]"). Set by enrichContext when detected. */
   i18nLocaleDir?: string;
+  /** When true, scaffold permissive middleware without route protection (keyless mode). */
+  keyless?: boolean;
+  /** When true, the project was created via bootstrap (empty repo). Scaffolders may add starter UI. */
+  isBootstrap?: boolean;
 }
 
 export type FileAction =

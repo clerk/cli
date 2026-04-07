@@ -35,6 +35,10 @@ async function detectPackageManager(cwd: string): Promise<ProjectContext["packag
 // Re-export for modules that import readDeps from context (e.g., format.ts)
 export { readDeps } from "../../lib/framework.js";
 
+export async function hasPackageJson(cwd: string): Promise<boolean> {
+  return fileExists(join(cwd, "package.json"));
+}
+
 export async function gatherContext(
   cwd: string,
   frameworkOverride?: FrameworkInfo,

@@ -519,3 +519,102 @@ export default wrapped;
   expect(mw.content).toContain("const middleware = wrapped");
   expect(mw.content).toContain("middleware(request)");
 });
+
+test("adds auth header in layout during bootstrap with Tailwind", async () => {
+  await mkdir(join(tempDir, "app"), { recursive: true });
+  await Bun.write(
+    join(tempDir, "app/layout.tsx"),
+    `export default function RootLayout({ children }: { children: React.ReactNode }) {
+  return (
+    <html lang="en">
+      <body>{children}</body>
+    </html>
+  );
+}
+`,
+  );
+
+  const plan = await nextjsApp.scaffold(
+    makeCtx({ isBootstrap: true, deps: { tailwindcss: "4.0.0" } }),
+  );
+  const layout = findAction(plan.actions, "app/layout.tsx");
+
+  expect(layout.type).toBe("modify");
+  if (layout.type !== "modify") throw new Error("Expected modify action");
+
+  // Auth header components are present
+  expect(layout.content).toContain('<Show when="signed-out">');
+  expect(layout.content).toContain("<SignInButton />");
+  expect(layout.content).toContain("<SignUpButton />");
+  expect(layout.content).toContain('<Show when="signed-in">');
+  expect(layout.content).toContain("<UserButton />");
+
+  // Tailwind classes on header
+  expect(layout.content).toContain(
+    'className="flex h-16 items-center justify-end gap-4 border-b px-4"',
+  );
+
+  // All imports merged into a single @clerk/nextjs import
+  expect(layout.content).toContain("ClerkProvider");
+  expect(layout.content).toContain("Show");
+  expect(layout.content).toContain("SignInButton");
+  expect(layout.content).toContain("SignUpButton");
+  expect(layout.content).toContain("UserButton");
+
+  // Description mentions auth header
+  expect(layout.description).toContain("auth header");
+});
+
+test("does not add auth header for non-bootstrap init", async () => {
+  await mkdir(join(tempDir, "app"), { recursive: true });
+  await Bun.write(
+    join(tempDir, "app/layout.tsx"),
+    `export default function RootLayout({ children }: { children: React.ReactNode }) {
+  return (
+    <html lang="en">
+      <body>{children}</body>
+    </html>
+  );
+}
+`,
+  );
+
+  const plan = await nextjsApp.scaffold(makeCtx());
+  const layout = findAction(plan.actions, "app/layout.tsx");
+
+  expect(layout.type).toBe("modify");
+  if (layout.type !== "modify") throw new Error("Expected modify action");
+
+  // Should have ClerkProvider but NOT the auth header
+  expect(layout.content).toContain("ClerkProvider");
+  expect(layout.content).not.toContain("<Show");
+  expect(layout.content).not.toContain("<SignInButton");
+  expect(layout.content).not.toContain("<UserButton");
+});
+
+test("uses plain styles for auth header when no Tailwind", async () => {
+  await mkdir(join(tempDir, "app"), { recursive: true });
+  await Bun.write(
+    join(tempDir, "app/layout.tsx"),
+    `export default function RootLayout({ children }: { children: React.ReactNode }) {
+  return (
+    <html lang="en">
+      <body>{children}</body>
+    </html>
+  );
+}
+`,
+  );
+
+  const plan = await nextjsApp.scaffold(makeCtx({ isBootstrap: true, deps: {} }));
+  const layout = findAction(plan.actions, "app/layout.tsx");
+
+  expect(layout.type).toBe("modify");
+  if (layout.type !== "modify") throw new Error("Expected modify action");
+
+  // Plain styles instead of Tailwind
+  expect(layout.content).toContain("style={{");
+  expect(layout.content).toContain("justifyContent");
+  expect(layout.content).toContain("borderBottom");
+  expect(layout.content).not.toContain('className="flex');
+});
