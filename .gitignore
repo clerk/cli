@@ -41,3 +41,38 @@ report.[0-9]_.[0-9]_.[0-9]_.[0-9]_.json
 
 # E2E HAR output
 test/e2e/.har
+
+# Agent skills installer output (repo-level safety net for tests or local
+# `clerk init` runs that don't pass `--no-skills` when invoked from the
+# worktree itself; `clerk init` writes these into its `cwd`).
+/.adal/
+/.agents/
+/.augment/
+/.bob/
+/.codebuddy/
+/.commandcode/
+/.continue/
+/.cortex/
+/.crush/
+/.factory/
+/.goose/
+/.iflow/
+/.junie/
+/.kilocode/
+/.kiro/
+/.kode/
+/.mcpjam/
+/.mux/
+/.neovate/
+/.openhands/
+/.pi/
+/.pochi/
+/.qoder/
+/.qwen/
+/.roo/
+/.trae/
+/.vibe/
+/.windsurf/
+/.zencoder/
+/skills/
+/skills-lock.json

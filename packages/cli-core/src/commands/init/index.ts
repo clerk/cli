@@ -19,7 +19,7 @@ import {
   printKeylessInfo,
   getAuthenticatedEmail,
 } from "./heuristics.ts";
-import { installSkills } from "./skills.ts";
+import { installSkills, type InstallSkillsDeps } from "./skills.ts";
 import {
   promptAndBootstrap,
   confirmOverwrite,
@@ -58,7 +58,8 @@ export type InitDeps = Need<{
   log: "info" | "warn" | "data";
 }> &
   LinkIfNeededDeps &
-  PullDefaultDeps;
+  PullDefaultDeps &
+  InstallSkillsDeps;
 
 export async function init(deps: InitDeps, options: InitOptions = {}): Promise<void> {
   const cwd = process.cwd();
@@ -121,7 +122,7 @@ export async function init(deps: InitDeps, options: InitOptions = {}): Promise<v
 
   if (options.skills !== false) {
     deps.spinner.bar();
-    await installSkills(cwd, ctx?.framework.dep, options.yes ?? false);
+    await installSkills(deps, cwd, ctx?.framework.dep, options.yes ?? false);
   }
 
   deps.spinner.outro("Done");
