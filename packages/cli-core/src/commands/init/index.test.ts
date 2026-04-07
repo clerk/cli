@@ -27,12 +27,14 @@ describe("init command", () => {
   function setup(overrides: { email?: string | null } = {}) {
     const email = overrides.email ?? null;
 
+    const gatherContextSpy = spyOn(context, "gatherContext").mockResolvedValue(null);
+
     spies = [
       spyOn(console, "log").mockImplementation(() => {}),
       spyOn(mode, "isAgent").mockReturnValue(false),
       spyOn(config, "resolveProfile").mockResolvedValue(undefined),
       spyOn(frameworkMod, "lookupFramework").mockReturnValue(null),
-      spyOn(context, "gatherContext").mockResolvedValue(null),
+      gatherContextSpy,
       spyOn(scaffoldMod, "scaffold").mockResolvedValue({ actions: [], postInstructions: [] }),
       spyOn(scaffoldMod, "enrichProjectContext").mockResolvedValue(undefined),
       spyOn(previewMod, "previewPlan").mockReturnValue(undefined),
@@ -50,6 +52,8 @@ describe("init command", () => {
       spyOn(linkMod, "link").mockResolvedValue(undefined),
       spyOn(pullMod, "pull").mockResolvedValue(undefined),
     ];
+
+    return { gatherContextSpy };
   }
 
   test("defaults to keyless mode when not authenticated", async () => {
@@ -70,5 +74,29 @@ describe("init command", () => {
     expect(linkMod.link).toHaveBeenCalledWith({ skipIfLinked: true });
     expect(pullMod.pull).toHaveBeenCalled();
     expect(heuristics.printKeylessInfo).not.toHaveBeenCalled();
+  });
+
+  test("short-circuits env pull and skills install when already set up", async () => {
+    const { gatherContextSpy } = setup({ email: "test@test.com" });
+
+    // Override the default null gatherContext with a minimal supported-framework
+    // context so detectAndInstall reaches the alreadySetUp path.
+    gatherContextSpy.mockResolvedValueOnce({
+      cwd: "/tmp/fake",
+      framework: { name: "Next.js", dep: "next", sdk: "@clerk/nextjs", publishableKeyEnv: "x" },
+      deps: { next: "15.0.0" },
+      packageManager: "bun",
+      typescript: true,
+      srcDir: false,
+      existingClerk: true,
+    } as never);
+
+    await init({ yes: true });
+
+    // Link still runs (it's before detectAndInstall); env pull and skills are skipped.
+    expect(linkMod.link).toHaveBeenCalledWith({ skipIfLinked: true });
+    expect(pullMod.pull).not.toHaveBeenCalled();
+    expect(heuristics.printKeylessInfo).not.toHaveBeenCalled();
+    expect(skillsMod.installSkills).not.toHaveBeenCalled();
   });
 });

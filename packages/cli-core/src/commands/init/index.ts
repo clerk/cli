@@ -61,7 +61,15 @@ export async function init(options: InitOptions = {}) {
     await link({ skipIfLinked: true });
   }
 
-  await detectAndInstall(cwd, ctx, options);
+  // Short-circuit on a fully-clean re-run so env pull / skills prompt don't
+  // execute when there's nothing to do.
+  const { alreadySetUp } = await detectAndInstall(cwd, ctx, options);
+
+  if (alreadySetUp) {
+    console.log(green("\nClerk is already set up in this project."));
+    outro("Done");
+    return;
+  }
 
   bar();
   if (authenticated) {
@@ -91,16 +99,25 @@ async function resolveAuth(cwd: string): Promise<boolean> {
   return true;
 }
 
+/**
+ * Run framework detection, SDK install, and scaffolding.
+ *
+ * Returns `alreadySetUp: true` only when the project has a supported
+ * framework, the SDK is installed, all scaffold actions are skips, and there
+ * are no postInstructions — i.e. a fully-clean re-run. The "no framework"
+ * and "framework detected but unsupported" branches return `false` so the
+ * caller still pulls env keys and offers the skills install.
+ */
 async function detectAndInstall(
   cwd: string,
   ctx: ProjectContext | null,
   options: InitOptions,
-): Promise<void> {
+): Promise<{ alreadySetUp: boolean }> {
   if (!ctx) {
     console.log(
       `Could not detect a framework. Install the appropriate Clerk SDK manually: ${dim("https://clerk.com/docs")}`,
     );
-    return;
+    return { alreadySetUp: false };
   }
 
   const variantLabel = ctx.variant ? ` (${ctx.variant})` : "";
@@ -115,20 +132,20 @@ async function detectAndInstall(
     await installSdk(ctx);
   }
 
-  await scaffoldAndWrite(cwd, ctx, options);
+  return await scaffoldAndWrite(cwd, ctx, options);
 }
 
 async function scaffoldAndWrite(
   cwd: string,
   ctx: ProjectContext,
   options: InitOptions,
-): Promise<void> {
+): Promise<{ alreadySetUp: boolean }> {
   const plan = await scaffold(ctx);
   const hasChanges = plan.actions.some((a) => a.type !== "skip");
 
+  // Fully-clean re-run: signal to init() to skip env pull / skills install.
   if (!hasChanges && plan.postInstructions.length === 0) {
-    console.log(green("\nClerk is already set up in this project."));
-    return;
+    return { alreadySetUp: true };
   }
 
   if (!hasChanges) {
@@ -136,7 +153,7 @@ async function scaffoldAndWrite(
     for (const instr of plan.postInstructions) {
       console.log(dim(`  • ${instr}`));
     }
-    return;
+    return { alreadySetUp: false };
   }
 
   if (await checkGitDirty(cwd)) {
@@ -159,4 +176,6 @@ async function scaffoldAndWrite(
     scanForIssues(cwd, ctx.framework.dep),
   );
   printOutro(plan, findings);
+
+  return { alreadySetUp: false };
 }
