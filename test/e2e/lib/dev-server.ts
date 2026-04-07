@@ -1,4 +1,4 @@
-import { createServer } from "node:net";
+import { createServer, Socket } from "node:net";
 import type { Subprocess } from "bun";
 import { log } from "./logger.ts";
 
@@ -45,6 +45,32 @@ export function buildDevCommand(devCmd: string[], port: number): string[] {
   const portFlag = isNextjs ? "-p" : "--port";
   const hostFlag = isNextjs ? "-H" : "--host";
   return [...devCmd, hostFlag, DEV_SERVER_HOST, portFlag, String(port)];
+}
+
+/**
+ * TCP connect probe: resolves true if the given host:port accepts a TCP
+ * connection within `timeoutMs`. We use this instead of an HTTP fetch because
+ * dev servers (notably Next.js with Clerk middleware) can take longer than a
+ * short HTTP timeout to produce the first response while compiling on demand,
+ * even though they're already accepting connections. Playwright's page.goto
+ * with waitUntil:"load" handles the slow first response.
+ */
+async function canConnect(host: string, port: number, timeoutMs: number): Promise<boolean> {
+  return new Promise((resolve) => {
+    const socket = new Socket();
+    let done = false;
+    const finish = (ok: boolean) => {
+      if (done) return;
+      done = true;
+      socket.destroy();
+      resolve(ok);
+    };
+    socket.setTimeout(timeoutMs);
+    socket.once("connect", () => finish(true));
+    socket.once("timeout", () => finish(false));
+    socket.once("error", () => finish(false));
+    socket.connect(port, host);
+  });
 }
 
 interface ReadyServer {
@@ -142,17 +168,9 @@ async function tryStart(opts: {
       );
     }
 
-    try {
-      const res = await fetch(`http://${DEV_SERVER_HOST}:${port}`, {
-        signal: AbortSignal.timeout(1000),
-        redirect: "manual",
-      });
-      if (res.status < 500) {
-        log(fixtureName, `dev server ready (status ${res.status})`);
-        return { kind: "ready", value: { proc, port, stdout: stdoutLines, stderr: stderrLines } };
-      }
-    } catch {
-      // Connection refused / timeout while polling — keep waiting.
+    if (await canConnect(DEV_SERVER_HOST, port, 1000)) {
+      log(fixtureName, `dev server ready (accepting TCP on ${DEV_SERVER_HOST}:${port})`);
+      return { kind: "ready", value: { proc, port, stdout: stdoutLines, stderr: stderrLines } };
     }
     await Bun.sleep(500);
   }
