@@ -12,14 +12,41 @@ import type { ScanFinding } from "./scan.js";
 
 export async function installSdk(ctx: ProjectContext): Promise<void> {
   const addCmd = pmInstallCommand(ctx.packageManager);
+
+  // The package manager is detected from lockfiles, which can exist without
+  // the actual binary being installed (e.g. teammate committed bun.lock, you
+  // only have npm). Fail fast with a useful message rather than a raw ENOENT.
+  const pmBinary = addCmd.split(" ")[0];
+  if (Bun.which(pmBinary) === null) {
+    console.log(
+      yellow(
+        `${pmBinary} is not installed but the project's lockfile suggests it. ` +
+          `Install ${pmBinary} or run \`${addCmd} ${ctx.framework.sdk}\` manually with another package manager.`,
+      ),
+    );
+    return;
+  }
+
   console.log(`Installing ${cyan(ctx.framework.sdk)} for ${ctx.framework.name}...`);
 
-  const proc = Bun.spawn(addCmd.split(" ").concat(ctx.framework.sdk), {
-    cwd: ctx.cwd,
-    stdout: "inherit",
-    stderr: "inherit",
-  });
-  const exitCode = await proc.exited;
+  // try/catch covers the TOCTOU window between Bun.which and spawn.
+  let exitCode: number;
+  try {
+    const proc = Bun.spawn(addCmd.split(" ").concat(ctx.framework.sdk), {
+      cwd: ctx.cwd,
+      stdout: "inherit",
+      stderr: "inherit",
+    });
+    exitCode = await proc.exited;
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.log(
+      yellow(
+        `Failed to spawn ${addCmd}: ${message}. You can install manually: ${addCmd} ${ctx.framework.sdk}`,
+      ),
+    );
+    return;
+  }
 
   if (exitCode !== 0) {
     console.log(
