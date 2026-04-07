@@ -13,6 +13,7 @@ import {
   checkEnvVars,
   checkConfigFile,
   checkShellCompletion,
+  checkCliVersion,
   errorMessage,
 } from "./checks.ts";
 import { formatCheckResult, formatJson } from "./format.ts";
@@ -27,6 +28,7 @@ const CHECKS: CheckFn[] = [
   checkEnvVars,
   checkConfigFile,
   checkShellCompletion,
+  checkCliVersion,
 ];
 
 async function runChecks(ctx: DoctorContext): Promise<CheckResult[]> {
