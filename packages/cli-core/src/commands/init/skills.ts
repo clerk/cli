@@ -36,6 +36,21 @@ function resolveSkills(frameworkDep: string | undefined): string[] {
   return skills;
 }
 
+/**
+ * Build the argv for `npx skills add`.
+ *
+ * Interactive mode: hand off to the skills CLI's native UX (auto-detect
+ * installed agents, scope picker). Non-interactive: pass `-y -g` so it
+ * runs unattended with global scope and auto-detected agents.
+ *
+ * Exported for tests.
+ */
+export function buildSkillsArgs(skills: string[], interactive: boolean): string[] {
+  const skillFlags = skills.flatMap((s) => ["--skill", s]);
+  const extraFlags = interactive ? [] : ["-y", "-g"];
+  return ["npx", "skills", "add", SKILLS_SOURCE, ...skillFlags, ...extraFlags];
+}
+
 export async function installSkills(
   cwd: string,
   frameworkDep: string | undefined,
@@ -54,15 +69,15 @@ export async function installSkills(
 
   console.log(`\nInstalling skills: ${cyan(skillList)}`);
 
-  const skillFlags = skills.flatMap((s) => ["--skill", s]);
-  const proc = Bun.spawn(
-    ["npx", "skills", "add", SKILLS_SOURCE, ...skillFlags, "--agent", "*", "-y"],
-    {
-      cwd,
-      stdout: "inherit",
-      stderr: "inherit",
-    },
-  );
+  const interactive = isHuman() && !skipPrompt;
+  const args = buildSkillsArgs(skills, interactive);
+
+  const proc = Bun.spawn(args, {
+    cwd,
+    stdin: "inherit",
+    stdout: "inherit",
+    stderr: "inherit",
+  });
   const exitCode = await proc.exited;
 
   if (exitCode !== 0) {
