@@ -66,4 +66,24 @@ describe("isolated fixture tests", () => {
     // A failed check does not count as a verified patch, so patchesChecked is 0.
     expect(result.patchesChecked).toBe(0);
   });
+
+  test("reports orphan when patches/*.patch is not referenced", async () => {
+    const root = makeTempRepo();
+
+    // No patchedDependencies declared
+    writeFileSync(
+      resolve(root, "package.json"),
+      JSON.stringify({ name: "fixture", patchedDependencies: {} }),
+    );
+
+    // Stale orphan patch file on disk
+    mkdirSync(resolve(root, "patches"));
+    writeFileSync(resolve(root, "patches", "stale.patch"), "");
+
+    const result = await checkPatches({ repoRoot: root });
+    expect(result.failures).toHaveLength(1);
+    expect(result.failures[0]).toContain("stale.patch");
+    expect(result.failures[0]).toContain("orphaned");
+    expect(result.patchesChecked).toBe(0);
+  });
 });

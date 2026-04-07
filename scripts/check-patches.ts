@@ -13,6 +13,7 @@
  * the E2E job and would otherwise let a silent patch regression through).
  */
 
+import { Glob } from "bun";
 import { existsSync } from "node:fs";
 import { resolve } from "node:path";
 
@@ -113,7 +114,20 @@ export async function checkPatches(opts: CheckPatchesOptions): Promise<CheckPatc
     patchesChecked += 1;
   }
 
-  // Orphan sweep arrives in Task 3.
+  // Orphan sweep: any patches/*.patch file not referenced by an entry is stale.
+  const referencedPaths = new Set(entries.map((e) => resolve(repoRoot, e.patchPath)));
+  const patchesGlob = new Glob("*.patch");
+  const patchesDir = resolve(repoRoot, "patches");
+  if (existsSync(patchesDir)) {
+    for (const file of patchesGlob.scanSync({ cwd: patchesDir })) {
+      const abs = resolve(patchesDir, file);
+      if (!referencedPaths.has(abs)) {
+        failures.push(
+          `patches/${file}: orphaned, no patchedDependencies entry references it. Either add the entry or delete the file.`,
+        );
+      }
+    }
+  }
 
   return { failures, patchesChecked };
 }
