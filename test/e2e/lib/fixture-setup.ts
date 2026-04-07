@@ -86,10 +86,12 @@ async function gitInit(projectDir: string): Promise<void> {
 }
 
 /**
- * Run `clerk init --yes` against the project directory using the pre-linked config.
+ * Run `clerk init --yes --no-skills` against the project directory using the
+ * pre-linked config. Skills install is skipped to avoid polluting the project
+ * with skill template files that break framework typecheck.
  */
 async function runClerkInit(projectDir: string, configDir: string): Promise<void> {
-  const result = await Bun.$`bun ${CLI_PATH} --mode human init --yes`
+  const result = await Bun.$`bun ${CLI_PATH} --mode human init --yes --no-skills`
     .cwd(projectDir)
     .env(clerkEnv(configDir))
     .quiet()
