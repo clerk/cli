@@ -68,6 +68,9 @@ jobs:
       github.event.pull_request.head.repo.full_name == github.repository &&
       github.actor != 'dependabot[bot]'
     runs-on: blacksmith-8vcpu-ubuntu-2404
+    container:
+      image: mcr.microsoft.com/playwright:v1.52.0-noble
+      options: --user 1001
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v6
@@ -81,8 +84,6 @@ jobs:
           key: bun-${{ runner.os }}-${{ hashFiles('bun.lock') }}
           restore-keys: bun-${{ runner.os }}-
       - run: bun install --frozen-lockfile
-      - run: bunx playwright install chromium --with-deps
-
       - name: Run E2E tests
         run: bun run test:e2e
         env:
