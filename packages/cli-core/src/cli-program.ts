@@ -388,7 +388,7 @@ export function createProgram(root: Root) {
       { command: "clerk doctor --fix", description: "Auto-fix detected issues" },
       { command: "clerk doctor --spotlight", description: "Only show warnings and failures" },
     ])
-    .action((opts) => doctor(opts));
+    .action((opts) => doctor(root, opts));
 
   program
     .command("switch-env", { hidden: true })

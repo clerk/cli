@@ -1,25 +1,9 @@
-import { test, expect, describe, beforeEach, afterEach, mock } from "bun:test";
+import { test, expect, describe, beforeEach, afterEach } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { gitStubs, tokenExchangeStubs, stubFetch } from "../../test/lib/stubs.ts";
-import type { CheckResult, CheckStatus, DoctorContext, ResolvedProfile } from "./types.ts";
-import type { Application } from "../../lib/plapi.ts";
-
-let mockUserInfo: { userId: string; email: string } | null = null;
-let mockUserInfoError: Error | null = null;
-
-mock.module("../../lib/token-exchange.ts", () => ({
-  ...tokenExchangeStubs,
-  fetchUserInfo: async () => {
-    if (mockUserInfoError) throw mockUserInfoError;
-    return mockUserInfo;
-  },
-}));
-
-mock.module("../../lib/git.ts", () => gitStubs);
-
-const {
+import { testRoot } from "../../test/lib/test-root.ts";
+import {
   checkLoggedIn,
   checkTokenValid,
   checkProjectLinked,
@@ -28,11 +12,11 @@ const {
   checkEnvVars,
   checkConfigFile,
   checkShellCompletion,
-} = await import("./checks.ts");
+} from "./checks.ts";
+import type { CheckResult, CheckStatus, DoctorContext, ResolvedProfile } from "./types.ts";
+import type { Application } from "../../lib/plapi.ts";
 
 const originalCwd = process.cwd;
-const originalFetch = globalThis.fetch;
-const originalEnv = { ...process.env };
 
 let tempDir: string;
 
@@ -61,8 +45,6 @@ type Profile = {
   instances: { development: string; production?: string };
 };
 
-const noopFix = () => ({ label: "noop", run: async () => {} });
-
 const mockProfile = {
   path: "github.com/org/repo",
   profile: { workspaceId: "org_1", appId: "app_1", instances: { development: "ins_dev" } },
@@ -87,11 +69,6 @@ function createMockContext(
     getApplication: async () => {
       if (overrides.applicationError) throw overrides.applicationError;
       return overrides.application ?? null;
-    },
-    fixes: {
-      login: noopFix,
-      link: noopFix,
-      envPull: noopFix,
     },
   };
 }
@@ -138,32 +115,25 @@ function expectCheck(result: CheckResult, expected: ExpectedCheck) {
 beforeEach(async () => {
   tempDir = await mkdtemp(join(tmpdir(), "clerk-doctor-test-"));
   process.cwd = () => tempDir;
-  process.env = { ...originalEnv };
-  process.env.CLERK_PLATFORM_API_KEY = "test_key";
-
-  mockUserInfo = null;
-  mockUserInfoError = null;
-
-  stubFetch(async () => new Response(JSON.stringify(mockApplication), { status: 200 }));
 });
 
 afterEach(async () => {
   process.cwd = originalCwd;
-  process.env = { ...originalEnv };
-  globalThis.fetch = originalFetch;
   await rm(tempDir, { recursive: true, force: true });
 });
 
 describe("checkLoggedIn", () => {
   test("pass when token exists", async () => {
+    const deps = testRoot();
     const ctx = createMockContext({ token: "test_token" });
-    const result = await checkLoggedIn(ctx);
+    const result = await checkLoggedIn(deps, ctx);
     expectCheck(result, { name: "Logged in", status: "pass", message: "Logged in" });
   });
 
   test("fail when no token", async () => {
+    const deps = testRoot();
     const ctx = createMockContext({ token: null });
-    const result = await checkLoggedIn(ctx);
+    const result = await checkLoggedIn(deps, ctx);
     expectCheck(result, {
       name: "Logged in",
       status: "fail",
@@ -175,9 +145,13 @@ describe("checkLoggedIn", () => {
 
 describe("checkTokenValid", () => {
   test("pass with valid token", async () => {
-    mockUserInfo = { userId: "user_1", email: "dev@example.com" };
+    const deps = testRoot({
+      tokenExchange: {
+        fetchUserInfo: async () => ({ userId: "user_1", email: "dev@example.com" }),
+      },
+    });
     const ctx = createMockContext({ token: "test_token" });
-    const result = await checkTokenValid(ctx);
+    const result = await checkTokenValid(deps, ctx);
     expectCheck(result, {
       name: "Authentication valid",
       status: "pass",
@@ -186,9 +160,15 @@ describe("checkTokenValid", () => {
   });
 
   test("fail when token is expired (401)", async () => {
-    mockUserInfoError = new Error("Failed to fetch user info (401): Unauthorized");
+    const deps = testRoot({
+      tokenExchange: {
+        fetchUserInfo: async () => {
+          throw new Error("Failed to fetch user info (401): Unauthorized");
+        },
+      },
+    });
     const ctx = createMockContext({ token: "expired_token" });
-    const result = await checkTokenValid(ctx);
+    const result = await checkTokenValid(deps, ctx);
     expectCheck(result, {
       name: "Authentication valid",
       status: "fail",
@@ -199,9 +179,15 @@ describe("checkTokenValid", () => {
   });
 
   test("warn when network is unreachable", async () => {
-    mockUserInfoError = new TypeError("fetch failed");
+    const deps = testRoot({
+      tokenExchange: {
+        fetchUserInfo: async () => {
+          throw new TypeError("fetch failed");
+        },
+      },
+    });
     const ctx = createMockContext({ token: "test_token" });
-    const result = await checkTokenValid(ctx);
+    const result = await checkTokenValid(deps, ctx);
     expectCheck(result, {
       name: "Authentication valid",
       status: "warn",
@@ -212,18 +198,18 @@ describe("checkTokenValid", () => {
   });
 
   test("warn+skip when no token", async () => {
+    const deps = testRoot();
     const ctx = createMockContext({ token: null });
-    const result = await checkTokenValid(ctx);
+    const result = await checkTokenValid(deps, ctx);
     expectCheck(result, { name: "Authentication valid", status: "warn", message: "Skipped" });
   });
 });
 
 describe("checkProjectLinked", () => {
   test("pass when profile exists", async () => {
-    const ctx = createMockContext({
-      profile: mockProfile,
-    });
-    const result = await checkProjectLinked(ctx);
+    const deps = testRoot();
+    const ctx = createMockContext({ profile: mockProfile });
+    const result = await checkProjectLinked(deps, ctx);
     expectCheck(result, {
       name: "Project linked",
       status: "pass",
@@ -232,8 +218,9 @@ describe("checkProjectLinked", () => {
   });
 
   test("fail when no profile", async () => {
+    const deps = testRoot();
     const ctx = createMockContext();
-    const result = await checkProjectLinked(ctx);
+    const result = await checkProjectLinked(deps, ctx);
     expectCheck(result, {
       name: "Project linked",
       status: "fail",
@@ -245,12 +232,13 @@ describe("checkProjectLinked", () => {
 
 describe("checkLinkedAppExists", () => {
   test("pass when app is reachable", async () => {
+    const deps = testRoot();
     const ctx = createMockContext({
       token: "test_token",
       profile: mockProfile,
       application: mockApplication,
     });
-    const result = await checkLinkedAppExists(ctx);
+    const result = await checkLinkedAppExists(deps, ctx);
     expectCheck(result, {
       name: "Application reachable",
       status: "pass",
@@ -260,12 +248,13 @@ describe("checkLinkedAppExists", () => {
 
   test("fail when app not found (404)", async () => {
     const { PlapiError } = await import("../../lib/errors.ts");
+    const deps = testRoot();
     const ctx = createMockContext({
       token: "test_token",
       profile: mockProfile,
       applicationError: new PlapiError(404, "Not found"),
     });
-    const result = await checkLinkedAppExists(ctx);
+    const result = await checkLinkedAppExists(deps, ctx);
     expectCheck(result, {
       name: "Application reachable",
       status: "fail",
@@ -276,12 +265,13 @@ describe("checkLinkedAppExists", () => {
   });
 
   test("fail with generic error on non-404", async () => {
+    const deps = testRoot();
     const ctx = createMockContext({
       token: "test_token",
       profile: mockProfile,
       applicationError: new Error("Connection timeout"),
     });
-    const result = await checkLinkedAppExists(ctx);
+    const result = await checkLinkedAppExists(deps, ctx);
     expectCheck(result, {
       name: "Application reachable",
       status: "fail",
@@ -291,20 +281,23 @@ describe("checkLinkedAppExists", () => {
   });
 
   test("warn when not authenticated", async () => {
+    const deps = testRoot();
     const ctx = createMockContext({ token: null });
-    const result = await checkLinkedAppExists(ctx);
+    const result = await checkLinkedAppExists(deps, ctx);
     expectCheck(result, { name: "Application reachable", status: "warn", message: "Skipped" });
   });
 
   test("warn when no project linked", async () => {
+    const deps = testRoot();
     const ctx = createMockContext({ token: "test_token" });
-    const result = await checkLinkedAppExists(ctx);
+    const result = await checkLinkedAppExists(deps, ctx);
     expectCheck(result, { name: "Application reachable", status: "warn", message: "Skipped" });
   });
 });
 
 describe("checkInstances", () => {
   test("pass when dev and prod match API", async () => {
+    const deps = testRoot();
     const ctx = createMockContext({
       token: "test_token",
       profile: {
@@ -318,7 +311,7 @@ describe("checkInstances", () => {
       },
       application: mockApplication,
     });
-    const result = await checkInstances(ctx);
+    const result = await checkInstances(deps, ctx);
     expectCheck(result, {
       name: "Instance IDs",
       status: "pass",
@@ -327,12 +320,13 @@ describe("checkInstances", () => {
   });
 
   test("warn when production not configured", async () => {
+    const deps = testRoot();
     const ctx = createMockContext({
       token: "test_token",
       profile: mockProfile,
       application: mockApplication,
     });
-    const result = await checkInstances(ctx);
+    const result = await checkInstances(deps, ctx);
     expectCheck(result, {
       name: "Instance IDs",
       status: "warn",
@@ -341,6 +335,7 @@ describe("checkInstances", () => {
   });
 
   test("fail when stored instance ID is stale", async () => {
+    const deps = testRoot();
     const ctx = createMockContext({
       token: "test_token",
       profile: {
@@ -350,7 +345,7 @@ describe("checkInstances", () => {
       },
       application: mockApplication,
     });
-    const result = await checkInstances(ctx);
+    const result = await checkInstances(deps, ctx);
     expectCheck(result, {
       name: "Instance IDs",
       status: "fail",
@@ -360,14 +355,16 @@ describe("checkInstances", () => {
   });
 
   test("warn when not authenticated", async () => {
+    const deps = testRoot();
     const ctx = createMockContext({ token: null });
-    const result = await checkInstances(ctx);
+    const result = await checkInstances(deps, ctx);
     expectCheck(result, { name: "Instance IDs", status: "warn", message: "Skipped" });
   });
 
   test("warn when no project linked", async () => {
+    const deps = testRoot();
     const ctx = createMockContext({ token: "test_token" });
-    const result = await checkInstances(ctx);
+    const result = await checkInstances(deps, ctx);
     expectCheck(result, { name: "Instance IDs", status: "warn", message: "Skipped" });
   });
 });
@@ -378,12 +375,13 @@ describe("checkEnvVars", () => {
       join(tempDir, ".env.local"),
       "CLERK_PUBLISHABLE_KEY=pk_test\nCLERK_SECRET_KEY=sk_test\n",
     );
+    const deps = testRoot();
     const ctx = createMockContext({
       token: "test_token",
       profile: mockProfile,
       application: mockApplication,
     });
-    const result = await checkEnvVars(ctx);
+    const result = await checkEnvVars(deps, ctx);
     expectCheck(result, {
       name: "Environment variables",
       status: "pass",
@@ -396,8 +394,9 @@ describe("checkEnvVars", () => {
       join(tempDir, ".env.local"),
       "CLERK_PUBLISHABLE_KEY=pk_test\nCLERK_SECRET_KEY=sk_test\n",
     );
+    const deps = testRoot();
     const ctx = createMockContext();
-    const result = await checkEnvVars(ctx);
+    const result = await checkEnvVars(deps, ctx);
     expectCheck(result, {
       name: "Environment variables",
       status: "pass",
@@ -411,12 +410,13 @@ describe("checkEnvVars", () => {
       join(tempDir, ".env.local"),
       "CLERK_PUBLISHABLE_KEY=pk_test_unknown\nCLERK_SECRET_KEY=sk_test\n",
     );
+    const deps = testRoot();
     const ctx = createMockContext({
       token: "test_token",
       profile: mockProfile,
       application: mockApplication,
     });
-    const result = await checkEnvVars(ctx);
+    const result = await checkEnvVars(deps, ctx);
     expectCheck(result, {
       name: "Environment variables",
       status: "pass",
@@ -429,12 +429,13 @@ describe("checkEnvVars", () => {
       join(tempDir, ".env.local"),
       "CLERK_PUBLISHABLE_KEY=pk_test_unknown\nCLERK_SECRET_KEY=sk_test_unknown\n",
     );
+    const deps = testRoot();
     const ctx = createMockContext({
       token: "test_token",
       profile: mockProfile,
       application: mockApplication,
     });
-    const result = await checkEnvVars(ctx);
+    const result = await checkEnvVars(deps, ctx);
     expectCheck(result, {
       name: "Environment variables",
       status: "pass",
@@ -451,12 +452,13 @@ describe("checkEnvVars", () => {
       join(tempDir, ".env.local"),
       "NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=pk_test\nCLERK_SECRET_KEY=sk_test\n",
     );
+    const deps = testRoot();
     const ctx = createMockContext({
       token: "test_token",
       profile: mockProfile,
       application: mockApplication,
     });
-    const result = await checkEnvVars(ctx);
+    const result = await checkEnvVars(deps, ctx);
     expectCheck(result, {
       name: "Environment variables",
       status: "pass",
@@ -469,10 +471,11 @@ describe("checkEnvVars", () => {
       join(tempDir, ".env.local"),
       "CLERK_PUBLISHABLE_KEY=pk_test\nCLERK_SECRET_KEY=sk_test\n",
     );
+    const deps = testRoot();
     const ctx = createMockContext({
       applicationError: new Error("Network timeout"),
     });
-    const result = await checkEnvVars(ctx);
+    const result = await checkEnvVars(deps, ctx);
     expectCheck(result, {
       name: "Environment variables",
       status: "pass",
@@ -485,8 +488,9 @@ describe("checkEnvVars", () => {
       join(tempDir, ".env"),
       "CLERK_PUBLISHABLE_KEY=pk_test\nCLERK_SECRET_KEY=sk_test\n",
     );
+    const deps = testRoot();
     const ctx = createMockContext({ application: mockApplication });
-    const result = await checkEnvVars(ctx);
+    const result = await checkEnvVars(deps, ctx);
     expectCheck(result, {
       name: "Environment variables",
       status: "pass",
@@ -496,8 +500,9 @@ describe("checkEnvVars", () => {
 
   test("warn when keys missing", async () => {
     await Bun.write(join(tempDir, ".env.local"), "OTHER=value\n");
+    const deps = testRoot();
     const ctx = createMockContext();
-    const result = await checkEnvVars(ctx);
+    const result = await checkEnvVars(deps, ctx);
     expectCheck(result, {
       name: "Environment variables",
       status: "warn",
@@ -508,8 +513,9 @@ describe("checkEnvVars", () => {
   });
 
   test("warn when no env file", async () => {
+    const deps = testRoot();
     const ctx = createMockContext();
-    const result = await checkEnvVars(ctx);
+    const result = await checkEnvVars(deps, ctx);
     expectCheck(result, {
       name: "Environment variables",
       status: "warn",
@@ -521,13 +527,15 @@ describe("checkEnvVars", () => {
 
 describe("checkConfigFile", () => {
   test("pass when config is valid", async () => {
-    process.env.CLERK_CONFIG_DIR = tempDir;
     await Bun.write(
       join(tempDir, "config.json"),
       JSON.stringify({ profiles: { "/a": {} }, auth: { userId: "u_1" } }),
     );
+    const deps = testRoot({
+      env: { get: (name) => (name === "CLERK_CONFIG_DIR" ? tempDir : undefined) },
+    });
     const ctx = createMockContext();
-    const result = await checkConfigFile(ctx);
+    const result = await checkConfigFile(deps, ctx);
     expectCheck(result, {
       name: "CLI configuration",
       status: "pass",
@@ -536,9 +544,12 @@ describe("checkConfigFile", () => {
   });
 
   test("warn when config file does not exist", async () => {
-    process.env.CLERK_CONFIG_DIR = join(tempDir, "nonexistent");
+    const missing = join(tempDir, "nonexistent");
+    const deps = testRoot({
+      env: { get: (name) => (name === "CLERK_CONFIG_DIR" ? missing : undefined) },
+    });
     const ctx = createMockContext();
-    const result = await checkConfigFile(ctx);
+    const result = await checkConfigFile(deps, ctx);
     expectCheck(result, {
       name: "CLI configuration",
       status: "warn",
@@ -548,10 +559,12 @@ describe("checkConfigFile", () => {
   });
 
   test("fail when config has invalid JSON", async () => {
-    process.env.CLERK_CONFIG_DIR = tempDir;
     await Bun.write(join(tempDir, "config.json"), "{ invalid json }");
+    const deps = testRoot({
+      env: { get: (name) => (name === "CLERK_CONFIG_DIR" ? tempDir : undefined) },
+    });
     const ctx = createMockContext();
-    const result = await checkConfigFile(ctx);
+    const result = await checkConfigFile(deps, ctx);
     expectCheck(result, {
       name: "CLI configuration",
       status: "fail",
@@ -563,8 +576,11 @@ describe("checkConfigFile", () => {
 
 describe("checkShellCompletion", () => {
   test("pass when shell cannot be detected", async () => {
-    process.env.SHELL = "";
-    const result = await checkShellCompletion();
+    const deps = testRoot({
+      env: { get: (name) => (name === "SHELL" ? "" : undefined) },
+    });
+    const ctx = createMockContext();
+    const result = await checkShellCompletion(deps, ctx);
     expectCheck(result, {
       name: "Shell completion",
       status: "pass",
@@ -573,9 +589,13 @@ describe("checkShellCompletion", () => {
   });
 
   test("warn when zsh completion not installed", async () => {
-    process.env.SHELL = "/bin/zsh";
-    process.env.HOME = tempDir;
-    const result = await checkShellCompletion();
+    const deps = testRoot({
+      env: {
+        get: (name) => (name === "SHELL" ? "/bin/zsh" : name === "HOME" ? tempDir : undefined),
+      },
+    });
+    const ctx = createMockContext();
+    const result = await checkShellCompletion(deps, ctx);
     expectCheck(result, {
       name: "Shell completion",
       status: "warn",
@@ -585,10 +605,14 @@ describe("checkShellCompletion", () => {
   });
 
   test("pass when zsh completion is installed via zshrc", async () => {
-    process.env.SHELL = "/bin/zsh";
-    process.env.HOME = tempDir;
     await Bun.write(join(tempDir, ".zshrc"), 'eval "$(clerk completion zsh)"\n');
-    const result = await checkShellCompletion();
+    const deps = testRoot({
+      env: {
+        get: (name) => (name === "SHELL" ? "/bin/zsh" : name === "HOME" ? tempDir : undefined),
+      },
+    });
+    const ctx = createMockContext();
+    const result = await checkShellCompletion(deps, ctx);
     expectCheck(result, {
       name: "Shell completion",
       status: "pass",
@@ -597,10 +621,14 @@ describe("checkShellCompletion", () => {
   });
 
   test("pass when zsh completion is installed via fpath", async () => {
-    process.env.SHELL = "/bin/zsh";
-    process.env.HOME = tempDir;
     await Bun.write(join(tempDir, ".zfunc/_clerk"), "#compdef clerk\n");
-    const result = await checkShellCompletion();
+    const deps = testRoot({
+      env: {
+        get: (name) => (name === "SHELL" ? "/bin/zsh" : name === "HOME" ? tempDir : undefined),
+      },
+    });
+    const ctx = createMockContext();
+    const result = await checkShellCompletion(deps, ctx);
     expectCheck(result, {
       name: "Shell completion",
       status: "pass",
@@ -609,9 +637,13 @@ describe("checkShellCompletion", () => {
   });
 
   test("warn when bash completion not installed", async () => {
-    process.env.SHELL = "/bin/bash";
-    process.env.HOME = tempDir;
-    const result = await checkShellCompletion();
+    const deps = testRoot({
+      env: {
+        get: (name) => (name === "SHELL" ? "/bin/bash" : name === "HOME" ? tempDir : undefined),
+      },
+    });
+    const ctx = createMockContext();
+    const result = await checkShellCompletion(deps, ctx);
     expectCheck(result, {
       name: "Shell completion",
       status: "warn",
@@ -621,10 +653,14 @@ describe("checkShellCompletion", () => {
   });
 
   test("pass when bash completion is in bashrc", async () => {
-    process.env.SHELL = "/bin/bash";
-    process.env.HOME = tempDir;
     await Bun.write(join(tempDir, ".bashrc"), 'eval "$(clerk completion bash)"\n');
-    const result = await checkShellCompletion();
+    const deps = testRoot({
+      env: {
+        get: (name) => (name === "SHELL" ? "/bin/bash" : name === "HOME" ? tempDir : undefined),
+      },
+    });
+    const ctx = createMockContext();
+    const result = await checkShellCompletion(deps, ctx);
     expectCheck(result, {
       name: "Shell completion",
       status: "pass",
@@ -633,9 +669,13 @@ describe("checkShellCompletion", () => {
   });
 
   test("warn when fish completion file missing", async () => {
-    process.env.SHELL = "/usr/bin/fish";
-    process.env.HOME = tempDir;
-    const result = await checkShellCompletion();
+    const deps = testRoot({
+      env: {
+        get: (name) => (name === "SHELL" ? "/usr/bin/fish" : name === "HOME" ? tempDir : undefined),
+      },
+    });
+    const ctx = createMockContext();
+    const result = await checkShellCompletion(deps, ctx);
     expectCheck(result, {
       name: "Shell completion",
       status: "warn",
@@ -645,11 +685,15 @@ describe("checkShellCompletion", () => {
   });
 
   test("pass when fish completion file exists", async () => {
-    process.env.SHELL = "/usr/bin/fish";
-    process.env.HOME = tempDir;
     const fishDir = join(tempDir, ".config/fish/completions");
     await Bun.write(join(fishDir, "clerk.fish"), "# completion script\n");
-    const result = await checkShellCompletion();
+    const deps = testRoot({
+      env: {
+        get: (name) => (name === "SHELL" ? "/usr/bin/fish" : name === "HOME" ? tempDir : undefined),
+      },
+    });
+    const ctx = createMockContext();
+    const result = await checkShellCompletion(deps, ctx);
     expectCheck(result, {
       name: "Shell completion",
       status: "pass",
@@ -658,9 +702,13 @@ describe("checkShellCompletion", () => {
   });
 
   test("no fix action attached (completions are not auto-fixable)", async () => {
-    process.env.SHELL = "/bin/zsh";
-    process.env.HOME = tempDir;
-    const result = await checkShellCompletion();
+    const deps = testRoot({
+      env: {
+        get: (name) => (name === "SHELL" ? "/bin/zsh" : name === "HOME" ? tempDir : undefined),
+      },
+    });
+    const ctx = createMockContext();
+    const result = await checkShellCompletion(deps, ctx);
     expectCheck(result, {
       name: "Shell completion",
       status: "warn",

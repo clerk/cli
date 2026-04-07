@@ -1,9 +1,7 @@
-import { isHuman } from "../../mode.ts";
+import type { Root } from "../../lib/deps.ts";
 import { bold, green, red } from "../../lib/color.ts";
-import { log } from "../../lib/log.ts";
 import { CliError, ERROR_CODE } from "../../lib/errors.ts";
-import { intro, outro, bar, withSpinner } from "../../lib/spinner.ts";
-import { createDoctorContext } from "./context.ts";
+import { createDoctorContext } from "./helpers/context.ts";
 import {
   checkLoggedIn,
   checkTokenValid,
@@ -31,11 +29,15 @@ const CHECKS: CheckFn[] = [
   checkShellCompletion,
 ];
 
-async function runChecks(ctx: DoctorContext): Promise<CheckResult[]> {
-  return Promise.all(
+async function runChecks(
+  root: Root,
+  ctx: DoctorContext,
+  options: DoctorOptions,
+): Promise<CheckResult[]> {
+  const results = await Promise.all(
     CHECKS.map(async (check) => {
       try {
-        return await check(ctx);
+        return await check(root, ctx);
       } catch (error) {
         return {
           name: "Unknown check",
@@ -45,35 +47,42 @@ async function runChecks(ctx: DoctorContext): Promise<CheckResult[]> {
       }
     }),
   );
-}
 
-function printResults(results: CheckResult[], options: DoctorOptions): void {
-  for (const result of results) {
-    if (!options.spotlight || result.status !== "pass") {
-      log.info(formatCheckResult(result, options.verbose ?? false));
+  if (!options.json) {
+    for (const result of results) {
+      if (!options.spotlight || result.status !== "pass") {
+        root.log.info(formatCheckResult(result, options.verbose ?? false));
+      }
     }
+    root.log.info("");
   }
-  log.blank();
+
+  return results;
 }
 
-export async function doctor(options: DoctorOptions = {}): Promise<void> {
+/**
+ * `clerk doctor` accepts the full `Root` because its fix handlers are dynamic
+ * (selected at runtime based on which check failed). Each fix dispatches to a
+ * different ported command (login, link, env pull) with that command's own
+ * slice, so a narrow up-front slice cannot cover the cross-command call
+ * surface. The check helpers themselves still take a narrow `CheckDeps` slice.
+ */
+export async function doctor(root: Root, options: DoctorOptions = {}): Promise<void> {
   if (!options.json) {
-    intro("clerk doctor");
+    root.spinner.intro("clerk doctor");
   }
 
-  const ctx = createDoctorContext();
-  const allResults = await withSpinner("Running diagnostics...", () => runChecks(ctx));
-
-  if (!options.json) {
-    printResults(allResults, options);
-  }
+  const ctx = createDoctorContext(root);
+  const allResults = await root.spinner.withSpinner("Running diagnostics...", () =>
+    runChecks(root, ctx, options),
+  );
 
   if (options.json) {
     const output = options.spotlight ? allResults.filter((r) => r.status !== "pass") : allResults;
-    log.data(formatJson(output));
+    root.log.data(formatJson(output));
   }
 
-  if (options.fix && !options.json && isHuman()) {
+  if (options.fix && !options.json && root.mode.isHuman()) {
     const fixable = allResults.filter((r) => r.status !== "pass" && r.fix);
 
     const seen = new Set<string>();
@@ -85,35 +94,38 @@ export async function doctor(options: DoctorOptions = {}): Promise<void> {
     });
 
     if (uniqueFixable.length > 0) {
-      log.blank();
-      log.info(bold("Auto-fix"));
-      log.blank();
-
-      const { confirm } = await import("@inquirer/prompts");
+      root.log.info("");
+      root.log.info(bold("Auto-fix"));
+      root.log.info("");
 
       for (const result of uniqueFixable) {
         const fix = result.fix;
         if (!fix) continue;
-        const proceed = await confirm({
+        const proceed = await root.prompts.confirm({
           message: `Fix "${result.name}"? (${fix.label})`,
           default: true,
         });
 
         if (proceed) {
           try {
-            await fix.run();
-            log.info(`  ${green("✓")} ${result.name} fixed`);
+            await fix.run(root);
+            root.log.success(`  ${green("\u2713")} ${result.name} fixed`);
           } catch (error) {
-            log.info(`  ${red("✗")} Fix failed: ${errorMessage(error)}`);
+            root.log.error(`  ${red("\u2717")} Fix failed: ${errorMessage(error)}`);
           }
         }
       }
 
-      bar();
+      root.spinner.bar();
 
-      const verifyCtx = createDoctorContext();
-      const verifyResults = await withSpinner("Verifying fixes...", () => runChecks(verifyCtx));
-      printResults(verifyResults, { ...options, fix: false, spotlight: false });
+      const verifyCtx = createDoctorContext(root);
+      const verifyResults = await root.spinner.withSpinner("Verifying fixes...", () =>
+        runChecks(root, verifyCtx, {
+          ...options,
+          fix: false,
+          spotlight: false,
+        }),
+      );
 
       const hasVerifyFailure = verifyResults.some((r) => r.status === "fail");
       if (hasVerifyFailure) {
@@ -121,7 +133,7 @@ export async function doctor(options: DoctorOptions = {}): Promise<void> {
           code: ERROR_CODE.DOCTOR_FAILED,
         });
       }
-      outro("All checks passing");
+      root.spinner.outro("All checks passing");
       return;
     }
   }
@@ -132,5 +144,5 @@ export async function doctor(options: DoctorOptions = {}): Promise<void> {
       code: ERROR_CODE.DOCTOR_FAILED,
     });
   }
-  outro("All checks passing");
+  root.spinner.outro("All checks passing");
 }

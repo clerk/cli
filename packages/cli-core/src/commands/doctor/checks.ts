@@ -1,6 +1,5 @@
 import { join } from "node:path";
 import { homedir } from "node:os";
-import { fetchUserInfo } from "../../lib/token-exchange.ts";
 import { PlapiError } from "../../lib/errors.ts";
 import { detectPublishableKeyName, detectSecretKeyName } from "../../lib/framework.ts";
 import { parseEnvFile } from "../../lib/dotenv.ts";
@@ -14,13 +13,40 @@ import {
   formatChannelFlag,
   formatChannelLabel,
 } from "../../lib/update-check.ts";
-import type { CheckResult, DoctorContext, FixAction } from "./types.ts";
+import { login } from "../auth/login.ts";
+import { link } from "../link/index.ts";
+import { pullDefault } from "../env/helpers/pull-default.ts";
+import type { Root } from "../../lib/deps.ts";
+import type { CheckDeps, CheckResult, DoctorContext, FixAction } from "./types.ts";
 
 const AUTH_ERROR_STATUS = /\((401|403)\)/;
 
 export function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
+
+// ── Pattern B fix handlers (take Root, dispatch to ported commands) ─────────
+
+const fixLogin = (): FixAction => ({
+  label: "Log in with clerk auth login",
+  run: async (root: Root) => {
+    await login(root);
+  },
+});
+
+const fixLink = (): FixAction => ({
+  label: "Link project with clerk link",
+  run: async (root: Root) => {
+    await link(root, {});
+  },
+});
+
+const fixEnvPull = (): FixAction => ({
+  label: "Pull env vars with clerk env pull",
+  run: async (root: Root) => {
+    await pullDefault(root, {});
+  },
+});
 
 interface CheckOptions {
   remedy?: string;
@@ -69,8 +95,8 @@ function defineCheck(name: string, fixFactory?: () => FixAction): CheckBuilder {
   };
 }
 
-export async function checkLoggedIn(ctx: DoctorContext): Promise<CheckResult> {
-  const check = defineCheck("Logged in", ctx.fixes.login);
+export async function checkLoggedIn(_deps: CheckDeps, ctx: DoctorContext): Promise<CheckResult> {
+  const check = defineCheck("Logged in", fixLogin);
   const token = await ctx.getToken();
   if (!token) {
     return check.fail("Not logged in", {
@@ -80,13 +106,13 @@ export async function checkLoggedIn(ctx: DoctorContext): Promise<CheckResult> {
   return check.pass("Logged in (token found in credential store)");
 }
 
-export async function checkTokenValid(ctx: DoctorContext): Promise<CheckResult> {
-  const check = defineCheck("Authentication valid", ctx.fixes.login);
+export async function checkTokenValid(deps: CheckDeps, ctx: DoctorContext): Promise<CheckResult> {
+  const check = defineCheck("Authentication valid", fixLogin);
   const token = await ctx.getToken();
   if (!token) return check.skip("no token");
 
   try {
-    const userInfo = await fetchUserInfo(token);
+    const userInfo = await deps.tokenExchange.fetchUserInfo(token);
     return check.pass(`Authenticated as ${userInfo.email}`);
   } catch (error) {
     const message = errorMessage(error);
@@ -96,7 +122,7 @@ export async function checkTokenValid(ctx: DoctorContext): Promise<CheckResult> 
       });
     }
 
-    return check.warn("Could not reach Clerk to verify authentication — network issue", {
+    return check.warn("Could not reach Clerk to verify authentication \u2014 network issue", {
       detail:
         "Your stored token from a previous login is likely still valid. " +
         "The auth server was unreachable.",
@@ -106,8 +132,11 @@ export async function checkTokenValid(ctx: DoctorContext): Promise<CheckResult> 
   }
 }
 
-export async function checkProjectLinked(ctx: DoctorContext): Promise<CheckResult> {
-  const check = defineCheck("Project linked", ctx.fixes.link);
+export async function checkProjectLinked(
+  _deps: CheckDeps,
+  ctx: DoctorContext,
+): Promise<CheckResult> {
+  const check = defineCheck("Project linked", fixLink);
   const resolved = await ctx.getProfile();
   if (!resolved) {
     return check.fail("Not linked to a Clerk application", {
@@ -128,8 +157,11 @@ export async function checkProjectLinked(ctx: DoctorContext): Promise<CheckResul
   );
 }
 
-export async function checkLinkedAppExists(ctx: DoctorContext): Promise<CheckResult> {
-  const check = defineCheck("Application reachable", ctx.fixes.link);
+export async function checkLinkedAppExists(
+  _deps: CheckDeps,
+  ctx: DoctorContext,
+): Promise<CheckResult> {
+  const check = defineCheck("Application reachable", fixLink);
   const token = await ctx.getToken();
   if (!token) return check.skip("not authenticated");
 
@@ -155,8 +187,8 @@ export async function checkLinkedAppExists(ctx: DoctorContext): Promise<CheckRes
   }
 }
 
-export async function checkInstances(ctx: DoctorContext): Promise<CheckResult> {
-  const check = defineCheck("Instance IDs", ctx.fixes.link);
+export async function checkInstances(_deps: CheckDeps, ctx: DoctorContext): Promise<CheckResult> {
+  const check = defineCheck("Instance IDs", fixLink);
   const token = await ctx.getToken();
   if (!token) return check.skip("not authenticated");
 
@@ -219,8 +251,8 @@ async function findEnvFile(
   return null;
 }
 
-export async function checkEnvVars(ctx: DoctorContext): Promise<CheckResult> {
-  const check = defineCheck("Environment variables", ctx.fixes.envPull);
+export async function checkEnvVars(_deps: CheckDeps, ctx: DoctorContext): Promise<CheckResult> {
+  const check = defineCheck("Environment variables", fixEnvPull);
   const cwd = process.cwd();
   const found = await findEnvFile(cwd);
 
@@ -277,9 +309,9 @@ async function identifyEnvironment(
   return match?.environment_type ?? null;
 }
 
-export async function checkConfigFile(ctx: DoctorContext): Promise<CheckResult> {
-  const check = defineCheck("CLI configuration", ctx.fixes.login);
-  const configFile = getConfigFile();
+export async function checkConfigFile(deps: CheckDeps): Promise<CheckResult> {
+  const check = defineCheck("CLI configuration", fixLogin);
+  const configFile = getConfigFile(deps);
   const file = Bun.file(configFile);
   if (!(await file.exists())) {
     return check.warn(`${configFile} does not exist`, {
@@ -307,8 +339,8 @@ export async function checkConfigFile(ctx: DoctorContext): Promise<CheckResult> 
   }
 }
 
-function getConfigFile(): string {
-  const homeDir = process.env.CLERK_CONFIG_DIR ?? join(homedir(), ".clerk");
+function getConfigFile(deps: CheckDeps): string {
+  const homeDir = deps.env.get("CLERK_CONFIG_DIR") ?? join(homedir(), ".clerk");
   return join(homeDir, "config.json");
 }
 
@@ -349,8 +381,8 @@ export async function checkCliVersion(): Promise<CheckResult> {
 
 type DetectedShell = "bash" | "zsh" | "fish";
 
-function detectShell(): DetectedShell | null {
-  const name = process.env.SHELL?.split("/").pop();
+function detectShell(deps: CheckDeps): DetectedShell | null {
+  const name = deps.env.get("SHELL")?.split("/").pop();
   if (name === "zsh" || name === "bash" || name === "fish") return name;
   return null;
 }
@@ -389,12 +421,12 @@ const SHELL_COMPLETION: Record<
   },
 };
 
-export async function checkShellCompletion(): Promise<CheckResult> {
+export async function checkShellCompletion(deps: CheckDeps): Promise<CheckResult> {
   const check = defineCheck("Shell completion");
-  const shell = detectShell();
+  const shell = detectShell(deps);
   if (!shell) return check.pass("Shell completion (could not detect shell, skipped)");
 
-  const home = process.env.HOME ?? homedir();
+  const home = deps.env.get("HOME") ?? homedir();
   const { isInstalled, remedy } = SHELL_COMPLETION[shell];
 
   if (await isInstalled(home)) return check.pass(`Shell completion installed for ${shell}`);
