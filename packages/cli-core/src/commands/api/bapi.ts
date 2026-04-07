@@ -64,3 +64,17 @@ export async function bapiRequest(options: {
     rawBody,
   };
 }
+
+export interface Bapi {
+  bapiRequest(options: {
+    method: string;
+    path: string;
+    secretKey: string;
+    body?: string;
+    baseUrl?: string;
+  }): Promise<BapiResponse>;
+}
+
+export const bapi: Bapi = {
+  bapiRequest,
+};
