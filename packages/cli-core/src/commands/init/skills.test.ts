@@ -7,7 +7,6 @@ describe("buildSkillsArgs", () => {
   test("interactive mode: no -y or -g, lets skills CLI take over", () => {
     const args = buildSkillsArgs(skills, true);
     expect(args).toEqual([
-      "npx",
       "skills",
       "add",
       "clerk/skills",

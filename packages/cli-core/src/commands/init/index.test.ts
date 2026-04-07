@@ -236,7 +236,12 @@ describe("init", () => {
 
     await init({ yes: true });
 
-    expect(skillsMod.installSkills).toHaveBeenCalledWith(FAKE_BOOTSTRAP.projectDir, "react", true);
+    expect(skillsMod.installSkills).toHaveBeenCalledWith(
+      FAKE_BOOTSTRAP.projectDir,
+      "react",
+      "npm",
+      true,
+    );
   });
 
   test("--starter in agent mode prints guidance without bootstrap", async () => {
