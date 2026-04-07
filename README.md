@@ -30,6 +30,8 @@ Commands:
   link        [options]                      Link this project to a Clerk application
   unlink      [options]                      Unlink this project from its Clerk application
   whoami                                     Show the current logged-in user
+  open                                       Open Clerk resources in your browser
+    dashboard [options] [subpath]            Open the linked app's dashboard
   apps                                       Manage your Clerk applications
     list      [options]                      List your Clerk applications
     create    [options] <name>               Create a new Clerk application
@@ -78,6 +80,14 @@ clerk unlink
     $ clerk unlink --yes               Skip confirmation
 
 clerk whoami             Show your email address
+
+clerk open [subpath]
+  --print              Print the URL without opening the browser
+  Examples:
+    $ clerk open                       Open the linked app's dashboard
+    $ clerk open users                 Open the users page
+    $ clerk open api-keys              Open the API keys page
+    $ clerk open --print               Print the dashboard URL
 
 clerk config pull
   --app <id>           Application ID to target (works from any directory)
