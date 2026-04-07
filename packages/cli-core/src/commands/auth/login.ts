@@ -10,11 +10,8 @@ import { isHuman } from "../../mode.ts";
 import { throwUserAbort } from "../../lib/errors.ts";
 import { intro, outro, bar, withSpinner } from "../../lib/spinner.ts";
 import { NEXT_STEPS } from "../../lib/next-steps.ts";
-
-const BROWSER_COMMANDS: Partial<Record<NodeJS.Platform, string>> = {
-  darwin: "open",
-  win32: "start",
-};
+import { openBrowser } from "../../lib/open.ts";
+import { cyan, dim } from "../../lib/color.ts";
 
 interface LoginOptions {
   showNextSteps?: boolean;
@@ -32,11 +29,6 @@ async function getExistingSession(): Promise<UserInfo | null> {
   } catch {
     return null;
   }
-}
-
-function openBrowser(url: string) {
-  const command = BROWSER_COMMANDS[process.platform] ?? "xdg-open";
-  return Bun.spawn([command, url]);
 }
 
 async function performOAuthFlow(): Promise<UserInfo> {
@@ -58,8 +50,15 @@ async function performOAuthFlow(): Promise<UserInfo> {
   authorizeUrl.searchParams.set("code_challenge", codeChallenge);
   authorizeUrl.searchParams.set("code_challenge_method", "S256");
 
-  const proc = openBrowser(authorizeUrl.toString());
-  await proc.exited;
+  // Critical fallback: the OAuth callback can't complete unless the user
+  // reaches the authorize URL somehow.
+  const urlString = authorizeUrl.toString();
+  const result = await openBrowser(urlString);
+  if (!result.ok) {
+    console.log(
+      `\nCould not open your browser automatically. Open this URL to continue:\n  ${cyan(urlString)}\n${dim("(Reason: " + result.reason + ")")}\n`,
+    );
+  }
 
   const timeoutMinutes = Math.round(AUTH_TIMEOUT_MS / 60_000);
   console.log(`Waiting for authentication (timeout in ${timeoutMinutes}m)...`);
