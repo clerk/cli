@@ -76,8 +76,6 @@ export async function checkPatches(opts: CheckPatchesOptions): Promise<CheckPatc
   }
 
   for (const entry of entries) {
-    patchesChecked += 1;
-
     // Check 1: patch file exists
     const absPatchPath = resolve(repoRoot, entry.patchPath);
     if (!existsSync(absPatchPath)) {
@@ -105,12 +103,14 @@ export async function checkPatches(opts: CheckPatchesOptions): Promise<CheckPatc
     // Check 3: drift
     if (installedVersion !== entry.declaredVersion) {
       failures.push(
-        `${entry.name}: declared patch version ${entry.declaredVersion} does not match installed version ${installedVersion}. Update the key in package.json#patchedDependencies and rename ${entry.patchPath} with: bun patch ${entry.name}@${installedVersion}`,
+        `${entry.name}: declared patch version ${entry.declaredVersion} does not match installed version ${installedVersion}. Rename ${entry.patchPath} to patches/${entry.name}@${installedVersion}.patch and update the key in package.json#patchedDependencies to match. If the patch no longer applies cleanly against the new version, recreate it with: bun patch ${entry.name}@${installedVersion}`,
       );
       continue;
     }
 
     // Check 4 (content) arrives in Task 4.
+
+    patchesChecked += 1;
   }
 
   // Orphan sweep arrives in Task 3.
