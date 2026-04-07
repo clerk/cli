@@ -31,11 +31,20 @@ async function getAvailablePort(): Promise<number> {
   });
 }
 
-/** Build the full dev server command with the port flag appended. */
+/**
+ * Host the dev server should bind to. We pin to IPv4 loopback instead of
+ * `localhost` because some environments (e.g. the Playwright Docker image)
+ * resolve `localhost` to `::1` first, which leaves the dev server listening
+ * only on IPv6 while Bun's `fetch` and some tooling try IPv4 first.
+ */
+export const DEV_SERVER_HOST = "127.0.0.1";
+
+/** Build the full dev server command with host and port flags appended. */
 export function buildDevCommand(devCmd: string[], port: number): string[] {
   const isNextjs = devCmd[0] === "next";
   const portFlag = isNextjs ? "-p" : "--port";
-  return [...devCmd, portFlag, String(port)];
+  const hostFlag = isNextjs ? "-H" : "--host";
+  return [...devCmd, hostFlag, DEV_SERVER_HOST, portFlag, String(port)];
 }
 
 interface ReadyServer {
@@ -134,7 +143,7 @@ async function tryStart(opts: {
     }
 
     try {
-      const res = await fetch(`http://localhost:${port}`, {
+      const res = await fetch(`http://${DEV_SERVER_HOST}:${port}`, {
         signal: AbortSignal.timeout(1000),
         redirect: "manual",
       });
