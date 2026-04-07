@@ -65,16 +65,17 @@ export async function gatherContext(
   const deps = await readDeps(cwd);
   const existingClerk = deps ? framework.sdk in deps : false;
 
-  // Pick the env file to write to:
-  //   1. If .env.local already exists, use it (respect the user's existing setup).
-  //   2. If only .env exists, use it (don't create a new .env.local alongside it).
-  //   3. If neither exists, fall back to the framework's preferred file
-  //      (".env" for Next.js/Astro/Nuxt, ".env.local" for Vite-based frameworks).
   const [envLocalExists, envExists] = await Promise.all([
     fileExists(join(cwd, ".env.local")),
     fileExists(join(cwd, ".env")),
   ]);
-  const envFile = envLocalExists ? ".env.local" : envExists ? ".env" : framework.envFile;
+
+  function resolveEnvFile(): string {
+    if (envLocalExists) return ".env.local";
+    if (envExists) return ".env";
+    return framework.envFile;
+  }
+  const envFile = resolveEnvFile();
 
   return {
     cwd,
