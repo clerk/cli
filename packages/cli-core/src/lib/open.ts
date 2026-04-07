@@ -89,11 +89,33 @@ export async function openBrowser(url: string): Promise<OpenResult> {
       stderr: "ignore",
       stdin: "ignore",
     });
-    // Don't await proc.exited; we just want to launch and continue. The
-    // launcher hands off the URL and exits ~immediately, but the parent
-    // (clerk CLI) shouldn't block on browser teardown. Attach a no-op catch
-    // so a late rejection (e.g. launcher exited non-zero) doesn't surface
-    // as an unhandled promise rejection.
+
+    // Race the launcher's exit against a short grace period. Real launchers
+    // (open, xdg-open, wslview, cmd start) hand off to the OS and exit within
+    // a few ms, so the common case is either:
+    //   - exit code 0 before the timer fires -> clear success
+    //   - still running after 150ms -> effectively success, fire-and-forget
+    // The case we care about catching is a fast non-zero exit, which happens
+    // in headless/misconfigured environments (e.g. xdg-open with no DISPLAY).
+    // Without this we'd return ok:true and the caller would skip printing the
+    // fallback URL, leaving auth login to hang on the OAuth callback.
+    const GRACE_MS = 150;
+    const outcome = await Promise.race([
+      proc.exited.then(
+        (code) => ({ kind: "exited" as const, code }),
+        () => ({ kind: "failed" as const }),
+      ),
+      new Promise<{ kind: "running" }>((resolve) =>
+        setTimeout(() => resolve({ kind: "running" }), GRACE_MS),
+      ),
+    ]);
+
+    if (outcome.kind === "failed" || (outcome.kind === "exited" && outcome.code !== 0)) {
+      return { ok: false, reason: "spawn-failed" };
+    }
+
+    // Still running (or exited cleanly). Swallow any later rejection so it
+    // doesn't surface as an unhandled promise rejection after the CLI moves on.
     proc.exited.catch(() => {});
     return { ok: true, launcher };
   } catch {
