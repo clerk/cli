@@ -4,7 +4,7 @@ import { setupFixture } from "./fixture-setup.ts";
 import type { FixtureConfig } from "./types.ts";
 import { chromium } from "playwright";
 import { clerkSetup, setupClerkTestingToken, clerk } from "@clerk/testing/playwright";
-import { startDevServer, killDevServer, DEV_SERVER_HOST } from "./dev-server.ts";
+import { startDevServer, killDevServer } from "./dev-server.ts";
 import { createTestUser, deleteTestUser } from "./test-user.ts";
 import { log } from "./logger.ts";
 
@@ -225,9 +225,8 @@ export function runBrowserTest(getFixture: () => FixtureState, config: FixtureCo
           context,
           options: frontendApiUrl ? { frontendApiUrl } : undefined,
         });
-        const baseUrl = `http://${DEV_SERVER_HOST}:${port}`;
-        log(fixtureName, `navigating to ${baseUrl}`);
-        await page.goto(baseUrl, { waitUntil: "load" });
+        log(fixtureName, `navigating to http://localhost:${port}`);
+        await page.goto(`http://localhost:${port}`, { waitUntil: "load" });
 
         // 5. Sign in
         log(fixtureName, "signing in");

@@ -74,6 +74,15 @@ jobs:
     steps:
       - name: Install unzip (required by setup-bun)
         run: apt-get update && apt-get install -y unzip
+      - name: Pin localhost to IPv4 in /etc/hosts
+        # The playwright image resolves `localhost` to `::1` first, which
+        # breaks Next.js dev: Next's internal proxy connects to `localhost`
+        # regardless of the -H flag, so if localhost is IPv6-only the
+        # proxy gets ECONNRESET. Drop the `::1 localhost` entry so every
+        # consumer (Next dev proxy, Bun fetch, Chromium) reaches 127.0.0.1.
+        run: |
+          grep -v '::1.*localhost' /etc/hosts > /tmp/hosts.new
+          cat /tmp/hosts.new > /etc/hosts
       - uses: actions/checkout@v6
       - uses: actions/setup-node@v6
         with:
