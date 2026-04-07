@@ -109,7 +109,21 @@ export async function checkPatches(opts: CheckPatchesOptions): Promise<CheckPatc
       continue;
     }
 
-    // Check 4 (content) arrives in Task 4.
+    // Check 4: content. The patch file's hunks must be currently applied
+    // byte-for-byte to the installed package. `git apply --reverse --check`
+    // is the canonical way to verify this: it dry-runs the reverse of the
+    // patch and exits 0 only if every hunk currently matches.
+    const installedPkgDir = resolve(repoRoot, "node_modules", entry.name);
+    const reverseCheck = await Bun.$`git apply --reverse --check ${absPatchPath}`
+      .cwd(installedPkgDir)
+      .quiet()
+      .nothrow();
+    if (reverseCheck.exitCode !== 0) {
+      failures.push(
+        `${entry.name}: patch file is not currently applied to node_modules/${entry.name}. The patch may have become a no-op against the installed version. Re-create with: bun patch ${entry.name}@${entry.declaredVersion}`,
+      );
+      continue;
+    }
 
     patchesChecked += 1;
   }
