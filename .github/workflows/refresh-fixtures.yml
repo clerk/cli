@@ -9,16 +9,22 @@ concurrency:
   group: refresh-fixtures
   cancel-in-progress: false
 
+# The default GITHUB_TOKEN only needs read access for checkout; the PR step
+# authenticates with CLERK_COOKIE_PAT so GITHUB_TOKEN never opens PRs here.
 permissions:
-  contents: write
-  pull-requests: write
+  contents: read
 
 jobs:
   refresh:
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-2vcpu-ubuntu-2404
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v6
+        with:
+          # Always refresh from main, even on workflow_dispatch runs that
+          # select a different ref, so manual triggers cannot smuggle
+          # unrelated changes from a feature branch into the refresh PR.
+          ref: main
 
       - uses: oven-sh/setup-bun@v2
 
@@ -28,7 +34,8 @@ jobs:
         run: bun run e2e:refresh-fixtures
 
       - name: Create or update pull request
-        uses: peter-evans/create-pull-request@v8
+        # Pinned to v8.1.0 by SHA because this step handles the CLERK_COOKIE_PAT.
+        uses: peter-evans/create-pull-request@c0f553fe549906ede9cf27b5156039d195d2ece0 # v8.1.0
         with:
           token: ${{ secrets.CLERK_COOKIE_PAT }}
           branch: chore/refresh-e2e-fixtures
