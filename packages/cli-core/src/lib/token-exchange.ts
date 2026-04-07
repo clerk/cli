@@ -12,7 +12,7 @@
 import { getOAuthConfig } from "./environment.ts";
 import { ApiError, withApiContext } from "./errors.ts";
 
-interface TokenResponse {
+export interface TokenResponse {
   access_token: string;
   token_type: string;
   expires_in: number;
@@ -80,3 +80,17 @@ export async function fetchUserInfo(accessToken: string): Promise<UserInfo> {
     "Failed to fetch user info",
   );
 }
+
+export interface TokenExchange {
+  exchangeCodeForToken(params: {
+    code: string;
+    codeVerifier: string;
+    redirectUri: string;
+  }): Promise<TokenResponse>;
+  fetchUserInfo(accessToken: string): Promise<UserInfo>;
+}
+
+export const tokenExchange: TokenExchange = {
+  exchangeCodeForToken,
+  fetchUserInfo,
+};
