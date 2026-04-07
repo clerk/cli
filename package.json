@@ -11,7 +11,7 @@
     "test:e2e": "bun run scripts/run-tests.ts --pattern 'test/e2e/*.test.ts' --retries 1",
     "test:e2e:op": "bun run scripts/run-e2e-op.ts",
     "e2e:refresh-fixtures": "bun run scripts/refresh-e2e-fixtures.ts",
-    "lint": "bun run --filter @clerk/cli-core lint && oxlint scripts/",
+    "lint": "bun run --filter @clerk/cli-core lint && oxlint -c .oxlintrc.json scripts/",
     "format": "bun run --filter @clerk/cli-core format && oxfmt --write scripts/",
     "format:check": "bun run --filter @clerk/cli-core format:check && oxfmt --check scripts/",
     "build:compile": "bun run --filter @clerk/cli-core build:compile",
