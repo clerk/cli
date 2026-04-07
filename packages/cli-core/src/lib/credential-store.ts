@@ -128,3 +128,15 @@ export async function deleteToken(): Promise<void> {
   await keyringDelete();
   await fileDelete();
 }
+
+export interface CredentialStore {
+  getToken(): Promise<string | null>;
+  storeToken(token: string): Promise<void>;
+  deleteToken(): Promise<void>;
+}
+
+export const credentialStore: CredentialStore = {
+  getToken,
+  storeToken,
+  deleteToken,
+};
