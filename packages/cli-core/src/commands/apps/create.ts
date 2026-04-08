@@ -1,31 +1,16 @@
-import { createApplication, fetchApplication, type Application } from "../../lib/plapi.ts";
+import { createApplication, fetchApplication } from "../../lib/plapi.ts";
 import { withApiContext } from "../../lib/errors.ts";
-import { isAgent } from "../../mode.ts";
 import { dim, cyan } from "../../lib/color.ts";
 import { withSpinner } from "../../lib/spinner.ts";
+import { stripSecrets, displayName, printJson, type AppsOptions } from "./shared.ts";
 
-interface AppsCreateOptions {
-  json?: boolean;
-}
-
-function stripSecrets(app: Application) {
-  return {
-    ...app,
-    instances: app.instances.map(({ secret_key: _, ...rest }) => rest),
-  };
-}
-
-export async function create(name: string, options: AppsCreateOptions = {}): Promise<void> {
+export async function create(name: string, options: AppsOptions = {}): Promise<void> {
   const app = await withSpinner("Creating application...", async () => {
     const created = await withApiContext(createApplication(name), "Failed to create application");
     return withApiContext(fetchApplication(created.application_id), "Failed to fetch application");
   });
 
-  if (options.json || isAgent()) {
-    console.log(JSON.stringify(stripSecrets(app), null, 2));
-    return;
-  }
+  if (printJson(stripSecrets(app), options)) return;
 
-  const label = app.name ?? app.application_id;
-  console.log(`Created ${cyan(label)} ${dim(app.application_id)}`);
+  console.log(`Created ${cyan(displayName(app))} ${dim(app.application_id)}`);
 }
