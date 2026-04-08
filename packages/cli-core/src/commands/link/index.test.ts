@@ -181,11 +181,10 @@ describe("link", () => {
       mockIsAgent.mockReturnValue(true);
       consoleSpy = spyOn(console, "log").mockImplementation(() => {});
 
-      await link();
+      await runLink();
 
-      const output = consoleSpy.mock.calls[0][0] as string;
-      expect(output).toContain("no applications exist");
-      expect(output).toContain("POST /v1/platform/applications");
+      expect(captured.out).toContain("no applications exist");
+      expect(captured.out).toContain("POST /v1/platform/applications");
     });
   });
 
@@ -1153,11 +1152,10 @@ describe("link", () => {
       });
       consoleSpy = spyOn(console, "log").mockImplementation(() => {});
 
-      await link();
+      await runLink();
 
-      const output = capturedOutput(consoleSpy);
-      expect(output).toContain("Created");
-      expect(output).toContain("Created App");
+      expect(captured.err).toContain("Created");
+      expect(captured.err).toContain("Created App");
     });
   });
 });
