@@ -2,6 +2,7 @@ import { select, input, confirm, password } from "@inquirer/prompts";
 import { isAgent } from "../../mode.ts";
 import { dim, bold, cyan, green, blue, yellow } from "../../lib/color.ts";
 import { printNextSteps, NEXT_STEPS } from "../../lib/next-steps.ts";
+import { openBrowser } from "../../lib/open.ts";
 
 const DEPLOY_PROMPT = `You are deploying a Clerk application to production. Follow these steps:
 
@@ -215,8 +216,10 @@ export async function deploy(options: { debug?: boolean }) {
         console.log();
 
         debug(`Opening ${displayName} OAuth setup guide in browser...`);
-        const proc = Bun.spawn(["open", docsUrl]);
-        await proc.exited;
+        const openResult = await openBrowser(docsUrl);
+        if (!openResult.ok) {
+          console.log(dim(`(Could not open browser automatically, visit ${docsUrl})`));
+        }
 
         console.log("Once you've created your credentials, enter them below:\n");
       }
