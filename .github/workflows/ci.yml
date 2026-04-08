@@ -98,7 +98,7 @@ jobs:
       - run: bun install --frozen-lockfile
 
       - name: Cleanup stale test users
-        run: bun test/e2e/cleanup-test-users.ts
+        run: bun scripts/cleanup-test-users.ts
         env:
           CLERK_CLI_TEST_APP_ID: ${{ secrets.CLERK_CLI_TEST_APP_ID }}
           CLERK_PLATFORM_API_KEY: ${{ secrets.CLERK_PLATFORM_API_KEY }}
