@@ -1,12 +1,7 @@
 import { join } from "node:path";
 import { resolveAppContext } from "../../lib/config.ts";
 import { fetchApplication } from "../../lib/plapi.ts";
-import {
-  parseEnvFile,
-  mergeEnvVars,
-  serializeEnvFile,
-  ENV_FILE_CANDIDATES,
-} from "../../lib/dotenv.ts";
+import { parseEnvFile, mergeEnvVars, serializeEnvFile } from "../../lib/dotenv.ts";
 import {
   detectPublishableKeyName,
   detectSecretKeyName,
@@ -15,6 +10,8 @@ import {
 import { CliError, ERROR_CODE, withApiContext } from "../../lib/errors.ts";
 import { withSpinner } from "../../lib/spinner.ts";
 import { dim } from "../../lib/color.ts";
+
+const DEV_LOCAL_ENV_FILE = ".env.development.local";
 
 interface EnvPullOptions {
   app?: string;
@@ -33,25 +30,22 @@ async function hasClerkKeys(path: string): Promise<boolean> {
 async function resolveTargetFile(
   cwd: string,
   flag?: string,
-  preferredFile: string = ".env.local",
+  fallbackFile: string = ".env.local",
 ): Promise<string> {
   if (flag) return join(cwd, flag);
 
-  // .env.development.local is the highest-priority file in the Next.js/Vite dev load order
-  // and is always gitignored, so it's safe for secrets.
-  const devLocal = join(cwd, ENV_FILE_CANDIDATES[0]);
+  const devLocal = join(cwd, DEV_LOCAL_ENV_FILE);
   if (await Bun.file(devLocal).exists()) return devLocal;
 
-  const preferred = join(cwd, preferredFile);
-  if (await Bun.file(preferred).exists()) return preferred;
+  const fallback = join(cwd, fallbackFile);
+  if (await Bun.file(fallback).exists()) return fallback;
 
-  // Backwards compat: if the non-preferred file already has Clerk keys,
+  // Backwards compat: if the non-fallback file already has Clerk keys,
   // keep writing there so we don't leave stale keys behind.
-  const other = preferredFile === ".env" ? ".env.local" : ".env";
-  const otherPath = join(cwd, other);
-  if (await hasClerkKeys(otherPath)) return otherPath;
+  const other = fallbackFile === ".env" ? ".env.local" : ".env";
+  if (await hasClerkKeys(join(cwd, other))) return join(cwd, other);
 
-  return preferred;
+  return fallback;
 }
 
 export async function pull(options: EnvPullOptions): Promise<void> {
