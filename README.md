@@ -32,6 +32,7 @@ Commands:
   whoami                                     Show the current logged-in user
   apps                                       Manage your Clerk applications
     list      [options]                      List your Clerk applications
+    create    [options] <name>               Create a new Clerk application
   config                                     Manage instance configuration
     pull      [options]                      Pull instance configuration from Clerk
     schema    [options]                      Pull instance config schema from Clerk
@@ -155,6 +156,12 @@ clerk api                Interactive request builder (TTY only)
 
 clerk apps list
   --json               Output as JSON
+
+clerk apps create <name>
+  --json               Output as JSON
+  Examples:
+    $ clerk apps create "My App"           Create a new application
+    $ clerk apps create "My App" --json    Output as JSON
 
 clerk doctor
   --verbose            Show detailed output for each check
