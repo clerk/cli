@@ -10,6 +10,10 @@ export const NEXT_STEPS = {
     "Run `clerk env pull` to fetch your environment variables",
     "Run `clerk doctor` to verify your setup",
   ],
+  CREATE: [
+    "Run `clerk link` to connect this app to your project",
+    "Run `clerk env pull` to fetch your environment variables",
+  ],
   DEPLOY: [
     "Run `clerk env pull --instance prod` to fetch production keys",
     "Run `clerk doctor` to verify your setup",

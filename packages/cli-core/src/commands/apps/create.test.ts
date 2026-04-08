@@ -100,6 +100,14 @@ describe("apps create", () => {
       expect(output).not.toContain("sk_test_xxx");
       expect(output).not.toContain("sk_live_xxx");
     });
+
+    test("shows next steps on stderr", async () => {
+      await create("My SaaS App");
+
+      const output = capturedOutput(errorSpy);
+      expect(output).toContain("clerk link");
+      expect(output).toContain("clerk env pull");
+    });
   });
 
   describe("JSON output", () => {
@@ -121,6 +129,16 @@ describe("apps create", () => {
       const output = capturedOutput(logSpy);
       const parsed = JSON.parse(output);
       expect(parsed.application_id).toBe("app_abc123");
+    });
+
+    test("does not show next steps", async () => {
+      mockIsAgent.mockReturnValue(true);
+
+      await create("My SaaS App");
+
+      const output = capturedOutput(errorSpy);
+      expect(output).not.toContain("clerk link");
+      expect(output).not.toContain("clerk env pull");
     });
 
     test("strips secret_key from JSON", async () => {
