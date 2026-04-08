@@ -1,23 +1,10 @@
 import { listApplications, type Application } from "../../lib/plapi.ts";
 import { withApiContext } from "../../lib/errors.ts";
-import { isAgent } from "../../mode.ts";
 import { dim, cyan } from "../../lib/color.ts";
 import { withSpinner } from "../../lib/spinner.ts";
-
-interface AppsListOptions {
-  json?: boolean;
-}
+import { stripSecrets, displayName, printJson, type AppsOptions } from "./shared.ts";
 
 const COLUMN_PADDING = 2;
-
-const displayName = (app: Application) => app.name ?? app.application_id;
-
-function stripSecrets(apps: Application[]) {
-  return apps.map(({ instances, ...app }) => ({
-    ...app,
-    instances: instances.map(({ secret_key: _, ...rest }) => rest),
-  }));
-}
 
 function formatAppsTable(apps: Application[]): void {
   const nameWidth =
@@ -36,15 +23,12 @@ function formatAppsTable(apps: Application[]): void {
   }
 }
 
-export async function list(options: AppsListOptions = {}): Promise<void> {
+export async function list(options: AppsOptions = {}): Promise<void> {
   const result = await withSpinner("Fetching applications...", () =>
     withApiContext(listApplications(), "Failed to list applications"),
   );
 
-  if (options.json || isAgent()) {
-    console.log(JSON.stringify(stripSecrets(result), null, 2));
-    return;
-  }
+  if (printJson(result.map(stripSecrets), options)) return;
 
   if (result.length === 0) {
     console.log("No applications found. Create one at https://dashboard.clerk.com");

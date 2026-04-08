@@ -12,7 +12,7 @@ import { configSchema } from "./commands/config/schema.ts";
 import { api } from "./commands/api/index.ts";
 import { link } from "./commands/link/index.ts";
 import { unlink } from "./commands/unlink/index.ts";
-import { list as appsList } from "./commands/apps/list.ts";
+import { apps as appsHandlers } from "./commands/apps/index.ts";
 import { doctor } from "./commands/doctor/index.ts";
 import { switchEnv } from "./commands/switch-env/index.ts";
 import { getEnvironment } from "./lib/config.ts";
@@ -170,7 +170,18 @@ export function createProgram() {
       { command: "clerk apps list", description: "List all applications" },
       { command: "clerk apps list --json", description: "Output as JSON" },
     ])
-    .action(appsList);
+    .action(appsHandlers.list);
+
+  apps
+    .command("create")
+    .description("Create a new Clerk application")
+    .argument("<name>", "Application name")
+    .option("--json", "Output as JSON")
+    .setExamples([
+      { command: 'clerk apps create "My App"', description: "Create a new application" },
+      { command: 'clerk apps create "My App" --json', description: "Output as JSON" },
+    ])
+    .action(appsHandlers.create);
 
   const env = program
     .command("env")
