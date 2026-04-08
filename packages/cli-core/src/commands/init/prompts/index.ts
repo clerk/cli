@@ -77,6 +77,10 @@ const FRAMEWORK_PROMPTS: Record<string, FrameworkPromptInfo> = {
   },
   astro: { template: "astro", docsUrl: "https://clerk.com/docs/astro/getting-started/quickstart" },
   vue: { template: "vue", docsUrl: "https://clerk.com/docs/vue/getting-started/quickstart" },
+  vite: {
+    template: "generic-fallback",
+    docsUrl: "https://clerk.com/docs/js-frontend/getting-started/quickstart",
+  },
   expo: { template: "expo", docsUrl: "https://clerk.com/docs/expo/getting-started/quickstart" },
   express: {
     template: "express",

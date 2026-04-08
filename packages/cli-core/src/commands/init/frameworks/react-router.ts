@@ -396,7 +396,7 @@ export const reactRouter: FrameworkScaffold = {
 
     if (!rootAction) {
       postInstructions.push(
-        "Add ClerkProvider, clerkMiddleware(), and rootAuthLoader() to your app/root.tsx. See: https://clerk.com/docs/quickstarts/react-router",
+        "Add ClerkProvider, clerkMiddleware(), and rootAuthLoader() to your app/root.tsx. See: https://clerk.com/docs/react-router/getting-started/quickstart",
       );
     }
 

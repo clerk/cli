@@ -82,6 +82,7 @@ export function createProgram() {
       ),
     )
     .option("--prompt", "Output a prompt for an AI agent to integrate Clerk")
+    .option("--starter", "Create a new project from a starter template")
     .option("-y, --yes", "Skip confirmation prompts")
     .option("--no-skills", "Skip the optional agent skills install prompt")
     .setExamples([
@@ -90,6 +91,7 @@ export function createProgram() {
         command: "clerk init --framework next",
         description: "Set up for Next.js (skips detection)",
       },
+      { command: "clerk init --starter", description: "Create a new project with Clerk" },
       { command: "clerk init --prompt", description: "Output a setup prompt for an AI agent" },
       { command: "clerk init -y", description: "Skip all confirmation prompts" },
       { command: "clerk init --no-skills", description: "Skip the agent skills install prompt" },

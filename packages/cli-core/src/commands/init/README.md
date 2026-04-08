@@ -7,6 +7,8 @@ Initializes Clerk in a project by authenticating the user, linking a Clerk appli
 ```sh
 clerk init
 clerk init --framework next
+clerk init --starter
+clerk init --starter --framework next
 clerk init --prompt
 clerk init -y
 clerk init --yes
@@ -15,12 +17,13 @@ clerk init --no-skills
 
 ## Options
 
-| Option               | Description                                                                                                                                                       |
-| -------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `--framework <name>` | Framework to set up (skips auto-detection). Valid values: `next`, `astro`, `nuxt`, `tanstack-start`, `react-router`, `vue`, `expo`, `react`, `express`, `fastify` |
-| `--prompt`           | Output a prompt for an AI agent to integrate Clerk, then exit                                                                                                     |
-| `-y, --yes`          | Skip confirmation prompts                                                                                                                                         |
-| `--no-skills`        | Skip the optional agent skills install prompt at the end of init                                                                                                  |
+| Option               | Description                                                                                                                                                                           |
+| -------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `--framework <name>` | Framework to set up (skips auto-detection). Valid values: `next`, `astro`, `nuxt`, `tanstack-start`, `react-router`, `vue`, `expo`, `react`, `javascript`, `js`, `express`, `fastify` |
+| `--starter`          | Bootstrap a new project from a starter template (runs the framework generator, installs deps, and scaffolds Clerk)                                                                    |
+| `--prompt`           | Output a prompt for an AI agent to integrate Clerk, then exit                                                                                                                         |
+| `-y, --yes`          | Skip confirmation prompts (also skips authentication after bootstrap, letting you connect your account later)                                                                         |
+| `--no-skills`        | Skip the optional agent skills install prompt at the end of init                                                                                                                      |
 
 ## Agent Mode
 
@@ -34,7 +37,7 @@ When running in agent mode (`--mode agent` or non-TTY), outputs a framework-spec
    - If already authenticated and linked: uses authenticated mode automatically
    - If authenticated but not linked: uses authenticated mode (runs `clerk link`)
    - If not authenticated: asks user — "Continue with temporary keys (connect your account later)" or "Log in to an existing Clerk account"
-   - With `--yes` and not authenticated: defaults to keyless mode
+   - With `--yes` and not authenticated: skips authentication (connect your account later)
 4. **Authenticated mode only**: authenticates via `clerk auth login` (skipped if already authenticated) and links the project via `clerk link` (skipped if already linked)
 5. Displays detected framework and variant
 6. Detects existing auth libraries (NextAuth, Auth0, Supabase, Firebase, Passport, Better Auth, Kinde) and shows migration guidance
@@ -47,7 +50,7 @@ When running in agent mode (`--mode agent` or non-TTY), outputs a framework-spec
 13. Scans for issues: hardcoded keys, leftover auth-library imports, stale API calls
 14. Prints a summary of created, modified, and skipped files with recommendations
 15. **Authenticated mode**: pulls development instance API keys via `clerk env pull`
-16. **Keyless mode**: prints instructions for keyless development and how to connect a Clerk account later
+16. **Unauthenticated mode**: prints instructions for development without API keys and how to connect a Clerk account later
 17. Optionally installs framework-specific Clerk agent skills via `npx skills add` (see [Agent skills install](#agent-skills-install))
 
 ## Framework Detection
@@ -64,6 +67,7 @@ Detects the project's framework from `package.json` dependencies (checked top-to
 | `vue`                   | Vue            | `@clerk/vue`                  | `VITE_CLERK_PUBLISHABLE_KEY`        |
 | `expo`                  | Expo           | `@clerk/expo`                 | `EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY` |
 | `react`                 | React          | `@clerk/react`                | `VITE_CLERK_PUBLISHABLE_KEY`        |
+| `vite`                  | JavaScript     | `@clerk/clerk-js`             | `VITE_CLERK_PUBLISHABLE_KEY`        |
 | `express`               | Express        | `@clerk/express`              | `CLERK_PUBLISHABLE_KEY`             |
 | `fastify`               | Fastify        | `@clerk/fastify`              | `CLERK_PUBLISHABLE_KEY`             |
 
@@ -71,7 +75,7 @@ Package manager is detected from lock files: `bun.lockb`/`bun.lock` → bun, `ya
 
 ## Scaffolding
 
-Scaffolding is supported for the first 8 frameworks above. Expo, Express, and Fastify are detected (SDK is installed, env vars are pulled) but scaffolding is not yet supported — users are directed to the Clerk docs.
+Scaffolding is supported for the first 9 frameworks above (through JavaScript/Vite). Expo, Express, and Fastify are detected (SDK is installed, env vars are pulled) but scaffolding is not yet supported — users are directed to the Clerk docs.
 
 All scaffolding is idempotent — files are skipped if they already contain Clerk setup.
 
@@ -150,6 +154,14 @@ Nuxt's module system auto-configures middleware and auto-imports components.
 | CREATE        | `src/views/sign-up.vue` | Sign-up page with `<SignUp />` component           |
 | MODIFY        | `src/router/index.ts`   | Add sign-in and sign-up routes (if router exists)  |
 | MODIFY        | `.env`                  | Add sign-in/sign-up route env vars (VITE\_ prefix) |
+
+### JavaScript (Vite)
+
+| Action | File             | Description                                     |
+| ------ | ---------------- | ----------------------------------------------- |
+| MODIFY | `src/main.ts/js` | Replace entry file with Clerk JS initialization |
+
+If no entry file is found, a post-instruction is printed pointing to the Clerk JS quickstart.
 
 ## Agent skills install
 

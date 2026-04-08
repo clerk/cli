@@ -2,6 +2,7 @@ import { join } from "node:path";
 import {
   authFileSpecs,
   hasTailwindStyles,
+  injectHeaderInProvider,
   jsxAuthPageContent,
   jsxExt,
   safeAddImport,
@@ -46,12 +47,22 @@ async function scaffoldLayout(ctx: ProjectContext): Promise<FileAction> {
     newContent = wrapBodyWithProvider(newContent, "ClerkProvider");
   }
 
+  if (ctx.isBootstrap && hasBody) {
+    newContent = safeAddImport(newContent, "@clerk/nextjs", "Show");
+    newContent = safeAddImport(newContent, "@clerk/nextjs", "SignInButton");
+    newContent = safeAddImport(newContent, "@clerk/nextjs", "SignUpButton");
+    newContent = safeAddImport(newContent, "@clerk/nextjs", "UserButton");
+    newContent = injectHeaderInProvider(newContent, hasTailwindStyles(ctx));
+  }
+
   return {
     path: ctx.layoutPath,
     type: "modify",
     content: newContent,
     description: hasBody
-      ? "Add ClerkProvider import and wrap body contents"
+      ? ctx.isBootstrap
+        ? "Add ClerkProvider, wrap body contents, and add auth header"
+        : "Add ClerkProvider import and wrap body contents"
       : "Add ClerkProvider import (manual wrapping needed)",
   };
 }
