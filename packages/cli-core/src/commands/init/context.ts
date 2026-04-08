@@ -2,6 +2,7 @@ import { join } from "node:path";
 import { stat } from "node:fs/promises";
 import { detectFramework, readDeps } from "../../lib/framework.js";
 import type { FrameworkInfo } from "../../lib/framework.js";
+import { findExistingEnvFile } from "../../lib/dotenv.js";
 import type { ProjectContext } from "./frameworks/types.js";
 
 export async function fileExists(path: string): Promise<boolean> {
@@ -65,7 +66,7 @@ export async function gatherContext(
   const deps = await readDeps(cwd);
   const existingClerk = deps ? framework.sdk in deps : false;
 
-  const envFile = (await fileExists(join(cwd, ".env.local"))) ? ".env.local" : ".env";
+  const envFile = await findExistingEnvFile(cwd, framework.envFile);
 
   return {
     cwd,

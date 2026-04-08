@@ -11,6 +11,8 @@ import { CliError, ERROR_CODE, withApiContext } from "../../lib/errors.ts";
 import { withSpinner } from "../../lib/spinner.ts";
 import { dim } from "../../lib/color.ts";
 
+const DEV_LOCAL_ENV_FILE = ".env.development.local";
+
 interface EnvPullOptions {
   app?: string;
   instance?: string;
@@ -28,20 +30,22 @@ async function hasClerkKeys(path: string): Promise<boolean> {
 async function resolveTargetFile(
   cwd: string,
   flag?: string,
-  preferredFile: string = ".env.local",
+  fallbackFile: string = ".env.local",
 ): Promise<string> {
   if (flag) return join(cwd, flag);
 
-  const preferred = join(cwd, preferredFile);
-  if (await Bun.file(preferred).exists()) return preferred;
+  const devLocal = join(cwd, DEV_LOCAL_ENV_FILE);
+  if (await Bun.file(devLocal).exists()) return devLocal;
 
-  // Backwards compat: if the non-preferred file already has Clerk keys,
+  const fallback = join(cwd, fallbackFile);
+  if (await Bun.file(fallback).exists()) return fallback;
+
+  // Backwards compat: if the non-fallback file already has Clerk keys,
   // keep writing there so we don't leave stale keys behind.
-  const other = preferredFile === ".env" ? ".env.local" : ".env";
-  const otherPath = join(cwd, other);
-  if (await hasClerkKeys(otherPath)) return otherPath;
+  const other = fallbackFile === ".env" ? ".env.local" : ".env";
+  if (await hasClerkKeys(join(cwd, other))) return join(cwd, other);
 
-  return preferred;
+  return fallback;
 }
 
 export async function pull(options: EnvPullOptions): Promise<void> {

@@ -245,4 +245,35 @@ describe("init", () => {
     expect(heuristics.printKeylessInfo).not.toHaveBeenCalled();
     expect(skillsMod.installSkills).not.toHaveBeenCalled();
   });
+
+  test("pulls env to ctx.envFile when authenticated and framework detected", async () => {
+    const { gatherContextSpy } = setup({ email: "test@test.com" });
+
+    const mockCtx = {
+      cwd: process.cwd(),
+      framework: {
+        dep: "next",
+        name: "Next.js",
+        sdk: "@clerk/nextjs",
+        envVar: "NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY",
+        envFile: ".env" as const,
+      },
+      typescript: true,
+      srcDir: false,
+      packageManager: "npm" as const,
+      existingClerk: false,
+      deps: { next: "15.0.0" },
+      envFile: ".env",
+    };
+
+    gatherContextSpy.mockResolvedValue(mockCtx);
+    spyOn(scaffoldMod, "scaffold").mockResolvedValue({
+      actions: [{ type: "write", path: "app/layout.tsx", content: "" }],
+      postInstructions: [],
+    });
+
+    await init({ yes: true });
+
+    expect(pullMod.pull).toHaveBeenCalledWith({ file: ".env" });
+  });
 });
