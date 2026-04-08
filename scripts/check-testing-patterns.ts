@@ -34,9 +34,6 @@ interface Violation {
 const COMMANDS_GLOB = "packages/cli-core/src/commands/**/*.test.ts";
 
 const MOCK_MODULE_ALLOWLIST = new Set<string>([
-  // api subcommands mock @inquirer/prompts directly (not yet in deps.prompts).
-  "packages/cli-core/src/commands/api/index.test.ts",
-  "packages/cli-core/src/commands/api/interactive.test.ts",
   // link helpers mock lib/autolink.ts (not in the deps registry per spec).
   "packages/cli-core/src/commands/link/index.test.ts",
   "packages/cli-core/src/commands/link/helpers/link-if-needed.test.ts",

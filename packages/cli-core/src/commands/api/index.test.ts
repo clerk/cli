@@ -1,12 +1,8 @@
-import { test, expect, describe, beforeEach, afterEach, spyOn, mock } from "bun:test";
+import { test, expect, describe, beforeEach, afterEach, spyOn } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { promptsStubs, stubFetch } from "../../test/lib/stubs.ts";
-
-// `@inquirer/prompts` is not part of the deps registry yet; ported commands
-// still import it directly. Stub it here so interactive confirms don't hang.
-mock.module("@inquirer/prompts", () => promptsStubs);
+import { stubFetch } from "../../test/lib/stubs.ts";
 
 import { api } from "./index.ts";
 import { bapiRequest } from "./bapi.ts";

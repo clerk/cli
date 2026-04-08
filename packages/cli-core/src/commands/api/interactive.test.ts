@@ -1,8 +1,8 @@
-import { test, expect, describe, beforeEach, afterEach, spyOn, mock } from "bun:test";
+import { test, expect, describe, beforeEach, afterEach, spyOn } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { promptsStubs, stubFetch } from "../../test/lib/stubs.ts";
+import { stubFetch } from "../../test/lib/stubs.ts";
 import { parseSpec, _setCacheDir } from "./catalog.ts";
 import { bapiRequest } from "./bapi.ts";
 import { validateKeyPrefix } from "../../lib/plapi.ts";
@@ -45,16 +45,10 @@ paths:
 let selectResponses: unknown[] = [];
 let inputResponses: string[] = [];
 let confirmResponses: boolean[] = [];
+let editorResponses: string[] = [];
 
 // Track fetch calls made by the real api handler
 let fetchCalls: { url: string; method: string }[] = [];
-
-mock.module("@inquirer/prompts", () => ({
-  ...promptsStubs,
-  select: async () => selectResponses.shift(),
-  input: async () => inputResponses.shift(),
-  confirm: async () => confirmResponses.shift(),
-}));
 
 function buildDeps(opts: { isHuman: boolean }) {
   return testRoot({
@@ -70,6 +64,12 @@ function buildDeps(opts: { isHuman: boolean }) {
     },
     env: {
       get: (name: string) => process.env[name],
+    },
+    prompts: {
+      select: async () => selectResponses.shift() as never,
+      input: async () => inputResponses.shift() as never,
+      confirm: async () => confirmResponses.shift() as never,
+      editor: async () => (editorResponses.shift() ?? "{}") as never,
     },
   });
 }
@@ -116,6 +116,7 @@ describe("apiInteractive", () => {
     selectResponses = [];
     inputResponses = [];
     confirmResponses = [];
+    editorResponses = [];
     fetchCalls = [];
   });
 
