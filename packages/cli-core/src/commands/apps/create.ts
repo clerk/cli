@@ -1,19 +1,37 @@
-import { createApplication, fetchApplication } from "../../lib/plapi.ts";
+import type { Need } from "../../lib/deps.ts";
 import { withApiContext } from "../../lib/errors.ts";
 import { dim, cyan } from "../../lib/color.ts";
-import { withSpinner } from "../../lib/spinner.ts";
 import { printNextSteps, NEXT_STEPS } from "../../lib/next-steps.ts";
-import { stripSecrets, displayName, printJson, type AppsOptions } from "./shared.ts";
-import { log } from "../../lib/log.ts";
+import { stripSecrets, displayName, type AppsOptions } from "./shared.ts";
 
-export async function create(name: string, options: AppsOptions = {}): Promise<void> {
-  const app = await withSpinner("Creating application...", async () => {
-    const created = await withApiContext(createApplication(name), "Failed to create application");
-    return withApiContext(fetchApplication(created.application_id), "Failed to fetch application");
+export type AppsCreateDeps = Need<{
+  plapi: "createApplication" | "fetchApplication";
+  mode: "isAgent";
+  spinner: "withSpinner";
+  log: "info" | "success" | "data";
+}>;
+
+export async function create(
+  deps: AppsCreateDeps,
+  name: string,
+  options: AppsOptions = {},
+): Promise<void> {
+  const app = await deps.spinner.withSpinner("Creating application...", async () => {
+    const created = await withApiContext(
+      deps.plapi.createApplication(name),
+      "Failed to create application",
+    );
+    return withApiContext(
+      deps.plapi.fetchApplication(created.application_id),
+      "Failed to fetch application",
+    );
   });
 
-  if (printJson(stripSecrets(app), options)) return;
+  if (options.json || deps.mode.isAgent()) {
+    deps.log.data(JSON.stringify(stripSecrets(app), null, 2));
+    return;
+  }
 
-  log.info(`Created ${cyan(displayName(app))} ${dim(app.application_id)}`);
+  deps.log.success(`Created ${cyan(displayName(app))} ${dim(app.application_id)}`);
   printNextSteps(NEXT_STEPS.CREATE);
 }

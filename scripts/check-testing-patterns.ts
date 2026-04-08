@@ -40,9 +40,6 @@ const MOCK_MODULE_ALLOWLIST = new Set<string>([
   // link helpers mock lib/autolink.ts (not in the deps registry per spec).
   "packages/cli-core/src/commands/link/index.test.ts",
   "packages/cli-core/src/commands/link/helpers/link-if-needed.test.ts",
-  // apps/create was added on main after this DI stack branched. Not yet
-  // ported to the (deps, opts) signature; still mocks lib/plapi.ts directly.
-  "packages/cli-core/src/commands/apps/create.test.ts",
 ]);
 
 const TEST_ROOT_EXEMPT = new Set<string>([
@@ -51,9 +48,6 @@ const TEST_ROOT_EXEMPT = new Set<string>([
   "packages/cli-core/src/commands/api/bapi.test.ts",
   "packages/cli-core/src/commands/doctor/helpers/context.test.ts",
   "packages/cli-core/src/commands/init/scan.test.ts",
-  // apps/create is not yet ported to the DI (deps, opts) signature, so its
-  // test file does not import testRoot. See MOCK_MODULE_ALLOWLIST entry.
-  "packages/cli-core/src/commands/apps/create.test.ts",
   // installSkills's unit test exercises buildSkillsArgs and SpawnFn stubbing
   // without needing testRoot; the command-level integration happens through
   // init/index.test.ts which does use testRoot.

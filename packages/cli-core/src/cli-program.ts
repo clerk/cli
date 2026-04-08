@@ -188,7 +188,7 @@ export function createProgram(root: Root) {
       { command: 'clerk apps create "My App"', description: "Create a new application" },
       { command: 'clerk apps create "My App" --json', description: "Output as JSON" },
     ])
-    .action((name, opts) => appsHandlers.create(name, opts));
+    .action((name, opts) => appsHandlers.create(root, name, opts));
 
   const env = program
     .command("env")

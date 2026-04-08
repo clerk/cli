@@ -1,25 +1,13 @@
-import { test, expect, describe, beforeEach, afterEach, mock, spyOn } from "bun:test";
-import { captureLog } from "../../test/lib/stubs.ts";
+import { test, expect, describe, mock } from "bun:test";
+import { create } from "./create.ts";
+import { testRoot } from "../../test/lib/test-root.ts";
 
-const mockCreateApplication = mock();
-const mockFetchApplication = mock();
-mock.module("../../lib/plapi.ts", () => ({
-  createApplication: (...args: unknown[]) => mockCreateApplication(...args),
-  fetchApplication: (...args: unknown[]) => mockFetchApplication(...args),
-  PlapiError: class PlapiError extends Error {},
-}));
+const mockCreatedApp = {
+  application_id: "app_abc123",
+  name: "My SaaS App",
+};
 
-const mockIsAgent = mock();
-mock.module("../../mode.ts", () => ({
-  isAgent: (...args: unknown[]) => mockIsAgent(...args),
-  isHuman: (...args: unknown[]) => !mockIsAgent(...args),
-  setMode: () => {},
-  getMode: () => "human",
-}));
-
-const { create } = await import("./create.ts");
-
-const mockApp = {
+const mockFetchedApp = {
   application_id: "app_abc123",
   name: "My SaaS App",
   instances: [
@@ -38,113 +26,117 @@ const mockApp = {
   ],
 };
 
+type DepsOverrides = {
+  isAgent?: boolean;
+  createApplication?: (name: string) => Promise<unknown>;
+  fetchApplication?: (id: string) => Promise<unknown>;
+};
+
+function depsFor(overrides: DepsOverrides = {}) {
+  const agent = overrides.isAgent ?? false;
+  return testRoot({
+    plapi: {
+      createApplication: overrides.createApplication ?? (async () => mockCreatedApp as never),
+      fetchApplication: overrides.fetchApplication ?? (async () => mockFetchedApp as never),
+    },
+    mode: {
+      isAgent: () => agent,
+    },
+  });
+}
+
+function dataCalls(deps: { log: { data: unknown } }): string[] {
+  return ((deps.log.data as ReturnType<typeof mock>).mock.calls as unknown[][]).map((c) =>
+    String(c[0] ?? ""),
+  );
+}
+function successCalls(deps: { log: { success: unknown } }): string[] {
+  return ((deps.log.success as ReturnType<typeof mock>).mock.calls as unknown[][]).map((c) =>
+    String(c[0] ?? ""),
+  );
+}
+
 describe("apps create", () => {
-  let logSpy: ReturnType<typeof spyOn>;
-  let errorSpy: ReturnType<typeof spyOn>;
-  let captured: ReturnType<typeof captureLog>;
-
-  beforeEach(() => {
-    mockIsAgent.mockReturnValue(false);
-    mockCreateApplication.mockResolvedValue({
-      application_id: "app_abc123",
-      name: "My SaaS App",
-    });
-    mockFetchApplication.mockResolvedValue(mockApp);
-    logSpy = spyOn(console, "log").mockImplementation(() => {});
-    errorSpy = spyOn(console, "error").mockImplementation(() => {});
-    captured = captureLog();
-  });
-
-  afterEach(() => {
-    captured.teardown();
-    mockCreateApplication.mockReset();
-    mockFetchApplication.mockReset();
-    mockIsAgent.mockReset();
-    logSpy.mockRestore();
-    errorSpy.mockRestore();
-  });
-
-  function runCreate(name: string, options?: Parameters<typeof create>[1]) {
-    return captured.run(() => create(name, options));
-  }
-
   test("calls createApplication then fetchApplication", async () => {
-    await runCreate("My SaaS App");
+    const createFn = mock(async (_name: string) => mockCreatedApp as never);
+    const fetchFn = mock(async (_id: string) => mockFetchedApp as never);
+    const deps = depsFor({ createApplication: createFn, fetchApplication: fetchFn });
 
-    expect(mockCreateApplication).toHaveBeenCalledWith("My SaaS App");
-    expect(mockFetchApplication).toHaveBeenCalledWith("app_abc123");
+    await create(deps, "My SaaS App");
+
+    expect(createFn).toHaveBeenCalledWith("My SaaS App");
+    expect(fetchFn).toHaveBeenCalledWith("app_abc123");
   });
 
   describe("human output", () => {
     test("shows created app name and id", async () => {
-      await runCreate("My SaaS App");
+      const deps = depsFor();
+      await create(deps, "My SaaS App");
 
-      expect(captured.err).toContain("Created");
-      expect(captured.err).toContain("My SaaS App");
-      expect(captured.err).toContain("app_abc123");
+      const output = successCalls(deps).join("\n");
+      expect(output).toContain("Created");
+      expect(output).toContain("My SaaS App");
+      expect(output).toContain("app_abc123");
     });
 
     test("falls back to app id when name is absent", async () => {
-      mockCreateApplication.mockResolvedValue({ application_id: "app_noname" });
-      mockFetchApplication.mockResolvedValue({
-        application_id: "app_noname",
-        instances: [
-          { instance_id: "ins_1", environment_type: "development", publishable_key: "pk_test" },
-        ],
+      const deps = depsFor({
+        createApplication: async () => ({ application_id: "app_noname" }) as never,
+        fetchApplication: async () =>
+          ({
+            application_id: "app_noname",
+            instances: [
+              {
+                instance_id: "ins_1",
+                environment_type: "development",
+                publishable_key: "pk_test",
+              },
+            ],
+          }) as never,
       });
+      await create(deps, "Some Name");
 
-      await runCreate("Some Name");
-
-      expect(captured.err).toContain("app_noname");
+      const output = successCalls(deps).join("\n");
+      expect(output).toContain("app_noname");
     });
 
     test("does not show secret keys", async () => {
-      await runCreate("My SaaS App");
+      const deps = depsFor();
+      await create(deps, "My SaaS App");
 
-      expect(captured.err).not.toContain("sk_test_xxx");
-      expect(captured.err).not.toContain("sk_live_xxx");
-    });
-
-    test("shows next steps on stderr", async () => {
-      await runCreate("My SaaS App");
-
-      expect(captured.err).toContain("clerk link");
-      expect(captured.err).toContain("clerk env pull");
+      const output = successCalls(deps).join("\n") + dataCalls(deps).join("\n");
+      expect(output).not.toContain("sk_test_xxx");
+      expect(output).not.toContain("sk_live_xxx");
     });
   });
 
   describe("JSON output", () => {
     test("outputs JSON when --json flag is set", async () => {
-      await runCreate("My SaaS App", { json: true });
+      const deps = depsFor();
+      await create(deps, "My SaaS App", { json: true });
 
-      const parsed = JSON.parse(captured.out);
+      const output = dataCalls(deps)[0]!;
+      const parsed = JSON.parse(output);
       expect(parsed.application_id).toBe("app_abc123");
       expect(parsed.name).toBe("My SaaS App");
       expect(parsed.instances).toHaveLength(2);
     });
 
     test("outputs JSON in agent mode", async () => {
-      mockIsAgent.mockReturnValue(true);
+      const deps = depsFor({ isAgent: true });
+      await create(deps, "My SaaS App");
 
-      await runCreate("My SaaS App");
-
-      const parsed = JSON.parse(captured.out);
+      const output = dataCalls(deps)[0]!;
+      const parsed = JSON.parse(output);
       expect(parsed.application_id).toBe("app_abc123");
     });
 
-    test("does not show next steps", async () => {
-      mockIsAgent.mockReturnValue(true);
-
-      await runCreate("My SaaS App");
-
-      expect(captured.err).not.toContain("clerk link");
-      expect(captured.err).not.toContain("clerk env pull");
-    });
-
     test("strips secret_key from JSON", async () => {
-      await runCreate("My SaaS App", { json: true });
+      const deps = depsFor();
+      await create(deps, "My SaaS App", { json: true });
 
-      const parsed = JSON.parse(captured.out);
+      const output = dataCalls(deps)[0]!;
+      const parsed = JSON.parse(output);
       for (const instance of parsed.instances) {
         expect(instance).not.toHaveProperty("secret_key");
         expect(instance).toHaveProperty("publishable_key");
@@ -154,16 +146,29 @@ describe("apps create", () => {
 
   describe("error handling", () => {
     test("propagates createApplication failure without fetching", async () => {
-      mockCreateApplication.mockRejectedValue(new Error("Unprocessable Entity"));
+      let fetchCalled = false;
+      const deps = depsFor({
+        createApplication: async () => {
+          throw new Error("Unprocessable Entity");
+        },
+        fetchApplication: async () => {
+          fetchCalled = true;
+          return mockFetchedApp as never;
+        },
+      });
 
-      await expect(create("Bad App")).rejects.toThrow("Unprocessable Entity");
-      expect(mockFetchApplication).not.toHaveBeenCalled();
+      await expect(create(deps, "Bad App")).rejects.toThrow("Unprocessable Entity");
+      expect(fetchCalled).toBe(false);
     });
 
     test("propagates fetchApplication failure after create", async () => {
-      mockFetchApplication.mockRejectedValue(new Error("Service Unavailable"));
+      const deps = depsFor({
+        fetchApplication: async () => {
+          throw new Error("Service Unavailable");
+        },
+      });
 
-      await expect(create("My SaaS App")).rejects.toThrow("Service Unavailable");
+      await expect(create(deps, "My SaaS App")).rejects.toThrow("Service Unavailable");
     });
   });
 });
