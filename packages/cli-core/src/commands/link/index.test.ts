@@ -7,6 +7,7 @@ import {
   gitStubs,
   promptsStubs,
 } from "../../test/lib/stubs.ts";
+import { PlapiError } from "../../lib/errors.ts";
 
 const mockIsAgent = mock();
 let _modeOverride: string | undefined;
@@ -34,9 +35,11 @@ mock.module("../auth/login.ts", () => ({
 
 const mockListApplications = mock();
 const mockFetchApplication = mock();
+const mockCreateApplication = mock();
 mock.module("../../lib/plapi.ts", () => ({
   listApplications: (...args: unknown[]) => mockListApplications(...args),
   fetchApplication: (...args: unknown[]) => mockFetchApplication(...args),
+  createApplication: (...args: unknown[]) => mockCreateApplication(...args),
   PlapiError: class PlapiError extends Error {},
   fetchInstanceConfig: async () => ({}),
   putInstanceConfig: async () => ({}),
@@ -75,10 +78,12 @@ mock.module("../../lib/git.ts", () => ({
 
 const mockSearch = mock();
 const mockConfirm = mock();
+const mockInput = mock();
 mock.module("@inquirer/prompts", () => ({
   ...promptsStubs,
   search: (...args: unknown[]) => mockSearch(...args),
   confirm: (...args: unknown[]) => mockConfirm(...args),
+  input: (...args: unknown[]) => mockInput(...args),
 }));
 
 mock.module("../../lib/spinner.ts", () => ({
@@ -118,6 +123,7 @@ describe("link", () => {
     mockLogin.mockReset();
     mockListApplications.mockReset();
     mockFetchApplication.mockReset();
+    mockCreateApplication.mockReset();
     mockSetProfile.mockReset();
     mockResolveProfile.mockReset();
     mockResolveProfile.mockResolvedValue(undefined);
@@ -136,6 +142,7 @@ describe("link", () => {
     mockGetGitNormalizedRemote.mockResolvedValue("github.com/org/repo");
     mockSearch.mockReset();
     mockConfirm.mockReset();
+    mockInput.mockReset();
     consoleSpy?.mockRestore();
   });
 
@@ -160,6 +167,17 @@ describe("link", () => {
       expect(mockSearch).not.toHaveBeenCalled();
       expect(mockGetToken).not.toHaveBeenCalled();
       expect(mockListApplications).not.toHaveBeenCalled();
+    });
+
+    test("prompt covers the create-app path", async () => {
+      mockIsAgent.mockReturnValue(true);
+      consoleSpy = spyOn(console, "log").mockImplementation(() => {});
+
+      await link();
+
+      const output = consoleSpy.mock.calls[0][0] as string;
+      expect(output).toContain("no applications exist");
+      expect(output).toContain("POST /v1/platform/applications");
     });
   });
 
@@ -279,7 +297,7 @@ describe("link", () => {
       expect(mockFetchApplication).not.toHaveBeenCalled();
     });
 
-    test("source returns all choices when term is empty", async () => {
+    test("source returns all choices plus create option when term is empty", async () => {
       mockIsAgent.mockReturnValue(false);
       mockGetToken.mockResolvedValue("token");
       mockListApplications.mockResolvedValue([
@@ -301,7 +319,7 @@ describe("link", () => {
       mockSearch.mockImplementation(
         async (config: { source: (term: string | undefined) => unknown[] }) => {
           const results = config.source(undefined);
-          expect(results).toHaveLength(2);
+          expect(results).toHaveLength(3); // 2 apps + create option
           return "app_a";
         },
       );
@@ -310,7 +328,7 @@ describe("link", () => {
       await link();
     });
 
-    test("source filters choices by name substring (case-insensitive)", async () => {
+    test("source filters choices by name substring (case-insensitive), keeps create option", async () => {
       mockIsAgent.mockReturnValue(false);
       mockGetToken.mockResolvedValue("token");
       mockListApplications.mockResolvedValue([
@@ -334,11 +352,13 @@ describe("link", () => {
           source: (term: string | undefined) => { name: string; value: string }[];
         }) => {
           const results = config.source("my");
-          expect(results).toHaveLength(1);
+          expect(results).toHaveLength(2); // 1 match + create option
           expect(results[0]!.value).toBe("app_a");
+          expect(results[1]!.value).toBe("__create_new__");
 
           const noMatch = config.source("zzz");
-          expect(noMatch).toHaveLength(0);
+          expect(noMatch).toHaveLength(1); // only create option
+          expect(noMatch[0]!.value).toBe("__create_new__");
 
           return "app_a";
         },
@@ -371,8 +391,9 @@ describe("link", () => {
           source: (term: string | undefined) => { name: string; value: string }[];
         }) => {
           const results = config.source("abc");
-          expect(results).toHaveLength(1);
+          expect(results).toHaveLength(2); // 1 match + create option
           expect(results[0]!.value).toBe("app_abc");
+          expect(results[1]!.value).toBe("__create_new__");
           return "app_abc";
         },
       );
@@ -381,12 +402,83 @@ describe("link", () => {
       await link();
     });
 
-    test("exits when no apps found", async () => {
+    test("shows picker with create option when no apps found", async () => {
       mockIsAgent.mockReturnValue(false);
       mockGetToken.mockResolvedValue("token");
       mockListApplications.mockResolvedValue([]);
+      mockSearch.mockImplementation(
+        async (config: {
+          source: (term: string | undefined) => { name: string; value: string }[];
+        }) => {
+          const results = config.source(undefined);
+          expect(results).toHaveLength(1);
+          expect(results[0]!.value).toBe("__create_new__");
+          return "__create_new__";
+        },
+      );
+      mockInput.mockResolvedValue("New App");
+      mockCreateApplication.mockResolvedValue({
+        application_id: "app_created",
+        name: "New App",
+        instances: [],
+      });
+      mockFetchApplication.mockResolvedValue({
+        application_id: "app_created",
+        name: "New App",
+        instances: [
+          { instance_id: "ins_dev", environment_type: "development", publishable_key: "pk_test" },
+        ],
+      });
+      consoleSpy = spyOn(console, "log").mockImplementation(() => {});
 
-      await expect(link()).rejects.toThrow("No applications found");
+      await link();
+
+      expect(mockCreateApplication).toHaveBeenCalledWith("New App");
+      expect(mockFetchApplication).toHaveBeenCalledWith("app_created");
+      expect(mockSetProfile).toHaveBeenCalled();
+    });
+
+    test("shows picker with only create option when listApplications fails with 500", async () => {
+      mockIsAgent.mockReturnValue(false);
+      mockGetToken.mockResolvedValue("token");
+      mockListApplications.mockRejectedValue(new PlapiError(500, "Internal Server Error"));
+      mockSearch.mockImplementation(
+        async (config: {
+          source: (term: string | undefined) => { name: string; value: string }[];
+        }) => {
+          const results = config.source(undefined);
+          expect(results).toHaveLength(1);
+          expect(results[0]!.value).toBe("__create_new__");
+          return "__create_new__";
+        },
+      );
+      mockInput.mockResolvedValue("My App");
+      mockCreateApplication.mockResolvedValue({
+        application_id: "app_new",
+        name: "My App",
+        instances: [],
+      });
+      mockFetchApplication.mockResolvedValue({
+        application_id: "app_new",
+        name: "My App",
+        instances: [
+          { instance_id: "ins_dev", environment_type: "development", publishable_key: "pk_test" },
+        ],
+      });
+      consoleSpy = spyOn(console, "log").mockImplementation(() => {});
+
+      await link();
+
+      expect(mockCreateApplication).toHaveBeenCalledWith("My App");
+      expect(mockSetProfile).toHaveBeenCalled();
+    });
+
+    test("propagates listApplications errors that are not 5xx", async () => {
+      mockIsAgent.mockReturnValue(false);
+      mockGetToken.mockResolvedValue("token");
+      mockListApplications.mockRejectedValue(new PlapiError(401, "Unauthorized"));
+
+      await expect(link()).rejects.toBeInstanceOf(PlapiError);
     });
   });
 
@@ -904,6 +996,161 @@ describe("link", () => {
 
       expect(mockFindClerkKeys).not.toHaveBeenCalled();
       expect(mockSearch).toHaveBeenCalled();
+    });
+  });
+
+  describe("create app from picker", () => {
+    test("selecting create option prompts for name and creates app", async () => {
+      mockIsAgent.mockReturnValue(false);
+      mockGetToken.mockResolvedValue("token");
+      mockListApplications.mockResolvedValue([mockApp]);
+      mockSearch.mockResolvedValue("__create_new__");
+      mockInput.mockResolvedValue("Brand New App");
+      mockCreateApplication.mockResolvedValue({
+        application_id: "app_new",
+        name: "Brand New App",
+        instances: [],
+      });
+      mockFetchApplication.mockResolvedValue({
+        application_id: "app_new",
+        name: "Brand New App",
+        instances: [
+          {
+            instance_id: "ins_dev_new",
+            environment_type: "development",
+            publishable_key: "pk_test_new",
+          },
+        ],
+      });
+      consoleSpy = spyOn(console, "log").mockImplementation(() => {});
+
+      await link();
+
+      expect(mockInput).toHaveBeenCalledWith(
+        expect.objectContaining({ message: "Application name:", validate: expect.any(Function) }),
+      );
+      expect(mockCreateApplication).toHaveBeenCalledWith("Brand New App");
+      expect(mockFetchApplication).toHaveBeenCalledWith("app_new");
+      expect(mockSetProfile).toHaveBeenCalledWith(
+        "github.com/org/repo",
+        expect.objectContaining({ appId: "app_new", appName: "Brand New App" }),
+      );
+    });
+
+    test("trims whitespace from app name", async () => {
+      mockIsAgent.mockReturnValue(false);
+      mockGetToken.mockResolvedValue("token");
+      mockListApplications.mockResolvedValue([mockApp]);
+      mockSearch.mockResolvedValue("__create_new__");
+      mockInput.mockResolvedValue("  Spaced Name  ");
+      mockCreateApplication.mockResolvedValue({
+        application_id: "app_trimmed",
+        name: "Spaced Name",
+        instances: [],
+      });
+      mockFetchApplication.mockResolvedValue({
+        application_id: "app_trimmed",
+        name: "Spaced Name",
+        instances: [
+          { instance_id: "ins_dev", environment_type: "development", publishable_key: "pk_test" },
+        ],
+      });
+      consoleSpy = spyOn(console, "log").mockImplementation(() => {});
+
+      await link();
+
+      expect(mockCreateApplication).toHaveBeenCalledWith("Spaced Name");
+    });
+
+    test("validate callback rejects empty app name", async () => {
+      mockIsAgent.mockReturnValue(false);
+      mockGetToken.mockResolvedValue("token");
+      mockListApplications.mockResolvedValue([mockApp]);
+      mockSearch.mockResolvedValue("__create_new__");
+
+      let capturedValidate: ((v: string) => true | string) | undefined;
+      mockInput.mockImplementation(
+        async (config: { message: string; validate?: (v: string) => true | string }) => {
+          capturedValidate = config.validate;
+          return "Valid App";
+        },
+      );
+      mockCreateApplication.mockResolvedValue({
+        application_id: "app_v",
+        name: "Valid App",
+        instances: [],
+      });
+      mockFetchApplication.mockResolvedValue({
+        application_id: "app_v",
+        name: "Valid App",
+        instances: [
+          { instance_id: "ins_dev", environment_type: "development", publishable_key: "pk_test" },
+        ],
+      });
+      consoleSpy = spyOn(console, "log").mockImplementation(() => {});
+
+      await link();
+
+      expect(capturedValidate).toBeDefined();
+      expect(capturedValidate!("")).toBe("Application name cannot be empty");
+      expect(capturedValidate!("   ")).toBe("Application name cannot be empty");
+      expect(capturedValidate!("My App")).toBe(true);
+    });
+
+    test("propagates createApplication failure without linking", async () => {
+      mockIsAgent.mockReturnValue(false);
+      mockGetToken.mockResolvedValue("token");
+      mockListApplications.mockResolvedValue([mockApp]);
+      mockSearch.mockResolvedValue("__create_new__");
+      mockInput.mockResolvedValue("My App");
+      mockCreateApplication.mockRejectedValue(new PlapiError(422, "Unprocessable Entity"));
+
+      await expect(link()).rejects.toBeInstanceOf(PlapiError);
+      expect(mockSetProfile).not.toHaveBeenCalled();
+    });
+
+    test("propagates fetchApplication failure after create without linking", async () => {
+      mockIsAgent.mockReturnValue(false);
+      mockGetToken.mockResolvedValue("token");
+      mockListApplications.mockResolvedValue([mockApp]);
+      mockSearch.mockResolvedValue("__create_new__");
+      mockInput.mockResolvedValue("My App");
+      mockCreateApplication.mockResolvedValue({
+        application_id: "app_new",
+        name: "My App",
+        instances: [],
+      });
+      mockFetchApplication.mockRejectedValue(new PlapiError(503, "Service Unavailable"));
+
+      await expect(link()).rejects.toBeInstanceOf(PlapiError);
+      expect(mockSetProfile).not.toHaveBeenCalled();
+    });
+
+    test("logs creation message", async () => {
+      mockIsAgent.mockReturnValue(false);
+      mockGetToken.mockResolvedValue("token");
+      mockListApplications.mockResolvedValue([mockApp]);
+      mockSearch.mockResolvedValue("__create_new__");
+      mockInput.mockResolvedValue("Created App");
+      mockCreateApplication.mockResolvedValue({
+        application_id: "app_c",
+        name: "Created App",
+        instances: [],
+      });
+      mockFetchApplication.mockResolvedValue({
+        application_id: "app_c",
+        name: "Created App",
+        instances: [
+          { instance_id: "ins_dev", environment_type: "development", publishable_key: "pk_test" },
+        ],
+      });
+      consoleSpy = spyOn(console, "log").mockImplementation(() => {});
+
+      await link();
+
+      const output = capturedOutput(consoleSpy);
+      expect(output).toContain("Created");
+      expect(output).toContain("Created App");
     });
   });
 });

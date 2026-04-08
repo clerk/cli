@@ -150,9 +150,14 @@ export class ApiError extends Error {
  *
  * @param status - HTTP status code
  * @param body - Raw response body text
+ * @param url - The URL that was requested (shown in verbose mode)
  */
 export class PlapiError extends ApiError {
-  constructor(status: number, body: string) {
+  constructor(
+    status: number,
+    body: string,
+    public url?: string,
+  ) {
     super(status, body);
     this.name = "PlapiError";
   }

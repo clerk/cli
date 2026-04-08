@@ -40,13 +40,16 @@ export async function createTestUser(
 
   log(fixtureName, `creating test user: ${email}`);
 
-  const result = await Bun.$`bun ${CLI_PATH} api /users -X POST -d ${body}`
+  const result = await Bun.$`bun ${CLI_PATH} api /users -X POST -d ${body} --yes`
     .env(clerkEnv(configDir, secretKey))
     .quiet()
     .nothrow();
 
   if (result.exitCode !== 0) {
-    throw new Error(`Failed to create test user:\n${result.stderr.toString()}`);
+    const stdout = result.stdout.toString().trim();
+    const stderr = result.stderr.toString().trim();
+    const detail = stderr || stdout || "(no output)";
+    throw new Error(`Failed to create test user:\n${detail}`);
   }
 
   const user = JSON.parse(result.stdout.toString());
@@ -64,13 +67,16 @@ export async function deleteTestUser(
 ): Promise<void> {
   log(fixtureName, `deleting test user: ${userId}`);
 
-  const result = await Bun.$`bun ${CLI_PATH} api /users/${userId} -X DELETE`
+  const result = await Bun.$`bun ${CLI_PATH} api /users/${userId} -X DELETE --yes`
     .env(clerkEnv(configDir, secretKey))
     .quiet()
     .nothrow();
 
   if (result.exitCode !== 0) {
-    log(fixtureName, `warning: failed to delete test user ${userId}: ${result.stderr.toString()}`);
+    const stdout = result.stdout.toString().trim();
+    const stderr = result.stderr.toString().trim();
+    const detail = stderr || stdout || "(no output)";
+    log(fixtureName, `warning: failed to delete test user ${userId}: ${detail}`);
   } else {
     log(fixtureName, `test user deleted: ${userId}`);
   }

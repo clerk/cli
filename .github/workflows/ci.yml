@@ -96,6 +96,13 @@ jobs:
           key: bun-${{ runner.os }}-${{ hashFiles('bun.lock') }}
           restore-keys: bun-${{ runner.os }}-
       - run: bun install --frozen-lockfile
+
+      - name: Cleanup stale test users
+        run: bun scripts/cleanup-test-users.ts
+        env:
+          CLERK_CLI_TEST_APP_ID: ${{ secrets.CLERK_CLI_TEST_APP_ID }}
+          CLERK_PLATFORM_API_KEY: ${{ secrets.CLERK_PLATFORM_API_KEY }}
+
       - name: Run E2E tests
         run: bun run test:e2e
         env:
