@@ -8,8 +8,10 @@ alwaysApply: false
 All output goes through the `log` object from `src/lib/log.ts`. **Never use `console.log`, `console.error`, `console.warn`, `console.info`, or `process.stderr.write` directly** — use `log.*` methods so output respects log levels, throttling, and test capture.
 
 ```ts
-import { log } from "../../lib/log.ts";
+import { log } from "<relative-path>/lib/log.ts";
 ```
+
+Adjust the relative path to `lib/log.ts` based on the file's location under `packages/cli-core/src/`.
 
 ## Which method to use
 
@@ -19,7 +21,7 @@ import { log } from "../../lib/log.ts";
 | `log.info()`    | stderr     | Status messages                                 |
 | `log.success()` | stderr     | Completion confirmations (green)                |
 | `log.warn()`    | stderr     | Warnings (yellow)                               |
-| `log.error()`   | stderr     | Errors (red, auto-prefixed `error: `)           |
+| `log.error()`   | stderr     | Errors (red, auto-prefixed `error:`)            |
 | `log.debug()`   | stderr     | Diagnostic info, only with `--verbose`          |
 | `log.raw()`     | stderr     | Machine-readable JSON for agent mode            |
 | `log.blank()`   | stderr     | Blank line                                      |
