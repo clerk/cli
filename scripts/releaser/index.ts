@@ -74,7 +74,9 @@ async function generatePlatformPackage(target: Target, version: string): Promise
 }
 
 function publish(dir: string, dryRun: boolean, tag?: string): void {
-  const flags = ["npm", "publish", "--access", "public", "--provenance", "--ignore-scripts"];
+  // --provenance requires a public repository. Once this repo is made public and
+  // NODE_AUTH_TOKEN is removed in favour of OIDC trusted publishing, re-enable it.
+  const flags = ["npm", "publish", "--access", "public", "--ignore-scripts"];
   if (tag) flags.push("--tag", tag);
   if (dryRun) flags.push("--dry-run");
   run(flags, { cwd: dir });
