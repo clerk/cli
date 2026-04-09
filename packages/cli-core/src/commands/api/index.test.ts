@@ -11,6 +11,7 @@ import {
   libPromptsStubs,
   stubFetch,
 } from "../../test/lib/stubs.ts";
+import { getPlapiBaseUrl } from "../../lib/environment.ts";
 
 let mockStoredToken: string | null = null;
 mock.module("../../lib/credential-store.ts", () => ({
@@ -463,8 +464,7 @@ describe("api command", () => {
     });
 
     await runApi("/v1/platform/applications", { platform: true });
-    expect(capturedUrl).toContain("api.clerk.com");
-    expect(capturedUrl).not.toContain("api.clerk.dev");
+    expect(capturedUrl).toStartWith(`${getPlapiBaseUrl()}/`);
     expect(capturedHeaders?.get("Authorization")).toBe("Bearer plat_key_123");
   });
 
