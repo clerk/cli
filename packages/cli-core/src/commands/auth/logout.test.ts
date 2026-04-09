@@ -53,6 +53,6 @@ describe("logout", () => {
     consoleSpy = spyOn(console, "log").mockImplementation(() => {});
     await runLogout();
 
-    expect(captured.out).toContain("Logged out successfully");
+    expect(captured.err).toContain("Logged out successfully");
   });
 });

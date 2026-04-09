@@ -23,8 +23,8 @@ test.each([{ mode: "human" }, { mode: "agent" }])(
     expect(loggedIn).toContain("test@example.com");
 
     // Logout
-    const { stdout: logoutOutput } = await clerk("--mode", mode, "auth", "logout");
-    expect(logoutOutput).toContain("Logged out successfully");
+    const logoutResult = await clerk.raw("--mode", mode, "auth", "logout");
+    expect(logoutResult.stderr).toContain("Logged out successfully");
     expect(mockState.storedToken).toBeNull();
 
     // Whoami again -> not logged in

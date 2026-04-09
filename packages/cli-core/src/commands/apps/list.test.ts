@@ -167,8 +167,8 @@ describe("apps list", () => {
 
       await runList();
 
-      expect(captured.out).toContain("No applications found");
-      expect(captured.out).toContain("dashboard.clerk.com");
+      expect(captured.err).toContain("No applications found");
+      expect(captured.err).toContain("dashboard.clerk.com");
     });
 
     test("outputs empty JSON array when --json flag is set", async () => {

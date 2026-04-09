@@ -52,8 +52,8 @@ describe("switch-env", () => {
     logSpy = spyOn(console, "log").mockImplementation(() => {});
     await runSwitchEnv(undefined);
 
-    expect(captured.out).toContain("Current environment: production");
-    expect(captured.out).toContain("Available environments: production, staging");
+    expect(captured.err).toContain("Current environment: production");
+    expect(captured.err).toContain("Available environments: production, staging");
   });
 
   test("switches to a valid environment", async () => {
