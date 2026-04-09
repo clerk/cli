@@ -27,7 +27,7 @@ export async function configPull(options: ConfigPullOptions): Promise<void> {
 
   if (options.output) {
     await Bun.write(options.output, json + "\n");
-    log.info(`Config written to ${options.output}`);
+    log.success(`Config written to ${options.output}`);
   } else {
     log.data(json);
   }

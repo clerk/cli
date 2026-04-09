@@ -109,7 +109,7 @@ export async function link(options: LinkOptions = {}): Promise<void> {
   });
 
   const label = app.name || app.application_id;
-  log.info(`Linked to ${cyan(label)} in ${dim(displayPath)}`);
+  log.success(`Linked to ${cyan(label)} in ${dim(displayPath)}`);
 
   outro(NEXT_STEPS.LINK);
 }

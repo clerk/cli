@@ -93,7 +93,7 @@ export async function login(options: LoginOptions = {}): Promise<UserInfo> {
   const existingSession = await withSpinner("Checking session...", () => getExistingSession());
 
   if (existingSession && !isHuman()) {
-    log.info(`Logged in as ${existingSession.email}`);
+    log.success(`Logged in as ${existingSession.email}`);
     return existingSession;
   }
 
@@ -111,7 +111,7 @@ export async function login(options: LoginOptions = {}): Promise<UserInfo> {
   const userInfo = await performOAuthFlow();
 
   bar();
-  log.info(`Logged in as ${userInfo.email}`);
+  log.success(`Logged in as ${userInfo.email}`);
 
   outro(showNextSteps ? NEXT_STEPS.LOGIN : "Done");
   return userInfo;

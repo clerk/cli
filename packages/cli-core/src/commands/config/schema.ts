@@ -24,7 +24,7 @@ export async function configSchema(options: ConfigSchemaOptions): Promise<void> 
 
   if (options.output) {
     await Bun.write(options.output, json + "\n");
-    log.info(`Schema written to ${options.output}`);
+    log.success(`Schema written to ${options.output}`);
   } else {
     log.data(json);
   }

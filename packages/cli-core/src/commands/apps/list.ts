@@ -32,7 +32,7 @@ export async function list(options: AppsOptions = {}): Promise<void> {
   if (printJson(result.map(stripSecrets), options)) return;
 
   if (result.length === 0) {
-    log.data("No applications found. Create one at https://dashboard.clerk.com");
+    log.warn("No applications found. Create one at https://dashboard.clerk.com");
     return;
   }
 

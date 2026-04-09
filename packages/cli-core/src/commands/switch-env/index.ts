@@ -24,8 +24,8 @@ export async function switchEnv(environment: string | undefined): Promise<void> 
   // No argument: print current environment
   if (!environment) {
     const current = getCurrentEnvName();
-    log.data(`Current environment: ${current}`);
-    log.data(`Available environments: ${available.join(", ")}`);
+    log.info(`Current environment: ${current}`);
+    log.info(`Available environments: ${available.join(", ")}`);
     return;
   }
 

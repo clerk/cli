@@ -118,7 +118,7 @@ async function configPush(options: ConfigPushOptions, op: Operation): Promise<vo
       ),
   );
   log.data(JSON.stringify(result, null, 2));
-  log.info("Config pushed successfully");
+  log.success("Config pushed successfully");
 }
 
 export async function readInput(options: { file?: string; json?: string }): Promise<string> {

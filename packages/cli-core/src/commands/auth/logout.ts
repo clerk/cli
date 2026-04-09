@@ -5,5 +5,5 @@ import { log } from "../../lib/log.ts";
 export async function logout(): Promise<void> {
   await deleteToken();
   await clearAuth();
-  log.data("Logged out successfully");
+  log.success("Logged out successfully");
 }
