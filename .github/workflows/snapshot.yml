@@ -138,6 +138,8 @@ jobs:
       - name: Publish snapshot packages
         run: bun run release:snapshot --version "$SNAPSHOT_VERSION"
         env:
+          # TODO: remove once we've completed our first publish
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
           SNAPSHOT_VERSION: ${{ needs.snapshot.outputs.version }}
           ARTIFACTS_DIR: ${{ github.workspace }}/dist/artifacts
 

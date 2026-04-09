@@ -99,6 +99,8 @@ jobs:
       - name: Publish packages
         run: bun run release
         env:
+          # TODO: remove once we've completed our first publish
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
           ARTIFACTS_DIR: ${{ github.workspace }}/dist/artifacts
           GH_TOKEN: ${{ github.token }}
 
@@ -250,5 +252,8 @@ jobs:
       - name: Publish canary packages
         run: bun run release:canary --version "$CANARY_VERSION"
         env:
+          # TODO: remove once we've completed our first publish
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
           CANARY_VERSION: ${{ needs.canary-version.outputs.version }}
           ARTIFACTS_DIR: ${{ github.workspace }}/dist/artifacts
+          GH_TOKEN: ${{ github.token }}
