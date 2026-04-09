@@ -18,9 +18,15 @@ async function runPmInstall(
   label: string,
   { fromLockfile = false }: { fromLockfile?: boolean } = {},
 ): Promise<void> {
-  const pmBinary = addCmd.split(" ")[0]!;
   const manualCmd = `${addCmd} ${packages.join(" ")}`;
 
+  // The package manager is detected from lockfiles, which can exist without
+  // the actual binary being installed (e.g. teammate committed bun.lock, you
+  // only have npm). Fail fast with a useful message rather than a raw ENOENT.
+  const pmBinary = addCmd.split(" ")[0];
+  if (!pmBinary) {
+    throw new Error(`Invalid package manager install command: ${addCmd}`);
+  }
   if (Bun.which(pmBinary) === null) {
     const hint = fromLockfile
       ? ` (detected from lockfile — install ${pmBinary} or switch package managers)`

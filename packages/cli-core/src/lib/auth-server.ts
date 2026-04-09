@@ -264,8 +264,13 @@ export function startAuthServer(expectedState: string): AuthServerResult {
   const activeServer = server;
   log.debug(`auth-server: listening on 127.0.0.1:${activeServer.port} for ${CALLBACK_PATH}`);
 
+  const port = server.port;
+  if (port === undefined) {
+    throw new Error("Failed to determine auth server port.");
+  }
+
   return {
-    port: activeServer.port!,
+    port,
     waitForCallback: () => callbackPromise,
     stop: () => {
       clearTimeout(timeout);
