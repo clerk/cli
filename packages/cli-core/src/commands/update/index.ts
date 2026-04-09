@@ -1,5 +1,5 @@
 import { isHuman } from "../../mode.ts";
-import { green, cyan } from "../../lib/color.ts";
+import { green, cyan, yellow } from "../../lib/color.ts";
 import { CliError } from "../../lib/errors.ts";
 import { log } from "../../lib/log.ts";
 import { intro, outro, withSpinner } from "../../lib/spinner.ts";
@@ -25,6 +25,78 @@ async function confirmUpdate(currentVersion: string, latestVersion: string): Pro
     message: `Update clerk ${currentVersion} → ${latestVersion}?`,
     default: true,
   });
+}
+
+/**
+ * Find the path of the npm-installed clerk binary by resolving where npm puts
+ * global binaries, then checking if clerk exists there.
+ */
+async function findNpmBinPath(): Promise<string | null> {
+  try {
+    const result = await Bun.$`npm bin -g`.quiet().nothrow();
+    if (result.exitCode !== 0) return null;
+    const npmBin = result.stdout.toString().trim();
+    if (!npmBin) return null;
+    return `${npmBin}/${UPDATE_PACKAGE_NAME}`;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Returns the resolved path of `clerk` on PATH, excluding the given npmBinPath.
+ * Used to detect stale binaries that shadow the npm-installed one.
+ */
+async function findShadowingBinary(npmBinPath: string): Promise<string | null> {
+  try {
+    // `which -a` lists all matches in PATH order; we want any entry that isn't
+    // the npm-managed one
+    const result = await Bun.$`which -a ${UPDATE_PACKAGE_NAME}`.quiet().nothrow();
+    if (result.exitCode !== 0) return null;
+    const lines = result.stdout
+      .toString()
+      .trim()
+      .split("\n")
+      .map((l) => l.trim());
+    // Find the first entry that isn't the npm bin path
+    return lines.find((p) => p && p !== npmBinPath) ?? null;
+  } catch {
+    return null;
+  }
+}
+
+async function removeShadowingBinary(shadowPath: string, autoConfirm: boolean): Promise<void> {
+  log.blank();
+  log.warn(
+    `Found an older \`clerk\` binary at \`${shadowPath}\` that takes precedence over the npm-installed one.`,
+  );
+  log.info("  This can cause the wrong version to run after an update.");
+  log.blank();
+
+  const shouldRemove =
+    autoConfirm ||
+    (isHuman() &&
+      (await (async () => {
+        const { confirm } = await import("@inquirer/prompts");
+        return confirm({ message: `Remove ${shadowPath}?`, default: true });
+      })()));
+
+  if (!shouldRemove) {
+    log.info(`  Skipped. To remove it manually: ${cyan(`rm ${shadowPath}`)}`);
+    return;
+  }
+
+  const rm = await Bun.$`rm ${shadowPath}`.quiet().nothrow();
+  if (rm.exitCode === 0) {
+    log.success(`Removed ${yellow(shadowPath)}`);
+  } else {
+    const stderr = rm.stderr.toString();
+    if (stderr.includes("Permission denied") || stderr.includes("EACCES")) {
+      log.warn(`Permission denied. Remove it manually: ${cyan(`sudo rm ${shadowPath}`)}`);
+    } else {
+      log.warn(`Could not remove ${shadowPath}: ${stderr.trim() || "unknown error"}`);
+    }
+  }
 }
 
 async function runNpmInstall(packageSpec: string): Promise<void> {
@@ -86,6 +158,16 @@ export async function update(options: UpdateOptions): Promise<void> {
   );
 
   await writeUpdateCache({ checkedAt: Date.now(), latest, distTag: channel });
+
+  // After install, check if a stale binary elsewhere on PATH is shadowing the
+  // npm-installed one (e.g. a previously compiled binary in ~/.local/bin).
+  const npmBinPath = await findNpmBinPath();
+  if (npmBinPath) {
+    const shadowPath = await findShadowingBinary(npmBinPath);
+    if (shadowPath) {
+      await removeShadowingBinary(shadowPath, autoConfirm);
+    }
+  }
 
   if (isHuman()) outro(`Successfully updated to ${latest}`);
 }

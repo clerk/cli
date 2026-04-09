@@ -21,6 +21,7 @@ clerk update [options]
 2. If already up to date, exits cleanly
 3. Prompts for confirmation (skipped with `--yes` or in non-interactive mode)
 4. Runs `npm install -g clerk@<version>` to install
+5. After install, checks if a stale binary elsewhere on PATH is shadowing the npm-installed one (e.g. a previously compiled binary in `~/.local/bin`). If found, prompts to remove it (or removes silently with `--yes`).
 
 ## Channels
 
@@ -42,3 +43,4 @@ Set `CLERK_UPDATE_CHANNEL=canary` to make canary the default for all update chec
 - Requires `npm` on PATH. If not found, the command will print instructions.
 - Permission errors (EACCES) suggest trying `sudo npm install -g clerk@<version>` or using a Node version manager like nvm.
 - This command does not perform the update itself in agent/non-interactive mode unless `--yes` is passed.
+- The shadowing binary check uses `which -a` (macOS/Linux). On platforms where `which -a` is unavailable, the check is silently skipped.
