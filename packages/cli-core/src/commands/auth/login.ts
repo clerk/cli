@@ -3,7 +3,7 @@ import { startAuthServer } from "../../lib/auth-server.ts";
 import { exchangeCodeForToken, fetchUserInfo, type UserInfo } from "../../lib/token-exchange.ts";
 import { getOAuthConfig } from "../../lib/environment.ts";
 import { storeToken, getToken } from "../../lib/credential-store.ts";
-import { getAuth, setAuth } from "../../lib/config.ts";
+import { getAuth, setAuth, resolveProfile } from "../../lib/config.ts";
 import { AUTH_TIMEOUT_MS, CALLBACK_PATH } from "../../lib/constants.ts";
 import { confirm } from "../../lib/prompts.ts";
 import { isHuman } from "../../mode.ts";
@@ -113,6 +113,19 @@ export async function login(options: LoginOptions = {}): Promise<UserInfo> {
   bar();
   log.success(`Logged in as ${userInfo.email}`);
 
-  outro(showNextSteps ? NEXT_STEPS.LOGIN : "Done");
+  if (showNextSteps) {
+    const linked = await resolveProfile(process.cwd());
+    if (linked) {
+      const appLabel = linked.profile.appName
+        ? `\`${linked.profile.appName}\` (${linked.profile.appId})`
+        : `\`${linked.profile.appId}\``;
+      log.success(`Linked to ${appLabel}`);
+      outro(NEXT_STEPS.LOGIN_LINKED);
+    } else {
+      outro(NEXT_STEPS.LOGIN);
+    }
+  } else {
+    outro("Done");
+  }
   return userInfo;
 }
