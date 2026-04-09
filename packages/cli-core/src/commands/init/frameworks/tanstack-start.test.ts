@@ -15,7 +15,7 @@ function makeCtx(overrides?: Partial<ProjectContext>): ProjectContext {
       name: "TanStack Start",
       sdk: "@clerk/tanstack-react-start",
       envVar: "VITE_CLERK_PUBLISHABLE_KEY",
-      envFile: ".env.local",
+      envFile: ".env.local" as const,
     },
     typescript: true,
     srcDir: true,
@@ -126,6 +126,81 @@ export const start = createStart(() => { return {}; });
   expect(appStart).toBeDefined();
   expect(appStart?.type).toBe("create");
   expect(srcStart).toBeUndefined();
+});
+
+test("adds auth header in root during bootstrap", async () => {
+  await mkdir(join(tempDir, "src/routes"), { recursive: true });
+  await Bun.write(
+    join(tempDir, "src/routes/__root.tsx"),
+    `import { createRootRoute } from "@tanstack/react-router";
+
+export const Route = createRootRoute({
+  shellComponent: RootDocument,
+});
+
+function RootDocument({ children }: { children: React.ReactNode }) {
+  return (
+    <html lang="en">
+      <body>
+        {children}
+      </body>
+    </html>
+  );
+}
+`,
+  );
+
+  const plan = await tanstackStart.scaffold(
+    makeCtx({
+      isBootstrap: true,
+      deps: { "@tanstack/react-start": "1.0.0", tailwindcss: "4.0.0" },
+    }),
+  );
+  const rootAction = plan.actions.find((a) => a.path === "src/routes/__root.tsx");
+
+  expect(rootAction?.type).toBe("modify");
+  if (rootAction?.type !== "modify") throw new Error("Expected modify action");
+
+  expect(rootAction.content).toContain('<Show when="signed-out">');
+  expect(rootAction.content).toContain("<SignInButton />");
+  expect(rootAction.content).toContain("<UserButton />");
+  expect(rootAction.content).toContain(
+    'className="flex h-16 items-center justify-end gap-4 border-b px-4"',
+  );
+  expect(rootAction.description).toContain("auth header");
+});
+
+test("does not add auth header for non-bootstrap init", async () => {
+  await mkdir(join(tempDir, "src/routes"), { recursive: true });
+  await Bun.write(
+    join(tempDir, "src/routes/__root.tsx"),
+    `import { createRootRoute } from "@tanstack/react-router";
+
+export const Route = createRootRoute({
+  shellComponent: RootDocument,
+});
+
+function RootDocument({ children }: { children: React.ReactNode }) {
+  return (
+    <html lang="en">
+      <body>
+        {children}
+      </body>
+    </html>
+  );
+}
+`,
+  );
+
+  const plan = await tanstackStart.scaffold(makeCtx());
+  const rootAction = plan.actions.find((a) => a.path === "src/routes/__root.tsx");
+
+  expect(rootAction?.type).toBe("modify");
+  if (rootAction?.type !== "modify") throw new Error("Expected modify action");
+
+  expect(rootAction.content).toContain("ClerkProvider");
+  expect(rootAction.content).not.toContain("<Show");
+  expect(rootAction.content).not.toContain("<SignInButton");
 });
 
 test("does not use locale dir when none detected", async () => {

@@ -15,7 +15,7 @@ function makeCtx(overrides?: Partial<ProjectContext>): ProjectContext {
       name: "React",
       sdk: "@clerk/react",
       envVar: "VITE_CLERK_PUBLISHABLE_KEY",
-      envFile: ".env.local",
+      envFile: ".env.local" as const,
     },
     typescript: true,
     srcDir: true,
@@ -159,6 +159,96 @@ ReactDOM.createRoot(document.getElementById("root")!).render(<App />);
 
   const entry = findAction(plan.actions, "main.tsx");
   expect(entry.type).toBe("modify");
+});
+
+test("adds auth header in entry during bootstrap with Tailwind", async () => {
+  await mkdir(join(tempDir, "src"), { recursive: true });
+  await Bun.write(
+    join(tempDir, "src/main.tsx"),
+    `import { StrictMode } from "react";
+import ReactDOM from "react-dom/client";
+import App from "./App";
+
+ReactDOM.createRoot(document.getElementById("root")!).render(
+  <StrictMode>
+    <App />
+  </StrictMode>,
+);
+`,
+  );
+
+  const plan = await reactVite.scaffold(
+    makeCtx({ isBootstrap: true, deps: { tailwindcss: "4.0.0" } }),
+  );
+  const entry = findAction(plan.actions, "src/main.tsx");
+
+  expect(entry.type).toBe("modify");
+  if (entry.type !== "modify") throw new Error("Expected modify action");
+
+  expect(entry.content).toContain('<Show when="signed-out">');
+  expect(entry.content).toContain("<SignInButton />");
+  expect(entry.content).toContain("<SignUpButton />");
+  expect(entry.content).toContain('<Show when="signed-in">');
+  expect(entry.content).toContain("<UserButton />");
+  expect(entry.content).toContain(
+    'className="flex h-16 items-center justify-end gap-4 border-b px-4"',
+  );
+  expect(entry.description).toContain("auth header");
+});
+
+test("does not add auth header for non-bootstrap init", async () => {
+  await mkdir(join(tempDir, "src"), { recursive: true });
+  await Bun.write(
+    join(tempDir, "src/main.tsx"),
+    `import { StrictMode } from "react";
+import ReactDOM from "react-dom/client";
+import App from "./App";
+
+ReactDOM.createRoot(document.getElementById("root")!).render(
+  <StrictMode>
+    <App />
+  </StrictMode>,
+);
+`,
+  );
+
+  const plan = await reactVite.scaffold(makeCtx());
+  const entry = findAction(plan.actions, "src/main.tsx");
+
+  expect(entry.type).toBe("modify");
+  if (entry.type !== "modify") throw new Error("Expected modify action");
+
+  expect(entry.content).toContain("ClerkProvider");
+  expect(entry.content).not.toContain("<Show");
+  expect(entry.content).not.toContain("<SignInButton");
+  expect(entry.content).not.toContain("<UserButton");
+});
+
+test("uses plain styles for auth header when no Tailwind", async () => {
+  await mkdir(join(tempDir, "src"), { recursive: true });
+  await Bun.write(
+    join(tempDir, "src/main.tsx"),
+    `import { StrictMode } from "react";
+import ReactDOM from "react-dom/client";
+import App from "./App";
+
+ReactDOM.createRoot(document.getElementById("root")!).render(
+  <StrictMode>
+    <App />
+  </StrictMode>,
+);
+`,
+  );
+
+  const plan = await reactVite.scaffold(makeCtx({ isBootstrap: true, deps: {} }));
+  const entry = findAction(plan.actions, "src/main.tsx");
+
+  expect(entry.type).toBe("modify");
+  if (entry.type !== "modify") throw new Error("Expected modify action");
+
+  expect(entry.content).toContain("style={{");
+  expect(entry.content).toContain("justifyContent");
+  expect(entry.content).not.toContain('className="flex');
 });
 
 test("includes env var post-instruction", async () => {

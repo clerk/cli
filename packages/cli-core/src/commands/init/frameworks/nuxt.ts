@@ -6,6 +6,7 @@ import {
   authFileSpecs,
   findFirstFile,
   hasTailwindStyles,
+  headerHtmlBlock,
   htmlAuthComponentMarkup,
   indentBlock,
   scaffoldAuthFiles,
@@ -74,7 +75,7 @@ function scaffoldConfig(ctx: ProjectContext): Promise<FileAction> {
  * The minimal Nuxt template uses `<NuxtWelcome />` without a router
  * outlet, which means pages/ routes never render.
  */
-async function scaffoldAppVue(ctx: ProjectContext): Promise<FileAction | null> {
+async function scaffoldAppVue(ctx: ProjectContext, tailwind: boolean): Promise<FileAction | null> {
   const appPath = await findFirstFile(ctx.cwd, ["app/app.vue", "app.vue"]);
   if (!appPath) return null;
 
@@ -85,6 +86,20 @@ async function scaffoldAppVue(ctx: ProjectContext): Promise<FileAction | null> {
   }
 
   if (!content.includes("<NuxtWelcome")) return null;
+
+  if (ctx.isBootstrap) {
+    const header = headerHtmlBlock("    ", tailwind);
+    return {
+      path: appPath,
+      type: "modify",
+      content: `<template>
+${header}
+    <NuxtPage />
+</template>
+`,
+      description: "Replace <NuxtWelcome /> with <NuxtPage /> and add auth header",
+    };
+  }
 
   const updated = content.replace(/<NuxtWelcome\s*\/?>/, "<NuxtPage />");
   return {
@@ -107,7 +122,7 @@ export const nuxt: FrameworkScaffold = {
     const pagesRoot = await pagesDir(ctx.cwd);
     const [configAction, appVueAction, authActions, envAction] = await Promise.all([
       scaffoldConfig(ctx),
-      scaffoldAppVue(ctx),
+      scaffoldAppVue(ctx, tailwind),
       scaffoldAuthFiles(
         ctx.cwd,
         authFileSpecs({
@@ -133,9 +148,11 @@ export const nuxt: FrameworkScaffold = {
       );
     }
 
-    postInstructions.push(
-      'Use <Show when="signed-in"> and <Show when="signed-out"> components in your app.vue for conditional rendering (auto-imported)',
-    );
+    if (!ctx.isBootstrap) {
+      postInstructions.push(
+        'Use <Show when="signed-in"> and <Show when="signed-out"> components in your app.vue for conditional rendering (auto-imported)',
+      );
+    }
 
     if (ctx.deps["@nuxtjs/i18n"]) {
       postInstructions.push(

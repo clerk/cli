@@ -31,6 +31,8 @@ export type FileAction =
 export interface ScaffoldPlan {
   actions: FileAction[];
   postInstructions: string[];
+  /** Additional packages to install before writing files (e.g., vue-router for Vue bootstrap). */
+  additionalDeps?: string[];
 }
 
 export interface FrameworkScaffold {

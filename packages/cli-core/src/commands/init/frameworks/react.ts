@@ -1,5 +1,13 @@
 import { join } from "node:path";
-import { findFirstFile, jsxExt, safeAddImport, scriptExt, srcPrefix } from "./helpers.js";
+import {
+  addBootstrapHeader,
+  findFirstFile,
+  hasTailwindStyles,
+  jsxExt,
+  safeAddImport,
+  scriptExt,
+  srcPrefix,
+} from "./helpers.js";
 import type { FileAction, FrameworkScaffold, ProjectContext, ScaffoldPlan } from "./types.js";
 
 async function findEntryFile(ctx: ProjectContext): Promise<string | null> {
@@ -39,13 +47,19 @@ async function scaffoldEntry(ctx: ProjectContext): Promise<FileAction | null> {
   }
 
   const imported = safeAddImport(content, "@clerk/react", "ClerkProvider");
-  const newContent = wrapWithClerkProvider(imported);
+  let newContent = wrapWithClerkProvider(imported);
+
+  if (ctx.isBootstrap) {
+    newContent = addBootstrapHeader(newContent, "@clerk/react", hasTailwindStyles(ctx));
+  }
 
   return {
     path: entryPath,
     type: "modify",
     content: newContent,
-    description: "Add ClerkProvider import and wrap app root",
+    description: ctx.isBootstrap
+      ? "Add ClerkProvider, wrap app root, and add auth header"
+      : "Add ClerkProvider import and wrap app root",
   };
 }
 

@@ -15,7 +15,7 @@ function makeCtx(overrides?: Partial<ProjectContext>): ProjectContext {
       name: "React Router",
       sdk: "@clerk/react-router",
       envVar: "VITE_CLERK_PUBLISHABLE_KEY",
-      envFile: ".env.local",
+      envFile: ".env.local" as const,
     },
     typescript: true,
     srcDir: false,
@@ -306,6 +306,60 @@ export default [
   const occurrences = (routesAction.content.match(/sign-in/g) ?? []).length;
   expect(occurrences).toBe(2);
   expect(routesAction.content).toContain('route("sign-up/*", "routes/sign-up.tsx")');
+});
+
+test("adds auth header in root during bootstrap with Tailwind", async () => {
+  await mkdir(join(tempDir, "app"), { recursive: true });
+  await Bun.write(
+    join(tempDir, "app/root.tsx"),
+    `import { Outlet } from "react-router";
+
+export default function Root() {
+  return <Outlet />;
+}
+`,
+  );
+
+  const plan = await reactRouter.scaffold(
+    makeCtx({ isBootstrap: true, deps: { "react-router": "7.0.0", tailwindcss: "4.0.0" } }),
+  );
+  const rootAction = plan.actions.find((action) => action.path === "app/root.tsx");
+
+  expect(rootAction?.type).toBe("modify");
+  if (rootAction?.type !== "modify") throw new Error("Expected modify action");
+
+  expect(rootAction.content).toContain('<Show when="signed-out">');
+  expect(rootAction.content).toContain("<SignInButton />");
+  expect(rootAction.content).toContain("<SignUpButton />");
+  expect(rootAction.content).toContain('<Show when="signed-in">');
+  expect(rootAction.content).toContain("<UserButton />");
+  expect(rootAction.content).toContain(
+    'className="flex h-16 items-center justify-end gap-4 border-b px-4"',
+  );
+  expect(rootAction.description).toContain("auth header");
+});
+
+test("does not add auth header for non-bootstrap init", async () => {
+  await mkdir(join(tempDir, "app"), { recursive: true });
+  await Bun.write(
+    join(tempDir, "app/root.tsx"),
+    `import { Outlet } from "react-router";
+
+export default function Root() {
+  return <Outlet />;
+}
+`,
+  );
+
+  const plan = await reactRouter.scaffold(makeCtx());
+  const rootAction = plan.actions.find((action) => action.path === "app/root.tsx");
+
+  expect(rootAction?.type).toBe("modify");
+  if (rootAction?.type !== "modify") throw new Error("Expected modify action");
+
+  expect(rootAction.content).toContain("ClerkProvider");
+  expect(rootAction.content).not.toContain("<Show");
+  expect(rootAction.content).not.toContain("<SignInButton");
 });
 
 test("wires locale-prefixed routes into app/routes.ts", async () => {

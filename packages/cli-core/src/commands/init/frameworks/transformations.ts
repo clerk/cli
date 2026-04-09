@@ -40,11 +40,36 @@ export function insertAfterLastImport(source: string, snippet: string): string {
 }
 
 /**
+ * Build the auth header block using HTML attributes (`class` / `style="..."`).
+ * Used by Vue, Nuxt, and Astro scaffolders.
+ */
+export function headerHtmlBlock(indent: string, tailwind: boolean): string {
+  const innerIndent = indent + "  ";
+  const headerAttr = tailwind
+    ? `class="flex h-16 items-center justify-end gap-4 border-b px-4"`
+    : `style="display: flex; height: 64px; align-items: center; justify-content: flex-end; gap: 16px; border-bottom: 1px solid #e5e7eb; padding: 0 16px;"`;
+
+  return [
+    `${indent}<header ${headerAttr}>`,
+    `${innerIndent}<Show when="signed-out">`,
+    `${innerIndent}  <SignInButton />`,
+    `${innerIndent}  <SignUpButton />`,
+    `${innerIndent}</Show>`,
+    `${innerIndent}<Show when="signed-in">`,
+    `${innerIndent}  <UserButton />`,
+    `${innerIndent}</Show>`,
+    `${indent}</header>`,
+  ].join("\n");
+}
+
+/**
  * Inject a navigation header with auth buttons inside `<ClerkProvider>`.
  * Must be called AFTER `wrapBodyWithProvider` has already wrapped body contents.
  */
 export function injectHeaderInProvider(content: string, tailwind: boolean): string {
-  const providerPattern = /^( *)<ClerkProvider>/m;
+  // Match a line containing <ClerkProvider>, capturing leading whitespace for indentation.
+  // The provider tag may appear after `return` or other tokens (e.g. React Router).
+  const providerPattern = /^( *).*<ClerkProvider[^>]*>/m;
   const match = providerPattern.exec(content);
   if (!match) return content;
 
@@ -68,7 +93,23 @@ export function injectHeaderInProvider(content: string, tailwind: boolean): stri
     `${innerIndent}</header>`,
   ].join("\n");
 
-  return content.replace(providerPattern, `${indent}<ClerkProvider>\n${headerBlock}`);
+  return content.replace(providerPattern, (fullMatch) => `${fullMatch}\n${headerBlock}`);
+}
+
+/**
+ * Add Show, SignInButton, SignUpButton, UserButton imports from a Clerk package
+ * and inject a header inside <ClerkProvider>. Used by JSX frameworks during bootstrap.
+ */
+export function addBootstrapHeader(
+  content: string,
+  clerkPackage: string,
+  tailwind: boolean,
+): string {
+  let result = safeAddImport(content, clerkPackage, "Show");
+  result = safeAddImport(result, clerkPackage, "SignInButton");
+  result = safeAddImport(result, clerkPackage, "SignUpButton");
+  result = safeAddImport(result, clerkPackage, "UserButton");
+  return injectHeaderInProvider(result, tailwind);
 }
 
 /** Wrap the contents of a `<body>` tag with a provider component (e.g. `<ClerkProvider>`). */

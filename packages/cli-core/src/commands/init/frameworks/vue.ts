@@ -4,6 +4,7 @@ import {
   authFileSpecs,
   findFirstFile,
   hasTailwindStyles,
+  headerHtmlBlock,
   htmlAuthComponentMarkup,
   indentBlock,
   insertAfterLastImport,
@@ -44,11 +45,13 @@ function addClerkPluginSetup(source: string): string {
   return insertAfterLastImport(result, keyBlock);
 }
 
-function newEntryContent(): string {
+function newEntryContent(withRouter = false): string {
+  const routerImport = withRouter ? `import router from "./router";\n` : "";
+  const routerUse = withRouter ? `app.use(router);\n` : "";
   return `import { createApp } from "vue";
 import { clerkPlugin } from "@clerk/vue";
 import App from "./App.vue";
-
+${routerImport}
 const PUBLISHABLE_KEY = import.meta.env.VITE_CLERK_PUBLISHABLE_KEY;
 
 if (!PUBLISHABLE_KEY) {
@@ -57,11 +60,11 @@ if (!PUBLISHABLE_KEY) {
 
 const app = createApp(App);
 app.use(clerkPlugin, { publishableKey: PUBLISHABLE_KEY });
-app.mount("#app");
+${routerUse}app.mount("#app");
 `;
 }
 
-async function scaffoldEntry(ctx: ProjectContext): Promise<FileAction> {
+async function scaffoldEntry(ctx: ProjectContext, withRouter = false): Promise<FileAction> {
   const entryPath = await findEntryFile(ctx);
 
   if (!entryPath) {
@@ -70,7 +73,7 @@ async function scaffoldEntry(ctx: ProjectContext): Promise<FileAction> {
     return {
       type: "create",
       path: `${base}main.${ext}`,
-      content: newEntryContent(),
+      content: newEntryContent(withRouter),
       description: "Create entry file with clerkPlugin setup",
     };
   }
@@ -83,16 +86,25 @@ async function scaffoldEntry(ctx: ProjectContext): Promise<FileAction> {
 
   let newContent = safeAddImport(content, "@clerk/vue", "clerkPlugin");
 
+  if (withRouter) {
+    newContent = insertAfterLastImport(newContent, `\nimport router from "./router";\n`);
+  }
+
   // Add the publishable key constant and app.use() call before app.mount()
   if (newContent.includes(".mount(")) {
     newContent = addClerkPluginSetup(newContent);
+    if (withRouter) {
+      newContent = newContent.replace(/(.+\.mount\s*\()/, `app.use(router);\n$1`);
+    }
   }
 
   return {
     path: entryPath,
     type: "modify",
     content: newContent,
-    description: "Add clerkPlugin with publishableKey to Vue app",
+    description: withRouter
+      ? "Add clerkPlugin with publishableKey and vue-router to Vue app"
+      : "Add clerkPlugin with publishableKey to Vue app",
   };
 }
 
@@ -127,6 +139,69 @@ function addSignRoutes(source: string, viewPrefix: string): string {
   );
 }
 
+function newRouterContent(viewPrefix: string): string {
+  return `import { createRouter, createWebHistory } from "vue-router";
+
+const router = createRouter({
+  history: createWebHistory(),
+  routes: [
+    {
+      path: "/sign-in",
+      component: () => import("${viewPrefix}views/sign-in.vue"),
+    },
+    {
+      path: "/sign-up",
+      component: () => import("${viewPrefix}views/sign-up.vue"),
+    },
+  ],
+});
+
+export default router;
+`;
+}
+
+function scaffoldNewRouter(ctx: ProjectContext): FileAction {
+  const base = srcPrefix(ctx);
+  const ext = scriptExt(ctx);
+  return {
+    type: "create",
+    path: `${base}router/index.${ext}`,
+    content: newRouterContent("../"),
+    description: "Create vue-router config with sign-in and sign-up routes",
+  };
+}
+
+async function scaffoldAppVue(ctx: ProjectContext, tailwind: boolean): Promise<FileAction | null> {
+  const base = srcPrefix(ctx);
+  const appPath = await findFirstFile(ctx.cwd, [`${base}App.vue`]);
+  if (!appPath) return null;
+
+  const header = headerHtmlBlock("    ", tailwind);
+  const content = ctx.isBootstrap
+    ? `<script setup>
+import { Show, SignInButton, SignUpButton, UserButton } from "@clerk/vue";
+</script>
+
+<template>
+${header}
+    <RouterView />
+</template>
+`
+    : `<template>
+  <RouterView />
+</template>
+`;
+
+  return {
+    path: appPath,
+    type: "modify",
+    content,
+    description: ctx.isBootstrap
+      ? "Replace template with <RouterView /> and add auth header"
+      : "Replace template with <RouterView /> for vue-router",
+  };
+}
+
 async function scaffoldRouter(ctx: ProjectContext): Promise<FileAction | null> {
   const routerPath = await findRouterFile(ctx);
   if (!routerPath) return null;
@@ -158,9 +233,10 @@ export const vue: FrameworkScaffold = {
   async scaffold(ctx: ProjectContext): Promise<ScaffoldPlan> {
     const tailwind = hasTailwindStyles(ctx);
     const base = srcPrefix(ctx);
+    const needsRouterBootstrap = ctx.isBootstrap && !ctx.deps["vue-router"];
 
     const [entryAction, authActions, envAction, routerAction] = await Promise.all([
-      scaffoldEntry(ctx),
+      scaffoldEntry(ctx, needsRouterBootstrap),
       scaffoldAuthFiles(
         ctx.cwd,
         authFileSpecs({
@@ -170,13 +246,19 @@ export const vue: FrameworkScaffold = {
         }),
       ),
       scaffoldEnvVars(ctx, SIGN_ROUTE_ENV_VARS.vite),
-      scaffoldRouter(ctx),
+      needsRouterBootstrap ? null : scaffoldRouter(ctx),
     ]);
 
     const actions: FileAction[] = [entryAction, ...authActions, envAction];
     const postInstructions: string[] = [];
+    const additionalDeps: string[] = [];
 
-    if (routerAction) {
+    if (needsRouterBootstrap) {
+      actions.push(scaffoldNewRouter(ctx));
+      const appVueAction = await scaffoldAppVue(ctx, tailwind);
+      if (appVueAction) actions.push(appVueAction);
+      additionalDeps.push("vue-router");
+    } else if (routerAction) {
       actions.push(routerAction);
     } else if (ctx.deps["vue-router"]) {
       postInstructions.push(
@@ -184,6 +266,6 @@ export const vue: FrameworkScaffold = {
       );
     }
 
-    return { actions, postInstructions };
+    return { actions, postInstructions, additionalDeps };
   },
 };

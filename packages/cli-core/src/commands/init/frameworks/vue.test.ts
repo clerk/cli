@@ -15,7 +15,7 @@ function makeCtx(overrides?: Partial<ProjectContext>): ProjectContext {
       name: "Vue",
       sdk: "@clerk/vue",
       envVar: "VITE_CLERK_PUBLISHABLE_KEY",
-      envFile: ".env.local",
+      envFile: ".env.local" as const,
     },
     typescript: true,
     srcDir: true,
@@ -358,4 +358,69 @@ export default router;
     type: "skip",
     skipReason: "Already has sign-in/sign-up routes",
   });
+});
+
+test("adds auth header in App.vue during bootstrap with Tailwind", async () => {
+  await mkdir(join(tempDir, "src"), { recursive: true });
+  await Bun.write(
+    join(tempDir, "src/main.ts"),
+    `import { createApp } from "vue";
+import App from "./App.vue";
+
+createApp(App).mount("#app");
+`,
+  );
+  await Bun.write(
+    join(tempDir, "src/App.vue"),
+    `<template>
+  <HelloWorld />
+</template>
+`,
+  );
+
+  const plan = await vue.scaffold(makeCtx({ isBootstrap: true, deps: { tailwindcss: "4.0.0" } }));
+  const appVue = findAction(plan.actions, "src/App.vue");
+
+  expect(appVue.type).toBe("modify");
+  if (appVue.type !== "modify") throw new Error("Expected modify action");
+
+  expect(appVue.content).toContain('<Show when="signed-out">');
+  expect(appVue.content).toContain("<SignInButton />");
+  expect(appVue.content).toContain("<SignUpButton />");
+  expect(appVue.content).toContain('<Show when="signed-in">');
+  expect(appVue.content).toContain("<UserButton />");
+  expect(appVue.content).toContain(
+    'class="flex h-16 items-center justify-end gap-4 border-b px-4"',
+  );
+  expect(appVue.content).toContain("@clerk/vue");
+  expect(appVue.content).toContain("<RouterView />");
+  expect(appVue.description).toContain("auth header");
+});
+
+test("uses plain styles for auth header in Vue when no Tailwind", async () => {
+  await mkdir(join(tempDir, "src"), { recursive: true });
+  await Bun.write(
+    join(tempDir, "src/main.ts"),
+    `import { createApp } from "vue";
+import App from "./App.vue";
+
+createApp(App).mount("#app");
+`,
+  );
+  await Bun.write(
+    join(tempDir, "src/App.vue"),
+    `<template>
+  <HelloWorld />
+</template>
+`,
+  );
+
+  const plan = await vue.scaffold(makeCtx({ isBootstrap: true, deps: {} }));
+  const appVue = findAction(plan.actions, "src/App.vue");
+
+  expect(appVue.type).toBe("modify");
+  if (appVue.type !== "modify") throw new Error("Expected modify action");
+
+  expect(appVue.content).toContain('style="display: flex;');
+  expect(appVue.content).not.toContain('class="flex');
 });

@@ -1,5 +1,6 @@
 import { join } from "node:path";
 import {
+  addBootstrapHeader,
   authComponentName,
   authFileSpecs,
   findFirstFile,
@@ -187,11 +188,21 @@ async function scaffoldRoot(ctx: ProjectContext): Promise<FileAction | null> {
     newContent = wrapBodyWithProvider(newContent, "ClerkProvider");
   }
 
+  if (ctx.isBootstrap) {
+    newContent = addBootstrapHeader(
+      newContent,
+      "@clerk/tanstack-react-start",
+      hasTailwindStyles(ctx),
+    );
+  }
+
   return {
     path: rootPath,
     type: "modify",
     content: newContent,
-    description: "Add ClerkProvider import and wrap body contents",
+    description: ctx.isBootstrap
+      ? "Add ClerkProvider, wrap body contents, and add auth header"
+      : "Add ClerkProvider import and wrap body contents",
   };
 }
 

@@ -17,6 +17,8 @@ export {
   insertAfterLastImport,
   wrapBodyWithProvider,
   injectHeaderInProvider,
+  addBootstrapHeader,
+  headerHtmlBlock,
 } from "./transformations.js";
 
 export type AuthKind = "sign-in" | "sign-up";
