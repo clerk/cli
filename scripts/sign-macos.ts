@@ -2,7 +2,7 @@ import { join } from "node:path";
 import { mkdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { parseArgs } from "node:util";
-import { targets } from "./releaser/targets.ts";
+import { targets } from "./lib/targets.ts";
 
 const ENTITLEMENTS_PATH = join(import.meta.dir, "entitlements.plist");
 const KEYCHAIN_NAME = "clerk-signing.keychain-db";

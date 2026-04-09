@@ -11,7 +11,7 @@ export interface Target {
 
 // Target names use Node.js ${process.platform}-${process.arch} convention so the wrapper
 // shim (packages/cli/bin/clerk) can derive package names without a lookup table.
-// Used by scripts/build.ts and scripts/releaser/index.ts.
+// Used by scripts/build.ts, scripts/sign-macos.ts, and scripts/releaser.ts.
 export const targets: Target[] = [
   {
     name: "darwin-arm64",
