@@ -37,9 +37,7 @@ export function isPublished(name: string, version: string): boolean {
  * Publish a package directory to npm.
  */
 export function publish(dir: string, opts: { dryRun: boolean; tag?: string }): void {
-  // --provenance requires a public repository. Once this repo is made public and
-  // NODE_AUTH_TOKEN is removed in favour of OIDC trusted publishing, re-enable it.
-  const flags = ["npm", "publish", "--access", "public", "--ignore-scripts"];
+  const flags = ["npm", "publish", "--access", "public", "--provenance", "--ignore-scripts"];
   if (opts.tag) flags.push("--tag", opts.tag);
   if (opts.dryRun) flags.push("--dry-run");
   run(flags, { cwd: dir });
