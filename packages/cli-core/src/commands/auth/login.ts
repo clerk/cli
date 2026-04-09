@@ -89,7 +89,7 @@ async function performOAuthFlow(): Promise<UserInfo> {
 
 export async function login(options: LoginOptions = {}): Promise<UserInfo> {
   const { showNextSteps = true } = options;
-  intro("clerk login");
+  intro("clerk auth login");
   const existingSession = await withSpinner("Checking session...", () => getExistingSession());
 
   if (existingSession && !isHuman()) {

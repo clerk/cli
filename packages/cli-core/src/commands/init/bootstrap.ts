@@ -121,7 +121,7 @@ export async function confirmOverwrite(cwd: string): Promise<void> {
 export async function askSkipAuth(): Promise<boolean> {
   return confirm({
     message:
-      "Skip authentication for now? (you can connect your Clerk account later with `clerk login`)",
+      "Skip authentication for now? (you can connect your Clerk account later with `clerk auth login`)",
     default: true,
   });
 }
