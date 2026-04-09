@@ -1,25 +1,12 @@
 import { mkdir, cp, rm, chmod, copyFile } from "node:fs/promises";
 import { join } from "node:path";
 import { parseArgs } from "node:util";
-import { type Target, targets, SCOPE, PKG_PREFIX } from "./targets.ts";
-import { isPublished } from "../lib/npm.ts";
+import { type Target, targets, SCOPE, PKG_PREFIX } from "./lib/targets.ts";
+import { run, isPublished, publish } from "./lib/npm.ts";
 
-const DIST_DIR = join(import.meta.dir, "../../dist/platform-packages");
-const ARTIFACTS_DIR = process.env.ARTIFACTS_DIR ?? join(import.meta.dir, "../../dist/artifacts");
-const WRAPPER_PKG_PATH = join(import.meta.dir, "../../packages/cli/package.json");
-
-function run(cmd: string[], opts?: { cwd?: string }): void {
-  const result = Bun.spawnSync(cmd, {
-    cwd: opts?.cwd,
-    stdio: ["ignore", "pipe", "pipe"],
-  });
-  if (result.exitCode !== 0) {
-    const stderr = result.stderr.toString().trim();
-    throw new Error(
-      `${cmd.join(" ")} failed (exit ${result.exitCode})${stderr ? `: ${stderr}` : ""}`,
-    );
-  }
-}
+const DIST_DIR = join(import.meta.dir, "../dist/platform-packages");
+const ARTIFACTS_DIR = process.env.ARTIFACTS_DIR ?? join(import.meta.dir, "../dist/artifacts");
+const WRAPPER_PKG_PATH = join(import.meta.dir, "../packages/cli/package.json");
 
 function parseCliArgs(): { dryRun: boolean; tag?: string; versionOverride?: string } {
   const { values } = parseArgs({
@@ -66,20 +53,10 @@ async function generatePlatformPackage(target: Target, version: string): Promise
   }
   await Bun.write(join(dir, "package.json"), JSON.stringify(pkg, null, 2) + "\n");
 
-  // Include the LICENSE file in each platform package.
-  const licensePath = join(import.meta.dir, "../../LICENSE");
+  const licensePath = join(import.meta.dir, "../LICENSE");
   await copyFile(licensePath, join(dir, "LICENSE"));
 
   return dir;
-}
-
-function publish(dir: string, dryRun: boolean, tag?: string): void {
-  // --provenance requires a public repository. Once this repo is made public and
-  // NODE_AUTH_TOKEN is removed in favour of OIDC trusted publishing, re-enable it.
-  const flags = ["npm", "publish", "--access", "public", "--ignore-scripts"];
-  if (tag) flags.push("--tag", tag);
-  if (dryRun) flags.push("--dry-run");
-  run(flags, { cwd: dir });
 }
 
 const { dryRun, tag, versionOverride } = parseCliArgs();
@@ -98,7 +75,7 @@ for (const target of targets) {
   }
   console.log(`Publishing ${name}@${version}...`);
   const dir = await generatePlatformPackage(target, version);
-  publish(dir, dryRun, tag);
+  publish(dir, { dryRun, tag });
 }
 
 // Build wrapper package.json for publishing: add optionalDependencies from targets and remove private flag.
@@ -119,7 +96,7 @@ try {
     console.log(`Skipping ${wrapperName}@${version} (already published)`);
   } else {
     console.log(`Publishing ${wrapperName}@${version}...`);
-    publish(join(import.meta.dir, "../../packages/cli"), dryRun, tag);
+    publish(join(import.meta.dir, "../packages/cli"), { dryRun, tag });
   }
 } finally {
   await Bun.write(WRAPPER_PKG_PATH, wrapperRaw);
@@ -130,7 +107,6 @@ try {
 if (!tag && !dryRun) {
   const tagName = `v${version}`;
 
-  // Check if tag exists on remote (not just locally)
   const remoteTagCheck = Bun.spawnSync(
     ["git", "ls-remote", "--tags", "origin", `refs/tags/${tagName}`],
     { stdio: ["ignore", "pipe", "pipe"] },
@@ -142,7 +118,6 @@ if (!tag && !dryRun) {
     console.log(`Tag ${tagName} already exists on remote, skipping tag push.`);
   } else {
     console.log(`Creating and pushing tag ${tagName}...`);
-    // Create locally if it doesn't exist yet
     const localTagCheck = Bun.spawnSync(["git", "rev-parse", tagName], {
       stdio: ["ignore", "pipe", "pipe"],
     });
@@ -152,7 +127,6 @@ if (!tag && !dryRun) {
     run(["git", "push", "origin", tagName]);
   }
 
-  // Create GitHub Release idempotently — skip if it already exists.
   const releaseViewCheck = Bun.spawnSync(["gh", "release", "view", tagName], {
     stdio: ["ignore", "pipe", "pipe"],
   });
