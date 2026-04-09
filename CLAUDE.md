@@ -134,17 +134,13 @@ log.info("Linked to `my-app` on `development`");
 
 ### Testing log output
 
-Use `captureLog()` from `packages/cli-core/src/test/lib/stubs.ts`:
+Use `captureLog()` from `packages/cli-core/src/test/lib/stubs.ts`. Capture is scoped via `AsyncLocalStorage` — no teardown needed:
 
 ```ts
 import { captureLog } from "../../test/lib/stubs.ts";
 
-let captured: ReturnType<typeof captureLog>;
-beforeEach(() => {
-  captured = captureLog();
-});
-
 test("outputs result", async () => {
+  const captured = captureLog();
   await captured.run(() => myCommand());
   expect(captured.out).toContain("expected stdout"); // log.data()
   expect(captured.err).toContain("expected stderr"); // log.info/warn/etc.
