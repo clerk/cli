@@ -51,20 +51,21 @@ Commands:
   deploy      [options]                      Deploy your Clerk application (hidden)
 
 clerk init
-  --framework <name>   Framework to set up (skips auto-detection)
-  --app <id>           Link to a specific Clerk application by ID
-  --starter            Bootstrap a new project from a starter template
-  --prompt             Output a prompt for an AI agent to integrate Clerk
-  --yes                Skip confirmation prompts
-  --no-skills          Skip the optional agent skills install prompt
+  --framework <name>     Framework to set up (skips auto-detection)
+  --pm <manager>         Package manager to use (skips prompt/auto-detection)
+  --name <project-name>  Project name for --starter (skips prompt)
+  --starter              Bootstrap a new project from a starter template
+  --prompt               Output a prompt for an AI agent to integrate Clerk
+  --yes                  Skip confirmation prompts
+  --no-skills            Skip the optional agent skills install prompt
   Examples:
-    $ clerk init                       Auto-detect framework and set up Clerk
-    $ clerk init --framework next      Set up for Next.js (skips detection)
-    $ clerk init --app app_123         Link to a specific Clerk application
-    $ clerk init --starter             Create a new project with Clerk
-    $ clerk init --prompt              Output a setup prompt for an AI agent
-    $ clerk init -y                    Skip all confirmation prompts
-    $ clerk init --no-skills           Skip the agent skills install prompt
+    $ clerk init                                      Auto-detect framework and set up Clerk
+    $ clerk init --framework next                     Set up for Next.js (skips detection)
+    $ clerk init --starter                            Create a new project with Clerk
+    $ clerk init --starter --framework next --pm bun  Bootstrap with Bun
+    $ clerk init --prompt                             Output a setup prompt for an AI agent
+    $ clerk init -y                                   Skip all confirmation prompts
+    $ clerk init --no-skills                          Skip the agent skills install prompt
 
 clerk auth login         Log in via browser (OAuth)
 clerk auth logout        Remove stored credentials
