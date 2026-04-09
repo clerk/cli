@@ -180,7 +180,7 @@ describe("init", () => {
     expect(heuristics.getAuthenticatedEmail).not.toHaveBeenCalled();
   });
 
-  test("-y flag forces auth for frameworks without keyless support", async () => {
+  test("-y flag skips auth for frameworks without keyless support in bootstrap", async () => {
     setup();
 
     const noKeylessCtx = {
@@ -202,8 +202,9 @@ describe("init", () => {
     expect(bootstrapMod.promptAndBootstrap).toHaveBeenCalled();
     // Should not ask about skipping auth — keyless not supported
     expect(bootstrapMod.askSkipAuth).not.toHaveBeenCalled();
-    // Should force authentication since framework lacks keyless support
-    expect(heuristics.getAuthenticatedEmail).toHaveBeenCalled();
+    // Should skip auth in non-interactive bootstrap — user connects later
+    expect(heuristics.getAuthenticatedEmail).not.toHaveBeenCalled();
+    expect(loginMod.login).not.toHaveBeenCalled();
     expect(heuristics.printKeylessInfo).not.toHaveBeenCalled();
   });
 

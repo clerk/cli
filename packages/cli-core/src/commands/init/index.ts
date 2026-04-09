@@ -90,7 +90,9 @@ export async function init(options: InitOptions = {}) {
   const keyless = await resolveKeylessMode(bootstrap, ctx, overrides.skipConfirm);
   ctx.keyless = keyless;
 
-  if (!keyless) {
+  const skipAuth = !keyless && bootstrap != null && overrides.skipConfirm;
+
+  if (!keyless && !skipAuth) {
     bar();
     await authenticateAndLink(ctx.cwd, options.app);
   }
@@ -106,7 +108,9 @@ export async function init(options: InitOptions = {}) {
   }
 
   bar();
-  if (!keyless) {
+  if (skipAuth) {
+    printManualSetupInfo(ctx.framework.name);
+  } else if (!keyless) {
     await pull({ file: ctx.envFile });
   } else {
     printKeylessInfo();
@@ -193,6 +197,16 @@ function printBootstrapNextSteps(
     steps.push("clerk auth login  (when you're ready to connect your Clerk account)");
   }
   printNextSteps(steps);
+}
+
+function printManualSetupInfo(frameworkName: string): void {
+  const lines = [
+    `\n  ${frameworkName} requires API keys — set them up manually:`,
+    "    clerk auth login",
+    "    clerk link",
+    "    clerk env pull",
+  ];
+  console.log(lines.map(dim).join("\n"));
 }
 
 // --- Keyless ---

@@ -48,7 +48,7 @@ Use `--prompt` to output a setup prompt for an AI agent without running init.
    - If already authenticated and linked: uses authenticated mode automatically
    - If authenticated but not linked: uses authenticated mode (runs `clerk link`)
    - If not authenticated: asks user — "Continue with temporary keys (connect your account later)" or "Log in to an existing Clerk account"
-   - With `--yes` and not authenticated: skips authentication (connect your account later)
+   - With `--yes` and not authenticated: skips authentication (connect your account later), including for non-keyless frameworks during bootstrap
 4. **Authenticated mode only**: authenticates via `clerk auth login` (skipped if already authenticated) and links the project via `clerk link` (skipped if already linked)
 5. Displays detected framework and variant
 6. Detects existing auth libraries (NextAuth, Auth0, Supabase, Firebase, Passport, Better Auth, Kinde) and shows migration guidance

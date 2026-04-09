@@ -83,7 +83,6 @@ export const FRAMEWORK_MAP: FrameworkInfo[] = [
     sdk: "@clerk/react",
     envVar: "VITE_CLERK_PUBLISHABLE_KEY",
     envFile: ".env.local",
-    supportsKeyless: true,
   },
   {
     dep: "vite",
