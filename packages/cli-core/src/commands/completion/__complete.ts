@@ -48,6 +48,10 @@ const KNOWN_OPTION_VALUES: Record<string, Completion[]> = {
   ],
   "--method": HTTP_METHOD_COMPLETIONS,
   "-X": HTTP_METHOD_COMPLETIONS,
+  "--channel": [
+    { name: "latest", description: "Latest stable release" },
+    { name: "canary", description: "Latest canary (pre-release) build" },
+  ],
 };
 
 /**

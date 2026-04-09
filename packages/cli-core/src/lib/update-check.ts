@@ -63,6 +63,7 @@ export function compareSemver(a: string, b: string): number {
 export function shouldCheckForUpdates(version: string): boolean {
   if (isAgent()) return false;
   if (isDevVersion(version)) return false;
+  if (process.env.CI) return false;
   if (process.env.NO_UPDATE_NOTIFIER) return false;
   if (process.env.CLERK_NO_UPDATE_CHECK) return false;
   return true;

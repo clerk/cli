@@ -192,6 +192,14 @@ clerk doctor
 clerk completion <shell>
   shell: bash, zsh, fish, powershell
 
+clerk update
+  --channel <tag>      Release channel to update to (e.g. latest, canary)
+  -y, --yes            Skip confirmation prompt
+  Examples:
+    $ clerk update                       Update to the latest stable release
+    $ clerk update --channel canary      Update to the latest canary release
+    $ clerk update --yes                 Update without confirmation prompt
+
 clerk deploy
   --debug              Show debug output
 ```

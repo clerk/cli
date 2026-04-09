@@ -1,6 +1,7 @@
 import { isHuman } from "../../mode.ts";
 import { green, cyan } from "../../lib/color.ts";
 import { CliError } from "../../lib/errors.ts";
+import { log } from "../../lib/log.ts";
 import { intro, outro, withSpinner } from "../../lib/spinner.ts";
 import { UPDATE_PACKAGE_NAME } from "../../lib/constants.ts";
 import {
@@ -44,7 +45,7 @@ export async function update(options: UpdateOptions): Promise<void> {
   const currentVersion = getCurrentVersion();
 
   if (isDevVersion(currentVersion)) {
-    console.log("Running development build (0.0.0-dev) — update not applicable.");
+    log.info("Running development build (0.0.0-dev) — update not applicable.");
     return;
   }
 
@@ -59,14 +60,14 @@ export async function update(options: UpdateOptions): Promise<void> {
   });
 
   if (compareSemver(latest, currentVersion) <= 0) {
-    console.log(`${green("✓")} Already on latest (${currentVersion})`);
+    log.info(`${green("✓")} Already on latest (${currentVersion})`);
     if (isHuman()) outro("Up to date");
     return;
   }
 
-  console.log(`  Current: ${currentVersion}`);
-  console.log(`  Latest:  ${cyan(latest)}${formatChannelLabel(channel)}`);
-  console.log("");
+  log.info(`  Current: ${currentVersion}`);
+  log.info(`  Latest:  ${cyan(latest)}${formatChannelLabel(channel)}`);
+  log.blank();
 
   const autoConfirm = options.yes || !isHuman();
   const shouldInstall = autoConfirm || (await confirmUpdate(currentVersion, latest));

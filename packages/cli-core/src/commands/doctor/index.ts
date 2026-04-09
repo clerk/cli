@@ -20,6 +20,7 @@ import { formatCheckResult, formatJson } from "./format.ts";
 import type { CheckFn, CheckResult, DoctorContext, DoctorOptions } from "./types.ts";
 
 const CHECKS: CheckFn[] = [
+  checkCliVersion,
   checkLoggedIn,
   checkTokenValid,
   checkProjectLinked,
@@ -28,7 +29,6 @@ const CHECKS: CheckFn[] = [
   checkEnvVars,
   checkConfigFile,
   checkShellCompletion,
-  checkCliVersion,
 ];
 
 async function runChecks(ctx: DoctorContext): Promise<CheckResult[]> {
