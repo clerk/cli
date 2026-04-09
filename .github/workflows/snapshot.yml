@@ -116,10 +116,8 @@ jobs:
       - uses: oven-sh/setup-bun@v2
       - uses: actions/setup-node@v6
         with:
-          node-version: "22"
+          node-version: "lts/*"
           registry-url: "https://registry.npmjs.org"
-      - name: Upgrade npm for OIDC trusted publishing
-        run: npm install -g npm@11
       - run: bun install --frozen-lockfile
 
       - uses: actions/download-artifact@v8
