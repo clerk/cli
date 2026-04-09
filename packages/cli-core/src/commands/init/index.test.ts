@@ -218,6 +218,27 @@ describe("init", () => {
     expect(bootstrapMod.confirmOverwrite).toHaveBeenCalledWith(expect.any(String));
   });
 
+  test("bootstrap passes project dir to installSkills, not original cwd", async () => {
+    setup();
+
+    const bootstrapCtx = {
+      ...FAKE_CTX,
+      cwd: FAKE_BOOTSTRAP.projectDir,
+      existingClerk: false,
+    };
+
+    spyOn(context, "gatherContext").mockResolvedValueOnce(null).mockResolvedValueOnce(bootstrapCtx);
+
+    spyOn(scaffoldMod, "scaffold").mockResolvedValue({
+      actions: [{ type: "write", path: "app/layout.tsx", content: "" }],
+      postInstructions: [],
+    });
+
+    await init({ yes: true });
+
+    expect(skillsMod.installSkills).toHaveBeenCalledWith(FAKE_BOOTSTRAP.projectDir, "react", true);
+  });
+
   test("--starter in agent mode prints guidance without bootstrap", async () => {
     const { captured } = setup({ isAgent: true });
 

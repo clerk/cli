@@ -100,7 +100,7 @@ export async function init(options: InitOptions = {}) {
 
   if (options.skills !== false) {
     bar();
-    await installSkills(cwd, ctx?.framework.dep, options.yes ?? false);
+    await installSkills(ctx.cwd, ctx?.framework.dep, options.yes ?? false);
   }
 
   outro("Done");
