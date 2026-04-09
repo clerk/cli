@@ -5,6 +5,7 @@ const mockGetToken = mock();
 const mockStoreToken = mock();
 const mockGetAuth = mock();
 const mockSetAuth = mock();
+const mockResolveProfile = mock();
 const mockExchangeCodeForToken = mock();
 const mockFetchUserInfo = mock();
 const mockStartAuthServer = mock();
@@ -21,6 +22,7 @@ mock.module("../../lib/config.ts", () => ({
   ...configStubs,
   getAuth: (...args: unknown[]) => mockGetAuth(...args),
   setAuth: (...args: unknown[]) => mockSetAuth(...args),
+  resolveProfile: (...args: unknown[]) => mockResolveProfile(...args),
 }));
 
 mock.module("../../lib/token-exchange.ts", () => ({
@@ -82,6 +84,7 @@ describe("login", () => {
     mockStoreToken.mockReset();
     mockGetAuth.mockReset();
     mockSetAuth.mockReset();
+    mockResolveProfile.mockReset();
     mockExchangeCodeForToken.mockReset();
     mockFetchUserInfo.mockReset();
     mockStartAuthServer.mockReset();
@@ -313,6 +316,113 @@ describe("login", () => {
     await expect(runLogin()).rejects.toThrow("User aborted");
     expect(mockConfirm).toHaveBeenCalled();
     expect(mockStartAuthServer).not.toHaveBeenCalled();
+  });
+
+  test("shows linked app with name and id in next steps when linked", async () => {
+    mockGetToken.mockResolvedValue(null);
+    mockBunSpawn();
+
+    const mockServer = {
+      port: 54321,
+      waitForCallback: mock().mockResolvedValue({ code: "fresh-auth-code" }),
+      stop: mock(),
+    };
+    mockStartAuthServer.mockReturnValue(mockServer);
+
+    mockExchangeCodeForToken.mockResolvedValue({
+      access_token: "new-access-token",
+      token_type: "Bearer",
+      expires_in: 3600,
+    });
+    mockStoreToken.mockResolvedValue(undefined);
+    mockFetchUserInfo.mockResolvedValue({
+      userId: "user_new",
+      email: "new@example.com",
+    });
+    mockSetAuth.mockResolvedValue(undefined);
+    mockResolveProfile.mockResolvedValue({
+      path: "/some/path",
+      profile: {
+        workspaceId: "ws_123",
+        appId: "app_abc123",
+        appName: "My App",
+        instances: { development: "ins_dev" },
+      },
+      resolvedVia: "remote",
+    });
+
+    consoleSpy = spyOn(console, "log").mockImplementation(() => {});
+    await runLogin();
+
+    expect(captured.err).toContain("Linked to `My App` (app_abc123)");
+  });
+
+  test("shows linked app with only id when appName is missing", async () => {
+    mockGetToken.mockResolvedValue(null);
+    mockBunSpawn();
+
+    const mockServer = {
+      port: 54321,
+      waitForCallback: mock().mockResolvedValue({ code: "fresh-auth-code" }),
+      stop: mock(),
+    };
+    mockStartAuthServer.mockReturnValue(mockServer);
+
+    mockExchangeCodeForToken.mockResolvedValue({
+      access_token: "new-access-token",
+      token_type: "Bearer",
+      expires_in: 3600,
+    });
+    mockStoreToken.mockResolvedValue(undefined);
+    mockFetchUserInfo.mockResolvedValue({
+      userId: "user_new",
+      email: "new@example.com",
+    });
+    mockSetAuth.mockResolvedValue(undefined);
+    mockResolveProfile.mockResolvedValue({
+      path: "/some/path",
+      profile: {
+        workspaceId: "ws_123",
+        appId: "app_abc123",
+        instances: { development: "ins_dev" },
+      },
+      resolvedVia: "remote",
+    });
+
+    consoleSpy = spyOn(console, "log").mockImplementation(() => {});
+    await runLogin();
+
+    expect(captured.err).toContain("Linked to `app_abc123`");
+  });
+
+  test("shows default next steps when not linked", async () => {
+    mockGetToken.mockResolvedValue(null);
+    mockBunSpawn();
+
+    const mockServer = {
+      port: 54321,
+      waitForCallback: mock().mockResolvedValue({ code: "fresh-auth-code" }),
+      stop: mock(),
+    };
+    mockStartAuthServer.mockReturnValue(mockServer);
+
+    mockExchangeCodeForToken.mockResolvedValue({
+      access_token: "new-access-token",
+      token_type: "Bearer",
+      expires_in: 3600,
+    });
+    mockStoreToken.mockResolvedValue(undefined);
+    mockFetchUserInfo.mockResolvedValue({
+      userId: "user_new",
+      email: "new@example.com",
+    });
+    mockSetAuth.mockResolvedValue(undefined);
+    mockResolveProfile.mockResolvedValue(undefined);
+
+    consoleSpy = spyOn(console, "log").mockImplementation(() => {});
+    await runLogin();
+
+    expect(captured.err).not.toContain("Linked to");
   });
 
   test("suppresses auth next-steps when requested", async () => {

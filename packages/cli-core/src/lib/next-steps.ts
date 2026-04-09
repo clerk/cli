@@ -7,6 +7,7 @@ export const NEXT_STEPS = {
     "Run `clerk init` to set up Clerk in your project",
     "Run `clerk link` to connect an existing Clerk application",
   ],
+  LOGIN_LINKED: ["Run `clerk link` to connect a different Clerk application"],
   LINK: [
     "Run `clerk env pull` to fetch your environment variables",
     "Run `clerk doctor` to verify your setup",

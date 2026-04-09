@@ -138,7 +138,10 @@ function printExistingStatus(
   if (existing.resolvedVia === "remote") {
     log.info(`Auto-linked via git remote (${dim(normalizedRemote ?? existing.path)})`);
   } else {
-    log.info(`Already linked to ${cyan(existing.profile.appId)} in ${dim(existing.path)}`);
+    const label = existing.profile.appName
+      ? `${existing.profile.appName} (${existing.profile.appId})`
+      : existing.profile.appId;
+    log.info(`Already linked to ${cyan(label)} in ${dim(existing.path)}`);
   }
 }
 
