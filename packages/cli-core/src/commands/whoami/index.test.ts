@@ -1,5 +1,6 @@
-import { test, expect, describe, afterEach, mock, spyOn } from "bun:test";
-import { credentialStoreStubs, tokenExchangeStubs } from "../../test/lib/stubs.ts";
+import { test, expect, describe, beforeEach, afterEach, mock, spyOn } from "bun:test";
+import { captureLog, credentialStoreStubs, tokenExchangeStubs } from "../../test/lib/stubs.ts";
+import { CliError } from "../../lib/errors.ts";
 
 const mockGetToken = mock();
 const mockFetchUserInfo = mock();
@@ -18,12 +19,22 @@ const { whoami } = await import("./index.ts");
 
 describe("whoami", () => {
   let consoleSpy: ReturnType<typeof spyOn>;
+  let captured: ReturnType<typeof captureLog>;
+
+  beforeEach(() => {
+    captured = captureLog();
+  });
 
   afterEach(() => {
+    captured.teardown();
     mockGetToken.mockReset();
     mockFetchUserInfo.mockReset();
     consoleSpy?.mockRestore();
   });
+
+  function runWhoami() {
+    return captured.run(() => whoami());
+  }
 
   test("prints email when authenticated", async () => {
     mockGetToken.mockResolvedValue("valid-token");
@@ -33,28 +44,26 @@ describe("whoami", () => {
     });
 
     consoleSpy = spyOn(console, "log").mockImplementation(() => {});
-    await whoami();
+    await runWhoami();
 
-    expect(consoleSpy).toHaveBeenCalledWith("alice@example.com");
+    expect(captured.out).toContain("alice@example.com");
   });
 
-  test("prompts to login when no token exists", async () => {
+  test("throws CliError when no token exists", async () => {
     mockGetToken.mockResolvedValue(null);
 
-    consoleSpy = spyOn(console, "log").mockImplementation(() => {});
-    await whoami();
-
-    expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining("Not logged in"));
+    await expect(runWhoami()).rejects.toThrow(CliError);
+    await expect(captured.run(() => whoami())).rejects.toThrow(/Not logged in/);
+    expect(captured.out).toBe("");
     expect(mockFetchUserInfo).not.toHaveBeenCalled();
   });
 
-  test("prints session expired when token is invalid", async () => {
+  test("throws CliError when token is invalid", async () => {
     mockGetToken.mockResolvedValue("expired-token");
     mockFetchUserInfo.mockRejectedValue(new Error("Unauthorized"));
 
-    consoleSpy = spyOn(console, "log").mockImplementation(() => {});
-    await whoami();
-
-    expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining("Session expired"));
+    await expect(runWhoami()).rejects.toThrow(CliError);
+    await expect(captured.run(() => whoami())).rejects.toThrow(/Session expired/);
+    expect(captured.out).toBe("");
   });
 });

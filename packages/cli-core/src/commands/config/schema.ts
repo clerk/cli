@@ -1,6 +1,7 @@
 import { resolveAppContext } from "../../lib/config.ts";
 import { fetchInstanceConfigSchema } from "../../lib/plapi.ts";
 import { withApiContext } from "../../lib/errors.ts";
+import { log } from "../../lib/log.ts";
 
 interface ConfigSchemaOptions {
   app?: string;
@@ -12,8 +13,7 @@ interface ConfigSchemaOptions {
 export async function configSchema(options: ConfigSchemaOptions): Promise<void> {
   const ctx = await resolveAppContext(options);
 
-  // Use `console.error` for informational messages so stdout is just the JSON response.
-  console.error(`Pulling config schema from ${ctx.appLabel} (${ctx.instanceLabel})...`);
+  log.info(`Pulling config schema from ${ctx.appLabel} (${ctx.instanceLabel})...`);
 
   const schema = await withApiContext(
     fetchInstanceConfigSchema(ctx.appId, ctx.instanceId, options.keys),
@@ -24,8 +24,8 @@ export async function configSchema(options: ConfigSchemaOptions): Promise<void> 
 
   if (options.output) {
     await Bun.write(options.output, json + "\n");
-    console.error(`Schema written to ${options.output}`);
+    log.success(`Schema written to ${options.output}`);
   } else {
-    console.log(json);
+    log.data(json);
   }
 }

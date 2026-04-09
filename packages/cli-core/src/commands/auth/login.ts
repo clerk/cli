@@ -12,6 +12,7 @@ import { intro, outro, bar, withSpinner } from "../../lib/spinner.ts";
 import { NEXT_STEPS } from "../../lib/next-steps.ts";
 import { openBrowser } from "../../lib/open.ts";
 import { cyan, dim } from "../../lib/color.ts";
+import { log } from "../../lib/log.ts";
 
 interface LoginOptions {
   showNextSteps?: boolean;
@@ -55,13 +56,13 @@ async function performOAuthFlow(): Promise<UserInfo> {
   const urlString = authorizeUrl.toString();
   const result = await openBrowser(urlString);
   if (!result.ok) {
-    console.log(
+    log.warn(
       `\nCould not open your browser automatically. Open this URL to continue:\n  ${cyan(urlString)}\n${dim("(Reason: " + result.reason + ")")}\n`,
     );
   }
 
   const timeoutMinutes = Math.round(AUTH_TIMEOUT_MS / 60_000);
-  console.log(`Waiting for authentication (timeout in ${timeoutMinutes}m)...`);
+  log.info(`Waiting for authentication (timeout in ${timeoutMinutes}m)...`);
 
   const { code } = await withSpinner("Waiting for authentication...", () =>
     authServer.waitForCallback().catch((error: unknown) => {
@@ -92,7 +93,7 @@ export async function login(options: LoginOptions = {}): Promise<UserInfo> {
   const existingSession = await withSpinner("Checking session...", () => getExistingSession());
 
   if (existingSession && !isHuman()) {
-    console.log(`Logged in as ${existingSession.email}`);
+    log.success(`Logged in as ${existingSession.email}`);
     return existingSession;
   }
 
@@ -110,7 +111,7 @@ export async function login(options: LoginOptions = {}): Promise<UserInfo> {
   const userInfo = await performOAuthFlow();
 
   bar();
-  console.log(`Logged in as ${userInfo.email}`);
+  log.success(`Logged in as ${userInfo.email}`);
 
   outro(showNextSteps ? NEXT_STEPS.LOGIN : "Done");
   return userInfo;

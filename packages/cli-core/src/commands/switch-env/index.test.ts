@@ -1,5 +1,5 @@
-import { test, expect, describe, afterEach, mock, spyOn } from "bun:test";
-import { configStubs, credentialStoreStubs } from "../../test/lib/stubs.ts";
+import { test, expect, describe, beforeEach, afterEach, mock, spyOn } from "bun:test";
+import { captureLog, configStubs, credentialStoreStubs } from "../../test/lib/stubs.ts";
 
 const mockSetEnvironment = mock();
 const mockGetToken = mock();
@@ -30,20 +30,30 @@ const { switchEnv } = await import("./index.ts");
 
 describe("switch-env", () => {
   let logSpy: ReturnType<typeof spyOn>;
+  let captured: ReturnType<typeof captureLog>;
+
+  beforeEach(() => {
+    captured = captureLog();
+  });
 
   afterEach(() => {
+    captured.teardown();
     mockSetEnvironment.mockReset();
     mockGetToken.mockReset();
     mockCurrentEnv = "production";
     logSpy?.mockRestore();
   });
 
+  function runSwitchEnv(environment: string | undefined) {
+    return captured.run(() => switchEnv(environment));
+  }
+
   test("prints current environment when no argument given", async () => {
     logSpy = spyOn(console, "log").mockImplementation(() => {});
-    await switchEnv(undefined);
+    await runSwitchEnv(undefined);
 
-    expect(logSpy).toHaveBeenCalledWith("Current environment: production");
-    expect(logSpy).toHaveBeenCalledWith("Available environments: production, staging");
+    expect(captured.err).toContain("Current environment: production");
+    expect(captured.err).toContain("Available environments: production, staging");
   });
 
   test("switches to a valid environment", async () => {
@@ -51,11 +61,11 @@ describe("switch-env", () => {
     mockGetToken.mockResolvedValue("some-token");
 
     logSpy = spyOn(console, "log").mockImplementation(() => {});
-    await switchEnv("staging");
+    await runSwitchEnv("staging");
 
     expect(mockCurrentEnv).toBe("staging");
     expect(mockSetEnvironment).toHaveBeenCalledWith("staging");
-    expect(logSpy).toHaveBeenCalledWith("Switched from production to staging.");
+    expect(captured.out).toContain("Switched from production to staging.");
   });
 
   test("reports already on environment when switching to current", async () => {
@@ -63,13 +73,13 @@ describe("switch-env", () => {
     mockGetToken.mockResolvedValue("some-token");
 
     logSpy = spyOn(console, "log").mockImplementation(() => {});
-    await switchEnv("production");
+    await runSwitchEnv("production");
 
-    expect(logSpy).toHaveBeenCalledWith("Already on production environment.");
+    expect(captured.out).toContain("Already on production environment.");
   });
 
   test("throws on invalid environment", async () => {
-    await expect(switchEnv("nonexistent")).rejects.toThrow(
+    await expect(runSwitchEnv("nonexistent")).rejects.toThrow(
       'Unknown environment "nonexistent". Available environments: production, staging',
     );
   });
@@ -79,9 +89,9 @@ describe("switch-env", () => {
     mockGetToken.mockResolvedValue(null);
 
     logSpy = spyOn(console, "log").mockImplementation(() => {});
-    await switchEnv("staging");
+    await runSwitchEnv("staging");
 
-    expect(logSpy).toHaveBeenCalledWith(
+    expect(captured.out).toContain(
       "No credentials found for staging. Run `clerk auth login` to authenticate.",
     );
   });
@@ -91,8 +101,8 @@ describe("switch-env", () => {
     mockGetToken.mockResolvedValue("valid-token");
 
     logSpy = spyOn(console, "log").mockImplementation(() => {});
-    await switchEnv("staging");
+    await runSwitchEnv("staging");
 
-    expect(logSpy).not.toHaveBeenCalledWith(expect.stringContaining("No credentials found"));
+    expect(captured.out).not.toContain("No credentials found");
   });
 });

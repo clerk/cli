@@ -13,6 +13,7 @@ import {
 import { isHuman } from "../../mode.ts";
 import { confirm } from "../../lib/prompts.ts";
 import { withSpinner } from "../../lib/spinner.ts";
+import { log } from "../../lib/log.ts";
 
 export interface ApiOptions {
   method?: string;
@@ -66,7 +67,7 @@ export async function api(
 
   // 4. Dry run
   if (options.dryRun) {
-    console.error(`[dry-run] ${method} ${baseUrl}${normalizePath(endpoint)}`);
+    log.info(`[dry-run] ${method} ${baseUrl}${normalizePath(endpoint)}`);
     if (body) {
       prettyPrint(body);
     }
@@ -75,7 +76,7 @@ export async function api(
 
   // 5. Confirmation for mutating methods
   if (MUTATING_METHODS.has(method) && isHuman() && !options.yes) {
-    console.error(`\nAbout to ${method} ${endpoint}`);
+    log.info(`\nAbout to ${method} ${endpoint}`);
     if (body) {
       prettyPrintToStderr(body);
     }
@@ -194,35 +195,35 @@ function normalizePath(path: string): string {
 }
 
 function printHeaders(status: number, headers: Headers): void {
-  console.error(`HTTP ${status}`);
+  log.raw(`HTTP ${status}`);
   headers.forEach((value, key) => {
-    console.error(`${key}: ${value}`);
+    log.raw(`${key}: ${value}`);
   });
-  console.error("");
+  log.blank();
 }
 
 function printBody(body: unknown): void {
   if (typeof body === "string") {
-    console.log(body);
+    log.data(body);
   } else {
-    console.log(JSON.stringify(body, null, 2));
+    log.data(JSON.stringify(body, null, 2));
   }
 }
 
 /** Pretty-print a string as JSON to stdout if possible, otherwise print raw. */
 function prettyPrint(text: string): void {
   try {
-    console.log(JSON.stringify(JSON.parse(text), null, 2));
+    log.data(JSON.stringify(JSON.parse(text), null, 2));
   } catch {
-    console.log(text);
+    log.data(text);
   }
 }
 
 /** Pretty-print a string as JSON to stderr if possible, otherwise print raw. */
 function prettyPrintToStderr(text: string): void {
   try {
-    console.error(JSON.stringify(JSON.parse(text), null, 2));
+    log.raw(JSON.stringify(JSON.parse(text), null, 2));
   } catch {
-    console.error(text);
+    log.raw(text);
   }
 }

@@ -11,10 +11,11 @@ useIntegrationTestHarness();
 test.each([{ mode: "human" }, { mode: "agent" }])(
   "whoami -> logout -> whoami cycle ($mode mode)",
   async ({ mode }) => {
-    // Not logged in
+    // Not logged in — exits non-zero, error on stderr
     mockState.storedToken = null;
-    const { stdout: notLoggedIn } = await clerk("--mode", mode, "whoami");
-    expect(notLoggedIn).toContain("Not logged in");
+    const notLoggedIn = await clerk.raw("--mode", mode, "whoami");
+    expect(notLoggedIn.exitCode).not.toBe(0);
+    expect(notLoggedIn.stderr).toContain("Not logged in");
 
     // Set token and verify whoami shows email
     mockState.storedToken = "valid_token";
@@ -22,12 +23,13 @@ test.each([{ mode: "human" }, { mode: "agent" }])(
     expect(loggedIn).toContain("test@example.com");
 
     // Logout
-    const { stdout: logoutOutput } = await clerk("--mode", mode, "auth", "logout");
-    expect(logoutOutput).toContain("Logged out successfully");
+    const logoutResult = await clerk.raw("--mode", mode, "auth", "logout");
+    expect(logoutResult.stderr).toContain("Logged out successfully");
     expect(mockState.storedToken).toBeNull();
 
     // Whoami again -> not logged in
-    const { stdout: afterLogout } = await clerk("--mode", mode, "whoami");
-    expect(afterLogout).toContain("Not logged in");
+    const afterLogout = await clerk.raw("--mode", mode, "whoami");
+    expect(afterLogout.exitCode).not.toBe(0);
+    expect(afterLogout.stderr).toContain("Not logged in");
   },
 );

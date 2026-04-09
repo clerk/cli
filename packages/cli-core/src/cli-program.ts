@@ -1,4 +1,5 @@
 import { Command, createOption, createArgument } from "@commander-js/extra-typings";
+import { setLogLevel } from "./lib/log.ts";
 import { setMode, type Mode } from "./mode.ts";
 import { init } from "./commands/init/index.ts";
 import { login } from "./commands/auth/login.ts";
@@ -29,8 +30,8 @@ import {
 } from "./lib/errors.ts";
 import { clerkHelpConfig } from "./lib/help.ts";
 import { ExitPromptError } from "@inquirer/core";
-import { red } from "./lib/color.ts";
 import { isAgent } from "./mode.ts";
+import { log } from "./lib/log.ts";
 
 export function createProgram() {
   const program = new Command()
@@ -48,10 +49,16 @@ export function createProgram() {
       "--mode <mode>",
       "Force interaction mode (human or agent). Defaults to auto-detect based on TTY.",
     )
-    .option("--verbose", "Show detailed error output");
+    .option("--verbose", "Show detailed output (enables debug messages)");
 
   program.hook("preAction", async () => {
+    // Reset log level at the start of each command invocation so a previous
+    // --verbose or --debug flag doesn't leak into subsequent runs.
+    setLogLevel("info");
     const opts = program.opts();
+    if (opts.verbose) {
+      setLogLevel("debug");
+    }
     if (opts.mode) {
       if (opts.mode !== "human" && opts.mode !== "agent") {
         throwUsageError(`Invalid mode "${opts.mode}". Must be "human" or "agent".`);
@@ -535,10 +542,10 @@ export async function runProgram(
         outputJsonError(error.code, error.message, error.docsUrl);
       } else {
         if (error.message) {
-          console.error(red(`error: ${error.message}`));
+          log.error(error.message);
         }
         if (error.docsUrl) {
-          console.error(`\nFor more information, see: ${error.docsUrl}`);
+          log.info(`\nFor more information, see: ${error.docsUrl}`);
         }
       }
       process.exit(error.exitCode);
@@ -557,9 +564,9 @@ export async function runProgram(
           apiErrors,
         );
       } else {
-        console.error(red(`error: ${prefix} (${error.status}): ${detail}`));
+        log.error(`${prefix} (${error.status}): ${detail}`);
         if (verbose && error instanceof PlapiError && error.url) {
-          console.error(`       URL: ${error.url}`);
+          log.error(`       URL: ${error.url}`);
         }
       }
       process.exit(EXIT_CODE.GENERAL);
@@ -569,7 +576,7 @@ export async function runProgram(
       if (isAgent()) {
         outputJsonError("unexpected_error", error.message);
       } else {
-        console.error(red(`error: ${error.message}`));
+        log.error(error.message);
       }
       process.exit(EXIT_CODE.GENERAL);
     }
@@ -577,7 +584,7 @@ export async function runProgram(
     if (isAgent()) {
       outputJsonError("unexpected_error", "An unexpected error occurred");
     } else {
-      console.error(red("error: An unexpected error occurred"));
+      log.error("An unexpected error occurred");
     }
     process.exit(EXIT_CODE.GENERAL);
   }
@@ -608,7 +615,7 @@ function outputJsonError(
   };
   if (docsUrl) payload.error.docsUrl = docsUrl;
   if (errors?.length) payload.error.errors = errors;
-  console.error(JSON.stringify(payload));
+  log.raw(JSON.stringify(payload));
 }
 
 /** Extract the error code from a Clerk API JSON response body, if present. */

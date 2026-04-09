@@ -1,5 +1,5 @@
 import { test, expect, describe, afterEach, spyOn } from "bun:test";
-import { configStubs, capturedOutput } from "../../test/lib/stubs.ts";
+import { captureLog } from "../../test/lib/stubs.ts";
 
 // Pure spyOn approach — Bun's mock.module globally replaces modules for the
 // entire test run, which pollutes other test files (link, env/pull, config,
@@ -44,14 +44,18 @@ const FAKE_BOOTSTRAP = {
 
 describe("init", () => {
   let spies: ReturnType<typeof spyOn>[];
+  let captured: ReturnType<typeof captureLog>;
 
   afterEach(() => {
+    captured.teardown();
     for (const s of spies) s.mockRestore();
   });
 
   function setup(overrides: { email?: string | null; isAgent?: boolean } = {}) {
     const email = overrides.email ?? null;
     const agent = overrides.isAgent ?? false;
+
+    captured = captureLog();
 
     const gatherContextSpy = spyOn(context, "gatherContext").mockResolvedValue(null);
 
@@ -85,7 +89,7 @@ describe("init", () => {
       spyOn(bootstrapMod, "askSkipAuth").mockResolvedValue(false),
     ];
 
-    return { gatherContextSpy };
+    return { gatherContextSpy, captured };
   }
 
   function setupBootstrapSuccess() {
@@ -110,12 +114,11 @@ describe("init", () => {
   });
 
   test("agent mode prints guidance without auth/bootstrap", async () => {
-    setup({ isAgent: true });
+    const { captured } = setup({ isAgent: true });
 
-    await init({});
+    await captured.run(() => init({}));
 
-    const output = capturedOutput(spies[0] as ReturnType<typeof spyOn>);
-    expect(output).toContain("clerk init -y");
+    expect(captured.out).toContain("clerk init -y");
     expect(loginMod.login).not.toHaveBeenCalled();
     expect(bootstrapMod.promptAndBootstrap).not.toHaveBeenCalled();
   });
@@ -216,12 +219,11 @@ describe("init", () => {
   });
 
   test("--starter in agent mode prints guidance without bootstrap", async () => {
-    setup({ isAgent: true });
+    const { captured } = setup({ isAgent: true });
 
-    await init({ starter: true });
+    await captured.run(() => init({ starter: true }));
 
-    const output = capturedOutput(spies[0] as ReturnType<typeof spyOn>);
-    expect(output).toContain("clerk init -y");
+    expect(captured.out).toContain("clerk init -y");
     expect(bootstrapMod.promptAndBootstrap).not.toHaveBeenCalled();
   });
 

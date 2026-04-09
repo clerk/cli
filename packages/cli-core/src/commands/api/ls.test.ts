@@ -3,7 +3,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { parseSpec, _setCacheDir } from "./catalog.ts";
-import { stubFetch } from "../../test/lib/stubs.ts";
+import { captureLog, stubFetch } from "../../test/lib/stubs.ts";
 import { apiLs } from "./ls.ts";
 
 const MINIMAL_SPEC = `
@@ -45,6 +45,7 @@ describe("apiLs", () => {
   let tempDir: string;
   let logSpy: ReturnType<typeof spyOn>;
   let errorSpy: ReturnType<typeof spyOn>;
+  let captured: ReturnType<typeof captureLog>;
   const originalFetch = globalThis.fetch;
 
   beforeEach(async () => {
@@ -58,12 +59,14 @@ describe("apiLs", () => {
 
     logSpy = spyOn(console, "log").mockImplementation(() => {});
     errorSpy = spyOn(console, "error").mockImplementation(() => {});
+    captured = captureLog();
     stubFetch(async () => {
       throw new Error("Should not fetch");
     });
   });
 
   afterEach(async () => {
+    captured.teardown();
     _setCacheDir(undefined);
     globalThis.fetch = originalFetch;
     logSpy.mockRestore();
@@ -71,37 +74,35 @@ describe("apiLs", () => {
     await rm(tempDir, { recursive: true, force: true });
   });
 
-  test("prints all endpoints in table format", async () => {
-    await apiLs(undefined, {});
+  function runApiLs(filter: string | undefined, options: Parameters<typeof apiLs>[1]) {
+    return captured.run(() => apiLs(filter, options));
+  }
 
-    expect(logSpy).toHaveBeenCalledTimes(4);
-    // Check that each line contains method, path, and summary
-    const firstCall = logSpy.mock.calls[0][0] as string;
-    expect(firstCall).toContain("GET");
-    expect(firstCall).toContain("/users");
-    expect(firstCall).toContain("List all users");
+  test("prints all endpoints in table format", async () => {
+    await runApiLs(undefined, {});
+
+    // Check that output contains method, path, and summary
+    expect(captured.out).toContain("GET");
+    expect(captured.out).toContain("/users");
+    expect(captured.out).toContain("List all users");
 
     // Footer
-    expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining("4 endpoints"));
+    expect(captured.err).toContain("4 endpoints");
   });
 
   test("filters endpoints by keyword", async () => {
-    await apiLs("organizations", {});
+    await runApiLs("organizations", {});
 
-    expect(logSpy).toHaveBeenCalledTimes(1);
-    const line = logSpy.mock.calls[0][0] as string;
-    expect(line).toContain("/organizations");
+    expect(captured.out).toContain("/organizations");
 
-    expect(errorSpy).toHaveBeenCalledWith(
-      expect.stringContaining('1 endpoint matching "organizations"'),
-    );
+    expect(captured.err).toContain('1 endpoint matching "organizations"');
   });
 
   test("shows message when no matches", async () => {
-    await apiLs("zzzzz", {});
+    await runApiLs("zzzzz", {});
 
-    expect(logSpy).not.toHaveBeenCalled();
-    expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining('No endpoints matching "zzzzz"'));
+    expect(captured.out).toBe("");
+    expect(captured.err).toContain('No endpoints matching "zzzzz"');
   });
 
   test("uses platform catalog when --platform set", async () => {
@@ -110,7 +111,7 @@ describe("apiLs", () => {
     cached.fetchedAt = Date.now();
     await Bun.write(join(tempDir, "plapi-catalog.json"), JSON.stringify(cached));
 
-    await apiLs(undefined, { platform: true });
-    expect(logSpy).toHaveBeenCalled();
+    await runApiLs(undefined, { platform: true });
+    expect(captured.out).not.toBe("");
   });
 });

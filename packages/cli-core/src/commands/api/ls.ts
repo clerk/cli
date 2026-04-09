@@ -3,6 +3,7 @@
  */
 
 import { loadCatalog, filterEndpoints, type EndpointInfo } from "./catalog.ts";
+import { log } from "../../lib/log.ts";
 
 export async function apiLs(
   filter: string | undefined,
@@ -12,7 +13,7 @@ export async function apiLs(
   const endpoints = filterEndpoints(catalog, filter);
 
   if (endpoints.length === 0) {
-    console.error(
+    log.info(
       filter
         ? `No endpoints matching "${filter}". Try a broader search term.`
         : "No endpoints found.",
@@ -25,7 +26,7 @@ export async function apiLs(
   const label = filter
     ? `${endpoints.length} endpoint${endpoints.length === 1 ? "" : "s"} matching "${filter}"`
     : `${endpoints.length} endpoint${endpoints.length === 1 ? "" : "s"}`;
-  console.error(`\n${label}`);
+  log.info(`\n${label}`);
 }
 
 function printTable(endpoints: EndpointInfo[]): void {
@@ -35,6 +36,6 @@ function printTable(endpoints: EndpointInfo[]): void {
   for (const ep of endpoints) {
     const method = ep.method.padEnd(methodWidth);
     const path = ep.path.padEnd(pathWidth);
-    console.log(`${method}${path}${ep.summary}`);
+    log.data(`${method}${path}${ep.summary}`);
   }
 }

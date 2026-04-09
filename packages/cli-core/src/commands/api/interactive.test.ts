@@ -2,7 +2,7 @@ import { test, expect, describe, beforeEach, afterEach, spyOn, mock } from "bun:
 import { mkdtemp, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { promptsStubs, stubFetch } from "../../test/lib/stubs.ts";
+import { captureLog, promptsStubs, stubFetch } from "../../test/lib/stubs.ts";
 
 let _mode = "human";
 mock.module("../../mode.ts", () => ({
@@ -68,6 +68,7 @@ describe("apiInteractive", () => {
   let errorSpy: ReturnType<typeof spyOn>;
   let logSpy: ReturnType<typeof spyOn>;
   let exitSpy: ReturnType<typeof spyOn>;
+  let captured: ReturnType<typeof captureLog>;
   const originalFetch = globalThis.fetch;
   const originalIsTTY = process.stdin.isTTY;
 
@@ -95,6 +96,7 @@ describe("apiInteractive", () => {
     exitSpy = spyOn(process, "exit").mockImplementation(() => {
       throw new Error("process.exit");
     });
+    captured = captureLog();
     // Capture fetch calls from the real api handler
     stubFetch(async (input, init) => {
       fetchCalls.push({ url: input.toString(), method: init?.method ?? "GET" });
@@ -109,6 +111,7 @@ describe("apiInteractive", () => {
   });
 
   afterEach(async () => {
+    captured.teardown();
     _setCacheDir(undefined);
     process.env = { ...originalEnv };
     globalThis.fetch = originalFetch;
@@ -123,21 +126,20 @@ describe("apiInteractive", () => {
     await rm(tempDir, { recursive: true, force: true });
   });
 
+  async function runApiInteractive(options: Record<string, unknown> = {}) {
+    const { apiInteractive } = await import("./interactive.ts");
+    return captured.run(() => apiInteractive(options));
+  }
+
   test("shows help and returns in agent mode", async () => {
     setMode("agent");
-    const { apiInteractive } = await import("./interactive.ts");
-
-    await apiInteractive({});
-    expect(errorSpy).toHaveBeenCalledWith(
-      expect.stringContaining("Interactive mode requires a TTY"),
-    );
+    await runApiInteractive({});
+    expect(captured.err).toContain("Interactive mode requires a TTY");
     setMode("human");
   });
 
   test("completes full flow for GET endpoint (no body, no params)", async () => {
     setMode("human");
-    const { apiInteractive } = await import("./interactive.ts");
-
     // Step 1: select tag "Users"
     selectResponses.push("Users");
     // Step 2: select endpoint GET /users
@@ -153,7 +155,7 @@ describe("apiInteractive", () => {
     // Step 5: confirm execution
     confirmResponses.push(true);
 
-    await apiInteractive({});
+    await runApiInteractive({});
 
     expect(fetchCalls.length).toBe(1);
     expect(fetchCalls[0].url).toContain("/v1/users");
@@ -162,8 +164,6 @@ describe("apiInteractive", () => {
 
   test("prompts for path parameters", async () => {
     setMode("human");
-    const { apiInteractive } = await import("./interactive.ts");
-
     selectResponses.push("Users");
     selectResponses.push({
       method: "GET",
@@ -177,7 +177,7 @@ describe("apiInteractive", () => {
     inputResponses.push("user_abc123");
     confirmResponses.push(true);
 
-    await apiInteractive({});
+    await runApiInteractive({});
 
     expect(fetchCalls.length).toBe(1);
     expect(fetchCalls[0].url).toContain("/v1/users/user_abc123");
@@ -185,8 +185,6 @@ describe("apiInteractive", () => {
 
   test("aborts when user declines confirmation", async () => {
     setMode("human");
-    const { apiInteractive } = await import("./interactive.ts");
-
     selectResponses.push("Users");
     selectResponses.push({
       method: "GET",
@@ -199,7 +197,7 @@ describe("apiInteractive", () => {
     });
     confirmResponses.push(false); // decline
 
-    await expect(apiInteractive({})).rejects.toThrow("User aborted");
+    await expect(runApiInteractive({})).rejects.toThrow("User aborted");
 
     expect(fetchCalls.length).toBe(0);
   });

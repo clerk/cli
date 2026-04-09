@@ -1,5 +1,5 @@
-import { test, expect, describe, afterEach, mock, spyOn } from "bun:test";
-import { credentialStoreStubs, configStubs } from "../../test/lib/stubs.ts";
+import { test, expect, describe, beforeEach, afterEach, mock, spyOn } from "bun:test";
+import { captureLog, credentialStoreStubs, configStubs } from "../../test/lib/stubs.ts";
 
 const mockGetToken = mock();
 const mockStoreToken = mock();
@@ -69,9 +69,15 @@ const { login } = await import("./login.ts");
 describe("login", () => {
   let consoleSpy: ReturnType<typeof spyOn>;
   let consoleErrorSpy: ReturnType<typeof spyOn>;
+  let captured: ReturnType<typeof captureLog>;
   const origSpawn = Bun.spawn;
 
+  beforeEach(() => {
+    captured = captureLog();
+  });
+
   afterEach(() => {
+    captured.teardown();
     mockGetToken.mockReset();
     mockStoreToken.mockReset();
     mockGetAuth.mockReset();
@@ -91,6 +97,10 @@ describe("login", () => {
     }
   });
 
+  function runLogin(options?: Parameters<typeof login>[0]) {
+    return captured.run(() => login(options));
+  }
+
   function mockBunSpawn() {
     try {
       (Bun as any).spawn = mock(() => ({ exited: Promise.resolve(0) }));
@@ -108,10 +118,10 @@ describe("login", () => {
     });
 
     consoleSpy = spyOn(console, "log").mockImplementation(() => {});
-    const result = await login();
+    const result = await runLogin();
 
     expect(result).toEqual({ userId: "user_123", email: "existing@example.com" });
-    expect(consoleSpy).toHaveBeenCalledWith("Logged in as existing@example.com");
+    expect(captured.err).toContain("Logged in as existing@example.com");
     expect(mockStartAuthServer).not.toHaveBeenCalled();
   });
 
@@ -139,7 +149,7 @@ describe("login", () => {
     mockSetAuth.mockResolvedValue(undefined);
 
     consoleSpy = spyOn(console, "log").mockImplementation(() => {});
-    const result = await login();
+    const result = await runLogin();
 
     expect(result).toEqual({ userId: "user_new", email: "new@example.com" });
     expect(mockStartAuthServer).toHaveBeenCalledWith("test-state-value");
@@ -150,7 +160,7 @@ describe("login", () => {
     });
     expect(mockStoreToken).toHaveBeenCalledWith("new-access-token");
     expect(mockSetAuth).toHaveBeenCalledWith({ userId: "user_new" });
-    expect(consoleSpy).toHaveBeenCalledWith("Logged in as new@example.com");
+    expect(captured.err).toContain("Logged in as new@example.com");
   });
 
   test("re-authenticates when existing token is expired", async () => {
@@ -177,7 +187,7 @@ describe("login", () => {
     mockSetAuth.mockResolvedValue(undefined);
 
     consoleSpy = spyOn(console, "log").mockImplementation(() => {});
-    const result = await login();
+    const result = await runLogin();
 
     expect(result).toEqual({ userId: "user_refreshed", email: "refreshed@example.com" });
     expect(mockStartAuthServer).toHaveBeenCalled();
@@ -199,7 +209,7 @@ describe("login", () => {
 
     consoleSpy = spyOn(console, "log").mockImplementation(() => {});
 
-    await expect(login()).rejects.toThrow("Authentication timed out");
+    await expect(runLogin()).rejects.toThrow("Authentication timed out");
     expect(mockServer.stop).toHaveBeenCalled();
   });
 
@@ -228,7 +238,7 @@ describe("login", () => {
     mockSetAuth.mockResolvedValue(undefined);
 
     consoleSpy = spyOn(console, "log").mockImplementation(() => {});
-    const result = await login();
+    const result = await runLogin();
 
     expect(result).toEqual({ userId: "user_brand_new", email: "brandnew@example.com" });
     expect(mockStartAuthServer).toHaveBeenCalled();
@@ -244,10 +254,10 @@ describe("login", () => {
     });
 
     consoleSpy = spyOn(console, "log").mockImplementation(() => {});
-    const result = await login();
+    const result = await runLogin();
 
     expect(result).toEqual({ userId: "user_123", email: "agent@example.com" });
-    expect(consoleSpy).toHaveBeenCalledWith("Logged in as agent@example.com");
+    expect(captured.err).toContain("Logged in as agent@example.com");
     expect(mockConfirm).not.toHaveBeenCalled();
     expect(mockStartAuthServer).not.toHaveBeenCalled();
   });
@@ -278,7 +288,7 @@ describe("login", () => {
     mockSetAuth.mockResolvedValue(undefined);
 
     consoleSpy = spyOn(console, "log").mockImplementation(() => {});
-    const result = await login();
+    const result = await runLogin();
 
     expect(mockConfirm).toHaveBeenCalledWith({
       message: "You're already logged in as old@example.com. Re-authenticate?",
@@ -300,7 +310,7 @@ describe("login", () => {
 
     consoleSpy = spyOn(console, "log").mockImplementation(() => {});
 
-    await expect(login()).rejects.toThrow("User aborted");
+    await expect(runLogin()).rejects.toThrow("User aborted");
     expect(mockConfirm).toHaveBeenCalled();
     expect(mockStartAuthServer).not.toHaveBeenCalled();
   });
@@ -331,12 +341,8 @@ describe("login", () => {
     consoleSpy = spyOn(console, "log").mockImplementation(() => {});
     consoleErrorSpy = spyOn(console, "error").mockImplementation(() => {});
 
-    await login({ showNextSteps: false });
+    await runLogin({ showNextSteps: false });
 
-    expect(
-      consoleErrorSpy.mock.calls.some(
-        (c) => typeof c[0] === "string" && (c[0] as string).includes("Next steps:"),
-      ),
-    ).toBe(false);
+    expect(captured.err).not.toContain("Next steps:");
   });
 });

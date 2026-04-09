@@ -4,6 +4,7 @@ import { dim, cyan } from "../../lib/color.ts";
 import { withSpinner } from "../../lib/spinner.ts";
 import { printNextSteps, NEXT_STEPS } from "../../lib/next-steps.ts";
 import { stripSecrets, displayName, printJson, type AppsOptions } from "./shared.ts";
+import { log } from "../../lib/log.ts";
 
 export async function create(name: string, options: AppsOptions = {}): Promise<void> {
   const app = await withSpinner("Creating application...", async () => {
@@ -13,6 +14,6 @@ export async function create(name: string, options: AppsOptions = {}): Promise<v
 
   if (printJson(stripSecrets(app), options)) return;
 
-  console.log(`Created ${cyan(displayName(app))} ${dim(app.application_id)}`);
+  log.info(`Created ${cyan(displayName(app))} ${dim(app.application_id)}`);
   printNextSteps(NEXT_STEPS.CREATE);
 }
