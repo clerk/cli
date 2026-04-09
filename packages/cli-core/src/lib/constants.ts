@@ -32,7 +32,7 @@ export const OPENAPI_SPEC_URLS = {
 // ── Cache ────────────────────────────────────────────────────────────────
 
 export const CLERK_CACHE_DIR = clerkConfigDir ? join(clerkConfigDir, "cache") : paths.cache;
-export const CACHE_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
+export const CACHE_TTL_MS = 60 * 60 * 1000; // 1 hour
 
 // ── Update check ──────────────────────────────────────────────────────────
 
