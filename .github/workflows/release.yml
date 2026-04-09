@@ -256,3 +256,4 @@ jobs:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
           CANARY_VERSION: ${{ needs.canary-version.outputs.version }}
           ARTIFACTS_DIR: ${{ github.workspace }}/dist/artifacts
+          GH_TOKEN: ${{ github.token }}
