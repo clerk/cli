@@ -18,6 +18,7 @@ export const KNOWN_DASHBOARD_PATHS = [
 
   // Configure section
   "api-keys",
+  "platform/api-keys",
   "sessions",
   "settings",
   "instance-settings",
@@ -42,7 +43,10 @@ export const KNOWN_DASHBOARD_PATHS = [
 export type KnownDashboardPath = (typeof KNOWN_DASHBOARD_PATHS)[number];
 
 export function isKnownDashboardPath(path: string): path is KnownDashboardPath {
-  // Match the first segment so deep paths like "users/user_xxx" still match.
-  const head = path.split("/")[0] ?? "";
-  return (KNOWN_DASHBOARD_PATHS as readonly string[]).includes(head);
+  const paths = KNOWN_DASHBOARD_PATHS as readonly string[];
+  // Check if the path starts with any known path. This handles:
+  //   "users"                → matches "users"
+  //   "users/user_xxx"       → matches "users"
+  //   "platform/api-keys"    → matches "platform/api-keys"
+  return paths.some((known) => path === known || path.startsWith(`${known}/`));
 }

@@ -1,6 +1,7 @@
 import { test, expect, describe, afterEach, beforeEach, mock, spyOn } from "bun:test";
 import { setMode } from "../../mode.ts";
 import { setCurrentEnv } from "../../lib/environment.ts";
+import { isKnownDashboardPath } from "./dashboard-paths.ts";
 
 const mockResolveProfile = mock();
 const mockOpenBrowser = mock();
@@ -23,6 +24,26 @@ const PROFILE = {
     instances: { development: "ins_dev789" },
   },
 };
+
+describe("isKnownDashboardPath", () => {
+  test("matches single-segment known path", () => {
+    expect(isKnownDashboardPath("users")).toBe(true);
+    expect(isKnownDashboardPath("api-keys")).toBe(true);
+  });
+
+  test("matches deep paths under single-segment known path", () => {
+    expect(isKnownDashboardPath("users/user_xxx")).toBe(true);
+  });
+
+  test("matches multi-segment known path exactly", () => {
+    expect(isKnownDashboardPath("platform/api-keys")).toBe(true);
+  });
+
+  test("rejects unknown paths", () => {
+    expect(isKnownDashboardPath("not-a-real-page")).toBe(false);
+    expect(isKnownDashboardPath("platform/unknown")).toBe(false);
+  });
+});
 
 describe("buildDashboardUrl", () => {
   beforeEach(() => {
@@ -140,6 +161,20 @@ describe("openDashboard", () => {
 
     const payload = JSON.parse(consoleSpy.mock.calls[0]?.[0] as string);
     expect(payload.subpath).toBeNull();
+  });
+
+  test("multi-segment known path (platform/api-keys) does not warn", async () => {
+    mockResolveProfile.mockResolvedValue(PROFILE);
+    consoleSpy = spyOn(console, "log").mockImplementation(() => {});
+    const errSpy = spyOn(console, "error").mockImplementation(() => {});
+
+    await openDashboard("platform/api-keys", { print: true });
+
+    expect(errSpy).not.toHaveBeenCalled();
+    expect(consoleSpy).toHaveBeenCalledWith(
+      "https://dashboard.clerk.com/apps/app_abc123/instances/ins_dev789/platform/api-keys",
+    );
+    errSpy.mockRestore();
   });
 
   test("known subpath does not warn", async () => {
