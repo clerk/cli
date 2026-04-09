@@ -1,11 +1,13 @@
-import { cyan, dimNeutral } from "./color.ts";
+import { cyan } from "./color.ts";
 import { isHuman } from "../mode.ts";
+import { log } from "./log.ts";
 
 export const NEXT_STEPS = {
   LOGIN: [
     "Run `clerk init` to set up Clerk in your project",
     "Run `clerk link` to connect an existing Clerk application",
   ],
+  LOGIN_LINKED: ["Run `clerk link` to connect a different Clerk application"],
   LINK: [
     "Run `clerk env pull` to fetch your environment variables",
     "Run `clerk doctor` to verify your setup",
@@ -27,7 +29,7 @@ export const NEXT_STEPS = {
 export function printNextSteps(steps: readonly string[]): void {
   if (!isHuman() || steps.length === 0) return;
   for (const step of steps) {
-    console.error(`   ${cyan("\u2192")} ${step}`);
+    log.info(`   ${cyan("\u2192")} ${step}`);
   }
-  console.error();
+  log.blank();
 }

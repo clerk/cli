@@ -3,7 +3,7 @@ import { startAuthServer } from "../../lib/auth-server.ts";
 import { exchangeCodeForToken, fetchUserInfo, type UserInfo } from "../../lib/token-exchange.ts";
 import { getOAuthConfig } from "../../lib/environment.ts";
 import { storeToken, getToken } from "../../lib/credential-store.ts";
-import { getAuth, setAuth } from "../../lib/config.ts";
+import { getAuth, setAuth, resolveProfile } from "../../lib/config.ts";
 import { AUTH_TIMEOUT_MS, CALLBACK_PATH } from "../../lib/constants.ts";
 import { confirm } from "../../lib/prompts.ts";
 import { isHuman } from "../../mode.ts";
@@ -12,6 +12,7 @@ import { intro, outro, bar, withSpinner } from "../../lib/spinner.ts";
 import { NEXT_STEPS } from "../../lib/next-steps.ts";
 import { openBrowser } from "../../lib/open.ts";
 import { cyan, dim } from "../../lib/color.ts";
+import { log } from "../../lib/log.ts";
 
 interface LoginOptions {
   showNextSteps?: boolean;
@@ -55,13 +56,13 @@ async function performOAuthFlow(): Promise<UserInfo> {
   const urlString = authorizeUrl.toString();
   const result = await openBrowser(urlString);
   if (!result.ok) {
-    console.log(
+    log.warn(
       `\nCould not open your browser automatically. Open this URL to continue:\n  ${cyan(urlString)}\n${dim("(Reason: " + result.reason + ")")}\n`,
     );
   }
 
   const timeoutMinutes = Math.round(AUTH_TIMEOUT_MS / 60_000);
-  console.log(`Waiting for authentication (timeout in ${timeoutMinutes}m)...`);
+  log.info(`Waiting for authentication (timeout in ${timeoutMinutes}m)...`);
 
   const { code } = await withSpinner("Waiting for authentication...", () =>
     authServer.waitForCallback().catch((error: unknown) => {
@@ -88,11 +89,11 @@ async function performOAuthFlow(): Promise<UserInfo> {
 
 export async function login(options: LoginOptions = {}): Promise<UserInfo> {
   const { showNextSteps = true } = options;
-  intro("clerk login");
+  intro("clerk auth login");
   const existingSession = await withSpinner("Checking session...", () => getExistingSession());
 
   if (existingSession && !isHuman()) {
-    console.log(`Logged in as ${existingSession.email}`);
+    log.success(`Logged in as ${existingSession.email}`);
     return existingSession;
   }
 
@@ -110,8 +111,21 @@ export async function login(options: LoginOptions = {}): Promise<UserInfo> {
   const userInfo = await performOAuthFlow();
 
   bar();
-  console.log(`Logged in as ${userInfo.email}`);
+  log.success(`Logged in as ${userInfo.email}`);
 
-  outro(showNextSteps ? NEXT_STEPS.LOGIN : "Done");
+  if (showNextSteps) {
+    const linked = await resolveProfile(process.cwd());
+    if (linked) {
+      const appLabel = linked.profile.appName
+        ? `\`${linked.profile.appName}\` (${linked.profile.appId})`
+        : `\`${linked.profile.appId}\``;
+      log.success(`Linked to ${appLabel}`);
+      outro(NEXT_STEPS.LOGIN_LINKED);
+    } else {
+      outro(NEXT_STEPS.LOGIN);
+    }
+  } else {
+    outro("Done");
+  }
   return userInfo;
 }

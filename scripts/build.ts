@@ -1,7 +1,7 @@
 import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import { parseArgs } from "node:util";
-import { targets } from "./releaser/targets.ts";
+import { targets } from "./lib/targets.ts";
 
 const { values } = parseArgs({
   args: Bun.argv.slice(2),

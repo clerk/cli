@@ -2,6 +2,7 @@ import { join, dirname } from "node:path";
 import { mkdir } from "node:fs/promises";
 import { dim, cyan, green, yellow, bold } from "../../lib/color.js";
 import { printNextSteps } from "../../lib/next-steps.js";
+import { log } from "../../lib/log.js";
 import { getToken } from "../../lib/credential-store.js";
 import { fetchUserInfo } from "../../lib/token-exchange.js";
 import { printFindings } from "./scan.js";
@@ -18,16 +19,14 @@ export async function installSdk(ctx: ProjectContext): Promise<void> {
   // only have npm). Fail fast with a useful message rather than a raw ENOENT.
   const pmBinary = addCmd.split(" ")[0];
   if (Bun.which(pmBinary) === null) {
-    console.log(
-      yellow(
-        `${pmBinary} is not installed but the project's lockfile suggests it. ` +
-          `Install ${pmBinary} or run \`${addCmd} ${ctx.framework.sdk}\` manually with another package manager.`,
-      ),
+    log.warn(
+      `${pmBinary} is not installed but the project's lockfile suggests it. ` +
+        `Install ${pmBinary} or run \`${addCmd} ${ctx.framework.sdk}\` manually with another package manager.`,
     );
     return;
   }
 
-  console.log(`Installing ${cyan(ctx.framework.sdk)} for ${ctx.framework.name}...`);
+  log.info(`Installing ${cyan(ctx.framework.sdk)} for ${ctx.framework.name}...`);
 
   // try/catch covers the TOCTOU window between Bun.which and spawn.
   let exitCode: number;
@@ -40,19 +39,15 @@ export async function installSdk(ctx: ProjectContext): Promise<void> {
     exitCode = await proc.exited;
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    console.log(
-      yellow(
-        `Failed to spawn ${addCmd}: ${message}. You can install manually: ${addCmd} ${ctx.framework.sdk}`,
-      ),
+    log.warn(
+      `Failed to spawn ${addCmd}: ${message}. You can install manually: ${addCmd} ${ctx.framework.sdk}`,
     );
     return;
   }
 
   if (exitCode !== 0) {
-    console.log(
-      yellow(
-        `Failed to install ${ctx.framework.sdk}. You can install it manually: ${addCmd} ${ctx.framework.sdk}`,
-      ),
+    log.warn(
+      `Failed to install ${ctx.framework.sdk}. You can install it manually: ${addCmd} ${ctx.framework.sdk}`,
     );
   }
 }
@@ -100,15 +95,15 @@ function formatAction(action: FileAction): string {
 }
 
 export function printOutro(plan: ScaffoldPlan, findings: ScanFinding[]): void {
-  console.log(bold(green("\n✓ Clerk has been set up in your project\n")));
+  log.info(bold(green("\n✓ Clerk has been set up in your project\n")));
 
   for (const action of plan.actions) {
-    console.log(formatAction(action));
+    log.info(formatAction(action));
   }
 
   printNextSteps(plan.postInstructions);
   printFindings(findings);
-  console.log();
+  log.blank();
 }
 
 /**
@@ -135,5 +130,5 @@ export function printKeylessInfo(): void {
     "    clerk link",
     "    clerk env pull",
   ];
-  console.log(lines.map(dim).join("\n"));
+  log.info(lines.map(dim).join("\n"));
 }

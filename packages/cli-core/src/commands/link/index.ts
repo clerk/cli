@@ -16,6 +16,7 @@ import { dim, cyan } from "../../lib/color.ts";
 import { NEXT_STEPS } from "../../lib/next-steps.ts";
 import { CliError, PlapiError, ERROR_CODE, withApiContext } from "../../lib/errors.ts";
 import { intro, outro, withSpinner } from "../../lib/spinner.ts";
+import { log } from "../../lib/log.ts";
 
 const AGENT_PROMPT = `You are linking a Clerk application to the current project directory.
 
@@ -49,7 +50,7 @@ function appLabel(app: Application): string {
 
 export async function link(options: LinkOptions = {}): Promise<void> {
   if (isAgent()) {
-    console.log(AGENT_PROMPT);
+    log.data(AGENT_PROMPT);
     return;
   }
 
@@ -108,7 +109,7 @@ export async function link(options: LinkOptions = {}): Promise<void> {
   });
 
   const label = app.name || app.application_id;
-  console.log(`Linked to ${cyan(label)} in ${dim(displayPath)}`);
+  log.success(`Linked to ${cyan(label)} in ${dim(displayPath)}`);
 
   outro(NEXT_STEPS.LINK);
 }
@@ -120,7 +121,7 @@ async function ensureAuth() {
   if (process.env.CLERK_PLATFORM_API_KEY) return;
   const token = await getToken();
   if (!token) {
-    console.log("Not logged in. Authenticating first...");
+    log.info("Not logged in. Authenticating first...");
     await login({ showNextSteps: false });
   }
 }
@@ -135,9 +136,12 @@ function printExistingStatus(
   normalizedRemote: string | undefined,
 ) {
   if (existing.resolvedVia === "remote") {
-    console.log(`Auto-linked via git remote (${dim(normalizedRemote ?? existing.path)})`);
+    log.info(`Auto-linked via git remote (${dim(normalizedRemote ?? existing.path)})`);
   } else {
-    console.log(`Already linked to ${cyan(existing.profile.appId)} in ${dim(existing.path)}`);
+    const label = existing.profile.appName
+      ? `${existing.profile.appName} (${existing.profile.appId})`
+      : existing.profile.appId;
+    log.info(`Already linked to ${cyan(label)} in ${dim(existing.path)}`);
   }
 }
 
@@ -149,7 +153,7 @@ async function handleExistingProfile(
   printExistingStatus(existing, normalizedRemote);
 
   if (existing.availableRemote) {
-    console.log(
+    log.info(
       `We detected this is now a git repository with remote ${dim(existing.availableRemote)}.`,
     );
     const upgrade = await confirm({
@@ -158,7 +162,7 @@ async function handleExistingProfile(
     });
     if (upgrade) {
       await moveProfile(existing.path, existing.availableRemote);
-      console.log(`\nLink updated to use git remote (${cyan(existing.availableRemote)})`);
+      log.info(`\nLink updated to use git remote (${cyan(existing.availableRemote)})`);
       return false;
     }
   }
@@ -182,7 +186,7 @@ async function tryDetectApp(cwd: string, apps: Application[]): Promise<Applicati
   const match = matchKeyToApp(detectedKeys, apps);
   if (!match) return undefined;
 
-  console.log(`We found ${cyan(appLabel(match.app))} from ${dim(match.source)}.`);
+  log.info(`We found ${cyan(appLabel(match.app))} from ${dim(match.source)}.`);
   const useDetected = await confirm({ message: "Link to this application?", default: true });
   return useDetected ? match.app : undefined;
 }
@@ -199,7 +203,7 @@ async function resolveApp(
     );
   } catch (error) {
     if (error instanceof PlapiError && error.status >= 500) {
-      console.log("Could not fetch your applications — you can still create a new one");
+      log.info("Could not fetch your applications — you can still create a new one");
       apps = [];
     } else {
       throw error;

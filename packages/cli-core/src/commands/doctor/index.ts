@@ -1,5 +1,6 @@
 import { isHuman } from "../../mode.ts";
 import { bold, green, red } from "../../lib/color.ts";
+import { log } from "../../lib/log.ts";
 import { CliError, ERROR_CODE } from "../../lib/errors.ts";
 import { intro, outro, bar, withSpinner } from "../../lib/spinner.ts";
 import { createDoctorContext } from "./context.ts";
@@ -28,8 +29,8 @@ const CHECKS: CheckFn[] = [
   checkShellCompletion,
 ];
 
-async function runChecks(ctx: DoctorContext, options: DoctorOptions): Promise<CheckResult[]> {
-  const results = await Promise.all(
+async function runChecks(ctx: DoctorContext): Promise<CheckResult[]> {
+  return Promise.all(
     CHECKS.map(async (check) => {
       try {
         return await check(ctx);
@@ -42,17 +43,15 @@ async function runChecks(ctx: DoctorContext, options: DoctorOptions): Promise<Ch
       }
     }),
   );
+}
 
-  if (!options.json) {
-    for (const result of results) {
-      if (!options.spotlight || result.status !== "pass") {
-        console.log(formatCheckResult(result, options.verbose ?? false));
-      }
+function printResults(results: CheckResult[], options: DoctorOptions): void {
+  for (const result of results) {
+    if (!options.spotlight || result.status !== "pass") {
+      log.info(formatCheckResult(result, options.verbose ?? false));
     }
-    console.log("");
   }
-
-  return results;
+  log.blank();
 }
 
 export async function doctor(options: DoctorOptions = {}): Promise<void> {
@@ -61,11 +60,15 @@ export async function doctor(options: DoctorOptions = {}): Promise<void> {
   }
 
   const ctx = createDoctorContext();
-  const allResults = await withSpinner("Running diagnostics...", () => runChecks(ctx, options));
+  const allResults = await withSpinner("Running diagnostics...", () => runChecks(ctx));
+
+  if (!options.json) {
+    printResults(allResults, options);
+  }
 
   if (options.json) {
     const output = options.spotlight ? allResults.filter((r) => r.status !== "pass") : allResults;
-    console.log(formatJson(output));
+    log.data(formatJson(output));
   }
 
   if (options.fix && !options.json && isHuman()) {
@@ -80,9 +83,9 @@ export async function doctor(options: DoctorOptions = {}): Promise<void> {
     });
 
     if (uniqueFixable.length > 0) {
-      console.log("");
-      console.log(bold("Auto-fix"));
-      console.log("");
+      log.blank();
+      log.info(bold("Auto-fix"));
+      log.blank();
 
       const { confirm } = await import("@inquirer/prompts");
 
@@ -97,9 +100,9 @@ export async function doctor(options: DoctorOptions = {}): Promise<void> {
         if (proceed) {
           try {
             await fix.run();
-            console.log(`  ${green("✓")} ${result.name} fixed`);
+            log.info(`  ${green("✓")} ${result.name} fixed`);
           } catch (error) {
-            console.log(`  ${red("✗")} Fix failed: ${errorMessage(error)}`);
+            log.info(`  ${red("✗")} Fix failed: ${errorMessage(error)}`);
           }
         }
       }
@@ -107,13 +110,8 @@ export async function doctor(options: DoctorOptions = {}): Promise<void> {
       bar();
 
       const verifyCtx = createDoctorContext();
-      const verifyResults = await withSpinner("Verifying fixes...", () =>
-        runChecks(verifyCtx, {
-          ...options,
-          fix: false,
-          spotlight: false,
-        }),
-      );
+      const verifyResults = await withSpinner("Verifying fixes...", () => runChecks(verifyCtx));
+      printResults(verifyResults, { ...options, fix: false, spotlight: false });
 
       const hasVerifyFailure = verifyResults.some((r) => r.status === "fail");
       if (hasVerifyFailure) {

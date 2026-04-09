@@ -1,5 +1,6 @@
 import { confirm } from "@inquirer/prompts";
 import { cyan, dim, green, yellow } from "../../lib/color.js";
+import { log } from "../../lib/log.js";
 import type { FileAction, ScaffoldPlan } from "./frameworks/types.js";
 
 function formatAction(action: FileAction): string {
@@ -14,20 +15,20 @@ function formatAction(action: FileAction): string {
 }
 
 export function previewPlan(plan: ScaffoldPlan): void {
-  console.log("\nclerk init will make the following changes:\n");
+  log.info("\nclerk init will make the following changes:\n");
 
   for (const action of plan.actions) {
-    console.log(formatAction(action));
+    log.info(formatAction(action));
   }
 
   if (plan.postInstructions.length > 0) {
-    console.log(dim("\n  After scaffolding, you'll need to:"));
+    log.info(dim("\n  After scaffolding, you'll need to:"));
     for (const instr of plan.postInstructions) {
-      console.log(dim(`  • ${instr}`));
+      log.info(dim(`  • ${instr}`));
     }
   }
 
-  console.log();
+  log.blank();
 }
 
 export async function previewAndConfirm(plan: ScaffoldPlan): Promise<boolean> {

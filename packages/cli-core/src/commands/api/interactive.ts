@@ -7,10 +7,11 @@ import { isHuman } from "../../mode.ts";
 import { loadCatalog, endpointsByTag, type EndpointInfo } from "./catalog.ts";
 import type { ApiOptions } from "./index.ts";
 import { throwUserAbort } from "../../lib/errors.ts";
+import { log } from "../../lib/log.ts";
 
 export async function apiInteractive(options: ApiOptions): Promise<void> {
   if (!isHuman()) {
-    console.error(
+    log.info(
       "Interactive mode requires a TTY.\n\n" +
         "Usage:\n" +
         "  clerk api <endpoint>        Make an API request\n" +
@@ -82,12 +83,12 @@ export async function apiInteractive(options: ApiOptions): Promise<void> {
   }
 
   // 6. Preview and confirm
-  console.error(`\n${endpoint.method} ${resolvedPath}`);
+  log.info(`\n${endpoint.method} ${resolvedPath}`);
   if (body) {
     try {
-      console.error(JSON.stringify(JSON.parse(body), null, 2));
+      log.raw(JSON.stringify(JSON.parse(body), null, 2));
     } catch {
-      console.error(body);
+      log.raw(body);
     }
   }
 

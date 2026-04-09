@@ -4,6 +4,7 @@ import { resolveProfile, removeProfile } from "../../lib/config.ts";
 import { getGitRepoRoot } from "../../lib/git.ts";
 import { dim, cyan } from "../../lib/color.ts";
 import { CliError, ERROR_CODE, throwUserAbort } from "../../lib/errors.ts";
+import { log } from "../../lib/log.ts";
 
 const AGENT_PROMPT = `You are unlinking a Clerk application from the current project directory.
 
@@ -26,7 +27,7 @@ interface UnlinkOptions {
 
 export async function unlink(options: UnlinkOptions = {}): Promise<void> {
   if (isAgent()) {
-    console.log(AGENT_PROMPT);
+    log.data(AGENT_PROMPT);
     return;
   }
 
@@ -54,5 +55,5 @@ export async function unlink(options: UnlinkOptions = {}): Promise<void> {
   }
 
   await removeProfile(existing.path);
-  console.log(`\nUnlinked ${cyan(label)} from ${dim(displayPath)}`);
+  log.data(`\nUnlinked ${cyan(label)} from ${dim(displayPath)}`);
 }

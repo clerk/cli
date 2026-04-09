@@ -2,10 +2,11 @@ import { login } from "../auth/login.js";
 import { link } from "../link/index.js";
 import { pull } from "../env/pull.js";
 import { isAgent } from "../../mode.js";
-import { dim, green, yellow, bold } from "../../lib/color.js";
+import { dim, bold } from "../../lib/color.js";
 import { throwUserAbort, CliError } from "../../lib/errors.js";
 import { lookupFramework, type FrameworkInfo } from "../../lib/framework.js";
 import { resolveProfile } from "../../lib/config.js";
+import { log } from "../../lib/log.js";
 import { printNextSteps } from "../../lib/next-steps.js";
 import { gatherContext, hasPackageJson } from "./context.js";
 import { scaffold, enrichProjectContext } from "./scaffold.js";
@@ -46,7 +47,7 @@ export async function init(options: InitOptions = {}) {
     : undefined;
 
   if (options.prompt || isAgent()) {
-    console.log(
+    log.data(
       "Run `clerk init -y` to automatically detect the framework, install the Clerk SDK, and scaffold authentication files without interactive prompts.",
     );
     return;
@@ -81,7 +82,7 @@ export async function init(options: InitOptions = {}) {
   const { alreadySetUp } = await detectAndInstall(ctx.cwd, ctx, options);
 
   if (alreadySetUp) {
-    console.log(green("\nClerk is already set up in this project."));
+    log.success("\nClerk is already set up in this project.");
     outro("Done");
     return;
   }
@@ -99,7 +100,7 @@ export async function init(options: InitOptions = {}) {
 
   if (options.skills !== false) {
     bar();
-    await installSkills(cwd, ctx?.framework.dep, options.yes ?? false);
+    await installSkills(ctx.cwd, ctx?.framework.dep, options.yes ?? false);
   }
 
   outro("Done");
@@ -171,7 +172,7 @@ function printBootstrapNextSteps(
 ): void {
   const steps = [`cd ${projectName}`, devCommand(packageManager)];
   if (keyless) {
-    steps.push("clerk login  (when you're ready to connect your Clerk account)");
+    steps.push("clerk auth login  (when you're ready to connect your Clerk account)");
   }
   printNextSteps(steps);
 }
@@ -194,12 +195,12 @@ async function authenticateAndLink(cwd: string): Promise<void> {
   const profile = await resolveProfile(cwd);
 
   if (label && profile) {
-    console.log(dim(`${label} · Linked to ${profile.profile.appId}`));
+    log.info(dim(`${label} · Linked to ${profile.profile.appId}`));
     return;
   }
 
   if (label) {
-    console.log(dim(label));
+    log.info(dim(label));
   }
 
   await link({ skipIfLinked: true });
@@ -213,13 +214,13 @@ async function detectAndInstall(
   options: InitOptions,
 ): Promise<{ alreadySetUp: boolean }> {
   const variantLabel = ctx.variant ? ` (${ctx.variant})` : "";
-  console.log(`\nDetected ${bold(ctx.framework.name)}${variantLabel}`);
+  log.info(`\nDetected ${bold(ctx.framework.name)}${variantLabel}`);
 
   detectAuthLibraries(ctx.deps);
-  console.log();
+  log.blank();
 
   if (ctx.existingClerk) {
-    console.log(dim(`${ctx.framework.sdk} is already installed`));
+    log.info(dim(`${ctx.framework.sdk} is already installed`));
   } else {
     await installSdk(ctx);
   }
@@ -241,16 +242,16 @@ async function scaffoldAndWrite(
   }
 
   if (!hasChanges) {
-    console.log(dim("\nNo files to scaffold, but:"));
+    log.info(dim("\nNo files to scaffold, but:"));
     for (const instr of plan.postInstructions) {
-      console.log(dim(`  • ${instr}`));
+      log.info(dim(`  • ${instr}`));
     }
     return { alreadySetUp: false };
   }
 
   if (await checkGitDirty(cwd)) {
-    console.log(yellow("Warning: You have uncommitted changes"));
-    console.log(dim("Consider committing first so you can review what clerk init creates.\n"));
+    log.warn("You have uncommitted changes");
+    log.info(dim("Consider committing first so you can review what clerk init creates.\n"));
   }
 
   if (options.yes) {

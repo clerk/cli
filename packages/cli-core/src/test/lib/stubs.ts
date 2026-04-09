@@ -1,7 +1,35 @@
 import type { spyOn } from "bun:test";
+import { withCapturedLogs } from "../../lib/log.ts";
 
 export function capturedOutput(spy: ReturnType<typeof spyOn>): string {
   return spy.mock.calls.map((c: unknown[]) => c[0]).join("\n");
+}
+
+/**
+ * Create a scoped capture buffer for `log.*` calls.
+ *
+ * Use `run()` to execute code inside the capture context in unit tests that
+ * exercise migrated commands (which use `log.*` instead of `console.log`/`console.error`).
+ */
+export function captureLog() {
+  const captured = { stdout: [] as string[], stderr: [] as string[] };
+  return {
+    ...captured,
+    /** Joined stdout output. */
+    get out() {
+      return captured.stdout.join("\n");
+    },
+    /** Joined stderr output. */
+    get err() {
+      return captured.stderr.join("\n");
+    },
+    run<T>(fn: () => T): T {
+      return withCapturedLogs(captured, fn);
+    },
+    teardown() {
+      // No-op: capture scope is tied to run(), not process-global state.
+    },
+  };
 }
 
 const noop = async () => {};

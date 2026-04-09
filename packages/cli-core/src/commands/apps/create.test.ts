@@ -1,5 +1,5 @@
 import { test, expect, describe, beforeEach, afterEach, mock, spyOn } from "bun:test";
-import { capturedOutput } from "../../test/lib/stubs.ts";
+import { captureLog } from "../../test/lib/stubs.ts";
 
 const mockCreateApplication = mock();
 const mockFetchApplication = mock();
@@ -41,6 +41,7 @@ const mockApp = {
 describe("apps create", () => {
   let logSpy: ReturnType<typeof spyOn>;
   let errorSpy: ReturnType<typeof spyOn>;
+  let captured: ReturnType<typeof captureLog>;
 
   beforeEach(() => {
     mockIsAgent.mockReturnValue(false);
@@ -51,9 +52,11 @@ describe("apps create", () => {
     mockFetchApplication.mockResolvedValue(mockApp);
     logSpy = spyOn(console, "log").mockImplementation(() => {});
     errorSpy = spyOn(console, "error").mockImplementation(() => {});
+    captured = captureLog();
   });
 
   afterEach(() => {
+    captured.teardown();
     mockCreateApplication.mockReset();
     mockFetchApplication.mockReset();
     mockIsAgent.mockReset();
@@ -61,8 +64,12 @@ describe("apps create", () => {
     errorSpy.mockRestore();
   });
 
+  function runCreate(name: string, options?: Parameters<typeof create>[1]) {
+    return captured.run(() => create(name, options));
+  }
+
   test("calls createApplication then fetchApplication", async () => {
-    await create("My SaaS App");
+    await runCreate("My SaaS App");
 
     expect(mockCreateApplication).toHaveBeenCalledWith("My SaaS App");
     expect(mockFetchApplication).toHaveBeenCalledWith("app_abc123");
@@ -70,12 +77,11 @@ describe("apps create", () => {
 
   describe("human output", () => {
     test("shows created app name and id", async () => {
-      await create("My SaaS App");
+      await runCreate("My SaaS App");
 
-      const output = capturedOutput(logSpy);
-      expect(output).toContain("Created");
-      expect(output).toContain("My SaaS App");
-      expect(output).toContain("app_abc123");
+      expect(captured.err).toContain("Created");
+      expect(captured.err).toContain("My SaaS App");
+      expect(captured.err).toContain("app_abc123");
     });
 
     test("falls back to app id when name is absent", async () => {
@@ -87,35 +93,31 @@ describe("apps create", () => {
         ],
       });
 
-      await create("Some Name");
+      await runCreate("Some Name");
 
-      const output = capturedOutput(logSpy);
-      expect(output).toContain("app_noname");
+      expect(captured.err).toContain("app_noname");
     });
 
     test("does not show secret keys", async () => {
-      await create("My SaaS App");
+      await runCreate("My SaaS App");
 
-      const output = capturedOutput(logSpy);
-      expect(output).not.toContain("sk_test_xxx");
-      expect(output).not.toContain("sk_live_xxx");
+      expect(captured.err).not.toContain("sk_test_xxx");
+      expect(captured.err).not.toContain("sk_live_xxx");
     });
 
     test("shows next steps on stderr", async () => {
-      await create("My SaaS App");
+      await runCreate("My SaaS App");
 
-      const output = capturedOutput(errorSpy);
-      expect(output).toContain("clerk link");
-      expect(output).toContain("clerk env pull");
+      expect(captured.err).toContain("clerk link");
+      expect(captured.err).toContain("clerk env pull");
     });
   });
 
   describe("JSON output", () => {
     test("outputs JSON when --json flag is set", async () => {
-      await create("My SaaS App", { json: true });
+      await runCreate("My SaaS App", { json: true });
 
-      const output = capturedOutput(logSpy);
-      const parsed = JSON.parse(output);
+      const parsed = JSON.parse(captured.out);
       expect(parsed.application_id).toBe("app_abc123");
       expect(parsed.name).toBe("My SaaS App");
       expect(parsed.instances).toHaveLength(2);
@@ -124,28 +126,25 @@ describe("apps create", () => {
     test("outputs JSON in agent mode", async () => {
       mockIsAgent.mockReturnValue(true);
 
-      await create("My SaaS App");
+      await runCreate("My SaaS App");
 
-      const output = capturedOutput(logSpy);
-      const parsed = JSON.parse(output);
+      const parsed = JSON.parse(captured.out);
       expect(parsed.application_id).toBe("app_abc123");
     });
 
     test("does not show next steps", async () => {
       mockIsAgent.mockReturnValue(true);
 
-      await create("My SaaS App");
+      await runCreate("My SaaS App");
 
-      const output = capturedOutput(errorSpy);
-      expect(output).not.toContain("clerk link");
-      expect(output).not.toContain("clerk env pull");
+      expect(captured.err).not.toContain("clerk link");
+      expect(captured.err).not.toContain("clerk env pull");
     });
 
     test("strips secret_key from JSON", async () => {
-      await create("My SaaS App", { json: true });
+      await runCreate("My SaaS App", { json: true });
 
-      const output = capturedOutput(logSpy);
-      const parsed = JSON.parse(output);
+      const parsed = JSON.parse(captured.out);
       for (const instance of parsed.instances) {
         expect(instance).not.toHaveProperty("secret_key");
         expect(instance).toHaveProperty("publishable_key");

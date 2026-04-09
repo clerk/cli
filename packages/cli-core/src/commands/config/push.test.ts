@@ -3,18 +3,20 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { _setConfigDir, setProfile } from "../../lib/config.ts";
-import { credentialStoreStubs, gitStubs, promptsStubs, stubFetch } from "../../test/lib/stubs.ts";
+import {
+  captureLog,
+  credentialStoreStubs,
+  gitStubs,
+  promptsStubs,
+  stubFetch,
+} from "../../test/lib/stubs.ts";
 import { printDiff, hasConfigChanges } from "./push.ts";
 
 mock.module("../../lib/credential-store.ts", () => credentialStoreStubs);
 mock.module("../../lib/git.ts", () => gitStubs);
 mock.module("@inquirer/prompts", () => promptsStubs);
 mock.module("../../lib/spinner.ts", () => ({
-  withSpinner: async (msg: string, fn: () => Promise<unknown>) => {
-    console.error(msg);
-    const result = await fn();
-    return result;
-  },
+  withSpinner: async (_msg: string, fn: () => Promise<unknown>) => fn(),
 }));
 
 describe("config push", () => {
@@ -24,6 +26,7 @@ describe("config push", () => {
   let logSpy: ReturnType<typeof spyOn>;
   let errorSpy: ReturnType<typeof spyOn>;
   let exitSpy: ReturnType<typeof spyOn>;
+  let captured: ReturnType<typeof captureLog>;
 
   const mockResponse = {
     session: { lifetime: 3600 },
@@ -48,6 +51,7 @@ describe("config push", () => {
     exitSpy = spyOn(process, "exit").mockImplementation(() => {
       throw new Error("process.exit");
     });
+    captured = captureLog();
 
     stubFetch(async (_input, init) => {
       const isGet = !init?.method || init.method === "GET";
@@ -57,6 +61,7 @@ describe("config push", () => {
   });
 
   afterEach(async () => {
+    captured.teardown();
     _setConfigDir(undefined);
     process.env = { ...originalEnv };
     globalThis.fetch = originalFetch;
@@ -78,7 +83,7 @@ describe("config push", () => {
     } = {},
   ) {
     const { configPatch } = await import("./push.ts");
-    return configPatch(options);
+    return captured.run(() => configPatch(options));
   }
 
   async function runConfigPut(
@@ -93,7 +98,7 @@ describe("config push", () => {
     } = {},
   ) {
     const { configPut } = await import("./push.ts");
-    return configPut(options);
+    return captured.run(() => configPut(options));
   }
 
   // --- Shared error cases ---
@@ -242,7 +247,7 @@ describe("config push", () => {
     });
 
     await runConfigPatch({ json: '{"session":{"lifetime":3600}}', yes: true });
-    expect(logSpy).toHaveBeenCalledWith(JSON.stringify(mockResponse, null, 2));
+    expect(captured.out).toContain(JSON.stringify(mockResponse, null, 2));
   });
 
   test("patch shows 'Updating' label", async () => {
@@ -253,9 +258,7 @@ describe("config push", () => {
     });
 
     await runConfigPatch({ json: '{"session":{"lifetime":3600}}', yes: true });
-    expect(errorSpy).toHaveBeenCalledWith(
-      expect.stringContaining("Updating config on app_1 (development)"),
-    );
+    expect(captured.err).toContain("Updating config on app_1 (development)");
   });
 
   // --- PUT happy paths ---
@@ -286,9 +289,7 @@ describe("config push", () => {
     });
 
     await runConfigPut({ json: '{"session":{"lifetime":3600}}', yes: true });
-    expect(errorSpy).toHaveBeenCalledWith(
-      expect.stringContaining("Replacing config on app_1 (development)"),
-    );
+    expect(captured.err).toContain("Replacing config on app_1 (development)");
   });
 
   // --- config_version stripping ---
@@ -418,7 +419,7 @@ describe("config push", () => {
     // Send a payload that matches the current config for the patched key
     await runConfigPatch({ json: '{"session":{"lifetime":604800}}', yes: true });
     expect(mutatingCallMade).toBe(false);
-    expect(errorSpy).toHaveBeenCalledWith("No changes detected");
+    expect(captured.err).toContain("No changes detected");
   });
 
   test("put skips API call when payload matches current config", async () => {
@@ -439,7 +440,7 @@ describe("config push", () => {
       yes: true,
     });
     expect(mutatingCallMade).toBe(false);
-    expect(errorSpy).toHaveBeenCalledWith("No changes detected");
+    expect(captured.err).toContain("No changes detected");
   });
 
   test("put detects no changes when current config has config_version (pull→put roundtrip)", async () => {
@@ -459,7 +460,7 @@ describe("config push", () => {
     // Simulate pull→put: payload includes config_version from the pull output
     await runConfigPut({ json: JSON.stringify(configWithVersion), yes: true });
     expect(mutatingCallMade).toBe(false);
-    expect(errorSpy).toHaveBeenCalledWith("No changes detected");
+    expect(captured.err).toContain("No changes detected");
   });
 
   // --- Instance targeting ---
@@ -542,8 +543,8 @@ describe("config push", () => {
       dryRun: true,
     });
     expect(fetchCalled).toBe(false);
-    expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining("[dry-run]"));
-    expect(logSpy).toHaveBeenCalledWith(JSON.stringify({ session: { lifetime: 3600 } }, null, 2));
+    expect(captured.err).toContain("[dry-run]");
+    expect(captured.out).toContain(JSON.stringify({ session: { lifetime: 3600 } }, null, 2));
   });
 
   test("dry-run for put shows PUT method", async () => {
@@ -554,7 +555,7 @@ describe("config push", () => {
     });
 
     await runConfigPut({ json: '{"a":1}', dryRun: true });
-    expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining("[dry-run] Would PUT"));
+    expect(captured.err).toContain("[dry-run] Would PUT");
   });
 
   // --- API error handling ---
@@ -582,7 +583,7 @@ describe("config push", () => {
     });
 
     await runConfigPatch({ json: '{"a":1}', yes: true });
-    expect(errorSpy).toHaveBeenCalledWith("Config pushed successfully");
+    expect(captured.err).toContain("Config pushed successfully");
   });
 
   // --- --json takes priority over --file ---
@@ -614,96 +615,97 @@ describe("config push", () => {
 });
 
 describe("printDiff", () => {
-  let errorSpy: ReturnType<typeof spyOn>;
-  let lines: string[];
+  let captured: ReturnType<typeof captureLog>;
+  const ANSI_ESCAPE_PATTERN = new RegExp(String.raw`\u001b\[[0-9;]*m`, "g");
+
+  /** Return captured stderr lines with ANSI codes stripped. */
+  function lines(): string[] {
+    return captured.stderr.map((l) => l.replace(ANSI_ESCAPE_PATTERN, ""));
+  }
 
   beforeEach(() => {
-    lines = [];
-    errorSpy = spyOn(console, "error").mockImplementation((...args: unknown[]) => {
-      // Strip ANSI codes for easier assertion
-      lines.push(String(args[0]).replace(/\x1b\[[0-9;]*m/g, ""));
-    });
+    captured = captureLog();
   });
 
   afterEach(() => {
-    errorSpy.mockRestore();
+    captured.teardown();
   });
 
   test("patch mode: shows only changed leaf values", () => {
     const current = { session: { lifetime: 604800, cookie: "__session" } };
     const patch = { session: { lifetime: 3600 } };
 
-    printDiff(current, patch, true);
+    captured.run(() => printDiff(current, patch, true));
 
-    expect(lines).toEqual(["  session:", "    lifetime:", "      - 604800", "      + 3600"]);
+    expect(lines()).toEqual(["  session:", "    lifetime:", "      - 604800", "      + 3600"]);
   });
 
   test("patch mode: skips unchanged keys", () => {
     const current = { session: { lifetime: 3600 }, sign_up: { mode: "public" } };
     const patch = { session: { lifetime: 3600 } };
 
-    printDiff(current, patch, true);
+    captured.run(() => printDiff(current, patch, true));
 
-    expect(lines).toEqual([]);
+    expect(lines()).toEqual([]);
   });
 
   test("patch mode: shows new keys being added", () => {
     const current = {};
     const patch = { session: { lifetime: 3600 } };
 
-    printDiff(current, patch, true);
+    captured.run(() => printDiff(current, patch, true));
 
-    expect(lines).toEqual(["  session:", '    + {"lifetime":3600}']);
+    expect(lines()).toEqual(["  session:", '    + {"lifetime":3600}']);
   });
 
   test("patch mode: ignores keys not in patch", () => {
     const current = { session: { lifetime: 604800 }, sign_up: { mode: "public" } };
     const patch = { session: { lifetime: 3600 } };
 
-    printDiff(current, patch, true);
+    captured.run(() => printDiff(current, patch, true));
 
     // sign_up should not appear
-    expect(lines.some((l) => l.includes("sign_up"))).toBe(false);
+    expect(lines().some((l) => l.includes("sign_up"))).toBe(false);
   });
 
   test("put mode: shows removed keys", () => {
     const current = { session: { lifetime: 604800 }, sign_up: { mode: "public" } };
     const payload = { session: { lifetime: 604800 } };
 
-    printDiff(current, payload, false);
+    captured.run(() => printDiff(current, payload, false));
 
     // session is unchanged, sign_up is being removed
-    expect(lines.some((l) => l.includes("sign_up"))).toBe(true);
-    expect(lines.some((l) => l.includes("- {"))).toBe(true);
+    expect(lines().some((l) => l.includes("sign_up"))).toBe(true);
+    expect(lines().some((l) => l.includes("- {"))).toBe(true);
   });
 
   test("put mode: shows both old and new for changed values", () => {
     const current = { session: { lifetime: 604800 } };
     const payload = { session: { lifetime: 3600 } };
 
-    printDiff(current, payload, false);
+    captured.run(() => printDiff(current, payload, false));
 
-    expect(lines).toContainEqual(expect.stringContaining("- 604800"));
-    expect(lines).toContainEqual(expect.stringContaining("+ 3600"));
+    expect(lines()).toContainEqual(expect.stringContaining("- 604800"));
+    expect(lines()).toContainEqual(expect.stringContaining("+ 3600"));
   });
 
   test("handles deeply nested changes", () => {
     const current = { a: { b: { c: { d: 1 } } } };
     const patch = { a: { b: { c: { d: 2 } } } };
 
-    printDiff(current, patch, true);
+    captured.run(() => printDiff(current, patch, true));
 
-    expect(lines).toEqual(["  a:", "    b.c.d:", "      - 1", "      + 2"]);
+    expect(lines()).toEqual(["  a:", "    b.c.d:", "      - 1", "      + 2"]);
   });
 
   test("handles array value changes", () => {
     const current = { allowed: { origins: ["a.com", "b.com"] } };
     const patch = { allowed: { origins: ["a.com", "c.com"] } };
 
-    printDiff(current, patch, true);
+    captured.run(() => printDiff(current, patch, true));
 
-    expect(lines).toContainEqual(expect.stringContaining('- ["a.com","b.com"]'));
-    expect(lines).toContainEqual(expect.stringContaining('+ ["a.com","c.com"]'));
+    expect(lines()).toContainEqual(expect.stringContaining('- ["a.com","b.com"]'));
+    expect(lines()).toContainEqual(expect.stringContaining('+ ["a.com","c.com"]'));
   });
 });
 

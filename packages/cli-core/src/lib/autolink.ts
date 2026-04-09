@@ -5,6 +5,7 @@ import { getGitRepoIdentifier, getGitNormalizedRemote } from "./git.ts";
 import { parseEnvFile } from "./dotenv.ts";
 import { detectPublishableKeyName } from "./framework.ts";
 import { dim, cyan } from "./color.ts";
+import { log } from "./log.ts";
 
 const ENV_FILES = [".env", ".env.local"];
 
@@ -85,7 +86,7 @@ export async function autolink(
   try {
     apps = await listApplications();
   } catch (err) {
-    console.error(`Failed to list applications: ${err}`);
+    log.error(`Failed to list applications: ${err}`);
     return undefined;
   }
 
@@ -120,7 +121,7 @@ export async function autolink(
   await setProfile(profileKey, profile);
 
   const label = match.app.name || match.app.application_id;
-  console.error(`Auto-linked to ${cyan(label)} ${dim(`(detected key in ${match.source})`)}`);
+  log.info(`Auto-linked to ${cyan(label)} ${dim(`(detected key in ${match.source})`)}`);
 
   return { path: profileKey, profile };
 }

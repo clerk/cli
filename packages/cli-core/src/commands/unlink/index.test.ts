@@ -1,5 +1,5 @@
-import { test, expect, describe, afterEach, mock, spyOn } from "bun:test";
-import { capturedOutput, configStubs, gitStubs, promptsStubs } from "../../test/lib/stubs.ts";
+import { test, expect, describe, beforeEach, afterEach, mock, spyOn } from "bun:test";
+import { captureLog, configStubs, gitStubs, promptsStubs } from "../../test/lib/stubs.ts";
 
 const mockIsAgent = mock();
 const mockIsHuman = mock();
@@ -46,8 +46,14 @@ describe("unlink", () => {
   let consoleSpy: ReturnType<typeof spyOn>;
   let errorSpy: ReturnType<typeof spyOn>;
   let exitSpy: ReturnType<typeof spyOn>;
+  let captured: ReturnType<typeof captureLog>;
+
+  beforeEach(() => {
+    captured = captureLog();
+  });
 
   afterEach(() => {
+    captured.teardown();
     _modeOverride = undefined;
     mockIsAgent.mockReset();
     mockIsHuman.mockReset();
@@ -61,23 +67,25 @@ describe("unlink", () => {
     exitSpy?.mockRestore();
   });
 
+  function runUnlink(options?: Parameters<typeof unlink>[0]) {
+    return captured.run(() => unlink(options));
+  }
+
   describe("agent mode", () => {
     test("outputs prompt and returns", async () => {
       mockIsAgent.mockReturnValue(true);
       consoleSpy = spyOn(console, "log").mockImplementation(() => {});
 
-      await unlink();
+      await runUnlink();
 
-      expect(consoleSpy).toHaveBeenCalledTimes(1);
-      const output = consoleSpy.mock.calls[0][0] as string;
-      expect(output).toContain("unlinking a Clerk application");
+      expect(captured.out).toContain("unlinking a Clerk application");
     });
 
     test("does not trigger side effects", async () => {
       mockIsAgent.mockReturnValue(true);
       consoleSpy = spyOn(console, "log").mockImplementation(() => {});
 
-      await unlink();
+      await runUnlink();
 
       expect(mockResolveProfile).not.toHaveBeenCalled();
       expect(mockRemoveProfile).not.toHaveBeenCalled();
@@ -94,7 +102,7 @@ describe("unlink", () => {
         throw new Error("exit");
       });
 
-      await expect(unlink()).rejects.toThrow("not linked");
+      await expect(runUnlink()).rejects.toThrow("not linked");
     });
   });
 
@@ -106,7 +114,7 @@ describe("unlink", () => {
       mockRemoveProfile.mockResolvedValue(undefined);
       consoleSpy = spyOn(console, "log").mockImplementation(() => {});
 
-      await unlink({ yes: true });
+      await runUnlink({ yes: true });
 
       expect(mockConfirm).not.toHaveBeenCalled();
       expect(mockRemoveProfile).toHaveBeenCalledWith(process.cwd());
@@ -120,7 +128,7 @@ describe("unlink", () => {
       mockRemoveProfile.mockResolvedValue(undefined);
       consoleSpy = spyOn(console, "log").mockImplementation(() => {});
 
-      await unlink();
+      await runUnlink();
 
       expect(mockConfirm).toHaveBeenCalledWith(
         expect.objectContaining({ message: expect.stringContaining("/repo") }),
@@ -135,7 +143,7 @@ describe("unlink", () => {
       mockConfirm.mockResolvedValue(false);
       consoleSpy = spyOn(console, "log").mockImplementation(() => {});
 
-      await expect(unlink()).rejects.toThrow("User aborted");
+      await expect(runUnlink()).rejects.toThrow("User aborted");
       expect(mockRemoveProfile).not.toHaveBeenCalled();
     });
   });
@@ -148,10 +156,9 @@ describe("unlink", () => {
       mockRemoveProfile.mockResolvedValue(undefined);
       consoleSpy = spyOn(console, "log").mockImplementation(() => {});
 
-      await unlink({ yes: true });
+      await runUnlink({ yes: true });
 
-      const output = capturedOutput(consoleSpy);
-      expect(output).toContain("Unlinked");
+      expect(captured.out).toContain("Unlinked");
     });
   });
 });

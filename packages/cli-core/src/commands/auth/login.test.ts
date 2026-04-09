@@ -1,10 +1,11 @@
-import { test, expect, describe, afterEach, mock, spyOn } from "bun:test";
-import { credentialStoreStubs, configStubs } from "../../test/lib/stubs.ts";
+import { test, expect, describe, beforeEach, afterEach, mock, spyOn } from "bun:test";
+import { captureLog, credentialStoreStubs, configStubs } from "../../test/lib/stubs.ts";
 
 const mockGetToken = mock();
 const mockStoreToken = mock();
 const mockGetAuth = mock();
 const mockSetAuth = mock();
+const mockResolveProfile = mock();
 const mockExchangeCodeForToken = mock();
 const mockFetchUserInfo = mock();
 const mockStartAuthServer = mock();
@@ -21,6 +22,7 @@ mock.module("../../lib/config.ts", () => ({
   ...configStubs,
   getAuth: (...args: unknown[]) => mockGetAuth(...args),
   setAuth: (...args: unknown[]) => mockSetAuth(...args),
+  resolveProfile: (...args: unknown[]) => mockResolveProfile(...args),
 }));
 
 mock.module("../../lib/token-exchange.ts", () => ({
@@ -69,13 +71,20 @@ const { login } = await import("./login.ts");
 describe("login", () => {
   let consoleSpy: ReturnType<typeof spyOn>;
   let consoleErrorSpy: ReturnType<typeof spyOn>;
+  let captured: ReturnType<typeof captureLog>;
   const origSpawn = Bun.spawn;
 
+  beforeEach(() => {
+    captured = captureLog();
+  });
+
   afterEach(() => {
+    captured.teardown();
     mockGetToken.mockReset();
     mockStoreToken.mockReset();
     mockGetAuth.mockReset();
     mockSetAuth.mockReset();
+    mockResolveProfile.mockReset();
     mockExchangeCodeForToken.mockReset();
     mockFetchUserInfo.mockReset();
     mockStartAuthServer.mockReset();
@@ -90,6 +99,10 @@ describe("login", () => {
       // Bun.spawn may not be writable
     }
   });
+
+  function runLogin(options?: Parameters<typeof login>[0]) {
+    return captured.run(() => login(options));
+  }
 
   function mockBunSpawn() {
     try {
@@ -108,10 +121,10 @@ describe("login", () => {
     });
 
     consoleSpy = spyOn(console, "log").mockImplementation(() => {});
-    const result = await login();
+    const result = await runLogin();
 
     expect(result).toEqual({ userId: "user_123", email: "existing@example.com" });
-    expect(consoleSpy).toHaveBeenCalledWith("Logged in as existing@example.com");
+    expect(captured.err).toContain("Logged in as existing@example.com");
     expect(mockStartAuthServer).not.toHaveBeenCalled();
   });
 
@@ -139,7 +152,7 @@ describe("login", () => {
     mockSetAuth.mockResolvedValue(undefined);
 
     consoleSpy = spyOn(console, "log").mockImplementation(() => {});
-    const result = await login();
+    const result = await runLogin();
 
     expect(result).toEqual({ userId: "user_new", email: "new@example.com" });
     expect(mockStartAuthServer).toHaveBeenCalledWith("test-state-value");
@@ -150,7 +163,7 @@ describe("login", () => {
     });
     expect(mockStoreToken).toHaveBeenCalledWith("new-access-token");
     expect(mockSetAuth).toHaveBeenCalledWith({ userId: "user_new" });
-    expect(consoleSpy).toHaveBeenCalledWith("Logged in as new@example.com");
+    expect(captured.err).toContain("Logged in as new@example.com");
   });
 
   test("re-authenticates when existing token is expired", async () => {
@@ -177,7 +190,7 @@ describe("login", () => {
     mockSetAuth.mockResolvedValue(undefined);
 
     consoleSpy = spyOn(console, "log").mockImplementation(() => {});
-    const result = await login();
+    const result = await runLogin();
 
     expect(result).toEqual({ userId: "user_refreshed", email: "refreshed@example.com" });
     expect(mockStartAuthServer).toHaveBeenCalled();
@@ -199,7 +212,7 @@ describe("login", () => {
 
     consoleSpy = spyOn(console, "log").mockImplementation(() => {});
 
-    await expect(login()).rejects.toThrow("Authentication timed out");
+    await expect(runLogin()).rejects.toThrow("Authentication timed out");
     expect(mockServer.stop).toHaveBeenCalled();
   });
 
@@ -228,7 +241,7 @@ describe("login", () => {
     mockSetAuth.mockResolvedValue(undefined);
 
     consoleSpy = spyOn(console, "log").mockImplementation(() => {});
-    const result = await login();
+    const result = await runLogin();
 
     expect(result).toEqual({ userId: "user_brand_new", email: "brandnew@example.com" });
     expect(mockStartAuthServer).toHaveBeenCalled();
@@ -244,10 +257,10 @@ describe("login", () => {
     });
 
     consoleSpy = spyOn(console, "log").mockImplementation(() => {});
-    const result = await login();
+    const result = await runLogin();
 
     expect(result).toEqual({ userId: "user_123", email: "agent@example.com" });
-    expect(consoleSpy).toHaveBeenCalledWith("Logged in as agent@example.com");
+    expect(captured.err).toContain("Logged in as agent@example.com");
     expect(mockConfirm).not.toHaveBeenCalled();
     expect(mockStartAuthServer).not.toHaveBeenCalled();
   });
@@ -278,7 +291,7 @@ describe("login", () => {
     mockSetAuth.mockResolvedValue(undefined);
 
     consoleSpy = spyOn(console, "log").mockImplementation(() => {});
-    const result = await login();
+    const result = await runLogin();
 
     expect(mockConfirm).toHaveBeenCalledWith({
       message: "You're already logged in as old@example.com. Re-authenticate?",
@@ -300,9 +313,116 @@ describe("login", () => {
 
     consoleSpy = spyOn(console, "log").mockImplementation(() => {});
 
-    await expect(login()).rejects.toThrow("User aborted");
+    await expect(runLogin()).rejects.toThrow("User aborted");
     expect(mockConfirm).toHaveBeenCalled();
     expect(mockStartAuthServer).not.toHaveBeenCalled();
+  });
+
+  test("shows linked app with name and id in next steps when linked", async () => {
+    mockGetToken.mockResolvedValue(null);
+    mockBunSpawn();
+
+    const mockServer = {
+      port: 54321,
+      waitForCallback: mock().mockResolvedValue({ code: "fresh-auth-code" }),
+      stop: mock(),
+    };
+    mockStartAuthServer.mockReturnValue(mockServer);
+
+    mockExchangeCodeForToken.mockResolvedValue({
+      access_token: "new-access-token",
+      token_type: "Bearer",
+      expires_in: 3600,
+    });
+    mockStoreToken.mockResolvedValue(undefined);
+    mockFetchUserInfo.mockResolvedValue({
+      userId: "user_new",
+      email: "new@example.com",
+    });
+    mockSetAuth.mockResolvedValue(undefined);
+    mockResolveProfile.mockResolvedValue({
+      path: "/some/path",
+      profile: {
+        workspaceId: "ws_123",
+        appId: "app_abc123",
+        appName: "My App",
+        instances: { development: "ins_dev" },
+      },
+      resolvedVia: "remote",
+    });
+
+    consoleSpy = spyOn(console, "log").mockImplementation(() => {});
+    await runLogin();
+
+    expect(captured.err).toContain("Linked to `My App` (app_abc123)");
+  });
+
+  test("shows linked app with only id when appName is missing", async () => {
+    mockGetToken.mockResolvedValue(null);
+    mockBunSpawn();
+
+    const mockServer = {
+      port: 54321,
+      waitForCallback: mock().mockResolvedValue({ code: "fresh-auth-code" }),
+      stop: mock(),
+    };
+    mockStartAuthServer.mockReturnValue(mockServer);
+
+    mockExchangeCodeForToken.mockResolvedValue({
+      access_token: "new-access-token",
+      token_type: "Bearer",
+      expires_in: 3600,
+    });
+    mockStoreToken.mockResolvedValue(undefined);
+    mockFetchUserInfo.mockResolvedValue({
+      userId: "user_new",
+      email: "new@example.com",
+    });
+    mockSetAuth.mockResolvedValue(undefined);
+    mockResolveProfile.mockResolvedValue({
+      path: "/some/path",
+      profile: {
+        workspaceId: "ws_123",
+        appId: "app_abc123",
+        instances: { development: "ins_dev" },
+      },
+      resolvedVia: "remote",
+    });
+
+    consoleSpy = spyOn(console, "log").mockImplementation(() => {});
+    await runLogin();
+
+    expect(captured.err).toContain("Linked to `app_abc123`");
+  });
+
+  test("shows default next steps when not linked", async () => {
+    mockGetToken.mockResolvedValue(null);
+    mockBunSpawn();
+
+    const mockServer = {
+      port: 54321,
+      waitForCallback: mock().mockResolvedValue({ code: "fresh-auth-code" }),
+      stop: mock(),
+    };
+    mockStartAuthServer.mockReturnValue(mockServer);
+
+    mockExchangeCodeForToken.mockResolvedValue({
+      access_token: "new-access-token",
+      token_type: "Bearer",
+      expires_in: 3600,
+    });
+    mockStoreToken.mockResolvedValue(undefined);
+    mockFetchUserInfo.mockResolvedValue({
+      userId: "user_new",
+      email: "new@example.com",
+    });
+    mockSetAuth.mockResolvedValue(undefined);
+    mockResolveProfile.mockResolvedValue(undefined);
+
+    consoleSpy = spyOn(console, "log").mockImplementation(() => {});
+    await runLogin();
+
+    expect(captured.err).not.toContain("Linked to");
   });
 
   test("suppresses auth next-steps when requested", async () => {
@@ -331,12 +451,8 @@ describe("login", () => {
     consoleSpy = spyOn(console, "log").mockImplementation(() => {});
     consoleErrorSpy = spyOn(console, "error").mockImplementation(() => {});
 
-    await login({ showNextSteps: false });
+    await runLogin({ showNextSteps: false });
 
-    expect(
-      consoleErrorSpy.mock.calls.some(
-        (c) => typeof c[0] === "string" && (c[0] as string).includes("Next steps:"),
-      ),
-    ).toBe(false);
+    expect(captured.err).not.toContain("Next steps:");
   });
 });

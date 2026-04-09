@@ -2,7 +2,7 @@ import { test, expect, describe, beforeEach, afterEach, mock, spyOn } from "bun:
 import { mkdtemp, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { credentialStoreStubs, gitStubs, stubFetch } from "../test/lib/stubs.ts";
+import { credentialStoreStubs, gitStubs, stubFetch, captureLog } from "../test/lib/stubs.ts";
 
 mock.module("./credential-store.ts", () => credentialStoreStubs);
 
@@ -223,6 +223,7 @@ describe("autolink", () => {
   let tempDir: string;
   let errorSpy: ReturnType<typeof spyOn>;
   let debugSpy: ReturnType<typeof spyOn>;
+  let captured: ReturnType<typeof captureLog>;
 
   beforeEach(async () => {
     tempDir = await mkdtemp(join(tmpdir(), "clerk-autolink-test-"));
@@ -237,11 +238,13 @@ describe("autolink", () => {
     mockGetGitNormalizedRemote.mockResolvedValue(undefined);
     errorSpy = spyOn(console, "error").mockImplementation(() => {});
     debugSpy = spyOn(console, "debug").mockImplementation(() => {});
+    captured = captureLog();
 
     stubFetch(async () => new Response(JSON.stringify(mockApps), { status: 200 }));
   });
 
   afterEach(async () => {
+    captured.teardown();
     _setConfigDir(undefined);
     process.env = { ...originalEnv };
     globalThis.fetch = originalFetch;
@@ -250,8 +253,12 @@ describe("autolink", () => {
     await rm(tempDir, { recursive: true, force: true });
   });
 
+  function runAutolink(cwd: string) {
+    return captured.run(() => autolink(cwd));
+  }
+
   test("returns undefined when no keys detected", async () => {
-    const result = await autolink(tempDir);
+    const result = await runAutolink(tempDir);
     expect(result).toBeUndefined();
   });
 
@@ -259,7 +266,7 @@ describe("autolink", () => {
     process.env.CLERK_PUBLISHABLE_KEY = "pk_test_abc";
     delete process.env.CLERK_PLATFORM_API_KEY;
 
-    const result = await autolink(tempDir);
+    const result = await runAutolink(tempDir);
     expect(result).toBeUndefined();
   });
 
@@ -267,21 +274,21 @@ describe("autolink", () => {
     process.env.CLERK_PUBLISHABLE_KEY = "pk_test_abc";
     stubFetch(async () => new Response("Unauthorized", { status: 401 }));
 
-    const result = await autolink(tempDir);
+    const result = await runAutolink(tempDir);
     expect(result).toBeUndefined();
   });
 
   test("returns undefined when key doesn't match any app", async () => {
     process.env.CLERK_PUBLISHABLE_KEY = "pk_test_unknown";
 
-    const result = await autolink(tempDir);
+    const result = await runAutolink(tempDir);
     expect(result).toBeUndefined();
   });
 
   test("auto-links when publishable key matches via env var", async () => {
     process.env.CLERK_PUBLISHABLE_KEY = "pk_test_abc";
 
-    const result = await autolink(tempDir);
+    const result = await runAutolink(tempDir);
 
     expect(result).toBeDefined();
     expect(result!.profile.appId).toBe("app_123");
@@ -297,7 +304,7 @@ describe("autolink", () => {
   test("auto-links when publishable key matches via .env file", async () => {
     await Bun.write(join(tempDir, ".env.local"), "CLERK_PUBLISHABLE_KEY=pk_test_def\n");
 
-    const result = await autolink(tempDir);
+    const result = await runAutolink(tempDir);
 
     expect(result).toBeDefined();
     expect(result!.profile.appId).toBe("app_456");
@@ -308,7 +315,7 @@ describe("autolink", () => {
     process.env.CLERK_PUBLISHABLE_KEY = "pk_test_abc";
     mockGetGitNormalizedRemote.mockResolvedValue("github.com/org/repo");
 
-    const result = await autolink(tempDir);
+    const result = await runAutolink(tempDir);
 
     expect(result!.path).toBe("github.com/org/repo");
     const config = await readConfig();
@@ -320,7 +327,7 @@ describe("autolink", () => {
     mockGetGitNormalizedRemote.mockResolvedValue(undefined);
     mockGetGitRepoIdentifier.mockResolvedValue("/repo/.git");
 
-    const result = await autolink(tempDir);
+    const result = await runAutolink(tempDir);
 
     expect(result!.path).toBe("/repo/.git");
     const config = await readConfig();
@@ -330,7 +337,7 @@ describe("autolink", () => {
   test("falls back to cwd when not in a git repo", async () => {
     process.env.CLERK_PUBLISHABLE_KEY = "pk_test_abc";
 
-    const result = await autolink(tempDir);
+    const result = await runAutolink(tempDir);
 
     expect(result!.path).toBe(tempDir);
   });
@@ -338,12 +345,11 @@ describe("autolink", () => {
   test("prints auto-link message to stderr", async () => {
     process.env.CLERK_PUBLISHABLE_KEY = "pk_test_abc";
 
-    await autolink(tempDir);
+    await runAutolink(tempDir);
 
-    const output = errorSpy.mock.calls.map((c: unknown[]) => c[0]).join("\n");
-    expect(output).toContain("Auto-linked to");
-    expect(output).toContain("My App");
-    expect(output).toContain("CLERK_PUBLISHABLE_KEY env var");
+    expect(captured.err).toContain("Auto-linked to");
+    expect(captured.err).toContain("My App");
+    expect(captured.err).toContain("CLERK_PUBLISHABLE_KEY env var");
   });
 
   test("returns undefined when matched app has no development instance", async () => {
@@ -367,7 +373,7 @@ describe("autolink", () => {
         ),
     );
 
-    const result = await autolink(tempDir);
+    const result = await runAutolink(tempDir);
     expect(result).toBeUndefined();
   });
 
@@ -375,14 +381,14 @@ describe("autolink", () => {
     process.env.CLERK_PUBLISHABLE_KEY = "pk_test_abc";
     stubFetch(async () => new Response(JSON.stringify({ error: "not an array" }), { status: 200 }));
 
-    const result = await autolink(tempDir);
+    const result = await runAutolink(tempDir);
     expect(result).toBeUndefined();
   });
 
   test("omits production instance when not present", async () => {
     process.env.CLERK_PUBLISHABLE_KEY = "pk_test_def";
 
-    const result = await autolink(tempDir);
+    const result = await runAutolink(tempDir);
 
     expect(result!.profile.instances.production).toBeUndefined();
   });

@@ -84,6 +84,69 @@ When creating or modifying a command, evaluate whether it needs an agent mode. C
 
 `README.md` at the project root contains the CLI help output. When commands are added, removed, or their options change, update the help output in `README.md` to stay in sync. You can regenerate it by running `bun run dev -- --help`.
 
+## Logging
+
+All output goes through the `log` object from `packages/cli-core/src/lib/log.ts`. **Never use `console.log`, `console.error`, or `process.stderr.write` directly** — use `log.*` methods so output respects log levels, throttling, and test capture.
+
+```ts
+import { log } from "../../lib/log.ts";
+```
+
+### Which method to use
+
+| Method          | Stream     | When to use                                     |
+| --------------- | ---------- | ----------------------------------------------- |
+| `log.data()`    | **stdout** | Pipeable output (JSON, lists, machine-readable) |
+| `log.info()`    | stderr     | Status messages                                 |
+| `log.success()` | stderr     | Completion confirmations (green)                |
+| `log.warn()`    | stderr     | Warnings (yellow)                               |
+| `log.error()`   | stderr     | Errors (red, auto-prefixed `error: `)           |
+| `log.debug()`   | stderr     | Diagnostic info, only with `--verbose`          |
+| `log.raw()`     | stderr     | Machine-readable JSON for agent mode            |
+| `log.blank()`   | stderr     | Blank line                                      |
+
+`log.data()` writes to **stdout** — this is what gets piped (e.g., `clerk apps list | jq`). Everything else writes to **stderr** as UI for humans. Never mix these.
+
+### Debug logging
+
+`log.debug()` is gated by `--verbose`. Use for diagnostic details (request URLs, timing, intermediate state):
+
+```ts
+log.debug(`Fetching instance ${instanceId}…`);
+```
+
+### Tagged loggers
+
+`log.withTag()` adds scoped context in complex flows:
+
+```ts
+const apiLog = log.withTag("api");
+apiLog.info("Fetching config…"); // [api] Fetching config…
+```
+
+### Inline highlighting
+
+Backtick-wrapped text auto-highlights in cyan:
+
+```ts
+log.info("Linked to `my-app` on `development`");
+```
+
+### Testing log output
+
+Use `captureLog()` from `packages/cli-core/src/test/lib/stubs.ts`. Capture is scoped via `AsyncLocalStorage` — no teardown needed:
+
+```ts
+import { captureLog } from "../../test/lib/stubs.ts";
+
+test("outputs result", async () => {
+  const captured = captureLog();
+  await captured.run(() => myCommand());
+  expect(captured.out).toContain("expected stdout"); // log.data()
+  expect(captured.err).toContain("expected stderr"); // log.info/warn/etc.
+});
+```
+
 ## Error Handling
 
 All error classes and helpers live in `packages/cli-core/src/lib/errors.ts`. The global error handler in `packages/cli-core/src/cli.ts` catches thrown errors and formats them for the user. **Never call `console.error` + `process.exit` directly in commands** — throw an error instead and let the global handler deal with output and exit codes.

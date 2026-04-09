@@ -85,10 +85,8 @@ jobs:
       - uses: oven-sh/setup-bun@v2
       - uses: actions/setup-node@v6
         with:
-          node-version: "22"
+          node-version: "lts/*"
           registry-url: "https://registry.npmjs.org"
-      - name: Upgrade npm for OIDC trusted publishing
-        run: npm install -g npm@11
       - run: bun install --frozen-lockfile
 
       - uses: actions/download-artifact@v8
@@ -99,6 +97,8 @@ jobs:
       - name: Publish packages
         run: bun run release
         env:
+          # TODO: remove once we've completed our first publish
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
           ARTIFACTS_DIR: ${{ github.workspace }}/dist/artifacts
           GH_TOKEN: ${{ github.token }}
 
@@ -228,10 +228,8 @@ jobs:
       - uses: oven-sh/setup-bun@v2
       - uses: actions/setup-node@v6
         with:
-          node-version: "22"
+          node-version: "lts/*"
           registry-url: "https://registry.npmjs.org"
-      - name: Upgrade npm for OIDC trusted publishing
-        run: npm install -g npm@11
       - run: bun install --frozen-lockfile
 
       - uses: actions/download-artifact@v8
@@ -250,5 +248,8 @@ jobs:
       - name: Publish canary packages
         run: bun run release:canary --version "$CANARY_VERSION"
         env:
+          # TODO: remove once we've completed our first publish
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
           CANARY_VERSION: ${{ needs.canary-version.outputs.version }}
           ARTIFACTS_DIR: ${{ github.workspace }}/dist/artifacts
+          GH_TOKEN: ${{ github.token }}
