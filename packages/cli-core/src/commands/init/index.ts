@@ -172,7 +172,7 @@ function printBootstrapNextSteps(
 ): void {
   const steps = [`cd ${projectName}`, devCommand(packageManager)];
   if (keyless) {
-    steps.push("clerk login  (when you're ready to connect your Clerk account)");
+    steps.push("clerk auth login  (when you're ready to connect your Clerk account)");
   }
   printNextSteps(steps);
 }
