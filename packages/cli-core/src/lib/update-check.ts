@@ -158,6 +158,12 @@ function formatUpdateBanner(
   ].join("\n");
 }
 
+function notifyIfNewer(currentVersion: string, latestVersion: string, distTag: string): void {
+  if (compareSemver(latestVersion, currentVersion) > 0) {
+    process.stderr.write(formatUpdateBanner(currentVersion, latestVersion, distTag));
+  }
+}
+
 export async function maybeNotifyUpdate(currentVersion: string): Promise<void> {
   if (!shouldCheckForUpdates(currentVersion)) return;
 
@@ -165,9 +171,7 @@ export async function maybeNotifyUpdate(currentVersion: string): Promise<void> {
   const cache = await readUpdateCache();
 
   if (cache && isCacheValid(cache, distTag)) {
-    if (compareSemver(cache.latest, currentVersion) > 0) {
-      process.stderr.write(formatUpdateBanner(currentVersion, cache.latest, distTag));
-    }
+    notifyIfNewer(currentVersion, cache.latest, distTag);
     return;
   }
 
@@ -175,9 +179,7 @@ export async function maybeNotifyUpdate(currentVersion: string): Promise<void> {
   try {
     const latest = await fetchLatestVersion(distTag);
     await writeUpdateCache({ checkedAt: Date.now(), latest, distTag });
-    if (compareSemver(latest, currentVersion) > 0) {
-      process.stderr.write(formatUpdateBanner(currentVersion, latest, distTag));
-    }
+    notifyIfNewer(currentVersion, latest, distTag);
   } catch {
     // silent failure — never crash the CLI on update check issues
   }
