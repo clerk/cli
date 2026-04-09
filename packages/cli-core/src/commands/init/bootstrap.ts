@@ -1,6 +1,6 @@
 import { join } from "node:path";
 import { search, confirm, input } from "@inquirer/prompts";
-import { throwUserAbort, CliError } from "../../lib/errors.js";
+import { throwUserAbort, throwUsageError, CliError } from "../../lib/errors.js";
 import { log } from "../../lib/log.js";
 import type { FrameworkInfo } from "../../lib/framework.js";
 import { hasPackageJson } from "./context.js";
@@ -63,24 +63,51 @@ async function pickPackageManager(): Promise<PackageManager> {
   });
 }
 
-function defaultProjectName(entry: BootstrapEntry): string {
-  return entry.defaultProjectName;
+const PM_PRIORITY: PackageManager[] = ["bun", "pnpm", "yarn", "npm"];
+
+/**
+ * Auto-select the first available package manager by priority: bun → pnpm → yarn → npm.
+ * Used when running non-interactively (-y / agent mode) and no explicit --pm was given.
+ */
+export function resolvePackageManager(): PackageManager {
+  for (const pm of PM_PRIORITY) {
+    if (Bun.which(pm) !== null) return pm;
+  }
+  return "npm";
+}
+
+function validateProjectName(value: string): string | true {
+  if (!value.trim()) return "Project name is required";
+  if (/[A-Z]/.test(value)) return "Project name must be lowercase";
+  if (/\s/.test(value)) return "Project name cannot contain spaces";
+  if (value.includes("/") || value.includes(".."))
+    return "Project name cannot contain path separators";
+  return true;
 }
 
 async function askProjectName(entry: BootstrapEntry): Promise<string> {
   const name = await input({
     message: "Project name:",
-    default: defaultProjectName(entry),
-    validate: (value) => {
-      if (!value.trim()) return "Project name is required";
-      if (/[A-Z]/.test(value)) return "Project name must be lowercase";
-      if (/\s/.test(value)) return "Project name cannot contain spaces";
-      if (value.includes("/") || value.includes(".."))
-        return "Project name cannot contain path separators";
-      return true;
-    },
+    default: entry.defaultProjectName,
+    validate: validateProjectName,
   });
   return name.trim();
+}
+
+function resolvePm(override?: PackageManager, skipConfirm = false): PackageManager | null {
+  if (override) return override;
+  if (skipConfirm) return resolvePackageManager();
+  return null;
+}
+
+function resolveName(
+  override?: string,
+  skipConfirm = false,
+  entry?: BootstrapEntry,
+): string | null {
+  if (override) return override;
+  if (skipConfirm && entry) return entry.defaultProjectName;
+  return null;
 }
 
 async function generateProject(label: string, command: string[], cwd: string): Promise<void> {
@@ -129,6 +156,12 @@ export async function askSkipAuth(): Promise<boolean> {
   });
 }
 
+export type BootstrapOverrides = {
+  skipConfirm: boolean;
+  pmOverride?: PackageManager;
+  nameOverride?: string;
+};
+
 export type BootstrapResult = {
   projectDir: string;
   projectName: string;
@@ -137,13 +170,13 @@ export type BootstrapResult = {
 
 /**
  * Interactive bootstrap flow.
- * When skipConfirm is true (e.g. --starter flag), skips the "create a new one?" prompt.
- * Returns bootstrap result on success, or null on failure.
+ * When skipConfirm is true (e.g. --starter flag, -y, or agent mode), skips the
+ * "create a new one?" prompt and auto-resolves PM/project name when not overridden.
  */
 export async function promptAndBootstrap(
   cwd: string,
-  frameworkOverride?: FrameworkInfo,
-  { skipConfirm = false } = {},
+  frameworkOverride: FrameworkInfo | undefined,
+  { skipConfirm = false, pmOverride, nameOverride }: BootstrapOverrides = { skipConfirm: false },
 ): Promise<BootstrapResult> {
   if (!skipConfirm) {
     const wantBootstrap = await confirm({
@@ -153,9 +186,21 @@ export async function promptAndBootstrap(
     if (!wantBootstrap) throwUserAbort();
   }
 
+  if (skipConfirm && !frameworkOverride) {
+    throwUsageError(
+      "Non-interactive mode requires --framework for new projects. Example: clerk init --starter --framework next",
+    );
+  }
+
+  if (nameOverride) {
+    const valid = validateProjectName(nameOverride);
+    if (valid !== true) throwUsageError(valid);
+  }
+
   const entry = await pickFramework(frameworkOverride);
-  const pm = await pickPackageManager();
-  const projectName = await askProjectName(entry);
+  const pm = resolvePm(pmOverride, skipConfirm) ?? (await pickPackageManager());
+  const projectName =
+    resolveName(nameOverride, skipConfirm, entry) ?? (await askProjectName(entry));
   const projectDir = join(cwd, projectName);
 
   await generateProject(entry.label, entry.buildCommand(pm, projectName), cwd);

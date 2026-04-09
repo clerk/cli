@@ -8,8 +8,8 @@ import { useIntegrationTestHarness, http, clerk } from "./lib/harness.ts";
 
 useIntegrationTestHarness();
 
-test("init outputs structured agent prompt without API calls", async () => {
-  const { stdout } = await clerk("--mode", "agent", "init");
+test("init --prompt outputs structured agent prompt without API calls", async () => {
+  const { stdout } = await clerk("init", "--prompt");
   expect(stdout).toContain("clerk init -y");
   expect(http.requests.length).toBe(0);
 });

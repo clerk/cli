@@ -15,6 +15,7 @@ import { runFormatters } from "./format.js";
 import { detectAuthLibraries, scanForIssues } from "./scan.js";
 import {
   installSdk,
+  installDeps,
   writePlan,
   checkGitDirty,
   printOutro,
@@ -27,14 +28,17 @@ import {
   promptAndBootstrap,
   confirmOverwrite,
   askSkipAuth,
+  type BootstrapOverrides,
   type BootstrapResult,
 } from "./bootstrap.js";
 import type { ProjectContext } from "./frameworks/types.js";
+import type { PackageManager } from "./bootstrap-registry.js";
 
 type InitOptions = {
   /** Framework to set up (skips auto-detection). */
   framework?: string;
-  /** Skip confirmation prompts (in bootstrap mode, also skips authentication so you can connect your account later). */
+  pm?: PackageManager;
+  name?: string;
   yes?: boolean;
   /** Output a prompt for an AI agent to integrate Clerk, then exit. */
   prompt?: boolean;
@@ -53,18 +57,25 @@ export async function init(options: InitOptions = {}) {
     ? (lookupFramework(options.framework) ?? undefined)
     : undefined;
 
-  if (options.prompt || isAgent()) {
+  if (options.prompt) {
     log.data(
       "Run `clerk init -y` to automatically detect the framework, install the Clerk SDK, and scaffold authentication files without interactive prompts.",
     );
     return;
   }
 
+  // In agent mode, implicitly enable --yes to skip all confirmation prompts.
+  const overrides: BootstrapOverrides = {
+    skipConfirm: options.yes || isAgent(),
+    pmOverride: options.pm,
+    nameOverride: options.name,
+  };
+
   intro("clerk init");
 
   const resolved = options.starter
-    ? await handleStarter(cwd, frameworkOverride, options.yes)
-    : await resolveProjectContext(cwd, frameworkOverride, options.yes);
+    ? await handleStarter(cwd, frameworkOverride, overrides)
+    : await resolveProjectContext(cwd, frameworkOverride, overrides);
 
   if (!resolved) return;
 
@@ -76,7 +87,7 @@ export async function init(options: InitOptions = {}) {
 
   await enrichProjectContext(ctx);
 
-  const keyless = bootstrap ? options.yes || (await askSkipAuth()) : false;
+  const keyless = await resolveKeylessMode(bootstrap, ctx, overrides.skipConfirm);
   ctx.keyless = keyless;
 
   if (!keyless) {
@@ -86,7 +97,7 @@ export async function init(options: InitOptions = {}) {
 
   // Short-circuit on a fully-clean re-run so env pull / skills prompt don't
   // execute when there's nothing to do.
-  const { alreadySetUp } = await detectAndInstall(ctx.cwd, ctx, options);
+  const { alreadySetUp } = await detectAndInstall(ctx.cwd, ctx, overrides.skipConfirm);
 
   if (alreadySetUp) {
     log.success("\nClerk is already set up in this project.");
@@ -107,7 +118,7 @@ export async function init(options: InitOptions = {}) {
 
   if (options.skills !== false) {
     bar();
-    await installSkills(ctx.cwd, ctx?.framework.dep, ctx?.packageManager, options.yes ?? false);
+    await installSkills(ctx.cwd, ctx?.framework.dep, ctx?.packageManager, overrides.skipConfirm);
   }
 
   outro("Done");
@@ -122,10 +133,10 @@ type ResolvedContext = {
 
 async function bootstrapAndDetect(
   cwd: string,
-  frameworkOverride?: FrameworkInfo,
-  skipConfirm = false,
+  frameworkOverride: FrameworkInfo | undefined,
+  overrides: BootstrapOverrides,
 ): Promise<ResolvedContext> {
-  const bootstrap = await promptAndBootstrap(cwd, frameworkOverride, { skipConfirm });
+  const bootstrap = await promptAndBootstrap(cwd, frameworkOverride, overrides);
 
   const ctx = await gatherContext(bootstrap.projectDir);
   if (!ctx) {
@@ -136,23 +147,23 @@ async function bootstrapAndDetect(
 
 async function handleStarter(
   cwd: string,
-  frameworkOverride?: FrameworkInfo,
-  skipConfirm = false,
+  frameworkOverride: FrameworkInfo | undefined,
+  overrides: BootstrapOverrides,
 ): Promise<ResolvedContext> {
-  if (!skipConfirm) {
+  if (!overrides.skipConfirm) {
     await confirmOverwrite(cwd);
   }
 
-  return bootstrapAndDetect(cwd, frameworkOverride, true);
+  return bootstrapAndDetect(cwd, frameworkOverride, { ...overrides, skipConfirm: true });
 }
 
 async function resolveProjectContext(
   cwd: string,
-  frameworkOverride?: FrameworkInfo,
-  skipConfirm = false,
+  frameworkOverride: FrameworkInfo | undefined,
+  overrides: BootstrapOverrides,
 ): Promise<ResolvedContext> {
   const ctx = await withSpinner("Detecting framework...", () =>
-    gatherContext(cwd, frameworkOverride),
+    gatherContext(cwd, frameworkOverride, overrides.pmOverride),
   );
   if (ctx) return { ctx, bootstrap: null };
 
@@ -164,7 +175,7 @@ async function resolveProjectContext(
     );
   }
 
-  return bootstrapAndDetect(cwd, frameworkOverride, skipConfirm);
+  return bootstrapAndDetect(cwd, frameworkOverride, overrides);
 }
 
 // --- Next steps ---
@@ -182,6 +193,27 @@ function printBootstrapNextSteps(
     steps.push("clerk auth login  (when you're ready to connect your Clerk account)");
   }
   printNextSteps(steps);
+}
+
+// --- Keyless ---
+
+async function resolveKeylessMode(
+  bootstrap: BootstrapResult | null,
+  ctx: ProjectContext,
+  skipConfirm: boolean,
+): Promise<boolean> {
+  if (!bootstrap) return false;
+
+  if (ctx.framework.supportsKeyless) {
+    return skipConfirm || askSkipAuth();
+  }
+
+  console.log(
+    dim(
+      `\n  ${ctx.framework.name} requires API keys — keyless mode is not yet supported for this framework.`,
+    ),
+  );
+  return false;
 }
 
 // --- Auth ---
@@ -220,7 +252,7 @@ async function authenticateAndLink(cwd: string, app: string | undefined): Promis
 async function detectAndInstall(
   cwd: string,
   ctx: ProjectContext,
-  options: InitOptions,
+  skipConfirm: boolean,
 ): Promise<{ alreadySetUp: boolean }> {
   const variantLabel = ctx.variant ? ` (${ctx.variant})` : "";
   log.info(`\nDetected ${bold(ctx.framework.name)}${variantLabel}`);
@@ -234,13 +266,13 @@ async function detectAndInstall(
     await installSdk(ctx);
   }
 
-  return await scaffoldAndWrite(cwd, ctx, options);
+  return await scaffoldAndWrite(cwd, ctx, skipConfirm);
 }
 
 async function scaffoldAndWrite(
   cwd: string,
   ctx: ProjectContext,
-  options: InitOptions,
+  skipConfirm: boolean,
 ): Promise<{ alreadySetUp: boolean }> {
   const plan = await scaffold(ctx);
   const hasChanges = plan.actions.some((a) => a.type !== "skip");
@@ -263,11 +295,15 @@ async function scaffoldAndWrite(
     log.info(dim("Consider committing first so you can review what clerk init creates.\n"));
   }
 
-  if (options.yes) {
+  if (skipConfirm) {
     previewPlan(plan);
   } else {
     const proceed = await previewAndConfirm(plan);
     if (!proceed) throwUserAbort();
+  }
+
+  if (plan.additionalDeps?.length) {
+    await installDeps(ctx, plan.additionalDeps);
   }
 
   const writtenFiles = await writePlan(cwd, plan);

@@ -27,7 +27,8 @@ const FAKE_CTX = {
     name: "React",
     sdk: "@clerk/react",
     envVar: "VITE_CLERK_PUBLISHABLE_KEY",
-    envFile: ".env.local" as const,
+    envFile: ".env" as const,
+    supportsKeyless: true,
   },
   typescript: true,
   srcDir: false,
@@ -78,6 +79,7 @@ describe("init", () => {
       spyOn(heuristics, "getAuthenticatedEmail").mockResolvedValue(email),
       spyOn(heuristics, "printKeylessInfo").mockReturnValue(undefined),
       spyOn(heuristics, "installSdk").mockResolvedValue(undefined),
+      spyOn(heuristics, "installDeps").mockResolvedValue(undefined),
       spyOn(heuristics, "writePlan").mockResolvedValue([]),
       spyOn(heuristics, "checkGitDirty").mockResolvedValue(false),
       spyOn(heuristics, "printOutro").mockReturnValue(undefined),
@@ -136,10 +138,21 @@ describe("init", () => {
     expect(linkMod.link).toHaveBeenCalledWith({ skipIfLinked: true, app: "app_abc" });
   });
 
-  test("agent mode prints guidance without auth/bootstrap", async () => {
-    const { captured } = setup({ isAgent: true });
+  test("agent mode runs existing-project flow without prompts", async () => {
+    setup({ isAgent: true });
+    spyOn(context, "gatherContext").mockResolvedValue(FAKE_CTX);
 
-    await captured.run(() => init({}));
+    await init({});
+
+    expect(bootstrapMod.askSkipAuth).not.toHaveBeenCalled();
+    expect(previewMod.previewAndConfirm).not.toHaveBeenCalled();
+    expect(bootstrapMod.promptAndBootstrap).not.toHaveBeenCalled();
+  });
+
+  test("--prompt flag prints guidance and exits", async () => {
+    const { captured } = setup({ isAgent: false });
+
+    await captured.run(() => init({ prompt: true }));
 
     expect(captured.out).toContain("clerk init -y");
     expect(loginMod.login).not.toHaveBeenCalled();
@@ -165,6 +178,33 @@ describe("init", () => {
     expect(bootstrapMod.promptAndBootstrap).toHaveBeenCalled();
     expect(bootstrapMod.askSkipAuth).not.toHaveBeenCalled();
     expect(heuristics.getAuthenticatedEmail).not.toHaveBeenCalled();
+  });
+
+  test("-y flag forces auth for frameworks without keyless support", async () => {
+    setup();
+
+    const noKeylessCtx = {
+      ...FAKE_CTX,
+      framework: {
+        dep: "vue",
+        name: "Vue",
+        sdk: "@clerk/vue",
+        envVar: "VITE_CLERK_PUBLISHABLE_KEY",
+        envFile: ".env.local" as const,
+      },
+      existingClerk: false,
+    };
+
+    spyOn(context, "gatherContext").mockResolvedValueOnce(null).mockResolvedValueOnce(noKeylessCtx);
+
+    await init({ yes: true });
+
+    expect(bootstrapMod.promptAndBootstrap).toHaveBeenCalled();
+    // Should not ask about skipping auth — keyless not supported
+    expect(bootstrapMod.askSkipAuth).not.toHaveBeenCalled();
+    // Should force authentication since framework lacks keyless support
+    expect(heuristics.getAuthenticatedEmail).toHaveBeenCalled();
+    expect(heuristics.printKeylessInfo).not.toHaveBeenCalled();
   });
 
   test("blank dir bootstrap declined throws UserAbortError", async () => {
@@ -204,7 +244,7 @@ describe("init", () => {
       name: "Next.js",
       sdk: "@clerk/nextjs",
       envVar: "NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY",
-      envFile: ".env" as const,
+      envFile: ".env.local" as const,
     };
     setup({ email: "test@test.com" });
     spyOn(frameworkMod, "lookupFramework").mockReturnValue(fwOverride);
@@ -215,6 +255,8 @@ describe("init", () => {
 
     expect(bootstrapMod.promptAndBootstrap).toHaveBeenCalledWith(expect.any(String), fwOverride, {
       skipConfirm: true,
+      pmOverride: undefined,
+      nameOverride: undefined,
     });
   });
 
@@ -227,6 +269,8 @@ describe("init", () => {
 
     expect(bootstrapMod.promptAndBootstrap).toHaveBeenCalledWith(expect.any(String), undefined, {
       skipConfirm: true,
+      pmOverride: undefined,
+      nameOverride: undefined,
     });
     // --yes skips confirmOverwrite
     expect(bootstrapMod.confirmOverwrite).not.toHaveBeenCalled();
@@ -268,13 +312,18 @@ describe("init", () => {
     );
   });
 
-  test("--starter in agent mode prints guidance without bootstrap", async () => {
-    const { captured } = setup({ isAgent: true });
+  test("--starter in agent mode runs bootstrap with skipConfirm", async () => {
+    setup({ isAgent: true });
+    spyOn(context, "gatherContext").mockResolvedValue(FAKE_CTX);
 
-    await captured.run(() => init({ starter: true }));
+    await init({ starter: true, framework: "react" });
 
-    expect(captured.out).toContain("clerk init -y");
-    expect(bootstrapMod.promptAndBootstrap).not.toHaveBeenCalled();
+    expect(bootstrapMod.promptAndBootstrap).toHaveBeenCalledWith(
+      expect.any(String),
+      undefined,
+      expect.objectContaining({ skipConfirm: true }),
+    );
+    expect(bootstrapMod.confirmOverwrite).not.toHaveBeenCalled();
   });
 
   test("short-circuits env pull and skills install when already set up", async () => {
@@ -296,6 +345,40 @@ describe("init", () => {
     expect(pullMod.pull).not.toHaveBeenCalled();
     expect(heuristics.printKeylessInfo).not.toHaveBeenCalled();
     expect(skillsMod.installSkills).not.toHaveBeenCalled();
+  });
+
+  test("--pm overrides detected package manager in existing-project flow", async () => {
+    setup({ email: "test@test.com" });
+    spyOn(context, "gatherContext").mockResolvedValue(FAKE_CTX);
+    spyOn(config, "resolveProfile").mockResolvedValue({ profile: { appId: "app_123" } } as never);
+
+    await init({ pm: "pnpm", yes: true });
+
+    expect(context.gatherContext).toHaveBeenCalledWith(expect.any(String), undefined, "pnpm");
+  });
+
+  test("--pm and --name are threaded to bootstrap", async () => {
+    setup({ email: "test@test.com" });
+    spyOn(context, "gatherContext").mockResolvedValue(FAKE_CTX);
+    spyOn(config, "resolveProfile").mockResolvedValue({ profile: { appId: "app_123" } } as never);
+
+    await init({ starter: true, yes: true, pm: "bun", name: "my-project" });
+
+    expect(bootstrapMod.promptAndBootstrap).toHaveBeenCalledWith(expect.any(String), undefined, {
+      skipConfirm: true,
+      pmOverride: "bun",
+      nameOverride: "my-project",
+    });
+  });
+
+  test("agent mode skips all confirmations implicitly", async () => {
+    setup({ isAgent: true });
+    spyOn(context, "gatherContext").mockResolvedValue(FAKE_CTX);
+
+    await init({});
+
+    // installSkills receives skipConfirm=true from agent mode
+    expect(skillsMod.installSkills).not.toHaveBeenCalled(); // alreadySetUp short-circuits
   });
 
   test("pulls env to ctx.envFile when authenticated and framework detected", async () => {
