@@ -11,8 +11,9 @@
  * so it runs unattended with global scope and auto-detected agents.
  */
 
-import { dim, cyan, yellow } from "../../lib/color.js";
+import { dim } from "../../lib/color.js";
 import { isHuman } from "../../mode.js";
+import { log } from "../../lib/log.js";
 import { confirm, select } from "../../lib/prompts.js";
 import {
   type Runner,
@@ -88,11 +89,10 @@ export async function installSkills(
   const available = detectAvailableRunners();
   if (available.length === 0) {
     const suggested = runnerForPackageManager(packageManager);
-    console.log(
-      yellow(
-        "\nNo package runner found on PATH (looked for bunx, npx, pnpm, yarn). " +
-          `Install one and run \`${suggested.display} skills add ${SKILLS_SOURCE}\` manually.`,
-      ),
+    log.blank();
+    log.warn(
+      "No package runner found on PATH (looked for bunx, npx, pnpm, yarn). " +
+        `Install one and run \`${suggested.display} skills add ${SKILLS_SOURCE}\` manually.`,
     );
     return;
   }
@@ -103,10 +103,9 @@ export async function installSkills(
     // preferredRunner should always find something. This guards against any
     // future change that decouples the two.
     const suggested = runnerForPackageManager(packageManager);
-    console.log(
-      yellow(
-        `\nCould not select a package runner. Run \`${suggested.display} skills add ${SKILLS_SOURCE}\` manually.`,
-      ),
+    log.blank();
+    log.warn(
+      `Could not select a package runner. Run \`${suggested.display} skills add ${SKILLS_SOURCE}\` manually.`,
     );
     return;
   }
@@ -128,7 +127,8 @@ export async function installSkills(
   const command = runnerCommand(runner, buildSkillsArgs(skills, interactive));
   const displayCommand = `${runner.display} skills add ${SKILLS_SOURCE}`;
 
-  console.log(`\nInstalling skills with ${cyan(runner.display)}: ${cyan(skillList)}`);
+  log.blank();
+  log.info(`Installing skills with \`${runner.display}\`: \`${skillList}\``);
 
   let exitCode: number;
   try {
@@ -140,16 +140,17 @@ export async function installSkills(
     });
     exitCode = await proc.exited;
   } catch {
-    console.log(yellow(`\nCould not run \`${displayCommand}\`. You can install manually later.`));
+    log.blank();
+    log.warn(`Could not run \`${displayCommand}\`. You can install manually later.`);
     return;
   }
 
   if (exitCode !== 0) {
-    console.log(
-      yellow(`\nSkills installation failed. You can install manually: ${displayCommand}`),
-    );
+    log.blank();
+    log.warn(`Skills installation failed. You can install manually: \`${displayCommand}\``);
     return;
   }
 
-  console.log(dim("\nAgent skills installed. AI agents now have Clerk context in this project."));
+  log.blank();
+  log.success("Agent skills installed. AI agents now have Clerk context in this project.");
 }

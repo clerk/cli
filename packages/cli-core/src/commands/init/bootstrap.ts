@@ -1,7 +1,7 @@
 import { join } from "node:path";
 import { search, confirm, input } from "@inquirer/prompts";
-import { cyan, yellow } from "../../lib/color.js";
 import { throwUserAbort, CliError } from "../../lib/errors.js";
+import { log } from "../../lib/log.js";
 import type { FrameworkInfo } from "../../lib/framework.js";
 import { hasPackageJson } from "./context.js";
 import {
@@ -84,7 +84,9 @@ async function askProjectName(entry: BootstrapEntry): Promise<string> {
 }
 
 async function generateProject(label: string, command: string[], cwd: string): Promise<void> {
-  console.log(`\nCreating ${cyan(label)} project...\n`);
+  log.blank();
+  log.info(`Creating \`${label}\` project...`);
+  log.blank();
 
   const exitCode = await spawnInherited(command, cwd);
   if (exitCode !== 0) {
@@ -93,14 +95,15 @@ async function generateProject(label: string, command: string[], cwd: string): P
 }
 
 async function installDependencies(pm: PackageManager, cwd: string): Promise<void> {
-  console.log(`\nInstalling dependencies...\n`);
+  log.blank();
+  log.info("Installing dependencies...");
+  log.blank();
 
   const exitCode = await spawnInherited(PM_INSTALL_COMMANDS[pm], cwd);
   if (exitCode !== 0) {
-    console.log(
-      yellow(
-        `\nDependency installation failed. Run manually: ${PM_INSTALL_COMMANDS[pm].join(" ")}`,
-      ),
+    log.blank();
+    log.warn(
+      `Dependency installation failed. Run manually: \`${PM_INSTALL_COMMANDS[pm].join(" ")}\``,
     );
   }
 }
@@ -163,6 +166,6 @@ export async function promptAndBootstrap(
 
   await installDependencies(pm, projectDir);
 
-  console.log();
+  log.blank();
   return { projectDir, projectName, packageManager: pm };
 }
