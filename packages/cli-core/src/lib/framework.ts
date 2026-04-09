@@ -15,6 +15,10 @@ export interface FrameworkInfo {
   /** Preferred env file for secrets. Frameworks that gitignore `.env` use it
    *  directly; Vite-based frameworks use `.env.local` since `.env` is tracked. */
   envFile: ".env" | ".env.local";
+  /** When true, the framework's Clerk SDK supports keyless mode (auto-generated
+   *  temporary dev keys). Frameworks without keyless support require API keys
+   *  and must authenticate during `clerk init`. */
+  supportsKeyless?: boolean;
 }
 
 // Order matters: more specific frameworks first (e.g. next before react, nuxt before vue)
@@ -25,6 +29,7 @@ export const FRAMEWORK_MAP: FrameworkInfo[] = [
     sdk: "@clerk/nextjs",
     envVar: "NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY",
     envFile: ".env",
+    supportsKeyless: true,
   },
   {
     dep: "astro",
@@ -32,6 +37,7 @@ export const FRAMEWORK_MAP: FrameworkInfo[] = [
     sdk: "@clerk/astro",
     envVar: "PUBLIC_CLERK_PUBLISHABLE_KEY",
     envFile: ".env",
+    supportsKeyless: true,
   },
   {
     dep: "nuxt",
@@ -47,6 +53,7 @@ export const FRAMEWORK_MAP: FrameworkInfo[] = [
     sdk: "@clerk/tanstack-react-start",
     envVar: "VITE_CLERK_PUBLISHABLE_KEY",
     envFile: ".env.local",
+    supportsKeyless: true,
   },
   {
     dep: "react-router",
@@ -54,6 +61,7 @@ export const FRAMEWORK_MAP: FrameworkInfo[] = [
     sdk: "@clerk/react-router",
     envVar: "VITE_CLERK_PUBLISHABLE_KEY",
     envFile: ".env.local",
+    supportsKeyless: true,
   },
   {
     dep: "vue",
@@ -75,6 +83,7 @@ export const FRAMEWORK_MAP: FrameworkInfo[] = [
     sdk: "@clerk/react",
     envVar: "VITE_CLERK_PUBLISHABLE_KEY",
     envFile: ".env.local",
+    supportsKeyless: true,
   },
   {
     dep: "vite",
