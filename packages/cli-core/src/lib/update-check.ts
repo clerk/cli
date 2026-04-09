@@ -19,8 +19,17 @@ export type UpdateCache = {
 
 // ── Channel ───────────────────────────────────────────────────────────────────
 
+export function inferChannelFromVersion(version: string): string {
+  const dashIndex = version.indexOf("-");
+  if (dashIndex === -1) return "latest";
+  const pre = version.slice(dashIndex + 1);
+  const dotIndex = pre.indexOf(".");
+  return dotIndex === -1 ? pre : pre.slice(0, dotIndex);
+}
+
 export function getUpdateChannel(): string {
-  return process.env.CLERK_UPDATE_CHANNEL ?? "latest";
+  if (process.env.CLERK_UPDATE_CHANNEL) return process.env.CLERK_UPDATE_CHANNEL;
+  return inferChannelFromVersion(getCurrentVersion());
 }
 
 // ── Version helpers ───────────────────────────────────────────────────────────
