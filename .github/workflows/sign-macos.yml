@@ -35,6 +35,7 @@ jobs:
           sparse-checkout: |
             scripts/sign-macos.ts
             scripts/entitlements.plist
+            scripts/lib/
             scripts/releaser/
             bun.lock
             package.json
