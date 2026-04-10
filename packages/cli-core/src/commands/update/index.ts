@@ -33,11 +33,12 @@ async function confirmUpdate(currentVersion: string, latestVersion: string): Pro
  */
 async function findNpmBinPath(): Promise<string | null> {
   try {
-    const result = await Bun.$`npm bin -g`.quiet().nothrow();
+    const result = await Bun.$`npm prefix -g`.quiet().nothrow();
     if (result.exitCode !== 0) return null;
-    const npmBin = result.stdout.toString().trim();
-    if (!npmBin) return null;
-    return `${npmBin}/${UPDATE_PACKAGE_NAME}`;
+    const prefix = result.stdout.toString().trim();
+    if (!prefix) return null;
+    const binPath = `${prefix}/bin/${UPDATE_PACKAGE_NAME}`;
+    return (await Bun.file(binPath).exists()) ? binPath : null;
   } catch {
     return null;
   }
