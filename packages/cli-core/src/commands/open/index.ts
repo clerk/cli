@@ -2,7 +2,8 @@ import { resolveProfile } from "../../lib/config.ts";
 import { CliError, ERROR_CODE } from "../../lib/errors.ts";
 import { getDashboardUrl } from "../../lib/environment.ts";
 import { openBrowser } from "../../lib/open.ts";
-import { dim, yellow, bold, cyan } from "../../lib/color.ts";
+import { log } from "../../lib/log.ts";
+import { bold, cyan, dim } from "../../lib/color.ts";
 import { intro, outro } from "../../lib/spinner.ts";
 import { isAgent } from "../../mode.ts";
 import { isKnownDashboardPath } from "./dashboard-paths.ts";
@@ -57,25 +58,17 @@ export async function openDashboard(
   //   human mode → intro/outro logging flow with browser open
   if (options.print) {
     if (unknownPath) {
-      console.error(
-        yellow(
-          `Warning: "${subpath}" is not a known dashboard path. Opening anyway — verify the URL.`,
-        ),
-      );
+      log.warn(`"${subpath}" is not a known dashboard path. Opening anyway — verify the URL.`);
     }
-    console.log(url);
+    log.data(url);
     return;
   }
 
   if (isAgent()) {
     if (unknownPath) {
-      console.error(
-        yellow(
-          `Warning: "${subpath}" is not a known dashboard path. Opening anyway — verify the URL.`,
-        ),
-      );
+      log.warn(`"${subpath}" is not a known dashboard path. Opening anyway — verify the URL.`);
     }
-    console.log(
+    log.data(
       JSON.stringify({
         url,
         appId,
@@ -91,23 +84,19 @@ export async function openDashboard(
 
   // Human mode — use intro/outro logging flow
   const target = subpath ? ` → ${cyan(subpath)}` : "";
-  intro(`clerk open`);
+  intro("clerk open");
 
   if (unknownPath) {
-    console.error(
-      yellow(
-        `Warning: "${subpath}" is not a known dashboard path. Opening anyway — verify the URL.`,
-      ),
-    );
+    log.warn(`"${subpath}" is not a known dashboard path. Opening anyway — verify the URL.`);
   }
 
-  console.log(`↗ Opening ${bold(appLabel)} (${instanceLabel})${target}`);
-  console.log(`  ${dim(url)}`);
+  log.info(`↗ Opening ${bold(appLabel)} (${instanceLabel})${target}`);
+  log.info(`  ${dim(url)}`);
 
   const result = await openBrowser(url);
   if (!result.ok) {
-    console.error(
-      `${yellow("Could not open your browser automatically.")} Open this URL to continue:\n  ${cyan(url)}\n${dim(`(Reason: ${result.reason})`)}`,
+    log.warn(
+      `Could not open your browser automatically. Open this URL to continue:\n  ${cyan(url)}\n${dim(`(Reason: ${result.reason})`)}`,
     );
   }
 
