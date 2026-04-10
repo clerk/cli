@@ -14,6 +14,11 @@ mock.module("../../lib/open.ts", () => ({
   openBrowser: (...args: unknown[]) => mockOpenBrowser(...args),
 }));
 
+mock.module("../../lib/spinner.ts", () => ({
+  intro: () => {},
+  outro: () => {},
+}));
+
 const { openDashboard, buildDashboardUrl } = await import("./index.ts");
 
 const PROFILE = {

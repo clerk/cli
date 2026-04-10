@@ -3,6 +3,7 @@ import { CliError, ERROR_CODE } from "../../lib/errors.ts";
 import { getDashboardUrl } from "../../lib/environment.ts";
 import { openBrowser } from "../../lib/open.ts";
 import { dim, yellow, bold, cyan } from "../../lib/color.ts";
+import { intro, outro } from "../../lib/spinner.ts";
 import { isAgent } from "../../mode.ts";
 import { isKnownDashboardPath } from "./dashboard-paths.ts";
 
@@ -47,27 +48,33 @@ export async function openDashboard(
     );
   }
 
-  // Warn on unknown subpaths but don't block — the dashboard route tree
-  // changes faster than this CLI ships, and users may know about new paths.
-  // Warning goes to stderr so stdout stays parseable.
-  if (subpath && !isKnownDashboardPath(subpath)) {
-    console.error(
-      yellow(
-        `Warning: "${subpath}" is not a known dashboard path. Opening anyway — verify the URL.`,
-      ),
-    );
-  }
-
   const url = buildDashboardUrl(appId, instanceId, subpath);
-  const willOpen = !options.print && !isAgent();
+  const unknownPath = subpath && !isKnownDashboardPath(subpath);
 
   // Output strategy:
   //   --print → plain URL on stdout (scriptable)
   //   agent mode → JSON object with full context (parseable)
-  //   human mode → arrow indicator + app/instance label + dim URL, then open
+  //   human mode → intro/outro logging flow with browser open
   if (options.print) {
+    if (unknownPath) {
+      console.error(
+        yellow(
+          `Warning: "${subpath}" is not a known dashboard path. Opening anyway — verify the URL.`,
+        ),
+      );
+    }
     console.log(url);
-  } else if (isAgent()) {
+    return;
+  }
+
+  if (isAgent()) {
+    if (unknownPath) {
+      console.error(
+        yellow(
+          `Warning: "${subpath}" is not a known dashboard path. Opening anyway — verify the URL.`,
+        ),
+      );
+    }
     console.log(
       JSON.stringify({
         url,
@@ -79,18 +86,30 @@ export async function openDashboard(
         opened: false,
       }),
     );
-  } else {
-    const target = subpath ? ` → ${cyan(subpath)}` : "";
-    console.log(`↗ Opening ${bold(appLabel)} (${instanceLabel})${target}`);
-    console.log(`  ${dim(url)}`);
+    return;
   }
 
-  if (willOpen) {
-    const result = await openBrowser(url);
-    if (!result.ok) {
-      console.error(
-        `\n${yellow("Could not open your browser automatically.")} Open this URL to continue:\n  ${cyan(url)}\n${dim(`(Reason: ${result.reason})`)}\n`,
-      );
-    }
+  // Human mode — use intro/outro logging flow
+  const target = subpath ? ` → ${cyan(subpath)}` : "";
+  intro(`clerk open`);
+
+  if (unknownPath) {
+    console.error(
+      yellow(
+        `Warning: "${subpath}" is not a known dashboard path. Opening anyway — verify the URL.`,
+      ),
+    );
   }
+
+  console.log(`↗ Opening ${bold(appLabel)} (${instanceLabel})${target}`);
+  console.log(`  ${dim(url)}`);
+
+  const result = await openBrowser(url);
+  if (!result.ok) {
+    console.error(
+      `${yellow("Could not open your browser automatically.")} Open this URL to continue:\n  ${cyan(url)}\n${dim(`(Reason: ${result.reason})`)}`,
+    );
+  }
+
+  outro();
 }
