@@ -27,10 +27,6 @@ async function confirmUpdate(currentVersion: string, latestVersion: string): Pro
   });
 }
 
-/**
- * Find the path of the npm-installed clerk binary by resolving where npm puts
- * global binaries, then checking if clerk exists there.
- */
 async function findNpmBinPath(): Promise<string | null> {
   try {
     const result = await Bun.$`npm prefix -g`.quiet().nothrow();
@@ -44,23 +40,21 @@ async function findNpmBinPath(): Promise<string | null> {
   }
 }
 
-/**
- * Returns the resolved path of `clerk` on PATH, excluding the given npmBinPath.
- * Used to detect stale binaries that shadow the npm-installed one.
- */
 async function findShadowingBinary(npmBinPath: string): Promise<string | null> {
   try {
-    // `which -a` lists all matches in PATH order; we want any entry that isn't
-    // the npm-managed one
-    const result = await Bun.$`which -a ${UPDATE_PACKAGE_NAME}`.quiet().nothrow();
-    if (result.exitCode !== 0) return null;
-    const lines = result.stdout
-      .toString()
-      .trim()
-      .split("\n")
-      .map((l) => l.trim());
-    // Find the first entry that isn't the npm bin path
-    return lines.find((p) => p && p !== npmBinPath) ?? null;
+    const pathDirs = (process.env.PATH ?? "").split(":");
+    for (const dir of pathDirs) {
+      if (!dir) continue;
+      const candidate = `${dir}/${UPDATE_PACKAGE_NAME}`;
+      if (candidate === npmBinPath) break;
+      const file = Bun.file(candidate);
+      if (!(await file.exists())) continue;
+      // Skip shell-script shims (asdf, volta, etc.) — only flag native binaries.
+      const bytes = new Uint8Array(await file.slice(0, 2).arrayBuffer());
+      if (bytes[0] === 0x23 && bytes[1] === 0x21) continue; // "#!"
+      return candidate;
+    }
+    return null;
   } catch {
     return null;
   }
@@ -134,7 +128,6 @@ export async function update(options: UpdateOptions): Promise<void> {
 
   if (compareSemver(latest, currentVersion) <= 0) {
     log.info(`${green("✓")} Already on latest (${currentVersion})`);
-    // Even when up to date, check if a stale binary is shadowing this install.
     const npmBinPath = await findNpmBinPath();
     if (npmBinPath) {
       const shadowPath = await findShadowingBinary(npmBinPath);
@@ -166,8 +159,6 @@ export async function update(options: UpdateOptions): Promise<void> {
 
   await writeUpdateCache({ checkedAt: Date.now(), latest, distTag: channel });
 
-  // After install, check if a stale binary elsewhere on PATH is shadowing the
-  // npm-installed one (e.g. a previously compiled binary in ~/.local/bin).
   const npmBinPath = await findNpmBinPath();
   if (npmBinPath) {
     const shadowPath = await findShadowingBinary(npmBinPath);
