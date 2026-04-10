@@ -28,7 +28,6 @@ const FAKE_CTX = {
     sdk: "@clerk/react",
     envVar: "VITE_CLERK_PUBLISHABLE_KEY",
     envFile: ".env" as const,
-    supportsKeyless: true,
   },
   typescript: true,
   srcDir: false,
@@ -62,7 +61,6 @@ describe("init", () => {
     const gatherContextSpy = spyOn(context, "gatherContext").mockResolvedValue(null);
 
     spies = [
-      spyOn(console, "log").mockImplementation(() => {}),
       spyOn(mode, "isAgent").mockReturnValue(agent),
       spyOn(mode, "isHuman").mockReturnValue(!agent),
       spyOn(config, "resolveProfile").mockResolvedValue(undefined),
@@ -162,6 +160,25 @@ describe("init", () => {
   test("blank dir in human mode triggers bootstrap flow", async () => {
     setup();
     setupBootstrapSuccess();
+
+    await init({});
+
+    expect(bootstrapMod.promptAndBootstrap).toHaveBeenCalled();
+    // React doesn't support keyless, so askSkipAuth is never called
+    expect(bootstrapMod.askSkipAuth).not.toHaveBeenCalled();
+  });
+
+  test("blank dir with keyless framework prompts askSkipAuth", async () => {
+    setup();
+
+    const keylessCtx = {
+      ...FAKE_CTX,
+      framework: {
+        ...FAKE_CTX.framework,
+        supportsKeyless: true,
+      },
+    };
+    spyOn(context, "gatherContext").mockResolvedValueOnce(null).mockResolvedValueOnce(keylessCtx);
 
     await init({});
 

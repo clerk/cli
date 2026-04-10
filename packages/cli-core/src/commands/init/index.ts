@@ -206,7 +206,7 @@ function printManualSetupInfo(frameworkName: string): void {
     "    clerk link",
     "    clerk env pull",
   ];
-  console.log(lines.map(dim).join("\n"));
+  log.info(lines.map(dim).join("\n"));
 }
 
 // --- Keyless ---
@@ -219,10 +219,10 @@ async function resolveKeylessMode(
   if (!bootstrap) return false;
 
   if (ctx.framework.supportsKeyless) {
-    return skipConfirm || askSkipAuth();
+    return skipConfirm || (await askSkipAuth());
   }
 
-  console.log(
+  log.info(
     dim(
       `\n  ${ctx.framework.name} requires API keys — keyless mode is not yet supported for this framework.`,
     ),
