@@ -134,6 +134,12 @@ export async function update(options: UpdateOptions): Promise<void> {
 
   if (compareSemver(latest, currentVersion) <= 0) {
     log.info(`${green("✓")} Already on latest (${currentVersion})`);
+    // Even when up to date, check if a stale binary is shadowing this install.
+    const npmBinPath = await findNpmBinPath();
+    if (npmBinPath) {
+      const shadowPath = await findShadowingBinary(npmBinPath);
+      if (shadowPath) await removeShadowingBinary(shadowPath, options.yes || !isHuman());
+    }
     if (isHuman()) outro("Up to date");
     return;
   }
