@@ -22,9 +22,11 @@
   },
   "files": [
     "bin",
+    "scripts",
     "LICENSE"
   ],
   "scripts": {
+    "postinstall": "node scripts/postinstall.js",
     "prepublishOnly": "echo 'Use scripts/releaser instead' && exit 1"
   },
   "engines": {
