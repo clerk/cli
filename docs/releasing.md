@@ -213,8 +213,7 @@ Attaches the compiled binaries to the GitHub Release for direct download. Binari
 | `.github/workflows/build-binaries.yml` | Reusable workflow for cross-compiling binaries (called by release + snapshot)  |
 | `.github/workflows/sign-macos.yml`     | Reusable workflow for macOS code signing and notarization                      |
 | `.github/workflows/smoke-test.yml`     | Reusable workflow for smoke-testing binaries (called by release + snapshot)    |
-| `.github/workflows/release.yml`        | GitHub Actions release + canary workflow                                       |
-| `.github/workflows/snapshot.yml`       | GitHub Actions snapshot workflow (triggered by PR comments)                    |
+| `.github/workflows/release.yml`        | GitHub Actions release, canary, and snapshot workflow                           |
 
 ## Keeping Targets in Sync
 
