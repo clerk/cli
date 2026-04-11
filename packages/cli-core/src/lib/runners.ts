@@ -9,8 +9,8 @@
  *
  * This module exposes:
  *  - `Runner` — a tagged record describing one runner
- *  - `RUNNERS` — the four runners we know about, in preference order
- *  - `detectAvailableRunners()` — filters RUNNERS to those on the user's PATH
+ *  - `KNOWN_RUNNERS` — the four runners we know about, in preference order
+ *  - `detectAvailableRunners()` — filters KNOWN_RUNNERS to those on the user's PATH
  *  - `preferredRunner()` — picks the best runner for a given package manager
  */
 
@@ -35,7 +35,7 @@ export type Runner = {
  * Known runners in preference order. When no project package manager is
  * provided, the first available runner from this list wins.
  */
-export const RUNNERS: readonly Runner[] = [
+export const KNOWN_RUNNERS: readonly Runner[] = [
   { id: "bunx", binary: "bunx", prefixArgs: [], display: "bunx" },
   { id: "npx", binary: "npx", prefixArgs: [], display: "npx" },
   { id: "pnpm", binary: "pnpm", prefixArgs: ["dlx"], display: "pnpm dlx" },
@@ -72,13 +72,13 @@ function yarnSupportsDlx(): boolean {
 }
 
 /**
- * Returns the subset of {@link RUNNERS} that are actually installed on the
- * user's PATH. Uses `Bun.which()`, which returns the resolved binary path
+ * Returns the subset of {@link KNOWN_RUNNERS} that are actually installed on
+ * the user's PATH. Uses `Bun.which()`, which returns the resolved binary path
  * or `null`. The `yarn` runner is additionally gated on a `yarn dlx --help`
  * probe so Yarn Classic (v1, no `dlx`) is not advertised.
  */
 export function detectAvailableRunners(): Runner[] {
-  return RUNNERS.filter((r) => {
+  return KNOWN_RUNNERS.filter((r) => {
     if (Bun.which(r.binary) === null) return false;
     if (r.id === "yarn") return yarnSupportsDlx();
     return true;
@@ -89,21 +89,21 @@ export function detectAvailableRunners(): Runner[] {
  * Returns the {@link Runner} spec matching a project's package manager,
  * regardless of whether it's installed on PATH. Useful for building
  * suggested-install messages when no runner is available locally yet.
- * Falls back to the first entry in {@link RUNNERS} when `packageManager`
+ * Falls back to the first entry in {@link KNOWN_RUNNERS} when `packageManager`
  * is undefined.
  */
 export function runnerForPackageManager(
   packageManager: ProjectContext["packageManager"] | undefined,
 ): Runner {
-  if (!packageManager) return RUNNERS[0];
+  if (!packageManager) return KNOWN_RUNNERS[0];
   const id = PM_TO_RUNNER[packageManager];
-  return RUNNERS.find((r) => r.id === id) ?? RUNNERS[0];
+  return KNOWN_RUNNERS.find((r) => r.id === id) ?? KNOWN_RUNNERS[0];
 }
 
 /**
  * Pick the best runner from a set of available runners. Prefers the project's
  * own package-manager runner if it's installed (e.g. bun project + bunx →
- * bunx). Otherwise falls back to the first available runner in {@link RUNNERS}
+ * bunx). Otherwise falls back to the first available runner in {@link KNOWN_RUNNERS}
  * order.
  *
  * Returns `undefined` only if `available` is empty.

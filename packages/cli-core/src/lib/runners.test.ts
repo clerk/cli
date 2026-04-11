@@ -1,6 +1,6 @@
 import { test, expect, describe, afterEach } from "bun:test";
 import {
-  RUNNERS,
+  KNOWN_RUNNERS,
   type Runner,
   detectAvailableRunners,
   preferredRunner,
@@ -57,31 +57,31 @@ function restoreSpawnSync() {
   }
 }
 
-describe("RUNNERS", () => {
+describe("KNOWN_RUNNERS", () => {
   test("includes the four expected runner ids", () => {
-    expect(RUNNERS.map((r) => r.id)).toEqual(["bunx", "npx", "pnpm", "yarn"]);
+    expect(KNOWN_RUNNERS.map((r) => r.id)).toEqual(["bunx", "npx", "pnpm", "yarn"]);
   });
 
   test("dlx-style runners have the dlx prefix arg", () => {
-    const pnpm = RUNNERS.find((r) => r.id === "pnpm")!;
-    const yarn = RUNNERS.find((r) => r.id === "yarn")!;
+    const pnpm = KNOWN_RUNNERS.find((r) => r.id === "pnpm")!;
+    const yarn = KNOWN_RUNNERS.find((r) => r.id === "yarn")!;
     expect(pnpm.prefixArgs).toEqual(["dlx"]);
     expect(yarn.prefixArgs).toEqual(["dlx"]);
   });
 
   test("bunx and npx have no prefix args", () => {
-    const bunx = RUNNERS.find((r) => r.id === "bunx")!;
-    const npx = RUNNERS.find((r) => r.id === "npx")!;
+    const bunx = KNOWN_RUNNERS.find((r) => r.id === "bunx")!;
+    const npx = KNOWN_RUNNERS.find((r) => r.id === "npx")!;
     expect(bunx.prefixArgs).toEqual([]);
     expect(npx.prefixArgs).toEqual([]);
   });
 });
 
 describe("runnerCommand", () => {
-  const bunx = RUNNERS.find((r) => r.id === "bunx")!;
-  const npx = RUNNERS.find((r) => r.id === "npx")!;
-  const pnpm = RUNNERS.find((r) => r.id === "pnpm")!;
-  const yarn = RUNNERS.find((r) => r.id === "yarn")!;
+  const bunx = KNOWN_RUNNERS.find((r) => r.id === "bunx")!;
+  const npx = KNOWN_RUNNERS.find((r) => r.id === "npx")!;
+  const pnpm = KNOWN_RUNNERS.find((r) => r.id === "pnpm")!;
+  const yarn = KNOWN_RUNNERS.find((r) => r.id === "yarn")!;
 
   test("prepends the runner binary for prefix-less runners", () => {
     expect(runnerCommand(bunx, ["skills", "add", "clerk/skills"])).toEqual([
@@ -116,10 +116,10 @@ describe("runnerCommand", () => {
 });
 
 describe("preferredRunner", () => {
-  const bunx = RUNNERS.find((r) => r.id === "bunx")!;
-  const npx = RUNNERS.find((r) => r.id === "npx")!;
-  const pnpm = RUNNERS.find((r) => r.id === "pnpm")!;
-  const yarn = RUNNERS.find((r) => r.id === "yarn")!;
+  const bunx = KNOWN_RUNNERS.find((r) => r.id === "bunx")!;
+  const npx = KNOWN_RUNNERS.find((r) => r.id === "npx")!;
+  const pnpm = KNOWN_RUNNERS.find((r) => r.id === "pnpm")!;
+  const yarn = KNOWN_RUNNERS.find((r) => r.id === "yarn")!;
 
   test("returns undefined when no runners are available", () => {
     expect(preferredRunner("bun", [])).toBeUndefined();
@@ -144,8 +144,8 @@ describe("preferredRunner", () => {
     expect(preferredRunner(undefined, [yarn])?.id).toBe("yarn");
   });
 
-  test("preserves RUNNERS preference order in fallback", () => {
-    expect(preferredRunner(undefined, RUNNERS)?.id).toBe("bunx");
+  test("preserves KNOWN_RUNNERS preference order in fallback", () => {
+    expect(preferredRunner(undefined, KNOWN_RUNNERS)?.id).toBe("bunx");
   });
 });
 
@@ -185,7 +185,7 @@ describe("detectAvailableRunners", () => {
     expect(result.map((r) => r.id)).toEqual(["bunx", "pnpm"]);
   });
 
-  test("preserves RUNNERS order in the output", () => {
+  test("preserves KNOWN_RUNNERS order in the output", () => {
     mockWhich(new Set(["yarn", "bunx", "npx"]));
     mockSpawnSync(0);
     const result = detectAvailableRunners();
