@@ -1,5 +1,30 @@
 import { test, expect, describe, afterEach, mock } from "bun:test";
-import { exchangeCodeForToken, fetchUserInfo } from "./token-exchange.ts";
+import { createTokenExchange } from "./token-exchange.ts";
+import type { Environment } from "./environment.ts";
+
+const fakeEnv: Environment = {
+  setCurrentEnv: () => {},
+  getCurrentEnvName: () => "production",
+  getCurrentEnv: () => ({
+    oauthClientId: "test-client",
+    oauthBaseUrl: "https://accounts.test",
+    platformApiUrl: "https://api.test",
+    backendApiUrl: "https://api.test.dev",
+  }),
+  getAvailableEnvs: () => ["production"],
+  isValidEnv: () => true,
+  getOAuthConfig: () => ({
+    clientId: "test-client",
+    scopes: "profile email",
+    authorizeUrl: "https://accounts.test/oauth/authorize",
+    tokenUrl: "https://accounts.test/oauth/token",
+    userinfoUrl: "https://accounts.test/oauth/userinfo",
+  }),
+  getPlapiBaseUrl: () => "https://api.test",
+  getBapiBaseUrl: () => "https://api.test.dev",
+};
+
+const { exchangeCodeForToken, fetchUserInfo } = createTokenExchange(fakeEnv);
 
 const originalFetch = globalThis.fetch;
 

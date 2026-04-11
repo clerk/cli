@@ -3,7 +3,6 @@
  * Thin HTTP wrapper for Clerk's Backend API endpoints.
  */
 
-import { getBapiBaseUrl } from "../../lib/environment.ts";
 import { BapiError } from "../../lib/errors.ts";
 
 export interface BapiResponse {
@@ -18,9 +17,9 @@ export async function bapiRequest(options: {
   path: string;
   secretKey: string;
   body?: string;
-  baseUrl?: string;
+  baseUrl: string;
 }): Promise<BapiResponse> {
-  const base = options.baseUrl ?? getBapiBaseUrl();
+  const base = options.baseUrl;
 
   // Normalize: ensure path starts with /v1/ if not already versioned
   let path = options.path;
@@ -71,7 +70,7 @@ export interface Bapi {
     path: string;
     secretKey: string;
     body?: string;
-    baseUrl?: string;
+    baseUrl: string;
   }): Promise<BapiResponse>;
 }
 

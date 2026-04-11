@@ -1,11 +1,10 @@
 import { join } from "node:path";
-import { setProfile, type Profile } from "./config.ts";
-import { listApplications, type Application, type ApplicationInstance } from "./plapi.ts";
-import { getGitRepoIdentifier, getGitNormalizedRemote } from "./git.ts";
+import type { Need } from "./deps.ts";
+import type { Profile } from "./config.ts";
+import type { Application, ApplicationInstance } from "./plapi.ts";
 import { parseEnvFile } from "./dotenv.ts";
 import { detectPublishableKeyName } from "./framework.ts";
 import { dim, cyan } from "./color.ts";
-import { log } from "./log.ts";
 
 const ENV_FILES = [".env", ".env.local"];
 
@@ -76,7 +75,15 @@ export function matchKeyToApp(
   return undefined;
 }
 
+export type AutolinkDeps = Need<{
+  plapi: "listApplications";
+  configStore: "setProfile";
+  git: "getGitRepoIdentifier" | "getGitNormalizedRemote";
+  log: "info" | "error";
+}>;
+
 export async function autolink(
+  deps: AutolinkDeps,
   cwd: string,
 ): Promise<{ path: string; profile: Profile } | undefined> {
   const detectedKeys = await findClerkKeys(cwd);
@@ -84,9 +91,9 @@ export async function autolink(
 
   let apps: Application[];
   try {
-    apps = await listApplications();
+    apps = await deps.plapi.listApplications();
   } catch (err) {
-    log.error(`Failed to list applications: ${err}`);
+    deps.log.error(`Failed to list applications: ${err}`);
     return undefined;
   }
 
@@ -95,8 +102,8 @@ export async function autolink(
   const match = matchKeyToApp(detectedKeys, apps);
   if (!match) return undefined;
 
-  const normalizedRemote = await getGitNormalizedRemote();
-  const repoId = await getGitRepoIdentifier();
+  const normalizedRemote = await deps.git.getGitNormalizedRemote();
+  const repoId = await deps.git.getGitRepoIdentifier();
   const profileKey = normalizedRemote ?? repoId ?? cwd;
 
   const devInstance = match.app.instances.find((i) => i.environment_type === "development");
@@ -118,10 +125,10 @@ export async function autolink(
     instances,
   };
 
-  await setProfile(profileKey, profile);
+  await deps.configStore.setProfile(profileKey, profile);
 
   const label = match.app.name || match.app.application_id;
-  log.info(`Auto-linked to ${cyan(label)} ${dim(`(detected key in ${match.source})`)}`);
+  deps.log.info(`Auto-linked to ${cyan(label)} ${dim(`(detected key in ${match.source})`)}`);
 
   return { path: profileKey, profile };
 }

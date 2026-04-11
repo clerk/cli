@@ -1,23 +1,15 @@
-import { test, expect, describe, beforeEach, afterEach } from "bun:test";
+import { test, expect, describe, afterEach } from "bun:test";
 import { stubFetch } from "../../test/lib/stubs.ts";
 import { bapiRequest } from "./bapi.ts";
 import { BapiError } from "../../lib/errors.ts";
 
+const BASE = "https://api.clerk.dev";
+
 describe("bapi", () => {
   const originalFetch = globalThis.fetch;
-  const originalBapiUrl = process.env.CLERK_BACKEND_API_URL;
-
-  beforeEach(() => {
-    process.env.CLERK_BACKEND_API_URL = "https://api.clerk.dev";
-  });
 
   afterEach(() => {
     globalThis.fetch = originalFetch;
-    if (originalBapiUrl === undefined) {
-      delete process.env.CLERK_BACKEND_API_URL;
-    } else {
-      process.env.CLERK_BACKEND_API_URL = originalBapiUrl;
-    }
   });
 
   test("constructs correct URL with /v1/ prefix", async () => {
@@ -26,7 +18,7 @@ describe("bapi", () => {
       requestedUrl = input.toString();
       return new Response(JSON.stringify({}), { status: 200 });
     });
-    await bapiRequest({ method: "GET", path: "/users", secretKey: "sk_test_123" });
+    await bapiRequest({ method: "GET", path: "/users", secretKey: "sk_test_123", baseUrl: BASE });
     expect(requestedUrl).toBe("https://api.clerk.dev/v1/users");
   });
 
@@ -36,7 +28,12 @@ describe("bapi", () => {
       requestedUrl = input.toString();
       return new Response(JSON.stringify({}), { status: 200 });
     });
-    await bapiRequest({ method: "GET", path: "/v1/users", secretKey: "sk_test_123" });
+    await bapiRequest({
+      method: "GET",
+      path: "/v1/users",
+      secretKey: "sk_test_123",
+      baseUrl: BASE,
+    });
     expect(requestedUrl).toBe("https://api.clerk.dev/v1/users");
   });
 
@@ -46,7 +43,7 @@ describe("bapi", () => {
       requestedUrl = input.toString();
       return new Response(JSON.stringify({}), { status: 200 });
     });
-    await bapiRequest({ method: "GET", path: "users", secretKey: "sk_test_123" });
+    await bapiRequest({ method: "GET", path: "users", secretKey: "sk_test_123", baseUrl: BASE });
     expect(requestedUrl).toBe("https://api.clerk.dev/v1/users");
   });
 
@@ -56,7 +53,7 @@ describe("bapi", () => {
       capturedHeaders = new Headers(init?.headers);
       return new Response(JSON.stringify({}), { status: 200 });
     });
-    await bapiRequest({ method: "GET", path: "/users", secretKey: "sk_test_abc" });
+    await bapiRequest({ method: "GET", path: "/users", secretKey: "sk_test_abc", baseUrl: BASE });
     expect(capturedHeaders?.get("Authorization")).toBe("Bearer sk_test_abc");
   });
 
@@ -71,6 +68,7 @@ describe("bapi", () => {
       path: "/users",
       secretKey: "sk_test_abc",
       body: '{"email":"a@b.com"}',
+      baseUrl: BASE,
     });
     expect(capturedHeaders?.get("Content-Type")).toBe("application/json");
   });
@@ -81,21 +79,31 @@ describe("bapi", () => {
       capturedHeaders = new Headers(init?.headers);
       return new Response(JSON.stringify({}), { status: 200 });
     });
-    await bapiRequest({ method: "GET", path: "/users", secretKey: "sk_test_abc" });
+    await bapiRequest({ method: "GET", path: "/users", secretKey: "sk_test_abc", baseUrl: BASE });
     expect(capturedHeaders?.get("Content-Type")).toBeNull();
   });
 
   test("returns parsed JSON body on success", async () => {
     const data = { data: [{ id: "user_1" }] };
     stubFetch(async () => new Response(JSON.stringify(data), { status: 200 }));
-    const result = await bapiRequest({ method: "GET", path: "/users", secretKey: "sk_test_abc" });
+    const result = await bapiRequest({
+      method: "GET",
+      path: "/users",
+      secretKey: "sk_test_abc",
+      baseUrl: BASE,
+    });
     expect(result.body).toEqual(data);
     expect(result.status).toBe(200);
   });
 
   test("returns raw text when response is not JSON", async () => {
     stubFetch(async () => new Response("plain text", { status: 200 }));
-    const result = await bapiRequest({ method: "GET", path: "/health", secretKey: "sk_test_abc" });
+    const result = await bapiRequest({
+      method: "GET",
+      path: "/health",
+      secretKey: "sk_test_abc",
+      baseUrl: BASE,
+    });
     expect(result.body).toBe("plain text");
     expect(result.rawBody).toBe("plain text");
   });
@@ -103,7 +111,12 @@ describe("bapi", () => {
   test("throws BapiError on non-2xx response", async () => {
     stubFetch(async () => new Response("Not Found", { status: 404 }));
     try {
-      await bapiRequest({ method: "GET", path: "/users/bad", secretKey: "sk_test_abc" });
+      await bapiRequest({
+        method: "GET",
+        path: "/users/bad",
+        secretKey: "sk_test_abc",
+        baseUrl: BASE,
+      });
       expect(true).toBe(false); // should not reach
     } catch (error) {
       expect(error).toBeInstanceOf(BapiError);
@@ -138,6 +151,7 @@ describe("bapi", () => {
       path: "/users",
       secretKey: "sk_test_abc",
       body: '{"email":"a@b.com"}',
+      baseUrl: BASE,
     });
     expect(JSON.parse(capturedBody)).toEqual({ email: "a@b.com" });
   });

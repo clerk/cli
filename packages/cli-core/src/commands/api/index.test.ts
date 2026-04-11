@@ -6,9 +6,23 @@ import { stubFetch } from "../../test/lib/stubs.ts";
 
 import { api } from "./index.ts";
 import { bapiRequest } from "./bapi.ts";
-import { validateKeyPrefix, getAuthToken, fetchApplication } from "../../lib/plapi.ts";
-import { getBapiBaseUrl, getPlapiBaseUrl } from "../../lib/environment.ts";
+import { validateKeyPrefix, createPlapi } from "../../lib/plapi.ts";
+import { createEnvironment } from "../../lib/environment.ts";
 import { testRoot } from "../../test/lib/test-root.ts";
+
+const testEnvironment = createEnvironment();
+// The real plapi factory is constructed with a credential store that returns
+// a dummy OAuth token so `fetchApplication`'s internal `getAuthToken` call
+// never throws "Not authenticated" when tests delete CLERK_PLATFORM_API_KEY.
+// Tests that care specifically about the auth header assert on it directly.
+const realPlapi = createPlapi(testEnvironment, {
+  getToken: async () => "oauth_token_test_fallback",
+  storeToken: async () => {},
+  deleteToken: async () => {},
+});
+const { getAuthToken, fetchApplication } = realPlapi;
+const getBapiBaseUrl = testEnvironment.getBapiBaseUrl;
+const getPlapiBaseUrl = testEnvironment.getPlapiBaseUrl;
 
 type ResolveAppContextResult = {
   appId: string;

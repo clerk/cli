@@ -11,13 +11,13 @@
 
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { CliError } from "./errors.ts";
 
 export interface EnvProfileConfig {
   oauthClientId: string;
   oauthBaseUrl: string;
   platformApiUrl: string;
   backendApiUrl: string;
-  dashboardUrl?: string;
 }
 
 const DEFAULT_PROFILES: Record<string, EnvProfileConfig> = {
@@ -26,7 +26,6 @@ const DEFAULT_PROFILES: Record<string, EnvProfileConfig> = {
     oauthBaseUrl: "https://clerk.clerk.com",
     platformApiUrl: "https://api.clerk.com",
     backendApiUrl: "https://api.clerk.dev",
-    dashboardUrl: "https://dashboard.clerk.com",
   },
 };
 
@@ -54,69 +53,12 @@ function getProfiles(): Record<string, EnvProfileConfig> {
   return loadFileProfiles() ?? DEFAULT_PROFILES;
 }
 
-let currentEnvName: string | undefined;
-
-/**
- * Set the active environment. Called during CLI initialization from config,
- * or by the switch-env command.
- */
-export function setCurrentEnv(name: string): void {
-  const profiles = getProfiles();
-  if (!profiles[name]) {
-    const available = Object.keys(profiles).join(", ");
-    throw new Error(`Unknown environment "${name}". Available environments: ${available}`);
-  }
-  currentEnvName = name;
-}
-
-/** Get the name of the active environment. Defaults to "production". */
-export function getCurrentEnvName(): string {
-  return currentEnvName ?? "production";
-}
-
-/** Get the profile config for the active environment. */
-export function getCurrentEnv(): EnvProfileConfig {
-  const name = getCurrentEnvName();
-  const profiles = getProfiles();
-  return profiles[name] ?? profiles.production!;
-}
-
-/** List all available environment names. */
-export function getAvailableEnvs(): string[] {
-  return Object.keys(getProfiles());
-}
-
-/** Check if an environment name is valid. */
-export function isValidEnv(name: string): boolean {
-  return name in getProfiles();
-}
-
-// ── Derived config from the active environment profile ──────────────────────
-
-export function getOAuthConfig() {
-  const env = getCurrentEnv();
-  const baseUrl = process.env.CLERK_OAUTH_BASE_URL ?? env.oauthBaseUrl;
-  return {
-    clientId: process.env.CLERK_OAUTH_CLIENT_ID ?? env.oauthClientId,
-    scopes: process.env.CLERK_OAUTH_SCOPES ?? "profile email",
-    authorizeUrl: new URL("/oauth/authorize", baseUrl).href,
-    tokenUrl: new URL("/oauth/token", baseUrl).href,
-    userinfoUrl: new URL("/oauth/userinfo", baseUrl).href,
-  };
-}
-
-export function getPlapiBaseUrl(): string {
-  return process.env.CLERK_PLATFORM_API_URL ?? getCurrentEnv().platformApiUrl;
-}
-
-export function getBapiBaseUrl(): string {
-  return process.env.CLERK_BACKEND_API_URL ?? getCurrentEnv().backendApiUrl;
-}
-
-export function getDashboardUrl(): string {
-  return (
-    process.env.CLERK_DASHBOARD_URL ?? getCurrentEnv().dashboardUrl ?? "https://dashboard.clerk.com"
-  );
+export interface OAuthConfig {
+  clientId: string;
+  scopes: string;
+  authorizeUrl: string;
+  tokenUrl: string;
+  userinfoUrl: string;
 }
 
 export interface Environment {
@@ -125,20 +67,55 @@ export interface Environment {
   getCurrentEnv(): EnvProfileConfig;
   getAvailableEnvs(): string[];
   isValidEnv(name: string): boolean;
-  getOAuthConfig(): ReturnType<typeof getOAuthConfig>;
+  getOAuthConfig(): OAuthConfig;
   getPlapiBaseUrl(): string;
   getBapiBaseUrl(): string;
-  getDashboardUrl(): string;
 }
 
-export const environment: Environment = {
-  setCurrentEnv,
-  getCurrentEnvName,
-  getCurrentEnv,
-  getAvailableEnvs,
-  isValidEnv,
-  getOAuthConfig,
-  getPlapiBaseUrl,
-  getBapiBaseUrl,
-  getDashboardUrl,
-};
+export function createEnvironment(): Environment {
+  let currentEnvName: string | undefined;
+
+  const getCurrentEnvName = (): string => currentEnvName ?? "production";
+
+  const getCurrentEnv = (): EnvProfileConfig => {
+    const name = getCurrentEnvName();
+    const profiles = getProfiles();
+    return profiles[name] ?? profiles.production!;
+  };
+
+  return {
+    setCurrentEnv(name: string): void {
+      const profiles = getProfiles();
+      if (!profiles[name]) {
+        const available = Object.keys(profiles).join(", ");
+        throw new CliError(`Unknown environment "${name}". Available environments: ${available}`);
+      }
+      currentEnvName = name;
+    },
+    getCurrentEnvName,
+    getCurrentEnv,
+    getAvailableEnvs(): string[] {
+      return Object.keys(getProfiles());
+    },
+    isValidEnv(name: string): boolean {
+      return name in getProfiles();
+    },
+    getOAuthConfig(): OAuthConfig {
+      const env = getCurrentEnv();
+      const baseUrl = process.env.CLERK_OAUTH_BASE_URL ?? env.oauthBaseUrl;
+      return {
+        clientId: process.env.CLERK_OAUTH_CLIENT_ID ?? env.oauthClientId,
+        scopes: process.env.CLERK_OAUTH_SCOPES ?? "profile email",
+        authorizeUrl: new URL("/oauth/authorize", baseUrl).href,
+        tokenUrl: new URL("/oauth/token", baseUrl).href,
+        userinfoUrl: new URL("/oauth/userinfo", baseUrl).href,
+      };
+    },
+    getPlapiBaseUrl(): string {
+      return process.env.CLERK_PLATFORM_API_URL ?? getCurrentEnv().platformApiUrl;
+    },
+    getBapiBaseUrl(): string {
+      return process.env.CLERK_BACKEND_API_URL ?? getCurrentEnv().backendApiUrl;
+    },
+  };
+}

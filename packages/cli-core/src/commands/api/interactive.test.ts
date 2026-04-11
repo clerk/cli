@@ -6,7 +6,11 @@ import { stubFetch } from "../../test/lib/stubs.ts";
 import { parseSpec, _setCacheDir } from "./catalog.ts";
 import { bapiRequest } from "./bapi.ts";
 import { validateKeyPrefix } from "../../lib/plapi.ts";
-import { getBapiBaseUrl, getPlapiBaseUrl } from "../../lib/environment.ts";
+import { createEnvironment } from "../../lib/environment.ts";
+
+const testEnvironment = createEnvironment();
+const getBapiBaseUrl = testEnvironment.getBapiBaseUrl;
+const getPlapiBaseUrl = testEnvironment.getPlapiBaseUrl;
 import { testRoot } from "../../test/lib/test-root.ts";
 import { apiInteractive } from "./interactive.ts";
 

@@ -45,7 +45,7 @@ export async function linkIfNeeded(
   }
 
   if (!options.app) {
-    const autolinked = await autolink(ctx.cwd);
+    const autolinked = await autolink(deps, ctx.cwd);
     if (autolinked) {
       return { linked: true, appId: autolinked.profile.appId };
     }

@@ -11,8 +11,11 @@ const tempDir = await mkdtemp(join(tmpdir(), "clerk-cred-test-"));
 // Redirect file-based credential storage to temp dir via env var
 process.env.CLERK_CONFIG_DIR = tempDir;
 
-// Import constants from the source module to avoid duplication
-const { KEYCHAIN_SERVICE, KEYCHAIN_ACCOUNT } = await import("./credential-store.ts");
+// Constants are duplicated here (not imported from the real module) so the
+// mock.module() registration below does not have to race with a prior import
+// that would pin Bun's module cache to the real module.
+const KEYCHAIN_SERVICE = "clerk-cli";
+const KEYCHAIN_ACCOUNT = "oauth-access-token";
 const credFile = () => join(tempDir, "credentials");
 
 let keyringModule: typeof import("@napi-rs/keyring") | null;

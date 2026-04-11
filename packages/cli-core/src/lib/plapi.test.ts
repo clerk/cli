@@ -1,11 +1,39 @@
 import { test, expect, describe, beforeEach, afterEach, mock } from "bun:test";
-import { credentialStoreStubs, stubFetch } from "../test/lib/stubs.ts";
+import { stubFetch } from "../test/lib/stubs.ts";
+import { createPlapi } from "./plapi.ts";
+import { PlapiError } from "./errors.ts";
+import type { Environment } from "./environment.ts";
+import type { CredentialStore } from "./credential-store.ts";
 
 const mockGetToken = mock();
-mock.module("./credential-store.ts", () => ({
-  ...credentialStoreStubs,
-  getToken: (...args: unknown[]) => mockGetToken(...args),
-}));
+
+const fakeEnv: Environment = {
+  setCurrentEnv: () => {},
+  getCurrentEnvName: () => "production",
+  getCurrentEnv: () => ({
+    oauthClientId: "",
+    oauthBaseUrl: "",
+    platformApiUrl: "https://api.clerk.com",
+    backendApiUrl: "https://api.clerk.dev",
+  }),
+  getAvailableEnvs: () => ["production"],
+  isValidEnv: () => true,
+  getOAuthConfig: () => ({
+    clientId: "",
+    scopes: "",
+    authorizeUrl: "",
+    tokenUrl: "",
+    userinfoUrl: "",
+  }),
+  getPlapiBaseUrl: () => process.env.CLERK_PLATFORM_API_URL ?? "https://api.clerk.com",
+  getBapiBaseUrl: () => "https://api.clerk.dev",
+};
+
+const fakeCredentialStore: CredentialStore = {
+  getToken: (...args: unknown[]) => mockGetToken(...(args as [])),
+  storeToken: async () => {},
+  deleteToken: async () => {},
+};
 
 const {
   fetchApplication,
@@ -14,8 +42,7 @@ const {
   patchInstanceConfig,
   listApplications,
   createApplication,
-} = await import("./plapi.ts");
-const { PlapiError } = await import("./errors.ts");
+} = createPlapi(fakeEnv, fakeCredentialStore);
 
 describe("plapi", () => {
   const originalEnv = { ...process.env };

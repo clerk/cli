@@ -1,23 +1,17 @@
-import { test, expect, describe, beforeEach, afterEach, mock, spyOn } from "bun:test";
+import { test, expect, describe, beforeEach, afterEach, spyOn } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { credentialStoreStubs, gitStubs, stubFetch, captureLog } from "../test/lib/stubs.ts";
+import { captureLog } from "../test/lib/stubs.ts";
+import { logger } from "./logger.ts";
+import { findClerkKeys, matchKeyToApp, autolink, type AutolinkDeps } from "./autolink.ts";
+import { createConfig, _setConfigDir } from "./config.ts";
+import type { Application } from "./plapi.ts";
+import type { Environment } from "./environment.ts";
+import type { Plapi } from "./plapi.ts";
+import type { Git } from "./git.ts";
 
-mock.module("./credential-store.ts", () => credentialStoreStubs);
-
-const mockGetGitRepoIdentifier = mock();
-const mockGetGitNormalizedRemote = mock();
-mock.module("./git.ts", () => ({
-  ...gitStubs,
-  getGitRepoIdentifier: (...args: unknown[]) => mockGetGitRepoIdentifier(...args),
-  getGitNormalizedRemote: (...args: unknown[]) => mockGetGitNormalizedRemote(...args),
-}));
-
-const { findClerkKeys, matchKeyToApp, autolink } = await import("./autolink.ts");
-const { _setConfigDir, readConfig } = await import("./config.ts");
-
-const mockApps = [
+const mockApps: Application[] = [
   {
     application_id: "app_123",
     name: "My App",
@@ -50,6 +44,48 @@ const mockApps = [
 async function writePackageJson(dir: string, dep: string) {
   await Bun.write(join(dir, "package.json"), JSON.stringify({ dependencies: { [dep]: "latest" } }));
 }
+
+// Build a fake Environment for config factory construction.
+const fakeEnv: Environment = {
+  setCurrentEnv: () => {},
+  getCurrentEnvName: () => "production",
+  getCurrentEnv: () => ({
+    oauthClientId: "",
+    oauthBaseUrl: "",
+    platformApiUrl: "https://api.test",
+    backendApiUrl: "https://api.test.dev",
+  }),
+  getAvailableEnvs: () => ["production"],
+  isValidEnv: () => true,
+  getOAuthConfig: () => ({
+    clientId: "",
+    scopes: "",
+    authorizeUrl: "",
+    tokenUrl: "",
+    userinfoUrl: "",
+  }),
+  getPlapiBaseUrl: () => "https://api.test",
+  getBapiBaseUrl: () => "https://api.test.dev",
+};
+
+const unusedPlapi: Plapi = new Proxy({} as Plapi, {
+  get(_target, prop: string) {
+    return () => {
+      throw new Error(`plapi.${prop} unexpectedly called from config in autolink tests`);
+    };
+  },
+});
+
+// Empty-git fake for the harness-local configStore; these tests assert on the
+// `autolink()` deps.git calls, not config-resolution git behavior.
+const configFakeGit: Git = {
+  getGitRepoRoot: async () => undefined,
+  getGitRepoIdentifier: async () => undefined,
+  getGitNormalizedRemote: async () => undefined,
+  normalizeGitRemoteUrl: (url: string) => url,
+};
+
+const configStore = createConfig(fakeEnv, unusedPlapi, configFakeGit);
 
 describe("findClerkKeys", () => {
   const originalEnv = { ...process.env };
@@ -219,42 +255,56 @@ describe("matchKeyToApp", () => {
 
 describe("autolink", () => {
   const originalEnv = { ...process.env };
-  const originalFetch = globalThis.fetch;
   let tempDir: string;
   let errorSpy: ReturnType<typeof spyOn>;
   let debugSpy: ReturnType<typeof spyOn>;
   let captured: ReturnType<typeof captureLog>;
+  let listApplicationsImpl: () => Promise<unknown>;
+  let gitNormalizedRemote: string | undefined;
+  let gitRepoIdentifier: string | undefined;
+
+  function buildDeps(): AutolinkDeps {
+    return {
+      plapi: {
+        listApplications: async () => (await listApplicationsImpl()) as Application[],
+      },
+      configStore: {
+        setProfile: configStore.setProfile,
+      },
+      git: {
+        getGitRepoIdentifier: async () => gitRepoIdentifier,
+        getGitNormalizedRemote: async () => gitNormalizedRemote,
+      },
+      // Route `deps.log.*` through the real `logger` so `captureLog()` picks
+      // up messages via the module-level log's AsyncLocalStorage capture.
+      log: { info: logger.info, error: logger.error },
+    };
+  }
 
   beforeEach(async () => {
     tempDir = await mkdtemp(join(tmpdir(), "clerk-autolink-test-"));
     _setConfigDir(tempDir);
     process.env = { ...originalEnv };
     delete process.env.CLERK_PUBLISHABLE_KEY;
-    process.env.CLERK_PLATFORM_API_KEY = "test_platform_key";
-    process.env.CLERK_PLATFORM_API_URL = "https://test-api.clerk.com";
-    mockGetGitRepoIdentifier.mockReset();
-    mockGetGitRepoIdentifier.mockResolvedValue(undefined);
-    mockGetGitNormalizedRemote.mockReset();
-    mockGetGitNormalizedRemote.mockResolvedValue(undefined);
+    gitNormalizedRemote = undefined;
+    gitRepoIdentifier = undefined;
+    listApplicationsImpl = async () => mockApps;
     errorSpy = spyOn(console, "error").mockImplementation(() => {});
     debugSpy = spyOn(console, "debug").mockImplementation(() => {});
     captured = captureLog();
-
-    stubFetch(async () => new Response(JSON.stringify(mockApps), { status: 200 }));
   });
 
   afterEach(async () => {
     captured.teardown();
     _setConfigDir(undefined);
     process.env = { ...originalEnv };
-    globalThis.fetch = originalFetch;
     errorSpy.mockRestore();
     debugSpy.mockRestore();
     await rm(tempDir, { recursive: true, force: true });
   });
 
   function runAutolink(cwd: string) {
-    return captured.run(() => autolink(cwd));
+    return captured.run(() => autolink(buildDeps(), cwd));
   }
 
   test("returns undefined when no keys detected", async () => {
@@ -262,17 +312,11 @@ describe("autolink", () => {
     expect(result).toBeUndefined();
   });
 
-  test("returns undefined when not authenticated", async () => {
+  test("returns undefined when listApplications throws", async () => {
     process.env.CLERK_PUBLISHABLE_KEY = "pk_test_abc";
-    delete process.env.CLERK_PLATFORM_API_KEY;
-
-    const result = await runAutolink(tempDir);
-    expect(result).toBeUndefined();
-  });
-
-  test("returns undefined when API returns error", async () => {
-    process.env.CLERK_PUBLISHABLE_KEY = "pk_test_abc";
-    stubFetch(async () => new Response("Unauthorized", { status: 401 }));
+    listApplicationsImpl = async () => {
+      throw new Error("Unauthorized");
+    };
 
     const result = await runAutolink(tempDir);
     expect(result).toBeUndefined();
@@ -296,7 +340,7 @@ describe("autolink", () => {
     expect(result!.profile.instances.production).toBe("ins_prod");
 
     // Verify profile was persisted
-    const config = await readConfig();
+    const config = await configStore.readConfig();
     expect(config.profiles[tempDir]).toBeDefined();
     expect(config.profiles[tempDir]!.appId).toBe("app_123");
   });
@@ -313,24 +357,24 @@ describe("autolink", () => {
 
   test("uses normalized remote as profile key when available", async () => {
     process.env.CLERK_PUBLISHABLE_KEY = "pk_test_abc";
-    mockGetGitNormalizedRemote.mockResolvedValue("github.com/org/repo");
+    gitNormalizedRemote = "github.com/org/repo";
 
     const result = await runAutolink(tempDir);
 
     expect(result!.path).toBe("github.com/org/repo");
-    const config = await readConfig();
+    const config = await configStore.readConfig();
     expect(config.profiles["github.com/org/repo"]).toBeDefined();
   });
 
   test("uses git repo identifier when no remote", async () => {
     process.env.CLERK_PUBLISHABLE_KEY = "pk_test_abc";
-    mockGetGitNormalizedRemote.mockResolvedValue(undefined);
-    mockGetGitRepoIdentifier.mockResolvedValue("/repo/.git");
+    gitNormalizedRemote = undefined;
+    gitRepoIdentifier = "/repo/.git";
 
     const result = await runAutolink(tempDir);
 
     expect(result!.path).toBe("/repo/.git");
-    const config = await readConfig();
+    const config = await configStore.readConfig();
     expect(config.profiles["/repo/.git"]).toBeDefined();
   });
 
@@ -354,24 +398,18 @@ describe("autolink", () => {
 
   test("returns undefined when matched app has no development instance", async () => {
     process.env.CLERK_PUBLISHABLE_KEY = "pk_live_only";
-    stubFetch(
-      async () =>
-        new Response(
-          JSON.stringify([
-            {
-              application_id: "app_no_dev",
-              instances: [
-                {
-                  instance_id: "ins_prod",
-                  environment_type: "production",
-                  publishable_key: "pk_live_only",
-                },
-              ],
-            },
-          ]),
-          { status: 200 },
-        ),
-    );
+    listApplicationsImpl = async () => [
+      {
+        application_id: "app_no_dev",
+        instances: [
+          {
+            instance_id: "ins_prod",
+            environment_type: "production",
+            publishable_key: "pk_live_only",
+          },
+        ],
+      },
+    ];
 
     const result = await runAutolink(tempDir);
     expect(result).toBeUndefined();
@@ -379,7 +417,7 @@ describe("autolink", () => {
 
   test("handles non-array response from listApplications", async () => {
     process.env.CLERK_PUBLISHABLE_KEY = "pk_test_abc";
-    stubFetch(async () => new Response(JSON.stringify({ error: "not an array" }), { status: 200 }));
+    listApplicationsImpl = async () => ({ error: "not an array" });
 
     const result = await runAutolink(tempDir);
     expect(result).toBeUndefined();

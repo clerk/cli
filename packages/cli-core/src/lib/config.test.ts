@@ -1,5 +1,53 @@
 import { test, expect, describe, beforeEach, afterEach } from "bun:test";
-import {
+import { createConfig, resolveInstanceId, _setConfigDir, type Profile } from "./config.ts";
+import type { Environment } from "./environment.ts";
+import type { Plapi } from "./plapi.ts";
+import type { Git } from "./git.ts";
+import { join } from "node:path";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+
+const fakeEnv: Environment = {
+  setCurrentEnv: () => {},
+  getCurrentEnvName: () => "production",
+  getCurrentEnv: () => ({
+    oauthClientId: "",
+    oauthBaseUrl: "",
+    platformApiUrl: "https://api.test",
+    backendApiUrl: "https://api.test.dev",
+  }),
+  getAvailableEnvs: () => ["production"],
+  isValidEnv: () => true,
+  getOAuthConfig: () => ({
+    clientId: "",
+    scopes: "",
+    authorizeUrl: "",
+    tokenUrl: "",
+    userinfoUrl: "",
+  }),
+  getPlapiBaseUrl: () => "https://api.test",
+  getBapiBaseUrl: () => "https://api.test.dev",
+};
+
+const unusedPlapi: Plapi = new Proxy({} as Plapi, {
+  get(_target, prop: string) {
+    return () => {
+      throw new Error(`plapi.${prop} called unexpectedly in config.test.ts`);
+    };
+  },
+});
+
+// Empty-git fake: resolveProfile tests don't exercise remote/repo-id matching,
+// so every method returns undefined. The walk-up-directories path is what the
+// tests assert on.
+const fakeGit: Git = {
+  getGitRepoRoot: async () => undefined,
+  getGitRepoIdentifier: async () => undefined,
+  getGitNormalizedRemote: async () => undefined,
+  normalizeGitRemoteUrl: (url: string) => url,
+};
+
+const {
   readConfig,
   writeConfig,
   getAuth,
@@ -9,14 +57,8 @@ import {
   setProfile,
   listProfiles,
   resolveProfile,
-  resolveInstanceId,
   resolveAppContext,
-  _setConfigDir,
-  type Profile,
-} from "./config.ts";
-import { join } from "node:path";
-import { mkdtemp, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
+} = createConfig(fakeEnv, unusedPlapi, fakeGit);
 
 describe("config", () => {
   let tempDir: string;

@@ -9,7 +9,7 @@
  *   CLERK_OAUTH_SCOPES=profile email
  */
 
-import { getOAuthConfig } from "./environment.ts";
+import type { Environment } from "./environment.ts";
 import { ApiError, withApiContext } from "./errors.ts";
 
 export interface TokenResponse {
@@ -24,63 +24,6 @@ export interface UserInfo {
   email: string;
 }
 
-export async function exchangeCodeForToken(params: {
-  code: string;
-  codeVerifier: string;
-  redirectUri: string;
-}): Promise<TokenResponse> {
-  const oauth = getOAuthConfig();
-  const body = new URLSearchParams({
-    grant_type: "authorization_code",
-    code: params.code,
-    client_id: oauth.clientId,
-    code_verifier: params.codeVerifier,
-    redirect_uri: params.redirectUri,
-  });
-
-  return withApiContext(
-    (async () => {
-      const response = await fetch(oauth.tokenUrl, {
-        method: "POST",
-        headers: { "Content-Type": "application/x-www-form-urlencoded" },
-        body: body.toString(),
-      });
-
-      if (!response.ok) {
-        const error = await response.text();
-        throw new ApiError(response.status, error);
-      }
-
-      return response.json() as Promise<TokenResponse>;
-    })(),
-    "Token exchange failed",
-  );
-}
-
-export async function fetchUserInfo(accessToken: string): Promise<UserInfo> {
-  const oauth = getOAuthConfig();
-  return withApiContext(
-    (async () => {
-      const response = await fetch(oauth.userinfoUrl, {
-        headers: { Authorization: `Bearer ${accessToken}` },
-      });
-
-      if (!response.ok) {
-        const error = await response.text();
-        throw new ApiError(response.status, error);
-      }
-
-      const data = (await response.json()) as Record<string, unknown>;
-
-      return {
-        userId: data.sub as string,
-        email: data.email as string,
-      };
-    })(),
-    "Failed to fetch user info",
-  );
-}
-
 export interface TokenExchange {
   exchangeCodeForToken(params: {
     code: string;
@@ -90,7 +33,63 @@ export interface TokenExchange {
   fetchUserInfo(accessToken: string): Promise<UserInfo>;
 }
 
-export const tokenExchange: TokenExchange = {
-  exchangeCodeForToken,
-  fetchUserInfo,
-};
+export function createTokenExchange(env: Environment): TokenExchange {
+  return {
+    async exchangeCodeForToken(params: {
+      code: string;
+      codeVerifier: string;
+      redirectUri: string;
+    }): Promise<TokenResponse> {
+      const oauth = env.getOAuthConfig();
+      const body = new URLSearchParams({
+        grant_type: "authorization_code",
+        code: params.code,
+        client_id: oauth.clientId,
+        code_verifier: params.codeVerifier,
+        redirect_uri: params.redirectUri,
+      });
+
+      return withApiContext(
+        (async () => {
+          const response = await fetch(oauth.tokenUrl, {
+            method: "POST",
+            headers: { "Content-Type": "application/x-www-form-urlencoded" },
+            body: body.toString(),
+          });
+
+          if (!response.ok) {
+            const error = await response.text();
+            throw new ApiError(response.status, error);
+          }
+
+          return response.json() as Promise<TokenResponse>;
+        })(),
+        "Token exchange failed",
+      );
+    },
+
+    async fetchUserInfo(accessToken: string): Promise<UserInfo> {
+      const oauth = env.getOAuthConfig();
+      return withApiContext(
+        (async () => {
+          const response = await fetch(oauth.userinfoUrl, {
+            headers: { Authorization: `Bearer ${accessToken}` },
+          });
+
+          if (!response.ok) {
+            const error = await response.text();
+            throw new ApiError(response.status, error);
+          }
+
+          const data = (await response.json()) as Record<string, unknown>;
+
+          return {
+            userId: data.sub as string,
+            email: data.email as string,
+          };
+        })(),
+        "Failed to fetch user info",
+      );
+    },
+  };
+}

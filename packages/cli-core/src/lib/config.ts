@@ -6,8 +6,9 @@
 import { dirname, join } from "node:path";
 import { mkdir } from "node:fs/promises";
 import { CONFIG_FILE } from "./constants.ts";
-import { getCurrentEnvName } from "./environment.ts";
-import { getGitRepoIdentifier, getGitNormalizedRemote } from "./git.ts";
+import type { Environment } from "./environment.ts";
+import type { Plapi } from "./plapi.ts";
+import type { Git } from "./git.ts";
 import { CliError, ERROR_CODE } from "./errors.ts";
 
 let overrideConfigFile: string | undefined;
@@ -68,139 +69,6 @@ function migrateRawConfig(raw: Record<string, unknown>): ClerkConfig {
   return config;
 }
 
-export async function readConfig(): Promise<ClerkConfig> {
-  const file = Bun.file(configFile());
-  if (!(await file.exists())) return defaultConfig();
-  try {
-    const raw = (await file.json()) as Record<string, unknown>;
-    return migrateRawConfig(raw);
-  } catch {
-    return defaultConfig();
-  }
-}
-
-export async function writeConfig(config: ClerkConfig): Promise<void> {
-  await mkdir(dirname(configFile()), { recursive: true });
-  await Bun.write(configFile(), JSON.stringify(config, null, 2) + "\n");
-}
-
-export async function getAuth(): Promise<Auth | undefined> {
-  const config = await readConfig();
-  const envName = getCurrentEnvName();
-  return config.auth?.[envName];
-}
-
-export async function setAuth(auth: Auth): Promise<void> {
-  const config = await readConfig();
-  if (!config.auth) config.auth = {};
-  config.auth[getCurrentEnvName()] = auth;
-  await writeConfig(config);
-}
-
-export async function clearAuth(): Promise<void> {
-  const config = await readConfig();
-  if (config.auth) {
-    delete config.auth[getCurrentEnvName()];
-    if (Object.keys(config.auth).length === 0) {
-      delete config.auth;
-    }
-  }
-  await writeConfig(config);
-}
-
-export async function getEnvironment(): Promise<string | undefined> {
-  const config = await readConfig();
-  return config.environment;
-}
-
-export async function setEnvironment(envName: string): Promise<void> {
-  const config = await readConfig();
-  config.environment = envName;
-  await writeConfig(config);
-}
-
-export async function getProfile(path: string): Promise<Profile | undefined> {
-  const config = await readConfig();
-  return config.profiles[path];
-}
-
-export async function setProfile(path: string, profile: Profile): Promise<void> {
-  const config = await readConfig();
-  config.profiles[path] = profile;
-  await writeConfig(config);
-}
-
-export async function removeProfile(path: string): Promise<void> {
-  const config = await readConfig();
-  delete config.profiles[path];
-  await writeConfig(config);
-}
-
-export async function moveProfile(oldKey: string, newKey: string): Promise<void> {
-  const config = await readConfig();
-  const profile = config.profiles[oldKey];
-  if (!profile) return;
-  config.profiles[newKey] = profile;
-  delete config.profiles[oldKey];
-  await writeConfig(config);
-}
-
-export async function listProfiles(): Promise<Record<string, Profile>> {
-  const config = await readConfig();
-  return config.profiles;
-}
-
-type ResolvedVia = "remote" | "git-common-dir" | "directory";
-
-export async function resolveProfile(cwd: string): Promise<
-  | {
-      path: string;
-      profile: Profile;
-      resolvedVia: ResolvedVia;
-      availableRemote?: string;
-    }
-  | undefined
-> {
-  const config = await readConfig();
-
-  // Try normalized remote URL first (cross-clone matching)
-  const normalizedRemote = await getGitNormalizedRemote();
-  if (normalizedRemote && config.profiles[normalizedRemote]) {
-    return {
-      path: normalizedRemote,
-      profile: config.profiles[normalizedRemote],
-      resolvedVia: "remote",
-    };
-  }
-
-  // For non-remote matches, include availableRemote when a remote URL exists
-  const fallbackFields = normalizedRemote ? { availableRemote: normalizedRemote } : {};
-
-  // Try git repo identifier (shared across worktrees, backward compat)
-  const repoId = await getGitRepoIdentifier();
-  if (repoId && config.profiles[repoId]) {
-    return {
-      path: repoId,
-      profile: config.profiles[repoId],
-      resolvedVia: "git-common-dir",
-      ...fallbackFields,
-    };
-  }
-
-  // Fall back to directory walking for backward compatibility
-  let dir = cwd;
-  while (true) {
-    const profile = config.profiles[dir];
-    if (profile) {
-      return { path: dir, profile, resolvedVia: "directory", ...fallbackFields };
-    }
-    const parent = join(dir, "..");
-    if (parent === dir) break;
-    dir = parent;
-  }
-  return undefined;
-}
-
 const INSTANCE_ALIASES: Record<string, "development" | "production"> = {
   dev: "development",
   development: "development",
@@ -226,85 +94,14 @@ export function resolveInstanceId(profile: Profile, flag?: string): { id: string
   return { id, label: env };
 }
 
-/**
- * Resolve app context from explicit flags or linked profile.
- * This is the isomorphic resolution chain used by profile-dependent commands:
- *   1. Explicit --app flag (works from any directory)
- *   2. resolveProfile(cwd) (project-aware, existing behavior)
- *   3. Error with helpful message
- */
-export async function resolveAppContext(options: {
-  app?: string;
-  instance?: string;
-}): Promise<{ appId: string; appLabel: string; instanceId: string; instanceLabel: string }> {
-  if (options.app) {
-    const { fetchApplication } = await import("./plapi.ts");
-    const app = await fetchApplication(options.app);
-    const appLabel = app.name || options.app;
-
-    if (options.instance) {
-      const env = INSTANCE_ALIASES[options.instance];
-      if (env) {
-        const matched = app.instances.find((instance) => instance.environment_type === env);
-        if (!matched) {
-          throw new CliError(`No ${env} instance found for application ${options.app}.`, {
-            code: ERROR_CODE.INSTANCE_NOT_FOUND,
-          });
-        }
-        return {
-          appId: options.app,
-          appLabel,
-          instanceId: matched.instance_id,
-          instanceLabel: env,
-        };
-      }
-
-      return {
-        appId: options.app,
-        appLabel,
-        instanceId: options.instance,
-        instanceLabel: options.instance,
-      };
+type ResolvedProfile =
+  | {
+      path: string;
+      profile: Profile;
+      resolvedVia: "remote" | "git-common-dir" | "directory";
+      availableRemote?: string;
     }
-
-    const development = app.instances.find(
-      (instance) => instance.environment_type === "development",
-    );
-    if (!development) {
-      throw new CliError(`No development instance found for application ${options.app}.`, {
-        code: ERROR_CODE.INSTANCE_NOT_FOUND,
-      });
-    }
-
-    return {
-      appId: options.app,
-      appLabel,
-      instanceId: development.instance_id,
-      instanceLabel: "development",
-    };
-  }
-
-  const resolved = await resolveProfile(process.cwd());
-  if (!resolved) {
-    throw new CliError(
-      "No Clerk project linked to this directory.\n" +
-        "Either:\n" +
-        "  - Run `clerk link` from your project directory\n" +
-        "  - Pass --app <app_id> to target an app directly",
-      { code: ERROR_CODE.NOT_LINKED },
-    );
-  }
-
-  const instance = resolveInstanceId(resolved.profile, options.instance);
-  return {
-    appId: resolved.profile.appId,
-    appLabel: resolved.profile.appName || resolved.profile.appId,
-    instanceId: instance.id,
-    instanceLabel: instance.label,
-  };
-}
-
-export type { Auth, Profile, ClerkConfig };
+  | undefined;
 
 export interface ConfigStore {
   readConfig(): Promise<ClerkConfig>;
@@ -319,26 +116,223 @@ export interface ConfigStore {
   removeProfile(path: string): Promise<void>;
   moveProfile(oldKey: string, newKey: string): Promise<void>;
   listProfiles(): Promise<Record<string, Profile>>;
-  resolveProfile(cwd: string): ReturnType<typeof resolveProfile>;
+  resolveProfile(cwd: string): Promise<ResolvedProfile>;
   resolveAppContext(options: {
     app?: string;
     instance?: string;
-  }): ReturnType<typeof resolveAppContext>;
+  }): Promise<{ appId: string; appLabel: string; instanceId: string; instanceLabel: string }>;
 }
 
-export const configStore: ConfigStore = {
-  readConfig,
-  writeConfig,
-  getAuth,
-  setAuth,
-  clearAuth,
-  getEnvironment,
-  setEnvironment,
-  getProfile,
-  setProfile,
-  removeProfile,
-  moveProfile,
-  listProfiles,
-  resolveProfile,
-  resolveAppContext,
-};
+export function createConfig(env: Environment, plapi: Plapi, git: Git): ConfigStore {
+  const readConfig = async (): Promise<ClerkConfig> => {
+    const file = Bun.file(configFile());
+    if (!(await file.exists())) return defaultConfig();
+    try {
+      const raw = (await file.json()) as Record<string, unknown>;
+      return migrateRawConfig(raw);
+    } catch {
+      return defaultConfig();
+    }
+  };
+
+  const writeConfig = async (config: ClerkConfig): Promise<void> => {
+    await mkdir(dirname(configFile()), { recursive: true });
+    await Bun.write(configFile(), JSON.stringify(config, null, 2) + "\n");
+  };
+
+  const getAuth = async (): Promise<Auth | undefined> => {
+    const config = await readConfig();
+    const envName = env.getCurrentEnvName();
+    return config.auth?.[envName];
+  };
+
+  const setAuth = async (auth: Auth): Promise<void> => {
+    const config = await readConfig();
+    if (!config.auth) config.auth = {};
+    config.auth[env.getCurrentEnvName()] = auth;
+    await writeConfig(config);
+  };
+
+  const clearAuth = async (): Promise<void> => {
+    const config = await readConfig();
+    if (config.auth) {
+      delete config.auth[env.getCurrentEnvName()];
+      if (Object.keys(config.auth).length === 0) {
+        delete config.auth;
+      }
+    }
+    await writeConfig(config);
+  };
+
+  const getEnvironment = async (): Promise<string | undefined> => {
+    const config = await readConfig();
+    return config.environment;
+  };
+
+  const setEnvironment = async (envName: string): Promise<void> => {
+    const config = await readConfig();
+    config.environment = envName;
+    await writeConfig(config);
+  };
+
+  const getProfile = async (path: string): Promise<Profile | undefined> => {
+    const config = await readConfig();
+    return config.profiles[path];
+  };
+
+  const setProfile = async (path: string, profile: Profile): Promise<void> => {
+    const config = await readConfig();
+    config.profiles[path] = profile;
+    await writeConfig(config);
+  };
+
+  const removeProfile = async (path: string): Promise<void> => {
+    const config = await readConfig();
+    delete config.profiles[path];
+    await writeConfig(config);
+  };
+
+  const moveProfile = async (oldKey: string, newKey: string): Promise<void> => {
+    const config = await readConfig();
+    const profile = config.profiles[oldKey];
+    if (!profile) return;
+    config.profiles[newKey] = profile;
+    delete config.profiles[oldKey];
+    await writeConfig(config);
+  };
+
+  const listProfiles = async (): Promise<Record<string, Profile>> => {
+    const config = await readConfig();
+    return config.profiles;
+  };
+
+  const resolveProfile = async (cwd: string): Promise<ResolvedProfile> => {
+    const config = await readConfig();
+
+    // Try normalized remote URL first (cross-clone matching)
+    const normalizedRemote = await git.getGitNormalizedRemote();
+    if (normalizedRemote && config.profiles[normalizedRemote]) {
+      return {
+        path: normalizedRemote,
+        profile: config.profiles[normalizedRemote],
+        resolvedVia: "remote",
+      };
+    }
+
+    // For non-remote matches, include availableRemote when a remote URL exists
+    const fallbackFields = normalizedRemote ? { availableRemote: normalizedRemote } : {};
+
+    // Try git repo identifier (shared across worktrees, backward compat)
+    const repoId = await git.getGitRepoIdentifier();
+    if (repoId && config.profiles[repoId]) {
+      return {
+        path: repoId,
+        profile: config.profiles[repoId],
+        resolvedVia: "git-common-dir",
+        ...fallbackFields,
+      };
+    }
+
+    // Fall back to directory walking for backward compatibility
+    let dir = cwd;
+    while (true) {
+      const profile = config.profiles[dir];
+      if (profile) {
+        return { path: dir, profile, resolvedVia: "directory", ...fallbackFields };
+      }
+      const parent = join(dir, "..");
+      if (parent === dir) break;
+      dir = parent;
+    }
+    return undefined;
+  };
+
+  const resolveAppContext = async (options: {
+    app?: string;
+    instance?: string;
+  }): Promise<{ appId: string; appLabel: string; instanceId: string; instanceLabel: string }> => {
+    if (options.app) {
+      const app = await plapi.fetchApplication(options.app);
+      const appLabel = app.name || options.app;
+
+      if (options.instance) {
+        const envType = INSTANCE_ALIASES[options.instance];
+        if (envType) {
+          const matched = app.instances.find((instance) => instance.environment_type === envType);
+          if (!matched) {
+            throw new CliError(`No ${envType} instance found for application ${options.app}.`, {
+              code: ERROR_CODE.INSTANCE_NOT_FOUND,
+            });
+          }
+          return {
+            appId: options.app,
+            appLabel,
+            instanceId: matched.instance_id,
+            instanceLabel: envType,
+          };
+        }
+
+        return {
+          appId: options.app,
+          appLabel,
+          instanceId: options.instance,
+          instanceLabel: options.instance,
+        };
+      }
+
+      const development = app.instances.find(
+        (instance) => instance.environment_type === "development",
+      );
+      if (!development) {
+        throw new CliError(`No development instance found for application ${options.app}.`, {
+          code: ERROR_CODE.INSTANCE_NOT_FOUND,
+        });
+      }
+
+      return {
+        appId: options.app,
+        appLabel,
+        instanceId: development.instance_id,
+        instanceLabel: "development",
+      };
+    }
+
+    const resolved = await resolveProfile(process.cwd());
+    if (!resolved) {
+      throw new CliError(
+        "No Clerk project linked to this directory.\n" +
+          "Either:\n" +
+          "  - Run `clerk link` from your project directory\n" +
+          "  - Pass --app <app_id> to target an app directly",
+        { code: ERROR_CODE.NOT_LINKED },
+      );
+    }
+
+    const instance = resolveInstanceId(resolved.profile, options.instance);
+    return {
+      appId: resolved.profile.appId,
+      appLabel: resolved.profile.appName || resolved.profile.appId,
+      instanceId: instance.id,
+      instanceLabel: instance.label,
+    };
+  };
+
+  return {
+    readConfig,
+    writeConfig,
+    getAuth,
+    setAuth,
+    clearAuth,
+    getEnvironment,
+    setEnvironment,
+    getProfile,
+    setProfile,
+    removeProfile,
+    moveProfile,
+    listProfiles,
+    resolveProfile,
+    resolveAppContext,
+  };
+}
+
+export type { Auth, Profile, ClerkConfig };

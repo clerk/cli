@@ -51,7 +51,7 @@ export type LinkDeps = Need<{
   prompts: "confirm" | "search" | "input";
   mode: "isAgent" | "isHuman";
   spinner: "intro" | "outro" | "bar" | "withSpinner";
-  log: "info" | "data";
+  log: "info" | "data" | "error";
   env: "get";
 }>;
 
@@ -126,7 +126,7 @@ export async function link(deps: LinkDeps, options: LinkOptions = {}): Promise<v
   }
 
   if (!existing && options.skipIfLinked && !options.app) {
-    const autolinked = await autolink(ctx.cwd);
+    const autolinked = await autolink(deps, ctx.cwd);
     if (autolinked) return;
   }
 

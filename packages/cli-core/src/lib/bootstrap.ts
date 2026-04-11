@@ -14,25 +14,29 @@
  * Callers are responsible for constructing the Root and running the program
  * after `bootstrap()` resolves.
  */
+import type { Need } from "./deps.ts";
 import { setMode, type Mode } from "../mode.ts";
-import { getEnvironment } from "./config.ts";
-import { setCurrentEnv, isValidEnv, getCurrentEnvName } from "./environment.ts";
 import { throwUsageError } from "./errors.ts";
 import { setLogLevel } from "./log.ts";
 
-export async function bootstrap(argv: string[]): Promise<void> {
+export type BootstrapDeps = Need<{
+  environment: "setCurrentEnv" | "isValidEnv" | "getCurrentEnvName";
+  configStore: "getEnvironment";
+}>;
+
+export async function bootstrap(deps: BootstrapDeps, argv: string[]): Promise<void> {
   // Reset log level so a previous --verbose flag doesn't leak into subsequent runs.
   setLogLevel(argv.includes("--verbose") ? "debug" : "info");
 
   const mode = extractModeFromArgv(argv);
   if (mode) setMode(mode);
 
-  const envName = await getEnvironment();
-  if (envName && isValidEnv(envName)) {
-    setCurrentEnv(envName);
+  const envName = await deps.configStore.getEnvironment();
+  if (envName && deps.environment.isValidEnv(envName)) {
+    deps.environment.setCurrentEnv(envName);
   }
 
-  const activeEnv = getCurrentEnvName();
+  const activeEnv = deps.environment.getCurrentEnvName();
   if (activeEnv !== "production") {
     process.stderr.write(`[${activeEnv.toUpperCase()}]\n`);
   }

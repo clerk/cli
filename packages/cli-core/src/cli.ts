@@ -19,5 +19,5 @@ if (args[0] === "__complete") {
 const root = createRoot();
 await runProgram(createProgram(root), undefined, {
   from: "node",
-  preParse: () => bootstrap(process.argv.slice(2)),
+  preParse: () => bootstrap(root, process.argv.slice(2)),
 });

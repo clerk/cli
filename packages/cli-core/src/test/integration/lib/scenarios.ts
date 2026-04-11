@@ -1,21 +1,21 @@
 /**
- * Shared setup for integration tests.
+ * Integration test scenarios.
  *
- * Registers module mocks (must happen at import time, before dynamic imports),
- * exports controllable mock state, mock data, CLI harness, and
- * test harness setup/teardown functions.
+ * Provides multi-command deps factories, temp-dir helpers, mock data, and a
+ * `clerk()` driver that exercises the full commander program (parsing,
+ * bootstrap, global error handler, exit codes) against a `testRoot()` whose
+ * collaborators are wired to in-memory state.
  *
- * WARNING: Do NOT add static imports of modules that transitively import any
- * mocked module (credential-store, git, mode, inquirer). Bun's `mock.module()`
- * must be registered before any consumer loads the real module. All consuming
- * imports must use dynamic `await import(...)` AFTER the mock.module() calls
- * below.
+ * Tests should pull `useIntegrationTestScenarios()`, `clerk`, and the mock
+ * data exports from this file. The driver constructs a fresh `testRoot()`
+ * per `clerk()` invocation with overrides closing over the per-test state
+ * (storedToken, prompt queues, http fixture, temp-dir CLERK_CONFIG_DIR).
  *
- * Ported (DI) commands no longer rely on `mock.module()` for token-exchange,
- * auth-server, or pkce; their stubs are inlined into `testRoot()` below.
+ * Every lib collaborator is constructed via its factory and injected
+ * through `testRoot()`. No `mock.module()` entries remain in this file.
  */
 
-import { mock, spyOn, beforeEach, afterEach } from "bun:test";
+import { spyOn, beforeEach, afterEach } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
@@ -23,6 +23,7 @@ import { capturedOutput } from "../../lib/stubs.ts";
 import { withCapturedLogs } from "../../../lib/log.ts";
 import { http } from "../../lib/http.ts";
 import type { Application, ApplicationInstance } from "../../../lib/plapi.ts";
+import type { Root } from "../../../lib/deps.ts";
 
 export { capturedOutput, http };
 
@@ -41,63 +42,22 @@ export const mockState = {
   gitRepoIdentifier: "/repo/.git" as string | undefined,
 };
 
-// ── Module mocks (executed at import time) ───────────────────────────────────
+// ── Harness-local git collaborator ───────────────────────────────────────────
+//
+// Closes over mockState so tests can mutate git state between `clerk()` calls.
+// Replaces the previous `mock.module("lib/git.ts", ...)` entry; both
+// `harnessConfigStore` (below) and the per-call `testRoot({ git })` override
+// reuse this same instance so command and config-resolution git calls see
+// identical state.
 
-mock.module("../../../lib/credential-store.ts", () => {
-  const stubs = {
-    getToken: async () => mockState.storedToken,
-    storeToken: async (token: string) => {
-      mockState.storedToken = token;
-    },
-    deleteToken: async () => {
-      mockState.storedToken = null;
-    },
-  };
-  return {
-    ...stubs,
-    _setTokenOverride: () => {},
-    KEYCHAIN_SERVICE: "clerk-cli",
-    KEYCHAIN_ACCOUNT: "oauth-access-token",
-    // The `credentialStore` namespace export is consumed by `lib/root.ts`.
-    credentialStore: stubs,
-  } satisfies typeof import("../../../lib/credential-store.ts");
-});
+const harnessGit = {
+  getGitRepoRoot: async () => mockState.gitRepoRoot,
+  getGitRepoIdentifier: async () => mockState.gitRepoIdentifier,
+  getGitNormalizedRemote: async () => mockState.gitNormalizedRemote,
+  normalizeGitRemoteUrl: (url: string) => url,
+};
 
-mock.module("../../../lib/git.ts", () => {
-  const stubs = {
-    getGitRepoRoot: async () => mockState.gitRepoRoot,
-    getGitRepoIdentifier: async () => mockState.gitRepoIdentifier,
-    getGitNormalizedRemote: async () => mockState.gitNormalizedRemote,
-    normalizeGitRemoteUrl: (url: string) => url,
-  };
-  return {
-    ...stubs,
-    // The `git` namespace export is consumed by `lib/root.ts` and unported
-    // command code paths (lib/config.ts, lib/autolink.ts) still import git
-    // helpers directly. The mock.module entry will be removable once those
-    // last raw consumers are ported.
-    git: stubs,
-  } satisfies typeof import("../../../lib/git.ts");
-});
-
-let _mode: "human" | "agent" = "human";
-mock.module("../../../mode.ts", () => {
-  const stubs = {
-    getMode: () => _mode,
-    isHuman: () => _mode === "human",
-    isAgent: () => _mode === "agent",
-  };
-  return {
-    ...stubs,
-    setMode: (m: "human" | "agent") => {
-      _mode = m;
-    },
-    // The `modeService` namespace export is consumed by `lib/root.ts`.
-    modeService: stubs,
-  } satisfies typeof import("../../../mode.ts");
-});
-
-// ── Prompt queue (replaces @inquirer/prompts) ────────────────────────────────
+// ── Prompt queue (consumed by `deps.prompts.*` in the testRoot shim) ────────
 
 type PromptType = "select" | "search" | "input" | "confirm" | "password" | "editor";
 
@@ -115,7 +75,7 @@ function dequeuePrompt(name: PromptType) {
     const queue = promptQueues[name];
     if (queue.length === 0) {
       throw new Error(
-        `Unexpected call to @inquirer/prompts.${name}() during test. ` +
+        `Unexpected call to deps.prompts.${name}() during test. ` +
           `Use a CLI flag (e.g. --yes) to bypass prompts, or queue a response with mockPrompts.${name}().`,
       );
     }
@@ -168,18 +128,39 @@ function assertPromptQueuesEmpty() {
   }
 }
 
-mock.module("@inquirer/prompts", () => ({
-  select: dequeuePrompt("select"),
-  search: dequeuePrompt("search"),
-  input: dequeuePrompt("input"),
-  confirm: dequeuePrompt("confirm"),
-  password: dequeuePrompt("password"),
-  editor: dequeuePrompt("editor"),
-}));
-
 // ── Real config module ───────────────────────────────────────────────────────
+//
+// Tests that pre-populate config (e.g. seeding a profile before invoking a
+// command) import `readConfig`/`setProfile` from this module. The exports
+// below are bound methods from a harness-local `ConfigStore` constructed via
+// the factory, driven by a harness-local `Environment`. This is the same
+// factory path the DI root uses, so the fixture data the tests seed is the
+// same data the command sees through `deps.configStore.*`.
 
-export const { _setConfigDir, readConfig, setProfile } = await import("../../../lib/config.ts");
+const { createEnvironment } = await import("../../../lib/environment.ts");
+const { createPlapi } = await import("../../../lib/plapi.ts");
+const { createConfig } = await import("../../../lib/config.ts");
+const { _setConfigDir: _setConfigDirImpl } = await import("../../../lib/config.ts");
+
+const harnessEnvironment = createEnvironment();
+// The harness `credentialStore` closes over `mockState.storedToken` so the
+// integration suite can read/set the stored token via mockState while ported
+// commands route through `deps.credentialStore.*`.
+const harnessCredentialStore = {
+  getToken: async () => mockState.storedToken,
+  storeToken: async (token: string) => {
+    mockState.storedToken = token;
+  },
+  deleteToken: async () => {
+    mockState.storedToken = null;
+  },
+};
+const harnessPlapi = createPlapi(harnessEnvironment, harnessCredentialStore);
+const harnessConfigStore = createConfig(harnessEnvironment, harnessPlapi, harnessGit);
+
+export const _setConfigDir = _setConfigDirImpl;
+export const readConfig = harnessConfigStore.readConfig;
+export const setProfile = harnessConfigStore.setProfile;
 
 // ── Mock data ────────────────────────────────────────────────────────────────
 
@@ -340,9 +321,9 @@ export function parseEnvFile(content: string, filePath: string): Map<string, str
   return env;
 }
 
-// ── CLI harness ──────────────────────────────────────────────────────────────
+// ── CLI driver ───────────────────────────────────────────────────────────────
 
-let currentHarness: TestHarness | null = null;
+let currentScenario: TestScenario | null = null;
 
 export interface CLIResult {
   stdout: string;
@@ -355,47 +336,23 @@ async function execCLI(...args: string[]): Promise<CLIResult> {
   const { testRoot } = await import("../../lib/test-root.ts");
   const { bootstrap } = await import("../../../lib/bootstrap.ts");
 
-  // Bridge mocked module state into the Root for ported commands. As more
-  // commands move to dependency injection, ported code paths read through
-  // deps instead of the file-level mock.module() registrations. This wiring
-  // keeps both worlds in sync until every command is ported and the
-  // mock.module() shims can be deleted.
-  const credentialStoreMock = await import("../../../lib/credential-store.ts");
-  const configModule = await import("../../../lib/config.ts");
-  const gitMock = await import("../../../lib/git.ts");
-  const modeMock = await import("../../../mode.ts");
+  // Wire the testRoot for ported commands. Every lib collaborator is
+  // constructed via its factory at file scope and injected here; no
+  // `mock.module()` entries remain.
+  const modeModule = await import("../../../mode.ts");
   const projectDetectorModule = await import("../../../lib/project-detector/index.ts");
-  const promptsModule = await import("../../../lib/prompts.ts");
-  const spinnerModule = await import("../../../lib/spinner.ts");
-  const plapiModule = await import("../../../lib/plapi.ts");
   const bapiModule = await import("../../../commands/api/bapi.ts");
-  const environmentModule = await import("../../../lib/environment.ts");
   const root = testRoot({
-    credentialStore: {
-      getToken: credentialStoreMock.getToken,
-      storeToken: credentialStoreMock.storeToken,
-      deleteToken: credentialStoreMock.deleteToken,
-    },
-    // configStore is backed by the real config module writing to the
-    // per-test temporary CLERK_CONFIG_DIR set by setupTest.
-    configStore: {
-      readConfig: configModule.readConfig,
-      writeConfig: configModule.writeConfig,
-      getAuth: configModule.getAuth,
-      setAuth: configModule.setAuth,
-      clearAuth: configModule.clearAuth,
-      getEnvironment: configModule.getEnvironment,
-      setEnvironment: configModule.setEnvironment,
-      getProfile: configModule.getProfile,
-      setProfile: configModule.setProfile,
-      removeProfile: configModule.removeProfile,
-      moveProfile: configModule.moveProfile,
-      listProfiles: configModule.listProfiles,
-      resolveProfile: configModule.resolveProfile,
-      resolveAppContext: configModule.resolveAppContext,
-    },
-    // tokenExchange is no longer file-level mocked. Inline the same stub
-    // values the deleted mock.module() block previously provided.
+    // Inline credential-store as closures over mockState.storedToken so the
+    // integration suite can read/set the stored token via mockState while
+    // ported commands route through deps.credentialStore.* instead of the
+    // real keychain-backed module.
+    credentialStore: harnessCredentialStore,
+    // configStore is the factory-constructed harness instance that reads and
+    // writes the per-test temporary CLERK_CONFIG_DIR set by setupTest.
+    configStore: harnessConfigStore,
+    // tokenExchange is no longer file-level mocked. Inline deterministic
+    // stubs for login flows so ported commands (e.g. login) run end-to-end.
     tokenExchange: {
       exchangeCodeForToken: async () => ({
         access_token: "mock_access_token",
@@ -438,8 +395,11 @@ async function execCLI(...args: string[]): Promise<CLIResult> {
         tokenUrl: "https://test.example.com/oauth/token",
         userinfoUrl: "https://test.example.com/oauth/userinfo",
       }),
-      getPlapiBaseUrl: environmentModule.getPlapiBaseUrl,
-      getBapiBaseUrl: environmentModule.getBapiBaseUrl,
+      getPlapiBaseUrl: harnessEnvironment.getPlapiBaseUrl,
+      getBapiBaseUrl: harnessEnvironment.getBapiBaseUrl,
+      getCurrentEnvName: harnessEnvironment.getCurrentEnvName,
+      setCurrentEnv: harnessEnvironment.setCurrentEnv,
+      isValidEnv: harnessEnvironment.isValidEnv,
     },
     // Route logger output through console so the harness's logSpy/errorSpy
     // observe what ported commands write. Unported commands still use bare
@@ -447,28 +407,21 @@ async function execCLI(...args: string[]): Promise<CLIResult> {
     log: {
       // `log.data` is the pipeable-stdout method (e.g. `clerk apps list`,
       // agent prompts) so it routes to console.log → stdout in the harness.
-      /* oxlint-disable no-console -- test harness intentionally routes log to console */
-      data: (msg: unknown) => console.log(msg),
+      data: (msg) => console.log(msg),
       // Every other method is stderr-oriented; route to console.error so
       // the harness stderr capture sees it.
-      info: (msg: unknown) => console.error(msg),
-      success: (msg: unknown) => console.error(msg),
-      warn: (msg: unknown) => console.error(msg),
-      error: (msg: unknown) => console.error(msg),
-      debug: (msg: unknown) => console.error(msg),
-      raw: (msg: unknown) => console.error(msg),
+      info: (msg) => console.error(msg),
+      success: (msg) => console.error(msg),
+      warn: (msg) => console.error(msg),
+      error: (msg) => console.error(msg),
+      debug: (msg) => console.error(msg),
+      raw: (msg) => console.error(msg),
       blank: () => console.error(""),
-      /* oxlint-enable no-console */
     },
-    // git is mock.module()-overridden at file load time. Bridge those stubs
-    // through the testRoot shim so ported commands (link, unlink) read git
-    // state via deps.git instead of touching the real git module.
-    git: {
-      getGitRepoRoot: gitMock.getGitRepoRoot,
-      getGitRepoIdentifier: gitMock.getGitRepoIdentifier,
-      getGitNormalizedRemote: gitMock.getGitNormalizedRemote,
-      normalizeGitRemoteUrl: gitMock.normalizeGitRemoteUrl,
-    },
+    // git is the harness-local instance (see `harnessGit` above) so ported
+    // commands read git state via deps.git and `harnessConfigStore` resolves
+    // profiles against the same mockState values.
+    git: harnessGit,
     // projectDetector reads the temp dir directly, which is exactly what we
     // want in integration tests since setupTest sets process.cwd to a fresh
     // temp dir per test.
@@ -479,43 +432,32 @@ async function execCLI(...args: string[]): Promise<CLIResult> {
       readDeps: projectDetectorModule.readDeps,
       detectFramework: projectDetectorModule.detectFramework,
     },
-    // mode is mock.module()-overridden so the global --mode flag set in argv
-    // is reflected through deps.mode.* for ported commands.
+    // mode reads through the real `mode.ts` module. The global --mode flag is
+    // parsed by `bootstrap()` (called via preParse below) which writes to the
+    // module-level forcedMode singleton via setMode(); these getters then
+    // surface that state through deps.mode.* for ported commands.
     mode: {
-      getMode: modeMock.getMode,
-      isHuman: modeMock.isHuman,
-      isAgent: modeMock.isAgent,
+      getMode: modeModule.getMode,
+      isHuman: modeModule.isHuman,
+      isAgent: modeModule.isAgent,
     },
-    // prompts.confirm calls @inquirer/prompts.confirm internally, which is
-    // already mock.module()-overridden in this harness to dequeue from the
-    // mockPrompts queue. Bridging here lets ported commands use deps.prompts.
+    // Route prompts directly to the FIFO mockPrompts queues. This bypasses
+    // `lib/prompts.ts` (which calls @inquirer/prompts under the hood) so the
+    // harness no longer needs the @inquirer/prompts mock.module entry. Tests
+    // queue responses with mockPrompts.<name>(...) and the dequeue functions
+    // throw a descriptive error if a prompt fires without a queued response.
     prompts: {
-      confirm: promptsModule.confirm,
-      search: promptsModule.search,
-      select: promptsModule.select,
-      input: promptsModule.input,
-      password: promptsModule.password,
+      confirm: dequeuePrompt("confirm") as Root["prompts"]["confirm"],
+      search: dequeuePrompt("search") as Root["prompts"]["search"],
+      select: dequeuePrompt("select") as Root["prompts"]["select"],
+      input: dequeuePrompt("input") as Root["prompts"]["input"],
+      password: dequeuePrompt("password") as Root["prompts"]["password"],
     },
-    // spinner methods are no-op-friendly in tests; the real implementations
-    // print to stderr (captured) and run callbacks synchronously enough.
-    spinner: {
-      intro: spinnerModule.intro,
-      outro: spinnerModule.outro,
-      bar: spinnerModule.bar,
-      withSpinner: spinnerModule.withSpinner,
-    },
+    // spinner methods are no-op-friendly in tests; testRoot's defaults already
+    // run callbacks via withSpinner and stub intro/outro/bar to no-op.
     // plapi makes real fetch calls; the http capture in setupTest mocks
     // global fetch so plapi calls hit the harness http fixture.
-    plapi: {
-      validateKeyPrefix: plapiModule.validateKeyPrefix,
-      getAuthToken: plapiModule.getAuthToken,
-      fetchInstanceConfigSchema: plapiModule.fetchInstanceConfigSchema,
-      fetchInstanceConfig: plapiModule.fetchInstanceConfig,
-      fetchApplication: plapiModule.fetchApplication,
-      putInstanceConfig: plapiModule.putInstanceConfig,
-      patchInstanceConfig: plapiModule.patchInstanceConfig,
-      listApplications: plapiModule.listApplications,
-    },
+    plapi: harnessPlapi,
     // bapi also makes real fetch calls; the http fixture covers it too.
     bapi: {
       bapiRequest: bapiModule.bapiRequest,
@@ -529,45 +471,44 @@ async function execCLI(...args: string[]): Promise<CLIResult> {
   const program = createProgram(root);
   program.exitOverride();
 
-  if (!currentHarness) {
+  if (!currentScenario) {
     throw new Error("clerk() called outside of setupTest/teardownTest lifecycle");
   }
 
-  currentHarness.logSpy.mockClear();
-  currentHarness.errorSpy.mockClear();
-  currentHarness.exitSpy.mockClear();
-  currentHarness.captured.stdout.length = 0;
-  currentHarness.captured.stderr.length = 0;
+  currentScenario.logSpy.mockClear();
+  currentScenario.errorSpy.mockClear();
+  currentScenario.exitSpy.mockClear();
 
   let exitCode = 0;
 
-  try {
-    await withCapturedLogs(currentHarness.captured, () =>
-      runProgram(program, args, {
+  // Capture module-level `log.*` output (from runProgram's error handler and
+  // any non-DI code paths) into local buffers. The DI log overrides still
+  // route through console.log/console.error, which the harness's logSpy and
+  // errorSpy pick up. We merge both sources into stdout/stderr below.
+  const captured = { stdout: [] as string[], stderr: [] as string[] };
+  await withCapturedLogs(captured, async () => {
+    try {
+      await runProgram(program, args, {
         from: "user",
-        preParse: () => bootstrap(args),
-      }),
-    );
-  } catch (error: unknown) {
-    if ((error as any)?.code?.startsWith?.("commander.")) {
-      exitCode = (error as any).exitCode ?? 1;
-    } else if (error instanceof Error && error.message === "process.exit") {
-      const calls = currentHarness.exitSpy.mock.calls;
-      exitCode = calls.length > 0 ? (calls[calls.length - 1][0] as number) : 1;
-    } else {
-      throw error;
+        preParse: () => bootstrap(root, args),
+      });
+    } catch (error: unknown) {
+      if ((error as any)?.code?.startsWith?.("commander.")) {
+        exitCode = (error as any).exitCode ?? 1;
+      } else if (error instanceof Error && error.message === "process.exit") {
+        const calls = currentScenario.exitSpy.mock.calls;
+        exitCode = calls.length > 0 ? (calls[calls.length - 1][0] as number) : 1;
+      } else {
+        throw error;
+      }
     }
-  }
+  });
 
-  // Merge output from both console spies (non-migrated code) and scoped log capture.
-  const consoleStdout = capturedOutput(currentHarness.logSpy);
-  const consoleStderr = capturedOutput(currentHarness.errorSpy);
-  const hookStdout = currentHarness.captured.stdout.join("\n");
-  const hookStderr = currentHarness.captured.stderr.join("\n");
-
+  const consoleStdout = capturedOutput(currentScenario.logSpy);
+  const consoleStderr = capturedOutput(currentScenario.errorSpy);
   return {
-    stdout: [consoleStdout, hookStdout].filter(Boolean).join("\n"),
-    stderr: [consoleStderr, hookStderr].filter(Boolean).join("\n"),
+    stdout: [consoleStdout, captured.stdout.join("\n")].filter(Boolean).join("\n"),
+    stderr: [consoleStderr, captured.stderr.join("\n")].filter(Boolean).join("\n"),
     exitCode,
   };
 }
@@ -594,15 +535,13 @@ clerkStrict.raw = execCLI;
  */
 export const clerk = clerkStrict;
 
-// ── Test harness ─────────────────────────────────────────────────────────────
+// ── Scenario fixture ─────────────────────────────────────────────────────────
 
-export interface TestHarness {
+export interface TestScenario {
   tempDir: string;
   logSpy: ReturnType<typeof spyOn>;
   errorSpy: ReturnType<typeof spyOn>;
   exitSpy: ReturnType<typeof spyOn>;
-  /** Output captured from log.* calls via the scoped capture context. */
-  captured: { stdout: string[]; stderr: string[] };
 }
 
 const originalCwd = process.cwd;
@@ -624,7 +563,7 @@ function setEnv(key: string, value: string) {
  * Creates a temporary directory, sets environment variables, resets mock state,
  * and installs console/process spies.
  */
-export async function setupTest(): Promise<TestHarness> {
+export async function setupTest(): Promise<TestScenario> {
   const tempDir = await mkdtemp(join(tmpdir(), "clerk-integration-"));
   _setConfigDir(tempDir);
   process.cwd = () => tempDir;
@@ -645,10 +584,9 @@ export async function setupTest(): Promise<TestHarness> {
     throw new Error("process.exit");
   });
 
-  const captured = { stdout: [] as string[], stderr: [] as string[] };
-  const harness = { tempDir, logSpy, errorSpy, exitSpy, captured };
-  currentHarness = harness;
-  return harness;
+  const scenario = { tempDir, logSpy, errorSpy, exitSpy };
+  currentScenario = scenario;
+  return scenario;
 }
 
 /**
@@ -657,8 +595,8 @@ export async function setupTest(): Promise<TestHarness> {
  * Asserts prompt queues are empty, restores process state, and removes the
  * temporary directory.
  */
-export async function teardownTest(harness: TestHarness): Promise<void> {
-  currentHarness = null;
+export async function teardownTest(scenario: TestScenario): Promise<void> {
+  currentScenario = null;
   assertPromptQueuesEmpty();
   http.assertRoutesConsumed();
   _setConfigDir(undefined);
@@ -673,15 +611,16 @@ export async function teardownTest(harness: TestHarness): Promise<void> {
   envMutations = new Map();
   globalThis.fetch = originalFetch;
   process.stdin.isTTY = originalStdinIsTTY;
-  harness.logSpy.mockRestore();
-  harness.errorSpy.mockRestore();
-  harness.exitSpy.mockRestore();
-  await rm(harness.tempDir, { recursive: true, force: true });
+  scenario.logSpy.mockRestore();
+  scenario.errorSpy.mockRestore();
+  scenario.exitSpy.mockRestore();
+  await rm(scenario.tempDir, { recursive: true, force: true });
 }
 
 /**
  * Register `beforeEach`/`afterEach` hooks that set up and tear down the
- * integration test harness. Returns a proxy with a lazy `tempDir` getter.
+ * integration test scenario fixture. Returns a proxy with a lazy `tempDir`
+ * getter so tests can write files into the per-test temporary directory.
  *
  * @example
  * ```ts
@@ -692,16 +631,16 @@ export async function teardownTest(harness: TestHarness): Promise<void> {
  * ```
  */
 export function useIntegrationTestScenarios() {
-  let harness: TestHarness;
+  let scenario: TestScenario;
   beforeEach(async () => {
-    harness = await setupTest();
+    scenario = await setupTest();
   });
   afterEach(async () => {
-    await teardownTest(harness);
+    await teardownTest(scenario);
   });
   return {
     get tempDir() {
-      return harness.tempDir;
+      return scenario.tempDir;
     },
   };
 }
