@@ -25,7 +25,7 @@ import { log } from "./lib/log.ts";
 import { maybeNotifyUpdate, getCurrentVersion } from "./lib/update-check.ts";
 import { update } from "./commands/update/index.ts";
 
-export function createProgram(_root: Root) {
+export function createProgram(root: Root) {
   const program = new Command()
     .name("clerk")
     .description("Clerk CLI")
@@ -148,7 +148,7 @@ export function createProgram(_root: Root) {
     .command("whoami")
     .description("Show the current logged-in user")
     .setExamples([{ command: "clerk whoami", description: "Show your email address" }])
-    .action(whoami);
+    .action(() => whoami(root));
 
   const open = program.command("open").description("Open Clerk resources in your browser");
 
