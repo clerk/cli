@@ -5,7 +5,7 @@ paths:
 alwaysApply: false
 ---
 
-All output goes through the `log` object from `src/lib/log.ts`. **Never use `console.log`, `console.error`, `console.warn`, `console.info`, or `process.stderr.write` directly** — use `log.*` methods so output respects log levels, throttling, and test capture.
+All output goes through the `log` object from `src/lib/log.ts`. **Never use `console.log`, `console.error`, `console.warn`, `console.info`, or `process.stderr.write` directly** — use `log.*` methods so output respects log levels, throttling, and test capture. The `no-console` oxlint rule enforces this in production source; test files (`*.test.ts`, `src/test/**`) and `scripts/**` are exempt.
 
 ```ts
 import { log } from "<relative-path>/lib/log.ts";

@@ -1,6 +1,7 @@
 {
   "rules": {
-    "unicorn/no-process-exit": "error"
+    "unicorn/no-process-exit": "error",
+    "no-console": "error"
   },
   "overrides": [
     {
@@ -11,6 +12,16 @@
       ],
       "rules": {
         "unicorn/no-process-exit": "off"
+      }
+    },
+    {
+      "files": [
+        "scripts/**",
+        "packages/cli-core/src/**/*.test.ts",
+        "packages/cli-core/src/test/**"
+      ],
+      "rules": {
+        "no-console": "off"
       }
     }
   ]
