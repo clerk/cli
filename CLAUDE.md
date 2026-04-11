@@ -35,18 +35,6 @@ Default to using Bun instead of Node.js.
 - Prefer `Bun.file` over `node:fs`'s readFile/writeFile
 - Bun.$`ls` instead of execa.
 
-## Testing
-
-Use `bun test` to run tests.
-
-```ts#index.test.ts
-import { test, expect } from "bun:test";
-
-test("hello world", () => {
-  expect(1).toBe(1);
-});
-```
-
 ## CI Checks
 
 After modifying files, run these commands to match what CI enforces on pull requests:
@@ -56,7 +44,7 @@ bun run format       # Format with oxfmt (writes changes)
 bun run lint         # Lint with oxlint
 bun run test         # Run unit tests
 bun run test:e2e:op  # Run E2E tests with secrets resolved from 1Password (preferred locally)
-bun run test:e2e     # Run E2E tests with env vars already set (used by CI; see .claude/rules/e2e.md)
+bun run test:e2e     # Run E2E tests with env vars already set (used by CI)
 ```
 
 Locally, prefer `bun run test:e2e:op` so secrets are injected from 1Password in-memory and never written to disk. `bun run test:e2e` is for CI or for cases where the required env vars are already exported.
@@ -66,85 +54,3 @@ CI runs `bun run format:check` (fails if unformatted), `bun run lint`, `bun test
 ## Versioning
 
 The `CLI_VERSION` global is injected at compile time via `bun build --compile --define "CLI_VERSION=..."`. Local `build:compile` omits it, so the binary reports `0.0.0-dev`. The CI release workflow injects the real version.
-
-## Commands
-
-Every CLI command lives in its own directory under `packages/cli-core/src/commands/<name>/`. Each directory must contain a `README.md` that documents:
-
-- What the command does
-- Usage and options
-- Clerk API endpoints the command calls (method, path, description)
-- Whether the command (or parts of it) is mocked/stubbed — call this out prominently with a blockquote at the top of the README if so
-
-When adding a new command, create its directory and README. When modifying a command's behavior, options, or API calls, update its README to match.
-
-When creating or modifying a command, evaluate whether it needs an agent mode. Commands with interactive prompts (menus, wizards, multi-step flows) should check `isAgent()` from `packages/cli-core/src/mode.ts` and, when in agent mode, output a structured prompt that an AI agent can follow instead of running the interactive flow. Commands that are already non-interactive (e.g., single API calls, browser-based OAuth) typically don't need agent mode.
-
-### Root README
-
-`README.md` at the project root contains the CLI help output. When commands are added, removed, or their options change, update the help output in `README.md` to stay in sync. You can regenerate it by running `bun run dev -- --help`.
-
-## Logging
-
-All output goes through the `log` object from `packages/cli-core/src/lib/log.ts`. **Never use `console.log`, `console.error`, `console.warn`, `console.info`, or `process.stderr.write` directly** — use `log.*` methods so output respects log levels, throttling, and test capture.
-
-See [.claude/rules/logging.md](.claude/rules/logging.md) for the full method reference, debug logging, tagged loggers, inline highlighting, and testing patterns.
-
-## Error Handling
-
-All error classes and helpers live in `packages/cli-core/src/lib/errors.ts`. The global error handler in `packages/cli-core/src/cli.ts` catches thrown errors and formats them for the user. **Never call `console.error` + `process.exit` directly in commands** — throw an error instead and let the global handler deal with output and exit codes.
-
-### Known failures — `CliError`
-
-For user-facing errors (missing config, invalid input, resource not found), throw a `CliError`:
-
-```ts
-import { CliError } from "../../lib/errors.ts";
-
-throw new CliError("No Clerk project linked. Run `clerk link` first.");
-
-// With a docs URL (automatically gets .md appended in agent mode for Clerk URLs):
-throw new CliError("Not authenticated.", {
-  docsUrl: "https://clerk.com/docs/guides/development/clerk-environment-variables",
-});
-```
-
-### Usage/validation errors — `throwUsageError`
-
-For invalid arguments or options, use `throwUsageError` (exits with code 2):
-
-```ts
-import { throwUsageError } from "../../lib/errors.ts";
-
-if (!secretKey) {
-  throwUsageError("No secret key found. Set CLERK_SECRET_KEY or use --secret-key.");
-}
-```
-
-### User cancellation — `throwUserAbort`
-
-When the user cancels a prompt or confirmation, call `throwUserAbort()`. The global handler exits cleanly with no error output:
-
-```ts
-import { throwUserAbort } from "../../lib/errors.ts";
-
-const confirmed = await confirm({ message: "Proceed?" });
-if (!confirmed) throwUserAbort();
-```
-
-### API errors — `withApiContext`
-
-Wrap API calls with `withApiContext` to attach a human-readable context string. The global handler extracts the first error message from the response body and prints it with the context prefix:
-
-```ts
-import { withApiContext } from "../../lib/errors.ts";
-
-const config = await withApiContext(
-  fetchInstanceConfig(appId, instanceId),
-  "Failed to fetch config",
-);
-```
-
-### API error classes
-
-`BapiError` and `PlapiError` (both extend `ApiError`) are thrown by the API helpers in `packages/cli-core/src/commands/api/bapi.ts` and `packages/cli-core/src/lib/plapi.ts` respectively. Don't construct these in commands — they're thrown automatically by the fetch wrappers. Use `withApiContext` to add context when calling those helpers.
