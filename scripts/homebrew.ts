@@ -6,6 +6,7 @@ import {
   renderFormula,
   createArchive,
   computeChecksum,
+  parseMajorVersion,
   HOMEBREW_TARGETS,
   type FormulaInput,
 } from "./lib/homebrew.ts";
@@ -86,8 +87,14 @@ const formula = renderFormula({ version, checksums });
 console.log("\nRendered formula:");
 console.log(formula);
 
+const major = parseMajorVersion(version);
+const versionedFormula = renderFormula({ version, checksums, major });
+console.log("\nRendered versioned formula:");
+console.log(versionedFormula);
+
 if (dryRun) {
   console.log("[dry-run] Skipping tap clone and push.");
+  console.log(`[dry-run] Would write Formula/clerk.rb and Formula/clerk@${major}.rb`);
 } else {
   const token = process.env.HOMEBREW_TAP_TOKEN;
   if (!token) {
@@ -114,9 +121,13 @@ if (dryRun) {
   await writeFile(formulaPath, formula, "utf-8");
   console.log(`Wrote formula to ${formulaPath}`);
 
+  const versionedFormulaPath = join(formulaDir, `clerk@${major}.rb`);
+  await writeFile(versionedFormulaPath, versionedFormula, "utf-8");
+  console.log(`Wrote versioned formula to ${versionedFormulaPath}`);
+
   run(["git", "config", "user.name", "clerk-bot"], { cwd: tapWorkDir });
   run(["git", "config", "user.email", "bot@clerk.com"], { cwd: tapWorkDir });
-  run(["git", "add", "Formula/clerk.rb"], { cwd: tapWorkDir });
+  run(["git", "add", "Formula/clerk.rb", `Formula/clerk@${major}.rb`], { cwd: tapWorkDir });
 
   const diffResult = Bun.spawnSync(["git", "diff", "--cached", "--quiet"], {
     cwd: tapWorkDir,
