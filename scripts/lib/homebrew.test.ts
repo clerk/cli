@@ -51,6 +51,37 @@ describe("renderFormula", () => {
     expect(result).toStartWith("class Clerk < Formula\n");
     expect(result).toEndWith("end\n");
   });
+
+  test("versioned formula uses ClerkATN class name", () => {
+    const result = renderFormula({
+      version: "1.2.3",
+      checksums: {
+        "darwin-arm64": "aaaa",
+        "darwin-x64": "bbbb",
+        "linux-arm64": "cccc",
+        "linux-x64": "dddd",
+      },
+      major: 1,
+    });
+
+    expect(result).toStartWith("class ClerkAT1 < Formula\n");
+    expect(result).not.toContain("class Clerk <");
+  });
+
+  test("versioned formula includes keg_only", () => {
+    const result = renderFormula({
+      version: "2.0.0",
+      checksums: {
+        "darwin-arm64": "aaaa",
+        "darwin-x64": "bbbb",
+        "linux-arm64": "cccc",
+        "linux-x64": "dddd",
+      },
+      major: 2,
+    });
+
+    expect(result).toContain("keg_only :versioned_formula");
+  });
 });
 
 describe("computeChecksum", () => {

@@ -16,6 +16,7 @@ export const HOMEBREW_TARGETS = targets.filter(
 export interface FormulaInput {
   version: string;
   checksums: Record<HomebrewTargetName, string>;
+  major?: number;
 }
 
 function assetUrl(version: string, target: string): string {
@@ -23,13 +24,16 @@ function assetUrl(version: string, target: string): string {
 }
 
 export function renderFormula(input: FormulaInput): string {
-  const { version, checksums } = input;
+  const { version, checksums, major } = input;
 
-  return `class Clerk < Formula
+  const className = major != null ? `ClerkAT${major}` : "Clerk";
+  const kegOnly = major != null ? "\n  keg_only :versioned_formula" : "";
+
+  return `class ${className} < Formula
   desc "The Clerk CLI"
   homepage "https://clerk.com"
   version "${version}"
-  license "MIT"
+  license "MIT"${kegOnly}
 
   on_macos do
     if Hardware::CPU.arm?
