@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { renderFormula, computeChecksum, createArchive } from "./homebrew.ts";
+import { renderFormula, computeChecksum, createArchive, parseMajorVersion } from "./homebrew.ts";
 import { mkdtemp, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
@@ -84,5 +84,19 @@ describe("createArchive", () => {
     expect(files).toContain("clerk");
 
     await rm(dir, { recursive: true });
+  });
+});
+
+describe("parseMajorVersion", () => {
+  test("extracts major from semver", () => {
+    expect(parseMajorVersion("1.2.3")).toBe(1);
+  });
+
+  test("handles zero major", () => {
+    expect(parseMajorVersion("0.5.1")).toBe(0);
+  });
+
+  test("handles major-only version", () => {
+    expect(parseMajorVersion("3")).toBe(3);
   });
 });

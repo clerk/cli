@@ -65,6 +65,13 @@ end
 }
 
 /**
+ * Extracts the major version number from a semver string.
+ */
+export function parseMajorVersion(version: string): number {
+  return parseInt(version.split(".")[0], 10);
+}
+
+/**
  * Creates a tar.gz archive containing just the binary renamed to "clerk".
  * Stages the rename in a temp directory so the archive entry name is always "clerk".
  */
