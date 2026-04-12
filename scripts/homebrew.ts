@@ -12,37 +12,28 @@ import {
 } from "./lib/homebrew.ts";
 import { run } from "./lib/npm.ts";
 
-const ARTIFACTS_DIR = process.env.ARTIFACTS_DIR ?? join(import.meta.dir, "../dist/artifacts");
+const DEFAULT_ARTIFACTS_DIR =
+  process.env.ARTIFACTS_DIR ?? join(import.meta.dir, "../dist/artifacts");
 
-function parseCliArgs(): {
-  version: string;
-  artifactsDir: string;
-  tapRepo: string;
-  dryRun: boolean;
-} {
-  const { values } = parseArgs({
-    args: Bun.argv.slice(2),
-    options: {
-      version: { type: "string" },
-      "artifacts-dir": { type: "string" },
-      "tap-repo": { type: "string" },
-      "dry-run": { type: "boolean", default: false },
-    },
-  });
+const { values } = parseArgs({
+  options: {
+    version: { type: "string" },
+    "artifacts-dir": { type: "string" },
+    "tap-repo": { type: "string" },
+    "dry-run": { type: "boolean", default: false },
+  },
+  strict: true,
+});
 
-  if (!values.version) {
-    throw new Error("--version is required");
-  }
-
-  return {
-    version: values.version,
-    artifactsDir: values["artifacts-dir"] ?? ARTIFACTS_DIR,
-    tapRepo: values["tap-repo"] ?? "clerk/homebrew-stable",
-    dryRun: values["dry-run"]!,
-  };
+if (!values.version) {
+  console.error("--version is required.");
+  process.exit(1);
 }
 
-const { version, artifactsDir, tapRepo, dryRun } = parseCliArgs();
+const version = values.version;
+const artifactsDir = values["artifacts-dir"] ?? DEFAULT_ARTIFACTS_DIR;
+const tapRepo = values["tap-repo"] ?? "clerk/homebrew-stable";
+const dryRun = values["dry-run"]!;
 
 console.log(`Homebrew distribution: v${version}${dryRun ? " (dry run)" : ""}`);
 console.log(`Artifacts dir: ${artifactsDir}`);

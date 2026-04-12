@@ -1,3 +1,4 @@
+import { copyFileSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { targets } from "./targets.ts";
@@ -72,7 +73,7 @@ end
  * Extracts the major version number from a semver string.
  */
 export function parseMajorVersion(version: string): number {
-  const major = parseInt(version.split(".")[0], 10);
+  const major = parseInt(version.split(".")[0] ?? "", 10);
   if (Number.isNaN(major)) {
     throw new Error(`Invalid version string: "${version}"`);
   }
@@ -88,20 +89,10 @@ export function createArchive(binaryPath: string, archivePath: string): void {
     tmpdir(),
     `homebrew-stage-${Date.now()}-${Math.random().toString(36).slice(2)}`,
   );
-  const result = Bun.spawnSync(["mkdir", "-p", stageDir], {
-    stdio: ["ignore", "pipe", "pipe"],
-  });
-  if (result.exitCode !== 0) {
-    throw new Error(`mkdir failed (exit ${result.exitCode}): ${result.stderr.toString().trim()}`);
-  }
+  mkdirSync(stageDir, { recursive: true });
 
   const stagedBinary = join(stageDir, "clerk");
-  const cpResult = Bun.spawnSync(["cp", binaryPath, stagedBinary], {
-    stdio: ["ignore", "pipe", "pipe"],
-  });
-  if (cpResult.exitCode !== 0) {
-    throw new Error(`cp failed (exit ${cpResult.exitCode}): ${cpResult.stderr.toString().trim()}`);
-  }
+  copyFileSync(binaryPath, stagedBinary);
 
   const tarResult = Bun.spawnSync(["tar", "czf", archivePath, "-C", stageDir, "clerk"], {
     stdio: ["ignore", "pipe", "pipe"],
