@@ -68,7 +68,11 @@ end
  * Extracts the major version number from a semver string.
  */
 export function parseMajorVersion(version: string): number {
-  return parseInt(version.split(".")[0], 10);
+  const major = parseInt(version.split(".")[0], 10);
+  if (Number.isNaN(major)) {
+    throw new Error(`Invalid version string: "${version}"`);
+  }
+  return major;
 }
 
 /**

@@ -99,4 +99,8 @@ describe("parseMajorVersion", () => {
   test("handles major-only version", () => {
     expect(parseMajorVersion("3")).toBe(3);
   });
+
+  test("throws on invalid version", () => {
+    expect(() => parseMajorVersion("")).toThrow("Invalid version string");
+  });
 });
