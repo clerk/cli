@@ -10,6 +10,7 @@
     "build": "bun build ./src/cli.ts --outfile ./dist/cli.js --target node --external @napi-rs/keyring",
     "build:compile": "bun build --compile --no-compile-autoload-dotenv ./src/cli.ts --outfile ./dist/clerk",
     "dev": "bun run ./src/cli.ts",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
     "lint": "oxlint src/",
     "format": "oxfmt --write src/",
     "format:check": "oxfmt --check src/"
