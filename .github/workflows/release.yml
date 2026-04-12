@@ -132,6 +132,30 @@ jobs:
             gh release upload "$tag" "${dir}clerk-${target}${ext}" --clobber
           done
 
+  homebrew:
+    needs: [versioning, build, sign-macos, smoke-test, publish-npm]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v6
+      - uses: oven-sh/setup-bun@v2
+      - run: bun install --frozen-lockfile
+
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: clerk-{darwin-arm64,darwin-x64,linux-arm64,linux-x64}
+          path: dist/artifacts
+
+      - name: Publish Homebrew formula
+        run: bun run scripts/homebrew.ts --version "$VERSION"
+        env:
+          VERSION: ${{ needs.versioning.outputs.version }}
+          ARTIFACTS_DIR: ${{ github.workspace }}/dist/artifacts
+          GH_TOKEN: ${{ github.token }}
+          HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+
   # ─── Canary release ────────────────────────────────────────────────
 
   canary-version:
