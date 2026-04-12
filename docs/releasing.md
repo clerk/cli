@@ -6,24 +6,25 @@ This document describes how the Clerk CLI is built, versioned, and published.
 
 ```
 push to main
-  → changesets/action creates/updates "Version Packages" PR
-    → merge "Version Packages" PR
-      → check-release.ts detects unpublished version
-        → build job: cross-compile all 8 targets (~5.5s total)
-          → sign-macos job: code sign + notarize darwin binaries
-            → smoke-test job: verify binaries on native runners
-              → publish-npm: generate platform packages + publish wrapper
-              → upload-github-assets: attach binaries to the GitHub Release
-  → (if no stable release needed) canary.ts versions packages
-    → build → sign-macos → smoke-test subset → upload GitHub pre-release → publish @canary (npm)
+  -> changesets/action creates/updates "Version Packages" PR
+    -> merge "Version Packages" PR
+      -> check-release.ts detects unpublished version
+        -> build job: cross-compile all 8 targets (~5.5s total)
+          -> sign-macos job: code sign + notarize darwin binaries
+            -> smoke-test job: verify binaries on native runners
+              -> publish-npm: generate platform packages + publish wrapper
+                -> upload-github-assets: attach binaries to the GitHub Release
+                -> homebrew: create archives, upload, render formula, push to clerk/homebrew-stable
+  -> (if no stable release needed) canary.ts versions packages
+    -> build -> sign-macos -> smoke-test subset -> upload GitHub pre-release -> publish @canary (npm)
 
 PR comment "!snapshot [name]"
-  → snapshot.ts versions packages from PR branch
-    → build job: cross-compile binaries
-      → sign-macos job: code sign + notarize darwin binaries
-        → smoke-test job: verify linux-x64 binary
-          → publish-npm: publish @snapshot packages
-            → post installation comment on PR
+  -> snapshot.ts versions packages from PR branch
+    -> build job: cross-compile binaries
+      -> sign-macos job: code sign + notarize darwin binaries
+        -> smoke-test job: verify linux-x64 binary
+          -> publish-npm: publish @snapshot packages
+            -> post installation comment on PR
 ```
 
 ## Architecture
@@ -192,6 +193,14 @@ Publishing uses [npm OIDC trusted publishing](https://docs.npmjs.com/trusted-pub
 
 Attaches the compiled binaries to the GitHub Release for direct download. Binaries are uploaded with display names following the `clerk-<target>` convention (e.g., `clerk-darwin-arm64`, `clerk-win32-x64.exe`).
 
+### 6. Homebrew Job
+
+Creates `.tar.gz` archives of the 4 Homebrew-relevant binaries (darwin-arm64, darwin-x64, linux-arm64, linux-x64) downloaded directly from Actions artifacts, uploads them to the GitHub Release, computes SHA256 checksums, renders `Formula/clerk.rb`, and pushes the result to `clerk/homebrew-stable`. The push uses the `HOMEBREW_TAP_TOKEN` secret (a fine-grained PAT or GitHub App token with `contents: write` on `clerk/homebrew-stable`).
+
+This job runs in parallel with `publish-github` since both depend on `publish-npm` (which creates the GitHub Release).
+
+Install: `brew install clerk/stable/clerk`
+
 ## Key Files
 
 | File                                   | Purpose                                                                        |
@@ -209,6 +218,8 @@ Attaches the compiled binaries to the GitHub Release for direct download. Binari
 | `scripts/canary.ts`                    | Versions packages for canary channel using Changesets snapshots                |
 | `scripts/snapshot.ts`                  | Versions packages for snapshot channel using Changesets snapshots              |
 | `scripts/check-release.ts`             | Detects if a stable release is needed (compares version to npm registry)       |
+| `scripts/homebrew.ts`                  | Creates Homebrew archives, uploads to release, renders and pushes formula      |
+| `scripts/homebrew-formula.ts`          | Renders `Formula/clerk.rb` from version + checksums                            |
 | `.changeset/config.json`               | Changesets configuration                                                       |
 | `.github/workflows/build-binaries.yml` | Reusable workflow for cross-compiling binaries (called by release + snapshot)  |
 | `.github/workflows/sign-macos.yml`     | Reusable workflow for macOS code signing and notarization                      |
@@ -221,6 +232,7 @@ The target list exists in these places that must stay in sync:
 
 1. `scripts/releaser/targets.ts` -- used by the releaser to generate platform packages and by `scripts/build.ts` to cross-compile binaries
 2. `.github/workflows/smoke-test.yml` preset definitions -- defines the target matrix for each preset (`stable`, `canary`, `snapshot`)
+3. `scripts/homebrew.ts` -- the `HOMEBREW_TARGETS` array of Homebrew-relevant targets (darwin-arm64, darwin-x64, linux-arm64, linux-x64)
 
 If you add or remove a target, update both of these. Note that the smoke-test presets may not cover every target if a native runner isn't available (e.g., `win32-arm64`).
 
