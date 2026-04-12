@@ -37,13 +37,13 @@ describe("getDarwinTargets", () => {
   test("filters to darwin-arm64 when specified", () => {
     const result = getDarwinTargets("darwin-arm64");
     expect(result.length).toBe(1);
-    expect(result[0].name).toBe("darwin-arm64");
+    expect(result[0]!.name).toBe("darwin-arm64");
   });
 
   test("filters to darwin-x64 when specified", () => {
     const result = getDarwinTargets("darwin-x64");
     expect(result.length).toBe(1);
-    expect(result[0].name).toBe("darwin-x64");
+    expect(result[0]!.name).toBe("darwin-x64");
   });
 
   test("throws for an invalid target", () => {

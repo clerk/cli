@@ -216,7 +216,7 @@ if (import.meta.main) {
       KEYCHAIN_NAME,
     ]);
     const identityMatch = identityOutput.match(/"([^"]+)"/);
-    if (!identityMatch) {
+    if (!identityMatch?.[1]) {
       throw new Error(`No codesigning identity found in keychain.\nOutput: ${identityOutput}`);
     }
     const identity = identityMatch[1];
