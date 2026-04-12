@@ -12,7 +12,7 @@ export interface Target {
 // Target names use Node.js ${process.platform}-${process.arch} convention so the wrapper
 // shim (packages/cli/bin/clerk) can derive package names without a lookup table.
 // Used by scripts/build.ts, scripts/sign-macos.ts, and scripts/releaser.ts.
-export const targets: Target[] = [
+export const targets = [
   {
     name: "darwin-arm64",
     bunTarget: "bun-darwin-arm64",
@@ -81,7 +81,7 @@ export const targets: Target[] = [
     ext: ".exe",
     verifyPattern: /PE32\+.*x86-64/,
   },
-];
+] as const satisfies Target[];
 
 export const SCOPE = "@clerk";
 export const PKG_PREFIX = "cli";
