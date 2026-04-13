@@ -1,4 +1,5 @@
 import { login } from "../auth/login.js";
+import { createRoot } from "../../lib/root.ts";
 import { link } from "../link/index.js";
 import { pull } from "../env/pull.js";
 import { isAgent } from "../../mode.js";
@@ -239,7 +240,7 @@ async function resolveAuthLabel(): Promise<string> {
   const email = await getAuthenticatedEmail();
   if (email) return `Logged in as ${email}`;
 
-  await login({ showNextSteps: false });
+  await login(createRoot(), { showNextSteps: false });
   return "";
 }
 

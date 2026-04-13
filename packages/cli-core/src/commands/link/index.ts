@@ -3,6 +3,7 @@ import { search, confirm, input } from "@inquirer/prompts";
 import { isAgent } from "../../mode.ts";
 import { getToken } from "../../lib/credential-store.ts";
 import { login } from "../auth/login.ts";
+import { createRoot } from "../../lib/root.ts";
 import {
   listApplications,
   fetchApplication,
@@ -123,7 +124,7 @@ async function ensureAuth() {
   const token = await getToken();
   if (!token) {
     log.info("Not logged in. Authenticating first...");
-    await login({ showNextSteps: false });
+    await login(createRoot(), { showNextSteps: false });
   }
 }
 

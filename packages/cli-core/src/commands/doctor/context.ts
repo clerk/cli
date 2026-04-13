@@ -41,7 +41,8 @@ export function createDoctorContext(): DoctorContext {
         label: "Log in with clerk auth login",
         run: async () => {
           const { login } = await import("../auth/login.ts");
-          await login();
+          const { createRoot } = await import("../../lib/root.ts");
+          await login(createRoot());
         },
       }),
       link: () => ({
