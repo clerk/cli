@@ -40,47 +40,55 @@ export const mockState = {
 
 // ── Module mocks (executed at import time) ───────────────────────────────────
 
-mock.module(
-  "../../../lib/credential-store.ts",
-  () =>
-    ({
-      getToken: async () => mockState.storedToken,
-      storeToken: async (token: string) => {
-        mockState.storedToken = token;
-      },
-      deleteToken: async () => {
-        mockState.storedToken = null;
-      },
-      _setTokenOverride: () => {},
-      KEYCHAIN_SERVICE: "clerk-cli",
-      KEYCHAIN_ACCOUNT: "oauth-access-token",
-    }) satisfies typeof import("../../../lib/credential-store.ts"),
-);
+mock.module("../../../lib/credential-store.ts", () => {
+  const getToken = async () => mockState.storedToken;
+  const storeToken = async (token: string) => {
+    mockState.storedToken = token;
+  };
+  const deleteToken = async () => {
+    mockState.storedToken = null;
+  };
+  return {
+    getToken,
+    storeToken,
+    deleteToken,
+    _setTokenOverride: () => {},
+    KEYCHAIN_SERVICE: "clerk-cli",
+    KEYCHAIN_ACCOUNT: "oauth-access-token",
+    credentialStore: { getToken, storeToken, deleteToken },
+  } satisfies typeof import("../../../lib/credential-store.ts");
+});
 
-mock.module(
-  "../../../lib/git.ts",
-  () =>
-    ({
-      getGitRepoRoot: async () => mockState.gitRepoRoot,
-      getGitRepoIdentifier: async () => mockState.gitRepoIdentifier,
-      getGitNormalizedRemote: async () => mockState.gitNormalizedRemote,
-      normalizeGitRemoteUrl: (url: string) => url,
-    }) satisfies typeof import("../../../lib/git.ts"),
-);
+mock.module("../../../lib/git.ts", () => {
+  const getGitRepoRoot = async () => mockState.gitRepoRoot;
+  const getGitRepoIdentifier = async () => mockState.gitRepoIdentifier;
+  const getGitNormalizedRemote = async () => mockState.gitNormalizedRemote;
+  const normalizeGitRemoteUrl = (url: string) => url;
+  return {
+    getGitRepoRoot,
+    getGitRepoIdentifier,
+    getGitNormalizedRemote,
+    normalizeGitRemoteUrl,
+    git: { getGitRepoRoot, getGitRepoIdentifier, getGitNormalizedRemote, normalizeGitRemoteUrl },
+  } satisfies typeof import("../../../lib/git.ts");
+});
 
 let _mode: "human" | "agent" = "human";
-mock.module(
-  "../../../mode.ts",
-  () =>
-    ({
-      getMode: () => _mode,
-      setMode: (m: "human" | "agent") => {
-        _mode = m;
-      },
-      isHuman: () => _mode === "human",
-      isAgent: () => _mode === "agent",
-    }) satisfies typeof import("../../../mode.ts"),
-);
+mock.module("../../../mode.ts", () => {
+  const getMode = () => _mode;
+  const setMode = (m: "human" | "agent") => {
+    _mode = m;
+  };
+  const isHuman = () => _mode === "human";
+  const isAgent = () => _mode === "agent";
+  return {
+    getMode,
+    setMode,
+    isHuman,
+    isAgent,
+    modeService: { getMode, isHuman, isAgent },
+  } satisfies typeof import("../../../mode.ts");
+});
 
 // ── Prompt queue (replaces @inquirer/prompts) ────────────────────────────────
 
@@ -162,43 +170,46 @@ mock.module("@inquirer/prompts", () => ({
   editor: dequeuePrompt("editor"),
 }));
 
-mock.module(
-  "../../../lib/token-exchange.ts",
-  () =>
-    ({
-      exchangeCodeForToken: async () => ({
-        access_token: "mock_access_token",
-        token_type: "Bearer",
-        expires_in: 3600,
-      }),
-      fetchUserInfo: async (token: string) => {
-        if (!token || token === "expired_token") throw new Error("Unauthorized");
-        return { userId: "user_123", email: "test@example.com" };
-      },
-    }) satisfies typeof import("../../../lib/token-exchange.ts"),
-);
+mock.module("../../../lib/token-exchange.ts", () => {
+  const exchangeCodeForToken = async () => ({
+    access_token: "mock_access_token",
+    token_type: "Bearer",
+    expires_in: 3600,
+  });
+  const fetchUserInfo = async (token: string) => {
+    if (!token || token === "expired_token") throw new Error("Unauthorized");
+    return { userId: "user_123", email: "test@example.com" };
+  };
+  return {
+    exchangeCodeForToken,
+    fetchUserInfo,
+    tokenExchange: { exchangeCodeForToken, fetchUserInfo },
+  } satisfies typeof import("../../../lib/token-exchange.ts");
+});
 
-mock.module(
-  "../../../lib/auth-server.ts",
-  () =>
-    ({
-      startAuthServer: () => ({
-        port: 12345,
-        waitForCallback: async () => ({ code: "mock_code" }),
-        stop: () => {},
-      }),
-    }) satisfies typeof import("../../../lib/auth-server.ts"),
-);
+mock.module("../../../lib/auth-server.ts", () => {
+  const startAuthServer = () => ({
+    port: 12345,
+    waitForCallback: async () => ({ code: "mock_code" }),
+    stop: () => {},
+  });
+  return {
+    startAuthServer,
+    authServer: { startAuthServer },
+  } satisfies typeof import("../../../lib/auth-server.ts");
+});
 
-mock.module(
-  "../../../lib/pkce.ts",
-  () =>
-    ({
-      generateCodeVerifier: () => "mock_verifier",
-      generateCodeChallenge: async () => "mock_challenge",
-      generateState: () => "mock_state",
-    }) satisfies typeof import("../../../lib/pkce.ts"),
-);
+mock.module("../../../lib/pkce.ts", () => {
+  const generateCodeVerifier = () => "mock_verifier";
+  const generateCodeChallenge = async () => "mock_challenge";
+  const generateState = () => "mock_state";
+  return {
+    generateCodeVerifier,
+    generateCodeChallenge,
+    generateState,
+    pkce: { generateCodeVerifier, generateCodeChallenge, generateState },
+  } satisfies typeof import("../../../lib/pkce.ts");
+});
 
 // ── Real config module ───────────────────────────────────────────────────────
 
