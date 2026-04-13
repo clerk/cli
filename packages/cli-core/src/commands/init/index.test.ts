@@ -27,6 +27,7 @@ const FAKE_CTX = {
     name: "React",
     sdk: "@clerk/react",
     envVar: "VITE_CLERK_PUBLISHABLE_KEY",
+    envFile: ".env.local" as const,
   },
   typescript: true,
   srcDir: false,
@@ -181,6 +182,7 @@ describe("init", () => {
       name: "Next.js",
       sdk: "@clerk/nextjs",
       envVar: "NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY",
+      envFile: ".env" as const,
     };
     setup({ email: "test@test.com" });
     spyOn(frameworkMod, "lookupFramework").mockReturnValue(fwOverride);
@@ -230,7 +232,7 @@ describe("init", () => {
     spyOn(context, "gatherContext").mockResolvedValueOnce(null).mockResolvedValueOnce(bootstrapCtx);
 
     spyOn(scaffoldMod, "scaffold").mockResolvedValue({
-      actions: [{ type: "write", path: "app/layout.tsx", content: "" }],
+      actions: [{ type: "create", path: "app/layout.tsx", content: "", description: "" }],
       postInstructions: [],
     });
 
@@ -296,7 +298,7 @@ describe("init", () => {
 
     gatherContextSpy.mockResolvedValue(mockCtx);
     spyOn(scaffoldMod, "scaffold").mockResolvedValue({
-      actions: [{ type: "write", path: "app/layout.tsx", content: "" }],
+      actions: [{ type: "create", path: "app/layout.tsx", content: "", description: "" }],
       postInstructions: [],
     });
 

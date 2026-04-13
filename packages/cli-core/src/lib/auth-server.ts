@@ -147,7 +147,7 @@ export function startAuthServer(expectedState: string): AuthServerResult {
   });
 
   return {
-    port: server.port,
+    port: server.port!,
     waitForCallback: () => callbackPromise,
     stop: () => {
       clearTimeout(timeout);

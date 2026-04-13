@@ -158,8 +158,8 @@ describe("apiInteractive", () => {
     await runApiInteractive({});
 
     expect(fetchCalls.length).toBe(1);
-    expect(fetchCalls[0].url).toContain("/v1/users");
-    expect(fetchCalls[0].method).toBe("GET");
+    expect(fetchCalls[0]!.url).toContain("/v1/users");
+    expect(fetchCalls[0]!.method).toBe("GET");
   });
 
   test("prompts for path parameters", async () => {
@@ -180,7 +180,7 @@ describe("apiInteractive", () => {
     await runApiInteractive({});
 
     expect(fetchCalls.length).toBe(1);
-    expect(fetchCalls[0].url).toContain("/v1/users/user_abc123");
+    expect(fetchCalls[0]!.url).toContain("/v1/users/user_abc123");
   });
 
   test("aborts when user declines confirmation", async () => {

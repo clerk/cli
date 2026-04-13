@@ -17,7 +17,7 @@ export async function installSdk(ctx: ProjectContext): Promise<void> {
   // The package manager is detected from lockfiles, which can exist without
   // the actual binary being installed (e.g. teammate committed bun.lock, you
   // only have npm). Fail fast with a useful message rather than a raw ENOENT.
-  const pmBinary = addCmd.split(" ")[0];
+  const pmBinary = addCmd.split(" ")[0] ?? addCmd;
   if (Bun.which(pmBinary) === null) {
     log.warn(
       `${pmBinary} is not installed but the project's lockfile suggests it. ` +

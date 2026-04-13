@@ -15,6 +15,7 @@ function makeCtx(overrides?: Partial<ProjectContext>): ProjectContext {
       name: "React",
       sdk: "@clerk/react",
       envVar: "VITE_CLERK_PUBLISHABLE_KEY",
+      envFile: ".env.local",
     },
     typescript: true,
     srcDir: true,

@@ -105,8 +105,8 @@ describe("plapi", () => {
       expect(true).toBe(false); // should not reach
     } catch (error) {
       expect(error).toBeInstanceOf(PlapiError);
-      expect((error as PlapiError).status).toBe(404);
-      expect((error as PlapiError).body).toBe("Not Found");
+      expect((error as InstanceType<typeof PlapiError>).status).toBe(404);
+      expect((error as InstanceType<typeof PlapiError>).body).toBe("Not Found");
     }
   });
 
@@ -179,7 +179,7 @@ describe("plapi", () => {
         expect(true).toBe(false);
       } catch (error) {
         expect(error).toBeInstanceOf(PlapiError);
-        expect((error as PlapiError).status).toBe(400);
+        expect((error as InstanceType<typeof PlapiError>).status).toBe(400);
       }
     });
   });
@@ -241,7 +241,7 @@ describe("plapi", () => {
         expect(true).toBe(false);
       } catch (error) {
         expect(error).toBeInstanceOf(PlapiError);
-        expect((error as PlapiError).status).toBe(422);
+        expect((error as InstanceType<typeof PlapiError>).status).toBe(422);
       }
     });
   });
@@ -282,7 +282,7 @@ describe("plapi", () => {
         expect(true).toBe(false);
       } catch (error) {
         expect(error).toBeInstanceOf(PlapiError);
-        expect((error as PlapiError).status).toBe(404);
+        expect((error as InstanceType<typeof PlapiError>).status).toBe(404);
       }
     });
   });
@@ -339,7 +339,7 @@ describe("plapi", () => {
         expect(true).toBe(false);
       } catch (error) {
         expect(error).toBeInstanceOf(PlapiError);
-        expect((error as PlapiError).status).toBe(400);
+        expect((error as InstanceType<typeof PlapiError>).status).toBe(400);
       }
     });
   });
@@ -375,7 +375,7 @@ describe("plapi", () => {
         expect(true).toBe(false);
       } catch (error) {
         expect(error).toBeInstanceOf(PlapiError);
-        expect((error as PlapiError).status).toBe(403);
+        expect((error as InstanceType<typeof PlapiError>).status).toBe(403);
       }
     });
   });

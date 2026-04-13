@@ -205,7 +205,7 @@ describe("withTag", () => {
     });
 
     expect(cap.stderr).toHaveLength(1);
-    const [output] = cap.stderr;
+    const [output] = cap.stderr as [string];
     const tagEnd = output.indexOf("]");
     const afterTagBeforeMessage = output.slice(tagEnd + 1, output.indexOf("broken"));
     expect(afterTagBeforeMessage).not.toContain("\x1b[0m");
@@ -234,7 +234,7 @@ describe("inline highlighting", () => {
     });
 
     expect(cap.stderr).toHaveLength(1);
-    const [output] = cap.stderr;
+    const [output] = cap.stderr as [string];
     const beforeBacktick = output.indexOf("\x1b[36m");
     const afterBacktick = output.indexOf("clerk link") + "clerk link".length;
     const highlightRegion = output.slice(beforeBacktick, afterBacktick + 10);

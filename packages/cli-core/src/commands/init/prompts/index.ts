@@ -33,7 +33,7 @@ const TEMPLATES = {
 } satisfies Record<string, string>;
 
 type TemplateName = keyof typeof TEMPLATES;
-type FrameworkTemplateName = Exclude<TemplateName, "generic" | "generic-fallback">;
+type FrameworkTemplateName = Exclude<TemplateName, "generic">;
 type FrameworkPromptInfo = { template: FrameworkTemplateName; docsUrl: string };
 
 function loadTemplate(name: TemplateName): string {

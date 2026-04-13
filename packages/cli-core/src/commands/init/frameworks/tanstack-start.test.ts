@@ -15,6 +15,7 @@ function makeCtx(overrides?: Partial<ProjectContext>): ProjectContext {
       name: "TanStack Start",
       sdk: "@clerk/tanstack-react-start",
       envVar: "VITE_CLERK_PUBLISHABLE_KEY",
+      envFile: ".env.local",
     },
     typescript: true,
     srcDir: true,

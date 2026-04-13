@@ -62,7 +62,7 @@ function createSpinner() {
       }
       stream.write("\x1b[?25l"); // hide cursor
       timer = setInterval(() => {
-        const char = cyan(FRAMES[frame++ % FRAMES.length]);
+        const char = cyan(FRAMES[frame++ % FRAMES.length]!);
         stream.write(`\r\x1b[K${char}  ${message}`);
       }, INTERVAL);
     },

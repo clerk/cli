@@ -226,7 +226,7 @@ function ensureRouteImported(source: string): string {
   const importMatch = source.match(
     /import\s*\{([^}]*)\}\s*from\s*["']@react-router\/dev\/routes["']/,
   );
-  if (!importMatch || /\broute\b/.test(importMatch[1])) return source;
+  if (!importMatch || !importMatch[1] || /\broute\b/.test(importMatch[1])) return source;
 
   return source.replace(
     /(\bimport\s*\{[^}]*)(\}\s*from\s*["']@react-router\/dev\/routes["'])/,
@@ -301,7 +301,7 @@ function injectRouteEntries(
   // Strategy 1: canonical create-react-router pattern.
   const canonicalPattern = /export default \[([^\]]*)\]\s*satisfies\s*RouteConfig\s*;/s;
   const canonical = source.match(canonicalPattern);
-  if (canonical) {
+  if (canonical && canonical[1] !== undefined) {
     const innerContent = canonical[1].trimEnd();
     const separator = innerContent.length > 0 && !innerContent.endsWith(",") ? "," : "";
     const newInner = `${innerContent}${separator}\n  ${newEntries},\n`;
@@ -311,7 +311,7 @@ function injectRouteEntries(
   // Strategy 2: any `export default [...]` array (no satisfies).
   const simplePattern = /(export\s+default\s+\[)([\s\S]*?)(\]\s*;)/;
   const simple = source.match(simplePattern);
-  if (simple) {
+  if (simple && simple[2] !== undefined) {
     const innerContent = simple[2].trimEnd();
     const separator = innerContent.length > 0 && !innerContent.endsWith(",") ? "," : "";
     const newInner = `${innerContent}${separator}\n  ${newEntries},\n`;

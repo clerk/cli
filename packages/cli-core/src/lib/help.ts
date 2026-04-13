@@ -106,7 +106,7 @@ export function clerkHelpConfig(): Partial<Help> {
           helper.formatItem(
             helper.styleSubcommandTerm(term),
             termWidth,
-            helper.styleSubcommandDescription(cmdData[i].description),
+            helper.styleSubcommandDescription(cmdData[i]!.description),
             helper,
           ),
         );

@@ -146,13 +146,13 @@ describe("filterEndpoints", () => {
   test("filters by summary", () => {
     const results = filterEndpoints(catalog, "retrieve");
     expect(results.length).toBe(1);
-    expect(results[0].operationId).toBe("GetUser");
+    expect(results[0]!.operationId).toBe("GetUser");
   });
 
   test("filters by tag", () => {
     const results = filterEndpoints(catalog, "organizations");
     expect(results.length).toBe(1);
-    expect(results[0].tag).toBe("Organizations");
+    expect(results[0]!.tag).toBe("Organizations");
   });
 
   test("is case-insensitive", () => {
