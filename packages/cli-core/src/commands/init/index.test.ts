@@ -110,7 +110,7 @@ describe("init", () => {
 
     await init({ yes: true });
 
-    expect(loginMod.login).toHaveBeenCalledWith({ showNextSteps: false });
+    expect(loginMod.login).toHaveBeenCalledWith(expect.anything(), { showNextSteps: false });
     expect(linkMod.link).toHaveBeenCalledWith({ skipIfLinked: true, app: undefined });
   });
 

@@ -33,18 +33,38 @@ mock.module("../auth/login.ts", () => ({
   login: (...args: unknown[]) => mockLogin(...args),
 }));
 
+mock.module("../../lib/root.ts", () => ({
+  createRoot: () => ({}),
+}));
+
 const mockListApplications = mock();
 const mockFetchApplication = mock();
 const mockCreateApplication = mock();
-mock.module("../../lib/plapi.ts", () => ({
-  listApplications: (...args: unknown[]) => mockListApplications(...args),
-  fetchApplication: (...args: unknown[]) => mockFetchApplication(...args),
-  createApplication: (...args: unknown[]) => mockCreateApplication(...args),
-  PlapiError: class PlapiError extends Error {},
-  fetchInstanceConfig: async () => ({}),
-  putInstanceConfig: async () => ({}),
-  patchInstanceConfig: async () => ({}),
-}));
+mock.module("../../lib/plapi.ts", () => {
+  const listApplications = (...args: unknown[]) => mockListApplications(...args);
+  const fetchApplication = (...args: unknown[]) => mockFetchApplication(...args);
+  const createApplication = (...args: unknown[]) => mockCreateApplication(...args);
+  const fetchInstanceConfig = async () => ({});
+  const putInstanceConfig = async () => ({});
+  const patchInstanceConfig = async () => ({});
+  return {
+    listApplications,
+    fetchApplication,
+    createApplication,
+    PlapiError: class PlapiError extends Error {},
+    fetchInstanceConfig,
+    putInstanceConfig,
+    patchInstanceConfig,
+    plapi: {
+      listApplications,
+      fetchApplication,
+      createApplication,
+      fetchInstanceConfig,
+      putInstanceConfig,
+      patchInstanceConfig,
+    },
+  };
+});
 
 const mockSetProfile = mock();
 const mockResolveProfile = mock();
@@ -86,12 +106,19 @@ mock.module("@inquirer/prompts", () => ({
   input: (...args: unknown[]) => mockInput(...args),
 }));
 
-mock.module("../../lib/spinner.ts", () => ({
-  intro: () => {},
-  outro: () => {},
-  bar: () => {},
-  withSpinner: async (_msg: string, fn: () => Promise<unknown>) => fn(),
-}));
+mock.module("../../lib/spinner.ts", () => {
+  const intro = () => {};
+  const outro = () => {};
+  const bar = () => {};
+  const withSpinner = async <T>(_msg: string, fn: () => Promise<T>) => fn();
+  return {
+    intro,
+    outro,
+    bar,
+    withSpinner,
+    spinner: { intro, outro, bar, withSpinner },
+  };
+});
 
 const { link } = await import("./index.ts");
 
@@ -311,7 +338,7 @@ describe("link", () => {
 
       await runLink({ app: "app_123" });
 
-      expect(mockLogin).toHaveBeenCalledWith({ showNextSteps: false });
+      expect(mockLogin).toHaveBeenCalledWith(expect.anything(), { showNextSteps: false });
     });
   });
 

@@ -34,7 +34,7 @@ export function captureLog() {
 
 const noop = async () => {};
 
-export const configStubs = {
+const configStubMembers = {
   _setConfigDir: () => {},
   readConfig: noop,
   writeConfig: noop,
@@ -52,23 +52,38 @@ export const configStubs = {
   resolveAppContext: async () => ({ appId: "", appLabel: "", instanceId: "", instanceLabel: "" }),
 };
 
+export const configStubs = {
+  ...configStubMembers,
+  configStore: configStubMembers,
+};
+
 export const autolinkStubs = {
   findClerkKeys: async () => [],
   matchKeyToApp: () => undefined,
   autolink: async () => undefined,
 };
 
-export const credentialStoreStubs = {
+const credentialStoreStubMembers = {
   getToken: async () => null,
   storeToken: async () => {},
   deleteToken: async () => {},
 };
 
-export const gitStubs = {
+export const credentialStoreStubs = {
+  ...credentialStoreStubMembers,
+  credentialStore: credentialStoreStubMembers,
+};
+
+const gitStubMembers = {
   getGitRepoRoot: async () => undefined,
   getGitRepoIdentifier: async () => undefined,
   getGitNormalizedRemote: async () => undefined,
   normalizeGitRemoteUrl: (url: string) => url,
+};
+
+export const gitStubs = {
+  ...gitStubMembers,
+  git: gitStubMembers,
 };
 
 export const promptsStubs = {
