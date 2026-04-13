@@ -44,7 +44,7 @@ export function extractModeFromArgv(argv: string[]): Mode | undefined {
   // behavior under the now-removed preAction hook. Validate every occurrence.
   let result: Mode | undefined;
   for (let i = 0; i < argv.length; i++) {
-    const a = argv[i];
+    const a = argv[i]!;
     let v: string | undefined;
     if (a === "--mode" && argv[i + 1]) {
       v = argv[i + 1];
