@@ -22,7 +22,7 @@
  */
 
 import { mock } from "bun:test";
-import type { Root } from "../../src/lib/deps.ts";
+import type { Root } from "../../lib/deps.ts";
 
 type DeepPartial<T> = T extends object ? { [K in keyof T]?: DeepPartial<T[K]> } : T;
 
@@ -87,7 +87,7 @@ const defaults: Root = {
     getGitRepoRoot: strict("git.getGitRepoRoot"),
     getGitRepoIdentifier: strict("git.getGitRepoIdentifier"),
     getGitNormalizedRemote: strict("git.getGitNormalizedRemote"),
-    normalizeGitRemoteUrl: (u) => u,
+    normalizeGitRemoteUrl: (u: string) => u,
   },
 
   // ── plapi (network); every method strict ───────────────────────────
@@ -117,6 +117,7 @@ const defaults: Root = {
   // ── prompts (no input) ─────────────────────────────────────────────
   prompts: {
     confirm: async () => false,
+    select: strict("prompts.select"),
   },
 
   // ── mode (test default = human) ────────────────────────────────────
@@ -136,7 +137,7 @@ const defaults: Root = {
     intro: () => {},
     outro: () => {},
     bar: () => {},
-    withSpinner: async (_message, fn, _doneMessage) => fn(),
+    withSpinner: async <T>(_message: string, fn: () => Promise<T>, _doneMessage?: string) => fn(),
   },
 
   // ── log (UI side effects) ──────────────────────────────────────────
@@ -178,6 +179,7 @@ const defaults: Root = {
     }),
     getPlapiBaseUrl: () => "https://api.test",
     getBapiBaseUrl: () => "https://api.test.dev",
+    getDashboardUrl: () => "https://dashboard.test",
   },
 
   // ── projectDetector (filesystem) ───────────────────────────────────
@@ -187,28 +189,32 @@ const defaults: Root = {
 };
 
 export function testRoot(overrides: DeepPartial<Root> = {}): Root {
-  const root = {} as Root;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- dynamic property merging
+  const root: any = {};
   for (const key of Object.keys(defaults) as (keyof Root)[]) {
     const defaultsForKey = defaults[key];
-    const overridesForKey = (overrides[key] ?? {}) as object;
+    const overridesForKey = (overrides[key] ?? {}) as Record<string, unknown>;
     // For Proxy-based defaults (plapi, bapi), preserve the Proxy and only
     // overlay overrides as a separate object that takes precedence.
     if (proxyDefaults.has(defaultsForKey as object)) {
-      root[key] = new Proxy({} as Root[typeof key], {
-        get: (_target, prop: string) => {
-          if (prop in overridesForKey) {
-            const v = (overridesForKey as Record<string, unknown>)[prop];
-            return typeof v === "function" ? mock(v as never) : v;
-          }
-          return (defaultsForKey as Record<string, unknown>)[prop];
+      root[key] = new Proxy(
+        {},
+        {
+          get: (_target, prop: string) => {
+            if (prop in overridesForKey) {
+              const v = overridesForKey[prop];
+              return typeof v === "function" ? mock(v as never) : v;
+            }
+            return (defaultsForKey as unknown as Record<string, unknown>)[prop];
+          },
         },
-      });
+      );
       continue;
     }
-    const merged = { ...defaultsForKey, ...overridesForKey };
+    const merged = { ...(defaultsForKey as object), ...overridesForKey };
     root[key] = Object.fromEntries(
       Object.entries(merged).map(([k, v]) => [k, typeof v === "function" ? mock(v as never) : v]),
-    ) as Root[typeof key];
+    );
   }
-  return root;
+  return root as Root;
 }
