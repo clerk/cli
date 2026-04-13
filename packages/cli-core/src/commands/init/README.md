@@ -6,6 +6,7 @@ Initializes Clerk in a project by authenticating the user, linking a Clerk appli
 
 ```sh
 clerk init
+clerk init --app app_123
 clerk init --framework next
 clerk init --starter
 clerk init --starter --framework next
@@ -20,6 +21,7 @@ clerk init --no-skills
 | Option               | Description                                                                                                                                                                           |
 | -------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `--framework <name>` | Framework to set up (skips auto-detection). Valid values: `next`, `astro`, `nuxt`, `tanstack-start`, `react-router`, `vue`, `expo`, `react`, `javascript`, `js`, `express`, `fastify` |
+| `--app <id>`         | Link to a specific Clerk application by ID (skips the interactive app picker). If the repo is already linked to a different application, prompts to re-link.                          |
 | `--starter`          | Bootstrap a new project from a starter template (runs the framework generator, installs deps, and scaffolds Clerk)                                                                    |
 | `--prompt`           | Output a prompt for an AI agent to integrate Clerk, then exit                                                                                                                         |
 | `-y, --yes`          | Skip confirmation prompts (also skips authentication after bootstrap, letting you connect your account later)                                                                         |
