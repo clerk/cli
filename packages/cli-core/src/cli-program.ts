@@ -88,6 +88,7 @@ export function createProgram() {
         FRAMEWORK_NAMES,
       ),
     )
+    .option("--app <id>", "Link to a specific Clerk application by ID")
     .option("--prompt", "Output a prompt for an AI agent to integrate Clerk")
     .option("--starter", "Create a new project from a starter template")
     .option("-y, --yes", "Skip confirmation prompts")
@@ -97,6 +98,10 @@ export function createProgram() {
       {
         command: "clerk init --framework next",
         description: "Set up for Next.js (skips detection)",
+      },
+      {
+        command: "clerk init --app app_123",
+        description: "Link to a specific Clerk application",
       },
       { command: "clerk init --starter", description: "Create a new project with Clerk" },
       { command: "clerk init --prompt", description: "Output a setup prompt for an AI agent" },
