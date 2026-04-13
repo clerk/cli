@@ -126,6 +126,16 @@ describe("init", () => {
     expect(linkMod.link).toHaveBeenCalledWith({ skipIfLinked: true, app: "app_abc" });
   });
 
+  test("forwards --app to link when no profile exists", async () => {
+    setup({ email: "test@test.com" });
+    spyOn(context, "gatherContext").mockResolvedValue(FAKE_CTX);
+    // resolveProfile already returns undefined by default in setup()
+
+    await init({ yes: true, app: "app_abc" });
+
+    expect(linkMod.link).toHaveBeenCalledWith({ skipIfLinked: true, app: "app_abc" });
+  });
+
   test("agent mode prints guidance without auth/bootstrap", async () => {
     const { captured } = setup({ isAgent: true });
 
