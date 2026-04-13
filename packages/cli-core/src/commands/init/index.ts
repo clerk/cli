@@ -37,6 +37,7 @@ type InitOptions = {
   prompt?: boolean;
   skills?: boolean;
   starter?: boolean;
+  app?: string;
 };
 
 export async function init(options: InitOptions = {}) {
@@ -74,7 +75,7 @@ export async function init(options: InitOptions = {}) {
 
   if (!keyless) {
     bar();
-    await authenticateAndLink(ctx.cwd);
+    await authenticateAndLink(ctx.cwd, options.app);
   }
 
   // Short-circuit on a fully-clean re-run so env pull / skills prompt don't
@@ -190,11 +191,13 @@ async function resolveAuthLabel(): Promise<string> {
   return "";
 }
 
-async function authenticateAndLink(cwd: string): Promise<void> {
+async function authenticateAndLink(cwd: string, app: string | undefined): Promise<void> {
   const label = await resolveAuthLabel();
   const profile = await resolveProfile(cwd);
 
-  if (label && profile) {
+  const alreadyOnRequestedApp = profile && (!app || profile.profile.appId === app);
+
+  if (label && alreadyOnRequestedApp) {
     log.info(dim(`${label} · Linked to ${profile.profile.appId}`));
     return;
   }
@@ -203,7 +206,7 @@ async function authenticateAndLink(cwd: string): Promise<void> {
     log.info(dim(label));
   }
 
-  await link({ skipIfLinked: true });
+  await link({ skipIfLinked: true, app });
 }
 
 // --- Detect & install ---

@@ -111,7 +111,19 @@ describe("init", () => {
     await init({ yes: true });
 
     expect(loginMod.login).toHaveBeenCalledWith({ showNextSteps: false });
-    expect(linkMod.link).toHaveBeenCalledWith({ skipIfLinked: true });
+    expect(linkMod.link).toHaveBeenCalledWith({ skipIfLinked: true, app: undefined });
+  });
+
+  test("forwards --app to link when provided", async () => {
+    setup({ email: "test@test.com" });
+    spyOn(context, "gatherContext").mockResolvedValue(FAKE_CTX);
+    spyOn(config, "resolveProfile").mockResolvedValue({
+      profile: { appId: "app_other" },
+    } as never);
+
+    await init({ yes: true, app: "app_abc" });
+
+    expect(linkMod.link).toHaveBeenCalledWith({ skipIfLinked: true, app: "app_abc" });
   });
 
   test("agent mode prints guidance without auth/bootstrap", async () => {
