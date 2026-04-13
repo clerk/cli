@@ -49,7 +49,7 @@ export async function init(options: InitOptions = {}) {
 
   if (options.prompt || isAgent()) {
     log.data(
-      "Run `clerk init -y` to automatically detect the framework, install the Clerk SDK, and scaffold authentication files without interactive prompts. Pass `--app <id>` to link to a specific Clerk application.",
+      "Run `clerk init -y` to automatically detect the framework, install the Clerk SDK, and scaffold authentication files without interactive prompts.",
     );
     return;
   }
