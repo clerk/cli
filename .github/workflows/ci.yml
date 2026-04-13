@@ -113,3 +113,14 @@ jobs:
           CLERK_CLI_TEST_APP_ID: ${{ secrets.CLERK_CLI_TEST_APP_ID }}
           CLERK_PLATFORM_API_KEY: ${{ secrets.CLERK_PLATFORM_API_KEY }}
           CLERK_E2E_DEBUG: "1"
+
+  notify-failure:
+    if: >-
+      always() &&
+      contains(needs.*.result, 'failure')
+    needs: [build, lint, test, test-e2e]
+    uses: ./.github/workflows/notify-failure.yml
+    with:
+      workflow-name: CI
+    secrets:
+      SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
