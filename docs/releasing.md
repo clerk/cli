@@ -219,12 +219,12 @@ Install: `brew install clerk/stable/clerk`
 | `scripts/snapshot.ts`                  | Versions packages for snapshot channel using Changesets snapshots              |
 | `scripts/check-release.ts`             | Detects if a stable release is needed (compares version to npm registry)       |
 | `scripts/homebrew.ts`                  | Creates Homebrew archives, uploads to release, renders and pushes formula      |
-| `scripts/homebrew-formula.ts`          | Renders `Formula/clerk.rb` from version + checksums                            |
+| `scripts/lib/homebrew.ts`              | Homebrew formula renderer, target list, and helper utilities                   |
 | `.changeset/config.json`               | Changesets configuration                                                       |
 | `.github/workflows/build-binaries.yml` | Reusable workflow for cross-compiling binaries (called by release + snapshot)  |
 | `.github/workflows/sign-macos.yml`     | Reusable workflow for macOS code signing and notarization                      |
 | `.github/workflows/smoke-test.yml`     | Reusable workflow for smoke-testing binaries (called by release + snapshot)    |
-| `.github/workflows/release.yml`        | GitHub Actions release, canary, and snapshot workflow                           |
+| `.github/workflows/release.yml`        | GitHub Actions release, canary, and snapshot workflow                          |
 
 ## Keeping Targets in Sync
 
@@ -232,9 +232,9 @@ The target list exists in these places that must stay in sync:
 
 1. `scripts/releaser/targets.ts` -- used by the releaser to generate platform packages and by `scripts/build.ts` to cross-compile binaries
 2. `.github/workflows/smoke-test.yml` preset definitions -- defines the target matrix for each preset (`stable`, `canary`, `snapshot`)
-3. `scripts/homebrew.ts` -- the `HOMEBREW_TARGETS` array of Homebrew-relevant targets (darwin-arm64, darwin-x64, linux-arm64, linux-x64)
+3. `scripts/lib/homebrew.ts` -- the `HOMEBREW_TARGETS` array of Homebrew-relevant targets (darwin-arm64, darwin-x64, linux-arm64, linux-x64)
 
-If you add or remove a target, update both of these. Note that the smoke-test presets may not cover every target if a native runner isn't available (e.g., `win32-arm64`).
+If you add or remove a target, update all three of these. Note that the smoke-test presets may not cover every target if a native runner isn't available (e.g., `win32-arm64`).
 
 ## Local Development
 
