@@ -110,6 +110,25 @@ ${header}
   };
 }
 
+async function scaffoldIndexPage(cwd: string, pagesRoot: string): Promise<FileAction> {
+  const indexPath = `${pagesRoot}/index.vue`;
+  if (await Bun.file(join(cwd, indexPath)).exists()) {
+    return { type: "skip", path: indexPath, skipReason: "Index page already exists" };
+  }
+  return {
+    type: "create",
+    path: indexPath,
+    content: `<template>
+  <div style="display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: calc(100vh - 65px); font-family: system-ui, sans-serif;">
+    <h1>It works!</h1>
+    <p>Edit <code>${indexPath}</code> to get started.</p>
+  </div>
+</template>
+`,
+    description: "Create index page so the root route renders",
+  };
+}
+
 export const nuxt: FrameworkScaffold = {
   name: "Nuxt",
   dep: "nuxt",
@@ -120,7 +139,7 @@ export const nuxt: FrameworkScaffold = {
   async scaffold(ctx: ProjectContext): Promise<ScaffoldPlan> {
     const tailwind = hasTailwindStyles(ctx);
     const pagesRoot = await pagesDir(ctx.cwd);
-    const [configAction, appVueAction, authActions, envAction] = await Promise.all([
+    const [configAction, appVueAction, authActions, envAction, indexAction] = await Promise.all([
       scaffoldConfig(ctx),
       scaffoldAppVue(ctx, tailwind),
       scaffoldAuthFiles(
@@ -134,9 +153,10 @@ export const nuxt: FrameworkScaffold = {
         }),
       ),
       scaffoldEnvVars(ctx, SIGN_ROUTE_ENV_VARS.nuxt),
+      ctx.isBootstrap ? scaffoldIndexPage(ctx.cwd, pagesRoot) : Promise.resolve(null),
     ]);
 
-    const actions = [configAction, appVueAction, ...authActions, envAction].filter(
+    const actions = [configAction, appVueAction, indexAction, ...authActions, envAction].filter(
       (action): action is FileAction => action !== null,
     );
 

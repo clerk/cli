@@ -53,10 +53,11 @@ export async function installDeps(ctx: ProjectContext, packages: string[]): Prom
 
 export async function installSdk(ctx: ProjectContext): Promise<void> {
   const addCmd = pmInstallCommand(ctx.packageManager);
+  const installPkg = ctx.framework.sdkInstall ?? ctx.framework.sdk;
   await runPmInstall(
     ctx.cwd,
     addCmd,
-    [ctx.framework.sdk],
+    [installPkg],
     `${cyan(ctx.framework.sdk)} for ${ctx.framework.name}`,
   );
 }

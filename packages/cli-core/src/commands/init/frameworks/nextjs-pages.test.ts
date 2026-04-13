@@ -15,7 +15,7 @@ function makeCtx(overrides?: Partial<ProjectContext>): ProjectContext {
       name: "Next.js",
       sdk: "@clerk/nextjs",
       envVar: "NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY",
-      envFile: ".env",
+      envFile: ".env" as const,
     },
     variant: "pages-router",
     typescript: true,

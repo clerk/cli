@@ -196,14 +196,11 @@ async function scaffoldRoot(ctx: ProjectContext): Promise<FileAction | null> {
     );
   }
 
-  return {
-    path: rootPath,
-    type: "modify",
-    content: newContent,
-    description: ctx.isBootstrap
-      ? "Add ClerkProvider, wrap body contents, and add auth header"
-      : "Add ClerkProvider import and wrap body contents",
-  };
+  const description = ctx.isBootstrap
+    ? "Add ClerkProvider, wrap body contents, and add auth header"
+    : "Add ClerkProvider import and wrap body contents";
+
+  return { path: rootPath, type: "modify", content: newContent, description };
 }
 
 export const tanstackStart: FrameworkScaffold = {

@@ -23,23 +23,19 @@ async function findEntryFile(ctx: ProjectContext): Promise<string | null> {
 }
 
 function addClerkPluginSetup(source: string): string {
-  const keyBlock = `\nconst PUBLISHABLE_KEY = import.meta.env.VITE_CLERK_PUBLISHABLE_KEY;\n\nif (!PUBLISHABLE_KEY) {\n  throw new Error("Add your Clerk Publishable Key to the .env file");\n}\n`;
+  const keyBlock = `\nconst PUBLISHABLE_KEY = import.meta.env.VITE_CLERK_PUBLISHABLE_KEY;\nif (!PUBLISHABLE_KEY) {\n  throw new Error("Missing VITE_CLERK_PUBLISHABLE_KEY. Add your key to .env.local.\\nRun: 1) clerk auth login  2) clerk link  3) clerk env pull — then restart the dev server.");\n}\n`;
 
   let result = source;
+
+  const useClerk = `app.use(clerkPlugin, { publishableKey: PUBLISHABLE_KEY });`;
 
   // Handle chained pattern: createApp(App).mount(...) -> split into separate statements
   const chainedPattern = /(createApp\([^)]*\))\.mount\s*\(([^)]*)\)/;
   if (chainedPattern.test(result)) {
-    result = result.replace(
-      chainedPattern,
-      `const app = $1;\napp.use(clerkPlugin, { publishableKey: PUBLISHABLE_KEY });\napp.mount($2)`,
-    );
+    result = result.replace(chainedPattern, `const app = $1;\n${useClerk}\napp.mount($2)`);
   } else {
     // Handle variable pattern: app.mount(...) -> insert app.use() before it
-    result = result.replace(
-      /((\w+)\.mount\s*\()/,
-      `$2.use(clerkPlugin, { publishableKey: PUBLISHABLE_KEY });\n$1`,
-    );
+    result = result.replace(/((\w+)\.mount\s*\()/, `${useClerk}\n$1`);
   }
 
   return insertAfterLastImport(result, keyBlock);
@@ -53,9 +49,8 @@ import { clerkPlugin } from "@clerk/vue";
 import App from "./App.vue";
 ${routerImport}
 const PUBLISHABLE_KEY = import.meta.env.VITE_CLERK_PUBLISHABLE_KEY;
-
 if (!PUBLISHABLE_KEY) {
-  throw new Error("Add your Clerk Publishable Key to the .env file");
+  throw new Error("Missing VITE_CLERK_PUBLISHABLE_KEY. Add your key to .env.local.\\nRun: 1) clerk auth login  2) clerk link  3) clerk env pull — then restart the dev server.");
 }
 
 const app = createApp(App);
@@ -91,21 +86,16 @@ async function scaffoldEntry(ctx: ProjectContext, withRouter = false): Promise<F
   }
 
   // Add the publishable key constant and app.use() call before app.mount()
-  if (newContent.includes(".mount(")) {
-    newContent = addClerkPluginSetup(newContent);
-    if (withRouter) {
-      newContent = newContent.replace(/(.+\.mount\s*\()/, `app.use(router);\n$1`);
-    }
-  }
+  const hasMount = newContent.includes(".mount(");
+  if (hasMount) newContent = addClerkPluginSetup(newContent);
+  if (hasMount && withRouter)
+    newContent = newContent.replace(/(.+\.mount\s*\()/, `app.use(router);\n$1`);
 
-  return {
-    path: entryPath,
-    type: "modify",
-    content: newContent,
-    description: withRouter
-      ? "Add clerkPlugin with publishableKey and vue-router to Vue app"
-      : "Add clerkPlugin with publishableKey to Vue app",
-  };
+  const description = withRouter
+    ? "Add clerkPlugin with publishableKey and vue-router to Vue app"
+    : "Add clerkPlugin with publishableKey to Vue app";
+
+  return { path: entryPath, type: "modify", content: newContent, description };
 }
 
 function authPageContent(kind: "sign-in" | "sign-up", tailwind: boolean): string {
@@ -176,29 +166,21 @@ async function scaffoldAppVue(ctx: ProjectContext, tailwind: boolean): Promise<F
   const appPath = await findFirstFile(ctx.cwd, [`${base}App.vue`]);
   if (!appPath) return null;
 
+  if (!ctx.isBootstrap) {
+    return {
+      path: appPath,
+      type: "modify",
+      content: `<template>\n  <RouterView />\n</template>\n`,
+      description: "Replace template with <RouterView /> for vue-router",
+    };
+  }
+
   const header = headerHtmlBlock("    ", tailwind);
-  const content = ctx.isBootstrap
-    ? `<script setup>
-import { Show, SignInButton, SignUpButton, UserButton } from "@clerk/vue";
-</script>
-
-<template>
-${header}
-    <RouterView />
-</template>
-`
-    : `<template>
-  <RouterView />
-</template>
-`;
-
   return {
     path: appPath,
     type: "modify",
-    content,
-    description: ctx.isBootstrap
-      ? "Replace template with <RouterView /> and add auth header"
-      : "Replace template with <RouterView /> for vue-router",
+    content: `<script setup>\nimport { Show, SignInButton, SignUpButton, UserButton } from "@clerk/vue";\n</script>\n\n<template>\n${header}\n    <RouterView />\n</template>\n`,
+    description: "Replace template with <RouterView /> and add auth header",
   };
 }
 

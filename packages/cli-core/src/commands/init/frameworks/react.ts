@@ -53,14 +53,11 @@ async function scaffoldEntry(ctx: ProjectContext): Promise<FileAction | null> {
     newContent = addBootstrapHeader(newContent, "@clerk/react", hasTailwindStyles(ctx));
   }
 
-  return {
-    path: entryPath,
-    type: "modify",
-    content: newContent,
-    description: ctx.isBootstrap
-      ? "Add ClerkProvider, wrap app root, and add auth header"
-      : "Add ClerkProvider import and wrap app root",
-  };
+  const description = ctx.isBootstrap
+    ? "Add ClerkProvider, wrap app root, and add auth header"
+    : "Add ClerkProvider import and wrap app root";
+
+  return { path: entryPath, type: "modify", content: newContent, description };
 }
 
 export const reactVite: FrameworkScaffold = {

@@ -73,16 +73,25 @@ function addClerkToIntegrations(content: string): string {
   return content;
 }
 
-function addClerkIntegration(content: string): string {
-  return addClerkToIntegrations(addClerkImport(content));
+function enableServerOutput(content: string): string {
+  if (content.includes("output:")) return content;
+  return content.replace(/(defineConfig\s*\(\s*\{)/, '$1\n  output: "server",');
+}
+
+function addClerkIntegration(content: string, enableSsr = false): string {
+  let result = addClerkToIntegrations(addClerkImport(content));
+  if (enableSsr) result = enableServerOutput(result);
+  return result;
 }
 
 function scaffoldConfig(ctx: ProjectContext): Promise<FileAction> {
   return scaffoldConfigFile(ctx.cwd, {
     candidates: ["astro.config.mjs", "astro.config.ts", "astro.config.js"],
     existsCheck: "@clerk/astro",
-    modify: addClerkIntegration,
-    description: "Add clerk() to integrations and import",
+    modify: (content) => addClerkIntegration(content, Boolean(ctx.isBootstrap)),
+    description: ctx.isBootstrap
+      ? "Add clerk() to integrations, import, and enable SSR output"
+      : "Add clerk() to integrations and import",
     existingSkipReason: "Already has @clerk/astro integration",
     missingAction: {
       type: "skip",

@@ -29,7 +29,8 @@ function runner(pm: PackageManager): string[] {
 // create-astro) infer the PM from npm_config_user_agent, which is set automatically when run
 // via bunx/pnpm dlx/yarn dlx/npx. This works in practice since we run them via the selected
 // PM's runner, and our own installDependencies() step uses the correct PM regardless.
-export const BOOTSTRAP_REGISTRY: BootstrapEntry[] = [
+/** Frameworks that support keyless mode — used for bootstrap (new project from empty dir / --starter). */
+export const BOOTSTRAP_KEYLESS_REGISTRY: BootstrapEntry[] = [
   {
     label: "Next.js",
     dep: "next",
@@ -42,24 +43,6 @@ export const BOOTSTRAP_REGISTRY: BootstrapEntry[] = [
       "--skip-install",
       "--disable-git",
     ],
-  },
-  {
-    label: "React",
-    dep: "react",
-    defaultProjectName: "my-clerk-react-app",
-    buildCommand: (pm, name) => [
-      ...runner(pm),
-      "create-vite@latest",
-      name,
-      "--template",
-      "react-ts",
-    ],
-  },
-  {
-    label: "Vue",
-    dep: "vue",
-    defaultProjectName: "my-clerk-vue-app",
-    buildCommand: (pm, name) => [...runner(pm), "create-vite@latest", name, "--template", "vue-ts"],
   },
   {
     label: "React Router",
@@ -124,6 +107,28 @@ export const BOOTSTRAP_REGISTRY: BootstrapEntry[] = [
       pm,
     ],
   },
+];
+
+/** Frameworks that require API keys — keyless mode is not yet supported. */
+export const BOOTSTRAP_AUTHENTICATED_REGISTRY: BootstrapEntry[] = [
+  {
+    label: "React",
+    dep: "react",
+    defaultProjectName: "my-clerk-react-app",
+    buildCommand: (pm, name) => [
+      ...runner(pm),
+      "create-vite@latest",
+      name,
+      "--template",
+      "react-ts",
+    ],
+  },
+  {
+    label: "Vue",
+    dep: "vue",
+    defaultProjectName: "my-clerk-vue-app",
+    buildCommand: (pm, name) => [...runner(pm), "create-vite@latest", name, "--template", "vue-ts"],
+  },
   {
     label: "JavaScript",
     dep: "vite",
@@ -136,6 +141,12 @@ export const BOOTSTRAP_REGISTRY: BootstrapEntry[] = [
       "vanilla",
     ],
   },
+];
+
+/** All bootstrap-capable frameworks (keyless + authenticated). */
+export const BOOTSTRAP_REGISTRY: BootstrapEntry[] = [
+  ...BOOTSTRAP_KEYLESS_REGISTRY,
+  ...BOOTSTRAP_AUTHENTICATED_REGISTRY,
 ];
 
 export const PM_INSTALL_COMMANDS: Record<PackageManager, string[]> = {

@@ -324,6 +324,51 @@ test("omits Show post-instruction when bootstrap includes header", async () => {
   expect(plan.postInstructions.some((i) => i.includes("<Show"))).toBe(false);
 });
 
+test("creates index page during bootstrap (Nuxt 4 app/ layout)", async () => {
+  await mkdir(join(tempDir, "app"), { recursive: true });
+  await Bun.write(
+    join(tempDir, "nuxt.config.ts"),
+    `export default defineNuxtConfig({ modules: [] });\n`,
+  );
+  await Bun.write(join(tempDir, "app/app.vue"), `<template>\n  <NuxtWelcome />\n</template>\n`);
+
+  const plan = await nuxt.scaffold(makeCtx({ isBootstrap: true }));
+
+  const indexPage = findAction(plan.actions, "app/pages/index.vue");
+  expect(indexPage.type).toBe("create");
+  if (indexPage.type === "create") {
+    expect(indexPage.content).toContain("It works!");
+    expect(indexPage.content).toContain("app/pages/index.vue");
+  }
+});
+
+test("skips index page during bootstrap when it already exists", async () => {
+  await mkdir(join(tempDir, "app/pages"), { recursive: true });
+  await Bun.write(
+    join(tempDir, "nuxt.config.ts"),
+    `export default defineNuxtConfig({ modules: [] });\n`,
+  );
+  await Bun.write(join(tempDir, "app/app.vue"), `<template>\n  <NuxtWelcome />\n</template>\n`);
+  await Bun.write(join(tempDir, "app/pages/index.vue"), `<template><div>existing</div></template>`);
+
+  const plan = await nuxt.scaffold(makeCtx({ isBootstrap: true }));
+
+  const indexPage = findAction(plan.actions, "app/pages/index.vue");
+  expect(indexPage.type).toBe("skip");
+});
+
+test("does not create index page for non-bootstrap init", async () => {
+  await Bun.write(
+    join(tempDir, "nuxt.config.ts"),
+    `export default defineNuxtConfig({ modules: [] });\n`,
+  );
+
+  const plan = await nuxt.scaffold(makeCtx());
+
+  const indexPage = plan.actions.find((a) => a.path.endsWith("index.vue"));
+  expect(indexPage).toBeUndefined();
+});
+
 test("handles nuxt.config.js variant", async () => {
   await Bun.write(
     join(tempDir, "nuxt.config.js"),

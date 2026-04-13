@@ -9,6 +9,8 @@ export interface FrameworkInfo {
   dep: string;
   name: string;
   sdk: string;
+  /** Override the install specifier when it differs from the package name (e.g. pinned version). */
+  sdkInstall?: string;
   envVar: string;
   /** Override for secret key env var name. Defaults to CLERK_SECRET_KEY when omitted. */
   secretKeyEnvVar?: string;
@@ -43,9 +45,12 @@ export const FRAMEWORK_MAP: FrameworkInfo[] = [
     dep: "nuxt",
     name: "Nuxt",
     sdk: "@clerk/nuxt",
+    // TODO: Remove sdkInstall once @clerk/nuxt stable (>=2.2.0) ships with keyless support
+    sdkInstall: "@clerk/nuxt@2.2.0-snapshot.v20260413174426",
     envVar: "NUXT_PUBLIC_CLERK_PUBLISHABLE_KEY",
     secretKeyEnvVar: "NUXT_CLERK_SECRET_KEY",
     envFile: ".env",
+    supportsKeyless: true,
   },
   {
     dep: "@tanstack/react-start",

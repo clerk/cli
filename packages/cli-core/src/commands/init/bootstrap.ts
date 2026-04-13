@@ -94,22 +94,6 @@ async function askProjectName(entry: BootstrapEntry): Promise<string> {
   return name.trim();
 }
 
-function resolvePm(override?: PackageManager, skipConfirm = false): PackageManager | null {
-  if (override) return override;
-  if (skipConfirm) return resolvePackageManager();
-  return null;
-}
-
-function resolveName(
-  override?: string,
-  skipConfirm = false,
-  entry?: BootstrapEntry,
-): string | null {
-  if (override) return override;
-  if (skipConfirm && entry) return entry.defaultProjectName;
-  return null;
-}
-
 async function generateProject(label: string, command: string[], cwd: string): Promise<void> {
   log.blank();
   log.info(`Creating \`${label}\` project...`);
@@ -198,9 +182,9 @@ export async function promptAndBootstrap(
   }
 
   const entry = await pickFramework(frameworkOverride);
-  const pm = resolvePm(pmOverride, skipConfirm) ?? (await pickPackageManager());
+  const pm = pmOverride ?? (skipConfirm ? resolvePackageManager() : await pickPackageManager());
   const projectName =
-    resolveName(nameOverride, skipConfirm, entry) ?? (await askProjectName(entry));
+    nameOverride ?? (skipConfirm ? entry.defaultProjectName : await askProjectName(entry));
   const projectDir = join(cwd, projectName);
 
   await generateProject(entry.label, entry.buildCommand(pm, projectName), cwd);
