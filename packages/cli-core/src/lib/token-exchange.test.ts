@@ -20,7 +20,7 @@ describe("exchangeCodeForToken", () => {
         status: 200,
         headers: { "Content-Type": "application/json" },
       });
-    }) as typeof fetch;
+    }) as unknown as typeof fetch;
 
     const result = await exchangeCodeForToken({
       code: "auth-code",
@@ -31,7 +31,7 @@ describe("exchangeCodeForToken", () => {
     expect(result).toEqual(tokenResponse);
     expect(globalThis.fetch).toHaveBeenCalledTimes(1);
 
-    const [, calledInit] = (globalThis.fetch as ReturnType<typeof mock>).mock.calls[0];
+    const [, calledInit] = (globalThis.fetch as unknown as ReturnType<typeof mock>).mock.calls[0]!;
     expect(calledInit.method).toBe("POST");
     expect(calledInit.headers["Content-Type"]).toBe("application/x-www-form-urlencoded");
 
@@ -52,7 +52,7 @@ describe("exchangeCodeForToken", () => {
 
     globalThis.fetch = mock(async () => {
       return new Response(JSON.stringify(tokenResponse), { status: 200 });
-    }) as typeof fetch;
+    }) as unknown as typeof fetch;
 
     const result = await exchangeCodeForToken({
       code: "code",
@@ -66,7 +66,7 @@ describe("exchangeCodeForToken", () => {
   test("throws on non-OK response with status code", async () => {
     globalThis.fetch = mock(async () => {
       return new Response("invalid_grant", { status: 400 });
-    }) as typeof fetch;
+    }) as unknown as typeof fetch;
 
     await expect(
       exchangeCodeForToken({
@@ -80,7 +80,7 @@ describe("exchangeCodeForToken", () => {
   test("includes error body in thrown message", async () => {
     globalThis.fetch = mock(async () => {
       return new Response("detailed error info", { status: 401 });
-    }) as typeof fetch;
+    }) as unknown as typeof fetch;
 
     await expect(
       exchangeCodeForToken({
@@ -103,7 +103,7 @@ describe("fetchUserInfo", () => {
         JSON.stringify({ sub: "user_abc", email: "user@example.com", name: "Test" }),
         { status: 200 },
       );
-    }) as typeof fetch;
+    }) as unknown as typeof fetch;
 
     const result = await fetchUserInfo("valid-token");
     expect(result).toEqual({ userId: "user_abc", email: "user@example.com" });
@@ -112,18 +112,18 @@ describe("fetchUserInfo", () => {
   test("sends Bearer token in Authorization header", async () => {
     globalThis.fetch = mock(async () => {
       return new Response(JSON.stringify({ sub: "u", email: "e" }), { status: 200 });
-    }) as typeof fetch;
+    }) as unknown as typeof fetch;
 
     await fetchUserInfo("my-secret-token");
 
-    const [, init] = (globalThis.fetch as ReturnType<typeof mock>).mock.calls[0];
+    const [, init] = (globalThis.fetch as unknown as ReturnType<typeof mock>).mock.calls[0]!;
     expect(init.headers.Authorization).toBe("Bearer my-secret-token");
   });
 
   test("throws on non-OK response with status code", async () => {
     globalThis.fetch = mock(async () => {
       return new Response("Unauthorized", { status: 401 });
-    }) as typeof fetch;
+    }) as unknown as typeof fetch;
 
     await expect(fetchUserInfo("expired-token")).rejects.toThrow("API error (401)");
   });
@@ -131,7 +131,7 @@ describe("fetchUserInfo", () => {
   test("includes response body in error message", async () => {
     globalThis.fetch = mock(async () => {
       return new Response("token_revoked", { status: 403 });
-    }) as typeof fetch;
+    }) as unknown as typeof fetch;
 
     await expect(fetchUserInfo("bad")).rejects.toThrow("token_revoked");
   });

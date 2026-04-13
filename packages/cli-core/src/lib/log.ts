@@ -146,9 +146,17 @@ function writeln(stream: NodeJS.WriteStream, channel: "stdout" | "stderr", msg: 
 
 // ── Tagged child logger ──────────────────────────────────────────────────
 
-export type Logger = typeof log & {
-  withTag(tag: string): Logger;
-};
+export interface Logger {
+  info(msg: string): void;
+  success(msg: string): void;
+  warn(msg: string): void;
+  error(msg: string): void;
+  debug(msg: string): void;
+  blank(): void;
+  raw(msg: string): void;
+  data(msg: string): void;
+  withTag(childTag: string): Logger;
+}
 
 function createLogger(tag?: string): Logger {
   function formatTag(msg: string): string {

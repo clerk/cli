@@ -34,7 +34,9 @@ test.each([{ mode: "human" }, { mode: "agent" }])(
 
     // Pull config
     const { stdout: pullOutput } = await clerk("--mode", mode, "config", "pull");
-    expect(pullOutput).toContain(`"lifetime": ${MOCK_CONFIG.session.lifetime}`);
+    expect(pullOutput).toContain(
+      `"lifetime": ${(MOCK_CONFIG.session as { lifetime: number }).lifetime}`,
+    );
 
     // Pull schema
     http.mock({

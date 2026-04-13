@@ -15,6 +15,7 @@ function makeCtx(overrides?: Partial<ProjectContext>): ProjectContext {
       name: "Astro",
       sdk: "@clerk/astro",
       envVar: "PUBLIC_CLERK_PUBLISHABLE_KEY",
+      envFile: ".env",
     },
     typescript: true,
     srcDir: false,

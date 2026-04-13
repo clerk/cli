@@ -77,7 +77,7 @@ export function wrapBodyWithProvider(content: string, provider: string): string 
   const match = bodyPattern.exec(content);
   if (!match) return content;
 
-  const [fullMatch, bodyIndent, openTag, inner, closeTag] = match;
+  const [fullMatch, bodyIndent = "", openTag, inner = "", closeTag] = match;
   const providerIndent = bodyIndent + "  ";
   const contentIndent = providerIndent + "  ";
 

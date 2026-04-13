@@ -95,9 +95,9 @@ export function detectAvailableRunners(): Runner[] {
 export function runnerForPackageManager(
   packageManager: ProjectContext["packageManager"] | undefined,
 ): Runner {
-  if (!packageManager) return KNOWN_RUNNERS[0];
+  if (!packageManager) return KNOWN_RUNNERS[0]!;
   const id = PM_TO_RUNNER[packageManager];
-  return KNOWN_RUNNERS.find((r) => r.id === id) ?? KNOWN_RUNNERS[0];
+  return KNOWN_RUNNERS.find((r) => r.id === id) ?? KNOWN_RUNNERS[0]!;
 }
 
 /**

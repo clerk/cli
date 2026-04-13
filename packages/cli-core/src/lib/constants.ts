@@ -12,7 +12,7 @@ import envPaths from "env-paths";
 // ── File paths ──────────────────────────────────────────────────────────────
 
 const clerkConfigDir = process.env.CLERK_CONFIG_DIR;
-const paths = envPaths("clerk-cli", { suffix: false });
+const paths = envPaths("clerk-cli", { suffix: "" });
 
 export const CONFIG_FILE = join(clerkConfigDir ?? paths.config, "config.json");
 export const CREDENTIALS_FILE = join(clerkConfigDir ?? paths.data, "credentials");

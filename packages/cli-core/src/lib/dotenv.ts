@@ -42,8 +42,8 @@ export function parseEnvFile(content: string): EnvLine[] {
     if (line.trim() === "") return { type: "blank" };
     const match = line.match(ENTRY_RE);
     if (!match) return { type: "comment", raw: line };
-    const key = match[2];
-    let value = match[3];
+    const key = match[2]!;
+    let value = match[3]!;
     // Strip surrounding quotes
     if (
       (value.startsWith('"') && value.endsWith('"')) ||
@@ -59,7 +59,7 @@ export function mergeEnvVars(lines: EnvLine[], vars: Record<string, string>): En
   const remaining = { ...vars };
   const result = lines.map((line): EnvLine => {
     if (line.type !== "entry" || !(line.key in remaining)) return line;
-    const value = remaining[line.key];
+    const value = remaining[line.key]!;
     delete remaining[line.key];
     return { type: "entry", key: line.key, value, raw: `${line.key}=${value}` };
   });

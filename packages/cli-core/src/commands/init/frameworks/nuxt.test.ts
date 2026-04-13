@@ -15,6 +15,7 @@ function makeCtx(overrides?: Partial<ProjectContext>): ProjectContext {
       name: "Nuxt",
       sdk: "@clerk/nuxt",
       envVar: "NUXT_PUBLIC_CLERK_PUBLISHABLE_KEY",
+      envFile: ".env",
     },
     typescript: true,
     srcDir: false,
