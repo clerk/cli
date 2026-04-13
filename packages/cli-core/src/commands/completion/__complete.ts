@@ -1,4 +1,5 @@
 import type { CommandUnknownOpts, Option } from "@commander-js/extra-typings";
+import { KNOWN_DASHBOARD_PATHS } from "../open/dashboard-paths.ts";
 
 const DIRECTIVE = {
   DEFAULT: 0,
@@ -47,6 +48,19 @@ const KNOWN_OPTION_VALUES: Record<string, Completion[]> = {
   ],
   "--method": HTTP_METHOD_COMPLETIONS,
   "-X": HTTP_METHOD_COMPLETIONS,
+};
+
+/**
+ * Positional-argument completions for commands where the argument accepts
+ * arbitrary values (no Commander `.choices()`) but we still want to suggest
+ * known candidates on tab. Keys are the space-joined command path relative
+ * to root, e.g. "open dashboard".
+ */
+const KNOWN_POSITIONAL_COMPLETIONS: Record<string, Completion[]> = {
+  "open dashboard": KNOWN_DASHBOARD_PATHS.map((path) => ({
+    name: path,
+    description: "Dashboard subpath",
+  })),
 };
 
 /**
@@ -193,15 +207,34 @@ function completeArguments(
   }
 
   const arg = registeredArgs[consumedCount];
-  if (!arg?.argChoices) {
-    return EMPTY_DEFAULT;
+
+  // Prefer strict Commander choices when available.
+  if (arg?.argChoices) {
+    const completions = arg.argChoices
+      .filter((c) => c.startsWith(partial))
+      .map((c) => ({ name: c, description: arg.description ?? "" }));
+    return noFileComp(completions);
   }
 
-  const completions = arg.argChoices
-    .filter((c) => c.startsWith(partial))
-    .map((c) => ({ name: c, description: arg.description ?? "" }));
+  // Fall back to the positional completion registry for commands that
+  // accept free-form values but still want tab suggestions.
+  const path = commandPath(cmd);
+  const registered = KNOWN_POSITIONAL_COMPLETIONS[path];
+  if (registered) {
+    return noFileComp(registered.filter((c) => c.name.startsWith(partial)));
+  }
 
-  return noFileComp(completions);
+  return EMPTY_DEFAULT;
+}
+
+function commandPath(cmd: CommandUnknownOpts): string {
+  const parts: string[] = [];
+  let current: CommandUnknownOpts | null = cmd;
+  while (current && current.parent) {
+    parts.unshift(current.name());
+    current = current.parent;
+  }
+  return parts.join(" ");
 }
 
 function completeOptions(

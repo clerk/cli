@@ -16,6 +16,7 @@ import { unlink } from "./commands/unlink/index.ts";
 import { apps as appsHandlers } from "./commands/apps/index.ts";
 import { doctor } from "./commands/doctor/index.ts";
 import { switchEnv } from "./commands/switch-env/index.ts";
+import { openDashboard } from "./commands/open/index.ts";
 import { getEnvironment } from "./lib/config.ts";
 import { setCurrentEnv, isValidEnv, getCurrentEnvName } from "./lib/environment.ts";
 import { completion, SUPPORTED_SHELLS } from "./commands/completion/index.ts";
@@ -166,6 +167,23 @@ export function createProgram() {
     .description("Show the current logged-in user")
     .setExamples([{ command: "clerk whoami", description: "Show your email address" }])
     .action(whoami);
+
+  const open = program.command("open").description("Open Clerk resources in your browser");
+
+  open
+    .command("dashboard", { isDefault: true })
+    .description("Open the linked app's dashboard in your browser")
+    .addArgument(
+      createArgument("[subpath]", "Optional dashboard subpath (e.g. users, api-keys, settings)"),
+    )
+    .option("--print", "Print the URL without opening the browser")
+    .setExamples([
+      { command: "clerk open", description: "Open the linked app's dashboard" },
+      { command: "clerk open users", description: "Open the users page" },
+      { command: "clerk open api-keys", description: "Open the API keys page" },
+      { command: "clerk open --print", description: "Print the dashboard URL" },
+    ])
+    .action((subpath, options) => openDashboard(subpath, options));
 
   const apps = program.command("apps").description("Manage your Clerk applications");
 

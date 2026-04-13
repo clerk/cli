@@ -17,6 +17,7 @@ export interface EnvProfileConfig {
   oauthBaseUrl: string;
   platformApiUrl: string;
   backendApiUrl: string;
+  dashboardUrl?: string;
 }
 
 const DEFAULT_PROFILES: Record<string, EnvProfileConfig> = {
@@ -25,6 +26,7 @@ const DEFAULT_PROFILES: Record<string, EnvProfileConfig> = {
     oauthBaseUrl: "https://clerk.clerk.com",
     platformApiUrl: "https://api.clerk.com",
     backendApiUrl: "https://api.clerk.dev",
+    dashboardUrl: "https://dashboard.clerk.com",
   },
 };
 
@@ -109,4 +111,10 @@ export function getPlapiBaseUrl(): string {
 
 export function getBapiBaseUrl(): string {
   return process.env.CLERK_BACKEND_API_URL ?? getCurrentEnv().backendApiUrl;
+}
+
+export function getDashboardUrl(): string {
+  return (
+    process.env.CLERK_DASHBOARD_URL ?? getCurrentEnv().dashboardUrl ?? "https://dashboard.clerk.com"
+  );
 }
