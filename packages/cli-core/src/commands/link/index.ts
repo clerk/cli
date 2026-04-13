@@ -62,8 +62,9 @@ export async function link(options: LinkOptions = {}): Promise<void> {
   const displayPath = repoRoot ?? cwd;
 
   const existing = await resolveProfile(cwd);
+  const targetsDifferentApp = options.app && existing && options.app !== existing.profile.appId;
 
-  if (existing && options.skipIfLinked) {
+  if (existing && options.skipIfLinked && !targetsDifferentApp) {
     printExistingStatus(existing, normalizedRemote);
     return;
   }
