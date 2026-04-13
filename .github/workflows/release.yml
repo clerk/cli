@@ -20,7 +20,7 @@ jobs:
 
   ci:
     if: github.event_name == 'push'
-    uses: ./.github/workflows/ci-checks.yml
+    uses: ./.github/workflows/ci.yml
     secrets: inherit
 
   versioning:
@@ -386,7 +386,7 @@ jobs:
   snapshot-ci:
     needs: snapshot
     if: needs.snapshot.outputs.is_fork != 'true'
-    uses: ./.github/workflows/ci-checks.yml
+    uses: ./.github/workflows/ci.yml
     with:
       ref: ${{ needs.snapshot.outputs.sha }}
     secrets: inherit
