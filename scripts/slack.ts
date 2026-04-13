@@ -2,15 +2,18 @@
  * Post a failure notification to Slack via an incoming webhook.
  *
  * Usage:
- *   bun scripts/slack.ts --workflow <name> --status <status>
+ *   bun scripts/slack.ts --status <status>
+ *
+ * The workflow name is read from the WORKFLOW_NAME env var.
  *
  * Required env vars:
- *   SLACK_WEBHOOK_URL   — Slack incoming webhook URL
- *   GITHUB_REPOSITORY   — e.g. "clerk/cli"
- *   GITHUB_SHA          — commit SHA that triggered the run
- *   GITHUB_ACTOR        — user who triggered the run
- *   GITHUB_SERVER_URL   — e.g. "https://github.com"
- *   GITHUB_RUN_ID       — workflow run ID (used to build the logs link)
+ *   SLACK_WEBHOOK_URL   - Slack incoming webhook URL
+ *   WORKFLOW_NAME       - Human-readable workflow name for the Slack message
+ *   GITHUB_REPOSITORY   - e.g. "clerk/cli"
+ *   GITHUB_SHA          - commit SHA that triggered the run
+ *   GITHUB_ACTOR        - user who triggered the run
+ *   GITHUB_SERVER_URL   - e.g. "https://github.com"
+ *   GITHUB_RUN_ID       - workflow run ID (used to build the logs link)
  */
 
 import { parseArgs } from "node:util";
@@ -18,13 +21,17 @@ import { parseArgs } from "node:util";
 const { values } = parseArgs({
   args: Bun.argv.slice(2),
   options: {
-    workflow: { type: "string" },
     status: { type: "string" },
   },
 });
 
-if (!values.workflow || !values.status) {
-  throw new Error("Usage: bun scripts/slack.ts --workflow <name> --status <status>");
+const workflow = process.env.WORKFLOW_NAME;
+if (!workflow) {
+  throw new Error("WORKFLOW_NAME env var is required");
+}
+
+if (!values.status) {
+  throw new Error("Usage: bun scripts/slack.ts --status <status>");
 }
 
 const webhookUrl = process.env.SLACK_WEBHOOK_URL;
@@ -46,7 +53,7 @@ const payload = {
       text: {
         type: "mrkdwn",
         text: [
-          `*:red_circle: ${values.workflow} failed*`,
+          `*:red_circle: ${workflow} failed*`,
           `*Repo:* \`${repo}\``,
           `*Status:* \`${values.status}\``,
           `*Commit:* \`${sha.slice(0, 7)}\``,

@@ -20,6 +20,7 @@ jobs:
       - uses: oven-sh/setup-bun@v2
       - run: bun install --frozen-lockfile
       - name: Notify Slack
-        run: bun scripts/slack.ts --workflow "${{ inputs.workflow-name }}" --status failure
+        run: bun scripts/slack.ts --status failure
         env:
           SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          WORKFLOW_NAME: ${{ inputs.workflow-name }}
