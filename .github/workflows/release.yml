@@ -18,7 +18,13 @@ jobs:
   # Push to main → stable or canary release
   # ═══════════════════════════════════════════════════════════════════════
 
+  ci:
+    if: github.event_name == 'push'
+    uses: ./.github/workflows/ci-checks.yml
+    secrets: inherit
+
   versioning:
+    needs: [ci]
     if: github.event_name == 'push'
     runs-on: blacksmith-2vcpu-ubuntu-2404
     timeout-minutes: 5
@@ -30,8 +36,7 @@ jobs:
       version: ${{ steps.check.outputs.version }}
     steps:
       - uses: actions/checkout@v6
-      - uses: oven-sh/setup-bun@v2
-      - run: bun install --frozen-lockfile
+      - uses: ./.github/actions/setup-bun
 
       - name: Check if release needed
         id: check
@@ -160,7 +165,7 @@ jobs:
     if: >-
       always() &&
       contains(needs.*.result, 'failure')
-    needs: [versioning, build, sign-macos, smoke-test, publish-npm, publish-github, homebrew]
+    needs: [ci, versioning, build, sign-macos, smoke-test, publish-npm, publish-github, homebrew]
     uses: ./.github/workflows/notify-failure.yml
     with:
       workflow-name: Stable release
@@ -178,8 +183,7 @@ jobs:
       version: ${{ steps.version.outputs.version }}
     steps:
       - uses: actions/checkout@v6
-      - uses: oven-sh/setup-bun@v2
-      - run: bun install --frozen-lockfile
+      - uses: ./.github/actions/setup-bun
 
       - name: Version packages for canary
         id: version
@@ -298,6 +302,7 @@ jobs:
       contains(needs.*.result, 'failure')
     needs:
       [
+        ci,
         canary-version,
         canary-build,
         canary-sign-macos,
@@ -378,8 +383,16 @@ jobs:
           version=$(jq -r '.version' packages/cli/package.json)
           echo "version=${version}" >> "$GITHUB_OUTPUT"
 
-  snapshot-build:
+  snapshot-ci:
     needs: snapshot
+    if: needs.snapshot.outputs.is_fork != 'true'
+    uses: ./.github/workflows/ci-checks.yml
+    with:
+      ref: ${{ needs.snapshot.outputs.sha }}
+    secrets: inherit
+
+  snapshot-build:
+    needs: [snapshot, snapshot-ci]
     if: needs.snapshot.outputs.is_fork != 'true'
     uses: ./.github/workflows/build-binaries.yml
     with:
@@ -483,7 +496,7 @@ jobs:
 
   snapshot-notify-failure:
     needs:
-      [snapshot, snapshot-build, snapshot-sign-macos, snapshot-smoke-test, snapshot-publish]
+      [snapshot, snapshot-ci, snapshot-build, snapshot-sign-macos, snapshot-smoke-test, snapshot-publish]
     if: >-
       always() &&
       contains(needs.*.result, 'failure')

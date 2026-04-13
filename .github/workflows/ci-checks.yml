@@ -1,0 +1,103 @@
+name: CI Checks
+
+on:
+  workflow_call:
+    inputs:
+      ref:
+        type: string
+        default: ""
+        description: Git ref to checkout. Leave empty for default checkout behavior.
+      run-e2e:
+        type: boolean
+        default: true
+        description: Whether to run E2E tests
+
+jobs:
+  build:
+    name: Build
+    runs-on: blacksmith-2vcpu-ubuntu-2404
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.ref }}
+      - uses: ./.github/actions/setup-bun
+        with:
+          cache: read-write
+      - run: bun run build
+
+  lint:
+    name: Lint
+    needs: [build]
+    runs-on: blacksmith-2vcpu-ubuntu-2404
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.ref }}
+      - uses: ./.github/actions/setup-bun
+        with:
+          cache: restore
+      - run: bun run format:check
+      - run: bun run lint
+      - run: bun run typecheck
+
+  test:
+    name: Test
+    needs: [build]
+    runs-on: blacksmith-2vcpu-ubuntu-2404
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.ref }}
+      - uses: ./.github/actions/setup-bun
+        with:
+          cache: restore
+      - run: bun run check:patches
+      - run: bun run test
+
+  test-e2e:
+    name: E2E Test
+    needs: [build]
+    if: inputs.run-e2e
+    runs-on: blacksmith-8vcpu-ubuntu-2404
+    container:
+      image: mcr.microsoft.com/playwright:v1.59.1-noble
+    timeout-minutes: 30
+    steps:
+      - name: Install unzip (required by setup-bun)
+        run: apt-get update && apt-get install -y unzip
+      - name: Pin localhost to IPv4 in /etc/hosts
+        # The playwright image resolves `localhost` to `::1` first, which
+        # breaks Next.js dev: Next's internal proxy connects to `localhost`
+        # regardless of the -H flag, so if localhost is IPv6-only the
+        # proxy gets ECONNRESET. Drop the `::1 localhost` entry so every
+        # consumer (Next dev proxy, Bun fetch, Chromium) reaches 127.0.0.1.
+        run: |
+          grep -v '::1.*localhost' /etc/hosts > /tmp/hosts.new
+          cat /tmp/hosts.new > /etc/hosts
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.ref }}
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+      - name: Mark workspace as safe for git
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+      - uses: ./.github/actions/setup-bun
+        with:
+          cache: restore
+
+      - name: Cleanup stale test users
+        run: bun scripts/cleanup-test-users.ts
+        env:
+          CLERK_CLI_TEST_APP_ID: ${{ secrets.CLERK_CLI_TEST_APP_ID }}
+          CLERK_PLATFORM_API_KEY: ${{ secrets.CLERK_PLATFORM_API_KEY }}
+
+      - name: Run E2E tests
+        run: bun run test:e2e
+        env:
+          CLERK_CLI_TEST_APP_ID: ${{ secrets.CLERK_CLI_TEST_APP_ID }}
+          CLERK_PLATFORM_API_KEY: ${{ secrets.CLERK_PLATFORM_API_KEY }}
+          CLERK_E2E_DEBUG: "1"
