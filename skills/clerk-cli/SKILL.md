@@ -33,14 +33,18 @@ Yarn Classic (v1) has no `dlx`; treat those projects as "no preferred runner" an
 
 The published npm package is **`clerk`**, not `@clerk/cli`. Never teach `npm install -g clerk` as the primary path. The bundled skill is versioned alongside the binary, so a globally installed mismatched version will drift. If `clerk --version` disagrees with `{{CLI_VERSION}}`, either upgrade the global install or fall back to the pinned-runner form above.
 
-## Prerequisites (verify once per session)
+## Prerequisites (run at session start)
+
+Before running any other Clerk command in a session, verify the CLI is authenticated, linked, and healthy:
 
 ```sh
 clerk --version               # confirm the binary is on PATH
 clerk doctor --json           # structured health check; exit 1 if anything failed
 ```
 
-`clerk doctor --json` is the first thing to run when something is off. Each result has `name`, `status` (`pass`/`warn`/`fail`), `message`, and a `remedy` string describing how to fix it. Parse that and act on it, or surface it to the user.
+**Always run `clerk doctor --json` first.** It catches the common setup failures (not logged in, project not linked, missing keys, outdated bundled skill) up front, so later commands don't fail with confusing errors. Each result has `name`, `status` (`pass`/`warn`/`fail`), `message`, and a `remedy` string describing how to fix it. Parse that and act on it, or surface it to the user. Rerun `clerk doctor --json` whenever a later command starts misbehaving.
+
+If `clerk skill --help` reports a newer CLI than the skill you're reading, run `clerk skill install` to refresh the bundled skill. The CLI binary is always the source of truth.
 
 ## The mental model
 
@@ -108,24 +112,29 @@ See [references/recipes.md](references/recipes.md) for concrete patterns: listin
 
 ## Core commands at a glance
 
-| Command                 | Purpose                                                                                           | Key flags                                                                                    |
-| ----------------------- | ------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------- |
-| `clerk auth login`      | OAuth browser login (stores token). Agent mode: no-op if already logged in, else prints guidance. | —                                                                                            |
-| `clerk auth logout`     | Clear stored credentials.                                                                         | —                                                                                            |
-| `clerk whoami`          | Print the logged-in email.                                                                        | —                                                                                            |
-| `clerk link`            | Link this repo to a Clerk app.                                                                    | `--app <id>`                                                                                 |
-| `clerk unlink`          | Remove the link.                                                                                  | `--yes`                                                                                      |
-| `clerk env pull`        | Write publishable + secret keys to `.env.local` (merge, not clobber).                             | `--app`, `--instance`, `--file`                                                              |
-| `clerk config pull`     | Fetch instance config JSON.                                                                       | `--app`, `--instance`, `--output`, `--keys`                                                  |
-| `clerk config schema`   | Fetch the JSON Schema for the instance config.                                                    | `--app`, `--instance`, `--output`, `--keys`                                                  |
-| `clerk config patch`    | Partial update (PATCH) of instance config.                                                        | `--file`, `--json`, `--dry-run`, `--yes`                                                     |
-| `clerk config put`      | Full replacement (PUT) of instance config — **destructive**.                                      | `--file`, `--json`, `--dry-run`, `--yes`                                                     |
-| `clerk apps list`       | List Clerk applications.                                                                          | `--json`                                                                                     |
-| `clerk doctor`          | Health check.                                                                                     | `--json`, `--spotlight`, `--verbose`, `--fix`                                                |
-| `clerk api [path]`      | Authenticated HTTP to Backend/Platform API.                                                       | `-X`, `-d`, `--file`, `--dry-run`, `--yes`, `--include`, `--app`, `--instance`, `--platform` |
-| `clerk api ls [filter]` | Discover endpoints from the bundled OpenAPI catalog.                                              | `--platform`                                                                                 |
+| Command                    | Purpose                                                                                                                                          | Key flags                                                                                    |
+| -------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------- |
+| `clerk init`               | Scaffold Clerk into a project, or emit an agent handoff with `--prompt`.                                                                         | `--framework`, `--pm`, `--prompt`, `--starter`, `-y`, `--no-skills`                          |
+| `clerk auth login`         | OAuth browser login (stores token). Agent mode: no-op if already logged in, else prints guidance.                                                | —                                                                                            |
+| `clerk auth logout`        | Clear stored credentials.                                                                                                                        | —                                                                                            |
+| `clerk whoami`             | Print the logged-in email.                                                                                                                       | —                                                                                            |
+| `clerk link`               | Link this repo to a Clerk app.                                                                                                                   | `--app <id>`                                                                                 |
+| `clerk unlink`             | Remove the link.                                                                                                                                 | `--yes`                                                                                      |
+| `clerk env pull`           | Write publishable + secret keys to `.env.local` (merge, not clobber).                                                                            | `--app`, `--instance`, `--file`                                                              |
+| `clerk config pull`        | Fetch instance config JSON.                                                                                                                      | `--app`, `--instance`, `--output`, `--keys`                                                  |
+| `clerk config schema`      | Fetch the JSON Schema for the instance config.                                                                                                   | `--app`, `--instance`, `--output`, `--keys`                                                  |
+| `clerk config patch`       | Partial update (PATCH) of instance config.                                                                                                       | `--file`, `--json`, `--dry-run`, `--yes`, `--destructive`                                    |
+| `clerk config put`         | Full replacement (PUT) of instance config. Pass `--destructive` to actually delete removed sub-resources rather than resetting them to defaults. | `--file`, `--json`, `--dry-run`, `--yes`, `--destructive`                                    |
+| `clerk apps list`          | List Clerk applications.                                                                                                                         | `--json`                                                                                     |
+| `clerk apps create <name>` | Create a new Clerk application.                                                                                                                  | `--json`                                                                                     |
+| `clerk open [subpath]`     | Open the linked app's dashboard in a browser. Agent mode: prints a JSON descriptor instead of opening.                                           | `--print`                                                                                    |
+| `clerk doctor`             | Health check.                                                                                                                                    | `--json`, `--spotlight`, `--verbose`, `--fix`                                                |
+| `clerk api [path]`         | Authenticated HTTP to Backend/Platform API.                                                                                                      | `-X`, `-d`, `--file`, `--dry-run`, `--yes`, `--include`, `--app`, `--instance`, `--platform` |
+| `clerk api ls [filter]`    | Discover endpoints from the bundled OpenAPI catalog.                                                                                             | `--platform`                                                                                 |
+| `clerk completion [shell]` | Print a shell completion script (`bash`, `zsh`, `fish`, `powershell`).                                                                           | —                                                                                            |
+| `clerk skill install`      | Reinstall the bundled `clerk-cli` skill. Run after upgrading the CLI so the skill matches the new binary.                                        | `-y`, `--pm`                                                                                 |
 
-Run `clerk <command> --help` for the authoritative, up-to-date flag list.
+**`clerk <command> --help` is the source of truth for flags.** This table is a hint, not a spec. Before running an unfamiliar command or flag combination, run `clerk <command> --help` once per session. Every command also defines `setExamples([...])` in source, which `--help` renders as a copy-pasteable Examples block, so you rarely need to guess syntax.
 
 ## Agent-mode behavior (important)
 

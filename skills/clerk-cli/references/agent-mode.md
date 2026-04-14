@@ -20,6 +20,8 @@ Force human mode with `--mode human` or `CLERK_MODE=human`. Typical AI-agent inv
 | Confirmation prompts (`unlink`, `config patch`, `api -X DELETE`) | Prompt y/n                     | Require `--yes`, otherwise error                                                                                                                                      |
 | `clerk doctor --fix`                                             | Interactively offers fixes     | **Ignored**; output the `remedy` field and let the caller act                                                                                                         |
 | `clerk apps list` default output                                 | Table                          | JSON (when piped)                                                                                                                                                     |
+| `clerk apps create <name>` output                                | Human-readable summary         | Same text output; pass `--json` explicitly for a machine-readable application object                                                                                  |
+| `clerk open [subpath]`                                           | Opens the browser to the URL   | Does not open a browser. Prints a JSON descriptor (`{url, appId, appName, instanceId, instanceLabel, subpath, opened: false}`) on stdout so the agent can surface it  |
 | `clerk auth login` when already authenticated                    | Prompt to re-auth              | Silent no-op                                                                                                                                                          |
 | `clerk init`                                                     | Full interactive scaffold flow | Skips the interactive scaffold and either runs non-interactively with `--yes` or, with `--prompt`, emits a short agent handoff pointing the agent at `clerk init -y`. |
 | Color / spinners                                                 | Enabled                        | Disabled                                                                                                                                                              |
@@ -47,14 +49,17 @@ When handling errors programmatically, read stderr, check the exit code, and re-
 
 ## Structured outputs you can rely on
 
-| Command                      | Structured output                                   |
-| ---------------------------- | --------------------------------------------------- |
-| `clerk doctor --json`        | `[{name, status, message, detail?, remedy?, fix?}]` |
-| `clerk apps list --json`     | Array of application objects                        |
-| `clerk api <path>`           | Raw API JSON (Backend or Platform) on stdout        |
-| `clerk api <path> --include` | Response headers on stderr, body on stdout          |
-| `clerk config pull`          | Instance config JSON                                |
-| `clerk config schema`        | JSON Schema                                         |
+| Command                      | Structured output                                                                       |
+| ---------------------------- | --------------------------------------------------------------------------------------- |
+| `clerk doctor --json`        | `[{name, status, message, detail?, remedy?, fix?}]`                                     |
+| `clerk apps list --json`     | Array of application objects                                                            |
+| `clerk apps create --json`   | Single application object                                                               |
+| `clerk api <path>`           | Raw API JSON (Backend or Platform) on stdout                                            |
+| `clerk api <path> --include` | Response headers on stderr, body on stdout                                              |
+| `clerk config pull`          | Instance config JSON                                                                    |
+| `clerk config schema`        | JSON Schema                                                                             |
+| `clerk open [subpath]`       | `{url, appId, appName, instanceId, instanceLabel, subpath, opened: false}` (agent mode) |
+| `clerk open --print`         | Plain dashboard URL on stdout                                                           |
 
 For commands without an explicit `--json` flag, `clerk api` is your escape hatch: hit the underlying endpoint directly.
 
