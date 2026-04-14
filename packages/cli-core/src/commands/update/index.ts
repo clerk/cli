@@ -1,6 +1,7 @@
 import { isHuman } from "../../mode.ts";
 import { green, cyan, yellow } from "../../lib/color.ts";
 import { CliError } from "../../lib/errors.ts";
+import { detectInstaller, globalInstallCommand, type Installer } from "../../lib/installer.ts";
 import { log } from "../../lib/log.ts";
 import { intro, outro, withSpinner } from "../../lib/spinner.ts";
 import { UPDATE_PACKAGE_NAME } from "../../lib/constants.ts";
@@ -19,31 +20,6 @@ export type UpdateOptions = {
   yes?: boolean;
 };
 
-// ── Package runner detection ─────────────────────────────────────────────────
-
-type PackageRunner = "npm" | "bun" | "pnpm" | "yarn";
-
-function detectPackageRunner(): PackageRunner {
-  const ua = process.env.npm_config_user_agent ?? "";
-  if (ua.startsWith("bun/")) return "bun";
-  if (ua.startsWith("pnpm/")) return "pnpm";
-  if (ua.startsWith("yarn/")) return "yarn";
-  return "npm";
-}
-
-function globalInstallHint(runner: PackageRunner, packageSpec: string): string {
-  switch (runner) {
-    case "bun":
-      return `bun add -g ${packageSpec}`;
-    case "pnpm":
-      return `pnpm add -g ${packageSpec}`;
-    case "yarn":
-      return `yarn global add ${packageSpec}`;
-    default:
-      return `npm install -g ${packageSpec}`;
-  }
-}
-
 async function confirmUpdate(currentVersion: string, latestVersion: string): Promise<boolean> {
   const { confirm } = await import("@inquirer/prompts");
   return confirm({
@@ -52,45 +28,13 @@ async function confirmUpdate(currentVersion: string, latestVersion: string): Pro
   });
 }
 
-async function findGlobalBinPath(runner: PackageRunner): Promise<string | null> {
-  try {
-    let result;
-    switch (runner) {
-      case "bun":
-        result = await Bun.$`bun pm bin -g`.quiet().nothrow();
-        break;
-      case "pnpm":
-        result = await Bun.$`pnpm bin -g`.quiet().nothrow();
-        break;
-      case "yarn":
-        result = await Bun.$`yarn global bin`.quiet().nothrow();
-        break;
-      default: {
-        result = await Bun.$`npm prefix -g`.quiet().nothrow();
-        if (result.exitCode !== 0) return null;
-        const prefix = result.stdout.toString().trim();
-        if (!prefix) return null;
-        const binPath = `${prefix}/bin/${UPDATE_PACKAGE_NAME}`;
-        return (await Bun.file(binPath).exists()) ? binPath : null;
-      }
-    }
-    if (result.exitCode !== 0) return null;
-    const binDir = result.stdout.toString().trim();
-    if (!binDir) return null;
-    const binPath = `${binDir}/${UPDATE_PACKAGE_NAME}`;
-    return (await Bun.file(binPath).exists()) ? binPath : null;
-  } catch {
-    return null;
-  }
-}
-
-async function findShadowingBinary(npmBinPath: string): Promise<string | null> {
+async function findShadowingBinary(installedBinPath: string): Promise<string | null> {
   try {
     const pathDirs = (process.env.PATH ?? "").split(":");
     for (const dir of pathDirs) {
       if (!dir) continue;
       const candidate = `${dir}/${UPDATE_PACKAGE_NAME}`;
-      if (candidate === npmBinPath) break;
+      if (candidate === installedBinPath) break;
       const file = Bun.file(candidate);
       if (!(await file.exists())) continue;
       // Skip shell-script shims (asdf, volta, etc.) — only flag native binaries.
@@ -107,7 +51,7 @@ async function findShadowingBinary(npmBinPath: string): Promise<string | null> {
 async function removeShadowingBinary(shadowPath: string, autoConfirm: boolean): Promise<void> {
   log.blank();
   log.warn(
-    `Found an older \`clerk\` binary at \`${shadowPath}\` that takes precedence over the npm-installed one.`,
+    `Found an older \`clerk\` binary at \`${shadowPath}\` that takes precedence over the installed one.`,
   );
   log.info("  This can cause the wrong version to run after an update.");
   log.blank();
@@ -138,9 +82,9 @@ async function removeShadowingBinary(shadowPath: string, autoConfirm: boolean): 
   }
 }
 
-async function runGlobalInstall(runner: PackageRunner, packageSpec: string): Promise<void> {
+async function runGlobalInstall(installer: Installer, packageSpec: string): Promise<void> {
   let result;
-  switch (runner) {
+  switch (installer) {
     case "bun":
       result = await Bun.$`bun add -g ${packageSpec}`.quiet().nothrow();
       break;
@@ -157,12 +101,12 @@ async function runGlobalInstall(runner: PackageRunner, packageSpec: string): Pro
   if (result.exitCode === 0) return;
 
   const stderr = result.stderr.toString();
-  const hint = globalInstallHint(runner, packageSpec);
+  const hint = globalInstallCommand(installer, packageSpec);
   if (stderr.includes("EACCES") || stderr.includes("permission denied")) {
     throw new CliError(`Permission denied. Try: sudo ${hint}`);
   }
   if (result.exitCode === 127 || stderr.includes("not found")) {
-    throw new CliError(`${runner} not found on PATH.`);
+    throw new CliError(`${installer} not found on PATH.`);
   }
   throw new CliError(`Update failed: ${stderr.trim() || "unknown error"}`);
 }
@@ -176,20 +120,20 @@ export async function update(options: UpdateOptions): Promise<void> {
   }
 
   const channel = options.channel ?? getUpdateChannel();
-  const runner = detectPackageRunner();
 
   if (isHuman()) intro("clerk update");
 
-  const latest = await withSpinner("Checking for updates...", () =>
-    fetchLatestVersion(channel),
-  ).catch(() => {
-    throw new CliError("Could not reach npm registry. Check your network connection.");
-  });
+  // Detect installer in parallel with the version check
+  const [latest, { installer, binPath }] = await Promise.all([
+    withSpinner("Checking for updates...", () => fetchLatestVersion(channel)).catch(() => {
+      throw new CliError("Could not reach npm registry. Check your network connection.");
+    }),
+    detectInstaller(),
+  ]);
 
   if (compareSemver(latest, currentVersion) <= 0) {
     log.info(`${green("✓")} Already on latest (${currentVersion})`);
-    const binPath = await findGlobalBinPath(runner);
-    if (binPath) {
+    if (installer !== "homebrew" && binPath) {
       const shadowPath = await findShadowingBinary(binPath);
       if (shadowPath) await removeShadowingBinary(shadowPath, options.yes || !isHuman());
     }
@@ -200,6 +144,15 @@ export async function update(options: UpdateOptions): Promise<void> {
   log.info(`  Current: ${currentVersion}`);
   log.info(`  Latest:  ${cyan(latest)}${formatChannelLabel(channel)}`);
   log.blank();
+
+  // Homebrew: cannot auto-update — instruct the user instead
+  if (installer === "homebrew") {
+    log.info(`  Installed via Homebrew. To update, run:`);
+    log.info(`  ${cyan("brew upgrade clerk")}`);
+    log.blank();
+    if (isHuman()) outro("Run `brew upgrade clerk` to update");
+    return;
+  }
 
   const autoConfirm = options.yes || !isHuman();
   const shouldInstall = autoConfirm || (await confirmUpdate(currentVersion, latest));
@@ -213,13 +166,12 @@ export async function update(options: UpdateOptions): Promise<void> {
 
   await withSpinner(
     `Installing ${packageSpec}...`,
-    () => runGlobalInstall(runner, packageSpec),
+    () => runGlobalInstall(installer, packageSpec),
     `Updated to ${latest}`,
   );
 
   await writeUpdateCache({ checkedAt: Date.now(), latest, distTag: channel });
 
-  const binPath = await findGlobalBinPath(runner);
   if (binPath) {
     const shadowPath = await findShadowingBinary(binPath);
     if (shadowPath) {
