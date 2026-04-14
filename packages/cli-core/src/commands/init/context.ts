@@ -4,7 +4,7 @@ import { detectFramework, readDeps } from "../../lib/framework.js";
 import type { FrameworkInfo } from "../../lib/framework.js";
 import { findExistingEnvFile } from "../../lib/dotenv.js";
 import type { ProjectContext } from "./frameworks/types.js";
-import type { PackageManager } from "./bootstrap-registry.js";
+import type { PackageManager } from "../../lib/package-manager.ts";
 
 export async function fileExists(path: string): Promise<boolean> {
   return Bun.file(path).exists();

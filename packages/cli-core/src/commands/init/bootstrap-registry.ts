@@ -1,5 +1,4 @@
-export type { PackageManager } from "../../lib/package-manager.js";
-import type { PackageManager } from "../../lib/package-manager.js";
+import type { PackageManager } from "../../lib/package-manager.ts";
 
 export type BootstrapEntry = {
   label: string;

@@ -4,10 +4,10 @@ import { throwUserAbort, throwUsageError, CliError } from "../../lib/errors.js";
 import { log } from "../../lib/log.js";
 import type { FrameworkInfo } from "../../lib/framework.js";
 import { dirExists, hasPackageJson } from "./context.js";
+import type { PackageManager } from "../../lib/package-manager.ts";
 import {
   BOOTSTRAP_REGISTRY,
   PM_INSTALL_COMMANDS,
-  type PackageManager,
   type BootstrapEntry,
 } from "./bootstrap-registry.js";
 
