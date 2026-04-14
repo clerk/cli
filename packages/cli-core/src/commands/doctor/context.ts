@@ -58,7 +58,8 @@ export function createDoctorContext(): DoctorContext {
         label: "Pull env vars with clerk env pull",
         run: async () => {
           const { pull } = await import("../env/pull.ts");
-          await pull({});
+          const { createRoot } = await import("../../lib/root.ts");
+          await pull(createRoot(), {});
         },
       }),
     },

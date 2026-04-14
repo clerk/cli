@@ -88,12 +88,22 @@ function depsFor(opts: DepsOpts = {}) {
         // the shared fixture between tests.
         return JSON.parse(JSON.stringify(current));
       },
-      putInstanceConfig: async (appId, instanceId, config, options) => {
+      putInstanceConfig: async (
+        appId: string,
+        instanceId: string,
+        config: Record<string, unknown>,
+        options?: { destructive?: boolean },
+      ) => {
         capture.put.push({ appId, instanceId, config, options });
         if (pushError) throw pushError;
         return pushResponse;
       },
-      patchInstanceConfig: async (appId, instanceId, config, options) => {
+      patchInstanceConfig: async (
+        appId: string,
+        instanceId: string,
+        config: Record<string, unknown>,
+        options?: { destructive?: boolean },
+      ) => {
         capture.patch.push({ appId, instanceId, config, options });
         if (pushError) throw pushError;
         return pushResponse;
