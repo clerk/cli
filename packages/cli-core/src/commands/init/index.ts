@@ -28,6 +28,7 @@ import {
   type BootstrapResult,
 } from "./bootstrap.ts";
 import type { ProjectContext } from "./frameworks/types.ts";
+import type { PackageManager } from "./bootstrap-registry.ts";
 
 export interface InitOptions {
   framework?: string;
@@ -103,7 +104,7 @@ export async function init(deps: InitDeps, options: InitOptions = {}): Promise<v
 
   // Short-circuit on a fully-clean re-run so env pull / skills prompt don't
   // execute when there's nothing to do.
-  const { alreadySetUp } = await detectAndInstall(deps, ctx.cwd, ctx, options);
+  const { alreadySetUp } = await detectAndInstall(deps, ctx.cwd, ctx, options.yes ?? false);
 
   if (alreadySetUp) {
     deps.log.info(green("\nClerk is already set up in this project."));
@@ -149,7 +150,7 @@ async function bootstrapAndDetect(
   deps: ResolveContextDeps,
   cwd: string,
   frameworkOverride: FrameworkInfo | undefined,
-  overrides: BootstrapOverrides,
+  skipConfirm: boolean = false,
 ): Promise<ResolvedContext> {
   const bootstrap = await promptAndBootstrap(deps, cwd, frameworkOverride, { skipConfirm });
 
@@ -164,7 +165,7 @@ async function handleStarter(
   deps: ResolveContextDeps,
   cwd: string,
   frameworkOverride: FrameworkInfo | undefined,
-  overrides: BootstrapOverrides,
+  skipConfirm: boolean = false,
 ): Promise<ResolvedContext> {
   if (!skipConfirm) {
     await confirmOverwrite(deps, cwd);
@@ -177,7 +178,7 @@ async function resolveProjectContext(
   deps: ResolveContextDeps,
   cwd: string,
   frameworkOverride: FrameworkInfo | undefined,
-  overrides: BootstrapOverrides,
+  skipConfirm: boolean = false,
 ): Promise<ResolvedContext> {
   const ctx = await deps.spinner.withSpinner("Detecting framework...", () =>
     deps.projectDetector.gather(cwd, frameworkOverride),
@@ -210,37 +211,6 @@ function printBootstrapNextSteps(
     steps.push("clerk login  (when you're ready to connect your Clerk account)");
   }
   printNextSteps(steps);
-}
-
-function printBootstrapManualSetupInfo(frameworkName: string): void {
-  const lines = [
-    `\n  ${frameworkName} requires API keys — set them up manually:`,
-    "    clerk auth login",
-    "    clerk link",
-    "    clerk env pull",
-  ];
-  log.info(lines.map(dim).join("\n"));
-}
-
-// --- Keyless ---
-
-async function resolveKeylessMode(
-  bootstrap: BootstrapResult | null,
-  ctx: ProjectContext,
-  skipConfirm: boolean,
-): Promise<boolean> {
-  if (!bootstrap) return false;
-
-  if (ctx.framework.supportsKeyless) {
-    return skipConfirm || (await askSkipAuth());
-  }
-
-  log.info(
-    dim(
-      `\n  ${ctx.framework.name} requires API keys — keyless mode is not yet supported for this framework.`,
-    ),
-  );
-  return false;
 }
 
 // --- Auth ---
@@ -312,7 +282,7 @@ async function detectAndInstall(
     await installSdk(deps, ctx);
   }
 
-  return await scaffoldAndWrite(deps, cwd, ctx, options);
+  return await scaffoldAndWrite(deps, cwd, ctx, skipConfirm);
 }
 
 async function scaffoldAndWrite(

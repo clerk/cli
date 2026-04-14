@@ -54,21 +54,30 @@ export async function installSdk(deps: InstallSdkDeps, ctx: ProjectContext): Pro
   }
 }
 
+async function runPmInstall(
+  cwd: string,
+  addCmd: string,
+  packages: string[],
+  label: string,
+  opts: { fromLockfile?: boolean } = {},
+): Promise<void> {
+  return withSpinner(`Installing ${label}...`, async () => {
+    const proc = Bun.spawn([...addCmd.split(" "), ...packages], {
+      cwd,
+      stdout: "inherit",
+      stderr: "inherit",
+    });
+    const exitCode = await proc.exited;
+    if (exitCode !== 0) {
+      const hint = opts.fromLockfile ? " (detected from lockfile)" : "";
+      throw new Error(`Failed to install ${label}${hint}`);
+    }
+  });
+}
+
 export async function installDeps(ctx: ProjectContext, packages: string[]): Promise<void> {
   const addCmd = pmInstallCommand(ctx.packageManager);
   await runPmInstall(ctx.cwd, addCmd, packages, packages.map(cyan).join(", "));
-}
-
-export async function installSdk(ctx: ProjectContext): Promise<void> {
-  const addCmd = pmInstallCommand(ctx.packageManager);
-  const installPkg = ctx.framework.sdkInstall ?? ctx.framework.sdk;
-  await runPmInstall(
-    ctx.cwd,
-    addCmd,
-    [installPkg],
-    `${cyan(ctx.framework.sdk)} for ${ctx.framework.name}`,
-    { fromLockfile: true },
-  );
 }
 
 export async function writePlan(cwd: string, plan: ScaffoldPlan): Promise<string[]> {

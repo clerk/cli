@@ -23,6 +23,7 @@ import { FRAMEWORK_MAP } from "../framework.ts";
 import type { FrameworkInfo } from "../framework.ts";
 import { findExistingEnvFile } from "../dotenv.ts";
 import type { ProjectContext } from "../../commands/init/frameworks/types.ts";
+import type { PackageManager } from "../../commands/init/bootstrap-registry.ts";
 
 export interface ProjectDetector {
   gather(cwd: string, override?: FrameworkInfo): Promise<ProjectContext | null>;
