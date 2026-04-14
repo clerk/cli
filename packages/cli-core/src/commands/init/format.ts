@@ -1,7 +1,3 @@
-import { readDeps } from "./context.js";
-// Pulls in the same runner detection skills.ts uses, so a bun project with
-// no `npx` on PATH (entirely possible if the user installed Bun via Homebrew
-// but never installed Node) will fall back to bunx instead of silently failing.
 import { detectAvailableRunners, preferredRunner, runnerCommand } from "../../lib/runners.js";
 import type { ProjectContext } from "./frameworks/types.js";
 
@@ -30,11 +26,9 @@ const FORMATTERS: FormatterConfig[] = [
  */
 export async function runFormatters(ctx: ProjectContext, files: string[]): Promise<void> {
   if (files.length === 0) return;
+  if (Object.keys(ctx.deps).length === 0) return;
 
-  const deps = ctx.deps && Object.keys(ctx.deps).length > 0 ? ctx.deps : await readDeps(ctx.cwd);
-  if (!deps) return;
-
-  const matchingFormatters = FORMATTERS.filter((f) => f.pkg in deps);
+  const matchingFormatters = FORMATTERS.filter((f) => f.pkg in ctx.deps);
   if (matchingFormatters.length === 0) return;
 
   const available = detectAvailableRunners();
