@@ -32,11 +32,18 @@ import {
 import type { ProjectContext } from "./frameworks/types.js";
 
 type InitOptions = {
+  /** Framework to set up (skips auto-detection). */
   framework?: string;
+  /** Skip confirmation prompts (in bootstrap mode, also skips authentication so you can connect your account later). */
   yes?: boolean;
+  /** Output a prompt for an AI agent to integrate Clerk, then exit. */
   prompt?: boolean;
+  /** Install the optional agent skills (set to false via `--no-skills` to skip). */
   skills?: boolean;
+  /** Create a new project from a starter template. */
   starter?: boolean;
+  /** Link to a specific Clerk application by ID (skips the interactive picker). */
+  app?: string;
 };
 
 export async function init(options: InitOptions = {}) {
@@ -74,7 +81,7 @@ export async function init(options: InitOptions = {}) {
 
   if (!keyless) {
     bar();
-    await authenticateAndLink(ctx.cwd);
+    await authenticateAndLink(ctx.cwd, options.app);
   }
 
   // Short-circuit on a fully-clean re-run so env pull / skills prompt don't
@@ -190,11 +197,13 @@ async function resolveAuthLabel(): Promise<string> {
   return "";
 }
 
-async function authenticateAndLink(cwd: string): Promise<void> {
+async function authenticateAndLink(cwd: string, app: string | undefined): Promise<void> {
   const label = await resolveAuthLabel();
   const profile = await resolveProfile(cwd);
 
-  if (label && profile) {
+  const alreadyOnRequestedApp = profile && (!app || profile.profile.appId === app);
+
+  if (label && alreadyOnRequestedApp) {
     log.info(dim(`${label} · Linked to ${profile.profile.appId}`));
     return;
   }
@@ -203,7 +212,7 @@ async function authenticateAndLink(cwd: string): Promise<void> {
     log.info(dim(label));
   }
 
-  await link({ skipIfLinked: true });
+  await link({ skipIfLinked: true, app });
 }
 
 // --- Detect & install ---

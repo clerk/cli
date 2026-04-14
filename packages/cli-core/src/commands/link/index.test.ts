@@ -226,6 +226,58 @@ describe("link", () => {
     });
   });
 
+  describe("skipIfLinked", () => {
+    test("returns early when linked and no --app given", async () => {
+      mockIsAgent.mockReturnValue(false);
+      mockResolveProfile.mockResolvedValue({
+        path: "/repo/.git",
+        profile: { workspaceId: "", appId: "app_existing", instances: { development: "ins_1" } },
+      });
+      consoleSpy = spyOn(console, "log").mockImplementation(() => {});
+
+      await runLink({ skipIfLinked: true });
+
+      expect(captured.err).toContain("Already linked");
+      expect(mockConfirm).not.toHaveBeenCalled();
+      expect(mockFetchApplication).not.toHaveBeenCalled();
+      expect(mockSetProfile).not.toHaveBeenCalled();
+    });
+
+    test("returns early when linked to the same app as --app", async () => {
+      mockIsAgent.mockReturnValue(false);
+      mockResolveProfile.mockResolvedValue({
+        path: "/repo/.git",
+        profile: { workspaceId: "", appId: "app_123", instances: { development: "ins_1" } },
+      });
+      consoleSpy = spyOn(console, "log").mockImplementation(() => {});
+
+      await runLink({ skipIfLinked: true, app: "app_123" });
+
+      expect(captured.err).toContain("Already linked");
+      expect(mockConfirm).not.toHaveBeenCalled();
+      expect(mockFetchApplication).not.toHaveBeenCalled();
+      expect(mockSetProfile).not.toHaveBeenCalled();
+    });
+
+    test("falls through to re-link prompt when --app differs from existing link", async () => {
+      mockIsAgent.mockReturnValue(false);
+      mockResolveProfile.mockResolvedValue({
+        path: "/repo/.git",
+        profile: { workspaceId: "", appId: "app_existing", instances: { development: "ins_1" } },
+      });
+      mockGetToken.mockResolvedValue("token");
+      mockFetchApplication.mockResolvedValue(mockApp);
+      mockConfirm.mockResolvedValue(true);
+      consoleSpy = spyOn(console, "log").mockImplementation(() => {});
+
+      await runLink({ skipIfLinked: true, app: "app_123" });
+
+      expect(mockConfirm).toHaveBeenCalled();
+      expect(mockFetchApplication).toHaveBeenCalledWith("app_123");
+      expect(mockSetProfile).toHaveBeenCalled();
+    });
+  });
+
   describe("authentication", () => {
     test("calls login when no token exists", async () => {
       mockIsAgent.mockReturnValue(false);
