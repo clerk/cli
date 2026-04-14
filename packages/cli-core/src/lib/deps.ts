@@ -10,6 +10,7 @@ import type { Pkce } from "./pkce.ts";
 import type { Prompts } from "./prompts.ts";
 import type { ModeService } from "../mode.ts";
 import type { Browser } from "./browser.ts";
+import type { System } from "./system.ts";
 import type { Spinner } from "./spinner.ts";
 import type { Logger } from "./logger.ts";
 import type { Env } from "./env.ts";
@@ -32,6 +33,7 @@ export interface DepsRegistry {
   prompts: Prompts;
   mode: ModeService;
   browser: Browser;
+  system: System;
   spinner: Spinner;
   log: Logger;
   env: Env;

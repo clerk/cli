@@ -23,6 +23,7 @@
 
 import { mock } from "bun:test";
 import type { Root } from "../../lib/deps.ts";
+import { createFakeSystem } from "../../lib/system.fake.ts";
 
 type DeepPartial<T> = T extends object ? { [K in keyof T]?: DeepPartial<T[K]> } : T;
 
@@ -134,6 +135,13 @@ const defaults: Root = {
   browser: {
     open: strict("browser.open"),
   },
+
+  // ── system (subprocess; tests must override or queue results) ──────
+  system: (() => {
+    const fake = createFakeSystem();
+    proxyDefaults.add(fake as unknown as object);
+    return fake;
+  })(),
 
   // ── spinner (UI side effects) ──────────────────────────────────────
   spinner: {

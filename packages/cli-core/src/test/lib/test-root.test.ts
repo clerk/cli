@@ -82,3 +82,24 @@ test("freshness: each call returns a new root with fresh spies", () => {
   expect(a.log.info).toHaveBeenCalledTimes(1);
   expect(b.log.info).toHaveBeenCalledTimes(0);
 });
+
+test("defaults: system.which throws helpful message when no binaries set", () => {
+  const deps = testRoot();
+  // FakeSystem.which returns null for unregistered binaries (not throw);
+  // this is the documented default. Queue-backed methods throw.
+  expect(deps.system.which("nonexistent")).toBeNull();
+});
+
+test("defaults: system.runInherit throws when not queued", async () => {
+  const deps = testRoot();
+  await expect(deps.system.runInherit(["echo"])).rejects.toThrow(/no queued runInherit/);
+});
+
+test("override: can inject a configured FakeSystem", async () => {
+  const { createFakeSystem } = await import("../../lib/system.fake.ts");
+  const system = createFakeSystem({ binaries: { bunx: "/usr/bin/bunx" } });
+  system.queueRunInherit(0);
+  const deps = testRoot({ system });
+  expect(deps.system.which("bunx")).toBe("/usr/bin/bunx");
+  await expect(deps.system.runInherit(["bunx", "--help"])).resolves.toBe(0);
+});
