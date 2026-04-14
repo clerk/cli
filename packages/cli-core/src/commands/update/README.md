@@ -23,7 +23,6 @@ clerk update [options]
 4. For Homebrew installations, prints `brew upgrade clerk` and exits (no auto-install)
 5. Prompts for confirmation (skipped with `--yes` or in non-interactive mode)
 6. Runs the detected installer's global install command (e.g. `npm install -g clerk@<version>`, `bun add -g clerk@<version>`)
-7. After install, checks if a stale binary elsewhere on PATH is shadowing the installed one (e.g. a previously compiled binary in `~/.local/bin`). If found, prompts to remove it (or removes silently with `--yes`).
 
 ## Installer detection
 
@@ -36,7 +35,7 @@ Detection uses a multi-stage algorithm (see `lib/installer.ts`):
 | 3        | `process.execPath` matches a PM's global prefix | npm, bun, pnpm, or yarn global install                      |
 | 4        | Fallback                                        | npm                                                         |
 
-`process.execPath` is the real, symlink-resolved path to the compiled binary. For Homebrew, this resolves through the symlink into the Cellar. For npm, this is the platform binary inside `node_modules/`.
+`process.execPath` is the real, symlink-resolved path to the compiled binary. For Homebrew, this resolves through the symlink into the Cellar. For npm, this is the platform binary inside `node_modules/`. Symlinked binaries (e.g. `~/.local/bin/clerk` → Cellar) are correctly attributed to their installer.
 
 ## Channels
 
@@ -59,4 +58,3 @@ Set `CLERK_UPDATE_CHANNEL=canary` to make canary the default for all update chec
 - Homebrew installations are not auto-updated. The command prints `brew upgrade clerk` and exits.
 - Permission errors (EACCES) suggest retrying with `sudo` using the detected installer's command.
 - This command does not perform the update itself in agent/non-interactive mode unless `--yes` is passed.
-- The shadowing binary check scans PATH directories. It skips shell-script shims (asdf, volta, etc.) and only flags native binaries. Skipped for Homebrew.

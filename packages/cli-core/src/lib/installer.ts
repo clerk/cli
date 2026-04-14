@@ -24,18 +24,6 @@ import { UPDATE_PACKAGE_NAME } from "./constants.ts";
 /** How the CLI was installed globally. */
 export type Installer = "npm" | "bun" | "pnpm" | "yarn" | "homebrew";
 
-/** Result of installer detection. */
-export type InstallerInfo = {
-  readonly installer: Installer;
-  /**
-   * Where the installer placed the `clerk` binary (or shim) on PATH.
-   * Used by `findShadowingBinary` — any native binary that appears on PATH
-   * *before* this location is a stale shadow that should be removed.
-   * `null` when the installer's bin path could not be determined.
-   */
-  readonly binPath: string | null;
-};
-
 // ── Stage 1: npm_config_user_agent ───────────────────────────────────────────
 
 export function detectFromUserAgent(): Installer | null {
@@ -57,7 +45,7 @@ export function isHomebrewPath(execPath: string): boolean {
   return /\/Cellar\/clerk\//.test(execPath);
 }
 
-// ── PM queries ───────────────────────────────────────────────────────────────
+// ── Stage 2b: PM prefix matching ─────────────────────────────────────────────
 
 async function safeRealpath(p: string): Promise<string> {
   try {
@@ -67,10 +55,6 @@ async function safeRealpath(p: string): Promise<string> {
   }
 }
 
-/**
- * Query a PM's global prefix for matching against `process.execPath`.
- * Returns a directory that the compiled binary would live under.
- */
 async function queryPmPrefix(pm: "npm" | "bun" | "pnpm" | "yarn"): Promise<string | null> {
   try {
     let result;
@@ -113,53 +97,6 @@ async function matchPmFromExecPath(execPath: string): Promise<Installer | null> 
   return null;
 }
 
-// ── Installer bin path ───────────────────────────────────────────────────────
-
-/**
- * Query the installer's global bin directory and return the full path to
- * the `clerk` binary/shim it manages. This is the path that
- * `findShadowingBinary` should walk PATH *up to* — any native binary
- * appearing before this location on PATH is a stale shadow.
- *
- * Unlike `Bun.which()` (which returns the first match on PATH and could be
- * the shadow itself), this queries the PM directly so we get the *intended*
- * location.
- */
-export async function queryInstallerBinPath(installer: Installer): Promise<string | null> {
-  try {
-    let result;
-    switch (installer) {
-      case "bun":
-        result = await Bun.$`bun pm bin -g`.quiet().nothrow();
-        break;
-      case "pnpm":
-        result = await Bun.$`pnpm bin -g`.quiet().nothrow();
-        break;
-      case "yarn":
-        result = await Bun.$`yarn global bin`.quiet().nothrow();
-        break;
-      case "homebrew":
-        // Homebrew doesn't need shadowing checks — return null
-        return null;
-      default: {
-        result = await Bun.$`npm prefix -g`.quiet().nothrow();
-        if (result.exitCode !== 0) return null;
-        const prefix = result.stdout.toString().trim();
-        if (!prefix) return null;
-        const binPath = `${prefix}/bin/${UPDATE_PACKAGE_NAME}`;
-        return (await Bun.file(binPath).exists()) ? binPath : null;
-      }
-    }
-    if (result.exitCode !== 0) return null;
-    const binDir = result.stdout.toString().trim();
-    if (!binDir) return null;
-    const binPath = `${binDir}/${UPDATE_PACKAGE_NAME}`;
-    return (await Bun.file(binPath).exists()) ? binPath : null;
-  } catch {
-    return null;
-  }
-}
-
 // ── Public API ───────────────────────────────────────────────────────────────
 
 /**
@@ -167,38 +104,31 @@ export async function queryInstallerBinPath(installer: Installer): Promise<strin
  *
  * Uses `npm_config_user_agent` when available (highest confidence), then
  * inspects `process.execPath` to identify Homebrew or match against PM
- * global directories.
+ * global directories. `process.execPath` resolves through symlinks
+ * automatically, so a symlink at `~/.local/bin/clerk` pointing to a
+ * Homebrew Cellar or PM global dir is correctly attributed.
  */
-export async function detectInstaller(): Promise<InstallerInfo> {
+export async function detectInstaller(): Promise<Installer> {
   // Stage 1: npm_config_user_agent
   const fromUA = detectFromUserAgent();
-  if (fromUA) {
-    const binPath = await queryInstallerBinPath(fromUA);
-    return { installer: fromUA, binPath };
-  }
+  if (fromUA) return fromUA;
 
   // Stage 2: process.execPath
   const execPath = process.execPath;
 
   // 2a: Homebrew — Cellar path is distinctive and unambiguous
-  if (isHomebrewPath(execPath)) {
-    return { installer: "homebrew", binPath: null };
-  }
+  if (isHomebrewPath(execPath)) return "homebrew";
 
   // 2b: Match against PM global directories (parallel queries)
   try {
     const pm = await matchPmFromExecPath(execPath);
-    if (pm) {
-      const binPath = await queryInstallerBinPath(pm);
-      return { installer: pm, binPath };
-    }
+    if (pm) return pm;
   } catch (error) {
     log.debug(`PM prefix detection failed: ${error}`);
   }
 
   // Stage 3: Fallback
-  const binPath = await queryInstallerBinPath("npm");
-  return { installer: "npm", binPath };
+  return "npm";
 }
 
 /**
