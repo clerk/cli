@@ -11,6 +11,7 @@ import type { Prompts } from "./prompts.ts";
 import type { ModeService } from "../mode.ts";
 import type { Browser } from "./browser.ts";
 import type { System } from "./system.ts";
+import type { Runners } from "./runners.ts";
 import type { Spinner } from "./spinner.ts";
 import type { Logger } from "./logger.ts";
 import type { Env } from "./env.ts";
@@ -34,6 +35,7 @@ export interface DepsRegistry {
   mode: ModeService;
   browser: Browser;
   system: System;
+  runners: Runners;
   spinner: Spinner;
   log: Logger;
   env: Env;

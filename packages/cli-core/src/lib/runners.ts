@@ -1,30 +1,16 @@
 /**
  * Package runner detection.
  *
- * A "runner" is a way to invoke an npm package binary without installing it
- * globally: `bunx skills add ...`, `npx prettier ...`, `pnpm dlx skills ...`,
- * `yarn dlx skills ...`. Different runners are tied to different package
- * managers, so a project's preferred runner is usually the one matching the
- * package manager that produced its lockfile.
- *
- * This module exposes:
- *  - `Runner` — a tagged record describing one runner
- *  - `KNOWN_RUNNERS` — the four runners we know about, in preference order
- *  - `detectAvailableRunners()` — filters KNOWN_RUNNERS to those on the user's PATH
- *  - `preferredRunner()` — picks the best runner for a given package manager
+ * Converts the legacy module-level helpers into a `createRunners(system)`
+ * factory so the I/O (`Bun.which`, `Bun.spawnSync`) is routed through the
+ * injected `System` collaborator. The pure helpers `runnerCommand` and
+ * `runnerForPackageManager` remain standalone exports — no I/O, so no
+ * reason to couple them to the factory.
  */
 
+import type { System } from "./system.ts";
 import type { ProjectContext } from "../commands/init/frameworks/types.js";
-import type { NonEmptyArray } from "./helpers/arrays.js";
 
-/**
- * One way to invoke an npm-published binary without installing it globally.
- *
- * `binary` is what we look up via `Bun.which()`. `prefixArgs` are the args
- * that come between the runner binary and the actual command — empty for
- * `bunx`/`npx`, `["dlx"]` for pnpm/yarn. `display` is the human-readable
- * label used in prompts and log lines.
- */
 export type Runner = {
   readonly id: "bunx" | "npx" | "pnpm" | "yarn";
   readonly binary: string;
@@ -32,10 +18,6 @@ export type Runner = {
   readonly display: string;
 };
 
-/**
- * Known runners in preference order. When no project package manager is
- * provided, the first available runner from this list wins.
- */
 export const KNOWN_RUNNERS: readonly Runner[] = [
   { id: "bunx", binary: "bunx", prefixArgs: [], display: "bunx" },
   { id: "npx", binary: "npx", prefixArgs: [], display: "npx" },
@@ -43,10 +25,6 @@ export const KNOWN_RUNNERS: readonly Runner[] = [
   { id: "yarn", binary: "yarn", prefixArgs: ["dlx"], display: "yarn dlx" },
 ];
 
-/**
- * Maps a project's package manager (from `ctx.packageManager`, detected from
- * lockfiles in init/context.ts) to its preferred runner id.
- */
 const PM_TO_RUNNER: Record<ProjectContext["packageManager"], Runner["id"]> = {
   bun: "bunx",
   npm: "npx",
@@ -54,45 +32,48 @@ const PM_TO_RUNNER: Record<ProjectContext["packageManager"], Runner["id"]> = {
   yarn: "yarn",
 };
 
-/**
- * Probes the installed `yarn` binary for `dlx` support by running
- * `yarn dlx --help`. Yarn Berry (>=2) exits 0; Yarn Classic (v1) lacks the
- * subcommand and exits non-zero with `Command "dlx" not found.`. Returns
- * `false` on any spawn failure so a broken yarn never gets advertised.
- */
-function yarnSupportsDlx(): boolean {
-  try {
-    const proc = Bun.spawnSync(["yarn", "dlx", "--help"], {
-      stdout: "ignore",
-      stderr: "ignore",
-    });
-    return proc.exitCode === 0;
-  } catch {
-    return false;
+export interface Runners {
+  detectAvailable(): Runner[];
+  preferred(
+    packageManager: ProjectContext["packageManager"] | undefined,
+    available: readonly Runner[],
+  ): Runner | undefined;
+}
+
+export function createRunners(system: System): Runners {
+  function yarnSupportsDlx(): boolean {
+    try {
+      const proc = system.spawnSync(["yarn", "dlx", "--help"], {
+        stdout: "ignore",
+        stderr: "ignore",
+      });
+      return proc.exitCode === 0;
+    } catch {
+      return false;
+    }
   }
+
+  return {
+    detectAvailable() {
+      return KNOWN_RUNNERS.filter((r) => {
+        if (system.which(r.binary) === null) return false;
+        if (r.id === "yarn") return yarnSupportsDlx();
+        return true;
+      });
+    },
+    preferred(packageManager, available) {
+      if (available.length === 0) return undefined;
+      if (packageManager) {
+        const preferredId = PM_TO_RUNNER[packageManager];
+        const match = available.find((r) => r.id === preferredId);
+        if (match) return match;
+      }
+      return available[0];
+    },
+  };
 }
 
-/**
- * Returns the subset of {@link KNOWN_RUNNERS} that are actually installed on
- * the user's PATH. Uses `Bun.which()`, which returns the resolved binary path
- * or `null`. The `yarn` runner is additionally gated on a `yarn dlx --help`
- * probe so Yarn Classic (v1, no `dlx`) is not advertised.
- */
-export function detectAvailableRunners(): Runner[] {
-  return KNOWN_RUNNERS.filter((r) => {
-    if (Bun.which(r.binary) === null) return false;
-    if (r.id === "yarn") return yarnSupportsDlx();
-    return true;
-  });
-}
-
-/**
- * Returns the {@link Runner} spec matching a project's package manager,
- * regardless of whether it's installed on PATH. Useful for building
- * suggested-install messages when no runner is available locally yet.
- * Falls back to the first entry in {@link KNOWN_RUNNERS} when `packageManager`
- * is undefined.
- */
+/** Pure: map a project's package manager to its runner spec (no I/O). */
 export function runnerForPackageManager(
   packageManager: ProjectContext["packageManager"] | undefined,
 ): Runner {
@@ -101,40 +82,7 @@ export function runnerForPackageManager(
   return KNOWN_RUNNERS.find((r) => r.id === id) ?? KNOWN_RUNNERS[0]!;
 }
 
-/**
- * Pick the best runner from a set of available runners. Prefers the project's
- * own package-manager runner if it's installed (e.g. bun project + bunx →
- * bunx). Otherwise falls back to the first available runner in {@link KNOWN_RUNNERS}
- * order.
- *
- * Requires a {@link NonEmptyArray} so the return type can be `Runner` (never
- * undefined). Callers prove non-emptiness via `isNonEmpty()` from
- * `lib/helpers/arrays.ts`.
- */
-export function preferredRunner(
-  packageManager: ProjectContext["packageManager"] | undefined,
-  available: NonEmptyArray<Runner>,
-): Runner {
-  if (packageManager) {
-    const preferredId = PM_TO_RUNNER[packageManager];
-    const match = available.find((r) => r.id === preferredId);
-    if (match) return match;
-  }
-  return available[0];
-}
-
-/**
- * Build the full spawn argv for invoking a command via a runner.
- *
- * @example
- * ```ts
- * runnerCommand(bunx, ["skills", "add", "clerk/skills"])
- * // => ["bunx", "skills", "add", "clerk/skills"]
- *
- * runnerCommand(pnpm, ["prettier", "--write", "file.ts"])
- * // => ["pnpm", "dlx", "prettier", "--write", "file.ts"]
- * ```
- */
-export function runnerCommand(runner: Runner, args: readonly string[]): string[] {
-  return [runner.binary, ...runner.prefixArgs, ...args];
+/** Pure: build spawn argv for invoking `cmd` through `runner`. */
+export function runnerCommand(runner: Runner, cmd: readonly string[]): string[] {
+  return [runner.binary, ...runner.prefixArgs, ...cmd];
 }

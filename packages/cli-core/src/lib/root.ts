@@ -19,6 +19,7 @@ import { prompts } from "./prompts.ts";
 import { modeService } from "../mode.ts";
 import { browser } from "./browser.ts";
 import { createSystem } from "./system.ts";
+import { createRunners } from "./runners.ts";
 import { spinner } from "./spinner.ts";
 import { logger } from "./logger.ts";
 import { env } from "./env.ts";
@@ -27,6 +28,7 @@ import { projectDetector } from "./project-detector/index.ts";
 import type { Root } from "./deps.ts";
 
 export function createRoot(): Root {
+  const system = createSystem();
   return {
     credentialStore,
     configStore,
@@ -39,7 +41,8 @@ export function createRoot(): Root {
     prompts,
     mode: modeService,
     browser,
-    system: createSystem(),
+    system,
+    runners: createRunners(system),
     spinner,
     log: logger,
     env,

@@ -143,6 +143,12 @@ const defaults: Root = {
     return fake;
   })(),
 
+  // ── runners (wraps system; tests override when they need runner detection) ──
+  runners: {
+    detectAvailable: () => [],
+    preferred: () => undefined,
+  },
+
   // ── spinner (UI side effects) ──────────────────────────────────────
   spinner: {
     intro: () => {},
