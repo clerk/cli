@@ -16,55 +16,45 @@ type SpawnImpl = (
   opts?: { cwd?: string; stdout?: unknown; stderr?: unknown },
 ) => { exited: Promise<number> };
 
+const bunOverrides = Bun as unknown as {
+  spawn: SpawnImpl;
+  which: (bin: string) => string | null;
+  spawnSync: (cmd: string[]) => { exitCode: number };
+};
+
 function setSpawn(impl: SpawnImpl) {
-  try {
-    (Bun as unknown as { spawn: SpawnImpl }).spawn = impl;
-  } catch {
-    // Bun.spawn may not be writable on some runtimes
+  bunOverrides.spawn = impl;
+  if (bunOverrides.spawn !== impl) {
+    throw new Error("Failed to mock Bun.spawn — property may be non-writable");
   }
 }
 function restoreSpawn() {
-  try {
-    (Bun as unknown as { spawn: typeof Bun.spawn }).spawn = origSpawn;
-  } catch {
-    // ignore
-  }
+  bunOverrides.spawn = origSpawn as unknown as SpawnImpl;
 }
 
 function mockWhich(present: ReadonlySet<string>) {
-  try {
-    (Bun as unknown as { which: (bin: string) => string | null }).which = (bin) =>
-      present.has(bin) ? `/usr/local/bin/${bin}` : null;
-  } catch {
-    // ignore
+  const impl = (bin: string) => (present.has(bin) ? `/usr/local/bin/${bin}` : null);
+  bunOverrides.which = impl;
+  if (bunOverrides.which !== impl) {
+    throw new Error("Failed to mock Bun.which — property may be non-writable");
   }
 }
 function restoreWhich() {
-  try {
-    (Bun as unknown as { which: typeof Bun.which }).which = origWhich;
-  } catch {
-    // ignore
-  }
+  bunOverrides.which = origWhich;
 }
 
 function mockSpawnSync(yarnDlxExitCode: number) {
-  try {
-    (Bun as unknown as { spawnSync: (cmd: string[]) => { exitCode: number } }).spawnSync = (
-      cmd,
-    ) => {
-      if (cmd[0] === "yarn" && cmd[1] === "dlx") return { exitCode: yarnDlxExitCode };
-      return { exitCode: 0 };
-    };
-  } catch {
-    // ignore
+  const impl = (cmd: string[]) => {
+    if (cmd[0] === "yarn" && cmd[1] === "dlx") return { exitCode: yarnDlxExitCode };
+    return { exitCode: 0 };
+  };
+  bunOverrides.spawnSync = impl;
+  if (bunOverrides.spawnSync !== impl) {
+    throw new Error("Failed to mock Bun.spawnSync — property may be non-writable");
   }
 }
 function restoreSpawnSync() {
-  try {
-    (Bun as unknown as { spawnSync: typeof Bun.spawnSync }).spawnSync = origSpawnSync;
-  } catch {
-    // ignore
-  }
+  bunOverrides.spawnSync = origSpawnSync as unknown as (cmd: string[]) => { exitCode: number };
 }
 
 /** Minimal ProjectContext suitable for driving runFormatters. */
@@ -214,21 +204,25 @@ describe("runFormatters", () => {
     ]);
   });
 
-  test("reads deps from disk when ctx.deps is empty", async () => {
-    await Bun.write(
-      join(tempDir, "package.json"),
-      JSON.stringify({ dependencies: { prettier: "3.0.0" } }),
-    );
+  test("ignores non-zero exit code from formatter (best-effort)", async () => {
+    setSpawn((cmd) => {
+      spawnCalls.push(cmd);
+      return { exited: Promise.resolve(1) };
+    });
     const ctx = makeCtx({
       cwd: tempDir,
-      packageManager: "bun",
-      deps: {}, // empty → triggers disk fallback
+      packageManager: "npm",
+      deps: { prettier: "3.0.0", "@biomejs/biome": "1.9.0" },
     });
     await runFormatters(ctx, ["x.ts"]);
-    expect(spawnCalls).toEqual([["bunx", "prettier", "--ignore-unknown", "--write", "x.ts"]]);
+    // Both formatters attempted despite prettier exiting non-zero.
+    expect(spawnCalls).toEqual([
+      ["npx", "prettier", "--ignore-unknown", "--write", "x.ts"],
+      ["npx", "@biomejs/biome", "format", "--write", "x.ts"],
+    ]);
   });
 
-  test("no-op when ctx.deps is empty and package.json is missing", async () => {
+  test("no-op when ctx.deps is empty", async () => {
     const ctx = makeCtx({
       cwd: tempDir,
       packageManager: "bun",
