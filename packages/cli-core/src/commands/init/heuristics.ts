@@ -9,12 +9,16 @@ import type { Need } from "../../lib/deps.ts";
 import type { FileAction, ProjectContext, ScaffoldPlan } from "./frameworks/types.js";
 import type { ScanFinding } from "./scan.js";
 
-export type InstallSdkDeps = Need<{ log: "info" | "warn" }>;
+export type InstallSdkDeps = Need<{ log: "info" | "warn"; system: "which" | "runInherit" }>;
 
 export async function installSdk(deps: InstallSdkDeps, ctx: ProjectContext): Promise<void> {
   const addCmd = pmInstallCommand(ctx.packageManager);
 
-  if (Bun.which(pmBinary) === null) {
+  // The package manager is detected from lockfiles, which can exist without
+  // the actual binary being installed (e.g. teammate committed bun.lock, you
+  // only have npm). Fail fast with a useful message rather than a raw ENOENT.
+  const pmBinary = addCmd.split(" ")[0] ?? addCmd;
+  if (deps.system.which(pmBinary) === null) {
     deps.log.warn(
       yellow(
         `${pmBinary} is not installed but the project's lockfile suggests it. ` +
@@ -28,12 +32,9 @@ export async function installSdk(deps: InstallSdkDeps, ctx: ProjectContext): Pro
 
   let exitCode: number;
   try {
-    const proc = Bun.spawn(addCmd.split(" ").concat(packages), {
-      cwd,
-      stdout: "inherit",
-      stderr: "inherit",
+    exitCode = await deps.system.runInherit(addCmd.split(" ").concat(ctx.framework.sdk), {
+      cwd: ctx.cwd,
     });
-    exitCode = await proc.exited;
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     deps.log.warn(
@@ -91,16 +92,12 @@ export async function writePlan(cwd: string, plan: ScaffoldPlan): Promise<string
   });
 }
 
-export async function checkGitDirty(cwd: string): Promise<boolean> {
+export type CheckGitDirtyDeps = Need<{ system: "runCapture" }>;
+
+export async function checkGitDirty(deps: CheckGitDirtyDeps, cwd: string): Promise<boolean> {
   try {
-    const proc = Bun.spawn(["git", "status", "--porcelain"], {
-      cwd,
-      stdout: "pipe",
-      stderr: "ignore",
-    });
-    const output = await new Response(proc.stdout).text();
-    await proc.exited;
-    return output.trim().length > 0;
+    const res = await deps.system.runCapture(["git", "status", "--porcelain"], { cwd });
+    return res.stdout.trim().length > 0;
   } catch {
     return false;
   }

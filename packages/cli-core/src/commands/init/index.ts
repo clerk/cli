@@ -56,7 +56,7 @@ export type InitDeps = Need<{
   env: "get";
   spinner: "intro" | "outro" | "bar" | "withSpinner";
   log: "info" | "warn" | "data";
-  system: "runInherit";
+  system: "which" | "runInherit" | "runCapture";
 }> &
   LinkIfNeededDeps &
   PullDefaultDeps &
@@ -290,6 +290,7 @@ type DetectAndInstallDeps = Need<{
   spinner: "withSpinner";
   prompts: "confirm";
   log: "info" | "warn";
+  system: "which" | "runInherit" | "runCapture";
 }>;
 
 async function detectAndInstall(
@@ -335,7 +336,7 @@ async function scaffoldAndWrite(
     return { alreadySetUp: false };
   }
 
-  if (await checkGitDirty(cwd)) {
+  if (await checkGitDirty(deps, cwd)) {
     deps.log.warn(yellow("You have uncommitted changes"));
     deps.log.info(dim("Consider committing first so you can review what clerk init creates.\n"));
   }
