@@ -10,6 +10,7 @@ import type { Pkce } from "./pkce.ts";
 import type { Prompts } from "./prompts.ts";
 import type { ModeService } from "../mode.ts";
 import type { Browser } from "./browser.ts";
+import type { Opener } from "./open.ts";
 import type { System } from "./system.ts";
 import type { Runners } from "./runners.ts";
 import type { Spinner } from "./spinner.ts";
@@ -34,6 +35,7 @@ export interface DepsRegistry {
   prompts: Prompts;
   mode: ModeService;
   browser: Browser;
+  opener: Opener;
   system: System;
   runners: Runners;
   spinner: Spinner;

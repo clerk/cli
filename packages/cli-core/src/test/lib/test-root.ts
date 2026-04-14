@@ -136,6 +136,11 @@ const defaults: Root = {
     open: strict("browser.open"),
   },
 
+  // ── opener (subprocess) ────────────────────────────────────────────
+  opener: {
+    open: strict("opener.open"),
+  },
+
   // ── system (subprocess; tests must override or queue results) ──────
   system: (() => {
     const fake = createFakeSystem();

@@ -18,6 +18,7 @@ import { pkce } from "./pkce.ts";
 import { prompts } from "./prompts.ts";
 import { modeService } from "../mode.ts";
 import { createBrowser } from "./browser.ts";
+import { createOpener } from "./open.ts";
 import { createSystem } from "./system.ts";
 import { createRunners } from "./runners.ts";
 import { spinner } from "./spinner.ts";
@@ -41,6 +42,7 @@ export function createRoot(): Root {
     prompts,
     mode: modeService,
     browser: createBrowser(system),
+    opener: createOpener(system),
     system,
     runners: createRunners(system),
     spinner,

@@ -1,35 +1,45 @@
-import { resolveProfile } from "../../lib/config.ts";
+import type { Need } from "../../lib/deps.ts";
 import { CliError, ERROR_CODE } from "../../lib/errors.ts";
-import { getDashboardUrl } from "../../lib/environment.ts";
-import { openBrowser } from "../../lib/open.ts";
-import { log } from "../../lib/log.ts";
 import { bold, cyan, dim } from "../../lib/color.ts";
-import { intro, outro } from "../../lib/spinner.ts";
-import { isAgent } from "../../mode.ts";
 import { isKnownDashboardPath } from "./dashboard-paths.ts";
 
 interface OpenOptions {
   print?: boolean;
 }
 
+export type OpenDashboardDeps = Need<{
+  configStore: "resolveProfile";
+  environment: "getDashboardUrl";
+  opener: "open";
+  spinner: "intro" | "outro";
+  mode: "isAgent";
+  log: "info" | "warn" | "data";
+}>;
+
 /**
  * Build the dashboard deep-link URL for the linked app's instance.
  * Exported for tests and reuse.
  */
-export function buildDashboardUrl(appId: string, instanceId: string, subpath?: string): string {
-  const host = getDashboardUrl().replace(/\/$/, "");
-  const base = `${host}/apps/${appId}/instances/${instanceId}`;
+export function buildDashboardUrl(
+  host: string,
+  appId: string,
+  instanceId: string,
+  subpath?: string,
+): string {
+  const trimmed = host.replace(/\/$/, "");
+  const base = `${trimmed}/apps/${appId}/instances/${instanceId}`;
   if (!subpath) return base;
   const cleaned = subpath.replace(/^\//, "").replace(/\/$/, "");
   return cleaned ? `${base}/${cleaned}` : base;
 }
 
 export async function openDashboard(
+  deps: OpenDashboardDeps,
   subpath: string | undefined,
   options: OpenOptions = {},
 ): Promise<void> {
   const cwd = process.cwd();
-  const resolved = await resolveProfile(cwd);
+  const resolved = await deps.configStore.resolveProfile(cwd);
 
   if (!resolved) {
     throw new CliError("No Clerk project linked to this directory. Run `clerk link` first.", {
@@ -49,26 +59,26 @@ export async function openDashboard(
     );
   }
 
-  const url = buildDashboardUrl(appId, instanceId, subpath);
+  const url = buildDashboardUrl(deps.environment.getDashboardUrl(), appId, instanceId, subpath);
   const unknownPath = subpath && !isKnownDashboardPath(subpath);
 
   // Output strategy:
-  //   --print → plain URL on stdout (scriptable)
-  //   agent mode → JSON object with full context (parseable)
-  //   human mode → intro/outro logging flow with browser open
+  //   --print -> plain URL on stdout (scriptable)
+  //   agent mode -> JSON object with full context (parseable)
+  //   human mode -> intro/outro logging flow with browser open
   if (options.print) {
     if (unknownPath) {
-      log.warn(`"${subpath}" is not a known dashboard path. Opening anyway — verify the URL.`);
+      deps.log.warn(`"${subpath}" is not a known dashboard path. Opening anyway, verify the URL.`);
     }
-    log.data(url);
+    deps.log.data(url);
     return;
   }
 
-  if (isAgent()) {
+  if (deps.mode.isAgent()) {
     if (unknownPath) {
-      log.warn(`"${subpath}" is not a known dashboard path. Opening anyway — verify the URL.`);
+      deps.log.warn(`"${subpath}" is not a known dashboard path. Opening anyway, verify the URL.`);
     }
-    log.data(
+    deps.log.data(
       JSON.stringify({
         url,
         appId,
@@ -82,23 +92,23 @@ export async function openDashboard(
     return;
   }
 
-  // Human mode — use intro/outro logging flow
+  // Human mode, use intro/outro logging flow
   const target = subpath ? ` → ${cyan(subpath)}` : "";
-  intro("clerk open");
+  deps.spinner.intro("clerk open");
 
   if (unknownPath) {
-    log.warn(`"${subpath}" is not a known dashboard path. Opening anyway — verify the URL.`);
+    deps.log.warn(`"${subpath}" is not a known dashboard path. Opening anyway, verify the URL.`);
   }
 
-  log.info(`↗ Opening ${bold(appLabel)} (${instanceLabel})${target}`);
-  log.info(`  ${dim(url)}`);
+  deps.log.info(`↗ Opening ${bold(appLabel)} (${instanceLabel})${target}`);
+  deps.log.info(`  ${dim(url)}`);
 
-  const result = await openBrowser(url);
+  const result = await deps.opener.open(url);
   if (!result.ok) {
-    log.warn(
+    deps.log.warn(
       `Could not open your browser automatically. Open this URL to continue:\n  ${cyan(url)}\n${dim(`(Reason: ${result.reason})`)}`,
     );
   }
 
-  outro();
+  deps.spinner.outro();
 }

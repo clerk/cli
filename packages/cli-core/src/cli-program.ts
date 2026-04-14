@@ -165,7 +165,7 @@ export function createProgram(root: Root) {
       { command: "clerk open api-keys", description: "Open the API keys page" },
       { command: "clerk open --print", description: "Print the dashboard URL" },
     ])
-    .action((subpath, options) => openDashboard(subpath, options));
+    .action((subpath, options) => openDashboard(root, subpath, options));
 
   const apps = program.command("apps").description("Manage your Clerk applications");
 
