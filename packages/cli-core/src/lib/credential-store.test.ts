@@ -93,6 +93,7 @@ const fakeEnv = {
   getPlapiBaseUrl: () => "",
   getBapiBaseUrl: () => "",
   getDashboardUrl: () => "",
+  getPlatformApiKey: () => undefined,
 };
 const { storeToken, getToken, deleteToken } = createCredentialStore(fakeEnv);
 

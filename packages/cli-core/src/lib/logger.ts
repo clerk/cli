@@ -38,13 +38,15 @@ export interface Logger {
   blank(): void;
 }
 
-export const logger: Logger = {
-  info: (message) => log.info(message),
-  success: (message) => log.success(message),
-  warn: (message) => log.warn(message),
-  error: (message) => log.error(message),
-  debug: (message) => log.debug(message),
-  data: (message) => log.data(message),
-  raw: (message) => log.raw(message),
-  blank: () => log.blank(),
-};
+export function createLogger(): Logger {
+  return {
+    info: (message) => log.info(message),
+    success: (message) => log.success(message),
+    warn: (message) => log.warn(message),
+    error: (message) => log.error(message),
+    debug: (message) => log.debug(message),
+    data: (message) => log.data(message),
+    raw: (message) => log.raw(message),
+    blank: () => log.blank(),
+  };
+}

@@ -4,7 +4,6 @@ import { dim, cyan, green, yellow, bold } from "../../lib/color.js";
 import { printNextSteps } from "../../lib/next-steps.js";
 import { printFindings } from "./scan.js";
 import { pmInstallCommand } from "./prompts/index.js";
-import { withSpinner } from "../../lib/spinner.js";
 import type { Need } from "../../lib/deps.ts";
 import type { FileAction, ProjectContext, ScaffoldPlan } from "./frameworks/types.js";
 import type { ScanFinding } from "./scan.js";
@@ -54,34 +53,14 @@ export async function installSdk(deps: InstallSdkDeps, ctx: ProjectContext): Pro
   }
 }
 
-async function runPmInstall(
+export type WritePlanDeps = Need<{ spinner: "withSpinner" }>;
+
+export async function writePlan(
+  deps: WritePlanDeps,
   cwd: string,
-  addCmd: string,
-  packages: string[],
-  label: string,
-  opts: { fromLockfile?: boolean } = {},
-): Promise<void> {
-  return withSpinner(`Installing ${label}...`, async () => {
-    const proc = Bun.spawn([...addCmd.split(" "), ...packages], {
-      cwd,
-      stdout: "inherit",
-      stderr: "inherit",
-    });
-    const exitCode = await proc.exited;
-    if (exitCode !== 0) {
-      const hint = opts.fromLockfile ? " (detected from lockfile)" : "";
-      throw new Error(`Failed to install ${label}${hint}`);
-    }
-  });
-}
-
-export async function installDeps(ctx: ProjectContext, packages: string[]): Promise<void> {
-  const addCmd = pmInstallCommand(ctx.packageManager);
-  await runPmInstall(ctx.cwd, addCmd, packages, packages.map(cyan).join(", "));
-}
-
-export async function writePlan(cwd: string, plan: ScaffoldPlan): Promise<string[]> {
-  return withSpinner("Writing files...", async () => {
+  plan: ScaffoldPlan,
+): Promise<string[]> {
+  return deps.spinner.withSpinner("Writing files...", async () => {
     const written: string[] = [];
 
     for (const action of plan.actions) {

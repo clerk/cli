@@ -15,7 +15,7 @@
  * after `bootstrap()` resolves.
  */
 import type { Need } from "./deps.ts";
-import { setMode, type Mode } from "../mode.ts";
+import { setMode, type Mode } from "./mode.ts";
 import { throwUsageError } from "./errors.ts";
 import { setLogLevel } from "./log.ts";
 

@@ -3,7 +3,9 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { captureLog } from "../test/lib/stubs.ts";
-import { logger } from "./logger.ts";
+import { createLogger } from "./logger.ts";
+
+const logger = createLogger();
 import { findClerkKeys, matchKeyToApp, autolink, type AutolinkDeps } from "./autolink.ts";
 import { createConfig, _setConfigDir } from "./config.ts";
 import type { Application } from "./plapi.ts";
@@ -67,6 +69,7 @@ const fakeEnv: Environment = {
   getPlapiBaseUrl: () => "https://api.test",
   getBapiBaseUrl: () => "https://api.test.dev",
   getDashboardUrl: () => "https://dashboard.test",
+  getPlatformApiKey: () => undefined,
 };
 
 const unusedPlapi: Plapi = new Proxy({} as Plapi, {

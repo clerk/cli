@@ -45,8 +45,6 @@ export interface Pkce {
   generateState(): string;
 }
 
-export const pkce: Pkce = {
-  generateCodeVerifier,
-  generateCodeChallenge,
-  generateState,
-};
+export function createPkce(): Pkce {
+  return { generateCodeVerifier, generateCodeChallenge, generateState };
+}

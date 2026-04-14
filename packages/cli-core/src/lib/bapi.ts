@@ -3,7 +3,7 @@
  * Thin HTTP wrapper for Clerk's Backend API endpoints.
  */
 
-import { BapiError } from "../../lib/errors.ts";
+import { BapiError } from "./errors.ts";
 
 export interface BapiResponse {
   status: number;
@@ -74,6 +74,6 @@ export interface Bapi {
   }): Promise<BapiResponse>;
 }
 
-export const bapi: Bapi = {
-  bapiRequest,
-};
+export function createBapi(): Bapi {
+  return { bapiRequest };
+}

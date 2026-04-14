@@ -28,6 +28,7 @@ const fakeEnv: Environment = {
   getPlapiBaseUrl: () => process.env.CLERK_PLATFORM_API_URL ?? "https://api.clerk.com",
   getBapiBaseUrl: () => "https://api.clerk.dev",
   getDashboardUrl: () => "https://dashboard.clerk.com",
+  getPlatformApiKey: () => process.env.CLERK_PLATFORM_API_KEY,
 };
 
 const fakeCredentialStore: CredentialStore = {

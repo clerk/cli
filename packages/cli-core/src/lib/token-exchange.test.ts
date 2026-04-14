@@ -23,6 +23,7 @@ const fakeEnv: Environment = {
   getPlapiBaseUrl: () => "https://api.test",
   getBapiBaseUrl: () => "https://api.test.dev",
   getDashboardUrl: () => "https://dashboard.test",
+  getPlatformApiKey: () => undefined,
 };
 
 const { exchangeCodeForToken, fetchUserInfo } = createTokenExchange(fakeEnv);

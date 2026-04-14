@@ -322,11 +322,7 @@ async function scaffoldAndWrite(
     if (!proceed) throwUserAbort();
   }
 
-  if (plan.additionalDeps?.length) {
-    await installDeps(ctx, plan.additionalDeps);
-  }
-
-  const writtenFiles = await writePlan(cwd, plan);
+  const writtenFiles = await writePlan(deps, cwd, plan);
   await runFormatters(deps, cwd, writtenFiles);
 
   const findings = await deps.spinner.withSpinner("Scanning for issues...", () =>

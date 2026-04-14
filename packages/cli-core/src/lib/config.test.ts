@@ -28,6 +28,7 @@ const fakeEnv: Environment = {
   getPlapiBaseUrl: () => "https://api.test",
   getBapiBaseUrl: () => "https://api.test.dev",
   getDashboardUrl: () => "https://dashboard.test",
+  getPlatformApiKey: () => undefined,
 };
 
 const unusedPlapi: Plapi = new Proxy({} as Plapi, {

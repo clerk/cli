@@ -73,6 +73,7 @@ export interface Environment {
   getPlapiBaseUrl(): string;
   getBapiBaseUrl(): string;
   getDashboardUrl(): string;
+  getPlatformApiKey(): string | undefined;
 }
 
 export function createEnvironment(): Environment {
@@ -126,6 +127,9 @@ export function createEnvironment(): Environment {
         getCurrentEnv().dashboardUrl ??
         "https://dashboard.clerk.com"
       );
+    },
+    getPlatformApiKey(): string | undefined {
+      return process.env.CLERK_PLATFORM_API_KEY;
     },
   };
 }

@@ -14,13 +14,15 @@ export interface Env {
   require(name: string): string;
 }
 
-export const env: Env = {
-  get: (name) => process.env[name],
-  require: (name) => {
-    const value = process.env[name];
-    if (value === undefined || value === "") {
-      throw new CliError(`Missing required environment variable: ${name}`);
-    }
-    return value;
-  },
-};
+export function createEnv(): Env {
+  return {
+    get: (name) => process.env[name],
+    require: (name) => {
+      const value = process.env[name];
+      if (value === undefined || value === "") {
+        throw new CliError(`Missing required environment variable: ${name}`);
+      }
+      return value;
+    },
+  };
+}

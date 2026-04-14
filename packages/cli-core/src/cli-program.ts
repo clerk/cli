@@ -20,7 +20,7 @@ import { FRAMEWORK_NAMES } from "./lib/framework.ts";
 import { CliError, UserAbortError, ApiError, PlapiError, EXIT_CODE } from "./lib/errors.ts";
 import { clerkHelpConfig } from "./lib/help.ts";
 import { ExitPromptError } from "@inquirer/core";
-import { isAgent } from "./mode.ts";
+import { isAgent } from "./lib/mode.ts";
 import { log } from "./lib/log.ts";
 import { maybeNotifyUpdate, getCurrentVersion } from "./lib/update-check.ts";
 import { update } from "./commands/update/index.ts";

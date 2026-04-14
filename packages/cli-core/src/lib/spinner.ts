@@ -1,4 +1,4 @@
-import { isHuman } from "../mode.ts";
+import type { ModeService } from "./mode.ts";
 import { dim, cyan, green, red } from "./color.ts";
 import { pushPrefix, popPrefix } from "./log.ts";
 
@@ -14,42 +14,7 @@ const S_STEP_ERROR = "■";
 const stream = process.stderr;
 const isInteractive = () => stream.isTTY && !process.env.CI;
 
-// --- Public API ---
-
-/** Print intro bracket: ┌  title — prefixes log output with │ until outro(). */
-export function intro(title?: string) {
-  if (!isHuman()) return;
-  const line = title ? `${dim(S_BAR_START)}  ${title}` : dim(S_BAR_START);
-  stream.write(`${line}\n`);
-  pushPrefix();
-}
-
-/** Print outro bracket: └  message — restores normal log output.
- *  Pass a string[] to render as next steps after the bracket. */
-export function outro(messageOrSteps?: string | readonly string[]) {
-  if (!isHuman()) return;
-  popPrefix();
-  stream.write(`${dim(S_BAR)}\n`);
-
-  if (Array.isArray(messageOrSteps)) {
-    stream.write(`${dim(S_BAR_END)}  ${dim("Next steps")}\n`);
-    for (const step of messageOrSteps) {
-      stream.write(`   ${cyan("\u2192")} ${step}\n`);
-    }
-    stream.write("\n");
-  } else {
-    const label = messageOrSteps ?? "Done";
-    stream.write(`${dim(S_BAR_END)}  ${label}\n\n`);
-  }
-}
-
-/** Print a bar separator: │ */
-export function bar() {
-  if (!isHuman()) return;
-  stream.write(`${dim(S_BAR)}\n`);
-}
-
-function createSpinner() {
+function makeInstance() {
   const interactive = isInteractive();
   let timer: ReturnType<typeof setInterval> | undefined;
   let frame = 0;
@@ -91,25 +56,6 @@ function createSpinner() {
   };
 }
 
-export async function withSpinner<T>(
-  message: string,
-  fn: () => Promise<T>,
-  doneMessage?: string,
-): Promise<T> {
-  if (!isHuman()) return fn();
-
-  const s = createSpinner();
-  s.start(message);
-  try {
-    const result = await fn();
-    s.stop(doneMessage ?? message.replace(/\.{3}$/, ""));
-    return result;
-  } catch (error) {
-    s.error("Failed");
-    throw error;
-  }
-}
-
 export interface Spinner {
   intro(title?: string): void;
   outro(messageOrSteps?: string | readonly string[]): void;
@@ -117,9 +63,47 @@ export interface Spinner {
   withSpinner<T>(message: string, fn: () => Promise<T>, doneMessage?: string): Promise<T>;
 }
 
-export const spinner: Spinner = {
-  intro,
-  outro,
-  bar,
-  withSpinner,
-};
+export function createSpinner(mode: Pick<ModeService, "isHuman">): Spinner {
+  return {
+    intro(title?: string) {
+      if (!mode.isHuman()) return;
+      const line = title ? `${dim(S_BAR_START)}  ${title}` : dim(S_BAR_START);
+      stream.write(`${line}\n`);
+      pushPrefix();
+    },
+    outro(messageOrSteps?: string | readonly string[]) {
+      if (!mode.isHuman()) return;
+      popPrefix();
+      stream.write(`${dim(S_BAR)}\n`);
+
+      if (Array.isArray(messageOrSteps)) {
+        stream.write(`${dim(S_BAR_END)}  ${dim("Next steps")}\n`);
+        for (const step of messageOrSteps) {
+          stream.write(`   ${cyan("\u2192")} ${step}\n`);
+        }
+        stream.write("\n");
+      } else {
+        const label = messageOrSteps ?? "Done";
+        stream.write(`${dim(S_BAR_END)}  ${label}\n\n`);
+      }
+    },
+    bar() {
+      if (!mode.isHuman()) return;
+      stream.write(`${dim(S_BAR)}\n`);
+    },
+    async withSpinner<T>(message: string, fn: () => Promise<T>, doneMessage?: string): Promise<T> {
+      if (!mode.isHuman()) return fn();
+
+      const s = makeInstance();
+      s.start(message);
+      try {
+        const result = await fn();
+        s.stop(doneMessage ?? message.replace(/\.{3}$/, ""));
+        return result;
+      } catch (error) {
+        s.error("Failed");
+        throw error;
+      }
+    },
+  };
+}

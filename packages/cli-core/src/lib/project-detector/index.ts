@@ -130,11 +130,6 @@ export async function gather(
   };
 }
 
-export const projectDetector: ProjectDetector = {
-  gather,
-  fileExists,
-  dirExists,
-  readDeps,
-  detectFramework,
-  hasPackageJson,
-};
+export function createProjectDetector(): ProjectDetector {
+  return { gather, fileExists, dirExists, readDeps, detectFramework, hasPackageJson };
+}

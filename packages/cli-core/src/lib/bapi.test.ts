@@ -1,7 +1,7 @@
 import { test, expect, describe, afterEach } from "bun:test";
-import { stubFetch } from "../../test/lib/stubs.ts";
+import { stubFetch } from "../test/lib/stubs.ts";
 import { bapiRequest } from "./bapi.ts";
-import { BapiError } from "../../lib/errors.ts";
+import { BapiError } from "./errors.ts";
 
 const BASE = "https://api.clerk.dev";
 

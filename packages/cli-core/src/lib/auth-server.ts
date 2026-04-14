@@ -160,6 +160,6 @@ export interface AuthServer {
   startAuthServer(expectedState: string): AuthServerResult;
 }
 
-export const authServer: AuthServer = {
-  startAuthServer,
-};
+export function createAuthServer(): AuthServer {
+  return { startAuthServer };
+}

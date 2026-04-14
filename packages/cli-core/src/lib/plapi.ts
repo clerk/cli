@@ -73,7 +73,7 @@ export interface Plapi {
 export function createPlapi(env: Environment, credentialStore: CredentialStore): Plapi {
   const getAuthToken = async (): Promise<string> => {
     // Prefer platform API key (OAuth token doesn't have platform scopes yet)
-    const key = process.env.CLERK_PLATFORM_API_KEY;
+    const key = env.getPlatformApiKey();
     if (key) {
       validateKeyPrefix(key, "ak_");
       return key;

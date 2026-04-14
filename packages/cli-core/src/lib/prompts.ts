@@ -157,11 +157,6 @@ export interface Prompts {
   }): Promise<string>;
 }
 
-export const prompts: Prompts = {
-  confirm,
-  select,
-  search,
-  input,
-  password,
-  editor,
-};
+export function createPrompts(): Prompts {
+  return { confirm, select, search, input, password, editor };
+}

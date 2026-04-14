@@ -1,5 +1,7 @@
 import { test, expect, spyOn } from "bun:test";
-import { logger } from "./logger.ts";
+import { createLogger } from "./logger.ts";
+
+const logger = createLogger();
 import { log } from "./log.ts";
 
 test("logger.info routes to log.info", () => {

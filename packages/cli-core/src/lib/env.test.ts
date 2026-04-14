@@ -1,5 +1,7 @@
 import { test, expect, afterEach } from "bun:test";
-import { env } from "./env.ts";
+import { createEnv } from "./env.ts";
+
+const env = createEnv();
 import { CliError } from "./errors.ts";
 
 const TEST_VAR = "_CLERK_CLI_ENV_TEST_VAR";

@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { stubFetch } from "../../test/lib/stubs.ts";
 import { parseSpec, _setCacheDir } from "./catalog.ts";
-import { bapiRequest } from "./bapi.ts";
+import { bapiRequest } from "../../lib/bapi.ts";
 import { validateKeyPrefix } from "../../lib/plapi.ts";
 import { createEnvironment } from "../../lib/environment.ts";
 

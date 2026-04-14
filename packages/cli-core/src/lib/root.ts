@@ -2,8 +2,10 @@
 /**
  * Production root construction.
  *
- * Wires lib collaborators via their factories in topological order:
- *   env → credentialStore → plapi → config → tokenExchange
+ * Wires lib collaborators via their factories. Factories with deps
+ * (environment, credentialStore, plapi, configStore, tokenExchange, spinner,
+ * system-backed collaborators like browser/opener/runners) are built in
+ * topological order after their dependencies.
  */
 
 import { createEnvironment } from "./environment.ts";
@@ -11,20 +13,20 @@ import { createCredentialStore } from "./credential-store.ts";
 import { createPlapi } from "./plapi.ts";
 import { createConfig } from "./config.ts";
 import { createTokenExchange } from "./token-exchange.ts";
-import { git } from "./git.ts";
-import { bapi } from "../commands/api/bapi.ts";
-import { authServer } from "./auth-server.ts";
-import { pkce } from "./pkce.ts";
-import { prompts } from "./prompts.ts";
-import { modeService } from "../mode.ts";
+import { createGit } from "./git.ts";
+import { createBapi } from "./bapi.ts";
+import { createAuthServer } from "./auth-server.ts";
+import { createPkce } from "./pkce.ts";
+import { createPrompts } from "./prompts.ts";
+import { createModeService } from "./mode.ts";
 import { createBrowser } from "./browser.ts";
 import { createOpener } from "./open.ts";
 import { createSystem } from "./system.ts";
 import { createRunners } from "./runners.ts";
-import { spinner } from "./spinner.ts";
-import { logger } from "./logger.ts";
-import { env } from "./env.ts";
-import { projectDetector } from "./project-detector/index.ts";
+import { createSpinner } from "./spinner.ts";
+import { createLogger } from "./logger.ts";
+import { createEnv } from "./env.ts";
+import { createProjectDetector } from "./project-detector/index.ts";
 import type { Root } from "./deps.ts";
 
 export function createRoot(): Root {
@@ -32,28 +34,30 @@ export function createRoot(): Root {
   const environment = createEnvironment();
   const credentialStore = createCredentialStore(environment);
   const plapi = createPlapi(environment, credentialStore);
+  const git = createGit();
   const configStore = createConfig(environment, plapi, git);
   const tokenExchange = createTokenExchange(environment);
+  const mode = createModeService();
 
   return {
     credentialStore,
     configStore,
     git,
     plapi,
-    bapi,
+    bapi: createBapi(),
     tokenExchange,
-    authServer,
-    pkce,
-    prompts,
-    mode: modeService,
+    authServer: createAuthServer(),
+    pkce: createPkce(),
+    prompts: createPrompts(),
+    mode,
     browser: createBrowser(system),
     opener: createOpener(system),
     system,
     runners: createRunners(system),
-    spinner,
-    log: logger,
-    env,
+    spinner: createSpinner(mode),
+    log: createLogger(),
+    env: createEnv(),
     environment,
-    projectDetector,
+    projectDetector: createProjectDetector(),
   };
 }

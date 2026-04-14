@@ -36,8 +36,6 @@ export interface ModeService {
   isAgent(): boolean;
 }
 
-export const modeService: ModeService = {
-  getMode,
-  isHuman,
-  isAgent,
-};
+export function createModeService(): ModeService {
+  return { getMode, isHuman, isAgent };
+}

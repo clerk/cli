@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { stubFetch } from "../../test/lib/stubs.ts";
 
 import { api } from "./index.ts";
-import { bapiRequest } from "./bapi.ts";
+import { bapiRequest } from "../../lib/bapi.ts";
 import { validateKeyPrefix, createPlapi } from "../../lib/plapi.ts";
 import { createEnvironment } from "../../lib/environment.ts";
 import { testRoot } from "../../test/lib/test-root.ts";

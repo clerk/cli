@@ -339,9 +339,9 @@ async function execCLI(...args: string[]): Promise<CLIResult> {
   // Wire the testRoot for ported commands. Every lib collaborator is
   // constructed via its factory at file scope and injected here; no
   // `mock.module()` entries remain.
-  const modeModule = await import("../../../mode.ts");
+  const modeModule = await import("../../../lib/mode.ts");
   const projectDetectorModule = await import("../../../lib/project-detector/index.ts");
-  const bapiModule = await import("../../../commands/api/bapi.ts");
+  const bapiModule = await import("../../../lib/bapi.ts");
   const root = testRoot({
     // Inline credential-store as closures over mockState.storedToken so the
     // integration suite can read/set the stored token via mockState while
