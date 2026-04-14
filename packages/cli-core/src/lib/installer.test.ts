@@ -118,27 +118,6 @@ describe("globalInstallCommand", () => {
 
 // ── detectInstaller ──────────────────────────────────────────────────────────
 
-// Bun.which is a native global. We patch it directly the same way
-// runners.test.ts patches Bun.which — wrapped in try/catch because some
-// runtimes mark globals as non-writable.
-const origWhich = Bun.which;
-
-function mockWhich(returnValue: string | null) {
-  try {
-    (Bun as unknown as { which: () => string | null }).which = () => returnValue;
-  } catch {
-    // Bun.which may not be writable on some runtimes
-  }
-}
-
-function restoreWhich() {
-  try {
-    (Bun as unknown as { which: typeof Bun.which }).which = origWhich;
-  } catch {
-    // Bun.which may not be writable on some runtimes
-  }
-}
-
 describe("detectInstaller", () => {
   let savedUA: string | undefined;
   let savedExecPath: string;
@@ -157,7 +136,6 @@ describe("detectInstaller", () => {
       process.env.npm_config_user_agent = savedUA;
     }
     Object.defineProperty(process, "execPath", { value: savedExecPath, writable: true });
-    restoreWhich();
   });
 
   function setExecPath(path: string) {
@@ -168,29 +146,24 @@ describe("detectInstaller", () => {
 
   test("stage 1: returns bun when npm_config_user_agent starts with bun/", async () => {
     process.env.npm_config_user_agent = "bun/1.3.9";
-    mockWhich("/some/bin/clerk");
     const info = await detectInstaller();
     expect(info.installer).toBe("bun");
-    expect(info.binPath).toBe("/some/bin/clerk");
   });
 
   test("stage 1: returns pnpm when npm_config_user_agent starts with pnpm/", async () => {
     process.env.npm_config_user_agent = "pnpm/8.15.0 npm/? node/v22.0.0";
-    mockWhich(null);
     const info = await detectInstaller();
     expect(info.installer).toBe("pnpm");
   });
 
   test("stage 1: returns yarn when npm_config_user_agent starts with yarn/", async () => {
     process.env.npm_config_user_agent = "yarn/3.6.0 npm/? node/v22.0.0";
-    mockWhich(null);
     const info = await detectInstaller();
     expect(info.installer).toBe("yarn");
   });
 
   test("stage 1: returns npm when npm_config_user_agent starts with npm/", async () => {
     process.env.npm_config_user_agent = "npm/10.5.0 node/v22.0.0 darwin arm64";
-    mockWhich(null);
     const info = await detectInstaller();
     expect(info.installer).toBe("npm");
   });
@@ -198,7 +171,6 @@ describe("detectInstaller", () => {
   test("stage 1: takes priority over Homebrew execPath", async () => {
     process.env.npm_config_user_agent = "npm/10.5.0";
     setExecPath("/opt/homebrew/Cellar/clerk/1.0.0/bin/clerk");
-    mockWhich("/opt/homebrew/bin/clerk");
     const info = await detectInstaller();
     // UA wins over Homebrew detection
     expect(info.installer).toBe("npm");
@@ -208,22 +180,20 @@ describe("detectInstaller", () => {
 
   test("stage 2a: detects Homebrew from Apple Silicon Cellar path", async () => {
     setExecPath("/opt/homebrew/Cellar/clerk/1.0.0/bin/clerk");
-    mockWhich("/opt/homebrew/bin/clerk");
     const info = await detectInstaller();
     expect(info.installer).toBe("homebrew");
-    expect(info.binPath).toBe("/opt/homebrew/bin/clerk");
+    // Homebrew does not need binPath (shadowing check is skipped)
+    expect(info.binPath).toBeNull();
   });
 
   test("stage 2a: detects Homebrew from Intel Cellar path", async () => {
     setExecPath("/usr/local/Cellar/clerk/2.0.0/bin/clerk");
-    mockWhich("/usr/local/bin/clerk");
     const info = await detectInstaller();
     expect(info.installer).toBe("homebrew");
   });
 
   test("stage 2a: detects Linuxbrew from Cellar path", async () => {
     setExecPath("/home/linuxbrew/.linuxbrew/Cellar/clerk/1.0.0/bin/clerk");
-    mockWhich("/home/linuxbrew/.linuxbrew/bin/clerk");
     const info = await detectInstaller();
     expect(info.installer).toBe("homebrew");
   });
@@ -238,7 +208,6 @@ describe("detectInstaller", () => {
     if (!prefix) return;
 
     setExecPath(`${prefix}/lib/node_modules/@clerk/cli-darwin-arm64/bin/clerk`);
-    mockWhich(`${prefix}/bin/clerk`);
     const info = await detectInstaller();
     expect(info.installer).toBe("npm");
   });
@@ -247,34 +216,55 @@ describe("detectInstaller", () => {
 
   test("stage 3: falls back to npm for unrecognized execPath", async () => {
     setExecPath("/some/totally/unknown/path/to/clerk");
-    mockWhich(null);
     const info = await detectInstaller();
     expect(info.installer).toBe("npm");
-    expect(info.binPath).toBeNull();
   });
 
-  test("stage 3: falls back to npm for unrecognized execPath with binPath", async () => {
-    setExecPath("/opt/custom-install/clerk");
-    mockWhich("/opt/custom-install/clerk");
+  // ── binPath comes from PM bin query, not Bun.which ─────────────────────
+
+  test("binPath for npm installer comes from npm prefix, not Bun.which", async () => {
+    process.env.npm_config_user_agent = "npm/10.5.0";
     const info = await detectInstaller();
     expect(info.installer).toBe("npm");
-    expect(info.binPath).toBe("/opt/custom-install/clerk");
+    // binPath should be the npm global bin location, or null if clerk isn't
+    // installed globally via npm on this machine. Either way, it must NOT
+    // be Bun.which (which could return a shadowing binary).
+    if (info.binPath !== null) {
+      expect(info.binPath).toEndWith("/clerk");
+      // Verify it's under the npm prefix
+      const result = Bun.spawnSync(["npm", "prefix", "-g"], { stdout: "pipe", stderr: "pipe" });
+      if (result.exitCode === 0) {
+        const prefix = new TextDecoder().decode(result.stdout).trim();
+        expect(info.binPath).toStartWith(`${prefix}/bin/`);
+      }
+    }
   });
 
-  // ── binPath ────────────────────────────────────────────────────────────
-
-  test("binPath comes from Bun.which regardless of installer", async () => {
-    process.env.npm_config_user_agent = "bun/1.3.9";
-    mockWhich("/custom/path/to/clerk");
-    const info = await detectInstaller();
-    expect(info.binPath).toBe("/custom/path/to/clerk");
-  });
-
-  test("binPath is null when Bun.which returns null", async () => {
+  test("binPath is null for Homebrew (shadowing check is skipped)", async () => {
     setExecPath("/opt/homebrew/Cellar/clerk/1.0.0/bin/clerk");
-    mockWhich(null);
     const info = await detectInstaller();
     expect(info.installer).toBe("homebrew");
     expect(info.binPath).toBeNull();
+  });
+});
+
+// ── queryInstallerBinPath ────────────────────────────────────────────────────
+
+describe("queryInstallerBinPath", () => {
+  test("returns null for homebrew", async () => {
+    const { queryInstallerBinPath } = await import("./installer.ts");
+    expect(await queryInstallerBinPath("homebrew")).toBeNull();
+  });
+
+  test("returns a path ending in /clerk for npm (if npm is available)", async () => {
+    const { queryInstallerBinPath } = await import("./installer.ts");
+    const result = Bun.spawnSync(["npm", "prefix", "-g"], { stdout: "pipe", stderr: "pipe" });
+    if (result.exitCode !== 0) return; // skip if npm unavailable
+
+    const binPath = await queryInstallerBinPath("npm");
+    // binPath is null if clerk isn't installed globally via npm on this machine
+    if (binPath !== null) {
+      expect(binPath).toEndWith("/clerk");
+    }
   });
 });

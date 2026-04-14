@@ -27,7 +27,12 @@ export type Installer = "npm" | "bun" | "pnpm" | "yarn" | "homebrew";
 /** Result of installer detection. */
 export type InstallerInfo = {
   readonly installer: Installer;
-  /** PATH-visible binary path (for the shadowing check). */
+  /**
+   * Where the installer placed the `clerk` binary (or shim) on PATH.
+   * Used by `findShadowingBinary` — any native binary that appears on PATH
+   * *before* this location is a stale shadow that should be removed.
+   * `null` when the installer's bin path could not be determined.
+   */
   readonly binPath: string | null;
 };
 
@@ -52,7 +57,7 @@ export function isHomebrewPath(execPath: string): boolean {
   return /\/Cellar\/clerk\//.test(execPath);
 }
 
-// ── Stage 2b: PM prefix matching ─────────────────────────────────────────────
+// ── PM queries ───────────────────────────────────────────────────────────────
 
 async function safeRealpath(p: string): Promise<string> {
   try {
@@ -62,6 +67,10 @@ async function safeRealpath(p: string): Promise<string> {
   }
 }
 
+/**
+ * Query a PM's global prefix for matching against `process.execPath`.
+ * Returns a directory that the compiled binary would live under.
+ */
 async function queryPmPrefix(pm: "npm" | "bun" | "pnpm" | "yarn"): Promise<string | null> {
   try {
     let result;
@@ -80,7 +89,6 @@ async function queryPmPrefix(pm: "npm" | "bun" | "pnpm" | "yarn"): Promise<strin
         if (result.exitCode !== 0) return null;
         const prefix = result.stdout.toString().trim();
         if (!prefix) return null;
-        // npm puts the binary under <prefix>/lib/node_modules/
         return await safeRealpath(`${prefix}/lib/node_modules`);
       }
     }
@@ -105,10 +113,51 @@ async function matchPmFromExecPath(execPath: string): Promise<Installer | null> 
   return null;
 }
 
-// ── binPath via Bun.which ────────────────────────────────────────────────────
+// ── Installer bin path ───────────────────────────────────────────────────────
 
-function resolveBinPath(): string | null {
-  return Bun.which(UPDATE_PACKAGE_NAME);
+/**
+ * Query the installer's global bin directory and return the full path to
+ * the `clerk` binary/shim it manages. This is the path that
+ * `findShadowingBinary` should walk PATH *up to* — any native binary
+ * appearing before this location on PATH is a stale shadow.
+ *
+ * Unlike `Bun.which()` (which returns the first match on PATH and could be
+ * the shadow itself), this queries the PM directly so we get the *intended*
+ * location.
+ */
+export async function queryInstallerBinPath(installer: Installer): Promise<string | null> {
+  try {
+    let result;
+    switch (installer) {
+      case "bun":
+        result = await Bun.$`bun pm bin -g`.quiet().nothrow();
+        break;
+      case "pnpm":
+        result = await Bun.$`pnpm bin -g`.quiet().nothrow();
+        break;
+      case "yarn":
+        result = await Bun.$`yarn global bin`.quiet().nothrow();
+        break;
+      case "homebrew":
+        // Homebrew doesn't need shadowing checks — return null
+        return null;
+      default: {
+        result = await Bun.$`npm prefix -g`.quiet().nothrow();
+        if (result.exitCode !== 0) return null;
+        const prefix = result.stdout.toString().trim();
+        if (!prefix) return null;
+        const binPath = `${prefix}/bin/${UPDATE_PACKAGE_NAME}`;
+        return (await Bun.file(binPath).exists()) ? binPath : null;
+      }
+    }
+    if (result.exitCode !== 0) return null;
+    const binDir = result.stdout.toString().trim();
+    if (!binDir) return null;
+    const binPath = `${binDir}/${UPDATE_PACKAGE_NAME}`;
+    return (await Bun.file(binPath).exists()) ? binPath : null;
+  } catch {
+    return null;
+  }
 }
 
 // ── Public API ───────────────────────────────────────────────────────────────
@@ -121,11 +170,10 @@ function resolveBinPath(): string | null {
  * global directories.
  */
 export async function detectInstaller(): Promise<InstallerInfo> {
-  const binPath = resolveBinPath();
-
   // Stage 1: npm_config_user_agent
   const fromUA = detectFromUserAgent();
   if (fromUA) {
+    const binPath = await queryInstallerBinPath(fromUA);
     return { installer: fromUA, binPath };
   }
 
@@ -134,13 +182,14 @@ export async function detectInstaller(): Promise<InstallerInfo> {
 
   // 2a: Homebrew — Cellar path is distinctive and unambiguous
   if (isHomebrewPath(execPath)) {
-    return { installer: "homebrew", binPath };
+    return { installer: "homebrew", binPath: null };
   }
 
   // 2b: Match against PM global directories (parallel queries)
   try {
     const pm = await matchPmFromExecPath(execPath);
     if (pm) {
+      const binPath = await queryInstallerBinPath(pm);
       return { installer: pm, binPath };
     }
   } catch (error) {
@@ -148,6 +197,7 @@ export async function detectInstaller(): Promise<InstallerInfo> {
   }
 
   // Stage 3: Fallback
+  const binPath = await queryInstallerBinPath("npm");
   return { installer: "npm", binPath };
 }
 
