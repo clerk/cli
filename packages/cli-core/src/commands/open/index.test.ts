@@ -1,5 +1,6 @@
 import { test, expect, describe, beforeEach, mock } from "bun:test";
 import { openDashboard, buildDashboardUrl } from "./index.ts";
+import { captureLog } from "../../test/lib/stubs.ts";
 import { testRoot } from "../../test/lib/test-root.ts";
 import { isKnownDashboardPath } from "./dashboard-paths.ts";
 import type { Root } from "../../lib/deps.ts";
@@ -157,6 +158,7 @@ describe("openDashboard", () => {
 
   test("known subpath does not warn", async () => {
     await openDashboard(deps, "users", { print: true });
+
     expect(deps.log.warn).not.toHaveBeenCalled();
   });
 
@@ -200,3 +202,6 @@ describe("openDashboard", () => {
     expect(logCalls(deps.log.warn)).toContain("Could not open your browser");
   });
 });
+
+// Unused but kept for reference
+void captureLog;

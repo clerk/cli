@@ -685,13 +685,13 @@ export async function teardownTest(harness: TestHarness): Promise<void> {
  *
  * @example
  * ```ts
- * const h = useIntegrationTestHarness();
+ * const h = useIntegrationTestScenarios();
  * test("my test", async () => {
  *   await Bun.write(join(h.tempDir, "file.txt"), "hello");
  * });
  * ```
  */
-export function useIntegrationTestHarness() {
+export function useIntegrationTestScenarios() {
   let harness: TestHarness;
   beforeEach(async () => {
     harness = await setupTest();

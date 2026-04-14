@@ -6,7 +6,7 @@ export type DeployDeps = Need<{
   mode: "isAgent";
   prompts: "select" | "input" | "confirm" | "password";
   browser: "open";
-  log: "info" | "debug" | "data";
+  log: "info" | "debug" | "data" | "blank";
 }>;
 
 export interface DeployOptions {
@@ -260,5 +260,5 @@ export async function deploy(deps: DeployDeps, options: DeployOptions): Promise<
     ),
   );
 
-  printNextSteps(NEXT_STEPS.DEPLOY);
+  printNextSteps(deps, NEXT_STEPS.DEPLOY);
 }

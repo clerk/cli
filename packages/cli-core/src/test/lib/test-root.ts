@@ -122,6 +122,7 @@ const defaults: Root = {
     search: strict("prompts.search"),
     input: strict("prompts.input"),
     password: strict("prompts.password"),
+    editor: strict("prompts.editor"),
   },
 
   // ── mode (test default = human) ────────────────────────────────────

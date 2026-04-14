@@ -1,4 +1,5 @@
 import { cyan } from "./color.ts";
+import type { Need } from "./deps.ts";
 
 export const NEXT_STEPS = {
   LOGIN: [
@@ -19,18 +20,20 @@ export const NEXT_STEPS = {
   ],
 } as const;
 
+export type PrintNextStepsDeps = Need<{
+  log: "info" | "blank";
+}>;
+
 /**
  * Print contextual next-step suggestions after a successful command.
  *
  * Callers are responsible for gating this on interactive/human mode via
- * deps.mode.isAgent() before calling. This helper is intentionally a pure
- * formatter with no mode awareness, per the deps-injection design where
- * lib/next-steps.ts is a pure-module exception to the deps rule.
+ * deps.mode.isAgent() before calling.
  */
-export function printNextSteps(steps: readonly string[]): void {
+export function printNextSteps(deps: PrintNextStepsDeps, steps: readonly string[]): void {
   if (steps.length === 0) return;
   for (const step of steps) {
-    console.error(`   ${cyan("\u2192")} ${step}`);
+    deps.log.info(`   ${cyan("\u2192")} ${step}`);
   }
-  console.error();
+  deps.log.blank();
 }

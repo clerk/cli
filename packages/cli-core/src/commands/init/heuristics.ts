@@ -118,7 +118,7 @@ function formatAction(action: FileAction): string {
   return `  ${dim("-")} ${dim(action.path)} ${dim(`(${action.skipReason})`)}`;
 }
 
-export type PrintOutroDeps = Need<{ log: "info" }>;
+export type PrintOutroDeps = Need<{ log: "info" | "blank" }>;
 
 export function printOutro(
   deps: PrintOutroDeps,
@@ -131,7 +131,7 @@ export function printOutro(
     deps.log.info(formatAction(action));
   }
 
-  printNextSteps(plan.postInstructions);
+  printNextSteps(deps, plan.postInstructions);
   printFindings(findings);
   deps.log.info("");
 }

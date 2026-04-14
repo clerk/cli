@@ -56,7 +56,7 @@ export type InitDeps = Need<{
   tokenExchange: "fetchUserInfo";
   env: "get";
   spinner: "intro" | "outro" | "bar" | "withSpinner";
-  log: "info" | "warn" | "data";
+  log: "info" | "warn" | "data" | "blank";
   system: "which" | "runInherit" | "runCapture" | "spawn";
   runners: "*";
 }> &
@@ -120,7 +120,7 @@ export async function init(deps: InitDeps, options: InitOptions = {}): Promise<v
   }
 
   if (bootstrap) {
-    printBootstrapNextSteps(bootstrap, keyless);
+    printBootstrapNextSteps(deps, bootstrap, keyless);
   }
 
   if (options.skills !== false) {
@@ -202,7 +202,10 @@ function devCommand(pm: string): string {
   return pm === "npm" ? "npm run dev" : `${pm} dev`;
 }
 
+type PrintBootstrapNextStepsDeps = Need<{ log: "info" | "blank" }>;
+
 function printBootstrapNextSteps(
+  deps: PrintBootstrapNextStepsDeps,
   { projectName, packageManager }: BootstrapResult,
   keyless: boolean,
 ): void {
@@ -210,7 +213,7 @@ function printBootstrapNextSteps(
   if (keyless) {
     steps.push("clerk login  (when you're ready to connect your Clerk account)");
   }
-  printNextSteps(steps);
+  printNextSteps(deps, steps);
 }
 
 // --- Auth ---
@@ -260,7 +263,7 @@ async function authenticateAndLink(deps: AuthenticateAndLinkDeps, cwd: string): 
 type DetectAndInstallDeps = Need<{
   spinner: "withSpinner";
   prompts: "confirm";
-  log: "info" | "warn";
+  log: "info" | "warn" | "blank";
   system: "which" | "runInherit" | "runCapture";
 }>;
 

@@ -8,7 +8,7 @@ export type AppsCreateDeps = Need<{
   plapi: "createApplication" | "fetchApplication";
   mode: "isAgent";
   spinner: "withSpinner";
-  log: "info" | "success" | "data";
+  log: "info" | "success" | "data" | "blank";
 }>;
 
 export async function create(
@@ -33,5 +33,5 @@ export async function create(
   }
 
   deps.log.success(`Created ${cyan(displayName(app))} ${dim(app.application_id)}`);
-  printNextSteps(NEXT_STEPS.CREATE);
+  printNextSteps(deps, NEXT_STEPS.CREATE);
 }

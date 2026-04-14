@@ -16,6 +16,7 @@ import {
   search as inquirerSearch,
   input as inquirerInput,
   password as inquirerPassword,
+  editor as inquirerEditor,
 } from "@inquirer/prompts";
 
 /** OS-specific path to the controlling terminal's input stream. */
@@ -104,6 +105,24 @@ export async function password(config: {
   }
 }
 
+/**
+ * Like `editor()` from @inquirer/prompts, with the piped-stdin fallback.
+ */
+export async function editor(config: {
+  message: string;
+  default?: string;
+  postfix?: string;
+  waitForUseInput?: boolean;
+  validate?: (value: string) => boolean | string | Promise<boolean | string>;
+}): Promise<string> {
+  const ttyInput = process.stdin.isTTY ? undefined : createReadStream(TTY_PATH);
+  try {
+    return await inquirerEditor(config, ttyInput ? { input: ttyInput } : undefined);
+  } finally {
+    ttyInput?.close();
+  }
+}
+
 export interface Prompts {
   confirm(config: { message: string; default?: boolean }): Promise<boolean>;
   select<T>(config: {
@@ -129,6 +148,13 @@ export interface Prompts {
     mask?: boolean | string;
     validate?: (value: string) => boolean | string | Promise<boolean | string>;
   }): Promise<string>;
+  editor(config: {
+    message: string;
+    default?: string;
+    postfix?: string;
+    waitForUseInput?: boolean;
+    validate?: (value: string) => boolean | string | Promise<boolean | string>;
+  }): Promise<string>;
 }
 
 export const prompts: Prompts = {
@@ -137,4 +163,5 @@ export const prompts: Prompts = {
   search,
   input,
   password,
+  editor,
 };
