@@ -111,7 +111,7 @@ The CLI auto-detects agent mode when stdout is not a TTY, or when `--mode agent`
 - **Mutations still require `--yes`** unless you accept per-call confirmation is impossible.
 - **`doctor --fix` is ignored.** Parse `doctor --json` output's `remedy` field and act on it yourself.
 - **`apps list` defaults to JSON** when piped.
-- **`init --prompt`** prints a framework-specific integration guide for agents to follow (run this instead of the interactive flow when you need to wire Clerk into a codebase).
+- **`clerk init --prompt`** prints a short agent-oriented handoff telling the agent to run `clerk init -y` (it is NOT a framework-specific integration guide — use the runtime `clerk init` output itself for that).
 
 Full matrix in [references/agent-mode.md](references/agent-mode.md).
 

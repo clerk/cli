@@ -14,15 +14,15 @@ Force human mode with `--mode human` or `CLERK_MODE=human`. Typical AI-agent inv
 
 ## What changes in agent mode
 
-| Behavior                                                         | Human mode                     | Agent mode                                                                                                            |
-| ---------------------------------------------------------------- | ------------------------------ | --------------------------------------------------------------------------------------------------------------------- |
-| Interactive pickers (`link` without `--app`, `api` with no args) | Show a TUI picker              | Print structured guidance and exit, or auto-resolve                                                                   |
-| Confirmation prompts (`unlink`, `config patch`, `api -X DELETE`) | Prompt y/n                     | Require `--yes`, otherwise error                                                                                      |
-| `clerk doctor --fix`                                             | Interactively offers fixes     | **Ignored**; output the `remedy` field and let the caller act                                                         |
-| `clerk apps list` default output                                 | Table                          | JSON (when piped)                                                                                                     |
-| `clerk auth login` when already authenticated                    | Prompt to re-auth              | Silent no-op                                                                                                          |
-| `clerk init`                                                     | Full interactive scaffold flow | Prints framework-specific integration guidance and exits; pair with `clerk init --prompt` for explicit agent guidance |
-| Color / spinners                                                 | Enabled                        | Disabled                                                                                                              |
+| Behavior                                                         | Human mode                     | Agent mode                                                                                                                                                            |
+| ---------------------------------------------------------------- | ------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Interactive pickers (`link` without `--app`, `api` with no args) | Show a TUI picker              | Print structured guidance and exit, or auto-resolve                                                                                                                   |
+| Confirmation prompts (`unlink`, `config patch`, `api -X DELETE`) | Prompt y/n                     | Require `--yes`, otherwise error                                                                                                                                      |
+| `clerk doctor --fix`                                             | Interactively offers fixes     | **Ignored**; output the `remedy` field and let the caller act                                                                                                         |
+| `clerk apps list` default output                                 | Table                          | JSON (when piped)                                                                                                                                                     |
+| `clerk auth login` when already authenticated                    | Prompt to re-auth              | Silent no-op                                                                                                                                                          |
+| `clerk init`                                                     | Full interactive scaffold flow | Skips the interactive scaffold and either runs non-interactively with `--yes` or, with `--prompt`, emits a short agent handoff pointing the agent at `clerk init -y`. |
+| Color / spinners                                                 | Enabled                        | Disabled                                                                                                                                                              |
 
 **Rule of thumb:** always pass `--yes` for mutations, `--json` for structured output where available, and `--app` / `--instance` explicitly instead of relying on pickers.
 
