@@ -15,7 +15,7 @@ function makeCtx(overrides?: Partial<ProjectContext>): ProjectContext {
       name: "Nuxt",
       sdk: "@clerk/nuxt",
       envVar: "NUXT_PUBLIC_CLERK_PUBLISHABLE_KEY",
-      envFile: ".env",
+      envFile: ".env" as const,
     },
     typescript: true,
     srcDir: false,
@@ -230,6 +230,143 @@ test("no i18n instruction without @nuxtjs/i18n", async () => {
   const plan = await nuxt.scaffold(makeCtx({ deps: {} }));
 
   expect(plan.postInstructions.some((i) => i.includes("@nuxtjs/i18n"))).toBe(false);
+});
+
+test("adds auth header in app.vue during bootstrap", async () => {
+  await mkdir(join(tempDir, "app"), { recursive: true });
+  await Bun.write(
+    join(tempDir, "nuxt.config.ts"),
+    `export default defineNuxtConfig({
+  modules: [],
+});
+`,
+  );
+  await Bun.write(
+    join(tempDir, "app/app.vue"),
+    `<template>
+  <div>
+    <NuxtRouteAnnouncer />
+    <NuxtWelcome />
+  </div>
+</template>
+`,
+  );
+
+  const plan = await nuxt.scaffold(makeCtx({ isBootstrap: true, deps: { tailwindcss: "4.0.0" } }));
+  const appVue = findAction(plan.actions, "app/app.vue");
+
+  expect(appVue.type).toBe("modify");
+  if (appVue.type !== "modify") throw new Error("Expected modify action");
+
+  expect(appVue.content).toContain('<Show when="signed-out">');
+  expect(appVue.content).toContain("<SignInButton />");
+  expect(appVue.content).toContain("<SignUpButton />");
+  expect(appVue.content).toContain('<Show when="signed-in">');
+  expect(appVue.content).toContain("<UserButton />");
+  expect(appVue.content).toContain("<NuxtPage />");
+  expect(appVue.content).toContain(
+    'class="flex h-16 items-center justify-end gap-4 border-b px-4"',
+  );
+  // Nuxt auto-imports — no script setup needed
+  expect(appVue.content).not.toContain("<script");
+  expect(appVue.description).toContain("auth header");
+});
+
+test("does not add auth header for non-bootstrap init", async () => {
+  await mkdir(join(tempDir, "app"), { recursive: true });
+  await Bun.write(
+    join(tempDir, "nuxt.config.ts"),
+    `export default defineNuxtConfig({
+  modules: [],
+});
+`,
+  );
+  await Bun.write(
+    join(tempDir, "app/app.vue"),
+    `<template>
+  <div>
+    <NuxtWelcome />
+  </div>
+</template>
+`,
+  );
+
+  const plan = await nuxt.scaffold(makeCtx());
+  const appVue = findAction(plan.actions, "app/app.vue");
+
+  expect(appVue.type).toBe("modify");
+  if (appVue.type !== "modify") throw new Error("Expected modify action");
+
+  expect(appVue.content).toContain("<NuxtPage />");
+  expect(appVue.content).not.toContain("<Show");
+  expect(appVue.content).not.toContain("<SignInButton");
+});
+
+test("omits Show post-instruction when bootstrap includes header", async () => {
+  await mkdir(join(tempDir, "app"), { recursive: true });
+  await Bun.write(
+    join(tempDir, "nuxt.config.ts"),
+    `export default defineNuxtConfig({ modules: [] });
+`,
+  );
+  await Bun.write(
+    join(tempDir, "app/app.vue"),
+    `<template>
+  <div>
+    <NuxtWelcome />
+  </div>
+</template>
+`,
+  );
+
+  const plan = await nuxt.scaffold(makeCtx({ isBootstrap: true }));
+
+  expect(plan.postInstructions.some((i) => i.includes("<Show"))).toBe(false);
+});
+
+test("creates index page during bootstrap (Nuxt 4 app/ layout)", async () => {
+  await mkdir(join(tempDir, "app"), { recursive: true });
+  await Bun.write(
+    join(tempDir, "nuxt.config.ts"),
+    `export default defineNuxtConfig({ modules: [] });\n`,
+  );
+  await Bun.write(join(tempDir, "app/app.vue"), `<template>\n  <NuxtWelcome />\n</template>\n`);
+
+  const plan = await nuxt.scaffold(makeCtx({ isBootstrap: true }));
+
+  const indexPage = findAction(plan.actions, "app/pages/index.vue");
+  expect(indexPage.type).toBe("create");
+  if (indexPage.type === "create") {
+    expect(indexPage.content).toContain("It works!");
+    expect(indexPage.content).toContain("app/pages/index.vue");
+  }
+});
+
+test("skips index page during bootstrap when it already exists", async () => {
+  await mkdir(join(tempDir, "app/pages"), { recursive: true });
+  await Bun.write(
+    join(tempDir, "nuxt.config.ts"),
+    `export default defineNuxtConfig({ modules: [] });\n`,
+  );
+  await Bun.write(join(tempDir, "app/app.vue"), `<template>\n  <NuxtWelcome />\n</template>\n`);
+  await Bun.write(join(tempDir, "app/pages/index.vue"), `<template><div>existing</div></template>`);
+
+  const plan = await nuxt.scaffold(makeCtx({ isBootstrap: true }));
+
+  const indexPage = findAction(plan.actions, "app/pages/index.vue");
+  expect(indexPage.type).toBe("skip");
+});
+
+test("does not create index page for non-bootstrap init", async () => {
+  await Bun.write(
+    join(tempDir, "nuxt.config.ts"),
+    `export default defineNuxtConfig({ modules: [] });\n`,
+  );
+
+  const plan = await nuxt.scaffold(makeCtx());
+
+  const indexPage = plan.actions.find((a) => a.path.endsWith("index.vue"));
+  expect(indexPage).toBeUndefined();
 });
 
 test("handles nuxt.config.js variant", async () => {

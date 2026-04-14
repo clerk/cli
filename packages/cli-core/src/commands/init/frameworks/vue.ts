@@ -4,9 +4,11 @@ import {
   authFileSpecs,
   findFirstFile,
   hasTailwindStyles,
+  headerHtmlBlock,
   htmlAuthComponentMarkup,
   indentBlock,
   insertAfterLastImport,
+  MISSING_PUBLISHABLE_KEY_ERROR,
   safeAddImport,
   scaffoldAuthFiles,
   scaffoldEnvVars,
@@ -22,46 +24,37 @@ async function findEntryFile(ctx: ProjectContext): Promise<string | null> {
 }
 
 function addClerkPluginSetup(source: string): string {
-  const keyBlock = `\nconst PUBLISHABLE_KEY = import.meta.env.VITE_CLERK_PUBLISHABLE_KEY;\n\nif (!PUBLISHABLE_KEY) {\n  throw new Error("Add your Clerk Publishable Key to the .env file");\n}\n`;
-
-  let result = source;
+  const keyBlock = `\nconst PUBLISHABLE_KEY = import.meta.env.VITE_CLERK_PUBLISHABLE_KEY;\nif (!PUBLISHABLE_KEY) {\n  throw new Error("${MISSING_PUBLISHABLE_KEY_ERROR}");\n}\n`;
+  const useClerk = `app.use(clerkPlugin, { publishableKey: PUBLISHABLE_KEY });`;
 
   // Handle chained pattern: createApp(App).mount(...) -> split into separate statements
   const chainedPattern = /(createApp\([^)]*\))\.mount\s*\(([^)]*)\)/;
-  if (chainedPattern.test(result)) {
-    result = result.replace(
-      chainedPattern,
-      `const app = $1;\napp.use(clerkPlugin, { publishableKey: PUBLISHABLE_KEY });\napp.mount($2)`,
-    );
-  } else {
-    // Handle variable pattern: app.mount(...) -> insert app.use() before it
-    result = result.replace(
-      /((\w+)\.mount\s*\()/,
-      `$2.use(clerkPlugin, { publishableKey: PUBLISHABLE_KEY });\n$1`,
-    );
-  }
+  const withPlugin = chainedPattern.test(source)
+    ? source.replace(chainedPattern, `const app = $1;\n${useClerk}\napp.mount($2)`)
+    : source.replace(/((\w+)\.mount\s*\()/, `${useClerk}\n$1`);
 
-  return insertAfterLastImport(result, keyBlock);
+  return insertAfterLastImport(withPlugin, keyBlock);
 }
 
-function newEntryContent(): string {
+function newEntryContent(withRouter = false): string {
+  const routerImport = withRouter ? `import router from "./router";\n` : "";
+  const routerUse = withRouter ? `app.use(router);\n` : "";
   return `import { createApp } from "vue";
 import { clerkPlugin } from "@clerk/vue";
 import App from "./App.vue";
-
+${routerImport}
 const PUBLISHABLE_KEY = import.meta.env.VITE_CLERK_PUBLISHABLE_KEY;
-
 if (!PUBLISHABLE_KEY) {
-  throw new Error("Add your Clerk Publishable Key to the .env file");
+  throw new Error("${MISSING_PUBLISHABLE_KEY_ERROR}");
 }
 
 const app = createApp(App);
 app.use(clerkPlugin, { publishableKey: PUBLISHABLE_KEY });
-app.mount("#app");
+${routerUse}app.mount("#app");
 `;
 }
 
-async function scaffoldEntry(ctx: ProjectContext): Promise<FileAction> {
+async function scaffoldEntry(ctx: ProjectContext, withRouter = false): Promise<FileAction> {
   const entryPath = await findEntryFile(ctx);
 
   if (!entryPath) {
@@ -70,7 +63,7 @@ async function scaffoldEntry(ctx: ProjectContext): Promise<FileAction> {
     return {
       type: "create",
       path: `${base}main.${ext}`,
-      content: newEntryContent(),
+      content: newEntryContent(withRouter),
       description: "Create entry file with clerkPlugin setup",
     };
   }
@@ -83,17 +76,21 @@ async function scaffoldEntry(ctx: ProjectContext): Promise<FileAction> {
 
   let newContent = safeAddImport(content, "@clerk/vue", "clerkPlugin");
 
-  // Add the publishable key constant and app.use() call before app.mount()
-  if (newContent.includes(".mount(")) {
-    newContent = addClerkPluginSetup(newContent);
+  if (withRouter) {
+    newContent = insertAfterLastImport(newContent, `\nimport router from "./router";\n`);
   }
 
-  return {
-    path: entryPath,
-    type: "modify",
-    content: newContent,
-    description: "Add clerkPlugin with publishableKey to Vue app",
-  };
+  // Add the publishable key constant and app.use() call before app.mount()
+  const hasMount = newContent.includes(".mount(");
+  if (hasMount) newContent = addClerkPluginSetup(newContent);
+  if (hasMount && withRouter)
+    newContent = newContent.replace(/(.+\.mount\s*\()/, `app.use(router);\n$1`);
+
+  const description = withRouter
+    ? "Add clerkPlugin with publishableKey and vue-router to Vue app"
+    : "Add clerkPlugin with publishableKey to Vue app";
+
+  return { path: entryPath, type: "modify", content: newContent, description };
 }
 
 function authPageContent(kind: "sign-in" | "sign-up", tailwind: boolean): string {
@@ -115,8 +112,12 @@ async function findRouterFile(ctx: ProjectContext): Promise<string | null> {
   return findFirstFile(ctx.cwd, [`${base}router/index.${ext}`, `${base}router.${ext}`]);
 }
 
+function hasSignRoutes(source: string): boolean {
+  return source.includes("/sign-in") || source.includes("/sign-up");
+}
+
 function addSignRoutes(source: string, viewPrefix: string): string {
-  if (source.includes("/sign-in") || source.includes("/sign-up")) {
+  if (hasSignRoutes(source)) {
     return source;
   }
 
@@ -127,13 +128,68 @@ function addSignRoutes(source: string, viewPrefix: string): string {
   );
 }
 
+function newRouterContent(viewPrefix: string): string {
+  return `import { createRouter, createWebHistory } from "vue-router";
+
+const router = createRouter({
+  history: createWebHistory(),
+  routes: [
+    {
+      path: "/sign-in",
+      component: () => import("${viewPrefix}views/sign-in.vue"),
+    },
+    {
+      path: "/sign-up",
+      component: () => import("${viewPrefix}views/sign-up.vue"),
+    },
+  ],
+});
+
+export default router;
+`;
+}
+
+function scaffoldNewRouter(ctx: ProjectContext): FileAction {
+  const base = srcPrefix(ctx);
+  const ext = scriptExt(ctx);
+  return {
+    type: "create",
+    path: `${base}router/index.${ext}`,
+    content: newRouterContent("../"),
+    description: "Create vue-router config with sign-in and sign-up routes",
+  };
+}
+
+async function scaffoldAppVue(ctx: ProjectContext, tailwind: boolean): Promise<FileAction | null> {
+  const base = srcPrefix(ctx);
+  const appPath = await findFirstFile(ctx.cwd, [`${base}App.vue`]);
+  if (!appPath) return null;
+
+  if (!ctx.isBootstrap) {
+    return {
+      path: appPath,
+      type: "modify",
+      content: `<template>\n  <RouterView />\n</template>\n`,
+      description: "Replace template with <RouterView /> for vue-router",
+    };
+  }
+
+  const header = headerHtmlBlock("    ", tailwind);
+  return {
+    path: appPath,
+    type: "modify",
+    content: `<script setup>\nimport { Show, SignInButton, SignUpButton, UserButton } from "@clerk/vue";\n</script>\n\n<template>\n${header}\n    <RouterView />\n</template>\n`,
+    description: "Replace template with <RouterView /> and add auth header",
+  };
+}
+
 async function scaffoldRouter(ctx: ProjectContext): Promise<FileAction | null> {
   const routerPath = await findRouterFile(ctx);
   if (!routerPath) return null;
 
   const content = await Bun.file(join(ctx.cwd, routerPath)).text();
 
-  if (content.includes("/sign-in") || content.includes("/sign-up")) {
+  if (hasSignRoutes(content)) {
     return { type: "skip", path: routerPath, skipReason: "Already has sign-in/sign-up routes" };
   }
 
@@ -158,9 +214,10 @@ export const vue: FrameworkScaffold = {
   async scaffold(ctx: ProjectContext): Promise<ScaffoldPlan> {
     const tailwind = hasTailwindStyles(ctx);
     const base = srcPrefix(ctx);
+    const needsRouterBootstrap = ctx.isBootstrap && !ctx.deps["vue-router"];
 
     const [entryAction, authActions, envAction, routerAction] = await Promise.all([
-      scaffoldEntry(ctx),
+      scaffoldEntry(ctx, needsRouterBootstrap),
       scaffoldAuthFiles(
         ctx.cwd,
         authFileSpecs({
@@ -170,13 +227,19 @@ export const vue: FrameworkScaffold = {
         }),
       ),
       scaffoldEnvVars(ctx, SIGN_ROUTE_ENV_VARS.vite),
-      scaffoldRouter(ctx),
+      needsRouterBootstrap ? null : scaffoldRouter(ctx),
     ]);
 
     const actions: FileAction[] = [entryAction, ...authActions, envAction];
     const postInstructions: string[] = [];
+    const additionalDeps: string[] = [];
 
-    if (routerAction) {
+    if (needsRouterBootstrap) {
+      actions.push(scaffoldNewRouter(ctx));
+      const appVueAction = await scaffoldAppVue(ctx, tailwind);
+      if (appVueAction) actions.push(appVueAction);
+      additionalDeps.push("vue-router");
+    } else if (routerAction) {
       actions.push(routerAction);
     } else if (ctx.deps["vue-router"]) {
       postInstructions.push(
@@ -184,6 +247,6 @@ export const vue: FrameworkScaffold = {
       );
     }
 
-    return { actions, postInstructions };
+    return { actions, postInstructions, additionalDeps };
   },
 };

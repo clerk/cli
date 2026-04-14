@@ -1,6 +1,7 @@
 import { join } from "node:path";
 import { parseModule } from "magicast";
 import {
+  addBootstrapHeader,
   authFileSpecs,
   findFirstDirMatch,
   findFirstFile,
@@ -92,16 +93,19 @@ function addLoaderDataBinding(source: string): { content: string; hasLoaderData:
 function describeRootAction(options: {
   hasLoaderData: boolean;
   needsManualLoaderMerge: boolean;
+  isBootstrap: boolean;
 }): string {
+  const suffix = options.isBootstrap ? ", and auth header" : "";
+
   if (options.needsManualLoaderMerge) {
-    return "Add ClerkProvider and clerkMiddleware (manual rootAuthLoader merge still required)";
+    return `Add ClerkProvider and clerkMiddleware (manual rootAuthLoader merge still required)${suffix}`;
   }
 
   if (options.hasLoaderData) {
-    return "Add ClerkProvider, clerkMiddleware, rootAuthLoader, and loaderData wiring";
+    return `Add ClerkProvider, clerkMiddleware, rootAuthLoader, and loaderData wiring${suffix}`;
   }
 
-  return "Add ClerkProvider, clerkMiddleware, and rootAuthLoader (manual loaderData wiring may be needed)";
+  return `Add ClerkProvider, clerkMiddleware, and rootAuthLoader (manual loaderData wiring may be needed)${suffix}`;
 }
 
 function wrapOutletWithProvider(source: string, hasLoaderData: boolean): string {
@@ -178,6 +182,10 @@ async function scaffoldRoot(ctx: ProjectContext): Promise<RootScaffoldResult> {
     : addLoaderDataBinding(result);
   result = wrapOutletWithProvider(loaderDataResult.content, loaderDataResult.hasLoaderData);
 
+  if (ctx.isBootstrap) {
+    result = addBootstrapHeader(result, "@clerk/react-router", hasTailwindStyles(ctx));
+  }
+
   return {
     action: {
       path: rootPath,
@@ -186,6 +194,7 @@ async function scaffoldRoot(ctx: ProjectContext): Promise<RootScaffoldResult> {
       description: describeRootAction({
         hasLoaderData: loaderDataResult.hasLoaderData,
         needsManualLoaderMerge,
+        isBootstrap: Boolean(ctx.isBootstrap),
       }),
     },
     needsManualLoaderMerge,
@@ -226,7 +235,7 @@ function ensureRouteImported(source: string): string {
   const importMatch = source.match(
     /import\s*\{([^}]*)\}\s*from\s*["']@react-router\/dev\/routes["']/,
   );
-  if (!importMatch || !importMatch[1] || /\broute\b/.test(importMatch[1])) return source;
+  if (!importMatch || /\broute\b/.test(importMatch[1]!)) return source;
 
   return source.replace(
     /(\bimport\s*\{[^}]*)(\}\s*from\s*["']@react-router\/dev\/routes["'])/,
@@ -301,8 +310,8 @@ function injectRouteEntries(
   // Strategy 1: canonical create-react-router pattern.
   const canonicalPattern = /export default \[([^\]]*)\]\s*satisfies\s*RouteConfig\s*;/s;
   const canonical = source.match(canonicalPattern);
-  if (canonical && canonical[1] !== undefined) {
-    const innerContent = canonical[1].trimEnd();
+  if (canonical) {
+    const innerContent = canonical[1]!.trimEnd();
     const separator = innerContent.length > 0 && !innerContent.endsWith(",") ? "," : "";
     const newInner = `${innerContent}${separator}\n  ${newEntries},\n`;
     return source.replace(canonicalPattern, `export default [${newInner}] satisfies RouteConfig;`);
@@ -311,8 +320,8 @@ function injectRouteEntries(
   // Strategy 2: any `export default [...]` array (no satisfies).
   const simplePattern = /(export\s+default\s+\[)([\s\S]*?)(\]\s*;)/;
   const simple = source.match(simplePattern);
-  if (simple && simple[2] !== undefined) {
-    const innerContent = simple[2].trimEnd();
+  if (simple) {
+    const innerContent = simple[2]!.trimEnd();
     const separator = innerContent.length > 0 && !innerContent.endsWith(",") ? "," : "";
     const newInner = `${innerContent}${separator}\n  ${newEntries},\n`;
     return source.replace(simplePattern, `$1${newInner}$3`);

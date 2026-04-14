@@ -39,36 +39,76 @@ export function insertAfterLastImport(source: string, snippet: string): string {
   return source.slice(0, lineEnd + 1) + snippet + source.slice(lineEnd + 1);
 }
 
+type HeaderSyntax = "html" | "jsx";
+
+const HEADER_ATTRS: Record<HeaderSyntax, { tailwind: string; inline: string }> = {
+  html: {
+    tailwind: `class="flex h-16 items-center justify-end gap-4 border-b px-4"`,
+    inline: `style="display: flex; height: 64px; align-items: center; justify-content: flex-end; gap: 16px; border-bottom: 1px solid #e5e7eb; padding: 0 16px;"`,
+  },
+  jsx: {
+    tailwind: `className="flex h-16 items-center justify-end gap-4 border-b px-4"`,
+    inline: `style={{ display: "flex", height: "64px", alignItems: "center", justifyContent: "flex-end", gap: "16px", borderBottom: "1px solid #e5e7eb", padding: "0 16px" }}`,
+  },
+};
+
+const AUTH_HEADER_COMPONENTS = ["Show", "SignInButton", "SignUpButton", "UserButton"] as const;
+
+function buildHeaderBlock(indent: string, tailwind: boolean, syntax: HeaderSyntax): string {
+  const innerIndent = indent + "  ";
+  const attrs = HEADER_ATTRS[syntax];
+  const attr = tailwind ? attrs.tailwind : attrs.inline;
+
+  return [
+    `${indent}<header ${attr}>`,
+    `${innerIndent}<Show when="signed-out">`,
+    `${innerIndent}  <SignInButton />`,
+    `${innerIndent}  <SignUpButton />`,
+    `${innerIndent}</Show>`,
+    `${innerIndent}<Show when="signed-in">`,
+    `${innerIndent}  <UserButton />`,
+    `${innerIndent}</Show>`,
+    `${indent}</header>`,
+  ].join("\n");
+}
+
+/**
+ * Build the auth header block using HTML attributes (`class` / `style="..."`).
+ * Used by Vue, Nuxt, and Astro scaffolders.
+ */
+export function headerHtmlBlock(indent: string, tailwind: boolean): string {
+  return buildHeaderBlock(indent, tailwind, "html");
+}
+
 /**
  * Inject a navigation header with auth buttons inside `<ClerkProvider>`.
  * Must be called AFTER `wrapBodyWithProvider` has already wrapped body contents.
  */
 export function injectHeaderInProvider(content: string, tailwind: boolean): string {
-  const providerPattern = /^( *)<ClerkProvider>/m;
+  const providerPattern = /^( *).*<ClerkProvider[^>]*>/m;
   const match = providerPattern.exec(content);
   if (!match) return content;
 
-  const [, indent] = match;
-  const innerIndent = indent + "  ";
-  const deepIndent = innerIndent + "  ";
+  const innerIndent = match[1] + "  ";
+  const headerBlock = buildHeaderBlock(innerIndent, tailwind, "jsx");
 
-  const headerAttr = tailwind
-    ? `className="flex h-16 items-center justify-end gap-4 border-b px-4"`
-    : `style={{ display: "flex", height: "64px", alignItems: "center", justifyContent: "flex-end", gap: "16px", borderBottom: "1px solid #e5e7eb", padding: "0 16px" }}`;
+  return content.replace(providerPattern, (fullMatch) => `${fullMatch}\n${headerBlock}`);
+}
 
-  const headerBlock = [
-    `${innerIndent}<header ${headerAttr}>`,
-    `${deepIndent}<Show when="signed-out">`,
-    `${deepIndent}  <SignInButton />`,
-    `${deepIndent}  <SignUpButton />`,
-    `${deepIndent}</Show>`,
-    `${deepIndent}<Show when="signed-in">`,
-    `${deepIndent}  <UserButton />`,
-    `${deepIndent}</Show>`,
-    `${innerIndent}</header>`,
-  ].join("\n");
-
-  return content.replace(providerPattern, `${indent}<ClerkProvider>\n${headerBlock}`);
+/**
+ * Add Show, SignInButton, SignUpButton, UserButton imports from a Clerk package
+ * and inject a header inside <ClerkProvider>. Used by JSX frameworks during bootstrap.
+ */
+export function addBootstrapHeader(
+  content: string,
+  clerkPackage: string,
+  tailwind: boolean,
+): string {
+  const withImports = AUTH_HEADER_COMPONENTS.reduce(
+    (result, name) => safeAddImport(result, clerkPackage, name),
+    content,
+  );
+  return injectHeaderInProvider(withImports, tailwind);
 }
 
 /** Wrap the contents of a `<body>` tag with a provider component (e.g. `<ClerkProvider>`). */

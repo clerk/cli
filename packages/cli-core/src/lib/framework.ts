@@ -9,12 +9,18 @@ export interface FrameworkInfo {
   dep: string;
   name: string;
   sdk: string;
+  /** Override the install specifier when it differs from the package name (e.g. pinned version). */
+  sdkInstall?: string;
   envVar: string;
   /** Override for secret key env var name. Defaults to CLERK_SECRET_KEY when omitted. */
   secretKeyEnvVar?: string;
   /** Preferred env file for secrets. Frameworks that gitignore `.env` use it
    *  directly; Vite-based frameworks use `.env.local` since `.env` is tracked. */
   envFile: ".env" | ".env.local";
+  /** When true, the framework's Clerk SDK supports keyless mode (auto-generated
+   *  temporary dev keys). Frameworks without keyless support require API keys
+   *  and must authenticate during `clerk init`. */
+  supportsKeyless?: boolean;
 }
 
 // Order matters: more specific frameworks first (e.g. next before react, nuxt before vue)
@@ -25,6 +31,7 @@ export const FRAMEWORK_MAP: FrameworkInfo[] = [
     sdk: "@clerk/nextjs",
     envVar: "NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY",
     envFile: ".env",
+    supportsKeyless: true,
   },
   {
     dep: "astro",
@@ -32,14 +39,18 @@ export const FRAMEWORK_MAP: FrameworkInfo[] = [
     sdk: "@clerk/astro",
     envVar: "PUBLIC_CLERK_PUBLISHABLE_KEY",
     envFile: ".env",
+    supportsKeyless: true,
   },
   {
     dep: "nuxt",
     name: "Nuxt",
     sdk: "@clerk/nuxt",
+    // TODO: Remove sdkInstall once @clerk/nuxt stable (>=2.2.0) ships with keyless support
+    sdkInstall: "@clerk/nuxt@2.2.0-snapshot.v20260413174426",
     envVar: "NUXT_PUBLIC_CLERK_PUBLISHABLE_KEY",
     secretKeyEnvVar: "NUXT_CLERK_SECRET_KEY",
     envFile: ".env",
+    supportsKeyless: true,
   },
   {
     dep: "@tanstack/react-start",
@@ -47,6 +58,7 @@ export const FRAMEWORK_MAP: FrameworkInfo[] = [
     sdk: "@clerk/tanstack-react-start",
     envVar: "VITE_CLERK_PUBLISHABLE_KEY",
     envFile: ".env.local",
+    supportsKeyless: true,
   },
   {
     dep: "react-router",
@@ -54,6 +66,7 @@ export const FRAMEWORK_MAP: FrameworkInfo[] = [
     sdk: "@clerk/react-router",
     envVar: "VITE_CLERK_PUBLISHABLE_KEY",
     envFile: ".env.local",
+    supportsKeyless: true,
   },
   {
     dep: "vue",

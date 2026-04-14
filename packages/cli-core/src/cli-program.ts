@@ -89,7 +89,13 @@ export function createProgram() {
         FRAMEWORK_NAMES,
       ),
     )
-    .option("--app <id>", "Link to a specific Clerk application by ID")
+    .addOption(
+      createOption(
+        "--pm <manager>",
+        "Package manager to use (skips prompt/auto-detection)",
+      ).choices(["bun", "pnpm", "yarn", "npm"]),
+    )
+    .option("--name <project-name>", "Project name for --starter (skips prompt)")
     .option("--prompt", "Output a prompt for an AI agent to integrate Clerk")
     .option("--starter", "Create a new project from a starter template")
     .option("-y, --yes", "Skip confirmation prompts")
@@ -105,6 +111,10 @@ export function createProgram() {
         description: "Link to a specific Clerk application",
       },
       { command: "clerk init --starter", description: "Create a new project with Clerk" },
+      {
+        command: "clerk init --starter --framework next --pm bun",
+        description: "Bootstrap with Bun",
+      },
       { command: "clerk init --prompt", description: "Output a setup prompt for an AI agent" },
       { command: "clerk init -y", description: "Skip all confirmation prompts" },
       { command: "clerk init --no-skills", description: "Skip the agent skills install prompt" },

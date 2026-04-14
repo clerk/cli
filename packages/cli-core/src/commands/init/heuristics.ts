@@ -11,45 +11,60 @@ import { withSpinner } from "../../lib/spinner.js";
 import type { FileAction, ProjectContext, ScaffoldPlan } from "./frameworks/types.js";
 import type { ScanFinding } from "./scan.js";
 
-export async function installSdk(ctx: ProjectContext): Promise<void> {
-  const addCmd = pmInstallCommand(ctx.packageManager);
+async function runPmInstall(
+  cwd: string,
+  addCmd: string,
+  packages: string[],
+  label: string,
+  { fromLockfile = false }: { fromLockfile?: boolean } = {},
+): Promise<void> {
+  const pmBinary = addCmd.split(" ")[0]!;
+  const manualCmd = `${addCmd} ${packages.join(" ")}`;
 
-  // The package manager is detected from lockfiles, which can exist without
-  // the actual binary being installed (e.g. teammate committed bun.lock, you
-  // only have npm). Fail fast with a useful message rather than a raw ENOENT.
-  const pmBinary = addCmd.split(" ")[0] ?? addCmd;
   if (Bun.which(pmBinary) === null) {
-    log.warn(
-      `${pmBinary} is not installed but the project's lockfile suggests it. ` +
-        `Install ${pmBinary} or run \`${addCmd} ${ctx.framework.sdk}\` manually with another package manager.`,
-    );
+    const hint = fromLockfile
+      ? ` (detected from lockfile — install ${pmBinary} or switch package managers)`
+      : "";
+    log.warn(`${pmBinary} is not installed${hint}. Install manually: ${manualCmd}`);
     return;
   }
 
-  log.info(`Installing ${cyan(ctx.framework.sdk)} for ${ctx.framework.name}...`);
+  log.info(`Installing ${label}...`);
 
-  // try/catch covers the TOCTOU window between Bun.which and spawn.
   let exitCode: number;
   try {
-    const proc = Bun.spawn(addCmd.split(" ").concat(ctx.framework.sdk), {
-      cwd: ctx.cwd,
+    const proc = Bun.spawn(addCmd.split(" ").concat(packages), {
+      cwd,
       stdout: "inherit",
       stderr: "inherit",
     });
     exitCode = await proc.exited;
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    log.warn(
-      `Failed to spawn ${addCmd}: ${message}. You can install manually: ${addCmd} ${ctx.framework.sdk}`,
-    );
+    log.warn(`Failed to spawn ${addCmd}: ${message}. Install manually: ${manualCmd}`);
     return;
   }
 
   if (exitCode !== 0) {
-    log.warn(
-      `Failed to install ${ctx.framework.sdk}. You can install it manually: ${addCmd} ${ctx.framework.sdk}`,
-    );
+    log.warn(`Failed to install ${packages.join(", ")}. Install manually: ${manualCmd}`);
   }
+}
+
+export async function installDeps(ctx: ProjectContext, packages: string[]): Promise<void> {
+  const addCmd = pmInstallCommand(ctx.packageManager);
+  await runPmInstall(ctx.cwd, addCmd, packages, packages.map(cyan).join(", "));
+}
+
+export async function installSdk(ctx: ProjectContext): Promise<void> {
+  const addCmd = pmInstallCommand(ctx.packageManager);
+  const installPkg = ctx.framework.sdkInstall ?? ctx.framework.sdk;
+  await runPmInstall(
+    ctx.cwd,
+    addCmd,
+    [installPkg],
+    `${cyan(ctx.framework.sdk)} for ${ctx.framework.name}`,
+    { fromLockfile: true },
+  );
 }
 
 export async function writePlan(cwd: string, plan: ScaffoldPlan): Promise<string[]> {

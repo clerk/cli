@@ -1,5 +1,6 @@
-import { test, expect, describe } from "bun:test";
+import { test, expect, describe, spyOn, afterAll } from "bun:test";
 import { BOOTSTRAP_REGISTRY } from "./bootstrap-registry.ts";
+import { resolvePackageManager } from "./bootstrap.ts";
 
 function entryFor(dep: string) {
   const entry = BOOTSTRAP_REGISTRY.find((e) => e.dep === dep);
@@ -122,5 +123,46 @@ describe("BOOTSTRAP_REGISTRY", () => {
     const cmd = entryFor("react").buildCommand("pnpm", "app");
     expect(cmd[0]).toBe("pnpm");
     expect(cmd[1]).toBe("dlx");
+  });
+});
+
+describe("resolvePackageManager", () => {
+  const whichSpy = spyOn(Bun, "which");
+
+  afterAll(() => {
+    whichSpy.mockRestore();
+  });
+
+  test("returns first available PM in priority order", () => {
+    whichSpy.mockImplementation((bin) => {
+      if (bin === "bun") return "/usr/local/bin/bun";
+      return null;
+    });
+
+    expect(resolvePackageManager()).toBe("bun");
+  });
+
+  test("falls back to pnpm when bun is unavailable", () => {
+    whichSpy.mockImplementation((bin) => {
+      if (bin === "pnpm") return "/usr/local/bin/pnpm";
+      return null;
+    });
+
+    expect(resolvePackageManager()).toBe("pnpm");
+  });
+
+  test("falls back to yarn when bun and pnpm are unavailable", () => {
+    whichSpy.mockImplementation((bin) => {
+      if (bin === "yarn") return "/usr/local/bin/yarn";
+      return null;
+    });
+
+    expect(resolvePackageManager()).toBe("yarn");
+  });
+
+  test("falls back to npm as last resort", () => {
+    whichSpy.mockReturnValue(null);
+
+    expect(resolvePackageManager()).toBe("npm");
   });
 });

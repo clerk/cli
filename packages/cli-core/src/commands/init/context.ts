@@ -4,6 +4,7 @@ import { detectFramework, readDeps } from "../../lib/framework.js";
 import type { FrameworkInfo } from "../../lib/framework.js";
 import { findExistingEnvFile } from "../../lib/dotenv.js";
 import type { ProjectContext } from "./frameworks/types.js";
+import type { PackageManager } from "./bootstrap-registry.js";
 
 export async function fileExists(path: string): Promise<boolean> {
   return Bun.file(path).exists();
@@ -43,6 +44,7 @@ export async function hasPackageJson(cwd: string): Promise<boolean> {
 export async function gatherContext(
   cwd: string,
   frameworkOverride?: FrameworkInfo,
+  pmOverride?: PackageManager,
 ): Promise<ProjectContext | null> {
   const framework = frameworkOverride ?? (await detectFramework(cwd));
   if (!framework) return null;
@@ -61,7 +63,7 @@ export async function gatherContext(
   const hasRootStructure = rootAppDir || rootPagesDir;
   const srcDir = srcDirExists && !hasRootStructure;
 
-  const packageManager = await detectPackageManager(cwd);
+  const packageManager = pmOverride ?? (await detectPackageManager(cwd));
 
   const deps = await readDeps(cwd);
   const existingClerk = deps ? framework.sdk in deps : false;

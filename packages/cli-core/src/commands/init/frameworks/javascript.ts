@@ -1,5 +1,5 @@
 import { join } from "node:path";
-import { findFirstFile, scriptExt, srcPrefix } from "./helpers.js";
+import { findFirstFile, MISSING_PUBLISHABLE_KEY_ERROR, scriptExt, srcPrefix } from "./helpers.js";
 import type { FileAction, FrameworkScaffold, ProjectContext, ScaffoldPlan } from "./types.js";
 
 async function findEntryFile(ctx: ProjectContext): Promise<string | null> {
@@ -23,9 +23,14 @@ function clerkInitContent(typescript: boolean): string {
 
 const publishableKey = import.meta.env.VITE_CLERK_PUBLISHABLE_KEY;
 
+if (!publishableKey) {
+  throw new Error("${MISSING_PUBLISHABLE_KEY_ERROR}");
+}
+
 const clerk = new Clerk(publishableKey);
 await clerk.load();
 
+// Static string literals with no user input — safe to use as markup
 if (clerk.user) {
   const div = document.getElementById("app")${castDiv};
   div.innerHTML = '<div id="user-button"></div>';

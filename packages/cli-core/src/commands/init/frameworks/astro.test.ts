@@ -15,7 +15,7 @@ function makeCtx(overrides?: Partial<ProjectContext>): ProjectContext {
       name: "Astro",
       sdk: "@clerk/astro",
       envVar: "PUBLIC_CLERK_PUBLISHABLE_KEY",
-      envFile: ".env",
+      envFile: ".env" as const,
     },
     typescript: true,
     srcDir: false,
@@ -245,6 +245,100 @@ export default defineConfig({
 
   // The only post-instruction should be about SSR, not i18n
   expect(plan.postInstructions.some((i) => i.includes("locale"))).toBe(false);
+});
+
+test("adds auth header in layout during bootstrap", async () => {
+  await Bun.write(
+    join(tempDir, "astro.config.mjs"),
+    `import { defineConfig } from "astro/config";
+export default defineConfig({ integrations: [] });
+`,
+  );
+  await mkdir(join(tempDir, "src/layouts"), { recursive: true });
+  await Bun.write(
+    join(tempDir, "src/layouts/Layout.astro"),
+    `---
+---
+
+<html lang="en">
+\t<body>
+\t\t<slot />
+\t</body>
+</html>
+`,
+  );
+
+  const plan = await astro.scaffold(makeCtx({ isBootstrap: true, deps: { tailwindcss: "4.0.0" } }));
+  const layout = findAction(plan.actions, "src/layouts/Layout.astro");
+
+  expect(layout.type).toBe("modify");
+  if (layout.type !== "modify") throw new Error("Expected modify action");
+
+  expect(layout.content).toContain('<Show when="signed-out">');
+  expect(layout.content).toContain("<SignInButton />");
+  expect(layout.content).toContain("<SignUpButton />");
+  expect(layout.content).toContain('<Show when="signed-in">');
+  expect(layout.content).toContain("<UserButton />");
+  expect(layout.content).toContain(
+    'class="flex h-16 items-center justify-end gap-4 border-b px-4"',
+  );
+  expect(layout.content).toContain("@clerk/astro/components");
+  expect(layout.description).toContain("auth header");
+});
+
+test("does not add auth header for non-bootstrap init", async () => {
+  await Bun.write(
+    join(tempDir, "astro.config.mjs"),
+    `import { defineConfig } from "astro/config";
+export default defineConfig({ integrations: [] });
+`,
+  );
+  await mkdir(join(tempDir, "src/layouts"), { recursive: true });
+  await Bun.write(
+    join(tempDir, "src/layouts/Layout.astro"),
+    `<html lang="en">
+\t<body>
+\t\t<slot />
+\t</body>
+</html>
+`,
+  );
+
+  const plan = await astro.scaffold(makeCtx());
+
+  const layoutAction = plan.actions.find((a) => a.path === "src/layouts/Layout.astro");
+  expect(layoutAction).toBeUndefined();
+});
+
+test("uses plain styles for auth header in Astro when no Tailwind", async () => {
+  await Bun.write(
+    join(tempDir, "astro.config.mjs"),
+    `import { defineConfig } from "astro/config";
+export default defineConfig({ integrations: [] });
+`,
+  );
+  await mkdir(join(tempDir, "src/layouts"), { recursive: true });
+  await Bun.write(
+    join(tempDir, "src/layouts/Layout.astro"),
+    `---
+---
+
+<html lang="en">
+\t<body>
+\t\t<slot />
+\t</body>
+</html>
+`,
+  );
+
+  const plan = await astro.scaffold(makeCtx({ isBootstrap: true, deps: {} }));
+  const layout = findAction(plan.actions, "src/layouts/Layout.astro");
+
+  expect(layout.type).toBe("modify");
+  if (layout.type !== "modify") throw new Error("Expected modify action");
+
+  expect(layout.content).toContain('style="display: flex;');
+  expect(layout.content).not.toContain('class="flex');
 });
 
 test("uses .js extension when typescript is false", async () => {

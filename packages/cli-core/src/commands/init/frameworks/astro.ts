@@ -6,6 +6,7 @@ import {
   findFirstFile,
   hasClerkImport,
   hasTailwindStyles,
+  headerHtmlBlock,
   htmlAuthComponentMarkup,
   scaffoldAuthFiles,
   scaffoldConfigFile,
@@ -72,16 +73,25 @@ function addClerkToIntegrations(content: string): string {
   return content;
 }
 
-function addClerkIntegration(content: string): string {
-  return addClerkToIntegrations(addClerkImport(content));
+function enableServerOutput(content: string): string {
+  if (content.includes("output:")) return content;
+  return content.replace(/(defineConfig\s*\(\s*\{)/, '$1\n  output: "server",');
+}
+
+function addClerkIntegration(content: string, enableSsr = false): string {
+  let result = addClerkToIntegrations(addClerkImport(content));
+  if (enableSsr) result = enableServerOutput(result);
+  return result;
 }
 
 function scaffoldConfig(ctx: ProjectContext): Promise<FileAction> {
   return scaffoldConfigFile(ctx.cwd, {
     candidates: ["astro.config.mjs", "astro.config.ts", "astro.config.js"],
     existsCheck: "@clerk/astro",
-    modify: addClerkIntegration,
-    description: "Add clerk() to integrations and import",
+    modify: (content) => addClerkIntegration(content, Boolean(ctx.isBootstrap)),
+    description: ctx.isBootstrap
+      ? "Add clerk() to integrations, import, and enable SSR output"
+      : "Add clerk() to integrations and import",
     existingSkipReason: "Already has @clerk/astro integration",
     missingAction: {
       type: "skip",
@@ -119,6 +129,47 @@ async function scaffoldMiddleware(ctx: ProjectContext): Promise<FileAction> {
   };
 }
 
+const ASTRO_HEADER_IMPORT = `import { Show, SignInButton, SignUpButton, UserButton } from "@clerk/astro/components";`;
+
+/** Inject a frontmatter import line into an Astro file. */
+function addAstroFrontmatterImport(content: string, importLine: string): string {
+  const fencePattern = /^---\n([\s\S]*?)^---/m;
+  const match = fencePattern.exec(content);
+  if (match) {
+    const [fullMatch, frontmatter = ""] = match;
+    if (frontmatter.includes(importLine)) return content;
+    return content.replace(fullMatch!, `---\n${frontmatter}${importLine}\n---`);
+  }
+  return `---\n${importLine}\n---\n\n${content}`;
+}
+
+/**
+ * Inject an auth header into the Astro layout file during bootstrap.
+ * Adds the necessary component import and inserts the header before `<slot />`.
+ */
+async function scaffoldLayout(ctx: ProjectContext, tailwind: boolean): Promise<FileAction | null> {
+  if (!ctx.isBootstrap) return null;
+
+  const layoutPath = await findFirstFile(ctx.cwd, ["src/layouts/Layout.astro"]);
+  if (!layoutPath) return null;
+
+  let content = await Bun.file(join(ctx.cwd, layoutPath)).text();
+
+  if (!content.includes("<slot")) return null;
+
+  content = addAstroFrontmatterImport(content, ASTRO_HEADER_IMPORT);
+
+  const header = headerHtmlBlock("\t\t", tailwind);
+  content = content.replace(/(\s*)(<slot\s*\/?>)/, `\n${header}\n$1$2`);
+
+  return {
+    path: layoutPath,
+    type: "modify",
+    content,
+    description: "Add auth header with Clerk components to layout",
+  };
+}
+
 /** Check if the Astro config contains an i18n configuration. */
 async function hasAstroI18n(cwd: string): Promise<boolean> {
   const configPath = await findFirstFile(cwd, [
@@ -143,20 +194,30 @@ export const astro: FrameworkScaffold = {
 
   async scaffold(ctx: ProjectContext): Promise<ScaffoldPlan> {
     const tailwind = hasTailwindStyles(ctx);
-    const [configAction, middlewareAction, authActions, envAction, i18n] = await Promise.all([
-      scaffoldConfig(ctx),
-      scaffoldMiddleware(ctx),
-      scaffoldAuthFiles(
-        ctx.cwd,
-        authFileSpecs({
-          path: (kind) => `src/pages/${kind}.astro`,
-          content: (kind) => authPageContent(kind, tailwind),
-          surface: "page",
-        }),
-      ),
-      scaffoldEnvVars(ctx, SIGN_ROUTE_ENV_VARS.astro),
-      hasAstroI18n(ctx.cwd),
-    ]);
+    const [configAction, middlewareAction, layoutAction, authActions, envAction, i18n] =
+      await Promise.all([
+        scaffoldConfig(ctx),
+        scaffoldMiddleware(ctx),
+        scaffoldLayout(ctx, tailwind),
+        scaffoldAuthFiles(
+          ctx.cwd,
+          authFileSpecs({
+            path: (kind) => `src/pages/${kind}.astro`,
+            content: (kind) => authPageContent(kind, tailwind),
+            surface: "page",
+          }),
+        ),
+        scaffoldEnvVars(ctx, SIGN_ROUTE_ENV_VARS.astro),
+        hasAstroI18n(ctx.cwd),
+      ]);
+
+    const actions = [
+      configAction,
+      middlewareAction,
+      layoutAction,
+      ...authActions,
+      envAction,
+    ].filter((action): action is FileAction => action !== null);
 
     const postInstructions = [
       "Ensure your Astro config has `output: 'server'` and an SSR adapter (e.g., @astrojs/node)",
@@ -169,7 +230,7 @@ export const astro: FrameworkScaffold = {
     }
 
     return {
-      actions: [configAction, middlewareAction, ...authActions, envAction],
+      actions,
       postInstructions,
     };
   },

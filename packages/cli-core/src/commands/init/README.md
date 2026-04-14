@@ -9,7 +9,8 @@ clerk init
 clerk init --app app_123
 clerk init --framework next
 clerk init --starter
-clerk init --starter --framework next
+clerk init --starter --framework next --pm bun
+clerk init --starter --framework next --pm bun --name my-app
 clerk init --prompt
 clerk init -y
 clerk init --yes
@@ -18,28 +19,36 @@ clerk init --no-skills
 
 ## Options
 
-| Option               | Description                                                                                                                                                                           |
-| -------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `--framework <name>` | Framework to set up (skips auto-detection). Valid values: `next`, `astro`, `nuxt`, `tanstack-start`, `react-router`, `vue`, `expo`, `react`, `javascript`, `js`, `express`, `fastify` |
-| `--app <id>`         | Link to a specific Clerk application by ID (skips the interactive app picker). If the repo is already linked to a different application, prompts to re-link.                          |
-| `--starter`          | Bootstrap a new project from a starter template (runs the framework generator, installs deps, and scaffolds Clerk)                                                                    |
-| `--prompt`           | Output a prompt for an AI agent to integrate Clerk, then exit                                                                                                                         |
-| `-y, --yes`          | Skip confirmation prompts (also skips authentication after bootstrap, letting you connect your account later)                                                                         |
-| `--no-skills`        | Skip the optional agent skills install prompt at the end of init                                                                                                                      |
+| Option                  | Description                                                                                                                                                                           |
+| ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `--framework <name>`    | Framework to set up (skips auto-detection). Valid values: `next`, `astro`, `nuxt`, `tanstack-start`, `react-router`, `vue`, `expo`, `react`, `javascript`, `js`, `express`, `fastify` |
+| `--pm <manager>`        | Package manager to use. Valid values: `bun`, `pnpm`, `yarn`, `npm`. Skips the PM prompt (bootstrap) or overrides lockfile detection (existing project)                                |
+| `--name <project-name>` | Project name for `--starter` (skips prompt). Must be lowercase, no spaces, no path separators                                                                                         |
+| `--starter`             | Bootstrap a new project from a starter template (runs the framework generator, installs deps, and scaffolds Clerk)                                                                    |
+| `--prompt`              | Output a prompt for an AI agent to integrate Clerk, then exit                                                                                                                         |
+| `-y, --yes`             | Skip confirmation prompts (also skips authentication after bootstrap, letting you connect your account later)                                                                         |
+| `--no-skills`           | Skip the optional agent skills install prompt at the end of init                                                                                                                      |
 
 ## Agent Mode
 
-When running in agent mode (`--mode agent` or non-TTY), outputs a framework-specific prompt with exact file paths and code snippets, then exits without modifying the project.
+When running in agent mode (`--mode agent` or non-TTY), the command runs the full init flow non-interactively:
+
+- All confirmation prompts are auto-skipped (as if `--yes` was passed)
+- For **existing projects**: framework and package manager are auto-detected, no flags required
+- For **new projects** (`--starter` or blank directory): `--framework` is required (no way to auto-detect in an empty dir). Package manager is auto-selected by availability (bun → pnpm → yarn → npm) unless `--pm` is provided
+- Project name defaults to the framework's default (e.g. `my-clerk-next-app`) unless `--name` is provided
+
+Use `--prompt` to output a setup prompt for an AI agent without running init.
 
 ## Flow
 
-1. Gathers project context (framework, router variant, TypeScript, `src/` directory, package manager)
-2. **Agent mode**: outputs a framework-specific prompt, then exits
+1. **`--prompt`**: outputs a framework-specific prompt, then exits
+2. Gathers project context (framework, router variant, TypeScript, `src/` directory, package manager)
 3. **Human mode**: determines auth mode:
    - If already authenticated and linked: uses authenticated mode automatically
    - If authenticated but not linked: uses authenticated mode (runs `clerk link`)
    - If not authenticated: asks user — "Continue with temporary keys (connect your account later)" or "Log in to an existing Clerk account"
-   - With `--yes` and not authenticated: skips authentication (connect your account later)
+   - With `--yes` and not authenticated: skips authentication (connect your account later), including for non-keyless frameworks during bootstrap
 4. **Authenticated mode only**: authenticates via `clerk auth login` (skipped if already authenticated) and links the project via `clerk link` (skipped if already linked)
 5. Displays detected framework and variant
 6. Detects existing auth libraries (NextAuth, Auth0, Supabase, Firebase, Passport, Better Auth, Kinde) and shows migration guidance
@@ -59,19 +68,21 @@ When running in agent mode (`--mode agent` or non-TTY), outputs a framework-spec
 
 Detects the project's framework from `package.json` dependencies (checked top-to-bottom, first match wins):
 
-| Dependency              | Framework      | Clerk SDK                     | Publishable Key Env Var             |
-| ----------------------- | -------------- | ----------------------------- | ----------------------------------- |
-| `next`                  | Next.js        | `@clerk/nextjs`               | `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` |
-| `astro`                 | Astro          | `@clerk/astro`                | `PUBLIC_CLERK_PUBLISHABLE_KEY`      |
-| `nuxt`                  | Nuxt           | `@clerk/nuxt`                 | `NUXT_PUBLIC_CLERK_PUBLISHABLE_KEY` |
-| `@tanstack/react-start` | TanStack Start | `@clerk/tanstack-react-start` | `VITE_CLERK_PUBLISHABLE_KEY`        |
-| `react-router`          | React Router   | `@clerk/react-router`         | `VITE_CLERK_PUBLISHABLE_KEY`        |
-| `vue`                   | Vue            | `@clerk/vue`                  | `VITE_CLERK_PUBLISHABLE_KEY`        |
-| `expo`                  | Expo           | `@clerk/expo`                 | `EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY` |
-| `react`                 | React          | `@clerk/react`                | `VITE_CLERK_PUBLISHABLE_KEY`        |
-| `vite`                  | JavaScript     | `@clerk/clerk-js`             | `VITE_CLERK_PUBLISHABLE_KEY`        |
-| `express`               | Express        | `@clerk/express`              | `CLERK_PUBLISHABLE_KEY`             |
-| `fastify`               | Fastify        | `@clerk/fastify`              | `CLERK_PUBLISHABLE_KEY`             |
+| Dependency              | Framework      | Clerk SDK                     | Publishable Key Env Var             | Keyless |
+| ----------------------- | -------------- | ----------------------------- | ----------------------------------- | ------- |
+| `next`                  | Next.js        | `@clerk/nextjs`               | `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` | Yes     |
+| `astro`                 | Astro          | `@clerk/astro`                | `PUBLIC_CLERK_PUBLISHABLE_KEY`      | Yes     |
+| `nuxt`                  | Nuxt           | `@clerk/nuxt`                 | `NUXT_PUBLIC_CLERK_PUBLISHABLE_KEY` | Yes     |
+| `@tanstack/react-start` | TanStack Start | `@clerk/tanstack-react-start` | `VITE_CLERK_PUBLISHABLE_KEY`        | Yes     |
+| `react-router`          | React Router   | `@clerk/react-router`         | `VITE_CLERK_PUBLISHABLE_KEY`        | Yes     |
+| `vue`                   | Vue            | `@clerk/vue`                  | `VITE_CLERK_PUBLISHABLE_KEY`        | No      |
+| `expo`                  | Expo           | `@clerk/expo`                 | `EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY` | No      |
+| `react`                 | React          | `@clerk/react`                | `VITE_CLERK_PUBLISHABLE_KEY`        | No      |
+| `vite`                  | JavaScript     | `@clerk/clerk-js`             | `VITE_CLERK_PUBLISHABLE_KEY`        | No      |
+| `express`               | Express        | `@clerk/express`              | `CLERK_PUBLISHABLE_KEY`             | No      |
+| `fastify`               | Fastify        | `@clerk/fastify`              | `CLERK_PUBLISHABLE_KEY`             | No      |
+
+The **Keyless** column indicates whether the framework's Clerk SDK supports keyless mode (auto-generated temporary dev keys). Frameworks without keyless support require API keys and always force authentication during `clerk init`, even with `--yes`.
 
 Package manager is detected from lock files: `bun.lockb`/`bun.lock` → bun, `yarn.lock` → yarn, `pnpm-lock.yaml` → pnpm, else npm.
 
@@ -157,6 +168,8 @@ Nuxt's module system auto-configures middleware and auto-imports components.
 | MODIFY        | `src/router/index.ts`   | Add sign-in and sign-up routes (if router exists)  |
 | MODIFY        | `.env`                  | Add sign-in/sign-up route env vars (VITE\_ prefix) |
 
+**Bootstrap (new project)**: When scaffolding a new Vue project via `--starter` or blank directory, `vue-router` is installed and a router config is created with sign-in/sign-up routes. `App.vue` is updated to use `<RouterView />`.
+
 ### JavaScript (Vite)
 
 | Action | File             | Description                                     |
@@ -170,7 +183,8 @@ If no entry file is found, a post-instruction is printed pointing to the Clerk J
 After scaffolding (and after env keys are pulled or keyless instructions are printed), `clerk init` offers to install Clerk's framework-specific agent skills from [`clerk/skills`](https://github.com/clerk/skills) via the [`skills`](https://www.npmjs.com/package/skills) CLI. The runner is detected from the project's package manager (`bunx`, `npx`, `pnpm dlx`, or `yarn dlx`), so a Bun project installs via `bunx skills add clerk/skills`, a pnpm project via `pnpm dlx skills add clerk/skills`, and so on. This step is optional and non-fatal: if no package runner is available on PATH or the install command exits non-zero, init prints a yellow warning with a runner-appropriate manual command and still exits successfully.
 
 - **Human mode**: prompts `Install agent skills? (...)` defaulting to yes. Pass `--no-skills` to suppress the prompt entirely, or `-y/--yes` to accept it without confirmation. When more than one runner is available, a second prompt picks which one to use (the project's package manager wins by default).
-- **Agent mode / `--prompt`**: `clerk init` exits early before the skills step runs (see the `if (options.prompt || isAgent()) { ... return }` branch in [`index.ts`](./index.ts)), so nothing is installed. Agent users should run `skills add clerk/skills` via their preferred runner manually, or have their agent do it.
+- **Agent mode**: skills are installed non-interactively with `-y -g` flags (no prompt shown). Pass `--no-skills` to skip entirely.
+- **`--prompt`**: exits before the skills step runs. Agent users should run `skills add clerk/skills` via their preferred runner manually.
 
 The base skills `clerk` and `clerk-setup` are always included. The detected framework dependency adds a matching skill:
 
