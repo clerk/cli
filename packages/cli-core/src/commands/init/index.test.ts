@@ -60,7 +60,6 @@ describe("init command", () => {
       spyOn(scanMod, "scanForIssues").mockResolvedValue([]),
       spyOn(heuristics, "printKeylessInfo").mockReturnValue(undefined),
       spyOn(heuristics, "installSdk").mockResolvedValue(undefined),
-      spyOn(heuristics, "installDeps").mockResolvedValue(undefined),
       spyOn(heuristics, "writePlan").mockResolvedValue([]),
       spyOn(heuristics, "checkGitDirty").mockResolvedValue(false),
       spyOn(heuristics, "printOutro").mockReturnValue(undefined),

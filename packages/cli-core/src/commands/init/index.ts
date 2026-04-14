@@ -12,7 +12,6 @@ import { runFormatters } from "./format.ts";
 import { detectAuthLibraries, scanForIssues } from "./scan.ts";
 import {
   installSdk,
-  installDeps,
   writePlan,
   checkGitDirty,
   printOutro,
