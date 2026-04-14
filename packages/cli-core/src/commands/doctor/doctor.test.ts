@@ -532,10 +532,9 @@ describe("checkConfigFile", () => {
       JSON.stringify({ profiles: { "/a": {} }, auth: { userId: "u_1" } }),
     );
     const deps = testRoot({
-      env: { get: (name) => (name === "CLERK_CONFIG_DIR" ? tempDir : undefined) },
+      env: { get: (name: string) => (name === "CLERK_CONFIG_DIR" ? tempDir : undefined) },
     });
-    const ctx = createMockContext();
-    const result = await checkConfigFile(deps, ctx);
+    const result = await checkConfigFile(deps);
     expectCheck(result, {
       name: "CLI configuration",
       status: "pass",
@@ -546,10 +545,9 @@ describe("checkConfigFile", () => {
   test("warn when config file does not exist", async () => {
     const missing = join(tempDir, "nonexistent");
     const deps = testRoot({
-      env: { get: (name) => (name === "CLERK_CONFIG_DIR" ? missing : undefined) },
+      env: { get: (name: string) => (name === "CLERK_CONFIG_DIR" ? missing : undefined) },
     });
-    const ctx = createMockContext();
-    const result = await checkConfigFile(deps, ctx);
+    const result = await checkConfigFile(deps);
     expectCheck(result, {
       name: "CLI configuration",
       status: "warn",
@@ -561,10 +559,9 @@ describe("checkConfigFile", () => {
   test("fail when config has invalid JSON", async () => {
     await Bun.write(join(tempDir, "config.json"), "{ invalid json }");
     const deps = testRoot({
-      env: { get: (name) => (name === "CLERK_CONFIG_DIR" ? tempDir : undefined) },
+      env: { get: (name: string) => (name === "CLERK_CONFIG_DIR" ? tempDir : undefined) },
     });
-    const ctx = createMockContext();
-    const result = await checkConfigFile(deps, ctx);
+    const result = await checkConfigFile(deps);
     expectCheck(result, {
       name: "CLI configuration",
       status: "fail",
@@ -577,10 +574,9 @@ describe("checkConfigFile", () => {
 describe("checkShellCompletion", () => {
   test("pass when shell cannot be detected", async () => {
     const deps = testRoot({
-      env: { get: (name) => (name === "SHELL" ? "" : undefined) },
+      env: { get: (name: string) => (name === "SHELL" ? "" : undefined) },
     });
-    const ctx = createMockContext();
-    const result = await checkShellCompletion(deps, ctx);
+    const result = await checkShellCompletion(deps);
     expectCheck(result, {
       name: "Shell completion",
       status: "pass",
@@ -591,11 +587,11 @@ describe("checkShellCompletion", () => {
   test("warn when zsh completion not installed", async () => {
     const deps = testRoot({
       env: {
-        get: (name) => (name === "SHELL" ? "/bin/zsh" : name === "HOME" ? tempDir : undefined),
+        get: (name: string) =>
+          name === "SHELL" ? "/bin/zsh" : name === "HOME" ? tempDir : undefined,
       },
     });
-    const ctx = createMockContext();
-    const result = await checkShellCompletion(deps, ctx);
+    const result = await checkShellCompletion(deps);
     expectCheck(result, {
       name: "Shell completion",
       status: "warn",
@@ -608,11 +604,11 @@ describe("checkShellCompletion", () => {
     await Bun.write(join(tempDir, ".zshrc"), 'eval "$(clerk completion zsh)"\n');
     const deps = testRoot({
       env: {
-        get: (name) => (name === "SHELL" ? "/bin/zsh" : name === "HOME" ? tempDir : undefined),
+        get: (name: string) =>
+          name === "SHELL" ? "/bin/zsh" : name === "HOME" ? tempDir : undefined,
       },
     });
-    const ctx = createMockContext();
-    const result = await checkShellCompletion(deps, ctx);
+    const result = await checkShellCompletion(deps);
     expectCheck(result, {
       name: "Shell completion",
       status: "pass",
@@ -624,11 +620,11 @@ describe("checkShellCompletion", () => {
     await Bun.write(join(tempDir, ".zfunc/_clerk"), "#compdef clerk\n");
     const deps = testRoot({
       env: {
-        get: (name) => (name === "SHELL" ? "/bin/zsh" : name === "HOME" ? tempDir : undefined),
+        get: (name: string) =>
+          name === "SHELL" ? "/bin/zsh" : name === "HOME" ? tempDir : undefined,
       },
     });
-    const ctx = createMockContext();
-    const result = await checkShellCompletion(deps, ctx);
+    const result = await checkShellCompletion(deps);
     expectCheck(result, {
       name: "Shell completion",
       status: "pass",
@@ -639,11 +635,11 @@ describe("checkShellCompletion", () => {
   test("warn when bash completion not installed", async () => {
     const deps = testRoot({
       env: {
-        get: (name) => (name === "SHELL" ? "/bin/bash" : name === "HOME" ? tempDir : undefined),
+        get: (name: string) =>
+          name === "SHELL" ? "/bin/bash" : name === "HOME" ? tempDir : undefined,
       },
     });
-    const ctx = createMockContext();
-    const result = await checkShellCompletion(deps, ctx);
+    const result = await checkShellCompletion(deps);
     expectCheck(result, {
       name: "Shell completion",
       status: "warn",
@@ -656,11 +652,11 @@ describe("checkShellCompletion", () => {
     await Bun.write(join(tempDir, ".bashrc"), 'eval "$(clerk completion bash)"\n');
     const deps = testRoot({
       env: {
-        get: (name) => (name === "SHELL" ? "/bin/bash" : name === "HOME" ? tempDir : undefined),
+        get: (name: string) =>
+          name === "SHELL" ? "/bin/bash" : name === "HOME" ? tempDir : undefined,
       },
     });
-    const ctx = createMockContext();
-    const result = await checkShellCompletion(deps, ctx);
+    const result = await checkShellCompletion(deps);
     expectCheck(result, {
       name: "Shell completion",
       status: "pass",
@@ -671,11 +667,11 @@ describe("checkShellCompletion", () => {
   test("warn when fish completion file missing", async () => {
     const deps = testRoot({
       env: {
-        get: (name) => (name === "SHELL" ? "/usr/bin/fish" : name === "HOME" ? tempDir : undefined),
+        get: (name: string) =>
+          name === "SHELL" ? "/usr/bin/fish" : name === "HOME" ? tempDir : undefined,
       },
     });
-    const ctx = createMockContext();
-    const result = await checkShellCompletion(deps, ctx);
+    const result = await checkShellCompletion(deps);
     expectCheck(result, {
       name: "Shell completion",
       status: "warn",
@@ -689,11 +685,11 @@ describe("checkShellCompletion", () => {
     await Bun.write(join(fishDir, "clerk.fish"), "# completion script\n");
     const deps = testRoot({
       env: {
-        get: (name) => (name === "SHELL" ? "/usr/bin/fish" : name === "HOME" ? tempDir : undefined),
+        get: (name: string) =>
+          name === "SHELL" ? "/usr/bin/fish" : name === "HOME" ? tempDir : undefined,
       },
     });
-    const ctx = createMockContext();
-    const result = await checkShellCompletion(deps, ctx);
+    const result = await checkShellCompletion(deps);
     expectCheck(result, {
       name: "Shell completion",
       status: "pass",
@@ -704,11 +700,11 @@ describe("checkShellCompletion", () => {
   test("no fix action attached (completions are not auto-fixable)", async () => {
     const deps = testRoot({
       env: {
-        get: (name) => (name === "SHELL" ? "/bin/zsh" : name === "HOME" ? tempDir : undefined),
+        get: (name: string) =>
+          name === "SHELL" ? "/bin/zsh" : name === "HOME" ? tempDir : undefined,
       },
     });
-    const ctx = createMockContext();
-    const result = await checkShellCompletion(deps, ctx);
+    const result = await checkShellCompletion(deps);
     expectCheck(result, {
       name: "Shell completion",
       status: "warn",

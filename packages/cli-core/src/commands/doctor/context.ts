@@ -35,34 +35,6 @@ export function createDoctorContext(): DoctorContext {
       }
       return appPromise;
     },
-
-    fixes: {
-      login: () => ({
-        label: "Log in with clerk auth login",
-        run: async () => {
-          const { login } = await import("../auth/login.ts");
-          const { createRoot } = await import("../../lib/root.ts");
-          await login(createRoot());
-        },
-      }),
-      link: () => ({
-        label: "Link project with clerk link",
-        run: async () => {
-          const { link } = await import("../link/index.ts");
-          const { createRoot } = await import("../../lib/root.ts");
-          await link(createRoot());
-        },
-      }),
-      // NOTE: pull is still unported (PR 6); leave as-is below.
-      envPull: () => ({
-        label: "Pull env vars with clerk env pull",
-        run: async () => {
-          const { pull } = await import("../env/pull.ts");
-          const { createRoot } = await import("../../lib/root.ts");
-          await pull(createRoot(), {});
-        },
-      }),
-    },
   };
 
   return ctx;
