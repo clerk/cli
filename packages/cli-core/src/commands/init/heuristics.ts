@@ -16,12 +16,16 @@ async function runPmInstall(
   addCmd: string,
   packages: string[],
   label: string,
+  { fromLockfile = false }: { fromLockfile?: boolean } = {},
 ): Promise<void> {
   const pmBinary = addCmd.split(" ")[0]!;
   const manualCmd = `${addCmd} ${packages.join(" ")}`;
 
   if (Bun.which(pmBinary) === null) {
-    log.warn(`${pmBinary} is not installed. Install manually: ${manualCmd}`);
+    const hint = fromLockfile
+      ? ` (detected from lockfile — install ${pmBinary} or switch package managers)`
+      : "";
+    log.warn(`${pmBinary} is not installed${hint}. Install manually: ${manualCmd}`);
     return;
   }
 
@@ -59,6 +63,7 @@ export async function installSdk(ctx: ProjectContext): Promise<void> {
     addCmd,
     [installPkg],
     `${cyan(ctx.framework.sdk)} for ${ctx.framework.name}`,
+    { fromLockfile: true },
   );
 }
 

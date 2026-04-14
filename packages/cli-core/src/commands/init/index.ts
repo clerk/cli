@@ -109,7 +109,7 @@ export async function init(options: InitOptions = {}) {
 
   bar();
   if (skipAuth) {
-    printManualSetupInfo(ctx.framework.name);
+    printBootstrapManualSetupInfo(ctx.framework.name);
   } else if (!keyless) {
     await pull({ file: ctx.envFile });
   } else {
@@ -122,7 +122,7 @@ export async function init(options: InitOptions = {}) {
 
   if (options.skills !== false) {
     bar();
-    await installSkills(ctx.cwd, ctx?.framework.dep, ctx?.packageManager, overrides.skipConfirm);
+    await installSkills(ctx.cwd, ctx.framework.dep, ctx.packageManager, overrides.skipConfirm);
   }
 
   outro("Done");
@@ -199,7 +199,7 @@ function printBootstrapNextSteps(
   printNextSteps(steps);
 }
 
-function printManualSetupInfo(frameworkName: string): void {
+function printBootstrapManualSetupInfo(frameworkName: string): void {
   const lines = [
     `\n  ${frameworkName} requires API keys — set them up manually:`,
     "    clerk auth login",

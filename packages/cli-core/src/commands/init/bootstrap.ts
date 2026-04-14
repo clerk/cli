@@ -1,4 +1,5 @@
 import { join } from "node:path";
+import { access } from "node:fs/promises";
 import { search, confirm, input } from "@inquirer/prompts";
 import { throwUserAbort, throwUsageError, CliError } from "../../lib/errors.js";
 import { log } from "../../lib/log.js";
@@ -178,7 +179,7 @@ export async function promptAndBootstrap(
 
   if (nameOverride) {
     const valid = validateProjectName(nameOverride);
-    if (valid !== true) throwUsageError(valid);
+    if (valid !== true) throwUsageError(`Invalid --name "${nameOverride}": ${valid}`);
   }
 
   const entry = await pickFramework(frameworkOverride);
@@ -186,6 +187,17 @@ export async function promptAndBootstrap(
   const projectName =
     nameOverride ?? (skipConfirm ? entry.defaultProjectName : await askProjectName(entry));
   const projectDir = join(cwd, projectName);
+
+  if (
+    await access(projectDir).then(
+      () => true,
+      () => false,
+    )
+  ) {
+    throw new CliError(
+      `Directory '${projectName}' already exists. Pick a different name or remove it first.`,
+    );
+  }
 
   await generateProject(entry.label, entry.buildCommand(pm, projectName), cwd);
 
