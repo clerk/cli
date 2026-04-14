@@ -2,7 +2,11 @@ import { test, expect, describe } from "bun:test";
 import { existsSync } from "node:fs";
 import { readFile, stat } from "node:fs/promises";
 import { join } from "node:path";
-import { buildSkillsArgs, withStagedClerkCliSkill } from "./install.ts";
+import {
+  buildSkillsArgs,
+  renderSkillVersionPlaceholder,
+  withStagedClerkCliSkill,
+} from "./install.ts";
 
 describe("buildSkillsArgs", () => {
   const skills = ["clerk", "clerk-setup", "clerk-nextjs-patterns"];
@@ -109,5 +113,38 @@ describe("withStagedClerkCliSkill", () => {
 
     expect(capturedDir).not.toBeNull();
     expect(existsSync(capturedDir!)).toBe(false);
+  });
+});
+
+describe("renderSkillVersionPlaceholder", () => {
+  test("replaces {{CLI_VERSION}} with the provided version", () => {
+    const result = renderSkillVersionPlaceholder("Pinned: `bunx clerk@{{CLI_VERSION}}`.", "1.2.3");
+    expect(result).toBe("Pinned: `bunx clerk@1.2.3`.");
+  });
+
+  test("replaces every occurrence, not just the first", () => {
+    const result = renderSkillVersionPlaceholder(
+      "v={{CLI_VERSION}} and again v={{CLI_VERSION}}",
+      "9.9.9",
+    );
+    expect(result).toBe("v=9.9.9 and again v=9.9.9");
+  });
+
+  test("falls back to `latest` when version is undefined", () => {
+    const result = renderSkillVersionPlaceholder(
+      "Install: `npx -y clerk@{{CLI_VERSION}}`.",
+      undefined,
+    );
+    expect(result).toBe("Install: `npx -y clerk@latest`.");
+  });
+
+  test("falls back to `latest` when version is the dev sentinel", () => {
+    const result = renderSkillVersionPlaceholder("v={{CLI_VERSION}}", "0.0.0-dev");
+    expect(result).toBe("v=latest");
+  });
+
+  test("returns content unchanged when no placeholder is present", () => {
+    const input = "No placeholder here.";
+    expect(renderSkillVersionPlaceholder(input, "1.2.3")).toBe(input);
   });
 });

@@ -55,6 +55,29 @@ const BUNDLED_CLERK_CLI_SKILL: ReadonlyArray<readonly [string, string]> = [
 ];
 
 /**
+ * The version string the compile-time `--define` global falls back to in dev
+ * builds (see `packages/cli-core/src/cli-program.ts`). When we see this we
+ * treat the binary as unversioned and tell the skill to pin against `latest`.
+ */
+const DEV_VERSION_SENTINEL = "0.0.0-dev";
+
+/**
+ * Substitute `{{CLI_VERSION}}` in a skill asset with the provided version.
+ * When the version is absent (undefined) or is the dev-build sentinel, the
+ * placeholder resolves to `latest` so the runnable commands in the skill
+ * remain copy-pasteable on unversioned binaries.
+ *
+ * Exported for tests.
+ */
+export function renderSkillVersionPlaceholder(
+  content: string,
+  version: string | undefined,
+): string {
+  const resolved = version && version !== DEV_VERSION_SENTINEL ? version : "latest";
+  return content.replaceAll("{{CLI_VERSION}}", resolved);
+}
+
+/**
  * Write the bundled clerk-cli skill to a fresh temp dir and call `fn` with
  * its path. The dir is deleted on return, so `fn` must finish any work that
  * reads from it before returning.
