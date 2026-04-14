@@ -1,11 +1,33 @@
-import { test, expect } from "bun:test";
-import { browser } from "./browser.ts";
+// packages/cli-core/src/lib/browser.test.ts
+import { describe, test, expect } from "bun:test";
+import { createBrowser } from "./browser.ts";
+import { createFakeSystem } from "./system.fake.ts";
 
-test("browser.open returns an OpenResult shape", async () => {
-  // We can't actually launch a browser in tests, so this only verifies
-  // the function exists, accepts a URL, and returns a Promise resolving
-  // to an object with an `ok` boolean. Real browser launching is tested
-  // by integration/e2e suites.
-  const result = await browser.open("about:blank");
-  expect(typeof result.ok).toBe("boolean");
+describe("createBrowser", () => {
+  test("spawns the platform opener", async () => {
+    const system = createFakeSystem();
+    system.queueSpawn({ exitCode: 0 });
+    const browser = createBrowser(system);
+    const res = await browser.open("https://example.com");
+    expect(res.ok).toBe(true);
+    expect(system.calls.spawn[0]?.cmd.at(-1)).toBe("https://example.com");
+  });
+
+  test("returns { ok: false } on non-zero exit", async () => {
+    const system = createFakeSystem();
+    system.queueSpawn({ exitCode: 1 });
+    const browser = createBrowser(system);
+    const res = await browser.open("https://example.com");
+    expect(res.ok).toBe(false);
+    expect(res.reason).toContain("exit code 1");
+  });
+
+  test("returns { ok: false } when spawn throws", async () => {
+    const system = createFakeSystem();
+    system.queueSpawn({ throw: new Error("ENOENT") });
+    const browser = createBrowser(system);
+    const res = await browser.open("https://example.com");
+    expect(res.ok).toBe(false);
+    expect(res.reason).toContain("ENOENT");
+  });
 });

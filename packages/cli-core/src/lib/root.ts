@@ -17,7 +17,7 @@ import { authServer } from "./auth-server.ts";
 import { pkce } from "./pkce.ts";
 import { prompts } from "./prompts.ts";
 import { modeService } from "../mode.ts";
-import { browser } from "./browser.ts";
+import { createBrowser } from "./browser.ts";
 import { createSystem } from "./system.ts";
 import { createRunners } from "./runners.ts";
 import { spinner } from "./spinner.ts";
@@ -40,7 +40,7 @@ export function createRoot(): Root {
     pkce,
     prompts,
     mode: modeService,
-    browser,
+    browser: createBrowser(system),
     system,
     runners: createRunners(system),
     spinner,
