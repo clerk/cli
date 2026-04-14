@@ -32,11 +32,17 @@ import {
 import type { ProjectContext } from "./frameworks/types.js";
 
 type InitOptions = {
+  /** Framework to set up (skips auto-detection). */
   framework?: string;
+  /** Skip confirmation prompts (also skips authentication after bootstrap). */
   yes?: boolean;
+  /** Output a prompt for an AI agent to integrate Clerk, then exit. */
   prompt?: boolean;
+  /** Whether to install the optional agent skills (default: true; `--no-skills` sets false). */
   skills?: boolean;
+  /** Create a new project from a starter template. */
   starter?: boolean;
+  /** Link to a specific Clerk application by ID (skips the interactive picker). */
   app?: string;
 };
 
