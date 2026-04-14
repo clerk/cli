@@ -56,7 +56,8 @@ export type InitDeps = Need<{
   env: "get";
   spinner: "intro" | "outro" | "bar" | "withSpinner";
   log: "info" | "warn" | "data";
-  system: "which" | "runInherit" | "runCapture";
+  system: "which" | "runInherit" | "runCapture" | "spawn";
+  runners: "*";
 }> &
   LinkIfNeededDeps &
   PullDefaultDeps &

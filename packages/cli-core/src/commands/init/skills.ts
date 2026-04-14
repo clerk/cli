@@ -13,36 +13,15 @@
 
 import type { Need } from "../../lib/deps.ts";
 import { dim } from "../../lib/color.ts";
-import {
-  type Runner,
-  detectAvailableRunners,
-  preferredRunner,
-  runnerCommand,
-  runnerForPackageManager,
-} from "../../lib/runners.ts";
+import { type Runner, runnerCommand, runnerForPackageManager } from "../../lib/runners.ts";
 import type { ProjectContext } from "./frameworks/types.ts";
-
-/**
- * Subprocess spawn function, injected so tests can replace the real
- * `Bun.spawn` with a no-op stub. Without injection, a test that forgets
- * to mock installSkills will write `.adal/`, `.agents/`, `skills/`, and
- * `skills-lock.json` into whichever directory the test's `cwd` points at,
- * polluting the repository.
- */
-export type SpawnFn = (
-  cmd: string[],
-  options: {
-    cwd: string;
-    stdin?: "inherit" | "ignore" | "pipe";
-    stdout: "inherit" | "ignore";
-    stderr: "inherit" | "ignore";
-  },
-) => { exited: Promise<number> };
 
 export type InstallSkillsDeps = Need<{
   mode: "isHuman";
   prompts: "confirm" | "select";
   log: "info" | "warn" | "success" | "blank";
+  system: "spawn";
+  runners: "*";
 }>;
 
 /** Skills installed regardless of framework. */
@@ -89,15 +68,12 @@ export function buildSkillsArgs(skills: string[], interactive: boolean): string[
   return ["skills", "add", SKILLS_SOURCE, ...skillFlags, ...extraFlags];
 }
 
-const defaultSpawn: SpawnFn = (cmd, options) => Bun.spawn(cmd, options);
-
 export async function installSkills(
   deps: InstallSkillsDeps,
   cwd: string,
   frameworkDep: string | undefined,
   packageManager: ProjectContext["packageManager"] | undefined,
   skipPrompt: boolean,
-  spawn: SpawnFn = defaultSpawn,
 ): Promise<void> {
   const skills = resolveSkills(frameworkDep);
   const skillList = skills.join(", ");
@@ -111,7 +87,7 @@ export async function installSkills(
   }
 
   // Detect runners after the user accepts, no point probing PATH if they decline.
-  const available = detectAvailableRunners();
+  const available = deps.runners.detectAvailable();
   if (available.length === 0) {
     const suggested = runnerForPackageManager(packageManager);
     deps.log.blank();
@@ -122,7 +98,7 @@ export async function installSkills(
     return;
   }
 
-  const preferred = preferredRunner(packageManager, available);
+  const preferred = deps.runners.preferred(packageManager, available);
   if (!preferred) {
     // Defensive: detectAvailableRunners returned a non-empty array above, so
     // preferredRunner should always find something. This guards against any
@@ -161,7 +137,7 @@ export async function installSkills(
   // try/catch is needed in addition to the exit code check below.
   let exitCode: number;
   try {
-    const proc = spawn(command, {
+    const proc = deps.system.spawn(command, {
       cwd,
       stdin: "inherit",
       stdout: "inherit",
