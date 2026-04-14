@@ -122,7 +122,7 @@ export async function init(deps: InitDeps, options: InitOptions = {}): Promise<v
 
   if (options.skills !== false) {
     deps.spinner.bar();
-    await installSkills(deps, cwd, ctx?.framework.dep, options.yes ?? false);
+    await installSkills(deps, cwd, ctx?.framework.dep, ctx?.packageManager, options.yes ?? false);
   }
 
   deps.spinner.outro("Done");
