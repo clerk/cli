@@ -118,6 +118,8 @@ const defaults: Root = {
   prompts: {
     confirm: async () => false,
     select: strict("prompts.select"),
+    search: strict("prompts.search"),
+    input: strict("prompts.input"),
   },
 
   // ── mode (test default = human) ────────────────────────────────────
@@ -197,13 +199,18 @@ export function testRoot(overrides: DeepPartial<Root> = {}): Root {
     // For Proxy-based defaults (plapi, bapi), preserve the Proxy and only
     // overlay overrides as a separate object that takes precedence.
     if (proxyDefaults.has(defaultsForKey as object)) {
+      // Memoize mock wrappers so `deps.plapi.foo` returns the same mock
+      // instance on every access (required for expect().toHaveBeenCalled()).
+      const wrappedOverrides: Record<string, unknown> = {};
+      for (const [k, v] of Object.entries(overridesForKey)) {
+        wrappedOverrides[k] = typeof v === "function" ? mock(v as never) : v;
+      }
       root[key] = new Proxy(
         {},
         {
           get: (_target, prop: string) => {
-            if (prop in overridesForKey) {
-              const v = overridesForKey[prop];
-              return typeof v === "function" ? mock(v as never) : v;
+            if (prop in wrappedOverrides) {
+              return wrappedOverrides[prop];
             }
             return (defaultsForKey as unknown as Record<string, unknown>)[prop];
           },

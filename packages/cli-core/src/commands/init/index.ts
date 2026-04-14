@@ -1,5 +1,4 @@
 import { login } from "../auth/login.js";
-import { createRoot } from "../../lib/root.ts";
 import { link } from "../link/index.js";
 import { createRoot } from "../../lib/root.js";
 import { pull } from "../env/pull.js";

@@ -111,7 +111,7 @@ describe("init", () => {
     await init({ yes: true });
 
     expect(loginMod.login).toHaveBeenCalledWith(expect.anything(), { showNextSteps: false });
-    expect(linkMod.link).toHaveBeenCalledWith(expect.any(Object), { skipIfLinked: true, app: undefined });
+    expect(linkMod.link).toHaveBeenCalledWith(expect.anything(), { skipIfLinked: true, app: undefined });
   });
 
   test("forwards --app to link when provided", async () => {
