@@ -24,6 +24,7 @@ import { dirname, join } from "node:path";
 import { dim } from "../../lib/color.js";
 import { isHuman } from "../../mode.js";
 import { log } from "../../lib/log.js";
+import { DEV_CLI_VERSION, resolveCliVersion } from "../../lib/version.js";
 import { select } from "../../lib/prompts.js";
 import {
   type Runner,
@@ -55,13 +56,6 @@ const BUNDLED_CLERK_CLI_SKILL: ReadonlyArray<readonly [string, string]> = [
 ];
 
 /**
- * The version string the compile-time `--define` global falls back to in dev
- * builds (see `packages/cli-core/src/cli-program.ts`). When we see this we
- * treat the binary as unversioned and tell the skill to pin against `latest`.
- */
-const DEV_VERSION_SENTINEL = "0.0.0-dev";
-
-/**
  * Substitute `{{CLI_VERSION}}` in a skill asset with the provided version.
  * When the version is absent (undefined) or is the dev-build sentinel, the
  * placeholder resolves to `latest` so the runnable commands in the skill
@@ -73,24 +67,28 @@ export function renderSkillVersionPlaceholder(
   content: string,
   version: string | undefined,
 ): string {
-  const resolved = version && version !== DEV_VERSION_SENTINEL ? version : "latest";
+  const resolved = version && version !== DEV_CLI_VERSION ? version : "latest";
   return content.replaceAll("{{CLI_VERSION}}", resolved);
 }
 
 /**
  * Write the bundled clerk-cli skill to a fresh temp dir and call `fn` with
- * its path. The dir is deleted on return, so `fn` must finish any work that
- * reads from it before returning.
+ * its path. Every asset has `{{CLI_VERSION}}` rendered against `version` first
+ * (see {@link renderSkillVersionPlaceholder}). The dir is deleted on return,
+ * so `fn` must finish any work that reads from it before returning.
  *
  * Exported for tests.
  */
-export async function withStagedClerkCliSkill<T>(fn: (stageDir: string) => Promise<T>): Promise<T> {
+export async function withStagedClerkCliSkill<T>(
+  version: string | undefined,
+  fn: (stageDir: string) => Promise<T>,
+): Promise<T> {
   const stageDir = await mkdtemp(join(tmpdir(), "clerk-cli-skill-"));
   try {
     for (const [rel, content] of BUNDLED_CLERK_CLI_SKILL) {
       const dest = join(stageDir, rel);
       await mkdir(dirname(dest), { recursive: true });
-      await writeFile(dest, content);
+      await writeFile(dest, renderSkillVersionPlaceholder(content, version));
     }
     return await fn(stageDir);
   } finally {
@@ -225,7 +223,7 @@ export async function installClerkCliSkillCore(
   cwd: string,
   interactive: boolean,
 ): Promise<boolean> {
-  return withStagedClerkCliSkill((stageDir) =>
+  return withStagedClerkCliSkill(resolveCliVersion(), (stageDir) =>
     runSkillsAdd(runner, cwd, stageDir, [], interactive, true, "clerk-cli skill"),
   );
 }

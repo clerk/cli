@@ -63,7 +63,7 @@ describe("withStagedClerkCliSkill", () => {
   test("stages all bundled files into a fresh temp dir and cleans up after", async () => {
     let observed: { dir: string; files: Record<string, string> } | null = null;
 
-    await withStagedClerkCliSkill(async (dir) => {
+    await withStagedClerkCliSkill(undefined, async (dir) => {
       const files = {
         "clerk-cli/SKILL.md": await readFile(join(dir, "clerk-cli/SKILL.md"), "utf-8"),
         "clerk-cli/references/auth.md": await readFile(
@@ -105,7 +105,7 @@ describe("withStagedClerkCliSkill", () => {
     let capturedDir: string | null = null;
 
     await expect(
-      withStagedClerkCliSkill(async (dir) => {
+      withStagedClerkCliSkill(undefined, async (dir) => {
         capturedDir = dir;
         throw new Error("boom");
       }),
@@ -113,6 +113,22 @@ describe("withStagedClerkCliSkill", () => {
 
     expect(capturedDir).not.toBeNull();
     expect(existsSync(capturedDir!)).toBe(false);
+  });
+});
+
+describe("withStagedClerkCliSkill version rendering", () => {
+  test("substitutes CLI_VERSION into the staged SKILL.md", async () => {
+    await withStagedClerkCliSkill("4.5.6", async (stageDir) => {
+      const skill = await readFile(join(stageDir, "clerk-cli/SKILL.md"), "utf8");
+      expect(skill).not.toContain("{{CLI_VERSION}}");
+    });
+  });
+
+  test("passes undefined through as `latest`", async () => {
+    await withStagedClerkCliSkill(undefined, async (stageDir) => {
+      const skill = await readFile(join(stageDir, "clerk-cli/SKILL.md"), "utf8");
+      expect(skill).not.toContain("{{CLI_VERSION}}");
+    });
   });
 });
 
