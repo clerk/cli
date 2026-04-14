@@ -197,6 +197,24 @@ At install time, [`skills.ts`](./skills.ts) stages the bundled content into a fr
 
 The `skills` CLI writes the installed files into each agent's skill directory (`.claude/skills/clerk/`, `.cursor/skills/clerk/`, etc.) and records the entry in the project's `skills-lock.json` with `sourceType: "local"`, which correctly excludes it from `skills update` (the skill can only change when the CLI itself is upgraded).
 
+#### Local debugging
+
+For skill authors iterating on the `clerk` skill without rebuilding the CLI, set `CLERK_SKILL_SOURCE` to any value the `skills` CLI accepts, and the bundled content is bypassed entirely:
+
+```sh
+# Absolute path to a working-tree skill dir (default symlink install —
+# edits to the source are reflected in the installed skill immediately).
+CLERK_SKILL_SOURCE="$PWD/skills/clerk" clerk init
+
+# A fork or PR branch on GitHub.
+CLERK_SKILL_SOURCE="https://github.com/me/cli/tree/wip/skills/clerk" clerk init
+
+# Shorthand for the default repo (installs from main branch).
+CLERK_SKILL_SOURCE="clerk/cli" clerk init
+```
+
+When the override is active, `clerk init` logs the value being used and hands it straight to `<runner> skills add <value>` without `--copy`, so the install mode matches whatever the `skills` CLI would do for a regular remote or local source. The override has no effect on the upstream skills.
+
 ### 2. The upstream skills
 
 A fixed default set is always installed from [`clerk/skills`](https://github.com/clerk/skills), covering the `core/` and `features/` directories:

@@ -27,6 +27,20 @@ clerk skill install --pm bun
 | `-y, --yes`      | Skip prompts; auto-select the preferred package runner and pass `-y -g` to the `skills` CLI                                 |
 | `--pm <manager>` | Package manager hint for runner detection (`bun`, `pnpm`, `yarn`, `npm`). Defaults to lockfile detection in the current dir |
 
+## Local debugging (`CLERK_SKILL_SOURCE`)
+
+Skill authors iterating on `clerk` can set `CLERK_SKILL_SOURCE` to bypass the bundled content and point `skills add` at any source the `skills` CLI accepts (absolute path, GitHub URL, or `org/repo` shorthand):
+
+```sh
+# Absolute path to a working-tree skill dir (symlink install — edits are live).
+CLERK_SKILL_SOURCE="$PWD/skills/clerk" clerk skill install
+
+# A fork or PR branch on GitHub.
+CLERK_SKILL_SOURCE="https://github.com/me/cli/tree/wip/skills/clerk" clerk skill install
+```
+
+When the override is active, the CLI logs the value being used and passes it straight to `<runner> skills add <value>` without `--copy`. The override applies to both `clerk skill install` and the skills step in `clerk init`.
+
 ## Clerk API endpoints
 
-None. This command does not make any Clerk API calls; it only spawns the external `skills` CLI against a staged copy of the bundled skill.
+None. This command does not make any Clerk API calls; it only spawns the external `skills` CLI against a staged copy of the bundled skill (or the `CLERK_SKILL_SOURCE` override when set).

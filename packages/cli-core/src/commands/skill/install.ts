@@ -42,6 +42,29 @@ import clerkRecipesMd from "../../../../../skills/clerk/references/recipes.md" w
 import clerkAgentModeMd from "../../../../../skills/clerk/references/agent-mode.md" with { type: "text" };
 
 /**
+ * Env var that overrides the bundled `clerk` skill source. Accepts any
+ * value the `skills` CLI recognises (github/gitlab URL, `org/repo` shorthand,
+ * absolute or relative local path). Intended for skill authors testing an
+ * in-progress version without recompiling the CLI.
+ */
+const SKILL_SOURCE_OVERRIDE_ENV = "CLERK_SKILL_SOURCE";
+
+/**
+ * Read the clerk skill source override from the given env. Returns the
+ * trimmed value when set and non-empty, otherwise `undefined`. Exposed for
+ * tests so the precedence rule can be asserted without mutating
+ * `process.env`.
+ */
+export function resolveClerkSkillOverride(
+  env: NodeJS.ProcessEnv = process.env,
+): string | undefined {
+  const raw = env[SKILL_SOURCE_OVERRIDE_ENV];
+  if (!raw) return undefined;
+  const trimmed = raw.trim();
+  return trimmed.length > 0 ? trimmed : undefined;
+}
+
+/**
  * The bundled clerk skill, as `(relativePath, content)` pairs. Text
  * imports resolve live from `<repo-root>/skills/clerk/` during
  * `bun run dev` and get embedded into the compiled binary by
@@ -211,8 +234,17 @@ export async function resolveSkillsRunner(
 }
 
 /**
- * Install the bundled clerk skill using a pre-resolved runner. Does not
- * prompt; callers handle any UX around confirmation and runner selection.
+ * Install the clerk skill using a pre-resolved runner. Does not prompt;
+ * callers handle any UX around confirmation and runner selection.
+ *
+ * Default path: stage the bundled content into a temp dir and invoke
+ * `skills add <tmpdir> --copy` (the --copy is mandatory; the default symlink
+ * mode would point at a dir we're about to delete).
+ *
+ * Override path: when `CLERK_SKILL_SOURCE` is set, hand the value straight
+ * to `skills add` unchanged. No staging, no --copy — the caller owns the
+ * source and the install mode. Used by skill authors iterating on clerk
+ * without rebuilding the CLI.
  *
  * Shared with the init flow so runner detection happens once when installing
  * clerk alongside the upstream framework-pattern skills.
@@ -222,6 +254,22 @@ export async function installClerkSkillCore(
   cwd: string,
   interactive: boolean,
 ): Promise<boolean> {
+  const override = resolveClerkSkillOverride();
+  if (override) {
+    log.blank();
+    log.info(
+      `Using \`${SKILL_SOURCE_OVERRIDE_ENV}=${override}\` in place of the bundled clerk skill.`,
+    );
+    return runSkillsAdd(
+      runner,
+      cwd,
+      override,
+      [],
+      interactive,
+      false,
+      `clerk skill (${override})`,
+    );
+  }
   return withStagedClerkSkill(resolveCliVersion(), (stageDir) =>
     runSkillsAdd(runner, cwd, stageDir, [], interactive, true, "clerk skill"),
   );

@@ -104,9 +104,9 @@ export async function installSkills(
   const runner = await resolveSkillsRunner(packageManager, interactive);
   if (!runner) return;
 
-  // Install the bundled clerk skill from a staged temp dir, then the
-  // upstream framework patterns. Each call soft-fails independently so a
-  // problem with one source doesn't block the other.
+  // Install the bundled clerk skill (respecting CLERK_SKILL_SOURCE if set),
+  // then the upstream framework patterns. Each call soft-fails independently
+  // so a problem with one source doesn't block the other.
   const cliSkillOk = await installClerkSkillCore(runner, cwd, interactive);
 
   log.debug(`skills: upstream install — ${upstreamSkills.join(", ")}`);

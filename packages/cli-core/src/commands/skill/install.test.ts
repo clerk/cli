@@ -3,7 +3,12 @@ import { existsSync } from "node:fs";
 import { readFile, stat } from "node:fs/promises";
 import { join } from "node:path";
 import YAML from "yaml";
-import { buildSkillsArgs, renderSkillVersionPlaceholder, withStagedClerkSkill } from "./install.ts";
+import {
+  buildSkillsArgs,
+  renderSkillVersionPlaceholder,
+  resolveClerkSkillOverride,
+  withStagedClerkSkill,
+} from "./install.ts";
 
 describe("buildSkillsArgs", () => {
   const skills = ["clerk", "clerk-setup", "clerk-nextjs-patterns"];
@@ -188,5 +193,28 @@ describe("renderSkillVersionPlaceholder", () => {
   test("returns content unchanged when no placeholder is present", () => {
     const input = "No placeholder here.";
     expect(renderSkillVersionPlaceholder(input, "1.2.3")).toBe(input);
+  });
+});
+
+describe("resolveClerkSkillOverride", () => {
+  test("returns undefined when env var is unset", () => {
+    expect(resolveClerkSkillOverride({})).toBeUndefined();
+  });
+
+  test("returns undefined when env var is empty or whitespace", () => {
+    expect(resolveClerkSkillOverride({ CLERK_SKILL_SOURCE: "" })).toBeUndefined();
+    expect(resolveClerkSkillOverride({ CLERK_SKILL_SOURCE: "   " })).toBeUndefined();
+  });
+
+  test("returns trimmed value when env var is set", () => {
+    expect(resolveClerkSkillOverride({ CLERK_SKILL_SOURCE: "clerk/cli" })).toBe("clerk/cli");
+    expect(resolveClerkSkillOverride({ CLERK_SKILL_SOURCE: "  /tmp/my-skill  " })).toBe(
+      "/tmp/my-skill",
+    );
+    expect(
+      resolveClerkSkillOverride({
+        CLERK_SKILL_SOURCE: "https://github.com/me/fork/tree/wip/skills/clerk",
+      }),
+    ).toBe("https://github.com/me/fork/tree/wip/skills/clerk");
   });
 });
