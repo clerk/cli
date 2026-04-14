@@ -147,53 +147,76 @@ describe("link", () => {
 
   describe("skipIfLinked", () => {
     test("returns early when linked and no --app given", async () => {
-      mockIsAgent.mockReturnValue(false);
-      mockResolveProfile.mockResolvedValue({
-        path: "/repo/.git",
-        profile: { workspaceId: "", appId: "app_existing", instances: { development: "ins_1" } },
+      const deps = happyDeps({
+        configStore: {
+          resolveProfile: async () => ({
+            path: "/repo/.git",
+            profile: {
+              workspaceId: "",
+              appId: "app_existing",
+              instances: { development: "ins_1" },
+            },
+          }),
+        },
       });
-      consoleSpy = spyOn(console, "log").mockImplementation(() => {});
 
-      await runLink({ skipIfLinked: true });
+      await link(deps, { skipIfLinked: true });
 
-      expect(captured.err).toContain("Already linked");
-      expect(mockConfirm).not.toHaveBeenCalled();
-      expect(mockFetchApplication).not.toHaveBeenCalled();
-      expect(mockSetProfile).not.toHaveBeenCalled();
+      const messages = (deps.log.info as ReturnType<typeof mock>).mock.calls.map(
+        (c) => c[0] as string,
+      );
+      expect(messages.some((m) => m.includes("Already linked"))).toBe(true);
+      expect(deps.prompts.confirm).not.toHaveBeenCalled();
+      expect(deps.plapi.fetchApplication).not.toHaveBeenCalled();
+      expect(deps.configStore.setProfile).not.toHaveBeenCalled();
     });
 
     test("returns early when linked to the same app as --app", async () => {
-      mockIsAgent.mockReturnValue(false);
-      mockResolveProfile.mockResolvedValue({
-        path: "/repo/.git",
-        profile: { workspaceId: "", appId: "app_123", instances: { development: "ins_1" } },
+      const deps = happyDeps({
+        configStore: {
+          resolveProfile: async () => ({
+            path: "/repo/.git",
+            profile: {
+              workspaceId: "",
+              appId: "app_123",
+              instances: { development: "ins_1" },
+            },
+          }),
+        },
       });
-      consoleSpy = spyOn(console, "log").mockImplementation(() => {});
 
-      await runLink({ skipIfLinked: true, app: "app_123" });
+      await link(deps, { skipIfLinked: true, app: "app_123" });
 
-      expect(captured.err).toContain("Already linked");
-      expect(mockConfirm).not.toHaveBeenCalled();
-      expect(mockFetchApplication).not.toHaveBeenCalled();
-      expect(mockSetProfile).not.toHaveBeenCalled();
+      const messages = (deps.log.info as ReturnType<typeof mock>).mock.calls.map(
+        (c) => c[0] as string,
+      );
+      expect(messages.some((m) => m.includes("Already linked"))).toBe(true);
+      expect(deps.prompts.confirm).not.toHaveBeenCalled();
+      expect(deps.plapi.fetchApplication).not.toHaveBeenCalled();
+      expect(deps.configStore.setProfile).not.toHaveBeenCalled();
     });
 
     test("falls through to re-link prompt when --app differs from existing link", async () => {
-      mockIsAgent.mockReturnValue(false);
-      mockResolveProfile.mockResolvedValue({
-        path: "/repo/.git",
-        profile: { workspaceId: "", appId: "app_existing", instances: { development: "ins_1" } },
+      const deps = happyDeps({
+        configStore: {
+          resolveProfile: async () => ({
+            path: "/repo/.git",
+            profile: {
+              workspaceId: "",
+              appId: "app_existing",
+              instances: { development: "ins_1" },
+            },
+          }),
+          setProfile: async () => {},
+        },
+        prompts: { confirm: async () => true },
       });
-      mockGetToken.mockResolvedValue("token");
-      mockFetchApplication.mockResolvedValue(mockApp);
-      mockConfirm.mockResolvedValue(true);
-      consoleSpy = spyOn(console, "log").mockImplementation(() => {});
 
-      await runLink({ skipIfLinked: true, app: "app_123" });
+      await link(deps, { skipIfLinked: true, app: "app_123" });
 
-      expect(mockConfirm).toHaveBeenCalled();
-      expect(mockFetchApplication).toHaveBeenCalledWith("app_123");
-      expect(mockSetProfile).toHaveBeenCalled();
+      expect(deps.prompts.confirm).toHaveBeenCalled();
+      expect(deps.plapi.fetchApplication).toHaveBeenCalledWith("app_123");
+      expect(deps.configStore.setProfile).toHaveBeenCalled();
     });
   });
 
