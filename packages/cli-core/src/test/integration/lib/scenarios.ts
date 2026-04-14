@@ -404,20 +404,22 @@ async function execCLI(...args: string[]): Promise<CLIResult> {
     // Route logger output through console so the harness's logSpy/errorSpy
     // observe what ported commands write. Unported commands still use bare
     // console.* directly, so this only matters for the DI'd code paths.
+    /* oxlint-disable no-console -- test harness intentionally routes log to console */
     log: {
       // `log.data` is the pipeable-stdout method (e.g. `clerk apps list`,
       // agent prompts) so it routes to console.log → stdout in the harness.
-      data: (msg) => console.log(msg),
+      data: (msg: unknown) => console.log(msg),
       // Every other method is stderr-oriented; route to console.error so
       // the harness stderr capture sees it.
-      info: (msg) => console.error(msg),
-      success: (msg) => console.error(msg),
-      warn: (msg) => console.error(msg),
-      error: (msg) => console.error(msg),
-      debug: (msg) => console.error(msg),
-      raw: (msg) => console.error(msg),
+      info: (msg: unknown) => console.error(msg),
+      success: (msg: unknown) => console.error(msg),
+      warn: (msg: unknown) => console.error(msg),
+      error: (msg: unknown) => console.error(msg),
+      debug: (msg: unknown) => console.error(msg),
+      raw: (msg: unknown) => console.error(msg),
       blank: () => console.error(""),
     },
+    /* oxlint-enable no-console */
     // git is the harness-local instance (see `harnessGit` above) so ported
     // commands read git state via deps.git and `harnessConfigStore` resolves
     // profiles against the same mockState values.
@@ -496,7 +498,7 @@ async function execCLI(...args: string[]): Promise<CLIResult> {
       if ((error as any)?.code?.startsWith?.("commander.")) {
         exitCode = (error as any).exitCode ?? 1;
       } else if (error instanceof Error && error.message === "process.exit") {
-        const calls = currentScenario.exitSpy.mock.calls;
+        const calls = currentScenario?.exitSpy.mock.calls ?? [];
         exitCode = calls.length > 0 ? (calls[calls.length - 1][0] as number) : 1;
       } else {
         throw error;

@@ -28,47 +28,73 @@ try {
 mock.module("./credential-store.ts", () => ({
   KEYCHAIN_SERVICE,
   KEYCHAIN_ACCOUNT,
-  async storeToken(token: string) {
-    if (keyringModule) {
+  createCredentialStore: () => ({
+    async storeToken(token: string) {
+      if (keyringModule) {
+        try {
+          const entry = new keyringModule.Entry(KEYCHAIN_SERVICE, KEYCHAIN_ACCOUNT);
+          entry.setPassword(token);
+          return;
+        } catch {}
+      }
+      const f = credFile();
+      await mkdir(dirname(f), { recursive: true });
+      await Bun.write(f, token);
+      await chmod(f, 0o600);
+    },
+    async getToken() {
+      if (keyringModule) {
+        try {
+          const entry = new keyringModule.Entry(KEYCHAIN_SERVICE, KEYCHAIN_ACCOUNT);
+          return entry.getPassword();
+        } catch {}
+      }
+      const file = Bun.file(credFile());
+      if (!(await file.exists())) return null;
+      const content = await file.text();
+      return content.trim() || null;
+    },
+    async deleteToken() {
+      if (keyringModule) {
+        try {
+          const entry = new keyringModule.Entry(KEYCHAIN_SERVICE, KEYCHAIN_ACCOUNT);
+          entry.deletePassword();
+        } catch {}
+      }
       try {
-        const entry = new keyringModule.Entry(KEYCHAIN_SERVICE, KEYCHAIN_ACCOUNT);
-        entry.setPassword(token);
-        return;
-      } catch {}
-    }
-    const f = credFile();
-    await mkdir(dirname(f), { recursive: true });
-    await Bun.write(f, token);
-    await chmod(f, 0o600);
-  },
-  async getToken() {
-    if (keyringModule) {
-      try {
-        const entry = new keyringModule.Entry(KEYCHAIN_SERVICE, KEYCHAIN_ACCOUNT);
-        return entry.getPassword();
-      } catch {}
-    }
-    const file = Bun.file(credFile());
-    if (!(await file.exists())) return null;
-    const content = await file.text();
-    return content.trim() || null;
-  },
-  async deleteToken() {
-    if (keyringModule) {
-      try {
-        const entry = new keyringModule.Entry(KEYCHAIN_SERVICE, KEYCHAIN_ACCOUNT);
-        entry.deletePassword();
-      } catch {}
-    }
-    try {
-      await unlink(credFile());
-    } catch {
-      // File doesn't exist, nothing to delete
-    }
-  },
+        await unlink(credFile());
+      } catch {
+        // File doesn't exist, nothing to delete
+      }
+    },
+  }),
 }));
 
-const { storeToken, getToken, deleteToken } = await import("./credential-store.ts");
+const { createCredentialStore } = await import("./credential-store.ts");
+// Fake env not used by the mock, but required by factory signature.
+const fakeEnv = {
+  setCurrentEnv: () => {},
+  getCurrentEnvName: () => "production",
+  getCurrentEnv: () => ({
+    oauthClientId: "",
+    oauthBaseUrl: "",
+    platformApiUrl: "",
+    backendApiUrl: "",
+  }),
+  getAvailableEnvs: () => ["production"],
+  isValidEnv: () => true,
+  getOAuthConfig: () => ({
+    clientId: "",
+    scopes: "",
+    authorizeUrl: "",
+    tokenUrl: "",
+    userinfoUrl: "",
+  }),
+  getPlapiBaseUrl: () => "",
+  getBapiBaseUrl: () => "",
+  getDashboardUrl: () => "",
+};
+const { storeToken, getToken, deleteToken } = createCredentialStore(fakeEnv);
 
 let savedToken: string | null = null;
 
