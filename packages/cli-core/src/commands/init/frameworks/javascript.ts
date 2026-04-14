@@ -1,5 +1,5 @@
 import { join } from "node:path";
-import { findFirstFile, scriptExt, srcPrefix } from "./helpers.js";
+import { findFirstFile, MISSING_PUBLISHABLE_KEY_ERROR, scriptExt, srcPrefix } from "./helpers.js";
 import type { FileAction, FrameworkScaffold, ProjectContext, ScaffoldPlan } from "./types.js";
 
 async function findEntryFile(ctx: ProjectContext): Promise<string | null> {
@@ -24,7 +24,7 @@ function clerkInitContent(typescript: boolean): string {
 const publishableKey = import.meta.env.VITE_CLERK_PUBLISHABLE_KEY;
 
 if (!publishableKey) {
-  throw new Error("Missing VITE_CLERK_PUBLISHABLE_KEY. Add your key to .env.local.\\nRun: 1) clerk auth login  2) clerk link  3) clerk env pull — then restart the dev server.");
+  throw new Error("${MISSING_PUBLISHABLE_KEY_ERROR}");
 }
 
 const clerk = new Clerk(publishableKey);

@@ -283,6 +283,8 @@ export function authComponentName(kind: AuthKind): "SignIn" | "SignUp" {
   return kind === "sign-in" ? "SignIn" : "SignUp";
 }
 
+export const MISSING_PUBLISHABLE_KEY_ERROR = `Missing VITE_CLERK_PUBLISHABLE_KEY. Add your key to .env.local.\\nRun: 1) clerk auth login  2) clerk link  3) clerk env pull — then restart the dev server.`;
+
 /** Generate a JSX auth page component for a Clerk framework SDK that exports SignIn/SignUp. */
 export function jsxAuthPageContent(
   kind: AuthKind,

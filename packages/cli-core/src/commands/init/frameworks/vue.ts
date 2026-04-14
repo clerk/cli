@@ -8,6 +8,7 @@ import {
   htmlAuthComponentMarkup,
   indentBlock,
   insertAfterLastImport,
+  MISSING_PUBLISHABLE_KEY_ERROR,
   safeAddImport,
   scaffoldAuthFiles,
   scaffoldEnvVars,
@@ -23,22 +24,16 @@ async function findEntryFile(ctx: ProjectContext): Promise<string | null> {
 }
 
 function addClerkPluginSetup(source: string): string {
-  const keyBlock = `\nconst PUBLISHABLE_KEY = import.meta.env.VITE_CLERK_PUBLISHABLE_KEY;\nif (!PUBLISHABLE_KEY) {\n  throw new Error("Missing VITE_CLERK_PUBLISHABLE_KEY. Add your key to .env.local.\\nRun: 1) clerk auth login  2) clerk link  3) clerk env pull — then restart the dev server.");\n}\n`;
-
-  let result = source;
-
+  const keyBlock = `\nconst PUBLISHABLE_KEY = import.meta.env.VITE_CLERK_PUBLISHABLE_KEY;\nif (!PUBLISHABLE_KEY) {\n  throw new Error("${MISSING_PUBLISHABLE_KEY_ERROR}");\n}\n`;
   const useClerk = `app.use(clerkPlugin, { publishableKey: PUBLISHABLE_KEY });`;
 
   // Handle chained pattern: createApp(App).mount(...) -> split into separate statements
   const chainedPattern = /(createApp\([^)]*\))\.mount\s*\(([^)]*)\)/;
-  if (chainedPattern.test(result)) {
-    result = result.replace(chainedPattern, `const app = $1;\n${useClerk}\napp.mount($2)`);
-  } else {
-    // Handle variable pattern: app.mount(...) -> insert app.use() before it
-    result = result.replace(/((\w+)\.mount\s*\()/, `${useClerk}\n$1`);
-  }
+  const withPlugin = chainedPattern.test(source)
+    ? source.replace(chainedPattern, `const app = $1;\n${useClerk}\napp.mount($2)`)
+    : source.replace(/((\w+)\.mount\s*\()/, `${useClerk}\n$1`);
 
-  return insertAfterLastImport(result, keyBlock);
+  return insertAfterLastImport(withPlugin, keyBlock);
 }
 
 function newEntryContent(withRouter = false): string {
@@ -50,7 +45,7 @@ import App from "./App.vue";
 ${routerImport}
 const PUBLISHABLE_KEY = import.meta.env.VITE_CLERK_PUBLISHABLE_KEY;
 if (!PUBLISHABLE_KEY) {
-  throw new Error("Missing VITE_CLERK_PUBLISHABLE_KEY. Add your key to .env.local.\\nRun: 1) clerk auth login  2) clerk link  3) clerk env pull — then restart the dev server.");
+  throw new Error("${MISSING_PUBLISHABLE_KEY_ERROR}");
 }
 
 const app = createApp(App);
@@ -117,8 +112,12 @@ async function findRouterFile(ctx: ProjectContext): Promise<string | null> {
   return findFirstFile(ctx.cwd, [`${base}router/index.${ext}`, `${base}router.${ext}`]);
 }
 
+function hasSignRoutes(source: string): boolean {
+  return source.includes("/sign-in") || source.includes("/sign-up");
+}
+
 function addSignRoutes(source: string, viewPrefix: string): string {
-  if (source.includes("/sign-in") || source.includes("/sign-up")) {
+  if (hasSignRoutes(source)) {
     return source;
   }
 
@@ -190,7 +189,7 @@ async function scaffoldRouter(ctx: ProjectContext): Promise<FileAction | null> {
 
   const content = await Bun.file(join(ctx.cwd, routerPath)).text();
 
-  if (content.includes("/sign-in") || content.includes("/sign-up")) {
+  if (hasSignRoutes(content)) {
     return { type: "skip", path: routerPath, skipReason: "Already has sign-in/sign-up routes" };
   }
 

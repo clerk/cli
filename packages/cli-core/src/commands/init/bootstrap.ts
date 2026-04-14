@@ -1,10 +1,9 @@
 import { join } from "node:path";
-import { access } from "node:fs/promises";
 import { search, confirm, input } from "@inquirer/prompts";
 import { throwUserAbort, throwUsageError, CliError } from "../../lib/errors.js";
 import { log } from "../../lib/log.js";
 import type { FrameworkInfo } from "../../lib/framework.js";
-import { hasPackageJson } from "./context.js";
+import { dirExists, hasPackageJson } from "./context.js";
 import {
   BOOTSTRAP_REGISTRY,
   PM_INSTALL_COMMANDS,
@@ -188,12 +187,7 @@ export async function promptAndBootstrap(
     nameOverride ?? (skipConfirm ? entry.defaultProjectName : await askProjectName(entry));
   const projectDir = join(cwd, projectName);
 
-  if (
-    await access(projectDir).then(
-      () => true,
-      () => false,
-    )
-  ) {
+  if (await dirExists(projectDir)) {
     throw new CliError(
       `Directory '${projectName}' already exists. Pick a different name or remove it first.`,
     );
