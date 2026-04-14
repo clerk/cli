@@ -11,11 +11,6 @@ import {
   type BootstrapEntry,
 } from "./bootstrap-registry.js";
 
-async function spawnInherited(args: string[], cwd: string): Promise<number> {
-  const proc = Bun.spawn(args, { cwd, stdout: "inherit", stderr: "inherit" });
-  return proc.exited;
-}
-
 function findEntry(dep: string) {
   return BOOTSTRAP_REGISTRY.find((entry) => entry.dep === dep);
 }
@@ -104,27 +99,27 @@ async function askProjectName(deps: AskProjectNameDeps, entry: BootstrapEntry): 
 }
 
 async function generateProject(
-  deps: Need<{ log: "info" }>,
+  deps: Need<{ log: "info"; system: "runInherit" }>,
   label: string,
   command: string[],
   cwd: string,
 ): Promise<void> {
   deps.log.info(`\nCreating ${cyan(label)} project...\n`);
 
-  const exitCode = await spawnInherited(command, cwd);
+  const exitCode = await deps.system.runInherit(command, { cwd });
   if (exitCode !== 0) {
     throw new CliError(`Project generation failed (exit code ${exitCode}).`);
   }
 }
 
 async function installDependencies(
-  deps: Need<{ log: "info" | "warn" }>,
+  deps: Need<{ log: "info" | "warn"; system: "runInherit" }>,
   pm: PackageManager,
   cwd: string,
 ): Promise<void> {
   deps.log.info(`\nInstalling dependencies...\n`);
 
-  const exitCode = await spawnInherited(PM_INSTALL_COMMANDS[pm], cwd);
+  const exitCode = await deps.system.runInherit(PM_INSTALL_COMMANDS[pm], { cwd });
   if (exitCode !== 0) {
     deps.log.warn(
       yellow(`Dependency installation failed. Run manually: ${PM_INSTALL_COMMANDS[pm].join(" ")}`),
@@ -172,6 +167,7 @@ export type BootstrapResult = {
 export type PromptAndBootstrapDeps = Need<{
   prompts: "confirm" | "search" | "input";
   log: "info" | "warn";
+  system: "runInherit";
 }>;
 
 /**

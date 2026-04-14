@@ -56,6 +56,7 @@ export type InitDeps = Need<{
   env: "get";
   spinner: "intro" | "outro" | "bar" | "withSpinner";
   log: "info" | "warn" | "data";
+  system: "runInherit";
 }> &
   LinkIfNeededDeps &
   PullDefaultDeps &
@@ -138,6 +139,7 @@ type ResolveContextDeps = Need<{
   spinner: "withSpinner";
   prompts: "confirm" | "search" | "input";
   log: "info" | "warn";
+  system: "runInherit";
 }>;
 
 // --- Bootstrap paths ---
