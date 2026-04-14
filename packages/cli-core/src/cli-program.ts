@@ -424,7 +424,7 @@ export function createProgram() {
     .action(doctor);
 
   program
-    .command("switch-env")
+    .command("switch-env", { hidden: true })
     .description("Switch the active Clerk CLI environment")
     .argument("[environment]", "Environment to switch to (e.g. production, staging)")
     .setExamples([
