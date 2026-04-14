@@ -1,6 +1,5 @@
-import { detectAvailableRunners, preferredRunner, runnerCommand } from "../../lib/runners.js";
-import { isNonEmpty } from "../../lib/helpers/arrays.js";
-import type { ProjectContext } from "./frameworks/types.js";
+import { readDeps } from "../../lib/project-detector/index.js";
+import type { Need } from "../../lib/deps.ts";
 
 type FormatterConfig = {
   pkg: string;
@@ -19,34 +18,20 @@ const FORMATTERS: FormatterConfig[] = [
   },
 ];
 
-/**
- * Format scaffolded files with prettier or biome (whichever the project uses).
- *
- * Best-effort: failures are silent (stdio ignored, spawn errors swallowed)
- * because formatting is purely cosmetic and shouldn't break init.
- */
-export async function runFormatters(ctx: ProjectContext, files: string[]): Promise<void> {
+export type RunFormattersDeps = Need<{ system: "runInherit" }>;
+
+export async function runFormatters(
+  deps: RunFormattersDeps,
+  cwd: string,
+  files: string[],
+): Promise<void> {
   if (files.length === 0) return;
-  if (Object.keys(ctx.deps).length === 0) return;
 
-  const matchingFormatters = FORMATTERS.filter((f) => f.pkg in ctx.deps);
-  if (matchingFormatters.length === 0) return;
+  const projectDeps = await readDeps(cwd);
+  if (!projectDeps) return;
 
-  const available = detectAvailableRunners();
-  if (!isNonEmpty(available)) return;
-  const runner = preferredRunner(ctx.packageManager, available);
-
-  for (const formatter of matchingFormatters) {
-    const command = runnerCommand(runner, formatter.binArgs(files));
-    try {
-      const proc = Bun.spawn(command, {
-        cwd: ctx.cwd,
-        stdout: "ignore",
-        stderr: "ignore",
-      });
-      await proc.exited;
-    } catch {
-      // Best-effort, see function doc comment.
-    }
+  for (const formatter of FORMATTERS) {
+    if (!(formatter.pkg in projectDeps)) continue;
+    await deps.system.runInherit(formatter.binArgs(files), { cwd });
   }
 }

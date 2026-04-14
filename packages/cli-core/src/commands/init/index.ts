@@ -353,7 +353,7 @@ async function scaffoldAndWrite(
   }
 
   const writtenFiles = await writePlan(cwd, plan);
-  await runFormatters(ctx, writtenFiles);
+  await runFormatters(deps, cwd, writtenFiles);
 
   const findings = await deps.spinner.withSpinner("Scanning for issues...", () =>
     scanForIssues(cwd, ctx.framework.dep),
