@@ -7,7 +7,31 @@ description: Operate the Clerk CLI (`clerk` binary) for authentication, user/org
 
 The `clerk` binary is a pre-authenticated gateway to Clerk's Backend API and Platform API, plus project-level tooling (auth, linking, env pulls, instance config). When the user asks anything that touches a Clerk resource, reach for `clerk` first instead of hand-rolling `curl`.
 
-> This skill was installed by `clerk init` and versioned alongside the CLI. If something described here doesn't match the installed binary, run `clerk --version` and `clerk <command> --help`; the binary is the source of truth.
+> This skill was installed by `clerk init` (or `clerk skill install`) and is pinned to clerk `{{CLI_VERSION}}`. If `clerk --version` disagrees, refresh it with `clerk skill install` (or `bunx clerk@{{CLI_VERSION}} skill install`). The binary is always the source of truth, so run `clerk <command> --help` to verify anything this skill claims.
+
+## Invoking the CLI
+
+Before running any `clerk` command, figure out which binary to invoke and bind that choice for the rest of the session:
+
+```sh
+# 1. Prefer a globally installed binary when it matches the skill's pinned version.
+command -v clerk >/dev/null 2>&1 && clerk --version
+```
+
+If that prints `{{CLI_VERSION}}` (or any version you trust), use bare `clerk` for the rest of the session.
+
+Otherwise fall back to a package runner, in this order (matches the CLI's own `preferredRunner` logic, which prefers the runner that matches the project's lockfile):
+
+| Project package manager   | Invocation                       |
+| ------------------------- | -------------------------------- |
+| bun (`bun.lock*`)         | `bunx clerk@{{CLI_VERSION}}`     |
+| npm (`package-lock.json`) | `npx -y clerk@{{CLI_VERSION}}`   |
+| pnpm (`pnpm-lock.yaml`)   | `pnpm dlx clerk@{{CLI_VERSION}}` |
+| yarn >= 2 (`yarn.lock`)   | `yarn dlx clerk@{{CLI_VERSION}}` |
+
+Yarn Classic (v1) has no `dlx`; treat those projects as "no preferred runner" and fall back to the first runner from the list above that's on PATH.
+
+The published npm package is **`clerk`**, not `@clerk/cli`. Never teach `npm install -g clerk` as the primary path. The bundled skill is versioned alongside the binary, so a globally installed mismatched version will drift. If `clerk --version` disagrees with `{{CLI_VERSION}}`, either upgrade the global install or fall back to the pinned-runner form above.
 
 ## Prerequisites (verify once per session)
 
