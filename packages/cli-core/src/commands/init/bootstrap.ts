@@ -63,7 +63,17 @@ async function pickPackageManager(): Promise<PackageManager> {
   });
 }
 
-const PM_PRIORITY: PackageManager[] = ["bun", "pnpm", "yarn", "npm"];
+const PM_PRIORITY = ["bun", "pnpm", "yarn", "npm"] as const satisfies readonly PackageManager[];
+
+// Exhaustiveness guard: breaks the build if a PackageManager variant is
+// missing from PM_PRIORITY (the `satisfies` above only ensures each entry
+// is a valid PackageManager, not that every variant is present).
+type _AllPackageManagersCovered =
+  Exclude<PackageManager, (typeof PM_PRIORITY)[number]> extends never
+    ? true
+    : ["PM_PRIORITY missing:", Exclude<PackageManager, (typeof PM_PRIORITY)[number]>];
+const _pmPriorityExhaustive: _AllPackageManagersCovered = true;
+void _pmPriorityExhaustive;
 
 /**
  * Auto-select the first available package manager by priority: bun → pnpm → yarn → npm.

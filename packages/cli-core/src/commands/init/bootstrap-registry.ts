@@ -1,6 +1,5 @@
-import type { ProjectContext } from "./frameworks/types.js";
-
-export type PackageManager = ProjectContext["packageManager"];
+export type { PackageManager } from "../../lib/package-manager.js";
+import type { PackageManager } from "../../lib/package-manager.js";
 
 export type BootstrapEntry = {
   label: string;

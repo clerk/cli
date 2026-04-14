@@ -2,7 +2,7 @@ import { test, expect, describe } from "bun:test";
 import { existsSync } from "node:fs";
 import { readFile, stat } from "node:fs/promises";
 import { join } from "node:path";
-import { buildSkillsArgs, withStagedClerkCliSkill } from "./skills.ts";
+import { buildSkillsArgs, withStagedClerkCliSkill } from "./install.ts";
 
 describe("buildSkillsArgs", () => {
   const skills = ["clerk", "clerk-setup", "clerk-nextjs-patterns"];

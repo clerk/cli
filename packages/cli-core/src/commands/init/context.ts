@@ -19,7 +19,7 @@ export async function dirExists(path: string): Promise<boolean> {
   }
 }
 
-async function detectPackageManager(cwd: string): Promise<ProjectContext["packageManager"]> {
+export async function detectPackageManager(cwd: string): Promise<ProjectContext["packageManager"]> {
   const checks: Array<{ files: string[]; pm: ProjectContext["packageManager"] }> = [
     { files: ["bun.lockb", "bun.lock"], pm: "bun" },
     { files: ["yarn.lock"], pm: "yarn" },
