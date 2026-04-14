@@ -111,10 +111,14 @@ describe("init", () => {
     await init({ yes: true });
 
     expect(loginMod.login).toHaveBeenCalledWith(expect.anything(), { showNextSteps: false });
-    expect(linkMod.link).toHaveBeenCalledWith(expect.anything(), {
-      skipIfLinked: true,
-      app: undefined,
-    });
+<<<<<<< HEAD
+    expect(linkMod.link).toHaveBeenCalledWith(expect.anything(), { skipIfLinked: true, app: undefined });
+||||||| parent of 4f5e9fc (fix: complete DI port of link - add search/input to Prompts, fix testRoot)
+    expect(loginMod.login).toHaveBeenCalledWith({ showNextSteps: false });
+    expect(linkMod.link).toHaveBeenCalledWith(expect.any(Object), { skipIfLinked: true });
+=======
+    expect(linkMod.link).toHaveBeenCalledWith(expect.anything(), { skipIfLinked: true });
+>>>>>>> 4f5e9fc (fix: complete DI port of link - add search/input to Prompts, fix testRoot)
   });
 
   test("forwards --app to link when provided", async () => {
