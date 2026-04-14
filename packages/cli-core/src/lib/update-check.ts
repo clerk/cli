@@ -1,13 +1,14 @@
 import { mkdir } from "node:fs/promises";
 import { dirname } from "node:path";
+import semver from "semver";
 import { isAgent } from "../mode.ts";
-import { yellow, cyan } from "./color.ts";
 import {
   CACHE_TTL_MS,
   NPM_REGISTRY_URL,
   UPDATE_PACKAGE_NAME,
   UPDATE_CACHE_FILE,
 } from "./constants.ts";
+import { log } from "./log.ts";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -42,29 +43,8 @@ export function isDevVersion(version: string): boolean {
   return version === "0.0.0-dev";
 }
 
-function parseSemver(version: string): [number, number, number, string] {
-  const dashIndex = version.indexOf("-");
-  const base = dashIndex === -1 ? version : version.slice(0, dashIndex);
-  const pre = dashIndex === -1 ? "" : version.slice(dashIndex + 1);
-  const parts = base.split(".");
-  return [Number(parts[0]) || 0, Number(parts[1]) || 0, Number(parts[2]) || 0, pre];
-}
-
 export function compareSemver(a: string, b: string): number {
-  const [aMaj, aMin, aPat, aPre] = parseSemver(a);
-  const [bMaj, bMin, bPat, bPre] = parseSemver(b);
-
-  if (aMaj !== bMaj) return aMaj - bMaj;
-  if (aMin !== bMin) return aMin - bMin;
-  if (aPat !== bPat) return aPat - bPat;
-  if (aPre === bPre) return 0;
-  if (!aPre) return 1; // 1.0.0 > 1.0.0-alpha
-  if (!bPre) return -1; // 1.0.0-alpha < 1.0.0
-
-  const aNum = Number(aPre.split(".").at(-1));
-  const bNum = Number(bPre.split(".").at(-1));
-  if (!isNaN(aNum) && !isNaN(bNum)) return aNum - bNum;
-  return aPre.localeCompare(bPre);
+  return semver.compare(a, b);
 }
 
 // ── Guards ────────────────────────────────────────────────────────────────────
@@ -94,7 +74,8 @@ export async function readUpdateCache(): Promise<UpdateCache | null> {
     if (!(await file.exists())) return null;
     const data = await file.json();
     return isUpdateCache(data) ? data : null;
-  } catch {
+  } catch (error) {
+    log.debug(`Failed to read update cache: ${error}`);
     return null;
   }
 }
@@ -103,8 +84,8 @@ export async function writeUpdateCache(data: UpdateCache): Promise<void> {
   try {
     await mkdir(dirname(UPDATE_CACHE_FILE), { recursive: true });
     await Bun.write(UPDATE_CACHE_FILE, JSON.stringify(data));
-  } catch {
-    // never crash the CLI on cache write failure
+  } catch (error) {
+    log.debug(`Failed to write update cache: ${error}`);
   }
 }
 
@@ -153,24 +134,14 @@ export function formatChannelLabel(channel: string): string {
   return channel !== "latest" ? ` (${channel})` : "";
 }
 
-function formatUpdateBanner(
-  currentVersion: string,
-  latestVersion: string,
-  distTag: string,
-): string {
-  const channelFlag = formatChannelFlag(distTag);
-  return [
-    "",
-    yellow(`  ⬆  Update available: ${currentVersion} → ${latestVersion}`),
-    `     Run: ${cyan(`clerk update${channelFlag}`)}`,
-    `     Disable: ${cyan("CLERK_NO_UPDATE_CHECK=1")}`,
-    "",
-  ].join("\n");
-}
-
 function notifyIfNewer(currentVersion: string, latestVersion: string, distTag: string): void {
   if (compareSemver(latestVersion, currentVersion) > 0) {
-    process.stderr.write(formatUpdateBanner(currentVersion, latestVersion, distTag));
+    const channelFlag = formatChannelFlag(distTag);
+    log.blank();
+    log.warn(`⬆  Update available: ${currentVersion} → ${latestVersion}`);
+    log.info(`     Run: \`clerk update${channelFlag}\``);
+    log.info(`     Disable: \`CLERK_NO_UPDATE_CHECK=1\``);
+    log.blank();
   }
 }
 
@@ -190,7 +161,7 @@ export async function maybeNotifyUpdate(currentVersion: string): Promise<void> {
     const latest = await fetchLatestVersion(distTag);
     await writeUpdateCache({ checkedAt: Date.now(), latest, distTag });
     notifyIfNewer(currentVersion, latest, distTag);
-  } catch {
-    // silent failure — never crash the CLI on update check issues
+  } catch (error) {
+    log.debug(`Update check failed: ${error}`);
   }
 }
