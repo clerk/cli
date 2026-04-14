@@ -25,5 +25,8 @@
     "magicast": "^0.5.2",
     "semver": "^7.7.4",
     "yaml": "^2.8.3"
+  },
+  "devDependencies": {
+    "@types/semver": "^7.7.1"
   }
 }
