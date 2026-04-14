@@ -137,6 +137,7 @@ type ResolveContextDeps = Need<{
   projectDetector: "gather" | "hasPackageJson";
   spinner: "withSpinner";
   prompts: "confirm" | "search" | "input";
+  log: "info" | "warn";
 }>;
 
 // --- Bootstrap paths ---

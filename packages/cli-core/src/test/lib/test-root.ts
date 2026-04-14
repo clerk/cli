@@ -189,6 +189,10 @@ const defaults: Root = {
   projectDetector: {
     gather: strict("projectDetector.gather"),
     hasPackageJson: strict("projectDetector.hasPackageJson"),
+    fileExists: strict("projectDetector.fileExists"),
+    dirExists: strict("projectDetector.dirExists"),
+    readDeps: strict("projectDetector.readDeps"),
+    detectFramework: strict("projectDetector.detectFramework"),
   },
 };
 

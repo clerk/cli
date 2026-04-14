@@ -447,16 +447,18 @@ async function execCLI(...args: string[]): Promise<CLIResult> {
     log: {
       // `log.data` is the pipeable-stdout method (e.g. `clerk apps list`,
       // agent prompts) so it routes to console.log → stdout in the harness.
-      data: (msg) => console.log(msg),
+      /* oxlint-disable no-console -- test harness intentionally routes log to console */
+      data: (msg: unknown) => console.log(msg),
       // Every other method is stderr-oriented; route to console.error so
       // the harness stderr capture sees it.
-      info: (msg) => console.error(msg),
-      success: (msg) => console.error(msg),
-      warn: (msg) => console.error(msg),
-      error: (msg) => console.error(msg),
-      debug: (msg) => console.error(msg),
-      raw: (msg) => console.error(msg),
+      info: (msg: unknown) => console.error(msg),
+      success: (msg: unknown) => console.error(msg),
+      warn: (msg: unknown) => console.error(msg),
+      error: (msg: unknown) => console.error(msg),
+      debug: (msg: unknown) => console.error(msg),
+      raw: (msg: unknown) => console.error(msg),
       blank: () => console.error(""),
+      /* oxlint-enable no-console */
     },
     // git is mock.module()-overridden at file load time. Bridge those stubs
     // through the testRoot shim so ported commands (link, unlink) read git
