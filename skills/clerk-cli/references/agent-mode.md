@@ -93,7 +93,7 @@ clerk api /users --app app_abc123 --instance prod
 
 ```sh
 clerk api ls users            # discover available user endpoints
-clerk api ls -- --platform apps   # platform-side endpoints
+clerk api ls --platform apps   # platform-side endpoints
 ```
 
 ### Surface doctor remedies to the user
