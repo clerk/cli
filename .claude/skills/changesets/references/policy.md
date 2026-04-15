@@ -156,10 +156,41 @@ explicitly opts into that. The repo convention is one changeset per PR.
 
 ## `bun changeset --empty`
 
-Only valid when the branch is fully exempt. `changeset status` already
-passes without a file in that case, so the empty changeset is usually
-unnecessary. Do NOT create an empty changeset to bypass enforcement on
-non-exempt changes; that silently produces a bumpless release.
+An empty changeset (frontmatter with no package keys) is valid when the
+branch touches non-exempt paths but has zero user-facing impact. CI still
+requires a file; an empty one satisfies enforcement and produces no
+changelog entry or version bump, which is the correct outcome for an
+internal-only change.
+
+Use the empty path when **all** of the following hold:
+
+- At least one non-exempt file changed (so a real exempt-skip is not an
+  option).
+- Every commit on the branch uses a non-user-facing prefix (`refactor:`,
+  `chore:`, `perf:`, `build:`, `ci:`, `style:`, `docs:`, `test:`).
+- The diff has no observable effect on the CLI's surface (no flag,
+  command, exported API, env var, output format, or behavior change a
+  user could detect).
+
+Generate it with:
+
+```sh
+bun changeset --empty
+```
+
+Place the resulting file with the same commit-placement rules as a real
+changeset (amend single-commit; new `docs(changeset):` tip on
+multi-commit).
+
+Do NOT use an empty changeset to bypass enforcement on user-facing
+changes. If any commit is `feat:` / `fix:` (or a variant), or the diff
+changes anything a user sees, write a real changeset instead. Mixed
+branches (any user-facing commit) get a real changeset covering the
+user-visible portion.
+
+When the branch is fully exempt (no non-exempt paths touched at all),
+`changeset status` already passes without any file. Skip; do not write an
+empty one in that case.
 
 ## Examples
 

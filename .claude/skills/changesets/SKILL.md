@@ -54,14 +54,23 @@ Anything else (notably non-test files under `packages/cli-core/src/**` or
 
 **All files exempt:** run `bun changeset status --since=origin/main` to
 confirm. Then report to the user, naming the exempt categories that matched,
-and stop without writing a file. Do not create an empty changeset to "be
-safe"; the policy forbids it.
+and stop without writing a file. Do not create an empty changeset for fully
+exempt branches; `changeset status` already passes.
 
 **Some files non-exempt and `.changeset/<slug>.md` already exists for this
 branch:** treat as a refresh. Read the existing file, then jump to step 5
 with the existing slug.
 
-**Some files non-exempt and no changeset file exists:** continue to step 4.
+**Some files non-exempt, no changeset file exists, and every commit on the
+branch uses a non-user-facing prefix** (`refactor:`, `chore:`, `perf:`,
+`build:`, `ci:`, `style:`, `docs:`, `test:`) **and the diff has no
+observable effect on the CLI surface**: skip to the empty-changeset path
+in step 7a.
+
+**Some files non-exempt, no changeset file exists, and the branch contains
+any user-facing commit** (`feat:`, `feat(`, `fix:`, `fix(`, `feat!:`,
+`fix!:`) or the diff changes a flag, command, exported API, env var,
+output format, or any other user-visible surface: continue to step 4.
 
 ### 4. Pick the slug
 
@@ -131,6 +140,24 @@ Only `"clerk"` is valid. `@clerk/cli-core` is in the `ignore` list in
 Write the file directly with the Write tool. Do not run `bun changeset add`;
 it is interactive and `--message` only pre-fills the summary.
 
+### 7a. Empty changeset path
+
+When step 3 routed here, the branch touches non-exempt paths but has no
+user-facing impact. CI requires a file; an empty one satisfies enforcement
+without producing a changelog entry or version bump.
+
+Generate it with:
+
+```sh
+bun changeset --empty
+```
+
+This writes `.changeset/<slug>.md` with empty frontmatter (no package
+keys). Continue to step 8 to place the commit.
+
+Skip steps 4 through 6: there is no slug to pick (the CLI generates one),
+no bump to choose, and no summary to author.
+
 ### 8. Place the commit
 
 Inspect the branch shape: `git log origin/main..HEAD --oneline | wc -l`.
@@ -151,9 +178,11 @@ Hand off to the `stacked-prs:stacked-prs` skill for any push or PR mutation.
 
 Tell the user:
 
-- Whether a changeset was written, refreshed, or skipped (with the exempt
-  categories that matched).
-- The chosen slug, bump type, and summary.
+- Which path the skill took: real changeset, refresh of an existing one,
+  empty changeset (internal-only non-exempt change), or skip (fully
+  exempt branch). For skip, name the exempt categories that matched.
+- For real or refresh: the chosen slug, bump type, and summary.
+- For empty: the slug the CLI generated.
 - The commit placement (amended vs. new tip commit).
 - Any follow-up: `stacked-prs:stacked-prs` push, PR description sync.
 
@@ -189,10 +218,19 @@ Branch `feat/oauth-github` already has `.changeset/oauth-github.md`
 the cumulative diff; bump stays `minor`. Amend the tip `docs(changeset):`
 commit (multi-commit branch).
 
+### Internal-only non-exempt change
+
+Branch `refactor/extract-logger` moves a helper inside
+`packages/cli-core/src/lib/`. Single commit, prefix `refactor:`, no flag,
+command, or output change. Run `bun changeset --empty`. The CLI writes
+`.changeset/<generated-slug>.md` with empty frontmatter. Stage and amend
+the existing commit. The next release skips a version bump for this
+change but the branch passes enforcement.
+
 ## Anti-patterns
 
-- Empty changeset to bypass enforcement on non-exempt changes (silently
-  produces a bumpless release).
+- Empty changeset to bypass enforcement on **user-facing** changes
+  (silently drops a real bump from the changelog).
 - Past-tense or implementation-leaking summaries ("Added oauth.ts with
   GithubProvider class").
 - Manually appending `(#123)` or `by @user`; the changelog renderer adds
