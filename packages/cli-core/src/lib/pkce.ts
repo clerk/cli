@@ -5,14 +5,21 @@
 
 const VERIFIER_LENGTH = 43;
 const CHARSET = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~";
+// Largest multiple of CHARSET.length that fits in a byte. Values >= this
+// would map non-uniformly via modulo, so reject them (rejection sampling).
+const REJECTION_THRESHOLD = 256 - (256 % CHARSET.length);
 
 export function generateCodeVerifier(): string {
-  const bytes = crypto.getRandomValues(new Uint8Array(VERIFIER_LENGTH));
-  let verifier = "";
-  for (const byte of bytes) {
-    verifier += CHARSET[byte % CHARSET.length];
+  const verifier: string[] = [];
+  while (verifier.length < VERIFIER_LENGTH) {
+    const bytes = crypto.getRandomValues(new Uint8Array(VERIFIER_LENGTH));
+    for (const byte of bytes) {
+      if (byte >= REJECTION_THRESHOLD) continue;
+      verifier.push(CHARSET.charAt(byte % CHARSET.length));
+      if (verifier.length === VERIFIER_LENGTH) break;
+    }
   }
-  return verifier;
+  return verifier.join("");
 }
 
 export async function generateCodeChallenge(verifier: string): Promise<string> {
