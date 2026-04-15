@@ -5,7 +5,7 @@ import {
   compareSemver,
   shouldCheckForUpdates,
 } from "./update-check.ts";
-import * as mode from "../mode.ts";
+import * as mode from "./mode.ts";
 
 // ── inferChannelFromVersion ───────────────────────────────────────────────────
 

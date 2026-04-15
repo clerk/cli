@@ -1,7 +1,7 @@
 import { mkdir } from "node:fs/promises";
 import { dirname } from "node:path";
 import semver from "semver";
-import { isAgent } from "../mode.ts";
+import { isAgent } from "./mode.ts";
 import {
   CACHE_TTL_MS,
   NPM_REGISTRY_URL,

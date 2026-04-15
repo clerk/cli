@@ -1,10 +1,13 @@
-import { isHuman } from "../../mode.ts";
+import { isHuman } from "../../lib/mode.ts";
 import { green, cyan } from "../../lib/color.ts";
 import { CliError } from "../../lib/errors.ts";
 import { detectInstaller, globalInstallCommand, type Installer } from "../../lib/installer.ts";
 import { log } from "../../lib/log.ts";
-import { intro, outro, withSpinner } from "../../lib/spinner.ts";
+import { createSpinner } from "../../lib/spinner.ts";
 import { UPDATE_PACKAGE_NAME } from "../../lib/constants.ts";
+
+const spinner = createSpinner({ isHuman });
+const { intro, outro, withSpinner } = spinner;
 import {
   getCurrentVersion,
   getUpdateChannel,
