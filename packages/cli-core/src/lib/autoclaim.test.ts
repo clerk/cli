@@ -1,0 +1,149 @@
+import { test, expect, describe, beforeEach, afterEach, spyOn } from "bun:test";
+import { mkdtemp, rm } from "node:fs/promises";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
+import { stubFetch, captureLog } from "../test/lib/stubs.ts";
+
+// Use spyOn instead of mock.module to avoid polluting other test files.
+import * as autolinkMod from "./autolink.ts";
+import * as keylessMod from "./keyless.ts";
+import { attemptAutoclaim } from "./autoclaim.ts";
+
+const MOCK_APP = {
+  application_id: "app_claimed",
+  name: "My Claimed App",
+  instances: [
+    { instance_id: "ins_dev", environment_type: "development", publishable_key: "pk_test_abc" },
+    { instance_id: "ins_prod", environment_type: "production", publishable_key: "pk_live_abc" },
+  ],
+};
+
+describe("attemptAutoclaim", () => {
+  const originalFetch = globalThis.fetch;
+  let tempDir: string;
+  let spies: ReturnType<typeof spyOn>[];
+  let captured: ReturnType<typeof captureLog>;
+  let linkAppSpy: ReturnType<typeof spyOn>;
+  let readBreadcrumbSpy: ReturnType<typeof spyOn>;
+  let clearBreadcrumbSpy: ReturnType<typeof spyOn>;
+
+  beforeEach(async () => {
+    tempDir = await mkdtemp(join(tmpdir(), "clerk-autoclaim-test-"));
+    process.env.CLERK_PLATFORM_API_KEY = "ak_test_key";
+    process.env.CLERK_PLATFORM_API_URL = "https://test-api.clerk.com";
+    captured = captureLog();
+
+    linkAppSpy = spyOn(autolinkMod, "linkApp").mockResolvedValue({
+      path: tempDir,
+      profile: {} as never,
+    });
+    clearBreadcrumbSpy = spyOn(keylessMod, "clearKeylessBreadcrumb").mockResolvedValue(undefined);
+    // readKeylessBreadcrumb defaults to "no breadcrumb" — tests override this
+    readBreadcrumbSpy = spyOn(keylessMod, "readKeylessBreadcrumb").mockResolvedValue(undefined);
+
+    spies = [linkAppSpy, readBreadcrumbSpy, clearBreadcrumbSpy];
+  });
+
+  afterEach(async () => {
+    captured.teardown();
+    delete process.env.CLERK_PLATFORM_API_KEY;
+    delete process.env.CLERK_PLATFORM_API_URL;
+    globalThis.fetch = originalFetch;
+    for (const s of spies) s.mockRestore();
+    await rm(tempDir, { recursive: true, force: true });
+  });
+
+  function withBreadcrumb(token = "valid_token") {
+    readBreadcrumbSpy.mockResolvedValue({ claimToken: token, createdAt: new Date().toISOString() });
+  }
+
+  function run() {
+    return captured.run(() => attemptAutoclaim(tempDir));
+  }
+
+  test("returns not_keyless when no breadcrumb exists", async () => {
+    const result = await run();
+    expect(result.status).toBe("not_keyless");
+    expect(linkAppSpy).not.toHaveBeenCalled();
+  });
+
+  test("claims and calls linkApp on success", async () => {
+    withBreadcrumb();
+    stubFetch(async () => new Response(JSON.stringify(MOCK_APP), { status: 200 }));
+
+    const result = await run();
+
+    expect(result.status).toBe("claimed");
+    if (result.status === "claimed") {
+      expect(result.app.application_id).toBe("app_claimed");
+    }
+    expect(linkAppSpy).toHaveBeenCalledWith(MOCK_APP, tempDir);
+  });
+
+  test("clears breadcrumb after successful claim", async () => {
+    withBreadcrumb();
+    stubFetch(async () => new Response(JSON.stringify(MOCK_APP), { status: 200 }));
+
+    await run();
+
+    expect(clearBreadcrumbSpy).toHaveBeenCalledWith(tempDir);
+  });
+
+  test("returns not_found and clears breadcrumb on 404", async () => {
+    withBreadcrumb("expired_token");
+    stubFetch(async () => new Response("Not Found", { status: 404 }));
+
+    const result = await run();
+
+    expect(result.status).toBe("not_found");
+    expect(clearBreadcrumbSpy).toHaveBeenCalled();
+  });
+
+  test("returns already_claimed and clears breadcrumb on 403", async () => {
+    withBreadcrumb("forbidden_token");
+    stubFetch(async () => new Response("Forbidden", { status: 403 }));
+
+    const result = await run();
+
+    expect(result.status).toBe("already_claimed");
+    expect(clearBreadcrumbSpy).toHaveBeenCalled();
+  });
+
+  test("returns failed on server error without clearing breadcrumb", async () => {
+    withBreadcrumb("server_error_token");
+    stubFetch(async () => new Response("Internal Server Error", { status: 500 }));
+
+    const result = await run();
+
+    expect(result.status).toBe("failed");
+    if (result.status === "failed") {
+      expect(result.error).toBeInstanceOf(Error);
+    }
+    expect(clearBreadcrumbSpy).not.toHaveBeenCalled();
+  });
+
+  test("does not call linkApp on failure", async () => {
+    withBreadcrumb();
+    stubFetch(async () => new Response("Server Error", { status: 500 }));
+
+    await run();
+
+    expect(linkAppSpy).not.toHaveBeenCalled();
+  });
+
+  test("sends claim token and app name in request body", async () => {
+    withBreadcrumb("my_claim_token");
+    let capturedBody: string | undefined;
+    stubFetch(async (_input, init) => {
+      capturedBody = init?.body as string;
+      return new Response(JSON.stringify(MOCK_APP), { status: 200 });
+    });
+
+    await run();
+
+    const parsed = JSON.parse(capturedBody!);
+    expect(parsed.token).toBe("my_claim_token");
+    expect(typeof parsed.name).toBe("string");
+    expect(parsed.name).toBeTruthy();
+  });
+});
