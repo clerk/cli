@@ -138,6 +138,11 @@ describe("generateCompletions", () => {
       expect(names).toContain("--framework");
     });
 
+    test("registers --app on init (advertised in examples, wired to authenticateAndLink)", () => {
+      const names = completionNames("init", "--");
+      expect(names).toContain("--app");
+    });
+
     test("completes partial option name", () => {
       const names = completionNames("--ver");
       expect(names).toContain("--verbose");

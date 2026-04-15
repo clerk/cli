@@ -55,6 +55,7 @@ clerk init
   --framework <name>     Framework to set up (skips auto-detection)
   --pm <manager>         Package manager to use (skips prompt/auto-detection)
   --name <project-name>  Project name for --starter (skips prompt)
+  --app <id>             Application ID to link (skips interactive picker)
   --starter              Bootstrap a new project from a starter template
   --prompt               Output a prompt for an AI agent to integrate Clerk
   --yes                  Skip confirmation prompts
@@ -62,6 +63,7 @@ clerk init
   Examples:
     $ clerk init                                      Auto-detect framework and set up Clerk
     $ clerk init --framework next                     Set up for Next.js (skips detection)
+    $ clerk init --app app_123                        Link to a specific Clerk application
     $ clerk init --starter                            Create a new project with Clerk
     $ clerk init --starter --framework next --pm bun  Bootstrap with Bun
     $ clerk init --prompt                             Output a setup prompt for an AI agent

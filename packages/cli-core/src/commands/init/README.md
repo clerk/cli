@@ -24,6 +24,7 @@ clerk init --no-skills
 | `--framework <name>`    | Framework to set up (skips auto-detection). Valid values: `next`, `astro`, `nuxt`, `tanstack-start`, `react-router`, `vue`, `expo`, `react`, `javascript`, `js`, `express`, `fastify` |
 | `--pm <manager>`        | Package manager to use. Valid values: `bun`, `pnpm`, `yarn`, `npm`. Skips the PM prompt (bootstrap) or overrides lockfile detection (existing project)                                |
 | `--name <project-name>` | Project name for `--starter` (skips prompt). Must be lowercase, no spaces, no path separators                                                                                         |
+| `--app <id>`            | Application ID to link (skips the interactive app picker during authenticated linking)                                                                                                |
 | `--starter`             | Bootstrap a new project from a starter template (runs the framework generator, installs deps, and scaffolds Clerk)                                                                    |
 | `--prompt`              | Output a prompt for an AI agent to integrate Clerk, then exit                                                                                                                         |
 | `-y, --yes`             | Skip confirmation prompts (also skips authentication after bootstrap, letting you connect your account later)                                                                         |

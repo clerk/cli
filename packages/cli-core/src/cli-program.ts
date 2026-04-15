@@ -102,6 +102,7 @@ export function createProgram() {
       ).choices(["bun", "pnpm", "yarn", "npm"]),
     )
     .option("--name <project-name>", "Project name for --starter (skips prompt)")
+    .option("--app <id>", "Application ID to link (skips interactive picker)")
     .option("--prompt", "Output a prompt for an AI agent to integrate Clerk")
     .option("--starter", "Create a new project from a starter template")
     .option("-y, --yes", "Skip confirmation prompts")
