@@ -1,7 +1,7 @@
 /**
  * Cross-platform "open this URL in the user's browser" helper.
  *
- * Used by the auth login OAuth flow and by deploy's docs-link redirects.
+ * Used by the auth login OAuth flow.
  * Both call sites previously used `Bun.spawn(["open", url])` (macOS only)
  * or a small per-file lookup table that fell back to `xdg-open` blindly.
  * That fails hard on:

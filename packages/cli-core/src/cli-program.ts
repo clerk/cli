@@ -6,7 +6,6 @@ import { login } from "./commands/auth/login.ts";
 import { logout } from "./commands/auth/logout.ts";
 import { whoami } from "./commands/whoami/index.ts";
 import { pull } from "./commands/env/pull.ts";
-import { deploy } from "./commands/deploy/index.ts";
 import { configPull } from "./commands/config/pull.ts";
 import { configPatch, configPut } from "./commands/config/push.ts";
 import { configSchema } from "./commands/config/schema.ts";
@@ -495,12 +494,6 @@ Tutorial — enable completions for your shell:
       { command: "clerk update --yes", description: "Update without confirmation prompt" },
     ])
     .action(update);
-
-  program
-    .command("deploy", { hidden: true })
-    .description("Deploy your Clerk application")
-    .option("--debug", "Show debug output")
-    .action(deploy);
 
   return program;
 }

@@ -38,10 +38,6 @@ describe("generateCompletions", () => {
       expect(names).toContain("--mode");
     });
 
-    test("excludes hidden commands", () => {
-      expect(completionNames("")).not.toContain("deploy");
-    });
-
     test("completes partial subcommand name", () => {
       const names = completionNames("au");
       expect(names).toContain("auth");
