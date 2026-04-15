@@ -1,6 +1,15 @@
 const repo = "clerk/cli";
 const [owner, repoName] = repo.split("/");
 
+// Authors excluded from changelog attribution. Used to suppress AI assistants
+// or automation accounts that should not be credited as contributors.
+const EXCLUDED_EMAILS = new Set(["noreply@anthropic.com"]);
+const EXCLUDED_LOGINS = new Set(["claude", "claude[bot]", "claude-code[bot]"]);
+
+function isExcludedUser(user) {
+  return Boolean(user && EXCLUDED_LOGINS.has(user.login));
+}
+
 // Cache to avoid duplicate fetches for the same commit/PR. Stores in-flight
 // promises so concurrent callers for the same key share a single request.
 const cache = new Map();
@@ -93,7 +102,7 @@ const fetchCommitInfo = withLimit((commit) =>
             associatedPullRequests(first: 50) {
               nodes { number url mergedAt author { login url } }
             }
-            author { user { login url } }
+            author { email user { login url } }
           }
         }
       }
@@ -112,7 +121,10 @@ const fetchCommitInfo = withLimit((commit) =>
       };
     }
 
-    let user = obj.author && obj.author.user ? obj.author.user : null;
+    const commitAuthorExcluded =
+      obj.author && (EXCLUDED_EMAILS.has(obj.author.email) || isExcludedUser(obj.author.user));
+    let user = commitAuthorExcluded ? null : obj.author && obj.author.user ? obj.author.user : null;
+
     const associatedPR =
       obj.associatedPullRequests &&
       obj.associatedPullRequests.nodes &&
@@ -125,7 +137,9 @@ const fetchCommitInfo = withLimit((commit) =>
           })[0]
         : null;
 
-    if (associatedPR && associatedPR.author) user = associatedPR.author;
+    if (associatedPR && associatedPR.author && !isExcludedUser(associatedPR.author)) {
+      user = associatedPR.author;
+    }
 
     return {
       user: user ? user.login : null,
@@ -153,7 +167,8 @@ const fetchPullRequestInfo = withLimit((pull) =>
     }`);
 
     const pr = data.repository.pullRequest;
-    const user = pr && pr.author ? pr.author : null;
+    const prAuthor = pr && pr.author ? pr.author : null;
+    const user = isExcludedUser(prAuthor) ? null : prAuthor;
     const mergeCommit = pr && pr.mergeCommit ? pr.mergeCommit : null;
 
     return {
