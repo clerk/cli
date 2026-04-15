@@ -109,10 +109,10 @@ the response to the user.
 
 Example contrast:
 
-| PR title                                                    | Changeset summary                                                            |
-| ----------------------------------------------------------- | ---------------------------------------------------------------------------- |
-| `feat(cli): wire up OAuth GitHub provider to login command` | `Add GitHub as an OAuth provider for ` `clerk login` `.`                     |
-| `fix(init): register --app option shown in help examples`   | `Fix ` `clerk init --app` ` so it works when invoked from the help example.` |
+| PR title                                                    | Changeset summary                                                        |
+| ----------------------------------------------------------- | ------------------------------------------------------------------------ |
+| `feat(cli): wire up OAuth GitHub provider to login command` | "Add GitHub as an OAuth provider for `clerk login`."                     |
+| `fix(init): register --app option shown in help examples`   | "Fix `clerk init --app` so it works when invoked from the help example." |
 
 ### Optional body prefixes
 

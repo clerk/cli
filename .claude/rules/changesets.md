@@ -6,7 +6,7 @@ paths:
 alwaysApply: false
 ---
 
-Changes inside these paths are **non-exempt**: the `Enforce Changeset` workflow (`.github/workflows/enforce-changeset.yml`) fails the PR if no `.changeset/<slug>.md` exists. Every commit to a feature branch that touches these paths must produce a changeset before the PR is opened or pushed.
+Changes inside these paths are **non-exempt**: the `Enforce Changeset` workflow (`.github/workflows/enforce-changeset.yml`) fails the PR if no `.changeset/<slug>.md` exists. Every feature branch that touches these paths must include a changeset before the PR is opened or any further commits are pushed.
 
 ## Test-file exception
 
