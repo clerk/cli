@@ -28,10 +28,12 @@ jobs:
       matrix: ${{ steps.resolve.outputs.matrix }}
     steps:
       - id: resolve
+        env:
+          PRESET: ${{ inputs.preset }}
         run: |
-          case "${{ inputs.preset }}" in
+          case "$PRESET" in
             stable)
-              # All testable targets. win32-arm64 is excluded — no GitHub-hosted
+              # All testable targets. win32-arm64 is excluded, no GitHub-hosted
               # ARM Windows runner available. Build-time format verification
               # confirms it is a valid PE32+/Aarch64 binary.
               matrix='[
@@ -58,7 +60,7 @@ jobs:
               matrix='[{"target":"linux-x64","runner":"ubuntu-latest","bin":"./clerk"}]'
               ;;
             *)
-              echo "::error::Unknown preset: ${{ inputs.preset }}"
+              echo "::error::Unknown preset: $PRESET"
               exit 1
               ;;
           esac
@@ -85,15 +87,18 @@ jobs:
         run: chmod +x ${{ matrix.bin }}
       - name: Smoke test
         shell: bash
+        env:
+          EXPECTED: ${{ inputs.version }}
+          DOCKER_IMAGE: ${{ matrix.docker }}
+          BIN: ${{ matrix.bin }}
         run: |
-          expected="${{ inputs.version }}"
-          if [ -n "${{ matrix.docker }}" ]; then
-            actual=$(docker run --rm -v "$PWD:/work" ${{ matrix.docker }} sh -c "apk add --no-cache libstdc++ libgcc >/dev/null 2>&1; /work/${{ matrix.bin }} --version")
+          if [ -n "$DOCKER_IMAGE" ]; then
+            actual=$(docker run --rm -v "$PWD:/work" "$DOCKER_IMAGE" sh -c "apk add --no-cache libstdc++ libgcc >/dev/null 2>&1; /work/$BIN --version")
           else
-            actual=$(${{ matrix.bin }} --version)
+            actual=$("$BIN" --version)
           fi
-          echo "Binary reports $actual (expected $expected)"
-          if [ "$actual" != "$expected" ]; then
-            echo "::error::Version mismatch: expected $expected, got $actual"
+          echo "Binary reports $actual (expected $EXPECTED)"
+          if [ "$actual" != "$EXPECTED" ]; then
+            echo "::error::Version mismatch: expected $EXPECTED, got $actual"
             exit 1
           fi
