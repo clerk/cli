@@ -43,6 +43,8 @@ export const ERROR_CODE = {
   CATALOG_ERROR: "catalog_error",
   /** Doctor checks found issues. */
   DOCTOR_FAILED: "doctor_failed",
+  /** Autoclaim of a keyless application failed. */
+  AUTOCLAIM_FAILED: "autoclaim_failed",
 } as const;
 
 export type ErrorCode = (typeof ERROR_CODE)[keyof typeof ERROR_CODE];
