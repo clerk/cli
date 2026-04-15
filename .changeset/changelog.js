@@ -29,6 +29,22 @@ function getOrSetCached(key, loader) {
 }
 
 const GITHUB_TIMEOUT_MS = 15000;
+const GITHUB_RETRY_BACKOFF_MS = 1000;
+const GITHUB_MAX_RETRIES = 1;
+
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+// Set once when GitHub enrichment can't proceed (missing token, etc.) so
+// subsequent loaders skip the network and return plain entries silently.
+let enrichmentDisabled = false;
+function disableEnrichment(reason) {
+  if (enrichmentDisabled) return;
+  enrichmentDisabled = true;
+  // eslint-disable-next-line no-console -- intentional one-shot warning when GitHub enrichment is unavailable.
+  console.warn(
+    `changelog: GitHub enrichment disabled (${reason}). Generated entries will lack PR and commit links.`,
+  );
+}
 
 // Simple concurrency limiter to avoid hitting GitHub secondary rate limits
 const MAX_CONCURRENT = 6;
@@ -60,41 +76,94 @@ async function graphql(query) {
     throw new Error("GITHUB_TOKEN environment variable is required");
   }
 
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), GITHUB_TIMEOUT_MS);
-  let res;
-  try {
-    res = await fetch("https://api.github.com/graphql", {
-      method: "POST",
-      headers: {
-        Authorization: `Token ${token}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({ query }),
-      signal: controller.signal,
-    });
-  } finally {
-    clearTimeout(timeout);
+  let lastError;
+  for (let attempt = 0; attempt <= GITHUB_MAX_RETRIES; attempt++) {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), GITHUB_TIMEOUT_MS);
+    let res;
+    try {
+      res = await fetch("https://api.github.com/graphql", {
+        method: "POST",
+        headers: {
+          Authorization: `Token ${token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ query }),
+        signal: controller.signal,
+      });
+    } catch (err) {
+      lastError = err;
+      if (
+        attempt < GITHUB_MAX_RETRIES &&
+        (err.name === "AbortError" || err.code === "ECONNRESET")
+      ) {
+        await sleep(GITHUB_RETRY_BACKOFF_MS);
+        continue;
+      }
+      throw err;
+    } finally {
+      clearTimeout(timeout);
+    }
+
+    if (res.status >= 500 && res.status < 600 && attempt < GITHUB_MAX_RETRIES) {
+      lastError = new Error(`GitHub API responded with ${res.status}`);
+      await sleep(GITHUB_RETRY_BACKOFF_MS);
+      continue;
+    }
+
+    if (!res.ok) {
+      throw new Error(`GitHub API responded with ${res.status}: ${await res.text()}`);
+    }
+
+    const json = await res.json();
+    if (json.errors) {
+      throw new Error(`GitHub GraphQL error: ${JSON.stringify(json.errors, null, 2)}`);
+    }
+    if (!json.data) {
+      throw new Error(`Unexpected GitHub response: ${JSON.stringify(json)}`);
+    }
+    return json.data;
   }
 
-  if (!res.ok) {
-    throw new Error(`GitHub API responded with ${res.status}: ${await res.text()}`);
-  }
-
-  const json = await res.json();
-  if (json.errors) {
-    throw new Error(`GitHub GraphQL error: ${JSON.stringify(json.errors, null, 2)}`);
-  }
-  if (!json.data) {
-    throw new Error(`Unexpected GitHub response: ${JSON.stringify(json)}`);
-  }
-  return json.data;
+  throw lastError;
 }
+
+// Returns null instead of throwing when enrichment is unavailable (no token,
+// network blip after retry, etc.), so loaders fall back to plain entries.
+async function tryGraphql(query) {
+  if (enrichmentDisabled) return null;
+  try {
+    return await graphql(query);
+  } catch (err) {
+    disableEnrichment(err.message);
+    return null;
+  }
+}
+
+const emptyCommitInfo = (commit) => ({
+  user: null,
+  pull: null,
+  links: {
+    commit: `[\`${commit.slice(0, 7)}\`](https://github.com/${repo}/commit/${commit})`,
+    pull: null,
+    user: null,
+  },
+});
+
+const emptyPullInfo = (pull) => ({
+  user: null,
+  commit: null,
+  links: {
+    commit: null,
+    pull: `[#${pull}](https://github.com/${repo}/pull/${pull})`,
+    user: null,
+  },
+});
 
 // Fetches commit info with a single small GraphQL query per commit
 const fetchCommitInfo = withLimit((commit) =>
   getOrSetCached(`commit:${commit}`, async () => {
-    const data = await graphql(`query {
+    const data = await tryGraphql(`query {
       repository(owner: ${JSON.stringify(owner)}, name: ${JSON.stringify(repoName)}) {
         object(expression: ${JSON.stringify(commit)}) {
           ... on Commit {
@@ -108,18 +177,10 @@ const fetchCommitInfo = withLimit((commit) =>
       }
     }`);
 
+    if (!data) return emptyCommitInfo(commit);
+
     const obj = data.repository.object;
-    if (!obj) {
-      return {
-        user: null,
-        pull: null,
-        links: {
-          commit: `[\`${commit.slice(0, 7)}\`](https://github.com/${repo}/commit/${commit})`,
-          pull: null,
-          user: null,
-        },
-      };
-    }
+    if (!obj) return emptyCommitInfo(commit);
 
     const commitAuthorExcluded =
       obj.author && (EXCLUDED_EMAILS.has(obj.author.email) || isExcludedUser(obj.author.user));
@@ -156,7 +217,7 @@ const fetchCommitInfo = withLimit((commit) =>
 // Fetches pull request info with a single small GraphQL query per PR
 const fetchPullRequestInfo = withLimit((pull) =>
   getOrSetCached(`pull:${pull}`, async () => {
-    const data = await graphql(`query {
+    const data = await tryGraphql(`query {
       repository(owner: ${JSON.stringify(owner)}, name: ${JSON.stringify(repoName)}) {
         pullRequest(number: ${pull}) {
           url
@@ -165,6 +226,8 @@ const fetchPullRequestInfo = withLimit((pull) =>
         }
       }
     }`);
+
+    if (!data) return emptyPullInfo(pull);
 
     const pr = data.repository.pullRequest;
     const prAuthor = pr && pr.author ? pr.author : null;
@@ -240,7 +303,7 @@ const getReleaseLine = async (changeset, type, options) => {
     })
     .trim();
 
-  const [firstLine, ...futureLines] = replacedChangelog.split("\n").map((l) => l.trimRight());
+  const [firstLine, ...futureLines] = replacedChangelog.split("\n").map((l) => l.trimEnd());
 
   const links = await (async () => {
     if (prFromSummary !== undefined) {
