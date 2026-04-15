@@ -10,6 +10,7 @@ import { isHuman } from "../../mode.ts";
 import { throwUserAbort } from "../../lib/errors.ts";
 import { intro, outro, bar, withSpinner } from "../../lib/spinner.ts";
 import { NEXT_STEPS } from "../../lib/next-steps.ts";
+import { attemptAutoclaim, type AutoclaimResult } from "../../lib/autoclaim.ts";
 import { openBrowser } from "../../lib/open.ts";
 import { cyan, dim } from "../../lib/color.ts";
 import { log } from "../../lib/log.ts";
@@ -113,19 +114,52 @@ export async function login(options: LoginOptions = {}): Promise<UserInfo> {
   bar();
   log.success(`Logged in as ${userInfo.email}`);
 
+  const claimStatus = await handleAutoclaim(process.cwd());
+
   if (showNextSteps) {
-    const linked = await resolveProfile(process.cwd());
-    if (linked) {
-      const appLabel = linked.profile.appName
-        ? `\`${linked.profile.appName}\` (${linked.profile.appId})`
-        : `\`${linked.profile.appId}\``;
-      log.success(`Linked to ${appLabel}`);
-      outro(NEXT_STEPS.LOGIN_LINKED);
-    } else {
-      outro(NEXT_STEPS.LOGIN);
-    }
+    outro(await loginNextSteps(claimStatus));
   } else {
     outro("Done");
   }
+
   return userInfo;
+}
+
+const CLAIM_WARNINGS: Partial<Record<AutoclaimResult["status"], string>> = {
+  not_found:
+    "Claim token is no longer valid — the application may have been claimed from the dashboard.",
+  already_claimed: "Unable to claim — your account does not have an active organization.",
+  failed: "Auto-claim failed due to a temporary error. It will be retried on your next login.",
+};
+
+async function handleAutoclaim(cwd: string): Promise<AutoclaimResult["status"]> {
+  const result = await attemptAutoclaim(cwd);
+
+  if (result.status === "claimed") {
+    const label = result.app.name || result.app.application_id;
+    log.success(`Claimed and linked application: \`${label}\``);
+  }
+
+  const warning = CLAIM_WARNINGS[result.status];
+  if (warning) log.warn(warning);
+
+  return result.status;
+}
+
+async function loginNextSteps(claimStatus: AutoclaimResult["status"]): Promise<readonly string[]> {
+  if (claimStatus === "claimed") return NEXT_STEPS.AUTOCLAIMED;
+  if (claimStatus === "failed") return NEXT_STEPS.AUTOCLAIM_RETRY;
+  if (claimStatus === "not_found" || claimStatus === "already_claimed") {
+    return NEXT_STEPS.AUTOCLAIM_MANUAL_LINK;
+  }
+
+  // not_keyless — normal login, check for existing linked profile
+  const linked = await resolveProfile(process.cwd());
+  if (!linked) return NEXT_STEPS.LOGIN;
+
+  const appLabel = linked.profile.appName
+    ? `\`${linked.profile.appName}\` (${linked.profile.appId})`
+    : `\`${linked.profile.appId}\``;
+  log.success(`Linked to ${appLabel}`);
+  return NEXT_STEPS.LOGIN_LINKED;
 }
