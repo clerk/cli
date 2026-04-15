@@ -17,6 +17,9 @@ on:
           canary (darwin-arm64 + linux-x64 + linux-x64-musl), or
           snapshot (linux-x64 only).
 
+permissions:
+  contents: read
+
 jobs:
   resolve-matrix:
     runs-on: ubuntu-latest
