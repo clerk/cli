@@ -15,6 +15,7 @@
  */
 
 import type { ProjectContext } from "../commands/init/frameworks/types.js";
+import type { NonEmptyArray } from "./helpers/arrays.js";
 
 /**
  * One way to invoke an npm-published binary without installing it globally.
@@ -106,13 +107,14 @@ export function runnerForPackageManager(
  * bunx). Otherwise falls back to the first available runner in {@link KNOWN_RUNNERS}
  * order.
  *
- * Returns `undefined` only if `available` is empty.
+ * Requires a {@link NonEmptyArray} so the return type can be `Runner` (never
+ * undefined). Callers prove non-emptiness via `isNonEmpty()` from
+ * `lib/helpers/arrays.ts`.
  */
 export function preferredRunner(
   packageManager: ProjectContext["packageManager"] | undefined,
-  available: readonly Runner[],
-): Runner | undefined {
-  if (available.length === 0) return undefined;
+  available: NonEmptyArray<Runner>,
+): Runner {
   if (packageManager) {
     const preferredId = PM_TO_RUNNER[packageManager];
     const match = available.find((r) => r.id === preferredId);

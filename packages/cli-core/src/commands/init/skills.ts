@@ -22,6 +22,7 @@ import {
   runnerCommand,
   runnerForPackageManager,
 } from "../../lib/runners.js";
+import { isNonEmpty } from "../../lib/helpers/arrays.js";
 import type { ProjectContext } from "./frameworks/types.js";
 
 /** Skills installed regardless of framework. */
@@ -87,7 +88,7 @@ export async function installSkills(
 
   // Detect runners after the user accepts — no point probing PATH if they decline.
   const available = detectAvailableRunners();
-  if (available.length === 0) {
+  if (!isNonEmpty(available)) {
     const suggested = runnerForPackageManager(packageManager);
     log.blank();
     log.warn(
@@ -98,17 +99,6 @@ export async function installSkills(
   }
 
   const preferred = preferredRunner(packageManager, available);
-  if (!preferred) {
-    // Defensive: detectAvailableRunners returned a non-empty array above, so
-    // preferredRunner should always find something. This guards against any
-    // future change that decouples the two.
-    const suggested = runnerForPackageManager(packageManager);
-    log.blank();
-    log.warn(
-      `Could not select a package runner. Run \`${suggested.display} skills add ${SKILLS_SOURCE}\` manually.`,
-    );
-    return;
-  }
 
   // Only prompt when there's an actual choice and the user is interactive.
   let runner = preferred;

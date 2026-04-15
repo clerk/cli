@@ -1,4 +1,5 @@
 import { detectAvailableRunners, preferredRunner, runnerCommand } from "../../lib/runners.js";
+import { isNonEmpty } from "../../lib/helpers/arrays.js";
 import type { ProjectContext } from "./frameworks/types.js";
 
 type FormatterConfig = {
@@ -32,9 +33,8 @@ export async function runFormatters(ctx: ProjectContext, files: string[]): Promi
   if (matchingFormatters.length === 0) return;
 
   const available = detectAvailableRunners();
-  if (available.length === 0) return;
+  if (!isNonEmpty(available)) return;
   const runner = preferredRunner(ctx.packageManager, available);
-  if (!runner) return;
 
   for (const formatter of matchingFormatters) {
     const command = runnerCommand(runner, formatter.binArgs(files));
