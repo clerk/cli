@@ -31,28 +31,28 @@ export function renderFormula(input: FormulaInput): string {
   const kegOnly = major != null ? "\n  keg_only :versioned_formula" : "";
 
   return `class ${className} < Formula
-  desc "The Clerk CLI"
+  desc "Clerk command-line interface"
   homepage "https://clerk.com"
   version "${version}"
   license "MIT"${kegOnly}
 
   on_macos do
-    if Hardware::CPU.arm?
+    on_arm do
       url "${assetUrl(version, "darwin-arm64")}"
       sha256 "${checksums["darwin-arm64"]}"
     end
-    if Hardware::CPU.intel?
+    on_intel do
       url "${assetUrl(version, "darwin-x64")}"
       sha256 "${checksums["darwin-x64"]}"
     end
   end
 
   on_linux do
-    if Hardware::CPU.arm? && Hardware::CPU.is_64_bit?
+    on_arm do
       url "${assetUrl(version, "linux-arm64")}"
       sha256 "${checksums["linux-arm64"]}"
     end
-    if Hardware::CPU.intel?
+    on_intel do
       url "${assetUrl(version, "linux-x64")}"
       sha256 "${checksums["linux-x64"]}"
     end

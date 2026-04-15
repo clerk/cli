@@ -35,6 +35,11 @@ const artifactsDir = values["artifacts-dir"] ?? DEFAULT_ARTIFACTS_DIR;
 const tapRepo = values["tap-repo"] ?? "clerk/homebrew-stable";
 const dryRun = values["dry-run"]!;
 
+if (!dryRun && !process.env.HOMEBREW_TAP_TOKEN) {
+  console.error("HOMEBREW_TAP_TOKEN is required (use --dry-run to skip).");
+  process.exit(1);
+}
+
 console.log(`Homebrew distribution: v${version}${dryRun ? " (dry run)" : ""}`);
 console.log(`Artifacts dir: ${artifactsDir}`);
 console.log(`Tap repo: ${tapRepo}`);
@@ -87,15 +92,12 @@ if (dryRun) {
   console.log("[dry-run] Skipping tap clone and push.");
   console.log(`[dry-run] Would write Formula/clerk.rb and Formula/clerk@${major}.rb`);
 } else {
-  const token = process.env.HOMEBREW_TAP_TOKEN;
-  if (!token) {
-    throw new Error("HOMEBREW_TAP_TOKEN env var is required for pushing to tap");
-  }
+  const token = process.env.HOMEBREW_TAP_TOKEN!;
 
   const tapWorkDir = join(workDir, "tap-workdir");
   console.log(`Cloning tap repo ${tapRepo}...`);
   run(["git", "clone", `https://github.com/${tapRepo}.git`, tapWorkDir]);
-  run(
+  const setUrlResult = Bun.spawnSync(
     [
       "git",
       "remote",
@@ -103,8 +105,11 @@ if (dryRun) {
       "origin",
       `https://x-access-token:${token}@github.com/${tapRepo}.git`,
     ],
-    { cwd: tapWorkDir },
+    { cwd: tapWorkDir, stdio: ["ignore", "pipe", "pipe"] },
   );
+  if (setUrlResult.exitCode !== 0) {
+    throw new Error("Failed to configure authenticated remote for tap repo");
+  }
 
   const formulaDir = join(tapWorkDir, "Formula");
   await mkdir(formulaDir, { recursive: true });
