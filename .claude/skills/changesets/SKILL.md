@@ -156,7 +156,9 @@ This writes `.changeset/<slug>.md` with empty frontmatter (no package
 keys). Continue to step 8 to place the commit.
 
 Skip steps 4 through 6: there is no slug to pick (the CLI generates one),
-no bump to choose, and no summary to author.
+no bump to choose, and no summary to author. When step 8 places a tip
+commit on a multi-commit branch, use the fixed title
+`docs(changeset): add empty changeset` since there is no summary.
 
 ### 8. Place the commit
 
