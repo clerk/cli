@@ -177,6 +177,27 @@ export async function createApplication(name: string): Promise<Application> {
   return response.json() as Promise<Application>;
 }
 
+export async function claimApplication(token: string, name: string): Promise<Application> {
+  const authToken = await getAuthToken();
+  const url = new URL("/v1/platform/accountless_applications/claim", getPlapiBaseUrl());
+  const response = await fetch(url, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${authToken}`,
+      "Content-Type": "application/json",
+      Accept: "application/json",
+    },
+    body: JSON.stringify({ token, name }),
+  });
+
+  if (!response.ok) {
+    const body = await response.text();
+    throw new PlapiError(response.status, body, url.toString());
+  }
+
+  return response.json() as Promise<Application>;
+}
+
 export async function listApplications(): Promise<Application[]> {
   const url = new URL("/v1/platform/applications", getPlapiBaseUrl());
   const response = await plapiFetch("GET", url);
