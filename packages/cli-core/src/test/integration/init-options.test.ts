@@ -5,9 +5,9 @@
  */
 
 import { test, expect } from "bun:test";
-import { useIntegrationTestHarness, clerk } from "./lib/harness.ts";
+import { useIntegrationTestScenarios, clerk } from "./lib/scenarios.ts";
 
-useIntegrationTestHarness();
+useIntegrationTestScenarios();
 
 test("init accepts --app without rejecting it as an unknown option", async () => {
   // --prompt exits before any auth/link/scaffold side effects. If --app is
