@@ -1,12 +1,12 @@
 # Skill Command
 
-Manages the bundled `clerk-cli` agent skill. The skill is embedded in the CLI binary at compile time via text imports from `skills/clerk-cli/`, so it always matches the version of the CLI in use.
+Manages the bundled `clerk` agent skill. The skill is embedded in the CLI binary at compile time via text imports from `skills/clerk/`, so it always matches the version of the CLI in use.
 
 ## Subcommands
 
 ### `clerk skill install`
 
-Installs the bundled `clerk-cli` skill for any locally detected AI agents (Claude Code, Cursor, etc.). The actual agent detection and scope selection is delegated to the external [`skills`](https://www.npmjs.com/package/skills) CLI, which is invoked via the preferred package runner on PATH (`bunx`, `pnpm dlx`, `yarn dlx`, or `npx`).
+Installs the bundled `clerk` skill for any locally detected AI agents (Claude Code, Cursor, etc.). The actual agent detection and scope selection is delegated to the external [`skills`](https://www.npmjs.com/package/skills) CLI, which is invoked via the preferred package runner on PATH (`bunx`, `pnpm dlx`, `yarn dlx`, or `npx`).
 
 Interactive mode hands off entirely to the `skills` CLI picker. Non-interactive mode (`-y`, agent mode, or no TTY) passes `-y -g` so the skills CLI runs unattended against global scope with auto-detected agents.
 

@@ -487,7 +487,7 @@ Tutorial — enable completions for your shell:
     .command("skill")
     .description("Manage the bundled Clerk CLI agent skill")
     .setExamples([
-      { command: "clerk skill install", description: "Install the clerk-cli agent skill" },
+      { command: "clerk skill install", description: "Install the clerk agent skill" },
       {
         command: "clerk skill install -y",
         description: "Install non-interactively (auto-detect agents, global scope)",
@@ -496,7 +496,7 @@ Tutorial — enable completions for your shell:
 
   skill
     .command("install")
-    .description("Install the bundled clerk-cli agent skill")
+    .description("Install the bundled clerk agent skill")
     .option("-y, --yes", "Skip prompts and run the `skills` CLI unattended")
     .addOption(
       createOption("--pm <manager>", "Package manager hint for runner detection").choices(

@@ -3,7 +3,7 @@
  *
  * Two installer calls share one runner detection:
  *
- *  1. The bundled `clerk-cli` skill (embedded in the binary via text
+ *  1. The bundled `clerk` skill (embedded in the binary via text
  *     imports). Delegated to the `clerk skill install` core helpers in
  *     `commands/skill/install.ts`.
  *
@@ -21,7 +21,7 @@ import { isHuman } from "../../mode.js";
 import { log } from "../../lib/log.js";
 import { confirm } from "../../lib/prompts.js";
 import type { ProjectContext } from "./frameworks/types.js";
-import { installClerkCliSkillCore, resolveSkillsRunner, runSkillsAdd } from "../skill/install.js";
+import { installClerkSkillCore, resolveSkillsRunner, runSkillsAdd } from "../skill/install.js";
 
 /** Upstream skills installed regardless of framework. */
 const BASE_SKILLS = ["clerk", "clerk-setup"];
@@ -58,7 +58,7 @@ export async function installSkills(
   skipPrompt: boolean,
 ): Promise<void> {
   const upstreamSkills = resolveUpstreamSkills(frameworkDep);
-  const skillList = ["clerk-cli", ...upstreamSkills].join(", ");
+  const skillList = ["clerk", ...upstreamSkills].join(", ");
 
   if (isHuman() && !skipPrompt) {
     const install = await confirm({
@@ -74,10 +74,10 @@ export async function installSkills(
   const runner = await resolveSkillsRunner(packageManager, interactive);
   if (!runner) return;
 
-  // Install the bundled clerk-cli skill from a staged temp dir, then the
+  // Install the bundled clerk skill from a staged temp dir, then the
   // upstream framework patterns. Each call soft-fails independently so a
   // problem with one source doesn't block the other.
-  const cliSkillOk = await installClerkCliSkillCore(runner, cwd, interactive);
+  const cliSkillOk = await installClerkSkillCore(runner, cwd, interactive);
 
   const upstreamOk = await runSkillsAdd(
     runner,

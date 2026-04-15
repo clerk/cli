@@ -1,8 +1,8 @@
 /**
- * `clerk skill install` — installs the bundled `clerk-cli` skill for local
+ * `clerk skill install` — installs the bundled `clerk` skill for local
  * agents.
  *
- * The `clerk-cli` skill is embedded in the CLI binary via text imports at
+ * The `clerk` skill is embedded in the CLI binary via text imports at
  * compile time. At install time we stage it to a temp dir and invoke
  * `skills add <tmpdir> --copy`, so the installed files are full copies
  * (not symlinks into the temp dir, which would break when cleaned up).
@@ -12,7 +12,7 @@
  * so the user gets the native picker. In non-interactive mode we pass
  * `-y -g` so it runs unattended with global scope and auto-detected agents.
  *
- * The `init` command also imports `installClerkCliSkillCore` and
+ * The `init` command also imports `installClerkSkillCore` and
  * `resolveSkillsRunner` from here so a single runner detection is shared
  * with the upstream framework-pattern skills install.
  */
@@ -37,22 +37,22 @@ import { isNonEmpty } from "../../lib/helpers/arrays.js";
 import type { PackageManager } from "../../lib/package-manager.js";
 import { detectPackageManager } from "../init/context.js";
 
-import clerkCliSkillMd from "../../../../../skills/clerk-cli/SKILL.md" with { type: "text" };
-import clerkCliAuthMd from "../../../../../skills/clerk-cli/references/auth.md" with { type: "text" };
-import clerkCliRecipesMd from "../../../../../skills/clerk-cli/references/recipes.md" with { type: "text" };
-import clerkCliAgentModeMd from "../../../../../skills/clerk-cli/references/agent-mode.md" with { type: "text" };
+import clerkSkillMd from "../../../../../skills/clerk/SKILL.md" with { type: "text" };
+import clerkAuthMd from "../../../../../skills/clerk/references/auth.md" with { type: "text" };
+import clerkRecipesMd from "../../../../../skills/clerk/references/recipes.md" with { type: "text" };
+import clerkAgentModeMd from "../../../../../skills/clerk/references/agent-mode.md" with { type: "text" };
 
 /**
- * The bundled clerk-cli skill, as `(relativePath, content)` pairs. Text
- * imports resolve live from `<repo-root>/skills/clerk-cli/` during
+ * The bundled clerk skill, as `(relativePath, content)` pairs. Text
+ * imports resolve live from `<repo-root>/skills/clerk/` during
  * `bun run dev` and get embedded into the compiled binary by
  * `bun build --compile`, so the content always matches the CLI being run.
  */
-const BUNDLED_CLERK_CLI_SKILL: ReadonlyArray<readonly [string, string]> = [
-  ["clerk-cli/SKILL.md", clerkCliSkillMd],
-  ["clerk-cli/references/auth.md", clerkCliAuthMd],
-  ["clerk-cli/references/recipes.md", clerkCliRecipesMd],
-  ["clerk-cli/references/agent-mode.md", clerkCliAgentModeMd],
+const BUNDLED_CLERK_SKILL: ReadonlyArray<readonly [string, string]> = [
+  ["clerk/SKILL.md", clerkSkillMd],
+  ["clerk/references/auth.md", clerkAuthMd],
+  ["clerk/references/recipes.md", clerkRecipesMd],
+  ["clerk/references/agent-mode.md", clerkAgentModeMd],
 ];
 
 /**
@@ -72,20 +72,20 @@ export function renderSkillVersionPlaceholder(
 }
 
 /**
- * Write the bundled clerk-cli skill to a fresh temp dir and call `fn` with
+ * Write the bundled clerk skill to a fresh temp dir and call `fn` with
  * its path. Every asset has `{{CLI_VERSION}}` rendered against `version` first
  * (see {@link renderSkillVersionPlaceholder}). The dir is deleted on return,
  * so `fn` must finish any work that reads from it before returning.
  *
  * Exported for tests.
  */
-export async function withStagedClerkCliSkill<T>(
+export async function withStagedClerkSkill<T>(
   version: string | undefined,
   fn: (stageDir: string) => Promise<T>,
 ): Promise<T> {
-  const stageDir = await mkdtemp(join(tmpdir(), "clerk-cli-skill-"));
+  const stageDir = await mkdtemp(join(tmpdir(), "clerk-skill-"));
   try {
-    for (const [rel, content] of BUNDLED_CLERK_CLI_SKILL) {
+    for (const [rel, content] of BUNDLED_CLERK_SKILL) {
       const dest = join(stageDir, rel);
       await mkdir(dirname(dest), { recursive: true });
       await writeFile(dest, renderSkillVersionPlaceholder(content, version));
@@ -102,11 +102,11 @@ export async function withStagedClerkCliSkill<T>(
  * {@link runnerCommand}.
  *
  * `skillNames` becomes `--skill <name>` pairs; leave empty to install every
- * skill from `source` (what we do for the bundled clerk-cli source).
+ * skill from `source` (what we do for the bundled clerk source).
  *
  * `copy` forces the `skills` CLI to copy files into each agent dir instead
  * of symlinking. Required for sources that live in an ephemeral directory
- * (our staged clerk-cli skill); optional otherwise.
+ * (our staged clerk skill); optional otherwise.
  *
  * Interactive mode: hand off to the skills CLI's native UX (auto-detect
  * installed agents, scope picker) by omitting `--agent` and `-y`.
@@ -212,19 +212,19 @@ export async function resolveSkillsRunner(
 }
 
 /**
- * Install the bundled clerk-cli skill using a pre-resolved runner. Does not
+ * Install the bundled clerk skill using a pre-resolved runner. Does not
  * prompt; callers handle any UX around confirmation and runner selection.
  *
  * Shared with the init flow so runner detection happens once when installing
- * clerk-cli alongside the upstream framework-pattern skills.
+ * clerk alongside the upstream framework-pattern skills.
  */
-export async function installClerkCliSkillCore(
+export async function installClerkSkillCore(
   runner: Runner,
   cwd: string,
   interactive: boolean,
 ): Promise<boolean> {
-  return withStagedClerkCliSkill(resolveCliVersion(), (stageDir) =>
-    runSkillsAdd(runner, cwd, stageDir, [], interactive, true, "clerk-cli skill"),
+  return withStagedClerkSkill(resolveCliVersion(), (stageDir) =>
+    runSkillsAdd(runner, cwd, stageDir, [], interactive, true, "clerk skill"),
   );
 }
 
@@ -234,7 +234,7 @@ export interface SkillInstallOptions {
 }
 
 /**
- * `clerk skill install` — standalone install of the bundled clerk-cli skill.
+ * `clerk skill install` — standalone install of the bundled clerk skill.
  */
 export async function skillInstall(options: SkillInstallOptions): Promise<void> {
   const cwd = process.cwd();
@@ -246,9 +246,9 @@ export async function skillInstall(options: SkillInstallOptions): Promise<void> 
   const runner = await resolveSkillsRunner(packageManager, interactive);
   if (!runner) return;
 
-  const ok = await installClerkCliSkillCore(runner, cwd, interactive);
+  const ok = await installClerkSkillCore(runner, cwd, interactive);
   if (ok) {
     log.blank();
-    log.success("clerk-cli skill installed. AI agents now have Clerk context in this project.");
+    log.success("clerk skill installed. AI agents now have Clerk context in this project.");
   }
 }
