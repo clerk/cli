@@ -49,7 +49,6 @@ Commands:
   switch-env  [environment]                  Switch the active Clerk CLI environment
   completion  [shell]                        Generate shell autocompletion script
   update      [options]                      Update the Clerk CLI to the latest version
-  deploy      [options]                      Deploy your Clerk application (hidden)
 
 clerk init
   --framework <name>     Framework to set up (skips auto-detection)
@@ -201,9 +200,6 @@ clerk update
     $ clerk update                       Update to the latest stable release
     $ clerk update --channel canary      Update to the latest canary release
     $ clerk update --yes                 Update without confirmation prompt
-
-clerk deploy
-  --debug              Show debug output
 ```
 
 ## Open Questions
