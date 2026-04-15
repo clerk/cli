@@ -13,12 +13,14 @@ import {
   checkEnvVars,
   checkConfigFile,
   checkShellCompletion,
+  checkCliVersion,
   errorMessage,
 } from "./checks.ts";
 import { formatCheckResult, formatJson } from "./format.ts";
 import type { CheckFn, CheckResult, DoctorContext, DoctorOptions } from "./types.ts";
 
 const CHECKS: CheckFn[] = [
+  checkCliVersion,
   checkLoggedIn,
   checkTokenValid,
   checkProjectLinked,

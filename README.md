@@ -48,6 +48,7 @@ Commands:
   doctor      [options]                      Check your project's Clerk integration health
   switch-env  [environment]                  Switch the active Clerk CLI environment
   completion  [shell]                        Generate shell autocompletion script
+  update      [options]                      Update the Clerk CLI to the latest version
   deploy      [options]                      Deploy your Clerk application (hidden)
 
 clerk init
@@ -190,6 +191,14 @@ clerk doctor
 
 clerk completion <shell>
   shell: bash, zsh, fish, powershell
+
+clerk update
+  --channel <tag>      Release channel to update to (e.g. latest, canary)
+  -y, --yes            Skip confirmation prompt
+  Examples:
+    $ clerk update                       Update to the latest stable release
+    $ clerk update --channel canary      Update to the latest canary release
+    $ clerk update --yes                 Update without confirmation prompt
 
 clerk deploy
   --debug              Show debug output

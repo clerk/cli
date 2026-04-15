@@ -4,6 +4,16 @@ import { fetchUserInfo } from "../../lib/token-exchange.ts";
 import { PlapiError } from "../../lib/errors.ts";
 import { detectPublishableKeyName, detectSecretKeyName } from "../../lib/framework.ts";
 import { parseEnvFile } from "../../lib/dotenv.ts";
+import {
+  getCurrentVersion,
+  getUpdateChannel,
+  isDevVersion,
+  compareSemver,
+  fetchLatestVersion,
+  writeUpdateCache,
+  formatChannelFlag,
+  formatChannelLabel,
+} from "../../lib/update-check.ts";
 import type { CheckResult, DoctorContext, FixAction } from "./types.ts";
 
 const AUTH_ERROR_STATUS = /\((401|403)\)/;
@@ -194,37 +204,34 @@ export async function checkInstances(ctx: DoctorContext): Promise<CheckResult> {
   }
 }
 
+async function findEnvFile(
+  cwd: string,
+): Promise<{ name: string; entries: Record<string, string> } | null> {
+  for (const candidate of [".env.local", ".env"]) {
+    const file = Bun.file(join(cwd, candidate));
+    if (!(await file.exists())) continue;
+    const entries: Record<string, string> = {};
+    for (const line of parseEnvFile(await file.text())) {
+      if (line.type === "entry") entries[line.key] = line.value;
+    }
+    return { name: candidate, entries };
+  }
+  return null;
+}
+
 export async function checkEnvVars(ctx: DoctorContext): Promise<CheckResult> {
   const check = defineCheck("Environment variables", ctx.fixes.envPull);
   const cwd = process.cwd();
+  const found = await findEnvFile(cwd);
 
-  const candidates = [".env.local", ".env"];
-  let foundFile: string | undefined;
-  const entries: Record<string, string> = {};
-
-  for (const candidate of candidates) {
-    const filePath = join(cwd, candidate);
-    const file = Bun.file(filePath);
-    if (await file.exists()) {
-      foundFile = candidate;
-      const content = await file.text();
-      const lines = parseEnvFile(content);
-      for (const line of lines) {
-        if (line.type === "entry") {
-          entries[line.key] = line.value;
-        }
-      }
-      break;
-    }
-  }
-
-  if (!foundFile) {
+  if (!found) {
     return check.warn("No .env.local or .env file found", {
       remedy: "Run `clerk env pull` to create one with your Clerk keys.",
       fixable: true,
     });
   }
 
+  const { name: foundFile, entries } = found;
   const publishableKeyName = await detectPublishableKeyName(cwd);
   const secretKeyName = await detectSecretKeyName(cwd);
   const hasPublishable = publishableKeyName in entries && entries[publishableKeyName] !== "";
@@ -261,12 +268,7 @@ async function identifyEnvironment(
   publishableKeyValue: string,
   secretKeyValue: string,
 ): Promise<string | null> {
-  let app;
-  try {
-    app = await ctx.getApplication();
-  } catch {
-    return null;
-  }
+  const app = await ctx.getApplication().catch(() => null);
   if (!app) return null;
 
   const match =
@@ -308,6 +310,39 @@ export async function checkConfigFile(ctx: DoctorContext): Promise<CheckResult> 
 function getConfigFile(): string {
   const homeDir = process.env.CLERK_CONFIG_DIR ?? join(homedir(), ".clerk");
   return join(homeDir, "config.json");
+}
+
+// ── CLI version check ─────────────────────────────────────────────────────────
+
+export async function checkCliVersion(): Promise<CheckResult> {
+  const check = defineCheck("CLI version");
+  const currentVersion = getCurrentVersion();
+
+  if (isDevVersion(currentVersion)) {
+    return check.pass("Running development build");
+  }
+
+  const channel = getUpdateChannel();
+  const channelLabel = formatChannelLabel(channel);
+
+  const latest = await fetchLatestVersion(channel, 3000).catch(() => null);
+  if (!latest) {
+    return check.warn("Could not reach npm registry to check for updates", {
+      detail: "Check your network connection.",
+      fixable: false,
+    });
+  }
+
+  // Write to cache so the postAction notification fires from cache next time
+  await writeUpdateCache({ checkedAt: Date.now(), latest, distTag: channel });
+
+  if (compareSemver(latest, currentVersion) <= 0) {
+    return check.pass(`Up to date (${currentVersion}${channelLabel})`);
+  }
+
+  return check.warn(`Update available: ${currentVersion} → ${latest}${channelLabel}`, {
+    remedy: `Run \`clerk update${formatChannelFlag(channel)}\` to update`,
+  });
 }
 
 // ── Shell completion check ───────────────────────────────────────────────────
