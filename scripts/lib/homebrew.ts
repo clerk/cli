@@ -1,0 +1,115 @@
+import { copyFileSync, mkdirSync } from "node:fs";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
+import { targets } from "./targets.ts";
+
+// Homebrew supports macOS and Linux (glibc only). Derive the subset from the
+// canonical targets list so adding/removing a target in targets.ts automatically
+// updates the Homebrew build.
+type HomebrewTarget = (typeof targets)[number] & { os: "darwin" | "linux"; libc?: "glibc" };
+export type HomebrewTargetName = HomebrewTarget["name"];
+
+export const HOMEBREW_TARGETS = targets.filter(
+  (t): t is HomebrewTarget =>
+    (t.os === "darwin" || t.os === "linux") && (!("libc" in t) || t.libc !== "musl"),
+);
+
+export interface FormulaInput {
+  version: string;
+  checksums: Record<HomebrewTargetName, string>;
+  major?: number;
+}
+
+function assetUrl(version: string, target: string): string {
+  return `https://github.com/clerk/cli/releases/download/v${version}/homebrew-clerk-${target}.tar.gz`;
+}
+
+export function renderFormula(input: FormulaInput): string {
+  const { version, checksums, major } = input;
+
+  const className = major != null ? `ClerkAT${major}` : "Clerk";
+  const kegOnly = major != null ? "\n  keg_only :versioned_formula" : "";
+
+  return `class ${className} < Formula
+  desc "Clerk command-line interface"
+  homepage "https://clerk.com"
+  version "${version}"
+  license "MIT"${kegOnly}
+
+  on_macos do
+    on_arm do
+      url "${assetUrl(version, "darwin-arm64")}"
+      sha256 "${checksums["darwin-arm64"]}"
+    end
+    on_intel do
+      url "${assetUrl(version, "darwin-x64")}"
+      sha256 "${checksums["darwin-x64"]}"
+    end
+  end
+
+  on_linux do
+    on_arm do
+      url "${assetUrl(version, "linux-arm64")}"
+      sha256 "${checksums["linux-arm64"]}"
+    end
+    on_intel do
+      url "${assetUrl(version, "linux-x64")}"
+      sha256 "${checksums["linux-x64"]}"
+    end
+  end
+
+  def install
+    bin.install "clerk"
+  end
+
+  test do
+    assert_match version.to_s, shell_output("#{bin}/clerk --version")
+  end
+end
+`;
+}
+
+/**
+ * Extracts the major version number from a semver string.
+ */
+export function parseMajorVersion(version: string): number {
+  const major = parseInt(version.split(".")[0] ?? "", 10);
+  if (Number.isNaN(major)) {
+    throw new Error(`Invalid version string: "${version}"`);
+  }
+  return major;
+}
+
+/**
+ * Creates a tar.gz archive containing just the binary renamed to "clerk".
+ * Stages the rename in a temp directory so the archive entry name is always "clerk".
+ */
+export function createArchive(binaryPath: string, archivePath: string): void {
+  const stageDir = join(
+    tmpdir(),
+    `homebrew-stage-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+  );
+  mkdirSync(stageDir, { recursive: true });
+
+  const stagedBinary = join(stageDir, "clerk");
+  copyFileSync(binaryPath, stagedBinary);
+
+  const tarResult = Bun.spawnSync(["tar", "czf", archivePath, "-C", stageDir, "clerk"], {
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  if (tarResult.exitCode !== 0) {
+    throw new Error(
+      `tar failed (exit ${tarResult.exitCode}): ${tarResult.stderr.toString().trim()}`,
+    );
+  }
+}
+
+/**
+ * Reads a file and returns its SHA256 hex digest.
+ */
+export async function computeChecksum(filePath: string): Promise<string> {
+  const buffer = await Bun.file(filePath).arrayBuffer();
+  const hasher = new Bun.CryptoHasher("sha256");
+  hasher.update(buffer);
+  return hasher.digest("hex");
+}

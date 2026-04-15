@@ -43,7 +43,7 @@
   "nano-staged": {
     "*.{ts,tsx,js,jsx}": [
       "oxfmt --write",
-      "oxlint"
+      "oxlint -c .oxlintrc.json"
     ],
     "*.{md,json,css}": "oxfmt --write"
   },

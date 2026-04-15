@@ -4,6 +4,14 @@ The Clerk command-line interface.
 
 ## Installation
 
+### Homebrew (macOS / Linux)
+
+```sh
+brew install clerk/stable/clerk
+```
+
+### npm
+
 ```sh
 npm install -g clerk
 ```
