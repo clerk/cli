@@ -4,10 +4,15 @@ const [owner, repoName] = repo.split("/");
 // Authors excluded from changelog attribution. Used to suppress AI assistants
 // or automation accounts that should not be credited as contributors.
 const EXCLUDED_EMAILS = new Set(["noreply@anthropic.com"]);
+// Logins are matched case-insensitively (compare against lowercase).
 const EXCLUDED_LOGINS = new Set(["claude", "claude[bot]", "claude-code[bot]"]);
 
+function isExcludedLogin(login) {
+  return typeof login === "string" && EXCLUDED_LOGINS.has(login.toLowerCase());
+}
+
 function isExcludedUser(user) {
-  return Boolean(user && EXCLUDED_LOGINS.has(user.login));
+  return Boolean(user && isExcludedLogin(user.login));
 }
 
 // Cache to avoid duplicate fetches for the same commit/PR. Stores in-flight
@@ -298,7 +303,7 @@ const getReleaseLine = async (changeset, type, options) => {
       return "";
     })
     .replace(/^\s*(?:author|user):\s*@?([^\s]+)/gim, (_, user) => {
-      usersFromSummary.push(user);
+      if (!isExcludedLogin(user)) usersFromSummary.push(user);
       return "";
     })
     .trim();
