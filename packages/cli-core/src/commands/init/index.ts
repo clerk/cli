@@ -7,6 +7,12 @@ import { throwUserAbort, CliError } from "../../lib/errors.js";
 import { lookupFramework, type FrameworkInfo } from "../../lib/framework.js";
 import { resolveProfile } from "../../lib/config.js";
 import { log } from "../../lib/log.js";
+import {
+  createAccountlessApp,
+  writeKeysToEnvFile,
+  parseClaimToken,
+  writeKeylessBreadcrumb,
+} from "../../lib/keyless.js";
 import { printNextSteps } from "../../lib/next-steps.js";
 import { gatherContext, hasPackageJson } from "./context.js";
 import { scaffold, enrichProjectContext } from "./scaffold.js";
@@ -117,7 +123,7 @@ export async function init(options: InitOptions = {}) {
   } else if (!keyless) {
     await pull({ file: ctx.envFile });
   } else {
-    printKeylessInfo();
+    await setupKeylessApp(ctx.cwd, ctx.framework.dep);
   }
 
   if (options.skills !== false) {
@@ -274,6 +280,28 @@ async function authenticateAndLink(cwd: string, app: string | undefined): Promis
   }
 
   await link({ skipIfLinked: true, app, cwd });
+}
+
+// --- Keyless app setup ---
+
+async function setupKeylessApp(cwd: string, frameworkDep: string): Promise<void> {
+  try {
+    const app = await withSpinner("Creating development application...", () =>
+      createAccountlessApp(frameworkDep),
+    );
+
+    await writeKeysToEnvFile(cwd, {
+      publishableKey: app.publishable_key,
+      secretKey: app.secret_key,
+    });
+
+    await writeKeylessBreadcrumb(cwd, parseClaimToken(app.claim_url));
+  } catch (error) {
+    const msg = error instanceof Error ? error.message : String(error);
+    log.debug(`Could not create accountless app: ${msg}`);
+  }
+
+  printKeylessInfo();
 }
 
 // --- Detect & install ---
