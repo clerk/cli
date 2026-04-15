@@ -8,7 +8,7 @@ jobs:
   enforce-changeset:
     name: Enforce Changeset
     # Skip the auto-generated Version Packages PR (it consumes changesets, doesn't add them).
-    if: github.event.pull_request.title != 'ci(repo): Version Packages'
+    if: "${{ github.event.pull_request.title != 'ci(repo): Version Packages' }}"
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
