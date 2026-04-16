@@ -98,7 +98,8 @@ export function getOAuthConfig() {
   const baseUrl = process.env.CLERK_OAUTH_BASE_URL ?? env.oauthBaseUrl;
   return {
     clientId: process.env.CLERK_OAUTH_CLIENT_ID ?? env.oauthClientId,
-    scopes: process.env.CLERK_OAUTH_SCOPES ?? "profile email",
+    // Unless scopes are explicitly set, use the default scopes
+    scopes: process.env.CLERK_OAUTH_SCOPES ?? "",
     authorizeUrl: new URL("/oauth/authorize", baseUrl).href,
     tokenUrl: new URL("/oauth/token", baseUrl).href,
     userinfoUrl: new URL("/oauth/userinfo", baseUrl).href,
