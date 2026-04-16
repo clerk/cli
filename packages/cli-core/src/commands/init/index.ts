@@ -90,7 +90,8 @@ export async function init(options: InitOptions = {}) {
   const keyless = await resolveKeylessMode(bootstrap, ctx, overrides.skipConfirm);
   ctx.keyless = keyless;
 
-  const skipAuth = !keyless && bootstrap != null && overrides.skipConfirm;
+  const skipAuth =
+    !keyless && bootstrap != null && overrides.skipConfirm && !(await getAuthenticatedEmail());
 
   if (!keyless && !skipAuth) {
     bar();
@@ -216,17 +217,21 @@ async function resolveKeylessMode(
   ctx: ProjectContext,
   skipConfirm: boolean,
 ): Promise<boolean> {
-  if (!bootstrap) return false;
-
   if (ctx.framework.supportsKeyless) {
+    // Already authenticated — go straight to the authenticated flow.
+    const email = await getAuthenticatedEmail();
+    if (email) return false;
+
     return skipConfirm || (await askSkipAuth());
   }
 
-  log.info(
-    dim(
-      `\n  ${ctx.framework.name} requires API keys — keyless mode is not yet supported for this framework.`,
-    ),
-  );
+  if (bootstrap) {
+    log.info(
+      dim(
+        `\n  ${ctx.framework.name} requires API keys — keyless mode is not yet supported for this framework.`,
+      ),
+    );
+  }
   return false;
 }
 
