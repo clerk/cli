@@ -2,7 +2,8 @@
  * Interactive API request builder for `clerk api` (no args, human mode).
  */
 
-import { select, input, confirm, editor } from "@inquirer/prompts";
+import { input, confirm, editor } from "@inquirer/prompts";
+import { select } from "../../lib/listage.ts";
 import { isHuman } from "../../mode.ts";
 import { loadCatalog, endpointsByTag, type EndpointInfo } from "./catalog.ts";
 import type { ApiOptions } from "./index.ts";

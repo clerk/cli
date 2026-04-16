@@ -1,5 +1,5 @@
 import { test, expect, describe, beforeEach, afterEach, mock, spyOn } from "bun:test";
-import { captureLog, promptsStubs } from "../../test/lib/stubs.ts";
+import { captureLog, promptsStubs, listageStubs } from "../../test/lib/stubs.ts";
 
 const mockIsAgent = mock();
 let _modeOverride: string | undefined;
@@ -26,6 +26,11 @@ mock.module("@inquirer/prompts", () => ({
   input: (...args: unknown[]) => mockInput(...args),
   confirm: (...args: unknown[]) => mockConfirm(...args),
   password: (...args: unknown[]) => mockPassword(...args),
+}));
+
+mock.module("../../lib/listage.ts", () => ({
+  ...listageStubs,
+  select: (...args: unknown[]) => mockSelect(...args),
 }));
 
 const { deploy } = await import("./index.ts");

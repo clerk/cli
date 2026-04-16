@@ -17,16 +17,29 @@ import {
 } from "../../lib/environment.ts";
 import { CliError } from "../../lib/errors.ts";
 import { log } from "../../lib/log.ts";
+import { isHuman } from "../../mode.ts";
+import { select } from "../../lib/listage.ts";
 
 export async function switchEnv(environment: string | undefined): Promise<void> {
   const available = getAvailableEnvs();
+  const current = getCurrentEnvName();
 
-  // No argument: print current environment
+  // No argument: show interactive picker (human) or print info (non-interactive)
   if (!environment) {
-    const current = getCurrentEnvName();
-    log.info(`Current environment: ${current}`);
-    log.info(`Available environments: ${available.join(", ")}`);
-    return;
+    if (isHuman() && available.length > 1) {
+      environment = await select<string>({
+        message: "Switch to environment:",
+        choices: available.map((env) => ({
+          name: env === current ? `${env} (current)` : env,
+          value: env,
+        })),
+        default: current,
+      });
+    } else {
+      log.info(`Current environment: ${current}`);
+      log.info(`Available environments: ${available.join(", ")}`);
+      return;
+    }
   }
 
   if (!isValidEnv(environment)) {

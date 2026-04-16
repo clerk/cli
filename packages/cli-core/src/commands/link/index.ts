@@ -1,5 +1,6 @@
 import { basename } from "node:path";
-import { search, confirm, input } from "@inquirer/prompts";
+import { confirm, input } from "@inquirer/prompts";
+import { search } from "../../lib/listage.ts";
 import { isAgent } from "../../mode.ts";
 import { getToken } from "../../lib/credential-store.ts";
 import { login } from "../auth/login.ts";

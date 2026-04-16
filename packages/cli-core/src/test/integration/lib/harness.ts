@@ -162,6 +162,25 @@ mock.module("@inquirer/prompts", () => ({
   editor: dequeuePrompt("editor"),
 }));
 
+mock.module("../../../lib/listage.ts", () => ({
+  select: dequeuePrompt("select"),
+  search: dequeuePrompt("search"),
+  filterChoices: <T extends { name: string }>(choices: T[], term: string | undefined): T[] => {
+    if (!term) return choices;
+    const lower = term.toLowerCase();
+    return choices.filter((c: T) => c.name.toLowerCase().includes(lower));
+  },
+  Separator: class Separator {
+    separator: string;
+    constructor(separator = "──────") {
+      this.separator = separator;
+    }
+    static isSeparator(item: unknown): item is Separator {
+      return item instanceof Separator;
+    }
+  },
+}));
+
 mock.module(
   "../../../lib/token-exchange.ts",
   () =>

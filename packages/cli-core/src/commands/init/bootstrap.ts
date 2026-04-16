@@ -1,5 +1,6 @@
 import { join } from "node:path";
-import { search, confirm, input } from "@inquirer/prompts";
+import { confirm, input } from "@inquirer/prompts";
+import { search, filterChoices } from "../../lib/listage.ts";
 import { throwUserAbort, throwUsageError, CliError } from "../../lib/errors.js";
 import { log } from "../../lib/log.js";
 import type { FrameworkInfo } from "../../lib/framework.js";
@@ -31,12 +32,6 @@ const PM_CHOICES: Array<{ name: string; value: PackageManager }> = [
   { name: "yarn", value: "yarn" },
   { name: "npm", value: "npm" },
 ];
-
-function filterChoices<T extends { name: string }>(choices: T[], term: string | undefined): T[] {
-  if (!term) return choices;
-  const lower = term.toLowerCase();
-  return choices.filter((c) => c.name.toLowerCase().includes(lower));
-}
 
 async function pickFramework(frameworkOverride?: FrameworkInfo): Promise<BootstrapEntry> {
   if (!frameworkOverride) {

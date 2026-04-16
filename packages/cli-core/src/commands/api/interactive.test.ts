@@ -2,7 +2,7 @@ import { test, expect, describe, beforeEach, afterEach, spyOn, mock } from "bun:
 import { mkdtemp, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { captureLog, promptsStubs, stubFetch } from "../../test/lib/stubs.ts";
+import { captureLog, promptsStubs, listageStubs, stubFetch } from "../../test/lib/stubs.ts";
 
 let _mode = "human";
 mock.module("../../mode.ts", () => ({
@@ -61,6 +61,11 @@ mock.module("@inquirer/prompts", () => ({
   select: async () => selectResponses.shift(),
   input: async () => inputResponses.shift(),
   confirm: async () => confirmResponses.shift(),
+}));
+
+mock.module("../../lib/listage.ts", () => ({
+  ...listageStubs,
+  select: async () => selectResponses.shift(),
 }));
 
 describe("apiInteractive", () => {
