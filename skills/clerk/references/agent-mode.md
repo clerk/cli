@@ -40,12 +40,23 @@ Force human mode with `--mode human` or `CLERK_MODE=human`. Typical AI-agent inv
 
 ## Error output format
 
+**Human mode:**
+
 - Single-line error message on stderr.
 - Stack traces hidden unless `--verbose` is passed.
 - API errors include the first message from the response body, prefixed with a human context string (e.g., `Failed to fetch config: unauthorized`).
-- User-aborted commands exit cleanly with no error output.
 
-When handling errors programmatically, read stderr, check the exit code, and re-run with `--verbose` to get a trace if you need to debug.
+**Agent mode:**
+
+- Structured JSON on stderr: `{"error":{"code":"...","message":"...","docsUrl?":"...","errors?":[...]}}`.
+- `code` is a machine-readable error code (e.g., `auth_required`, `api_error`, `unexpected_error`).
+- `errors` array is present for API errors and mirrors the Clerk API error shape (`{code?, message?, meta?}`).
+- `docsUrl` is present when the error has associated documentation.
+
+**Both modes:**
+
+- User-aborted commands exit cleanly with no error output.
+- When handling errors programmatically, read stderr, check the exit code, and re-run with `--verbose` to get a trace if you need to debug.
 
 ## Structured outputs you can rely on
 
@@ -60,6 +71,7 @@ When handling errors programmatically, read stderr, check the exit code, and re-
 | `clerk config schema`        | JSON Schema                                                                             |
 | `clerk open [subpath]`       | `{url, appId, appName, instanceId, instanceLabel, subpath, opened: false}` (agent mode) |
 | `clerk open --print`         | Plain dashboard URL on stdout                                                           |
+| Any command (agent mode)     | On error: `{"error":{"code","message","docsUrl?","errors?"}}` on stderr                 |
 
 For commands without an explicit `--json` flag, `clerk api` is your escape hatch: hit the underlying endpoint directly.
 
