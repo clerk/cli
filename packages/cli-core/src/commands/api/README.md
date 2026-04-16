@@ -50,7 +50,7 @@ clerk api /users --secret-key sk_test_abc123
 # Resolve a secret key from an app directly
 clerk api /users --app app_123 --instance prod
 
-# Target production instance (requires CLERK_PLATFORM_API_KEY)
+# Target production instance (requires a Platform API token, see Authentication)
 clerk api /users --instance prod
 
 # Platform API mode
@@ -74,16 +74,21 @@ clerk api /v1/platform/applications --platform
 
 ## Authentication
 
-Secret key resolution order:
+Secret key resolution order (Backend API, the default):
 
 1. `--secret-key` flag (explicit)
 2. `CLERK_SECRET_KEY` environment variable
-3. Auto-resolve from `--app <id>` plus `CLERK_PLATFORM_API_KEY`
-4. Auto-resolve from linked project profile (requires `CLERK_PLATFORM_API_KEY`)
+3. Auto-resolve from `--app <id>` via the Platform API (see below)
+4. Auto-resolve from linked project profile via the Platform API (see below)
 
-`--platform` mode uses the same Platform API auth path as other PLAPI-backed commands:
+Steps 3 and 4 both exchange a Platform API token for the target instance's
+secret key, so either needs Platform API auth to be available. Step 3 works
+from any directory (no `clerk link` required); step 4 uses the app ID stored
+by `clerk link`.
 
-1. `CLERK_PLATFORM_API_KEY`
+Platform API auth (used by `--platform` mode, and by steps 3 and 4 above):
+
+1. `CLERK_PLATFORM_API_KEY` environment variable (`ak_...`)
 2. Stored `clerk auth login` token
 3. Interactive human-mode prompt for a Platform API key
 
