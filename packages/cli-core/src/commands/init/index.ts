@@ -159,7 +159,7 @@ async function handleStarter(
     await confirmOverwrite(cwd);
   }
 
-  return bootstrapAndDetect(cwd, frameworkOverride, { ...overrides, skipConfirm: true });
+  return bootstrapAndDetect(cwd, frameworkOverride, { ...overrides, implicitBootstrap: true });
 }
 
 async function resolveProjectContext(

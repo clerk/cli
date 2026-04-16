@@ -380,11 +380,16 @@ describe("init", () => {
 
     await init({ starter: true, yes: true });
 
-    expect(bootstrapMod.promptAndBootstrap).toHaveBeenCalledWith(expect.any(String), undefined, {
-      skipConfirm: true,
-      pmOverride: undefined,
-      nameOverride: undefined,
-    });
+    expect(bootstrapMod.promptAndBootstrap).toHaveBeenCalledWith(
+      expect.any(String),
+      undefined,
+      expect.objectContaining({
+        skipConfirm: true,
+        implicitBootstrap: true,
+        pmOverride: undefined,
+        nameOverride: undefined,
+      }),
+    );
     // --yes skips confirmOverwrite
     expect(bootstrapMod.confirmOverwrite).not.toHaveBeenCalled();
   });
@@ -397,6 +402,20 @@ describe("init", () => {
     await init({ starter: true });
 
     expect(bootstrapMod.confirmOverwrite).toHaveBeenCalledWith(expect.any(String));
+  });
+
+  test("--starter without -y runs bootstrap interactively (does not require --framework)", async () => {
+    setup({ email: "test@test.com" });
+    spyOn(context, "gatherContext").mockResolvedValue(FAKE_CTX);
+    spyOn(config, "resolveProfile").mockResolvedValue({ profile: { appId: "app_123" } } as never);
+
+    await init({ starter: true });
+
+    expect(bootstrapMod.promptAndBootstrap).toHaveBeenCalledWith(
+      expect.any(String),
+      undefined,
+      expect.objectContaining({ skipConfirm: false, implicitBootstrap: true }),
+    );
   });
 
   test("bootstrap passes project dir to installSkills, not original cwd", async () => {
@@ -477,11 +496,16 @@ describe("init", () => {
 
     await init({ starter: true, yes: true, pm: "bun", name: "my-project" });
 
-    expect(bootstrapMod.promptAndBootstrap).toHaveBeenCalledWith(expect.any(String), undefined, {
-      skipConfirm: true,
-      pmOverride: "bun",
-      nameOverride: "my-project",
-    });
+    expect(bootstrapMod.promptAndBootstrap).toHaveBeenCalledWith(
+      expect.any(String),
+      undefined,
+      expect.objectContaining({
+        skipConfirm: true,
+        implicitBootstrap: true,
+        pmOverride: "bun",
+        nameOverride: "my-project",
+      }),
+    );
   });
 
   test("agent mode skips all confirmations implicitly", async () => {

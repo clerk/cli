@@ -141,7 +141,10 @@ export async function askSkipAuth(): Promise<boolean> {
 }
 
 export type BootstrapOverrides = {
+  /** Non-interactive mode: require --framework, auto-resolve PM/name, skip all prompts. */
   skipConfirm: boolean;
+  /** User already opted into bootstrapping (e.g. via --starter) — skip the "create a new one?" confirm without implying non-interactive mode. */
+  implicitBootstrap?: boolean;
   pmOverride?: PackageManager;
   nameOverride?: string;
 };
@@ -154,15 +157,20 @@ export type BootstrapResult = {
 
 /**
  * Interactive bootstrap flow.
- * When skipConfirm is true (e.g. --starter flag, -y, or agent mode), skips the
- * "create a new one?" prompt and auto-resolves PM/project name when not overridden.
+ * `skipConfirm` means non-interactive: requires --framework and auto-resolves PM/project name.
+ * `implicitBootstrap` only skips the initial "create a new one?" confirm — the rest of the flow stays interactive.
  */
 export async function promptAndBootstrap(
   cwd: string,
   frameworkOverride: FrameworkInfo | undefined,
-  { skipConfirm = false, pmOverride, nameOverride }: BootstrapOverrides = { skipConfirm: false },
+  {
+    skipConfirm = false,
+    implicitBootstrap = false,
+    pmOverride,
+    nameOverride,
+  }: BootstrapOverrides = { skipConfirm: false },
 ): Promise<BootstrapResult> {
-  if (!skipConfirm) {
+  if (!skipConfirm && !implicitBootstrap) {
     const wantBootstrap = await confirm({
       message: "No project detected. Would you like to create a new one?",
       default: true,
