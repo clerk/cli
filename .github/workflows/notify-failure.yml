@@ -11,6 +11,9 @@ on:
       SLACK_WEBHOOK_URL:
         required: true
 
+permissions:
+  contents: read
+
 jobs:
   notify:
     runs-on: blacksmith-2vcpu-ubuntu-2404
