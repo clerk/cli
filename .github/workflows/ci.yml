@@ -13,14 +13,6 @@ on:
         type: boolean
         default: true
         description: Whether to run E2E tests
-      cache-writable:
-        type: boolean
-        default: true
-        description: >
-          If true, the build job populates the bun install cache. Set to
-          false when running untrusted code (e.g. snapshot CI against a
-          PR head SHA) to prevent cache poisoning of the caller's branch
-          scope.
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
@@ -38,9 +30,13 @@ jobs:
       - uses: actions/checkout@v6
         with:
           ref: ${{ inputs.ref }}
-      - uses: ./.github/actions/setup-bun
+      - uses: oven-sh/setup-bun@v2
+      - uses: actions/cache@v5
         with:
-          cache: ${{ inputs.cache-writable && 'read-write' || 'restore' }}
+          path: ~/.bun/install/cache
+          key: bun-${{ runner.os }}-${{ hashFiles('bun.lock') }}
+          restore-keys: bun-${{ runner.os }}-
+      - run: bun install --frozen-lockfile
       - run: bun run build
 
   lint:
@@ -52,9 +48,13 @@ jobs:
       - uses: actions/checkout@v6
         with:
           ref: ${{ inputs.ref }}
-      - uses: ./.github/actions/setup-bun
+      - uses: oven-sh/setup-bun@v2
+      - uses: actions/cache/restore@v5
         with:
-          cache: restore
+          path: ~/.bun/install/cache
+          key: bun-${{ runner.os }}-${{ hashFiles('bun.lock') }}
+          restore-keys: bun-${{ runner.os }}-
+      - run: bun install --frozen-lockfile
       - run: bun run format:check
       - run: bun run lint
       - run: bun run typecheck
@@ -68,9 +68,13 @@ jobs:
       - uses: actions/checkout@v6
         with:
           ref: ${{ inputs.ref }}
-      - uses: ./.github/actions/setup-bun
+      - uses: oven-sh/setup-bun@v2
+      - uses: actions/cache/restore@v5
         with:
-          cache: restore
+          path: ~/.bun/install/cache
+          key: bun-${{ runner.os }}-${{ hashFiles('bun.lock') }}
+          restore-keys: bun-${{ runner.os }}-
+      - run: bun install --frozen-lockfile
       - run: bun run check:patches
       - run: bun run test
 
@@ -109,9 +113,13 @@ jobs:
           node-version: 22
       - name: Mark workspace as safe for git
         run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
-      - uses: ./.github/actions/setup-bun
+      - uses: oven-sh/setup-bun@v2
+      - uses: actions/cache/restore@v5
         with:
-          cache: restore
+          path: ~/.bun/install/cache
+          key: bun-${{ runner.os }}-${{ hashFiles('bun.lock') }}
+          restore-keys: bun-${{ runner.os }}-
+      - run: bun install --frozen-lockfile
 
       - name: Cleanup stale test users
         run: bun scripts/cleanup-test-users.ts

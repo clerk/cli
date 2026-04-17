@@ -393,7 +393,6 @@ jobs:
     uses: ./.github/workflows/ci.yml
     with:
       ref: ${{ needs.snapshot.outputs.sha }}
-      cache-writable: false
     secrets: inherit
 
   snapshot-build:
