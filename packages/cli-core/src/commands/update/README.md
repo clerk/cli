@@ -14,28 +14,39 @@ clerk update [options]
 | ----------------- | --------------------------------------------------------------------------------- |
 | `--channel <tag>` | Release channel to update from (default: `latest`; use `canary` for pre-releases) |
 | `-y, --yes`       | Skip confirmation prompt                                                          |
+| `--all`           | Update every clerk install found on PATH, not just the first one                  |
 
 ## Behavior
 
-1. Detects the installer (npm, bun, pnpm, yarn, or Homebrew) in parallel with the version check
-2. Fetches the latest version for the given channel from the npm registry
-3. If already up to date, exits cleanly
-4. For Homebrew installations, prints `brew upgrade clerk` and exits (no auto-install)
-5. Prompts for confirmation (skipped with `--yes` or in non-interactive mode)
-6. Runs the detected installer's global install command (e.g. `npm install -g clerk@<version>`, `bun add -g clerk@<version>`)
+1. Fetches the latest version for the given channel from the npm registry
+2. Walks `PATH` to find every `clerk` binary and picks the first one (the target the user's shell will actually execute) as the **primary target**
+3. Determines which installer owns the primary target via `ownerOfBinary()`:
+   - Known installer (npm/bun/pnpm/yarn) → installs via that PM
+   - Homebrew → prints `brew upgrade clerk` and exits (stable channel only)
+   - `null` (binary not owned by any recognized installer, e.g. `install.sh`) → refuses and lists reinstall options
+4. Prompts for confirmation (skipped with `--yes` or in non-interactive mode)
+5. Runs the installer's global install command (e.g. `npm install -g clerk@<version>`, `bun add -g clerk@<version>`)
+6. With `--all`, repeats for every other `clerk` install on PATH, skipping Homebrew on non-stable channels and `null`-owned binaries
+7. After a successful install, prints a shell-specific `hash -r` / `rehash` hint when applicable
+
+## Why PATH-walking matters
+
+A machine can host multiple `clerk` installs (bun + asdf-npm + Homebrew is common). `process.execPath` tells you what is running right now, but the binary the user's shell will resolve next may be a different one — e.g. `~/.bun/bin/clerk` shadowing `~/.asdf/shims/clerk`. To ensure the update actually affects the user's next `clerk` invocation, the command resolves the target from `PATH` order, not from `process.execPath`.
 
 ## Installer detection
 
-Detection uses a multi-stage algorithm (see `lib/installer.ts`):
+Detection uses path-based ownership (see `lib/installer.ts`). For a given binary path:
 
-| Priority | Signal                                          | What it detects                                             |
-| -------- | ----------------------------------------------- | ----------------------------------------------------------- |
-| 1        | `npm_config_user_agent` env var                 | PM actively running the CLI (npx, bunx, pnpm dlx, yarn dlx) |
-| 2        | `process.execPath` contains `/Cellar/clerk/`    | Homebrew (macOS, Linuxbrew)                                 |
-| 3        | `process.execPath` matches a PM's global prefix | npm, bun, pnpm, or yarn global install                      |
-| 4        | Fallback                                        | npm                                                         |
+| Check                                                 | Result                    |
+| ----------------------------------------------------- | ------------------------- |
+| Contains `/Cellar/clerk/`                             | `homebrew`                |
+| Under `<npm prefix>/lib/node_modules`                 | `npm`                     |
+| Under `<bun install dir>/install/global/node_modules` | `bun`                     |
+| Under `pnpm root -g`                                  | `pnpm`                    |
+| Under `<yarn global dir>/node_modules`                | `yarn`                    |
+| Nothing matches                                       | `null` (refuse to update) |
 
-`process.execPath` is the real, symlink-resolved path to the compiled binary. For Homebrew, this resolves through the symlink into the Cellar. For npm, this is the platform binary inside `node_modules/`. Symlinked binaries (e.g. `~/.local/bin/clerk` → Cellar) are correctly attributed to their installer.
+When multiple PMs' dirs nest, the longest prefix wins. `null` is the signal to refuse rather than silently install via the wrong installer.
 
 ## Channels
 
@@ -44,7 +55,7 @@ Detection uses a multi-stage algorithm (see `lib/installer.ts`):
 | Stable  | `latest` | Production-ready releases (default)   |
 | Canary  | `canary` | Pre-release builds for early adopters |
 
-Set `CLERK_UPDATE_CHANNEL=canary` to make canary the default for all update checks.
+Set `CLERK_UPDATE_CHANNEL=canary` to make canary the default for all update checks. Homebrew is updatable only on `latest` (no canary tap).
 
 ## npm registry endpoints
 
@@ -55,6 +66,6 @@ Set `CLERK_UPDATE_CHANNEL=canary` to make canary the default for all update chec
 ## Notes
 
 - Supports 5 installers: npm, bun, pnpm, yarn, and Homebrew.
-- Homebrew installations are not auto-updated. The command prints `brew upgrade clerk` and exits.
+- Binaries installed via `install.sh` (direct GitHub Release download) are owned by no PM — the update command refuses and lists reinstall options instead of silently writing to a different prefix.
 - Permission errors (EACCES) suggest retrying with `sudo` using the detected installer's command.
 - This command does not perform the update itself in agent/non-interactive mode unless `--yes` is passed.

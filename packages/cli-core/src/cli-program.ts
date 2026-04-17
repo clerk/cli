@@ -532,6 +532,7 @@ Tutorial — enable completions for your shell:
     .description("Update the Clerk CLI to the latest version")
     .option("--channel <tag>", "Release channel to update to (e.g. latest, canary)")
     .option("-y, --yes", "Skip confirmation prompt")
+    .option("--all", "Update every clerk install found on PATH, not just the first")
     .setExamples([
       { command: "clerk update", description: "Update to the latest stable release" },
       {
@@ -539,6 +540,7 @@ Tutorial — enable completions for your shell:
         description: "Update to the latest canary release",
       },
       { command: "clerk update --yes", description: "Update without confirmation prompt" },
+      { command: "clerk update --all", description: "Update every clerk install on PATH" },
     ])
     .action(update);
 

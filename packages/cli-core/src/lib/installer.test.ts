@@ -1,9 +1,14 @@
 import { test, expect, describe, beforeEach, afterEach } from "bun:test";
+import { chmod, mkdir, mkdtemp, realpath, rm, symlink, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { delimiter, join } from "node:path";
 import {
   detectFromUserAgent,
   isHomebrewPath,
   globalInstallCommand,
   detectInstaller,
+  findClerkOnPath,
+  ownerOfBinary,
 } from "./installer.ts";
 
 // ── detectFromUserAgent ──────────────────────────────────────────────────────
@@ -203,5 +208,176 @@ describe("detectInstaller", () => {
   test("stage 3: falls back to npm for unrecognized execPath", async () => {
     setExecPath("/some/totally/unknown/path/to/clerk");
     expect(await detectInstaller()).toBe("npm");
+  });
+});
+
+// ── ownerOfBinary ────────────────────────────────────────────────────────────
+
+describe("ownerOfBinary", () => {
+  const dirs = {
+    npm: "/opt/homebrew/lib/node_modules",
+    pnpm: "/Users/x/Library/pnpm/global/5/node_modules",
+    yarn: "/Users/x/.config/yarn/global/node_modules",
+    bun: "/Users/x/.bun/install/global/node_modules",
+  } as const;
+
+  test("returns homebrew for Cellar paths regardless of installDirs", () => {
+    expect(ownerOfBinary("/opt/homebrew/Cellar/clerk/1.0.0/bin/clerk", dirs)).toBe("homebrew");
+  });
+
+  test("returns bun for paths under bun's install dir", () => {
+    expect(
+      ownerOfBinary(
+        "/Users/x/.bun/install/global/node_modules/@clerk/cli-darwin-arm64/bin/clerk",
+        dirs,
+      ),
+    ).toBe("bun");
+  });
+
+  test("returns npm for paths under npm prefix", () => {
+    expect(
+      ownerOfBinary("/opt/homebrew/lib/node_modules/@clerk/cli-darwin-arm64/bin/clerk", dirs),
+    ).toBe("npm");
+  });
+
+  test("returns pnpm for paths under pnpm's global dir", () => {
+    expect(
+      ownerOfBinary(
+        "/Users/x/Library/pnpm/global/5/node_modules/@clerk/cli-darwin-arm64/bin/clerk",
+        dirs,
+      ),
+    ).toBe("pnpm");
+  });
+
+  test("returns yarn for paths under yarn's global dir", () => {
+    expect(
+      ownerOfBinary(
+        "/Users/x/.config/yarn/global/node_modules/@clerk/cli-darwin-arm64/bin/clerk",
+        dirs,
+      ),
+    ).toBe("yarn");
+  });
+
+  test("returns null for install.sh standalone binaries", () => {
+    expect(ownerOfBinary("/usr/local/bin/clerk", dirs)).toBe(null);
+  });
+
+  test("returns null when no installers are present on the system", () => {
+    expect(
+      ownerOfBinary(
+        "/Users/x/.bun/install/global/node_modules/@clerk/cli-darwin-arm64/bin/clerk",
+        {},
+      ),
+    ).toBe(null);
+  });
+
+  test("trailing separator prevents /a/b matching /a/bother", () => {
+    // "/a/b" must not match a binary at "/a/bother/clerk".
+    const nested = { npm: "/a/b" } as const;
+    expect(ownerOfBinary("/a/bother/clerk", nested)).toBe(null);
+    expect(ownerOfBinary("/a/b/clerk", nested)).toBe("npm");
+  });
+
+  test("longest match wins when dirs nest", () => {
+    const nested = {
+      npm: "/home/x/.asdf/installs/nodejs/22/lib/node_modules",
+      bun: "/home/x/.asdf/installs/nodejs/22/lib/node_modules/.bun-shim",
+    } as const;
+    expect(
+      ownerOfBinary(
+        "/home/x/.asdf/installs/nodejs/22/lib/node_modules/.bun-shim/@clerk/cli-linux-x64/bin/clerk",
+        nested,
+      ),
+    ).toBe("bun");
+  });
+});
+
+// ── findClerkOnPath ──────────────────────────────────────────────────────────
+
+describe("findClerkOnPath", () => {
+  let sandbox: string;
+  let savedPath: string | undefined;
+
+  beforeEach(async () => {
+    // realpath so symlinks like macOS's /var -> /private/var are resolved
+    // upfront; findClerkOnPath also realpaths, so the comparison matches.
+    sandbox = await realpath(await mkdtemp(join(tmpdir(), "clerk-path-test-")));
+    savedPath = process.env.PATH;
+  });
+
+  afterEach(async () => {
+    if (savedPath === undefined) delete process.env.PATH;
+    else process.env.PATH = savedPath;
+    await rm(sandbox, { recursive: true, force: true });
+  });
+
+  test("returns empty array when PATH has no clerk", async () => {
+    process.env.PATH = sandbox;
+    expect(await findClerkOnPath()).toEqual([]);
+  });
+
+  test("finds a single executable clerk on PATH", async () => {
+    const bin = join(sandbox, "clerk");
+    await writeFile(bin, "#!/bin/sh\necho fake");
+    await chmod(bin, 0o755);
+    process.env.PATH = sandbox;
+    const found = await findClerkOnPath();
+    expect(found).toEqual([bin]);
+  });
+
+  test("skips non-executable files on POSIX", async () => {
+    if (process.platform === "win32") return;
+    const bin = join(sandbox, "clerk");
+    await writeFile(bin, "#!/bin/sh\necho fake");
+    await chmod(bin, 0o644); // no execute bit
+    process.env.PATH = sandbox;
+    expect(await findClerkOnPath()).toEqual([]);
+  });
+
+  test("skips directories named clerk", async () => {
+    await mkdir(join(sandbox, "clerk"));
+    process.env.PATH = sandbox;
+    expect(await findClerkOnPath()).toEqual([]);
+  });
+
+  test("preserves PATH order across multiple hits", async () => {
+    const dirA = join(sandbox, "a");
+    const dirB = join(sandbox, "b");
+    await mkdir(dirA);
+    await mkdir(dirB);
+    const aBin = join(dirA, "clerk");
+    const bBin = join(dirB, "clerk");
+    await writeFile(aBin, "#!/bin/sh\necho a");
+    await writeFile(bBin, "#!/bin/sh\necho b");
+    await chmod(aBin, 0o755);
+    await chmod(bBin, 0o755);
+    process.env.PATH = [dirA, dirB].join(delimiter);
+    expect(await findClerkOnPath()).toEqual([aBin, bBin]);
+    // Reversed PATH should reverse the order too.
+    process.env.PATH = [dirB, dirA].join(delimiter);
+    expect(await findClerkOnPath()).toEqual([bBin, aBin]);
+  });
+
+  test("dedupes by realpath when two PATH entries resolve to the same file", async () => {
+    if (process.platform === "win32") return; // skip symlink test on win32
+    const real = join(sandbox, "real");
+    const link = join(sandbox, "link");
+    await mkdir(real);
+    await symlink(real, link);
+    const bin = join(real, "clerk");
+    await writeFile(bin, "#!/bin/sh\necho fake");
+    await chmod(bin, 0o755);
+    process.env.PATH = [real, link].join(delimiter);
+    const found = await findClerkOnPath();
+    expect(found.length).toBe(1);
+    expect(found[0]).toBe(bin);
+  });
+
+  test("ignores empty PATH entries (:: as CWD)", async () => {
+    const bin = join(sandbox, "clerk");
+    await writeFile(bin, "#!/bin/sh\necho fake");
+    await chmod(bin, 0o755);
+    process.env.PATH = `${sandbox}${delimiter}${delimiter}`;
+    expect(await findClerkOnPath()).toEqual([bin]);
   });
 });
