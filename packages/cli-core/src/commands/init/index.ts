@@ -28,7 +28,6 @@ import { intro, outro, bar, withSpinner } from "../../lib/spinner.js";
 import {
   promptAndBootstrap,
   confirmOverwrite,
-  askSkipAuth,
   type BootstrapOverrides,
   type BootstrapResult,
 } from "./bootstrap.js";
@@ -88,7 +87,7 @@ export async function init(options: InitOptions = {}) {
 
   await enrichProjectContext(ctx);
 
-  const keyless = await resolveKeylessMode(bootstrap, ctx, overrides.skipConfirm);
+  const keyless = await resolveKeylessMode(bootstrap, ctx);
   ctx.keyless = keyless;
 
   const skipAuth =
@@ -216,14 +215,13 @@ function printBootstrapManualSetupInfo(frameworkName: string): void {
 async function resolveKeylessMode(
   bootstrap: BootstrapResult | null,
   ctx: ProjectContext,
-  skipConfirm: boolean,
 ): Promise<boolean> {
   if (ctx.framework.supportsKeyless) {
-    // Already authenticated (OAuth token or CLERK_PLATFORM_API_KEY) — go
-    // straight to the authenticated flow so real keys get pulled into .env.
-    if (await isAuthenticated()) return false;
-
-    return skipConfirm || (await askSkipAuth());
+    // Authenticated (OAuth token or CLERK_PLATFORM_API_KEY) — use the
+    // authenticated flow so real keys get pulled into .env. Otherwise fall
+    // back to keyless: the app runs on auto-generated dev keys and the user
+    // can connect their account later via `clerk auth login`.
+    return !(await isAuthenticated());
   }
 
   if (bootstrap) {

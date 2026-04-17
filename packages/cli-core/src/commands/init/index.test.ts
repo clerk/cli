@@ -90,7 +90,6 @@ describe("init", () => {
       spyOn(pullMod, "pull").mockResolvedValue(undefined),
       spyOn(bootstrapMod, "promptAndBootstrap").mockResolvedValue(FAKE_BOOTSTRAP),
       spyOn(bootstrapMod, "confirmOverwrite").mockResolvedValue(undefined),
-      spyOn(bootstrapMod, "askSkipAuth").mockResolvedValue(false),
     ];
 
     return { gatherContextSpy, captured };
@@ -145,7 +144,6 @@ describe("init", () => {
 
     await init({});
 
-    expect(bootstrapMod.askSkipAuth).not.toHaveBeenCalled();
     expect(previewMod.previewAndConfirm).not.toHaveBeenCalled();
     expect(bootstrapMod.promptAndBootstrap).not.toHaveBeenCalled();
   });
@@ -167,29 +165,35 @@ describe("init", () => {
     await init({});
 
     expect(bootstrapMod.promptAndBootstrap).toHaveBeenCalled();
-    // React doesn't support keyless, so askSkipAuth is never called
-    expect(bootstrapMod.askSkipAuth).not.toHaveBeenCalled();
+    // React doesn't support keyless, so keyless flow isn't triggered
+    expect(heuristics.printKeylessInfo).not.toHaveBeenCalled();
   });
 
-  test("blank dir with keyless framework prompts askSkipAuth", async () => {
+  test("blank dir with keyless framework auto-selects keyless when unauthenticated", async () => {
     setup();
 
     const keylessCtx = {
       ...FAKE_CTX,
+      existingClerk: false,
       framework: {
         ...FAKE_CTX.framework,
         supportsKeyless: true,
       },
     };
     spyOn(context, "gatherContext").mockResolvedValueOnce(null).mockResolvedValueOnce(keylessCtx);
+    spyOn(scaffoldMod, "scaffold").mockResolvedValue({
+      actions: [{ type: "create", path: "middleware.ts", content: "", description: "" }],
+      postInstructions: [],
+    });
 
     await init({});
 
     expect(bootstrapMod.promptAndBootstrap).toHaveBeenCalled();
-    expect(bootstrapMod.askSkipAuth).toHaveBeenCalled();
+    expect(heuristics.printKeylessInfo).toHaveBeenCalled();
+    expect(linkMod.link).not.toHaveBeenCalled();
   });
 
-  test("bootstrap with keyless framework skips askSkipAuth when already authenticated", async () => {
+  test("bootstrap with keyless framework goes authenticated when already signed in", async () => {
     setup({ email: "user@example.com" });
 
     const keylessCtx = {
@@ -201,7 +205,6 @@ describe("init", () => {
     await init({});
 
     expect(heuristics.isAuthenticated).toHaveBeenCalled();
-    expect(bootstrapMod.askSkipAuth).not.toHaveBeenCalled();
     expect(heuristics.printKeylessInfo).not.toHaveBeenCalled();
     expect(linkMod.link).toHaveBeenCalled();
   });
@@ -218,7 +221,6 @@ describe("init", () => {
     await init({ yes: true });
 
     expect(heuristics.isAuthenticated).toHaveBeenCalled();
-    expect(bootstrapMod.askSkipAuth).not.toHaveBeenCalled();
     expect(heuristics.printKeylessInfo).not.toHaveBeenCalled();
   });
 
@@ -234,7 +236,6 @@ describe("init", () => {
     await init({ yes: true });
 
     expect(heuristics.isAuthenticated).toHaveBeenCalled();
-    expect(bootstrapMod.askSkipAuth).not.toHaveBeenCalled();
     expect(heuristics.printKeylessInfo).not.toHaveBeenCalled();
     expect(linkMod.link).toHaveBeenCalled();
   });
@@ -256,7 +257,6 @@ describe("init", () => {
     await init({ yes: true });
 
     expect(heuristics.isAuthenticated).toHaveBeenCalled();
-    expect(bootstrapMod.askSkipAuth).not.toHaveBeenCalled();
     expect(heuristics.printKeylessInfo).toHaveBeenCalled();
     expect(linkMod.link).not.toHaveBeenCalled();
   });
@@ -268,7 +268,6 @@ describe("init", () => {
     await init({ yes: true });
 
     expect(bootstrapMod.promptAndBootstrap).toHaveBeenCalled();
-    expect(bootstrapMod.askSkipAuth).not.toHaveBeenCalled();
     // isAuthenticated is called during skipAuth check
     expect(heuristics.isAuthenticated).toHaveBeenCalled();
   });
@@ -293,8 +292,6 @@ describe("init", () => {
     await init({ yes: true });
 
     expect(bootstrapMod.promptAndBootstrap).toHaveBeenCalled();
-    // Should not ask about skipping auth — keyless not supported
-    expect(bootstrapMod.askSkipAuth).not.toHaveBeenCalled();
     // isAuthenticated is called during skipAuth check, returns false → skip auth
     expect(heuristics.isAuthenticated).toHaveBeenCalled();
     expect(loginMod.login).not.toHaveBeenCalled();
@@ -332,7 +329,7 @@ describe("init", () => {
     expect(context.hasPackageJson).not.toHaveBeenCalled();
   });
 
-  test("existing repo with keyless framework skips askSkipAuth when signed in", async () => {
+  test("existing repo with keyless framework uses authenticated flow when signed in", async () => {
     setup({ email: "user@example.com" });
 
     const keylessCtx = {
@@ -346,11 +343,10 @@ describe("init", () => {
 
     expect(bootstrapMod.promptAndBootstrap).not.toHaveBeenCalled();
     expect(heuristics.isAuthenticated).toHaveBeenCalled();
-    expect(bootstrapMod.askSkipAuth).not.toHaveBeenCalled();
     expect(heuristics.printKeylessInfo).not.toHaveBeenCalled();
   });
 
-  test("existing repo with keyless framework prompts askSkipAuth when not signed in", async () => {
+  test("existing repo with keyless framework auto-selects keyless when not signed in", async () => {
     setup();
 
     const keylessCtx = {
@@ -368,7 +364,8 @@ describe("init", () => {
 
     expect(bootstrapMod.promptAndBootstrap).not.toHaveBeenCalled();
     expect(heuristics.isAuthenticated).toHaveBeenCalled();
-    expect(bootstrapMod.askSkipAuth).toHaveBeenCalled();
+    expect(heuristics.printKeylessInfo).toHaveBeenCalled();
+    expect(linkMod.link).not.toHaveBeenCalled();
   });
 
   test("passes frameworkOverride to bootstrap when provided", async () => {

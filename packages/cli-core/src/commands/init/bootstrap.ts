@@ -132,14 +132,6 @@ export async function confirmOverwrite(cwd: string): Promise<void> {
   if (!proceed) throwUserAbort();
 }
 
-export async function askSkipAuth(): Promise<boolean> {
-  return confirm({
-    message:
-      "Skip authentication for now? (you can connect your Clerk account later with `clerk auth login`)",
-    default: true,
-  });
-}
-
 export type BootstrapOverrides = {
   /** Non-interactive mode: require --framework, auto-resolve PM/name, skip all prompts. */
   skipConfirm: boolean;
