@@ -4,7 +4,7 @@ import { exchangeCodeForToken, fetchUserInfo, type UserInfo } from "../../lib/to
 import { getOAuthConfig } from "../../lib/environment.ts";
 import { storeToken, getToken } from "../../lib/credential-store.ts";
 import { getAuth, setAuth, resolveProfile } from "../../lib/config.ts";
-import { AUTH_TIMEOUT_MS, CALLBACK_PATH } from "../../lib/constants.ts";
+import { AUTH_TIMEOUT_MS, CALLBACK_PATH, CLERK_CLIENT_CLI } from "../../lib/constants.ts";
 import { confirm } from "../../lib/prompts.ts";
 import { isHuman } from "../../mode.ts";
 import { throwUserAbort } from "../../lib/errors.ts";
@@ -50,6 +50,7 @@ async function performOAuthFlow(): Promise<UserInfo> {
   authorizeUrl.searchParams.set("state", state);
   authorizeUrl.searchParams.set("code_challenge", codeChallenge);
   authorizeUrl.searchParams.set("code_challenge_method", "S256");
+  authorizeUrl.searchParams.set("clerk_client", CLERK_CLIENT_CLI);
 
   // Critical fallback: the OAuth callback can't complete unless the user
   // reaches the authorize URL somehow.

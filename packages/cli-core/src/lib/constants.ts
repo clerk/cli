@@ -22,6 +22,16 @@ export const CREDENTIALS_FILE = join(clerkConfigDir ?? paths.data, "credentials"
 export const CALLBACK_PATH = "/callback";
 export const AUTH_TIMEOUT_MS = Number(process.env.CLERK_AUTH_TIMEOUT_MS) || 2 * 60 * 1000;
 
+// ── OAuth client identification ─────────────────────────────────────────────
+
+/**
+ * Value sent as `clerk_client` on the OAuth authorize URL so the Clerk
+ * dashboard can recognize CLI-originated sign-up flows and preserve the
+ * return URL through onboarding. Must match
+ * `CLERK_CLIENT_CLI_VALUE` in the dashboard (`apps/dashboard/app/utils/url.ts`).
+ */
+export const CLERK_CLIENT_CLI = "cli";
+
 // ── OpenAPI Spec ──────────────────────────────────────────────────────────
 
 export const OPENAPI_SPEC_URLS = {
