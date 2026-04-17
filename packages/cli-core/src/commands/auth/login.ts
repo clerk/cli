@@ -114,10 +114,10 @@ export async function login(options: LoginOptions = {}): Promise<UserInfo> {
   bar();
   log.success(`Logged in as ${userInfo.email}`);
 
-  const claimStatus = await handleAutoclaim(process.cwd());
+  const claimResult = await handleAutoclaim(process.cwd());
 
   if (showNextSteps) {
-    outro(await loginNextSteps(claimStatus));
+    outro(await loginNextSteps(claimResult));
   } else {
     outro("Done");
   }
@@ -132,24 +132,31 @@ const CLAIM_WARNINGS: Partial<Record<AutoclaimResult["status"], string>> = {
   failed: "Auto-claim failed due to a temporary error. It will be retried on your next login.",
 };
 
-async function handleAutoclaim(cwd: string): Promise<AutoclaimResult["status"]> {
+async function handleAutoclaim(cwd: string): Promise<AutoclaimResult> {
   const result = await attemptAutoclaim(cwd);
 
   if (result.status === "claimed") {
     const label = result.app.name || result.app.application_id;
     log.success(`Claimed and linked application: \`${label}\``);
+    if (!result.envPulled) {
+      log.warn(
+        "Could not refresh environment variables automatically. Run `clerk env pull` manually.",
+      );
+    }
   }
 
   const warning = CLAIM_WARNINGS[result.status];
   if (warning) log.warn(warning);
 
-  return result.status;
+  return result;
 }
 
-async function loginNextSteps(claimStatus: AutoclaimResult["status"]): Promise<readonly string[]> {
-  if (claimStatus === "claimed") return NEXT_STEPS.AUTOCLAIMED;
-  if (claimStatus === "failed") return NEXT_STEPS.AUTOCLAIM_RETRY;
-  if (claimStatus === "not_found" || claimStatus === "already_claimed") {
+async function loginNextSteps(result: AutoclaimResult): Promise<readonly string[]> {
+  if (result.status === "claimed") {
+    return result.envPulled ? NEXT_STEPS.AUTOCLAIMED : NEXT_STEPS.AUTOCLAIMED_NO_ENV;
+  }
+  if (result.status === "failed") return NEXT_STEPS.AUTOCLAIM_RETRY;
+  if (result.status === "not_found" || result.status === "already_claimed") {
     return NEXT_STEPS.AUTOCLAIM_MANUAL_LINK;
   }
 

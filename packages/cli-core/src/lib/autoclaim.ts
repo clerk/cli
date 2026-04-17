@@ -13,14 +13,17 @@ import { readKeylessBreadcrumb, clearKeylessBreadcrumb } from "./keyless.ts";
 import { claimApplication, type Application } from "./plapi.ts";
 import { PlapiError } from "./errors.ts";
 import { linkApp } from "./autolink.ts";
+import { pull } from "../commands/env/pull.ts";
 import { log } from "./log.ts";
 
-type Claimed = { status: "claimed"; app: Application };
+type Claimed = { status: "claimed"; app: Application; envPulled: boolean };
 type Terminal = { status: "not_found" | "already_claimed" };
 type Failed = { status: "failed"; error: Error };
 type Skipped = { status: "not_keyless" };
 
 export type AutoclaimResult = Claimed | Terminal | Failed | Skipped;
+
+type ClaimAttempt = { status: "claimed"; app: Application } | Terminal | Failed;
 
 export async function attemptAutoclaim(cwd: string): Promise<AutoclaimResult> {
   const breadcrumb = await readKeylessBreadcrumb(cwd);
@@ -37,17 +40,29 @@ export async function attemptAutoclaim(cwd: string): Promise<AutoclaimResult> {
 
   if (result.status === "claimed") {
     await linkApp(result.app, cwd);
+    const envPulled = await tryPullEnv();
+    return { ...result, envPulled };
   }
 
   return result;
 }
 
-async function tryClaim(claimToken: string, name: string): Promise<Claimed | Terminal | Failed> {
+async function tryClaim(claimToken: string, name: string): Promise<ClaimAttempt> {
   try {
     const app = await claimApplication(claimToken, name);
     return { status: "claimed", app };
   } catch (error) {
     return classifyClaimError(error);
+  }
+}
+
+async function tryPullEnv(): Promise<boolean> {
+  try {
+    await pull({});
+    return true;
+  } catch (error) {
+    log.debug(`Auto env pull failed: ${error instanceof Error ? error.message : String(error)}`);
+    return false;
   }
 }
 

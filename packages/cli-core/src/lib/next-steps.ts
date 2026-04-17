@@ -20,7 +20,8 @@ export const NEXT_STEPS = {
     "Run `clerk env pull --instance prod` to fetch production keys",
     "Run `clerk doctor` to verify your setup",
   ],
-  AUTOCLAIMED: [
+  AUTOCLAIMED: ["Run `clerk doctor` to verify your setup"],
+  AUTOCLAIMED_NO_ENV: [
     "Run `clerk env pull` to refresh your environment variables",
     "Run `clerk doctor` to verify your setup",
   ],

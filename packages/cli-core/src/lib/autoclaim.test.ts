@@ -7,6 +7,7 @@ import { stubFetch, captureLog } from "../test/lib/stubs.ts";
 // Use spyOn instead of mock.module to avoid polluting other test files.
 import * as autolinkMod from "./autolink.ts";
 import * as keylessMod from "./keyless.ts";
+import * as pullMod from "../commands/env/pull.ts";
 import { attemptAutoclaim } from "./autoclaim.ts";
 
 const MOCK_APP = {
@@ -26,6 +27,7 @@ describe("attemptAutoclaim", () => {
   let linkAppSpy: ReturnType<typeof spyOn>;
   let readBreadcrumbSpy: ReturnType<typeof spyOn>;
   let clearBreadcrumbSpy: ReturnType<typeof spyOn>;
+  let pullSpy: ReturnType<typeof spyOn>;
 
   beforeEach(async () => {
     tempDir = await mkdtemp(join(tmpdir(), "clerk-autoclaim-test-"));
@@ -40,8 +42,9 @@ describe("attemptAutoclaim", () => {
     clearBreadcrumbSpy = spyOn(keylessMod, "clearKeylessBreadcrumb").mockResolvedValue(undefined);
     // readKeylessBreadcrumb defaults to "no breadcrumb" — tests override this
     readBreadcrumbSpy = spyOn(keylessMod, "readKeylessBreadcrumb").mockResolvedValue(undefined);
+    pullSpy = spyOn(pullMod, "pull").mockResolvedValue(undefined);
 
-    spies = [linkAppSpy, readBreadcrumbSpy, clearBreadcrumbSpy];
+    spies = [linkAppSpy, readBreadcrumbSpy, clearBreadcrumbSpy, pullSpy];
   });
 
   afterEach(async () => {
@@ -67,7 +70,7 @@ describe("attemptAutoclaim", () => {
     expect(linkAppSpy).not.toHaveBeenCalled();
   });
 
-  test("claims and calls linkApp on success", async () => {
+  test("claims, calls linkApp, and pulls env on success", async () => {
     withBreadcrumb();
     stubFetch(async () => new Response(JSON.stringify(MOCK_APP), { status: 200 }));
 
@@ -76,8 +79,24 @@ describe("attemptAutoclaim", () => {
     expect(result.status).toBe("claimed");
     if (result.status === "claimed") {
       expect(result.app.application_id).toBe("app_claimed");
+      expect(result.envPulled).toBe(true);
     }
     expect(linkAppSpy).toHaveBeenCalledWith(MOCK_APP, tempDir);
+    expect(pullSpy).toHaveBeenCalledWith({});
+  });
+
+  test("returns envPulled false when pull fails", async () => {
+    withBreadcrumb();
+    stubFetch(async () => new Response(JSON.stringify(MOCK_APP), { status: 200 }));
+    pullSpy.mockRejectedValue(new Error("no profile linked"));
+
+    const result = await run();
+
+    expect(result.status).toBe("claimed");
+    if (result.status === "claimed") {
+      expect(result.envPulled).toBe(false);
+    }
+    expect(linkAppSpy).toHaveBeenCalled();
   });
 
   test("clears breadcrumb after successful claim", async () => {
