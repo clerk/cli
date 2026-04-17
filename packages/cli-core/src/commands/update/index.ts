@@ -116,10 +116,10 @@ async function runGlobalInstall(installer: Installer, packageSpec: string): Prom
 /** Reason a target cannot be auto-updated (returns null if it can). */
 function whyCantUpdate(target: Target, channel: string): string | null {
   if (target.owner === null) {
-    return "unknown installer — not a package-manager-owned binary";
+    return "unknown installer (not a package-manager-owned binary)";
   }
   if (target.owner === "homebrew" && channel !== "latest") {
-    return `Homebrew has no ${channel} tap — update only works on the stable channel`;
+    return `Homebrew has no ${channel} tap; update only works on the stable channel`;
   }
   return null;
 }
@@ -127,8 +127,7 @@ function whyCantUpdate(target: Target, channel: string): string | null {
 // ── User-facing reporting ────────────────────────────────────────────────────
 
 function formatTarget(target: Target): string {
-  const owner = target.owner ?? dim("unknown");
-  return `${target.displayPath} ${dim(`(${owner})`)}`;
+  return `${target.displayPath} ${dim(`(${target.owner ?? "unknown"})`)}`;
 }
 
 function reportOtherInstalls(others: Target[], channel: string): void {
@@ -137,7 +136,7 @@ function reportOtherInstalls(others: Target[], channel: string): void {
   log.info(`Also found ${others.length} other clerk install${others.length === 1 ? "" : "s"}:`);
   for (const t of others) {
     const skip = whyCantUpdate(t, channel);
-    const suffix = skip ? ` ${yellow(`— ${skip}`)}` : "";
+    const suffix = skip ? ` ${yellow(`- ${skip}`)}` : "";
     log.info(`  ${formatTarget(t)}${suffix}`);
   }
   log.info(`Run ${cyan("clerk update --all")} to update them too.`);
@@ -151,7 +150,7 @@ function hashHint(): string | null {
   if (shell.endsWith("/tcsh") || shell.endsWith("/csh")) {
     return "If `clerk` still points to the old binary, run `rehash` or open a new shell.";
   }
-  // bash, zsh, sh, dash, ksh — all support `hash -r`.
+  // bash, zsh, sh, dash, ksh all support `hash -r`.
   return "If `clerk` still points to the old binary, run `hash -r` or open a new shell.";
 }
 
@@ -171,7 +170,7 @@ export async function update(options: UpdateOptions): Promise<void> {
   const currentVersion = getCurrentVersion();
 
   if (isDevVersion(currentVersion)) {
-    log.info("Running development build (0.0.0-dev) — update not applicable.");
+    log.info("Running development build (0.0.0-dev); update not applicable.");
     return;
   }
 
@@ -276,13 +275,13 @@ export async function update(options: UpdateOptions): Promise<void> {
     log.info("Summary:");
     for (const r of results) {
       const icon = r.ok ? green("✓") : yellow("✗");
-      const suffix = r.ok ? "" : ` ${yellow(`— ${r.error}`)}`;
+      const suffix = r.ok ? "" : ` ${yellow(`- ${r.error}`)}`;
       log.info(`  ${icon} ${formatTarget(r.target)}${suffix}`);
     }
     for (const t of others) {
       const skip = whyCantUpdate(t, channel);
       if (!skip) continue;
-      log.info(`  ${yellow("⚠")} ${formatTarget(t)} ${yellow(`— skipped: ${skip}`)}`);
+      log.info(`  ${yellow("⚠")} ${formatTarget(t)} ${yellow(`- skipped: ${skip}`)}`);
     }
   } else {
     reportOtherInstalls(others, channel);

@@ -1,25 +1,16 @@
 /**
- * Global installer detection.
+ * Path-based installer detection for `clerk update`.
  *
- * Detects how the CLI was installed globally — npm, bun, pnpm, yarn, or
- * Homebrew — so the update command can use the correct update mechanism.
- *
- * Detection priority:
- *  1. `npm_config_user_agent` env var (set when invoked via a PM script runner)
- *  2. `process.execPath` — the real, symlink-resolved binary path:
- *     a. Contains `/Cellar/clerk/` → Homebrew
- *     b. Matches a PM's global prefix → that PM
- *  3. Falls back to npm
- *
- * This module also provides `globalInstallCommand()` for building
- * user-facing install/update hints.
+ * Maps a resolved binary path to the package manager that owns it by comparing
+ * against each PM's install directory. Handles asdf shims via `asdf which` and
+ * exposes helpers for walking PATH and invoking per-installer global install
+ * commands.
  */
 
 import { constants as fsConstants } from "node:fs";
 import { access, realpath, stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import { delimiter, join, sep } from "node:path";
-import { log } from "./log.ts";
 import { UPDATE_PACKAGE_NAME } from "./constants.ts";
 
 // ── Types ────────────────────────────────────────────────────────────────────
@@ -27,146 +18,38 @@ import { UPDATE_PACKAGE_NAME } from "./constants.ts";
 /** How the CLI was installed globally. */
 export type Installer = "npm" | "bun" | "pnpm" | "yarn" | "homebrew";
 
-// ── Stage 1: npm_config_user_agent ───────────────────────────────────────────
-
-export function detectFromUserAgent(): Installer | null {
-  const ua = process.env.npm_config_user_agent ?? "";
-  if (ua.startsWith("bun/")) return "bun";
-  if (ua.startsWith("pnpm/")) return "pnpm";
-  if (ua.startsWith("yarn/")) return "yarn";
-  if (ua.startsWith("npm/")) return "npm";
-  return null;
-}
-
-// ── Stage 2a: Homebrew ───────────────────────────────────────────────────────
+// ── Homebrew path check ──────────────────────────────────────────────────────
 
 export function isHomebrewPath(execPath: string): boolean {
   // Matches:
-  //   /opt/homebrew/Cellar/clerk/...         (macOS Apple Silicon)
-  //   /usr/local/Cellar/clerk/...            (macOS Intel)
+  //   /opt/homebrew/Cellar/clerk/...              (macOS Apple Silicon)
+  //   /usr/local/Cellar/clerk/...                 (macOS Intel)
   //   /home/linuxbrew/.linuxbrew/Cellar/clerk/... (Linuxbrew)
   return /\/Cellar\/clerk\//.test(execPath);
 }
 
-// ── Stage 2b: PM prefix matching ─────────────────────────────────────────────
+// ── PATH discovery ───────────────────────────────────────────────────────────
 
-async function safeRealpath(p: string): Promise<string> {
-  try {
-    return await realpath(p);
-  } catch {
-    return p;
-  }
-}
-
-async function queryPmPrefix(pm: "npm" | "bun" | "pnpm" | "yarn"): Promise<string | null> {
-  try {
-    let result;
-    switch (pm) {
-      case "bun":
-        result = await Bun.$`bun pm bin -g`.quiet().nothrow();
-        break;
-      case "pnpm":
-        result = await Bun.$`pnpm root -g`.quiet().nothrow();
-        break;
-      case "yarn":
-        result = await Bun.$`yarn global dir`.quiet().nothrow();
-        break;
-      default: {
-        result = await Bun.$`npm prefix -g`.quiet().nothrow();
-        if (result.exitCode !== 0) return null;
-        const prefix = result.stdout.toString().trim();
-        if (!prefix) return null;
-        return await safeRealpath(`${prefix}/lib/node_modules`);
-      }
-    }
-    if (result.exitCode !== 0) return null;
-    const dir = result.stdout.toString().trim();
-    if (!dir) return null;
-    return await safeRealpath(dir);
-  } catch {
-    return null;
-  }
-}
-
-async function matchPmFromExecPath(execPath: string): Promise<Installer | null> {
-  const pms = ["bun", "pnpm", "yarn", "npm"] as const;
-  const results = await Promise.allSettled(pms.map((pm) => queryPmPrefix(pm)));
-
-  for (const [i, result] of results.entries()) {
-    if (result.status !== "fulfilled" || !result.value) continue;
-    const pm = pms[i];
-    if (pm && execPath.startsWith(result.value + "/")) return pm;
-  }
-  return null;
-}
-
-// ── Public API ───────────────────────────────────────────────────────────────
+// On a machine with more than one global install (bun + asdf-npm + Homebrew
+// is a common combo), runtime-based detection isn't enough: `npm install -g`
+// can land in the wrong prefix while the shell still resolves `clerk` to a
+// different binary. findClerkOnPath walks PATH so the caller can target the
+// first-on-PATH install, i.e. what the user's shell will actually execute.
 
 /**
- * Detect the installer that installed the CLI globally.
+ * Returns symlink-resolved absolute paths to every `clerk` binary on PATH, in
+ * PATH order. Duplicates (same realpath reached via two PATH entries) are
+ * collapsed; first occurrence wins so PATH order is preserved.
  *
- * Uses `npm_config_user_agent` when available (highest confidence), then
- * inspects `process.execPath` to identify Homebrew or match against PM
- * global directories. `process.execPath` resolves through symlinks
- * automatically, so a symlink at `~/.local/bin/clerk` pointing to a
- * Homebrew Cellar or PM global dir is correctly attributed.
- */
-export async function detectInstaller(): Promise<Installer> {
-  // Stage 1: npm_config_user_agent
-  const fromUA = detectFromUserAgent();
-  if (fromUA) return fromUA;
-
-  // Stage 2: process.execPath
-  const execPath = process.execPath;
-
-  // 2a: Homebrew — Cellar path is distinctive and unambiguous
-  if (isHomebrewPath(execPath)) return "homebrew";
-
-  // 2b: Match against PM global directories (parallel queries)
-  try {
-    const pm = await matchPmFromExecPath(execPath);
-    if (pm) return pm;
-  } catch (error) {
-    log.debug(`PM prefix detection failed: ${error}`);
-  }
-
-  // Stage 3: Fallback
-  return "npm";
-}
-
-// ── Strategy B: PATH-priority-aware update detection ────────────────────────
-//
-// The single-`detectInstaller()` call is not enough: on a machine with more
-// than one global install (e.g. bun + asdf-managed npm), `npm install -g` can
-// land in the wrong prefix while the shell still resolves `clerk` to the
-// bun-installed binary. To fix this the update command needs to (1) discover
-// every `clerk` on PATH in PATH order, (2) ask which installer owns the FIRST
-// one, and (3) run that installer — not whatever `process.execPath` suggests.
-//
-// The helpers below implement steps (1) and (2a). Step (2b) — the actual
-// path→installer decision — is intentionally left as a TODO for a contributor
-// to fill in; see `ownerOfBinary` at the bottom.
-
-/**
- * Walk the current process PATH and return symlink-resolved absolute paths to
- * every `clerk` binary found, in PATH order. Duplicates (same realpath reached
- * via two PATH entries) are collapsed; the first occurrence wins so PATH order
- * is preserved.
- *
- * Shell-agnostic by design — reads `process.env.PATH` directly rather than
- * shelling out to `which`/`where`, so it behaves identically under bash, zsh,
- * fish, Nushell, PowerShell, cmd, and any other shell that exports a standard
- * PATH to child processes. The sole shell-specific concern post-update is the
- * command hash table (bash/zsh `hash`, zsh/tcsh `rehash`, fish auto-rehashes)
- * — handled separately in the success message, not here.
+ * Shell-agnostic: reads `process.env.PATH` directly, no `which`/`where`
+ * subshell. Post-update command-hash invalidation (`hash -r`, `rehash`) is
+ * the caller's responsibility.
  *
  * Platform handling:
- *  - POSIX: iterates PATH as-is, filters to regular files with the X bit set.
- *    Empty PATH entries (common via `::`) are ignored rather than being
- *    treated as CWD — safer default, matches most modern shells.
- *  - Windows: iterates PATHEXT extensions in declared order (first match per
- *    dir wins, matching Windows resolution), accepts any regular file (the
- *    X bit is meaningless on NTFS; PATHEXT is the gate).
+ *   POSIX: iterates PATH as-is; filters to regular files with the X bit set.
+ *          Empty PATH entries (`::`) are ignored rather than treated as CWD.
+ *   Windows: iterates PATHEXT in declared order; accepts any regular file
+ *            since NTFS has no X bit.
  */
 export async function findClerkOnPath(binaryName = UPDATE_PACKAGE_NAME): Promise<string[]> {
   const dirs = (process.env.PATH ?? "").split(delimiter).filter(Boolean);
@@ -197,11 +80,9 @@ export async function findClerkOnPath(binaryName = UPDATE_PACKAGE_NAME): Promise
 }
 
 /**
- * Is this path a regular file that the current process can actually execute?
- * On POSIX, "executable" means the X bit is set for the effective user.
- * On Windows, NTFS has no concept of executability — extension filtering in
- * findClerkOnPath() is what gates executability there, so we only confirm
- * the path is a regular file.
+ * Regular file that the current process can execute. On POSIX, checks the X
+ * bit. On Windows, PATHEXT filtering at the caller is the executability gate,
+ * so we only verify the path is a regular file.
  */
 async function isExecutableFile(path: string): Promise<boolean> {
   try {
@@ -215,27 +96,39 @@ async function isExecutableFile(path: string): Promise<boolean> {
   }
 }
 
+async function safeRealpath(p: string): Promise<string> {
+  try {
+    return await realpath(p);
+  } catch {
+    return p;
+  }
+}
+
+// ── Installer install dirs ──────────────────────────────────────────────────
+
 /**
- * Directories where each PM stores its globally-installed packages — i.e. the
- * parent of the `@clerk/cli-<arch>/` package folder, NOT where PMs put shim
- * symlinks. This is the bun-detection bug fix: `bun pm bin -g` returns the
- * symlink dir (~/.bun/bin), but the compiled platform binary actually lives
- * in ~/.bun/install/global/node_modules — so matching against the symlink dir
- * never succeeds. All four PMs are queried in parallel; a PM that isn't on
- * the system (nonzero exit, no output) is omitted from the result.
+ * Packages directory for each PM present on the system: the parent of the
+ * `@clerk/cli-<arch>/` package folder, NOT the shim or bin dir.
+ *
+ * Bun stores packages at `$BUN_INSTALL/install/global/node_modules` while
+ * `bun pm bin -g` returns the shim dir (`~/.bun/bin`); matching against the
+ * shim dir never succeeds against a resolved platform binary, which is why
+ * this helper returns the install dir directly.
+ *
+ * PMs not present on the system (nonzero exit, no output) are omitted.
  */
 export async function getInstallerPackageDirs(): Promise<Partial<Record<Installer, string>>> {
-  const queries: Array<[Installer, Promise<string | null>]> = [
-    ["npm", queryNpmPackageDir()],
-    ["pnpm", queryPnpmPackageDir()],
-    ["yarn", queryYarnPackageDir()],
-    ["bun", queryBunPackageDir()],
-  ];
+  const [npm, pnpm, yarn, bun] = await Promise.all([
+    queryNpmPackageDir(),
+    queryPnpmPackageDir(),
+    queryYarnPackageDir(),
+    queryBunPackageDir(),
+  ]);
   const out: Partial<Record<Installer, string>> = {};
-  for (const [pm, p] of queries) {
-    const dir = await p;
-    if (dir) out[pm] = dir;
-  }
+  if (npm) out.npm = npm;
+  if (pnpm) out.pnpm = pnpm;
+  if (yarn) out.yarn = yarn;
+  if (bun) out.bun = bun;
   return out;
 }
 
@@ -261,18 +154,15 @@ async function queryYarnPackageDir(): Promise<string | null> {
 }
 
 async function queryBunPackageDir(): Promise<string | null> {
-  // $BUN_INSTALL defaults to ~/.bun; packages live at $BUN_INSTALL/install/global/node_modules.
-  // Falling back to the conventional path is safe because `clerk update` only runs from an
-  // installed clerk, which means Bun's layout (if used) is already in place.
   const root = process.env.BUN_INSTALL ?? join(homedir(), ".bun");
   return await safeRealpath(join(root, "install", "global", "node_modules"));
 }
 
 // ── asdf shim handling ───────────────────────────────────────────────────────
 
-// asdf shims are bash scripts, not symlinks — `realpath` returns the shim
-// itself, so ownerOfBinary can't match it against an installer's package
-// dir. `asdf which` is the only way to chase the shim to the real binary.
+// asdf shims are bash scripts, not symlinks. `realpath` returns the shim
+// itself, so ownerOfBinary can't match it against an installer's package dir.
+// `asdf which` is the only way to chase the shim to the real binary.
 
 function asdfShimsDir(): string {
   return join(process.env.ASDF_DATA_DIR ?? join(homedir(), ".asdf"), "shims");
@@ -313,19 +203,17 @@ export async function asdfReshim(plugin: string): Promise<void> {
   } catch {}
 }
 
+// ── Ownership decision ──────────────────────────────────────────────────────
+
 /**
- * Given the symlink-resolved absolute path to a clerk binary and the install
- * dirs returned by `getInstallerPackageDirs()`, return which installer owns
- * that specific binary — or `null` if no known installer does.
+ * Maps a resolved binary path to its owning installer, or `null` if none
+ * matches. Homebrew is checked first via its distinctive Cellar pattern. PM
+ * dirs are matched with a trailing separator (so `/a/b` doesn't match
+ * `/a/bother`); when multiple match due to nested prefixes, the longest match
+ * wins.
  *
- * Homebrew is matched first via its distinctive `/Cellar/clerk/` pattern.
- * Each PM dir is matched with a trailing path separator to avoid the
- * `/a/b` vs `/a/bother` false-positive. When multiple PMs match (possible
- * under unusual nested-prefix configurations), the longest match wins —
- * a more specific prefix is a better answer than a shorter one.
- *
- * Returns `null` (NOT `"npm"`) when nothing matches. Callers use `null` as
- * the signal to refuse-rather-than-guess.
+ * `null` is the refuse-rather-than-guess signal; callers must NOT default to
+ * "npm" on no match.
  */
 export function ownerOfBinary(
   binaryPath: string,
@@ -341,9 +229,9 @@ export function ownerOfBinary(
   return best?.installer ?? null;
 }
 
-/**
- * Returns a human-readable install/update command for the given installer.
- */
+// ── Install command strings ─────────────────────────────────────────────────
+
+/** Human-readable install/update command for the given installer. */
 export function globalInstallCommand(installer: Installer, packageSpec: string): string {
   switch (installer) {
     case "bun":
