@@ -82,6 +82,34 @@ describe("renderFormula", () => {
 
     expect(result).toContain("keg_only :versioned_formula");
   });
+
+  // Homebrew's FormulaAudit/Desc rule rejects descriptions that start with
+  // the formula name (case-insensitive). Breaking this causes `brew style`
+  // failures in the homebrew-stable tap's CI.
+  test("desc does not start with the formula name", () => {
+    const unversioned = renderFormula({
+      version: "1.2.3",
+      checksums: {
+        "darwin-arm64": "aaaa",
+        "darwin-x64": "bbbb",
+        "linux-arm64": "cccc",
+        "linux-x64": "dddd",
+      },
+    });
+    expect(unversioned).not.toMatch(/desc "clerk\b/i);
+
+    const versioned = renderFormula({
+      version: "1.2.3",
+      checksums: {
+        "darwin-arm64": "aaaa",
+        "darwin-x64": "bbbb",
+        "linux-arm64": "cccc",
+        "linux-x64": "dddd",
+      },
+      major: 1,
+    });
+    expect(versioned).not.toMatch(/desc "clerk\b/i);
+  });
 });
 
 describe("computeChecksum", () => {

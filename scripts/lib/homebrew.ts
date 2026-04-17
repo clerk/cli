@@ -31,7 +31,7 @@ export function renderFormula(input: FormulaInput): string {
   const kegOnly = major != null ? "\n  keg_only :versioned_formula" : "";
 
   return `class ${className} < Formula
-  desc "Clerk command-line interface"
+  desc "Command-line interface for Clerk"
   homepage "https://clerk.com"
   version "${version}"
   license "MIT"${kegOnly}
