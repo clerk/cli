@@ -1,0 +1,29 @@
+name: Setup Bun
+description: Install Bun, optionally restore dependency cache, and run bun install
+
+inputs:
+  cache:
+    description: >
+      Cache mode for Bun dependencies.
+      "none" skips caching, "restore" uses read-only cache restore,
+      "read-write" populates the cache after install.
+    default: "none"
+
+runs:
+  using: composite
+  steps:
+    - uses: oven-sh/setup-bun@v2
+    - uses: actions/cache@v5
+      if: inputs.cache == 'read-write'
+      with:
+        path: ~/.bun/install/cache
+        key: bun-${{ runner.os }}-${{ hashFiles('bun.lock') }}
+        restore-keys: bun-${{ runner.os }}-
+    - uses: actions/cache/restore@v5
+      if: inputs.cache == 'restore'
+      with:
+        path: ~/.bun/install/cache
+        key: bun-${{ runner.os }}-${{ hashFiles('bun.lock') }}
+        restore-keys: bun-${{ runner.os }}-
+    - run: bun install --frozen-lockfile
+      shell: bash

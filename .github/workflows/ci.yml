@@ -3,6 +3,16 @@ name: CI
 on:
   pull_request:
     branches: [main]
+  workflow_call:
+    inputs:
+      ref:
+        type: string
+        default: ""
+        description: Git ref to checkout. Leave empty for default checkout behavior.
+      run-e2e:
+        type: boolean
+        default: true
+        description: Whether to run E2E tests
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
@@ -18,6 +28,8 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.ref }}
       - uses: oven-sh/setup-bun@v2
       - uses: actions/cache@v5
         with:
@@ -34,6 +46,8 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.ref }}
       - uses: oven-sh/setup-bun@v2
       - uses: actions/cache/restore@v5
         with:
@@ -52,6 +66,8 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.ref }}
       - uses: oven-sh/setup-bun@v2
       - uses: actions/cache/restore@v5
         with:
@@ -65,12 +81,14 @@ jobs:
   test-e2e:
     name: E2E Test
     needs: [build]
-    # Prevent fork PRs from running E2E tests and using this repo's secrets.
-    # Also skip Dependabot PRs: Dependabot cannot access Actions secrets, so
-    # CLERK_CLI_TEST_APP_ID would be empty and the run would fail anyway.
+    # For workflow_call: respect the run-e2e input.
+    # For pull_request: skip fork PRs (no access to secrets) and Dependabot PRs
+    # (cannot access Actions secrets, so CLERK_CLI_TEST_APP_ID would be empty).
     if: >-
-      github.event.pull_request.head.repo.full_name == github.repository &&
-      github.actor != 'dependabot[bot]'
+      (github.event_name == 'pull_request' &&
+       github.event.pull_request.head.repo.full_name == github.repository &&
+       github.actor != 'dependabot[bot]') ||
+      (github.event_name != 'pull_request' && inputs.run-e2e)
     runs-on: blacksmith-8vcpu-ubuntu-2404
     container:
       image: mcr.microsoft.com/playwright:v1.59.1-noble
@@ -88,6 +106,8 @@ jobs:
           grep -v '::1.*localhost' /etc/hosts > /tmp/hosts.new
           cat /tmp/hosts.new > /etc/hosts
       - uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.ref }}
       - uses: actions/setup-node@v6
         with:
           node-version: 22
