@@ -21,6 +21,7 @@ import {
   printOutro,
   printKeylessInfo,
   getAuthenticatedEmail,
+  isAuthenticated,
 } from "./heuristics.js";
 import { installSkills } from "./skills.js";
 import { intro, outro, bar, withSpinner } from "../../lib/spinner.js";
@@ -91,7 +92,7 @@ export async function init(options: InitOptions = {}) {
   ctx.keyless = keyless;
 
   const skipAuth =
-    !keyless && bootstrap != null && overrides.skipConfirm && !(await getAuthenticatedEmail());
+    !keyless && bootstrap != null && overrides.skipConfirm && !(await isAuthenticated());
 
   if (!keyless && !skipAuth) {
     bar();
@@ -218,9 +219,9 @@ async function resolveKeylessMode(
   skipConfirm: boolean,
 ): Promise<boolean> {
   if (ctx.framework.supportsKeyless) {
-    // Already authenticated — go straight to the authenticated flow.
-    const email = await getAuthenticatedEmail();
-    if (email) return false;
+    // Already authenticated (OAuth token or CLERK_PLATFORM_API_KEY) — go
+    // straight to the authenticated flow so real keys get pulled into .env.
+    if (await isAuthenticated()) return false;
 
     return skipConfirm || (await askSkipAuth());
   }

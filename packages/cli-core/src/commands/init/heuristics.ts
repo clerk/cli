@@ -136,6 +136,16 @@ export async function getAuthenticatedEmail(): Promise<string | null> {
   }
 }
 
+/**
+ * True if the user has any form of credentials configured — either a stored
+ * OAuth token or a `CLERK_PLATFORM_API_KEY` env var. Used to decide whether to
+ * skip keyless/skip-auth prompts during `clerk init`.
+ */
+export async function isAuthenticated(): Promise<boolean> {
+  if (process.env.CLERK_PLATFORM_API_KEY) return true;
+  return (await getAuthenticatedEmail()) != null;
+}
+
 export function printKeylessInfo(): void {
   const lines = [
     "\n  Your app will work immediately — Clerk generates temporary dev keys automatically.",

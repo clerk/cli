@@ -52,9 +52,11 @@ describe("init", () => {
     for (const s of spies) s.mockRestore();
   });
 
-  function setup(overrides: { email?: string | null; isAgent?: boolean } = {}) {
+  function setup(overrides: { email?: string | null; apiKey?: boolean; isAgent?: boolean } = {}) {
     const email = overrides.email ?? null;
+    const apiKey = overrides.apiKey ?? false;
     const agent = overrides.isAgent ?? false;
+    const authed = email != null || apiKey;
 
     captured = captureLog();
 
@@ -75,6 +77,7 @@ describe("init", () => {
       spyOn(scanMod, "detectAuthLibraries").mockReturnValue(undefined),
       spyOn(scanMod, "scanForIssues").mockResolvedValue([]),
       spyOn(heuristics, "getAuthenticatedEmail").mockResolvedValue(email),
+      spyOn(heuristics, "isAuthenticated").mockResolvedValue(authed),
       spyOn(heuristics, "printKeylessInfo").mockReturnValue(undefined),
       spyOn(heuristics, "installSdk").mockResolvedValue(undefined),
       spyOn(heuristics, "installDeps").mockResolvedValue(undefined),
@@ -197,7 +200,7 @@ describe("init", () => {
 
     await init({});
 
-    expect(heuristics.getAuthenticatedEmail).toHaveBeenCalled();
+    expect(heuristics.isAuthenticated).toHaveBeenCalled();
     expect(bootstrapMod.askSkipAuth).not.toHaveBeenCalled();
     expect(heuristics.printKeylessInfo).not.toHaveBeenCalled();
     expect(linkMod.link).toHaveBeenCalled();
@@ -214,9 +217,26 @@ describe("init", () => {
 
     await init({ yes: true });
 
-    expect(heuristics.getAuthenticatedEmail).toHaveBeenCalled();
+    expect(heuristics.isAuthenticated).toHaveBeenCalled();
     expect(bootstrapMod.askSkipAuth).not.toHaveBeenCalled();
     expect(heuristics.printKeylessInfo).not.toHaveBeenCalled();
+  });
+
+  test("-y flag with keyless framework uses authenticated flow when CLERK_PLATFORM_API_KEY is set", async () => {
+    setup({ apiKey: true });
+
+    const keylessCtx = {
+      ...FAKE_CTX,
+      framework: { ...FAKE_CTX.framework, supportsKeyless: true },
+    };
+    spyOn(context, "gatherContext").mockResolvedValueOnce(null).mockResolvedValueOnce(keylessCtx);
+
+    await init({ yes: true });
+
+    expect(heuristics.isAuthenticated).toHaveBeenCalled();
+    expect(bootstrapMod.askSkipAuth).not.toHaveBeenCalled();
+    expect(heuristics.printKeylessInfo).not.toHaveBeenCalled();
+    expect(linkMod.link).toHaveBeenCalled();
   });
 
   test("-y flag with keyless framework goes keyless when not authenticated", async () => {
@@ -235,7 +255,7 @@ describe("init", () => {
 
     await init({ yes: true });
 
-    expect(heuristics.getAuthenticatedEmail).toHaveBeenCalled();
+    expect(heuristics.isAuthenticated).toHaveBeenCalled();
     expect(bootstrapMod.askSkipAuth).not.toHaveBeenCalled();
     expect(heuristics.printKeylessInfo).toHaveBeenCalled();
     expect(linkMod.link).not.toHaveBeenCalled();
@@ -249,8 +269,8 @@ describe("init", () => {
 
     expect(bootstrapMod.promptAndBootstrap).toHaveBeenCalled();
     expect(bootstrapMod.askSkipAuth).not.toHaveBeenCalled();
-    // getAuthenticatedEmail is called during skipAuth check
-    expect(heuristics.getAuthenticatedEmail).toHaveBeenCalled();
+    // isAuthenticated is called during skipAuth check
+    expect(heuristics.isAuthenticated).toHaveBeenCalled();
   });
 
   test("-y flag skips auth for frameworks without keyless support in bootstrap", async () => {
@@ -275,8 +295,8 @@ describe("init", () => {
     expect(bootstrapMod.promptAndBootstrap).toHaveBeenCalled();
     // Should not ask about skipping auth — keyless not supported
     expect(bootstrapMod.askSkipAuth).not.toHaveBeenCalled();
-    // getAuthenticatedEmail is called during skipAuth check, returns null → skip auth
-    expect(heuristics.getAuthenticatedEmail).toHaveBeenCalled();
+    // isAuthenticated is called during skipAuth check, returns false → skip auth
+    expect(heuristics.isAuthenticated).toHaveBeenCalled();
     expect(loginMod.login).not.toHaveBeenCalled();
     expect(heuristics.printKeylessInfo).not.toHaveBeenCalled();
   });
@@ -325,7 +345,7 @@ describe("init", () => {
     await init({ yes: true });
 
     expect(bootstrapMod.promptAndBootstrap).not.toHaveBeenCalled();
-    expect(heuristics.getAuthenticatedEmail).toHaveBeenCalled();
+    expect(heuristics.isAuthenticated).toHaveBeenCalled();
     expect(bootstrapMod.askSkipAuth).not.toHaveBeenCalled();
     expect(heuristics.printKeylessInfo).not.toHaveBeenCalled();
   });
@@ -347,7 +367,7 @@ describe("init", () => {
     await init({});
 
     expect(bootstrapMod.promptAndBootstrap).not.toHaveBeenCalled();
-    expect(heuristics.getAuthenticatedEmail).toHaveBeenCalled();
+    expect(heuristics.isAuthenticated).toHaveBeenCalled();
     expect(bootstrapMod.askSkipAuth).toHaveBeenCalled();
   });
 
