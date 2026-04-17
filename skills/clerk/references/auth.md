@@ -34,6 +34,8 @@ When you run `clerk api --platform ...`, or any command that already uses PLAPI 
 
 Set `CLERK_PLATFORM_API_KEY` for CI and scripted agent usage. Use `clerk auth login` for local interactive development.
 
+> **`config` commands do not accept `--secret-key`.** They target the Platform API and authenticate via the PLAPI chain above (`CLERK_PLATFORM_API_KEY` or the stored OAuth token). If you need to script `config pull/schema/patch/put` in CI, export `CLERK_PLATFORM_API_KEY`; a Backend API `sk_...` key will not work.
+
 ## Project linking
 
 `clerk link` stores a mapping from your repo to a Clerk application in `~/.clerk/config.json`. The key is the normalized git remote URL (e.g., `github.com/org/repo`), which means the link is shared across all clones and worktrees of the same repo automatically.
@@ -71,6 +73,8 @@ clerk config pull --instance ins_2aB3c...
 
 ### `clerk auth login`
 
+Aliases: `signup`, `signin`, `sign-in`. Top-level shortcut: `clerk login`.
+
 OAuth 2.0 PKCE flow against the Clerk OAuth system instance (`https://clerk.clerk.com` by default, overridable via `CLERK_OAUTH_BASE_URL`):
 
 1. Generates PKCE parameters.
@@ -83,6 +87,8 @@ OAuth 2.0 PKCE flow against the Clerk OAuth system instance (`https://clerk.cler
 In agent mode, if already authenticated, it's a no-op. If not, it prints guidance rather than opening a browser.
 
 ### `clerk auth logout`
+
+Aliases: `signout`, `sign-out`. Top-level shortcut: `clerk logout`.
 
 Clears the stored token. No API calls.
 

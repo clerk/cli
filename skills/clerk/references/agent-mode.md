@@ -112,6 +112,22 @@ clerk api ls --platform apps   # platform-side endpoints
 
 When `clerk doctor --json` reports a failure, show the user the `name`, `message`, and `remedy` — don't just silently try to fix it, because the underlying fix (e.g., `clerk auth login`) usually requires human interaction.
 
+`clerk doctor --fix` is disabled in agent mode, so you cannot rely on it. If a caller wants to attempt remediation anyway, map the failing check to the command that would fix it in human mode. Each check exposes this mapping via the optional `fix.label` field on the JSON result:
+
+| Failing check           | Manual remediation                           |
+| ----------------------- | -------------------------------------------- |
+| `Logged in`             | `clerk auth login`                           |
+| `Authentication valid`  | `clerk auth login`                           |
+| `CLI configuration`     | `clerk auth login`                           |
+| `Project linked`        | `clerk link`                                 |
+| `Application reachable` | `clerk link`                                 |
+| `Instance IDs`          | `clerk link`                                 |
+| `Environment variables` | `clerk env pull`                             |
+| `CLI version`           | (no auto-fix; run `clerk update`)            |
+| `Shell completion`      | (no auto-fix; see `clerk completion --help`) |
+
+All three remediation commands are themselves interactive by default: `auth login` opens a browser, `link` prompts for an app when `--app` is omitted, and `env pull` writes a file. Prefer surfacing the mapping to the user rather than invoking these blindly.
+
 ## What NOT to do in agent mode
 
 - **Don't call `clerk auth login` from an agent and expect it to work** — it opens a browser and waits for a callback. Instead, export `CLERK_PLATFORM_API_KEY`.
