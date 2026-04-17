@@ -37,6 +37,8 @@ jobs:
     steps:
       - uses: actions/checkout@v6
       - uses: ./.github/actions/setup-bun
+        with:
+          cache: restore
 
       - name: Check if release needed
         id: check
@@ -184,6 +186,8 @@ jobs:
     steps:
       - uses: actions/checkout@v6
       - uses: ./.github/actions/setup-bun
+        with:
+          cache: restore
 
       - name: Version packages for canary
         id: version
@@ -389,6 +393,7 @@ jobs:
     uses: ./.github/workflows/ci.yml
     with:
       ref: ${{ needs.snapshot.outputs.sha }}
+      cache-writable: false
     secrets: inherit
 
   snapshot-build:

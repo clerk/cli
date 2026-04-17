@@ -13,6 +13,14 @@ on:
         type: boolean
         default: true
         description: Whether to run E2E tests
+      cache-writable:
+        type: boolean
+        default: true
+        description: >
+          If true, the build job populates the bun install cache. Set to
+          false when running untrusted code (e.g. snapshot CI against a
+          PR head SHA) to prevent cache poisoning of the caller's branch
+          scope.
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
@@ -32,7 +40,7 @@ jobs:
           ref: ${{ inputs.ref }}
       - uses: ./.github/actions/setup-bun
         with:
-          cache: read-write
+          cache: ${{ inputs.cache-writable && 'read-write' || 'restore' }}
       - run: bun run build
 
   lint:
