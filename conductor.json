@@ -1,6 +1,6 @@
 {
   "scripts": {
-    "setup": "cp \"$CONDUCTOR_ROOT_PATH/.env.local\" .env.local && bun install",
+    "setup": "cp \"$CONDUCTOR_ROOT_PATH/.env.local\" .env.local && cp \"$CONDUCTOR_ROOT_PATH/.env-profiles.json\" .env-profiles.json && bun install",
     "run": "bun run dev -- init"
   }
 }
