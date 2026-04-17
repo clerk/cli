@@ -260,15 +260,7 @@ export async function installClerkSkillCore(
     log.info(
       `Using \`${SKILL_SOURCE_OVERRIDE_ENV}=${override}\` in place of the bundled clerk skill.`,
     );
-    return runSkillsAdd(
-      runner,
-      cwd,
-      override,
-      [],
-      interactive,
-      false,
-      `clerk skill (${override})`,
-    );
+    return runSkillsAdd(runner, cwd, override, [], interactive, false, `clerk skill (${override})`);
   }
   return withStagedClerkSkill(resolveCliVersion(), (stageDir) =>
     runSkillsAdd(runner, cwd, stageDir, [], interactive, true, "clerk skill"),
