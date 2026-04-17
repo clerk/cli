@@ -1,17 +1,7 @@
-/**
- * Autoclaim orchestrator.
- *
- * After `clerk auth login`, detects whether the current directory is a keyless
- * project (has .clerk/keyless.json) and claims the application automatically.
- *
- * NEVER throws — all errors are returned as status values so the login flow
- * is never interrupted by autoclaim failures.
- */
-
 import { basename } from "node:path";
 import { readKeylessBreadcrumb, clearKeylessBreadcrumb } from "./keyless.ts";
 import { claimApplication, type Application } from "./plapi.ts";
-import { PlapiError } from "./errors.ts";
+import { PlapiError, errorMessage } from "./errors.ts";
 import { linkApp } from "./autolink.ts";
 import { pull } from "../commands/env/pull.ts";
 import { log } from "./log.ts";
@@ -25,15 +15,21 @@ export type AutoclaimResult = Claimed | Terminal | Failed | Skipped;
 
 type ClaimAttempt = { status: "claimed"; app: Application } | Terminal | Failed;
 
+const APP_NAME_MAX = 50;
+
+const TERMINAL_BY_STATUS: Record<number, Terminal["status"]> = {
+  404: "not_found",
+  403: "already_claimed",
+};
+
+/** Orchestrates post-login claim of a keyless app. Never throws. */
 export async function attemptAutoclaim(cwd: string): Promise<AutoclaimResult> {
   const breadcrumb = await readKeylessBreadcrumb(cwd);
   if (!breadcrumb) return { status: "not_keyless" };
 
-  const appName = basename(cwd).slice(0, 50);
+  const appName = basename(cwd).slice(0, APP_NAME_MAX);
   const result = await tryClaim(breadcrumb.claimToken, appName);
 
-  // Transient failures keep the breadcrumb so the next login can retry.
-  // Terminal statuses (not_found, already_claimed, claimed) clear it.
   if (result.status === "failed") return result;
 
   await clearKeylessBreadcrumb(cwd);
@@ -61,20 +57,16 @@ async function tryPullEnv(): Promise<boolean> {
     await pull({});
     return true;
   } catch (error) {
-    log.debug(`Auto env pull failed: ${error instanceof Error ? error.message : String(error)}`);
+    log.debug(`Auto env pull failed: ${errorMessage(error)}`);
     return false;
   }
 }
 
 function classifyClaimError(error: unknown): Terminal | Failed {
-  if (error instanceof PlapiError && error.status === 404) {
-    log.debug("Claim token not found (app may have been claimed already or expired)");
-    return { status: "not_found" };
-  }
-
-  if (error instanceof PlapiError && error.status === 403) {
-    log.debug("Not authorized to claim (missing active organization)");
-    return { status: "already_claimed" };
+  if (error instanceof PlapiError && error.status in TERMINAL_BY_STATUS) {
+    const status = TERMINAL_BY_STATUS[error.status]!;
+    log.debug(`Claim returned ${error.status}: classified as ${status}`);
+    return { status };
   }
 
   const err = error instanceof Error ? error : new Error(String(error));

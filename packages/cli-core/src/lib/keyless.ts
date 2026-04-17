@@ -1,11 +1,3 @@
-/**
- * Keyless application lifecycle.
- *
- * Creates accountless applications via BAPI (no auth required) and manages
- * the local breadcrumb file (.clerk/keyless.json) that stores the claim token
- * for autoclaim during `clerk auth login`.
- */
-
 import { join } from "node:path";
 import { mkdir, unlink } from "node:fs/promises";
 import { getBapiBaseUrl } from "./environment.ts";
@@ -13,7 +5,9 @@ import { detectPublishableKeyName, detectSecretKeyName } from "./framework.ts";
 import { parseEnvFile, mergeEnvVars, serializeEnvFile } from "./dotenv.ts";
 import { log } from "./log.ts";
 
-// ── Types ──────────────────────────────────────────────────────────────────
+const ENV_LOCAL = ".env.local";
+const BREADCRUMB_DIR = ".clerk";
+const BREADCRUMB_FILE = "keyless.json";
 
 interface AccountlessAppResponse {
   publishable_key: string;
@@ -26,12 +20,7 @@ interface KeylessBreadcrumb {
   createdAt: string;
 }
 
-// ── BAPI: create accountless application ───────────────────────────────────
-
-/**
- * Creates an accountless (keyless) application via the Backend API.
- * This endpoint is public — no authentication required.
- */
+/** Creates an accountless Clerk application via the public BAPI endpoint. */
 export async function createAccountlessApp(framework?: string): Promise<AccountlessAppResponse> {
   const url = new URL("/v1/accountless_applications", getBapiBaseUrl());
 
@@ -52,19 +41,19 @@ export async function createAccountlessApp(framework?: string): Promise<Accountl
   return response.json() as Promise<AccountlessAppResponse>;
 }
 
-// ── Env file writing ───────────────────────────────────────────────────────
-
-/** Write publishable + secret keys into .env.local. */
 export async function writeKeysToEnvFile(
   cwd: string,
   keys: { publishableKey: string; secretKey: string },
 ): Promise<void> {
-  const publishableKeyName = await detectPublishableKeyName(cwd);
-  const secretKeyName = await detectSecretKeyName(cwd);
+  const [publishableKeyName, secretKeyName] = await Promise.all([
+    detectPublishableKeyName(cwd),
+    detectSecretKeyName(cwd),
+  ]);
 
-  const targetFile = join(cwd, ".env.local");
-  const file = Bun.file(targetFile);
-  const existingContent = (await file.exists()) ? await file.text() : "";
+  const targetFile = join(cwd, ENV_LOCAL);
+  const existingContent = await Bun.file(targetFile)
+    .text()
+    .catch(() => "");
 
   const merged = mergeEnvVars(parseEnvFile(existingContent), {
     [publishableKeyName]: keys.publishableKey,
@@ -72,23 +61,15 @@ export async function writeKeysToEnvFile(
   });
 
   await Bun.write(targetFile, serializeEnvFile(merged));
-  log.info("Environment variables written to .env.local");
+  log.info(`Environment variables written to ${ENV_LOCAL}`);
 }
 
-// ── Claim token extraction ─────────────────────────────────────────────────
-
-/** Extracts the `token` query parameter from a claim URL. */
 export function parseClaimToken(claimUrl: string): string {
   const base = claimUrl.startsWith("http") ? undefined : "https://placeholder.com";
   const token = new URL(claimUrl, base).searchParams.get("token");
   if (!token) throw new Error(`No token parameter in claim URL: ${claimUrl}`);
   return token;
 }
-
-// ── Breadcrumb I/O ─────────────────────────────────────────────────────────
-
-const BREADCRUMB_DIR = ".clerk";
-const BREADCRUMB_FILE = "keyless.json";
 
 function breadcrumbPath(cwd: string): string {
   return join(cwd, BREADCRUMB_DIR, BREADCRUMB_FILE);
@@ -107,13 +88,9 @@ export async function writeKeylessBreadcrumb(cwd: string, claimToken: string): P
 }
 
 export async function readKeylessBreadcrumb(cwd: string): Promise<KeylessBreadcrumb | undefined> {
-  const file = Bun.file(breadcrumbPath(cwd));
-  if (!(await file.exists())) return undefined;
-
   try {
-    return (await file.json()) as KeylessBreadcrumb;
+    return (await Bun.file(breadcrumbPath(cwd)).json()) as KeylessBreadcrumb;
   } catch {
-    log.debug("Failed to parse keyless breadcrumb, ignoring");
     return undefined;
   }
 }
@@ -123,6 +100,6 @@ export async function clearKeylessBreadcrumb(cwd: string): Promise<void> {
     await unlink(breadcrumbPath(cwd));
     log.debug("Cleared keyless breadcrumb");
   } catch {
-    // File may already be gone
+    // idempotent
   }
 }

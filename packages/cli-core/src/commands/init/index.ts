@@ -3,7 +3,7 @@ import { link } from "../link/index.js";
 import { pull } from "../env/pull.js";
 import { isAgent } from "../../mode.js";
 import { dim, bold } from "../../lib/color.js";
-import { throwUserAbort, CliError } from "../../lib/errors.js";
+import { throwUserAbort, CliError, errorMessage } from "../../lib/errors.js";
 import { lookupFramework, type FrameworkInfo } from "../../lib/framework.js";
 import { resolveProfile } from "../../lib/config.js";
 import { log } from "../../lib/log.js";
@@ -297,8 +297,7 @@ async function setupKeylessApp(cwd: string, frameworkDep: string): Promise<void>
 
     await writeKeylessBreadcrumb(cwd, parseClaimToken(app.claim_url));
   } catch (error) {
-    const msg = error instanceof Error ? error.message : String(error);
-    log.debug(`Could not create accountless app: ${msg}`);
+    log.debug(`Could not create accountless app: ${errorMessage(error)}`);
   }
 
   printKeylessInfo();

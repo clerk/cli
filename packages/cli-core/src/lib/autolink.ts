@@ -76,11 +76,7 @@ export function matchKeyToApp(
   return undefined;
 }
 
-/**
- * Builds a Profile from an Application and persists it.
- * Shared by autolink (key detection) and autoclaim (keyless claim).
- * Returns the profile and its key, or undefined if no development instance exists.
- */
+/** Returns undefined when the app has no development instance. */
 export async function linkApp(
   app: Application,
   cwd: string,

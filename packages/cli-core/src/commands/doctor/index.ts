@@ -1,7 +1,7 @@
 import { isHuman } from "../../mode.ts";
 import { bold, green, red } from "../../lib/color.ts";
 import { log } from "../../lib/log.ts";
-import { CliError, ERROR_CODE } from "../../lib/errors.ts";
+import { CliError, ERROR_CODE, errorMessage } from "../../lib/errors.ts";
 import { intro, outro, bar, withSpinner } from "../../lib/spinner.ts";
 import { createDoctorContext } from "./context.ts";
 import {
@@ -14,7 +14,6 @@ import {
   checkConfigFile,
   checkShellCompletion,
   checkCliVersion,
-  errorMessage,
 } from "./checks.ts";
 import { formatCheckResult, formatJson } from "./format.ts";
 import type { CheckFn, CheckResult, DoctorContext, DoctorOptions } from "./types.ts";

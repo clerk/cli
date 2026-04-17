@@ -4,10 +4,10 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { stubFetch, captureLog } from "../test/lib/stubs.ts";
 
-// Use spyOn instead of mock.module to avoid polluting other test files.
 import * as autolinkMod from "./autolink.ts";
 import * as keylessMod from "./keyless.ts";
 import * as pullMod from "../commands/env/pull.ts";
+import type { Profile } from "./config.ts";
 import { attemptAutoclaim } from "./autoclaim.ts";
 
 const MOCK_APP = {
@@ -22,7 +22,6 @@ const MOCK_APP = {
 describe("attemptAutoclaim", () => {
   const originalFetch = globalThis.fetch;
   let tempDir: string;
-  let spies: ReturnType<typeof spyOn>[];
   let captured: ReturnType<typeof captureLog>;
   let linkAppSpy: ReturnType<typeof spyOn>;
   let readBreadcrumbSpy: ReturnType<typeof spyOn>;
@@ -37,14 +36,11 @@ describe("attemptAutoclaim", () => {
 
     linkAppSpy = spyOn(autolinkMod, "linkApp").mockResolvedValue({
       path: tempDir,
-      profile: {} as never,
+      profile: {} as Profile,
     });
     clearBreadcrumbSpy = spyOn(keylessMod, "clearKeylessBreadcrumb").mockResolvedValue(undefined);
-    // readKeylessBreadcrumb defaults to "no breadcrumb" — tests override this
     readBreadcrumbSpy = spyOn(keylessMod, "readKeylessBreadcrumb").mockResolvedValue(undefined);
     pullSpy = spyOn(pullMod, "pull").mockResolvedValue(undefined);
-
-    spies = [linkAppSpy, readBreadcrumbSpy, clearBreadcrumbSpy, pullSpy];
   });
 
   afterEach(async () => {
@@ -52,7 +48,10 @@ describe("attemptAutoclaim", () => {
     delete process.env.CLERK_PLATFORM_API_KEY;
     delete process.env.CLERK_PLATFORM_API_URL;
     globalThis.fetch = originalFetch;
-    for (const s of spies) s.mockRestore();
+    linkAppSpy.mockRestore();
+    readBreadcrumbSpy.mockRestore();
+    clearBreadcrumbSpy.mockRestore();
+    pullSpy.mockRestore();
     await rm(tempDir, { recursive: true, force: true });
   });
 

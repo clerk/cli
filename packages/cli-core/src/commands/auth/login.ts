@@ -160,7 +160,6 @@ async function loginNextSteps(result: AutoclaimResult): Promise<readonly string[
     return NEXT_STEPS.AUTOCLAIM_MANUAL_LINK;
   }
 
-  // not_keyless — normal login, check for existing linked profile
   const linked = await resolveProfile(process.cwd());
   if (!linked) return NEXT_STEPS.LOGIN;
 
