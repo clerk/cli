@@ -2,10 +2,13 @@ import { isHuman } from "../../mode.ts";
 import { green, cyan, yellow, dim } from "../../lib/color.ts";
 import { CliError } from "../../lib/errors.ts";
 import {
+  asdfPluginFromPath,
+  asdfReshim,
   findClerkOnPath,
   getInstallerPackageDirs,
   globalInstallCommand,
   ownerOfBinary,
+  resolveAsdfShim,
   type Installer,
 } from "../../lib/installer.ts";
 import { log } from "../../lib/log.ts";
@@ -30,9 +33,10 @@ export type UpdateOptions = {
 // ── Target resolution ────────────────────────────────────────────────────────
 
 type Target = {
-  /** Symlink-resolved absolute path to the clerk binary on disk. */
-  path: string;
-  /** Installer that owns this binary, or `null` if none recognized. */
+  /** Path as it appears on PATH (shown to the user). */
+  displayPath: string;
+  /** Underlying binary after asdf-shim resolution; equal to displayPath for non-shim targets. */
+  resolvedPath: string;
   owner: Installer | null;
 };
 
@@ -42,20 +46,34 @@ async function resolveTargets(
 ): Promise<{ primary: Target; others: Target[] }> {
   const onPath = await findClerkOnPath();
 
-  // The primary is the first on PATH (what the user's shell will resolve to).
-  // If PATH discovery came up empty (corporate locked-down env, weird setup),
-  // fall back to the running binary so we still have a target.
-  const primaryPath = onPath[0] ?? runningPath;
-  const others = onPath
-    .filter((p) => p !== primaryPath)
-    .map((path) => ({
-      path,
-      owner: ownerOfBinary(path, installDirs),
-    }));
+  const resolved = await Promise.all(onPath.map((p) => resolveAsdfShim(p)));
+  const candidates = onPath.map((displayPath, i) => ({
+    displayPath,
+    resolvedPath: resolved[i]!,
+  }));
+
+  // Dedupe by resolvedPath: a shim and its resolved target shouldn't both appear.
+  const seen = new Set<string>();
+  const unique: Array<{ displayPath: string; resolvedPath: string }> = [];
+  for (const c of candidates) {
+    if (seen.has(c.resolvedPath)) continue;
+    seen.add(c.resolvedPath);
+    unique.push(c);
+  }
+
+  // Fallback when PATH discovery yields nothing: use the running binary.
+  const effective =
+    unique.length > 0 ? unique : [{ displayPath: runningPath, resolvedPath: runningPath }];
+
+  const toTarget = (c: { displayPath: string; resolvedPath: string }): Target => ({
+    displayPath: c.displayPath,
+    resolvedPath: c.resolvedPath,
+    owner: ownerOfBinary(c.resolvedPath, installDirs),
+  });
 
   return {
-    primary: { path: primaryPath, owner: ownerOfBinary(primaryPath, installDirs) },
-    others,
+    primary: toTarget(effective[0]!),
+    others: effective.slice(1).map(toTarget),
   };
 }
 
@@ -110,7 +128,7 @@ function whyCantUpdate(target: Target, channel: string): string | null {
 
 function formatTarget(target: Target): string {
   const owner = target.owner ?? dim("unknown");
-  return `${target.path} ${dim(`(${owner})`)}`;
+  return `${target.displayPath} ${dim(`(${owner})`)}`;
 }
 
 function reportOtherInstalls(others: Target[], channel: string): void {
@@ -226,9 +244,9 @@ export async function update(options: UpdateOptions): Promise<void> {
     const owner = t.owner as Installer;
     try {
       await withSpinner(
-        `Installing ${packageSpec} via ${owner} (${t.path})...`,
+        `Installing ${packageSpec} via ${owner} (${t.displayPath})...`,
         () => runGlobalInstall(owner, packageSpec),
-        `Updated ${owner}: ${t.path}`,
+        `Updated ${owner}: ${t.displayPath}`,
       );
       results.push({ target: t, ok: true });
     } catch (error) {
@@ -237,6 +255,17 @@ export async function update(options: UpdateOptions): Promise<void> {
       // Keep going for --all; a single failure shouldn't block other installs.
       if (!options.all) throw error;
     }
+  }
+
+  // Safety net: modern asdf-nodejs auto-reshims on npm install, older ones don't.
+  const asdfPlugins = new Set<string>();
+  for (const r of results) {
+    if (!r.ok) continue;
+    const plugin = asdfPluginFromPath(r.target.resolvedPath);
+    if (plugin) asdfPlugins.add(plugin);
+  }
+  for (const plugin of asdfPlugins) {
+    await asdfReshim(plugin);
   }
 
   await writeUpdateCache({ checkedAt: Date.now(), latest, distTag: channel });

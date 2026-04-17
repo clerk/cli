@@ -268,6 +268,51 @@ async function queryBunPackageDir(): Promise<string | null> {
   return await safeRealpath(join(root, "install", "global", "node_modules"));
 }
 
+// ── asdf shim handling ───────────────────────────────────────────────────────
+
+// asdf shims are bash scripts, not symlinks — `realpath` returns the shim
+// itself, so ownerOfBinary can't match it against an installer's package
+// dir. `asdf which` is the only way to chase the shim to the real binary.
+
+function asdfShimsDir(): string {
+  return join(process.env.ASDF_DATA_DIR ?? join(homedir(), ".asdf"), "shims");
+}
+
+export function isAsdfShimPath(path: string): boolean {
+  return path.startsWith(asdfShimsDir() + sep);
+}
+
+/** Returns `path` unchanged when not a shim, asdf is missing, or resolution fails. */
+export async function resolveAsdfShim(path: string): Promise<string> {
+  if (!isAsdfShimPath(path)) return path;
+  const name = path.slice((asdfShimsDir() + sep).length).split(sep)[0];
+  if (!name) return path;
+  try {
+    const result = await Bun.$`asdf which ${name}`.quiet().nothrow();
+    if (result.exitCode !== 0) return path;
+    const real = result.stdout.toString().trim();
+    if (!real) return path;
+    return await safeRealpath(real);
+  } catch {
+    return path;
+  }
+}
+
+export function asdfPluginFromPath(path: string): string | null {
+  const installsDir = join(process.env.ASDF_DATA_DIR ?? join(homedir(), ".asdf"), "installs");
+  const prefix = installsDir + sep;
+  if (!path.startsWith(prefix)) return null;
+  const plugin = path.slice(prefix.length).split(sep)[0];
+  return plugin || null;
+}
+
+/** Best-effort; swallows errors. */
+export async function asdfReshim(plugin: string): Promise<void> {
+  try {
+    await Bun.$`asdf reshim ${plugin}`.quiet().nothrow();
+  } catch {}
+}
+
 /**
  * Given the symlink-resolved absolute path to a clerk binary and the install
  * dirs returned by `getInstallerPackageDirs()`, return which installer owns

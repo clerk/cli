@@ -9,6 +9,9 @@ import {
   detectInstaller,
   findClerkOnPath,
   ownerOfBinary,
+  isAsdfShimPath,
+  asdfPluginFromPath,
+  resolveAsdfShim,
 } from "./installer.ts";
 
 // ── detectFromUserAgent ──────────────────────────────────────────────────────
@@ -379,5 +382,90 @@ describe("findClerkOnPath", () => {
     await chmod(bin, 0o755);
     process.env.PATH = `${sandbox}${delimiter}${delimiter}`;
     expect(await findClerkOnPath()).toEqual([bin]);
+  });
+});
+
+// ── asdf helpers ─────────────────────────────────────────────────────────────
+
+describe("isAsdfShimPath", () => {
+  let savedDataDir: string | undefined;
+
+  beforeEach(() => {
+    savedDataDir = process.env.ASDF_DATA_DIR;
+  });
+  afterEach(() => {
+    if (savedDataDir === undefined) delete process.env.ASDF_DATA_DIR;
+    else process.env.ASDF_DATA_DIR = savedDataDir;
+  });
+
+  test("matches paths under the default ~/.asdf/shims directory", () => {
+    delete process.env.ASDF_DATA_DIR;
+    const home = process.env.HOME ?? "";
+    expect(isAsdfShimPath(`${home}/.asdf/shims/clerk`)).toBe(true);
+  });
+
+  test("matches paths under an ASDF_DATA_DIR override", () => {
+    process.env.ASDF_DATA_DIR = "/opt/asdf-data";
+    expect(isAsdfShimPath("/opt/asdf-data/shims/clerk")).toBe(true);
+  });
+
+  test("rejects non-shim paths (including trailing-separator-adjacent names)", () => {
+    process.env.ASDF_DATA_DIR = "/opt/asdf-data";
+    expect(isAsdfShimPath("/opt/asdf-data/installs/nodejs/22/bin/clerk")).toBe(false);
+    expect(isAsdfShimPath("/usr/local/bin/clerk")).toBe(false);
+    expect(isAsdfShimPath("/opt/asdf-data/shimsxyz/clerk")).toBe(false);
+  });
+});
+
+describe("asdfPluginFromPath", () => {
+  let savedDataDir: string | undefined;
+
+  beforeEach(() => {
+    savedDataDir = process.env.ASDF_DATA_DIR;
+    process.env.ASDF_DATA_DIR = "/opt/asdf-data";
+  });
+  afterEach(() => {
+    if (savedDataDir === undefined) delete process.env.ASDF_DATA_DIR;
+    else process.env.ASDF_DATA_DIR = savedDataDir;
+  });
+
+  test("extracts the plugin name from a nodejs installs path", () => {
+    expect(
+      asdfPluginFromPath("/opt/asdf-data/installs/nodejs/22.16.0/lib/node_modules/clerk/bin/clerk"),
+    ).toBe("nodejs");
+  });
+
+  test("returns null for paths outside the installs tree", () => {
+    expect(asdfPluginFromPath("/opt/asdf-data/shims/clerk")).toBe(null);
+    expect(asdfPluginFromPath("/usr/local/bin/clerk")).toBe(null);
+  });
+
+  test("returns null when the installs path has no plugin segment", () => {
+    expect(asdfPluginFromPath("/opt/asdf-data/installs")).toBe(null);
+    expect(asdfPluginFromPath("/opt/asdf-data/installs/")).toBe(null);
+  });
+});
+
+describe("resolveAsdfShim", () => {
+  let savedDataDir: string | undefined;
+
+  beforeEach(() => {
+    savedDataDir = process.env.ASDF_DATA_DIR;
+  });
+  afterEach(() => {
+    if (savedDataDir === undefined) delete process.env.ASDF_DATA_DIR;
+    else process.env.ASDF_DATA_DIR = savedDataDir;
+  });
+
+  test("returns non-shim paths unchanged", async () => {
+    process.env.ASDF_DATA_DIR = "/opt/asdf-data";
+    expect(await resolveAsdfShim("/usr/local/bin/clerk")).toBe("/usr/local/bin/clerk");
+    expect(await resolveAsdfShim("/opt/homebrew/bin/clerk")).toBe("/opt/homebrew/bin/clerk");
+  });
+
+  test("returns shim path unchanged when `asdf which` fails", async () => {
+    process.env.ASDF_DATA_DIR = "/nonexistent/asdf-sandbox";
+    const shim = "/nonexistent/asdf-sandbox/shims/definitely-not-a-real-binary-xyzzy";
+    expect(await resolveAsdfShim(shim)).toBe(shim);
   });
 });
