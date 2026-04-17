@@ -1,6 +1,6 @@
 {
   "name": "clerk",
-  "version": "0.0.2",
+  "version": "0.8.4",
   "private": true,
   "description": "Clerk CLI",
   "keywords": [
