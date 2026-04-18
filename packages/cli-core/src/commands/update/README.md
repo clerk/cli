@@ -22,7 +22,7 @@ clerk update [options]
 2. Walks `PATH` to find every `clerk` binary. For asdf shims (bash scripts, not symlinks), resolves through `asdf which <name>` so the underlying installer is visible. Picks the first one as the **primary target**
 3. Determines which installer owns the primary target via `ownerOfBinary()`:
    - Known installer (npm/bun/pnpm/yarn) → installs via that PM
-   - Homebrew → prints `brew upgrade clerk` and exits (stable channel only)
+   - Homebrew → runs `brew upgrade clerk` after confirmation (stable channel only; refuses on `canary` since there is no canary tap)
    - `null` (binary not owned by any recognized installer, e.g. `install.sh`) → refuses and lists reinstall options
 4. Prompts for confirmation (skipped with `--yes` or in non-interactive mode)
 5. Runs the installer's global install command (e.g. `npm install -g clerk@<version>`, `bun add -g clerk@<version>`)
@@ -74,4 +74,4 @@ Set `CLERK_UPDATE_CHANNEL=canary` to make canary the default for all update chec
 - Supports 5 installers: npm, bun, pnpm, yarn, and Homebrew.
 - Binaries installed via `install.sh` (direct GitHub Release download) are owned by no PM; the update command refuses and lists reinstall options instead of silently writing to a different prefix.
 - Permission errors (EACCES) suggest retrying with `sudo` using the detected installer's command.
-- This command does not perform the update itself in agent/non-interactive mode unless `--yes` is passed.
+- This command does not perform the update itself in agent/non-interactive mode unless `--yes` is passed. In agent mode without `--yes`, it prints the command the caller needs to run and exits.

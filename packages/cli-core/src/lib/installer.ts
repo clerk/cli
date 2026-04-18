@@ -154,8 +154,15 @@ async function queryYarnPackageDir(): Promise<string | null> {
 }
 
 async function queryBunPackageDir(): Promise<string | null> {
-  const root = process.env.BUN_INSTALL ?? join(homedir(), ".bun");
-  return await safeRealpath(join(root, "install", "global", "node_modules"));
+  const root = process.env.BUN_INSTALL || join(homedir(), ".bun");
+  const dir = join(root, "install", "global", "node_modules");
+  try {
+    const s = await stat(dir);
+    if (!s.isDirectory()) return null;
+  } catch {
+    return null;
+  }
+  return await safeRealpath(dir);
 }
 
 // ── asdf shim handling ───────────────────────────────────────────────────────
@@ -164,8 +171,12 @@ async function queryBunPackageDir(): Promise<string | null> {
 // itself, so ownerOfBinary can't match it against an installer's package dir.
 // `asdf which` is the only way to chase the shim to the real binary.
 
+function asdfDataDir(): string {
+  return process.env.ASDF_DATA_DIR || join(homedir(), ".asdf");
+}
+
 function asdfShimsDir(): string {
-  return join(process.env.ASDF_DATA_DIR ?? join(homedir(), ".asdf"), "shims");
+  return join(asdfDataDir(), "shims");
 }
 
 export function isAsdfShimPath(path: string): boolean {
@@ -189,7 +200,7 @@ export async function resolveAsdfShim(path: string): Promise<string> {
 }
 
 export function asdfPluginFromPath(path: string): string | null {
-  const installsDir = join(process.env.ASDF_DATA_DIR ?? join(homedir(), ".asdf"), "installs");
+  const installsDir = join(asdfDataDir(), "installs");
   const prefix = installsDir + sep;
   if (!path.startsWith(prefix)) return null;
   const plugin = path.slice(prefix.length).split(sep)[0];
@@ -221,9 +232,17 @@ export function ownerOfBinary(
 ): Installer | null {
   if (isHomebrewPath(binaryPath)) return "homebrew";
 
+  // Windows paths are case-insensitive and can mix forward/back slashes after
+  // realpath (e.g. `C:\…` vs `c:\…`). Normalize both sides before comparison.
+  const normalize = (p: string): string =>
+    process.platform === "win32" ? p.toLowerCase().replace(/\//g, sep) : p;
+  const target = normalize(binaryPath);
+
   let best: { installer: Installer; len: number } | null = null;
   for (const [pm, dir] of Object.entries(installDirs) as Array<[Installer, string]>) {
-    if (!dir || !binaryPath.startsWith(dir + sep)) continue;
+    if (!dir) continue;
+    const prefix = normalize(dir) + sep;
+    if (!target.startsWith(prefix)) continue;
     if (!best || dir.length > best.len) best = { installer: pm, len: dir.length };
   }
   return best?.installer ?? null;

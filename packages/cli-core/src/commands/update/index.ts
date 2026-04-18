@@ -1,4 +1,4 @@
-import { isHuman } from "../../mode.ts";
+import { isAgent, isHuman } from "../../mode.ts";
 import { green, cyan, yellow, dim } from "../../lib/color.ts";
 import { CliError } from "../../lib/errors.ts";
 import {
@@ -144,6 +144,9 @@ function reportOtherInstalls(others: Target[], channel: string): void {
 
 /** Hint for invalidating the current shell's command-hash cache after update. */
 function hashHint(): string | null {
+  // Windows shells (cmd.exe, PowerShell) don't cache command paths, and `$SHELL`
+  // is typically unset — don't emit a POSIX hint in that case.
+  if (process.platform === "win32") return null;
   const shell = (process.env.SHELL ?? "").toLowerCase();
   if (shell.endsWith("/fish") || shell.endsWith("fish.exe")) return null; // auto-rehashes
   if (shell.endsWith("/pwsh") || shell.endsWith("powershell.exe")) return null; // no cache
@@ -152,6 +155,19 @@ function hashHint(): string | null {
   }
   // bash, zsh, sh, dash, ksh all support `hash -r`.
   return "If `clerk` still points to the old binary, run `hash -r` or open a new shell.";
+}
+
+/**
+ * Detect invocation via a package runner (npx/bunx/pnpm dlx). The binary lives
+ * in a runner cache (e.g. `~/.npm/_npx/<hash>/...`) not on PATH, so `ownerOfBinary`
+ * can't identify it — but we can recognize the runner from env vars it sets.
+ */
+function detectPackageRunner(): "npx" | "bunx" | null {
+  const ua = (process.env.npm_config_user_agent ?? "").toLowerCase();
+  const execPath = (process.env.npm_execpath ?? "").toLowerCase();
+  if (execPath.includes("npx") || ua.startsWith("npm/")) return "npx";
+  if (ua.startsWith("bun/")) return "bunx";
+  return null;
 }
 
 // ── Confirmation ─────────────────────────────────────────────────────────────
@@ -202,25 +218,40 @@ export async function update(options: UpdateOptions): Promise<void> {
   // Primary target can't be updated by us: refuse (don't guess a different installer).
   const primarySkip = whyCantUpdate(primary, channel);
   if (primarySkip) {
-    log.warn(`Cannot auto-update: ${primarySkip}`);
-    if (primary.owner === "homebrew") {
-      log.info(`  Run: ${cyan("brew upgrade clerk")}`);
-    } else if (primary.owner === null) {
-      log.info(`  This binary appears to be installed outside any known package manager.`);
-      log.info(`  Reinstall via your preferred method, e.g.:`);
+    const runner = detectPackageRunner();
+    if (primary.owner === null && runner) {
+      // npx/bunx runs land in a runner cache that isn't on PATH. There's
+      // nothing to "update" in place — the user needs a global install.
+      log.warn(`Running via ${runner}; no installed clerk to update. Install globally first:`);
       log.info(`    ${cyan(`bun add -g ${UPDATE_PACKAGE_NAME}@${latest}`)}`);
       log.info(`    ${cyan(`npm install -g ${UPDATE_PACKAGE_NAME}@${latest}`)}`);
-      log.info(
-        `    ${cyan(`curl -fsSL https://raw.githubusercontent.com/clerk/cli/main/install.sh | bash`)}`,
-      );
+    } else {
+      log.warn(`Cannot auto-update: ${primarySkip}`);
+      if (primary.owner === "homebrew") {
+        log.info(`  Run: ${cyan("brew upgrade clerk")}`);
+      } else if (primary.owner === null) {
+        log.info(`  This binary appears to be installed outside any known package manager.`);
+        log.info(`  Reinstall via your preferred method, e.g.:`);
+        log.info(`    ${cyan(`bun add -g ${UPDATE_PACKAGE_NAME}@${latest}`)}`);
+        log.info(`    ${cyan(`npm install -g ${UPDATE_PACKAGE_NAME}@${latest}`)}`);
+        log.info(
+          `    ${cyan(`curl -fsSL https://raw.githubusercontent.com/clerk/cli/main/install.sh | bash`)}`,
+        );
+      }
     }
     reportOtherInstalls(others, channel);
     if (isHuman()) outro("Update required manual action");
     return;
   }
 
-  const autoConfirm = options.yes || !isHuman();
-  const shouldInstall = autoConfirm || (await confirmUpdate(currentVersion, latest));
+  // In agent/non-interactive mode, require explicit `--yes` rather than silently
+  // running a global install the caller didn't confirm.
+  if (isAgent() && !options.yes) {
+    log.info(`Run \`clerk update --yes\` to proceed.`);
+    return;
+  }
+
+  const shouldInstall = options.yes || (await confirmUpdate(currentVersion, latest));
 
   if (!shouldInstall) {
     if (isHuman()) outro("Update cancelled");
@@ -267,7 +298,13 @@ export async function update(options: UpdateOptions): Promise<void> {
     await asdfReshim(plugin);
   }
 
-  await writeUpdateCache({ checkedAt: Date.now(), latest, distTag: channel });
+  // Only refresh the update-notification cache when every attempted install
+  // succeeded — otherwise a partial --all failure would silently mark the
+  // latest version as cached.
+  const anyFailed = results.some((r) => !r.ok);
+  if (!anyFailed) {
+    await writeUpdateCache({ checkedAt: Date.now(), latest, distTag: channel });
+  }
 
   // Summary + skipped installs when --all.
   if (options.all) {
@@ -275,8 +312,9 @@ export async function update(options: UpdateOptions): Promise<void> {
     log.info("Summary:");
     for (const r of results) {
       const icon = r.ok ? green("✓") : yellow("✗");
+      const primaryTag = r.target === primary ? dim(" [primary]") : "";
       const suffix = r.ok ? "" : ` ${yellow(`- ${r.error}`)}`;
-      log.info(`  ${icon} ${formatTarget(r.target)}${suffix}`);
+      log.info(`  ${icon} ${formatTarget(r.target)}${primaryTag}${suffix}`);
     }
     for (const t of others) {
       const skip = whyCantUpdate(t, channel);
@@ -294,7 +332,6 @@ export async function update(options: UpdateOptions): Promise<void> {
   }
 
   if (isHuman()) {
-    const anyFailed = results.some((r) => !r.ok);
     outro(anyFailed ? "Update completed with errors" : `Successfully updated to ${latest}`);
   }
 }
