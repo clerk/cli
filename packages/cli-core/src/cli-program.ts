@@ -17,7 +17,13 @@ import { doctor } from "./commands/doctor/index.ts";
 import { switchEnv } from "./commands/switch-env/index.ts";
 import { openDashboard } from "./commands/open/index.ts";
 import { getEnvironment } from "./lib/config.ts";
-import { setCurrentEnv, isValidEnv, getCurrentEnvName } from "./lib/environment.ts";
+import {
+  setCurrentEnv,
+  isValidEnv,
+  getCurrentEnvName,
+  getAvailableEnvs,
+  getPlapiBaseUrl,
+} from "./lib/environment.ts";
 import { completion, SUPPORTED_SHELLS } from "./commands/completion/index.ts";
 import { FRAMEWORK_NAMES } from "./lib/framework.ts";
 import {
@@ -67,7 +73,15 @@ export function createProgram() {
     // Initialize the active environment from persisted config
     const envName = await getEnvironment();
     if (envName && isValidEnv(envName)) {
-      setCurrentEnv(envName);
+      setCurrentEnv(envName); // logs env + platformApiUrl
+    } else {
+      if (envName) {
+        log.warn(
+          `Saved environment "${envName}" is not available in this binary. Falling back to production.`,
+        );
+        log.warn(`Available environments: ${getAvailableEnvs().join(", ")}`);
+      }
+      log.debug(`env: active environment is "production" (platformApiUrl=${getPlapiBaseUrl()})`);
     }
 
     // Print environment banner to stderr when not on production,

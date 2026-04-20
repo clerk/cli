@@ -3,7 +3,7 @@
  * Thin HTTP wrapper for Clerk's Platform API endpoints.
  */
 
-import { getPlapiBaseUrl } from "./environment.ts";
+import { getPlapiBaseUrl, getCurrentEnvName } from "./environment.ts";
 import { getToken } from "./credential-store.ts";
 import { CliError, PlapiError, ERROR_CODE } from "./errors.ts";
 import { log } from "./log.ts";
@@ -33,14 +33,18 @@ export async function getAuthToken(): Promise<string> {
   const key = process.env.CLERK_PLATFORM_API_KEY;
   if (key) {
     validateKeyPrefix(key, "ak_");
-    log.debug("plapi: using CLERK_PLATFORM_API_KEY for auth");
+    log.debug(
+      `plapi: using CLERK_PLATFORM_API_KEY for auth (env=${getCurrentEnvName()}, target=${getPlapiBaseUrl()})`,
+    );
     return key;
   }
 
   // Fall back to OAuth access token from `clerk auth login`
   const oauthToken = await getToken();
   if (oauthToken) {
-    log.debug("plapi: using OAuth token from credential store for auth");
+    log.debug(
+      `plapi: using OAuth token from credential store for auth (env=${getCurrentEnvName()}, target=${getPlapiBaseUrl()})`,
+    );
     return oauthToken;
   }
 

@@ -40,7 +40,12 @@ function loadFileProfiles(): Record<string, EnvProfileConfig> | undefined {
   for (const path of candidates) {
     try {
       const content = readFileSync(path, "utf-8");
-      return JSON.parse(content);
+      const profiles = JSON.parse(content) as Record<string, EnvProfileConfig>;
+      if (!profilesSourceLogged) {
+        profilesSourceLogged = true;
+        log.debug(`env: profiles from ${path} (${Object.keys(profiles).join(", ")})`);
+      }
+      return profiles;
     } catch {
       continue;
     }
@@ -50,12 +55,29 @@ function loadFileProfiles(): Record<string, EnvProfileConfig> | undefined {
 
 function getProfiles(): Record<string, EnvProfileConfig> {
   if (typeof CLI_ENV_PROFILES !== "undefined" && CLI_ENV_PROFILES) {
+    if (!profilesSourceLogged) {
+      profilesSourceLogged = true;
+      log.debug(
+        `env: profiles from compile-time CLI_ENV_PROFILES (${Object.keys(CLI_ENV_PROFILES).join(", ")})`,
+      );
+    }
     return CLI_ENV_PROFILES;
   }
-  return loadFileProfiles() ?? DEFAULT_PROFILES;
+  const fileProfiles = loadFileProfiles();
+  if (fileProfiles) {
+    return fileProfiles;
+  }
+  if (!profilesSourceLogged) {
+    profilesSourceLogged = true;
+    log.debug(
+      `env: profiles from defaults — no CLI_ENV_PROFILES and no .env-profiles.json (${Object.keys(DEFAULT_PROFILES).join(", ")})`,
+    );
+  }
+  return DEFAULT_PROFILES;
 }
 
 let currentEnvName: string | undefined;
+let profilesSourceLogged = false;
 
 /**
  * Set the active environment. Called during CLI initialization from config,
