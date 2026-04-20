@@ -65,7 +65,7 @@ try {
   }
   const shortSha = shortShaResult.stdout.toString().trim();
   const originalVersion: string = pkg.version;
-  const finalVersion = originalVersion.replace(/[a-f0-9]{40}$/, shortSha);
+  const finalVersion = originalVersion.replace(/\b[a-f0-9]{40}\b/, shortSha);
   if (finalVersion !== originalVersion) {
     pkg.version = finalVersion;
     await Bun.write(WRAPPER_PKG, JSON.stringify(pkg, null, 2) + "\n");

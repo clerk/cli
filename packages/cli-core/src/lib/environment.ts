@@ -31,6 +31,9 @@ const DEFAULT_PROFILES: Record<string, EnvProfileConfig> = {
   },
 };
 
+let currentEnvName: string | undefined;
+let profilesSourceLogged = false;
+
 function loadFileProfiles(): Record<string, EnvProfileConfig> | undefined {
   // Try repo root (cwd) first, then fall back to path relative to this source file
   const candidates = [
@@ -75,9 +78,6 @@ function getProfiles(): Record<string, EnvProfileConfig> {
   }
   return DEFAULT_PROFILES;
 }
-
-let currentEnvName: string | undefined;
-let profilesSourceLogged = false;
 
 /**
  * Set the active environment. Called during CLI initialization from config,
