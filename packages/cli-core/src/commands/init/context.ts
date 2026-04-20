@@ -4,7 +4,9 @@ import { detectFramework, readDeps } from "../../lib/framework.js";
 import type { FrameworkInfo } from "../../lib/framework.js";
 import { findExistingEnvFile } from "../../lib/dotenv.js";
 import type { ProjectContext } from "./frameworks/types.js";
-import type { PackageManager } from "../../lib/package-manager.ts";
+import { detectPackageManager, type PackageManager } from "../../lib/package-manager.ts";
+
+export { detectPackageManager };
 
 export async function fileExists(path: string): Promise<boolean> {
   return Bun.file(path).exists();
@@ -17,21 +19,6 @@ export async function dirExists(path: string): Promise<boolean> {
   } catch {
     return false;
   }
-}
-
-export async function detectPackageManager(cwd: string): Promise<ProjectContext["packageManager"]> {
-  const checks: Array<{ files: string[]; pm: ProjectContext["packageManager"] }> = [
-    { files: ["bun.lockb", "bun.lock"], pm: "bun" },
-    { files: ["yarn.lock"], pm: "yarn" },
-    { files: ["pnpm-lock.yaml"], pm: "pnpm" },
-  ];
-
-  for (const { files, pm } of checks) {
-    for (const file of files) {
-      if (await fileExists(join(cwd, file))) return pm;
-    }
-  }
-  return "npm";
 }
 
 // Re-export for modules that import readDeps from context (e.g., format.ts)

@@ -7,7 +7,7 @@
  *     imports). Delegated to the `clerk skill install` core helpers in
  *     `commands/skill/install.ts`.
  *
- *  2. The framework-pattern skills (`clerk`, `clerk-setup`,
+ *  2. The framework-pattern skills (`clerk-setup`,
  *     `clerk-<framework>-patterns`) ship from the upstream `clerk/skills`
  *     repo and version independently of the CLI.
  *
@@ -24,7 +24,7 @@ import type { ProjectContext } from "./frameworks/types.js";
 import { installClerkSkillCore, resolveSkillsRunner, runSkillsAdd } from "../skill/install.js";
 
 /** Upstream skills installed regardless of framework. */
-const BASE_SKILLS = ["clerk", "clerk-setup"];
+const BASE_SKILLS = ["clerk-setup"];
 
 /** Maps framework dep (from package.json) to the upstream skill name. */
 const FRAMEWORK_SKILL_MAP: Record<string, string> = {

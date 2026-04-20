@@ -34,8 +34,7 @@ import {
   runnerForPackageManager,
 } from "../../lib/runners.js";
 import { isNonEmpty } from "../../lib/helpers/arrays.js";
-import type { PackageManager } from "../../lib/package-manager.js";
-import { detectPackageManager } from "../init/context.js";
+import { detectPackageManager, type PackageManager } from "../../lib/package-manager.js";
 
 import clerkSkillMd from "../../../../../skills/clerk/SKILL.md" with { type: "text" };
 import clerkAuthMd from "../../../../../skills/clerk/references/auth.md" with { type: "text" };

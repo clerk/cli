@@ -109,18 +109,29 @@ describe("withStagedClerkSkill", () => {
   });
 });
 
+const ALL_BUNDLED_FILES = [
+  "clerk/SKILL.md",
+  "clerk/references/auth.md",
+  "clerk/references/recipes.md",
+  "clerk/references/agent-mode.md",
+] as const;
+
 describe("withStagedClerkSkill version rendering", () => {
-  test("substitutes CLI_VERSION into the staged SKILL.md", async () => {
+  test("substitutes CLI_VERSION in every staged file", async () => {
     await withStagedClerkSkill("4.5.6", async (stageDir) => {
-      const skill = await readFile(join(stageDir, "clerk/SKILL.md"), "utf8");
-      expect(skill).not.toContain("{{CLI_VERSION}}");
+      for (const rel of ALL_BUNDLED_FILES) {
+        const content = await readFile(join(stageDir, rel), "utf8");
+        expect(content, rel).not.toContain("{{CLI_VERSION}}");
+      }
     });
   });
 
-  test("passes undefined through as `latest`", async () => {
+  test("resolves undefined version to `latest` in every staged file", async () => {
     await withStagedClerkSkill(undefined, async (stageDir) => {
-      const skill = await readFile(join(stageDir, "clerk/SKILL.md"), "utf8");
-      expect(skill).not.toContain("{{CLI_VERSION}}");
+      for (const rel of ALL_BUNDLED_FILES) {
+        const content = await readFile(join(stageDir, rel), "utf8");
+        expect(content, rel).not.toContain("{{CLI_VERSION}}");
+      }
     });
   });
 });
