@@ -4,6 +4,7 @@
  */
 
 import { AUTH_TIMEOUT_MS, CALLBACK_PATH } from "./constants.ts";
+import { log } from "./log.ts";
 
 function escapeHtml(str: string): string {
   return str
@@ -85,6 +86,7 @@ export function startAuthServer(expectedState: string): AuthServerResult {
   });
 
   const timeout = setTimeout(() => {
+    log.debug(`auth-server: timed out after ${AUTH_TIMEOUT_MS}ms`);
     rejectCallback(new Error("Authentication timed out. Please try again."));
     server.stop();
   }, AUTH_TIMEOUT_MS);
@@ -102,6 +104,7 @@ export function startAuthServer(expectedState: string): AuthServerResult {
 
           if (error) {
             const description = url.searchParams.get("error_description") || error;
+            log.debug(`auth-server: OAuth error in callback — ${error}: ${description}`);
             rejectCallback(new Error(`OAuth error: ${description}`));
             clearTimeout(timeout);
             setTimeout(() => server.stop(), 100);
@@ -111,6 +114,7 @@ export function startAuthServer(expectedState: string): AuthServerResult {
           }
 
           if (state !== expectedState) {
+            log.debug(`auth-server: state mismatch (expected=${expectedState}, got=${state})`);
             rejectCallback(new Error("Invalid state parameter. Possible CSRF attack."));
             clearTimeout(timeout);
             setTimeout(() => server.stop(), 100);
@@ -121,6 +125,7 @@ export function startAuthServer(expectedState: string): AuthServerResult {
           }
 
           if (!code) {
+            log.debug("auth-server: callback received with no authorization code");
             rejectCallback(new Error("No authorization code received."));
             clearTimeout(timeout);
             setTimeout(() => server.stop(), 100);
@@ -130,6 +135,7 @@ export function startAuthServer(expectedState: string): AuthServerResult {
             });
           }
 
+          log.debug("auth-server: callback received with valid code and state");
           resolveCallback({ code });
           clearTimeout(timeout);
           setTimeout(() => server.stop(), 100);
@@ -145,6 +151,8 @@ export function startAuthServer(expectedState: string): AuthServerResult {
       });
     },
   });
+
+  log.debug(`auth-server: listening on 127.0.0.1:${server.port} for ${CALLBACK_PATH}`);
 
   return {
     port: server.port!,
