@@ -87,11 +87,11 @@ export async function init(options: InitOptions = {}) {
 
   await enrichProjectContext(ctx);
 
-  const keyless = await resolveKeylessMode(bootstrap, ctx);
+  const authed = await isAuthenticated();
+  const keyless = resolveKeylessMode(bootstrap, ctx, authed);
   ctx.keyless = keyless;
 
-  const skipAuth =
-    !keyless && bootstrap != null && overrides.skipConfirm && !(await isAuthenticated());
+  const skipAuth = !keyless && bootstrap != null && overrides.skipConfirm && !authed;
 
   if (!keyless && !skipAuth) {
     bar();
@@ -212,25 +212,31 @@ function printBootstrapManualSetupInfo(frameworkName: string): void {
 
 // --- Keyless ---
 
-async function resolveKeylessMode(
+function resolveKeylessMode(
   bootstrap: BootstrapResult | null,
   ctx: ProjectContext,
-): Promise<boolean> {
+  authed: boolean,
+): boolean {
+  // Auto-keyless is scoped to bootstrap (new-project) flows only. For existing
+  // projects, fall through to the authenticated flow so `clerk init` still
+  // runs `authenticateAndLink` and pulls real keys — even when signed out the
+  // user gets a login prompt rather than being silently dropped into keyless
+  // (which would skip `env pull` and could overwrite permissive middleware).
+  if (!bootstrap) return false;
+
   if (ctx.framework.supportsKeyless) {
     // Authenticated (OAuth token or CLERK_PLATFORM_API_KEY) — use the
     // authenticated flow so real keys get pulled into .env. Otherwise fall
     // back to keyless: the app runs on auto-generated dev keys and the user
     // can connect their account later via `clerk auth login`.
-    return !(await isAuthenticated());
+    return !authed;
   }
 
-  if (bootstrap) {
-    log.info(
-      dim(
-        `\n  ${ctx.framework.name} requires API keys — keyless mode is not yet supported for this framework.`,
-      ),
-    );
-  }
+  log.info(
+    dim(
+      `\n  ${ctx.framework.name} requires API keys — keyless mode is not yet supported for this framework.`,
+    ),
+  );
   return false;
 }
 

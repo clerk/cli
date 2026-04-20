@@ -346,7 +346,11 @@ describe("init", () => {
     expect(heuristics.printKeylessInfo).not.toHaveBeenCalled();
   });
 
-  test("existing repo with keyless framework auto-selects keyless when not signed in", async () => {
+  test("existing repo with keyless framework uses authenticated flow when not signed in", async () => {
+    // Keyless auto-selection is scoped to bootstrap (new-project) flows. On an
+    // existing repo, an unauthenticated re-run should fall through to the
+    // authenticated flow (which prompts login) rather than silently skip
+    // `env pull` and scaffold permissive middleware.
     setup();
 
     const keylessCtx = {
@@ -359,13 +363,20 @@ describe("init", () => {
       actions: [{ type: "create", path: "middleware.ts", content: "", description: "" }],
       postInstructions: [],
     });
+    spyOn(loginMod, "login").mockResolvedValue({
+      userId: "user_1",
+      email: "test@test.com",
+    } as never);
 
     await init({});
 
     expect(bootstrapMod.promptAndBootstrap).not.toHaveBeenCalled();
     expect(heuristics.isAuthenticated).toHaveBeenCalled();
-    expect(heuristics.printKeylessInfo).toHaveBeenCalled();
-    expect(linkMod.link).not.toHaveBeenCalled();
+    expect(heuristics.printKeylessInfo).not.toHaveBeenCalled();
+    // Unauthenticated + existing repo → login + link run via authenticateAndLink.
+    expect(loginMod.login).toHaveBeenCalledWith({ showNextSteps: false });
+    expect(linkMod.link).toHaveBeenCalled();
+    expect(pullMod.pull).toHaveBeenCalled();
   });
 
   test("passes frameworkOverride to bootstrap when provided", async () => {

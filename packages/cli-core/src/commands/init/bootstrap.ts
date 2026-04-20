@@ -135,7 +135,7 @@ export async function confirmOverwrite(cwd: string): Promise<void> {
 export type BootstrapOverrides = {
   /** Non-interactive mode: require --framework, auto-resolve PM/name, skip all prompts. */
   skipConfirm: boolean;
-  /** User already opted into bootstrapping (e.g. via --starter) — skip the "create a new one?" confirm without implying non-interactive mode. */
+  /** User already opted into bootstrapping (e.g. via --starter) — skip the "create a new one?" confirm without implying non-interactive mode. Ignored when `skipConfirm` is true (which already implies implicit bootstrap). */
   implicitBootstrap?: boolean;
   pmOverride?: PackageManager;
   nameOverride?: string;
