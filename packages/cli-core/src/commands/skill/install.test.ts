@@ -2,6 +2,7 @@ import { test, expect, describe } from "bun:test";
 import { existsSync } from "node:fs";
 import { readFile, stat } from "node:fs/promises";
 import { join } from "node:path";
+import YAML from "yaml";
 import { buildSkillsArgs, renderSkillVersionPlaceholder, withStagedClerkSkill } from "./install.ts";
 
 describe("buildSkillsArgs", () => {
@@ -132,6 +133,27 @@ describe("withStagedClerkSkill version rendering", () => {
         const content = await readFile(join(stageDir, rel), "utf8");
         expect(content, rel).not.toContain("{{CLI_VERSION}}");
       }
+    });
+  });
+});
+
+describe("bundled SKILL.md frontmatter", () => {
+  // Regression guard: the upstream `skills` CLI parses SKILL.md frontmatter as
+  // strict YAML and silently drops skills whose frontmatter fails to parse.
+  // An unquoted `: ` inside the description (e.g. `raw HTTP: it handles`)
+  // triggers "Nested mappings are not allowed in compact mappings" and makes
+  // `clerk skill install` fail with "No valid skills found".
+  test("parses as YAML with name and description strings", async () => {
+    await withStagedClerkSkill(undefined, async (stageDir) => {
+      const content = await readFile(join(stageDir, "clerk/SKILL.md"), "utf8");
+      const frontmatter = content.match(/^---\n([\s\S]*?)\n---/)?.[1];
+      expect(frontmatter, "SKILL.md must have YAML frontmatter").toBeDefined();
+
+      const parsed = YAML.parse(frontmatter!);
+      expect(typeof parsed.name).toBe("string");
+      expect(typeof parsed.description).toBe("string");
+      expect(parsed.name.length).toBeGreaterThan(0);
+      expect(parsed.description.length).toBeGreaterThan(0);
     });
   });
 });

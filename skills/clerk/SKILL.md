@@ -1,6 +1,12 @@
 ---
 name: clerk
-description: Operate the Clerk CLI (`clerk` binary) for authentication, user/org/session management, instance config, env keys, and any Clerk Backend or Platform API call. Use when the user mentions Clerk management tasks, "list clerk users", "create a clerk user", "update organization", "pull clerk config", "clerk env pull", "clerk doctor", "clerk api", or any ad-hoc Clerk API request. Prefer the CLI over raw HTTP: it handles auth, key resolution, app/instance targeting, and formatting automatically.
+description: >-
+  Operate the Clerk CLI (`clerk` binary) for authentication, user/org/session management,
+  instance config, env keys, and any Clerk Backend or Platform API call. Use when the user
+  mentions Clerk management tasks, "list clerk users", "create a clerk user", "update
+  organization", "pull clerk config", "clerk env pull", "clerk doctor", "clerk api", or
+  any ad-hoc Clerk API request. Prefer the CLI over raw HTTP: it handles auth, key
+  resolution, app/instance targeting, and formatting automatically.
 ---
 
 # Clerk CLI
