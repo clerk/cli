@@ -11,6 +11,7 @@ import { dirname } from "node:path";
 import { mkdir, chmod, unlink } from "node:fs/promises";
 import { CREDENTIALS_FILE } from "./constants.ts";
 import { getCurrentEnvName } from "./environment.ts";
+import { log } from "./log.ts";
 
 export const KEYCHAIN_SERVICE = "clerk-cli";
 export const KEYCHAIN_ACCOUNT = "oauth-access-token";
@@ -43,22 +44,35 @@ async function getKeyring(): Promise<typeof import("@napi-rs/keyring") | null> {
 async function keyringStore(token: string): Promise<boolean> {
   const mod = await getKeyring();
   if (!mod) return false;
+  const account = keychainAccount();
+  log.debug(
+    `credentials: storing token in keyring (service=${KEYCHAIN_SERVICE}, account=${account})`,
+  );
   try {
-    const entry = new mod.Entry(KEYCHAIN_SERVICE, keychainAccount());
+    const entry = new mod.Entry(KEYCHAIN_SERVICE, account);
     entry.setPassword(token);
     return true;
   } catch {
+    log.debug("credentials: failed to store token in keyring");
     return false;
   }
 }
 
 async function keyringGet(): Promise<string | null> {
   const mod = await getKeyring();
-  if (!mod) return null;
+  if (!mod) {
+    log.debug("credentials: keyring not available");
+    return null;
+  }
+  const account = keychainAccount();
+  log.debug(`credentials: checking keyring (service=${KEYCHAIN_SERVICE}, account=${account})`);
   try {
-    const entry = new mod.Entry(KEYCHAIN_SERVICE, keychainAccount());
-    return entry.getPassword();
+    const entry = new mod.Entry(KEYCHAIN_SERVICE, account);
+    const token = entry.getPassword();
+    log.debug(`credentials: ${token ? "found token in keyring" : "no token in keyring"}`);
+    return token;
   } catch {
+    log.debug("credentials: keyring lookup failed");
     return null;
   }
 }
@@ -66,8 +80,12 @@ async function keyringGet(): Promise<string | null> {
 async function keyringDelete(): Promise<boolean> {
   const mod = await getKeyring();
   if (!mod) return false;
+  const account = keychainAccount();
+  log.debug(
+    `credentials: deleting token from keyring (service=${KEYCHAIN_SERVICE}, account=${account})`,
+  );
   try {
-    const entry = new mod.Entry(KEYCHAIN_SERVICE, keychainAccount());
+    const entry = new mod.Entry(KEYCHAIN_SERVICE, account);
     entry.deletePassword();
     return true;
   } catch {
@@ -76,22 +94,32 @@ async function keyringDelete(): Promise<boolean> {
 }
 
 async function fileStore(token: string): Promise<void> {
-  const file = credentialsFile();
-  await mkdir(dirname(file), { recursive: true });
-  await Bun.write(file, token);
-  await chmod(file, 0o600);
+  const path = credentialsFile();
+  log.debug(`credentials: storing token in file ${path}`);
+  await mkdir(dirname(path), { recursive: true });
+  await Bun.write(path, token);
+  await chmod(path, 0o600);
 }
 
 async function fileGet(): Promise<string | null> {
-  const file = Bun.file(credentialsFile());
-  if (!(await file.exists())) return null;
+  const path = credentialsFile();
+  log.debug(`credentials: checking file ${path}`);
+  const file = Bun.file(path);
+  if (!(await file.exists())) {
+    log.debug("credentials: credentials file not found");
+    return null;
+  }
   const content = await file.text();
-  return content.trim() || null;
+  const token = content.trim() || null;
+  log.debug(`credentials: ${token ? "found token in file" : "credentials file is empty"}`);
+  return token;
 }
 
 async function fileDelete(): Promise<void> {
+  const path = credentialsFile();
   try {
-    await unlink(credentialsFile());
+    log.debug(`credentials: deleting credentials file ${path}`);
+    await unlink(path);
   } catch {
     // File doesn't exist, nothing to delete
   }

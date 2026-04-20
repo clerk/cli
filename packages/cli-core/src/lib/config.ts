@@ -9,6 +9,7 @@ import { CONFIG_FILE } from "./constants.ts";
 import { getCurrentEnvName } from "./environment.ts";
 import { getGitRepoIdentifier, getGitNormalizedRemote } from "./git.ts";
 import { CliError, ERROR_CODE } from "./errors.ts";
+import { log } from "./log.ts";
 
 let overrideConfigFile: string | undefined;
 
@@ -69,7 +70,9 @@ function migrateRawConfig(raw: Record<string, unknown>): ClerkConfig {
 }
 
 export async function readConfig(): Promise<ClerkConfig> {
-  const file = Bun.file(configFile());
+  const path = configFile();
+  log.debug(`config: reading ${path}`);
+  const file = Bun.file(path);
   if (!(await file.exists())) return defaultConfig();
   try {
     const raw = (await file.json()) as Record<string, unknown>;
@@ -80,8 +83,10 @@ export async function readConfig(): Promise<ClerkConfig> {
 }
 
 export async function writeConfig(config: ClerkConfig): Promise<void> {
-  await mkdir(dirname(configFile()), { recursive: true });
-  await Bun.write(configFile(), JSON.stringify(config, null, 2) + "\n");
+  const path = configFile();
+  log.debug(`config: writing ${path}`);
+  await mkdir(dirname(path), { recursive: true });
+  await Bun.write(path, JSON.stringify(config, null, 2) + "\n");
 }
 
 export async function getAuth(): Promise<Auth | undefined> {

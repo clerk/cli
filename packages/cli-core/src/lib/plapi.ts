@@ -6,6 +6,7 @@
 import { getPlapiBaseUrl } from "./environment.ts";
 import { getToken } from "./credential-store.ts";
 import { CliError, PlapiError, ERROR_CODE } from "./errors.ts";
+import { log } from "./log.ts";
 
 /**
  * Validate that a key has the expected prefix and suggest the correct key type
@@ -32,12 +33,16 @@ export async function getAuthToken(): Promise<string> {
   const key = process.env.CLERK_PLATFORM_API_KEY;
   if (key) {
     validateKeyPrefix(key, "ak_");
+    log.debug("plapi: using CLERK_PLATFORM_API_KEY for auth");
     return key;
   }
 
   // Fall back to OAuth access token from `clerk auth login`
   const oauthToken = await getToken();
-  if (oauthToken) return oauthToken;
+  if (oauthToken) {
+    log.debug("plapi: using OAuth token from credential store for auth");
+    return oauthToken;
+  }
 
   throw new CliError("Not authenticated. Run `clerk auth login` or set CLERK_PLATFORM_API_KEY", {
     code: ERROR_CODE.AUTH_REQUIRED,
@@ -60,6 +65,7 @@ export async function fetchInstanceConfigSchema(
       url.searchParams.append("keys", key);
     }
   }
+  log.debug(`plapi: GET ${url}`);
   const response = await fetch(url, {
     headers: {
       Authorization: `Bearer ${token}`,
@@ -69,6 +75,7 @@ export async function fetchInstanceConfigSchema(
 
   if (!response.ok) {
     const body = await response.text();
+    log.debug(`plapi: ${response.status} GET ${url} — ${body}`);
     throw new PlapiError(response.status, body, url.toString());
   }
 
@@ -90,6 +97,7 @@ export async function fetchInstanceConfig(
       url.searchParams.append("keys", key);
     }
   }
+  log.debug(`plapi: GET ${url}`);
   const response = await fetch(url, {
     headers: {
       Authorization: `Bearer ${token}`,
@@ -99,6 +107,7 @@ export async function fetchInstanceConfig(
 
   if (!response.ok) {
     const body = await response.text();
+    log.debug(`plapi: ${response.status} GET ${url} — ${body}`);
     throw new PlapiError(response.status, body, url.toString());
   }
 
@@ -122,6 +131,7 @@ export async function fetchApplication(applicationId: string): Promise<Applicati
   const token = await getAuthToken();
   const url = new URL(`/v1/platform/applications/${applicationId}`, getPlapiBaseUrl());
   url.searchParams.set("include_secret_keys", "true");
+  log.debug(`plapi: GET ${url}`);
   const response = await fetch(url, {
     headers: {
       Authorization: `Bearer ${token}`,
@@ -131,6 +141,7 @@ export async function fetchApplication(applicationId: string): Promise<Applicati
 
   if (!response.ok) {
     const body = await response.text();
+    log.debug(`plapi: ${response.status} GET ${url} — ${body}`);
     throw new PlapiError(response.status, body, url.toString());
   }
 
@@ -152,6 +163,7 @@ async function sendInstanceConfig(
   if (options?.destructive) {
     url.searchParams.set("destructive", "true");
   }
+  log.debug(`plapi: ${method} ${url}`);
   const response = await fetch(url, {
     method,
     headers: {
@@ -164,6 +176,7 @@ async function sendInstanceConfig(
 
   if (!response.ok) {
     const body = await response.text();
+    log.debug(`plapi: ${response.status} ${method} ${url} — ${body}`);
     throw new PlapiError(response.status, body, url.toString());
   }
 
@@ -187,6 +200,7 @@ export const patchInstanceConfig = (
 export async function createApplication(name: string): Promise<Application> {
   const token = await getAuthToken();
   const url = new URL("/v1/platform/applications", getPlapiBaseUrl());
+  log.debug(`plapi: POST ${url}`);
   const response = await fetch(url, {
     method: "POST",
     headers: {
@@ -199,6 +213,7 @@ export async function createApplication(name: string): Promise<Application> {
 
   if (!response.ok) {
     const body = await response.text();
+    log.debug(`plapi: ${response.status} POST ${url} — ${body}`);
     throw new PlapiError(response.status, body, url.toString());
   }
 
@@ -208,6 +223,7 @@ export async function createApplication(name: string): Promise<Application> {
 export async function listApplications(): Promise<Application[]> {
   const token = await getAuthToken();
   const url = new URL("/v1/platform/applications", getPlapiBaseUrl());
+  log.debug(`plapi: GET ${url}`);
   const response = await fetch(url, {
     headers: {
       Authorization: `Bearer ${token}`,
@@ -217,6 +233,7 @@ export async function listApplications(): Promise<Application[]> {
 
   if (!response.ok) {
     const body = await response.text();
+    log.debug(`plapi: ${response.status} GET ${url} — ${body}`);
     throw new PlapiError(response.status, body, url.toString());
   }
 

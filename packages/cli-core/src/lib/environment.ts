@@ -11,6 +11,7 @@
 
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { log } from "./log.ts";
 
 export interface EnvProfileConfig {
   oauthClientId: string;
@@ -67,6 +68,9 @@ export function setCurrentEnv(name: string): void {
     throw new Error(`Unknown environment "${name}". Available environments: ${available}`);
   }
   currentEnvName = name;
+  const profile = profiles[name]!;
+  const platformApiUrl = process.env.CLERK_PLATFORM_API_URL ?? profile.platformApiUrl;
+  log.debug(`env: active environment is "${name}" (platformApiUrl=${platformApiUrl})`);
 }
 
 /** Get the name of the active environment. Defaults to "production". */
