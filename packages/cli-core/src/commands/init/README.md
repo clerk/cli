@@ -45,11 +45,11 @@ Use `--prompt` to output a setup prompt for an AI agent without running init.
 
 1. **`--prompt`**: outputs a framework-specific prompt, then exits
 2. Gathers project context (framework, router variant, TypeScript, `src/` directory, package manager)
-3. **Human mode**: determines auth mode:
-   - If already authenticated and linked: uses authenticated mode automatically
-   - If authenticated but not linked: uses authenticated mode (runs `clerk link`)
-   - If not authenticated: asks user — "Continue with temporary keys (connect your account later)" or "Log in to an existing Clerk account"
-   - With `--yes` and not authenticated: skips authentication (connect your account later), including for non-keyless frameworks during bootstrap
+3. Determines auth mode from credential presence (no user prompt):
+   - **Authenticated** (OAuth token or `CLERK_PLATFORM_API_KEY` set): uses the authenticated flow — runs `clerk link` if not already linked and pulls real API keys into `.env` at the end
+   - **Bootstrap + keyless-capable framework + not authenticated**: automatically uses keyless mode — the app runs on auto-generated dev keys and the user can connect a Clerk account later with `clerk auth login`
+   - **Bootstrap + non-keyless framework + not authenticated** (with `--yes` or agent mode): skips authentication and prints manual setup instructions (run `clerk auth login` / `clerk link` / `clerk env pull` when ready)
+   - **Existing project + not authenticated**: runs the authenticated flow, which triggers an interactive login so real keys can be pulled
 4. **Authenticated mode only**: authenticates via `clerk auth login` (skipped if already authenticated) and links the project via `clerk link` (skipped if already linked)
 5. Displays detected framework and variant
 6. Detects existing auth libraries (NextAuth, Auth0, Supabase, Firebase, Passport, Better Auth, Kinde) and shows migration guidance
@@ -83,7 +83,7 @@ Detects the project's framework from `package.json` dependencies (checked top-to
 | `express`               | Express        | `@clerk/express`              | `CLERK_PUBLISHABLE_KEY`             | No      |
 | `fastify`               | Fastify        | `@clerk/fastify`              | `CLERK_PUBLISHABLE_KEY`             | No      |
 
-The **Keyless** column indicates whether the framework's Clerk SDK supports keyless mode (auto-generated temporary dev keys). Frameworks without keyless support require API keys and always force authentication during `clerk init`, even with `--yes`.
+The **Keyless** column indicates whether the framework's Clerk SDK supports keyless mode (auto-generated temporary dev keys). Keyless auto-selection only applies during bootstrap (new projects) — re-running `clerk init` in an existing project always uses the authenticated flow (prompting login when signed out) so real keys can be pulled via `clerk env pull`. During bootstrap of a non-keyless framework with `--yes` and no credentials, `clerk init` skips authentication and prints manual setup instructions instead of blocking on a login prompt.
 
 Package manager is detected from lock files: `bun.lockb`/`bun.lock` → bun, `yarn.lock` → yarn, `pnpm-lock.yaml` → pnpm, else npm.
 

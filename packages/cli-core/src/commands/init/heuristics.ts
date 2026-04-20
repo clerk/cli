@@ -136,6 +136,21 @@ export async function getAuthenticatedEmail(): Promise<string | null> {
   }
 }
 
+/**
+ * True if the user has any form of credentials configured locally — either a
+ * stored OAuth token or a `CLERK_PLATFORM_API_KEY` env var. Used to pick
+ * between the authenticated and keyless flows in `clerk init`.
+ *
+ * This is a pure credential-presence check: it does not hit the network, so
+ * an expired token or a Clerk API outage won't silently demote the user into
+ * keyless. Token validity is resolved later by the actual auth/link/pull
+ * calls, which surface real errors instead of swallowing them.
+ */
+export async function isAuthenticated(): Promise<boolean> {
+  if (process.env.CLERK_PLATFORM_API_KEY) return true;
+  return (await getToken()) != null;
+}
+
 export function printKeylessInfo(): void {
   const lines = [
     "\n  Your app will work immediately — Clerk generates temporary dev keys automatically.",

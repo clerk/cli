@@ -1,6 +1,6 @@
 import { test, expect, describe, spyOn, afterAll } from "bun:test";
 import { BOOTSTRAP_REGISTRY } from "./bootstrap-registry.ts";
-import { resolvePackageManager } from "./bootstrap.ts";
+import { promptAndBootstrap, resolvePackageManager } from "./bootstrap.ts";
 
 function entryFor(dep: string) {
   const entry = BOOTSTRAP_REGISTRY.find((e) => e.dep === dep);
@@ -164,5 +164,28 @@ describe("resolvePackageManager", () => {
     whichSpy.mockReturnValue(null);
 
     expect(resolvePackageManager()).toBe("npm");
+  });
+});
+
+describe("promptAndBootstrap", () => {
+  test("throws a usage-exit CliError when skipConfirm is set without a framework override", async () => {
+    await expect(
+      promptAndBootstrap("/tmp", undefined, { skipConfirm: true }),
+    ).rejects.toMatchObject({
+      name: "CliError",
+      exitCode: 2,
+      message: expect.stringContaining("Non-interactive mode requires --framework"),
+    });
+  });
+
+  test("guard still fires when implicitBootstrap is combined with skipConfirm", async () => {
+    // --starter -y path: implicitBootstrap + skipConfirm. Guard still applies.
+    await expect(
+      promptAndBootstrap("/tmp", undefined, { skipConfirm: true, implicitBootstrap: true }),
+    ).rejects.toMatchObject({
+      name: "CliError",
+      exitCode: 2,
+      message: expect.stringContaining("--framework"),
+    });
   });
 });
