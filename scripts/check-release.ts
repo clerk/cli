@@ -7,7 +7,7 @@ const GITHUB_OUTPUT = process.env.GITHUB_OUTPUT;
 
 const pkg = await Bun.file(WRAPPER_PKG_PATH).json();
 const version: string = pkg.version;
-const published = isPublished("clerk", version);
+const published = await isPublished("clerk", version);
 
 if (published) {
   console.log(`Version ${version} is already published — skipping stable release.`);

@@ -67,16 +67,18 @@ console.log(
 
 await rm(DIST_DIR, { recursive: true, force: true });
 
-for (const target of targets) {
-  const name = packageName(target.name);
-  if (isPublished(name, version)) {
-    console.log(`Skipping ${name}@${version} (already published)`);
-    continue;
-  }
-  console.log(`Publishing ${name}@${version}...`);
-  const dir = await generatePlatformPackage(target, version);
-  publish(dir, { dryRun, tag });
-}
+await Promise.all(
+  targets.map(async (target) => {
+    const name = packageName(target.name);
+    if (await isPublished(name, version)) {
+      console.log(`Skipping ${name}@${version} (already published)`);
+      return;
+    }
+    console.log(`Publishing ${name}@${version}...`);
+    const dir = await generatePlatformPackage(target, version);
+    await publish(dir, { dryRun, tag });
+  }),
+);
 
 // Build wrapper package.json for publishing: add optionalDependencies from targets and remove private flag.
 // This mutation is intentional — the repo omits optionalDependencies while the published package includes them.
@@ -92,7 +94,7 @@ try {
   await Bun.write(WRAPPER_PKG_PATH, JSON.stringify(wrapperPkg, null, 2) + "\n");
 
   const wrapperName = "clerk";
-  if (isPublished(wrapperName, version)) {
+  if (await isPublished(wrapperName, version)) {
     console.log(`Skipping ${wrapperName}@${version} (already published)`);
   } else {
     console.log(`Publishing ${wrapperName}@${version}...`);
@@ -122,9 +124,9 @@ if (!tag && !dryRun) {
       stdio: ["ignore", "pipe", "pipe"],
     });
     if (localTagCheck.exitCode !== 0) {
-      run(["git", "tag", tagName]);
+      await run(["git", "tag", tagName]);
     }
-    run(["git", "push", "origin", tagName]);
+    await run(["git", "push", "origin", tagName]);
   }
 
   const releaseViewCheck = Bun.spawnSync(["gh", "release", "view", tagName], {
@@ -134,7 +136,7 @@ if (!tag && !dryRun) {
     console.log(`GitHub Release for ${tagName} already exists, skipping.`);
   } else {
     console.log(`Creating GitHub Release for ${tagName}...`);
-    run(["gh", "release", "create", tagName, "--generate-notes"]);
+    await run(["gh", "release", "create", tagName, "--generate-notes"]);
   }
 }
 
