@@ -70,12 +70,19 @@ export function filterChoices<T extends { name: string }>(
 /**
  * Calculate how many items sit above/below the visible page window.
  *
- * Mirrors `usePagination`'s `usePointerPosition` logic for `loop: false`
- * assuming every item renders as a single line. This holds for all current
- * CLI choices; long labels that wrap in narrow terminals will cause the
- * counts to drift from the actual rendered window. A line-aware calculation
- * would require access to `breakLines` and terminal width inside the render
- * function, which is deferred until a real need arises.
+ * Approximates `usePagination`'s `usePointerPosition` logic for
+ * `loop: false`, assuming every item renders as a single line.
+ *
+ * Known imprecisions:
+ * - For odd `pageSize` values (e.g. 7, middle=3), the counts may be off
+ *   by ±1 near the boundary where the window starts scrolling, because
+ *   `usePagination` only slides once the active item would cross out of
+ *   the visible range, whereas this function slides at `active > middle`.
+ * - Long labels that wrap in narrow terminals produce multi-line rendered
+ *   items, causing the counts to drift from the actual rendered window.
+ *
+ * These are cosmetic — the indicator text ("3 more above") may be off by
+ * one in edge cases but the prompt remains fully functional.
  */
 export function scrollBounds(
   totalItems: number,
@@ -131,10 +138,6 @@ export function withScrollIndicators(
 
 function isSelectable<T>(item: T | Separator): item is T & { disabled?: boolean | string } {
   return !Separator.isSeparator(item) && !(item as { disabled?: boolean | string }).disabled;
-}
-
-function isNavigable<T>(item: T | Separator): boolean {
-  return !Separator.isSeparator(item);
 }
 
 type NormalizedChoice<Value> = {
@@ -262,7 +265,7 @@ const rawSelect = createPrompt<unknown, SelectConfig<unknown>>((config, done) =>
         let next = active;
         do {
           next = (next + offset + items.length) % items.length;
-        } while (!isNavigable(items[next]!));
+        } while (!isSelectable(items[next]!));
         setActive(next);
       }
     } else if (isNumberKey(key) && !Number.isNaN(Number(rl.line))) {
