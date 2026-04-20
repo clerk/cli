@@ -10,7 +10,7 @@
  */
 
 import { createReadStream } from "node:fs";
-import { confirm as inquirerConfirm, select as inquirerSelect } from "@inquirer/prompts";
+import { confirm as inquirerConfirm } from "@inquirer/prompts";
 
 /** OS-specific path to the controlling terminal's input stream. */
 const TTY_PATH = process.platform === "win32" ? "CONIN$" : "/dev/tty";
@@ -24,23 +24,6 @@ export async function confirm(config: { message: string; default?: boolean }): P
   const ttyInput = process.stdin.isTTY ? undefined : createReadStream(TTY_PATH);
   try {
     return await inquirerConfirm(config, ttyInput ? { input: ttyInput } : undefined);
-  } finally {
-    ttyInput?.close();
-  }
-}
-
-/**
- * Like `select()` from @inquirer/prompts, but with the same piped-stdin
- * fallback as {@link confirm} above.
- */
-export async function select<T>(config: {
-  message: string;
-  choices: ReadonlyArray<{ name: string; value: T; description?: string }>;
-  default?: T;
-}): Promise<T> {
-  const ttyInput = process.stdin.isTTY ? undefined : createReadStream(TTY_PATH);
-  try {
-    return await inquirerSelect<T>(config, ttyInput ? { input: ttyInput } : undefined);
   } finally {
     ttyInput?.close();
   }

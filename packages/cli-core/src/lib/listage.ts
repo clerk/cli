@@ -190,7 +190,7 @@ type SelectChoice<Value> = {
   disabled?: boolean | string;
 };
 
-type SelectConfig<Value> = {
+export type SelectConfig<Value> = {
   message: string;
   choices: ReadonlyArray<Separator | Value | SelectChoice<Value>>;
   pageSize?: number;
@@ -383,7 +383,7 @@ type SearchChoice<Value> = {
   disabled?: boolean | string;
 };
 
-type SearchConfig<Value> = {
+export type SearchConfig<Value> = {
   message: string;
   source: (
     term: string | undefined,

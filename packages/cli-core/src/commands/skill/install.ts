@@ -25,7 +25,7 @@ import { dim } from "../../lib/color.js";
 import { isHuman } from "../../mode.js";
 import { log } from "../../lib/log.js";
 import { DEV_CLI_VERSION, resolveCliVersion } from "../../lib/version.js";
-import { select } from "../../lib/prompts.js";
+import { select } from "../../lib/listage.js";
 import {
   type Runner,
   detectAvailableRunners,
