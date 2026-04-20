@@ -120,13 +120,15 @@ export async function init(options: InitOptions = {}) {
     printKeylessInfo();
   }
 
-  if (bootstrap) {
-    printBootstrapNextSteps(bootstrap, keyless);
-  }
-
   if (options.skills !== false) {
     bar();
     await installSkills(ctx.cwd, ctx.framework.dep, ctx.packageManager, overrides.skipConfirm);
+  }
+
+  // Next steps print last so they stay on screen as the final thing the user sees.
+  if (bootstrap) {
+    bar();
+    printBootstrapNextSteps(bootstrap, keyless);
   }
 
   outro("Done");
