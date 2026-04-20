@@ -153,6 +153,33 @@ describe("ownerOfBinary", () => {
       ),
     ).toBe("bun");
   });
+
+  // Windows path normalization is only exercised when process.platform is
+  // "win32" — the helper no-ops on POSIX. The CI matrix runs Windows
+  // separately, so these cases guard against regressions there.
+  test("matches win32 extended-length realpath against plain install dir (windows-only)", () => {
+    if (process.platform !== "win32") return;
+    const win = { npm: "C:\\Users\\x\\AppData\\Roaming\\npm\\node_modules" } as const;
+    // Bun's realpath can prepend \\?\ for deep trees; install dir may not have it.
+    expect(
+      ownerOfBinary(
+        "\\\\?\\C:\\Users\\x\\AppData\\Roaming\\npm\\node_modules\\@clerk\\cli-win32-x64\\bin\\clerk.exe",
+        win,
+      ),
+    ).toBe("npm");
+  });
+
+  test("matches win32 UNC realpath against install dir (windows-only)", () => {
+    if (process.platform !== "win32") return;
+    const win = { npm: "\\\\server\\share\\npm\\node_modules" } as const;
+    // \\?\UNC\server\share\... is the extended-length form of \\server\share\...
+    expect(
+      ownerOfBinary(
+        "\\\\?\\UNC\\server\\share\\npm\\node_modules\\@clerk\\cli-win32-x64\\bin\\clerk.exe",
+        win,
+      ),
+    ).toBe("npm");
+  });
 });
 
 // ── findClerkOnPath ──────────────────────────────────────────────────────────

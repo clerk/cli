@@ -79,7 +79,11 @@ async function resolveTargets(
 
 // ── Install execution ────────────────────────────────────────────────────────
 
-async function runGlobalInstall(installer: Installer, packageSpec: string): Promise<void> {
+async function runGlobalInstall(
+  installer: Installer,
+  packageSpec: string,
+  targetVersion: string,
+): Promise<void> {
   let result;
   switch (installer) {
     case "bun":
@@ -98,17 +102,43 @@ async function runGlobalInstall(installer: Installer, packageSpec: string): Prom
       result = await Bun.$`npm install -g ${packageSpec}`.quiet().nothrow();
       break;
   }
-  if (result.exitCode === 0) return;
+  if (result.exitCode !== 0) {
+    const stderr = result.stderr.toString();
+    const hint = globalInstallCommand(installer, packageSpec);
+    if (stderr.includes("EACCES") || stderr.includes("permission denied")) {
+      throw new CliError(`Permission denied. Try: sudo ${hint}`);
+    }
+    if (result.exitCode === 127 || stderr.includes("not found")) {
+      throw new CliError(`${installer} not found on PATH.`);
+    }
+    throw new CliError(`Update failed: ${stderr.trim() || "unknown error"}`);
+  }
 
-  const stderr = result.stderr.toString();
-  const hint = globalInstallCommand(installer, packageSpec);
-  if (stderr.includes("EACCES") || stderr.includes("permission denied")) {
-    throw new CliError(`Permission denied. Try: sudo ${hint}`);
+  // Homebrew installs whatever version its tap currently publishes, ignoring
+  // the packageSpec pin. When the tap lags the npm release, `brew upgrade`
+  // exits 0 but leaves the old version in place. Verify post-install and
+  // surface the mismatch so the user isn't left with a stale binary believing
+  // the update succeeded.
+  if (installer === "homebrew") {
+    const installed = await installedBrewVersion();
+    if (installed && installed !== targetVersion) {
+      throw new CliError(
+        `Homebrew tap is stale: installed ${installed}, expected ${targetVersion}. ` +
+          `Update via another installer (e.g. \`npm install -g ${packageSpec}\`) ` +
+          `or wait for the tap to catch up.`,
+      );
+    }
   }
-  if (result.exitCode === 127 || stderr.includes("not found")) {
-    throw new CliError(`${installer} not found on PATH.`);
-  }
-  throw new CliError(`Update failed: ${stderr.trim() || "unknown error"}`);
+}
+
+/** Returns the currently installed Homebrew clerk version, or null on failure. */
+async function installedBrewVersion(): Promise<string | null> {
+  const result = await Bun.$`brew list --versions ${UPDATE_PACKAGE_NAME}`.quiet().nothrow();
+  if (result.exitCode !== 0) return null;
+  // Output shape: "clerk 0.8.4 0.8.5" (package name + one or more versions).
+  // The last token is the most recently installed version that brew will use.
+  const tokens = result.stdout.toString().trim().split(/\s+/);
+  return tokens.length >= 2 ? (tokens.at(-1) ?? null) : null;
 }
 
 // ── Skip predicates ──────────────────────────────────────────────────────────
@@ -144,12 +174,14 @@ function reportOtherInstalls(others: Target[], channel: string): void {
 
 /** Hint for invalidating the current shell's command-hash cache after update. */
 function hashHint(): string | null {
-  // Windows shells (cmd.exe, PowerShell) don't cache command paths, and `$SHELL`
-  // is typically unset — don't emit a POSIX hint in that case.
+  // Windows native shells (cmd.exe, PowerShell) don't cache command paths.
+  // On Windows, $SHELL is typically unset, so nothing below would match anyway —
+  // but return early to be explicit.
   if (process.platform === "win32") return null;
   const shell = (process.env.SHELL ?? "").toLowerCase();
-  if (shell.endsWith("/fish") || shell.endsWith("fish.exe")) return null; // auto-rehashes
-  if (shell.endsWith("/pwsh") || shell.endsWith("powershell.exe")) return null; // no cache
+  if (shell.endsWith("/fish")) return null; // auto-rehashes
+  // pwsh can run on Linux/macOS via $SHELL=/usr/bin/pwsh; no command-hash cache.
+  if (shell.endsWith("/pwsh")) return null;
   if (shell.endsWith("/tcsh") || shell.endsWith("/csh")) {
     return "If `clerk` still points to the old binary, run `rehash` or open a new shell.";
   }
@@ -158,15 +190,24 @@ function hashHint(): string | null {
 }
 
 /**
- * Detect invocation via a package runner (npx/bunx/pnpm dlx). The binary lives
- * in a runner cache (e.g. `~/.npm/_npx/<hash>/...`) not on PATH, so `ownerOfBinary`
- * can't identify it — but we can recognize the runner from env vars it sets.
+ * Detect invocation via a package runner (npx/bunx). The binary lives in a
+ * runner cache (e.g. `~/.npm/_npx/<hash>/...`) not on PATH, so `ownerOfBinary`
+ * can't identify it.
+ *
+ * Detection is execpath-only: `npm_config_user_agent` alone is unreliable
+ * because it's set for *every* npm/bun invocation (e.g. `npm run build` that
+ * internally calls `clerk update` would look like npx). The execpath — the
+ * actual binary that launched the process — is the only signal that
+ * distinguishes a runner from a regular script invocation.
  */
 function detectPackageRunner(): "npx" | "bunx" | null {
-  const ua = (process.env.npm_config_user_agent ?? "").toLowerCase();
-  const execPath = (process.env.npm_execpath ?? "").toLowerCase();
-  if (execPath.includes("npx") || ua.startsWith("npm/")) return "npx";
-  if (ua.startsWith("bun/")) return "bunx";
+  const execPath = (process.env.npm_execpath ?? process.argv0 ?? "").toLowerCase();
+  // Match the runner basename, not any substring (so `/home/npxyz/node` doesn't
+  // misfire; `_npx/<hash>/…/npx-cli.js` and `…/npx` both end with `npx` after
+  // stripping the optional `.js`).
+  const stripped = execPath.replace(/\.(js|cjs|mjs|exe|cmd)$/, "");
+  if (/(^|[\\/])npx$/.test(stripped) || execPath.includes("/_npx/")) return "npx";
+  if (/(^|[\\/])bunx$/.test(stripped)) return "bunx";
   return null;
 }
 
@@ -215,9 +256,22 @@ export async function update(options: UpdateOptions): Promise<void> {
   log.info(`  Target:  ${formatTarget(primary)}`);
   log.blank();
 
-  // Primary target can't be updated by us: refuse (don't guess a different installer).
+  // Build the ordered updatable list. Without --all, only the primary counts;
+  // with --all, include every on-PATH install whose owner we can update.
   const primarySkip = whyCantUpdate(primary, channel);
-  if (primarySkip) {
+  const toUpdate: Target[] = [];
+  if (!primarySkip) toUpdate.push(primary);
+  if (options.all) {
+    for (const t of others) {
+      if (whyCantUpdate(t, channel) === null) toUpdate.push(t);
+    }
+  }
+
+  // Nothing we can update: emit the refuse-path guidance keyed off the primary
+  // (still the most useful target to talk about), then exit. The --all branch
+  // shares this exit only when *every* install is blocked, which is the
+  // intended refuse behavior.
+  if (toUpdate.length === 0) {
     const runner = detectPackageRunner();
     if (primary.owner === null && runner) {
       // npx/bunx runs land in a runner cache that isn't on PATH. There's
@@ -244,6 +298,19 @@ export async function update(options: UpdateOptions): Promise<void> {
     return;
   }
 
+  // --all with a blocked primary: tell the user before we proceed that we're
+  // skipping their shell's effective `clerk` and updating other installs
+  // instead. Without this, a user who runs `--all --channel canary` on a
+  // Homebrew-primary machine would see no reason their `clerk -v` stays the
+  // same until they read the summary.
+  if (primarySkip && options.all) {
+    log.warn(`Skipping primary (${formatTarget(primary)}): ${primarySkip}`);
+    log.info(
+      `Proceeding with ${toUpdate.length} other install${toUpdate.length === 1 ? "" : "s"}.`,
+    );
+    log.blank();
+  }
+
   // In agent/non-interactive mode, require explicit `--yes` rather than silently
   // running a global install the caller didn't confirm.
   if (isAgent() && !options.yes) {
@@ -260,14 +327,6 @@ export async function update(options: UpdateOptions): Promise<void> {
 
   const packageSpec = `${UPDATE_PACKAGE_NAME}@${latest}`;
 
-  // Build the target list: always primary first, optionally every other updatable install.
-  const toUpdate: Target[] = [primary];
-  if (options.all) {
-    for (const t of others) {
-      if (whyCantUpdate(t, channel) === null) toUpdate.push(t);
-    }
-  }
-
   const results: Array<{ target: Target; ok: boolean; error?: string }> = [];
   for (const t of toUpdate) {
     // `owner` is non-null here because whyCantUpdate returned null for it.
@@ -275,7 +334,7 @@ export async function update(options: UpdateOptions): Promise<void> {
     try {
       await withSpinner(
         `Installing ${packageSpec} via ${owner} (${t.displayPath})...`,
-        () => runGlobalInstall(owner, packageSpec),
+        () => runGlobalInstall(owner, packageSpec, latest),
         `Updated ${owner}: ${t.displayPath}`,
       );
       results.push({ target: t, ok: true });
@@ -315,6 +374,13 @@ export async function update(options: UpdateOptions): Promise<void> {
       const primaryTag = r.target === primary ? dim(" [primary]") : "";
       const suffix = r.ok ? "" : ` ${yellow(`- ${r.error}`)}`;
       log.info(`  ${icon} ${formatTarget(r.target)}${primaryTag}${suffix}`);
+    }
+    // Skipped installs. Include the primary when it was blocked (so users
+    // aren't left wondering why `clerk -v` didn't change after --all).
+    if (primarySkip) {
+      log.info(
+        `  ${yellow("⚠")} ${formatTarget(primary)}${dim(" [primary]")} ${yellow(`- skipped: ${primarySkip}`)}`,
+      );
     }
     for (const t of others) {
       const skip = whyCantUpdate(t, channel);

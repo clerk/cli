@@ -236,19 +236,35 @@ export function ownerOfBinary(
   if (isHomebrewPath(binaryPath)) return "homebrew";
 
   // Windows paths are case-insensitive and can mix forward/back slashes after
-  // realpath (e.g. `C:\…` vs `c:\…`). Normalize both sides before comparison.
-  const normalize = (p: string): string =>
-    process.platform === "win32" ? p.toLowerCase().replace(/\//g, sep) : p;
-  const target = normalize(binaryPath);
+  // realpath (e.g. `C:\…` vs `c:\…`). They can also come back with the Win32
+  // extended-length prefix `\\?\` (realpath returns this for deep trees), or
+  // the UNC variant `\\?\UNC\server\share\…` which is the same as
+  // `\\server\share\…`. Normalize all of these before comparison.
+  const target = normalizeWindowsPath(binaryPath);
 
   let best: { installer: Installer; len: number } | null = null;
   for (const [pm, dir] of Object.entries(installDirs) as Array<[Installer, string]>) {
     if (!dir) continue;
-    const prefix = normalize(dir) + sep;
+    const normalizedDir = normalizeWindowsPath(dir);
+    const prefix = normalizedDir + sep;
     if (!target.startsWith(prefix)) continue;
-    if (!best || dir.length > best.len) best = { installer: pm, len: dir.length };
+    if (!best || normalizedDir.length > best.len) {
+      best = { installer: pm, len: normalizedDir.length };
+    }
   }
   return best?.installer ?? null;
+}
+
+/**
+ * Strips Win32 namespace prefixes (`\\?\` and `\\?\UNC\`), unifies slashes to
+ * the platform separator, and lowercases on Windows. No-op on POSIX.
+ */
+function normalizeWindowsPath(p: string): string {
+  if (process.platform !== "win32") return p;
+  let out = p;
+  if (out.startsWith("\\\\?\\UNC\\")) out = "\\\\" + out.slice(8);
+  else if (out.startsWith("\\\\?\\")) out = out.slice(4);
+  return out.toLowerCase().replace(/\//g, sep);
 }
 
 // ── Install command strings ─────────────────────────────────────────────────
