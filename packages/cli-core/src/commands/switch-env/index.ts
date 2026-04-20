@@ -36,6 +36,10 @@ export async function switchEnv(environmentArg: string | undefined): Promise<voi
         })),
         default: current,
       });
+    } else if (available.length <= 1) {
+      log.info(`Current environment: ${current}`);
+      log.info("Only one environment configured — nothing to switch to.");
+      return;
     } else {
       log.info(`Current environment: ${current}`);
       log.info(`Available environments: ${available.join(", ")}`);

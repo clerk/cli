@@ -80,24 +80,7 @@ export const promptsStubs = {
   editor: async () => "{}",
 };
 
-export const listageStubs = {
-  select: async () => undefined,
-  search: async () => undefined,
-  filterChoices: <T extends { name: string }>(choices: T[], term: string | undefined): T[] => {
-    if (!term) return choices;
-    const lower = term.toLowerCase();
-    return choices.filter((c: T) => c.name.toLowerCase().includes(lower));
-  },
-  Separator: class Separator {
-    separator: string;
-    constructor(separator = "──────") {
-      this.separator = separator;
-    }
-    static isSeparator(item: unknown): item is Separator {
-      return item instanceof Separator;
-    }
-  },
-};
+export { listageStubs } from "./listage-stubs.ts";
 
 export const tokenExchangeStubs = {
   exchangeCodeForToken: async () => ({}),

@@ -6,14 +6,11 @@
  * because stdin is at EOF. These helpers open the controlling terminal
  * as a fallback input so prompts can still read from the user's terminal.
  *
- * Uses /dev/tty on Unix and CONIN$ on Windows.
+ * Uses the shared ttyContext from lib/listage.ts for consistent error handling.
  */
 
-import { createReadStream } from "node:fs";
 import { confirm as inquirerConfirm } from "@inquirer/prompts";
-
-/** OS-specific path to the controlling terminal's input stream. */
-const TTY_PATH = process.platform === "win32" ? "CONIN$" : "/dev/tty";
+import { ttyContext } from "./listage.ts";
 
 /**
  * Like `confirm()` from @inquirer/prompts, but works even when stdin
@@ -21,10 +18,10 @@ const TTY_PATH = process.platform === "win32" ? "CONIN$" : "/dev/tty";
  * controlling terminal.
  */
 export async function confirm(config: { message: string; default?: boolean }): Promise<boolean> {
-  const ttyInput = process.stdin.isTTY ? undefined : createReadStream(TTY_PATH);
+  const tty = ttyContext();
   try {
-    return await inquirerConfirm(config, ttyInput ? { input: ttyInput } : undefined);
+    return await inquirerConfirm(config, tty ? { input: tty.input } : undefined);
   } finally {
-    ttyInput?.close();
+    tty?.close();
   }
 }

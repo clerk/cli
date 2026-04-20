@@ -39,7 +39,7 @@ import type { PartialDeep } from "@inquirer/type";
 
 const TTY_PATH = process.platform === "win32" ? "CONIN$" : "/dev/tty";
 
-function ttyContext(): { input: NodeJS.ReadableStream; close: () => void } | undefined {
+export function ttyContext(): { input: NodeJS.ReadableStream; close: () => void } | undefined {
   if (process.stdin.isTTY) return undefined;
   try {
     const input = createReadStream(TTY_PATH);
@@ -120,8 +120,8 @@ export function withScrollIndicators(
   effectivePageSize: number,
 ): string {
   const { above, below } = scrollBounds(totalItems, active, effectivePageSize);
-  const top = above > 0 ? styleText("dim", ` ↑ ${above} more above`) : " ";
-  const bottom = below > 0 ? styleText("dim", ` ↓ ${below} more below`) : " ";
+  const top = above > 0 ? styleText("dim", ` ${figures.arrowUp} ${above} more above`) : " ";
+  const bottom = below > 0 ? styleText("dim", ` ${figures.arrowDown} ${below} more below`) : " ";
   return [top, page, bottom].join("\n");
 }
 
@@ -492,7 +492,12 @@ const rawSearch = createPrompt<unknown, SearchConfig<unknown>>((config, done) =>
       rl.clearLine(0);
       rl.write(selectedChoice.name);
       setSearchTerm(selectedChoice.name);
-    } else if (status !== "loading" && (isUpKey(key) || isDownKey(key))) {
+    } else if (
+      status !== "loading" &&
+      searchResults.length > 0 &&
+      bounds.first !== -1 &&
+      (isUpKey(key) || isDownKey(key))
+    ) {
       rl.clearLine(0);
       if ((isUpKey(key) && active !== bounds.first) || (isDownKey(key) && active !== bounds.last)) {
         const offset = isUpKey(key) ? -1 : 1;

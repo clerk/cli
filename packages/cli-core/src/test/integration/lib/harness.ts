@@ -167,8 +167,7 @@ mock.module("../../../lib/listage.ts", () => ({
   search: dequeuePrompt("search"),
   filterChoices: <T extends { name: string }>(choices: T[], term: string | undefined): T[] => {
     if (!term) return choices;
-    const lower = term.toLowerCase();
-    return choices.filter((c: T) => c.name.toLowerCase().includes(lower));
+    return choices.filter((c: T) => c.name.toLowerCase().includes(term.toLowerCase()));
   },
   Separator: class Separator {
     separator: string;
@@ -179,6 +178,7 @@ mock.module("../../../lib/listage.ts", () => ({
       return item instanceof Separator;
     }
   },
+  ttyContext: () => undefined,
 }));
 
 mock.module(
