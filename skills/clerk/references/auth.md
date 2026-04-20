@@ -38,7 +38,7 @@ Set `CLERK_PLATFORM_API_KEY` for CI and scripted agent usage. Use `clerk auth lo
 
 ## Project linking
 
-`clerk link` stores a mapping from your repo to a Clerk application in `~/.clerk/config.json`. The key is the normalized git remote URL (e.g., `github.com/org/repo`), which means the link is shared across all clones and worktrees of the same repo automatically.
+`clerk link` stores a mapping from your repo to a Clerk application in the CLI config file (run `clerk doctor --verbose` to see the resolved path; override with `CLERK_CONFIG_DIR`). The key is the normalized git remote URL (e.g., `github.com/org/repo`), which means the link is shared across all clones and worktrees of the same repo automatically.
 
 When you run a command without `--app`/`--instance`:
 
@@ -106,6 +106,7 @@ Hits `GET /oauth/userinfo` with the stored token and prints the email. Exits wit
 | `CLERK_BACKEND_API_URL`  | Override Backend API base URL.                                  |
 | `CLERK_PLATFORM_API_URL` | Override Platform API base URL.                                 |
 | `CLERK_OAUTH_BASE_URL`   | Override OAuth base URL (advanced / internal).                  |
+| `CLERK_CONFIG_DIR`       | Override config, cache, and credential directory (advanced).    |
 
 ## Common auth failure modes
 

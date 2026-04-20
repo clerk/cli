@@ -10,7 +10,7 @@ clerk api ls users            # filter by keyword
 clerk api ls --platform       # Platform API (account-level)
 ```
 
-The bundled catalog is cached under `~/.clerk/cache/` for 1 hour; run `clerk api ls` to force a refresh if needed.
+The bundled catalog is cached locally for 1 hour; run `clerk api ls` to force a refresh if needed.
 
 ## Users
 
