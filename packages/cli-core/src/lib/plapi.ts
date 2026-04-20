@@ -80,6 +80,17 @@ async function plapiFetch(method: string, url: URL, init?: { body?: string }): P
   return response;
 }
 
+/** Normalize and append `keys` query params, splitting comma-separated values. */
+function appendKeys(url: URL, keys?: string[]): void {
+  if (!keys?.length) return;
+  for (const key of keys) {
+    for (const k of key.split(",")) {
+      const trimmed = k.trim();
+      if (trimmed) url.searchParams.append("keys", trimmed);
+    }
+  }
+}
+
 export async function fetchInstanceConfigSchema(
   applicationId: string,
   instanceId: string,
@@ -89,11 +100,7 @@ export async function fetchInstanceConfigSchema(
     `/v1/platform/applications/${applicationId}/instances/${instanceId}/config/schema`,
     getPlapiBaseUrl(),
   );
-  if (keys?.length) {
-    for (const key of keys) {
-      url.searchParams.append("keys", key);
-    }
-  }
+  appendKeys(url, keys);
   const response = await plapiFetch("GET", url);
   return response.json() as Promise<Record<string, unknown>>;
 }
@@ -107,11 +114,7 @@ export async function fetchInstanceConfig(
     `/v1/platform/applications/${applicationId}/instances/${instanceId}/config`,
     getPlapiBaseUrl(),
   );
-  if (keys?.length) {
-    for (const key of keys) {
-      url.searchParams.append("keys", key);
-    }
-  }
+  appendKeys(url, keys);
   const response = await plapiFetch("GET", url);
   return response.json() as Promise<Record<string, unknown>>;
 }
