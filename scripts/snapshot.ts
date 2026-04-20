@@ -1,5 +1,6 @@
 import { join } from "node:path";
 import { parseArgs } from "node:util";
+import { isPublished } from "./lib/npm.ts";
 
 const CHANGESET_CONFIG = join(import.meta.dir, "../.changeset/config.json");
 const WRAPPER_PKG = join(import.meta.dir, "../packages/cli/package.json");
@@ -50,7 +51,36 @@ try {
   }
 
   const pkg = await Bun.file(WRAPPER_PKG).json();
-  console.log(`Snapshot version: ${pkg.version}`);
+
+  // Changesets substitutes `{commit}` in `prereleaseTemplate` with the full
+  // 40-char SHA from `git rev-parse HEAD`. Rewrite it to the short SHA so the
+  // published version string stays readable (e.g. `0.8.6-snapshot.a1b2c3d`).
+  const shortShaResult = Bun.spawnSync(["git", "rev-parse", "--short", "HEAD"], {
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  if (shortShaResult.exitCode !== 0) {
+    throw new Error(
+      `git rev-parse --short HEAD failed: ${shortShaResult.stderr.toString().trim()}`,
+    );
+  }
+  const shortSha = shortShaResult.stdout.toString().trim();
+  const originalVersion: string = pkg.version;
+  const finalVersion = originalVersion.replace(/[a-f0-9]{40}$/, shortSha);
+  if (finalVersion !== originalVersion) {
+    pkg.version = finalVersion;
+    await Bun.write(WRAPPER_PKG, JSON.stringify(pkg, null, 2) + "\n");
+  }
+
+  // Bail early if this commit has already been snapshotted. The build, sign,
+  // and test jobs would otherwise run for several minutes only for npm to
+  // reject the final publish as a duplicate.
+  if (await isPublished("clerk", finalVersion)) {
+    throw new Error(
+      `clerk@${finalVersion} is already published. Push a new commit or re-run with a different tag (e.g. \`!snapshot retry\`).`,
+    );
+  }
+
+  console.log(`Snapshot version: ${finalVersion}`);
 } finally {
   // Restore config
   Bun.spawnSync(["git", "checkout", "HEAD", "--", CHANGESET_CONFIG], {
