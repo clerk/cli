@@ -164,7 +164,7 @@ export async function resolveProfile(cwd: string): Promise<
   const config = await readConfig();
 
   // Try normalized remote URL first (cross-clone matching)
-  const normalizedRemote = await getGitNormalizedRemote();
+  const normalizedRemote = await getGitNormalizedRemote(cwd);
   if (normalizedRemote && config.profiles[normalizedRemote]) {
     return {
       path: normalizedRemote,
@@ -177,7 +177,7 @@ export async function resolveProfile(cwd: string): Promise<
   const fallbackFields = normalizedRemote ? { availableRemote: normalizedRemote } : {};
 
   // Try git repo identifier (shared across worktrees, backward compat)
-  const repoId = await getGitRepoIdentifier();
+  const repoId = await getGitRepoIdentifier(cwd);
   if (repoId && config.profiles[repoId]) {
     return {
       path: repoId,

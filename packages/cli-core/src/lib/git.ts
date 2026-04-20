@@ -14,7 +14,15 @@ async function getGitRepoInfo(cwd?: string): Promise<GitRepoInfo | undefined> {
   const key = cwd ?? process.cwd();
   if (cache.has(key)) return cache.get(key);
 
-  const result = await $`git rev-parse --show-toplevel --git-common-dir`.cwd(key).quiet().nothrow();
+  let result;
+  try {
+    result = await $`git rev-parse --show-toplevel --git-common-dir`.cwd(key).quiet().nothrow();
+  } catch {
+    // Directory doesn't exist or other error (e.g., ENOENT)
+    cache.set(key, undefined);
+    return undefined;
+  }
+
   if (result.exitCode !== 0) {
     cache.set(key, undefined);
     return undefined;
@@ -29,8 +37,14 @@ async function getGitRepoInfo(cwd?: string): Promise<GitRepoInfo | undefined> {
   }
 
   // Fetch remote URL (non-blocking since rev-parse already succeeded)
-  const remoteResult = await $`git remote get-url origin`.cwd(key).quiet().nothrow();
-  const rawRemote = remoteResult.exitCode === 0 ? remoteResult.text().trim() : undefined;
+  let rawRemote: string | undefined;
+  try {
+    const remoteResult = await $`git remote get-url origin`.cwd(key).quiet().nothrow();
+    rawRemote = remoteResult.exitCode === 0 ? remoteResult.text().trim() : undefined;
+  } catch {
+    // Directory error or git command failed
+    rawRemote = undefined;
+  }
 
   const info = {
     toplevel,
