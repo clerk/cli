@@ -133,10 +133,13 @@ export async function getInstallerPackageDirs(): Promise<Partial<Record<Installe
 }
 
 async function queryNpmPackageDir(): Promise<string | null> {
-  const result = await Bun.$`npm prefix -g`.quiet().nothrow();
+  // `npm root -g` reports the actual global node_modules dir on both platforms
+  // (POSIX: `<prefix>/lib/node_modules`; Windows: `<prefix>\node_modules`, no
+  // `lib` segment). Constructing the path manually breaks on Windows.
+  const result = await Bun.$`npm root -g`.quiet().nothrow();
   if (result.exitCode !== 0) return null;
-  const prefix = result.stdout.toString().trim();
-  return prefix ? await safeRealpath(join(prefix, "lib", "node_modules")) : null;
+  const dir = result.stdout.toString().trim();
+  return dir ? await safeRealpath(dir) : null;
 }
 
 async function queryPnpmPackageDir(): Promise<string | null> {

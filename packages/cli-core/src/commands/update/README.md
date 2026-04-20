@@ -36,21 +36,21 @@ A machine can host multiple `clerk` installs (bun + asdf-npm + Homebrew is commo
 
 ## Version managers (asdf, nvm)
 
-- **nvm**: fully supported without special handling. nvm uses real symlinks, so `realpath` chases them into `<nvm-version>/lib/node_modules/clerk/bin/clerk`, which matches the active `npm prefix -g`; `ownerOfBinary` returns `"npm"`.
+- **nvm**: fully supported without special handling. nvm uses real symlinks, so `realpath` chases them into `<nvm-version>/lib/node_modules/clerk/bin/clerk`, which matches the active `npm root -g`; `ownerOfBinary` returns `"npm"`.
 - **asdf**: handled via `resolveAsdfShim()`. asdf shims (`~/.asdf/shims/<name>`) are bash scripts, not symlinks, so `realpath` returns the shim itself. The update command calls `asdf which <name>` to find the underlying binary (e.g. `~/.asdf/installs/nodejs/22.16.0/bin/clerk`), realpaths it into the asdf-managed node's `lib/node_modules`, and treats it as `"npm"` with a post-install `asdf reshim <plugin>`. Honors `$ASDF_DATA_DIR` when set. If `asdf` isn't on PATH the shim path is returned unchanged and ownership falls back to `null`.
 
 ## Installer detection
 
 Detection uses path-based ownership (see `lib/installer.ts`). For a given binary path:
 
-| Check                                                 | Result                    |
-| ----------------------------------------------------- | ------------------------- |
-| Contains `/Cellar/clerk/`                             | `homebrew`                |
-| Under `<npm prefix>/lib/node_modules`                 | `npm`                     |
-| Under `<bun install dir>/install/global/node_modules` | `bun`                     |
-| Under `pnpm root -g`                                  | `pnpm`                    |
-| Under `<yarn global dir>/node_modules`                | `yarn`                    |
-| Nothing matches                                       | `null` (refuse to update) |
+| Check                                                                                          | Result                    |
+| ---------------------------------------------------------------------------------------------- | ------------------------- |
+| Contains `/Cellar/clerk/`                                                                      | `homebrew`                |
+| Under `npm root -g` (`<prefix>/lib/node_modules` on POSIX, `<prefix>\node_modules` on Windows) | `npm`                     |
+| Under `<bun install dir>/install/global/node_modules`                                          | `bun`                     |
+| Under `pnpm root -g`                                                                           | `pnpm`                    |
+| Under `<yarn global dir>/node_modules`                                                         | `yarn`                    |
+| Nothing matches                                                                                | `null` (refuse to update) |
 
 When multiple PMs' dirs nest, the longest prefix wins. `null` is the signal to refuse rather than silently install via the wrong installer.
 
