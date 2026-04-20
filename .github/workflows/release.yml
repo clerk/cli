@@ -403,6 +403,7 @@ jobs:
       version: ${{ needs.snapshot.outputs.version }}
       ref: ${{ needs.snapshot.outputs.sha }}
       artifact-prefix: clerk-snapshot
+    secrets: inherit
 
   snapshot-sign-macos:
     needs: [snapshot, snapshot-build]
