@@ -26,6 +26,8 @@ import {
 } from "./lib/environment.ts";
 import { completion, SUPPORTED_SHELLS } from "./commands/completion/index.ts";
 import { FRAMEWORK_NAMES } from "./lib/framework.ts";
+import { PACKAGE_MANAGERS } from "./lib/package-manager.ts";
+import { skillInstall } from "./commands/skill/install.ts";
 import {
   CliError,
   UserAbortError,
@@ -112,7 +114,7 @@ export function createProgram() {
       createOption(
         "--pm <manager>",
         "Package manager to use (skips prompt/auto-detection)",
-      ).choices(["bun", "pnpm", "yarn", "npm"]),
+      ).choices(PACKAGE_MANAGERS),
     )
     .option("--name <project-name>", "Project name for --starter (skips prompt)")
     .option("--app <id>", "Application ID to link (skips interactive picker)")
@@ -494,6 +496,36 @@ Tutorial — enable completions for your shell:
     $ clerk completion powershell >> $PROFILE                       # Permanent`,
     )
     .action(completion);
+
+  const skill = program
+    .command("skill")
+    .description("Manage the bundled Clerk CLI agent skill")
+    .setExamples([
+      { command: "clerk skill install", description: "Install the clerk agent skill" },
+      {
+        command: "clerk skill install -y",
+        description: "Install non-interactively (auto-detect agents, global scope)",
+      },
+    ]);
+
+  skill
+    .command("install")
+    .description("Install the bundled clerk agent skill")
+    .option("-y, --yes", "Skip prompts and run the `skills` CLI unattended")
+    .addOption(
+      createOption("--pm <manager>", "Package manager hint for runner detection").choices(
+        PACKAGE_MANAGERS,
+      ),
+    )
+    .setExamples([
+      { command: "clerk skill install", description: "Install with an interactive runner picker" },
+      { command: "clerk skill install -y", description: "Install unattended" },
+      {
+        command: "clerk skill install --pm bun",
+        description: "Force bunx as the runner",
+      },
+    ])
+    .action(skillInstall);
 
   program
     .command("update")

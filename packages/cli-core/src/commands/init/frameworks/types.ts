@@ -1,11 +1,12 @@
 import type { FrameworkInfo } from "../../../lib/framework.js";
+import type { PackageManager } from "../../../lib/package-manager.js";
 
 export interface ProjectContext {
   cwd: string;
   framework: FrameworkInfo;
   typescript: boolean;
   srcDir: boolean;
-  packageManager: "bun" | "yarn" | "pnpm" | "npm";
+  packageManager: PackageManager;
   existingClerk: boolean;
   deps: Record<string, string>;
   envFile: string;

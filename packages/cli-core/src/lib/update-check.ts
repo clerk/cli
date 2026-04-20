@@ -10,6 +10,7 @@ import {
 } from "./constants.ts";
 import { loggedFetch } from "./fetch.ts";
 import { log } from "./log.ts";
+import { DEV_CLI_VERSION } from "./version.ts";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -37,11 +38,11 @@ export function getUpdateChannel(): string {
 // ── Version helpers ───────────────────────────────────────────────────────────
 
 export function getCurrentVersion(): string {
-  return typeof CLI_VERSION !== "undefined" ? CLI_VERSION : "0.0.0-dev";
+  return typeof CLI_VERSION !== "undefined" ? CLI_VERSION : DEV_CLI_VERSION;
 }
 
 export function isDevVersion(version: string): boolean {
-  return version === "0.0.0-dev";
+  return version === DEV_CLI_VERSION;
 }
 
 export function compareSemver(a: string, b: string): number {

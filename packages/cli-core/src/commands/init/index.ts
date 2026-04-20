@@ -32,7 +32,7 @@ import {
   type BootstrapResult,
 } from "./bootstrap.js";
 import type { ProjectContext } from "./frameworks/types.js";
-import type { PackageManager } from "./bootstrap-registry.js";
+import type { PackageManager } from "../../lib/package-manager.ts";
 
 type InitOptions = {
   /** Framework to set up (skips auto-detection). */
