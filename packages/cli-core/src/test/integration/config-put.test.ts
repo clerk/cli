@@ -38,7 +38,8 @@ test.each([{ mode: "human" }, { mode: "agent" }])(
 
     // GET returns a different config so hasConfigChanges detects changes
     http.stub(async (_url, init) => {
-      const body = init?.method ? fullConfig : { session: { lifetime: 3600 } };
+      const body =
+        init?.method && init.method !== "GET" ? fullConfig : { session: { lifetime: 3600 } };
       return new Response(JSON.stringify(body), { status: 200 });
     });
 
@@ -63,7 +64,8 @@ test("config put requires confirmation in human mode without --yes", async () =>
 
   // GET returns different config so changes are detected
   http.stub(async (_url, init) => {
-    const body = init?.method ? fullConfig : { session: { lifetime: 604800 } };
+    const body =
+      init?.method && init.method !== "GET" ? fullConfig : { session: { lifetime: 604800 } };
     return new Response(JSON.stringify(body), { status: 200 });
   });
 

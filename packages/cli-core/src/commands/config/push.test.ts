@@ -171,11 +171,11 @@ describe("config push", () => {
     let capturedMethod = "";
     let capturedBody = "";
     stubFetch(async (_input, init) => {
-      if (init?.method) {
+      if (init?.method && init.method !== "GET") {
         capturedMethod = init.method;
         capturedBody = init.body as string;
       }
-      const body = init?.method ? mockResponse : currentConfig;
+      const body = init?.method && init.method !== "GET" ? mockResponse : currentConfig;
       return new Response(JSON.stringify(body), { status: 200 });
     });
 
@@ -194,7 +194,7 @@ describe("config push", () => {
     let capturedUrl = "";
     stubFetch(async (input, init) => {
       const url = input.toString();
-      if (init?.method) {
+      if (init?.method && init.method !== "GET") {
         capturedUrl = url;
         return new Response(JSON.stringify(mockResponse), { status: 200 });
       }
@@ -221,8 +221,8 @@ describe("config push", () => {
   test("patch reads config from --file", async () => {
     let capturedBody = "";
     stubFetch(async (_input, init) => {
-      if (init?.method) capturedBody = init.body as string;
-      const body = init?.method ? mockResponse : currentConfig;
+      if (init?.method && init.method !== "GET") capturedBody = init.body as string;
+      const body = init?.method && init.method !== "GET" ? mockResponse : currentConfig;
       return new Response(JSON.stringify(body), { status: 200 });
     });
 
@@ -266,8 +266,8 @@ describe("config push", () => {
   test("put sends PUT method", async () => {
     let capturedMethod = "";
     stubFetch(async (_input, init) => {
-      if (init?.method) capturedMethod = init.method;
-      const body = init?.method ? mockResponse : currentConfig;
+      if (init?.method && init.method !== "GET") capturedMethod = init.method;
+      const body = init?.method && init.method !== "GET" ? mockResponse : currentConfig;
       return new Response(JSON.stringify(body), { status: 200 });
     });
 
@@ -297,8 +297,8 @@ describe("config push", () => {
   test("put strips config_version from payload before sending", async () => {
     let capturedBody = "";
     stubFetch(async (_input, init) => {
-      if (init?.method) capturedBody = init.body as string;
-      const body = init?.method ? mockResponse : currentConfig;
+      if (init?.method && init.method !== "GET") capturedBody = init.body as string;
+      const body = init?.method && init.method !== "GET" ? mockResponse : currentConfig;
       return new Response(JSON.stringify(body), { status: 200 });
     });
 
@@ -318,8 +318,8 @@ describe("config push", () => {
   test("patch strips config_version from payload before sending", async () => {
     let capturedBody = "";
     stubFetch(async (_input, init) => {
-      if (init?.method) capturedBody = init.body as string;
-      const body = init?.method ? mockResponse : currentConfig;
+      if (init?.method && init.method !== "GET") capturedBody = init.body as string;
+      const body = init?.method && init.method !== "GET" ? mockResponse : currentConfig;
       return new Response(JSON.stringify(body), { status: 200 });
     });
 
@@ -341,8 +341,8 @@ describe("config push", () => {
   test("patch sends ?destructive=true when --destructive is set", async () => {
     let capturedUrl = "";
     stubFetch(async (input, init) => {
-      if (init?.method) capturedUrl = input.toString();
-      const body = init?.method ? mockResponse : currentConfig;
+      if (init?.method && init.method !== "GET") capturedUrl = input.toString();
+      const body = init?.method && init.method !== "GET" ? mockResponse : currentConfig;
       return new Response(JSON.stringify(body), { status: 200 });
     });
 
@@ -363,8 +363,8 @@ describe("config push", () => {
   test("put sends ?destructive=true when --destructive is set", async () => {
     let capturedUrl = "";
     stubFetch(async (input, init) => {
-      if (init?.method) capturedUrl = input.toString();
-      const body = init?.method ? mockResponse : currentConfig;
+      if (init?.method && init.method !== "GET") capturedUrl = input.toString();
+      const body = init?.method && init.method !== "GET" ? mockResponse : currentConfig;
       return new Response(JSON.stringify(body), { status: 200 });
     });
 
@@ -385,8 +385,8 @@ describe("config push", () => {
   test("does not send ?destructive=true by default", async () => {
     let capturedUrl = "";
     stubFetch(async (input, init) => {
-      if (init?.method) capturedUrl = input.toString();
-      const body = init?.method ? mockResponse : currentConfig;
+      if (init?.method && init.method !== "GET") capturedUrl = input.toString();
+      const body = init?.method && init.method !== "GET" ? mockResponse : currentConfig;
       return new Response(JSON.stringify(body), { status: 200 });
     });
 
@@ -405,8 +405,8 @@ describe("config push", () => {
   test("patch skips API call when payload matches current config", async () => {
     let mutatingCallMade = false;
     stubFetch(async (_input, init) => {
-      if (init?.method) mutatingCallMade = true;
-      const body = init?.method ? mockResponse : currentConfig;
+      if (init?.method && init.method !== "GET") mutatingCallMade = true;
+      const body = init?.method && init.method !== "GET" ? mockResponse : currentConfig;
       return new Response(JSON.stringify(body), { status: 200 });
     });
 
@@ -425,7 +425,7 @@ describe("config push", () => {
   test("put skips API call when payload matches current config", async () => {
     let mutatingCallMade = false;
     stubFetch(async (_input, init) => {
-      if (init?.method) mutatingCallMade = true;
+      if (init?.method && init.method !== "GET") mutatingCallMade = true;
       return new Response(JSON.stringify(currentConfig), { status: 200 });
     });
 
@@ -447,7 +447,7 @@ describe("config push", () => {
     let mutatingCallMade = false;
     const configWithVersion = { ...currentConfig, config_version: 42 };
     stubFetch(async (_input, init) => {
-      if (init?.method) mutatingCallMade = true;
+      if (init?.method && init.method !== "GET") mutatingCallMade = true;
       return new Response(JSON.stringify(configWithVersion), { status: 200 });
     });
 
@@ -468,8 +468,8 @@ describe("config push", () => {
   test("targets development instance by default", async () => {
     let requestedUrl = "";
     stubFetch(async (input, init) => {
-      if (init?.method) requestedUrl = input.toString();
-      const body = init?.method ? mockResponse : currentConfig;
+      if (init?.method && init.method !== "GET") requestedUrl = input.toString();
+      const body = init?.method && init.method !== "GET" ? mockResponse : currentConfig;
       return new Response(JSON.stringify(body), { status: 200 });
     });
 
@@ -486,8 +486,8 @@ describe("config push", () => {
   test("--instance prod targets production instance", async () => {
     let requestedUrl = "";
     stubFetch(async (input, init) => {
-      if (init?.method) requestedUrl = input.toString();
-      const body = init?.method ? mockResponse : currentConfig;
+      if (init?.method && init.method !== "GET") requestedUrl = input.toString();
+      const body = init?.method && init.method !== "GET" ? mockResponse : currentConfig;
       return new Response(JSON.stringify(body), { status: 200 });
     });
 
@@ -504,8 +504,8 @@ describe("config push", () => {
   test("--instance with literal ID passes through", async () => {
     let requestedUrl = "";
     stubFetch(async (input, init) => {
-      if (init?.method) requestedUrl = input.toString();
-      const body = init?.method ? mockResponse : currentConfig;
+      if (init?.method && init.method !== "GET") requestedUrl = input.toString();
+      const body = init?.method && init.method !== "GET" ? mockResponse : currentConfig;
       return new Response(JSON.stringify(body), { status: 200 });
     });
 
@@ -562,7 +562,8 @@ describe("config push", () => {
 
   test("handles API errors gracefully", async () => {
     stubFetch(async (_input, init) => {
-      if (!init?.method) return new Response(JSON.stringify(currentConfig), { status: 200 });
+      if (!init?.method || init.method === "GET")
+        return new Response(JSON.stringify(currentConfig), { status: 200 });
       return new Response("Bad Request", { status: 400 });
     });
 
@@ -591,8 +592,8 @@ describe("config push", () => {
   test("--json takes priority over --file", async () => {
     let capturedBody = "";
     stubFetch(async (_input, init) => {
-      if (init?.method) capturedBody = init.body as string;
-      const body = init?.method ? mockResponse : currentConfig;
+      if (init?.method && init.method !== "GET") capturedBody = init.body as string;
+      const body = init?.method && init.method !== "GET" ? mockResponse : currentConfig;
       return new Response(JSON.stringify(body), { status: 200 });
     });
 

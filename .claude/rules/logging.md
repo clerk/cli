@@ -36,6 +36,8 @@ Adjust the relative path to `lib/log.ts` based on the file's location under `pac
 log.debug(`Fetching instance ${instanceId}…`);
 ```
 
+See [`.claude/rules/debug-logging.md`](./debug-logging.md) for the full rule: namespace format, the `loggedFetch` helper for HTTP calls, and noise-control patterns.
+
 ## Tagged loggers
 
 `log.withTag()` adds scoped context in complex flows:

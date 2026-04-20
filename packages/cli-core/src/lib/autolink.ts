@@ -80,20 +80,34 @@ export async function autolink(
   cwd: string,
 ): Promise<{ path: string; profile: Profile } | undefined> {
   const detectedKeys = await findClerkKeys(cwd);
-  if (detectedKeys.length === 0) return undefined;
+  if (detectedKeys.length === 0) {
+    log.debug("autolink: no clerk publishable keys found in env or .env files");
+    return undefined;
+  }
+  log.debug(
+    `autolink: found ${detectedKeys.length} key(s) (sources: ${detectedKeys.map((k) => k.source).join(", ")})`,
+  );
 
   let apps: Application[];
   try {
     apps = await listApplications();
   } catch (err) {
-    log.error(`Failed to list applications: ${err}`);
+    // Autolink is a best-effort fallback — swallow the failure at debug level
+    // so callers can gracefully proceed to the interactive picker.
+    log.debug(`autolink: listApplications failed — ${err}`);
     return undefined;
   }
 
   if (!Array.isArray(apps)) return undefined;
 
   const match = matchKeyToApp(detectedKeys, apps);
-  if (!match) return undefined;
+  if (!match) {
+    log.debug(`autolink: no app matched any detected key (checked ${apps.length} app(s))`);
+    return undefined;
+  }
+  log.debug(
+    `autolink: matched key from ${match.source} → app ${match.app.application_id} (${match.app.name ?? "unnamed"})`,
+  );
 
   const normalizedRemote = await getGitNormalizedRemote();
   const repoId = await getGitRepoIdentifier();

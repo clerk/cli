@@ -8,6 +8,7 @@ import {
   UPDATE_PACKAGE_NAME,
   UPDATE_CACHE_FILE,
 } from "./constants.ts";
+import { loggedFetch } from "./fetch.ts";
 import { log } from "./log.ts";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -109,7 +110,8 @@ export async function fetchLatestVersion(distTag: string, timeoutMs = 1500): Pro
   const timer = setTimeout(() => controller.abort(), timeoutMs);
 
   try {
-    const res = await fetch(url, {
+    const res = await loggedFetch(url, {
+      tag: "update-check",
       signal: controller.signal,
       headers: { Accept: "application/vnd.npm.install-v1+json" },
     });

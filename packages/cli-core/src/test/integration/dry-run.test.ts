@@ -68,7 +68,8 @@ test.each([{ mode: "human" }, { mode: "agent" }])(
     const updatedConfig = { session: { lifetime: 3600 } };
     // GET returns different config so hasConfigChanges detects changes
     http.stub(async (_url, init) => {
-      const body = init?.method ? updatedConfig : { session: { lifetime: 604800 } };
+      const body =
+        init?.method && init.method !== "GET" ? updatedConfig : { session: { lifetime: 604800 } };
       return new Response(JSON.stringify(body), { status: 200 });
     });
 
