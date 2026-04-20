@@ -98,7 +98,7 @@ try {
     console.log(`Skipping ${wrapperName}@${version} (already published)`);
   } else {
     console.log(`Publishing ${wrapperName}@${version}...`);
-    publish(join(import.meta.dir, "../packages/cli"), { dryRun, tag });
+    await publish(join(import.meta.dir, "../packages/cli"), { dryRun, tag });
   }
 } finally {
   await Bun.write(WRAPPER_PKG_PATH, wrapperRaw);
