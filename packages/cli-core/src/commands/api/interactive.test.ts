@@ -63,6 +63,10 @@ mock.module("@inquirer/prompts", () => ({
   confirm: async () => confirmResponses.shift(),
 }));
 
+mock.module("../../lib/prompts.ts", () => ({
+  confirm: async () => confirmResponses.shift(),
+}));
+
 mock.module("../../lib/listage.ts", () => ({
   ...listageStubs,
   select: async () => selectResponses.shift(),

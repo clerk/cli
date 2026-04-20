@@ -28,6 +28,10 @@ mock.module("@inquirer/prompts", () => ({
   password: (...args: unknown[]) => mockPassword(...args),
 }));
 
+mock.module("../../lib/prompts.ts", () => ({
+  confirm: (...args: unknown[]) => mockConfirm(...args),
+}));
+
 mock.module("../../lib/listage.ts", () => ({
   ...listageStubs,
   select: (...args: unknown[]) => mockSelect(...args),

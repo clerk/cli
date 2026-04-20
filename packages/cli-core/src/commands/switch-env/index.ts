@@ -27,7 +27,7 @@ export async function switchEnv(environmentArg: string | undefined): Promise<voi
   // No argument: show interactive picker (human) or print info (non-interactive)
   let target = environmentArg;
   if (!target) {
-    if (isHuman() && available.length > 1) {
+    if (isHuman() && available.length > 1 && process.stdin.isTTY) {
       target = await select<string>({
         message: "Switch to environment:",
         choices: available.map((env) => ({
@@ -36,6 +36,10 @@ export async function switchEnv(environmentArg: string | undefined): Promise<voi
         })),
         default: current,
       });
+    } else if (isHuman() && available.length > 1 && !process.stdin.isTTY) {
+      throw new CliError(
+        "No interactive terminal available — pass an environment name explicitly: `clerk switch-env <name>`",
+      );
     } else if (available.length <= 1) {
       log.info(`Current environment: ${current}`);
       log.info("Only one environment configured — nothing to switch to.");

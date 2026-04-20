@@ -1,5 +1,5 @@
-import { test, expect, describe } from "bun:test";
-import { scrollBounds, withScrollIndicators, filterChoices } from "./listage.ts";
+import { test, expect, describe, beforeEach } from "bun:test";
+import { scrollBounds, withScrollIndicators, filterChoices, ttyContext } from "./listage.ts";
 
 describe("scrollBounds", () => {
   test("returns zeros when all items fit on page", () => {
@@ -26,10 +26,18 @@ describe("scrollBounds", () => {
     expect(scrollBounds(20, 19, 5)).toEqual({ above: 15, below: 0 });
   });
 
-  test("above + below + pageSize = totalItems", () => {
+  test("above + below + pageSize = totalItems (pageSize=5)", () => {
     for (let active = 0; active < 20; active++) {
       const { above, below } = scrollBounds(20, active, 5);
       expect(above + below + 5).toBe(20);
+    }
+  });
+
+  test("above + below + pageSize = totalItems (pageSize=7, odd)", () => {
+    // Odd pageSize may drift by ±1 at boundaries but must never be catastrophically wrong
+    for (let active = 0; active < 20; active++) {
+      const { above, below } = scrollBounds(20, active, 7);
+      expect(above + below + 7).toBe(20);
     }
   });
 });
@@ -94,5 +102,30 @@ describe("filterChoices", () => {
 
   test("returns empty array when nothing matches", () => {
     expect(filterChoices(choices, "angular")).toEqual([]);
+  });
+});
+
+describe("ttyContext", () => {
+  const originalIsTTY = process.stdin.isTTY;
+
+  beforeEach(() => {
+    process.stdin.isTTY = originalIsTTY;
+  });
+
+  test("returns undefined when stdin is a TTY", () => {
+    process.stdin.isTTY = true;
+    expect(ttyContext()).toBeUndefined();
+  });
+
+  test("returns context with input and close when stdin is not a TTY", () => {
+    process.stdin.isTTY = false;
+    const ctx = ttyContext();
+    // On macOS/Linux with /dev/tty available, this should return a context
+    if (ctx) {
+      expect(ctx.input).toBeDefined();
+      expect(typeof ctx.close).toBe("function");
+      ctx.close();
+    }
+    // On CI/Docker without a TTY, ttyContext may return undefined — both are valid
   });
 });

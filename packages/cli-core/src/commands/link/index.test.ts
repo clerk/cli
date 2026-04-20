@@ -87,6 +87,10 @@ mock.module("@inquirer/prompts", () => ({
   input: (...args: unknown[]) => mockInput(...args),
 }));
 
+mock.module("../../lib/prompts.ts", () => ({
+  confirm: (...args: unknown[]) => mockConfirm(...args),
+}));
+
 mock.module("../../lib/listage.ts", () => ({
   ...listageStubs,
   search: (...args: unknown[]) => mockSearch(...args),

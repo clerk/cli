@@ -1,4 +1,4 @@
-import { confirm } from "@inquirer/prompts";
+import { confirm } from "../../lib/prompts.ts";
 import { isAgent, isHuman } from "../../mode.ts";
 import { resolveProfile, removeProfile } from "../../lib/config.ts";
 import { getGitRepoRoot } from "../../lib/git.ts";

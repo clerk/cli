@@ -52,9 +52,11 @@ const { switchEnv } = await import("./index.ts");
 describe("switch-env", () => {
   let logSpy: ReturnType<typeof spyOn>;
   let captured: ReturnType<typeof captureLog>;
+  const originalIsTTY = process.stdin.isTTY;
 
   beforeEach(() => {
     captured = captureLog();
+    process.stdin.isTTY = true;
   });
 
   afterEach(() => {
@@ -65,6 +67,7 @@ describe("switch-env", () => {
     mockCurrentEnv = "production";
     _modeOverride = undefined;
     logSpy?.mockRestore();
+    process.stdin.isTTY = originalIsTTY;
   });
 
   function runSwitchEnv(environment: string | undefined) {
@@ -113,6 +116,11 @@ describe("switch-env", () => {
     await runSwitchEnv("production");
 
     expect(captured.out).toContain("Already on production environment.");
+  });
+
+  test("throws when no TTY is available in human mode", async () => {
+    process.stdin.isTTY = false;
+    await expect(runSwitchEnv(undefined)).rejects.toThrow("No interactive terminal available");
   });
 
   test("throws on invalid environment", async () => {

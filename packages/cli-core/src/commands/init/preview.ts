@@ -1,4 +1,4 @@
-import { confirm } from "@inquirer/prompts";
+import { confirm } from "../../lib/prompts.ts";
 import { cyan, dim, green, yellow } from "../../lib/color.js";
 import { log } from "../../lib/log.js";
 import type { FileAction, ScaffoldPlan } from "./frameworks/types.js";

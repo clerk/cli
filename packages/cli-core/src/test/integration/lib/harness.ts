@@ -181,6 +181,10 @@ mock.module("../../../lib/listage.ts", () => ({
   ttyContext: () => undefined,
 }));
 
+mock.module("../../../lib/prompts.ts", () => ({
+  confirm: dequeuePrompt("confirm"),
+}));
+
 mock.module(
   "../../../lib/token-exchange.ts",
   () =>

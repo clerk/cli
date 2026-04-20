@@ -1,5 +1,6 @@
 import { join } from "node:path";
-import { confirm, input } from "@inquirer/prompts";
+import { input } from "@inquirer/prompts";
+import { confirm } from "../../lib/prompts.ts";
 import { search, filterChoices } from "../../lib/listage.ts";
 import { throwUserAbort, throwUsageError, CliError } from "../../lib/errors.js";
 import { log } from "../../lib/log.js";

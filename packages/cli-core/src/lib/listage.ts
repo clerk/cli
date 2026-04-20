@@ -182,7 +182,6 @@ type SelectTheme = {
     keysHelpTip: (keys: [key: string, action: string][]) => string | undefined;
   };
   i18n: { disabledError: string };
-  indexMode: "hidden" | "number";
 };
 
 type SelectChoice<Value> = {
@@ -212,7 +211,6 @@ const selectTheme: SelectTheme = {
         .join(styleText("dim", " • ")),
   },
   i18n: { disabledError: "This option is disabled and cannot be selected." },
-  indexMode: "hidden",
 };
 
 const rawSelect = createPrompt<unknown, SelectConfig<unknown>>((config, done) => {
@@ -304,24 +302,19 @@ const rawSelect = createPrompt<unknown, SelectConfig<unknown>>((config, done) =>
   const needsScroll = items.length > pageSize;
   const effectivePageSize = needsScroll ? Math.max(pageSize - 2, 3) : pageSize;
 
-  let separatorCount = 0;
   const page = usePagination({
     items,
     active,
-    renderItem({ item, isActive, index }) {
-      if (Separator.isSeparator(item)) {
-        separatorCount++;
-        return ` ${item.separator}`;
-      }
+    renderItem({ item, isActive }) {
+      if (Separator.isSeparator(item)) return ` ${item.separator}`;
       const cursor = isActive ? theme.icon.cursor : " ";
-      const indexLabel = theme.indexMode === "number" ? `${index + 1 - separatorCount}. ` : "";
       if (item.disabled) {
         const disabledLabel = typeof item.disabled === "string" ? item.disabled : "(disabled)";
         const disabledCursor = isActive ? theme.icon.cursor : "-";
-        return theme.style.disabled(`${disabledCursor} ${indexLabel}${item.name} ${disabledLabel}`);
+        return theme.style.disabled(`${disabledCursor} ${item.name} ${disabledLabel}`);
       }
       const color = isActive ? theme.style.highlight : (x: string) => x;
-      return color(`${cursor} ${indexLabel}${item.name}`);
+      return color(`${cursor} ${item.name}`);
     },
     pageSize: effectivePageSize,
     loop: false,
