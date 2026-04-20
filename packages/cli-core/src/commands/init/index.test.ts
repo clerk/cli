@@ -18,6 +18,7 @@ import * as scanMod from "./scan.ts";
 import * as heuristics from "./heuristics.ts";
 import * as skillsMod from "./skills.ts";
 import * as bootstrapMod from "./bootstrap.ts";
+import * as nextStepsMod from "../../lib/next-steps.ts";
 import { init } from "./index.ts";
 
 const FAKE_CTX = {
@@ -211,6 +212,31 @@ describe("init", () => {
     await init({});
 
     expect(previewMod.previewAndConfirm).toHaveBeenCalled();
+  });
+
+  test("bootstrap prints next steps after skills install", async () => {
+    setup({ email: "test@test.com" });
+    setupBootstrapSuccess();
+    spyOn(scaffoldMod, "scaffold").mockResolvedValue({
+      actions: [{ type: "create", path: "app/layout.tsx", content: "", description: "" }],
+      postInstructions: [],
+    });
+
+    const callOrder: string[] = [];
+    spies.push(
+      spyOn(skillsMod, "installSkills").mockImplementation(async () => {
+        callOrder.push("installSkills");
+      }),
+    );
+    spies.push(
+      spyOn(nextStepsMod, "printNextSteps").mockImplementation(() => {
+        callOrder.push("printNextSteps");
+      }),
+    );
+
+    await init({});
+
+    expect(callOrder.indexOf("installSkills")).toBeLessThan(callOrder.indexOf("printNextSteps"));
   });
 
   test("blank dir with keyless framework auto-selects keyless when unauthenticated", async () => {
