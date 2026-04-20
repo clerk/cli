@@ -18,12 +18,12 @@ clerk config pull --keys auth_email session
 
 #### Options
 
-| Flag               | Description                                                                         |
-| ------------------ | ----------------------------------------------------------------------------------- |
-| `--app <id>`       | Application ID to target directly (works from any directory)                        |
-| `--instance <id>`  | Instance to target (`dev`, `prod`, or a full instance ID). Defaults to development. |
-| `--output <file>`  | Write config to a file instead of stdout                                            |
-| `--keys <keys...>` | Top-level config keys to retrieve (e.g. auth_email, session)                        |
+| Flag               | Description                                                                                |
+| ------------------ | ------------------------------------------------------------------------------------------ |
+| `--app <id>`       | Application ID to target directly (works from any directory)                               |
+| `--instance <id>`  | Instance to target (`dev`, `prod`, or a full instance ID). Defaults to development.        |
+| `--output <file>`  | Write config to a file instead of stdout                                                   |
+| `--keys <keys...>` | Top-level config keys to retrieve, separated by spaces or commas (e.g. auth_email session) |
 
 #### Requirements
 
@@ -56,12 +56,12 @@ clerk config schema --keys auth_email session
 
 #### Options
 
-| Flag               | Description                                                                         |
-| ------------------ | ----------------------------------------------------------------------------------- |
-| `--app <id>`       | Application ID to target directly (works from any directory)                        |
-| `--instance <id>`  | Instance to target (`dev`, `prod`, or a full instance ID). Defaults to development. |
-| `--output <file>`  | Write schema to a file instead of stdout                                            |
-| `--keys <keys...>` | Top-level schema sections to retrieve (e.g. auth_email, session)                    |
+| Flag               | Description                                                                                    |
+| ------------------ | ---------------------------------------------------------------------------------------------- |
+| `--app <id>`       | Application ID to target directly (works from any directory)                                   |
+| `--instance <id>`  | Instance to target (`dev`, `prod`, or a full instance ID). Defaults to development.            |
+| `--output <file>`  | Write schema to a file instead of stdout                                                       |
+| `--keys <keys...>` | Top-level schema sections to retrieve, separated by spaces or commas (e.g. auth_email session) |
 
 #### Requirements
 

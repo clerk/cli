@@ -85,7 +85,8 @@ function appendKeys(url: URL, keys?: string[]): void {
   if (!keys?.length) return;
   for (const key of keys) {
     for (const k of key.split(",")) {
-      if (k) url.searchParams.append("keys", k);
+      const trimmed = k.trim();
+      if (trimmed) url.searchParams.append("keys", trimmed);
     }
   }
 }

@@ -309,7 +309,10 @@ export function createProgram() {
     .option("--app <id>", "Application ID to target (works from any directory)")
     .option("--instance <id>", "Instance to target (dev, prod, or a full instance ID)")
     .option("--output <file>", "Write config to a file instead of stdout")
-    .option("--keys <keys...>", "Top-level config keys to retrieve (e.g. auth_email, session)")
+    .option(
+      "--keys <keys...>",
+      "Top-level config keys to retrieve, separated by spaces or commas (e.g. auth_email session)",
+    )
     .setExamples([
       { command: "clerk config pull", description: "Print dev config to stdout" },
       { command: "clerk config pull --instance prod", description: "Pull production config" },
@@ -323,7 +326,10 @@ export function createProgram() {
     .option("--app <id>", "Application ID to target (works from any directory)")
     .option("--instance <id>", "Instance to target (dev, prod, or a full instance ID)")
     .option("--output <file>", "Write schema to a file instead of stdout")
-    .option("--keys <keys...>", "Top-level schema sections to retrieve (e.g. auth_email, session)")
+    .option(
+      "--keys <keys...>",
+      "Top-level schema sections to retrieve, separated by spaces or commas (e.g. auth_email session)",
+    )
     .setExamples([
       { command: "clerk config schema", description: "Print full config schema" },
       {
