@@ -28,7 +28,7 @@ import {
   makeTheme,
 } from "@inquirer/core";
 import type { Theme } from "@inquirer/core";
-import { cursorHide } from "@inquirer/ansi";
+import { cursorHide, cursorShow } from "@inquirer/ansi";
 import { styleText } from "node:util";
 import figures from "@inquirer/figures";
 import type { PartialDeep } from "@inquirer/type";
@@ -41,8 +41,16 @@ const TTY_PATH = process.platform === "win32" ? "CONIN$" : "/dev/tty";
 
 function ttyContext(): { input: NodeJS.ReadableStream; close: () => void } | undefined {
   if (process.stdin.isTTY) return undefined;
-  const input = createReadStream(TTY_PATH);
-  return { input, close: () => input.close() };
+  try {
+    const input = createReadStream(TTY_PATH);
+    // Swallow open errors (Docker without --tty, detached CI runners, Windows
+    // sessions without CONIN$) so the prompt falls back to the default stdin
+    // instead of crashing with an unhandled error event.
+    input.on("error", () => {});
+    return { input, close: () => input.close() };
+  } catch {
+    return undefined;
+  }
 }
 
 /** Case-insensitive name filter — shared by search-based prompts. */
@@ -63,9 +71,13 @@ export function filterChoices<T extends { name: string }>(
  * Calculate how many items sit above/below the visible page window.
  *
  * Mirrors `usePagination`'s `usePointerPosition` logic for `loop: false`
- * assuming every item renders as a single line (true for all CLI choices).
+ * assuming every item renders as a single line. This holds for all current
+ * CLI choices; long labels that wrap in narrow terminals will cause the
+ * counts to drift from the actual rendered window. A line-aware calculation
+ * would require access to `breakLines` and terminal width inside the render
+ * function, which is deferred until a real need arises.
  */
-function scrollBounds(
+export function scrollBounds(
   totalItems: number,
   active: number,
   pageSize: number,
@@ -94,35 +106,31 @@ function scrollBounds(
   };
 }
 
-function formatIndicators(above: number, below: number): { top: string; bottom: string } {
-  return {
-    top: above > 0 ? styleText("dim", ` ↑ ${above} more above`) : "",
-    bottom: below > 0 ? styleText("dim", ` ↓ ${below} more below`) : "",
-  };
-}
-
 /**
  * Wrap the page string returned by `usePagination` with scroll indicators.
- * Reduces effective pageSize by up to 2 lines so the total height stays stable.
+ *
+ * Always renders both indicator lines when called (even if count is 0) so
+ * the total height stays stable as the user scrolls — preventing terminal
+ * jitter from line-count changes between renders.
  */
-function withScrollIndicators(
+export function withScrollIndicators(
   page: string,
   totalItems: number,
   active: number,
   effectivePageSize: number,
 ): string {
   const { above, below } = scrollBounds(totalItems, active, effectivePageSize);
-  if (above === 0 && below === 0) return page;
-  const { top, bottom } = formatIndicators(above, below);
-  return [top, page, bottom].filter(Boolean).join("\n");
+  const top = above > 0 ? styleText("dim", ` ↑ ${above} more above`) : " ";
+  const bottom = below > 0 ? styleText("dim", ` ↓ ${below} more below`) : " ";
+  return [top, page, bottom].join("\n");
 }
 
 // ---------------------------------------------------------------------------
 // Shared item helpers
 // ---------------------------------------------------------------------------
 
-function isSelectable<T>(item: T | Separator): item is T & { disabled?: false } {
-  return !Separator.isSeparator(item) && !(item as { disabled?: boolean }).disabled;
+function isSelectable<T>(item: T | Separator): item is T & { disabled?: boolean | string } {
+  return !Separator.isSeparator(item) && !(item as { disabled?: boolean | string }).disabled;
 }
 
 function isNavigable<T>(item: T | Separator): boolean {
@@ -214,8 +222,8 @@ const rawSelect = createPrompt<unknown, SelectConfig<unknown>>((config, done) =>
   const items = useMemo(() => normalizeChoices(config.choices), [config.choices]);
 
   const bounds = useMemo(() => {
-    const first = items.findIndex(isNavigable);
-    const last = items.findLastIndex(isNavigable);
+    const first = items.findIndex(isSelectable);
+    const last = items.findLastIndex(isSelectable);
     if (first === -1) {
       throw new ValidationError("[select prompt] No selectable choices. All choices are disabled.");
     }
@@ -317,7 +325,7 @@ const rawSelect = createPrompt<unknown, SelectConfig<unknown>>((config, done) =>
   });
 
   if (status === "done") {
-    return [prefix, message, theme.style.answer(selectedChoice.short)].filter(Boolean).join(" ");
+    return `${[prefix, message, theme.style.answer(selectedChoice.short)].filter(Boolean).join(" ")}${cursorShow}`;
   }
 
   const pageWithScroll = needsScroll
@@ -420,7 +428,8 @@ const rawSearch = createPrompt<unknown, SearchConfig<unknown>>((config, done) =>
     return { first, last };
   }, [searchResults]);
 
-  const [active = bounds.first, setActive] = useState<number>();
+  const defaultActive = bounds.first === -1 ? 0 : bounds.first;
+  const [active = defaultActive, setActive] = useState<number>();
 
   useEffect(() => {
     const controller = new AbortController();
@@ -450,6 +459,7 @@ const rawSearch = createPrompt<unknown, SearchConfig<unknown>>((config, done) =>
       } catch (error: unknown) {
         if (!controller.signal.aborted && error instanceof Error) {
           setSearchError(error.message);
+          setStatus("idle");
         }
       }
     };
@@ -532,10 +542,7 @@ const rawSearch = createPrompt<unknown, SearchConfig<unknown>>((config, done) =>
   }
 
   if (status === "done" && selectedChoice) {
-    return [prefix, message, theme.style.answer(selectedChoice.short)]
-      .filter(Boolean)
-      .join(" ")
-      .trimEnd();
+    return `${[prefix, message, theme.style.answer(selectedChoice.short)].filter(Boolean).join(" ").trimEnd()}${cursorShow}`;
   }
 
   const searchStr = theme.style.searchTerm(searchTerm);

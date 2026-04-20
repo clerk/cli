@@ -20,14 +20,15 @@ import { log } from "../../lib/log.ts";
 import { isHuman } from "../../mode.ts";
 import { select } from "../../lib/listage.ts";
 
-export async function switchEnv(environment: string | undefined): Promise<void> {
+export async function switchEnv(environmentArg: string | undefined): Promise<void> {
   const available = getAvailableEnvs();
   const current = getCurrentEnvName();
 
   // No argument: show interactive picker (human) or print info (non-interactive)
-  if (!environment) {
+  let target = environmentArg;
+  if (!target) {
     if (isHuman() && available.length > 1) {
-      environment = await select<string>({
+      target = await select<string>({
         message: "Switch to environment:",
         choices: available.map((env) => ({
           name: env === current ? `${env} (current)` : env,
@@ -42,28 +43,28 @@ export async function switchEnv(environment: string | undefined): Promise<void> 
     }
   }
 
-  if (!isValidEnv(environment)) {
+  if (!isValidEnv(target)) {
     throw new CliError(
-      `Unknown environment "${environment}". Available environments: ${available.join(", ")}`,
+      `Unknown environment "${target}". Available environments: ${available.join(", ")}`,
     );
   }
 
   const previousEnv = getCurrentEnvName();
 
-  if (previousEnv === environment) {
-    log.data(`Already on ${environment} environment.`);
+  if (previousEnv === target) {
+    log.data(`Already on ${target} environment.`);
     return;
   }
 
   // Update the in-memory state and persist
-  setCurrentEnv(environment);
-  await setEnvironment(environment);
+  setCurrentEnv(target);
+  await setEnvironment(target);
 
-  log.data(`Switched from ${previousEnv} to ${environment}.`);
+  log.data(`Switched from ${previousEnv} to ${target}.`);
 
   // Check if there's a stored token for the target environment
   const token = await getToken();
   if (!token) {
-    log.data(`No credentials found for ${environment}. Run \`clerk auth login\` to authenticate.`);
+    log.data(`No credentials found for ${target}. Run \`clerk auth login\` to authenticate.`);
   }
 }
