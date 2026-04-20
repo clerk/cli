@@ -73,8 +73,24 @@ async function configPush(options: ConfigPushOptions, op: Operation): Promise<vo
   delete configPayload.config_version;
 
   if (options.dryRun) {
-    log.info(`[dry-run] Would ${op.method} config on ${ctx.appLabel} (${ctx.instanceLabel}):`);
-    log.data(JSON.stringify(configPayload, null, 2));
+    const currentConfig = await withSpinner("Fetching current config...", () =>
+      withApiContext(
+        fetchInstanceConfig(ctx.appId, ctx.instanceId),
+        "Failed to fetch current config",
+      ),
+    );
+    delete currentConfig.config_version;
+
+    const isPatch = op.method === "PATCH";
+    const hasChanges = hasConfigChanges(currentConfig, configPayload, isPatch);
+
+    if (!hasChanges) {
+      log.info("[dry-run] No changes detected");
+      return;
+    }
+
+    log.info(`\n[dry-run] Would ${op.method} config on ${ctx.appLabel} (${ctx.instanceLabel}):\n`);
+    printDiff(currentConfig, configPayload, isPatch);
     return;
   }
 
