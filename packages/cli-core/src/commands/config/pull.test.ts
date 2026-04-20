@@ -258,9 +258,27 @@ describe("config pull", () => {
       instances: { development: "ins_dev" },
     });
 
-    await runConfigPull({ keys: ["session", "sign_up"] });
+    await runConfigPull({ keys: ["session", "auth_email"] });
     expect(requestedUrl).toContain("keys=session");
-    expect(requestedUrl).toContain("keys=sign_up");
+    expect(requestedUrl).toContain("keys=auth_email");
+  });
+
+  test("splits comma-separated --keys into individual params", async () => {
+    let requestedUrl = "";
+    stubFetch(async (input) => {
+      requestedUrl = input.toString();
+      return new Response(JSON.stringify({ session: { lifetime: 604800 } }), { status: 200 });
+    });
+
+    await setProfile(process.cwd(), {
+      workspaceId: "org_1",
+      appId: "app_1",
+      instances: { development: "ins_dev" },
+    });
+
+    await runConfigPull({ keys: ["session,auth_email"] });
+    expect(requestedUrl).toContain("keys=session");
+    expect(requestedUrl).toContain("keys=auth_email");
   });
 
   test("handles API errors gracefully", async () => {

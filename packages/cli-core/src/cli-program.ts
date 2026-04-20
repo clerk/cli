@@ -278,8 +278,8 @@ export function createProgram() {
       { command: "clerk config pull --output config.json", description: "Save config to a file" },
       { command: "clerk config schema", description: "Print full config schema" },
       {
-        command: "clerk config schema --keys social_login",
-        description: "Schema for specific keys",
+        command: "clerk config schema --keys auth_email session",
+        description: "Schema for specific top-level keys",
       },
       {
         command: "clerk config patch --file config.json",
@@ -309,7 +309,7 @@ export function createProgram() {
     .option("--app <id>", "Application ID to target (works from any directory)")
     .option("--instance <id>", "Instance to target (dev, prod, or a full instance ID)")
     .option("--output <file>", "Write config to a file instead of stdout")
-    .option("--keys <keys...>", "Config keys to retrieve")
+    .option("--keys <keys...>", "Top-level config keys to retrieve (e.g. auth_email, session)")
     .setExamples([
       { command: "clerk config pull", description: "Print dev config to stdout" },
       { command: "clerk config pull --instance prod", description: "Pull production config" },
@@ -323,12 +323,12 @@ export function createProgram() {
     .option("--app <id>", "Application ID to target (works from any directory)")
     .option("--instance <id>", "Instance to target (dev, prod, or a full instance ID)")
     .option("--output <file>", "Write schema to a file instead of stdout")
-    .option("--keys <keys...>", "Config keys to retrieve schema for")
+    .option("--keys <keys...>", "Top-level schema sections to retrieve (e.g. auth_email, session)")
     .setExamples([
       { command: "clerk config schema", description: "Print full config schema" },
       {
-        command: "clerk config schema --keys social_login",
-        description: "Schema for specific keys",
+        command: "clerk config schema --keys auth_email session",
+        description: "Schema for specific top-level keys",
       },
       { command: "clerk config schema --output schema.json", description: "Save schema to a file" },
     ])

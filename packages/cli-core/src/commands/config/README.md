@@ -13,7 +13,7 @@ clerk config pull
 clerk config pull --app app_123
 clerk config pull --instance prod
 clerk config pull --output clerk-config.json
-clerk config pull --keys session sign_up
+clerk config pull --keys auth_email session
 ```
 
 #### Options
@@ -23,7 +23,7 @@ clerk config pull --keys session sign_up
 | `--app <id>`       | Application ID to target directly (works from any directory)                        |
 | `--instance <id>`  | Instance to target (`dev`, `prod`, or a full instance ID). Defaults to development. |
 | `--output <file>`  | Write config to a file instead of stdout                                            |
-| `--keys <keys...>` | Config keys to retrieve                                                             |
+| `--keys <keys...>` | Top-level config keys to retrieve (e.g. auth_email, session)                        |
 
 #### Requirements
 
@@ -51,7 +51,7 @@ clerk config schema
 clerk config schema --app app_123
 clerk config schema --instance prod
 clerk config schema --output config-schema.json
-clerk config schema --keys session sign_up
+clerk config schema --keys auth_email session
 ```
 
 #### Options
@@ -61,7 +61,7 @@ clerk config schema --keys session sign_up
 | `--app <id>`       | Application ID to target directly (works from any directory)                        |
 | `--instance <id>`  | Instance to target (`dev`, `prod`, or a full instance ID). Defaults to development. |
 | `--output <file>`  | Write schema to a file instead of stdout                                            |
-| `--keys <keys...>` | Config keys to retrieve schema for                                                  |
+| `--keys <keys...>` | Top-level schema sections to retrieve (e.g. auth_email, session)                    |
 
 #### Requirements
 

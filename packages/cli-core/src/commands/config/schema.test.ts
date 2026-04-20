@@ -208,10 +208,28 @@ describe("config schema", () => {
       instances: { development: "ins_dev" },
     });
 
-    await runConfigSchema({ keys: ["session", "sign_up"] });
+    await runConfigSchema({ keys: ["session", "auth_email"] });
     expect(requestedUrl).toContain("keys=session");
-    expect(requestedUrl).toContain("keys=sign_up");
+    expect(requestedUrl).toContain("keys=auth_email");
     expect(requestedUrl).toContain("/config/schema");
+  });
+
+  test("splits comma-separated --keys into individual params", async () => {
+    let requestedUrl = "";
+    stubFetch(async (input) => {
+      requestedUrl = input.toString();
+      return new Response(JSON.stringify(mockSchema), { status: 200 });
+    });
+
+    await setProfile(process.cwd(), {
+      workspaceId: "org_1",
+      appId: "app_1",
+      instances: { development: "ins_dev" },
+    });
+
+    await runConfigSchema({ keys: ["session,auth_email"] });
+    expect(requestedUrl).toContain("keys=session");
+    expect(requestedUrl).toContain("keys=auth_email");
   });
 
   test("errors when production instance not configured", async () => {
