@@ -63,7 +63,7 @@ Use `--prompt` to output a setup prompt for an AI agent without running init.
 14. Prints a summary of created, modified, and skipped files with recommendations
 15. **Authenticated mode**: pulls development instance API keys via `clerk env pull`
 16. **Unauthenticated mode**: prints instructions for development without API keys and how to connect a Clerk account later
-17. Optionally installs framework-specific Clerk agent skills via the project's package runner (see [Agent skills install](#agent-skills-install))
+17. Optionally installs Clerk agent skills (core + features, plus a framework-specific skill) via the project's package runner (see [Agent skills install](#agent-skills-install))
 
 ## Framework Detection
 
@@ -197,9 +197,14 @@ At install time, [`skills.ts`](./skills.ts) stages the bundled content into a fr
 
 The `skills` CLI writes the installed files into each agent's skill directory (`.claude/skills/clerk/`, `.cursor/skills/clerk/`, etc.) and records the entry in the project's `skills-lock.json` with `sourceType: "local"`, which correctly excludes it from `skills update` (the skill can only change when the CLI itself is upgraded).
 
-### 2. The upstream framework-pattern skills
+### 2. The upstream skills
 
-The base skills `clerk` and `clerk-setup` are always included from [`clerk/skills`](https://github.com/clerk/skills). The detected framework dependency adds a matching skill:
+A fixed default set is always installed from [`clerk/skills`](https://github.com/clerk/skills), covering the `core/` and `features/` directories:
+
+- **Core**: `clerk-setup`, `clerk-custom-ui`, `clerk-backend-api`
+- **Features**: `clerk-orgs`, `clerk-testing`, `clerk-webhooks`
+
+The detected framework dependency adds one more skill on top:
 
 | Framework dep           | Added skill                   |
 | ----------------------- | ----------------------------- |
@@ -211,8 +216,8 @@ The base skills `clerk` and `clerk-setup` are always included from [`clerk/skill
 | `astro`                 | `clerk-astro-patterns`        |
 | `@tanstack/react-start` | `clerk-tanstack-patterns`     |
 | `expo`                  | `clerk-expo-patterns`         |
-| `express`               | `clerk-backend-api`           |
-| `fastify`               | `clerk-backend-api`           |
+
+Express and Fastify projects don't get a framework-specific skill — `clerk-backend-api` (now a default) already covers their needs.
 
 These skills version independently of the CLI, so no pin is applied.
 
