@@ -100,7 +100,10 @@ export async function init(options: InitOptions = {}) {
 
   // Short-circuit on a fully-clean re-run so env pull / skills prompt don't
   // execute when there's nothing to do.
-  const { alreadySetUp } = await detectAndInstall(ctx.cwd, ctx, overrides.skipConfirm);
+  // Bootstrap implies consent — the user already opted into project creation, so
+  // skip the scaffold "Proceed?" prompt as well.
+  const skipScaffoldConfirm = overrides.skipConfirm || bootstrap != null;
+  const { alreadySetUp } = await detectAndInstall(ctx.cwd, ctx, skipScaffoldConfirm);
 
   if (alreadySetUp) {
     log.success("\nClerk is already set up in this project.");

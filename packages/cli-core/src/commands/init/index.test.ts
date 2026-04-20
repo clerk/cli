@@ -169,6 +169,50 @@ describe("init", () => {
     expect(heuristics.printKeylessInfo).not.toHaveBeenCalled();
   });
 
+  test("bootstrap flow skips scaffold Proceed? prompt (user already opted in)", async () => {
+    setup({ email: "test@test.com" });
+    setupBootstrapSuccess();
+    spyOn(scaffoldMod, "scaffold").mockResolvedValue({
+      actions: [{ type: "create", path: "app/layout.tsx", content: "", description: "" }],
+      postInstructions: [],
+    });
+
+    await init({});
+
+    expect(bootstrapMod.promptAndBootstrap).toHaveBeenCalled();
+    expect(previewMod.previewAndConfirm).not.toHaveBeenCalled();
+    expect(previewMod.previewPlan).toHaveBeenCalled();
+  });
+
+  test("--starter skips scaffold Proceed? prompt even without -y", async () => {
+    setup({ email: "test@test.com" });
+    spyOn(context, "gatherContext").mockResolvedValue(FAKE_CTX);
+    spyOn(config, "resolveProfile").mockResolvedValue({ profile: { appId: "app_123" } } as never);
+    spyOn(scaffoldMod, "scaffold").mockResolvedValue({
+      actions: [{ type: "create", path: "app/layout.tsx", content: "", description: "" }],
+      postInstructions: [],
+    });
+
+    await init({ starter: true });
+
+    expect(previewMod.previewAndConfirm).not.toHaveBeenCalled();
+    expect(previewMod.previewPlan).toHaveBeenCalled();
+  });
+
+  test("existing project without -y still prompts scaffold Proceed?", async () => {
+    setup({ email: "test@test.com" });
+    spyOn(context, "gatherContext").mockResolvedValue(FAKE_CTX);
+    spyOn(config, "resolveProfile").mockResolvedValue({ profile: { appId: "app_123" } } as never);
+    spyOn(scaffoldMod, "scaffold").mockResolvedValue({
+      actions: [{ type: "create", path: "app/layout.tsx", content: "", description: "" }],
+      postInstructions: [],
+    });
+
+    await init({});
+
+    expect(previewMod.previewAndConfirm).toHaveBeenCalled();
+  });
+
   test("blank dir with keyless framework auto-selects keyless when unauthenticated", async () => {
     setup();
 
