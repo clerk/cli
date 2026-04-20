@@ -49,7 +49,7 @@ test.each([{ mode: "human" }, { mode: "agent" }])(
     // Patch config — GET returns current (different) config so changes are detected
     const updatedConfig = { session: { lifetime: 86400 }, sign_up: { mode: "public" } };
     http.stub(async (_url, init) => {
-      const body = init?.method ? updatedConfig : MOCK_CONFIG;
+      const body = init?.method && init.method !== "GET" ? updatedConfig : MOCK_CONFIG;
       return new Response(JSON.stringify(body), { status: 200 });
     });
 

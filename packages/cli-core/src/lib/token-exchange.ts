@@ -11,6 +11,7 @@
 
 import { getOAuthConfig } from "./environment.ts";
 import { ApiError, withApiContext } from "./errors.ts";
+import { loggedFetch } from "./fetch.ts";
 
 interface TokenResponse {
   access_token: string;
@@ -40,7 +41,8 @@ export async function exchangeCodeForToken(params: {
 
   return withApiContext(
     (async () => {
-      const response = await fetch(oauth.tokenUrl, {
+      const response = await loggedFetch(oauth.tokenUrl, {
+        tag: "oauth",
         method: "POST",
         headers: { "Content-Type": "application/x-www-form-urlencoded" },
         body: body.toString(),
@@ -61,7 +63,8 @@ export async function fetchUserInfo(accessToken: string): Promise<UserInfo> {
   const oauth = getOAuthConfig();
   return withApiContext(
     (async () => {
-      const response = await fetch(oauth.userinfoUrl, {
+      const response = await loggedFetch(oauth.userinfoUrl, {
+        tag: "oauth",
         headers: { Authorization: `Bearer ${accessToken}` },
       });
 
