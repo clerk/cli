@@ -22,7 +22,7 @@ When you run `clerk api /users` (no `--platform`), the CLI picks the `sk_` key i
 3. Auto-resolved from `--app <id>` (uses `CLERK_PLATFORM_API_KEY` or stored OAuth token to fetch the app's secret key)
 4. Auto-resolved from the linked project profile (same mechanism as #3, but the app ID comes from the repo's link)
 
-The CLI validates prefixes: passing `sk_test_...` to a production target or `ak_...` where `sk_...` is expected emits a warning.
+The CLI validates prefixes: passing `ak_...` where `sk_...` is expected (or vice versa) throws an error immediately with guidance on which key type to use.
 
 ### Platform API auth resolution order
 
@@ -30,7 +30,7 @@ When you run `clerk api --platform ...`, or any command that already uses PLAPI 
 
 1. `CLERK_PLATFORM_API_KEY` environment variable
 2. Stored OAuth token from `clerk auth login`
-3. Interactive prompt for a Platform API key (human mode only — fails in agent mode)
+3. If neither is present, the CLI errors: "Not authenticated. Run `clerk auth login` or set `CLERK_PLATFORM_API_KEY`."
 
 Set `CLERK_PLATFORM_API_KEY` for CI and scripted agent usage. Use `clerk auth login` for local interactive development.
 
