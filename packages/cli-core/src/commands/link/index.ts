@@ -44,6 +44,7 @@ const CREATE_NEW_APP = "__create_new__";
 interface LinkOptions {
   app?: string;
   skipIfLinked?: boolean;
+  cwd?: string;
 }
 
 function appLabel(app: Application): string {
@@ -56,10 +57,10 @@ export async function link(options: LinkOptions = {}): Promise<void> {
     return;
   }
 
-  const cwd = process.cwd();
-  const repoRoot = await getGitRepoRoot();
-  const normalizedRemote = await getGitNormalizedRemote();
-  const repoId = await getGitRepoIdentifier();
+  const cwd = options.cwd ?? process.cwd();
+  const repoRoot = await getGitRepoRoot(cwd);
+  const normalizedRemote = await getGitNormalizedRemote(cwd);
+  const repoId = await getGitRepoIdentifier(cwd);
   const profileKey = normalizedRemote ?? repoId ?? cwd;
   const displayPath = repoRoot ?? cwd;
 

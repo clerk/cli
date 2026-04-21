@@ -273,7 +273,7 @@ async function authenticateAndLink(cwd: string, app: string | undefined): Promis
     log.info(dim(label));
   }
 
-  await link({ skipIfLinked: true, app });
+  await link({ skipIfLinked: true, app, cwd });
 }
 
 // --- Detect & install ---

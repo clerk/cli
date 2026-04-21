@@ -109,8 +109,8 @@ export async function autolink(
     `autolink: matched key from ${match.source} → app ${match.app.application_id} (${match.app.name ?? "unnamed"})`,
   );
 
-  const normalizedRemote = await getGitNormalizedRemote();
-  const repoId = await getGitRepoIdentifier();
+  const normalizedRemote = await getGitNormalizedRemote(cwd);
+  const repoId = await getGitRepoIdentifier(cwd);
   const profileKey = normalizedRemote ?? repoId ?? cwd;
 
   const devInstance = match.app.instances.find((i) => i.environment_type === "development");
