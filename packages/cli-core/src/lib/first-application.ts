@@ -13,9 +13,7 @@ export async function ensureFirstApplication(): Promise<void> {
     const created = await createApplication(DEFAULT_FIRST_APPLICATION_NAME);
     log.debug(`ensure-first-app: created ${created.application_id}`);
   } catch (err) {
-    log.warn(
-      "Could not set up a default application. You can create one at https://dashboard.clerk.com.",
-    );
+    log.warn("Could not set up a default application. Run `clerk apps create` to create one.");
     log.debug(`ensure-first-app: failed (non-fatal): ${String(err)}`);
   }
 }
