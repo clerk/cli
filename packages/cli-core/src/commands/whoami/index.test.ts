@@ -2,12 +2,12 @@ import { test, expect, describe, beforeEach, afterEach, mock, spyOn } from "bun:
 import { captureLog, credentialStoreStubs, tokenExchangeStubs } from "../../test/lib/stubs.ts";
 import { CliError } from "../../lib/errors.ts";
 
-const mockGetToken = mock();
+const mockGetValidToken = mock();
 const mockFetchUserInfo = mock();
 
 mock.module("../../lib/credential-store.ts", () => ({
   ...credentialStoreStubs,
-  getToken: (...args: unknown[]) => mockGetToken(...args),
+  getValidToken: (...args: unknown[]) => mockGetValidToken(...args),
 }));
 
 mock.module("../../lib/token-exchange.ts", () => ({
@@ -27,7 +27,7 @@ describe("whoami", () => {
 
   afterEach(() => {
     captured.teardown();
-    mockGetToken.mockReset();
+    mockGetValidToken.mockReset();
     mockFetchUserInfo.mockReset();
     consoleSpy?.mockRestore();
   });
@@ -37,7 +37,7 @@ describe("whoami", () => {
   }
 
   test("prints email when authenticated", async () => {
-    mockGetToken.mockResolvedValue("valid-token");
+    mockGetValidToken.mockResolvedValue("valid-token");
     mockFetchUserInfo.mockResolvedValue({
       userId: "user_123",
       email: "alice@example.com",
@@ -50,7 +50,7 @@ describe("whoami", () => {
   });
 
   test("throws CliError when no token exists", async () => {
-    mockGetToken.mockResolvedValue(null);
+    mockGetValidToken.mockResolvedValue(null);
 
     await expect(runWhoami()).rejects.toThrow(CliError);
     await expect(captured.run(() => whoami())).rejects.toThrow(/Not logged in/);
@@ -59,7 +59,7 @@ describe("whoami", () => {
   });
 
   test("throws CliError when token is invalid", async () => {
-    mockGetToken.mockResolvedValue("expired-token");
+    mockGetValidToken.mockResolvedValue("expired-token");
     mockFetchUserInfo.mockRejectedValue(new Error("Unauthorized"));
 
     await expect(runWhoami()).rejects.toThrow(CliError);

@@ -1,8 +1,8 @@
 /**
- * Credential store for persisting the OAuth access token.
+ * Credential store for persisting the OAuth session.
  * Uses platform keyring as primary (via @napi-rs/keyring), falls back to a plaintext file with chmod 600.
  *
- * Tokens are stored per-environment so switching environments preserves auth state.
+ * Sessions are stored per-environment so switching environments preserves auth state.
  * Keychain account: "oauth-access-token:<envName>"
  * File fallback: "credentials.<envName>"
  */
@@ -11,7 +11,9 @@ import { dirname } from "node:path";
 import { mkdir, chmod, writeFile, unlink } from "node:fs/promises";
 import { CREDENTIALS_FILE } from "./constants.ts";
 import { getCurrentEnvName } from "./environment.ts";
+import { ApiError, CliError, ERROR_CODE } from "./errors.ts";
 import { log } from "./log.ts";
+import { refreshAccessToken, type TokenResponse } from "./token-exchange.ts";
 import { resolveCliVersion } from "./version.ts";
 
 export const KEYCHAIN_SERVICE = "clerk-cli";
@@ -19,6 +21,14 @@ export const LOCAL_DEV_KEYCHAIN_SERVICE = "clerk-cli-dev";
 export const KEYCHAIN_ACCOUNT = "oauth-access-token";
 const RELEASE_MACOS_TEAM_ID = "L8SD6SB282";
 const RELEASE_MACOS_IDENTIFIER = "clerk";
+const JWT_EXPIRY_LEEWAY_MS = 30_000;
+
+export interface OAuthSession {
+  accessToken: string;
+  refreshToken: string;
+  expiresAt: number;
+  tokenType: string;
+}
 
 function keychainAccount(): string {
   const envName = getCurrentEnvName();
@@ -88,18 +98,18 @@ async function resolveKeychainService(): Promise<string> {
   return keychainServicePromise;
 }
 
-async function keyringStore(token: string): Promise<boolean> {
+async function keyringStore(value: string): Promise<boolean> {
   const mod = await getKeyring();
   if (!mod) return false;
   const service = await resolveKeychainService();
   const account = keychainAccount();
-  log.debug(`credentials: storing token in keyring (service=${service}, account=${account})`);
+  log.debug(`credentials: storing session in keyring (service=${service}, account=${account})`);
   try {
     const entry = new mod.Entry(service, account);
-    entry.setPassword(token);
+    entry.setPassword(value);
     return true;
   } catch {
-    log.debug("credentials: failed to store token in keyring");
+    log.debug("credentials: failed to store session in keyring");
     return false;
   }
 }
@@ -115,9 +125,9 @@ async function keyringGet(): Promise<string | null> {
   log.debug(`credentials: checking keyring (service=${service}, account=${account})`);
   try {
     const entry = new mod.Entry(service, account);
-    const token = entry.getPassword();
-    log.debug(`credentials: ${token ? "found token in keyring" : "no token in keyring"}`);
-    return token;
+    const value = entry.getPassword();
+    log.debug(`credentials: ${value ? "found session in keyring" : "no session in keyring"}`);
+    return value;
   } catch {
     log.debug("credentials: keyring lookup failed");
     return null;
@@ -129,7 +139,7 @@ async function keyringDelete(): Promise<boolean> {
   if (!mod) return false;
   const service = await resolveKeychainService();
   const account = keychainAccount();
-  log.debug(`credentials: deleting token from keyring (service=${service}, account=${account})`);
+  log.debug(`credentials: deleting session from keyring (service=${service}, account=${account})`);
   try {
     const entry = new mod.Entry(service, account);
     entry.deletePassword();
@@ -139,11 +149,11 @@ async function keyringDelete(): Promise<boolean> {
   }
 }
 
-async function fileStore(token: string): Promise<void> {
+async function fileStore(value: string): Promise<void> {
   const path = credentialsFile();
-  log.debug(`credentials: storing token in file ${path}`);
+  log.debug(`credentials: storing session in file ${path}`);
   await mkdir(dirname(path), { recursive: true, mode: 0o700 });
-  await writeFile(path, token, { mode: 0o600 });
+  await writeFile(path, value, { mode: 0o600 });
   // We keep the chmod because if the file permission had changed
   // `writeFile` wouldn't set it back to 0o600
   await chmod(path, 0o600);
@@ -157,10 +167,9 @@ async function fileGet(): Promise<string | null> {
     log.debug("credentials: credentials file not found");
     return null;
   }
-  const content = await file.text();
-  const token = content.trim() || null;
-  log.debug(`credentials: ${token ? "found token in file" : "credentials file is empty"}`);
-  return token;
+  const value = (await file.text()).trim() || null;
+  log.debug(`credentials: ${value ? "found session in file" : "credentials file is empty"}`);
+  return value;
 }
 
 async function fileDelete(): Promise<void> {
@@ -173,15 +182,125 @@ async function fileDelete(): Promise<void> {
   }
 }
 
-export async function storeToken(token: string): Promise<void> {
-  const stored = await keyringStore(token);
+function isOAuthSession(value: unknown): value is OAuthSession {
+  if (!value || typeof value !== "object") return false;
+
+  const session = value as Record<string, unknown>;
+  return (
+    typeof session.accessToken === "string" &&
+    typeof session.refreshToken === "string" &&
+    typeof session.expiresAt === "number" &&
+    typeof session.tokenType === "string"
+  );
+}
+
+function parseStoredSession(raw: string): OAuthSession | null {
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    return isOAuthSession(parsed) ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+function encodeStoredValue(value: string | OAuthSession): string {
+  if (typeof value === "string") return value;
+  return JSON.stringify(value);
+}
+
+function getJwtExpiryMs(token: string): number | null {
+  const [, payload] = token.split(".");
+  if (!payload) return null;
+
+  try {
+    const normalized = payload.replace(/-/g, "+").replace(/_/g, "/");
+    const padded = normalized.padEnd(Math.ceil(normalized.length / 4) * 4, "=");
+    const decoded = Buffer.from(padded, "base64").toString("utf8");
+    const parsed = JSON.parse(decoded) as Record<string, unknown>;
+    return typeof parsed.exp === "number" ? parsed.exp * 1000 : null;
+  } catch {
+    return null;
+  }
+}
+
+function isExpiredJwt(token: string): boolean {
+  const expiresAt = getJwtExpiryMs(token);
+  if (expiresAt === null) return true;
+  return expiresAt <= Date.now() + JWT_EXPIRY_LEEWAY_MS;
+}
+
+function sessionExpiredError(): CliError {
+  return new CliError("Session expired. Run `clerk auth login` to re-authenticate", {
+    code: ERROR_CODE.AUTH_REQUIRED,
+  });
+}
+
+function isInvalidGrant(error: unknown): boolean {
+  return (
+    error instanceof ApiError &&
+    (error.status === 400 || error.status === 401) &&
+    /\binvalid_grant\b/i.test(error.body)
+  );
+}
+
+async function readStoredValue(): Promise<string | null> {
+  if (tokenOverride !== undefined) return tokenOverride;
+
+  const value = await keyringGet();
+  if (value) return value;
+
+  return fileGet();
+}
+
+async function refreshStoredSession(session: OAuthSession): Promise<string> {
+  let tokenResponse: TokenResponse;
+  try {
+    tokenResponse = await refreshAccessToken(session.refreshToken);
+  } catch (error) {
+    if (isInvalidGrant(error)) {
+      await deleteToken();
+      throw sessionExpiredError();
+    }
+    throw error;
+  }
+
+  const nextSession = createOAuthSession(tokenResponse, session.refreshToken);
+  await storeToken(nextSession);
+  return nextSession.accessToken;
+}
+
+export function createOAuthSession(
+  tokenResponse: TokenResponse,
+  currentRefreshToken?: string,
+): OAuthSession {
+  const refreshToken = tokenResponse.refresh_token ?? currentRefreshToken;
+  if (!refreshToken) {
+    throw new CliError(
+      "Authentication response did not include a refresh token. Run `clerk auth login` to re-authenticate",
+      {
+        code: ERROR_CODE.AUTH_REQUIRED,
+      },
+    );
+  }
+
+  return {
+    accessToken: tokenResponse.access_token,
+    refreshToken,
+    expiresAt: Date.now() + tokenResponse.expires_in * 1000,
+    tokenType: tokenResponse.token_type,
+  };
+}
+
+export async function storeToken(value: string | OAuthSession): Promise<void> {
+  const encoded = encodeStoredValue(value);
+  const stored = await keyringStore(encoded);
   if (stored) {
     // Clean up any stale plaintext credentials from a previous file-based storage
     await fileDelete();
     return;
   }
 
-  await fileStore(token);
+  await fileStore(encoded);
 }
 
 let tokenOverride: string | null | undefined;
@@ -192,12 +311,35 @@ export function _setTokenOverride(value: string | null | undefined): void {
 }
 
 export async function getToken(): Promise<string | null> {
-  if (tokenOverride !== undefined) return tokenOverride;
+  const value = await readStoredValue();
+  if (!value) return null;
+  return parseStoredSession(value)?.accessToken ?? value;
+}
 
-  const token = await keyringGet();
-  if (token) return token;
+export async function getStoredSession(): Promise<OAuthSession | null> {
+  const value = await readStoredValue();
+  if (!value) return null;
+  return parseStoredSession(value);
+}
 
-  return fileGet();
+export async function hasStoredCredentials(): Promise<boolean> {
+  return (await readStoredValue()) !== null;
+}
+
+export async function getValidToken(): Promise<string | null> {
+  const session = await getStoredSession();
+  if (!session) {
+    if (await hasStoredCredentials()) {
+      throw sessionExpiredError();
+    }
+    return null;
+  }
+
+  if (!isExpiredJwt(session.accessToken)) {
+    return session.accessToken;
+  }
+
+  return refreshStoredSession(session);
 }
 
 export async function deleteToken(): Promise<void> {

@@ -13,7 +13,7 @@ import { getOAuthConfig } from "./environment.ts";
 import { ApiError, withApiContext } from "./errors.ts";
 import { loggedFetch } from "./fetch.ts";
 
-interface TokenResponse {
+export interface TokenResponse {
   access_token: string;
   token_type: string;
   expires_in: number;
@@ -56,6 +56,34 @@ export async function exchangeCodeForToken(params: {
       return response.json() as Promise<TokenResponse>;
     })(),
     "Token exchange failed",
+  );
+}
+
+export async function refreshAccessToken(refreshToken: string): Promise<TokenResponse> {
+  const oauth = getOAuthConfig();
+  const body = new URLSearchParams({
+    grant_type: "refresh_token",
+    refresh_token: refreshToken,
+    client_id: oauth.clientId,
+  });
+
+  return withApiContext(
+    (async () => {
+      const response = await loggedFetch(oauth.tokenUrl, {
+        tag: "oauth",
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body: body.toString(),
+      });
+
+      if (!response.ok) {
+        const error = await response.text();
+        throw new ApiError(response.status, error);
+      }
+
+      return response.json() as Promise<TokenResponse>;
+    })(),
+    "Token refresh failed",
   );
 }
 

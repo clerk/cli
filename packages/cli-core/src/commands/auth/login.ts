@@ -2,7 +2,7 @@ import { generateCodeVerifier, generateCodeChallenge, generateState } from "../.
 import { startAuthServer } from "../../lib/auth-server.ts";
 import { exchangeCodeForToken, fetchUserInfo, type UserInfo } from "../../lib/token-exchange.ts";
 import { getOAuthConfig } from "../../lib/environment.ts";
-import { storeToken, getToken } from "../../lib/credential-store.ts";
+import { createOAuthSession, getValidToken, storeToken } from "../../lib/credential-store.ts";
 import { getAuth, setAuth, resolveProfile } from "../../lib/config.ts";
 import { AUTH_TIMEOUT_MS, CALLBACK_PATH, CLERK_CLIENT_CLI } from "../../lib/constants.ts";
 import { confirm } from "../../lib/prompts.ts";
@@ -21,13 +21,12 @@ interface LoginOptions {
 }
 
 async function getExistingSession(): Promise<UserInfo | null> {
-  const token = await getToken();
-  if (!token) return null;
-
   const auth = await getAuth();
   if (!auth) return null;
 
   try {
+    const token = await getValidToken();
+    if (!token) return null;
     return await fetchUserInfo(token);
   } catch {
     return null;
@@ -82,7 +81,7 @@ async function performOAuthFlow(): Promise<UserInfo> {
     }),
   );
 
-  await storeToken(tokenResponse.access_token);
+  await storeToken(createOAuthSession(tokenResponse));
 
   const userInfo = await fetchUserInfo(tokenResponse.access_token);
   await setAuth({ userId: userInfo.userId });

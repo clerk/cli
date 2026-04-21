@@ -1,11 +1,11 @@
-import { getToken } from "../../lib/credential-store.ts";
+import { getValidToken } from "../../lib/credential-store.ts";
 import { fetchUserInfo } from "../../lib/token-exchange.ts";
 import { withSpinner } from "../../lib/spinner.ts";
 import { log } from "../../lib/log.ts";
 import { CliError, ERROR_CODE } from "../../lib/errors.ts";
 
 export async function whoami() {
-  const token = await getToken();
+  const token = await getValidToken();
   if (!token) {
     throw new CliError("Not logged in. Run `clerk auth login` to authenticate", {
       code: ERROR_CODE.AUTH_REQUIRED,

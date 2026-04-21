@@ -4,7 +4,7 @@
  */
 
 import { getPlapiBaseUrl, getCurrentEnvName } from "./environment.ts";
-import { getToken } from "./credential-store.ts";
+import { getValidToken } from "./credential-store.ts";
 import { CliError, PlapiError, ERROR_CODE } from "./errors.ts";
 import { loggedFetch } from "./fetch.ts";
 import { log } from "./log.ts";
@@ -48,7 +48,8 @@ export async function getAuthToken(): Promise<string> {
     return key;
   }
 
-  const oauthToken = await getToken();
+  // Fall back to OAuth access token from `clerk auth login`
+  const oauthToken = await getValidToken();
   if (oauthToken) {
     log.debug(
       `plapi: using OAuth token from credential store for auth (env=${getCurrentEnvName()}, target=${getPlapiBaseUrl()})`,

@@ -1,8 +1,9 @@
 import { test, expect, describe, beforeEach, afterEach, mock, spyOn } from "bun:test";
 import { captureLog, credentialStoreStubs, configStubs } from "../../test/lib/stubs.ts";
 
-const mockGetToken = mock();
+const mockGetValidToken = mock();
 const mockStoreToken = mock();
+const mockCreateOAuthSession = mock();
 const mockGetAuth = mock();
 const mockSetAuth = mock();
 const mockResolveProfile = mock();
@@ -16,8 +17,9 @@ const mockEnsureFirstApplication = mock<() => Promise<void>>(() => Promise.resol
 
 mock.module("../../lib/credential-store.ts", () => ({
   ...credentialStoreStubs,
-  getToken: (...args: unknown[]) => mockGetToken(...args),
+  getValidToken: (...args: unknown[]) => mockGetValidToken(...args),
   storeToken: (...args: unknown[]) => mockStoreToken(...args),
+  createOAuthSession: (...args: unknown[]) => mockCreateOAuthSession(...args),
 }));
 
 mock.module("../../lib/config.ts", () => ({
@@ -95,8 +97,9 @@ describe("login", () => {
 
   afterEach(() => {
     captured.teardown();
-    mockGetToken.mockReset();
+    mockGetValidToken.mockReset();
     mockStoreToken.mockReset();
+    mockCreateOAuthSession.mockReset();
     mockGetAuth.mockReset();
     mockSetAuth.mockReset();
     mockResolveProfile.mockReset();
@@ -132,7 +135,7 @@ describe("login", () => {
   }
 
   test("returns early when already authenticated with valid token", async () => {
-    mockGetToken.mockResolvedValue("existing-token");
+    mockGetValidToken.mockResolvedValue("existing-token");
     mockGetAuth.mockResolvedValue({ userId: "user_123" });
     mockFetchUserInfo.mockResolvedValue({
       userId: "user_123",
@@ -148,7 +151,7 @@ describe("login", () => {
   });
 
   test("performs fresh login when no token exists", async () => {
-    mockGetToken.mockResolvedValue(null);
+    mockGetValidToken.mockResolvedValue(null);
     mockBunSpawn();
 
     const mockServer = {
@@ -162,6 +165,13 @@ describe("login", () => {
       access_token: "new-access-token",
       token_type: "Bearer",
       expires_in: 3600,
+      refresh_token: "new-refresh-token",
+    });
+    mockCreateOAuthSession.mockReturnValue({
+      accessToken: "new-access-token",
+      refreshToken: "new-refresh-token",
+      expiresAt: 123,
+      tokenType: "Bearer",
     });
     mockStoreToken.mockResolvedValue(undefined);
     mockFetchUserInfo.mockResolvedValue({
@@ -180,17 +190,29 @@ describe("login", () => {
       codeVerifier: "test-code-verifier",
       redirectUri: "http://127.0.0.1:54321/callback",
     });
-    expect(mockStoreToken).toHaveBeenCalledWith("new-access-token");
+    expect(mockCreateOAuthSession).toHaveBeenCalledWith({
+      access_token: "new-access-token",
+      token_type: "Bearer",
+      expires_in: 3600,
+      refresh_token: "new-refresh-token",
+    });
+    expect(mockStoreToken).toHaveBeenCalledWith({
+      accessToken: "new-access-token",
+      refreshToken: "new-refresh-token",
+      expiresAt: 123,
+      tokenType: "Bearer",
+    });
     expect(mockSetAuth).toHaveBeenCalledWith({ userId: "user_new" });
     expect(captured.err).toContain("Logged in as new@example.com");
   });
 
   test("re-authenticates when existing token is expired", async () => {
-    mockGetToken.mockResolvedValue("expired-token");
+    mockGetValidToken.mockRejectedValue(new Error("Session expired"));
     mockGetAuth.mockResolvedValue({ userId: "user_old" });
-    mockFetchUserInfo
-      .mockRejectedValueOnce(new Error("Token expired"))
-      .mockResolvedValueOnce({ userId: "user_refreshed", email: "refreshed@example.com" });
+    mockFetchUserInfo.mockResolvedValueOnce({
+      userId: "user_refreshed",
+      email: "refreshed@example.com",
+    });
     mockBunSpawn();
 
     const mockServer = {
@@ -204,6 +226,13 @@ describe("login", () => {
       access_token: "refreshed-token",
       token_type: "Bearer",
       expires_in: 3600,
+      refresh_token: "refreshed-refresh-token",
+    });
+    mockCreateOAuthSession.mockReturnValue({
+      accessToken: "refreshed-token",
+      refreshToken: "refreshed-refresh-token",
+      expiresAt: 456,
+      tokenType: "Bearer",
     });
     mockStoreToken.mockResolvedValue(undefined);
     mockSetAuth.mockResolvedValue(undefined);
@@ -213,11 +242,16 @@ describe("login", () => {
 
     expect(result).toEqual({ userId: "user_refreshed", email: "refreshed@example.com" });
     expect(mockStartAuthServer).toHaveBeenCalled();
-    expect(mockStoreToken).toHaveBeenCalledWith("refreshed-token");
+    expect(mockStoreToken).toHaveBeenCalledWith({
+      accessToken: "refreshed-token",
+      refreshToken: "refreshed-refresh-token",
+      expiresAt: 456,
+      tokenType: "Bearer",
+    });
   });
 
   test("stops auth server and throws when callback fails", async () => {
-    mockGetToken.mockResolvedValue(null);
+    mockGetValidToken.mockResolvedValue(null);
     mockBunSpawn();
 
     const mockServer = {
@@ -236,7 +270,7 @@ describe("login", () => {
   });
 
   test("proceeds with login when token exists but no auth config", async () => {
-    mockGetToken.mockResolvedValue("orphan-token");
+    mockGetValidToken.mockResolvedValue("orphan-token");
     mockGetAuth.mockResolvedValue(undefined);
     mockBunSpawn();
 
@@ -251,6 +285,13 @@ describe("login", () => {
       access_token: "brand-new-token",
       token_type: "Bearer",
       expires_in: 3600,
+      refresh_token: "brand-new-refresh-token",
+    });
+    mockCreateOAuthSession.mockReturnValue({
+      accessToken: "brand-new-token",
+      refreshToken: "brand-new-refresh-token",
+      expiresAt: 789,
+      tokenType: "Bearer",
     });
     mockStoreToken.mockResolvedValue(undefined);
     mockFetchUserInfo.mockResolvedValue({
@@ -268,7 +309,7 @@ describe("login", () => {
 
   test("in agent mode, returns early without prompting when already authenticated", async () => {
     mockIsHuman.mockReturnValue(false);
-    mockGetToken.mockResolvedValue("existing-token");
+    mockGetValidToken.mockResolvedValue("existing-token");
     mockGetAuth.mockResolvedValue({ userId: "user_123" });
     mockFetchUserInfo.mockResolvedValue({
       userId: "user_123",
@@ -286,7 +327,7 @@ describe("login", () => {
 
   test("in human mode, prompts and runs OAuth when user accepts re-auth", async () => {
     mockIsHuman.mockReturnValue(true);
-    mockGetToken.mockResolvedValue("existing-token");
+    mockGetValidToken.mockResolvedValue("existing-token");
     mockGetAuth.mockResolvedValue({ userId: "user_123" });
     mockFetchUserInfo
       .mockResolvedValueOnce({ userId: "user_123", email: "old@example.com" })
@@ -305,6 +346,13 @@ describe("login", () => {
       access_token: "new-token",
       token_type: "Bearer",
       expires_in: 3600,
+      refresh_token: "new-refresh-token",
+    });
+    mockCreateOAuthSession.mockReturnValue({
+      accessToken: "new-token",
+      refreshToken: "new-refresh-token",
+      expiresAt: 999,
+      tokenType: "Bearer",
     });
     mockStoreToken.mockResolvedValue(undefined);
     mockSetAuth.mockResolvedValue(undefined);
@@ -322,7 +370,7 @@ describe("login", () => {
 
   test("in human mode, throws UserAbortError when user declines re-auth", async () => {
     mockIsHuman.mockReturnValue(true);
-    mockGetToken.mockResolvedValue("existing-token");
+    mockGetValidToken.mockResolvedValue("existing-token");
     mockGetAuth.mockResolvedValue({ userId: "user_123" });
     mockFetchUserInfo.mockResolvedValue({
       userId: "user_123",
@@ -338,7 +386,7 @@ describe("login", () => {
   });
 
   test("shows linked app with name and id in next steps when linked", async () => {
-    mockGetToken.mockResolvedValue(null);
+    mockGetValidToken.mockResolvedValue(null);
     mockBunSpawn();
 
     const mockServer = {
@@ -352,6 +400,13 @@ describe("login", () => {
       access_token: "new-access-token",
       token_type: "Bearer",
       expires_in: 3600,
+      refresh_token: "new-refresh-token",
+    });
+    mockCreateOAuthSession.mockReturnValue({
+      accessToken: "new-access-token",
+      refreshToken: "new-refresh-token",
+      expiresAt: 123,
+      tokenType: "Bearer",
     });
     mockStoreToken.mockResolvedValue(undefined);
     mockFetchUserInfo.mockResolvedValue({
@@ -377,7 +432,7 @@ describe("login", () => {
   });
 
   test("shows linked app with only id when appName is missing", async () => {
-    mockGetToken.mockResolvedValue(null);
+    mockGetValidToken.mockResolvedValue(null);
     mockBunSpawn();
 
     const mockServer = {
@@ -391,6 +446,13 @@ describe("login", () => {
       access_token: "new-access-token",
       token_type: "Bearer",
       expires_in: 3600,
+      refresh_token: "new-refresh-token",
+    });
+    mockCreateOAuthSession.mockReturnValue({
+      accessToken: "new-access-token",
+      refreshToken: "new-refresh-token",
+      expiresAt: 123,
+      tokenType: "Bearer",
     });
     mockStoreToken.mockResolvedValue(undefined);
     mockFetchUserInfo.mockResolvedValue({
@@ -415,7 +477,7 @@ describe("login", () => {
   });
 
   test("shows default next steps when not linked", async () => {
-    mockGetToken.mockResolvedValue(null);
+    mockGetValidToken.mockResolvedValue(null);
     mockBunSpawn();
 
     const mockServer = {
@@ -429,6 +491,13 @@ describe("login", () => {
       access_token: "new-access-token",
       token_type: "Bearer",
       expires_in: 3600,
+      refresh_token: "new-refresh-token",
+    });
+    mockCreateOAuthSession.mockReturnValue({
+      accessToken: "new-access-token",
+      refreshToken: "new-refresh-token",
+      expiresAt: 123,
+      tokenType: "Bearer",
     });
     mockStoreToken.mockResolvedValue(undefined);
     mockFetchUserInfo.mockResolvedValue({
@@ -520,7 +589,7 @@ describe("login", () => {
   });
 
   test("suppresses auth next-steps when requested", async () => {
-    mockGetToken.mockResolvedValue(null);
+    mockGetValidToken.mockResolvedValue(null);
     mockBunSpawn();
 
     const mockServer = {
@@ -534,6 +603,13 @@ describe("login", () => {
       access_token: "new-access-token",
       token_type: "Bearer",
       expires_in: 3600,
+      refresh_token: "new-refresh-token",
+    });
+    mockCreateOAuthSession.mockReturnValue({
+      accessToken: "new-access-token",
+      refreshToken: "new-refresh-token",
+      expiresAt: 123,
+      tokenType: "Bearer",
     });
     mockStoreToken.mockResolvedValue(undefined);
     mockFetchUserInfo.mockResolvedValue({

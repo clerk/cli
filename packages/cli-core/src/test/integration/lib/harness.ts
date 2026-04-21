@@ -45,12 +45,34 @@ mock.module(
   () =>
     ({
       getToken: async () => mockState.storedToken,
-      storeToken: async (token: string) => {
-        mockState.storedToken = token;
+      getValidToken: async () => mockState.storedToken,
+      getStoredSession: async () =>
+        mockState.storedToken
+          ? {
+              accessToken: mockState.storedToken,
+              refreshToken: "mock_refresh_token",
+              expiresAt: Date.now() + 3_600_000,
+              tokenType: "Bearer",
+            }
+          : null,
+      hasStoredCredentials: async () => mockState.storedToken !== null,
+      storeToken: async (value: string | { accessToken: string }) => {
+        mockState.storedToken = typeof value === "string" ? value : value.accessToken;
       },
       deleteToken: async () => {
         mockState.storedToken = null;
       },
+      createOAuthSession: (tokenResponse: {
+        access_token: string;
+        refresh_token?: string;
+        expires_in: number;
+        token_type: string;
+      }) => ({
+        accessToken: tokenResponse.access_token,
+        refreshToken: tokenResponse.refresh_token ?? "mock_refresh_token",
+        expiresAt: Date.now() + tokenResponse.expires_in * 1000,
+        tokenType: tokenResponse.token_type,
+      }),
       _setTokenOverride: () => {},
       KEYCHAIN_SERVICE: "clerk-cli",
       LOCAL_DEV_KEYCHAIN_SERVICE: "clerk-cli-dev",
@@ -195,6 +217,13 @@ mock.module(
         access_token: "mock_access_token",
         token_type: "Bearer",
         expires_in: 3600,
+        refresh_token: "mock_refresh_token",
+      }),
+      refreshAccessToken: async () => ({
+        access_token: "mock_access_token",
+        token_type: "Bearer",
+        expires_in: 3600,
+        refresh_token: "mock_refresh_token",
       }),
       fetchUserInfo: async (token: string) => {
         if (!token || token === "expired_token") throw new Error("Unauthorized");

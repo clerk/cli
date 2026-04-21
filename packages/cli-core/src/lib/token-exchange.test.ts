@@ -1,5 +1,5 @@
 import { test, expect, describe, afterEach, mock } from "bun:test";
-import { exchangeCodeForToken, fetchUserInfo } from "./token-exchange.ts";
+import { exchangeCodeForToken, refreshAccessToken, fetchUserInfo } from "./token-exchange.ts";
 
 const originalFetch = globalThis.fetch;
 
@@ -134,5 +134,40 @@ describe("fetchUserInfo", () => {
     }) as unknown as typeof fetch;
 
     await expect(fetchUserInfo("bad")).rejects.toThrow("token_revoked");
+  });
+});
+
+describe("refreshAccessToken", () => {
+  afterEach(() => {
+    globalThis.fetch = originalFetch;
+  });
+
+  test("sends correct parameters and returns token response", async () => {
+    const tokenResponse = {
+      access_token: "refreshed-token-123",
+      token_type: "Bearer",
+      expires_in: 3600,
+      refresh_token: "next-refresh-token",
+    };
+
+    globalThis.fetch = mock(async () => {
+      return new Response(JSON.stringify(tokenResponse), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    }) as unknown as typeof fetch;
+
+    const result = await refreshAccessToken("refresh-token-123");
+
+    expect(result).toEqual(tokenResponse);
+    expect(globalThis.fetch).toHaveBeenCalledTimes(1);
+
+    const [, calledInit] = (globalThis.fetch as unknown as ReturnType<typeof mock>).mock.calls[0]!;
+    expect(calledInit.method).toBe("POST");
+    expect(calledInit.headers["Content-Type"]).toBe("application/x-www-form-urlencoded");
+
+    const body = new URLSearchParams(calledInit.body);
+    expect(body.get("grant_type")).toBe("refresh_token");
+    expect(body.get("refresh_token")).toBe("refresh-token-123");
   });
 });
