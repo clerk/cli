@@ -13,7 +13,7 @@ import { log } from "./log.ts";
  * Canonical attribution marker written to `applications.from_source` when the
  * CLI creates an application through PLAPI. Surfaces in BigQuery via
  * `dim_applications.from_source` for growth analytics. Do not change without
- * coordinating with the growth-data team — the value is consumed by dbt
+ * coordinating with the growth-data team - the value is consumed by dbt
  * models and dashboards downstream.
  */
 const CLI_FROM_SOURCE = "cli";
