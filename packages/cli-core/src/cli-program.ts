@@ -42,6 +42,7 @@ import { isAgent } from "./mode.ts";
 import { log } from "./lib/log.ts";
 import { maybeNotifyUpdate, getCurrentVersion } from "./lib/update-check.ts";
 import { update } from "./commands/update/index.ts";
+import { isClerkSkillInstalled } from "./lib/skill-detection.ts";
 
 export function createProgram() {
   const program = new Command()
@@ -56,9 +57,10 @@ export function createProgram() {
       "Force interaction mode (human or agent). Defaults to auto-detect based on TTY.",
     )
     .option("--verbose", "Show detailed output (enables debug messages)")
-    .addHelpText(
-      "after",
-      `
+    .addHelpText("after", () =>
+      isClerkSkillInstalled()
+        ? ""
+        : `
 Give AI agents better Clerk context: install the Clerk skills
   $ clerk skill install`,
     );
