@@ -1,14 +1,17 @@
-import { test, expect, describe } from "bun:test";
+import { test, expect, describe, spyOn, afterEach } from "bun:test";
 import { existsSync } from "node:fs";
 import { readFile, stat } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import YAML from "yaml";
 import {
   buildSkillsArgs,
+  installClerkSkillCore,
   renderSkillVersionPlaceholder,
   resolveClerkSkillOverride,
   withStagedClerkSkill,
 } from "./install.ts";
+import type { Runner } from "../../lib/runners.ts";
 
 describe("buildSkillsArgs", () => {
   const skills = ["clerk", "clerk-setup", "clerk-nextjs-patterns"];
@@ -193,6 +196,68 @@ describe("renderSkillVersionPlaceholder", () => {
   test("returns content unchanged when no placeholder is present", () => {
     const input = "No placeholder here.";
     expect(renderSkillVersionPlaceholder(input, "1.2.3")).toBe(input);
+  });
+});
+
+describe("installClerkSkillCore wiring", () => {
+  const runner: Runner = {
+    id: "bunx",
+    binary: "bunx",
+    prefixArgs: [],
+    display: "bunx",
+  };
+
+  const originalOverride = process.env.CLERK_SKILL_SOURCE;
+  const spawnSpy = spyOn(Bun, "spawn");
+
+  afterEach(() => {
+    if (originalOverride === undefined) delete process.env.CLERK_SKILL_SOURCE;
+    else process.env.CLERK_SKILL_SOURCE = originalOverride;
+    spawnSpy.mockReset();
+  });
+
+  function stubSpawnSuccess() {
+    spawnSpy.mockImplementation(
+      () => ({ exited: Promise.resolve(0) }) as unknown as ReturnType<typeof Bun.spawn>,
+    );
+  }
+
+  test("routes to override with copy:false when CLERK_SKILL_SOURCE is set", async () => {
+    process.env.CLERK_SKILL_SOURCE = "clerk/cli";
+    stubSpawnSuccess();
+
+    const ok = await installClerkSkillCore(runner, process.cwd(), false);
+    expect(ok).toBe(true);
+
+    expect(spawnSpy).toHaveBeenCalledTimes(1);
+    const call = spawnSpy.mock.calls[0];
+    if (!call) throw new Error("spawn was not called");
+    const argv = call[0] as string[];
+    expect(argv[0]).toBe("bunx");
+    expect(argv.slice(1, 4)).toEqual(["skills", "add", "clerk/cli"]);
+    expect(argv).not.toContain("--copy");
+    expect(argv).not.toContain("--skill");
+  });
+
+  test("routes to withStagedClerkSkill with copy:true when unset", async () => {
+    delete process.env.CLERK_SKILL_SOURCE;
+    stubSpawnSuccess();
+
+    const ok = await installClerkSkillCore(runner, process.cwd(), false);
+    expect(ok).toBe(true);
+
+    expect(spawnSpy).toHaveBeenCalledTimes(1);
+    const call = spawnSpy.mock.calls[0];
+    if (!call) throw new Error("spawn was not called");
+    const argv = call[0] as string[];
+    expect(argv[0]).toBe("bunx");
+    expect(argv.slice(1, 3)).toEqual(["skills", "add"]);
+    const source = argv[3];
+    if (!source) throw new Error("spawn argv missing source arg");
+    expect(source.startsWith(tmpdir())).toBe(true);
+    expect(source).toContain("clerk-skill-");
+    expect(argv).toContain("--copy");
+    expect(argv).not.toContain("--skill");
   });
 });
 
