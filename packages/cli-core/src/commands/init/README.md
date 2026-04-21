@@ -45,11 +45,11 @@ Use `--prompt` to output a setup prompt for an AI agent without running init.
 
 1. **`--prompt`**: outputs a framework-specific prompt, then exits
 2. Gathers project context (framework, router variant, TypeScript, `src/` directory, package manager)
-3. **Human mode**: determines auth mode:
-   - If already authenticated and linked: uses authenticated mode automatically
-   - If authenticated but not linked: uses authenticated mode (runs `clerk link`)
-   - If not authenticated: asks user — "Continue with temporary keys (connect your account later)" or "Log in to an existing Clerk account"
-   - With `--yes` and not authenticated: skips authentication (connect your account later), including for non-keyless frameworks during bootstrap
+3. Determines auth mode from credential presence (no user prompt):
+   - **Authenticated** (OAuth token or `CLERK_PLATFORM_API_KEY` set): uses the authenticated flow — runs `clerk link` if not already linked and pulls real API keys into `.env` at the end
+   - **Bootstrap + keyless-capable framework + not authenticated**: automatically uses keyless mode — the app runs on auto-generated dev keys and the user can connect a Clerk account later with `clerk auth login`
+   - **Bootstrap + non-keyless framework + not authenticated** (with `--yes` or agent mode): skips authentication and prints manual setup instructions (run `clerk auth login` / `clerk link` / `clerk env pull` when ready)
+   - **Existing project + not authenticated**: runs the authenticated flow, which triggers an interactive login so real keys can be pulled
 4. **Authenticated mode only**: authenticates via `clerk auth login` (skipped if already authenticated) and links the project via `clerk link` (skipped if already linked)
 5. Displays detected framework and variant
 6. Detects existing auth libraries (NextAuth, Auth0, Supabase, Firebase, Passport, Better Auth, Kinde) and shows migration guidance
@@ -83,7 +83,7 @@ Detects the project's framework from `package.json` dependencies (checked top-to
 | `express`               | Express        | `@clerk/express`              | `CLERK_PUBLISHABLE_KEY`             | No      |
 | `fastify`               | Fastify        | `@clerk/fastify`              | `CLERK_PUBLISHABLE_KEY`             | No      |
 
-The **Keyless** column indicates whether the framework's Clerk SDK supports keyless mode (auto-generated temporary dev keys). Frameworks without keyless support require API keys and always force authentication during `clerk init`, even with `--yes`.
+The **Keyless** column indicates whether the framework's Clerk SDK supports keyless mode (auto-generated temporary dev keys). Keyless auto-selection only applies during bootstrap (new projects) — re-running `clerk init` in an existing project always uses the authenticated flow (prompting login when signed out) so real keys can be pulled via `clerk env pull`. During bootstrap of a non-keyless framework with `--yes` and no credentials, `clerk init` skips authentication and prints manual setup instructions instead of blocking on a login prompt.
 
 Package manager is detected from lock files: `bun.lockb`/`bun.lock` → bun, `yarn.lock` → yarn, `pnpm-lock.yaml` → pnpm, else npm.
 
@@ -181,13 +181,25 @@ If no entry file is found, a post-instruction is printed pointing to the Clerk J
 
 ## Agent skills install
 
-After scaffolding (and after env keys are pulled or keyless instructions are printed), `clerk init` offers to install Clerk's framework-specific agent skills from [`clerk/skills`](https://github.com/clerk/skills) via the [`skills`](https://www.npmjs.com/package/skills) CLI. The runner is detected from the project's package manager (`bunx`, `npx`, `pnpm dlx`, or `yarn dlx`), so a Bun project installs via `bunx skills add clerk/skills`, a pnpm project via `pnpm dlx skills add clerk/skills`, and so on. This step is optional and non-fatal: if no package runner is available on PATH or the install command exits non-zero, init prints a yellow warning with a runner-appropriate manual command and still exits successfully.
+After scaffolding (and after env keys are pulled or keyless instructions are printed), `clerk init` offers to install Clerk's agent skills via the [`skills`](https://www.npmjs.com/package/skills) CLI. The runner is detected from the project's package manager (`bunx`, `npx`, `pnpm dlx`, or `yarn dlx`), so a Bun project installs via `bunx skills add ...`, a pnpm project via `pnpm dlx skills add ...`, and so on. This step is optional and non-fatal: if no package runner is available on PATH or an install command exits non-zero, init prints a yellow warning with a runner-appropriate manual command and still exits successfully.
 
 - **Human mode**: prompts `Install agent skills? (...)` defaulting to yes. Pass `--no-skills` to suppress the prompt entirely, or `-y/--yes` to accept it without confirmation. When more than one runner is available, a second prompt picks which one to use (the project's package manager wins by default).
 - **Agent mode**: skills are installed non-interactively with `-y -g` flags (no prompt shown). Pass `--no-skills` to skip entirely.
-- **`--prompt`**: exits before the skills step runs. Agent users should run `skills add clerk/skills` via their preferred runner manually.
+- **`--prompt`**: exits before the skills step runs. Agent users should run `skills add clerk/skills` via their preferred runner manually; the bundled `clerk` skill is only installable via `clerk init` itself, since its source lives inside the CLI binary.
 
-The base skills `clerk` and `clerk-setup` are always included. The detected framework dependency adds a matching skill:
+Two install commands run, sharing one runner:
+
+### 1. The bundled `clerk` skill
+
+The `clerk` skill ships **inside the CLI binary**. Its markdown files at [`<repo-root>/skills/clerk/`](../../../../../skills/clerk/) are pulled into [`skills.ts`](./skills.ts) as [text imports](https://bun.com/docs/bundler/loaders#text) (`import md from "./SKILL.md" with { type: "text" }`) and embedded by `bun build --compile`, so the skill content always matches the binary running it. No network, no tag, no version fallback.
+
+At install time, [`skills.ts`](./skills.ts) stages the bundled content into a fresh temp directory (`mkdtemp`) and invokes `<runner> skills add <tmpdir> --copy`. The `--copy` flag is required: the default symlink mode would point each agent's skill dir at the temp dir, which we delete immediately after the install completes.
+
+The `skills` CLI writes the installed files into each agent's skill directory (`.claude/skills/clerk/`, `.cursor/skills/clerk/`, etc.) and records the entry in the project's `skills-lock.json` with `sourceType: "local"`, which correctly excludes it from `skills update` (the skill can only change when the CLI itself is upgraded).
+
+### 2. The upstream framework-pattern skills
+
+The base skills `clerk` and `clerk-setup` are always included from [`clerk/skills`](https://github.com/clerk/skills). The detected framework dependency adds a matching skill:
 
 | Framework dep           | Added skill                   |
 | ----------------------- | ----------------------------- |
@@ -202,7 +214,13 @@ The base skills `clerk` and `clerk-setup` are always included. The detected fram
 | `express`               | `clerk-backend-api`           |
 | `fastify`               | `clerk-backend-api`           |
 
-Implementation lives in [`skills.ts`](./skills.ts). Note that the E2E fixture setup runs `clerk init --yes --no-skills` because the skill templates reference framework-generated types (e.g. React Router's `./+types/root`) that don't exist outside a real app directory and would break the fixture's `tsc` step.
+These skills version independently of the CLI, so no pin is applied.
+
+### Failure handling
+
+The two install commands fail independently: a problem with the bundled `clerk` skill install (e.g. the `skills` CLI can't be fetched by the runner) does not block the upstream skills install, and vice versa. Each failure prints its own yellow warning with a manual install command (where applicable — the bundled `clerk` skill has no standalone manual command, since its source lives in the binary). Init continues and exits successfully either way.
+
+Implementation lives in [`skills.ts`](./skills.ts). Note that the E2E fixture setup runs `clerk init --yes --no-skills` because the framework template skills reference auto-generated types (e.g. React Router's `./+types/root`) that don't exist outside a real app directory and would break the fixture's `tsc` step.
 
 ## API Endpoints
 

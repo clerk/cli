@@ -4,6 +4,7 @@
  */
 
 import { join } from "node:path";
+import { log } from "./log.ts";
 
 export interface FrameworkInfo {
   dep: string;
@@ -145,12 +146,19 @@ export async function readDeps(cwd: string): Promise<Record<string, string> | nu
 
 export async function detectFramework(cwd: string): Promise<FrameworkInfo | null> {
   const allDeps = await readDeps(cwd);
-  if (!allDeps) return null;
-
-  for (const fw of FRAMEWORK_MAP) {
-    if (fw.dep in allDeps) return fw;
+  if (!allDeps) {
+    log.debug(`framework: no package.json at ${cwd} or unable to parse`);
+    return null;
   }
 
+  for (const fw of FRAMEWORK_MAP) {
+    if (fw.dep in allDeps) {
+      log.debug(`framework: detected "${fw.name}" via dependency "${fw.dep}"`);
+      return fw;
+    }
+  }
+
+  log.debug(`framework: no match in ${cwd}/package.json dependencies`);
   return null;
 }
 

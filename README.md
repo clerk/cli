@@ -54,6 +54,8 @@ Commands:
     ls [filter]                              List available API endpoints
     (no args)                                Interactive request builder (TTY only)
   doctor      [options]                      Check your project's Clerk integration health
+  skill                                      Manage the bundled Clerk CLI agent skill
+    install   [options]                      Install the bundled clerk agent skill
   switch-env  [environment]                  Switch the active Clerk CLI environment
   completion  [shell]                        Generate shell autocompletion script
   update      [options]                      Update the Clerk CLI to the latest version
@@ -198,16 +200,26 @@ clerk doctor
     $ clerk doctor --fix               Auto-fix detected issues
     $ clerk doctor --spotlight         Only show warnings and failures
 
+clerk skill install
+  -y, --yes            Skip prompts and run the `skills` CLI unattended
+  --pm <manager>       Package manager hint for runner detection
+  Examples:
+    $ clerk skill install              Install with an interactive runner picker
+    $ clerk skill install -y           Install unattended
+    $ clerk skill install --pm bun     Force bunx as the runner
+
 clerk completion <shell>
   shell: bash, zsh, fish, powershell
 
 clerk update
   --channel <tag>      Release channel to update to (e.g. latest, canary)
   -y, --yes            Skip confirmation prompt
+  --all                Update every clerk install found on PATH, not just the first
   Examples:
     $ clerk update                       Update to the latest stable release
     $ clerk update --channel canary      Update to the latest canary release
     $ clerk update --yes                 Update without confirmation prompt
+    $ clerk update --all                 Update every clerk install on PATH
 ```
 
 ## Open Questions

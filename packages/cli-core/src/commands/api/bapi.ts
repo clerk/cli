@@ -5,6 +5,7 @@
 
 import { getBapiBaseUrl } from "../../lib/environment.ts";
 import { BapiError } from "../../lib/errors.ts";
+import { loggedFetch } from "../../lib/fetch.ts";
 
 export interface BapiResponse {
   status: number;
@@ -38,7 +39,8 @@ export async function bapiRequest(options: {
     headers["Content-Type"] = "application/json";
   }
 
-  const response = await fetch(url, {
+  const response = await loggedFetch(url, {
+    tag: "bapi",
     method: options.method,
     headers,
     body: options.body,

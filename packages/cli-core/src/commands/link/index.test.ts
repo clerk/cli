@@ -6,6 +6,7 @@ import {
   autolinkStubs,
   gitStubs,
   promptsStubs,
+  listageStubs,
 } from "../../test/lib/stubs.ts";
 import { PlapiError } from "../../lib/errors.ts";
 
@@ -84,6 +85,15 @@ mock.module("@inquirer/prompts", () => ({
   search: (...args: unknown[]) => mockSearch(...args),
   confirm: (...args: unknown[]) => mockConfirm(...args),
   input: (...args: unknown[]) => mockInput(...args),
+}));
+
+mock.module("../../lib/prompts.ts", () => ({
+  confirm: (...args: unknown[]) => mockConfirm(...args),
+}));
+
+mock.module("../../lib/listage.ts", () => ({
+  ...listageStubs,
+  search: (...args: unknown[]) => mockSearch(...args),
 }));
 
 mock.module("../../lib/spinner.ts", () => ({

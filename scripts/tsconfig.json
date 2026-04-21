@@ -1,4 +1,4 @@
 {
   "extends": "../tsconfig.json",
-  "include": ["**/*.ts"]
+  "include": ["**/*.ts", "../packages/cli-core/src/globals.d.ts"]
 }

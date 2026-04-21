@@ -21,18 +21,18 @@ import {
   printOutro,
   printKeylessInfo,
   getAuthenticatedEmail,
+  isAuthenticated,
 } from "./heuristics.js";
 import { installSkills } from "./skills.js";
 import { intro, outro, bar, withSpinner } from "../../lib/spinner.js";
 import {
   promptAndBootstrap,
   confirmOverwrite,
-  askSkipAuth,
   type BootstrapOverrides,
   type BootstrapResult,
 } from "./bootstrap.js";
 import type { ProjectContext } from "./frameworks/types.js";
-import type { PackageManager } from "./bootstrap-registry.js";
+import type { PackageManager } from "../../lib/package-manager.ts";
 
 type InitOptions = {
   /** Framework to set up (skips auto-detection). */
@@ -87,10 +87,11 @@ export async function init(options: InitOptions = {}) {
 
   await enrichProjectContext(ctx);
 
-  const keyless = await resolveKeylessMode(bootstrap, ctx, overrides.skipConfirm);
+  const authed = await isAuthenticated();
+  const keyless = resolveKeylessMode(bootstrap, ctx, authed);
   ctx.keyless = keyless;
 
-  const skipAuth = !keyless && bootstrap != null && overrides.skipConfirm;
+  const skipAuth = !keyless && bootstrap != null && overrides.skipConfirm && !authed;
 
   if (!keyless && !skipAuth) {
     bar();
@@ -99,7 +100,10 @@ export async function init(options: InitOptions = {}) {
 
   // Short-circuit on a fully-clean re-run so env pull / skills prompt don't
   // execute when there's nothing to do.
-  const { alreadySetUp } = await detectAndInstall(ctx.cwd, ctx, overrides.skipConfirm);
+  // Bootstrap implies consent — the user already opted into project creation, so
+  // skip the scaffold "Proceed?" prompt as well.
+  const skipScaffoldConfirm = overrides.skipConfirm || bootstrap != null;
+  const { alreadySetUp } = await detectAndInstall(ctx.cwd, ctx, skipScaffoldConfirm);
 
   if (alreadySetUp) {
     log.success("\nClerk is already set up in this project.");
@@ -116,13 +120,15 @@ export async function init(options: InitOptions = {}) {
     printKeylessInfo();
   }
 
-  if (bootstrap) {
-    printBootstrapNextSteps(bootstrap, keyless);
-  }
-
   if (options.skills !== false) {
     bar();
     await installSkills(ctx.cwd, ctx.framework.dep, ctx.packageManager, overrides.skipConfirm);
+  }
+
+  // Next steps print last so they stay on screen as the final thing the user sees.
+  if (bootstrap) {
+    bar();
+    printBootstrapNextSteps(bootstrap, keyless);
   }
 
   outro("Done");
@@ -158,7 +164,7 @@ async function handleStarter(
     await confirmOverwrite(cwd);
   }
 
-  return bootstrapAndDetect(cwd, frameworkOverride, { ...overrides, skipConfirm: true });
+  return bootstrapAndDetect(cwd, frameworkOverride, { ...overrides, implicitBootstrap: true });
 }
 
 async function resolveProjectContext(
@@ -211,15 +217,24 @@ function printBootstrapManualSetupInfo(frameworkName: string): void {
 
 // --- Keyless ---
 
-async function resolveKeylessMode(
+function resolveKeylessMode(
   bootstrap: BootstrapResult | null,
   ctx: ProjectContext,
-  skipConfirm: boolean,
-): Promise<boolean> {
+  authed: boolean,
+): boolean {
+  // Auto-keyless is scoped to bootstrap (new-project) flows only. For existing
+  // projects, fall through to the authenticated flow so `clerk init` still
+  // runs `authenticateAndLink` and pulls real keys — even when signed out the
+  // user gets a login prompt rather than being silently dropped into keyless
+  // (which would skip `env pull` and could overwrite permissive middleware).
   if (!bootstrap) return false;
 
   if (ctx.framework.supportsKeyless) {
-    return skipConfirm || (await askSkipAuth());
+    // Authenticated (OAuth token or CLERK_PLATFORM_API_KEY) — use the
+    // authenticated flow so real keys get pulled into .env. Otherwise fall
+    // back to keyless: the app runs on auto-generated dev keys and the user
+    // can connect their account later via `clerk auth login`.
+    return !authed;
   }
 
   log.info(

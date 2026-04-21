@@ -1,4 +1,5 @@
 import { resolve } from "node:path";
+import { log } from "./log.ts";
 
 const $ = Bun.$;
 
@@ -15,6 +16,7 @@ async function getGitRepoInfo(): Promise<GitRepoInfo | undefined> {
 
   const result = await $`git rev-parse --show-toplevel --git-common-dir`.quiet().nothrow();
   if (result.exitCode !== 0) {
+    log.debug("git: not a git repository (git rev-parse failed)");
     cached = undefined;
     return undefined;
   }
@@ -23,6 +25,7 @@ async function getGitRepoInfo(): Promise<GitRepoInfo | undefined> {
   const toplevel = lines[0];
   const commonDir = lines[1];
   if (!toplevel || !commonDir) {
+    log.debug("git: rev-parse returned no toplevel/commonDir");
     cached = undefined;
     return undefined;
   }
@@ -36,6 +39,9 @@ async function getGitRepoInfo(): Promise<GitRepoInfo | undefined> {
     commonDir: resolve(toplevel, commonDir),
     normalizedRemote: rawRemote ? normalizeGitRemoteUrl(rawRemote) : undefined,
   };
+  log.debug(
+    `git: toplevel=${cached.toplevel}, commonDir=${cached.commonDir}, remote=${cached.normalizedRemote ?? "<none>"}`,
+  );
   return cached;
 }
 

@@ -1,9 +1,15 @@
 /**
  * Install Clerk agent skills after scaffolding.
  *
- * Maps the detected framework to the appropriate skill set from
- * github.com/clerk/skills, then installs via the user's package runner
- * (bunx, npx, pnpm dlx, or yarn dlx).
+ * Two installer calls share one runner detection:
+ *
+ *  1. The bundled `clerk` skill (embedded in the binary via text
+ *     imports). Delegated to the `clerk skill install` core helpers in
+ *     `commands/skill/install.ts`.
+ *
+ *  2. The framework-pattern skills (`clerk-setup`,
+ *     `clerk-<framework>-patterns`) ship from the upstream `clerk/skills`
+ *     repo and version independently of the CLI.
  *
  * The skills CLI itself handles agent auto-detection and scope selection:
  * in interactive mode we hand off entirely (no `--agent` / `-y`), so the
@@ -11,24 +17,16 @@
  * so it runs unattended with global scope and auto-detected agents.
  */
 
-import { dim } from "../../lib/color.js";
 import { isHuman } from "../../mode.js";
 import { log } from "../../lib/log.js";
-import { confirm, select } from "../../lib/prompts.js";
-import {
-  type Runner,
-  detectAvailableRunners,
-  preferredRunner,
-  runnerCommand,
-  runnerForPackageManager,
-} from "../../lib/runners.js";
-import { isNonEmpty } from "../../lib/helpers/arrays.js";
+import { confirm } from "../../lib/prompts.js";
 import type { ProjectContext } from "./frameworks/types.js";
+import { installClerkSkillCore, resolveSkillsRunner, runSkillsAdd } from "../skill/install.js";
 
-/** Skills installed regardless of framework. */
-const BASE_SKILLS = ["clerk", "clerk-setup"];
+/** Upstream skills installed regardless of framework. */
+const BASE_SKILLS = ["clerk-setup"];
 
-/** Maps framework dep (from package.json) to the skill name in clerk/skills. */
+/** Maps framework dep (from package.json) to the upstream skill name. */
 const FRAMEWORK_SKILL_MAP: Record<string, string> = {
   next: "clerk-nextjs-patterns",
   react: "clerk-react-patterns",
@@ -42,31 +40,15 @@ const FRAMEWORK_SKILL_MAP: Record<string, string> = {
   fastify: "clerk-backend-api",
 };
 
-const SKILLS_SOURCE = "clerk/skills";
+/** Source for upstream framework-pattern skills. */
+const UPSTREAM_SKILLS_SOURCE = "clerk/skills";
 
-function resolveSkills(frameworkDep: string | undefined): string[] {
+function resolveUpstreamSkills(frameworkDep: string | undefined): string[] {
   const skills = [...BASE_SKILLS];
   if (frameworkDep && FRAMEWORK_SKILL_MAP[frameworkDep]) {
     skills.push(FRAMEWORK_SKILL_MAP[frameworkDep]);
   }
   return skills;
-}
-
-/**
- * Build the runner-agnostic argv for `skills add ...`. The caller prepends
- * the runner (bunx / npx / pnpm dlx / yarn dlx) via {@link runnerCommand}.
- *
- * Interactive mode: hand off to the skills CLI's native UX (auto-detect
- * installed agents, scope picker) by omitting `--agent` and `-y`.
- * Non-interactive: pass `-y -g` so it runs unattended with global scope
- * and auto-detected agents.
- *
- * Exported for tests.
- */
-export function buildSkillsArgs(skills: string[], interactive: boolean): string[] {
-  const skillFlags = skills.flatMap((s) => ["--skill", s]);
-  const extraFlags = interactive ? [] : ["-y", "-g"];
-  return ["skills", "add", SKILLS_SOURCE, ...skillFlags, ...extraFlags];
 }
 
 export async function installSkills(
@@ -75,8 +57,8 @@ export async function installSkills(
   packageManager: ProjectContext["packageManager"] | undefined,
   skipPrompt: boolean,
 ): Promise<void> {
-  const skills = resolveSkills(frameworkDep);
-  const skillList = skills.join(", ");
+  const upstreamSkills = resolveUpstreamSkills(frameworkDep);
+  const skillList = ["clerk", ...upstreamSkills].join(", ");
 
   if (isHuman() && !skipPrompt) {
     const install = await confirm({
@@ -86,61 +68,29 @@ export async function installSkills(
     if (!install) return;
   }
 
-  // Detect runners after the user accepts — no point probing PATH if they decline.
-  const available = detectAvailableRunners();
-  if (!isNonEmpty(available)) {
-    const suggested = runnerForPackageManager(packageManager);
-    log.blank();
-    log.warn(
-      "No package runner found on PATH (looked for bunx, npx, pnpm, yarn). " +
-        `Install one and run \`${suggested.display} skills add ${SKILLS_SOURCE}\` manually.`,
-    );
-    return;
-  }
-
-  const preferred = preferredRunner(packageManager, available);
-
-  // Only prompt when there's an actual choice and the user is interactive.
-  let runner = preferred;
-  if (isHuman() && !skipPrompt && available.length > 1) {
-    runner = await select<Runner>({
-      message: "Which package runner should install the skills?",
-      choices: available.map((r) => ({
-        name: r.id === preferred.id ? `${r.display} ${dim("(detected)")}` : r.display,
-        value: r,
-      })),
-      default: preferred,
-    });
-  }
-
   const interactive = isHuman() && !skipPrompt;
-  const command = runnerCommand(runner, buildSkillsArgs(skills, interactive));
-  const displayCommand = `${runner.display} skills add ${SKILLS_SOURCE}`;
 
-  log.blank();
-  log.info(`Installing skills with \`${runner.display}\`: \`${skillList}\``);
+  // Detect runner after the user accepts — no point probing PATH if they decline.
+  const runner = await resolveSkillsRunner(packageManager, interactive);
+  if (!runner) return;
 
-  let exitCode: number;
-  try {
-    const proc = Bun.spawn(command, {
-      cwd,
-      stdin: "inherit",
-      stdout: "inherit",
-      stderr: "inherit",
-    });
-    exitCode = await proc.exited;
-  } catch {
+  // Install the bundled clerk skill from a staged temp dir, then the
+  // upstream framework patterns. Each call soft-fails independently so a
+  // problem with one source doesn't block the other.
+  const cliSkillOk = await installClerkSkillCore(runner, cwd, interactive);
+
+  const upstreamOk = await runSkillsAdd(
+    runner,
+    cwd,
+    UPSTREAM_SKILLS_SOURCE,
+    upstreamSkills,
+    interactive,
+    false,
+    upstreamSkills.join(", "),
+  );
+
+  if (cliSkillOk && upstreamOk) {
     log.blank();
-    log.warn(`Could not run \`${displayCommand}\`. You can install manually later.`);
-    return;
+    log.success("Agent skills installed. AI agents now have Clerk context in this project.");
   }
-
-  if (exitCode !== 0) {
-    log.blank();
-    log.warn(`Skills installation failed. You can install manually: \`${displayCommand}\``);
-    return;
-  }
-
-  log.blank();
-  log.success("Agent skills installed. AI agents now have Clerk context in this project.");
 }

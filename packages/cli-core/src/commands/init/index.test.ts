@@ -18,6 +18,7 @@ import * as scanMod from "./scan.ts";
 import * as heuristics from "./heuristics.ts";
 import * as skillsMod from "./skills.ts";
 import * as bootstrapMod from "./bootstrap.ts";
+import * as nextStepsMod from "../../lib/next-steps.ts";
 import { init } from "./index.ts";
 
 const FAKE_CTX = {
@@ -52,9 +53,11 @@ describe("init", () => {
     for (const s of spies) s.mockRestore();
   });
 
-  function setup(overrides: { email?: string | null; isAgent?: boolean } = {}) {
+  function setup(overrides: { email?: string | null; apiKey?: boolean; isAgent?: boolean } = {}) {
     const email = overrides.email ?? null;
+    const apiKey = overrides.apiKey ?? false;
     const agent = overrides.isAgent ?? false;
+    const authed = email != null || apiKey;
 
     captured = captureLog();
 
@@ -75,6 +78,7 @@ describe("init", () => {
       spyOn(scanMod, "detectAuthLibraries").mockReturnValue(undefined),
       spyOn(scanMod, "scanForIssues").mockResolvedValue([]),
       spyOn(heuristics, "getAuthenticatedEmail").mockResolvedValue(email),
+      spyOn(heuristics, "isAuthenticated").mockResolvedValue(authed),
       spyOn(heuristics, "printKeylessInfo").mockReturnValue(undefined),
       spyOn(heuristics, "installSdk").mockResolvedValue(undefined),
       spyOn(heuristics, "installDeps").mockResolvedValue(undefined),
@@ -87,7 +91,6 @@ describe("init", () => {
       spyOn(pullMod, "pull").mockResolvedValue(undefined),
       spyOn(bootstrapMod, "promptAndBootstrap").mockResolvedValue(FAKE_BOOTSTRAP),
       spyOn(bootstrapMod, "confirmOverwrite").mockResolvedValue(undefined),
-      spyOn(bootstrapMod, "askSkipAuth").mockResolvedValue(false),
     ];
 
     return { gatherContextSpy, captured };
@@ -142,7 +145,6 @@ describe("init", () => {
 
     await init({});
 
-    expect(bootstrapMod.askSkipAuth).not.toHaveBeenCalled();
     expect(previewMod.previewAndConfirm).not.toHaveBeenCalled();
     expect(bootstrapMod.promptAndBootstrap).not.toHaveBeenCalled();
   });
@@ -164,26 +166,169 @@ describe("init", () => {
     await init({});
 
     expect(bootstrapMod.promptAndBootstrap).toHaveBeenCalled();
-    // React doesn't support keyless, so askSkipAuth is never called
-    expect(bootstrapMod.askSkipAuth).not.toHaveBeenCalled();
+    // React doesn't support keyless, so keyless flow isn't triggered
+    expect(heuristics.printKeylessInfo).not.toHaveBeenCalled();
   });
 
-  test("blank dir with keyless framework prompts askSkipAuth", async () => {
+  test("bootstrap flow skips scaffold Proceed? prompt (user already opted in)", async () => {
+    setup({ email: "test@test.com" });
+    setupBootstrapSuccess();
+    spyOn(scaffoldMod, "scaffold").mockResolvedValue({
+      actions: [{ type: "create", path: "app/layout.tsx", content: "", description: "" }],
+      postInstructions: [],
+    });
+
+    await init({});
+
+    expect(bootstrapMod.promptAndBootstrap).toHaveBeenCalled();
+    expect(previewMod.previewAndConfirm).not.toHaveBeenCalled();
+    expect(previewMod.previewPlan).toHaveBeenCalled();
+  });
+
+  test("--starter skips scaffold Proceed? prompt even without -y", async () => {
+    setup({ email: "test@test.com" });
+    spyOn(context, "gatherContext").mockResolvedValue(FAKE_CTX);
+    spyOn(config, "resolveProfile").mockResolvedValue({ profile: { appId: "app_123" } } as never);
+    spyOn(scaffoldMod, "scaffold").mockResolvedValue({
+      actions: [{ type: "create", path: "app/layout.tsx", content: "", description: "" }],
+      postInstructions: [],
+    });
+
+    await init({ starter: true });
+
+    expect(previewMod.previewAndConfirm).not.toHaveBeenCalled();
+    expect(previewMod.previewPlan).toHaveBeenCalled();
+  });
+
+  test("existing project without -y still prompts scaffold Proceed?", async () => {
+    setup({ email: "test@test.com" });
+    spyOn(context, "gatherContext").mockResolvedValue(FAKE_CTX);
+    spyOn(config, "resolveProfile").mockResolvedValue({ profile: { appId: "app_123" } } as never);
+    spyOn(scaffoldMod, "scaffold").mockResolvedValue({
+      actions: [{ type: "create", path: "app/layout.tsx", content: "", description: "" }],
+      postInstructions: [],
+    });
+
+    await init({});
+
+    expect(previewMod.previewAndConfirm).toHaveBeenCalled();
+  });
+
+  test("bootstrap prints next steps after skills install", async () => {
+    setup({ email: "test@test.com" });
+    setupBootstrapSuccess();
+    spyOn(scaffoldMod, "scaffold").mockResolvedValue({
+      actions: [{ type: "create", path: "app/layout.tsx", content: "", description: "" }],
+      postInstructions: [],
+    });
+
+    const callOrder: string[] = [];
+    spies.push(
+      spyOn(skillsMod, "installSkills").mockImplementation(async () => {
+        callOrder.push("installSkills");
+      }),
+    );
+    spies.push(
+      spyOn(nextStepsMod, "printNextSteps").mockImplementation(() => {
+        callOrder.push("printNextSteps");
+      }),
+    );
+
+    await init({});
+
+    expect(callOrder.indexOf("installSkills")).toBeLessThan(callOrder.indexOf("printNextSteps"));
+  });
+
+  test("blank dir with keyless framework auto-selects keyless when unauthenticated", async () => {
     setup();
 
     const keylessCtx = {
       ...FAKE_CTX,
+      existingClerk: false,
       framework: {
         ...FAKE_CTX.framework,
         supportsKeyless: true,
       },
     };
     spyOn(context, "gatherContext").mockResolvedValueOnce(null).mockResolvedValueOnce(keylessCtx);
+    spyOn(scaffoldMod, "scaffold").mockResolvedValue({
+      actions: [{ type: "create", path: "middleware.ts", content: "", description: "" }],
+      postInstructions: [],
+    });
 
     await init({});
 
     expect(bootstrapMod.promptAndBootstrap).toHaveBeenCalled();
-    expect(bootstrapMod.askSkipAuth).toHaveBeenCalled();
+    expect(heuristics.printKeylessInfo).toHaveBeenCalled();
+    expect(linkMod.link).not.toHaveBeenCalled();
+  });
+
+  test("bootstrap with keyless framework goes authenticated when already signed in", async () => {
+    setup({ email: "user@example.com" });
+
+    const keylessCtx = {
+      ...FAKE_CTX,
+      framework: { ...FAKE_CTX.framework, supportsKeyless: true },
+    };
+    spyOn(context, "gatherContext").mockResolvedValueOnce(null).mockResolvedValueOnce(keylessCtx);
+
+    await init({});
+
+    expect(heuristics.isAuthenticated).toHaveBeenCalled();
+    expect(heuristics.printKeylessInfo).not.toHaveBeenCalled();
+    expect(linkMod.link).toHaveBeenCalled();
+  });
+
+  test("-y flag with keyless framework uses authenticated flow when signed in", async () => {
+    setup({ email: "user@example.com" });
+
+    const keylessCtx = {
+      ...FAKE_CTX,
+      framework: { ...FAKE_CTX.framework, supportsKeyless: true },
+    };
+    spyOn(context, "gatherContext").mockResolvedValueOnce(null).mockResolvedValueOnce(keylessCtx);
+
+    await init({ yes: true });
+
+    expect(heuristics.isAuthenticated).toHaveBeenCalled();
+    expect(heuristics.printKeylessInfo).not.toHaveBeenCalled();
+  });
+
+  test("-y flag with keyless framework uses authenticated flow when CLERK_PLATFORM_API_KEY is set", async () => {
+    setup({ apiKey: true });
+
+    const keylessCtx = {
+      ...FAKE_CTX,
+      framework: { ...FAKE_CTX.framework, supportsKeyless: true },
+    };
+    spyOn(context, "gatherContext").mockResolvedValueOnce(null).mockResolvedValueOnce(keylessCtx);
+
+    await init({ yes: true });
+
+    expect(heuristics.isAuthenticated).toHaveBeenCalled();
+    expect(heuristics.printKeylessInfo).not.toHaveBeenCalled();
+    expect(linkMod.link).toHaveBeenCalled();
+  });
+
+  test("-y flag with keyless framework goes keyless when not authenticated", async () => {
+    setup();
+
+    const keylessCtx = {
+      ...FAKE_CTX,
+      existingClerk: false,
+      framework: { ...FAKE_CTX.framework, supportsKeyless: true },
+    };
+    spyOn(context, "gatherContext").mockResolvedValueOnce(null).mockResolvedValueOnce(keylessCtx);
+    spyOn(scaffoldMod, "scaffold").mockResolvedValue({
+      actions: [{ type: "create", path: "middleware.ts", content: "", description: "" }],
+      postInstructions: [],
+    });
+
+    await init({ yes: true });
+
+    expect(heuristics.isAuthenticated).toHaveBeenCalled();
+    expect(heuristics.printKeylessInfo).toHaveBeenCalled();
+    expect(linkMod.link).not.toHaveBeenCalled();
   });
 
   test("-y flag skips auth prompt and defaults to unauthenticated mode", async () => {
@@ -193,8 +338,8 @@ describe("init", () => {
     await init({ yes: true });
 
     expect(bootstrapMod.promptAndBootstrap).toHaveBeenCalled();
-    expect(bootstrapMod.askSkipAuth).not.toHaveBeenCalled();
-    expect(heuristics.getAuthenticatedEmail).not.toHaveBeenCalled();
+    // isAuthenticated is called during skipAuth check
+    expect(heuristics.isAuthenticated).toHaveBeenCalled();
   });
 
   test("-y flag skips auth for frameworks without keyless support in bootstrap", async () => {
@@ -217,10 +362,8 @@ describe("init", () => {
     await init({ yes: true });
 
     expect(bootstrapMod.promptAndBootstrap).toHaveBeenCalled();
-    // Should not ask about skipping auth — keyless not supported
-    expect(bootstrapMod.askSkipAuth).not.toHaveBeenCalled();
-    // Should skip auth in non-interactive bootstrap — user connects later
-    expect(heuristics.getAuthenticatedEmail).not.toHaveBeenCalled();
+    // isAuthenticated is called during skipAuth check, returns false → skip auth
+    expect(heuristics.isAuthenticated).toHaveBeenCalled();
     expect(loginMod.login).not.toHaveBeenCalled();
     expect(heuristics.printKeylessInfo).not.toHaveBeenCalled();
   });
@@ -256,6 +399,56 @@ describe("init", () => {
     expect(context.hasPackageJson).not.toHaveBeenCalled();
   });
 
+  test("existing repo with keyless framework uses authenticated flow when signed in", async () => {
+    setup({ email: "user@example.com" });
+
+    const keylessCtx = {
+      ...FAKE_CTX,
+      framework: { ...FAKE_CTX.framework, supportsKeyless: true },
+    };
+    spyOn(context, "gatherContext").mockResolvedValue(keylessCtx);
+    spyOn(config, "resolveProfile").mockResolvedValue({ profile: { appId: "app_123" } } as never);
+
+    await init({ yes: true });
+
+    expect(bootstrapMod.promptAndBootstrap).not.toHaveBeenCalled();
+    expect(heuristics.isAuthenticated).toHaveBeenCalled();
+    expect(heuristics.printKeylessInfo).not.toHaveBeenCalled();
+  });
+
+  test("existing repo with keyless framework uses authenticated flow when not signed in", async () => {
+    // Keyless auto-selection is scoped to bootstrap (new-project) flows. On an
+    // existing repo, an unauthenticated re-run should fall through to the
+    // authenticated flow (which prompts login) rather than silently skip
+    // `env pull` and scaffold permissive middleware.
+    setup();
+
+    const keylessCtx = {
+      ...FAKE_CTX,
+      existingClerk: false,
+      framework: { ...FAKE_CTX.framework, supportsKeyless: true },
+    };
+    spyOn(context, "gatherContext").mockResolvedValue(keylessCtx);
+    spyOn(scaffoldMod, "scaffold").mockResolvedValue({
+      actions: [{ type: "create", path: "middleware.ts", content: "", description: "" }],
+      postInstructions: [],
+    });
+    spyOn(loginMod, "login").mockResolvedValue({
+      userId: "user_1",
+      email: "test@test.com",
+    } as never);
+
+    await init({});
+
+    expect(bootstrapMod.promptAndBootstrap).not.toHaveBeenCalled();
+    expect(heuristics.isAuthenticated).toHaveBeenCalled();
+    expect(heuristics.printKeylessInfo).not.toHaveBeenCalled();
+    // Unauthenticated + existing repo → login + link run via authenticateAndLink.
+    expect(loginMod.login).toHaveBeenCalledWith({ showNextSteps: false });
+    expect(linkMod.link).toHaveBeenCalled();
+    expect(pullMod.pull).toHaveBeenCalled();
+  });
+
   test("passes frameworkOverride to bootstrap when provided", async () => {
     const fwOverride = {
       dep: "next",
@@ -285,11 +478,16 @@ describe("init", () => {
 
     await init({ starter: true, yes: true });
 
-    expect(bootstrapMod.promptAndBootstrap).toHaveBeenCalledWith(expect.any(String), undefined, {
-      skipConfirm: true,
-      pmOverride: undefined,
-      nameOverride: undefined,
-    });
+    expect(bootstrapMod.promptAndBootstrap).toHaveBeenCalledWith(
+      expect.any(String),
+      undefined,
+      expect.objectContaining({
+        skipConfirm: true,
+        implicitBootstrap: true,
+        pmOverride: undefined,
+        nameOverride: undefined,
+      }),
+    );
     // --yes skips confirmOverwrite
     expect(bootstrapMod.confirmOverwrite).not.toHaveBeenCalled();
   });
@@ -302,6 +500,20 @@ describe("init", () => {
     await init({ starter: true });
 
     expect(bootstrapMod.confirmOverwrite).toHaveBeenCalledWith(expect.any(String));
+  });
+
+  test("--starter without -y runs bootstrap interactively (does not require --framework)", async () => {
+    setup({ email: "test@test.com" });
+    spyOn(context, "gatherContext").mockResolvedValue(FAKE_CTX);
+    spyOn(config, "resolveProfile").mockResolvedValue({ profile: { appId: "app_123" } } as never);
+
+    await init({ starter: true });
+
+    expect(bootstrapMod.promptAndBootstrap).toHaveBeenCalledWith(
+      expect.any(String),
+      undefined,
+      expect.objectContaining({ skipConfirm: false, implicitBootstrap: true }),
+    );
   });
 
   test("bootstrap passes project dir to installSkills, not original cwd", async () => {
@@ -382,11 +594,16 @@ describe("init", () => {
 
     await init({ starter: true, yes: true, pm: "bun", name: "my-project" });
 
-    expect(bootstrapMod.promptAndBootstrap).toHaveBeenCalledWith(expect.any(String), undefined, {
-      skipConfirm: true,
-      pmOverride: "bun",
-      nameOverride: "my-project",
-    });
+    expect(bootstrapMod.promptAndBootstrap).toHaveBeenCalledWith(
+      expect.any(String),
+      undefined,
+      expect.objectContaining({
+        skipConfirm: true,
+        implicitBootstrap: true,
+        pmOverride: "bun",
+        nameOverride: "my-project",
+      }),
+    );
   });
 
   test("agent mode skips all confirmations implicitly", async () => {
