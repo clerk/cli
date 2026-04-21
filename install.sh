@@ -263,10 +263,10 @@ if [ -z "$INSTALL_DIR" ]; then
     INSTALL_DIR="/usr/local/bin"
   else
     INSTALL_DIR="${HOME}/.local/bin"
-    mkdir -p "$INSTALL_DIR"
   fi
 fi
 
+mkdir -p "$INSTALL_DIR"
 mv "${TMPDIR}/${BINARY_NAME}${EXT}" "${INSTALL_DIR}/${BINARY_NAME}${EXT}"
 
 echo ""
