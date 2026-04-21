@@ -74,7 +74,7 @@ mock.module("../../lib/open.ts", () => ({
 }));
 
 mock.module("../../lib/first-application.ts", () => ({
-  ensureFirstApplication: (...args: unknown[]) => mockEnsureFirstApplication(...args),
+  ensureFirstApplication: () => mockEnsureFirstApplication(),
 }));
 
 const { login } = await import("./login.ts");
