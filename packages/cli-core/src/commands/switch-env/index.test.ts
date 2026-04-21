@@ -1,8 +1,14 @@
 import { test, expect, describe, beforeEach, afterEach, mock, spyOn } from "bun:test";
-import { captureLog, configStubs, credentialStoreStubs } from "../../test/lib/stubs.ts";
+import {
+  captureLog,
+  configStubs,
+  credentialStoreStubs,
+  listageStubs,
+} from "../../test/lib/stubs.ts";
 
 const mockSetEnvironment = mock();
 const mockGetToken = mock();
+const mockSelect = mock();
 let mockCurrentEnv = "production";
 
 mock.module("../../lib/config.ts", () => ({
@@ -26,34 +32,68 @@ mock.module("../../lib/environment.ts", () => ({
   },
 }));
 
+let _modeOverride: string | undefined;
+mock.module("../../mode.ts", () => ({
+  isAgent: () => _modeOverride === "agent",
+  isHuman: () => _modeOverride !== "agent",
+  setMode: (m: string) => {
+    _modeOverride = m;
+  },
+  getMode: () => _modeOverride ?? "human",
+}));
+
+mock.module("../../lib/listage.ts", () => ({
+  ...listageStubs,
+  select: (...args: unknown[]) => mockSelect(...args),
+}));
+
 const { switchEnv } = await import("./index.ts");
 
 describe("switch-env", () => {
   let logSpy: ReturnType<typeof spyOn>;
   let captured: ReturnType<typeof captureLog>;
+  const originalIsTTY = process.stdin.isTTY;
 
   beforeEach(() => {
     captured = captureLog();
+    process.stdin.isTTY = true;
   });
 
   afterEach(() => {
     captured.teardown();
     mockSetEnvironment.mockReset();
     mockGetToken.mockReset();
+    mockSelect.mockReset();
     mockCurrentEnv = "production";
+    _modeOverride = undefined;
     logSpy?.mockRestore();
+    process.stdin.isTTY = originalIsTTY;
   });
 
   function runSwitchEnv(environment: string | undefined) {
     return captured.run(() => switchEnv(environment));
   }
 
-  test("prints current environment when no argument given", async () => {
+  test("prints current environment in non-interactive mode", async () => {
+    _modeOverride = "agent";
     logSpy = spyOn(console, "log").mockImplementation(() => {});
     await runSwitchEnv(undefined);
 
     expect(captured.err).toContain("Current environment: production");
     expect(captured.err).toContain("Available environments: production, staging");
+  });
+
+  test("shows interactive picker when no argument given in human mode", async () => {
+    mockSetEnvironment.mockResolvedValue(undefined);
+    mockGetToken.mockResolvedValue("some-token");
+    mockSelect.mockResolvedValue("staging");
+
+    logSpy = spyOn(console, "log").mockImplementation(() => {});
+    await runSwitchEnv(undefined);
+
+    expect(mockSelect).toHaveBeenCalledTimes(1);
+    expect(mockCurrentEnv).toBe("staging");
+    expect(captured.out).toContain("Switched from production to staging.");
   });
 
   test("switches to a valid environment", async () => {
@@ -76,6 +116,11 @@ describe("switch-env", () => {
     await runSwitchEnv("production");
 
     expect(captured.out).toContain("Already on production environment.");
+  });
+
+  test("throws when no TTY is available in human mode", async () => {
+    process.stdin.isTTY = false;
+    await expect(runSwitchEnv(undefined)).rejects.toThrow("No interactive terminal available");
   });
 
   test("throws on invalid environment", async () => {

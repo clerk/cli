@@ -80,6 +80,8 @@ export const promptsStubs = {
   editor: async () => "{}",
 };
 
+export { listageStubs } from "./listage-stubs.ts";
+
 export const tokenExchangeStubs = {
   exchangeCodeForToken: async () => ({}),
   fetchUserInfo: async () => ({}),

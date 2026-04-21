@@ -1,13 +1,14 @@
 import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import { parseArgs } from "node:util";
+import { DEV_CLI_VERSION } from "../packages/cli-core/src/lib/version.ts";
 import { targets } from "./lib/targets.ts";
 
 const { values } = parseArgs({
   args: Bun.argv.slice(2),
   options: {
     target: { type: "string" },
-    version: { type: "string", default: "0.0.0-dev" },
+    version: { type: "string", default: DEV_CLI_VERSION },
     "env-profiles-path": { type: "string" },
   },
 });

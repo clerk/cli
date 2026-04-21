@@ -1,13 +1,15 @@
 import { join } from "node:path";
-import { search, confirm, input } from "@inquirer/prompts";
+import { input } from "@inquirer/prompts";
+import { confirm } from "../../lib/prompts.ts";
+import { search, filterChoices } from "../../lib/listage.ts";
 import { throwUserAbort, throwUsageError, CliError } from "../../lib/errors.js";
 import { log } from "../../lib/log.js";
 import type { FrameworkInfo } from "../../lib/framework.js";
 import { dirExists, hasPackageJson } from "./context.js";
+import type { PackageManager } from "../../lib/package-manager.ts";
 import {
   BOOTSTRAP_REGISTRY,
   PM_INSTALL_COMMANDS,
-  type PackageManager,
   type BootstrapEntry,
 } from "./bootstrap-registry.js";
 
@@ -31,12 +33,6 @@ const PM_CHOICES: Array<{ name: string; value: PackageManager }> = [
   { name: "yarn", value: "yarn" },
   { name: "npm", value: "npm" },
 ];
-
-function filterChoices<T extends { name: string }>(choices: T[], term: string | undefined): T[] {
-  if (!term) return choices;
-  const lower = term.toLowerCase();
-  return choices.filter((c) => c.name.toLowerCase().includes(lower));
-}
 
 async function pickFramework(frameworkOverride?: FrameworkInfo): Promise<BootstrapEntry> {
   if (!frameworkOverride) {
@@ -63,7 +59,17 @@ async function pickPackageManager(): Promise<PackageManager> {
   });
 }
 
-const PM_PRIORITY: PackageManager[] = ["bun", "pnpm", "yarn", "npm"];
+const PM_PRIORITY = ["bun", "pnpm", "yarn", "npm"] as const satisfies readonly PackageManager[];
+
+// Exhaustiveness guard: breaks the build if a PackageManager variant is
+// missing from PM_PRIORITY (the `satisfies` above only ensures each entry
+// is a valid PackageManager, not that every variant is present).
+type _AllPackageManagersCovered =
+  Exclude<PackageManager, (typeof PM_PRIORITY)[number]> extends never
+    ? true
+    : ["PM_PRIORITY missing:", Exclude<PackageManager, (typeof PM_PRIORITY)[number]>];
+const _pmPriorityExhaustive: _AllPackageManagersCovered = true;
+void _pmPriorityExhaustive;
 
 /**
  * Auto-select the first available package manager by priority: bun → pnpm → yarn → npm.

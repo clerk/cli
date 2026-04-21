@@ -16,6 +16,7 @@
 
 import type { ProjectContext } from "../commands/init/frameworks/types.js";
 import type { NonEmptyArray } from "./helpers/arrays.js";
+import { log } from "./log.ts";
 
 /**
  * One way to invoke an npm-published binary without installing it globally.
@@ -66,8 +67,13 @@ function yarnSupportsDlx(): boolean {
       stdout: "ignore",
       stderr: "ignore",
     });
-    return proc.exitCode === 0;
-  } catch {
+    const supported = proc.exitCode === 0;
+    if (!supported) {
+      log.debug(`runners: yarn dlx --help exited ${proc.exitCode} (likely Yarn Classic)`);
+    }
+    return supported;
+  } catch (err) {
+    log.debug(`runners: yarn dlx probe threw — ${err}`);
     return false;
   }
 }
@@ -79,11 +85,15 @@ function yarnSupportsDlx(): boolean {
  * probe so Yarn Classic (v1, no `dlx`) is not advertised.
  */
 export function detectAvailableRunners(): Runner[] {
-  return KNOWN_RUNNERS.filter((r) => {
+  const available = KNOWN_RUNNERS.filter((r) => {
     if (Bun.which(r.binary) === null) return false;
     if (r.id === "yarn") return yarnSupportsDlx();
     return true;
   });
+  log.debug(
+    `runners: available on PATH = ${available.length > 0 ? available.map((r) => r.id).join(", ") : "<none>"}`,
+  );
+  return available;
 }
 
 /**

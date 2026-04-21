@@ -18,6 +18,7 @@ import * as scanMod from "./scan.ts";
 import * as heuristics from "./heuristics.ts";
 import * as skillsMod from "./skills.ts";
 import * as bootstrapMod from "./bootstrap.ts";
+import * as nextStepsMod from "../../lib/next-steps.ts";
 import { init } from "./index.ts";
 
 const FAKE_CTX = {
@@ -179,6 +180,75 @@ describe("init", () => {
     expect(bootstrapMod.promptAndBootstrap).toHaveBeenCalled();
     // React doesn't support keyless, so keyless flow isn't triggered
     expect(heuristics.printKeylessInfo).not.toHaveBeenCalled();
+  });
+
+  test("bootstrap flow skips scaffold Proceed? prompt (user already opted in)", async () => {
+    setup({ email: "test@test.com" });
+    setupBootstrapSuccess();
+    spyOn(scaffoldMod, "scaffold").mockResolvedValue({
+      actions: [{ type: "create", path: "app/layout.tsx", content: "", description: "" }],
+      postInstructions: [],
+    });
+
+    await init({});
+
+    expect(bootstrapMod.promptAndBootstrap).toHaveBeenCalled();
+    expect(previewMod.previewAndConfirm).not.toHaveBeenCalled();
+    expect(previewMod.previewPlan).toHaveBeenCalled();
+  });
+
+  test("--starter skips scaffold Proceed? prompt even without -y", async () => {
+    setup({ email: "test@test.com" });
+    spyOn(context, "gatherContext").mockResolvedValue(FAKE_CTX);
+    spyOn(config, "resolveProfile").mockResolvedValue({ profile: { appId: "app_123" } } as never);
+    spyOn(scaffoldMod, "scaffold").mockResolvedValue({
+      actions: [{ type: "create", path: "app/layout.tsx", content: "", description: "" }],
+      postInstructions: [],
+    });
+
+    await init({ starter: true });
+
+    expect(previewMod.previewAndConfirm).not.toHaveBeenCalled();
+    expect(previewMod.previewPlan).toHaveBeenCalled();
+  });
+
+  test("existing project without -y still prompts scaffold Proceed?", async () => {
+    setup({ email: "test@test.com" });
+    spyOn(context, "gatherContext").mockResolvedValue(FAKE_CTX);
+    spyOn(config, "resolveProfile").mockResolvedValue({ profile: { appId: "app_123" } } as never);
+    spyOn(scaffoldMod, "scaffold").mockResolvedValue({
+      actions: [{ type: "create", path: "app/layout.tsx", content: "", description: "" }],
+      postInstructions: [],
+    });
+
+    await init({});
+
+    expect(previewMod.previewAndConfirm).toHaveBeenCalled();
+  });
+
+  test("bootstrap prints next steps after skills install", async () => {
+    setup({ email: "test@test.com" });
+    setupBootstrapSuccess();
+    spyOn(scaffoldMod, "scaffold").mockResolvedValue({
+      actions: [{ type: "create", path: "app/layout.tsx", content: "", description: "" }],
+      postInstructions: [],
+    });
+
+    const callOrder: string[] = [];
+    spies.push(
+      spyOn(skillsMod, "installSkills").mockImplementation(async () => {
+        callOrder.push("installSkills");
+      }),
+    );
+    spies.push(
+      spyOn(nextStepsMod, "printNextSteps").mockImplementation(() => {
+        callOrder.push("printNextSteps");
+      }),
+    );
+
+    await init({});
+
+    expect(callOrder.indexOf("installSkills")).toBeLessThan(callOrder.indexOf("printNextSteps"));
   });
 
   test("blank dir with keyless framework auto-selects keyless when unauthenticated", async () => {

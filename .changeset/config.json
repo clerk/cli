@@ -9,6 +9,6 @@
   "ignore": ["@clerk/cli-core"],
   "snapshot": {
     "useCalculatedVersion": true,
-    "prereleaseTemplate": "{tag}.v{datetime}"
+    "prereleaseTemplate": "{tag}.{commit}"
   }
 }

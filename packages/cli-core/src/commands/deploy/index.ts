@@ -1,4 +1,6 @@
-import { select, input, confirm, password } from "@inquirer/prompts";
+import { input, password } from "@inquirer/prompts";
+import { select } from "../../lib/listage.ts";
+import { confirm } from "../../lib/prompts.ts";
 import { isAgent } from "../../mode.ts";
 import { dim, bold, cyan, green, blue } from "../../lib/color.ts";
 import { printNextSteps, NEXT_STEPS } from "../../lib/next-steps.ts";

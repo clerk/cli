@@ -17,9 +17,17 @@ import { doctor } from "./commands/doctor/index.ts";
 import { switchEnv } from "./commands/switch-env/index.ts";
 import { openDashboard } from "./commands/open/index.ts";
 import { getEnvironment } from "./lib/config.ts";
-import { setCurrentEnv, isValidEnv, getCurrentEnvName } from "./lib/environment.ts";
+import {
+  setCurrentEnv,
+  isValidEnv,
+  getCurrentEnvName,
+  getAvailableEnvs,
+  getPlapiBaseUrl,
+} from "./lib/environment.ts";
 import { completion, SUPPORTED_SHELLS } from "./commands/completion/index.ts";
 import { FRAMEWORK_NAMES } from "./lib/framework.ts";
+import { PACKAGE_MANAGERS } from "./lib/package-manager.ts";
+import { skillInstall } from "./commands/skill/install.ts";
 import {
   CliError,
   UserAbortError,
@@ -67,7 +75,15 @@ export function createProgram() {
     // Initialize the active environment from persisted config
     const envName = await getEnvironment();
     if (envName && isValidEnv(envName)) {
-      setCurrentEnv(envName);
+      setCurrentEnv(envName); // logs env + platformApiUrl
+    } else {
+      if (envName) {
+        log.warn(
+          `Saved environment "${envName}" is not available in this binary. Falling back to production.`,
+        );
+        log.warn(`Available environments: ${getAvailableEnvs().join(", ")}`);
+      }
+      log.debug(`env: active environment is "production" (platformApiUrl=${getPlapiBaseUrl()})`);
     }
 
     // Print environment banner to stderr when not on production,
@@ -98,7 +114,7 @@ export function createProgram() {
       createOption(
         "--pm <manager>",
         "Package manager to use (skips prompt/auto-detection)",
-      ).choices(["bun", "pnpm", "yarn", "npm"]),
+      ).choices(PACKAGE_MANAGERS),
     )
     .option("--name <project-name>", "Project name for --starter (skips prompt)")
     .option("--app <id>", "Application ID to link (skips interactive picker)")
@@ -262,8 +278,8 @@ export function createProgram() {
       { command: "clerk config pull --output config.json", description: "Save config to a file" },
       { command: "clerk config schema", description: "Print full config schema" },
       {
-        command: "clerk config schema --keys social_login",
-        description: "Schema for specific keys",
+        command: "clerk config schema --keys auth_email session",
+        description: "Schema for specific top-level keys",
       },
       {
         command: "clerk config patch --file config.json",
@@ -293,7 +309,10 @@ export function createProgram() {
     .option("--app <id>", "Application ID to target (works from any directory)")
     .option("--instance <id>", "Instance to target (dev, prod, or a full instance ID)")
     .option("--output <file>", "Write config to a file instead of stdout")
-    .option("--keys <keys...>", "Config keys to retrieve")
+    .option(
+      "--keys <keys...>",
+      "Top-level config keys to retrieve, separated by spaces or commas (e.g. auth_email session)",
+    )
     .setExamples([
       { command: "clerk config pull", description: "Print dev config to stdout" },
       { command: "clerk config pull --instance prod", description: "Pull production config" },
@@ -307,12 +326,15 @@ export function createProgram() {
     .option("--app <id>", "Application ID to target (works from any directory)")
     .option("--instance <id>", "Instance to target (dev, prod, or a full instance ID)")
     .option("--output <file>", "Write schema to a file instead of stdout")
-    .option("--keys <keys...>", "Config keys to retrieve schema for")
+    .option(
+      "--keys <keys...>",
+      "Top-level schema sections to retrieve, separated by spaces or commas (e.g. auth_email session)",
+    )
     .setExamples([
       { command: "clerk config schema", description: "Print full config schema" },
       {
-        command: "clerk config schema --keys social_login",
-        description: "Schema for specific keys",
+        command: "clerk config schema --keys auth_email session",
+        description: "Schema for specific top-level keys",
       },
       { command: "clerk config schema --output schema.json", description: "Save schema to a file" },
     ])
@@ -481,11 +503,42 @@ Tutorial — enable completions for your shell:
     )
     .action(completion);
 
+  const skill = program
+    .command("skill")
+    .description("Manage the bundled Clerk CLI agent skill")
+    .setExamples([
+      { command: "clerk skill install", description: "Install the clerk agent skill" },
+      {
+        command: "clerk skill install -y",
+        description: "Install non-interactively (auto-detect agents, global scope)",
+      },
+    ]);
+
+  skill
+    .command("install")
+    .description("Install the bundled clerk agent skill")
+    .option("-y, --yes", "Skip prompts and run the `skills` CLI unattended")
+    .addOption(
+      createOption("--pm <manager>", "Package manager hint for runner detection").choices(
+        PACKAGE_MANAGERS,
+      ),
+    )
+    .setExamples([
+      { command: "clerk skill install", description: "Install with an interactive runner picker" },
+      { command: "clerk skill install -y", description: "Install unattended" },
+      {
+        command: "clerk skill install --pm bun",
+        description: "Force bunx as the runner",
+      },
+    ])
+    .action(skillInstall);
+
   program
     .command("update")
     .description("Update the Clerk CLI to the latest version")
     .option("--channel <tag>", "Release channel to update to (e.g. latest, canary)")
     .option("-y, --yes", "Skip confirmation prompt")
+    .option("--all", "Update every clerk install found on PATH, not just the first")
     .setExamples([
       { command: "clerk update", description: "Update to the latest stable release" },
       {
@@ -493,6 +546,7 @@ Tutorial — enable completions for your shell:
         description: "Update to the latest canary release",
       },
       { command: "clerk update --yes", description: "Update without confirmation prompt" },
+      { command: "clerk update --all", description: "Update every clerk install on PATH" },
     ])
     .action(update);
 

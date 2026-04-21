@@ -57,7 +57,7 @@ test("does not open tty when stdin is a TTY", async () => {
 test("opens controlling terminal as input when stdin is not a TTY", async () => {
   process.stdin.isTTY = false;
 
-  const mockStream = { close: mock(() => {}) };
+  const mockStream = { close: mock(() => {}), on: mock(() => mockStream) };
   const createReadStreamSpy = spyOn(await import("node:fs"), "createReadStream").mockReturnValue(
     mockStream as any,
   );
@@ -77,7 +77,7 @@ test("closes tty stream even when confirm throws", async () => {
   process.stdin.isTTY = false;
   confirmResult = new Error("user cancelled");
 
-  const mockStream = { close: mock(() => {}) };
+  const mockStream = { close: mock(() => {}), on: mock(() => mockStream) };
   const createReadStreamSpy = spyOn(await import("node:fs"), "createReadStream").mockReturnValue(
     mockStream as any,
   );

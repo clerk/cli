@@ -119,7 +119,7 @@ Base URL: `https://api.clerk.com` (overridable via `CLERK_PLATFORM_API_URL`)
 Lists available API endpoints from the Clerk OpenAPI spec.
 
 - Fetches the spec from `clerk/openapi-specs` on GitHub
-- Caches locally in `~/.clerk/cache/` for 24 hours
+- Caches locally in `~/.clerk/cache/` for 1 hour
 - Supports `--platform` to list Platform API endpoints
 - Optional filter keyword matches against path, summary, tag, and operation ID
 

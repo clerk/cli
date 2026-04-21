@@ -45,9 +45,15 @@ test.each([{ mode: "human" }, { mode: "agent" }])(
 );
 
 test.each([{ mode: "human" }, { mode: "agent" }])(
-  "config patch dry-run sends no requests ($mode mode)",
+  "config patch dry-run fetches config and shows diff ($mode mode)",
   async ({ mode }) => {
-    const { stdout, stderr } = await clerk(
+    http.stub(async (_url, init) => {
+      const isGet = !init?.method || init.method === "GET";
+      const body = isGet ? { session: { lifetime: 604800 } } : {};
+      return new Response(JSON.stringify(body), { status: 200 });
+    });
+
+    const { stderr } = await clerk(
       "--mode",
       mode,
       "config",
@@ -56,9 +62,13 @@ test.each([{ mode: "human" }, { mode: "agent" }])(
       '{"session":{"lifetime":3600}}',
       "--dry-run",
     );
-    expect(http.requests.length).toBe(0);
+    const getReqs = http.requests.filter((r) => r.method === "GET");
+    const patchReqs = http.requests.filter((r) => r.method === "PATCH");
+    expect(getReqs.length).toBe(1);
+    expect(patchReqs.length).toBe(0);
     expect(stderr).toContain("[dry-run]");
-    expect(stdout).toContain('"lifetime": 3600');
+    expect(stderr).toContain("604800");
+    expect(stderr).toContain("3600");
   },
 );
 
@@ -68,7 +78,8 @@ test.each([{ mode: "human" }, { mode: "agent" }])(
     const updatedConfig = { session: { lifetime: 3600 } };
     // GET returns different config so hasConfigChanges detects changes
     http.stub(async (_url, init) => {
-      const body = init?.method ? updatedConfig : { session: { lifetime: 604800 } };
+      const body =
+        init?.method && init.method !== "GET" ? updatedConfig : { session: { lifetime: 604800 } };
       return new Response(JSON.stringify(body), { status: 200 });
     });
 
