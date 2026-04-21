@@ -224,7 +224,3 @@ clerk update
     $ clerk update --yes                 Update without confirmation prompt
     $ clerk update --all                 Update every clerk install on PATH
 ```
-
-## Open Questions
-
-- How do we keep types in sync with PLAPI?
