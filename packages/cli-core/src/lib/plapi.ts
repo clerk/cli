@@ -9,6 +9,19 @@ import { CliError, PlapiError, ERROR_CODE } from "./errors.ts";
 import { loggedFetch } from "./fetch.ts";
 import { log } from "./log.ts";
 
+/**
+ * Canonical attribution marker written to `applications.from_source` when the
+ * CLI creates an application through PLAPI. Surfaces in BigQuery via
+ * `dim_applications.from_source` for growth analytics. Do not change without
+ * coordinating with the growth-data team — the value is consumed by dbt
+ * models and dashboards downstream.
+ */
+const CLI_FROM_SOURCE = "cli";
+
+/**
+ * Validate that a key has the expected prefix and suggest the correct key type
+ * if the user mixed them up.
+ */
 export function validateKeyPrefix(key: string, expected: "ak_" | "sk_"): void {
   if (key.startsWith(expected)) return;
 
@@ -167,7 +180,9 @@ export const patchInstanceConfig = (
 
 export async function createApplication(name: string): Promise<Application> {
   const url = new URL("/v1/platform/applications", getPlapiBaseUrl());
-  const response = await plapiFetch("POST", url, { body: JSON.stringify({ name }) });
+  const response = await plapiFetch("POST", url, {
+    body: JSON.stringify({ name, from_source: CLI_FROM_SOURCE }),
+  });
   return response.json() as Promise<Application>;
 }
 

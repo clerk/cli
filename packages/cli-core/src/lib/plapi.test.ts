@@ -305,7 +305,7 @@ describe("plapi", () => {
       await createApplication("My App");
       expect(capturedMethod).toBe("POST");
       expect(capturedUrl).toBe("https://api.clerk.com/v1/platform/applications");
-      expect(JSON.parse(capturedBody)).toEqual({ name: "My App" });
+      expect(JSON.parse(capturedBody)).toEqual({ name: "My App", from_source: "cli" });
     });
 
     test("sends Content-Type and Authorization headers", async () => {
