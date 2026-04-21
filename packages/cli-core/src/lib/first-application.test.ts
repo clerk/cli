@@ -40,4 +40,15 @@ describe("ensureFirstApplication", () => {
     await ensureFirstApplication();
     expect(mockCreateApplication).not.toHaveBeenCalled();
   });
+
+  it("swallows listApplications errors", async () => {
+    mockListApplications.mockRejectedValue(new Error("boom"));
+    await expect(ensureFirstApplication()).resolves.toBeUndefined();
+    expect(mockCreateApplication).not.toHaveBeenCalled();
+  });
+
+  it("swallows createApplication errors", async () => {
+    mockCreateApplication.mockRejectedValue(new Error("boom"));
+    await expect(ensureFirstApplication()).resolves.toBeUndefined();
+  });
 });

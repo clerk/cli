@@ -114,7 +114,7 @@ export async function login(options: LoginOptions = {}): Promise<UserInfo> {
 
   // Best-effort: ensure the user has at least one application so downstream
   // commands (clerk link, clerk init) have something to operate on.
-  await ensureFirstApplication();
+  await withSpinner("Setting up your default application...", () => ensureFirstApplication());
 
   bar();
   log.success(`Logged in as ${userInfo.email}`);
