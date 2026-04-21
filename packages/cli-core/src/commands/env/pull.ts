@@ -1,5 +1,5 @@
 import { join } from "node:path";
-import { resolveAppContext } from "../../lib/config.ts";
+import { resolveAppContext, type AppContextOptions } from "../../lib/config.ts";
 import { fetchApplication } from "../../lib/plapi.ts";
 import { parseEnvFile, mergeEnvVars, serializeEnvFile } from "../../lib/dotenv.ts";
 import {
@@ -13,9 +13,7 @@ import { log } from "../../lib/log.ts";
 
 const DEV_LOCAL_ENV_FILE = ".env.development.local";
 
-interface EnvPullOptions {
-  app?: string;
-  instance?: string;
+interface EnvPullOptions extends AppContextOptions {
   file?: string;
 }
 
@@ -49,9 +47,11 @@ async function resolveTargetFile(
 }
 
 export async function pull(options: EnvPullOptions): Promise<void> {
-  const ctx = await resolveAppContext(options);
-  const cwd = process.cwd();
-  const preferredEnvFile = await detectEnvFile(cwd);
+  const cwd = options.cwd ?? process.cwd();
+  const [ctx, preferredEnvFile] = await Promise.all([
+    resolveAppContext({ ...options, cwd }),
+    detectEnvFile(cwd),
+  ]);
   const targetFile = await resolveTargetFile(cwd, options.file, preferredEnvFile);
   const displayPath = options.file ?? targetFile.split("/").pop()!;
 

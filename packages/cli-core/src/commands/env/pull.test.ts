@@ -46,7 +46,7 @@ mock.module("../../lib/config.ts", () => ({
     if (!id) throw new Error(`No ${env} instance configured. Run \`clerk link\` to set one up.`);
     return { id, label: env };
   },
-  resolveAppContext: async (options: { app?: string; instance?: string }) => {
+  resolveAppContext: async (options: { app?: string; instance?: string; cwd?: string }) => {
     if (options.app) {
       const app = {
         application_id: "app_1",
@@ -92,7 +92,7 @@ mock.module("../../lib/config.ts", () => ({
       };
     }
 
-    const profile = _profiles[process.cwd()];
+    const profile = _profiles[options.cwd ?? process.cwd()];
     if (!profile) throw new Error("No Clerk project linked");
     const instance = !options.instance
       ? { id: profile.instances.development, label: "development" }
@@ -182,7 +182,9 @@ describe("env pull", () => {
     await rm(tempDir, { recursive: true, force: true });
   });
 
-  async function runEnvPull(options: { app?: string; instance?: string; file?: string } = {}) {
+  async function runEnvPull(
+    options: { app?: string; instance?: string; file?: string; cwd?: string } = {},
+  ) {
     const { pull } = await import("./pull.ts");
     return captured.run(() => pull(options));
   }
@@ -563,6 +565,30 @@ describe("env pull", () => {
     const content = await Bun.file(join(tempDir, ".env.local")).text();
     expect(content).toContain("VITE_CLERK_PUBLISHABLE_KEY=pk_test_abc123");
     expect(await Bun.file(join(tempDir, ".env")).exists()).toBe(false);
+  });
+
+  test("writes to options.cwd, not process.cwd(), when cwd is passed", async () => {
+    const projectDir = await mkdtemp(join(tmpdir(), "clerk-env-pull-project-"));
+    try {
+      await Bun.write(
+        join(projectDir, "package.json"),
+        JSON.stringify({ dependencies: { express: "4.0.0" } }),
+      );
+      await setProfile(projectDir, {
+        workspaceId: "org_1",
+        appId: "app_1",
+        instances: { development: "ins_dev" },
+      });
+
+      await runEnvPull({ cwd: projectDir });
+
+      const projectEnv = await Bun.file(join(projectDir, ".env.local")).text();
+      expect(projectEnv).toContain("CLERK_SECRET_KEY=sk_test_xyz789");
+      // The process.cwd() directory (tempDir) must not have received keys.
+      expect(await Bun.file(join(tempDir, ".env.local")).exists()).toBe(false);
+    } finally {
+      await rm(projectDir, { recursive: true, force: true });
+    }
   });
 
   test("detects Nuxt and uses NUXT_CLERK_SECRET_KEY", async () => {

@@ -231,6 +231,12 @@ export function resolveInstanceId(profile: Profile, flag?: string): { id: string
   return { id, label: env };
 }
 
+interface AppContextOptions {
+  app?: string;
+  instance?: string;
+  cwd?: string;
+}
+
 /**
  * Resolve app context from explicit flags or linked profile.
  * This is the isomorphic resolution chain used by profile-dependent commands:
@@ -238,10 +244,9 @@ export function resolveInstanceId(profile: Profile, flag?: string): { id: string
  *   2. resolveProfile(cwd) (project-aware, existing behavior)
  *   3. Error with helpful message
  */
-export async function resolveAppContext(options: {
-  app?: string;
-  instance?: string;
-}): Promise<{ appId: string; appLabel: string; instanceId: string; instanceLabel: string }> {
+export async function resolveAppContext(
+  options: AppContextOptions,
+): Promise<{ appId: string; appLabel: string; instanceId: string; instanceLabel: string }> {
   if (options.app) {
     const { fetchApplication } = await import("./plapi.ts");
     const app = await fetchApplication(options.app);
@@ -289,7 +294,7 @@ export async function resolveAppContext(options: {
     };
   }
 
-  const resolved = await resolveProfile(process.cwd());
+  const resolved = await resolveProfile(options.cwd ?? process.cwd());
   if (!resolved) {
     throw new CliError(
       "No Clerk project linked to this directory.\n" +
@@ -309,4 +314,4 @@ export async function resolveAppContext(options: {
   };
 }
 
-export type { Auth, Profile, ClerkConfig };
+export type { Auth, Profile, ClerkConfig, AppContextOptions };

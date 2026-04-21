@@ -204,5 +204,17 @@ describe("config", () => {
       const ctx = await resolveAppContext({});
       expect(ctx.appLabel).toBe("app_1");
     });
+
+    test("resolves via explicit cwd instead of process.cwd()", async () => {
+      const projectDir = join(tempDir, "child-project");
+      await setProfile(projectDir, {
+        workspaceId: "org_1",
+        appId: "app_in_child",
+        instances: { development: "ins_dev" },
+      });
+
+      const ctx = await resolveAppContext({ cwd: projectDir });
+      expect(ctx.appId).toBe("app_in_child");
+    });
   });
 });

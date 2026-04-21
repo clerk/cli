@@ -121,7 +121,7 @@ export async function init(options: InitOptions = {}) {
   if (skipAuth) {
     printBootstrapManualSetupInfo(ctx.framework.name);
   } else if (!keyless) {
-    await pull({ file: ctx.envFile });
+    await pull({ file: ctx.envFile, cwd: ctx.cwd });
   } else {
     await setupKeylessApp(ctx.cwd, ctx.framework.dep, ctx.envFile);
   }
