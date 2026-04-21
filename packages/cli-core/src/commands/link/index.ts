@@ -3,7 +3,7 @@ import { input } from "@inquirer/prompts";
 import { search } from "../../lib/listage.ts";
 import { confirm } from "../../lib/prompts.ts";
 import { isAgent } from "../../mode.ts";
-import { getToken } from "../../lib/credential-store.ts";
+import { isAuthenticated } from "../init/heuristics.ts";
 import { login } from "../auth/login.ts";
 import {
   listApplications,
@@ -85,7 +85,7 @@ export async function link(options: LinkOptions = {}): Promise<void> {
   await ensureAuth();
 
   const app = options.app
-    ? await withApiContext(fetchApplication(options.app), "Failed to fetch application")
+    ? await fetchAppWithReauth(options.app)
     : await resolveApp(cwd, displayPath, !existing);
 
   const devInstance = app.instances.find((i) => i.environment_type === "development");
@@ -118,11 +118,9 @@ async function ensureAuth() {
   // The PLAPI fetch helpers use it directly for API calls, so no OAuth
   // token is needed when this key is present.
   if (process.env.CLERK_PLATFORM_API_KEY) return;
-  const token = await getToken();
-  if (!token) {
-    log.info("Not logged in. Authenticating first...");
-    await login({ showNextSteps: false });
-  }
+  if (await isAuthenticated()) return;
+  log.info("Not logged in. Authenticating first...");
+  await login({ showNextSteps: false });
 }
 
 async function createAndFetchApp(name: string): Promise<Application> {
@@ -190,18 +188,37 @@ async function tryDetectApp(cwd: string, apps: Application[]): Promise<Applicati
   return useDetected ? match.app : undefined;
 }
 
+async function fetchAppWithReauth(appId: string): Promise<Application> {
+  const fetchOnce = () => withApiContext(fetchApplication(appId), "Failed to fetch application");
+  try {
+    return await fetchOnce();
+  } catch (error) {
+    if (error instanceof PlapiError && (error.status === 401 || error.status === 403)) {
+      log.info("Session expired. Re-authenticating...");
+      await login({ showNextSteps: false });
+      return fetchOnce();
+    }
+    throw error;
+  }
+}
+
 async function resolveApp(
   cwd: string,
   displayPath: string,
   detectKeys: boolean,
 ): Promise<Application> {
+  const fetchApps = () => withApiContext(listApplications(), "Failed to fetch applications");
+
   let apps: Application[];
   try {
-    apps = await withSpinner("Fetching applications...", () =>
-      withApiContext(listApplications(), "Failed to fetch applications"),
-    );
+    apps = await withSpinner("Fetching applications...", fetchApps);
   } catch (error) {
-    if (error instanceof PlapiError && error.status >= 500) {
+    if (error instanceof PlapiError && (error.status === 401 || error.status === 403)) {
+      // Token was present but not live. Re-auth inline, then retry once.
+      log.info("Session expired. Re-authenticating...");
+      await login({ showNextSteps: false });
+      apps = await withSpinner("Fetching applications...", fetchApps);
+    } else if (error instanceof PlapiError && error.status >= 500) {
       log.info("Could not fetch your applications — you can still create a new one");
       apps = [];
     } else {

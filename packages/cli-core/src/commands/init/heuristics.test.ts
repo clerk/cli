@@ -1,0 +1,64 @@
+import { test, expect, describe, afterEach, mock } from "bun:test";
+
+const mockGetToken = mock();
+mock.module("../../lib/credential-store.ts", () => ({
+  getToken: (...args: unknown[]) => mockGetToken(...args),
+}));
+
+const mockFetchUserInfo = mock();
+mock.module("../../lib/token-exchange.ts", () => ({
+  fetchUserInfo: (...args: unknown[]) => mockFetchUserInfo(...args),
+}));
+
+const { getAuthenticatedEmail, isAuthenticated } = await import("./heuristics.ts");
+
+describe("heuristics auth primitives", () => {
+  const originalApiKey = process.env.CLERK_PLATFORM_API_KEY;
+
+  afterEach(() => {
+    mockGetToken.mockReset();
+    mockFetchUserInfo.mockReset();
+    if (originalApiKey == null) delete process.env.CLERK_PLATFORM_API_KEY;
+    else process.env.CLERK_PLATFORM_API_KEY = originalApiKey;
+  });
+
+  test("isAuthenticated returns true when CLERK_PLATFORM_API_KEY is set — no network call", async () => {
+    process.env.CLERK_PLATFORM_API_KEY = "ak_test";
+
+    expect(await isAuthenticated()).toBe(true);
+    expect(mockGetToken).not.toHaveBeenCalled();
+    expect(mockFetchUserInfo).not.toHaveBeenCalled();
+  });
+
+  test("isAuthenticated is presence-only and passes for an expired token", async () => {
+    delete process.env.CLERK_PLATFORM_API_KEY;
+    mockGetToken.mockResolvedValue("expired_token");
+
+    expect(await isAuthenticated()).toBe(true);
+    expect(mockFetchUserInfo).not.toHaveBeenCalled();
+  });
+
+  test("getAuthenticatedEmail returns null when no token is stored", async () => {
+    delete process.env.CLERK_PLATFORM_API_KEY;
+    mockGetToken.mockResolvedValue(null);
+
+    expect(await getAuthenticatedEmail()).toBeNull();
+    expect(mockFetchUserInfo).not.toHaveBeenCalled();
+  });
+
+  test("getAuthenticatedEmail returns the email when userinfo succeeds", async () => {
+    delete process.env.CLERK_PLATFORM_API_KEY;
+    mockGetToken.mockResolvedValue("valid_token");
+    mockFetchUserInfo.mockResolvedValue({ userId: "user_1", email: "x@y.z" });
+
+    expect(await getAuthenticatedEmail()).toBe("x@y.z");
+  });
+
+  test("getAuthenticatedEmail swallows fetch errors and returns null (expired/revoked/network)", async () => {
+    delete process.env.CLERK_PLATFORM_API_KEY;
+    mockGetToken.mockResolvedValue("expired_token");
+    mockFetchUserInfo.mockRejectedValue(new Error("401 Unauthorized"));
+
+    expect(await getAuthenticatedEmail()).toBeNull();
+  });
+});

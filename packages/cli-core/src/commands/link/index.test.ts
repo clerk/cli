@@ -29,6 +29,11 @@ mock.module("../../lib/credential-store.ts", () => ({
   getToken: (...args: unknown[]) => mockGetToken(...args),
 }));
 
+const mockIsAuthenticated = mock();
+mock.module("../init/heuristics.ts", () => ({
+  isAuthenticated: (...args: unknown[]) => mockIsAuthenticated(...args),
+}));
+
 const mockLogin = mock();
 mock.module("../auth/login.ts", () => ({
   login: (...args: unknown[]) => mockLogin(...args),
@@ -129,6 +134,7 @@ describe("link", () => {
 
   beforeEach(() => {
     captured = captureLog();
+    mockIsAuthenticated.mockResolvedValue(true);
   });
 
   afterEach(() => {
@@ -136,6 +142,7 @@ describe("link", () => {
     _modeOverride = undefined;
     mockIsAgent.mockReset();
     mockGetToken.mockReset();
+    mockIsAuthenticated.mockReset();
     mockLogin.mockReset();
     mockListApplications.mockReset();
     mockFetchApplication.mockReset();
@@ -337,21 +344,22 @@ describe("link", () => {
   });
 
   describe("authentication", () => {
-    test("calls login when no token exists", async () => {
+    test("calls login when no token exists — presence-only check, no userinfo", async () => {
       mockIsAgent.mockReturnValue(false);
-      mockGetToken.mockResolvedValue(null);
+      mockIsAuthenticated.mockResolvedValue(false);
       mockLogin.mockResolvedValue({ userId: "user_1", email: "test@test.com" });
       mockFetchApplication.mockResolvedValue(mockApp);
       consoleSpy = spyOn(console, "log").mockImplementation(() => {});
 
       await runLink({ app: "app_123" });
 
-      expect(mockLogin).toHaveBeenCalled();
+      expect(mockLogin).toHaveBeenCalledWith({ showNextSteps: false });
+      expect(captured.err).toContain("Not logged in");
     });
 
-    test("skips login when token exists", async () => {
+    test("happy path skips login entirely when token is present", async () => {
       mockIsAgent.mockReturnValue(false);
-      mockGetToken.mockResolvedValue("oauth_token_123");
+      mockIsAuthenticated.mockResolvedValue(true);
       mockFetchApplication.mockResolvedValue(mockApp);
       consoleSpy = spyOn(console, "log").mockImplementation(() => {});
 
@@ -360,9 +368,53 @@ describe("link", () => {
       expect(mockLogin).not.toHaveBeenCalled();
     });
 
+    test("re-auths + retries when fetchApplication 401s (expired token path via --app)", async () => {
+      mockIsAgent.mockReturnValue(false);
+      mockIsAuthenticated.mockResolvedValue(true);
+      mockFetchApplication
+        .mockRejectedValueOnce(new PlapiError(401, "unauthorized", "url"))
+        .mockResolvedValueOnce(mockApp);
+      mockLogin.mockResolvedValue({ userId: "user_1", email: "test@test.com" });
+      consoleSpy = spyOn(console, "log").mockImplementation(() => {});
+
+      await runLink({ app: "app_123" });
+
+      expect(mockLogin).toHaveBeenCalledWith({ showNextSteps: false });
+      expect(mockFetchApplication).toHaveBeenCalledTimes(2);
+      expect(captured.err).toContain("Session expired");
+    });
+
+    test("re-auths + retries when listApplications 401s (expired token path via picker)", async () => {
+      mockIsAgent.mockReturnValue(false);
+      mockIsAuthenticated.mockResolvedValue(true);
+      mockListApplications
+        .mockRejectedValueOnce(new PlapiError(401, "unauthorized", "url"))
+        .mockResolvedValueOnce([mockApp]);
+      mockLogin.mockResolvedValue({ userId: "user_1", email: "test@test.com" });
+      mockSearch.mockResolvedValue(mockApp.application_id);
+      consoleSpy = spyOn(console, "log").mockImplementation(() => {});
+
+      await runLink();
+
+      expect(mockLogin).toHaveBeenCalledWith({ showNextSteps: false });
+      expect(mockListApplications).toHaveBeenCalledTimes(2);
+      expect(captured.err).toContain("Session expired");
+    });
+
+    test("lets a second 401 after re-auth bubble up (no infinite retry)", async () => {
+      mockIsAgent.mockReturnValue(false);
+      mockIsAuthenticated.mockResolvedValue(true);
+      mockListApplications.mockRejectedValue(new PlapiError(401, "unauthorized", "url"));
+      mockLogin.mockResolvedValue({ userId: "user_1", email: "test@test.com" });
+      consoleSpy = spyOn(console, "log").mockImplementation(() => {});
+
+      await expect(runLink()).rejects.toBeInstanceOf(PlapiError);
+      expect(mockListApplications).toHaveBeenCalledTimes(2);
+    });
+
     test("suppresses auth next-steps when login runs during link", async () => {
       mockIsAgent.mockReturnValue(false);
-      mockGetToken.mockResolvedValue(null);
+      mockIsAuthenticated.mockResolvedValue(false);
       mockLogin.mockResolvedValue({ userId: "user_1", email: "test@test.com" });
       mockFetchApplication.mockResolvedValue(mockApp);
       consoleSpy = spyOn(console, "log").mockImplementation(() => {});

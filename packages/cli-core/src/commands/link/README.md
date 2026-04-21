@@ -35,7 +35,7 @@ deterministic paths:
    - With `skipIfLinked` (used by `clerk init`), returns immediately
    - Otherwise, offers to upgrade the profile key to use the git remote if available, or asks to re-link
 3. If `skipIfLinked` and not already linked, tries silent autolink (detect keys → match → persist without prompting)
-4. Checks for authentication (calls `clerk auth login` if needed)
+4. Validates the session against `/userinfo` (not just token presence) — a missing _or_ expired OAuth token triggers `clerk auth login` before any Platform API call, so `listApplications()` can't surface a raw 401
 5. If `--app` is provided, fetches that app directly
 6. Otherwise, fetches the list of applications and scans for publishable keys in env vars / `.env` / `.env.local`
 7. If a key matches an application, suggests it: "We found \<app\>. Link to this application?"

@@ -48,17 +48,33 @@ const FAKE_BOOTSTRAP = {
 describe("init", () => {
   let spies: ReturnType<typeof spyOn>[];
   let captured: ReturnType<typeof captureLog>;
+  const originalApiKey = process.env.CLERK_PLATFORM_API_KEY;
 
   afterEach(() => {
     captured.teardown();
     for (const s of spies) s.mockRestore();
+    if (originalApiKey == null) delete process.env.CLERK_PLATFORM_API_KEY;
+    else process.env.CLERK_PLATFORM_API_KEY = originalApiKey;
   });
 
-  function setup(overrides: { email?: string | null; apiKey?: boolean; isAgent?: boolean } = {}) {
+  function setup(
+    overrides: {
+      email?: string | null;
+      apiKey?: boolean;
+      isAgent?: boolean;
+      /** Override token presence independently of email (to simulate stale token). */
+      hasToken?: boolean;
+    } = {},
+  ) {
     const email = overrides.email ?? null;
     const apiKey = overrides.apiKey ?? false;
     const agent = overrides.isAgent ?? false;
-    const authed = email != null || apiKey;
+    const authed = overrides.hasToken ?? (email != null || apiKey);
+
+    // Init's branch logic reads process.env.CLERK_PLATFORM_API_KEY directly
+    // (not through a mockable function), so sync the env var with the flag.
+    if (apiKey) process.env.CLERK_PLATFORM_API_KEY = "ak_test";
+    else delete process.env.CLERK_PLATFORM_API_KEY;
 
     captured = captureLog();
 
@@ -127,6 +143,37 @@ describe("init", () => {
       app: undefined,
       cwd: FAKE_CTX.cwd,
     });
+  });
+
+  test("non-keyless framework with expired token pre-messages before opening browser", async () => {
+    const { captured } = setup({ email: null, hasToken: true });
+    spyOn(context, "gatherContext").mockResolvedValue(FAKE_CTX);
+    spyOn(loginMod, "login").mockResolvedValue({
+      userId: "user_1",
+      email: "test@test.com",
+    } as never);
+
+    await captured.run(() => init({ yes: true }));
+
+    expect(captured.err).toContain("previous session expired");
+    expect(captured.err).toContain("signing you back in");
+    expect(loginMod.login).toHaveBeenCalledWith({ showNextSteps: false });
+    expect(linkMod.link).toHaveBeenCalled();
+  });
+
+  test("non-keyless framework with absent token skips the expiry pre-message", async () => {
+    const { captured } = setup({ email: null, hasToken: false });
+    spyOn(context, "gatherContext").mockResolvedValue(FAKE_CTX);
+    spyOn(loginMod, "login").mockResolvedValue({
+      userId: "user_1",
+      email: "test@test.com",
+    } as never);
+
+    await captured.run(() => init({ yes: true }));
+
+    expect(captured.err).not.toContain("previous session expired");
+    expect(captured.err).not.toContain("signing you back in");
+    expect(loginMod.login).toHaveBeenCalledWith({ showNextSteps: false });
   });
 
   test("forwards --app to link when provided", async () => {
@@ -349,6 +396,67 @@ describe("init", () => {
     expect(heuristics.isAuthenticated).toHaveBeenCalled();
     expect(heuristics.printKeylessInfo).toHaveBeenCalled();
     expect(linkMod.link).not.toHaveBeenCalled();
+  });
+
+  test("keyless framework with expired session drops to keyless and notes it", async () => {
+    // Token present (isAuthenticated=true) but userinfo returns null email.
+    const { captured } = setup({ email: null, hasToken: true });
+
+    const keylessCtx = {
+      ...FAKE_CTX,
+      existingClerk: false,
+      framework: { ...FAKE_CTX.framework, supportsKeyless: true },
+    };
+    spyOn(context, "gatherContext").mockResolvedValueOnce(null).mockResolvedValueOnce(keylessCtx);
+    spyOn(scaffoldMod, "scaffold").mockResolvedValue({
+      actions: [{ type: "create", path: "middleware.ts", content: "", description: "" }],
+      postInstructions: [],
+    });
+
+    await captured.run(() => init({ yes: true }));
+
+    expect(heuristics.getAuthenticatedEmail).toHaveBeenCalled();
+    expect(heuristics.printKeylessInfo).toHaveBeenCalled();
+    expect(linkMod.link).not.toHaveBeenCalled();
+    expect(loginMod.login).not.toHaveBeenCalled();
+
+    // Top-of-flow warning explains what happened + what to do.
+    expect(captured.err).toContain("Your previous session has expired");
+    expect(captured.err).toContain("Starting in keyless mode");
+    expect(captured.err).toContain("clerk auth login");
+    expect(captured.err).toContain("clerk link");
+  });
+
+  test("keyless framework with no token at all goes keyless without expiry note", async () => {
+    const { captured } = setup({ email: null, hasToken: false });
+
+    const keylessCtx = {
+      ...FAKE_CTX,
+      existingClerk: false,
+      framework: { ...FAKE_CTX.framework, supportsKeyless: true },
+    };
+    spyOn(context, "gatherContext").mockResolvedValueOnce(null).mockResolvedValueOnce(keylessCtx);
+    spyOn(scaffoldMod, "scaffold").mockResolvedValue({
+      actions: [{ type: "create", path: "middleware.ts", content: "", description: "" }],
+      postInstructions: [],
+    });
+
+    await captured.run(() => init({ yes: true }));
+
+    expect(heuristics.printKeylessInfo).toHaveBeenCalled();
+    expect(captured.err).not.toContain("previous session expired");
+  });
+
+  test("valid session: email is fetched once and passed through to the label (no duplicate call)", async () => {
+    setup({ email: "user@example.com" });
+    spyOn(context, "gatherContext").mockResolvedValue(FAKE_CTX);
+
+    await init({ yes: true });
+
+    // Was: two callers — one in hasValidSession, one in resolveAuthLabel — collapsed
+    // via memoization. Now: one call at the top, threaded through as an argument.
+    expect(heuristics.getAuthenticatedEmail).toHaveBeenCalledTimes(1);
+    expect(linkMod.link).toHaveBeenCalled();
   });
 
   test("-y flag skips auth prompt and defaults to unauthenticated mode", async () => {

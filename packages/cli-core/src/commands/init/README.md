@@ -45,11 +45,11 @@ Use `--prompt` to output a setup prompt for an AI agent without running init.
 
 1. **`--prompt`**: outputs a framework-specific prompt, then exits
 2. Gathers project context (framework, router variant, TypeScript, `src/` directory, package manager)
-3. Determines auth mode from credential presence (no user prompt):
-   - **Authenticated** (OAuth token or `CLERK_PLATFORM_API_KEY` set): uses the authenticated flow — runs `clerk link` if not already linked and pulls real API keys into `.env` at the end
-   - **Bootstrap + keyless-capable framework + not authenticated**: automatically uses keyless mode — the app runs on auto-generated dev keys and the user can connect a Clerk account later with `clerk auth login`
-   - **Bootstrap + non-keyless framework + not authenticated** (with `--yes` or agent mode): skips authentication and prints manual setup instructions (run `clerk auth login` / `clerk link` / `clerk env pull` when ready)
-   - **Existing project + not authenticated**: runs the authenticated flow, which triggers an interactive login so real keys can be pulled
+3. Determines auth mode from session validity (no user prompt). "Validity" means the stored OAuth token passes a `/userinfo` check or `CLERK_PLATFORM_API_KEY` is set — an expired or revoked token counts as "not authenticated" at the branch:
+   - **Valid session** (live OAuth token or `CLERK_PLATFORM_API_KEY`): uses the authenticated flow — runs `clerk link` if not already linked and pulls real API keys into `.env` at the end
+   - **Bootstrap + keyless-capable framework + invalid session**: automatically uses keyless mode — the app runs on auto-generated dev keys and the user can connect a Clerk account later with `clerk auth login`. When the reason is an _expired_ session (stale token on disk, not absence), init prints a dim note explaining the fallback so it doesn't feel silent
+   - **Bootstrap + non-keyless framework + invalid session** (with `--yes` or agent mode): skips authentication and prints manual setup instructions (run `clerk auth login` / `clerk link` / `clerk env pull` when ready)
+   - **Existing project + invalid session**: runs the authenticated flow, which triggers an interactive login so real keys can be pulled. If the session is expired (not absent), init prints "Your previous session expired — signing you back in…" before opening the browser
 4. **Authenticated mode only**: authenticates via `clerk auth login` (skipped if already authenticated) and links the project via `clerk link` (skipped if already linked)
 5. Displays detected framework and variant
 6. Detects existing auth libraries (NextAuth, Auth0, Supabase, Firebase, Passport, Better Auth, Kinde) and shows migration guidance
@@ -83,7 +83,7 @@ Detects the project's framework from `package.json` dependencies (checked top-to
 | `express`               | Express        | `@clerk/express`              | `CLERK_PUBLISHABLE_KEY`             | No      |
 | `fastify`               | Fastify        | `@clerk/fastify`              | `CLERK_PUBLISHABLE_KEY`             | No      |
 
-The **Keyless** column indicates whether the framework's Clerk SDK supports keyless mode (auto-generated temporary dev keys). Keyless auto-selection only applies during bootstrap (new projects) — re-running `clerk init` in an existing project always uses the authenticated flow (prompting login when signed out) so real keys can be pulled via `clerk env pull`. During bootstrap of a non-keyless framework with `--yes` and no credentials, `clerk init` skips authentication and prints manual setup instructions instead of blocking on a login prompt.
+The **Keyless** column indicates whether the framework's Clerk SDK supports keyless mode (auto-generated temporary dev keys). Keyless auto-selection only applies during bootstrap (new projects) — re-running `clerk init` in an existing project always uses the authenticated flow (prompting login when signed out) so real keys can be pulled via `clerk env pull`. During bootstrap of a non-keyless framework with `--yes` and no credentials, `clerk init` skips authentication and prints manual setup instructions instead of blocking on a login prompt. A stale-but-present OAuth token (expired session) is treated the same as "not authenticated" for the keyless branch decision, so expired sessions on keyless-capable frameworks drop into keyless mode automatically rather than failing on a Platform API 401.
 
 Package manager is detected from lock files: `bun.lockb`/`bun.lock` → bun, `yarn.lock` → yarn, `pnpm-lock.yaml` → pnpm, else npm.
 

@@ -93,15 +93,31 @@ export async function init(options: InitOptions = {}) {
 
   await enrichProjectContext(ctx);
 
-  const authed = await isAuthenticated();
-  const keyless = resolveKeylessMode(bootstrap, ctx, authed);
+  const hasToken = await isAuthenticated();
+  const hasApiKey = Boolean(process.env.CLERK_PLATFORM_API_KEY);
+  // One userinfo round-trip, used for both the keyless branch decision and
+  // the "Logged in as …" label downstream.
+  const sessionEmail = hasToken && !hasApiKey ? await getAuthenticatedEmail() : null;
+  const sessionValid = hasApiKey || sessionEmail !== null;
+  const keyless = resolveKeylessMode(bootstrap, ctx, sessionValid);
   ctx.keyless = keyless;
 
-  const skipAuth = !keyless && bootstrap != null && overrides.skipConfirm && !authed;
+  const sessionExpired = hasToken && !sessionValid;
+  if (keyless && sessionExpired) {
+    log.warn("\n  Your previous session has expired.");
+    log.info(dim("  Starting in keyless mode with temporary dev keys so you can keep working."));
+    log.info(
+      dim(
+        "  Run `clerk auth login` to re-authenticate, then `clerk link` to reconnect your Clerk app.",
+      ),
+    );
+  }
+
+  const skipAuth = !keyless && bootstrap != null && overrides.skipConfirm && !sessionValid;
 
   if (!keyless && !skipAuth) {
     bar();
-    await authenticateAndLink(ctx.cwd, options.app);
+    await authenticateAndLink(ctx.cwd, options.app, sessionEmail);
   }
 
   // Short-circuit on a fully-clean re-run so env pull / skills prompt don't
@@ -134,7 +150,7 @@ export async function init(options: InitOptions = {}) {
   // Next steps print last so they stay on screen as the final thing the user sees.
   if (bootstrap) {
     bar();
-    printBootstrapNextSteps(bootstrap, keyless);
+    printBootstrapNextSteps(bootstrap, keyless, sessionExpired);
   }
 
   outro("Done");
@@ -203,9 +219,13 @@ function devCommand(pm: string): string {
 function printBootstrapNextSteps(
   { projectName, packageManager }: BootstrapResult,
   keyless: boolean,
+  sessionExpired: boolean,
 ): void {
   const steps = [`cd ${projectName}`, devCommand(packageManager)];
-  if (keyless) {
+  if (keyless && sessionExpired) {
+    steps.push("clerk auth login  (your previous session expired — sign in again)");
+    steps.push("clerk link        (reconnect this project to your Clerk application)");
+  } else if (keyless) {
     steps.push("clerk auth login  (when you're ready to connect your Clerk account)");
   }
   printNextSteps(steps);
@@ -226,7 +246,7 @@ function printBootstrapManualSetupInfo(frameworkName: string): void {
 function resolveKeylessMode(
   bootstrap: BootstrapResult | null,
   ctx: ProjectContext,
-  authed: boolean,
+  sessionValid: boolean,
 ): boolean {
   // Auto-keyless is scoped to bootstrap (new-project) flows only. For existing
   // projects, fall through to the authenticated flow so `clerk init` still
@@ -236,11 +256,10 @@ function resolveKeylessMode(
   if (!bootstrap) return false;
 
   if (ctx.framework.supportsKeyless) {
-    // Authenticated (OAuth token or CLERK_PLATFORM_API_KEY) — use the
-    // authenticated flow so real keys get pulled into .env. Otherwise fall
-    // back to keyless: the app runs on auto-generated dev keys and the user
-    // can connect their account later via `clerk auth login`.
-    return !authed;
+    // Valid session → authenticated flow pulls real keys into .env.
+    // Otherwise fall back to keyless (auto-generated dev keys; user can
+    // connect a Clerk account later via `clerk auth login`).
+    return !sessionValid;
   }
 
   log.info(
@@ -253,19 +272,24 @@ function resolveKeylessMode(
 
 // --- Auth ---
 
-async function resolveAuthLabel(): Promise<string> {
-  const hasApiKey = Boolean(process.env.CLERK_PLATFORM_API_KEY);
-  if (hasApiKey) return "Using API key";
+async function resolveAuthLabel(sessionEmail: string | null): Promise<string> {
+  if (process.env.CLERK_PLATFORM_API_KEY) return "Using API key";
+  if (sessionEmail) return `Logged in as ${sessionEmail}`;
 
-  const email = await getAuthenticatedEmail();
-  if (email) return `Logged in as ${email}`;
-
+  // Expired-session path — message before the browser pop so it doesn't feel unprovoked.
+  if (await isAuthenticated()) {
+    log.info(dim("Your previous session expired — signing you back in…"));
+  }
   await login({ showNextSteps: false });
   return "";
 }
 
-async function authenticateAndLink(cwd: string, app: string | undefined): Promise<void> {
-  const label = await resolveAuthLabel();
+async function authenticateAndLink(
+  cwd: string,
+  app: string | undefined,
+  sessionEmail: string | null,
+): Promise<void> {
+  const label = await resolveAuthLabel(sessionEmail);
   const profile = await resolveProfile(cwd);
 
   const alreadyOnRequestedApp = profile && (!app || profile.profile.appId === app);
