@@ -525,11 +525,12 @@ describe("config push", () => {
 
   // --- Dry run ---
 
-  test("dry-run prints payload without calling API", async () => {
-    let fetchCalled = false;
-    stubFetch(async () => {
-      fetchCalled = true;
-      return new Response(JSON.stringify(mockResponse), { status: 200 });
+  test("dry-run fetches current config and shows diff without mutating", async () => {
+    let mutatingCallMade = false;
+    stubFetch(async (_input, init) => {
+      if (init?.method && init.method !== "GET") mutatingCallMade = true;
+      const body = init?.method && init.method !== "GET" ? mockResponse : currentConfig;
+      return new Response(JSON.stringify(body), { status: 200 });
     });
 
     await setProfile(process.cwd(), {
@@ -542,9 +543,24 @@ describe("config push", () => {
       json: '{"session":{"lifetime":3600}}',
       dryRun: true,
     });
-    expect(fetchCalled).toBe(false);
-    expect(captured.err).toContain("[dry-run]");
-    expect(captured.out).toContain(JSON.stringify({ session: { lifetime: 3600 } }, null, 2));
+    expect(mutatingCallMade).toBe(false);
+    expect(captured.err).toContain("[dry-run] Would PATCH");
+    expect(captured.err).toContain("- 604800");
+    expect(captured.err).toContain("+ 3600");
+  });
+
+  test("dry-run reports no changes when payload matches current", async () => {
+    await setProfile(process.cwd(), {
+      workspaceId: "org_1",
+      appId: "app_1",
+      instances: { development: "ins_dev" },
+    });
+
+    await runConfigPatch({
+      json: '{"session":{"lifetime":604800}}',
+      dryRun: true,
+    });
+    expect(captured.err).toContain("[dry-run] No changes detected");
   });
 
   test("dry-run for put shows PUT method", async () => {
@@ -554,7 +570,7 @@ describe("config push", () => {
       instances: { development: "ins_dev" },
     });
 
-    await runConfigPut({ json: '{"a":1}', dryRun: true });
+    await runConfigPut({ json: '{"session":{"lifetime":3600}}', dryRun: true });
     expect(captured.err).toContain("[dry-run] Would PUT");
   });
 

@@ -104,6 +104,11 @@ test("config put aborted when user declines confirmation", async () => {
 });
 
 test("config put --dry-run shows payload without sending request", async () => {
+  // Mock the current config endpoint (needed for the diff preview)
+  http.mock({
+    "/config": { session: { lifetime: 604800 } },
+  });
+
   const { stdout, stderr } = await clerk(
     "--mode",
     "human",
@@ -115,8 +120,9 @@ test("config put --dry-run shows payload without sending request", async () => {
   );
 
   expect(stderr).toContain("[dry-run]");
-  expect(stdout).toContain('"lifetime": 3600');
+  expect(stderr).toContain("3600");
 
-  // No requests sent
-  expect(http.requests.length).toBe(0);
+  // No PUT request sent
+  const putReqs = http.requests.filter((r) => r.method === "PUT");
+  expect(putReqs.length).toBe(0);
 });
