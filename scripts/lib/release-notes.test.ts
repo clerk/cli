@@ -1,64 +1,49 @@
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { getStableReleaseCreateArgs, stableReleaseNotesPath } from "./release-notes.ts";
-
-let tempDir: string | undefined;
-
-afterEach(async () => {
-  if (tempDir) {
-    await rm(tempDir, { recursive: true, force: true });
-    tempDir = undefined;
-  }
-});
-
-describe("stableReleaseNotesPath", () => {
-  test("builds the version-specific markdown path", () => {
-    expect(stableReleaseNotesPath("1.0.0", "/tmp/release-notes")).toBe(
-      "/tmp/release-notes/v1.0.0.md",
-    );
-  });
-});
+import { getStableReleaseCreateArgs } from "./release-notes.ts";
 
 describe("getStableReleaseCreateArgs", () => {
-  test("uses plain generated notes when no intro file exists", async () => {
-    tempDir = await mkdtemp(join(tmpdir(), "release-notes-"));
+  let tempDir: string;
 
-    expect(await getStableReleaseCreateArgs("1.0.0", tempDir)).toEqual([
-      "gh",
-      "release",
-      "create",
-      "v1.0.0",
-      "--generate-notes",
-    ]);
+  beforeEach(async () => {
+    tempDir = await mkdtemp(join(tmpdir(), "release-notes-"));
+  });
+
+  afterEach(async () => {
+    await rm(tempDir, { recursive: true, force: true });
+  });
+
+  test("uses plain generated notes when no intro file exists", async () => {
+    expect(await getStableReleaseCreateArgs("1.0.0", tempDir)).toEqual({
+      args: ["gh", "release", "create", "v1.0.0", "--generate-notes"],
+    });
   });
 
   test("prepends version-specific notes when the intro file exists", async () => {
-    tempDir = await mkdtemp(join(tmpdir(), "release-notes-"));
-    await Bun.write(join(tempDir, "v1.0.0.md"), "Intro line\n\n- Highlight");
+    const notesPath = join(tempDir, "v1.0.0.md");
+    await Bun.write(notesPath, "Intro line\n\n- Highlight");
 
-    expect(await getStableReleaseCreateArgs("1.0.0", tempDir)).toEqual([
-      "gh",
-      "release",
-      "create",
-      "v1.0.0",
-      "--generate-notes",
-      "--notes",
-      "Intro line\n\n- Highlight",
-    ]);
+    expect(await getStableReleaseCreateArgs("1.0.0", tempDir)).toEqual({
+      args: [
+        "gh",
+        "release",
+        "create",
+        "v1.0.0",
+        "--generate-notes",
+        "--notes",
+        "Intro line\n\n- Highlight",
+      ],
+      notesPath,
+    });
   });
 
   test("ignores empty intro files", async () => {
-    tempDir = await mkdtemp(join(tmpdir(), "release-notes-"));
     await Bun.write(join(tempDir, "v1.0.0.md"), "\n  \n");
 
-    expect(await getStableReleaseCreateArgs("1.0.0", tempDir)).toEqual([
-      "gh",
-      "release",
-      "create",
-      "v1.0.0",
-      "--generate-notes",
-    ]);
+    expect(await getStableReleaseCreateArgs("1.0.0", tempDir)).toEqual({
+      args: ["gh", "release", "create", "v1.0.0", "--generate-notes"],
+    });
   });
 });
