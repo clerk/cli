@@ -56,8 +56,8 @@ export async function attemptAutoclaim(cwd: string): Promise<AutoclaimResult> {
   await clearKeylessBreadcrumb(cwd);
 
   if (result.status === "claimed") {
-    await linkApp(result.app, cwd);
-    const envPulled = await tryPullEnv();
+    const linked = await tryLinkApp(result.app, cwd);
+    const envPulled = linked && (await tryPullEnv());
     return { ...result, envPulled };
   }
 
@@ -70,6 +70,21 @@ async function tryClaim(claimToken: string, name: string): Promise<ClaimAttempt>
     return { status: "claimed", app };
   } catch (error) {
     return classifyClaimError(error);
+  }
+}
+
+// Preserves the orchestrator's never-throws contract. Claim has already
+// succeeded on the server and the breadcrumb is cleared — a local link
+// failure must not surface as a failed login.
+async function tryLinkApp(app: Application, cwd: string): Promise<boolean> {
+  try {
+    await linkApp(app, cwd);
+    return true;
+  } catch (error) {
+    log.warn(
+      `Claim succeeded but linking the project locally failed: ${errorMessage(error)}. Run \`clerk link\` to finish setup.`,
+    );
+    return false;
   }
 }
 

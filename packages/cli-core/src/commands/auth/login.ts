@@ -135,7 +135,8 @@ const CLAIM_WARNINGS: Partial<Record<AutoclaimResult["status"], string>> = {
   not_found:
     "Claim token is no longer valid - the application may have been claimed from the dashboard.",
   no_organization: "Unable to claim - your account does not have an active organization.",
-  failed: "Auto-claim failed due to a temporary error. It will be retried on your next login.",
+  failed:
+    "Auto-claim failed due to a temporary error. It will be retried on your next `clerk auth login`.",
 };
 
 async function handleAutoclaim(cwd: string): Promise<AutoclaimResult> {

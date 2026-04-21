@@ -299,8 +299,12 @@ async function setupKeylessApp(cwd: string, frameworkDep: string, envFile: strin
     printKeylessInfo(envFile);
   } catch (error) {
     log.debug(`Could not create accountless app: ${errorMessage(error)}`);
+    const isTimeout = error instanceof Error && error.name === "AbortError";
+    const prefix = isTimeout
+      ? "Could not reach api.clerk.com within 15s."
+      : "Could not set up development keys.";
     log.warn(
-      "Could not set up development keys. Run `clerk auth login` then `clerk link` to connect your app manually.",
+      `${prefix} Run \`clerk auth login\` then \`clerk link\` to connect your app manually.`,
     );
   }
 }

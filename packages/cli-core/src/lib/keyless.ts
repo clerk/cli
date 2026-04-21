@@ -131,7 +131,7 @@ export async function readKeylessBreadcrumb(cwd: string): Promise<KeylessBreadcr
   try {
     const data: unknown = await Bun.file(breadcrumbPath(cwd)).json();
     if (isKeylessBreadcrumb(data)) return data;
-    log.debug("Keyless breadcrumb has wrong shape; clearing it to allow fresh setup");
+    log.warn("Keyless breadcrumb file has wrong shape; clearing it to allow fresh setup.");
     await clearKeylessBreadcrumb(cwd);
     return undefined;
   } catch {
