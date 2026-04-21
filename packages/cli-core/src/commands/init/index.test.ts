@@ -668,7 +668,7 @@ describe("init", () => {
 
     await init({ yes: true });
 
-    expect(pullMod.pull).toHaveBeenCalledWith({ file: ".env" });
+    expect(pullMod.pull).toHaveBeenCalledWith({ file: ".env", cwd: mockCtx.cwd });
   });
 
   test("bootstrap passes project dir to link, not parent cwd", async () => {
