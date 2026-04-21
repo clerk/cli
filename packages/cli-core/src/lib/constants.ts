@@ -27,6 +27,11 @@ export const AUTH_TIMEOUT_MS = Number(process.env.CLERK_AUTH_TIMEOUT_MS) || 2 * 
 /** Signals CLI-originated flow to the dashboard. Must match `CLERK_CLIENT_CLI_VALUE` in clerk/dashboard. */
 export const CLERK_CLIENT_CLI = "cli";
 
+// ── First-application bootstrap ─────────────────────────────────────────────
+
+/** Name assigned to the default application created on first CLI login. */
+export const DEFAULT_FIRST_APPLICATION_NAME = "My Application";
+
 // ── OpenAPI Spec ──────────────────────────────────────────────────────────
 
 export const OPENAPI_SPEC_URLS = {
