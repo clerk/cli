@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { parseArgs } from "node:util";
 import { type Target, targets, SCOPE, PKG_PREFIX } from "./lib/targets.ts";
 import { run, isPublished, publish } from "./lib/npm.ts";
+import { getStableReleaseCreateArgs } from "./lib/release-notes.ts";
 
 const DIST_DIR = join(import.meta.dir, "../dist/platform-packages");
 const ARTIFACTS_DIR = process.env.ARTIFACTS_DIR ?? join(import.meta.dir, "../dist/artifacts");
@@ -136,7 +137,11 @@ if (!tag && !dryRun) {
     console.log(`GitHub Release for ${tagName} already exists, skipping.`);
   } else {
     console.log(`Creating GitHub Release for ${tagName}...`);
-    await run(["gh", "release", "create", tagName, "--generate-notes"]);
+    const { args: releaseArgs, notesPath } = await getStableReleaseCreateArgs(version);
+    if (notesPath) {
+      console.log(`Prepending release intro from ${notesPath}...`);
+    }
+    await run(releaseArgs);
   }
 }
 
