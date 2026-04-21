@@ -72,48 +72,26 @@ async function configPush(options: ConfigPushOptions, op: Operation): Promise<vo
   // Strip config_version — it's returned by pull but not accepted by the backend
   delete configPayload.config_version;
 
-  if (options.dryRun) {
-    const currentConfig = await withSpinner("Fetching current config...", () =>
-      withApiContext(
-        fetchInstanceConfig(ctx.appId, ctx.instanceId),
-        "Failed to fetch current config",
-      ),
-    );
-    delete currentConfig.config_version;
-
-    const isPatch = op.method === "PATCH";
-    const hasChanges = hasConfigChanges(currentConfig, configPayload, isPatch);
-
-    if (!hasChanges) {
-      log.info("[dry-run] No changes detected");
-      return;
-    }
-
-    log.info(`\n[dry-run] Would ${op.method} config on ${ctx.appLabel} (${ctx.instanceLabel}):\n`);
-    printDiff(currentConfig, configPayload, isPatch);
-    return;
-  }
-
   const currentConfig = await withSpinner("Fetching current config...", () =>
     withApiContext(
       fetchInstanceConfig(ctx.appId, ctx.instanceId),
       "Failed to fetch current config",
     ),
   );
-
-  // Strip config_version from current config to match the payload normalization above
   delete currentConfig.config_version;
 
   const isPatch = op.method === "PATCH";
-  const hasChanges = hasConfigChanges(currentConfig, configPayload, isPatch);
 
-  if (!hasChanges) {
-    log.info("No changes detected");
+  if (!hasConfigChanges(currentConfig, configPayload, isPatch)) {
+    log.info(options.dryRun ? "[dry-run] No changes detected" : "No changes detected");
     return;
   }
 
-  log.info(`\n${op.verb} config on ${ctx.appLabel} (${ctx.instanceLabel}):\n`);
+  const prefix = options.dryRun ? `[dry-run] Would ${op.method}` : op.verb;
+  log.info(`\n${prefix} config on ${ctx.appLabel} (${ctx.instanceLabel}):\n`);
   printDiff(currentConfig, configPayload, isPatch);
+
+  if (options.dryRun) return;
 
   if (isHuman() && !options.yes) {
     if (op.warning) {
