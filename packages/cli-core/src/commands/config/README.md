@@ -100,7 +100,7 @@ clerk config patch --file partial-config.json --dry-run
 | `--instance <id>` | Instance to target (`dev`, `prod`, or a full instance ID). Defaults to development. |
 | `--file <path>`   | Read config JSON from a file                                                        |
 | `--json <string>` | Pass config JSON inline (takes priority over `--file`)                              |
-| `--dry-run`       | Show what would be sent without making the API call                                 |
+| `--dry-run`       | Validate server-side and preview the projected result without persisting changes    |
 | `--yes`           | Skip confirmation prompts                                                           |
 
 #### Requirements
@@ -112,9 +112,9 @@ clerk config patch --file partial-config.json --dry-run
 
 #### API Endpoints
 
-| Method  | Endpoint                                                          | Description                                                                                               |
-| ------- | ----------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------- |
-| `PATCH` | `/v1/platform/applications/{appID}/instances/{instanceID}/config` | Partially updates instance configuration. Authenticated via `Bearer` token from `CLERK_PLATFORM_API_KEY`. |
+| Method  | Endpoint                                                          | Description                                                                                                                                                                                   |
+| ------- | ----------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `PATCH` | `/v1/platform/applications/{appID}/instances/{instanceID}/config` | Partially updates instance configuration. Sends `?dry_run=true` under `--dry-run` to validate and preview without persisting. Authenticated via `Bearer` token from `CLERK_PLATFORM_API_KEY`. |
 
 ---
 
@@ -140,7 +140,7 @@ clerk config put --file full-config.json --dry-run
 | `--instance <id>` | Instance to target (`dev`, `prod`, or a full instance ID). Defaults to development. |
 | `--file <path>`   | Read config JSON from a file                                                        |
 | `--json <string>` | Pass config JSON inline (takes priority over `--file`)                              |
-| `--dry-run`       | Show what would be sent without making the API call                                 |
+| `--dry-run`       | Validate server-side and preview the projected result without persisting changes    |
 | `--yes`           | Skip confirmation prompts                                                           |
 
 #### Requirements
@@ -152,6 +152,6 @@ clerk config put --file full-config.json --dry-run
 
 #### API Endpoints
 
-| Method | Endpoint                                                          | Description                                                                                               |
-| ------ | ----------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------- |
-| `PUT`  | `/v1/platform/applications/{appID}/instances/{instanceID}/config` | Replaces the full instance configuration. Authenticated via `Bearer` token from `CLERK_PLATFORM_API_KEY`. |
+| Method | Endpoint                                                          | Description                                                                                                                                                                                   |
+| ------ | ----------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `PUT`  | `/v1/platform/applications/{appID}/instances/{instanceID}/config` | Replaces the full instance configuration. Sends `?dry_run=true` under `--dry-run` to validate and preview without persisting. Authenticated via `Bearer` token from `CLERK_PLATFORM_API_KEY`. |

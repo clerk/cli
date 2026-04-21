@@ -138,7 +138,7 @@ async function sendInstanceConfig(
   applicationId: string,
   instanceId: string,
   config: Record<string, unknown>,
-  options?: { destructive?: boolean },
+  options?: { destructive?: boolean; dryRun?: boolean },
 ): Promise<Record<string, unknown>> {
   const url = new URL(
     `/v1/platform/applications/${applicationId}/instances/${instanceId}/config`,
@@ -146,6 +146,9 @@ async function sendInstanceConfig(
   );
   if (options?.destructive) {
     url.searchParams.set("destructive", "true");
+  }
+  if (options?.dryRun) {
+    url.searchParams.set("dry_run", "true");
   }
   const response = await plapiFetch(method, url, { body: JSON.stringify(config) });
   return response.json() as Promise<Record<string, unknown>>;
@@ -155,14 +158,14 @@ export const putInstanceConfig = (
   applicationId: string,
   instanceId: string,
   config: Record<string, unknown>,
-  options?: { destructive?: boolean },
+  options?: { destructive?: boolean; dryRun?: boolean },
 ) => sendInstanceConfig("PUT", applicationId, instanceId, config, options);
 
 export const patchInstanceConfig = (
   applicationId: string,
   instanceId: string,
   config: Record<string, unknown>,
-  options?: { destructive?: boolean },
+  options?: { destructive?: boolean; dryRun?: boolean },
 ) => sendInstanceConfig("PATCH", applicationId, instanceId, config, options);
 
 export async function createApplication(name: string): Promise<Application> {
