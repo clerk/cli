@@ -123,7 +123,7 @@ export async function init(options: InitOptions = {}) {
   } else if (!keyless) {
     await pull({ file: ctx.envFile });
   } else {
-    await setupKeylessApp(ctx.cwd, ctx.framework.dep);
+    await setupKeylessApp(ctx.cwd, ctx.framework.dep, ctx.envFile);
   }
 
   if (options.skills !== false) {
@@ -284,7 +284,7 @@ async function authenticateAndLink(cwd: string, app: string | undefined): Promis
 
 // --- Keyless app setup ---
 
-async function setupKeylessApp(cwd: string, frameworkDep: string): Promise<void> {
+async function setupKeylessApp(cwd: string, frameworkDep: string, envFile: string): Promise<void> {
   try {
     const app = await withSpinner("Creating development application...", () =>
       createAccountlessApp(frameworkDep),
@@ -296,11 +296,13 @@ async function setupKeylessApp(cwd: string, frameworkDep: string): Promise<void>
     });
 
     await writeKeylessBreadcrumb(cwd, parseClaimToken(app.claim_url));
+    printKeylessInfo(envFile);
   } catch (error) {
     log.debug(`Could not create accountless app: ${errorMessage(error)}`);
+    log.warn(
+      "Could not set up development keys. Run `clerk auth login` then `clerk link` to connect your app manually.",
+    );
   }
-
-  printKeylessInfo();
 }
 
 // --- Detect & install ---

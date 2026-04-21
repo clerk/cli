@@ -60,12 +60,21 @@ describe("breadcrumb", () => {
   });
 
   test("read returns undefined when breadcrumb is malformed JSON", async () => {
-    const dir = join(tempDir, ".clerk");
-    await Bun.write(join(dir, "keyless.json"), "not json{{{");
+    await Bun.write(join(tempDir, ".clerk", "keyless.json"), "not json{{{");
 
     const captured = captureLog();
     const result = await captured.run(() => readKeylessBreadcrumb(tempDir));
     expect(result).toBeUndefined();
+  });
+
+  test("read returns undefined and clears file when breadcrumb has wrong shape", async () => {
+    const breadcrumbFile = join(tempDir, ".clerk", "keyless.json");
+    await Bun.write(breadcrumbFile, JSON.stringify({ claimToken: 12345, createdAt: "2024-01-01" }));
+
+    const captured = captureLog();
+    const result = await captured.run(() => readKeylessBreadcrumb(tempDir));
+    expect(result).toBeUndefined();
+    expect(await Bun.file(breadcrumbFile).exists()).toBe(false);
   });
 
   test("clear removes the breadcrumb file", async () => {
@@ -79,6 +88,20 @@ describe("breadcrumb", () => {
   test("clear does not throw when file is already gone", async () => {
     await clearKeylessBreadcrumb(tempDir);
     // Should not throw
+  });
+
+  test("writeKeylessBreadcrumb adds .clerk/ to .gitignore", async () => {
+    await writeKeylessBreadcrumb(tempDir, "token_abc");
+    const gitignore = await Bun.file(join(tempDir, ".gitignore")).text();
+    expect(gitignore).toContain(".clerk/");
+  });
+
+  test("writeKeylessBreadcrumb does not duplicate .clerk/ entry if already present", async () => {
+    await Bun.write(join(tempDir, ".gitignore"), ".clerk/\n");
+    await writeKeylessBreadcrumb(tempDir, "token_abc");
+    const gitignore = await Bun.file(join(tempDir, ".gitignore")).text();
+    const matches = gitignore.split("\n").filter((l) => l.trim() === ".clerk/");
+    expect(matches.length).toBe(1);
   });
 });
 
@@ -123,7 +146,7 @@ describe("writeKeysToEnvFile", () => {
     expect(content).toContain("CLERK_PUBLISHABLE_KEY=pk_test_abc");
   });
 
-  test("uses framework-specific key names when package.json specifies Next.js", async () => {
+  test("uses framework-specific key names and env file when package.json specifies Next.js", async () => {
     await Bun.write(
       join(tempDir, "package.json"),
       JSON.stringify({ dependencies: { next: "latest" } }),
@@ -137,7 +160,8 @@ describe("writeKeysToEnvFile", () => {
       }),
     );
 
-    const content = await Bun.file(join(tempDir, ".env.local")).text();
+    // Next.js declares envFile: ".env" in FRAMEWORK_MAP
+    const content = await Bun.file(join(tempDir, ".env")).text();
     expect(content).toContain("NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=pk_test_next");
     expect(content).toContain("CLERK_SECRET_KEY=sk_test_next");
   });
@@ -196,11 +220,12 @@ describe("createAccountlessApp", () => {
     expect(capturedHeaders?.get("Clerk-Framework")).toBeNull();
   });
 
-  test("throws on non-OK response", async () => {
+  test("throws BapiError on non-OK response", async () => {
     stubFetch(async () => new Response("Server Error", { status: 500 }));
 
-    await expect(createAccountlessApp()).rejects.toThrow(
-      "Failed to create accountless application",
-    );
+    await expect(createAccountlessApp()).rejects.toMatchObject({
+      name: "BapiError",
+      status: 500,
+    });
   });
 });

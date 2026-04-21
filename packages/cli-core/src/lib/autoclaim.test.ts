@@ -1,6 +1,6 @@
 import { test, expect, describe, beforeEach, afterEach, spyOn } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
-import { join } from "node:path";
+import { join, basename } from "node:path";
 import { tmpdir } from "node:os";
 import { stubFetch, captureLog } from "../test/lib/stubs.ts";
 
@@ -117,14 +117,34 @@ describe("attemptAutoclaim", () => {
     expect(clearBreadcrumbSpy).toHaveBeenCalled();
   });
 
-  test("returns already_claimed and clears breadcrumb on 403", async () => {
+  test("returns no_organization and clears breadcrumb on 403", async () => {
     withBreadcrumb("forbidden_token");
     stubFetch(async () => new Response("Forbidden", { status: 403 }));
 
     const result = await run();
 
-    expect(result.status).toBe("already_claimed");
+    expect(result.status).toBe("no_organization");
     expect(clearBreadcrumbSpy).toHaveBeenCalled();
+  });
+
+  test("returns failed (preserves breadcrumb) on 400 — could be recoverable (e.g. 401 re-login)", async () => {
+    withBreadcrumb("bad_token");
+    stubFetch(async () => new Response("Bad Request", { status: 400 }));
+
+    const result = await run();
+
+    expect(result.status).toBe("failed");
+    expect(clearBreadcrumbSpy).not.toHaveBeenCalled();
+  });
+
+  test("returns failed (preserves breadcrumb) on 429 rate limit", async () => {
+    withBreadcrumb("rate_limited_token");
+    stubFetch(async () => new Response("Too Many Requests", { status: 429 }));
+
+    const result = await run();
+
+    expect(result.status).toBe("failed");
+    expect(clearBreadcrumbSpy).not.toHaveBeenCalled();
   });
 
   test("returns failed on server error without clearing breadcrumb", async () => {
@@ -161,7 +181,7 @@ describe("attemptAutoclaim", () => {
 
     const parsed = JSON.parse(capturedBody!);
     expect(parsed.token).toBe("my_claim_token");
-    expect(typeof parsed.name).toBe("string");
-    expect(parsed.name).toBeTruthy();
+    // no package.json in tempDir, so basename is used; assert exact value
+    expect(parsed.name).toBe(basename(tempDir));
   });
 });

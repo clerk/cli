@@ -95,6 +95,12 @@ export async function login(options: LoginOptions = {}): Promise<UserInfo> {
 
   if (existingSession && !isHuman()) {
     log.success(`Logged in as ${existingSession.email}`);
+    const claimResult = await handleAutoclaim(process.cwd());
+    if (showNextSteps) {
+      outro(await loginNextSteps(claimResult));
+    } else {
+      outro("Done");
+    }
     return existingSession;
   }
 
@@ -127,8 +133,8 @@ export async function login(options: LoginOptions = {}): Promise<UserInfo> {
 
 const CLAIM_WARNINGS: Partial<Record<AutoclaimResult["status"], string>> = {
   not_found:
-    "Claim token is no longer valid — the application may have been claimed from the dashboard.",
-  already_claimed: "Unable to claim — your account does not have an active organization.",
+    "Claim token is no longer valid - the application may have been claimed from the dashboard.",
+  no_organization: "Unable to claim - your account does not have an active organization.",
   failed: "Auto-claim failed due to a temporary error. It will be retried on your next login.",
 };
 
@@ -138,11 +144,6 @@ async function handleAutoclaim(cwd: string): Promise<AutoclaimResult> {
   if (result.status === "claimed") {
     const label = result.app.name || result.app.application_id;
     log.success(`Claimed and linked application: \`${label}\``);
-    if (!result.envPulled) {
-      log.warn(
-        "Could not refresh environment variables automatically. Run `clerk env pull` manually.",
-      );
-    }
   }
 
   const warning = CLAIM_WARNINGS[result.status];
@@ -156,7 +157,7 @@ async function loginNextSteps(result: AutoclaimResult): Promise<readonly string[
     return result.envPulled ? NEXT_STEPS.AUTOCLAIMED : NEXT_STEPS.AUTOCLAIMED_NO_ENV;
   }
   if (result.status === "failed") return NEXT_STEPS.AUTOCLAIM_RETRY;
-  if (result.status === "not_found" || result.status === "already_claimed") {
+  if (result.status === "not_found" || result.status === "no_organization") {
     return NEXT_STEPS.AUTOCLAIM_MANUAL_LINK;
   }
 

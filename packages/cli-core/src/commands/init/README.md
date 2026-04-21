@@ -224,4 +224,21 @@ Implementation lives in [`skills.ts`](./skills.ts). Note that the E2E fixture se
 
 ## API Endpoints
 
+| Step                   | Method | Base URL                        | Endpoint                       | Description                                                                                                                                         |
+| ---------------------- | ------ | ------------------------------- | ------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Create accountless app | `POST` | `CLERK_BAPI_URL` (default BAPI) | `/v1/accountless_applications` | Creates a temporary keyless Clerk application; returns `publishable_key`, `secret_key`, and `claim_url`. Only called in the keyless bootstrap path. |
+
 See [auth/README.md](../auth/README.md), [link/README.md](../link/README.md), and [env/README.md](../env/README.md) for the API endpoints used by each step.
+
+## Keyless breadcrumb
+
+In the keyless bootstrap path, after calling `POST /v1/accountless_applications`, `clerk init` writes `.clerk/keyless.json` to the project root. This file records the claim token extracted from `claim_url` so that `clerk auth login` can automatically claim the temporary application the next time the user authenticates.
+
+```json
+{
+  "claimToken": "<token>",
+  "createdAt": "<ISO timestamp>"
+}
+```
+
+`.clerk/` is automatically added to `.gitignore` when the breadcrumb is written. The breadcrumb is removed after a successful claim (or when the claim token expires/is already consumed).

@@ -151,9 +151,9 @@ export async function isAuthenticated(): Promise<boolean> {
   return (await getToken()) != null;
 }
 
-export function printKeylessInfo(): void {
+export function printKeylessInfo(envFile: string): void {
   const lines = [
-    "\n  Your app is ready with development keys in .env.local.",
+    `\n  Your app is ready with development keys in ${envFile}.`,
     `  When you're ready, run ${bold("clerk auth login")} and your app will be claimed automatically.\n`,
   ];
   log.info(lines.map(dim).join("\n"));
