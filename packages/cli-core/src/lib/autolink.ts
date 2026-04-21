@@ -76,6 +76,34 @@ export function matchKeyToApp(
   return undefined;
 }
 
+/** Returns undefined when the app has no development instance. */
+export async function linkApp(
+  app: Application,
+  cwd: string,
+): Promise<{ path: string; profile: Profile } | undefined> {
+  const devInstance = app.instances.find((i) => i.environment_type === "development");
+  if (!devInstance) return undefined;
+
+  const prodInstance = app.instances.find((i) => i.environment_type === "production");
+
+  const normalizedRemote = await getGitNormalizedRemote(cwd);
+  const repoId = await getGitRepoIdentifier(cwd);
+  const profileKey = normalizedRemote ?? repoId ?? cwd;
+
+  const profile: Profile = {
+    workspaceId: "",
+    appId: app.application_id,
+    appName: app.name,
+    instances: {
+      development: devInstance.instance_id,
+      ...(prodInstance ? { production: prodInstance.instance_id } : {}),
+    },
+  };
+
+  await setProfile(profileKey, profile);
+  return { path: profileKey, profile };
+}
+
 export async function autolink(
   cwd: string,
 ): Promise<{ path: string; profile: Profile } | undefined> {
@@ -109,33 +137,11 @@ export async function autolink(
     `autolink: matched key from ${match.source} → app ${match.app.application_id} (${match.app.name ?? "unnamed"})`,
   );
 
-  const normalizedRemote = await getGitNormalizedRemote(cwd);
-  const repoId = await getGitRepoIdentifier(cwd);
-  const profileKey = normalizedRemote ?? repoId ?? cwd;
-
-  const devInstance = match.app.instances.find((i) => i.environment_type === "development");
-  const prodInstance = match.app.instances.find((i) => i.environment_type === "production");
-
-  if (!devInstance) return undefined;
-
-  const instances: Profile["instances"] = {
-    development: devInstance.instance_id,
-  };
-  if (prodInstance) {
-    instances.production = prodInstance.instance_id;
-  }
-
-  const profile: Profile = {
-    workspaceId: "",
-    appId: match.app.application_id,
-    appName: match.app.name,
-    instances,
-  };
-
-  await setProfile(profileKey, profile);
+  const result = await linkApp(match.app, cwd);
+  if (!result) return undefined;
 
   const label = match.app.name || match.app.application_id;
   log.info(`Auto-linked to ${cyan(label)} ${dim(`(detected key in ${match.source})`)}`);
 
-  return { path: profileKey, profile };
+  return result;
 }

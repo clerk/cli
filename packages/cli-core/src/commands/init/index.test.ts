@@ -19,6 +19,7 @@ import * as heuristics from "./heuristics.ts";
 import * as skillsMod from "./skills.ts";
 import * as bootstrapMod from "./bootstrap.ts";
 import * as nextStepsMod from "../../lib/next-steps.ts";
+import * as keylessMod from "../../lib/keyless.ts";
 import { init } from "./index.ts";
 
 const FAKE_CTX = {
@@ -91,6 +92,13 @@ describe("init", () => {
       spyOn(pullMod, "pull").mockResolvedValue(undefined),
       spyOn(bootstrapMod, "promptAndBootstrap").mockResolvedValue(FAKE_BOOTSTRAP),
       spyOn(bootstrapMod, "confirmOverwrite").mockResolvedValue(undefined),
+      spyOn(keylessMod, "createAccountlessApp").mockResolvedValue({
+        publishable_key: "pk_test_stub",
+        secret_key: "sk_test_stub",
+        claim_url: "/apps/claim?token=stub_token",
+      }),
+      spyOn(keylessMod, "writeKeysToEnvFile").mockResolvedValue(undefined),
+      spyOn(keylessMod, "writeKeylessBreadcrumb").mockResolvedValue(undefined),
     ];
 
     return { gatherContextSpy, captured };

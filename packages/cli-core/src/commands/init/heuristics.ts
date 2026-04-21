@@ -151,14 +151,10 @@ export async function isAuthenticated(): Promise<boolean> {
   return (await getToken()) != null;
 }
 
-export function printKeylessInfo(): void {
+export function printKeylessInfo(envFile: string): void {
   const lines = [
-    "\n  Your app will work immediately — Clerk generates temporary dev keys automatically.",
-    `  Look for the ${bold('"Configure your application"')} banner to claim your account.\n`,
-    "  To connect a Clerk account later:",
-    "    clerk auth login",
-    "    clerk link",
-    "    clerk env pull",
+    `\n  Your app is ready with development keys in ${envFile}.`,
+    `  When you're ready, run ${bold("clerk auth login")} and your app will be claimed automatically.\n`,
   ];
   log.info(lines.map(dim).join("\n"));
 }

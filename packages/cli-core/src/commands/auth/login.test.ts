@@ -66,6 +66,10 @@ mock.module("../../lib/prompts.ts", () => ({
   confirm: (...args: unknown[]) => mockConfirm(...args),
 }));
 
+mock.module("../../lib/autoclaim.ts", () => ({
+  attemptAutoclaim: async () => ({ status: "not_keyless" }),
+}));
+
 const { login } = await import("./login.ts");
 
 describe("login", () => {

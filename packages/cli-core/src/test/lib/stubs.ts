@@ -56,6 +56,7 @@ export const autolinkStubs = {
   findClerkKeys: async () => [],
   matchKeyToApp: () => undefined,
   autolink: async () => undefined,
+  linkApp: async () => undefined,
 };
 
 export const credentialStoreStubs = {
