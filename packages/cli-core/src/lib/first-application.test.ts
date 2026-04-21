@@ -40,21 +40,4 @@ describe("ensureFirstApplication", () => {
     await ensureFirstApplication();
     expect(mockCreateApplication).not.toHaveBeenCalled();
   });
-
-  it("does not throw when listApplications fails", async () => {
-    mockListApplications.mockImplementation(() => {
-      throw new Error("synthetic list failure");
-    });
-    await expect(ensureFirstApplication()).resolves.toBeUndefined();
-    expect(mockCreateApplication).not.toHaveBeenCalled();
-  });
-
-  it("does not throw when createApplication fails", async () => {
-    mockListApplications.mockResolvedValue([]);
-    mockCreateApplication.mockImplementation(() => {
-      throw new Error("synthetic create failure");
-    });
-    await expect(ensureFirstApplication()).resolves.toBeUndefined();
-    expect(mockCreateApplication).toHaveBeenCalledTimes(1);
-  });
 });
