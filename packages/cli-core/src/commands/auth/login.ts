@@ -13,6 +13,7 @@ import { NEXT_STEPS } from "../../lib/next-steps.ts";
 import { openBrowser } from "../../lib/open.ts";
 import { cyan, dim } from "../../lib/color.ts";
 import { log } from "../../lib/log.ts";
+import { ensureFirstApplication } from "../../lib/first-application.ts";
 
 interface LoginOptions {
   showNextSteps?: boolean;
@@ -110,6 +111,10 @@ export async function login(options: LoginOptions = {}): Promise<UserInfo> {
   }
 
   const userInfo = await performOAuthFlow();
+
+  // Best-effort: ensure the user has at least one application so downstream
+  // commands (clerk link, clerk init) have something to operate on.
+  await ensureFirstApplication();
 
   bar();
   log.success(`Logged in as ${userInfo.email}`);
