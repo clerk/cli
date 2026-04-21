@@ -24,12 +24,7 @@ export const AUTH_TIMEOUT_MS = Number(process.env.CLERK_AUTH_TIMEOUT_MS) || 2 * 
 
 // ── OAuth client identification ─────────────────────────────────────────────
 
-/**
- * Value sent as `clerk_client` on the OAuth authorize URL so the Clerk
- * dashboard can recognize CLI-originated sign-up flows and preserve the
- * return URL through onboarding. Must match
- * `CLERK_CLIENT_CLI_VALUE` in the dashboard (`apps/dashboard/app/utils/url.ts`).
- */
+/** Signals CLI-originated flow to the dashboard. Must match `CLERK_CLIENT_CLI_VALUE` in clerk/dashboard. */
 export const CLERK_CLIENT_CLI = "cli";
 
 // ── OpenAPI Spec ──────────────────────────────────────────────────────────
