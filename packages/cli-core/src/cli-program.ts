@@ -501,6 +501,7 @@ Tutorial — enable completions for your shell:
     # Then add to ~/.zshrc: fpath=(~/.zfunc $fpath); autoload -Uz compinit && compinit
 
   Fish:
+    $ mkdir -p ~/.config/fish/completions
     $ clerk completion fish > ~/.config/fish/completions/clerk.fish  # Auto-discovered
 
   PowerShell:

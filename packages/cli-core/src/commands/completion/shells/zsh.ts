@@ -14,6 +14,7 @@ export function generate(binaryName: string): string {
 # Add to ~/.zshrc:
 #   eval "$(${binaryName} completion zsh)"
 # Or save to a file in your $fpath:
+#   mkdir -p ~/.zfunc
 #   ${binaryName} completion zsh > ~/.zfunc/_${binaryName}
 #   # Then ensure ~/.zshrc contains:
 #   #   fpath=(~/.zfunc $fpath)

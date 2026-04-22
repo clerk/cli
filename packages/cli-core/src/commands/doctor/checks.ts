@@ -369,7 +369,8 @@ const SHELL_COMPLETION: Record<
 > = {
   fish: {
     isInstalled: (home) => Bun.file(join(home, ".config/fish/completions/clerk.fish")).exists(),
-    remedy: "Run `clerk completion fish > ~/.config/fish/completions/clerk.fish`",
+    remedy:
+      "Run `mkdir -p ~/.config/fish/completions && clerk completion fish > ~/.config/fish/completions/clerk.fish`",
   },
   bash: {
     isInstalled: (home) =>
@@ -381,7 +382,7 @@ const SHELL_COMPLETION: Record<
       (await fileContains([join(home, ".zshrc")], "clerk completion")) ||
       (await Bun.file(join(home, ".zfunc/_clerk")).exists()),
     remedy:
-      'Add `eval "$(clerk completion zsh)"` to your ~/.zshrc, or run `clerk completion zsh > ~/.zfunc/_clerk`',
+      'Add `eval "$(clerk completion zsh)"` to your ~/.zshrc (run `clerk completion --help` for other install methods)',
   },
 };
 
