@@ -62,6 +62,15 @@ describe("shell script generators", () => {
     expect(generateZsh(BINARY)).toContain("_describe");
   });
 
+  test("zsh banner instructs users to mkdir ~/.zfunc before writing", () => {
+    const script = generateZsh(BINARY);
+    const mkdirIdx = script.indexOf("mkdir -p ~/.zfunc");
+    const writeIdx = script.indexOf(`${BINARY} completion zsh > ~/.zfunc/_${BINARY}`);
+    expect(mkdirIdx).toBeGreaterThan(-1);
+    expect(writeIdx).toBeGreaterThan(-1);
+    expect(mkdirIdx).toBeLessThan(writeIdx);
+  });
+
   test("fish uses complete command", () => {
     expect(generateFish(BINARY)).toContain(`complete -c ${BINARY}`);
   });

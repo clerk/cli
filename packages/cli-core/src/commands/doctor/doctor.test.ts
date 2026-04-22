@@ -667,4 +667,21 @@ describe("checkShellCompletion", () => {
       fix: false,
     });
   });
+
+  test("zsh remedy leads with the eval form (safe on fresh systems)", async () => {
+    process.env.SHELL = "/bin/zsh";
+    process.env.HOME = tempDir;
+    const result = await checkShellCompletion();
+    expect(result.remedy).toContain('eval "$(clerk completion zsh)"');
+    // The raw fpath one-liner was unsafe — it fails when ~/.zfunc doesn't exist
+    // and silently no-ops without fpath/compinit setup in ~/.zshrc.
+    expect(result.remedy).not.toMatch(/clerk completion zsh > ~\/\.zfunc\/_clerk/);
+  });
+
+  test("fish remedy creates the completions directory before writing", async () => {
+    process.env.SHELL = "/usr/bin/fish";
+    process.env.HOME = tempDir;
+    const result = await checkShellCompletion();
+    expect(result.remedy).toContain("mkdir -p ~/.config/fish/completions");
+  });
 });
