@@ -3,7 +3,7 @@ import { mkdir } from "node:fs/promises";
 import { dim, cyan, green, yellow, bold } from "../../lib/color.js";
 import { printNextSteps } from "../../lib/next-steps.js";
 import { log } from "../../lib/log.js";
-import { getStoredSession, getValidToken } from "../../lib/credential-store.js";
+import { getValidToken, hasStoredCredentials } from "../../lib/credential-store.js";
 import { fetchUserInfo } from "../../lib/token-exchange.js";
 import { printFindings } from "./scan.js";
 import { pmInstallCommand } from "./prompts/index.js";
@@ -148,7 +148,7 @@ export async function getAuthenticatedEmail(): Promise<string | null> {
  */
 export async function isAuthenticated(): Promise<boolean> {
   if (process.env.CLERK_PLATFORM_API_KEY) return true;
-  return (await getStoredSession()) != null;
+  return hasStoredCredentials();
 }
 
 export function printKeylessInfo(envFile: string): void {
