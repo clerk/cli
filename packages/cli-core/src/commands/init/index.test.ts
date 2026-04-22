@@ -650,14 +650,14 @@ describe("init", () => {
         name: "Next.js",
         sdk: "@clerk/nextjs",
         envVar: "NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY",
-        envFile: ".env" as const,
+        envFile: ".env.local" as const,
       },
       typescript: true,
       srcDir: false,
       packageManager: "npm" as const,
       existingClerk: false,
       deps: { next: "15.0.0" },
-      envFile: ".env",
+      envFile: ".env.local",
     };
 
     gatherContextSpy.mockResolvedValue(mockCtx);
@@ -668,7 +668,7 @@ describe("init", () => {
 
     await init({ yes: true });
 
-    expect(pullMod.pull).toHaveBeenCalledWith({ file: ".env", cwd: mockCtx.cwd });
+    expect(pullMod.pull).toHaveBeenCalledWith({ file: ".env.local", cwd: mockCtx.cwd });
   });
 
   test("bootstrap passes project dir to link, not parent cwd", async () => {

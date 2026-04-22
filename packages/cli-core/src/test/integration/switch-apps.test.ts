@@ -42,7 +42,7 @@ test("re-link from one app to another", async () => {
 
   // Pull env for App A
   await clerk("--mode", "human", "env", "pull");
-  let env = parseEnvFile(await Bun.file(join(h.tempDir, ".env")).text(), ".env");
+  let env = parseEnvFile(await Bun.file(join(h.tempDir, ".env.local")).text(), ".env.local");
   expect(env.get("NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY")).toBe(appADev.publishable_key);
 
   // Unlink
@@ -61,7 +61,7 @@ test("re-link from one app to another", async () => {
 
   // Pull env for App B — should overwrite App A's values, not append
   await clerk("--mode", "human", "env", "pull");
-  env = parseEnvFile(await Bun.file(join(h.tempDir, ".env")).text(), ".env");
+  env = parseEnvFile(await Bun.file(join(h.tempDir, ".env.local")).text(), ".env.local");
   expect(env.get("NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY")).toBe(appBDev.publishable_key);
   expect(env.get("CLERK_SECRET_KEY")).toBe(appBDev.secret_key);
 });

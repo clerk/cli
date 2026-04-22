@@ -15,8 +15,9 @@ export interface FrameworkInfo {
   envVar: string;
   /** Override for secret key env var name. Defaults to CLERK_SECRET_KEY when omitted. */
   secretKeyEnvVar?: string;
-  /** Preferred env file for secrets. Frameworks that gitignore `.env` use it
-   *  directly; Vite-based frameworks use `.env.local` since `.env` is tracked. */
+  /** Preferred env file for secrets when the project has none yet. Frameworks
+   *  with a `.env.local` convention use it (always gitignored, per-machine
+   *  overrides); frameworks without that convention fall back to `.env`. */
   envFile: ".env" | ".env.local";
   /** When true, the framework's Clerk SDK supports keyless mode (auto-generated
    *  temporary dev keys). Frameworks without keyless support require API keys
@@ -31,7 +32,7 @@ export const FRAMEWORK_MAP: FrameworkInfo[] = [
     name: "Next.js",
     sdk: "@clerk/nextjs",
     envVar: "NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY",
-    envFile: ".env",
+    envFile: ".env.local",
     supportsKeyless: true,
   },
   {

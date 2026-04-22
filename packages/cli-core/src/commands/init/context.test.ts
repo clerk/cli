@@ -206,7 +206,7 @@ test("Next.js: uses .env when only .env exists", async () => {
   expect(ctx!.envFile).toBe(".env");
 });
 
-test("Next.js: uses .env when neither .env nor .env.local exists", async () => {
+test("Next.js: uses .env.local when neither .env nor .env.local exists", async () => {
   await Bun.write(
     join(tempDir, "package.json"),
     JSON.stringify({ dependencies: { next: "15.0.0" } }),
@@ -214,7 +214,7 @@ test("Next.js: uses .env when neither .env nor .env.local exists", async () => {
 
   const ctx = await gatherContext(tempDir);
 
-  expect(ctx!.envFile).toBe(".env");
+  expect(ctx!.envFile).toBe(".env.local");
 });
 
 test("Next.js: uses .env.local when both .env and .env.local exist (keep existing setup)", async () => {

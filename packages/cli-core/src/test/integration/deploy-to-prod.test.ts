@@ -39,7 +39,7 @@ test.each([{ mode: "human" }, { mode: "agent" }])(
 
     // Pull dev env (default)
     await clerk("--mode", mode, "env", "pull");
-    const devEnv = parseEnvFile(await Bun.file(join(h.tempDir, ".env")).text(), ".env");
+    const devEnv = parseEnvFile(await Bun.file(join(h.tempDir, ".env.local")).text(), ".env.local");
     expect(devEnv.get("NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY")).toBe(devInstance.publishable_key);
     expect(devEnv.get("CLERK_SECRET_KEY")).toBe(devInstance.secret_key);
 
@@ -53,7 +53,10 @@ test.each([{ mode: "human" }, { mode: "agent" }])(
     expect(prodEnv.get("CLERK_SECRET_KEY")).toBe(prodInstance.secret_key);
 
     // Dev file not overwritten
-    const devEnvAfter = parseEnvFile(await Bun.file(join(h.tempDir, ".env")).text(), ".env");
+    const devEnvAfter = parseEnvFile(
+      await Bun.file(join(h.tempDir, ".env.local")).text(),
+      ".env.local",
+    );
     expect(devEnvAfter.get("NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY")).toBe(devInstance.publishable_key);
 
     // Config pull targets prod instance
