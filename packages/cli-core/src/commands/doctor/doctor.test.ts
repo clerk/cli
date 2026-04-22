@@ -72,6 +72,7 @@ const mockProfile = {
 function createMockContext(
   overrides: {
     token?: string | null;
+    validToken?: string | null;
     profile?: {
       path: string;
       profile: Profile;
@@ -83,6 +84,8 @@ function createMockContext(
 ): DoctorContext {
   return {
     getToken: async () => overrides.token ?? null,
+    getValidToken: async () =>
+      overrides.validToken !== undefined ? overrides.validToken : (overrides.token ?? null),
     getProfile: async () => overrides.profile as ResolvedProfile | undefined,
     getApplication: async () => {
       if (overrides.applicationError) throw overrides.applicationError;

@@ -1,6 +1,5 @@
 import { join } from "node:path";
 import { homedir } from "node:os";
-import { getValidToken } from "../../lib/credential-store.ts";
 import { fetchUserInfo } from "../../lib/token-exchange.ts";
 import { PlapiError, errorMessage } from "../../lib/errors.ts";
 import { detectPublishableKeyName, detectSecretKeyName } from "../../lib/framework.ts";
@@ -83,7 +82,7 @@ export async function checkTokenValid(ctx: DoctorContext): Promise<CheckResult> 
   if (!storedToken) return check.skip("no token");
 
   try {
-    const token = await getValidToken();
+    const token = await ctx.getValidToken();
     if (!token) return check.skip("no token");
     const userInfo = await fetchUserInfo(token);
     return check.pass(`Authenticated as ${userInfo.email}`);
