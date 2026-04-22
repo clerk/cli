@@ -1,5 +1,11 @@
 # clerk
 
+## 1.0.1
+
+### Patch Changes
+
+- Fix the stable release Homebrew publish step so it awaits each release upload and tap repository command before moving to the next step. This prevents the Homebrew workflow from racing past `gh release upload`, `git clone`, and the follow-up git operations while publishing a release. ([#214](https://github.com/clerk/cli/pull/214)) by [@wyattjoh](https://github.com/wyattjoh)
+
 ## 1.0.0
 
 ### Major Changes
