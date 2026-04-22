@@ -1,5 +1,5 @@
 import { test, expect, describe, beforeEach, afterAll, mock, setDefaultTimeout } from "bun:test";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { ApiError, AuthError } from "./errors.ts";
@@ -32,6 +32,10 @@ mock.module("./token-exchange.ts", () => ({
 const { createOAuthSession, deleteToken, getStoredSession, getToken, getValidToken, storeToken } =
   await import("./credential-store.ts");
 
+async function writeLegacyToken(value: string): Promise<void> {
+  await writeFile(join(tempDir, "credentials"), value, { mode: 0o600 });
+}
+
 afterAll(async () => {
   delete process.env.CLERK_CONFIG_DIR;
   await rm(tempDir, { recursive: true, force: true });
@@ -47,8 +51,8 @@ describe("credential-store", () => {
     expect(await getToken()).toBeNull();
   });
 
-  test("storeToken and getToken roundtrip for legacy token strings", async () => {
-    await storeToken("my-access-token");
+  test("getToken reads legacy token strings without a stored session", async () => {
+    await writeLegacyToken("my-access-token");
 
     expect(await getToken()).toBe("my-access-token");
     expect(await getStoredSession()).toBeNull();
@@ -95,13 +99,14 @@ describe("credential-store", () => {
       access_token: "refreshed-access-token",
       token_type: "Bearer",
       expires_in: 3600,
+      refresh_token: "rotated-refresh-token",
     });
 
     expect(await getValidToken()).toBe("refreshed-access-token");
     expect(mockRefreshAccessToken).toHaveBeenCalledWith("refresh-token");
     expect(await getStoredSession()).toEqual({
       accessToken: "refreshed-access-token",
-      refreshToken: "refresh-token",
+      refreshToken: "rotated-refresh-token",
       expiresAt: expect.any(Number),
       tokenType: "Bearer",
     });
@@ -123,21 +128,13 @@ describe("credential-store", () => {
     expect(await getStoredSession()).toBeNull();
   });
 
-  test("createOAuthSession reuses the current refresh token when rotation is omitted", () => {
-    expect(
-      createOAuthSession(
-        {
-          access_token: "new-access-token",
-          token_type: "Bearer",
-          expires_in: 3600,
-        },
-        "existing-refresh-token",
-      ),
-    ).toEqual({
-      accessToken: "new-access-token",
-      refreshToken: "existing-refresh-token",
-      expiresAt: expect.any(Number),
-      tokenType: "Bearer",
-    });
+  test("createOAuthSession requires a refresh token in the auth response", () => {
+    expect(() =>
+      createOAuthSession({
+        access_token: "new-access-token",
+        token_type: "Bearer",
+        expires_in: 3600,
+      } as never),
+    ).toThrow("Authentication response did not include a refresh token");
   });
 });

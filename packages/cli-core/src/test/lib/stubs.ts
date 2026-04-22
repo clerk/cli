@@ -68,12 +68,12 @@ export const credentialStoreStubs = {
   deleteToken: async () => {},
   createOAuthSession: (tokenResponse: {
     access_token: string;
-    refresh_token?: string;
+    refresh_token: string;
     expires_in: number;
     token_type: string;
   }) => ({
     accessToken: tokenResponse.access_token,
-    refreshToken: tokenResponse.refresh_token ?? "",
+    refreshToken: tokenResponse.refresh_token,
     expiresAt: Date.now() + tokenResponse.expires_in * 1000,
     tokenType: tokenResponse.token_type,
   }),

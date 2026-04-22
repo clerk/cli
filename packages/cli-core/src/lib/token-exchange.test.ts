@@ -13,6 +13,7 @@ describe("exchangeCodeForToken", () => {
       access_token: "test-token-123",
       token_type: "Bearer",
       expires_in: 3600,
+      refresh_token: "refresh-token-123",
     };
 
     globalThis.fetch = mock(async () => {

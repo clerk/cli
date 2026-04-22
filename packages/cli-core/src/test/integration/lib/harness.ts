@@ -56,20 +56,20 @@ mock.module(
             }
           : null,
       hasStoredCredentials: async () => mockState.storedToken !== null,
-      storeToken: async (value: string | { accessToken: string }) => {
-        mockState.storedToken = typeof value === "string" ? value : value.accessToken;
+      storeToken: async (value: { accessToken: string }) => {
+        mockState.storedToken = value.accessToken;
       },
       deleteToken: async () => {
         mockState.storedToken = null;
       },
       createOAuthSession: (tokenResponse: {
         access_token: string;
-        refresh_token?: string;
+        refresh_token: string;
         expires_in: number;
         token_type: string;
       }) => ({
         accessToken: tokenResponse.access_token,
-        refreshToken: tokenResponse.refresh_token ?? "mock_refresh_token",
+        refreshToken: tokenResponse.refresh_token,
         expiresAt: Date.now() + tokenResponse.expires_in * 1000,
         tokenType: tokenResponse.token_type,
       }),

@@ -11,7 +11,7 @@ import { dirname } from "node:path";
 import { mkdir, chmod, writeFile, unlink } from "node:fs/promises";
 import { CREDENTIALS_FILE } from "./constants.ts";
 import { getCurrentEnvName } from "./environment.ts";
-import { ApiError, AuthError, CliError, ERROR_CODE } from "./errors.ts";
+import { ApiError, AuthError, CliError, ERROR_CODE, errorMessage } from "./errors.ts";
 import { log } from "./log.ts";
 import { refreshAccessToken, type TokenResponse } from "./token-exchange.ts";
 import { resolveCliVersion } from "./version.ts";
@@ -108,8 +108,8 @@ async function keyringStore(value: string): Promise<boolean> {
     const entry = new mod.Entry(service, account);
     entry.setPassword(value);
     return true;
-  } catch {
-    log.debug("credentials: failed to store session in keyring");
+  } catch (error) {
+    log.debug(`credentials: failed to store session in keyring: ${errorMessage(error)}`);
     return false;
   }
 }
@@ -128,8 +128,8 @@ async function keyringGet(): Promise<string | null> {
     const value = entry.getPassword();
     log.debug(`credentials: ${value ? "found session in keyring" : "no session in keyring"}`);
     return value;
-  } catch {
-    log.debug("credentials: keyring lookup failed");
+  } catch (error) {
+    log.debug(`credentials: keyring lookup failed: ${errorMessage(error)}`);
     return null;
   }
 }
@@ -203,8 +203,7 @@ function parseStoredSession(raw: string): OAuthSession | null {
   }
 }
 
-function encodeStoredValue(value: string | OAuthSession): string {
-  if (typeof value === "string") return value;
+function encodeStoredValue(value: OAuthSession): string {
   return JSON.stringify(value);
 }
 
@@ -269,16 +268,13 @@ async function refreshStoredSession(session: OAuthSession): Promise<string> {
     throw error;
   }
 
-  const nextSession = createOAuthSession(tokenResponse, session.refreshToken);
+  const nextSession = createOAuthSession(tokenResponse);
   await storeToken(nextSession);
   return nextSession.accessToken;
 }
 
-export function createOAuthSession(
-  tokenResponse: TokenResponse,
-  currentRefreshToken?: string,
-): OAuthSession {
-  const refreshToken = tokenResponse.refresh_token ?? currentRefreshToken;
+export function createOAuthSession(tokenResponse: TokenResponse): OAuthSession {
+  const refreshToken = tokenResponse.refresh_token;
   if (!refreshToken) {
     throw new CliError(
       "Authentication response did not include a refresh token. Run `clerk auth login` to re-authenticate",
@@ -296,7 +292,7 @@ export function createOAuthSession(
   };
 }
 
-export async function storeToken(value: string | OAuthSession): Promise<void> {
+export async function storeToken(value: OAuthSession): Promise<void> {
   const encoded = encodeStoredValue(value);
   const stored = await keyringStore(encoded);
   if (stored) {
