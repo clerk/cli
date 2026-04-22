@@ -112,6 +112,32 @@ describe("credential-store", () => {
     });
   });
 
+  test("getValidToken reuses a newer stored session after invalid_grant from another refresh", async () => {
+    const session = {
+      accessToken: "expired-access-token",
+      refreshToken: "refresh-token",
+      expiresAt: Date.now() - 60_000,
+      tokenType: "Bearer",
+    };
+    const refreshedSession = {
+      accessToken: "other-process-access-token",
+      refreshToken: "other-process-refresh-token",
+      expiresAt: Date.now() + 60_000,
+      tokenType: "Bearer",
+    };
+    await storeToken(session);
+
+    mockRefreshAccessToken.mockImplementation(async () => {
+      setTimeout(() => {
+        void storeToken(refreshedSession);
+      }, 5);
+      throw new ApiError(400, "invalid_grant");
+    });
+
+    expect(await getValidToken()).toBe("other-process-access-token");
+    expect(await getStoredSession()).toEqual(refreshedSession);
+  });
+
   test("getValidToken deletes stored credentials when refresh returns invalid_grant", async () => {
     const session = {
       accessToken: "expired-access-token",

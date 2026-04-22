@@ -7,6 +7,7 @@
  * File fallback: "credentials.<envName>"
  */
 
+import { setTimeout as sleep } from "node:timers/promises";
 import { dirname, join } from "node:path";
 import { mkdir, chmod, writeFile, unlink } from "node:fs/promises";
 import { CREDENTIALS_FILE } from "./constants.ts";
@@ -27,6 +28,7 @@ export const KEYCHAIN_ACCOUNT = "oauth-access-token";
 const RELEASE_MACOS_TEAM_ID = "L8SD6SB282";
 const RELEASE_MACOS_IDENTIFIER = "clerk";
 const JWT_EXPIRY_LEEWAY_MS = 30_000;
+const INVALID_GRANT_RETRY_DELAYS_MS = [25, 50, 100];
 
 export interface OAuthSession {
   accessToken: string;
@@ -292,6 +294,15 @@ function sessionExpiredError(): AuthError {
   return new AuthError({ reason: "session_expired" });
 }
 
+function sessionFingerprint(session: OAuthSession): string {
+  return JSON.stringify([
+    session.accessToken,
+    session.refreshToken,
+    session.expiresAt,
+    session.tokenType,
+  ]);
+}
+
 function isInvalidGrant(error: unknown): boolean {
   return (
     error instanceof ApiError &&
@@ -309,6 +320,34 @@ async function readStoredValue(): Promise<string | null> {
   return fileGet();
 }
 
+async function getValidAccessToken(session: OAuthSession): Promise<string> {
+  if (!isExpiredSession(session)) {
+    return session.accessToken;
+  }
+
+  return refreshStoredSession(session);
+}
+
+async function recoverFromInvalidGrant(session: OAuthSession): Promise<string | null> {
+  const originalFingerprint = sessionFingerprint(session);
+
+  for (const delayMs of [0, ...INVALID_GRANT_RETRY_DELAYS_MS]) {
+    if (delayMs > 0) {
+      await sleep(delayMs);
+    }
+
+    const storedSession = await getStoredSession();
+    if (!storedSession || sessionFingerprint(storedSession) === originalFingerprint) {
+      continue;
+    }
+
+    log.debug("credentials: detected a newer stored session after invalid_grant");
+    return getValidAccessToken(storedSession);
+  }
+
+  return null;
+}
+
 async function refreshStoredSession(session: OAuthSession): Promise<string> {
   let tokenResponse: TokenResponse;
   try {
@@ -316,6 +355,10 @@ async function refreshStoredSession(session: OAuthSession): Promise<string> {
     tokenResponse = await refreshAccessToken(session.refreshToken);
   } catch (error) {
     if (isInvalidGrant(error)) {
+      const recoveredToken = await recoverFromInvalidGrant(session);
+      if (recoveredToken) {
+        return recoveredToken;
+      }
       await deleteToken();
       throw sessionExpiredError();
     }
@@ -391,11 +434,7 @@ export async function getValidToken(): Promise<string | null> {
     return null;
   }
 
-  if (!isExpiredSession(session)) {
-    return session.accessToken;
-  }
-
-  return refreshStoredSession(session);
+  return getValidAccessToken(session);
 }
 
 export async function deleteToken(): Promise<void> {
