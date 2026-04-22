@@ -1,7 +1,7 @@
 import { join } from "node:path";
 import { homedir } from "node:os";
 import { fetchUserInfo } from "../../lib/token-exchange.ts";
-import { PlapiError, errorMessage } from "../../lib/errors.ts";
+import { errorMessage, isAuthError, PlapiError } from "../../lib/errors.ts";
 import { detectPublishableKeyName, detectSecretKeyName } from "../../lib/framework.ts";
 import { parseEnvFile } from "../../lib/dotenv.ts";
 import {
@@ -15,8 +15,6 @@ import {
   formatChannelLabel,
 } from "../../lib/update-check.ts";
 import type { CheckResult, DoctorContext, FixAction } from "./types.ts";
-
-const AUTH_ERROR_STATUS = /\((401|403)\)/;
 
 interface CheckOptions {
   remedy?: string;
@@ -87,8 +85,7 @@ export async function checkTokenValid(ctx: DoctorContext): Promise<CheckResult> 
     const userInfo = await fetchUserInfo(token);
     return check.pass(`Authenticated as ${userInfo.email}`);
   } catch (error) {
-    const message = errorMessage(error);
-    if (AUTH_ERROR_STATUS.test(message)) {
+    if (isAuthError(error)) {
       return check.fail("Token is expired or invalid", {
         remedy: "Run `clerk auth login` to re-authenticate.",
       });

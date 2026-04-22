@@ -11,7 +11,7 @@ import { dirname } from "node:path";
 import { mkdir, chmod, writeFile, unlink } from "node:fs/promises";
 import { CREDENTIALS_FILE } from "./constants.ts";
 import { getCurrentEnvName } from "./environment.ts";
-import { ApiError, CliError, ERROR_CODE } from "./errors.ts";
+import { ApiError, AuthError, CliError, ERROR_CODE } from "./errors.ts";
 import { log } from "./log.ts";
 import { refreshAccessToken, type TokenResponse } from "./token-exchange.ts";
 import { resolveCliVersion } from "./version.ts";
@@ -229,10 +229,8 @@ function isExpiredJwt(token: string): boolean {
   return expiresAt <= Date.now() + JWT_EXPIRY_LEEWAY_MS;
 }
 
-function sessionExpiredError(): CliError {
-  return new CliError("Session expired. Run `clerk auth login` to re-authenticate", {
-    code: ERROR_CODE.AUTH_REQUIRED,
-  });
+function sessionExpiredError(): AuthError {
+  return new AuthError({ reason: "session_expired" });
 }
 
 function isInvalidGrant(error: unknown): boolean {

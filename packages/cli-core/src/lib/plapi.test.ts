@@ -15,7 +15,7 @@ const {
   listApplications,
   createApplication,
 } = await import("./plapi.ts");
-const { PlapiError } = await import("./errors.ts");
+const { AuthError, PlapiError } = await import("./errors.ts");
 
 describe("plapi", () => {
   const originalEnv = { ...process.env };
@@ -35,6 +35,7 @@ describe("plapi", () => {
   test("throws when neither OAuth token nor env var is set", async () => {
     mockGetValidToken.mockResolvedValue(null);
     delete process.env.CLERK_PLATFORM_API_KEY;
+    await expect(fetchInstanceConfig("app_1", "ins_1")).rejects.toBeInstanceOf(AuthError);
     await expect(fetchInstanceConfig("app_1", "ins_1")).rejects.toThrow("Not authenticated");
   });
 

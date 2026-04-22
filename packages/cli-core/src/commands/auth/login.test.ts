@@ -1,5 +1,8 @@
 import { test, expect, describe, beforeEach, afterEach, mock, spyOn } from "bun:test";
+import { AuthError } from "../../lib/errors.ts";
 import { captureLog, credentialStoreStubs, configStubs } from "../../test/lib/stubs.ts";
+
+const actualConstants = await import("../../lib/constants.ts");
 
 const mockGetValidToken = mock();
 const mockStoreToken = mock();
@@ -45,6 +48,7 @@ mock.module("../../lib/environment.ts", () => ({
 }));
 
 mock.module("../../lib/constants.ts", () => ({
+  ...actualConstants,
   CALLBACK_PATH: "/callback",
   AUTH_TIMEOUT_MS: 120000,
   CLERK_CLIENT_CLI: "cli",
@@ -207,7 +211,7 @@ describe("login", () => {
   });
 
   test("re-authenticates when existing token is expired", async () => {
-    mockGetValidToken.mockRejectedValue(new Error("Session expired"));
+    mockGetValidToken.mockRejectedValue(new AuthError({ reason: "session_expired" }));
     mockGetAuth.mockResolvedValue({ userId: "user_old" });
     mockFetchUserInfo.mockResolvedValueOnce({
       userId: "user_refreshed",

@@ -2,6 +2,7 @@ import { test, expect, describe, beforeEach, afterEach, mock } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
+import { ApiError, AuthError } from "../../lib/errors.ts";
 import { gitStubs, tokenExchangeStubs, stubFetch } from "../../test/lib/stubs.ts";
 import type { CheckResult, CheckStatus, DoctorContext, ResolvedProfile } from "./types.ts";
 import type { Application } from "../../lib/plapi.ts";
@@ -72,7 +73,7 @@ const mockProfile = {
 function createMockContext(
   overrides: {
     token?: string | null;
-    validToken?: string | null;
+    validToken?: string | null | Error;
     profile?: {
       path: string;
       profile: Profile;
@@ -84,8 +85,10 @@ function createMockContext(
 ): DoctorContext {
   return {
     getToken: async () => overrides.token ?? null,
-    getValidToken: async () =>
-      overrides.validToken !== undefined ? overrides.validToken : (overrides.token ?? null),
+    getValidToken: async () => {
+      if (overrides.validToken instanceof Error) throw overrides.validToken;
+      return overrides.validToken !== undefined ? overrides.validToken : (overrides.token ?? null);
+    },
     getProfile: async () => overrides.profile as ResolvedProfile | undefined,
     getApplication: async () => {
       if (overrides.applicationError) throw overrides.applicationError;
@@ -189,8 +192,23 @@ describe("checkTokenValid", () => {
   });
 
   test("fail when token is expired (401)", async () => {
-    mockUserInfoError = new Error("Failed to fetch user info (401): Unauthorized");
+    mockUserInfoError = new ApiError(401, "Unauthorized");
     const ctx = createMockContext({ token: "expired_token" });
+    const result = await checkTokenValid(ctx);
+    expectCheck(result, {
+      name: "Authentication valid",
+      status: "fail",
+      message: "expired or invalid",
+      remedy: "clerk auth login",
+      fix: true,
+    });
+  });
+
+  test("fail when refreshing the stored session requires re-authentication", async () => {
+    const ctx = createMockContext({
+      token: "expired_token",
+      validToken: new AuthError({ reason: "session_expired" }),
+    });
     const result = await checkTokenValid(ctx);
     expectCheck(result, {
       name: "Authentication valid",

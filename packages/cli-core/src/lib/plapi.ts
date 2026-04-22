@@ -5,7 +5,7 @@
 
 import { getPlapiBaseUrl, getCurrentEnvName } from "./environment.ts";
 import { getValidToken } from "./credential-store.ts";
-import { CliError, PlapiError, ERROR_CODE } from "./errors.ts";
+import { AuthError, CliError, ERROR_CODE, PlapiError } from "./errors.ts";
 import { loggedFetch } from "./fetch.ts";
 import { log } from "./log.ts";
 
@@ -57,8 +57,9 @@ export async function getAuthToken(): Promise<string> {
     return oauthToken;
   }
 
-  throw new CliError("Not authenticated. Run `clerk auth login` or set CLERK_PLATFORM_API_KEY", {
-    code: ERROR_CODE.AUTH_REQUIRED,
+  throw new AuthError({
+    reason: "not_logged_in",
+    message: "Not authenticated. Run `clerk auth login` or set CLERK_PLATFORM_API_KEY",
     docsUrl: "https://clerk.com/docs/guides/development/clerk-environment-variables",
   });
 }
