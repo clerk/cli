@@ -544,7 +544,7 @@ describe("config push", () => {
       dryRun: true,
     });
     expect(patchUrl).toContain("dry_run=true");
-    expect(captured.err).toContain("[dry-run] Would PATCH");
+    expect(captured.err).toContain("[dry-run] Proposing PATCH");
     expect(captured.err).toContain("- 604800");
     expect(captured.err).toContain("+ 3600");
     expect(captured.out).toContain(JSON.stringify(mockResponse, null, 2));
@@ -588,7 +588,7 @@ describe("config push", () => {
 
     await runConfigPut({ json: '{"session":{"lifetime":3600}}', dryRun: true });
     expect(putUrl).toContain("dry_run=true");
-    expect(captured.err).toContain("[dry-run] Would PUT");
+    expect(captured.err).toContain("[dry-run] Proposing PUT");
   });
 
   test("dry-run surfaces server validation errors", async () => {
@@ -610,7 +610,7 @@ describe("config push", () => {
 
     await expect(
       runConfigPatch({ json: '{"session":{"lifetime":3600}}', dryRun: true }),
-    ).rejects.toThrow("API error");
+    ).rejects.toThrow("invalid organization_settings");
   });
 
   // --- API error handling ---
