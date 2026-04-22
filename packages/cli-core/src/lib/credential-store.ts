@@ -259,6 +259,7 @@ async function readStoredValue(): Promise<string | null> {
 async function refreshStoredSession(session: OAuthSession): Promise<string> {
   let tokenResponse: TokenResponse;
   try {
+    log.debug("credentials: refreshing OAuth session");
     tokenResponse = await refreshAccessToken(session.refreshToken);
   } catch (error) {
     if (isInvalidGrant(error)) {
@@ -270,6 +271,7 @@ async function refreshStoredSession(session: OAuthSession): Promise<string> {
 
   const nextSession = createOAuthSession(tokenResponse);
   await storeToken(nextSession);
+  log.debug("credentials: stored refreshed OAuth session");
   return nextSession.accessToken;
 }
 
