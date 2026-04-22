@@ -3,6 +3,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { createProgram, formatApiBody } from "./cli-program.ts";
+import { STANDARD_AGENT_DIRS, EXTRA_REL_PATHS } from "./lib/skill-detection.ts";
 
 describe("formatApiBody", () => {
   // --- Single error with meta ---
@@ -206,16 +207,6 @@ describe("formatApiBody", () => {
 
 describe("help: clerk skill install tip", () => {
   const TIP_SUBSTR = "Give AI agents better Clerk context";
-  const STANDARD_AGENT_DIRS = [
-    ".claude",
-    ".agents",
-    ".codex",
-    ".cursor",
-    ".windsurf",
-    ".zed",
-    ".cline",
-  ];
-  const EXTRA_REL_PATHS = [".vscode/skills/clerk/SKILL.md", ".github/prompts/clerk.md"];
 
   // Capture help output including `addHelpText("after", ...)`. The custom
   // formatter in lib/help.ts rebuilds help from scratch, so the "after"

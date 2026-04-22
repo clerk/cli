@@ -8,7 +8,7 @@ import { join } from "node:path";
  * both `$HOME/<dir>/skills/clerk/SKILL.md` (global) and
  * `<cwd>/<dir>/skills/clerk/SKILL.md` (project-local).
  */
-const STANDARD_AGENT_DIRS = [
+export const STANDARD_AGENT_DIRS = [
   ".claude", // Claude Code
   ".agents", // generic / shared
   ".codex", // OpenAI Codex CLI
@@ -26,7 +26,7 @@ const STANDARD_SKILL_REL = "skills/clerk/SKILL.md";
  * and are checked under `<cwd>` (not `$HOME`), because
  * `clerk skill install` does not install these layouts globally.
  */
-const EXTRA_REL_PATHS = [
+export const EXTRA_REL_PATHS = [
   ".vscode/skills/clerk/SKILL.md", // VS Code (project-local)
   ".github/prompts/clerk.md", // GitHub Copilot (project-local)
 ] as const;
