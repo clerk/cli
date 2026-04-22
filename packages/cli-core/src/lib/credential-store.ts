@@ -8,7 +8,7 @@
  */
 
 import { dirname } from "node:path";
-import { mkdir, writeFile, unlink } from "node:fs/promises";
+import { mkdir, chmod, writeFile, unlink } from "node:fs/promises";
 import { CREDENTIALS_FILE } from "./constants.ts";
 import { getCurrentEnvName } from "./environment.ts";
 import { log } from "./log.ts";
