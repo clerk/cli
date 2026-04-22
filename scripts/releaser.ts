@@ -7,7 +7,9 @@ import { getStableReleaseCreateArgs } from "./lib/release-notes.ts";
 
 const DIST_DIR = join(import.meta.dir, "../dist/platform-packages");
 const ARTIFACTS_DIR = process.env.ARTIFACTS_DIR ?? join(import.meta.dir, "../dist/artifacts");
+const ROOT_README_PATH = join(import.meta.dir, "../README.md");
 const WRAPPER_PKG_PATH = join(import.meta.dir, "../packages/cli/package.json");
+const WRAPPER_README_PATH = join(import.meta.dir, "../packages/cli/README.md");
 
 function parseCliArgs(): { dryRun: boolean; tag?: string; versionOverride?: string } {
   const { values } = parseArgs({
@@ -23,6 +25,21 @@ function parseCliArgs(): { dryRun: boolean; tag?: string; versionOverride?: stri
 
 function packageName(targetName: string): string {
   return `${SCOPE}/${PKG_PREFIX}-${targetName}`;
+}
+
+function platformReadme(target: Target): string {
+  return `# ${packageName(target.name)}
+
+Platform-specific binary package for Clerk CLI on \`${target.name}\`.
+
+Most users should install the top-level \`clerk\` package instead:
+
+\`\`\`sh
+npm install -g clerk
+\`\`\`
+
+This package is published as an internal optional dependency used by the \`clerk\` wrapper package.
+`;
 }
 
 async function generatePlatformPackage(target: Target, version: string): Promise<string> {
@@ -53,6 +70,7 @@ async function generatePlatformPackage(target: Target, version: string): Promise
     pkg.libc = [target.libc];
   }
   await Bun.write(join(dir, "package.json"), JSON.stringify(pkg, null, 2) + "\n");
+  await Bun.write(join(dir, "README.md"), platformReadme(target));
 
   const licensePath = join(import.meta.dir, "../LICENSE");
   await copyFile(licensePath, join(dir, "LICENSE"));
@@ -85,6 +103,7 @@ await Promise.all(
 // This mutation is intentional — the repo omits optionalDependencies while the published package includes them.
 // We restore the original file after publishing (or on failure) so the working tree stays clean.
 const wrapperRaw = await Bun.file(WRAPPER_PKG_PATH).text();
+const rootReadmeRaw = await Bun.file(ROOT_README_PATH).text();
 try {
   const wrapperPkg = JSON.parse(wrapperRaw);
   wrapperPkg.version = version;
@@ -93,6 +112,7 @@ try {
   );
   delete wrapperPkg.private;
   await Bun.write(WRAPPER_PKG_PATH, JSON.stringify(wrapperPkg, null, 2) + "\n");
+  await Bun.write(WRAPPER_README_PATH, rootReadmeRaw);
 
   const wrapperName = "clerk";
   if (await isPublished(wrapperName, version)) {
@@ -103,6 +123,7 @@ try {
   }
 } finally {
   await Bun.write(WRAPPER_PKG_PATH, wrapperRaw);
+  await rm(WRAPPER_README_PATH, { force: true });
 }
 
 // Create git tag and GitHub Release for stable releases (no --tag flag).
