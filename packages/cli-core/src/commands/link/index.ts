@@ -68,19 +68,17 @@ export async function link(options: LinkOptions = {}): Promise<void> {
 
   intro("clerk link");
 
-  if (existing) {
-    if (agent) {
-      printExistingStatus(existing, normalizedRemote);
-      if (!options.app || !targetsDifferentApp) {
-        outro();
-        return;
-      }
-    } else {
-      const shouldRelink = await handleExistingProfile(existing, normalizedRemote, options);
-      if (!shouldRelink) {
-        outro();
-        return;
-      }
+  if (existing && agent) {
+    printExistingStatus(existing, normalizedRemote);
+    if (!targetsDifferentApp) {
+      outro();
+      return;
+    }
+  } else if (existing) {
+    const shouldRelink = await handleExistingProfile(existing, normalizedRemote, options);
+    if (!shouldRelink) {
+      outro();
+      return;
     }
   }
 
