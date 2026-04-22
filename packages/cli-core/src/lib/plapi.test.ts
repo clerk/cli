@@ -1,10 +1,10 @@
 import { test, expect, describe, beforeEach, afterEach, mock } from "bun:test";
 import { credentialStoreStubs, stubFetch } from "../test/lib/stubs.ts";
 
-const mockGetToken = mock();
+const mockGetValidToken = mock();
 mock.module("./credential-store.ts", () => ({
   ...credentialStoreStubs,
-  getToken: (...args: unknown[]) => mockGetToken(...args),
+  getValidToken: (...args: unknown[]) => mockGetValidToken(...args),
 }));
 
 const {
@@ -15,31 +15,32 @@ const {
   listApplications,
   createApplication,
 } = await import("./plapi.ts");
-const { PlapiError } = await import("./errors.ts");
+const { AuthError, PlapiError } = await import("./errors.ts");
 
 describe("plapi", () => {
   const originalEnv = { ...process.env };
   const originalFetch = globalThis.fetch;
 
   beforeEach(() => {
-    mockGetToken.mockResolvedValue(null);
+    mockGetValidToken.mockResolvedValue(null);
     process.env.CLERK_PLATFORM_API_KEY = "test_key_123";
   });
 
   afterEach(() => {
     process.env = { ...originalEnv };
     globalThis.fetch = originalFetch;
-    mockGetToken.mockReset();
+    mockGetValidToken.mockReset();
   });
 
   test("throws when neither OAuth token nor env var is set", async () => {
-    mockGetToken.mockResolvedValue(null);
+    mockGetValidToken.mockResolvedValue(null);
     delete process.env.CLERK_PLATFORM_API_KEY;
+    await expect(fetchInstanceConfig("app_1", "ins_1")).rejects.toBeInstanceOf(AuthError);
     await expect(fetchInstanceConfig("app_1", "ins_1")).rejects.toThrow("Not authenticated");
   });
 
   test("prefers CLERK_PLATFORM_API_KEY over OAuth token", async () => {
-    mockGetToken.mockResolvedValue("oauth_token_abc");
+    mockGetValidToken.mockResolvedValue("oauth_token_abc");
     process.env.CLERK_PLATFORM_API_KEY = "env_key_xyz";
     let capturedHeaders: Headers | undefined;
     stubFetch(async (_input, init) => {
@@ -53,7 +54,7 @@ describe("plapi", () => {
 
   test("falls back to OAuth token when no CLERK_PLATFORM_API_KEY", async () => {
     delete process.env.CLERK_PLATFORM_API_KEY;
-    mockGetToken.mockResolvedValue("oauth_token_abc");
+    mockGetValidToken.mockResolvedValue("oauth_token_abc");
     let capturedHeaders: Headers | undefined;
     stubFetch(async (_input, init) => {
       capturedHeaders = new Headers(init?.headers);

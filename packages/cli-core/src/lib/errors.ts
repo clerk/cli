@@ -46,6 +46,12 @@ export const ERROR_CODE = {
 } as const;
 
 export type ErrorCode = (typeof ERROR_CODE)[keyof typeof ERROR_CODE];
+export const AUTH_ERROR_REASON = {
+  NOT_LOGGED_IN: "not_logged_in",
+  SESSION_EXPIRED: "session_expired",
+} as const;
+
+export type AuthErrorReason = (typeof AUTH_ERROR_REASON)[keyof typeof AUTH_ERROR_REASON];
 
 interface CliErrorOptions {
   /** Machine-readable error code for programmatic consumption. */
@@ -54,6 +60,11 @@ interface CliErrorOptions {
   exitCode?: ExitCode;
   /** URL to relevant documentation, printed after the error message. */
   docsUrl?: string;
+}
+
+interface AuthErrorOptions extends Omit<CliErrorOptions, "code"> {
+  message?: string;
+  reason: AuthErrorReason;
 }
 
 /**
@@ -99,6 +110,27 @@ export class CliError extends Error {
         this.docsUrl += ".md";
       }
     }
+  }
+}
+
+const AUTH_ERROR_MESSAGE: Record<AuthErrorReason, string> = {
+  [AUTH_ERROR_REASON.NOT_LOGGED_IN]: "Not logged in. Run `clerk auth login` to authenticate",
+  [AUTH_ERROR_REASON.SESSION_EXPIRED]: "Session expired. Run `clerk auth login` to re-authenticate",
+};
+
+export class AuthError extends CliError {
+  declare code: typeof ERROR_CODE.AUTH_REQUIRED;
+  public reason: AuthErrorReason;
+
+  constructor(options: AuthErrorOptions) {
+    const { message, reason, ...rest } = options;
+    super(message ?? AUTH_ERROR_MESSAGE[reason], {
+      ...rest,
+      code: ERROR_CODE.AUTH_REQUIRED,
+    });
+    this.name = "AuthError";
+    this.code = ERROR_CODE.AUTH_REQUIRED;
+    this.reason = reason;
   }
 }
 
@@ -181,6 +213,13 @@ export class BapiError extends ApiError {
     super(status, body, headers);
     this.name = "BapiError";
   }
+}
+
+export function isAuthError(error: unknown): error is AuthError | ApiError {
+  return (
+    (error instanceof CliError && error.code === ERROR_CODE.AUTH_REQUIRED) ||
+    (error instanceof ApiError && (error.status === 401 || error.status === 403))
+  );
 }
 
 /**

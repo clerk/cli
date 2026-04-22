@@ -21,6 +21,7 @@ export interface CheckResult {
 
 export interface DoctorContext {
   getToken(): Promise<string | null>;
+  getValidToken(): Promise<string | null>;
   getProfile(): Promise<ResolvedProfile | undefined>;
   getApplication(): Promise<Application | null>;
   fixes: {

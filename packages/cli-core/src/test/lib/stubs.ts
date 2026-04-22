@@ -61,8 +61,22 @@ export const autolinkStubs = {
 
 export const credentialStoreStubs = {
   getToken: async () => null,
+  getValidToken: async () => null,
+  getStoredSession: async () => null,
+  hasStoredCredentials: async () => false,
   storeToken: async () => {},
   deleteToken: async () => {},
+  createOAuthSession: (tokenResponse: {
+    access_token: string;
+    refresh_token: string;
+    expires_in: number;
+    token_type: string;
+  }) => ({
+    accessToken: tokenResponse.access_token,
+    refreshToken: tokenResponse.refresh_token,
+    expiresAt: Date.now() + tokenResponse.expires_in * 1000,
+    tokenType: tokenResponse.token_type,
+  }),
 };
 
 export const gitStubs = {
@@ -85,6 +99,7 @@ export { listageStubs } from "./listage-stubs.ts";
 
 export const tokenExchangeStubs = {
   exchangeCodeForToken: async () => ({}),
+  refreshAccessToken: async () => ({}),
   fetchUserInfo: async () => ({}),
 };
 

@@ -15,6 +15,7 @@ let mockStoredToken: string | null = null;
 mock.module("../../lib/credential-store.ts", () => ({
   ...credentialStoreStubs,
   getToken: async () => mockStoredToken,
+  getValidToken: async () => mockStoredToken,
 }));
 mock.module("../../lib/git.ts", () => gitStubs);
 
