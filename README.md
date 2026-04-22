@@ -1,4 +1,4 @@
-# @clerk/cli
+# clerk
 
 The Clerk command-line interface.
 
