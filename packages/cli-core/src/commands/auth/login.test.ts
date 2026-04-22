@@ -11,6 +11,8 @@ const mockFetchUserInfo = mock();
 const mockStartAuthServer = mock();
 const mockIsHuman = mock();
 const mockConfirm = mock();
+const mockOpenBrowser = mock();
+const mockEnsureFirstApplication = mock<() => Promise<void>>(() => Promise.resolve());
 
 mock.module("../../lib/credential-store.ts", () => ({
   ...credentialStoreStubs,
@@ -43,6 +45,7 @@ mock.module("../../lib/environment.ts", () => ({
 mock.module("../../lib/constants.ts", () => ({
   CALLBACK_PATH: "/callback",
   AUTH_TIMEOUT_MS: 120000,
+  CLERK_CLIENT_CLI: "cli",
 }));
 
 mock.module("../../lib/pkce.ts", () => ({
@@ -64,6 +67,14 @@ mock.module("../../mode.ts", () => ({
 
 mock.module("../../lib/prompts.ts", () => ({
   confirm: (...args: unknown[]) => mockConfirm(...args),
+}));
+
+mock.module("../../lib/open.ts", () => ({
+  openBrowser: (...args: unknown[]) => mockOpenBrowser(...args),
+}));
+
+mock.module("../../lib/first-application.ts", () => ({
+  ensureFirstApplication: () => mockEnsureFirstApplication(),
 }));
 
 mock.module("../../lib/autoclaim.ts", () => ({
@@ -94,7 +105,11 @@ describe("login", () => {
     mockStartAuthServer.mockReset();
     mockIsHuman.mockReset();
     mockConfirm.mockReset();
+    mockOpenBrowser.mockReset();
+    mockEnsureFirstApplication.mockReset();
+    mockEnsureFirstApplication.mockResolvedValue(undefined);
     mockIsHuman.mockReturnValue(false);
+    mockOpenBrowser.mockResolvedValue({ ok: true, launcher: "test" });
     consoleSpy?.mockRestore();
     consoleErrorSpy?.mockRestore();
     try {
@@ -427,6 +442,81 @@ describe("login", () => {
     await runLogin();
 
     expect(captured.err).not.toContain("Linked to");
+  });
+
+  test("authorize URL includes clerk_client=cli so dashboard recognizes CLI sign-up", async () => {
+    mockGetToken.mockResolvedValue(null);
+    mockBunSpawn();
+
+    const mockServer = {
+      port: 54321,
+      waitForCallback: mock().mockResolvedValue({ code: "fresh-auth-code" }),
+      stop: mock(),
+    };
+    mockStartAuthServer.mockReturnValue(mockServer);
+
+    mockExchangeCodeForToken.mockResolvedValue({
+      access_token: "new-access-token",
+      token_type: "Bearer",
+      expires_in: 3600,
+    });
+    mockStoreToken.mockResolvedValue(undefined);
+    mockFetchUserInfo.mockResolvedValue({
+      userId: "user_new",
+      email: "new@example.com",
+    });
+    mockSetAuth.mockResolvedValue(undefined);
+
+    consoleSpy = spyOn(console, "log").mockImplementation(() => {});
+    await runLogin({ showNextSteps: false });
+
+    expect(mockOpenBrowser).toHaveBeenCalledTimes(1);
+    const urlString = mockOpenBrowser.mock.calls[0]?.[0] as string;
+    const parsed = new URL(urlString);
+    expect(parsed.searchParams.get("clerk_client")).toBe("cli");
+  });
+
+  test("calls ensureFirstApplication after a successful OAuth flow", async () => {
+    mockGetToken.mockResolvedValue(null);
+    mockBunSpawn();
+
+    const mockServer = {
+      port: 54321,
+      waitForCallback: mock().mockResolvedValue({ code: "fresh-auth-code" }),
+      stop: mock(),
+    };
+    mockStartAuthServer.mockReturnValue(mockServer);
+
+    mockExchangeCodeForToken.mockResolvedValue({
+      access_token: "new-access-token",
+      token_type: "Bearer",
+      expires_in: 3600,
+    });
+    mockStoreToken.mockResolvedValue(undefined);
+    mockFetchUserInfo.mockResolvedValue({
+      userId: "user_new",
+      email: "new@example.com",
+    });
+    mockSetAuth.mockResolvedValue(undefined);
+
+    consoleSpy = spyOn(console, "log").mockImplementation(() => {});
+    await runLogin({ showNextSteps: false });
+
+    expect(mockEnsureFirstApplication).toHaveBeenCalledTimes(1);
+  });
+
+  test("does not call ensureFirstApplication when existing session is reused", async () => {
+    mockGetToken.mockResolvedValue("existing-token");
+    mockGetAuth.mockResolvedValue({ userId: "user_123" });
+    mockFetchUserInfo.mockResolvedValue({
+      userId: "user_123",
+      email: "existing@example.com",
+    });
+
+    consoleSpy = spyOn(console, "log").mockImplementation(() => {});
+    await runLogin();
+
+    expect(mockEnsureFirstApplication).not.toHaveBeenCalled();
   });
 
   test("suppresses auth next-steps when requested", async () => {
