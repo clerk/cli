@@ -1,5 +1,9 @@
-import { test, expect, describe } from "bun:test";
-import { formatApiBody } from "./cli-program.ts";
+import { test, expect, describe, beforeEach, afterEach } from "bun:test";
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { dirname, join } from "node:path";
+import { createProgram, formatApiBody } from "./cli-program.ts";
+import { STANDARD_AGENT_DIRS, EXTRA_REL_PATHS } from "./lib/skill-detection.ts";
 
 describe("formatApiBody", () => {
   // --- Single error with meta ---
@@ -199,4 +203,81 @@ describe("formatApiBody", () => {
     const result = formatApiBody(body, false);
     expect(result).toBe("Plan limitation");
   });
+});
+
+describe("help: clerk skill install tip", () => {
+  const TIP_SUBSTR = "Give AI agents better Clerk context";
+
+  // Capture help output including `addHelpText("after", ...)`. The custom
+  // formatter in lib/help.ts rebuilds help from scratch, so the "after"
+  // listener only fires during outputHelp (which writes via stdout).
+  function renderHelp(): string {
+    const program = createProgram();
+    let captured = "";
+    const origWrite = process.stdout.write.bind(process.stdout);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (process.stdout as unknown as { write: (chunk: any) => boolean }).write = (chunk) => {
+      captured += typeof chunk === "string" ? chunk : chunk.toString();
+      return true;
+    };
+    try {
+      program.outputHelp();
+    } finally {
+      (process.stdout as unknown as { write: typeof origWrite }).write = origWrite;
+    }
+    return captured;
+  }
+
+  let tmpHome: string;
+  let tmpCwd: string;
+  let originalHome: string | undefined;
+  let originalCwd: string;
+
+  beforeEach(() => {
+    originalHome = process.env.HOME;
+    originalCwd = process.cwd();
+    tmpHome = mkdtempSync(join(tmpdir(), "clerk-help-home-"));
+    tmpCwd = mkdtempSync(join(tmpdir(), "clerk-help-cwd-"));
+    process.env.HOME = tmpHome;
+    process.chdir(tmpCwd);
+  });
+
+  afterEach(() => {
+    process.chdir(originalCwd);
+    if (originalHome === undefined) delete process.env.HOME;
+    else process.env.HOME = originalHome;
+    rmSync(tmpHome, { recursive: true, force: true });
+    rmSync(tmpCwd, { recursive: true, force: true });
+  });
+
+  test("shows the tip when no skill is installed anywhere", () => {
+    const help = renderHelp();
+    expect(help).toContain(TIP_SUBSTR);
+    expect(help).toContain("clerk skill install");
+  });
+
+  for (const dir of STANDARD_AGENT_DIRS) {
+    test(`hides the tip when ${dir}/skills/clerk/SKILL.md exists under HOME`, () => {
+      const target = join(tmpHome, dir, "skills/clerk");
+      mkdirSync(target, { recursive: true });
+      writeFileSync(join(target, "SKILL.md"), "ok");
+      expect(renderHelp()).not.toContain(TIP_SUBSTR);
+    });
+
+    test(`hides the tip when ${dir}/skills/clerk/SKILL.md exists under cwd`, () => {
+      const target = join(tmpCwd, dir, "skills/clerk");
+      mkdirSync(target, { recursive: true });
+      writeFileSync(join(target, "SKILL.md"), "ok");
+      expect(renderHelp()).not.toContain(TIP_SUBSTR);
+    });
+  }
+
+  for (const rel of EXTRA_REL_PATHS) {
+    test(`hides the tip when ${rel} exists under cwd`, () => {
+      const full = join(tmpCwd, rel);
+      mkdirSync(dirname(full), { recursive: true });
+      writeFileSync(full, "ok");
+      expect(renderHelp()).not.toContain(TIP_SUBSTR);
+    });
+  }
 });
