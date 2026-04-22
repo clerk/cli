@@ -29,7 +29,7 @@ PR comment "!snapshot [name]"
 
 ## Architecture
 
-The CLI is distributed as an npm wrapper package (`clerk`) plus one platform-specific package per target (e.g., `@clerk/cli-darwin-arm64`). The full list of platform targets is defined in [`scripts/releaser/targets.ts`](../scripts/releaser/targets.ts).
+The CLI is distributed as an npm wrapper package (`clerk`) plus one platform-specific package per target (e.g., `@clerk/cli-darwin-arm64`). The full list of platform targets is defined in [`scripts/lib/targets.ts`](../scripts/lib/targets.ts).
 
 When a user runs `npm install -g clerk`, npm installs the wrapper plus the matching platform package via `optionalDependencies`. The wrapper's `bin/clerk` shim resolves the binary from the platform package using `require.resolve()`.
 
@@ -160,7 +160,7 @@ Publishing and GitHub Release upload are gated on all smoke tests passing.
 
 ### 4. Publish npm Job
 
-Runs the releaser script (`scripts/releaser/index.ts`) via `bun run release` (stable), `bun run release:canary` (canary), or `bun run release:snapshot` (snapshot):
+Runs the releaser script (`scripts/releaser.ts`) via `bun run release` (stable), `bun run release:canary` (canary), or `bun run release:snapshot` (snapshot):
 
 1. Reads the version from `packages/cli/package.json` (or uses `--version` override for canary/snapshot)
 2. For each target, generates a platform package in `dist/platform-packages/`:
@@ -211,10 +211,10 @@ Install: `brew install clerk/stable/clerk`
 | `packages/cli/package.json`            | Wrapper package (has `prepublishOnly` guard against accidental direct publish) |
 | `packages/cli-core/src/cli.ts`         | CLI entrypoint (reads `CLI_VERSION` global at runtime)                         |
 | `packages/cli-core/src/globals.d.ts`   | TypeScript declaration for the `CLI_VERSION` compile-time define               |
-| `install.sh`                           | Shell install script — downloads binary from GitHub Releases                   |
-| `scripts/releaser/index.ts`            | Generates platform packages and publishes everything to npm                    |
+| `install.sh`                           | Shell install script, downloads binary from GitHub Releases                    |
+| `scripts/releaser.ts`                  | Generates platform packages and publishes everything to npm                    |
 | `.github/release-notes/vX.Y.Z.md`      | Optional version-specific intro prepended to stable GitHub Release notes       |
-| `scripts/releaser/targets.ts`          | Target definitions (used by both releaser and build.ts)                        |
+| `scripts/lib/targets.ts`               | Target definitions (used by both releaser and build.ts)                        |
 | `scripts/build.ts`                     | Cross-compiles CLI binaries for all 8 platform targets                         |
 | `scripts/sign-macos.ts`                | Signs and notarizes macOS binaries (keychain, codesign, notarytool)            |
 | `scripts/entitlements.plist`           | macOS entitlements for Bun's JIT engine (used by codesign)                     |
@@ -233,7 +233,7 @@ Install: `brew install clerk/stable/clerk`
 
 The target list exists in these places that must stay in sync:
 
-1. `scripts/releaser/targets.ts` -- used by the releaser to generate platform packages and by `scripts/build.ts` to cross-compile binaries
+1. `scripts/lib/targets.ts` -- used by the releaser to generate platform packages and by `scripts/build.ts` to cross-compile binaries
 2. `.github/workflows/smoke-test.yml` preset definitions -- defines the target matrix for each preset (`stable`, `canary`, `snapshot`)
 3. `scripts/lib/homebrew.ts` -- the `HOMEBREW_TARGETS` array of Homebrew-relevant targets (darwin-arm64, darwin-x64, linux-arm64, linux-x64)
 
@@ -257,11 +257,28 @@ bun run scripts/build.ts --target=bun-darwin-arm64
 
 The `dev` and `start` commands do not inject a version (falls back to `0.0.0-dev`). The release workflow handles version injection.
 
-To test the releaser without publishing:
+> **Bun version for local rehearsal:** CI pins Bun `1.3.11` in [`build-binaries.yml`](../.github/workflows/build-binaries.yml) because `1.3.12` produces darwin-arm64 binaries that macOS codesign rejects. If you are rehearsing a release locally and plan to execute the compiled darwin-arm64 binary, match the CI pin. This will stop being relevant once the pin is lifted.
+
+### Releaser dry-run
+
+The releaser reads each binary from `$ARTIFACTS_DIR/clerk-<target>/clerk`, mirroring the CI-style layout (one GitHub Actions artifact per target, named `clerk-<target>`). `scripts/build.ts` writes to a different layout (`dist/artifacts/<target>/clerk`), so a local dry-run needs to stage the binaries under the expected CI layout before invoking the releaser.
+
+Stage one target and dry-run:
 
 ```sh
-bun run scripts/releaser/index.ts --dry-run
+# 1. Build a single target locally.
+bun run scripts/build.ts --target=darwin-arm64 --version=1.2.3
+
+# 2. Stage it under the CI-style layout the releaser expects.
+STAGE=/tmp/clerk-release-artifacts
+mkdir -p "$STAGE/clerk-darwin-arm64"
+cp dist/artifacts/darwin-arm64/clerk "$STAGE/clerk-darwin-arm64/clerk"
+
+# 3. Dry-run the releaser against the staged directory.
+ARTIFACTS_DIR="$STAGE" bun run scripts/releaser.ts --dry-run --version 1.2.3
 ```
+
+To rehearse every target, repeat the build + stage step for each entry in [`scripts/lib/targets.ts`](../scripts/lib/targets.ts) (or run `bun run build:compile:all` and copy each `dist/artifacts/<target>/` directory into `$STAGE/clerk-<target>/`).
 
 ## Contributing
 
