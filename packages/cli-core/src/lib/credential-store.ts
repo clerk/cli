@@ -144,6 +144,7 @@ async function fileStore(token: string): Promise<void> {
   log.debug(`credentials: storing token in file ${path}`);
   await mkdir(dirname(path), { recursive: true, mode: 0o700 });
   await writeFile(path, token, { mode: 0o600 });
+  await chmod(path, 0o600);
 }
 
 async function fileGet(): Promise<string | null> {
