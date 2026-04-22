@@ -8,6 +8,7 @@
 export function generate(binaryName: string): string {
   return `# Fish completion for ${binaryName}
 # Save to:
+#   mkdir -p ~/.config/fish/completions
 #   ${binaryName} completion fish > ~/.config/fish/completions/${binaryName}.fish
 
 function __${binaryName}_complete

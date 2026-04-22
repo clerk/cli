@@ -43,6 +43,7 @@ clerk completion zsh > ~/.zfunc/_clerk
 
 ```sh
 # Fish auto-discovers completion files — just save it
+mkdir -p ~/.config/fish/completions
 clerk completion fish > ~/.config/fish/completions/clerk.fish
 ```
 

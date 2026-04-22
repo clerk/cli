@@ -75,6 +75,17 @@ describe("shell script generators", () => {
     expect(generateFish(BINARY)).toContain(`complete -c ${BINARY}`);
   });
 
+  test("fish banner instructs users to mkdir ~/.config/fish/completions before writing", () => {
+    const script = generateFish(BINARY);
+    const mkdirIdx = script.indexOf("mkdir -p ~/.config/fish/completions");
+    const writeIdx = script.indexOf(
+      `${BINARY} completion fish > ~/.config/fish/completions/${BINARY}.fish`,
+    );
+    expect(mkdirIdx).toBeGreaterThan(-1);
+    expect(writeIdx).toBeGreaterThan(-1);
+    expect(mkdirIdx).toBeLessThan(writeIdx);
+  });
+
   test("powershell uses Register-ArgumentCompleter", () => {
     expect(generatePowershell(BINARY)).toContain("Register-ArgumentCompleter");
   });
