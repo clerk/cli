@@ -87,7 +87,7 @@ async function configPush(options: ConfigPushOptions, op: Operation): Promise<vo
     return;
   }
 
-  const prefix = options.dryRun ? `[dry-run] Would ${op.method}` : op.verb;
+  const prefix = options.dryRun ? `[dry-run] Proposing ${op.method}` : op.verb;
   log.info(`\n${prefix} config on ${ctx.appLabel} (${ctx.instanceLabel}):\n`);
   printDiff(currentConfig, configPayload, isPatch);
 
