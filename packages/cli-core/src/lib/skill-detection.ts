@@ -22,8 +22,9 @@ const STANDARD_SKILL_REL = "skills/clerk/SKILL.md";
 
 /**
  * Paths for agents that don't follow the uniform
- * `<dir>/skills/<name>/SKILL.md` layout. Checked as-is under both
- * `$HOME` and `<cwd>`.
+ * `<dir>/skills/<name>/SKILL.md` layout. These are project-local only
+ * and are checked under `<cwd>` (not `$HOME`), because
+ * `clerk skill install` does not install these layouts globally.
  */
 const EXTRA_REL_PATHS = [
   ".vscode/skills/clerk/SKILL.md", // VS Code (project-local)
@@ -45,7 +46,6 @@ export function isClerkSkillInstalled(): boolean {
     if (existsSync(join(cwd, dir, STANDARD_SKILL_REL))) return true;
   }
   for (const rel of EXTRA_REL_PATHS) {
-    if (existsSync(join(home, rel))) return true;
     if (existsSync(join(cwd, rel))) return true;
   }
   return false;
