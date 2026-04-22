@@ -589,6 +589,10 @@ describe("config push", () => {
     await runConfigPut({ json: '{"session":{"lifetime":3600}}', dryRun: true });
     expect(putUrl).toContain("dry_run=true");
     expect(captured.err).toContain("[dry-run] Proposing PUT");
+    expect(captured.err).toContain("- 604800");
+    expect(captured.err).toContain("+ 3600");
+    expect(captured.out).toContain(JSON.stringify(mockResponse, null, 2));
+    expect(captured.err).toContain("[dry-run] Validation passed");
   });
 
   test("dry-run surfaces server validation errors", async () => {
