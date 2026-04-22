@@ -25,7 +25,7 @@ type Operation = {
     appId: string,
     instId: string,
     config: Record<string, unknown>,
-    options?: { destructive?: boolean },
+    options?: { destructive?: boolean; dryRun?: boolean },
   ) => Promise<Record<string, unknown>>;
 };
 
@@ -87,13 +87,11 @@ async function configPush(options: ConfigPushOptions, op: Operation): Promise<vo
     return;
   }
 
-  const prefix = options.dryRun ? `[dry-run] Would ${op.method}` : op.verb;
+  const prefix = options.dryRun ? `[dry-run] Proposing ${op.method}` : op.verb;
   log.info(`\n${prefix} config on ${ctx.appLabel} (${ctx.instanceLabel}):\n`);
   printDiff(currentConfig, configPayload, isPatch);
 
-  if (options.dryRun) return;
-
-  if (isHuman() && !options.yes) {
+  if (!options.dryRun && isHuman() && !options.yes) {
     if (op.warning) {
       log.warn(`${op.warning}`);
     }
@@ -103,16 +101,24 @@ async function configPush(options: ConfigPushOptions, op: Operation): Promise<vo
     }
   }
 
-  const result = await withSpinner(
-    `${op.verb} config on ${ctx.appLabel} (${ctx.instanceLabel})...`,
-    () =>
-      withApiContext(
-        op.apiFn(ctx.appId, ctx.instanceId, configPayload, { destructive: options.destructive }),
-        "Failed to push config",
-      ),
+  const spinnerMsg = options.dryRun
+    ? `[dry-run] Validating config on ${ctx.appLabel} (${ctx.instanceLabel})...`
+    : `${op.verb} config on ${ctx.appLabel} (${ctx.instanceLabel})...`;
+  const result = await withSpinner(spinnerMsg, () =>
+    withApiContext(
+      op.apiFn(ctx.appId, ctx.instanceId, configPayload, {
+        destructive: options.destructive,
+        dryRun: options.dryRun,
+      }),
+      options.dryRun ? "Dry-run failed" : "Failed to push config",
+    ),
   );
   log.data(JSON.stringify(result, null, 2));
-  log.success("Config pushed successfully");
+  log.success(
+    options.dryRun
+      ? "[dry-run] Validation passed — no changes applied"
+      : "Config pushed successfully",
+  );
 }
 
 export async function readInput(options: { file?: string; json?: string }): Promise<string> {

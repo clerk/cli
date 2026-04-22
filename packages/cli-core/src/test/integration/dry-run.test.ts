@@ -45,11 +45,11 @@ test.each([{ mode: "human" }, { mode: "agent" }])(
 );
 
 test.each([{ mode: "human" }, { mode: "agent" }])(
-  "config patch dry-run fetches config and shows diff ($mode mode)",
+  "config patch dry-run sends PATCH with ?dry_run=true and shows diff ($mode mode)",
   async ({ mode }) => {
     http.stub(async (_url, init) => {
       const isGet = !init?.method || init.method === "GET";
-      const body = isGet ? { session: { lifetime: 604800 } } : {};
+      const body = isGet ? { session: { lifetime: 604800 } } : { session: { lifetime: 3600 } };
       return new Response(JSON.stringify(body), { status: 200 });
     });
 
@@ -65,7 +65,8 @@ test.each([{ mode: "human" }, { mode: "agent" }])(
     const getReqs = http.requests.filter((r) => r.method === "GET");
     const patchReqs = http.requests.filter((r) => r.method === "PATCH");
     expect(getReqs.length).toBe(1);
-    expect(patchReqs.length).toBe(0);
+    expect(patchReqs.length).toBe(1);
+    expect(patchReqs[0]!.url).toContain("dry_run=true");
     expect(stderr).toContain("[dry-run]");
     expect(stderr).toContain("604800");
     expect(stderr).toContain("3600");

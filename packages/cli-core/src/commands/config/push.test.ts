@@ -525,10 +525,10 @@ describe("config push", () => {
 
   // --- Dry run ---
 
-  test("dry-run fetches current config and shows diff without mutating", async () => {
-    let mutatingCallMade = false;
-    stubFetch(async (_input, init) => {
-      if (init?.method && init.method !== "GET") mutatingCallMade = true;
+  test("dry-run sends PATCH with ?dry_run=true and prints diff and projected result", async () => {
+    let patchUrl = "";
+    stubFetch(async (input, init) => {
+      if (init?.method === "PATCH") patchUrl = input.toString();
       const body = init?.method && init.method !== "GET" ? mockResponse : currentConfig;
       return new Response(JSON.stringify(body), { status: 200 });
     });
@@ -543,13 +543,21 @@ describe("config push", () => {
       json: '{"session":{"lifetime":3600}}',
       dryRun: true,
     });
-    expect(mutatingCallMade).toBe(false);
-    expect(captured.err).toContain("[dry-run] Would PATCH");
+    expect(patchUrl).toContain("dry_run=true");
+    expect(captured.err).toContain("[dry-run] Proposing PATCH");
     expect(captured.err).toContain("- 604800");
     expect(captured.err).toContain("+ 3600");
+    expect(captured.out).toContain(JSON.stringify(mockResponse, null, 2));
+    expect(captured.err).toContain("[dry-run] Validation passed");
   });
 
-  test("dry-run reports no changes when payload matches current", async () => {
+  test("dry-run reports no changes when payload matches current without hitting server", async () => {
+    let mutatingCallMade = false;
+    stubFetch(async (_input, init) => {
+      if (init?.method && init.method !== "GET") mutatingCallMade = true;
+      return new Response(JSON.stringify(currentConfig), { status: 200 });
+    });
+
     await setProfile(process.cwd(), {
       workspaceId: "org_1",
       appId: "app_1",
@@ -560,10 +568,18 @@ describe("config push", () => {
       json: '{"session":{"lifetime":604800}}',
       dryRun: true,
     });
+    expect(mutatingCallMade).toBe(false);
     expect(captured.err).toContain("[dry-run] No changes detected");
   });
 
-  test("dry-run for put shows PUT method", async () => {
+  test("dry-run for put sends PUT with ?dry_run=true", async () => {
+    let putUrl = "";
+    stubFetch(async (input, init) => {
+      if (init?.method === "PUT") putUrl = input.toString();
+      const body = init?.method && init.method !== "GET" ? mockResponse : currentConfig;
+      return new Response(JSON.stringify(body), { status: 200 });
+    });
+
     await setProfile(process.cwd(), {
       workspaceId: "org_1",
       appId: "app_1",
@@ -571,7 +587,34 @@ describe("config push", () => {
     });
 
     await runConfigPut({ json: '{"session":{"lifetime":3600}}', dryRun: true });
-    expect(captured.err).toContain("[dry-run] Would PUT");
+    expect(putUrl).toContain("dry_run=true");
+    expect(captured.err).toContain("[dry-run] Proposing PUT");
+    expect(captured.err).toContain("- 604800");
+    expect(captured.err).toContain("+ 3600");
+    expect(captured.out).toContain(JSON.stringify(mockResponse, null, 2));
+    expect(captured.err).toContain("[dry-run] Validation passed");
+  });
+
+  test("dry-run surfaces server validation errors", async () => {
+    stubFetch(async (_input, init) => {
+      if (!init?.method || init.method === "GET") {
+        return new Response(JSON.stringify(currentConfig), { status: 200 });
+      }
+      return new Response(
+        JSON.stringify({ errors: [{ message: "invalid organization_settings" }] }),
+        { status: 422 },
+      );
+    });
+
+    await setProfile(process.cwd(), {
+      workspaceId: "org_1",
+      appId: "app_1",
+      instances: { development: "ins_dev" },
+    });
+
+    await expect(
+      runConfigPatch({ json: '{"session":{"lifetime":3600}}', dryRun: true }),
+    ).rejects.toThrow("invalid organization_settings");
   });
 
   // --- API error handling ---
