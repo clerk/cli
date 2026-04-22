@@ -31,7 +31,7 @@
     "load-env-profiles": "bun run scripts/load-env-profiles.ts"
   },
   "devDependencies": {
-    "@changesets/cli": "^2.29.4",
+    "@changesets/cli": "^2.31.0",
     "@clerk/testing": "^2.0.8",
     "@types/bun": "^1.3.11",
     "nano-staged": "^1.0.2",
