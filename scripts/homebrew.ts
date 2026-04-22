@@ -64,7 +64,7 @@ for (const target of HOMEBREW_TARGETS) {
     console.log(`[dry-run] Would upload ${basename(archivePath)} to ${tagName}`);
   } else {
     console.log(`Uploading ${basename(archivePath)} to ${tagName}...`);
-    run(["gh", "release", "upload", tagName, archivePath, "--clobber"]);
+    await run(["gh", "release", "upload", tagName, archivePath, "--clobber"]);
   }
 }
 
@@ -96,7 +96,7 @@ if (dryRun) {
 
   const tapWorkDir = join(workDir, "tap-workdir");
   console.log(`Cloning tap repo ${tapRepo}...`);
-  run(["git", "clone", `https://github.com/${tapRepo}.git`, tapWorkDir]);
+  await run(["git", "clone", `https://github.com/${tapRepo}.git`, tapWorkDir]);
   const setUrlResult = Bun.spawnSync(
     [
       "git",
@@ -121,9 +121,9 @@ if (dryRun) {
   await writeFile(versionedFormulaPath, versionedFormula, "utf-8");
   console.log(`Wrote versioned formula to ${versionedFormulaPath}`);
 
-  run(["git", "config", "user.name", "clerk-bot"], { cwd: tapWorkDir });
-  run(["git", "config", "user.email", "bot@clerk.com"], { cwd: tapWorkDir });
-  run(["git", "add", "Formula/clerk.rb", `Formula/clerk@${major}.rb`], { cwd: tapWorkDir });
+  await run(["git", "config", "user.name", "clerk-bot"], { cwd: tapWorkDir });
+  await run(["git", "config", "user.email", "bot@clerk.com"], { cwd: tapWorkDir });
+  await run(["git", "add", "Formula/clerk.rb", `Formula/clerk@${major}.rb`], { cwd: tapWorkDir });
 
   const diffResult = Bun.spawnSync(["git", "diff", "--cached", "--quiet"], {
     cwd: tapWorkDir,
@@ -134,8 +134,8 @@ if (dryRun) {
     console.log("No changes to formula, skipping commit and push.");
   } else {
     console.log(`Committing and pushing formula for clerk ${version}...`);
-    run(["git", "commit", "-m", `clerk ${version}`], { cwd: tapWorkDir });
-    run(["git", "push", "origin", "main"], { cwd: tapWorkDir });
+    await run(["git", "commit", "-m", `clerk ${version}`], { cwd: tapWorkDir });
+    await run(["git", "push", "origin", "main"], { cwd: tapWorkDir });
     console.log("Pushed formula to tap.");
   }
 }
