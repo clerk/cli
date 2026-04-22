@@ -3,10 +3,16 @@ import { link } from "../link/index.js";
 import { pull } from "../env/pull.js";
 import { isAgent } from "../../mode.js";
 import { dim, bold } from "../../lib/color.js";
-import { throwUserAbort, CliError } from "../../lib/errors.js";
+import { throwUserAbort, CliError, errorMessage } from "../../lib/errors.js";
 import { lookupFramework, type FrameworkInfo } from "../../lib/framework.js";
 import { resolveProfile } from "../../lib/config.js";
 import { log } from "../../lib/log.js";
+import {
+  createAccountlessApp,
+  writeKeysToEnvFile,
+  parseClaimToken,
+  writeKeylessBreadcrumb,
+} from "../../lib/keyless.js";
 import { printNextSteps } from "../../lib/next-steps.js";
 import { gatherContext, hasPackageJson } from "./context.js";
 import { scaffold, enrichProjectContext } from "./scaffold.js";
@@ -115,9 +121,9 @@ export async function init(options: InitOptions = {}) {
   if (skipAuth) {
     printBootstrapManualSetupInfo(ctx.framework.name);
   } else if (!keyless) {
-    await pull({ file: ctx.envFile });
+    await pull({ file: ctx.envFile, cwd: ctx.cwd });
   } else {
-    printKeylessInfo();
+    await setupKeylessApp(ctx.cwd, ctx.framework.dep, ctx.envFile);
   }
 
   if (options.skills !== false) {
@@ -273,7 +279,34 @@ async function authenticateAndLink(cwd: string, app: string | undefined): Promis
     log.info(dim(label));
   }
 
-  await link({ skipIfLinked: true, app });
+  await link({ skipIfLinked: true, app, cwd });
+}
+
+// --- Keyless app setup ---
+
+async function setupKeylessApp(cwd: string, frameworkDep: string, envFile: string): Promise<void> {
+  try {
+    const app = await withSpinner("Creating development application...", () =>
+      createAccountlessApp(frameworkDep),
+    );
+
+    await writeKeysToEnvFile(cwd, {
+      publishableKey: app.publishable_key,
+      secretKey: app.secret_key,
+    });
+
+    await writeKeylessBreadcrumb(cwd, parseClaimToken(app.claim_url));
+    printKeylessInfo(envFile);
+  } catch (error) {
+    log.debug(`Could not create accountless app: ${errorMessage(error)}`);
+    const isTimeout = error instanceof Error && error.name === "AbortError";
+    const prefix = isTimeout
+      ? "Could not reach api.clerk.com within 15s."
+      : "Could not set up development keys.";
+    log.warn(
+      `${prefix} Run \`clerk auth login\` then \`clerk link\` to connect your app manually.`,
+    );
+  }
 }
 
 // --- Detect & install ---

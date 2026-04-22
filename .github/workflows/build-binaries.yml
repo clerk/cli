@@ -31,7 +31,14 @@ jobs:
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: "1.3.11"
-      - run: bun install --frozen-lockfile
+      # --cpu=* --os=* forces bun to install every platform's optional deps,
+      # not just the Linux host's. Cross-compiling with bun build --compile
+      # embeds each target's native bindings (e.g. @napi-rs/keyring-<target>)
+      # into the executable; without this flag the darwin and win32 bindings
+      # are absent from node_modules and the bundler silently replaces them
+      # with throw stubs, leaving those binaries unable to reach the OS
+      # keychain and falling back to plaintext-file credential storage.
+      - run: bun install --frozen-lockfile --cpu='*' --os='*'
 
       - name: Build all targets
         env:

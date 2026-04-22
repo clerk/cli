@@ -20,6 +20,19 @@ export const NEXT_STEPS = {
     "Run `clerk env pull --instance prod` to fetch production keys",
     "Run `clerk doctor` to verify your setup",
   ],
+  AUTOCLAIMED: ["Run `clerk doctor` to verify your setup"],
+  AUTOCLAIMED_NO_ENV: [
+    "Run `clerk env pull` to refresh your environment variables",
+    "Run `clerk doctor` to verify your setup",
+  ],
+  AUTOCLAIM_MANUAL_LINK: [
+    "Run `clerk link` to connect your Clerk application",
+    "Run `clerk env pull` to fetch your environment variables",
+  ],
+  AUTOCLAIM_RETRY: [
+    "Run `clerk auth login` again to retry auto-claim",
+    "Run `clerk link` to connect your application manually",
+  ],
 } as const;
 
 /**

@@ -1,7 +1,7 @@
 import { join } from "node:path";
 import { homedir } from "node:os";
 import { fetchUserInfo } from "../../lib/token-exchange.ts";
-import { PlapiError } from "../../lib/errors.ts";
+import { PlapiError, errorMessage } from "../../lib/errors.ts";
 import { detectPublishableKeyName, detectSecretKeyName } from "../../lib/framework.ts";
 import { parseEnvFile } from "../../lib/dotenv.ts";
 import {
@@ -17,10 +17,6 @@ import {
 import type { CheckResult, DoctorContext, FixAction } from "./types.ts";
 
 const AUTH_ERROR_STATUS = /\((401|403)\)/;
-
-export function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
-}
 
 interface CheckOptions {
   remedy?: string;

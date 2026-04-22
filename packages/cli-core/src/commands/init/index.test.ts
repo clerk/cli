@@ -19,6 +19,7 @@ import * as heuristics from "./heuristics.ts";
 import * as skillsMod from "./skills.ts";
 import * as bootstrapMod from "./bootstrap.ts";
 import * as nextStepsMod from "../../lib/next-steps.ts";
+import * as keylessMod from "../../lib/keyless.ts";
 import { init } from "./index.ts";
 
 const FAKE_CTX = {
@@ -91,6 +92,13 @@ describe("init", () => {
       spyOn(pullMod, "pull").mockResolvedValue(undefined),
       spyOn(bootstrapMod, "promptAndBootstrap").mockResolvedValue(FAKE_BOOTSTRAP),
       spyOn(bootstrapMod, "confirmOverwrite").mockResolvedValue(undefined),
+      spyOn(keylessMod, "createAccountlessApp").mockResolvedValue({
+        publishable_key: "pk_test_stub",
+        secret_key: "sk_test_stub",
+        claim_url: "/apps/claim?token=stub_token",
+      }),
+      spyOn(keylessMod, "writeKeysToEnvFile").mockResolvedValue(undefined),
+      spyOn(keylessMod, "writeKeylessBreadcrumb").mockResolvedValue(undefined),
     ];
 
     return { gatherContextSpy, captured };
@@ -114,7 +122,11 @@ describe("init", () => {
     await init({ yes: true });
 
     expect(loginMod.login).toHaveBeenCalledWith({ showNextSteps: false });
-    expect(linkMod.link).toHaveBeenCalledWith({ skipIfLinked: true, app: undefined });
+    expect(linkMod.link).toHaveBeenCalledWith({
+      skipIfLinked: true,
+      app: undefined,
+      cwd: FAKE_CTX.cwd,
+    });
   });
 
   test("forwards --app to link when provided", async () => {
@@ -126,7 +138,11 @@ describe("init", () => {
 
     await init({ yes: true, app: "app_abc" });
 
-    expect(linkMod.link).toHaveBeenCalledWith({ skipIfLinked: true, app: "app_abc" });
+    expect(linkMod.link).toHaveBeenCalledWith({
+      skipIfLinked: true,
+      app: "app_abc",
+      cwd: FAKE_CTX.cwd,
+    });
   });
 
   test("forwards --app to link when no profile exists", async () => {
@@ -136,7 +152,11 @@ describe("init", () => {
 
     await init({ yes: true, app: "app_abc" });
 
-    expect(linkMod.link).toHaveBeenCalledWith({ skipIfLinked: true, app: "app_abc" });
+    expect(linkMod.link).toHaveBeenCalledWith({
+      skipIfLinked: true,
+      app: "app_abc",
+      cwd: FAKE_CTX.cwd,
+    });
   });
 
   test("agent mode runs existing-project flow without prompts", async () => {
@@ -571,7 +591,11 @@ describe("init", () => {
 
     await init({ yes: true });
 
-    expect(linkMod.link).toHaveBeenCalledWith({ skipIfLinked: true });
+    expect(linkMod.link).toHaveBeenCalledWith({
+      skipIfLinked: true,
+      app: undefined,
+      cwd: "/tmp/fake",
+    });
     expect(pullMod.pull).not.toHaveBeenCalled();
     expect(heuristics.printKeylessInfo).not.toHaveBeenCalled();
     expect(skillsMod.installSkills).not.toHaveBeenCalled();
@@ -644,6 +668,30 @@ describe("init", () => {
 
     await init({ yes: true });
 
-    expect(pullMod.pull).toHaveBeenCalledWith({ file: ".env" });
+    expect(pullMod.pull).toHaveBeenCalledWith({ file: ".env", cwd: mockCtx.cwd });
+  });
+
+  test("bootstrap passes project dir to link, not parent cwd", async () => {
+    setup({ email: "test@test.com" });
+
+    const bootstrapCtx = {
+      ...FAKE_CTX,
+      cwd: FAKE_BOOTSTRAP.projectDir,
+      existingClerk: false,
+    };
+
+    spyOn(context, "gatherContext").mockResolvedValueOnce(null).mockResolvedValueOnce(bootstrapCtx);
+    spyOn(scaffoldMod, "scaffold").mockResolvedValue({
+      actions: [{ type: "create", path: "app/layout.tsx", content: "", description: "" }],
+      postInstructions: [],
+    });
+
+    await init({ yes: true });
+
+    expect(linkMod.link).toHaveBeenCalledWith({
+      skipIfLinked: true,
+      app: undefined,
+      cwd: FAKE_BOOTSTRAP.projectDir,
+    });
   });
 });

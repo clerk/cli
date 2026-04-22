@@ -10,6 +10,15 @@ import { loggedFetch } from "./fetch.ts";
 import { log } from "./log.ts";
 
 /**
+ * Canonical attribution marker written to `applications.from_source` when the
+ * CLI creates an application through PLAPI. Surfaces in BigQuery via
+ * `dim_applications.from_source` for growth analytics. Do not change without
+ * coordinating with the growth-data team - the value is consumed by dbt
+ * models and dashboards downstream.
+ */
+const CLI_FROM_SOURCE = "cli";
+
+/**
  * Validate that a key has the expected prefix and suggest the correct key type
  * if the user mixed them up.
  */
@@ -30,7 +39,6 @@ export function validateKeyPrefix(key: string, expected: "ak_" | "sk_"): void {
 }
 
 export async function getAuthToken(): Promise<string> {
-  // Prefer platform API key (OAuth token doesn't have platform scopes yet)
   const key = process.env.CLERK_PLATFORM_API_KEY;
   if (key) {
     validateKeyPrefix(key, "ak_");
@@ -40,7 +48,6 @@ export async function getAuthToken(): Promise<string> {
     return key;
   }
 
-  // Fall back to OAuth access token from `clerk auth login`
   const oauthToken = await getToken();
   if (oauthToken) {
     log.debug(
@@ -173,7 +180,15 @@ export const patchInstanceConfig = (
 
 export async function createApplication(name: string): Promise<Application> {
   const url = new URL("/v1/platform/applications", getPlapiBaseUrl());
-  const response = await plapiFetch("POST", url, { body: JSON.stringify({ name }) });
+  const response = await plapiFetch("POST", url, {
+    body: JSON.stringify({ name, from_source: CLI_FROM_SOURCE }),
+  });
+  return response.json() as Promise<Application>;
+}
+
+export async function claimApplication(token: string, name: string): Promise<Application> {
+  const url = new URL("/v1/platform/accountless_applications/claim", getPlapiBaseUrl());
+  const response = await plapiFetch("POST", url, { body: JSON.stringify({ token, name }) });
   return response.json() as Promise<Application>;
 }
 

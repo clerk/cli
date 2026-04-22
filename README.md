@@ -60,6 +60,9 @@ Commands:
   completion  [shell]                        Generate shell autocompletion script
   update      [options]                      Update the Clerk CLI to the latest version
 
+Give AI agents better Clerk context: install the Clerk skills
+  $ clerk skill install
+
 clerk init
   --framework <name>     Framework to set up (skips auto-detection)
   --pm <manager>         Package manager to use (skips prompt/auto-detection)
@@ -221,7 +224,3 @@ clerk update
     $ clerk update --yes                 Update without confirmation prompt
     $ clerk update --all                 Update every clerk install on PATH
 ```
-
-## Open Questions
-
-- How do we keep types in sync with PLAPI?

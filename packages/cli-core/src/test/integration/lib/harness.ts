@@ -53,7 +53,9 @@ mock.module(
       },
       _setTokenOverride: () => {},
       KEYCHAIN_SERVICE: "clerk-cli",
+      LOCAL_DEV_KEYCHAIN_SERVICE: "clerk-cli-dev",
       KEYCHAIN_ACCOUNT: "oauth-access-token",
+      isReleaseSignedMacosBinary: () => true,
     }) satisfies typeof import("../../../lib/credential-store.ts"),
 );
 

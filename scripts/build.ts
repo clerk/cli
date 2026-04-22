@@ -2,7 +2,14 @@ import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import { parseArgs } from "node:util";
 import { DEV_CLI_VERSION } from "../packages/cli-core/src/lib/version.ts";
-import { targets } from "./lib/targets.ts";
+import { type Target, targets } from "./lib/targets.ts";
+
+function keyringBindingPath(target: Target): string {
+  const libcSuffix = target.libc === "musl" ? "-musl" : target.libc === "glibc" ? "-gnu" : "";
+  const winSuffix = target.os === "win32" ? "-msvc" : "";
+  const bindingName = `${target.os}-${target.cpu}${libcSuffix}${winSuffix}`;
+  return join("node_modules", "@napi-rs", `keyring-${bindingName}`, `keyring.${bindingName}.node`);
+}
 
 const { values } = parseArgs({
   args: Bun.argv.slice(2),
@@ -45,6 +52,27 @@ const selectedTargets = targetFilter
 if (selectedTargets.length === 0) {
   throw new Error(
     `Unknown target: ${targetFilter}\nAvailable targets: ${targets.map((t) => t.bunTarget).join(", ")}`,
+  );
+}
+
+// Cross-compile embeds each target's @napi-rs/keyring native binding into
+// the output. A default `bun install` on any single host skips the bindings
+// for other platforms (optional deps are filtered by os/cpu), so without a
+// platform-unfiltered install the darwin/win32/arm64 builds would silently
+// ship without the binding and fall back to plaintext-file credentials at
+// runtime. Fail fast here so the dev sees the actionable fix.
+const bindingChecks = await Promise.all(
+  selectedTargets.map(async (t) => {
+    const path = keyringBindingPath(t);
+    return { target: t, path, exists: await Bun.file(path).exists() };
+  }),
+);
+const missingBindings = bindingChecks.filter((check) => !check.exists);
+if (missingBindings.length > 0) {
+  const list = missingBindings.map(({ target, path }) => `  - ${target.name}: ${path}`).join("\n");
+  throw new Error(
+    `Missing @napi-rs/keyring native bindings for:\n${list}\n\n` +
+      `Run \`bun install --frozen-lockfile --cpu='*' --os='*'\` to install every platform's optional deps.`,
   );
 }
 

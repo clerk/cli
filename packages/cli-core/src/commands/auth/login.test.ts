@@ -77,6 +77,10 @@ mock.module("../../lib/first-application.ts", () => ({
   ensureFirstApplication: () => mockEnsureFirstApplication(),
 }));
 
+mock.module("../../lib/autoclaim.ts", () => ({
+  attemptAutoclaim: async () => ({ status: "not_keyless" }),
+}));
+
 const { login } = await import("./login.ts");
 
 describe("login", () => {
