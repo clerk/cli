@@ -3,6 +3,7 @@ import { AuthError } from "../../lib/errors.ts";
 import { captureLog, credentialStoreStubs, configStubs } from "../../test/lib/stubs.ts";
 
 const actualConstants = await import("../../lib/constants.ts");
+const actualEnvironment = await import("../../lib/environment.ts");
 
 const mockGetValidToken = mock();
 const mockStoreToken = mock();
@@ -38,6 +39,7 @@ mock.module("../../lib/token-exchange.ts", () => ({
 }));
 
 mock.module("../../lib/environment.ts", () => ({
+  ...actualEnvironment,
   getOAuthConfig: () => ({
     clientId: "test-client-id",
     scopes: "profile email",
@@ -518,7 +520,7 @@ describe("login", () => {
   });
 
   test("authorize URL includes clerk_client=cli so dashboard recognizes CLI sign-up", async () => {
-    mockGetToken.mockResolvedValue(null);
+    mockGetValidToken.mockResolvedValue(null);
     mockBunSpawn();
 
     const mockServer = {
@@ -532,6 +534,13 @@ describe("login", () => {
       access_token: "new-access-token",
       token_type: "Bearer",
       expires_in: 3600,
+      refresh_token: "new-refresh-token",
+    });
+    mockCreateOAuthSession.mockReturnValue({
+      accessToken: "new-access-token",
+      refreshToken: "new-refresh-token",
+      expiresAt: 123,
+      tokenType: "Bearer",
     });
     mockStoreToken.mockResolvedValue(undefined);
     mockFetchUserInfo.mockResolvedValue({
@@ -550,7 +559,7 @@ describe("login", () => {
   });
 
   test("calls ensureFirstApplication after a successful OAuth flow", async () => {
-    mockGetToken.mockResolvedValue(null);
+    mockGetValidToken.mockResolvedValue(null);
     mockBunSpawn();
 
     const mockServer = {
@@ -564,6 +573,13 @@ describe("login", () => {
       access_token: "new-access-token",
       token_type: "Bearer",
       expires_in: 3600,
+      refresh_token: "new-refresh-token",
+    });
+    mockCreateOAuthSession.mockReturnValue({
+      accessToken: "new-access-token",
+      refreshToken: "new-refresh-token",
+      expiresAt: 123,
+      tokenType: "Bearer",
     });
     mockStoreToken.mockResolvedValue(undefined);
     mockFetchUserInfo.mockResolvedValue({
@@ -579,7 +595,7 @@ describe("login", () => {
   });
 
   test("does not call ensureFirstApplication when existing session is reused", async () => {
-    mockGetToken.mockResolvedValue("existing-token");
+    mockGetValidToken.mockResolvedValue("existing-token");
     mockGetAuth.mockResolvedValue({ userId: "user_123" });
     mockFetchUserInfo.mockResolvedValue({
       userId: "user_123",

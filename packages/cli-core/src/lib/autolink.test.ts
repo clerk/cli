@@ -230,7 +230,7 @@ describe("autolink", () => {
     _setConfigDir(tempDir);
     process.env = { ...originalEnv };
     delete process.env.CLERK_PUBLISHABLE_KEY;
-    process.env.CLERK_PLATFORM_API_KEY = "test_platform_key";
+    process.env.CLERK_PLATFORM_API_KEY = "ak_test_platform_key";
     process.env.CLERK_PLATFORM_API_URL = "https://test-api.clerk.com";
     mockGetGitRepoIdentifier.mockReset();
     mockGetGitRepoIdentifier.mockResolvedValue(undefined);
