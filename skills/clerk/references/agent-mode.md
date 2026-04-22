@@ -17,6 +17,8 @@ Force human mode with `--mode human` or `CLERK_MODE=human`. Typical AI-agent inv
 | Behavior                                                         | Human mode                     | Agent mode                                                                                                                                                            |
 | ---------------------------------------------------------------- | ------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Interactive pickers (`link` without `--app`, `api` with no args) | Show a TUI picker              | Print structured guidance and exit, or auto-resolve                                                                                                                   |
+| `clerk link --app <id>`                                          | Links directly                 | Links directly                                                                                                                                                        |
+| `clerk link` without `--app`                                     | Interactive picker / create UI | Tries silent autolink from detected publishable keys; if no deterministic match exists, exits with a usage error telling the caller to pass `--app`                   |
 | Confirmation prompts (`unlink`, `config patch`, `api -X DELETE`) | Prompt y/n                     | Require `--yes`, otherwise error                                                                                                                                      |
 | `clerk doctor --fix`                                             | Interactively offers fixes     | **Ignored**; output the `remedy` field and let the caller act                                                                                                         |
 | `clerk apps list` default output                                 | Table                          | JSON (when piped)                                                                                                                                                     |
@@ -101,6 +103,8 @@ clerk api /users/user_abc123 -X DELETE --yes
 clerk api /users --app app_abc123 --instance prod
 ```
 
+The same advice applies to linking in agent mode: `clerk link --app app_abc123` is deterministic and works non-interactively. If you omit `--app`, the command only succeeds when silent autolink can prove the target app from existing publishable keys.
+
 ### Use the catalog, not hard-coded paths
 
 ```sh
@@ -126,12 +130,13 @@ When `clerk doctor --json` reports a failure, show the user the `name`, `message
 | `CLI version`           | (no auto-fix; run `clerk update`)            |
 | `Shell completion`      | (no auto-fix; see `clerk completion --help`) |
 
-All three remediation commands are themselves interactive by default: `auth login` opens a browser, `link` prompts for an app when `--app` is omitted, and `env pull` writes a file. Prefer surfacing the mapping to the user rather than invoking these blindly.
+All three remediation commands are themselves interactive by default: `auth login` opens a browser, `link` prompts for an app when `--app` is omitted, and `env pull` writes a file. In agent mode, prefer `clerk link --app <id>` over bare `clerk link`, since the bare form only works when silent autolink can resolve the target app without a picker.
 
 ## What NOT to do in agent mode
 
 - **Don't call `clerk auth login` from an agent and expect it to work** — it opens a browser and waits for a callback. Instead, export `CLERK_PLATFORM_API_KEY`.
-- **Don't call interactive `clerk link` without `--app`** — it will print guidance, not pick an app.
+- **Don't call `clerk link` without `--app` and assume the agent can pick for you** — it only succeeds when silent autolink can determine the app from detected keys.
+- **Don't run `clerk unlink` in agent mode without `--yes`** — it exits with a usage error instead of prompting.
 - **Don't run `clerk config put` without `--dry-run` first** — it's a full replacement and is destructive.
 - **Don't skip `--yes` on mutations and expect them to work** — agent mode disables prompts, so commands that require confirmation will error.
 - **Don't leak secret keys into logs** — the CLI never prints the raw secret key, and you shouldn't either.

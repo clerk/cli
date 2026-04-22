@@ -76,24 +76,28 @@ describe("unlink", () => {
   }
 
   describe("agent mode", () => {
-    test("outputs prompt and returns", async () => {
+    test("requires --yes", async () => {
       mockIsAgent.mockReturnValue(true);
       consoleSpy = spyOn(console, "log").mockImplementation(() => {});
 
-      await runUnlink();
-
-      expect(captured.out).toContain("unlinking a Clerk application");
-    });
-
-    test("does not trigger side effects", async () => {
-      mockIsAgent.mockReturnValue(true);
-      consoleSpy = spyOn(console, "log").mockImplementation(() => {});
-
-      await runUnlink();
+      await expect(runUnlink()).rejects.toThrow("Pass --yes to unlink in agent mode.");
 
       expect(mockResolveProfile).not.toHaveBeenCalled();
       expect(mockRemoveProfile).not.toHaveBeenCalled();
+    });
+
+    test("unlinks without prompting when --yes is passed", async () => {
+      mockIsAgent.mockReturnValue(true);
+      mockIsHuman.mockReturnValue(false);
+      mockResolveProfile.mockResolvedValue(mockProfile);
+      mockRemoveProfile.mockResolvedValue(undefined);
+      consoleSpy = spyOn(console, "log").mockImplementation(() => {});
+
+      await runUnlink({ yes: true });
+
       expect(mockConfirm).not.toHaveBeenCalled();
+      expect(mockRemoveProfile).toHaveBeenCalledWith(process.cwd());
+      expect(captured.out).toContain("Unlinked");
     });
   });
 

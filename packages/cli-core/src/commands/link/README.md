@@ -20,9 +20,13 @@ clerk link --app app_abc123   # Link directly by app ID
 
 ## Agent Mode
 
-When running in agent mode (`--mode agent` or piped stdin), outputs a structured
-prompt describing how to perform the link operation instead of running the
-interactive flow.
+In agent mode (`--mode agent` or piped stdout), `clerk link` only runs through
+deterministic paths:
+
+- `clerk link --app app_abc123` links directly
+- bare `clerk link` first tries silent autolink from detected publishable keys
+- if no unambiguous app can be determined, the command exits with a usage error
+  telling the caller to pass `--app`
 
 ## Flow
 
@@ -40,7 +44,7 @@ interactive flow.
 8. If no match (or no apps exist), presents a searchable picker (type to filter by name)
    - The picker always includes a "+ Create a new application" option pinned at the bottom
    - Selecting it prompts for a name and creates the app via the Platform API
-   - For non-interactive/CI flows, create apps from the Clerk Dashboard or via the Platform API, then pass `--app <id>`
+   - For non-interactive/CI/agent flows, create apps from the Clerk Dashboard or via the Platform API, then pass `--app <id>`
 9. Stores the profile in the config file keyed by the normalized remote URL
 10. Falls back to git-common-dir or the current directory path if no remote is configured
 
