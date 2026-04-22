@@ -1,6 +1,7 @@
 import { join } from "node:path";
 import { parseArgs } from "node:util";
 import { isPublished } from "./lib/npm.ts";
+import { replaceChangesetsCommit } from "./lib/prerelease-version.ts";
 
 const CHANGESET_CONFIG = join(import.meta.dir, "../.changeset/config.json");
 const WRAPPER_PKG = join(import.meta.dir, "../packages/cli/package.json");
@@ -53,8 +54,9 @@ try {
   const pkg = await Bun.file(WRAPPER_PKG).json();
 
   // Changesets substitutes `{commit}` in `prereleaseTemplate` with the full
-  // 40-char SHA from `git rev-parse HEAD`. Rewrite it to the short SHA so the
-  // published version string stays readable (e.g. `0.8.6-snapshot.a1b2c3d`).
+  // 40-char SHA from `git rev-parse HEAD`. Rewrite it to a short, semver-safe
+  // identifier so published versions stay readable and package managers agree
+  // on the exact prerelease string.
   const shortShaResult = Bun.spawnSync(["git", "rev-parse", "--short", "HEAD"], {
     stdio: ["ignore", "pipe", "pipe"],
   });
@@ -65,7 +67,7 @@ try {
   }
   const shortSha = shortShaResult.stdout.toString().trim();
   const originalVersion: string = pkg.version;
-  const finalVersion = originalVersion.replace(/\b[a-f0-9]{40}\b/, shortSha);
+  const finalVersion = replaceChangesetsCommit(originalVersion, shortSha);
   if (finalVersion !== originalVersion) {
     pkg.version = finalVersion;
     await Bun.write(WRAPPER_PKG, JSON.stringify(pkg, null, 2) + "\n");
