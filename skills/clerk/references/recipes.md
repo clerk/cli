@@ -78,6 +78,17 @@ clerk api /organizations/org_abc123/memberships/user_xyz -X DELETE --dry-run
 clerk api /organizations/org_abc123/invitations -d '{"email_address":"new@acme.com","role":"org:member"}'
 ```
 
+If organization endpoints return `organization_not_enabled_in_instance`, enable the feature first:
+
+```sh
+# Inspect org settings
+clerk api /instance/organization_settings
+
+# Preview, then enable organizations for this instance
+clerk api /instance/organization_settings -X PATCH -d '{"enabled":true}' --dry-run
+clerk api /instance/organization_settings -X PATCH -d '{"enabled":true}' --yes
+```
+
 ## Sessions
 
 ```sh

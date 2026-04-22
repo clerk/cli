@@ -24,4 +24,6 @@ clerk unlink --yes
 
 ## Agent Mode
 
-In agent mode, outputs a structured prompt describing the unlink steps instead of running the interactive flow.
+In agent mode, `clerk unlink` requires `--yes`. With `--yes`, it removes the
+link without prompting. Without `--yes`, it exits with a usage error instead of
+showing an interactive confirmation.

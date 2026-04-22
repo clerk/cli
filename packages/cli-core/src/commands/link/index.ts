@@ -16,28 +16,15 @@ import { autolink, findClerkKeys, matchKeyToApp } from "../../lib/autolink.ts";
 import { getGitRepoIdentifier, getGitRepoRoot, getGitNormalizedRemote } from "../../lib/git.ts";
 import { dim, cyan } from "../../lib/color.ts";
 import { NEXT_STEPS } from "../../lib/next-steps.ts";
-import { CliError, PlapiError, ERROR_CODE, withApiContext } from "../../lib/errors.ts";
+import {
+  CliError,
+  PlapiError,
+  ERROR_CODE,
+  throwUsageError,
+  withApiContext,
+} from "../../lib/errors.ts";
 import { intro, outro, withSpinner } from "../../lib/spinner.ts";
 import { log } from "../../lib/log.ts";
-
-const AGENT_PROMPT = `You are linking a Clerk application to the current project directory.
-
-## Steps
-
-1. Ensure the user is authenticated. If not, run \`clerk auth login\` first.
-2. Determine which application to link:
-   - If the user provides an app ID: \`clerk link --app <app_id>\`
-   - Otherwise, list available applications with \`GET /v1/platform/applications\` and ask the user to select one.
-   - If no applications exist, or the user wants a new one, create one with \`POST /v1/platform/applications\`, then fetch its details with \`GET /v1/platform/applications/{appId}\`.
-3. The link is stored in ~/.clerk/config.json as a profile keyed by the git repository root (shared across worktrees).
-
-## API Endpoints
-
-| Method | Endpoint | Purpose |
-|--------|----------|---------|
-| GET | /v1/platform/applications | List all applications |
-| GET | /v1/platform/applications/{appId} | Fetch application with instance details |
-| POST | /v1/platform/applications | Create a new application |`;
 
 const CREATE_NEW_APP = "__create_new__";
 
@@ -52,11 +39,7 @@ function appLabel(app: Application): string {
 }
 
 export async function link(options: LinkOptions = {}): Promise<void> {
-  if (isAgent()) {
-    log.data(AGENT_PROMPT);
-    return;
-  }
-
+  const agent = isAgent();
   const cwd = options.cwd ?? process.cwd();
   const repoRoot = await getGitRepoRoot(cwd);
   const normalizedRemote = await getGitNormalizedRemote(cwd);
@@ -72,14 +55,26 @@ export async function link(options: LinkOptions = {}): Promise<void> {
     return;
   }
 
-  if (!existing && options.skipIfLinked && !options.app) {
+  if (!existing && !options.app && (options.skipIfLinked || agent)) {
     const autolinked = await autolink(cwd);
     if (autolinked) return;
   }
 
+  if (agent && !existing && !options.app) {
+    throwUsageError(
+      "Cannot select an application in agent mode. Pass --app <id>, or run `clerk apps list --json` and retry.",
+    );
+  }
+
   intro("clerk link");
 
-  if (existing) {
+  if (existing && agent) {
+    printExistingStatus(existing, normalizedRemote);
+    if (!targetsDifferentApp) {
+      outro();
+      return;
+    }
+  } else if (existing) {
     const shouldRelink = await handleExistingProfile(existing, normalizedRemote, options);
     if (!shouldRelink) {
       outro();

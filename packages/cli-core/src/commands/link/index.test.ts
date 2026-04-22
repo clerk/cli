@@ -167,17 +167,30 @@ describe("link", () => {
   }
 
   describe("agent mode", () => {
-    test("outputs prompt and returns", async () => {
+    test("links directly with --app", async () => {
       mockIsAgent.mockReturnValue(true);
+      mockGetToken.mockResolvedValue("token");
+      mockFetchApplication.mockResolvedValue(mockApp);
       consoleSpy = spyOn(console, "log").mockImplementation(() => {});
 
-      await runLink();
+      await runLink({ app: "app_123" });
 
-      expect(captured.out).toContain("linking a Clerk application");
+      expect(mockFetchApplication).toHaveBeenCalledWith("app_123");
+      expect(mockSetProfile).toHaveBeenCalledWith(
+        expect.any(String),
+        expect.objectContaining({
+          appId: "app_123",
+          instances: expect.objectContaining({ development: "ins_dev", production: "ins_prod" }),
+        }),
+      );
     });
 
-    test("does not trigger interactive prompts", async () => {
+    test("auto-links without prompts when a key match is available", async () => {
       mockIsAgent.mockReturnValue(true);
+      mockAutolink.mockResolvedValue({
+        path: "github.com/org/repo",
+        profile: { workspaceId: "", appId: "app_auto", instances: { development: "ins_dev" } },
+      });
       consoleSpy = spyOn(console, "log").mockImplementation(() => {});
 
       await runLink();
@@ -187,14 +200,49 @@ describe("link", () => {
       expect(mockListApplications).not.toHaveBeenCalled();
     });
 
-    test("prompt covers the create-app path", async () => {
+    test("returns current link status when already linked and no app is provided", async () => {
       mockIsAgent.mockReturnValue(true);
+      mockResolveProfile.mockResolvedValue({
+        path: "/repo/.git",
+        profile: { workspaceId: "", appId: "app_existing", instances: { development: "ins_1" } },
+      });
       consoleSpy = spyOn(console, "log").mockImplementation(() => {});
 
       await runLink();
 
-      expect(captured.out).toContain("no applications exist");
-      expect(captured.out).toContain("POST /v1/platform/applications");
+      expect(captured.err).toContain("Already linked");
+      expect(mockConfirm).not.toHaveBeenCalled();
+      expect(mockFetchApplication).not.toHaveBeenCalled();
+      expect(mockSetProfile).not.toHaveBeenCalled();
+    });
+
+    test("re-links directly when already linked and --app differs", async () => {
+      mockIsAgent.mockReturnValue(true);
+      mockGetToken.mockResolvedValue("token");
+      mockResolveProfile.mockResolvedValue({
+        path: "/repo/.git",
+        profile: { workspaceId: "", appId: "app_existing", instances: { development: "ins_1" } },
+      });
+      mockFetchApplication.mockResolvedValue(mockApp);
+      consoleSpy = spyOn(console, "log").mockImplementation(() => {});
+
+      await runLink({ app: "app_123" });
+
+      expect(mockConfirm).not.toHaveBeenCalled();
+      expect(mockFetchApplication).toHaveBeenCalledWith("app_123");
+      expect(mockSetProfile).toHaveBeenCalled();
+    });
+
+    test("errors when no deterministic app selection is available", async () => {
+      mockIsAgent.mockReturnValue(true);
+      consoleSpy = spyOn(console, "log").mockImplementation(() => {});
+
+      await expect(runLink()).rejects.toThrow(
+        "Cannot select an application in agent mode. Pass --app <id>",
+      );
+
+      expect(mockSearch).not.toHaveBeenCalled();
+      expect(mockListApplications).not.toHaveBeenCalled();
     });
   });
 
