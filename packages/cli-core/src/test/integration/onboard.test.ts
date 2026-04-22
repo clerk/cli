@@ -26,7 +26,7 @@ test.each([
     framework: "Next.js",
     deps: { next: "15.0.0" },
     expectedKey: "NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY",
-    envFile: ".env",
+    envFile: ".env.local",
   },
   {
     framework: "React/Vite",

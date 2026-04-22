@@ -500,11 +500,11 @@ describe("env pull", () => {
 
     await runEnvPull();
 
-    // Next.js prefers .env (gitignored by create-next-app via .env* pattern)
-    const content = await Bun.file(join(tempDir, ".env")).text();
+    // Next.js prefers .env.local (always gitignored, per Next.js convention for secrets)
+    const content = await Bun.file(join(tempDir, ".env.local")).text();
     expect(content).toContain("NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=pk_test_abc123");
-    // Should NOT have created .env.local
-    expect(await Bun.file(join(tempDir, ".env.local")).exists()).toBe(false);
+    // Should NOT have created .env
+    expect(await Bun.file(join(tempDir, ".env")).exists()).toBe(false);
   });
 
   test("Next.js writes to existing .env.local if it already has Clerk keys", async () => {

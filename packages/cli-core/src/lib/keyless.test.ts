@@ -160,8 +160,8 @@ describe("writeKeysToEnvFile", () => {
       }),
     );
 
-    // Next.js declares envFile: ".env" in FRAMEWORK_MAP
-    const content = await Bun.file(join(tempDir, ".env")).text();
+    // Next.js declares envFile: ".env.local" in FRAMEWORK_MAP
+    const content = await Bun.file(join(tempDir, ".env.local")).text();
     expect(content).toContain("NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=pk_test_next");
     expect(content).toContain("CLERK_SECRET_KEY=sk_test_next");
   });
