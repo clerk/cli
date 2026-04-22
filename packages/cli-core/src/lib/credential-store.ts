@@ -229,6 +229,13 @@ function isExpiredJwt(token: string): boolean {
   return expiresAt <= Date.now() + JWT_EXPIRY_LEEWAY_MS;
 }
 
+function isExpiredSession(session: OAuthSession): boolean {
+  if (Number.isFinite(session.expiresAt)) {
+    return session.expiresAt <= Date.now() + JWT_EXPIRY_LEEWAY_MS;
+  }
+  return isExpiredJwt(session.accessToken);
+}
+
 function sessionExpiredError(): AuthError {
   return new AuthError({ reason: "session_expired" });
 }
@@ -333,7 +340,7 @@ export async function getValidToken(): Promise<string | null> {
     return null;
   }
 
-  if (!isExpiredJwt(session.accessToken)) {
+  if (!isExpiredSession(session)) {
     return session.accessToken;
   }
 
