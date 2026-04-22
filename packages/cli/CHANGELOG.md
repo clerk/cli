@@ -1,5 +1,11 @@
 # clerk
 
+## 1.0.2
+
+### Patch Changes
+
+- fixed readme publishing on npm ([#217](https://github.com/clerk/cli/pull/217)) by [@wyattjoh](https://github.com/wyattjoh)
+
 ## 1.0.1
 
 ### Patch Changes
