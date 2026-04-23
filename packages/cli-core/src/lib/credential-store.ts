@@ -342,7 +342,10 @@ async function recoverFromInvalidGrant(session: OAuthSession): Promise<string | 
     }
 
     log.debug("credentials: detected a newer stored session after invalid_grant");
-    return getValidAccessToken(storedSession);
+    if (isExpiredSession(storedSession)) {
+      continue;
+    }
+    return storedSession.accessToken;
   }
 
   return null;
@@ -355,9 +358,13 @@ async function refreshStoredSession(session: OAuthSession): Promise<string> {
     tokenResponse = await refreshAccessToken(session.refreshToken);
   } catch (error) {
     if (isInvalidGrant(error)) {
-      const recoveredToken = await recoverFromInvalidGrant(session);
-      if (recoveredToken) {
-        return recoveredToken;
+      try {
+        const recoveredToken = await recoverFromInvalidGrant(session);
+        if (recoveredToken) {
+          return recoveredToken;
+        }
+      } catch {
+        log.debug("credentials: recovery from invalid_grant failed, cleaning up");
       }
       await deleteToken();
       throw sessionExpiredError();
