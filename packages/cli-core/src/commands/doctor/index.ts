@@ -1,4 +1,4 @@
-import { isHuman } from "../../mode.ts";
+import { isAgent, isHuman } from "../../mode.ts";
 import { bold, green, red } from "../../lib/color.ts";
 import { log } from "../../lib/log.ts";
 import { CliError, ERROR_CODE, errorMessage } from "../../lib/errors.ts";
@@ -6,6 +6,7 @@ import { intro, outro, bar, withSpinner } from "../../lib/spinner.ts";
 import { createDoctorContext } from "./context.ts";
 import {
   checkLoggedIn,
+  checkHostExecution,
   checkTokenValid,
   checkProjectLinked,
   checkLinkedAppExists,
@@ -18,7 +19,7 @@ import {
 import { formatCheckResult, formatJson } from "./format.ts";
 import type { CheckFn, CheckResult, DoctorContext, DoctorOptions } from "./types.ts";
 
-const CHECKS: CheckFn[] = [
+const BASE_CHECKS: CheckFn[] = [
   checkCliVersion,
   checkLoggedIn,
   checkTokenValid,
@@ -30,9 +31,13 @@ const CHECKS: CheckFn[] = [
   checkShellCompletion,
 ];
 
+function getChecks(): CheckFn[] {
+  return isAgent() ? [checkHostExecution, ...BASE_CHECKS] : BASE_CHECKS;
+}
+
 async function runChecks(ctx: DoctorContext): Promise<CheckResult[]> {
   return Promise.all(
-    CHECKS.map(async (check) => {
+    getChecks().map(async (check) => {
       try {
         return await check(ctx);
       } catch (error) {

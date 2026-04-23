@@ -1,11 +1,32 @@
-import { test, expect, describe } from "bun:test";
+import { afterEach, describe, expect, spyOn, test } from "bun:test";
 import { startAuthServer } from "./auth-server.ts";
 
 describe("auth-server", () => {
+  let serveSpy: ReturnType<typeof spyOn> | undefined;
+  let clearTimeoutSpy: ReturnType<typeof spyOn> | undefined;
+
+  afterEach(() => {
+    serveSpy?.mockRestore();
+    clearTimeoutSpy?.mockRestore();
+    serveSpy = undefined;
+    clearTimeoutSpy = undefined;
+  });
+
   test("starts on a random port", () => {
     const server = startAuthServer("test-state");
     expect(server.port).toBeGreaterThan(0);
     server.stop();
+  });
+
+  test("clears the timeout when Bun.serve throws", () => {
+    serveSpy = spyOn(Bun, "serve").mockImplementation(() => {
+      throw new Error("listen failed");
+    });
+    clearTimeoutSpy = spyOn(globalThis, "clearTimeout");
+
+    expect(() => startAuthServer("test-state")).toThrow("listen failed");
+    expect(serveSpy).toHaveBeenCalled();
+    expect(clearTimeoutSpy).toHaveBeenCalled();
   });
 
   test("callback resolves with code on valid request", async () => {

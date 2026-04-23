@@ -174,6 +174,15 @@ jobs:
     secrets:
       SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
 
+  notify-stable-success:
+    needs: [versioning, publish-npm, publish-github, homebrew]
+    if: needs.versioning.outputs.release_created == 'true'
+    uses: ./.github/workflows/notify-release.yml
+    with:
+      version: ${{ needs.versioning.outputs.version }}
+    secrets:
+      SLACK_RELEASE_WEBHOOK_URL: ${{ secrets.SLACK_RELEASE_WEBHOOK_URL }}
+
   # ─── Canary release ────────────────────────────────────────────────
 
   canary-version:

@@ -4,6 +4,7 @@
  */
 
 import { AUTH_TIMEOUT_MS, CALLBACK_PATH } from "./constants.ts";
+import { observeHostCapabilityFailure } from "./host-execution.ts";
 import { log } from "./log.ts";
 
 function escapeHtml(str: string): string {
@@ -79,6 +80,7 @@ interface AuthServerResult {
 export function startAuthServer(expectedState: string): AuthServerResult {
   let resolveCallback: (value: { code: string }) => void;
   let rejectCallback: (reason: Error) => void;
+  let server: ReturnType<typeof Bun.serve> | undefined;
 
   const callbackPromise = new Promise<{ code: string }>((resolve, reject) => {
     resolveCallback = resolve;
@@ -88,78 +90,89 @@ export function startAuthServer(expectedState: string): AuthServerResult {
   const timeout = setTimeout(() => {
     log.debug(`auth-server: timed out after ${AUTH_TIMEOUT_MS}ms`);
     rejectCallback(new Error("Authentication timed out. Please try again."));
-    server.stop();
+    server?.stop();
   }, AUTH_TIMEOUT_MS);
 
-  const server = Bun.serve({
-    hostname: "127.0.0.1",
-    port: 0,
-    routes: {
-      [CALLBACK_PATH]: {
-        GET: (req) => {
-          const url = new URL(req.url);
-          const code = url.searchParams.get("code");
-          const state = url.searchParams.get("state");
-          const error = url.searchParams.get("error");
+  try {
+    server = Bun.serve({
+      hostname: "127.0.0.1",
+      port: 0,
+      routes: {
+        [CALLBACK_PATH]: {
+          GET: (req) => {
+            const url = new URL(req.url);
+            const code = url.searchParams.get("code");
+            const state = url.searchParams.get("state");
+            const error = url.searchParams.get("error");
 
-          if (error) {
-            const description = url.searchParams.get("error_description") || error;
-            log.debug(`auth-server: OAuth error in callback — ${error}: ${description}`);
-            rejectCallback(new Error(`OAuth error: ${description}`));
+            if (error) {
+              const description = url.searchParams.get("error_description") || error;
+              log.debug(`auth-server: OAuth error in callback — ${error}: ${description}`);
+              rejectCallback(new Error(`OAuth error: ${description}`));
+              clearTimeout(timeout);
+              setTimeout(() => server?.stop(), 100);
+              return new Response(ERROR_HTML(description), {
+                headers: { "Content-Type": "text/html" },
+              });
+            }
+
+            if (state !== expectedState) {
+              log.debug(`auth-server: state mismatch (expected=${expectedState}, got=${state})`);
+              rejectCallback(new Error("Invalid state parameter. Possible CSRF attack."));
+              clearTimeout(timeout);
+              setTimeout(() => server?.stop(), 100);
+              return new Response(ERROR_HTML("Invalid state parameter."), {
+                status: 400,
+                headers: { "Content-Type": "text/html" },
+              });
+            }
+
+            if (!code) {
+              log.debug("auth-server: callback received with no authorization code");
+              rejectCallback(new Error("No authorization code received."));
+              clearTimeout(timeout);
+              setTimeout(() => server?.stop(), 100);
+              return new Response(ERROR_HTML("No authorization code received."), {
+                status: 400,
+                headers: { "Content-Type": "text/html" },
+              });
+            }
+
+            log.debug("auth-server: callback received with valid code and state");
+            resolveCallback({ code });
             clearTimeout(timeout);
-            setTimeout(() => server.stop(), 100);
-            return new Response(ERROR_HTML(description), {
+            setTimeout(() => server?.stop(), 100);
+            return new Response(SUCCESS_HTML, {
               headers: { "Content-Type": "text/html" },
             });
-          }
-
-          if (state !== expectedState) {
-            log.debug(`auth-server: state mismatch (expected=${expectedState}, got=${state})`);
-            rejectCallback(new Error("Invalid state parameter. Possible CSRF attack."));
-            clearTimeout(timeout);
-            setTimeout(() => server.stop(), 100);
-            return new Response(ERROR_HTML("Invalid state parameter."), {
-              status: 400,
-              headers: { "Content-Type": "text/html" },
-            });
-          }
-
-          if (!code) {
-            log.debug("auth-server: callback received with no authorization code");
-            rejectCallback(new Error("No authorization code received."));
-            clearTimeout(timeout);
-            setTimeout(() => server.stop(), 100);
-            return new Response(ERROR_HTML("No authorization code received."), {
-              status: 400,
-              headers: { "Content-Type": "text/html" },
-            });
-          }
-
-          log.debug("auth-server: callback received with valid code and state");
-          resolveCallback({ code });
-          clearTimeout(timeout);
-          setTimeout(() => server.stop(), 100);
-          return new Response(SUCCESS_HTML, {
-            headers: { "Content-Type": "text/html" },
-          });
+          },
         },
       },
-    },
-    fetch() {
-      return new Response("Clerk CLI is waiting for authentication...", {
-        headers: { "Content-Type": "text/plain" },
-      });
-    },
-  });
+      fetch() {
+        return new Response("Clerk CLI is waiting for authentication...", {
+          headers: { "Content-Type": "text/plain" },
+        });
+      },
+    });
+  } catch (error) {
+    clearTimeout(timeout);
+    observeHostCapabilityFailure("localhost-bind", error, {
+      operation: "listen",
+      target: "127.0.0.1:0",
+      label: CALLBACK_PATH,
+    });
+    throw error;
+  }
 
-  log.debug(`auth-server: listening on 127.0.0.1:${server.port} for ${CALLBACK_PATH}`);
+  const activeServer = server;
+  log.debug(`auth-server: listening on 127.0.0.1:${activeServer.port} for ${CALLBACK_PATH}`);
 
   return {
-    port: server.port!,
+    port: activeServer.port!,
     waitForCallback: () => callbackPromise,
     stop: () => {
       clearTimeout(timeout);
-      server.stop();
+      activeServer.stop();
     },
   };
 }

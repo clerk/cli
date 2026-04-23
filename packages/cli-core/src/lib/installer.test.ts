@@ -6,6 +6,7 @@ import {
   isHomebrewPath,
   globalInstallCommand,
   findClerkOnPath,
+  findRunningInstallIndex,
   ownerOfBinary,
   isAsdfShimPath,
   asdfPluginFromPath,
@@ -179,6 +180,89 @@ describe("ownerOfBinary", () => {
         win,
       ),
     ).toBe("npm");
+  });
+});
+
+// ── findRunningInstallIndex ─────────────────────────────────────────────────
+
+describe("findRunningInstallIndex", () => {
+  const dirs = {
+    npm: "/home/u/.asdf/installs/nodejs/22.16.0/lib/node_modules",
+    bun: "/home/u/.bun/install/global/node_modules",
+  } as const;
+
+  // Platform binaries the Node shim spawns (what process.execPath resolves to
+  // inside the compiled CLI).
+  const bunPlatformBin = "/home/u/.bun/install/global/node_modules/@clerk/cli-linux-x64/bin/clerk";
+  const npmPlatformBin =
+    "/home/u/.asdf/installs/nodejs/22.16.0/lib/node_modules/@clerk/cli-linux-x64/bin/clerk";
+
+  // PATH candidates after realpath + asdf resolution (sibling shims in the
+  // same install tree as the platform binary).
+  const bunCandidate = {
+    resolvedPath: "/home/u/.bun/install/global/node_modules/clerk/bin/clerk",
+  };
+  const npmCandidate = {
+    resolvedPath: "/home/u/.asdf/installs/nodejs/22.16.0/lib/node_modules/clerk/bin/clerk",
+  };
+
+  test("returns index of candidate owned by same installer as execPath", () => {
+    // Reproduces the reported bug: asdf-npm first on PATH, user ran bun's
+    // install. The running install must win over PATH order.
+    const candidates = [npmCandidate, bunCandidate];
+    expect(findRunningInstallIndex(candidates, bunPlatformBin, dirs)).toBe(1);
+  });
+
+  test("picks the right install when running is npm and PATH puts bun first", () => {
+    // Mirror case of the above, covering the other direction.
+    const candidates = [bunCandidate, npmCandidate];
+    expect(findRunningInstallIndex(candidates, npmPlatformBin, dirs)).toBe(1);
+  });
+
+  test("returns 0 when the running install is already first on PATH", () => {
+    const candidates = [bunCandidate, npmCandidate];
+    expect(findRunningInstallIndex(candidates, bunPlatformBin, dirs)).toBe(0);
+  });
+
+  test("returns -1 when execPath is outside every known installer dir", () => {
+    // install.sh-style standalone binary: not owned by any PM, so there is
+    // no "running install" to match against — caller falls back to PATH order.
+    const candidates = [bunCandidate, npmCandidate];
+    expect(findRunningInstallIndex(candidates, "/usr/local/bin/clerk", dirs)).toBe(-1);
+  });
+
+  test("returns -1 when candidates is empty", () => {
+    expect(findRunningInstallIndex([], bunPlatformBin, dirs)).toBe(-1);
+  });
+
+  test("returns -1 when the running installer is not among candidates", () => {
+    // Running install has owner, but none of the PATH candidates share it.
+    // Caller should fall through to PATH-first order rather than misfire.
+    const candidates = [npmCandidate];
+    expect(findRunningInstallIndex(candidates, bunPlatformBin, dirs)).toBe(-1);
+  });
+
+  test("matches Homebrew execPath against a Homebrew candidate", () => {
+    const candidates = [
+      { resolvedPath: "/opt/homebrew/Cellar/clerk/1.0.0/bin/clerk" },
+      npmCandidate,
+    ];
+    expect(
+      findRunningInstallIndex(candidates, "/opt/homebrew/Cellar/clerk/1.0.0/bin/clerk", dirs),
+    ).toBe(0);
+  });
+
+  test("returns -1 when execPath is under an inactive asdf-nodejs version", () => {
+    // installDirs.npm points at the currently-active nodejs version (from
+    // `npm root -g`). A binary under a *different* asdf-nodejs install (e.g.
+    // the user invoked clerk from a shell that had v20 active, while the
+    // current shell has v22 active) doesn't start with the active dir, so
+    // ownerOfBinary returns null and the helper safely falls back to PATH
+    // order rather than mismatching against the active version's clerk.
+    const candidates = [bunCandidate, npmCandidate];
+    const inactiveNodeExec =
+      "/home/u/.asdf/installs/nodejs/20.0.0/lib/node_modules/@clerk/cli-linux-x64/bin/clerk";
+    expect(findRunningInstallIndex(candidates, inactiveNodeExec, dirs)).toBe(-1);
   });
 });
 
