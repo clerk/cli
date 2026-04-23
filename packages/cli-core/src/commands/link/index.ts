@@ -166,10 +166,7 @@ async function handleExistingProfile(
 
   if (options.app) {
     await ensureAuth();
-    const targetApp = await withApiContext(
-      fetchApplication(options.app),
-      "Failed to fetch application",
-    );
+    const targetApp = await fetchAppWithReauth(options.app);
     return confirm({ message: `Re-link to ${cyan(appLabel(targetApp))}?`, default: false });
   }
 
