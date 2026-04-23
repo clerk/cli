@@ -74,8 +74,10 @@ Every command accepts `--input-json <json|@file>`. Keys convert from camelCase/s
 ```sh
 clerk init --input-json '{"framework":"next","yes":true}'
 clerk config pull --input-json '{"keys":["auth_email","session"]}'  # arrays → repeated flags
-clerk apps create --input-json @app.json                            # or read from a file
+clerk init --input-json @init-opts.json                             # or read JSON from a file
 ```
+
+Positional arguments (e.g. the `<name>` in `clerk apps create <name>`) cannot come from JSON — only flag-style options can.
 
 | JSON             | Expansion                               |
 | ---------------- | --------------------------------------- |
