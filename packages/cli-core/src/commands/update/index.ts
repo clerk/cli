@@ -46,7 +46,10 @@ async function resolveTargets(
   runningPath: string,
   installDirs: Awaited<ReturnType<typeof getInstallerPackageDirs>>,
 ): Promise<{ primary: Target; others: Target[] }> {
-  const onPath = await findClerkOnPath();
+  const [onPath, runningResolved] = await Promise.all([
+    findClerkOnPath(),
+    safeRealpath(runningPath),
+  ]);
 
   const resolved = await Promise.all(onPath.map((p) => resolveAsdfShim(p)));
   const candidates = onPath.map((displayPath, i) => ({
@@ -71,7 +74,6 @@ async function resolveTargets(
   // different install got the upgrade. When the running binary isn't on PATH
   // (invoked by absolute path, PATH mutated mid-session), fall through to
   // PATH order.
-  const runningResolved = await safeRealpath(runningPath);
   const runningIdx = findRunningInstallIndex(unique, runningResolved, installDirs);
   const reordered =
     runningIdx > 0
@@ -86,6 +88,10 @@ async function resolveTargets(
     reordered.length > 0
       ? reordered
       : [{ displayPath: runningPath, resolvedPath: runningResolved }];
+
+  log.debug(
+    `update: primary=${effective[0]!.resolvedPath} (runningIdx=${runningIdx}, execPath=${runningResolved})`,
+  );
 
   const toTarget = (c: { displayPath: string; resolvedPath: string }): Target => ({
     displayPath: c.displayPath,
