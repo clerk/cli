@@ -79,7 +79,10 @@ export async function openBrowser(url: string): Promise<OpenResult> {
 
   // On Windows, invoke `start` via cmd.exe. The empty "" is the window title
   // (otherwise start would interpret a quoted URL as the title).
-  const command = launcher === "start" ? ["cmd.exe", "/c", "start", "", url] : [launcher, url];
+  // On Windows, the URL must be quoted because cmd.exe treats `&` as a
+  // command separator, which truncates OAuth URLs with query parameters.
+  const command =
+    launcher === "start" ? ["cmd.exe", "/c", "start", "", `"${url}"`] : [launcher, url];
 
   try {
     const proc = Bun.spawn(command, {
