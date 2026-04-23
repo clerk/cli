@@ -43,6 +43,15 @@ import { log } from "./lib/log.ts";
 import { maybeNotifyUpdate, getCurrentVersion } from "./lib/update-check.ts";
 import { update } from "./commands/update/index.ts";
 import { isClerkSkillInstalled } from "./lib/skill-detection.ts";
+import { orgsEnable, orgsDisable } from "./commands/orgs/index.ts";
+import {
+  billingEnable,
+  billingDisable,
+  plansCreate,
+  plansList,
+  plansUpdate,
+  plansRemove,
+} from "./commands/billing/index.ts";
 
 export function createProgram() {
   const program = new Command()
@@ -413,6 +422,175 @@ Give AI agents better Clerk context: install the Clerk skills
       },
     ])
     .action(configPut);
+
+  // --- clerk orgs ---
+  const orgs = program
+    .command("orgs")
+    .alias("organizations")
+    .description("Manage Clerk Organizations")
+    .setExamples([
+      { command: "clerk orgs enable", description: "Enable organizations" },
+      {
+        command: "clerk orgs enable --force-selection --max-members 10",
+        description: "Enable with options",
+      },
+      { command: "clerk orgs disable", description: "Disable organizations" },
+    ]);
+
+  orgs
+    .command("enable")
+    .description("Enable organizations on the linked instance")
+    .option("--app <id>", "Application ID to target")
+    .option("--instance <id>", "Instance to target (dev, prod, or instance ID)")
+    .option("--force-selection", "Force organization selection on login")
+    .option("--auto-create", "Auto-create an organization for new users")
+    .option("--max-members <n>", "Maximum members per organization")
+    .option("--domains", "Enable verified domains")
+    .option("--yes", "Skip confirmation prompts")
+    .setExamples([
+      { command: "clerk orgs enable", description: "Enable organizations" },
+      {
+        command: "clerk orgs enable --force-selection",
+        description: "Enable and force org selection",
+      },
+      {
+        command: "clerk orgs enable --auto-create --max-members 10",
+        description: "Enable with auto-creation and member limit",
+      },
+    ])
+    .action(orgsEnable);
+
+  orgs
+    .command("disable")
+    .description("Disable organizations on the linked instance")
+    .option("--app <id>", "Application ID to target")
+    .option("--instance <id>", "Instance to target (dev, prod, or instance ID)")
+    .option("--yes", "Skip confirmation prompts")
+    .setExamples([{ command: "clerk orgs disable", description: "Disable organizations" }])
+    .action(orgsDisable);
+
+  // --- clerk billing ---
+  const billing = program
+    .command("billing")
+    .description("Manage billing and subscription plans")
+    .setExamples([
+      { command: "clerk billing enable --for org", description: "Enable org billing" },
+      {
+        command: "clerk billing plans create pro --amount 1999 --payer org",
+        description: "Create a Pro plan",
+      },
+      { command: "clerk billing plans list", description: "List all plans" },
+    ]);
+
+  billing
+    .command("enable")
+    .description("Enable billing on the linked instance")
+    .addOption(createOption("--for <type>", "Billing target type").choices(["org", "user"]))
+    .option("--app <id>", "Application ID to target")
+    .option("--instance <id>", "Instance to target (dev, prod, or instance ID)")
+    .option("--require-payment-method", "Require payment method for free trials")
+    .option("--yes", "Skip confirmation prompts")
+    .setExamples([
+      { command: "clerk billing enable --for org", description: "Enable org billing" },
+      { command: "clerk billing enable --for user", description: "Enable user billing" },
+    ])
+    .action(billingEnable);
+
+  billing
+    .command("disable")
+    .description("Disable billing on the linked instance")
+    .addOption(createOption("--for <type>", "Billing target type").choices(["org", "user"]))
+    .option("--app <id>", "Application ID to target")
+    .option("--instance <id>", "Instance to target (dev, prod, or instance ID)")
+    .option("--yes", "Skip confirmation prompts")
+    .setExamples([
+      { command: "clerk billing disable --for org", description: "Disable org billing" },
+    ])
+    .action(billingDisable);
+
+  const plans = billing
+    .command("plans")
+    .description("Manage subscription plans")
+    .setExamples([
+      { command: "clerk billing plans list", description: "List all plans" },
+      {
+        command: "clerk billing plans create pro --amount 1999 --payer org",
+        description: "Create a Pro plan at $19.99/mo",
+      },
+    ]);
+
+  plans
+    .command("create")
+    .description("Create a subscription plan")
+    .argument("<slug>", "Plan slug (display name auto-derived via title case)")
+    .option("--name <name>", "Override display name")
+    .requiredOption("--amount <cents>", "Monthly price in cents")
+    .addOption(createOption("--payer <type>", "Who pays").choices(["org", "user"]))
+    .option("--currency <code>", "Currency code (default: usd)")
+    .option("--description <text>", "Plan description")
+    .option("--trial-days <n>", "Free trial length in days")
+    .option("--annual-amount <cents>", "Monthly equivalent when billed annually, in cents")
+    .option("--hidden", "Hide plan from end users")
+    .option("--app <id>", "Application ID to target")
+    .option("--instance <id>", "Instance to target (dev, prod, or instance ID)")
+    .option("--yes", "Skip confirmation prompts")
+    .setExamples([
+      {
+        command: "clerk billing plans create pro --amount 1999 --payer org",
+        description: "Create a Pro plan at $19.99/mo for orgs",
+      },
+      {
+        command:
+          'clerk billing plans create enterprise --name "Enterprise Plus" --amount 9999 --payer org --trial-days 14',
+        description: "Create an Enterprise plan with a 14-day trial",
+      },
+    ])
+    .action(plansCreate);
+
+  plans
+    .command("list")
+    .description("List subscription plans")
+    .option("--json", "Output as JSON")
+    .option("--app <id>", "Application ID to target")
+    .option("--instance <id>", "Instance to target (dev, prod, or instance ID)")
+    .setExamples([
+      { command: "clerk billing plans list", description: "List all plans" },
+      { command: "clerk billing plans list --json", description: "Output as JSON" },
+    ])
+    .action(plansList);
+
+  plans
+    .command("update")
+    .description("Update a subscription plan")
+    .argument("<slug>", "Plan slug to update")
+    .option("--name <name>", "Update display name")
+    .option("--amount <cents>", "Update monthly price in cents")
+    .option("--currency <code>", "Update currency")
+    .option("--description <text>", "Update description")
+    .option("--trial-days <n>", "Update free trial days")
+    .option("--annual-amount <cents>", "Update annual amount")
+    .option("--hidden", "Hide plan from end users")
+    .option("--visible", "Show plan to end users")
+    .option("--app <id>", "Application ID to target")
+    .option("--instance <id>", "Instance to target (dev, prod, or instance ID)")
+    .option("--yes", "Skip confirmation prompts")
+    .setExamples([
+      { command: "clerk billing plans update pro --amount 2999", description: "Update price" },
+      { command: "clerk billing plans update pro --hidden", description: "Hide plan" },
+    ])
+    .action(plansUpdate);
+
+  plans
+    .command("remove")
+    .description("Remove a subscription plan")
+    .argument("<slug>", "Plan slug to remove")
+    .option("--app <id>", "Application ID to target")
+    .option("--instance <id>", "Instance to target (dev, prod, or instance ID)")
+    .option("--yes", "Skip confirmation prompts")
+    .setExamples([
+      { command: "clerk billing plans remove pro", description: "Remove the Pro plan" },
+    ])
+    .action(plansRemove);
 
   program
     .command("api")
