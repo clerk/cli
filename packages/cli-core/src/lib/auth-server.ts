@@ -155,6 +155,7 @@ export function startAuthServer(expectedState: string): AuthServerResult {
       },
     });
   } catch (error) {
+    clearTimeout(timeout);
     observeHostCapabilityFailure("localhost-bind", error, {
       operation: "listen",
       target: "127.0.0.1:0",
