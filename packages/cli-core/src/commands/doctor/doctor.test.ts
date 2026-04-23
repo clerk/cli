@@ -3,6 +3,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { ApiError, AuthError } from "../../lib/errors.ts";
+import { _setConfigDir } from "../../lib/config.ts";
 import { gitStubs, tokenExchangeStubs, stubFetch } from "../../test/lib/stubs.ts";
 import type { CheckResult, CheckStatus, DoctorContext, ResolvedProfile } from "./types.ts";
 import type { Application } from "../../lib/plapi.ts";
@@ -157,6 +158,7 @@ afterEach(async () => {
   process.cwd = originalCwd;
   process.env = { ...originalEnv };
   globalThis.fetch = originalFetch;
+  _setConfigDir(undefined);
   await rm(tempDir, { recursive: true, force: true });
 });
 
@@ -542,7 +544,7 @@ describe("checkEnvVars", () => {
 
 describe("checkConfigFile", () => {
   test("pass when config is valid", async () => {
-    process.env.CLERK_CONFIG_DIR = tempDir;
+    _setConfigDir(tempDir);
     await Bun.write(
       join(tempDir, "config.json"),
       JSON.stringify({ profiles: { "/a": {} }, auth: { userId: "u_1" } }),
@@ -557,7 +559,7 @@ describe("checkConfigFile", () => {
   });
 
   test("warn when config file does not exist", async () => {
-    process.env.CLERK_CONFIG_DIR = join(tempDir, "nonexistent");
+    _setConfigDir(join(tempDir, "nonexistent"));
     const ctx = createMockContext();
     const result = await checkConfigFile(ctx);
     expectCheck(result, {
@@ -569,7 +571,7 @@ describe("checkConfigFile", () => {
   });
 
   test("fail when config has invalid JSON", async () => {
-    process.env.CLERK_CONFIG_DIR = tempDir;
+    _setConfigDir(tempDir);
     await Bun.write(join(tempDir, "config.json"), "{ invalid json }");
     const ctx = createMockContext();
     const result = await checkConfigFile(ctx);
