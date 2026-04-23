@@ -5,10 +5,12 @@ import {
   asdfPluginFromPath,
   asdfReshim,
   findClerkOnPath,
+  findRunningInstallIndex,
   getInstallerPackageDirs,
   globalInstallCommand,
   ownerOfBinary,
   resolveAsdfShim,
+  safeRealpath,
   type Installer,
 } from "../../lib/installer.ts";
 import { log } from "../../lib/log.ts";
@@ -61,9 +63,29 @@ async function resolveTargets(
     unique.push(c);
   }
 
+  // Promote the install that owns the currently-running binary to primary.
+  // The binary the user just invoked is the authoritative update target:
+  // shell hash caches (zsh/bash) and PATH ordering quirks (asdf shims before
+  // `~/.bun/bin`) can make a fresh PATH walk disagree with what actually ran,
+  // leaving `clerk -v` unchanged after an "Updated" message because a
+  // different install got the upgrade. When the running binary isn't on PATH
+  // (invoked by absolute path, PATH mutated mid-session), fall through to
+  // PATH order.
+  const runningResolved = await safeRealpath(runningPath);
+  const runningIdx = findRunningInstallIndex(unique, runningResolved, installDirs);
+  const reordered =
+    runningIdx > 0
+      ? [unique[runningIdx]!, ...unique.slice(0, runningIdx), ...unique.slice(runningIdx + 1)]
+      : unique;
+
   // Fallback when PATH discovery yields nothing: use the running binary.
+  // `resolvedPath` gets the realpath'd variant so ownerOfBinary sees the
+  // same form (e.g. `/private/var/...` on macOS) that PM install dirs use —
+  // otherwise an unresolved `/var/...` execPath would fail owner matching.
   const effective =
-    unique.length > 0 ? unique : [{ displayPath: runningPath, resolvedPath: runningPath }];
+    reordered.length > 0
+      ? reordered
+      : [{ displayPath: runningPath, resolvedPath: runningResolved }];
 
   const toTarget = (c: { displayPath: string; resolvedPath: string }): Target => ({
     displayPath: c.displayPath,
