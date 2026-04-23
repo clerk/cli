@@ -9,6 +9,7 @@ import { CONFIG_FILE } from "./constants.ts";
 import { getCurrentEnvName } from "./environment.ts";
 import { getGitRepoIdentifier, getGitNormalizedRemote } from "./git.ts";
 import { CliError, ERROR_CODE } from "./errors.ts";
+import { withHomeFsAccess } from "./host-execution.ts";
 import { log } from "./log.ts";
 
 let overrideConfigFile: string | undefined;
@@ -19,7 +20,10 @@ export function _setConfigDir(dir: string | undefined): void {
 }
 
 export function getConfigFile(): string {
-  return overrideConfigFile ?? CONFIG_FILE;
+  return (
+    overrideConfigFile ??
+    (process.env.CLERK_CONFIG_DIR ? join(process.env.CLERK_CONFIG_DIR, "config.json") : CONFIG_FILE)
+  );
 }
 
 interface Auth {
@@ -72,21 +76,31 @@ function migrateRawConfig(raw: Record<string, unknown>): ClerkConfig {
 export async function readConfig(): Promise<ClerkConfig> {
   const path = getConfigFile();
   log.debug(`config: reading ${path}`);
-  const file = Bun.file(path);
-  if (!(await file.exists())) return defaultConfig();
-  try {
-    const raw = (await file.json()) as Record<string, unknown>;
-    return migrateRawConfig(raw);
-  } catch {
-    return defaultConfig();
-  }
+  return withHomeFsAccess(
+    { operation: "read", target: path, label: "CLI config directory" },
+    async () => {
+      const file = Bun.file(path);
+      if (!(await file.exists())) return defaultConfig();
+      try {
+        const raw = (await file.json()) as Record<string, unknown>;
+        return migrateRawConfig(raw);
+      } catch {
+        return defaultConfig();
+      }
+    },
+  );
 }
 
 export async function writeConfig(config: ClerkConfig): Promise<void> {
   const path = getConfigFile();
   log.debug(`config: writing ${path}`);
-  await mkdir(dirname(path), { recursive: true });
-  await Bun.write(path, JSON.stringify(config, null, 2) + "\n");
+  await withHomeFsAccess(
+    { operation: "write", target: path, label: "CLI config directory" },
+    async () => {
+      await mkdir(dirname(path), { recursive: true });
+      await Bun.write(path, JSON.stringify(config, null, 2) + "\n");
+    },
+  );
 }
 
 export async function getAuth(): Promise<Auth | undefined> {

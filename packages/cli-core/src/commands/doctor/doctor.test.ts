@@ -10,6 +10,10 @@ import type { Application } from "../../lib/plapi.ts";
 
 let mockUserInfo: { userId: string; email: string } | null = null;
 let mockUserInfoError: Error | null = null;
+let mockHostStateProbe = {
+  ok: true,
+  failures: [] as Array<{ label: string; path: string; error: string }>,
+};
 
 mock.module("../../lib/token-exchange.ts", () => ({
   ...tokenExchangeStubs,
@@ -20,8 +24,14 @@ mock.module("../../lib/token-exchange.ts", () => ({
 }));
 
 mock.module("../../lib/git.ts", () => gitStubs);
+mock.module("../../lib/host-execution.ts", () => ({
+  getAgentHostStateProbe: async () => mockHostStateProbe,
+  formatHostStateProbeFailures: (failures: Array<{ label: string; path: string; error: string }>) =>
+    failures.map((failure) => `${failure.label}: ${failure.error} (${failure.path})`).join("\n"),
+}));
 
 const {
+  checkHostExecution,
   checkLoggedIn,
   checkTokenValid,
   checkProjectLinked,
@@ -150,6 +160,7 @@ beforeEach(async () => {
 
   mockUserInfo = null;
   mockUserInfoError = null;
+  mockHostStateProbe = { ok: true, failures: [] };
 
   stubFetch(async () => new Response(JSON.stringify(mockApplication), { status: 200 }));
 });
@@ -177,6 +188,54 @@ describe("checkLoggedIn", () => {
       status: "fail",
       remedy: "clerk auth login",
       fix: true,
+    });
+  });
+});
+
+describe("checkHostExecution", () => {
+  test("pass when not in agent mode", async () => {
+    process.env.CLERK_MODE = "human";
+    const result = await checkHostExecution();
+    expectCheck(result, {
+      name: "Host execution",
+      status: "pass",
+      message: "Skipped (human mode)",
+    });
+  });
+
+  test("pass when agent mode has writable host state", async () => {
+    process.env.CLERK_MODE = "agent";
+    mockHostStateProbe = { ok: true, failures: [] };
+
+    const result = await checkHostExecution();
+    expectCheck(result, {
+      name: "Host execution",
+      status: "pass",
+      message: "writable in agent mode",
+    });
+  });
+
+  test("warn when agent mode cannot write host state", async () => {
+    process.env.CLERK_MODE = "agent";
+    mockHostStateProbe = {
+      ok: false,
+      failures: [
+        {
+          label: "CLI config directory",
+          path: "/Users/test/Library/Preferences/clerk-cli/.clerk-write-probe-1",
+          error: "EPERM: operation not permitted",
+        },
+      ],
+    };
+
+    const result = await checkHostExecution();
+    expectCheck(result, {
+      name: "Host execution",
+      status: "warn",
+      message: "not writable in agent mode",
+      remedy: "Re-run the command on the host shell",
+      detail: "EPERM: operation not permitted",
+      fix: false,
     });
   });
 });

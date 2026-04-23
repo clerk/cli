@@ -8,6 +8,7 @@ import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import { CLERK_CACHE_DIR, CACHE_TTL_MS, OPENAPI_SPEC_URLS } from "../../lib/constants.ts";
 import { CliError, ERROR_CODE } from "../../lib/errors.ts";
+import { withHomeFsAccess, withNetworkAccess } from "../../lib/host-execution.ts";
 import { withSpinner } from "../../lib/spinner.ts";
 import { log } from "../../lib/log.ts";
 
@@ -54,19 +55,31 @@ function cacheFilePath(platform: boolean): string {
 // ── Cache I/O ──────────────────────────────────────────────────────────────
 
 async function readCache(platform: boolean): Promise<Catalog | null> {
-  try {
-    const file = Bun.file(cacheFilePath(platform));
-    if (!(await file.exists())) return null;
-    const data = await file.json();
-    return data as Catalog;
-  } catch {
-    return null;
-  }
+  const path = cacheFilePath(platform);
+  return withHomeFsAccess(
+    { operation: "read", target: path, label: "CLI cache directory" },
+    async () => {
+      try {
+        const file = Bun.file(path);
+        if (!(await file.exists())) return null;
+        const data = await file.json();
+        return data as Catalog;
+      } catch {
+        return null;
+      }
+    },
+  );
 }
 
 async function writeCache(platform: boolean, catalog: Catalog): Promise<void> {
-  await mkdir(cacheDir(), { recursive: true });
-  await Bun.write(cacheFilePath(platform), JSON.stringify(catalog));
+  const path = cacheFilePath(platform);
+  await withHomeFsAccess(
+    { operation: "write", target: path, label: "CLI cache directory" },
+    async () => {
+      await mkdir(cacheDir(), { recursive: true });
+      await Bun.write(path, JSON.stringify(catalog));
+    },
+  );
 }
 
 // ── Spec parsing ───────────────────────────────────────────────────────────
@@ -128,7 +141,10 @@ export async function loadCatalog(options: { platform?: boolean } = {}): Promise
   const url = platform ? OPENAPI_SPEC_URLS.platform : OPENAPI_SPEC_URLS.bapi;
   try {
     const catalog = await withSpinner("Fetching API catalog...", async () => {
-      const response = await fetch(url);
+      const response = await withNetworkAccess(
+        { operation: "connect", target: url, label: "api-catalog" },
+        async () => fetch(url),
+      );
       if (!response.ok) {
         throw new Error(`HTTP ${response.status}`);
       }

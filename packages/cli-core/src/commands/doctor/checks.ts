@@ -15,6 +15,8 @@ import {
   formatChannelFlag,
   formatChannelLabel,
 } from "../../lib/update-check.ts";
+import { formatHostStateProbeFailures, getAgentHostStateProbe } from "../../lib/host-execution.ts";
+import { isAgent } from "../../mode.ts";
 import type { CheckResult, DoctorContext, FixAction } from "./types.ts";
 
 interface CheckOptions {
@@ -73,6 +75,25 @@ export async function checkLoggedIn(ctx: DoctorContext): Promise<CheckResult> {
     });
   }
   return check.pass("Logged in (token found in credential store)");
+}
+
+export async function checkHostExecution(): Promise<CheckResult> {
+  const check = defineCheck("Host execution");
+  if (!isAgent()) {
+    return check.pass("Skipped (human mode)");
+  }
+
+  const probe = await getAgentHostStateProbe();
+  if (probe.ok) {
+    return check.pass("Host-only Clerk state is writable in agent mode");
+  }
+
+  return check.warn("Host-only Clerk state is not writable in agent mode", {
+    detail: formatHostStateProbeFailures(probe.failures),
+    remedy:
+      "This may be a sandboxed run. Re-run the command on the host shell before trusting auth, link, env, or API failures.",
+    fixable: false,
+  });
 }
 
 export async function checkTokenValid(ctx: DoctorContext): Promise<CheckResult> {

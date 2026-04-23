@@ -9,6 +9,7 @@
  */
 
 import { log } from "./log.ts";
+import { withNetworkAccess } from "./host-execution.ts";
 
 export type LoggedFetchInit = RequestInit & { tag: string };
 
@@ -17,7 +18,10 @@ export async function loggedFetch(url: URL | string, options: LoggedFetchInit): 
   const method = init.method ?? "GET";
   const urlStr = url.toString();
   log.debug(`${tag}: ${method} ${urlStr}`);
-  const response = await fetch(url, init);
+  const response = await withNetworkAccess(
+    { operation: "connect", target: urlStr, label: tag },
+    async () => fetch(url, init),
+  );
   if (!response.ok) {
     // Clone so the caller can still consume the body for error construction.
     const body = await response.clone().text();

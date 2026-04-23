@@ -7,11 +7,16 @@
  * File fallback: "credentials.<envName>"
  */
 
-import { dirname } from "node:path";
+import { dirname, join } from "node:path";
 import { mkdir, chmod, writeFile, unlink } from "node:fs/promises";
 import { CREDENTIALS_FILE } from "./constants.ts";
 import { getCurrentEnvName } from "./environment.ts";
 import { ApiError, AuthError, CliError, ERROR_CODE, errorMessage } from "./errors.ts";
+import {
+  observeHostCapabilityFailure,
+  withHomeFsAccess,
+  withKeychainAccess,
+} from "./host-execution.ts";
 import { log } from "./log.ts";
 import { refreshAccessToken, type TokenResponse } from "./token-exchange.ts";
 import { resolveCliVersion } from "./version.ts";
@@ -37,9 +42,12 @@ function keychainAccount(): string {
 }
 
 function credentialsFile(): string {
+  const basePath = process.env.CLERK_CONFIG_DIR
+    ? join(process.env.CLERK_CONFIG_DIR, "credentials")
+    : CREDENTIALS_FILE;
   const envName = getCurrentEnvName();
-  if (envName === "production") return CREDENTIALS_FILE;
-  return `${CREDENTIALS_FILE}.${envName}`;
+  if (envName === "production") return basePath;
+  return `${basePath}.${envName}`;
 }
 
 let keyringModule: typeof import("@napi-rs/keyring") | null | undefined;
@@ -104,14 +112,24 @@ async function keyringStore(value: string): Promise<boolean> {
   const service = await resolveKeychainService();
   const account = keychainAccount();
   log.debug(`credentials: storing session in keyring (service=${service}, account=${account})`);
-  try {
-    const entry = new mod.Entry(service, account);
-    entry.setPassword(value);
-    return true;
-  } catch (error) {
-    log.debug(`credentials: failed to store session in keyring: ${errorMessage(error)}`);
-    return false;
-  }
+  return withKeychainAccess(
+    { operation: "write", target: `${service}/${account}`, label: "credential keychain entry" },
+    async () => {
+      try {
+        const entry = new mod.Entry(service, account);
+        entry.setPassword(value);
+        return true;
+      } catch (error) {
+        observeHostCapabilityFailure("keychain", error, {
+          operation: "write",
+          target: `${service}/${account}`,
+          label: "credential keychain entry",
+        });
+        log.debug(`credentials: failed to store session in keyring: ${errorMessage(error)}`);
+        return false;
+      }
+    },
+  );
 }
 
 async function keyringGet(): Promise<string | null> {
@@ -123,15 +141,25 @@ async function keyringGet(): Promise<string | null> {
   const service = await resolveKeychainService();
   const account = keychainAccount();
   log.debug(`credentials: checking keyring (service=${service}, account=${account})`);
-  try {
-    const entry = new mod.Entry(service, account);
-    const value = entry.getPassword();
-    log.debug(`credentials: ${value ? "found session in keyring" : "no session in keyring"}`);
-    return value;
-  } catch (error) {
-    log.debug(`credentials: keyring lookup failed: ${errorMessage(error)}`);
-    return null;
-  }
+  return withKeychainAccess(
+    { operation: "read", target: `${service}/${account}`, label: "credential keychain entry" },
+    async () => {
+      try {
+        const entry = new mod.Entry(service, account);
+        const value = entry.getPassword();
+        log.debug(`credentials: ${value ? "found session in keyring" : "no session in keyring"}`);
+        return value;
+      } catch (error) {
+        observeHostCapabilityFailure("keychain", error, {
+          operation: "read",
+          target: `${service}/${account}`,
+          label: "credential keychain entry",
+        });
+        log.debug(`credentials: keyring lookup failed: ${errorMessage(error)}`);
+        return null;
+      }
+    },
+  );
 }
 
 async function keyringDelete(): Promise<boolean> {
@@ -140,46 +168,71 @@ async function keyringDelete(): Promise<boolean> {
   const service = await resolveKeychainService();
   const account = keychainAccount();
   log.debug(`credentials: deleting session from keyring (service=${service}, account=${account})`);
-  try {
-    const entry = new mod.Entry(service, account);
-    entry.deletePassword();
-    return true;
-  } catch {
-    return false;
-  }
+  return withKeychainAccess(
+    { operation: "delete", target: `${service}/${account}`, label: "credential keychain entry" },
+    async () => {
+      try {
+        const entry = new mod.Entry(service, account);
+        entry.deletePassword();
+        return true;
+      } catch (error) {
+        observeHostCapabilityFailure("keychain", error, {
+          operation: "delete",
+          target: `${service}/${account}`,
+          label: "credential keychain entry",
+        });
+        return false;
+      }
+    },
+  );
 }
 
 async function fileStore(value: string): Promise<void> {
   const path = credentialsFile();
   log.debug(`credentials: storing session in file ${path}`);
-  await mkdir(dirname(path), { recursive: true, mode: 0o700 });
-  await writeFile(path, value, { mode: 0o600 });
-  // We keep the chmod because if the file permission had changed
-  // `writeFile` wouldn't set it back to 0o600
-  await chmod(path, 0o600);
+  await withHomeFsAccess(
+    { operation: "write", target: path, label: "credential fallback directory" },
+    async () => {
+      await mkdir(dirname(path), { recursive: true, mode: 0o700 });
+      await writeFile(path, value, { mode: 0o600 });
+      // We keep the chmod because if the file permission had changed
+      // `writeFile` wouldn't set it back to 0o600
+      await chmod(path, 0o600);
+    },
+  );
 }
 
 async function fileGet(): Promise<string | null> {
   const path = credentialsFile();
   log.debug(`credentials: checking file ${path}`);
-  const file = Bun.file(path);
-  if (!(await file.exists())) {
-    log.debug("credentials: credentials file not found");
-    return null;
-  }
-  const value = (await file.text()).trim() || null;
-  log.debug(`credentials: ${value ? "found session in file" : "credentials file is empty"}`);
-  return value;
+  return withHomeFsAccess(
+    { operation: "read", target: path, label: "credential fallback directory" },
+    async () => {
+      const file = Bun.file(path);
+      if (!(await file.exists())) {
+        log.debug("credentials: credentials file not found");
+        return null;
+      }
+      const value = (await file.text()).trim() || null;
+      log.debug(`credentials: ${value ? "found session in file" : "credentials file is empty"}`);
+      return value;
+    },
+  );
 }
 
 async function fileDelete(): Promise<void> {
   const path = credentialsFile();
-  try {
-    log.debug(`credentials: deleting credentials file ${path}`);
-    await unlink(path);
-  } catch {
-    // File doesn't exist, nothing to delete
-  }
+  await withHomeFsAccess(
+    { operation: "delete", target: path, label: "credential fallback directory" },
+    async () => {
+      try {
+        log.debug(`credentials: deleting credentials file ${path}`);
+        await unlink(path);
+      } catch {
+        // File doesn't exist, nothing to delete
+      }
+    },
+  );
 }
 
 function isOAuthSession(value: unknown): value is OAuthSession {

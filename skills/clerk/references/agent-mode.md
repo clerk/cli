@@ -2,6 +2,40 @@
 
 The Clerk CLI has a first-class "agent" mode that's designed for non-interactive and AI-driven use. Read this before writing scripts or letting an LLM drive the CLI.
 
+## Sandbox warning semantics
+
+Agent mode and sandboxing are related but not identical:
+
+- **Agent mode** controls non-interactive behavior.
+- **Sandboxing** controls whether the CLI can actually reach host-only Clerk
+  state and host system capabilities.
+
+In agent mode, the CLI now performs a **best-effort warn-once check** at the
+host-sensitive integration boundaries. The first time an invocation hits a
+blocked host capability, it emits:
+
+```text
+Host-only Clerk state or system capabilities may be unavailable in agent mode. This may be a sandboxed run.
+Re-run this command on the host shell before trusting auth, link, env, or API failures.
+```
+
+Treat that warning as authoritative. The command may still continue and return
+an ordinary Clerk error, but any auth/link/env/config/API/browser/OAuth
+failure from that invocation should be treated as suspect until rerun on the
+host.
+
+The warning can be triggered by:
+
+- home-directory Clerk config / credential file access
+- OS keychain access
+- outbound Clerk network requests
+- browser launch
+- localhost callback server binding for OAuth
+
+If your harness does not obviously look non-interactive, force agent behavior
+with `--mode agent` or `CLERK_MODE=agent` so the CLI's non-interactive and
+sandbox-warning paths apply deterministically.
+
 ## How agent mode is detected
 
 Priority (first match wins):
@@ -27,6 +61,9 @@ Force human mode with `--mode human` or `CLERK_MODE=human`. Typical AI-agent inv
 | `clerk auth login` when already authenticated                    | Prompt to re-auth              | Silent no-op                                                                                                                                                          |
 | `clerk init`                                                     | Full interactive scaffold flow | Skips the interactive scaffold and either runs non-interactively with `--yes` or, with `--prompt`, emits a short agent handoff pointing the agent at `clerk init -y`. |
 | Color / spinners                                                 | Enabled                        | Disabled                                                                                                                                                              |
+
+In addition, sandboxed agent-mode invocations may emit the warning above once
+per CLI invocation when a host-sensitive operation is blocked.
 
 **Rule of thumb:** always pass `--yes` for mutations, `--json` for structured output where available, and `--app` / `--instance` explicitly instead of relying on pickers.
 
@@ -87,6 +124,11 @@ clerk doctor --json --spotlight
 
 Parse the output, then for each failing check read `remedy` and act. Never call `--fix` from an agent — it's interactive.
 
+In agent mode, `doctor` also includes a **`Host execution`** check when it can
+detect that Clerk's host-side state is not writable. If that check warns, stop
+trusting auth/link/env/API failures from the same sandboxed run and rerun the
+relevant command on the host.
+
 ### Preview every mutation
 
 ```sh
@@ -134,6 +176,7 @@ All three remediation commands are themselves interactive by default: `auth logi
 
 ## What NOT to do in agent mode
 
+- **Don't ignore the sandbox warning.** If the CLI says host-only Clerk state or system capabilities may be unavailable, rerun the same command on the host before trusting the result.
 - **Don't call `clerk auth login` from an agent and expect it to work** — it opens a browser and waits for a callback. Instead, export `CLERK_PLATFORM_API_KEY`.
 - **Don't call `clerk link` without `--app` and assume the agent can pick for you** — it only succeeds when silent autolink can determine the app from detected keys.
 - **Don't run `clerk unlink` in agent mode without `--yes`** — it exits with a usage error instead of prompting.
