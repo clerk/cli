@@ -227,7 +227,7 @@ async function pickOrCreateApp(apps: Application[], displayPath: string): Promis
       const filtered = term
         ? appChoices.filter((c) => c.name.toLowerCase().includes(term.toLowerCase()))
         : appChoices;
-      return [...filtered, createChoice];
+      return [createChoice, ...filtered];
     },
   });
 
