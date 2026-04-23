@@ -21,6 +21,8 @@
  * cannot complete without the user reaching the URL.
  */
 
+import { observeHostCapabilityFailure, withBrowserLaunch } from "./host-execution.ts";
+
 /** Outcome of an `openBrowser` call. */
 export type OpenResult =
   | { ok: true; launcher: string }
@@ -82,43 +84,55 @@ export async function openBrowser(url: string): Promise<OpenResult> {
   const command = launcher === "start" ? ["cmd.exe", "/c", "start", "", url] : [launcher, url];
 
   try {
-    const proc = Bun.spawn(command, {
-      // Detach so the parent process (clerk CLI) can exit without waiting
-      // for the browser to close.
-      stdout: "ignore",
-      stderr: "ignore",
-      stdin: "ignore",
-    });
+    const result = await withBrowserLaunch(
+      { operation: "open", target: url, label: launcher },
+      async () => {
+        const proc = Bun.spawn(command, {
+          // Detach so the parent process (clerk CLI) can exit without waiting
+          // for the browser to close.
+          stdout: "ignore",
+          stderr: "ignore",
+          stdin: "ignore",
+        });
 
-    // Race the launcher's exit against a short grace period. Real launchers
-    // (open, xdg-open, wslview, cmd start) hand off to the OS and exit within
-    // a few ms, so the common case is either:
-    //   - exit code 0 before the timer fires -> clear success
-    //   - still running after 150ms -> effectively success, fire-and-forget
-    // The case we care about catching is a fast non-zero exit, which happens
-    // in headless/misconfigured environments (e.g. xdg-open with no DISPLAY).
-    // Without this we'd return ok:true and the caller would skip printing the
-    // fallback URL, leaving auth login to hang on the OAuth callback.
-    const GRACE_MS = 150;
-    const outcome = await Promise.race([
-      proc.exited.then(
-        (code) => ({ kind: "exited" as const, code }),
-        () => ({ kind: "failed" as const }),
-      ),
-      new Promise<{ kind: "running" }>((resolve) =>
-        setTimeout(() => resolve({ kind: "running" }), GRACE_MS),
-      ),
-    ]);
+        // Race the launcher's exit against a short grace period. Real launchers
+        // (open, xdg-open, wslview, cmd start) hand off to the OS and exit within
+        // a few ms, so the common case is either:
+        //   - exit code 0 before the timer fires -> clear success
+        //   - still running after 150ms -> effectively success, fire-and-forget
+        // The case we care about catching is a fast non-zero exit, which happens
+        // in headless/misconfigured environments (e.g. xdg-open with no DISPLAY).
+        // Without this we'd return ok:true and the caller would skip printing the
+        // fallback URL, leaving auth login to hang on the OAuth callback.
+        const GRACE_MS = 150;
+        const outcome = await Promise.race([
+          proc.exited.then(
+            (code) => ({ kind: "exited" as const, code }),
+            () => ({ kind: "failed" as const }),
+          ),
+          new Promise<{ kind: "running" }>((resolve) =>
+            setTimeout(() => resolve({ kind: "running" }), GRACE_MS),
+          ),
+        ]);
 
-    if (outcome.kind === "failed" || (outcome.kind === "exited" && outcome.code !== 0)) {
-      return { ok: false, reason: "spawn-failed" };
-    }
+        if (outcome.kind === "failed" || (outcome.kind === "exited" && outcome.code !== 0)) {
+          observeHostCapabilityFailure("browser-launch", new Error("spawn-failed"), {
+            operation: "open",
+            target: url,
+            label: launcher,
+          });
+          return { ok: false as const, reason: "spawn-failed" as const };
+        }
 
-    // Still running (or exited cleanly). Swallow any later rejection so it
-    // doesn't surface as an unhandled promise rejection after the CLI moves on.
-    proc.exited.catch(() => {});
-    return { ok: true, launcher };
+        // Still running (or exited cleanly). Swallow any later rejection so it
+        // doesn't surface as an unhandled promise rejection after the CLI moves on.
+        proc.exited.catch(() => {});
+        return { ok: true as const, launcher };
+      },
+    );
+
+    return result;
   } catch {
-    return { ok: false, reason: "spawn-failed" };
+    return { ok: false as const, reason: "spawn-failed" };
   }
 }

@@ -34,6 +34,37 @@ When you run `clerk api --platform ...`, or any command that already uses PLAPI 
 
 Set `CLERK_PLATFORM_API_KEY` for CI and scripted agent usage. Use `clerk auth login` for local interactive development.
 
+## Host vs sandbox behavior
+
+These auth and targeting rules only produce trustworthy results when the CLI
+can actually reach the user's host state.
+
+In agent mode, the CLI now emits a best-effort warning once per invocation
+when it detects that host-only Clerk state or system capabilities are
+unavailable:
+
+```text
+Host-only Clerk state or system capabilities may be unavailable in agent mode. This may be a sandboxed run.
+Re-run this command on the host shell before trusting auth, link, env, or API failures.
+```
+
+That warning usually means one of the following is blocked:
+
+- Clerk home-directory config or fallback credential files
+- OS keychain access
+- outbound Clerk network access
+- browser launch or localhost OAuth callback setup
+
+When that warning appears, stop trusting the current invocation's auth or
+targeting result. A sandboxed run can misreport:
+
+- `Not logged in` / `auth_required`
+- `Not authenticated. Run clerk auth login or set CLERK_PLATFORM_API_KEY`
+- `No Clerk project linked`
+- missing env or missing linked profile state
+
+Rerun the same command on the host before acting on it.
+
 > **`config` commands do not accept `--secret-key`.** They target the Platform API and authenticate via the PLAPI chain above (`CLERK_PLATFORM_API_KEY` or the stored OAuth token). If you need to script `config pull/schema/patch/put` in CI, export `CLERK_PLATFORM_API_KEY`; a Backend API `sk_...` key will not work.
 
 ## Project linking
@@ -85,6 +116,9 @@ OAuth 2.0 PKCE flow against the Clerk OAuth system instance (`https://clerk.cler
 6. Stores the token in the OS credential store.
 
 In agent mode, if already authenticated, it's a no-op. If not, it prints guidance rather than opening a browser.
+In a sandbox, even the "already authenticated" check can be false if the
+keychain or fallback credential file is blocked, so rerun on the host before
+trusting a sandboxed auth failure.
 
 ### `clerk auth logout`
 
@@ -110,11 +144,12 @@ Hits `GET /oauth/userinfo` with the stored token and prints the email. Exits wit
 
 ## Common auth failure modes
 
-| Symptom                     | Likely cause                                                  | Fix                                                          |
-| --------------------------- | ------------------------------------------------------------- | ------------------------------------------------------------ |
-| `Not authenticated`         | No token stored, no `CLERK_PLATFORM_API_KEY`                  | `clerk auth login` or export `CLERK_PLATFORM_API_KEY`        |
-| `No Clerk project linked`   | Running a command that needs a linked profile with no `--app` | `clerk link` or pass `--app <id>`                            |
-| `Invalid secret key prefix` | Passed `ak_...` where `sk_...` expected (or vice versa)       | Check which API the command hits; pass the matching key type |
-| `Unauthorized` from API     | Key belongs to a different instance                           | Verify `--instance` and ensure the key matches               |
+| Symptom                             | Likely cause                                                  | Fix                                                          |
+| ----------------------------------- | ------------------------------------------------------------- | ------------------------------------------------------------ |
+| `Not authenticated`                 | No token stored, no `CLERK_PLATFORM_API_KEY`                  | `clerk auth login` or export `CLERK_PLATFORM_API_KEY`        |
+| `No Clerk project linked`           | Running a command that needs a linked profile with no `--app` | `clerk link` or pass `--app <id>`                            |
+| `Invalid secret key prefix`         | Passed `ak_...` where `sk_...` expected (or vice versa)       | Check which API the command hits; pass the matching key type |
+| `Unauthorized` from API             | Key belongs to a different instance                           | Verify `--instance` and ensure the key matches               |
+| Sandbox warning + auth/link failure | Host-only Clerk state or system capabilities are blocked      | Rerun the same command on the host before trusting the error |
 
 When in doubt: `clerk doctor --json` walks through all of this and tells you exactly what's wrong.
