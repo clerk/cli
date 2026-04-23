@@ -42,7 +42,7 @@ deterministic paths:
    - If the user confirms (default), links to the detected app
    - If the user declines, falls through to the interactive picker
 8. If no match (or no apps exist), presents a searchable picker (type to filter by name)
-   - The picker always includes a "+ Create a new application" option pinned at the bottom
+   - The picker always includes a "+ Create a new application" option pinned at the top
    - Selecting it prompts for a name and creates the app via the Platform API
    - For non-interactive/CI/agent flows, create apps from the Clerk Dashboard or via the Platform API, then pass `--app <id>`
 9. Stores the profile in the config file keyed by the normalized remote URL
