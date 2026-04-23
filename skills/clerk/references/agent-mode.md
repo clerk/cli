@@ -69,44 +69,25 @@ per CLI invocation when a host-sensitive operation is blocked.
 
 ## Passing options as JSON: `--input-json`
 
-Every Clerk CLI command accepts `--input-json <value>`. The value can be either an inline JSON object or `@path/to/file.json` to read from disk. Keys are converted from camelCase / snake_case to kebab-case and expanded into flags before Commander parses the command line, so anything a command accepts as a flag can be passed via JSON.
+Every command accepts `--input-json <json|@file>`. Keys convert from camelCase/snake_case to kebab-case and expand into flags before Commander parses argv — so anything a command accepts as a flag can come from JSON instead.
 
 ```sh
-# Inline JSON — equivalent to `clerk init --framework next --yes`
 clerk init --input-json '{"framework":"next","yes":true}'
-
-# Read the JSON body from a file
-clerk init --input-json @init-opts.json
-
-# Array values expand to repeated flags: --keys auth_email --keys session
-clerk config pull --input-json '{"keys":["auth_email","session"]}'
+clerk config pull --input-json '{"keys":["auth_email","session"]}'  # arrays → repeated flags
+clerk apps create --input-json @app.json                            # or read from a file
 ```
 
-Expansion rules:
+| JSON             | Expansion                               |
+| ---------------- | --------------------------------------- |
+| `"str"` / number | `--flag <value>`                        |
+| `true`           | `--flag`                                |
+| `false` / `null` | omitted                                 |
+| `["a","b"]`      | `--flag a --flag b` (empty arrays omit) |
+| `{…}` (nested)   | rejected — `invalid_json`, exit `2`     |
 
-| JSON value       | Expansion                                          |
-| ---------------- | -------------------------------------------------- |
-| `"str"` / number | `--flag <value>` (numbers are stringified)         |
-| `true`           | `--flag`                                           |
-| `false` / `null` | omitted entirely                                   |
-| `["a","b"]`      | `--flag a --flag b` (empty arrays are omitted)     |
-| `{…}` (nested)   | **rejected** with a `usage_error` (`invalid_json`) |
+**Placement.** Put `--input-json` after the leaf subcommand. Before it, flags land on the root program, so only `--mode` / `--verbose` work there — subcommand flags (`--json`, `--app`, etc.) error as unknown. Explicit flags after `--input-json` override its values (last-flag-wins).
 
-Key conversion: `dryRun` → `--dry-run`, `noSkills` → `--no-skills`, `secret_key` → `--secret-key`.
-
-Precedence and placement:
-
-- Explicit flags always win over JSON-sourced flags when both are present. The JSON is expanded at the position of `--input-json` in argv, so any explicit flag that appears **after** it overrides the JSON value (standard Commander "last flag wins" semantics).
-- Placement matters for subcommand flags. `clerk apps list --input-json '{"json":true}'` works because the expansion lands after the subcommand. `clerk --input-json '{"json":true}' apps list` expands to `clerk --json apps list`, which errors — `--json` is not a root-level option.
-- Rule of thumb: place `--input-json` immediately after the leaf subcommand (e.g., after `apps list`, after `config patch`), so expanded flags target that subcommand.
-
-Error codes follow the standard agent-mode format:
-
-- Invalid JSON, primitives, arrays, or nested objects → `{"error":{"code":"invalid_json", ...}}` on stderr, exit `2`.
-- Missing `@file` target → `{"error":{"code":"file_not_found", ...}}`, exit `2`.
-- Unknown flags produced by key expansion → Commander's usual `unknown option` usage error, exit `2`.
-
-Use `--input-json` when an agent wants to pass structured options (often from a tool call's JSON args) without building a shell command string.
+Errors use the standard agent-mode format: bad JSON → `invalid_json`, missing `@file` → `file_not_found`, unknown expanded flags → Commander's `unknown option`. All exit `2`.
 
 ## Exit codes
 
