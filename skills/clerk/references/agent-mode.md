@@ -134,6 +134,7 @@ All three remediation commands are themselves interactive by default: `auth logi
 
 ## What NOT to do in agent mode
 
+- **Don't trust sandboxed output.** AI agent sandboxes hide the credential store, `~/.clerk`, the linked project metadata, local `.env*` files, and outbound network. `clerk doctor`, `whoami`, `auth login`, `link`, `env pull`, `apps`, `config`, and `api` all need host execution. See "Execution environment" in the skill's main `SKILL.md`. If a sandboxed run reports an auth/link/env/credential/network failure, rerun it on the host before acting on the result.
 - **Don't call `clerk auth login` from an agent and expect it to work** — it opens a browser and waits for a callback. Instead, export `CLERK_PLATFORM_API_KEY`.
 - **Don't call `clerk link` without `--app` and assume the agent can pick for you** — it only succeeds when silent autolink can determine the app from detected keys.
 - **Don't run `clerk unlink` in agent mode without `--yes`** — it exits with a usage error instead of prompting.

@@ -15,6 +15,32 @@ The `clerk` binary is a pre-authenticated gateway to Clerk's Backend API and Pla
 
 > This skill was installed by `clerk init` (or `clerk skill install`) and is pinned to clerk `{{CLI_VERSION}}`. If `clerk --version` disagrees, refresh it with `clerk skill install` (or `bunx clerk@{{CLI_VERSION}} skill install`). The binary is always the source of truth, so run `clerk <command> --help` to verify anything this skill claims.
 
+## Execution environment (run on the host, not a sandbox)
+
+Most AI coding agents default to running shell commands in a sandbox where
+network access, credential stores, and the user's home directory are
+unavailable. The Clerk CLI cannot work there. It depends on host-local state:
+
+- **OS credential store**: `clerk auth login` stores the OAuth token in the
+  system keychain. A sandbox without keychain access reports "not logged in"
+  even when the host is authenticated.
+- **`~/.clerk`**: saved profile, selected app/instance, and cached metadata.
+- **Linked project metadata**: resolved from the repo's git remote plus
+  local config. Sandboxes with a read-only or stripped repo see no link.
+- **Local `.env*` files**: publishable and secret keys materialized by
+  `clerk env pull`.
+- **Outbound network access to Clerk**: every Backend and Platform API call.
+
+**Run these commands on the user's host shell, not in a sandbox:**
+
+`clerk doctor`, `clerk whoami`, `clerk auth login`, `clerk link`, `clerk env pull`,
+`clerk apps ...`, `clerk config ...`, `clerk api ...`.
+
+If a command was accidentally run in a sandbox and it reports "not signed in",
+"no app linked", missing env, credential-store errors, or network failures,
+**do not treat the result as authoritative**. Rerun it on the host before
+acting on it or reporting it to the user.
+
 ## Invoking the CLI
 
 Before running any `clerk` command, figure out which binary to invoke and bind that choice for the rest of the session:
