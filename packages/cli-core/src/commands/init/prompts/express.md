@@ -74,3 +74,5 @@ If any fails, revise.
 ## After Setup
 
 Have the user test the protected route by sending a request without authentication (should get 401) and with a valid session token (should succeed). Then recommend exploring: Dashboard (https://dashboard.clerk.com/).
+
+If you (the agent) need to create test users programmatically to exercise auth-gated code, use a `+clerk_test` email suffix. Clerk accepts `424242` as the OTP for these addresses, so you don't need inbox access. Development instances only.
