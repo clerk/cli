@@ -52,6 +52,23 @@ clerk api /users/user_abc123 -X DELETE --dry-run
 clerk api /users/user_abc123 -X DELETE --yes
 ```
 
+### Test users (development only)
+
+For test accounts you need to sign into without real email access, use the `+clerk_test` email suffix. Clerk recognizes these as test emails: no message is sent, and the verification code is a fixed `424242`. The domain portion is arbitrary.
+
+```sh
+# Create a test user (dev instance)
+clerk api /users -d '{
+  "email_address": ["demo+clerk_test@example.com"],
+  "password": "TestPass123!",
+  "skip_password_checks": true
+}'
+```
+
+When signing in as this user in a browser or Playwright, enter `424242` at the OTP prompt.
+
+This pattern only applies to development instances. In production, client trust blocks sign-in regardless of the suffix. See [Clerk's test emails and phones reference](https://clerk.com/docs/testing/test-emails-and-phones) for the complete list of magic values (OTPs, phone numbers, test cards).
+
 ## Organizations
 
 ```sh
