@@ -54,10 +54,12 @@ clerk api /users/user_abc123 -X DELETE --yes
 
 ### Test users (development only)
 
-For test accounts you need to sign into without real email access, use the `+clerk_test` email suffix. Clerk recognizes these as test emails: no message is sent, and the verification code is a fixed `424242`. The domain portion is arbitrary.
+For test accounts you need to sign into without real email or SMS delivery, Clerk provides two magic patterns that both verify with the fixed OTP `424242`. Use them on development instances; production rejects them.
+
+**By email.** Any address with the `+clerk_test` subaddress is recognized as a test email. The domain portion is arbitrary.
 
 ```sh
-# Create a test user (dev instance)
+# Create a test user with a test email (dev instance)
 clerk api /users -d '{
   "email_address": ["demo+clerk_test@example.com"],
   "password": "TestPass123!",
@@ -65,9 +67,20 @@ clerk api /users -d '{
 }'
 ```
 
-When signing in as this user in a browser or Playwright, enter `424242` at the OTP prompt.
+**By phone.** Any US fictional phone number in the `+1 (XXX) 555-0100` through `+1 (XXX) 555-0199` range is recognized as a test phone. Pass the E.164 form.
 
-This pattern only applies to development instances. In production, client trust blocks sign-in regardless of the suffix. See [Clerk's test emails and phones reference](https://clerk.com/docs/testing/test-emails-and-phones) for the complete list of magic values (OTPs, phone numbers, test cards).
+```sh
+# Create a test user with a test phone (dev instance)
+clerk api /users -d '{
+  "phone_number": ["+12015550100"],
+  "password": "TestPass123!",
+  "skip_password_checks": true
+}'
+```
+
+When signing in as either user in a browser or Playwright, enter `424242` at the OTP prompt.
+
+These patterns only apply to development instances. In production, client trust blocks sign-in regardless of suffix or number, and using real-looking test addresses is highly discouraged. Test addresses and numbers do not count against the dev-instance monthly caps (20 SMS, 100 emails). See [Clerk's test emails and phones reference](https://clerk.com/docs/guides/development/testing/test-emails-and-phones) for the full contract.
 
 ## Organizations
 
