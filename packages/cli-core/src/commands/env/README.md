@@ -31,7 +31,7 @@ sequenceDiagram
         CLI->>API: GET /v1/platform/applications/{appId}
         API-->>CLI: { instances }
     else Resolve project profile
-        CLI->>FS: Read ~/.clerk/config.json
+        CLI->>FS: Read CLI config file
         FS-->>CLI: { appId, instances }
     end
 

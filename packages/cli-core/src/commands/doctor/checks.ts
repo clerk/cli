@@ -1,5 +1,6 @@
 import { join } from "node:path";
 import { homedir } from "node:os";
+import { getConfigFile } from "../../lib/config.ts";
 import { fetchUserInfo } from "../../lib/token-exchange.ts";
 import { errorMessage, isAuthError, PlapiError } from "../../lib/errors.ts";
 import { detectPublishableKeyName, detectSecretKeyName } from "../../lib/framework.ts";
@@ -300,11 +301,6 @@ export async function checkConfigFile(ctx: DoctorContext): Promise<CheckResult> 
       remedy: `Check the JSON syntax in ${configFile}, or delete it and re-run \`clerk auth login\`.`,
     });
   }
-}
-
-function getConfigFile(): string {
-  const homeDir = process.env.CLERK_CONFIG_DIR ?? join(homedir(), ".clerk");
-  return join(homeDir, "config.json");
 }
 
 // ── CLI version check ─────────────────────────────────────────────────────────

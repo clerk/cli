@@ -15,10 +15,10 @@ let overrideConfigFile: string | undefined;
 
 /** Test-only: override the config file path. Pass undefined to reset. */
 export function _setConfigDir(dir: string | undefined): void {
-  overrideConfigFile = dir ? `${dir}/config.json` : undefined;
+  overrideConfigFile = dir ? join(dir, "config.json") : undefined;
 }
 
-function configFile(): string {
+export function getConfigFile(): string {
   return overrideConfigFile ?? CONFIG_FILE;
 }
 
@@ -70,7 +70,7 @@ function migrateRawConfig(raw: Record<string, unknown>): ClerkConfig {
 }
 
 export async function readConfig(): Promise<ClerkConfig> {
-  const path = configFile();
+  const path = getConfigFile();
   log.debug(`config: reading ${path}`);
   const file = Bun.file(path);
   if (!(await file.exists())) return defaultConfig();
@@ -83,7 +83,7 @@ export async function readConfig(): Promise<ClerkConfig> {
 }
 
 export async function writeConfig(config: ClerkConfig): Promise<void> {
-  const path = configFile();
+  const path = getConfigFile();
   log.debug(`config: writing ${path}`);
   await mkdir(dirname(path), { recursive: true });
   await Bun.write(path, JSON.stringify(config, null, 2) + "\n");

@@ -1,7 +1,7 @@
 /**
  * Switch the active Clerk CLI environment (e.g. production, staging).
  *
- * Persists the choice in ~/.clerk/config.json so all subsequent commands
+ * Persists the choice in the CLI config file so all subsequent commands
  * use the selected environment's API endpoints and OAuth credentials.
  * Auth tokens are stored per-environment, so switching back does not
  * require re-authentication.
