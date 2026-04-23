@@ -14,5 +14,5 @@ jobs:
       - name: Revalidate install script cache
         run: |
           curl -X POST https://clerk.com/api/revalidate-install \
-            -H "Authorization: Bearer ${{ secrets.REVALIDATION_SECRET }}" \
+            -H "Authorization: Bearer ${{ secrets.INSTALL_REVALIDATE_SECRET }}" \
             --fail --silent --show-error
