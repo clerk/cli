@@ -209,7 +209,7 @@ else
 
     if [ -z "$TAG" ]; then
       TAG=$(curl -fsSL "${_AUTH[@]}" "https://api.github.com/repos/${REPO}/releases" \
-        | grep -o '"tag_name":"[^"]*canary[^"]*"' \
+        | grep -o '"tag_name": *"[^"]*canary[^"]*"' \
         | head -1 \
         | cut -d'"' -f4 || true)
     fi
@@ -220,7 +220,7 @@ else
     fi
   else
     TAG=$(curl -fsSL "${_AUTH[@]}" "https://api.github.com/repos/${REPO}/releases/latest" \
-      | grep -o '"tag_name":"[^"]*"' \
+      | grep -o '"tag_name": *"[^"]*"' \
       | cut -d'"' -f4 || true)
 
     if [ -z "$TAG" ]; then
