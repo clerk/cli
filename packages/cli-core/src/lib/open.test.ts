@@ -31,12 +31,11 @@ describe("openBrowser", () => {
 
     expect(result.ok).toBe(true);
     expect(capturedCmd).toBeDefined();
-    // cmd.exe /c start "" "<url>" — the URL arg must be wrapped in quotes
+    // cmd.exe /c 'start "" "<url>"' — passed as a single string so cmd.exe
+    // parses it as a shell command line, preserving the quotes around the URL.
     expect(capturedCmd![0]).toBe("cmd.exe");
     expect(capturedCmd![1]).toBe("/c");
-    expect(capturedCmd![2]).toBe("start");
-    expect(capturedCmd![3]).toBe("");
-    expect(capturedCmd![4]).toBe(`"${url}"`);
+    expect(capturedCmd![2]).toBe(`start "" "${url}"`);
   });
 
   test("non-win32: passes URL without extra quoting", async () => {
