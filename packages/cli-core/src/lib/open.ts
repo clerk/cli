@@ -92,6 +92,8 @@ export async function openBrowser(url: string): Promise<OpenResult> {
       stdout: "ignore",
       stderr: "ignore",
       stdin: "ignore",
+      // Prevent Bun from escaping the quotes inside the cmd.exe command string.
+      windowsVerbatimArguments: launcher === "start",
     });
 
     // Race the launcher's exit against a short grace period. Real launchers
