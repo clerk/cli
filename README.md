@@ -27,7 +27,7 @@ Options:
   -v, --version  Output the version number
   --mode <mode>  Force interaction mode (human or agent). Defaults to
                  auto-detect based on TTY.
-  --verbose      Show detailed error output
+  --verbose      Show detailed output (enables debug messages)
   -h, --help     Display help for command
 
 Commands:
@@ -48,6 +48,17 @@ Commands:
     schema    [options]                      Pull instance config schema from Clerk
     patch     [options]                      Partially update instance configuration (PATCH)
     put       [options]                      Replace entire instance configuration (PUT)
+  orgs|organizations                         Manage Clerk Organizations
+    enable    [options]                      Enable organizations on the linked instance
+    disable   [options]                      Disable organizations on the linked instance
+  billing                                    Manage billing and subscription plans
+    enable    [options]                      Enable billing on the linked instance
+    disable   [options]                      Disable billing on the linked instance
+    plans                                    Manage subscription plans
+      create  [options] <slug>              Create a subscription plan
+      list    [options]                      List subscription plans
+      update  [options] <slug>              Update a subscription plan
+      remove  [options] <slug>              Remove a subscription plan
   env                                        Manage environment variables
     pull      [options]                      Pull environment variables from Clerk to .env.local
   api         [options] [endpoint] [filter]  Make authenticated requests to the Clerk API
@@ -151,6 +162,71 @@ clerk config put
     $ clerk config put --file config.json --dry-run        Preview the replacement
     $ clerk config put --instance prod --file config.json  Replace production config
     $ clerk config put --file config.json --yes            Skip confirmation prompt
+
+clerk orgs enable
+  --force-selection    Force organization selection on login
+  --auto-create        Auto-create an organization for new users
+  --max-members <n>    Maximum members per organization
+  --domains            Enable verified domains
+  --app <id>           Application ID to target
+  --instance <id>      Instance to target (dev, prod, or instance ID)
+  Examples:
+    $ clerk orgs enable                                    Enable organizations
+    $ clerk orgs enable --force-selection                  Enable and force org selection
+    $ clerk orgs enable --auto-create --max-members 10     Enable with auto-creation and member limit
+
+clerk orgs disable
+  --app <id>           Application ID to target
+  --instance <id>      Instance to target (dev, prod, or instance ID)
+
+clerk billing enable
+  --for <org|user>     (required) Billing target type
+  --require-payment-method  Require payment method for free trials
+  --app <id>           Application ID to target
+  --instance <id>      Instance to target (dev, prod, or instance ID)
+  Examples:
+    $ clerk billing enable --for org             Enable org billing
+    $ clerk billing enable --for user            Enable user billing
+
+clerk billing disable
+  --for <org|user>     (required) Billing target type
+  --app <id>           Application ID to target
+  --instance <id>      Instance to target (dev, prod, or instance ID)
+
+clerk billing plans create <slug>
+  --name <name>        Override display name (default: title-cased slug)
+  --amount <cents>     (required) Monthly price in cents
+  --payer <org|user>   Who pays
+  --currency <code>    Currency code (default: usd)
+  --description <text> Plan description
+  --trial-days <n>     Free trial length in days
+  --annual-amount <cents>  Monthly equivalent when billed annually, in cents
+  --hidden             Hide plan from end users
+  --app <id>           Application ID to target
+  --instance <id>      Instance to target (dev, prod, or instance ID)
+  Examples:
+    $ clerk billing plans create pro --amount 1999 --payer org
+    $ clerk billing plans create enterprise --name "Enterprise Plus" --amount 9999 --payer org --trial-days 14
+
+clerk billing plans list
+  --json               Output as JSON
+  --app <id>           Application ID to target
+  --instance <id>      Instance to target (dev, prod, or instance ID)
+
+clerk billing plans update <slug>
+  --name <name>        Update display name
+  --amount <cents>     Update monthly price
+  --hidden             Hide plan from end users
+  --visible            Show plan to end users
+  --app <id>           Application ID to target
+  --instance <id>      Instance to target (dev, prod, or instance ID)
+  Examples:
+    $ clerk billing plans update pro --amount 2999
+    $ clerk billing plans update pro --hidden
+
+clerk billing plans remove <slug>
+  --app <id>           Application ID to target
+  --instance <id>      Instance to target (dev, prod, or instance ID)
 
 clerk env pull
   --app <id>           Application ID to target (works from any directory)
