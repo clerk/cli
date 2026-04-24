@@ -23,6 +23,14 @@ Authentication is resolved in this order:
 
 The users commands talk to the instance's Backend API. Identifier and required-field rules are enforced by BAPI, so any BAPI secret key (via `CLERK_SECRET_KEY`, `--secret-key`, or `--app`-resolved) is enough — no `applications:manage` Platform API scope is required.
 
+## Interactive mode
+
+In human mode (TTY), `clerk users` invoked with no subcommand opens an interactive menu that lists every registered action and dispatches to its handler.
+
+`clerk users create` invoked without curated flags or `--input-json` / `-d` / `--file` enters a guided wizard. The wizard fetches the instance's Frontend API configuration to prompt only for fields the instance accepts (and marks required fields). When run with `--secret-key` only (no app context), the wizard falls back to prompting the full curated-flag set as optional and lets the Backend API validate.
+
+In agent mode all interactive flows are disabled and the same invocations exit with a structured usage error.
+
 ## Passing input as JSON
 
 Two complementary mechanisms for JSON input work across the users command family:
