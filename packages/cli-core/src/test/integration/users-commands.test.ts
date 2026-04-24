@@ -1,7 +1,8 @@
 /**
  * Exercise primary users flows through the real CLI program.
  * Covers create against linked-project, --app, --secret-key, raw -d/--data,
- * --dry-run, and the wizard picker fallback when no project is linked.
+ * --dry-run, and the wizard picker fallback when no project is linked, plus
+ * lifecycle transitions against linked-project resolution.
  */
 
 import { writeFile } from "node:fs/promises";
@@ -264,5 +265,30 @@ describe("users commands", () => {
     expect(exitCode).not.toBe(0);
     expect(stderr + stdout).toContain("No input provided");
     expect(findBapiCreateRequest()).toBeUndefined();
+  });
+
+  test("bans a user via direct state transition", async () => {
+    await setProfile("github.com/test/project", {
+      workspaceId: "",
+      appId: MOCK_APP.application_id,
+      appName: MOCK_APP.name,
+      instances: { development: devInstance.instance_id },
+    });
+
+    http.mock({
+      "/v1/platform/applications/app_1?include_secret_keys=true": MOCK_APP,
+      "/v1/users/user_123/ban": { id: "user_123", banned: true },
+    });
+
+    const { stderr } = await clerk("--mode", "human", "users", "ban", "user_123", "--yes");
+    expect(stderr).toContain("Banned user");
+    expect(stderr).toContain("user_123");
+
+    const banRequest = http.requests.find(
+      (request) =>
+        request.method === "POST" &&
+        request.url.includes("https://test-bapi.clerk.dev/v1/users/user_123/ban"),
+    );
+    expect(banRequest).toBeDefined();
   });
 });

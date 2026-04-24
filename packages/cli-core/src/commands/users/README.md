@@ -64,11 +64,35 @@ Supported curated flags:
 - `-d, --data <json>`
 - `--file <path>`
 
+### Lifecycle Commands
+
+These commands execute direct state transitions on an existing user:
+
+| Command                   | Effect          |
+| ------------------------- | --------------- |
+| `clerk users delete <id>` | Delete the user |
+| `clerk users ban <id>`    | Ban the user    |
+| `clerk users unban <id>`  | Remove a ban    |
+| `clerk users lock <id>`   | Lock the user   |
+| `clerk users unlock <id>` | Unlock the user |
+
+```sh
+clerk users delete user_123 --yes
+clerk users delete user_123 --json --yes
+clerk users ban user_123 --app app_123 --instance prod --yes
+clerk users unlock user_123 --dry-run
+```
+
 ## API Endpoints
 
-| Method | Endpoint    | Command(s) |
-| ------ | ----------- | ---------- |
-| `POST` | `/v1/users` | `create`   |
+| Method   | Endpoint                     | Command(s) |
+| -------- | ---------------------------- | ---------- |
+| `POST`   | `/v1/users`                  | `create`   |
+| `DELETE` | `/v1/users/{user_id}`        | `delete`   |
+| `POST`   | `/v1/users/{user_id}/ban`    | `ban`      |
+| `POST`   | `/v1/users/{user_id}/unban`  | `unban`    |
+| `POST`   | `/v1/users/{user_id}/lock`   | `lock`     |
+| `POST`   | `/v1/users/{user_id}/unlock` | `unlock`   |
 
 ## Notes
 

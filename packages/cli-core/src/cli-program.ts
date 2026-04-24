@@ -273,6 +273,8 @@ Give AI agents better Clerk context: install the Clerk skills
         command: 'clerk users create -d \'{"email_address":["alice@example.com"]}\' --yes',
         description: "Create a user from an inline BAPI request body",
       },
+      { command: "clerk users delete user_123 --yes", description: "Delete a user" },
+      { command: "clerk users ban user_123 --yes", description: "Ban a user" },
     ])
     .action(usersHandlers.menu);
 
@@ -308,6 +310,66 @@ Give AI agents better Clerk context: install the Clerk skills
     .action((_opts, cmd) =>
       usersHandlers.create(cmd.optsWithGlobals() as Parameters<typeof usersHandlers.create>[0]),
     );
+
+  users
+    .command("delete")
+    .argument("<user-id>")
+    .description("Delete a user")
+    .option("--json", "Output as JSON")
+    .option("--secret-key <key>", "Backend API secret key to use")
+    .option("--app <id>", "Application ID to target (works from any directory)")
+    .option("--instance <id>", "Instance to target (dev, prod, or a full instance ID)")
+    .option("--dry-run", "Show the request without executing it")
+    .option("--yes", "Skip confirmation prompt")
+    .action(usersHandlers.remove);
+
+  users
+    .command("ban")
+    .argument("<user-id>")
+    .description("Ban a user")
+    .option("--json", "Output as JSON")
+    .option("--secret-key <key>", "Backend API secret key to use")
+    .option("--app <id>", "Application ID to target (works from any directory)")
+    .option("--instance <id>", "Instance to target (dev, prod, or a full instance ID)")
+    .option("--dry-run", "Show the request without executing it")
+    .option("--yes", "Skip confirmation prompt")
+    .action(usersHandlers.ban);
+
+  users
+    .command("unban")
+    .argument("<user-id>")
+    .description("Unban a user")
+    .option("--json", "Output as JSON")
+    .option("--secret-key <key>", "Backend API secret key to use")
+    .option("--app <id>", "Application ID to target (works from any directory)")
+    .option("--instance <id>", "Instance to target (dev, prod, or a full instance ID)")
+    .option("--dry-run", "Show the request without executing it")
+    .option("--yes", "Skip confirmation prompt")
+    .action(usersHandlers.unban);
+
+  users
+    .command("lock")
+    .argument("<user-id>")
+    .description("Lock a user")
+    .option("--json", "Output as JSON")
+    .option("--secret-key <key>", "Backend API secret key to use")
+    .option("--app <id>", "Application ID to target (works from any directory)")
+    .option("--instance <id>", "Instance to target (dev, prod, or a full instance ID)")
+    .option("--dry-run", "Show the request without executing it")
+    .option("--yes", "Skip confirmation prompt")
+    .action(usersHandlers.lock);
+
+  users
+    .command("unlock")
+    .argument("<user-id>")
+    .description("Unlock a user")
+    .option("--json", "Output as JSON")
+    .option("--secret-key <key>", "Backend API secret key to use")
+    .option("--app <id>", "Application ID to target (works from any directory)")
+    .option("--instance <id>", "Instance to target (dev, prod, or a full instance ID)")
+    .option("--dry-run", "Show the request without executing it")
+    .option("--yes", "Skip confirmation prompt")
+    .action(usersHandlers.unlock);
 
   const env = program
     .command("env")

@@ -11,12 +11,35 @@ test("registers users as a top-level command", () => {
   expect(users).toBeDefined();
 });
 
-test("registers users create as a subcommand", () => {
+test("registers users create and lifecycle transitions as subcommands", () => {
   const program = createProgram();
   const users = program.commands.find((command) => command.name() === "users")!;
   const names = users.commands.map((command) => command.name());
 
-  expect(names).toContain("create");
+  expect(names).toEqual(
+    expect.arrayContaining(["create", "delete", "ban", "unban", "lock", "unlock"]),
+  );
+});
+
+test("users lifecycle commands expose targeting and mutation control options", () => {
+  const program = createProgram();
+  const users = program.commands.find((command) => command.name() === "users")!;
+  const optionNames = (command: (typeof users.commands)[number]) =>
+    command.options.map((option) => option.long);
+
+  for (const name of ["delete", "ban", "unban", "lock", "unlock"]) {
+    const command = users.commands.find((entry) => entry.name() === name)!;
+    expect(optionNames(command)).toEqual(
+      expect.arrayContaining([
+        "--json",
+        "--secret-key",
+        "--app",
+        "--instance",
+        "--dry-run",
+        "--yes",
+      ]),
+    );
+  }
 });
 
 test("users create exposes --json output, curated flags, and -d/--data for inline request bodies", () => {
