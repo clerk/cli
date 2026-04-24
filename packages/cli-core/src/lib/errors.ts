@@ -43,6 +43,8 @@ export const ERROR_CODE = {
   CATALOG_ERROR: "catalog_error",
   /** Doctor checks found issues. */
   DOCTOR_FAILED: "doctor_failed",
+  /** Frontend API request failed. */
+  FAPI_ERROR: "fapi_error",
 } as const;
 
 export type ErrorCode = (typeof ERROR_CODE)[keyof typeof ERROR_CODE];
