@@ -272,7 +272,8 @@ Give AI agents better Clerk context: install the Clerk skills
         command: 'clerk users create -d \'{"email_address":["alice@example.com"]}\' --yes',
         description: "Create a user from an inline BAPI request body",
       },
-    ]);
+    ])
+    .action(usersHandlers.menu);
 
   users
     .command("create")
