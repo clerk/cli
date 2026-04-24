@@ -265,6 +265,7 @@ Give AI agents better Clerk context: install the Clerk skills
     .option("--app <id>", "Application ID to target (works from any directory)")
     .option("--instance <id>", "Instance to target (dev, prod, or a full instance ID)")
     .setExamples([
+      { command: "clerk users get user_123", description: "Get a user" },
       {
         command: "clerk users create --email alice@example.com --first-name Alice --yes",
         description: "Create a user from curated flags",
@@ -308,6 +309,16 @@ Give AI agents better Clerk context: install the Clerk skills
     .action((_opts, cmd) =>
       usersHandlers.create(cmd.optsWithGlobals() as Parameters<typeof usersHandlers.create>[0]),
     );
+
+  users
+    .command("get")
+    .argument("<user-id>")
+    .description("Get a user")
+    .option("--json", "Output as JSON")
+    .option("--secret-key <key>", "Backend API secret key to use")
+    .option("--app <id>", "Application ID to target (works from any directory)")
+    .option("--instance <id>", "Instance to target (dev, prod, or a full instance ID)")
+    .action(usersHandlers.get);
 
   const env = program
     .command("env")

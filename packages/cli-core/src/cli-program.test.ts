@@ -11,12 +11,23 @@ test("registers users as a top-level command", () => {
   expect(users).toBeDefined();
 });
 
-test("registers users create as a subcommand", () => {
+test("registers users create and get as subcommands", () => {
   const program = createProgram();
   const users = program.commands.find((command) => command.name() === "users")!;
   const names = users.commands.map((command) => command.name());
 
-  expect(names).toContain("create");
+  expect(names).toEqual(expect.arrayContaining(["create", "get"]));
+});
+
+test("users get exposes --json and BAPI targeting options", () => {
+  const program = createProgram();
+  const users = program.commands.find((command) => command.name() === "users")!;
+  const get = users.commands.find((command) => command.name() === "get")!;
+  const optionNames = get.options.map((option) => option.long);
+
+  expect(optionNames).toEqual(
+    expect.arrayContaining(["--json", "--secret-key", "--app", "--instance"]),
+  );
 });
 
 test("users create exposes --json output, curated flags, and -d/--data for inline request bodies", () => {

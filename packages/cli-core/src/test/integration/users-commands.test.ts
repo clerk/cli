@@ -1,7 +1,8 @@
 /**
  * Exercise primary users flows through the real CLI program.
  * Covers create against linked-project, --app, --secret-key, raw -d/--data,
- * --dry-run, and the wizard picker fallback when no project is linked.
+ * --dry-run, and the wizard picker fallback when no project is linked, plus
+ * get wired up against linked-project resolution.
  */
 
 import { writeFile } from "node:fs/promises";
@@ -265,4 +266,44 @@ describe("users commands", () => {
     expect(stderr + stdout).toContain("No input provided");
     expect(findBapiCreateRequest()).toBeUndefined();
   });
+
+  test.each([{ mode: "human" }, { mode: "agent" }])(
+    "gets a user by id from linked project context ($mode mode)",
+    async ({ mode }) => {
+      await setProfile("github.com/test/project", {
+        workspaceId: "",
+        appId: MOCK_APP.application_id,
+        appName: MOCK_APP.name,
+        instances: { development: devInstance.instance_id },
+      });
+
+      const user = {
+        id: "user_123",
+        email_addresses: [{ email_address: "john@example.com" }],
+        first_name: "John",
+        last_name: "Doe",
+      };
+      http.mock({
+        "/v1/platform/applications/app_1?include_secret_keys=true": MOCK_APP,
+        "/v1/users/user_123": user,
+      });
+
+      const { stdout, stderr } = await clerk("--mode", mode, "users", "get", "user_123");
+
+      if (mode === "human") {
+        expect(stdout).toContain("John Doe");
+        expect(stdout).toContain("john@example.com");
+      } else {
+        expect(JSON.parse(stdout)).toEqual(user);
+      }
+
+      const getRequest = http.requests.find(
+        (request) =>
+          request.method === "GET" &&
+          request.url.includes("https://test-bapi.clerk.dev/v1/users/user_123"),
+      );
+      expect(getRequest).toBeDefined();
+      expect(stderr).not.toContain("error:");
+    },
+  );
 });

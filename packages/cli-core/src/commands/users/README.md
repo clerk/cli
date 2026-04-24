@@ -40,6 +40,16 @@ Two complementary mechanisms for JSON input work across the users command family
 
 ## Commands
 
+### `clerk users get <user-id>`
+
+Fetch one user by ID.
+
+```sh
+clerk users get user_123
+clerk users get user_123 --json
+clerk users get user_123 --app app_123 --instance prod
+```
+
 ### `clerk users create`
 
 Create a user from curated flags or a raw BAPI request body via `-d` or `--file`. By default, human mode prints a terse success message; pass `--json` for the response body.
@@ -66,9 +76,10 @@ Supported curated flags:
 
 ## API Endpoints
 
-| Method | Endpoint    | Command(s) |
-| ------ | ----------- | ---------- |
-| `POST` | `/v1/users` | `create`   |
+| Method | Endpoint              | Command(s) |
+| ------ | --------------------- | ---------- |
+| `GET`  | `/v1/users/{user_id}` | `get`      |
+| `POST` | `/v1/users`           | `create`   |
 
 ## Notes
 
