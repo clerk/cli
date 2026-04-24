@@ -1,5 +1,5 @@
 import { handleBapiError, resolveBapiSecretKey } from "../../lib/bapi-command.ts";
-import { throwUsageError, throwUserAbort } from "../../lib/errors.ts";
+import { throwUsageError } from "../../lib/errors.ts";
 import { log } from "../../lib/log.ts";
 import {
   buildCreateUserPayload,
@@ -10,7 +10,6 @@ import {
 } from "../../lib/users.ts";
 import { isHuman } from "../../mode.ts";
 import { bapiRequest } from "../api/bapi.ts";
-import { confirm } from "../../lib/prompts.ts";
 import { withSpinner } from "../../lib/spinner.ts";
 import { handleUsersBapiError, printUsersMutationResult } from "./output.ts";
 import { registerUsersAction } from "./registry.ts";
@@ -42,8 +41,6 @@ export async function create(options: CreateUserOptions): Promise<void> {
     log.data(JSON.stringify(redactUsersDisplayPayload(payload), null, 2));
     return;
   }
-
-  await confirmMutation("POST", "/v1/users", payload, options);
 
   const secretKey = await resolveBapiSecretKey({
     secretKey: options.secretKey,
@@ -126,46 +123,6 @@ function hasCreateFlagPayload(options: CreateUserOptions): boolean {
     options.lastName ||
     options.externalId,
   );
-}
-
-async function confirmMutation(
-  method: string,
-  path: string,
-  payload: Record<string, unknown>,
-  options: { yes?: boolean },
-): Promise<void> {
-  if (!isHuman() || options.yes) return;
-
-  log.info(`About to ${method} ${path}`);
-  const display = redactUsersDisplayPayload(payload);
-  for (const line of formatPayloadForDisplay(display)) {
-    log.info(line);
-  }
-
-  const ok = await confirm({ message: "Proceed?" });
-  if (!ok) {
-    throwUserAbort();
-  }
-}
-
-function formatPayloadForDisplay(payload: unknown): string[] {
-  if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
-    return [`  ${formatPayloadValue(payload)}`];
-  }
-  return Object.entries(payload as Record<string, unknown>).map(
-    ([key, value]) => `  ${key}: ${formatPayloadValue(value)}`,
-  );
-}
-
-function formatPayloadValue(value: unknown): string {
-  if (value === null || value === undefined) return "(none)";
-  if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") {
-    return String(value);
-  }
-  if (Array.isArray(value) && value.length === 1 && typeof value[0] === "string") {
-    return value[0];
-  }
-  return JSON.stringify(value);
 }
 
 registerUsersAction({
