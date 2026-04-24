@@ -1,7 +1,9 @@
+import { fetchAppsTolerantly, pickOrCreateApp } from "../../../lib/app-picker.ts";
 import { resolveAppContext, resolveFetchedApplicationInstance } from "../../../lib/config.ts";
 import { CliError, ERROR_CODE, withApiContext } from "../../../lib/errors.ts";
-import { fetchApplication, validateKeyPrefix } from "../../../lib/plapi.ts";
 import { decodePublishableKey } from "../../../lib/fapi.ts";
+import { fetchApplication, validateKeyPrefix } from "../../../lib/plapi.ts";
+import { isHuman } from "../../../mode.ts";
 
 export type UsersInstanceContext = {
   secretKey: string;
@@ -32,11 +34,23 @@ export async function resolveUsersInstanceContext(
       appId = ctx.appId;
       instanceHint = ctx.instanceId;
     } catch (error) {
-      if (error instanceof CliError && error.code === ERROR_CODE.NOT_LINKED && options.secretKey) {
+      if (!(error instanceof CliError) || error.code !== ERROR_CODE.NOT_LINKED) {
+        throw error;
+      }
+      if (options.secretKey) {
         validateKeyPrefix(options.secretKey, "sk_");
         return { secretKey: options.secretKey };
       }
-      throw error;
+      if (isHuman()) {
+        const apps = await fetchAppsTolerantly();
+        const picked = await pickOrCreateApp({
+          apps,
+          message: "Select a Clerk application to use:",
+        });
+        appId = picked.application_id;
+      } else {
+        throw error;
+      }
     }
   }
 

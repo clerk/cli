@@ -1,7 +1,11 @@
 import { test, expect, describe, beforeEach, mock } from "bun:test";
+import { CliError, ERROR_CODE } from "../../../lib/errors.ts";
 
 const mockResolveAppContext = mock();
 const mockFetchApplication = mock();
+const mockFetchAppsTolerantly = mock();
+const mockPickOrCreateApp = mock();
+const mockIsHuman = mock(() => true);
 
 mock.module("../../../lib/config.ts", () => ({
   resolveAppContext: (...args: unknown[]) => mockResolveAppContext(...args),
@@ -31,6 +35,17 @@ mock.module("../../../lib/plapi.ts", () => ({
   fetchApplication: (...args: unknown[]) => mockFetchApplication(...args),
   validateKeyPrefix: () => {},
 }));
+mock.module("../../../lib/app-picker.ts", () => ({
+  fetchAppsTolerantly: (...args: unknown[]) => mockFetchAppsTolerantly(...args),
+  pickOrCreateApp: (...args: unknown[]) => mockPickOrCreateApp(...args),
+  appLabel: (a: { application_id: string }) => a.application_id,
+}));
+mock.module("../../../mode.ts", () => ({
+  isHuman: () => mockIsHuman(),
+  isAgent: () => !mockIsHuman(),
+  setMode: () => {},
+  getMode: () => "human",
+}));
 
 const { resolveUsersInstanceContext } = await import("./instance-context.ts");
 
@@ -38,6 +53,9 @@ describe("resolveUsersInstanceContext", () => {
   beforeEach(() => {
     mockResolveAppContext.mockReset();
     mockFetchApplication.mockReset();
+    mockFetchAppsTolerantly.mockReset();
+    mockPickOrCreateApp.mockReset();
+    mockIsHuman.mockReturnValue(true);
   });
 
   test("returns publishable key when --app is provided", async () => {
@@ -64,5 +82,39 @@ describe("resolveUsersInstanceContext", () => {
     expect(ctx.secretKey).toBe("sk_test_raw");
     expect(ctx.publishableKey).toBeUndefined();
     expect(ctx.fapiHost).toBeUndefined();
+  });
+
+  test("falls back to picker when no project linked and human mode", async () => {
+    mockResolveAppContext.mockRejectedValue(
+      new CliError("No Clerk project linked", { code: ERROR_CODE.NOT_LINKED }),
+    );
+    mockFetchAppsTolerantly.mockResolvedValue([{ application_id: "app_picked", name: "Picked" }]);
+    mockPickOrCreateApp.mockResolvedValue({ application_id: "app_picked", name: "Picked" });
+    mockFetchApplication.mockResolvedValue({
+      application_id: "app_picked",
+      instances: [
+        {
+          instance_id: "ins_dev",
+          environment_type: "development",
+          publishable_key: "pk_test_aWRlYWwtbG91c2UtNjEuY2xlcmsuYWNjb3VudHMuZGV2JA",
+          secret_key: "sk_test_picked",
+        },
+      ],
+    });
+
+    const ctx = await resolveUsersInstanceContext({});
+    expect(mockPickOrCreateApp).toHaveBeenCalled();
+    expect(ctx.secretKey).toBe("sk_test_picked");
+    expect(ctx.fapiHost).toBe("ideal-louse-61.clerk.accounts.dev");
+  });
+
+  test("re-throws NOT_LINKED in agent mode without invoking picker", async () => {
+    mockIsHuman.mockReturnValue(false);
+    mockResolveAppContext.mockRejectedValue(
+      new CliError("No Clerk project linked", { code: ERROR_CODE.NOT_LINKED }),
+    );
+
+    await expect(resolveUsersInstanceContext({})).rejects.toThrow(CliError);
+    expect(mockPickOrCreateApp).not.toHaveBeenCalled();
   });
 });
