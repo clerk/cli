@@ -1,5 +1,31 @@
 # clerk
 
+## 1.0.3
+
+### Patch Changes
+
+- Improve Clerk CLI behavior for sandboxed agent runs. ([#226](https://github.com/clerk/cli/pull/226)) by [@wyattjoh](https://github.com/wyattjoh)
+
+  The CLI now warns once per invocation when host-only Clerk state or system
+  capabilities are unavailable in agent mode, which helps distinguish real auth
+  and linking failures from sandbox-induced ones. `clerk doctor` also includes a
+  `Host execution` check in agent mode so the sandbox condition is visible in
+  structured diagnostics.
+
+  This release also updates the bundled Clerk skill docs to explain the warning,
+  when to rerun commands on the host, and how sandboxed agent runs can misreport
+  auth, linking, env, and API failures.
+
+- Teach agents the `+clerk_test` email suffix and the US fictional-phone range (`+1 (XXX) 555-0100` through `+1 (XXX) 555-0199`), paired with the fixed `424242` OTP, for creating test users that bypass client trust in development. The pattern is documented in the bundled skill's recipes and every `clerk init --prompt` handoff. ([#227](https://github.com/clerk/cli/pull/227)) by [@wyattjoh](https://github.com/wyattjoh)
+
+- Fix `clerk update` to upgrade the binary that is actually running. With multiple installs on the same machine (e.g. bun and asdf-npm), the command now picks the install that owns the currently-running `clerk` as the primary target instead of the first `PATH` match, so `clerk -v` reflects the upgrade without needing `--all`. ([#230](https://github.com/clerk/cli/pull/230)) by [@rafa-thayto](https://github.com/rafa-thayto)
+
+- Fix `clerk doctor` falsely reporting the CLI config file as missing. The check was looking at a legacy path (`~/.clerk/config.json`) instead of the platform-appropriate location used by the rest of the CLI. ([#220](https://github.com/clerk/cli/pull/220)) by [@rafa-thayto](https://github.com/rafa-thayto)
+
+- Move the "Create a new application" option to the top of the `clerk link` picker so it's visible without scrolling. ([#221](https://github.com/clerk/cli/pull/221)) by [@rafa-thayto](https://github.com/rafa-thayto)
+
+- Fix `clerk login` on Windows failing to open the OAuth URL when query parameters contain ampersands. ([#222](https://github.com/clerk/cli/pull/222)) by [@alexcarpenter](https://github.com/alexcarpenter)
+
 ## 1.0.2
 
 ### Patch Changes

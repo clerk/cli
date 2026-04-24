@@ -86,10 +86,17 @@ for (const testFile of testFiles) {
     const pkg = JSON.parse(await Bun.file(pkgPath).text()) as {
       name?: string;
       dependencies?: Record<string, string>;
+      devDependencies?: Record<string, string>;
     };
     pkg.name = `clerk-fixture-${name}`;
     pkg.dependencies ??= {};
     pkg.dependencies[config.clerkSdk] = "latest";
+    if (name === "tanstack-start") {
+      pkg.devDependencies ??= {};
+      // TanStack Start's current scaffold omits this peer dependency even
+      // though the Vite plugin imports it during config evaluation.
+      pkg.devDependencies["@rsbuild/core"] = "^2.0.0";
+    }
     await Bun.write(pkgPath, JSON.stringify(pkg, null, 2) + "\n");
 
     // Strip generated artifacts that shouldn't be committed
