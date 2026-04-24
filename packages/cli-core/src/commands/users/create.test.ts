@@ -22,6 +22,11 @@ mock.module("../../mode.ts", () => ({
   getMode: () => "human",
 }));
 
+const mockRunCreateWizard = mock();
+mock.module("./create-wizard.ts", () => ({
+  runCreateWizard: (...args: unknown[]) => mockRunCreateWizard(...args),
+}));
+
 mock.module("@inquirer/prompts", () => promptsStubs);
 mock.module("../../lib/spinner.ts", () => ({
   withSpinner: async (_msg: string, fn: () => Promise<unknown>) => fn(),
@@ -37,6 +42,7 @@ describe("users create", () => {
   beforeEach(() => {
     mockIsAgent.mockReturnValue(false);
     mockResolveBapiSecretKey.mockResolvedValue("sk_test_123");
+    mockRunCreateWizard.mockResolvedValue({});
     mockBapiRequest.mockResolvedValue({
       status: 200,
       headers: new Headers(),
@@ -56,6 +62,7 @@ describe("users create", () => {
     mockHandleBapiError.mockImplementation(() => false);
     mockBapiRequest.mockReset();
     mockIsAgent.mockReset();
+    mockRunCreateWizard.mockReset();
     logSpy.mockRestore();
     errorSpy.mockRestore();
   });
@@ -195,5 +202,29 @@ describe("users create", () => {
       ],
     });
     expect(captured.err).not.toContain("Created user");
+  });
+
+  test("invokes the wizard when no flags + human + no data", async () => {
+    mockIsAgent.mockReturnValue(false);
+    mockRunCreateWizard.mockResolvedValue({ email: "alice@example.com" });
+    await runCreate({ yes: true });
+    expect(mockRunCreateWizard).toHaveBeenCalledWith({
+      app: undefined,
+      instance: undefined,
+      secretKey: undefined,
+    });
+    expect(mockBapiRequest).toHaveBeenCalled();
+  });
+
+  test("does not invoke the wizard in agent mode", async () => {
+    mockIsAgent.mockReturnValue(true);
+    let thrown: unknown;
+    try {
+      await runCreate({});
+    } catch (e) {
+      thrown = e;
+    }
+    expect(thrown).toBeDefined();
+    expect(mockRunCreateWizard).not.toHaveBeenCalled();
   });
 });

@@ -14,6 +14,7 @@ import { confirm } from "../../lib/prompts.ts";
 import { withSpinner } from "../../lib/spinner.ts";
 import { handleUsersBapiError, printUsersMutationResult } from "./output.ts";
 import { registerUsersAction } from "./registry.ts";
+import { runCreateWizard } from "./create-wizard.ts";
 
 type CreateUserOptions = {
   email?: string;
@@ -73,29 +74,45 @@ export async function create(options: CreateUserOptions): Promise<void> {
 }
 
 async function resolveCreatePayload(options: CreateUserOptions): Promise<Record<string, unknown>> {
-  const basePayload = await resolveBasePayload(options, hasCreateFlagPayload(options));
+  const basePayload = await resolveBasePayload(options);
   return mergeUsersPayload(basePayload, buildCreateUserPayload(options));
 }
 
-async function resolveBasePayload(
-  options: { data?: string; file?: string },
-  hasFlagPayload: boolean,
-): Promise<Record<string, unknown>> {
+async function resolveBasePayload(options: CreateUserOptions): Promise<Record<string, unknown>> {
   if (options.data || options.file) {
     return parseUsersPayload(
       await readUsersPayloadInput({ data: options.data, file: options.file }),
     );
   }
 
-  if (hasFlagPayload) {
+  if (hasCreateFlagPayload(options)) {
     return {};
   }
 
-  throwUsageError(
+  if (isHuman()) {
+    const wizardResult = await runCreateWizard({
+      app: options.app,
+      instance: options.instance,
+      secretKey: options.secretKey,
+    });
+    if (Object.keys(wizardResult).length === 0) {
+      throwUsageError(noInputMessage());
+    }
+    Object.assign(options, wizardResult);
+    return {};
+  }
+
+  throwUsageError(noInputMessage());
+  // unreachable
+  return {};
+}
+
+function noInputMessage(): string {
+  return (
     "No input provided. Pass curated flags, -d <json>, or --file <path>.\n" +
-      "  Example: clerk users create --email alice@example.com --first-name Alice\n" +
-      '  Example: clerk users create -d \'{"email_address":["alice@example.com"]}\'\n' +
-      "  Example: clerk users create --file user.json",
+    "  Example: clerk users create --email alice@example.com --first-name Alice\n" +
+    '  Example: clerk users create -d \'{"email_address":["alice@example.com"]}\'\n' +
+    "  Example: clerk users create --file user.json"
   );
 }
 
