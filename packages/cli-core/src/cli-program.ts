@@ -291,12 +291,11 @@ Give AI agents better Clerk context: install the Clerk skills
     .option("--external-id <external-id>", "External ID")
     .option("-d, --data <json>", "Inline BAPI request body")
     .option("--file <path>", "Read BAPI request body from a file")
-    .option("--secret-key <key>", "Backend API secret key to use")
-    .option("--app <id>", "Application ID to target (works from any directory)")
-    .option("--instance <id>", "Instance to target (dev, prod, or a full instance ID)")
     .option("--dry-run", "Show the request without executing it")
     .option("--yes", "Skip confirmation prompt")
-    .action(usersHandlers.create);
+    .action((_opts, cmd) =>
+      usersHandlers.create(cmd.optsWithGlobals() as Parameters<typeof usersHandlers.create>[0]),
+    );
 
   const env = program
     .command("env")

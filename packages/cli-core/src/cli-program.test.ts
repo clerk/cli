@@ -37,13 +37,18 @@ test("users create exposes --json output, curated flags, and -d/--data for inlin
       "--external-id",
       "--data",
       "--file",
-      "--secret-key",
-      "--app",
-      "--instance",
       "--dry-run",
       "--yes",
     ]),
   );
+});
+
+test("users parent command exposes targeting flags inherited by subcommands", () => {
+  const program = createProgram();
+  const users = program.commands.find((command) => command.name() === "users")!;
+  const optionNames = users.options.map((option) => option.long);
+
+  expect(optionNames).toEqual(expect.arrayContaining(["--secret-key", "--app", "--instance"]));
 });
 
 test("users create documents -d and --file for raw BAPI request bodies", () => {
