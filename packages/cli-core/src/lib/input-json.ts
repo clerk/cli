@@ -2,6 +2,7 @@ import { throwUsageError, ERROR_CODE } from "./errors.ts";
 
 const INPUT_JSON_FLAG = "--input-json";
 const FILE_PREFIX = "@";
+const STDIN_MARKER = "-";
 
 type JsonObject = Record<string, unknown>;
 
@@ -58,10 +59,29 @@ async function readJsonFile(path: string): Promise<string> {
 }
 
 /**
+ * Read all of stdin as a UTF-8 string.
+ * Uses Bun.stdin, which is a `ReadableStream<Uint8Array>`.
+ */
+async function readStdin(): Promise<string> {
+  const text = await Bun.stdin.text();
+  if (!text.trim()) {
+    throwUsageError(
+      "No JSON received on stdin. Pipe JSON to the command or use --input-json <json|@file>.",
+      undefined,
+      ERROR_CODE.USAGE_ERROR,
+    );
+  }
+  return text;
+}
+
+/**
  * Resolve the raw --input-json value to a JSON string.
- * If the value starts with `@`, reads from the given file path.
+ * - `"-"` reads from stdin.
+ * - `"@path"` reads from the given file.
+ * - Anything else is treated as an inline JSON string.
  */
 function resolveJsonValue(raw: string): Promise<string> | string {
+  if (raw === STDIN_MARKER) return readStdin();
   return raw.startsWith(FILE_PREFIX) ? readJsonFile(raw.slice(1)) : raw;
 }
 
@@ -97,21 +117,44 @@ function requireValue(argv: string[], idx: number): string {
 }
 
 /**
+ * Check whether stdin has piped data available (i.e. is not a TTY).
+ */
+function hasStdinPipe(): boolean {
+  return !process.stdin.isTTY;
+}
+
+/**
  * Process an argv array: find `--input-json`, expand JSON to flags, return
  * a new argv with the expanded flags spliced in (so explicit CLI flags that
  * appear later in argv naturally take precedence).
  *
- * If `--input-json` is not present, returns the original array unchanged.
+ * If `--input-json` is not present but stdin is piped (not a TTY), reads
+ * JSON from stdin and appends the expanded flags to the end of argv.
+ *
+ * If neither `--input-json` nor stdin pipe is present, returns the original
+ * array unchanged.
  */
 export async function expandInputJson(argv: string[]): Promise<string[]> {
   const idx = argv.indexOf(INPUT_JSON_FLAG);
-  if (idx === -1) return argv;
 
-  const rawValue = requireValue(argv, idx);
-  const jsonStr = await resolveJsonValue(rawValue);
-  const parsed = parseJsonString(jsonStr);
-  assertJsonObject(parsed);
+  if (idx !== -1) {
+    const rawValue = requireValue(argv, idx);
+    const jsonStr = await resolveJsonValue(rawValue);
+    const parsed = parseJsonString(jsonStr);
+    assertJsonObject(parsed);
+    argv.splice(idx, 2, ...expandJsonToFlags(parsed));
+    return argv;
+  }
 
-  argv.splice(idx, 2, ...expandJsonToFlags(parsed));
+  // No explicit --input-json flag — check for piped stdin
+  if (hasStdinPipe()) {
+    const jsonStr = await readStdin();
+    const parsed = parseJsonString(jsonStr);
+    assertJsonObject(parsed);
+    // Append expanded flags at the end; explicit CLI flags already in argv
+    // appear before these, so they naturally take precedence (last-flag-wins).
+    argv.push(...expandJsonToFlags(parsed));
+  }
+
   return argv;
 }

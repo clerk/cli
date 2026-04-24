@@ -203,7 +203,7 @@ The CLI auto-detects agent mode when stdout is not a TTY, or when `--mode agent`
 - **`doctor --fix` is ignored.** Parse `doctor --json` output's `remedy` field and act on it yourself.
 - **`apps list` and `apps create` default to JSON** when piped.
 - **`clerk init --prompt`** prints a short agent-oriented handoff telling the agent to run `clerk init -y` (it is NOT a framework-specific integration guide; use the runtime `clerk init` output itself for that).
-- **`--input-json <json|@file>`** expands JSON into flags on any command (e.g. `clerk init --input-json '{"framework":"next","yes":true}'`). Place it after the leaf subcommand. Full rules in [references/agent-mode.md](references/agent-mode.md#passing-options-as-json---input-json).
+- **`--input-json <json|@file|->`** expands JSON into flags on any command (e.g. `clerk init --input-json '{"framework":"next","yes":true}'`). Piped stdin is also accepted: `echo '{"yes":true}' | clerk init`. Place `--input-json` after the leaf subcommand. Full rules in [references/agent-mode.md](references/agent-mode.md#passing-options-as-json---input-json).
 
 Full matrix and sandbox details in [references/agent-mode.md](references/agent-mode.md).
 

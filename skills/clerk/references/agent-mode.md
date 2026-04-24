@@ -69,13 +69,17 @@ per CLI invocation when a host-sensitive operation is blocked.
 
 ## Passing options as JSON: `--input-json`
 
-Every command accepts `--input-json <json|@file>`. Keys convert from camelCase/snake_case to kebab-case and expand into flags before Commander parses argv — so anything a command accepts as a flag can come from JSON instead.
+Every command accepts `--input-json <json|@file|->`. Keys convert from camelCase/snake_case to kebab-case and expand into flags before Commander parses argv — so anything a command accepts as a flag can come from JSON instead.
 
 ```sh
 clerk init --input-json '{"framework":"next","yes":true}'
 clerk config pull --input-json '{"keys":["auth_email","session"]}'  # arrays → repeated flags
-clerk init --input-json @init-opts.json                             # or read JSON from a file
+clerk init --input-json @init-opts.json                             # read JSON from a file
+clerk init --input-json -                                           # read JSON from stdin
+echo '{"framework":"next","yes":true}' | clerk init                 # auto-detect piped stdin
 ```
+
+When `--input-json` is omitted and stdin is piped (not a TTY), the CLI automatically reads JSON from stdin — no flag needed. This lets agents pipe options directly: `echo '{"yes":true}' | clerk init`.
 
 Positional arguments (e.g. the `<name>` in `clerk apps create <name>`) cannot come from JSON — only flag-style options can.
 

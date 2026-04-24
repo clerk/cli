@@ -53,7 +53,10 @@ export function createProgram() {
     .version(getCurrentVersion(), "-v, --version", "Output the version number")
     .helpOption("-h, --help", "Display help for command")
     .addHelpCommand("help [command]", "Display help for command")
-    .option("--input-json <json>", "Pass command options as a JSON string or @file.json")
+    .option(
+      "--input-json <json>",
+      "Pass command options as a JSON string, @file.json, or - for stdin",
+    )
     .option(
       "--mode <mode>",
       "Force interaction mode (human or agent). Defaults to auto-detect based on TTY.",
