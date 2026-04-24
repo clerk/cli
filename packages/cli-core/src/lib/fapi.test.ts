@@ -1,6 +1,6 @@
 import { test, expect, describe, afterEach } from "bun:test";
 import { decodePublishableKey, bootstrapDevBrowser, fetchUserSettings } from "./fapi.ts";
-import { CliError } from "./errors.ts";
+import { CliError, FapiError } from "./errors.ts";
 import { stubFetch } from "../test/lib/stubs.ts";
 
 describe("decodePublishableKey", () => {
@@ -25,6 +25,17 @@ describe("decodePublishableKey", () => {
   test("throws CliError when decoded value does not end with $", () => {
     // base64("clerk.example.com") = "Y2xlcmsuZXhhbXBsZS5jb20="
     expect(() => decodePublishableKey("pk_test_Y2xlcmsuZXhhbXBsZS5jb20=")).toThrow(CliError);
+  });
+
+  test("throws CliError when decoded host contains a slash", () => {
+    // base64("clerk.example.com/path$") = encodeToB64("clerk.example.com/path$")
+    const encoded = btoa("clerk.example.com/path$");
+    expect(() => decodePublishableKey(`pk_test_${encoded}`)).toThrow(CliError);
+  });
+
+  test("throws CliError when decoded host contains an @ sign", () => {
+    const encoded = btoa("user@clerk.example.com$");
+    expect(() => decodePublishableKey(`pk_test_${encoded}`)).toThrow(CliError);
   });
 });
 
@@ -53,8 +64,13 @@ describe("bootstrapDevBrowser", () => {
     expect(capturedMethod).toBe("POST");
   });
 
-  test("throws CliError on non-2xx response", async () => {
+  test("throws FapiError on non-2xx response", async () => {
     stubFetch(async () => new Response("nope", { status: 500 }));
+    await expect(bootstrapDevBrowser("foo.example.com")).rejects.toThrow(FapiError);
+  });
+
+  test("throws when response has no token", async () => {
+    stubFetch(async () => new Response(JSON.stringify({}), { status: 200 }));
     await expect(bootstrapDevBrowser("foo.example.com")).rejects.toThrow(CliError);
   });
 });
@@ -100,8 +116,13 @@ describe("fetchUserSettings", () => {
     expect(capturedUrl).not.toContain("__clerk_db_jwt");
   });
 
-  test("throws CliError on non-2xx response", async () => {
+  test("throws FapiError on non-2xx response", async () => {
     stubFetch(async () => new Response("nope", { status: 401 }));
+    await expect(fetchUserSettings("foo.example.com", {})).rejects.toThrow(FapiError);
+  });
+
+  test("throws when response has no user_settings", async () => {
+    stubFetch(async () => new Response(JSON.stringify({}), { status: 200 }));
     await expect(fetchUserSettings("foo.example.com", {})).rejects.toThrow(CliError);
   });
 });

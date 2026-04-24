@@ -35,6 +35,7 @@ import {
   UserAbortError,
   ApiError,
   PlapiError,
+  FapiError,
   EXIT_CODE,
   throwUsageError,
 } from "./lib/errors.ts";
@@ -734,7 +735,7 @@ export async function runProgram(
         );
       } else {
         log.error(`${prefix} (${error.status}): ${detail}`);
-        if (verbose && error instanceof PlapiError && error.url) {
+        if (verbose && (error instanceof PlapiError || error instanceof FapiError) && error.url) {
           log.error(`       URL: ${error.url}`);
         }
       }

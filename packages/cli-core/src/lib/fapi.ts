@@ -5,11 +5,17 @@
  */
 
 import type { UserSettingsJSON } from "@clerk/shared/types";
-import { CliError, ERROR_CODE } from "./errors.ts";
+import { CliError, FapiError, ERROR_CODE } from "./errors.ts";
 import { loggedFetch } from "./fetch.ts";
 
 const PK_TEST_PREFIX = "pk_test_";
 const PK_LIVE_PREFIX = "pk_live_";
+
+/**
+ * The clerk-js client version FAPI's `/v1/environment` payload is shaped for.
+ * Bump when consuming response fields introduced in a later major version.
+ */
+const CLERK_JS_API_VERSION = "5";
 
 export type InstanceType = "development" | "production";
 
@@ -49,26 +55,47 @@ export function decodePublishableKey(pk: string): DecodedPublishableKey {
     });
   }
 
+  const host = decoded.slice(0, -1);
+
+  if (!/^[a-zA-Z0-9.-]+$/.test(host)) {
+    throw new CliError(
+      "Invalid publishable key format: decoded host contains invalid characters.",
+      { code: ERROR_CODE.INVALID_KEY_FORMAT },
+    );
+  }
+
   return {
-    fapiHost: decoded.slice(0, -1),
+    fapiHost: host,
     instanceType,
   };
 }
 
 export type { UserSettingsJSON };
 
+async function fapiFetch(method: "GET" | "POST", url: URL): Promise<Response> {
+  const response = await loggedFetch(url, { tag: "fapi", method });
+  if (!response.ok) {
+    const body = await response.text();
+    throw new FapiError(response.status, body, url.toString());
+  }
+  return response;
+}
+
+async function fapiFetchJson<T>(method: "GET" | "POST", url: URL): Promise<T> {
+  const response = await fapiFetch(method, url);
+  const text = await response.text();
+  try {
+    return JSON.parse(text) as T;
+  } catch {
+    throw new CliError(`FAPI returned non-JSON response from ${url.pathname}.`, {
+      code: ERROR_CODE.FAPI_ERROR,
+    });
+  }
+}
+
 export async function bootstrapDevBrowser(fapiHost: string): Promise<string> {
   const url = new URL(`https://${fapiHost}/v1/dev_browser`);
-  const response = await loggedFetch(url, { tag: "fapi", method: "POST" });
-  if (!response.ok) {
-    throw new CliError(
-      `Failed to bootstrap dev browser: ${response.status} ${response.statusText}`,
-      {
-        code: ERROR_CODE.FAPI_ERROR,
-      },
-    );
-  }
-  const body = (await response.json()) as { token?: unknown };
+  const body = await fapiFetchJson<{ token?: unknown }>("POST", url);
   if (typeof body.token !== "string" || body.token.length === 0) {
     throw new CliError("Dev browser response did not include a token.", {
       code: ERROR_CODE.FAPI_ERROR,
@@ -82,18 +109,11 @@ export async function fetchUserSettings(
   opts: { jwt?: string },
 ): Promise<UserSettingsJSON> {
   const url = new URL(`https://${fapiHost}/v1/environment`);
-  url.searchParams.set("_clerk_js_version", "5");
+  url.searchParams.set("_clerk_js_version", CLERK_JS_API_VERSION);
   if (opts.jwt) {
     url.searchParams.set("__clerk_db_jwt", opts.jwt);
   }
-  const response = await loggedFetch(url, { tag: "fapi", method: "GET" });
-  if (!response.ok) {
-    throw new CliError(
-      `Failed to fetch instance settings: ${response.status} ${response.statusText}`,
-      { code: ERROR_CODE.FAPI_ERROR },
-    );
-  }
-  const body = (await response.json()) as { user_settings?: UserSettingsJSON };
+  const body = await fapiFetchJson<{ user_settings?: UserSettingsJSON }>("GET", url);
   if (!body.user_settings) {
     throw new CliError("FAPI environment response did not include user_settings.", {
       code: ERROR_CODE.FAPI_ERROR,
