@@ -79,9 +79,13 @@ export async function openBrowser(url: string): Promise<OpenResult> {
     return { ok: false, reason: "no-launcher" };
   }
 
-  // On Windows, invoke `start` via cmd.exe. The empty "" is the window title
-  // (otherwise start would interpret a quoted URL as the title).
-  const command = launcher === "start" ? ["cmd.exe", "/c", "start", "", url] : [launcher, url];
+  // On Windows, invoke `start` via cmd.exe. The entire command is passed as a
+  // single string after `/c` so that cmd.exe parses it exactly as if typed at
+  // the prompt: `start "" "https://..."`.  The empty `""` is the window title
+  // (otherwise `start` interprets a quoted URL as the title), and the URL is
+  // quoted so `&` in OAuth query strings is not treated as a cmd.exe command
+  // separator.
+  const command = launcher === "start" ? ["cmd.exe", "/c", `start "" "${url}"`] : [launcher, url];
 
   try {
     const result = await withBrowserLaunch(
@@ -93,6 +97,8 @@ export async function openBrowser(url: string): Promise<OpenResult> {
           stdout: "ignore",
           stderr: "ignore",
           stdin: "ignore",
+          // Prevent Bun from escaping the quotes inside the cmd.exe command string.
+          windowsVerbatimArguments: launcher === "start",
         });
 
         // Race the launcher's exit against a short grace period. Real launchers
