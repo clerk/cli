@@ -74,6 +74,11 @@ async function readStdin(): Promise<string> {
   return text;
 }
 
+async function readOptionalStdin(): Promise<string | undefined> {
+  const text = await Bun.stdin.text();
+  return text.trim() ? text : undefined;
+}
+
 /**
  * Resolve the raw --input-json value to a JSON string.
  * - `"-"` reads from stdin.
@@ -148,7 +153,8 @@ export async function expandInputJson(argv: string[]): Promise<string[]> {
 
   // No explicit --input-json flag — check for piped stdin
   if (hasStdinPipe()) {
-    const jsonStr = await readStdin();
+    const jsonStr = await readOptionalStdin();
+    if (jsonStr === undefined) return argv;
     const parsed = parseJsonString(jsonStr);
     assertJsonObject(parsed);
     // Append expanded flags at the end; explicit CLI flags already in argv

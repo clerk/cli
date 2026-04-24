@@ -341,6 +341,11 @@ describe("expandInputJson", () => {
       expect(result.result).toEqual(["clerk", "init", "--yes", "--framework", "next"]);
     });
 
+    test("auto-stdin ignores empty stdin", async () => {
+      const result = await expandViaStdin(["clerk", "init", "--yes"], "");
+      expect(result.result).toEqual(["clerk", "init", "--yes"]);
+    });
+
     test("--input-json - errors on invalid JSON from stdin", async () => {
       const result = await expandViaStdin(["clerk", "init", "--input-json", "-"], "not-json");
       expect(result.error).toContain("Invalid JSON");
