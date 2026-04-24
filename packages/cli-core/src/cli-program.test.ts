@@ -11,12 +11,51 @@ test("registers users as a top-level command", () => {
   expect(users).toBeDefined();
 });
 
-test("registers users create as a subcommand", () => {
+test("registers users create and specialized mutations as subcommands", () => {
   const program = createProgram();
   const users = program.commands.find((command) => command.name() === "users")!;
   const names = users.commands.map((command) => command.name());
 
-  expect(names).toContain("create");
+  expect(names).toEqual(
+    expect.arrayContaining(["create", "metadata", "profile-image", "password", "mfa"]),
+  );
+});
+
+test("payload-bearing user mutation commands expose --json for output and -d/--data for inline request bodies", () => {
+  const program = createProgram();
+  const users = program.commands.find((command) => command.name() === "users")!;
+  const optionNames = (name: string) =>
+    users.commands.find((command) => command.name() === name)!.options.map((option) => option.long);
+
+  for (const name of ["create", "metadata"]) {
+    expect(optionNames(name)).toEqual(expect.arrayContaining(["--json", "--data", "--file"]));
+  }
+});
+
+test("users specialized mutation commands expose --json output and verification confirmations consistently", () => {
+  const program = createProgram();
+  const users = program.commands.find((command) => command.name() === "users")!;
+  const optionNames = (name: string) =>
+    users.commands.find((command) => command.name() === name)!.options.map((option) => option.long);
+
+  expect(optionNames("profile-image")).toEqual(
+    expect.arrayContaining(["--json", "--set", "--remove", "--dry-run", "--yes"]),
+  );
+  expect(optionNames("password")).toEqual(
+    expect.arrayContaining(["--json", "--verify", "--password", "--dry-run", "--yes"]),
+  );
+  expect(optionNames("mfa")).toEqual(
+    expect.arrayContaining([
+      "--json",
+      "--disable",
+      "--remove-totp",
+      "--remove-backup-codes",
+      "--verify",
+      "--code",
+      "--dry-run",
+      "--yes",
+    ]),
+  );
 });
 
 test("users create exposes --json output, curated flags, and -d/--data for inline request bodies", () => {

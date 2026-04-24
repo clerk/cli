@@ -273,6 +273,22 @@ Give AI agents better Clerk context: install the Clerk skills
         command: 'clerk users create -d \'{"email_address":["alice@example.com"]}\' --yes',
         description: "Create a user from an inline BAPI request body",
       },
+      {
+        command: "clerk users metadata user_123 --file metadata.json --yes",
+        description: "Patch user metadata",
+      },
+      {
+        command: "clerk users profile-image user_123 --set ./avatar.png --yes",
+        description: "Upload a profile image",
+      },
+      {
+        command: "clerk users password user_123 --verify --password 'Password123!'",
+        description: "Verify a user's password",
+      },
+      {
+        command: "clerk users mfa user_123 --disable --yes",
+        description: "Disable MFA for a user",
+      },
     ])
     .action(usersHandlers.menu);
 
@@ -308,6 +324,65 @@ Give AI agents better Clerk context: install the Clerk skills
     .action((_opts, cmd) =>
       usersHandlers.create(cmd.optsWithGlobals() as Parameters<typeof usersHandlers.create>[0]),
     );
+
+  users
+    .command("metadata")
+    .argument("<user-id>")
+    .description("Manage user metadata")
+    .option("--json", "Output as JSON")
+    .option("-d, --data <json>", "Inline BAPI request body")
+    .option("--file <path>", "Read BAPI request body from a file")
+    .option("--secret-key <key>", "Backend API secret key to use")
+    .option("--app <id>", "Application ID to target (works from any directory)")
+    .option("--instance <id>", "Instance to target (dev, prod, or a full instance ID)")
+    .option("--dry-run", "Show the request without executing it")
+    .option("--yes", "Skip confirmation prompt")
+    .action(usersHandlers.metadata);
+
+  users
+    .command("profile-image")
+    .argument("<user-id>")
+    .description("Manage user profile image")
+    .option("--json", "Output as JSON")
+    .option("--set <path>", "Upload a profile image from a local file")
+    .option("--remove", "Remove the current profile image")
+    .option("--secret-key <key>", "Backend API secret key to use")
+    .option("--app <id>", "Application ID to target (works from any directory)")
+    .option("--instance <id>", "Instance to target (dev, prod, or a full instance ID)")
+    .option("--dry-run", "Show the request without executing it")
+    .option("--yes", "Skip confirmation prompt")
+    .action(usersHandlers.profileImage);
+
+  users
+    .command("password")
+    .argument("<user-id>")
+    .description("Manage user password state")
+    .option("--json", "Output as JSON")
+    .option("--verify", "Verify the supplied password for the user")
+    .option("--password <password>", "Password value for the selected action")
+    .option("--secret-key <key>", "Backend API secret key to use")
+    .option("--app <id>", "Application ID to target (works from any directory)")
+    .option("--instance <id>", "Instance to target (dev, prod, or a full instance ID)")
+    .option("--dry-run", "Show the request without executing it")
+    .option("--yes", "Skip confirmation prompt")
+    .action(usersHandlers.password);
+
+  users
+    .command("mfa")
+    .argument("<user-id>")
+    .description("Manage user MFA state")
+    .option("--json", "Output as JSON")
+    .option("--disable", "Disable all MFA methods for the user")
+    .option("--remove-totp", "Remove the user's TOTP configuration")
+    .option("--remove-backup-codes", "Remove the user's backup codes")
+    .option("--verify", "Verify an MFA code for the user")
+    .option("--code <code>", "MFA code for --verify")
+    .option("--secret-key <key>", "Backend API secret key to use")
+    .option("--app <id>", "Application ID to target (works from any directory)")
+    .option("--instance <id>", "Instance to target (dev, prod, or a full instance ID)")
+    .option("--dry-run", "Show the request without executing it")
+    .option("--yes", "Skip confirmation prompt")
+    .action(usersHandlers.mfa);
 
   const env = program
     .command("env")

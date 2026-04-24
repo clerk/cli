@@ -1,7 +1,8 @@
 /**
  * Exercise primary users flows through the real CLI program.
  * Covers create against linked-project, --app, --secret-key, raw -d/--data,
- * --dry-run, and the wizard picker fallback when no project is linked.
+ * --dry-run, and the wizard picker fallback when no project is linked, plus
+ * specialized user mutations against linked-project resolution.
  */
 
 import { writeFile } from "node:fs/promises";
@@ -264,5 +265,41 @@ describe("users commands", () => {
     expect(exitCode).not.toBe(0);
     expect(stderr + stdout).toContain("No input provided");
     expect(findBapiCreateRequest()).toBeUndefined();
+  });
+
+  test("patches user metadata from inline JSON", async () => {
+    await setProfile("github.com/test/project", {
+      workspaceId: "",
+      appId: MOCK_APP.application_id,
+      appName: MOCK_APP.name,
+      instances: { development: devInstance.instance_id },
+    });
+
+    http.mock({
+      "/v1/platform/applications/app_1?include_secret_keys=true": MOCK_APP,
+      "/v1/users/user_123/metadata": { id: "user_123", public_metadata: { role: "admin" } },
+    });
+
+    const { stderr } = await clerk(
+      "--mode",
+      "human",
+      "users",
+      "metadata",
+      "user_123",
+      "-d",
+      '{"public_metadata":{"role":"admin"}}',
+      "--yes",
+    );
+    expect(stderr).toContain("Updated metadata");
+
+    const metadataRequest = http.requests.find(
+      (request) =>
+        request.method === "PATCH" &&
+        request.url.includes("https://test-bapi.clerk.dev/v1/users/user_123/metadata"),
+    );
+    expect(metadataRequest).toBeDefined();
+    expect(JSON.parse(metadataRequest!.body!)).toEqual({
+      public_metadata: { role: "admin" },
+    });
   });
 });

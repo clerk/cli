@@ -64,15 +64,52 @@ Supported curated flags:
 - `-d, --data <json>`
 - `--file <path>`
 
+### Metadata And Profile Image
+
+`metadata` updates public, private, or unsafe metadata from JSON input. `profile-image` uploads or removes the profile image. By default, human mode prints terse success; pass `--json` for the response body.
+
+```sh
+clerk users metadata user_123 -d '{"public_metadata":{"role":"admin"}}' --yes
+clerk users metadata user_123 -d '{"public_metadata":{"role":"admin"}}' --json --yes
+clerk users metadata user_123 --file metadata.json --dry-run
+clerk users profile-image user_123 --set ./avatar.png --yes
+clerk users profile-image user_123 --set ./avatar.png --json --yes
+clerk users profile-image user_123 --remove --yes
+```
+
+### Password And MFA
+
+`password` currently supports password verification. `mfa` supports disabling or removing MFA state and verifying a TOTP code. Verification-style commands prompt in human mode unless `--yes`; pass `--json` for machine-readable output.
+
+```sh
+clerk users password user_123 --verify --password 'Password123!'
+clerk users password user_123 --verify --password 'Password123!' --yes
+clerk users password user_123 --verify --password 'Password123!' --dry-run
+clerk users mfa user_123 --disable --yes
+clerk users mfa user_123 --remove-totp --yes
+clerk users mfa user_123 --remove-backup-codes --yes
+clerk users mfa user_123 --verify --code 123456
+clerk users mfa user_123 --verify --code 123456 --yes --json
+```
+
 ## API Endpoints
 
-| Method | Endpoint    | Command(s) |
-| ------ | ----------- | ---------- |
-| `POST` | `/v1/users` | `create`   |
+| Method   | Endpoint                              | Command(s)                   |
+| -------- | ------------------------------------- | ---------------------------- |
+| `POST`   | `/v1/users`                           | `create`                     |
+| `PATCH`  | `/v1/users/{user_id}/metadata`        | `metadata`                   |
+| `POST`   | `/v1/users/{user_id}/profile_image`   | `profile-image --set`        |
+| `DELETE` | `/v1/users/{user_id}/profile_image`   | `profile-image --remove`     |
+| `POST`   | `/v1/users/{user_id}/verify_password` | `password --verify`          |
+| `DELETE` | `/v1/users/{user_id}/mfa`             | `mfa --disable`              |
+| `DELETE` | `/v1/users/{user_id}/totp`            | `mfa --remove-totp`          |
+| `DELETE` | `/v1/users/{user_id}/backup_code`     | `mfa --remove-backup-codes`  |
+| `POST`   | `/v1/users/{user_id}/verify_totp`     | `mfa --verify --code <code>` |
 
 ## Notes
 
 - Human mode prints concise tables or summaries for reads and terse success summaries for mutations by default; agent mode defaults to JSON across the users command family.
 - `--json` is the response-output flag across the users command family.
-- `-d, --data` is the inline raw-BAPI-body flag for `create`; `--file` reads the same body from a file.
+- `-d, --data` is the inline raw-BAPI-body flag for `create` and `metadata`; `--file` reads the same body from a file.
+- Verification-style commands prompt in human mode unless `--yes` is passed.
 - `--dry-run` is available on mutating commands to preview the outgoing request.
