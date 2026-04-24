@@ -13,6 +13,7 @@ import { bapiRequest } from "../api/bapi.ts";
 import { confirm } from "../../lib/prompts.ts";
 import { withSpinner } from "../../lib/spinner.ts";
 import { handleUsersBapiError, printUsersMutationResult } from "./output.ts";
+import { registerUsersAction } from "./registry.ts";
 
 type CreateUserOptions = {
   email?: string;
@@ -126,3 +127,12 @@ async function confirmMutation(
     throwUserAbort();
   }
 }
+
+registerUsersAction({
+  key: "create",
+  label: "Create user",
+  description: "Create a new user",
+  handler: async (targeting) => {
+    await create(targeting);
+  },
+});
