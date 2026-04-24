@@ -175,6 +175,7 @@ export function runBrowserTest(getFixture: () => FixtureState, config: FixtureCo
       const fixtureName = config.description;
 
       let port: number | undefined;
+      let host: string | undefined;
       let proc: import("bun").Subprocess | undefined;
       let stderrLines: string[] = [];
       let stdoutLines: string[] = [];
@@ -196,6 +197,7 @@ export function runBrowserTest(getFixture: () => FixtureState, config: FixtureCo
         });
         proc = server.proc;
         port = server.port;
+        host = server.host;
         stderrLines = server.stderr;
         stdoutLines = server.stdout;
 
@@ -225,8 +227,8 @@ export function runBrowserTest(getFixture: () => FixtureState, config: FixtureCo
           context,
           options: frontendApiUrl ? { frontendApiUrl } : undefined,
         });
-        log(fixtureName, `navigating to http://localhost:${port}`);
-        await page.goto(`http://localhost:${port}`, { waitUntil: "load" });
+        log(fixtureName, `navigating to http://${host}:${port}`);
+        await page.goto(`http://${host}:${port}`, { waitUntil: "load" });
 
         // 5. Sign in
         log(fixtureName, "signing in");
