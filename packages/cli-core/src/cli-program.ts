@@ -263,6 +263,9 @@ Give AI agents better Clerk context: install the Clerk skills
   const users = program
     .command("users")
     .description("Manage Clerk users")
+    .option("--secret-key <key>", "Backend API secret key to use")
+    .option("--app <id>", "Application ID to target (works from any directory)")
+    .option("--instance <id>", "Instance to target (dev, prod, or a full instance ID)")
     .setExamples([
       {
         command: "clerk users create --email alice@example.com --first-name Alice --yes",
