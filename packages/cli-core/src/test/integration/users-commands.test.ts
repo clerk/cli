@@ -1,7 +1,8 @@
 /**
  * Exercise primary users flows through the real CLI program.
  * Covers create against linked-project, --app, --secret-key, raw -d/--data,
- * --dry-run, and the wizard picker fallback when no project is linked.
+ * --dry-run, and the wizard picker fallback when no project is linked, plus
+ * list wired up against linked-project resolution.
  */
 
 import { writeFile } from "node:fs/promises";
@@ -9,6 +10,7 @@ import { join } from "node:path";
 import { describe, expect, test } from "bun:test";
 import {
   MOCK_APP,
+  MOCK_USERS,
   clerk,
   getInstance,
   http,
@@ -265,4 +267,50 @@ describe("users commands", () => {
     expect(stderr + stdout).toContain("No input provided");
     expect(findBapiCreateRequest()).toBeUndefined();
   });
+
+  test.each([{ mode: "human" }, { mode: "agent" }])(
+    "lists users from linked project context ($mode mode)",
+    async ({ mode }) => {
+      await setProfile("github.com/test/project", {
+        workspaceId: "",
+        appId: MOCK_APP.application_id,
+        appName: MOCK_APP.name,
+        instances: { development: devInstance.instance_id },
+      });
+
+      http.mock({
+        "/v1/platform/applications/app_1?include_secret_keys=true": MOCK_APP,
+        "/v1/users": { data: MOCK_USERS, totalCount: MOCK_USERS.length },
+      });
+
+      const { stdout, stderr } = await clerk("--mode", mode, "users", "list");
+
+      if (mode === "human") {
+        expect(stdout).toContain("John Doe");
+        expect(stdout).toContain("john@example.com");
+        expect(stderr).toContain("1 user");
+      } else {
+        expect(JSON.parse(stdout)).toEqual({
+          data: MOCK_USERS,
+          totalCount: MOCK_USERS.length,
+        });
+      }
+
+      expect(
+        http.requests.some(
+          (request) =>
+            request.method === "GET" &&
+            request.url.includes("/v1/platform/applications/app_1") &&
+            request.url.includes("include_secret_keys=true"),
+        ),
+      ).toBe(true);
+      expect(
+        http.requests.some(
+          (request) =>
+            request.method === "GET" &&
+            request.url.includes("https://test-bapi.clerk.dev/v1/users"),
+        ),
+      ).toBe(true);
+    },
+  );
 });

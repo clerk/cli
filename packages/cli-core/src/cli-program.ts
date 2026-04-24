@@ -47,6 +47,47 @@ import { maybeNotifyUpdate, getCurrentVersion } from "./lib/update-check.ts";
 import { update } from "./commands/update/index.ts";
 import { isClerkSkillInstalled } from "./lib/skill-detection.ts";
 
+const USER_LIST_ORDER_BY_FIELDS = [
+  "created_at",
+  "updated_at",
+  "email_address",
+  "web3wallet",
+  "first_name",
+  "last_name",
+  "phone_number",
+  "username",
+  "last_active_at",
+  "last_sign_in_at",
+] as const;
+
+const USER_LIST_ORDER_BY_CHOICES = USER_LIST_ORDER_BY_FIELDS.flatMap((field) => [
+  field,
+  `+${field}`,
+  `-${field}`,
+]);
+
+function collectOptionValues(value: string, previous: string[] = []): string[] {
+  return [...previous, value];
+}
+
+function parseIntegerOption(
+  value: string,
+  flag: string,
+  { min, max }: { min: number; max?: number },
+): number {
+  if (!/^\d+$/.test(value)) {
+    throwUsageError(`Invalid ${flag} value "${value}". Must be an integer.`);
+  }
+
+  const parsed = Number.parseInt(value, 10);
+  if (parsed < min || (typeof max === "number" && parsed > max)) {
+    const range = typeof max === "number" ? `${min}-${max}` : `>= ${min}`;
+    throwUsageError(`Invalid ${flag} value "${value}". Must be ${range}.`);
+  }
+
+  return parsed;
+}
+
 export function createProgram() {
   const program = new Command()
     .name("clerk")
@@ -265,6 +306,7 @@ Give AI agents better Clerk context: install the Clerk skills
     .option("--app <id>", "Application ID to target (works from any directory)")
     .option("--instance <id>", "Instance to target (dev, prod, or a full instance ID)")
     .setExamples([
+      { command: "clerk users list", description: "List users" },
       {
         command: "clerk users create --email alice@example.com --first-name Alice --yes",
         description: "Create a user from curated flags",
@@ -275,6 +317,70 @@ Give AI agents better Clerk context: install the Clerk skills
       },
     ])
     .action(usersHandlers.menu);
+
+  users
+    .command("list")
+    .description("List users")
+    .option("--json", "Output as JSON")
+    .option("--limit <number>", "Maximum users to return (1-500)", (value) =>
+      parseIntegerOption(value, "--limit", { min: 1, max: 500 }),
+    )
+    .option("--offset <number>", "Users to skip before returning results (0+)", (value) =>
+      parseIntegerOption(value, "--offset", { min: 0 }),
+    )
+    .option("--query <query>", "Search across common user fields")
+    .option(
+      "--email-address <email>",
+      "Filter by email address (repeat or comma-separate)",
+      collectOptionValues,
+      [],
+    )
+    .option(
+      "--phone-number <phone>",
+      "Filter by phone number (repeat or comma-separate)",
+      collectOptionValues,
+      [],
+    )
+    .option(
+      "--username <username>",
+      "Filter by username (repeat or comma-separate)",
+      collectOptionValues,
+      [],
+    )
+    .option(
+      "--user-id <user-id>",
+      "Filter by user ID (repeat or comma-separate)",
+      collectOptionValues,
+      [],
+    )
+    .option(
+      "--external-id <external-id>",
+      "Filter by external ID (repeat or comma-separate)",
+      collectOptionValues,
+      [],
+    )
+    .addOption(
+      createOption(
+        "--order-by <field>",
+        "Order by a supported field, optionally prefixed with + or -",
+      ).choices(USER_LIST_ORDER_BY_CHOICES),
+    )
+    .option("--secret-key <key>", "Backend API secret key to use")
+    .option("--app <id>", "Application ID to target (works from any directory)")
+    .option("--instance <id>", "Instance to target (dev, prod, or a full instance ID)")
+    .setExamples([
+      { command: "clerk users list", description: "List users with the default ordering" },
+      {
+        command: "clerk users list --query alice --limit 20",
+        description: "Search across common user fields with pagination",
+      },
+      {
+        command:
+          "clerk users list --email-address alice@example.com --external-id crm_123 --order-by -last_sign_in_at",
+        description: "Filter by common identifiers and sort by recent sign-in",
+      },
+    ])
+    .action(usersHandlers.list);
 
   users
     .command("create")

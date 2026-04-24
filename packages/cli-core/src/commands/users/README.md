@@ -40,6 +40,31 @@ Two complementary mechanisms for JSON input work across the users command family
 
 ## Commands
 
+### `clerk users list`
+
+List users from the target instance.
+
+```sh
+clerk users list
+clerk users list --json
+clerk users list --query alice --limit 20 --offset 40
+clerk users list --email-address alice@example.com --phone-number +15551234567
+clerk users list --user-id user_123 --external-id crm_123 --order-by -last_sign_in_at
+clerk users list --app app_123 --instance prod
+```
+
+Common list filters:
+
+- `--limit <number>`
+- `--offset <number>`
+- `--query <query>`
+- `--email-address <email>` repeat or comma-separate values
+- `--phone-number <phone>` repeat or comma-separate values
+- `--username <username>` repeat or comma-separate values
+- `--user-id <user-id>` repeat or comma-separate values
+- `--external-id <external-id>` repeat or comma-separate values
+- `--order-by <field>` supports Clerk's common `getUserList()` order fields, with optional `+` or `-`
+
 ### `clerk users create`
 
 Create a user from curated flags or a raw BAPI request body via `-d` or `--file`. By default, human mode prints a terse success message; pass `--json` for the response body.
@@ -68,6 +93,7 @@ Supported curated flags:
 
 | Method | Endpoint    | Command(s) |
 | ------ | ----------- | ---------- |
+| `GET`  | `/v1/users` | `list`     |
 | `POST` | `/v1/users` | `create`   |
 
 ## Notes
