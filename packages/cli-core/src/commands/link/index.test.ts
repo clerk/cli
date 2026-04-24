@@ -384,6 +384,31 @@ describe("link", () => {
       expect(captured.err).toContain("Session expired");
     });
 
+    test("re-auths + retries when fetchApplication 401s in handleExistingProfile --app path", async () => {
+      mockIsAgent.mockReturnValue(false);
+      mockIsAuthenticated.mockResolvedValue(true);
+      mockResolveProfile.mockResolvedValue({
+        path: "/repo/.git",
+        profile: { workspaceId: "", appId: "app_existing", instances: { development: "ins_1" } },
+      });
+      // handleExistingProfile calls fetchAppWithReauth (reject once, succeed once),
+      // then link() calls fetchAppWithReauth again for the actual app data.
+      mockFetchApplication
+        .mockRejectedValueOnce(new PlapiError(401, "unauthorized", "url"))
+        .mockResolvedValueOnce(mockApp) // retry in handleExistingProfile
+        .mockResolvedValueOnce(mockApp); // second fetchAppWithReauth in link()
+      mockLogin.mockResolvedValue({ userId: "user_1", email: "test@test.com" });
+      mockConfirm.mockResolvedValue(true);
+      consoleSpy = spyOn(console, "log").mockImplementation(() => {});
+
+      await runLink({ app: "app_123" });
+
+      expect(mockLogin).toHaveBeenCalledWith({ showNextSteps: false });
+      expect(mockFetchApplication).toHaveBeenCalledTimes(3);
+      expect(captured.err).toContain("Session expired");
+      expect(mockSetProfile).toHaveBeenCalled();
+    });
+
     test("re-auths + retries when listApplications 401s (expired token path via picker)", async () => {
       mockIsAgent.mockReturnValue(false);
       mockIsAuthenticated.mockResolvedValue(true);
