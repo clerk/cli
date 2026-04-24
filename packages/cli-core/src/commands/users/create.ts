@@ -136,13 +136,36 @@ async function confirmMutation(
 ): Promise<void> {
   if (!isHuman() || options.yes) return;
 
-  log.info(`\nAbout to ${method} ${path}`);
-  log.raw(JSON.stringify(redactUsersDisplayPayload(payload), null, 2));
+  log.info(`About to ${method} ${path}`);
+  const display = redactUsersDisplayPayload(payload);
+  for (const line of formatPayloadForDisplay(display)) {
+    log.info(line);
+  }
 
   const ok = await confirm({ message: "Proceed?" });
   if (!ok) {
     throwUserAbort();
   }
+}
+
+function formatPayloadForDisplay(payload: unknown): string[] {
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
+    return [`  ${formatPayloadValue(payload)}`];
+  }
+  return Object.entries(payload as Record<string, unknown>).map(
+    ([key, value]) => `  ${key}: ${formatPayloadValue(value)}`,
+  );
+}
+
+function formatPayloadValue(value: unknown): string {
+  if (value === null || value === undefined) return "(none)";
+  if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") {
+    return String(value);
+  }
+  if (Array.isArray(value) && value.length === 1 && typeof value[0] === "string") {
+    return value[0];
+  }
+  return JSON.stringify(value);
 }
 
 registerUsersAction({
