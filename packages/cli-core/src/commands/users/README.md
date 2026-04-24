@@ -36,7 +36,7 @@ In agent mode all interactive flows are disabled and the same invocations exit w
 Two complementary mechanisms for JSON input work across the users command family:
 
 - **`--input-json <json|@file|->`** (program-level). Expands JSON object keys into argv flags before Commander parses them. Drive the curated flags with structured JSON, from an agent or a pipeline: `clerk users create --input-json '{"email":"alice@example.com","first-name":"Alice","yes":true}'`. Accepts inline JSON, `@path/to/file.json`, or `-` for stdin. Piped stdin is auto-detected when `--input-json` is absent.
-- **`-d, --data <json>` plus `--file <path>`** (per-command). Send a raw BAPI request body directly to `/v1/users`. Use this when you need a BAPI field the curated flags don't expose (for example, `primary_email_address_id` or `web3_wallets`). Mirrors `clerk api -d` / `--file`.
+- **`-d, --data <json>` plus `--file <path>`** (per-command). Send a raw BAPI request body directly to the target endpoint. Use this when you need a BAPI field the curated flags don't expose. Mirrors `clerk api -d` / `--file`.
 
 ## Commands
 
@@ -64,15 +64,38 @@ Supported curated flags:
 - `-d, --data <json>`
 - `--file <path>`
 
+### `clerk users update <user-id>`
+
+Update a user from curated flags or a raw BAPI request body via `-d` or `--file`. By default, human mode prints a terse success message; pass `--json` for the response body.
+
+```sh
+clerk users update user_123 --first-name Alicia --yes
+clerk users update user_123 -d '{"last_name":"Example"}' --app app_123 --yes
+clerk users update user_123 -d '{"last_name":"Example"}' --app app_123 --json --yes
+clerk users update user_123 --file update.json --dry-run
+```
+
+Supported curated flags:
+
+- `--username <username>`
+- `--password <password>`
+- `--first-name <first-name>`
+- `--last-name <last-name>`
+- `--external-id <external-id>`
+- `--json`
+- `-d, --data <json>`
+- `--file <path>`
+
 ## API Endpoints
 
-| Method | Endpoint    | Command(s) |
-| ------ | ----------- | ---------- |
-| `POST` | `/v1/users` | `create`   |
+| Method  | Endpoint              | Command(s) |
+| ------- | --------------------- | ---------- |
+| `POST`  | `/v1/users`           | `create`   |
+| `PATCH` | `/v1/users/{user_id}` | `update`   |
 
 ## Notes
 
 - Human mode prints concise tables or summaries for reads and terse success summaries for mutations by default; agent mode defaults to JSON across the users command family.
 - `--json` is the response-output flag across the users command family.
-- `-d, --data` is the inline raw-BAPI-body flag for `create`; `--file` reads the same body from a file.
+- `-d, --data` is the inline raw-BAPI-body flag for `create` and `update`; `--file` reads the same body from a file.
 - `--dry-run` is available on mutating commands to preview the outgoing request.
