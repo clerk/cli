@@ -29,14 +29,14 @@ const FAKE_CTX = {
     name: "React",
     sdk: "@clerk/react",
     envVar: "VITE_CLERK_PUBLISHABLE_KEY",
-    envFile: ".env" as const,
+    envFile: ".env.local" as const,
   },
   typescript: true,
   srcDir: false,
   packageManager: "npm" as const,
   existingClerk: true,
   deps: { react: "^19.0.0" },
-  envFile: ".env",
+  envFile: ".env.local",
 };
 
 const FAKE_BOOTSTRAP = {
