@@ -190,7 +190,11 @@ async function fetchAppWithReauth(appId: string): Promise<Application> {
   try {
     return await fetchOnce();
   } catch (error) {
-    if (error instanceof PlapiError && (error.status === 401 || error.status === 403)) {
+    if (
+      error instanceof PlapiError &&
+      (error.status === 401 || error.status === 403) &&
+      !process.env.CLERK_PLATFORM_API_KEY
+    ) {
       log.info("Session expired. Re-authenticating...");
       await login({ showNextSteps: false });
       return fetchOnce();
@@ -210,7 +214,11 @@ async function resolveApp(
   try {
     apps = await withSpinner("Fetching applications...", fetchApps);
   } catch (error) {
-    if (error instanceof PlapiError && (error.status === 401 || error.status === 403)) {
+    if (
+      error instanceof PlapiError &&
+      (error.status === 401 || error.status === 403) &&
+      !process.env.CLERK_PLATFORM_API_KEY
+    ) {
       // Token was present but not live. Re-auth inline, then retry once.
       log.info("Session expired. Re-authenticating...");
       await login({ showNextSteps: false });
