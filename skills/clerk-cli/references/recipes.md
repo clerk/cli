@@ -15,18 +15,18 @@ The bundled catalog is cached locally for 1 hour; run `clerk api ls` to force a 
 ## Users
 
 ```sh
-# List users (paginated)
-clerk api /users
-clerk api '/users?limit=10&offset=0&order_by=-created_at'
+# List users (preferred; curated flags)
+clerk users list
+clerk users list --limit 10 --offset 0 --order-by -created_at
 
-# Count users
+# Count users (no curated subcommand; use the raw API)
 clerk api /users/count
 
-# Fetch a user
+# Fetch a user (no curated subcommand; use the raw API)
 clerk api /users/user_abc123
 
 # Search by email
-clerk api '/users?email_address=alice@example.com'
+clerk users list --email-address alice@example.com
 
 # Create a user (preferred; curated flags)
 clerk users create \
@@ -217,10 +217,10 @@ clerk api /v1/platform/applications/app_abc123 --platform
 
 ```sh
 # Get a list of user IDs
-clerk api /users | jq -r '.[] | .id'
+clerk users list --json | jq -r '.[] | .id'
 
 # Count banned users
-clerk api /users | jq '[.[] | select(.banned)] | length'
+clerk users list --json | jq '[.[] | select(.banned)] | length'
 ```
 
 ### Read body from stdin
@@ -234,7 +234,7 @@ jq -n '{email_address:["c@d.co"]}' | clerk api /users
 
 ```sh
 # Always --dry-run first across the whole set
-for id in $(clerk api /users | jq -r '.[] | .id'); do
+for id in $(clerk users list --json | jq -r '.[] | .id'); do
   clerk api /users/$id -X PATCH -d '{"public_metadata":{"migrated":true}}' --dry-run
 done
 # Re-run without --dry-run once the previews look right
