@@ -1,41 +1,23 @@
 import { basename } from "node:path";
-import { input } from "@inquirer/prompts";
-import { search } from "../../lib/listage.ts";
 import { confirm } from "../../lib/prompts.ts";
 import { isAgent } from "../../mode.ts";
 import { getToken } from "../../lib/credential-store.ts";
 import { login } from "../auth/login.ts";
-import {
-  listApplications,
-  fetchApplication,
-  createApplication,
-  type Application,
-} from "../../lib/plapi.ts";
+import { fetchApplication, type Application } from "../../lib/plapi.ts";
+import { appLabel, fetchAppsTolerantly, pickOrCreateApp } from "../../lib/app-picker.ts";
 import { setProfile, resolveProfile, moveProfile } from "../../lib/config.ts";
 import { autolink, findClerkKeys, matchKeyToApp } from "../../lib/autolink.ts";
 import { getGitRepoIdentifier, getGitRepoRoot, getGitNormalizedRemote } from "../../lib/git.ts";
 import { dim, cyan } from "../../lib/color.ts";
 import { NEXT_STEPS } from "../../lib/next-steps.ts";
-import {
-  CliError,
-  PlapiError,
-  ERROR_CODE,
-  throwUsageError,
-  withApiContext,
-} from "../../lib/errors.ts";
-import { intro, outro, withSpinner } from "../../lib/spinner.ts";
+import { CliError, ERROR_CODE, throwUsageError, withApiContext } from "../../lib/errors.ts";
+import { intro, outro } from "../../lib/spinner.ts";
 import { log } from "../../lib/log.ts";
-
-const CREATE_NEW_APP = "__create_new__";
 
 interface LinkOptions {
   app?: string;
   skipIfLinked?: boolean;
   cwd?: string;
-}
-
-function appLabel(app: Application): string {
-  return app.name ? `${app.name} (${app.application_id})` : app.application_id;
 }
 
 export async function link(options: LinkOptions = {}): Promise<void> {
@@ -125,11 +107,6 @@ async function ensureAuth() {
   }
 }
 
-async function createAndFetchApp(name: string): Promise<Application> {
-  const created = await withApiContext(createApplication(name), "Failed to create application");
-  return withApiContext(fetchApplication(created.application_id), "Failed to fetch application");
-}
-
 function printExistingStatus(
   existing: Awaited<ReturnType<typeof resolveProfile>> & {},
   normalizedRemote: string | undefined,
@@ -195,55 +172,15 @@ async function resolveApp(
   displayPath: string,
   detectKeys: boolean,
 ): Promise<Application> {
-  let apps: Application[];
-  try {
-    apps = await withSpinner("Fetching applications...", () =>
-      withApiContext(listApplications(), "Failed to fetch applications"),
-    );
-  } catch (error) {
-    if (error instanceof PlapiError && error.status >= 500) {
-      log.info("Could not fetch your applications — you can still create a new one");
-      apps = [];
-    } else {
-      throw error;
-    }
-  }
+  const apps = await fetchAppsTolerantly();
 
   if (apps.length > 0 && detectKeys) {
     const detected = await tryDetectApp(cwd, apps);
     if (detected) return detected;
   }
 
-  return pickOrCreateApp(apps, displayPath);
-}
-
-async function pickOrCreateApp(apps: Application[], displayPath: string): Promise<Application> {
-  const appChoices = apps.map((a) => ({ name: appLabel(a), value: a.application_id }));
-  const createChoice = { name: dim("+ Create a new application"), value: CREATE_NEW_APP };
-
-  const selectedId = await search({
+  return pickOrCreateApp({
+    apps,
     message: `Select a Clerk application to link ${dim(`(repo: ${basename(displayPath)})`)}`,
-    source: (term: string | undefined) => {
-      const filtered = term
-        ? appChoices.filter((c) => c.name.toLowerCase().includes(term.toLowerCase()))
-        : appChoices;
-      return [createChoice, ...filtered];
-    },
   });
-
-  if (selectedId === CREATE_NEW_APP) {
-    const name = await input({
-      message: "Application name:",
-      validate: (v) => (v.trim() ? true : "Application name cannot be empty"),
-    });
-    return createAndFetchApp(name.trim());
-  }
-
-  const found = apps.find((a) => a.application_id === selectedId);
-  if (!found) {
-    throw new CliError("Selected application not found", {
-      code: ERROR_CODE.APP_NOT_FOUND,
-    });
-  }
-  return found;
 }
