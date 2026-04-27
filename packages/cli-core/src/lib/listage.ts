@@ -140,7 +140,7 @@ function isSelectable<T>(item: T | Separator): item is T & { disabled?: boolean 
   return !Separator.isSeparator(item) && !(item as { disabled?: boolean | string }).disabled;
 }
 
-type NormalizedChoice<Value> = {
+export type NormalizedChoice<Value> = {
   value: Value;
   name: string;
   short: string;
@@ -149,7 +149,7 @@ type NormalizedChoice<Value> = {
   style?: (text: string, isActive: boolean) => string;
 };
 
-function normalizeChoices<Value>(
+export function normalizeChoices<Value>(
   choices: ReadonlyArray<Value | SelectChoice<Value> | Separator>,
 ): Array<NormalizedChoice<Value> | Separator> {
   return choices.map((choice) => {
@@ -412,6 +412,37 @@ const searchTheme: SearchTheme = {
   },
 };
 
+export type SearchItemTheme = {
+  icon: { cursor: string };
+  style: {
+    disabled: (text: string) => string;
+    highlight: (text: string) => string;
+  };
+};
+
+/**
+ * Render a single search-prompt row. Returns the rendered string the prompt
+ * paints for that line. A choice's `style` hook, when set, takes precedence
+ * over the default `theme.style.highlight` and is invoked with the cursor +
+ * name and whether the row is active.
+ */
+export function renderSearchItem<Value>(
+  item: NormalizedChoice<Value> | Separator,
+  isActive: boolean,
+  theme: SearchItemTheme,
+): string {
+  if (Separator.isSeparator(item)) return ` ${item.separator}`;
+  if (item.disabled) {
+    const disabledLabel = typeof item.disabled === "string" ? item.disabled : "(disabled)";
+    return theme.style.disabled(`${item.name} ${disabledLabel}`);
+  }
+  const cursor = isActive ? theme.icon.cursor : " ";
+  const line = `${cursor} ${item.name}`;
+  if (item.style) return item.style(line, isActive);
+  const color = isActive ? theme.style.highlight : (x: string) => x;
+  return color(line);
+}
+
 const rawSearch = createPrompt<unknown, SearchConfig<unknown>>((config, done) => {
   const { pageSize = 7, validate = () => true } = config;
   const theme = makeTheme(searchTheme, config.theme);
@@ -527,18 +558,7 @@ const rawSearch = createPrompt<unknown, SearchConfig<unknown>>((config, done) =>
   const page = usePagination({
     items: searchResults,
     active,
-    renderItem({ item, isActive }) {
-      if (Separator.isSeparator(item)) return ` ${item.separator}`;
-      if (item.disabled) {
-        const disabledLabel = typeof item.disabled === "string" ? item.disabled : "(disabled)";
-        return theme.style.disabled(`${item.name} ${disabledLabel}`);
-      }
-      const cursor = isActive ? theme.icon.cursor : " ";
-      const line = `${cursor} ${item.name}`;
-      if (item.style) return item.style(line, isActive);
-      const color = isActive ? theme.style.highlight : (x: string) => x;
-      return color(line);
-    },
+    renderItem: ({ item, isActive }) => renderSearchItem(item, isActive, theme),
     pageSize: effectivePageSize,
     loop: false,
   });
