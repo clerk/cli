@@ -293,6 +293,20 @@ Give AI agents better Clerk context: install the Clerk skills
     .option("--file <path>", "Read BAPI request body from a file")
     .option("--dry-run", "Show the request without executing it")
     .option("--yes", "Skip confirmation prompt")
+    .setExamples([
+      {
+        command: "clerk users create --email alice@example.com --first-name Alice --yes",
+        description: "Create a user from curated flags",
+      },
+      {
+        command: 'clerk users create -d \'{"email_address":["alice@example.com"]}\' --yes',
+        description: "Create a user from an inline BAPI request body",
+      },
+      {
+        command: "clerk users create --file user.json --dry-run",
+        description: "Preview a request from a file without executing",
+      },
+    ])
     .action((_opts, cmd) =>
       usersHandlers.create(cmd.optsWithGlobals() as Parameters<typeof usersHandlers.create>[0]),
     );
