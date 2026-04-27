@@ -313,7 +313,9 @@ Give AI agents better Clerk context: install the Clerk skills
         description: "Create a user from an inline BAPI request body",
       },
     ])
-    .action(usersHandlers.menu);
+    .action((_opts, cmd) =>
+      usersHandlers.menu(cmd.optsWithGlobals() as Parameters<typeof usersHandlers.menu>[0]),
+    );
 
   users
     .command("list")
@@ -377,7 +379,9 @@ Give AI agents better Clerk context: install the Clerk skills
         description: "Filter by common identifiers and sort by recent sign-in",
       },
     ])
-    .action(usersHandlers.list);
+    .action((_opts, cmd) =>
+      usersHandlers.list(cmd.optsWithGlobals() as Parameters<typeof usersHandlers.list>[0]),
+    );
 
   users
     .command("create")

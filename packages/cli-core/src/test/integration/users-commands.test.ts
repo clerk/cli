@@ -313,4 +313,36 @@ describe("users commands", () => {
       ).toBe(true);
     },
   );
+
+  test("list resolves the secret key via --app without a linked project", async () => {
+    // No setProfile call: --app must thread through the parent command's
+    // option, not silently fall through to the no-secret-key error.
+    http.mock({
+      [PLAPI_APP_ROUTE]: MOCK_APP,
+      "/v1/users": { data: MOCK_USERS, totalCount: MOCK_USERS.length },
+    });
+
+    const { stdout, exitCode } = await clerk.raw(
+      "--mode",
+      "agent",
+      "users",
+      "list",
+      "--app",
+      "app_1",
+      "--instance",
+      "development",
+    );
+
+    expect(exitCode).toBe(0);
+    expect(JSON.parse(stdout)).toEqual({
+      data: MOCK_USERS,
+      totalCount: MOCK_USERS.length,
+    });
+
+    const fetchAppCall = http.requests.find(
+      (request) =>
+        request.method === "GET" && request.url.includes("/v1/platform/applications/app_1"),
+    );
+    expect(fetchAppCall).toBeDefined();
+  });
 });
