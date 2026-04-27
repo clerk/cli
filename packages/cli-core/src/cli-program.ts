@@ -49,14 +49,11 @@ import { isClerkSkillInstalled } from "./lib/skill-detection.ts";
 
 const USER_LIST_ORDER_BY_FIELDS = [
   "created_at",
-  "updated_at",
   "email_address",
-  "web3wallet",
   "first_name",
   "last_name",
   "phone_number",
   "username",
-  "last_active_at",
   "last_sign_in_at",
 ] as const;
 
