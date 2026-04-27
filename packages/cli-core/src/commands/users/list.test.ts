@@ -208,7 +208,7 @@ describe("users list", () => {
 
     await runList();
 
-    expect(mockResolveUsersInstanceContext).toHaveBeenCalledWith({ instance: undefined });
+    expect(mockResolveUsersInstanceContext).toHaveBeenCalledWith({});
     expect(mockBapiRequest).toHaveBeenCalledWith({
       method: "GET",
       path: "/users",
@@ -239,4 +239,19 @@ describe("users list", () => {
     await expect(runList()).rejects.toBe(original);
     expect(mockResolveUsersInstanceContext).not.toHaveBeenCalled();
   });
+
+  test.each([
+    { label: "--app", options: { app: "app_123" } },
+    { label: "--instance", options: { instance: "prod" } },
+    { label: "--secret-key", options: { secretKey: "sk_test_explicit" } },
+  ])(
+    "re-throws NO_SECRET_KEY without invoking the picker when $label is set",
+    async ({ options }) => {
+      const original = new CliError("No secret key found.", { code: ERROR_CODE.NO_SECRET_KEY });
+      mockResolveBapiSecretKey.mockRejectedValue(original);
+
+      await expect(runList(options)).rejects.toBe(original);
+      expect(mockResolveUsersInstanceContext).not.toHaveBeenCalled();
+    },
+  );
 });

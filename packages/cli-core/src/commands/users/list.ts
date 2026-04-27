@@ -151,9 +151,22 @@ async function resolveListSecretKey(options: UsersListOptions): Promise<string> 
   } catch (error) {
     // Mirror `users create`: when there is no link, no env var, and no
     // targeting flags, fall back to the shared picker-aware resolver in human
-    // mode so the user can choose an application interactively.
-    if (isHuman() && error instanceof CliError && error.code === ERROR_CODE.NO_SECRET_KEY) {
-      const ctx = await resolveUsersInstanceContext({ instance: options.instance });
+    // mode so the user can choose an application interactively. With an
+    // explicit target the user already chose where to operate; surface the
+    // original error instead of silently switching applications.
+    const hasExplicitTarget =
+      Boolean(options.secretKey) ||
+      Boolean(options.app) ||
+      Boolean(options.instance) ||
+      Boolean(process.env.CLERK_SECRET_KEY);
+
+    if (
+      isHuman() &&
+      !hasExplicitTarget &&
+      error instanceof CliError &&
+      error.code === ERROR_CODE.NO_SECRET_KEY
+    ) {
+      const ctx = await resolveUsersInstanceContext({});
       return ctx.secretKey;
     }
     throw error;
