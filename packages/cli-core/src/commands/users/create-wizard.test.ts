@@ -42,6 +42,8 @@ describe("runCreateWizard", () => {
   test("only prompts for enabled attributes (FAPI-driven)", async () => {
     mockResolveContext.mockResolvedValue({
       secretKey: "sk_test_xyz",
+      appId: "app_xyz",
+      instanceId: "ins_dev",
       publishableKey: "pk_test_xyz",
       fapiHost: "fake.example.com",
     });
@@ -59,10 +61,15 @@ describe("runCreateWizard", () => {
 
     const result = await runCreateWizard({});
 
-    expect(result).toEqual({
+    expect(result.fields).toEqual({
       email: "alice@example.com",
       password: "Password123",
       firstName: "Alice",
+    });
+    expect(result.targeting).toEqual({
+      app: "app_xyz",
+      instance: "ins_dev",
+      secretKey: "sk_test_xyz",
     });
     // username was disabled — never prompted
     expect(mockInput).toHaveBeenCalledTimes(2);
@@ -75,7 +82,8 @@ describe("runCreateWizard", () => {
     mockPassword.mockResolvedValue("");
 
     const result = await runCreateWizard({ secretKey: "sk_test_raw" });
-    expect(result).toEqual({});
+    expect(result.fields).toEqual({});
+    expect(result.targeting).toEqual({ secretKey: "sk_test_raw" });
     expect(mockBootstrapDevBrowser).not.toHaveBeenCalled();
     expect(mockFetchUserSettings).not.toHaveBeenCalled();
   });

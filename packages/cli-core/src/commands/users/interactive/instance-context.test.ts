@@ -73,6 +73,8 @@ describe("resolveUsersInstanceContext", () => {
 
     const ctx = await resolveUsersInstanceContext({ app: "app_123" });
     expect(ctx.secretKey).toBe("sk_test_xyz");
+    expect(ctx.appId).toBe("app_123");
+    expect(ctx.instanceId).toBe("ins_dev");
     expect(ctx.publishableKey).toBe("pk_test_aWRlYWwtbG91c2UtNjEuY2xlcmsuYWNjb3VudHMuZGV2JA");
     expect(ctx.fapiHost).toBe("ideal-louse-61.clerk.accounts.dev");
   });
@@ -105,6 +107,8 @@ describe("resolveUsersInstanceContext", () => {
     const ctx = await resolveUsersInstanceContext({});
     expect(mockPickOrCreateApp).toHaveBeenCalled();
     expect(ctx.secretKey).toBe("sk_test_picked");
+    expect(ctx.appId).toBe("app_picked");
+    expect(ctx.instanceId).toBe("ins_dev");
     expect(ctx.fapiHost).toBe("ideal-louse-61.clerk.accounts.dev");
   });
 

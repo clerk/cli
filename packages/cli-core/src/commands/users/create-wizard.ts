@@ -10,13 +10,24 @@ import { withSpinner } from "../../lib/spinner.ts";
 import { isEnabled, isRequired, type AttributeName } from "./interactive/attributes.ts";
 import { resolveUsersInstanceContext } from "./interactive/instance-context.ts";
 
-export type CreateWizardResult = {
+export type CreateWizardFields = {
   email?: string;
   phone?: string;
   username?: string;
   password?: string;
   firstName?: string;
   lastName?: string;
+};
+
+export type CreateWizardTargeting = {
+  app?: string;
+  instance?: string;
+  secretKey?: string;
+};
+
+export type CreateWizardResult = {
+  fields: CreateWizardFields;
+  targeting: CreateWizardTargeting;
 };
 
 type WizardOptions = {
@@ -27,7 +38,7 @@ type WizardOptions = {
 
 type FieldDef = {
   attr: AttributeName;
-  key: keyof CreateWizardResult;
+  key: keyof CreateWizardFields;
   message: string;
   isPassword?: boolean;
 };
@@ -48,15 +59,21 @@ export async function runCreateWizard(options: WizardOptions): Promise<CreateWiz
       ? await loadSettings(ctx.fapiHost, decodePublishableKey(ctx.publishableKey).instanceType)
       : undefined;
 
-  const result: CreateWizardResult = {};
+  const fields: CreateWizardFields = {};
   for (const field of ALL_FIELDS) {
     const enabled = settings ? isEnabled(settings, field.attr) : true;
     if (!enabled) continue;
     const required = settings ? isRequired(settings, field.attr) : false;
     const value = await promptField(field, required);
-    if (value) result[field.key] = value;
+    if (value) fields[field.key] = value;
   }
-  return result;
+
+  const targeting: CreateWizardTargeting = {};
+  if (ctx.appId) targeting.app = ctx.appId;
+  if (ctx.instanceId) targeting.instance = ctx.instanceId;
+  if (ctx.secretKey) targeting.secretKey = ctx.secretKey;
+
+  return { fields, targeting };
 }
 
 async function loadSettings(

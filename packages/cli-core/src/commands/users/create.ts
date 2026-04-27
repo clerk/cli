@@ -87,15 +87,15 @@ async function resolveBasePayload(options: CreateUserOptions): Promise<Record<st
   }
 
   if (isHuman()) {
-    const wizardResult = await runCreateWizard({
+    const { fields, targeting } = await runCreateWizard({
       app: options.app,
       instance: options.instance,
       secretKey: options.secretKey,
     });
-    if (Object.keys(wizardResult).length === 0) {
+    if (Object.keys(fields).length === 0) {
       throwUsageError(noInputMessage());
     }
-    Object.assign(options, wizardResult);
+    Object.assign(options, targeting, fields);
     return {};
   }
 

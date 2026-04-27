@@ -42,7 +42,7 @@ describe("users create", () => {
   beforeEach(() => {
     mockIsAgent.mockReturnValue(false);
     mockResolveBapiSecretKey.mockResolvedValue("sk_test_123");
-    mockRunCreateWizard.mockResolvedValue({});
+    mockRunCreateWizard.mockResolvedValue({ fields: {}, targeting: {} });
     mockBapiRequest.mockResolvedValue({
       status: 200,
       headers: new Headers(),
@@ -206,12 +206,36 @@ describe("users create", () => {
 
   test("invokes the wizard when no flags + human + no data", async () => {
     mockIsAgent.mockReturnValue(false);
-    mockRunCreateWizard.mockResolvedValue({ email: "alice@example.com" });
+    mockRunCreateWizard.mockResolvedValue({
+      fields: { email: "alice@example.com" },
+      targeting: {},
+    });
     await runCreate({ yes: true });
     expect(mockRunCreateWizard).toHaveBeenCalledWith({
       app: undefined,
       instance: undefined,
       secretKey: undefined,
+    });
+    expect(mockBapiRequest).toHaveBeenCalled();
+  });
+
+  test("forwards wizard-resolved targeting to the secret key resolver", async () => {
+    mockIsAgent.mockReturnValue(false);
+    mockRunCreateWizard.mockResolvedValue({
+      fields: { email: "alice@example.com", password: "Password123" },
+      targeting: {
+        app: "app_picked",
+        instance: "ins_dev",
+        secretKey: "sk_test_picked",
+      },
+    });
+
+    await runCreate({ yes: true });
+
+    expect(mockResolveBapiSecretKey).toHaveBeenCalledWith({
+      secretKey: "sk_test_picked",
+      app: "app_picked",
+      instance: "ins_dev",
     });
     expect(mockBapiRequest).toHaveBeenCalled();
   });
