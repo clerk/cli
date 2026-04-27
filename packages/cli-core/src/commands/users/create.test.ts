@@ -240,15 +240,20 @@ describe("users create", () => {
     expect(mockBapiRequest).toHaveBeenCalled();
   });
 
-  test("does not invoke the wizard in agent mode", async () => {
+  test("agent mode without input throws a structured usage error and never prompts", async () => {
     mockIsAgent.mockReturnValue(true);
-    let thrown: unknown;
-    try {
-      await runCreate({});
-    } catch (e) {
-      thrown = e;
-    }
-    expect(thrown).toBeDefined();
+
+    const error = await runCreate({}).catch((caught) => caught);
+
+    expect(error).toBeInstanceOf(CliError);
+    expect(error.code).toBe(ERROR_CODE.USAGE_ERROR);
+    expect(error.exitCode).toBe(EXIT_CODE.USAGE);
+    expect(error.message).toContain("No input provided");
+    expect(error.message).toContain("--email alice@example.com");
+    expect(error.message).toContain("-d '{");
+    expect(error.message).toContain("--file user.json");
     expect(mockRunCreateWizard).not.toHaveBeenCalled();
+    expect(mockResolveBapiSecretKey).not.toHaveBeenCalled();
+    expect(mockBapiRequest).not.toHaveBeenCalled();
   });
 });
