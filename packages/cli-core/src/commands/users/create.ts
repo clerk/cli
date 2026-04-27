@@ -33,19 +33,24 @@ type CreateUserOptions = {
   yes?: boolean;
 };
 
-export async function create(options: CreateUserOptions): Promise<void> {
-  const payload = await resolveCreatePayload(options);
+type ResolvedCreate = {
+  payload: Record<string, unknown>;
+  resolved: CreateUserOptions;
+};
 
-  if (options.dryRun) {
+export async function create(options: CreateUserOptions): Promise<void> {
+  const { payload, resolved } = await resolveCreate(options);
+
+  if (resolved.dryRun) {
     log.info("[dry-run] POST /v1/users");
     log.data(JSON.stringify(redactUsersDisplayPayload(payload), null, 2));
     return;
   }
 
   const secretKey = await resolveBapiSecretKey({
-    secretKey: options.secretKey,
-    app: options.app,
-    instance: options.instance,
+    secretKey: resolved.secretKey,
+    app: resolved.app,
+    instance: resolved.instance,
   });
 
   try {
@@ -58,9 +63,9 @@ export async function create(options: CreateUserOptions): Promise<void> {
       }),
     );
 
-    printUsersMutationResult("Created user", response.body, options);
+    printUsersMutationResult("Created user", response.body, resolved);
   } catch (error) {
-    if (handleUsersBapiError(error, "Failed to create user", options)) {
+    if (handleUsersBapiError(error, "Failed to create user", resolved)) {
       return;
     }
     if (handleBapiError(error)) {
@@ -70,20 +75,29 @@ export async function create(options: CreateUserOptions): Promise<void> {
   }
 }
 
-async function resolveCreatePayload(options: CreateUserOptions): Promise<Record<string, unknown>> {
-  const basePayload = await resolveBasePayload(options);
-  return mergeUsersPayload(basePayload, buildCreateUserPayload(options));
+async function resolveCreate(options: CreateUserOptions): Promise<ResolvedCreate> {
+  const { basePayload, resolved } = await resolveBasePayload(options);
+  return {
+    payload: mergeUsersPayload(basePayload, buildCreateUserPayload(resolved)),
+    resolved,
+  };
 }
 
-async function resolveBasePayload(options: CreateUserOptions): Promise<Record<string, unknown>> {
+async function resolveBasePayload(options: CreateUserOptions): Promise<{
+  basePayload: Record<string, unknown>;
+  resolved: CreateUserOptions;
+}> {
   if (options.data || options.file) {
-    return parseUsersPayload(
-      await readUsersPayloadInput({ data: options.data, file: options.file }),
-    );
+    return {
+      basePayload: parseUsersPayload(
+        await readUsersPayloadInput({ data: options.data, file: options.file }),
+      ),
+      resolved: options,
+    };
   }
 
   if (hasCreateFlagPayload(options)) {
-    return {};
+    return { basePayload: {}, resolved: options };
   }
 
   if (isHuman()) {
@@ -95,13 +109,10 @@ async function resolveBasePayload(options: CreateUserOptions): Promise<Record<st
     if (Object.keys(fields).length === 0) {
       throwUsageError(noInputMessage());
     }
-    Object.assign(options, targeting, fields);
-    return {};
+    return { basePayload: {}, resolved: { ...options, ...targeting, ...fields } };
   }
 
   throwUsageError(noInputMessage());
-  // unreachable
-  return {};
 }
 
 function noInputMessage(): string {
