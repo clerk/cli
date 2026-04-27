@@ -323,6 +323,12 @@ export async function resolveAppContext(
     const app = await fetchApplication(options.app);
     const appLabel = app.name || options.app;
     const resolved = resolveFetchedApplicationInstance(options.app, app, options.instance);
+    if (!resolved.found) {
+      throw new CliError(
+        `Instance ${resolved.instanceId} not found in application ${options.app}.`,
+        { code: ERROR_CODE.INSTANCE_NOT_FOUND },
+      );
+    }
 
     return {
       appId: options.app,

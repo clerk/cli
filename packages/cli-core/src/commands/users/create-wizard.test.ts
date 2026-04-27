@@ -88,6 +88,24 @@ describe("runCreateWizard", () => {
     expect(mockFetchUserSettings).not.toHaveBeenCalled();
   });
 
+  test("preserves whitespace in password input without trimming", async () => {
+    mockResolveContext.mockResolvedValue({
+      secretKey: "sk_test_xyz",
+      publishableKey: "pk_test_xyz",
+      fapiHost: "fake.example.com",
+    });
+    mockBootstrapDevBrowser.mockResolvedValue("jwt-abc");
+    mockFetchUserSettings.mockResolvedValue({
+      attributes: {
+        password: { enabled: true, required: true, used_for_first_factor: false },
+      },
+    });
+    mockPassword.mockResolvedValueOnce("  spaced password  ");
+
+    const result = await runCreateWizard({});
+    expect(result.fields.password).toBe("  spaced password  ");
+  });
+
   test("skips dev_browser bootstrap on production instance", async () => {
     mockResolveContext.mockResolvedValue({
       secretKey: "sk_live_xyz",

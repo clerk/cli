@@ -1,6 +1,6 @@
 import { fetchAppsTolerantly, pickOrCreateApp } from "../../../lib/app-picker.ts";
 import { resolveAppContext, resolveFetchedApplicationInstance } from "../../../lib/config.ts";
-import { CliError, ERROR_CODE, withApiContext } from "../../../lib/errors.ts";
+import { CliError, ERROR_CODE, throwUsageError, withApiContext } from "../../../lib/errors.ts";
 import { decodePublishableKey } from "../../../lib/fapi.ts";
 import { fetchApplication, validateKeyPrefix } from "../../../lib/plapi.ts";
 import { isHuman } from "../../../mode.ts";
@@ -22,7 +22,12 @@ export type ResolveUsersInstanceContextOptions = {
 export async function resolveUsersInstanceContext(
   options: ResolveUsersInstanceContextOptions,
 ): Promise<UsersInstanceContext> {
-  if (options.secretKey && !options.app) {
+  if (options.secretKey) {
+    if (options.app || options.instance) {
+      throwUsageError(
+        "--secret-key cannot be combined with --app or --instance. The secret key already targets a specific instance.",
+      );
+    }
     validateKeyPrefix(options.secretKey, "sk_");
     return { secretKey: options.secretKey };
   }
@@ -38,10 +43,6 @@ export async function resolveUsersInstanceContext(
     } catch (error) {
       if (!(error instanceof CliError) || error.code !== ERROR_CODE.NOT_LINKED) {
         throw error;
-      }
-      if (options.secretKey) {
-        validateKeyPrefix(options.secretKey, "sk_");
-        return { secretKey: options.secretKey };
       }
       if (isHuman()) {
         const apps = await fetchAppsTolerantly();
@@ -71,7 +72,7 @@ export async function resolveUsersInstanceContext(
   }
 
   const ctx: UsersInstanceContext = {
-    secretKey: options.secretKey ?? instance.secret_key,
+    secretKey: instance.secret_key,
     appId,
     instanceId: resolved.instanceId,
   };

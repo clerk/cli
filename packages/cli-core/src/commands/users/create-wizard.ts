@@ -92,8 +92,7 @@ async function promptField(field: FieldDef, required: boolean): Promise<string> 
     ? (value: string) => value.trim().length > 0 || `${field.message} is required`
     : undefined;
   if (field.isPassword) {
-    const value = await password({ message, validate });
-    return value.trim();
+    return password({ message, validate });
   }
   const value = await input({ message, validate });
   return value.trim();

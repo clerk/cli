@@ -121,4 +121,18 @@ describe("resolveUsersInstanceContext", () => {
     await expect(resolveUsersInstanceContext({})).rejects.toThrow(CliError);
     expect(mockPickOrCreateApp).not.toHaveBeenCalled();
   });
+
+  test("rejects --secret-key combined with --app", async () => {
+    await expect(
+      resolveUsersInstanceContext({ secretKey: "sk_test_raw", app: "app_123" }),
+    ).rejects.toThrow(/--secret-key cannot be combined with --app or --instance/);
+    expect(mockFetchApplication).not.toHaveBeenCalled();
+  });
+
+  test("rejects --secret-key combined with --instance", async () => {
+    await expect(
+      resolveUsersInstanceContext({ secretKey: "sk_test_raw", instance: "ins_dev" }),
+    ).rejects.toThrow(/--secret-key cannot be combined with --app or --instance/);
+    expect(mockResolveAppContext).not.toHaveBeenCalled();
+  });
 });

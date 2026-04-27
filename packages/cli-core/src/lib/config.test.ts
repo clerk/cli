@@ -289,5 +289,25 @@ describe("config", () => {
         instanceLabel: "ins_custom_123",
       });
     });
+
+    test("throws INSTANCE_NOT_FOUND when --instance does not match any fetched instance", async () => {
+      fetchApplicationSpy.mockResolvedValue({
+        application_id: "app_123",
+        name: "My App",
+        instances: [
+          {
+            instance_id: "ins_real_123",
+            environment_type: "staging",
+            publishable_key: "pk_test_real_123",
+          },
+        ],
+      });
+
+      await expect(
+        resolveAppContext({ app: "app_123", instance: "ins_missing_123" }),
+      ).rejects.toMatchObject({
+        code: "instance_not_found",
+      });
+    });
   });
 });
