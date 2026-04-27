@@ -7,7 +7,7 @@
 import { input } from "@inquirer/prompts";
 import { cyan, dim } from "./color.ts";
 import { CliError, ERROR_CODE, PlapiError, withApiContext } from "./errors.ts";
-import { search, Separator } from "./listage.ts";
+import { search } from "./listage.ts";
 import { log } from "./log.ts";
 import {
   type Application,
@@ -58,7 +58,7 @@ export async function pickOrCreateApp(opts: {
       const filtered = term
         ? appChoices.filter((c) => c.name.toLowerCase().includes(term.toLowerCase()))
         : appChoices;
-      return filtered.length > 0 ? [...filtered, new Separator(), createChoice] : [createChoice];
+      return [...filtered, createChoice];
     },
   });
 

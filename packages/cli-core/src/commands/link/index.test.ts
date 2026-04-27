@@ -436,7 +436,7 @@ describe("link", () => {
       mockSearch.mockImplementation(
         async (config: { source: (term: string | undefined) => unknown[] }) => {
           const results = config.source(undefined);
-          expect(results).toHaveLength(4); // 2 apps + separator + create option
+          expect(results).toHaveLength(3); // 2 apps + create option
           return "app_a";
         },
       );
@@ -469,12 +469,12 @@ describe("link", () => {
           source: (term: string | undefined) => { name: string; value: string }[];
         }) => {
           const results = config.source("my");
-          expect(results).toHaveLength(3); // 1 match + separator + create option
+          expect(results).toHaveLength(2); // 1 match + create option
           expect(results[0]!.value).toBe("app_a");
-          expect(results[2]!.value).toBe("__create_new__");
+          expect(results[1]!.value).toBe("__create_new__");
 
           const noMatch = config.source("zzz");
-          expect(noMatch).toHaveLength(1); // only create option (no separator when list is empty)
+          expect(noMatch).toHaveLength(1); // only create option
           expect(noMatch[0]!.value).toBe("__create_new__");
 
           return "app_a";
@@ -508,9 +508,9 @@ describe("link", () => {
           source: (term: string | undefined) => { name: string; value: string }[];
         }) => {
           const results = config.source("abc");
-          expect(results).toHaveLength(3); // 1 match + separator + create option
+          expect(results).toHaveLength(2); // 1 match + create option
           expect(results[0]!.value).toBe("app_abc");
-          expect(results[2]!.value).toBe("__create_new__");
+          expect(results[1]!.value).toBe("__create_new__");
           return "app_abc";
         },
       );
