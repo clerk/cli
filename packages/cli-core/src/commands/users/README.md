@@ -42,7 +42,7 @@ Two complementary mechanisms for JSON input work across the users command family
 
 ### `clerk users list`
 
-List users from the target instance.
+List users from the target instance. In human mode without a linked project, an env var, or a targeting flag, the command opens the same application picker as `clerk users create` so you can choose an instance interactively.
 
 ```sh
 clerk users list

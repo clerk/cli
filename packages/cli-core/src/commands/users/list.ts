@@ -1,9 +1,12 @@
 import { resolveBapiSecretKey } from "../../lib/bapi-command.ts";
 import { dim, cyan } from "../../lib/color.ts";
-import { log } from "../../lib/log.ts";
-import { isAgent } from "../../mode.ts";
+import { CliError, ERROR_CODE } from "../../lib/errors.ts";
+import { isInsideGutter, log } from "../../lib/log.ts";
+import { isAgent, isHuman } from "../../mode.ts";
 import { withSpinner } from "../../lib/spinner.ts";
 import { bapiRequest } from "../api/bapi.ts";
+import { resolveUsersInstanceContext } from "./interactive/instance-context.ts";
+import { registerUsersAction } from "./registry.ts";
 
 type UsersListOptions = {
   json?: boolean;
@@ -121,23 +124,44 @@ function formatUsersTable(users: BapiUser[]): void {
   const idWidth =
     Math.max("USER ID".length, ...users.map((user) => user.id.length)) + COLUMN_PADDING;
 
-  log.data(
+  // Inside an intro/outro block, route rows to stderr so the gutter prefix is
+  // applied. Direct invocations still get the table on stdout for piping.
+  const emit = isInsideGutter()
+    ? (line: string) => log.info(line)
+    : (line: string) => log.data(line);
+
+  emit(
     `${dim("NAME".padEnd(nameWidth))}${dim("USER ID".padEnd(idWidth))}${dim("PRIMARY IDENTIFIER")}`,
   );
 
   for (const user of users) {
     const name = cyan(userDisplayName(user).padEnd(nameWidth));
     const id = dim(user.id.padEnd(idWidth));
-    log.data(`${name}${id}${primaryIdentifier(user)}`);
+    emit(`${name}${id}${primaryIdentifier(user)}`);
+  }
+}
+
+async function resolveListSecretKey(options: UsersListOptions): Promise<string> {
+  try {
+    return await resolveBapiSecretKey({
+      secretKey: options.secretKey,
+      app: options.app,
+      instance: options.instance,
+    });
+  } catch (error) {
+    // Mirror `users create`: when there is no link, no env var, and no
+    // targeting flags, fall back to the shared picker-aware resolver in human
+    // mode so the user can choose an application interactively.
+    if (isHuman() && error instanceof CliError && error.code === ERROR_CODE.NO_SECRET_KEY) {
+      const ctx = await resolveUsersInstanceContext({ instance: options.instance });
+      return ctx.secretKey;
+    }
+    throw error;
   }
 }
 
 export async function list(options: UsersListOptions = {}): Promise<void> {
-  const secretKey = await resolveBapiSecretKey({
-    secretKey: options.secretKey,
-    app: options.app,
-    instance: options.instance,
-  });
+  const secretKey = await resolveListSecretKey(options);
   const response = await withSpinner("Fetching users...", () =>
     bapiRequest({
       method: "GET",
@@ -168,3 +192,12 @@ export async function list(options: UsersListOptions = {}): Promise<void> {
   formatUsersTable(users);
   log.info(`\n${totalCount} user${totalCount === 1 ? "" : "s"}`);
 }
+
+registerUsersAction({
+  key: "list",
+  label: "List users",
+  description: "List users with filters and pagination",
+  handler: async (targeting) => {
+    await list(targeting);
+  },
+});

@@ -1,4 +1,6 @@
 import { test, expect, describe, beforeEach, afterEach, mock, spyOn } from "bun:test";
+import { CliError, ERROR_CODE } from "../../lib/errors.ts";
+import { popPrefix, pushPrefix } from "../../lib/log.ts";
 import { captureLog } from "../../test/lib/stubs.ts";
 
 const mockBapiRequest = mock();
@@ -9,6 +11,11 @@ mock.module("../../commands/api/bapi.ts", () => ({
 const mockResolveBapiSecretKey = mock();
 mock.module("../../lib/bapi-command.ts", () => ({
   resolveBapiSecretKey: (...args: unknown[]) => mockResolveBapiSecretKey(...args),
+}));
+
+const mockResolveUsersInstanceContext = mock();
+mock.module("./interactive/instance-context.ts", () => ({
+  resolveUsersInstanceContext: (...args: unknown[]) => mockResolveUsersInstanceContext(...args),
 }));
 
 const mockWithSpinner = mock((_msg: string, fn: () => Promise<unknown>) => fn());
@@ -75,6 +82,7 @@ describe("users list", () => {
     captured.teardown();
     mockBapiRequest.mockReset();
     mockResolveBapiSecretKey.mockReset();
+    mockResolveUsersInstanceContext.mockReset();
     mockWithSpinner.mockReset();
     mockWithSpinner.mockImplementation((_msg: string, fn: () => Promise<unknown>) => fn());
     mockIsAgent.mockReset();
@@ -190,5 +198,45 @@ describe("users list", () => {
       data: mockUsers,
       totalCount: mockUsers.length,
     });
+  });
+
+  test("falls back to the shared picker-aware resolver in human mode when no credentials resolve", async () => {
+    mockResolveBapiSecretKey.mockRejectedValue(
+      new CliError("No secret key found.", { code: ERROR_CODE.NO_SECRET_KEY }),
+    );
+    mockResolveUsersInstanceContext.mockResolvedValue({ secretKey: "sk_test_picked" });
+
+    await runList();
+
+    expect(mockResolveUsersInstanceContext).toHaveBeenCalledWith({ instance: undefined });
+    expect(mockBapiRequest).toHaveBeenCalledWith({
+      method: "GET",
+      path: "/users",
+      secretKey: "sk_test_picked",
+    });
+  });
+
+  test("routes the table to stderr (under the gutter) when invoked inside an intro/outro block", async () => {
+    pushPrefix();
+    try {
+      await runList();
+    } finally {
+      popPrefix();
+    }
+
+    expect(captured.out).toBe("");
+    expect(captured.err).toContain("Alice Example");
+    expect(captured.err).toContain("user_123");
+    expect(captured.err).toContain("alice@example.com");
+    expect(captured.err).toContain("2 users");
+  });
+
+  test("re-throws the original NO_SECRET_KEY error in agent mode without invoking the picker", async () => {
+    mockIsAgent.mockReturnValue(true);
+    const original = new CliError("No secret key found.", { code: ERROR_CODE.NO_SECRET_KEY });
+    mockResolveBapiSecretKey.mockRejectedValue(original);
+
+    await expect(runList()).rejects.toBe(original);
+    expect(mockResolveUsersInstanceContext).not.toHaveBeenCalled();
   });
 });
