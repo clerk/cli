@@ -5,6 +5,7 @@
  */
 
 import { input } from "@inquirer/prompts";
+import { cyan, dim } from "./color.ts";
 import { CliError, ERROR_CODE, PlapiError, withApiContext } from "./errors.ts";
 import { search, Separator } from "./listage.ts";
 import { log } from "./log.ts";
@@ -48,7 +49,7 @@ export async function pickOrCreateApp(opts: {
   const createChoice = {
     name: "+ Create a new application",
     value: CREATE_NEW_APP,
-    description: "Provision a new Clerk application via the API",
+    style: (text: string, isActive: boolean) => (isActive ? cyan(text) : dim(text)),
   };
 
   const selectedId = await search<string>({

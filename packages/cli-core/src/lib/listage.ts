@@ -146,6 +146,7 @@ type NormalizedChoice<Value> = {
   short: string;
   disabled: boolean | string;
   description?: string;
+  style?: (text: string, isActive: boolean) => string;
 };
 
 function normalizeChoices<Value>(
@@ -157,7 +158,9 @@ function normalizeChoices<Value>(
       const name = String(choice);
       return { value: choice as Value, name, short: name, disabled: false };
     }
-    const c = choice as SelectChoice<Value>;
+    const c = choice as SelectChoice<Value> & {
+      style?: (text: string, isActive: boolean) => string;
+    };
     const name = c.name ?? String(c.value);
     const normalized: NormalizedChoice<Value> = {
       value: c.value,
@@ -166,6 +169,7 @@ function normalizeChoices<Value>(
       disabled: c.disabled ?? false,
     };
     if (c.description) normalized.description = c.description;
+    if (c.style) normalized.style = c.style;
     return normalized;
   });
 }
@@ -377,6 +381,8 @@ type SearchChoice<Value> = {
   description?: string;
   short?: string;
   disabled?: boolean | string;
+  /** Per-choice style hook. Receives `${cursor} ${name}` plus whether the row is active. */
+  style?: (text: string, isActive: boolean) => string;
 };
 
 export type SearchConfig<Value> = {
@@ -527,9 +533,11 @@ const rawSearch = createPrompt<unknown, SearchConfig<unknown>>((config, done) =>
         const disabledLabel = typeof item.disabled === "string" ? item.disabled : "(disabled)";
         return theme.style.disabled(`${item.name} ${disabledLabel}`);
       }
-      const color = isActive ? theme.style.highlight : (x: string) => x;
       const cursor = isActive ? theme.icon.cursor : " ";
-      return color(`${cursor} ${item.name}`);
+      const line = `${cursor} ${item.name}`;
+      if (item.style) return item.style(line, isActive);
+      const color = isActive ? theme.style.highlight : (x: string) => x;
+      return color(line);
     },
     pageSize: effectivePageSize,
     loop: false,
