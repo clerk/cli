@@ -5,9 +5,8 @@
  */
 
 import { input } from "@inquirer/prompts";
-import { dim } from "./color.ts";
 import { CliError, ERROR_CODE, PlapiError, withApiContext } from "./errors.ts";
-import { search } from "./listage.ts";
+import { search, Separator } from "./listage.ts";
 import { log } from "./log.ts";
 import {
   type Application,
@@ -46,7 +45,11 @@ export async function pickOrCreateApp(opts: {
   message: string;
 }): Promise<Application> {
   const appChoices = opts.apps.map((a) => ({ name: appLabel(a), value: a.application_id }));
-  const createChoice = { name: dim("+ Create a new application"), value: CREATE_NEW_APP };
+  const createChoice = {
+    name: "+ Create a new application",
+    value: CREATE_NEW_APP,
+    description: "Provision a new Clerk application via the API",
+  };
 
   const selectedId = await search<string>({
     message: opts.message,
@@ -54,7 +57,7 @@ export async function pickOrCreateApp(opts: {
       const filtered = term
         ? appChoices.filter((c) => c.name.toLowerCase().includes(term.toLowerCase()))
         : appChoices;
-      return [...filtered, createChoice];
+      return filtered.length > 0 ? [...filtered, new Separator(), createChoice] : [createChoice];
     },
   });
 
