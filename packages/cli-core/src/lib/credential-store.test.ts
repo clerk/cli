@@ -112,7 +112,7 @@ describe("credential-store", () => {
     });
   });
 
-  test("getValidToken reuses a newer stored session after invalid_grant from another refresh", async () => {
+  test("getValidToken recovers from a concurrent refresh race when another process completes the refresh first (invalid_grant)", async () => {
     const session = {
       accessToken: "expired-access-token",
       refreshToken: "refresh-token",

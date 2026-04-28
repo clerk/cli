@@ -294,15 +294,6 @@ function sessionExpiredError(): AuthError {
   return new AuthError({ reason: "session_expired" });
 }
 
-function sessionFingerprint(session: OAuthSession): string {
-  return JSON.stringify([
-    session.accessToken,
-    session.refreshToken,
-    session.expiresAt,
-    session.tokenType,
-  ]);
-}
-
 function isInvalidGrant(error: unknown): boolean {
   return (
     error instanceof ApiError &&
@@ -328,16 +319,29 @@ async function getValidAccessToken(session: OAuthSession): Promise<string> {
   return refreshStoredSession(session);
 }
 
-async function recoverFromInvalidGrant(session: OAuthSession): Promise<string | null> {
-  const originalFingerprint = sessionFingerprint(session);
-
+/**
+ * Detect whether a sibling process has already refreshed the OAuth session
+ * after our own refresh failed with `invalid_grant`. Polls the credential
+ * store on a short retry budget; returns the new access token if a different
+ * (non-expired) session appears, otherwise returns `null`.
+ *
+ * Race window: two CLI invocations whose stored session is expired will both
+ * try to redeem the same refresh token. The first wins and rotates; the
+ * second sees `invalid_grant`. We wait briefly for the winner's persisted
+ * session to become visible and reuse it instead of forcing a re-auth.
+ *
+ * Detection compares refresh tokens because the OAuth server rotates them on
+ * every successful exchange, so a different refresh token implies a new
+ * session was written by another process.
+ */
+async function awaitConcurrentRefresh(session: OAuthSession): Promise<string | null> {
   for (const delayMs of [0, ...INVALID_GRANT_RETRY_DELAYS_MS]) {
     if (delayMs > 0) {
       await sleep(delayMs);
     }
 
     const storedSession = await getStoredSession();
-    if (!storedSession || sessionFingerprint(storedSession) === originalFingerprint) {
+    if (!storedSession || storedSession.refreshToken === session.refreshToken) {
       continue;
     }
 
@@ -359,7 +363,7 @@ async function refreshStoredSession(session: OAuthSession): Promise<string> {
   } catch (error) {
     if (isInvalidGrant(error)) {
       try {
-        const recoveredToken = await recoverFromInvalidGrant(session);
+        const recoveredToken = await awaitConcurrentRefresh(session);
         if (recoveredToken) {
           return recoveredToken;
         }
