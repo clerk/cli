@@ -469,9 +469,9 @@ describe("link", () => {
           source: (term: string | undefined) => { name: string; value: string }[];
         }) => {
           const results = config.source("my");
-          expect(results).toHaveLength(2); // 1 match + create option
-          expect(results[0]!.value).toBe("app_a");
-          expect(results[1]!.value).toBe("__create_new__");
+          expect(results).toHaveLength(2); // create option + 1 match
+          expect(results[0]!.value).toBe("__create_new__");
+          expect(results[1]!.value).toBe("app_a");
 
           const noMatch = config.source("zzz");
           expect(noMatch).toHaveLength(1); // only create option
@@ -508,9 +508,9 @@ describe("link", () => {
           source: (term: string | undefined) => { name: string; value: string }[];
         }) => {
           const results = config.source("abc");
-          expect(results).toHaveLength(2); // 1 match + create option
-          expect(results[0]!.value).toBe("app_abc");
-          expect(results[1]!.value).toBe("__create_new__");
+          expect(results).toHaveLength(2); // create option + 1 match
+          expect(results[0]!.value).toBe("__create_new__");
+          expect(results[1]!.value).toBe("app_abc");
           return "app_abc";
         },
       );
