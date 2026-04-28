@@ -6,7 +6,7 @@ import { log } from "../../lib/log.js";
 import { getValidToken, hasStoredCredentials } from "../../lib/credential-store.js";
 import { fetchUserInfo } from "../../lib/token-exchange.js";
 import { printFindings } from "./scan.js";
-import { pmInstallCommand } from "./prompts/index.js";
+import { pmInstallCommand } from "../../lib/package-manager.js";
 import { withSpinner } from "../../lib/spinner.js";
 import type { FileAction, ProjectContext, ScaffoldPlan } from "./frameworks/types.js";
 import type { ScanFinding } from "./scan.js";

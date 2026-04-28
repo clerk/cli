@@ -131,7 +131,6 @@ Give AI agents better Clerk context: install the Clerk skills
     )
     .option("--name <project-name>", "Project name for --starter (skips prompt)")
     .option("--app <id>", "Application ID to link (skips interactive picker)")
-    .option("--prompt", "Output a prompt for an AI agent to integrate Clerk")
     .option("--starter", "Create a new project from a starter template")
     .option("-y, --yes", "Skip confirmation prompts")
     .option("--no-skills", "Skip the optional agent skills install prompt")
@@ -150,7 +149,6 @@ Give AI agents better Clerk context: install the Clerk skills
         command: "clerk init --starter --framework next --pm bun",
         description: "Bootstrap with Bun",
       },
-      { command: "clerk init --prompt", description: "Output a setup prompt for an AI agent" },
       { command: "clerk init -y", description: "Skip all confirmation prompts" },
       { command: "clerk init --no-skills", description: "Skip the agent skills install prompt" },
     ])

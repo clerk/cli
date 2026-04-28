@@ -27,23 +27,21 @@ beforeEach(async () => {
 });
 
 test("init --input-json passes options through Commander pipeline", async () => {
-  // {"prompt":true} expands to --prompt, short-circuiting init to log the agent handoff
-  const { stdout } = await clerk("init", "--input-json", '{"prompt":true}');
-  expect(stdout).toContain("clerk init -y");
+  // {"yes":true} expands to --yes; init still fails (no framework in test cwd) but
+  // the "unknown option" path would surface a different stderr if Commander rejected
+  // the expanded flag, so this proves expansion + acceptance.
+  const result = await clerk.raw("init", "--input-json", '{"yes":true}');
+  expect(result.stderr).not.toContain("unknown option");
 });
 
 test("explicit CLI flags override --input-json values", async () => {
-  // --input-json sets mode=human, but --mode agent after it overrides. --prompt on the
-  // subcommand short-circuits so we don't trigger bootstrap.
-  const { stdout } = await clerk(
-    "init",
-    "--prompt",
-    "--input-json",
-    '{"mode":"human"}',
-    "--mode",
-    "agent",
-  );
-  expect(stdout).toContain("clerk init -y");
+  // --input-json sets mode=human, but --mode agent later overrides. The post-parse
+  // mode is observable via the structured-JSON error format that agent mode emits.
+  const result = await clerk.raw("init", "--input-json", '{"mode":"human"}', "--mode", "agent");
+  expect(result.exitCode).not.toBe(0);
+  // Agent mode emits structured JSON to stderr; human mode emits plain text.
+  const parsed = JSON.parse(result.stderr);
+  expect(parsed.error).toBeDefined();
 });
 
 test("doctor --input-json with json:true outputs JSON", async () => {
@@ -103,8 +101,11 @@ test("rejects unknown options via Commander", async () => {
 });
 
 test("empty JSON object is a no-op", async () => {
-  const { stdout } = await clerk("init", "--prompt", "--input-json", "{}");
-  expect(stdout).toContain("clerk init -y");
+  // Empty JSON adds no flags. doctor is non-side-effecting and returns JSON
+  // when --json is in argv elsewhere — here we just need a clean exit.
+  const result = await clerk.raw("doctor", "--input-json", "{}", "--json");
+  const parsed = JSON.parse(result.stdout);
+  expect(Array.isArray(parsed)).toBe(true);
 });
 
 test("@file.json reads options from a temp file", async () => {
@@ -219,21 +220,22 @@ test("--input-json after nested subcommand targets that subcommand", async () =>
 });
 
 test("noSkills negated boolean via --input-json", async () => {
-  // noSkills:true → --no-skills. Commander must accept the negated flag without error.
-  const { stdout } = await clerk(
-    "init",
-    "--prompt",
-    "--input-json",
-    '{"prompt":true,"noSkills":true}',
-  );
-  expect(stdout).toContain("clerk init -y");
+  // noSkills:true → --no-skills. Init will exit non-zero (no framework in test cwd)
+  // but Commander would surface "unknown option" before the action runs if the
+  // negated flag wasn't accepted.
+  const result = await clerk.raw("init", "--input-json", '{"yes":true,"noSkills":true}');
+  expect(result.stderr).not.toContain("unknown option");
 });
 
 test("--input-json is registered as a global option", async () => {
   // --input-json before the subcommand expands to flags at the root-program level.
   // --mode is a root-level flag, so this works; subcommand-specific flags would not.
-  const { stdout } = await clerk("--input-json", '{"mode":"agent"}', "init", "--prompt");
-  expect(stdout).toContain("clerk init -y");
+  // doctor exits non-zero in this harness; the structured-JSON error format on
+  // stderr is the agent-mode signature, which proves --mode agent was applied.
+  const result = await clerk.raw("--input-json", '{"mode":"agent"}', "doctor", "--json");
+  expect(result.exitCode).not.toBe(0);
+  const parsed = JSON.parse(result.stderr);
+  expect(parsed.error).toBeDefined();
 });
 
 test("structured JSON error in agent mode for invalid JSON", async () => {

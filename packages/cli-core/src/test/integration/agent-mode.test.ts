@@ -8,12 +8,6 @@ import { useIntegrationTestHarness, http, clerk, readConfig, MOCK_APP } from "./
 
 useIntegrationTestHarness();
 
-test("init --prompt outputs structured agent prompt without API calls", async () => {
-  const { stdout } = await clerk("init", "--prompt");
-  expect(stdout).toContain("clerk init -y");
-  expect(http.requests.length).toBe(0);
-});
-
 test("link with --app writes the profile in agent mode", async () => {
   http.mock({
     [`/applications/${MOCK_APP.application_id}`]: MOCK_APP,
