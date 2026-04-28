@@ -129,7 +129,7 @@ const COPY_SCRIPT = `
   }
 `;
 
-export const SUCCESS_HTML = `<!DOCTYPE html>
+const SUCCESS_HTML = `<!DOCTYPE html>
 <html>
 <head><meta charset="utf-8"><title>Clerk CLI</title><style>${PAGE_STYLE}</style></head>
 <body>
@@ -156,7 +156,7 @@ export const SUCCESS_HTML = `<!DOCTYPE html>
 </body>
 </html>`;
 
-export const ERROR_HTML = (message: string) => `<!DOCTYPE html>
+const ERROR_HTML = (message: string) => `<!DOCTYPE html>
 <html>
 <head><meta charset="utf-8"><title>Clerk CLI</title><style>${PAGE_STYLE}</style></head>
 <body>
