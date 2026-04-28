@@ -25,6 +25,7 @@ const CLERK_LOGO = `<svg width="48" height="48" viewBox="0 0 160 160" fill="none
 `;
 
 const PAGE_STYLE = `
+  * { margin: 0; padding: 0; box-sizing: border-box; }
   :root {
     color-scheme: light dark;
     --cli-bg: #fff;
@@ -36,9 +37,8 @@ const PAGE_STYLE = `
     --cli-tab-bg: linear-gradient(90deg, rgba(10,10,10,0.045) 0%, rgba(10,10,10,0.022) 100%);
     --cli-code-bg: linear-gradient(90deg, rgba(10,10,10,0.028) 0%, rgba(10,10,10,0.014) 100%);
     --cli-hover-bg: rgba(10,10,10,0.06);
-    --cli-syntax-bin: #2563eb;
     --cli-syntax-mid: #7c3aed;
-    --cli-syntax-target: #0a0a0a;
+    --cli-syntax-target: #2563eb;
     --cli-accent: #6c47ff;
   }
   @media (prefers-color-scheme: dark) {
@@ -52,22 +52,24 @@ const PAGE_STYLE = `
       --cli-tab-bg: linear-gradient(90deg, rgba(245,245,247,0.05) 0%, rgba(245,245,247,0.025) 100%);
       --cli-code-bg: linear-gradient(90deg, rgba(245,245,247,0.03) 0%, rgba(245,245,247,0.015) 100%);
       --cli-hover-bg: rgba(245,245,247,0.06);
-      --cli-syntax-bin: #70b8ff;
       --cli-syntax-mid: #c4baff;
-      --cli-syntax-target: #f5f5f7;
+      --cli-syntax-target: #70b8ff;
       --cli-accent: #9c87ff;
     }
   }
-  body { font-family: system-ui, -apple-system, "Segoe UI", sans-serif; display: flex; justify-content: center; align-items: center; min-height: 100vh; margin: 0; padding: 1rem; background: var(--cli-bg); color: var(--cli-fg); }
+  body { font-family: system-ui, -apple-system, "Segoe UI", sans-serif; display: flex; justify-content: center; align-items: center; min-height: 100vh; background: var(--cli-bg); color: var(--cli-fg); }
+  .auth-page { text-align: center; padding-block: 4rem; padding-inline: 1rem; }
+  .auth-page h1 { margin-top: 1.25rem; font-size: clamp(1.875rem, 4vw, 2.5rem); }
+  .auth-page > p { margin-top: 0.75rem; }
   @keyframes roll-in { from { transform: rotateX(90deg); opacity: 0; } to { transform: rotateX(0deg); opacity: 1; } }
   @keyframes fade-in { from { opacity: 0; filter: blur(2px); } to { opacity: 1; filter: blur(0px); } }
   @keyframes sparkle-pulse { 0%, 100% { opacity: 0.7; transform: scale(1); } 50% { opacity: 1; transform: scale(1.12); } }
   .ai-section { margin-top: 2rem; display: flex; justify-content: center; opacity: 0; animation: fade-in 0.4s ease-out 0.85s forwards; }
-  .ai-installer-wrap { display: flex; flex-direction: column; width: 24rem; max-width: 100%; }
-  .ai-installer { display: flex; flex-direction: column; border: 1px solid var(--cli-border); border-radius: 12px; overflow: hidden; text-align: left; }
+  .ai-installer-wrap { display: flex; flex-direction: column; align-items: center; width: 24rem; max-width: 100%; }
+  .ai-installer { display: flex; flex-direction: column; width: 100%; border: 1px solid var(--cli-border); border-radius: 12px; overflow: hidden; text-align: left; }
   .ai-header { display: flex; align-items: center; gap: 0.5rem; padding: 0.6rem 1rem; border-bottom: 1px solid var(--cli-border); background: var(--cli-tab-bg); font-size: 12.5px; color: var(--cli-fg-muted); }
   .ai-header span { color: var(--cli-fg-muted); }
-  .ai-learn { display: inline-flex; align-items: center; gap: 0.3rem; align-self: flex-start; margin-top: 0.6rem; padding: 0 0.05rem; font-size: 12px; color: var(--cli-fg-faint); text-decoration: none; transition: color 0.15s; }
+  .ai-learn { display: inline-flex; align-items: center; gap: 0.3rem; margin-top: 0.75rem; font-size: 12px; color: var(--cli-fg-faint); text-decoration: none; transition: color 0.15s; }
   .ai-learn:hover { color: var(--cli-accent); }
   .ai-learn:hover .ai-external { transform: translate(1px, -1px); }
   .ai-external { width: 11px; height: 11px; flex: none; color: currentColor; transition: transform 0.2s; }
@@ -75,10 +77,10 @@ const PAGE_STYLE = `
   .ai-code-row { display: flex; align-items: center; gap: 0.5rem; padding: 0.7rem 0.5rem 0.7rem 1rem; background: var(--cli-code-bg); }
   .ai-cmd-wrap { flex: 1; min-width: 0; overflow: hidden; -webkit-mask-image: linear-gradient(to right, #000 0, #000 calc(100% - 1.875rem), transparent 100%); mask-image: linear-gradient(to right, #000 0, #000 calc(100% - 1.875rem), transparent 100%); }
   .ai-cmd { display: block; white-space: nowrap; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 13px; line-height: 1.1; letter-spacing: -0.02em; color: var(--cli-fg-muted); user-select: text; }
-  .ai-bin { color: var(--cli-syntax-bin); font-weight: 500; }
-  .ai-mid { color: var(--cli-syntax-mid); font-weight: 500; }
+  .ai-bin { color: var(--cli-fg-muted); }
+  .ai-mid { color: var(--cli-syntax-mid); }
   .ai-target { color: var(--cli-syntax-target); font-weight: 500; }
-  .ai-copy { background: transparent; border: 0; padding: 0; width: 1.75rem; height: 1.75rem; cursor: pointer; color: var(--cli-fg-dim); border-radius: 6px; display: inline-flex; align-items: center; justify-content: center; flex: none; transition: color 0.3s cubic-bezier(0.4,0.36,0,1), background 0.15s, transform 0.15s; }
+  .ai-copy { background: transparent; border: 0; width: 1.75rem; height: 1.75rem; cursor: pointer; color: var(--cli-fg-dim); border-radius: 6px; display: inline-flex; align-items: center; justify-content: center; flex: none; transition: color 0.3s cubic-bezier(0.4,0.36,0,1), background 0.15s, transform 0.15s; }
   .ai-copy:hover { color: var(--cli-fg); background: var(--cli-hover-bg); }
   .ai-copy:active { transform: scale(0.92); }
   .ai-copy .icon-check { display: none; color: #16a34a; }
@@ -131,7 +133,7 @@ export const SUCCESS_HTML = `<!DOCTYPE html>
 <html>
 <head><meta charset="utf-8"><title>Clerk CLI</title><style>${PAGE_STYLE}</style></head>
 <body>
-  <div style="text-align: center;">
+  <div class="auth-page">
     ${CLERK_LOGO}
     <h1>${animatedText("Authentication successful")}</h1>
     <p style="color: var(--cli-fg-muted); opacity:0;animation:fade-in 0.4s ease-out 0.5s forwards;">You can close this window and return to your terminal.</p>
@@ -158,7 +160,7 @@ export const ERROR_HTML = (message: string) => `<!DOCTYPE html>
 <html>
 <head><meta charset="utf-8"><title>Clerk CLI</title><style>${PAGE_STYLE}</style></head>
 <body>
-  <div style="text-align: center;">
+  <div class="auth-page">
     ${CLERK_LOGO}
     <h1>Authentication failed</h1>
     <p>${escapeHtml(message)}</p>
