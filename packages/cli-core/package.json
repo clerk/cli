@@ -29,6 +29,7 @@
     "yaml": "^2.8.3"
   },
   "devDependencies": {
+    "@clerk/shared": "^4.8.3",
     "@types/semver": "^7.7.1"
   }
 }

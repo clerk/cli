@@ -140,15 +140,16 @@ function isSelectable<T>(item: T | Separator): item is T & { disabled?: boolean 
   return !Separator.isSeparator(item) && !(item as { disabled?: boolean | string }).disabled;
 }
 
-type NormalizedChoice<Value> = {
+export type NormalizedChoice<Value> = {
   value: Value;
   name: string;
   short: string;
   disabled: boolean | string;
   description?: string;
+  style?: (text: string, isActive: boolean) => string;
 };
 
-function normalizeChoices<Value>(
+export function normalizeChoices<Value>(
   choices: ReadonlyArray<Value | SelectChoice<Value> | Separator>,
 ): Array<NormalizedChoice<Value> | Separator> {
   return choices.map((choice) => {
@@ -157,7 +158,9 @@ function normalizeChoices<Value>(
       const name = String(choice);
       return { value: choice as Value, name, short: name, disabled: false };
     }
-    const c = choice as SelectChoice<Value>;
+    const c = choice as SelectChoice<Value> & {
+      style?: (text: string, isActive: boolean) => string;
+    };
     const name = c.name ?? String(c.value);
     const normalized: NormalizedChoice<Value> = {
       value: c.value,
@@ -166,6 +169,7 @@ function normalizeChoices<Value>(
       disabled: c.disabled ?? false,
     };
     if (c.description) normalized.description = c.description;
+    if (c.style) normalized.style = c.style;
     return normalized;
   });
 }
@@ -377,6 +381,8 @@ type SearchChoice<Value> = {
   description?: string;
   short?: string;
   disabled?: boolean | string;
+  /** Per-choice style hook. Receives `${cursor} ${name}` plus whether the row is active. */
+  style?: (text: string, isActive: boolean) => string;
 };
 
 export type SearchConfig<Value> = {
@@ -405,6 +411,37 @@ const searchTheme: SearchTheme = {
         .join(styleText("dim", " • ")),
   },
 };
+
+export type SearchItemTheme = {
+  icon: { cursor: string };
+  style: {
+    disabled: (text: string) => string;
+    highlight: (text: string) => string;
+  };
+};
+
+/**
+ * Render a single search-prompt row. Returns the rendered string the prompt
+ * paints for that line. A choice's `style` hook, when set, takes precedence
+ * over the default `theme.style.highlight` and is invoked with the cursor +
+ * name and whether the row is active.
+ */
+export function renderSearchItem<Value>(
+  item: NormalizedChoice<Value> | Separator,
+  isActive: boolean,
+  theme: SearchItemTheme,
+): string {
+  if (Separator.isSeparator(item)) return ` ${item.separator}`;
+  if (item.disabled) {
+    const disabledLabel = typeof item.disabled === "string" ? item.disabled : "(disabled)";
+    return theme.style.disabled(`${item.name} ${disabledLabel}`);
+  }
+  const cursor = isActive ? theme.icon.cursor : " ";
+  const line = `${cursor} ${item.name}`;
+  if (item.style) return item.style(line, isActive);
+  const color = isActive ? theme.style.highlight : (x: string) => x;
+  return color(line);
+}
 
 const rawSearch = createPrompt<unknown, SearchConfig<unknown>>((config, done) => {
   const { pageSize = 7, validate = () => true } = config;
@@ -521,16 +558,7 @@ const rawSearch = createPrompt<unknown, SearchConfig<unknown>>((config, done) =>
   const page = usePagination({
     items: searchResults,
     active,
-    renderItem({ item, isActive }) {
-      if (Separator.isSeparator(item)) return ` ${item.separator}`;
-      if (item.disabled) {
-        const disabledLabel = typeof item.disabled === "string" ? item.disabled : "(disabled)";
-        return theme.style.disabled(`${item.name} ${disabledLabel}`);
-      }
-      const color = isActive ? theme.style.highlight : (x: string) => x;
-      const cursor = isActive ? theme.icon.cursor : " ";
-      return color(`${cursor} ${item.name}`);
-    },
+    renderItem: ({ item, isActive }) => renderSearchItem(item, isActive, theme),
     pageSize: effectivePageSize,
     loop: false,
   });

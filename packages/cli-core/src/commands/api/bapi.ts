@@ -4,6 +4,7 @@
  */
 
 import { getBapiBaseUrl } from "../../lib/environment.ts";
+import { normalizeBapiPath } from "../../lib/bapi-command.ts";
 import { BapiError } from "../../lib/errors.ts";
 import { loggedFetch } from "../../lib/fetch.ts";
 
@@ -22,11 +23,7 @@ export async function bapiRequest(options: {
   baseUrl?: string;
 }): Promise<BapiResponse> {
   const base = options.baseUrl ?? getBapiBaseUrl();
-
-  // Normalize: ensure path starts with /v1/ if not already versioned
-  let path = options.path;
-  if (!path.startsWith("/")) path = `/${path}`;
-  if (!path.startsWith("/v1/")) path = `/v1${path}`;
+  const path = normalizeBapiPath(options.path);
 
   const url = `${base}${path}`;
 

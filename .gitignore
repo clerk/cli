@@ -41,3 +41,6 @@ report.[0-9]_.[0-9]_.[0-9]_.[0-9]_.json
 
 # E2E HAR output
 test/e2e/.har
+
+# Local planning/spec docs
+docs/superpowers/

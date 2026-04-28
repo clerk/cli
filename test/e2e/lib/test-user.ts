@@ -20,8 +20,10 @@ function clerkEnv(configDir: string, secretKey: string): Record<string, string |
 }
 
 /**
- * Create a test user via `clerk api`. Uses +clerk_test email suffix so
- * OTP code 424242 works without real email delivery.
+ * Create a test user via `clerk users create`. Uses +clerk_test email suffix
+ * so OTP code 424242 works without real email delivery. Passes the BAPI body
+ * via `-d` because `skip_password_checks` is not a curated flag. The instance
+ * BAPI secret key comes from the fixture's env via `CLERK_SECRET_KEY`.
  */
 export async function createTestUser(
   configDir: string,
@@ -40,7 +42,7 @@ export async function createTestUser(
 
   log(fixtureName, `creating test user: ${email}`);
 
-  const result = await Bun.$`bun ${CLI_PATH} api /users -X POST -d ${body} --yes`
+  const result = await Bun.$`bun ${CLI_PATH} users create -d ${body} --json --yes`
     .env(clerkEnv(configDir, secretKey))
     .quiet()
     .nothrow();
