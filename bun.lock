@@ -29,6 +29,7 @@
         "clerk": "./src/cli.ts",
       },
       "dependencies": {
+        "@clerk/cli-extras": "workspace:*",
         "@commander-js/extra-typings": "^14.0.0",
         "@inquirer/ansi": "^2.0.5",
         "@inquirer/core": "^11.1.9",
@@ -44,6 +45,14 @@
       "devDependencies": {
         "@clerk/shared": "^4.8.3",
         "@types/semver": "^7.7.1",
+      },
+    },
+    "packages/extras": {
+      "name": "@clerk/cli-extras",
+      "version": "0.0.0",
+      "dependencies": {
+        "@commander-js/extra-typings": "^14.0.0",
+        "commander": "^14.0.3",
       },
     },
   },
@@ -99,7 +108,9 @@
 
     "@clerk/cli-core": ["@clerk/cli-core@workspace:packages/cli-core"],
 
-    "@clerk/shared": ["@clerk/shared@4.8.3", "", { "dependencies": { "@tanstack/query-core": "5.90.16", "dequal": "2.0.3", "glob-to-regexp": "0.4.1", "js-cookie": "3.0.5", "std-env": "^3.9.0" }, "peerDependencies": { "react": "^18.0.0 || ~19.0.3 || ~19.1.4 || ~19.2.3 || ~19.3.0-0", "react-dom": "^18.0.0 || ~19.0.3 || ~19.1.4 || ~19.2.3 || ~19.3.0-0" }, "optionalPeers": ["react", "react-dom"] }, "sha512-HZViZBCTfOR2OreSBDMXcIRPgYiiYCE+GCCPrpjq/ZPcA6OsGiRCIQgUoGgGdAoFgr6Hk0TT00hnVK7g0qRKqQ=="],
+    "@clerk/cli-extras": ["@clerk/cli-extras@workspace:packages/extras"],
+
+    "@clerk/shared": ["@clerk/shared@4.8.5", "", { "dependencies": { "@tanstack/query-core": "5.90.16", "dequal": "2.0.3", "glob-to-regexp": "0.4.1", "js-cookie": "3.0.5", "std-env": "^3.9.0" }, "peerDependencies": { "react": "^18.0.0 || ~19.0.3 || ~19.1.4 || ~19.2.3 || ~19.3.0-0", "react-dom": "^18.0.0 || ~19.0.3 || ~19.1.4 || ~19.2.3 || ~19.3.0-0" }, "optionalPeers": ["react", "react-dom"] }, "sha512-YxgUWHoKEXEbRPWPEcB2Q0o+NJkDc0/zQRp4QCsnGIM5e32hlBUwxcYpyDjDlZ2lYB+GUXHuEc3KETnxWGp26g=="],
 
     "@clerk/testing": ["@clerk/testing@2.0.8", "", { "dependencies": { "@clerk/backend": "^3.2.4", "@clerk/shared": "^4.4.0", "dotenv": "17.2.2" }, "peerDependencies": { "@playwright/test": "^1", "cypress": "^13 || ^14" }, "optionalPeers": ["@playwright/test", "cypress"] }, "sha512-p1m0CZ1GsIUkE4c5SPcapdHoH0rCBqkECgGWs4340w/LrgyVWX1+Z1auWdcX+HvY/Soi6OzThSBP+n/acBO5OQ=="],
 
