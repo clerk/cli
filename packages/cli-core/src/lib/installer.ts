@@ -139,27 +139,69 @@ export async function getInstallerPackageDirs(): Promise<Partial<Record<Installe
   return out;
 }
 
+const PM_PROBE_TIMEOUT_MS = 1500;
+
+/**
+ * Run a package-manager probe with stdin detached and a hard timeout, capturing
+ * trimmed stdout on success. Returns null on any failure (spawn error, nonzero
+ * exit, timeout, empty output).
+ *
+ * Why stdin is detached: corepack-shimmed PMs (yarn/pnpm/npm under recent Node
+ * releases) prompt on stdin to download the requested package on first use.
+ * Inheriting the parent's TTY makes that prompt block forever waiting for a
+ * Y/n. `stdin: "ignore"` plus `COREPACK_ENABLE_DOWNLOAD_PROMPT=0` ensures
+ * corepack errors out instead of prompting.
+ *
+ * Why the timeout: defense in depth. Even with stdin handled, slow shims, alias
+ * scripts, or network-bound startup paths can still hang. 1500ms matches the
+ * registry timeout in `fetchLatestVersion`.
+ */
+async function probePmDir(args: string[]): Promise<string | null> {
+  let proc: ReturnType<typeof Bun.spawn> | undefined;
+  try {
+    proc = Bun.spawn(args, {
+      stdin: "ignore",
+      stdout: "pipe",
+      stderr: "ignore",
+      env: { ...process.env, COREPACK_ENABLE_DOWNLOAD_PROMPT: "0" },
+    });
+  } catch {
+    return null;
+  }
+  let timedOut = false;
+  const timer = setTimeout(() => {
+    timedOut = true;
+    proc?.kill();
+  }, PM_PROBE_TIMEOUT_MS);
+  try {
+    const exitCode = await proc.exited;
+    if (timedOut || exitCode !== 0) return null;
+    // `stdout: "pipe"` always yields a ReadableStream; the union in the type
+    // covers other stdout modes we don't use here.
+    const stdout = await new Response(proc.stdout as ReadableStream<Uint8Array>).text();
+    return stdout.trim() || null;
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 async function queryNpmPackageDir(): Promise<string | null> {
   // `npm root -g` reports the actual global node_modules dir on both platforms
   // (POSIX: `<prefix>/lib/node_modules`; Windows: `<prefix>\node_modules`, no
   // `lib` segment). Constructing the path manually breaks on Windows.
-  const result = await Bun.$`npm root -g`.quiet().nothrow();
-  if (result.exitCode !== 0) return null;
-  const dir = result.stdout.toString().trim();
+  const dir = await probePmDir(["npm", "root", "-g"]);
   return dir ? await safeRealpath(dir) : null;
 }
 
 async function queryPnpmPackageDir(): Promise<string | null> {
-  const result = await Bun.$`pnpm root -g`.quiet().nothrow();
-  if (result.exitCode !== 0) return null;
-  const dir = result.stdout.toString().trim();
+  const dir = await probePmDir(["pnpm", "root", "-g"]);
   return dir ? await safeRealpath(dir) : null;
 }
 
 async function queryYarnPackageDir(): Promise<string | null> {
-  const result = await Bun.$`yarn global dir`.quiet().nothrow();
-  if (result.exitCode !== 0) return null;
-  const dir = result.stdout.toString().trim();
+  const dir = await probePmDir(["yarn", "global", "dir"]);
   return dir ? await safeRealpath(join(dir, "node_modules")) : null;
 }
 
