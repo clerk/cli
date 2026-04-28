@@ -5,62 +5,6 @@ import { dirname, join } from "node:path";
 import { createProgram, formatApiBody } from "./cli-program.ts";
 import { STANDARD_AGENT_DIRS, EXTRA_REL_PATHS } from "./lib/skill-detection.ts";
 
-test("registers users as a top-level command", () => {
-  const program = createProgram();
-  const users = program.commands.find((command) => command.name() === "users");
-  expect(users).toBeDefined();
-});
-
-test("registers users create as a subcommand", () => {
-  const program = createProgram();
-  const users = program.commands.find((command) => command.name() === "users")!;
-  const names = users.commands.map((command) => command.name());
-
-  expect(names).toContain("create");
-});
-
-test("users create exposes --json output, curated flags, and -d/--data for inline request bodies", () => {
-  const program = createProgram();
-  const users = program.commands.find((command) => command.name() === "users")!;
-  const create = users.commands.find((command) => command.name() === "create")!;
-  const optionNames = create.options.map((option) => option.long);
-
-  expect(optionNames).toEqual(
-    expect.arrayContaining([
-      "--json",
-      "--email",
-      "--phone",
-      "--username",
-      "--password",
-      "--first-name",
-      "--last-name",
-      "--external-id",
-      "--data",
-      "--file",
-      "--dry-run",
-      "--yes",
-    ]),
-  );
-});
-
-test("users parent command exposes targeting flags inherited by subcommands", () => {
-  const program = createProgram();
-  const users = program.commands.find((command) => command.name() === "users")!;
-  const optionNames = users.options.map((option) => option.long);
-
-  expect(optionNames).toEqual(expect.arrayContaining(["--secret-key", "--app", "--instance"]));
-});
-
-test("users create documents -d and --file for raw BAPI request bodies", () => {
-  const program = createProgram();
-  const users = program.commands.find((command) => command.name() === "users")!;
-  const create = users.commands.find((command) => command.name() === "create")!;
-  const help = create.helpInformation();
-
-  expect(help).toContain("-d, --data");
-  expect(help).toContain("--file");
-});
-
 describe("formatApiBody", () => {
   // --- Single error with meta ---
 

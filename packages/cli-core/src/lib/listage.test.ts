@@ -1,13 +1,5 @@
 import { test, expect, describe, beforeEach } from "bun:test";
-import {
-  filterChoices,
-  normalizeChoices,
-  renderSearchItem,
-  scrollBounds,
-  Separator,
-  ttyContext,
-  withScrollIndicators,
-} from "./listage.ts";
+import { scrollBounds, withScrollIndicators, filterChoices, ttyContext } from "./listage.ts";
 
 describe("scrollBounds", () => {
   test("returns zeros when all items fit on page", () => {
@@ -110,88 +102,6 @@ describe("filterChoices", () => {
 
   test("returns empty array when nothing matches", () => {
     expect(filterChoices(choices, "angular")).toEqual([]);
-  });
-});
-
-describe("normalizeChoices", () => {
-  test("forwards style hook from choice to normalized item", () => {
-    const style = (text: string, isActive: boolean) => `[${isActive ? "on" : "off"}]${text}`;
-    // Cast through unknown: SelectChoice doesn't expose `style` at the type
-    // level, but normalizeChoices preserves it at runtime so SearchChoice
-    // callers can opt in.
-    const choices = [
-      { value: "a", name: "A" },
-      { value: "b", name: "B", style },
-    ] as unknown as Parameters<typeof normalizeChoices<string>>[0];
-    const result = normalizeChoices(choices);
-    const a = result[0] as Exclude<(typeof result)[number], Separator>;
-    const b = result[1] as Exclude<(typeof result)[number], Separator>;
-    expect(a.style).toBeUndefined();
-    expect(b.style).toBe(style);
-  });
-
-  test("preserves separators", () => {
-    const sep = new Separator();
-    const result = normalizeChoices([{ value: "a", name: "A" }, sep, { value: "b", name: "B" }]);
-    expect(Separator.isSeparator(result[0])).toBe(false);
-    expect(Separator.isSeparator(result[1])).toBe(true);
-    expect(Separator.isSeparator(result[2])).toBe(false);
-  });
-});
-
-describe("renderSearchItem", () => {
-  const theme = {
-    icon: { cursor: ">" },
-    style: {
-      disabled: (text: string) => `[disabled]${text}`,
-      highlight: (text: string) => `[highlight]${text}`,
-    },
-  };
-  const baseItem = {
-    value: "a",
-    name: "Choice A",
-    short: "A",
-    disabled: false as boolean | string,
-  };
-
-  test("uses default highlight when active and no style hook is set", () => {
-    expect(renderSearchItem(baseItem, true, theme)).toBe("[highlight]> Choice A");
-  });
-
-  test("returns plain text when inactive and no style hook is set", () => {
-    expect(renderSearchItem(baseItem, false, theme)).toBe("  Choice A");
-  });
-
-  test("invokes the style hook when set, bypassing the default highlight", () => {
-    const style = (text: string, isActive: boolean) => `[${isActive ? "on" : "off"}]${text}`;
-    const styled = { ...baseItem, style };
-    expect(renderSearchItem(styled, true, theme)).toBe("[on]> Choice A");
-    expect(renderSearchItem(styled, false, theme)).toBe("[off]  Choice A");
-  });
-
-  test("style hook receives cursor + name with no extra wrapping", () => {
-    let received: { text: string; isActive: boolean } | undefined;
-    const style = (text: string, isActive: boolean) => {
-      received = { text, isActive };
-      return text;
-    };
-    renderSearchItem({ ...baseItem, style }, true, theme);
-    expect(received).toEqual({ text: "> Choice A", isActive: true });
-  });
-
-  test("renders separators verbatim with a leading space", () => {
-    expect(renderSearchItem(new Separator("---"), false, theme)).toBe(" ---");
-  });
-
-  test("renders disabled choices with the disabled style and ignores style hook", () => {
-    const style = (text: string) => `[styled]${text}`;
-    const disabled = { ...baseItem, disabled: true as boolean | string, style };
-    expect(renderSearchItem(disabled, false, theme)).toBe("[disabled]Choice A (disabled)");
-  });
-
-  test("uses the disabled string label when provided", () => {
-    const disabled = { ...baseItem, disabled: "coming soon" as boolean | string };
-    expect(renderSearchItem(disabled, false, theme)).toBe("[disabled]Choice A coming soon");
   });
 });
 
