@@ -1,5 +1,5 @@
 ---
-name: clerk
+name: clerk-cli
 description: >-
   Operate the Clerk CLI (`clerk` binary) for authentication, user/org/session management,
   instance config, env keys, and any Clerk Backend or Platform API call. Use when the user
@@ -186,7 +186,7 @@ See [references/recipes.md](references/recipes.md) for concrete patterns: listin
 | `clerk api ls [filter]`    | Discover endpoints from the bundled OpenAPI catalog.                                                                                                                                             | `--platform`                                                                                                 |
 | `clerk completion [shell]` | Print a shell completion script (`bash`, `zsh`, `fish`, `powershell`).                                                                                                                           | —                                                                                                            |
 | `clerk update`             | Update the CLI to the latest version.                                                                                                                                                            | `--channel`, `-y`, `--all`                                                                                   |
-| `clerk skill install`      | Reinstall the bundled `clerk` skill. Run after upgrading the CLI so the skill matches the new binary.                                                                                            | `-y`, `--pm`                                                                                                 |
+| `clerk skill install`      | Reinstall the bundled `clerk-cli` skill. Run after upgrading the CLI so the skill matches the new binary.                                                                                        | `-y`, `--pm`                                                                                                 |
 
 **`clerk <command> --help` is the source of truth for flags.** This table is a hint, not a spec. Before running an unfamiliar command or flag combination, run `clerk <command> --help` once per session. Every command also defines `setExamples([...])` in source, which `--help` renders as a copy-pasteable Examples block, so you rarely need to guess syntax.
 
