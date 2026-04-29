@@ -3,7 +3,7 @@ import { link } from "../link/index.js";
 import { pull } from "../env/pull.js";
 import { isAgent } from "../../mode.js";
 import { dim, bold } from "../../lib/color.js";
-import { throwUserAbort, CliError, errorMessage } from "../../lib/errors.js";
+import { throwUserAbort, CliError, errorMessage, throwUsageError } from "../../lib/errors.js";
 import { lookupFramework, type FrameworkInfo } from "../../lib/framework.js";
 import { resolveProfile } from "../../lib/config.js";
 import { log } from "../../lib/log.js";
@@ -58,6 +58,7 @@ type InitOptions = {
 
 export async function init(options: InitOptions = {}) {
   const cwd = process.cwd();
+  const agent = isAgent();
 
   const frameworkOverride = options.framework
     ? (lookupFramework(options.framework) ?? undefined)
@@ -72,7 +73,7 @@ export async function init(options: InitOptions = {}) {
 
   // In agent mode, implicitly enable --yes to skip all confirmation prompts.
   const overrides: BootstrapOverrides = {
-    skipConfirm: options.yes || isAgent(),
+    skipConfirm: options.yes || agent,
     pmOverride: options.pm,
     nameOverride: options.name,
   };
@@ -94,14 +95,23 @@ export async function init(options: InitOptions = {}) {
   await enrichProjectContext(ctx);
 
   const authed = await isAuthenticated();
-  const keyless = resolveKeylessMode(bootstrap, ctx, authed);
+  const linkedProfile = agent && !options.app ? await resolveProfile(ctx.cwd) : undefined;
+  const hasRealAppTarget = Boolean(options.app || linkedProfile);
+  const keyless = resolveKeylessMode({
+    agent,
+    bootstrap,
+    ctx,
+    authed,
+    hasRealAppTarget,
+  });
   ctx.keyless = keyless;
 
-  const skipAuth = !keyless && bootstrap != null && overrides.skipConfirm && !authed;
+  const manualSetup =
+    !keyless && (agent ? !hasRealAppTarget : bootstrap != null && overrides.skipConfirm && !authed);
 
-  if (!keyless && !skipAuth) {
+  if (!keyless && !manualSetup) {
     bar();
-    await authenticateAndLink(ctx.cwd, options.app);
+    await authenticateAndLink(ctx.cwd, options.app, { allowInteractiveLogin: !agent });
   }
 
   // Short-circuit on a fully-clean re-run so env pull / skills prompt don't
@@ -113,12 +123,15 @@ export async function init(options: InitOptions = {}) {
 
   if (alreadySetUp) {
     log.success("\nClerk is already set up in this project.");
+    if (agent && manualSetup) {
+      printBootstrapManualSetupInfo(ctx.framework.name);
+    }
     outro("Done");
     return;
   }
 
   bar();
-  if (skipAuth) {
+  if (manualSetup) {
     printBootstrapManualSetupInfo(ctx.framework.name);
   } else if (!keyless) {
     await pull({ file: ctx.envFile, cwd: ctx.cwd });
@@ -214,8 +227,8 @@ function printBootstrapNextSteps(
 function printBootstrapManualSetupInfo(frameworkName: string): void {
   const lines = [
     `\n  ${frameworkName} requires API keys — set them up manually:`,
-    "    clerk auth login",
-    "    clerk link",
+    "    clerk init --app <app_id>",
+    "    # or: clerk auth login && clerk link",
     "    clerk env pull",
   ];
   log.info(lines.map(dim).join("\n"));
@@ -223,19 +236,27 @@ function printBootstrapManualSetupInfo(frameworkName: string): void {
 
 // --- Keyless ---
 
-function resolveKeylessMode(
-  bootstrap: BootstrapResult | null,
-  ctx: ProjectContext,
-  authed: boolean,
-): boolean {
-  // Auto-keyless is scoped to bootstrap (new-project) flows only. For existing
-  // projects, fall through to the authenticated flow so `clerk init` still
-  // runs `authenticateAndLink` and pulls real keys — even when signed out the
-  // user gets a login prompt rather than being silently dropped into keyless
-  // (which would skip `env pull` and could overwrite permissive middleware).
-  if (!bootstrap) return false;
-
+function resolveKeylessMode({
+  agent,
+  bootstrap,
+  ctx,
+  authed,
+  hasRealAppTarget,
+}: {
+  agent: boolean;
+  bootstrap: BootstrapResult | null;
+  ctx: ProjectContext;
+  authed: boolean;
+  hasRealAppTarget: boolean;
+}): boolean {
   if (ctx.framework.supportsKeyless) {
+    if (agent) return !hasRealAppTarget;
+
+    // Auto-keyless is scoped to bootstrap (new-project) flows only in human
+    // mode. Existing projects keep the authenticated flow so real keys can be
+    // pulled unless an agent explicitly chooses keyless by omitting an app.
+    if (!bootstrap) return false;
+
     // Authenticated (OAuth token or CLERK_PLATFORM_API_KEY) — use the
     // authenticated flow so real keys get pulled into .env. Otherwise fall
     // back to keyless: the app runs on auto-generated dev keys and the user
@@ -253,19 +274,33 @@ function resolveKeylessMode(
 
 // --- Auth ---
 
-async function resolveAuthLabel(): Promise<string> {
+async function resolveAuthLabel({
+  allowInteractiveLogin,
+}: {
+  allowInteractiveLogin: boolean;
+}): Promise<string> {
   const hasApiKey = Boolean(process.env.CLERK_PLATFORM_API_KEY);
   if (hasApiKey) return "Using API key";
 
   const email = await getAuthenticatedEmail();
   if (email) return `Logged in as ${email}`;
 
+  if (!allowInteractiveLogin) {
+    throwUsageError(
+      "clerk init in agent mode requires CLERK_PLATFORM_API_KEY or a valid stored session when using a real Clerk application. Pass --app only with auth available, or omit --app for keyless-capable frameworks.",
+    );
+  }
+
   await login({ showNextSteps: false });
   return "";
 }
 
-async function authenticateAndLink(cwd: string, app: string | undefined): Promise<void> {
-  const label = await resolveAuthLabel();
+async function authenticateAndLink(
+  cwd: string,
+  app: string | undefined,
+  options: { allowInteractiveLogin: boolean },
+): Promise<void> {
+  const label = await resolveAuthLabel(options);
   const profile = await resolveProfile(cwd);
 
   const alreadyOnRequestedApp = profile && (!app || profile.profile.appId === app);

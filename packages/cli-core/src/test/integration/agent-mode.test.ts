@@ -4,9 +4,73 @@
  */
 
 import { test, expect } from "bun:test";
-import { useIntegrationTestHarness, http, clerk, readConfig, MOCK_APP } from "./lib/harness.ts";
+import { mkdir } from "node:fs/promises";
+import { join } from "node:path";
+import {
+  useIntegrationTestHarness,
+  http,
+  clerk,
+  readConfig,
+  MOCK_APP,
+  getInstance,
+  parseEnvFile,
+} from "./lib/harness.ts";
 
-useIntegrationTestHarness();
+const h = useIntegrationTestHarness();
+
+async function writeNextAppProject() {
+  await Bun.write(
+    join(h.tempDir, "package.json"),
+    JSON.stringify({
+      name: "test-next-app",
+      dependencies: {
+        "@clerk/nextjs": "latest",
+        next: "15.0.0",
+        react: "19.0.0",
+        "react-dom": "19.0.0",
+      },
+    }),
+  );
+  await Bun.write(join(h.tempDir, "tsconfig.json"), "{}");
+  await mkdir(join(h.tempDir, "app"), { recursive: true });
+  await Bun.write(
+    join(h.tempDir, "app/layout.tsx"),
+    `export default function RootLayout({ children }: { children: React.ReactNode }) {
+  return (
+    <html lang="en">
+      <body>{children}</body>
+    </html>
+  );
+}
+`,
+  );
+}
+
+async function writeReactProject() {
+  await Bun.write(
+    join(h.tempDir, "package.json"),
+    JSON.stringify({
+      name: "test-react-app",
+      dependencies: {
+        "@clerk/react": "latest",
+        "@vitejs/plugin-react": "latest",
+        vite: "6.0.0",
+        react: "19.0.0",
+        "react-dom": "19.0.0",
+      },
+    }),
+  );
+  await Bun.write(join(h.tempDir, "tsconfig.json"), "{}");
+  await mkdir(join(h.tempDir, "src"), { recursive: true });
+  await Bun.write(
+    join(h.tempDir, "src/main.tsx"),
+    `import ReactDOM from "react-dom/client";
+import App from "./App";
+
+ReactDOM.createRoot(document.getElementById("root")!).render(<App />);
+`,
+  );
+}
 
 test("init --prompt outputs structured agent prompt without API calls", async () => {
   const { stdout } = await clerk("init", "--prompt");
@@ -44,4 +108,51 @@ test("unlink --yes removes the profile in agent mode", async () => {
 
   const config = await readConfig();
   expect(config.profiles["github.com/test/project"]).toBeUndefined();
+});
+
+test("init uses keyless for keyless framework without an app target in agent mode", async () => {
+  await writeNextAppProject();
+  http.mock({
+    "/v1/accountless_applications": {
+      publishable_key: "pk_test_keyless",
+      secret_key: "sk_test_keyless",
+      claim_url: "/apps/claim?token=keyless_token",
+    },
+  });
+
+  await clerk("--mode", "agent", "init", "--no-skills");
+
+  const env = parseEnvFile(await Bun.file(join(h.tempDir, ".env.local")).text(), ".env.local");
+  expect(env.get("NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY")).toBe("pk_test_keyless");
+  expect(env.get("CLERK_SECRET_KEY")).toBe("sk_test_keyless");
+
+  const config = await readConfig();
+  expect(config.profiles["github.com/test/project"]).toBeUndefined();
+  expect(http.requests.some((r) => r.url.includes("/v1/platform/applications"))).toBe(false);
+});
+
+test("init prints manual setup for non-keyless framework without an app target in agent mode", async () => {
+  await writeReactProject();
+
+  const { stderr } = await clerk("--mode", "agent", "init", "--no-skills");
+
+  expect(stderr).toContain("clerk init --app <app_id>");
+  expect(http.requests).toHaveLength(0);
+});
+
+test("init with --app uses real app flow in agent mode", async () => {
+  await writeReactProject();
+  const devInstance = getInstance(MOCK_APP, "development");
+  http.mock({
+    [`/applications/${MOCK_APP.application_id}`]: MOCK_APP,
+  });
+
+  await clerk("--mode", "agent", "init", "--app", MOCK_APP.application_id, "--no-skills");
+
+  const config = await readConfig();
+  expect(config.profiles["github.com/test/project"]?.appId).toBe(MOCK_APP.application_id);
+
+  const env = parseEnvFile(await Bun.file(join(h.tempDir, ".env.local")).text(), ".env.local");
+  expect(env.get("VITE_CLERK_PUBLISHABLE_KEY")).toBe(devInstance.publishable_key);
+  expect(env.get("CLERK_SECRET_KEY")).toBe(devInstance.secret_key);
 });
