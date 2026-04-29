@@ -258,11 +258,9 @@ async function loadBest(): Promise<number> {
 }
 
 function saveBest(n: number): void {
-  try {
-    Bun.write(BEST_FILE, String(n));
-  } catch {
+  void Bun.write(BEST_FILE, String(n)).catch(() => {
     /* best-effort */
-  }
+  });
 }
 
 // ═══════════════════════════════════════════════════════
