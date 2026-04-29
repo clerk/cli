@@ -5,6 +5,8 @@ effort: high
 user-invocable: true
 disable-model-invocation: true
 argument-hint: "[--apply]"
+metadata:
+  internal: true
 ---
 
 # Audit the clerk Skill
