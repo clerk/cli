@@ -7,6 +7,7 @@
  * File fallback: "credentials.<envName>"
  */
 
+import { setTimeout as sleep } from "node:timers/promises";
 import { dirname, join } from "node:path";
 import { mkdir, chmod, writeFile, unlink } from "node:fs/promises";
 import { CREDENTIALS_FILE } from "./constants.ts";
@@ -27,6 +28,7 @@ export const KEYCHAIN_ACCOUNT = "oauth-access-token";
 const RELEASE_MACOS_TEAM_ID = "L8SD6SB282";
 const RELEASE_MACOS_IDENTIFIER = "clerk";
 const JWT_EXPIRY_LEEWAY_MS = 30_000;
+const INVALID_GRANT_RETRY_DELAYS_MS = [25, 50, 100];
 
 export interface OAuthSession {
   accessToken: string;
@@ -309,6 +311,50 @@ async function readStoredValue(): Promise<string | null> {
   return fileGet();
 }
 
+async function getValidAccessToken(session: OAuthSession): Promise<string> {
+  if (!isExpiredSession(session)) {
+    return session.accessToken;
+  }
+
+  return refreshStoredSession(session);
+}
+
+/**
+ * Detect whether a sibling process has already refreshed the OAuth session
+ * after our own refresh failed with `invalid_grant`. Polls the credential
+ * store on a short retry budget; returns the new access token if a different
+ * (non-expired) session appears, otherwise returns `null`.
+ *
+ * Race window: two CLI invocations whose stored session is expired will both
+ * try to redeem the same refresh token. The first wins and rotates; the
+ * second sees `invalid_grant`. We wait briefly for the winner's persisted
+ * session to become visible and reuse it instead of forcing a re-auth.
+ *
+ * Detection compares refresh tokens because the OAuth server rotates them on
+ * every successful exchange, so a different refresh token implies a new
+ * session was written by another process.
+ */
+async function awaitConcurrentRefresh(session: OAuthSession): Promise<string | null> {
+  for (const delayMs of [0, ...INVALID_GRANT_RETRY_DELAYS_MS]) {
+    if (delayMs > 0) {
+      await sleep(delayMs);
+    }
+
+    const storedSession = await getStoredSession();
+    if (!storedSession || storedSession.refreshToken === session.refreshToken) {
+      continue;
+    }
+
+    log.debug("credentials: detected a newer stored session after invalid_grant");
+    if (isExpiredSession(storedSession)) {
+      continue;
+    }
+    return storedSession.accessToken;
+  }
+
+  return null;
+}
+
 async function refreshStoredSession(session: OAuthSession): Promise<string> {
   let tokenResponse: TokenResponse;
   try {
@@ -316,6 +362,14 @@ async function refreshStoredSession(session: OAuthSession): Promise<string> {
     tokenResponse = await refreshAccessToken(session.refreshToken);
   } catch (error) {
     if (isInvalidGrant(error)) {
+      try {
+        const recoveredToken = await awaitConcurrentRefresh(session);
+        if (recoveredToken) {
+          return recoveredToken;
+        }
+      } catch {
+        log.debug("credentials: recovery from invalid_grant failed, cleaning up");
+      }
       await deleteToken();
       throw sessionExpiredError();
     }
@@ -391,11 +445,7 @@ export async function getValidToken(): Promise<string | null> {
     return null;
   }
 
-  if (!isExpiredSession(session)) {
-    return session.accessToken;
-  }
-
-  return refreshStoredSession(session);
+  return getValidAccessToken(session);
 }
 
 export async function deleteToken(): Promise<void> {

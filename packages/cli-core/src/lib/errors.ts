@@ -43,8 +43,6 @@ export const ERROR_CODE = {
   CATALOG_ERROR: "catalog_error",
   /** Doctor checks found issues. */
   DOCTOR_FAILED: "doctor_failed",
-  /** Frontend API request failed. */
-  FAPI_ERROR: "fapi_error",
 } as const;
 
 export type ErrorCode = (typeof ERROR_CODE)[keyof typeof ERROR_CODE];
@@ -194,29 +192,6 @@ export class PlapiError extends ApiError {
   ) {
     super(status, body);
     this.name = "PlapiError";
-  }
-}
-
-/**
- * Error from the Clerk Frontend API (FAPI).
- *
- * Thrown by `src/lib/fapi.ts` helpers when a Frontend API request fails.
- * Displayed as "Frontend API request failed" in the global error handler when
- * wrapped with `withApiContext()`. Carries the request URL so verbose mode can
- * surface it for debugging.
- *
- * @param status - HTTP status code
- * @param body - Raw response body text
- * @param url - The request URL that failed
- */
-export class FapiError extends ApiError {
-  constructor(
-    status: number,
-    body: string,
-    public url?: string,
-  ) {
-    super(status, body);
-    this.name = "FapiError";
   }
 }
 
