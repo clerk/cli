@@ -228,7 +228,6 @@ function printBootstrapManualSetupInfo(frameworkName: string): void {
   const lines = [
     `\n  ${frameworkName} requires API keys — set them up manually:`,
     "    clerk init --app <app_id>",
-    "    # or: clerk auth login && clerk link",
     "    clerk env pull",
   ];
   log.info(lines.map(dim).join("\n"));
