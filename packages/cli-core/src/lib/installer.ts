@@ -12,6 +12,7 @@ import { access, realpath, stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import { delimiter, join, sep } from "node:path";
 import { UPDATE_PACKAGE_NAME } from "./constants.ts";
+import { pmInstallCommand, type PackageManager } from "./package-manager.ts";
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -354,16 +355,10 @@ function normalizeWindowsPath(p: string): string {
 
 /** Human-readable install/update command for the given installer. */
 export function globalInstallCommand(installer: Installer, packageSpec: string): string {
-  switch (installer) {
-    case "bun":
-      return `bun add -g ${packageSpec}`;
-    case "pnpm":
-      return `pnpm add -g ${packageSpec}`;
-    case "yarn":
-      return `yarn global add ${packageSpec}`;
-    case "homebrew":
-      return `brew upgrade ${UPDATE_PACKAGE_NAME}`;
-    default:
-      return `npm install -g ${packageSpec}`;
-  }
+  if (installer === "homebrew") return `brew upgrade ${UPDATE_PACKAGE_NAME}`;
+  if (installer === "yarn") return `yarn global add ${packageSpec}`;
+
+  // For bun, pnpm, and npm the global form is the local `<pm> add` command
+  // with a `-g` flag appended — reuse `pmInstallCommand` as the base.
+  return `${pmInstallCommand(installer as PackageManager)} -g ${packageSpec}`;
 }
