@@ -40,15 +40,15 @@ describe("buildSkillsArgs", () => {
     expect(buildSkillsArgs(upstream, skills, false, false)).not.toContain("--agent");
   });
 
-  test("empty skillNames omits --skill flags (used for the clerk source)", () => {
-    const stageDir = "/tmp/clerk-skill-abc";
+  test("empty skillNames omits --skill flags (used for the clerk-cli source)", () => {
+    const stageDir = "/tmp/clerk-cli-skill-abc";
     const args = buildSkillsArgs(stageDir, [], true, true);
     expect(args).toEqual(["skills", "add", stageDir, "--copy"]);
     expect(args).not.toContain("--skill");
   });
 
-  test("copy=true appends --copy flag (required for the staged clerk dir)", () => {
-    const args = buildSkillsArgs("/tmp/clerk-skill-xyz", [], false, true);
+  test("copy=true appends --copy flag (required for the staged clerk-cli dir)", () => {
+    const args = buildSkillsArgs("/tmp/clerk-cli-skill-xyz", [], false, true);
     expect(args).toContain("--copy");
     // --copy should trail -y / -g, not replace them.
     expect(args).toContain("-y");
@@ -62,20 +62,23 @@ describe("withStagedClerkSkill", () => {
 
     await withStagedClerkSkill(undefined, async (dir) => {
       const files = {
-        "clerk/SKILL.md": await readFile(join(dir, "clerk/SKILL.md"), "utf-8"),
-        "clerk/references/auth.md": await readFile(join(dir, "clerk/references/auth.md"), "utf-8"),
-        "clerk/references/recipes.md": await readFile(
-          join(dir, "clerk/references/recipes.md"),
+        "clerk-cli/SKILL.md": await readFile(join(dir, "clerk-cli/SKILL.md"), "utf-8"),
+        "clerk-cli/references/auth.md": await readFile(
+          join(dir, "clerk-cli/references/auth.md"),
           "utf-8",
         ),
-        "clerk/references/agent-mode.md": await readFile(
-          join(dir, "clerk/references/agent-mode.md"),
+        "clerk-cli/references/recipes.md": await readFile(
+          join(dir, "clerk-cli/references/recipes.md"),
+          "utf-8",
+        ),
+        "clerk-cli/references/agent-mode.md": await readFile(
+          join(dir, "clerk-cli/references/agent-mode.md"),
           "utf-8",
         ),
       };
       observed = { dir, files };
 
-      const entry = await stat(join(dir, "clerk"));
+      const entry = await stat(join(dir, "clerk-cli"));
       expect(entry.isDirectory()).toBe(true);
     });
 
@@ -89,7 +92,7 @@ describe("withStagedClerkSkill", () => {
     }
 
     // SKILL.md should at least contain the YAML frontmatter marker.
-    expect(files["clerk/SKILL.md"]).toContain("---");
+    expect(files["clerk-cli/SKILL.md"]).toContain("---");
 
     // Temp dir is removed once the callback returns.
     expect(existsSync(dir)).toBe(false);
@@ -111,10 +114,10 @@ describe("withStagedClerkSkill", () => {
 });
 
 const ALL_BUNDLED_FILES = [
-  "clerk/SKILL.md",
-  "clerk/references/auth.md",
-  "clerk/references/recipes.md",
-  "clerk/references/agent-mode.md",
+  "clerk-cli/SKILL.md",
+  "clerk-cli/references/auth.md",
+  "clerk-cli/references/recipes.md",
+  "clerk-cli/references/agent-mode.md",
 ] as const;
 
 describe("withStagedClerkSkill version rendering", () => {
@@ -145,7 +148,7 @@ describe("bundled SKILL.md frontmatter", () => {
   // `clerk skill install` fail with "No valid skills found".
   test("parses as YAML with name and description strings", async () => {
     await withStagedClerkSkill(undefined, async (stageDir) => {
-      const content = await readFile(join(stageDir, "clerk/SKILL.md"), "utf8");
+      const content = await readFile(join(stageDir, "clerk-cli/SKILL.md"), "utf8");
       const frontmatter = content.match(/^---\n([\s\S]*?)\n---/)?.[1];
       expect(frontmatter, "SKILL.md must have YAML frontmatter").toBeDefined();
 
