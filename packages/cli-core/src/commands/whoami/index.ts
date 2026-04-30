@@ -20,6 +20,11 @@ export async function whoami() {
   }
   log.data(userInfo.email);
 
-  const profile = await resolveProfile(process.cwd());
-  printNextSteps(profile ? NEXT_STEPS.WHOAMI_LINKED : NEXT_STEPS.WHOAMI);
+  let isLinked = false;
+  try {
+    isLinked = Boolean(await resolveProfile(process.cwd()));
+  } catch {
+    // Best-effort only: don't fail whoami when local profile resolution fails.
+  }
+  printNextSteps(isLinked ? NEXT_STEPS.WHOAMI_LINKED : NEXT_STEPS.WHOAMI);
 }
