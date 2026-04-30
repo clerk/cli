@@ -257,15 +257,15 @@ describe("help: clerk skill install tip", () => {
   });
 
   for (const dir of STANDARD_AGENT_DIRS) {
-    test(`hides the tip when ${dir}/skills/clerk/SKILL.md exists under HOME`, () => {
-      const target = join(tmpHome, dir, "skills/clerk");
+    test(`hides the tip when ${dir}/skills/clerk-cli/SKILL.md exists under HOME`, () => {
+      const target = join(tmpHome, dir, "skills/clerk-cli");
       mkdirSync(target, { recursive: true });
       writeFileSync(join(target, "SKILL.md"), "ok");
       expect(renderHelp()).not.toContain(TIP_SUBSTR);
     });
 
-    test(`hides the tip when ${dir}/skills/clerk/SKILL.md exists under cwd`, () => {
-      const target = join(tmpCwd, dir, "skills/clerk");
+    test(`hides the tip when ${dir}/skills/clerk-cli/SKILL.md exists under cwd`, () => {
+      const target = join(tmpCwd, dir, "skills/clerk-cli");
       mkdirSync(target, { recursive: true });
       writeFileSync(join(target, "SKILL.md"), "ok");
       expect(renderHelp()).not.toContain(TIP_SUBSTR);
