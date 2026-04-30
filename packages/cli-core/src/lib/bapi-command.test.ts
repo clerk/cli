@@ -35,6 +35,8 @@ describe("bapi-command", () => {
     expect(normalizeBapiPath("users")).toBe("/v1/users");
     expect(normalizeBapiPath("/users")).toBe("/v1/users");
     expect(normalizeBapiPath("/v1/users")).toBe("/v1/users");
+    expect(normalizeBapiPath("v1")).toBe("/v1");
+    expect(normalizeBapiPath("/v1")).toBe("/v1");
   });
 
   test("prints raw BAPI error bodies for machine use", async () => {

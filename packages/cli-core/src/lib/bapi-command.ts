@@ -6,7 +6,7 @@ import { fetchApplication, validateKeyPrefix } from "./plapi.ts";
 export function normalizeBapiPath(path: string): string {
   let normalized = path;
   if (!normalized.startsWith("/")) normalized = `/${normalized}`;
-  if (!normalized.startsWith("/v1/")) normalized = `/v1${normalized}`;
+  if (!/^\/v1(?:\/|$)/.test(normalized)) normalized = `/v1${normalized}`;
   return normalized;
 }
 
