@@ -18,7 +18,7 @@ mock.module("../../lib/spinner.ts", () => ({
   withSpinner: async (_msg: string, fn: () => Promise<unknown>) => fn(),
 }));
 
-describe("clerk billing", () => {
+describe("clerk enable/disable billing", () => {
   const originalEnv = { ...process.env };
   const originalFetch = globalThis.fetch;
   let tempDir: string;
@@ -59,9 +59,9 @@ describe("clerk billing", () => {
     });
   }
 
-  // --- billing enable ---
+  // --- enable ---
 
-  test("enable --for org sends organization_enabled = true", async () => {
+  test("enable --for org sends organization_enabled = true and cascades organization_settings.enabled", async () => {
     let capturedBody = "";
     stubFetch(async (_input, init) => {
       if (init?.method === "PATCH") capturedBody = init.body as string;
@@ -70,13 +70,15 @@ describe("clerk billing", () => {
 
     await setupProfile();
     const { billingEnable } = await import("./index.ts");
-    await captured.run(() => billingEnable({ for: "org" }));
+    await captured.run(() => billingEnable({ for: ["org"] }));
 
     const parsed = JSON.parse(capturedBody);
     expect(parsed.billing.organization_enabled).toBe(true);
+    expect(parsed.billing.user_enabled).toBeUndefined();
+    expect(parsed.organization_settings.enabled).toBe(true);
   });
 
-  test("enable --for user sends user_enabled = true", async () => {
+  test("enable --for user sends user_enabled = true and does NOT cascade orgs", async () => {
     let capturedBody = "";
     stubFetch(async (_input, init) => {
       if (init?.method === "PATCH") capturedBody = init.body as string;
@@ -85,37 +87,125 @@ describe("clerk billing", () => {
 
     await setupProfile();
     const { billingEnable } = await import("./index.ts");
-    await captured.run(() => billingEnable({ for: "user" }));
+    await captured.run(() => billingEnable({ for: ["user"] }));
 
     const parsed = JSON.parse(capturedBody);
     expect(parsed.billing.user_enabled).toBe(true);
+    expect(parsed.billing.organization_enabled).toBeUndefined();
+    expect(parsed.organization_settings).toBeUndefined();
   });
 
-  test("enable errors without --for", async () => {
+  test("enable --for org,user (CSV form) sets both billing fields and cascades orgs", async () => {
+    let capturedBody = "";
+    stubFetch(async (_input, init) => {
+      if (init?.method === "PATCH") capturedBody = init.body as string;
+      return new Response(JSON.stringify({}), { status: 200 });
+    });
+
     await setupProfile();
     const { billingEnable } = await import("./index.ts");
-    await expect(captured.run(() => billingEnable({}))).rejects.toThrow("--for is required");
+    await captured.run(() => billingEnable({ for: ["org,user"] }));
+
+    const parsed = JSON.parse(capturedBody);
+    expect(parsed.billing.organization_enabled).toBe(true);
+    expect(parsed.billing.user_enabled).toBe(true);
+    expect(parsed.organization_settings.enabled).toBe(true);
   });
 
-  test("enable errors with invalid --for value", async () => {
+  test("enable --for org user (variadic form) sets both billing fields and cascades orgs", async () => {
+    let capturedBody = "";
+    stubFetch(async (_input, init) => {
+      if (init?.method === "PATCH") capturedBody = init.body as string;
+      return new Response(JSON.stringify({}), { status: 200 });
+    });
+
     await setupProfile();
     const { billingEnable } = await import("./index.ts");
-    await expect(captured.run(() => billingEnable({ for: "invalid" }))).rejects.toThrow(
-      'Must be "org" or "user"',
+    // Commander variadic produces a string[] when the user writes
+    // `--for org user` or `--for org --for user`.
+    await captured.run(() => billingEnable({ for: ["org", "user"] }));
+
+    const parsed = JSON.parse(capturedBody);
+    expect(parsed.billing.organization_enabled).toBe(true);
+    expect(parsed.billing.user_enabled).toBe(true);
+    expect(parsed.organization_settings.enabled).toBe(true);
+  });
+
+  test("enable with no --for defaults to both targets and cascades orgs", async () => {
+    let capturedBody = "";
+    stubFetch(async (_input, init) => {
+      if (init?.method === "PATCH") capturedBody = init.body as string;
+      return new Response(JSON.stringify({}), { status: 200 });
+    });
+
+    await setupProfile();
+    const { billingEnable } = await import("./index.ts");
+    await captured.run(() => billingEnable({}));
+
+    const parsed = JSON.parse(capturedBody);
+    expect(parsed.billing.organization_enabled).toBe(true);
+    expect(parsed.billing.user_enabled).toBe(true);
+    expect(parsed.organization_settings.enabled).toBe(true);
+  });
+
+  test("enable rejects invalid --for token", async () => {
+    await setupProfile();
+    const { billingEnable } = await import("./index.ts");
+    await expect(captured.run(() => billingEnable({ for: ["foo"] }))).rejects.toThrow(
+      'Invalid --for value: "foo"',
     );
+  });
+
+  test("enable rejects empty --for value", async () => {
+    await setupProfile();
+    const { billingEnable } = await import("./index.ts");
+    await expect(captured.run(() => billingEnable({ for: [","] }))).rejects.toThrow(
+      "--for must include at least one of",
+    );
+  });
+
+  test("enable trims whitespace and dedupes --for tokens", async () => {
+    let capturedBody = "";
+    stubFetch(async (_input, init) => {
+      if (init?.method === "PATCH") capturedBody = init.body as string;
+      return new Response(JSON.stringify({}), { status: 200 });
+    });
+
+    await setupProfile();
+    const { billingEnable } = await import("./index.ts");
+    await captured.run(() => billingEnable({ for: [" org , org , user "] }));
+
+    const parsed = JSON.parse(capturedBody);
+    expect(parsed.billing.organization_enabled).toBe(true);
+    expect(parsed.billing.user_enabled).toBe(true);
   });
 
   test("enable shows success message", async () => {
     await setupProfile();
     const { billingEnable } = await import("./index.ts");
-    await captured.run(() => billingEnable({ for: "org" }));
+    await captured.run(() => billingEnable({ for: ["org"] }));
 
     expect(captured.err).toContain("Billing enabled for organizations");
   });
 
-  // --- billing disable ---
+  test("enable --dry-run plumbs dry_run=true to the API", async () => {
+    let capturedUrl = "";
+    stubFetch(async (input, init) => {
+      if (init?.method === "PATCH") capturedUrl = input.toString();
+      return new Response(JSON.stringify({}), { status: 200 });
+    });
 
-  test("disable --for org sends organization_enabled = false", async () => {
+    await setupProfile();
+    const { billingEnable } = await import("./index.ts");
+    await captured.run(() => billingEnable({ for: ["org"], dryRun: true }));
+
+    expect(capturedUrl).toContain("dry_run=true");
+    expect(captured.err).toContain("[dry-run]");
+  });
+
+  // --- disable ---
+
+  test("disable --for org sets organization_enabled = false and never touches organization_settings", async () => {
     let capturedBody = "";
     stubFetch(async (_input, init) => {
       if (init?.method === "PATCH") capturedBody = init.body as string;
@@ -124,15 +214,15 @@ describe("clerk billing", () => {
 
     await setupProfile();
     const { billingDisable } = await import("./index.ts");
-    await captured.run(() => billingDisable({ for: "org" }));
+    await captured.run(() => billingDisable({ for: ["org"] }));
 
     const parsed = JSON.parse(capturedBody);
     expect(parsed.billing.organization_enabled).toBe(false);
+    expect(parsed.billing.user_enabled).toBeUndefined();
+    expect(parsed.organization_settings).toBeUndefined();
   });
 
-  // --- plans create ---
-
-  test("plans create sends correct plan config", async () => {
+  test("disable --for user sets user_enabled = false and never touches organization_settings", async () => {
     let capturedBody = "";
     stubFetch(async (_input, init) => {
       if (init?.method === "PATCH") capturedBody = init.body as string;
@@ -140,244 +230,61 @@ describe("clerk billing", () => {
     });
 
     await setupProfile();
-    const { plansCreate } = await import("./index.ts");
-    await captured.run(() => plansCreate("pro", { amount: "1999", payer: "org" }));
+    const { billingDisable } = await import("./index.ts");
+    await captured.run(() => billingDisable({ for: ["user"] }));
 
     const parsed = JSON.parse(capturedBody);
-    expect(parsed.billing.plans.pro.name).toBe("Pro");
-    expect(parsed.billing.plans.pro.amount).toBe(1999);
-    expect(parsed.billing.plans.pro.payer_type).toBe("org");
-    expect(parsed.billing.plans.pro.is_recurring).toBe(true);
+    expect(parsed.billing.user_enabled).toBe(false);
+    expect(parsed.billing.organization_enabled).toBeUndefined();
+    expect(parsed.organization_settings).toBeUndefined();
   });
 
-  test("plans create auto-derives name from slug", async () => {
+  test("disable with no --for defaults to both targets and never cascades to orgs", async () => {
     let capturedBody = "";
     stubFetch(async (_input, init) => {
       if (init?.method === "PATCH") capturedBody = init.body as string;
-      return new Response(JSON.stringify({}), { status: 200 });
-    });
-
-    await setupProfile();
-    const { plansCreate } = await import("./index.ts");
-    await captured.run(() => plansCreate("enterprise-plus", { amount: "9999", payer: "org" }));
-
-    const parsed = JSON.parse(capturedBody);
-    expect(parsed.billing.plans["enterprise-plus"].name).toBe("Enterprise Plus");
-  });
-
-  test("plans create uses --name override", async () => {
-    let capturedBody = "";
-    stubFetch(async (_input, init) => {
-      if (init?.method === "PATCH") capturedBody = init.body as string;
-      return new Response(JSON.stringify({}), { status: 200 });
-    });
-
-    await setupProfile();
-    const { plansCreate } = await import("./index.ts");
-    await captured.run(() =>
-      plansCreate("pro", { amount: "1999", payer: "org", name: "Pro Plus" }),
-    );
-
-    const parsed = JSON.parse(capturedBody);
-    expect(parsed.billing.plans.pro.name).toBe("Pro Plus");
-  });
-
-  test("plans create with --trial-days enables trial", async () => {
-    let capturedBody = "";
-    stubFetch(async (_input, init) => {
-      if (init?.method === "PATCH") capturedBody = init.body as string;
-      return new Response(JSON.stringify({}), { status: 200 });
-    });
-
-    await setupProfile();
-    const { plansCreate } = await import("./index.ts");
-    await captured.run(() => plansCreate("pro", { amount: "1999", payer: "org", trialDays: "14" }));
-
-    const parsed = JSON.parse(capturedBody);
-    expect(parsed.billing.plans.pro.free_trial_enabled).toBe(true);
-    expect(parsed.billing.plans.pro.free_trial_days).toBe(14);
-  });
-
-  test("plans create with --hidden sets publicly_visible = false", async () => {
-    let capturedBody = "";
-    stubFetch(async (_input, init) => {
-      if (init?.method === "PATCH") capturedBody = init.body as string;
-      return new Response(JSON.stringify({}), { status: 200 });
-    });
-
-    await setupProfile();
-    const { plansCreate } = await import("./index.ts");
-    await captured.run(() => plansCreate("pro", { amount: "1999", payer: "org", hidden: true }));
-
-    const parsed = JSON.parse(capturedBody);
-    expect(parsed.billing.plans.pro.publicly_visible).toBe(false);
-  });
-
-  test("plans create shows success message", async () => {
-    await setupProfile();
-    const { plansCreate } = await import("./index.ts");
-    await captured.run(() => plansCreate("pro", { amount: "1999", payer: "org" }));
-
-    expect(captured.err).toContain("created");
-  });
-
-  // --- plans list ---
-
-  test("plans list outputs plans", async () => {
-    stubFetch(async () => {
       return new Response(
         JSON.stringify({
-          billing: {
-            plans: {
-              free_org: { name: "Free", amount: 0, payer_type: "org", publicly_visible: true },
-              pro: {
-                name: "Pro",
-                amount: 1999,
-                currency: "usd",
-                payer_type: "org",
-                publicly_visible: true,
-              },
-            },
-          },
+          billing: { organization_enabled: true, user_enabled: true },
+          organization_settings: { enabled: true },
         }),
         { status: 200 },
       );
     });
 
     await setupProfile();
-    const { plansList } = await import("./index.ts");
-    await captured.run(() => plansList({}));
-
-    expect(captured.err).toContain("Free");
-    expect(captured.err).toContain("Pro");
-  });
-
-  test("plans list --json outputs JSON", async () => {
-    const plansData = {
-      free_org: { name: "Free", amount: 0, payer_type: "org" },
-    };
-    stubFetch(async () => {
-      return new Response(JSON.stringify({ billing: { plans: plansData } }), { status: 200 });
-    });
-
-    await setupProfile();
-    const { plansList } = await import("./index.ts");
-    await captured.run(() => plansList({ json: true }));
-
-    expect(captured.out).toContain('"Free"');
-  });
-
-  test("plans list shows message when no plans", async () => {
-    stubFetch(async () => {
-      return new Response(JSON.stringify({ billing: { plans: {} } }), { status: 200 });
-    });
-
-    await setupProfile();
-    const { plansList } = await import("./index.ts");
-    await captured.run(() => plansList({}));
-
-    expect(captured.err).toContain("No plans configured");
-  });
-
-  // --- plans update ---
-
-  test("plans update sends partial plan config", async () => {
-    let capturedBody = "";
-    stubFetch(async (_input, init) => {
-      if (init?.method === "PATCH") capturedBody = init.body as string;
-      return new Response(JSON.stringify({}), { status: 200 });
-    });
-
-    await setupProfile();
-    const { plansUpdate } = await import("./index.ts");
-    await captured.run(() => plansUpdate("pro", { amount: "2999" }));
+    const { billingDisable } = await import("./index.ts");
+    await captured.run(() => billingDisable({}));
 
     const parsed = JSON.parse(capturedBody);
-    expect(parsed.billing.plans.pro.amount).toBe(2999);
+    expect(parsed.billing.organization_enabled).toBe(false);
+    expect(parsed.billing.user_enabled).toBe(false);
+    expect(parsed.organization_settings).toBeUndefined();
   });
 
-  test("plans update --hidden sets publicly_visible = false", async () => {
-    let capturedBody = "";
-    stubFetch(async (_input, init) => {
-      if (init?.method === "PATCH") capturedBody = init.body as string;
-      return new Response(JSON.stringify({}), { status: 200 });
-    });
-
+  test("disable shows success message", async () => {
     await setupProfile();
-    const { plansUpdate } = await import("./index.ts");
-    await captured.run(() => plansUpdate("pro", { hidden: true }));
+    const { billingDisable } = await import("./index.ts");
+    await captured.run(() => billingDisable({ for: ["org"] }));
 
-    const parsed = JSON.parse(capturedBody);
-    expect(parsed.billing.plans.pro.publicly_visible).toBe(false);
+    expect(captured.err).toContain("Billing disabled for organizations");
   });
 
-  test("plans update errors with no options", async () => {
-    await setupProfile();
-    const { plansUpdate } = await import("./index.ts");
-    await expect(captured.run(() => plansUpdate("pro", {}))).rejects.toThrow(
-      "No update options provided",
-    );
-  });
-
-  // --- plans remove ---
-
-  test("plans remove sends config without the plan", async () => {
-    let capturedBody = "";
-    stubFetch(async (_input, init) => {
-      if (!init?.method || init.method === "GET") {
-        return new Response(
-          JSON.stringify({
-            billing: {
-              plans: {
-                free_org: { name: "Free", amount: 0 },
-                pro: { name: "Pro", amount: 1999 },
-              },
-            },
-          }),
-          { status: 200 },
-        );
-      }
-      if (init?.method === "PATCH") capturedBody = init.body as string;
-      return new Response(JSON.stringify({}), { status: 200 });
-    });
-
-    await setupProfile();
-    const { plansRemove } = await import("./index.ts");
-    await captured.run(() => plansRemove("pro", {}));
-
-    const parsed = JSON.parse(capturedBody);
-    expect(parsed.billing.plans).not.toHaveProperty("pro");
-    expect(parsed.billing.plans).toHaveProperty("free_org");
-  });
-
-  test("plans remove sends ?destructive=true", async () => {
+  test("disable --dry-run plumbs dry_run=true", async () => {
     let capturedUrl = "";
     stubFetch(async (input, init) => {
-      if (!init?.method || init.method === "GET") {
-        return new Response(JSON.stringify({ billing: { plans: { pro: { name: "Pro" } } } }), {
-          status: 200,
-        });
-      }
       if (init?.method === "PATCH") capturedUrl = input.toString();
-      return new Response(JSON.stringify({}), { status: 200 });
+      return new Response(
+        JSON.stringify({ billing: { organization_enabled: true, user_enabled: true } }),
+        { status: 200 },
+      );
     });
 
     await setupProfile();
-    const { plansRemove } = await import("./index.ts");
-    await captured.run(() => plansRemove("pro", {}));
+    const { billingDisable } = await import("./index.ts");
+    await captured.run(() => billingDisable({ dryRun: true }));
 
-    expect(capturedUrl).toContain("destructive=true");
-  });
-
-  test("plans remove errors when plan not found", async () => {
-    stubFetch(async () => {
-      return new Response(JSON.stringify({ billing: { plans: {} } }), { status: 200 });
-    });
-
-    await setupProfile();
-    const { plansRemove } = await import("./index.ts");
-    await expect(captured.run(() => plansRemove("nonexistent", {}))).rejects.toThrow(
-      'Plan "nonexistent" not found',
-    );
+    expect(capturedUrl).toContain("dry_run=true");
+    expect(captured.err).toContain("[dry-run]");
   });
 });

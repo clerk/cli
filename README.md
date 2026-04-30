@@ -48,17 +48,12 @@ Commands:
     schema    [options]                      Pull instance config schema from Clerk
     patch     [options]                      Partially update instance configuration (PATCH)
     put       [options]                      Replace entire instance configuration (PUT)
-  orgs|organizations                         Manage Clerk Organizations
-    enable    [options]                      Enable organizations on the linked instance
-    disable   [options]                      Disable organizations on the linked instance
-  billing                                    Manage billing and subscription plans
-    enable    [options]                      Enable billing on the linked instance
-    disable   [options]                      Disable billing on the linked instance
-    plans                                    Manage subscription plans
-      create  [options] <slug>              Create a subscription plan
-      list    [options]                      List subscription plans
-      update  [options] <slug>              Update a subscription plan
-      remove  [options] <slug>              Remove a subscription plan
+  enable                                     Enable Clerk features on the linked instance
+    orgs|organizations [options]             Enable organizations
+    billing   [options]                      Enable billing for organizations and/or users
+  disable                                    Disable Clerk features on the linked instance
+    orgs|organizations [options]             Disable organizations
+    billing   [options]                      Disable billing for organizations and/or users
   env                                        Manage environment variables
     pull      [options]                      Pull environment variables from Clerk to .env.local
   api         [options] [endpoint] [filter]  Make authenticated requests to the Clerk API
@@ -163,70 +158,51 @@ clerk config put
     $ clerk config put --instance prod --file config.json  Replace production config
     $ clerk config put --file config.json --yes            Skip confirmation prompt
 
-clerk orgs enable
+clerk enable orgs
   --force-selection    Force organization selection on login
   --auto-create        Auto-create an organization for new users
-  --max-members <n>    Maximum members per organization
+  --max-members <n>    Maximum members per organization (positive integer)
   --domains            Enable verified domains
   --app <id>           Application ID to target
   --instance <id>      Instance to target (dev, prod, or instance ID)
+  --yes                Skip the confirmation prompt
+  --dry-run            Preview the patch without applying it
   Examples:
-    $ clerk orgs enable                                    Enable organizations
-    $ clerk orgs enable --force-selection                  Enable and force org selection
-    $ clerk orgs enable --auto-create --max-members 10     Enable with auto-creation and member limit
+    $ clerk enable orgs                                  Enable organizations
+    $ clerk enable orgs --force-selection                Enable and force organization selection
+    $ clerk enable orgs --auto-create --max-members 10   Enable with auto-creation and member limit
+    $ clerk enable orgs --dry-run                        Preview the patch without applying it
 
-clerk orgs disable
+clerk disable orgs
   --app <id>           Application ID to target
   --instance <id>      Instance to target (dev, prod, or instance ID)
+  --yes                Skip the confirmation prompt
+  --dry-run            Preview the patch without applying it
 
-clerk billing enable
-  --for <org|user>     (required) Billing target type
-  --require-payment-method  Require payment method for free trials
+  Note: when org billing is currently enabled, `disable` warns and confirms in
+  human mode. In agent mode (no TTY), `--yes` is required to override.
+
+clerk enable billing
+  --for <targets...>   Billing targets (org and/or user), separated by spaces or commas (e.g. org user). Defaults to both when omitted.
   --app <id>           Application ID to target
   --instance <id>      Instance to target (dev, prod, or instance ID)
+  --yes                Skip the confirmation prompt
+  --dry-run            Preview the patch without applying it
   Examples:
-    $ clerk billing enable --for org             Enable org billing
-    $ clerk billing enable --for user            Enable user billing
+    $ clerk enable billing                               Enable billing for organizations and users
+    $ clerk enable billing --for org                     Enable billing for organizations only
+    $ clerk enable billing --for user                    Enable billing for users only
+    $ clerk enable billing --for org user                Enable billing for both targets
 
-clerk billing disable
-  --for <org|user>     (required) Billing target type
+clerk disable billing
+  --for <targets...>   Billing targets (org and/or user), separated by spaces or commas (e.g. org user). Defaults to both when omitted.
   --app <id>           Application ID to target
   --instance <id>      Instance to target (dev, prod, or instance ID)
+  --yes                Skip the confirmation prompt
+  --dry-run            Preview the patch without applying it
 
-clerk billing plans create <slug>
-  --name <name>        Override display name (default: title-cased slug)
-  --amount <cents>     (required) Monthly price in cents
-  --payer <org|user>   Who pays
-  --currency <code>    Currency code (default: usd)
-  --description <text> Plan description
-  --trial-days <n>     Free trial length in days
-  --annual-amount <cents>  Monthly equivalent when billed annually, in cents
-  --hidden             Hide plan from end users
-  --app <id>           Application ID to target
-  --instance <id>      Instance to target (dev, prod, or instance ID)
-  Examples:
-    $ clerk billing plans create pro --amount 1999 --payer org
-    $ clerk billing plans create enterprise --name "Enterprise Plus" --amount 9999 --payer org --trial-days 14
-
-clerk billing plans list
-  --json               Output as JSON
-  --app <id>           Application ID to target
-  --instance <id>      Instance to target (dev, prod, or instance ID)
-
-clerk billing plans update <slug>
-  --name <name>        Update display name
-  --amount <cents>     Update monthly price
-  --hidden             Hide plan from end users
-  --visible            Show plan to end users
-  --app <id>           Application ID to target
-  --instance <id>      Instance to target (dev, prod, or instance ID)
-  Examples:
-    $ clerk billing plans update pro --amount 2999
-    $ clerk billing plans update pro --hidden
-
-clerk billing plans remove <slug>
-  --app <id>           Application ID to target
-  --instance <id>      Instance to target (dev, prod, or instance ID)
+  Note: `disable billing` never disables organizations themselves — run
+  `clerk disable orgs` separately if that's what you intend.
 
 clerk env pull
   --app <id>           Application ID to target (works from any directory)

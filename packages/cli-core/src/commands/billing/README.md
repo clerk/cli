@@ -1,80 +1,54 @@
-# clerk billing
+# clerk billing (enable/disable)
 
-Enable/disable billing and manage subscription plans on the linked instance.
+Toggle Clerk billing for organizations and/or users on the linked instance.
+The handlers are wired to top-level `clerk enable billing` and `clerk disable
+billing` commands.
+
+For arbitrary billing config edits (plans, trials, payment-method requirements)
+use `clerk config patch --json '{"billing":{...}}'` until a dedicated
+`clerk billing settings` command lands.
 
 ## Usage
 
 ```
-clerk billing enable --for <org|user> [options]
-clerk billing disable --for <org|user> [options]
-clerk billing plans create <slug> [options]
-clerk billing plans list [options]
-clerk billing plans update <slug> [options]
-clerk billing plans remove <slug> [options]
+clerk enable billing [--for <targets>] [options]
+clerk disable billing [--for <targets>] [options]
+```
+
+`<targets>` is `org` and/or `user`, accepted as space-separated, comma-separated,
+or repeated `--for` flags (matching `clerk config pull --keys`). When omitted,
+the command targets both:
+
+```sh
+clerk enable billing --for org user
+clerk enable billing --for org,user
+clerk enable billing --for org --for user
+clerk enable billing                   # defaults to both
 ```
 
 ## Options
 
-### `enable` / `disable`
+| Flag              | Description                                                                     |
+| ----------------- | ------------------------------------------------------------------------------- |
+| `--for <targets>` | Targets (`org` and/or `user`), separated by spaces or commas. Defaults to both. |
+| `--app <id>`      | Target a specific application                                                   |
+| `--instance <id>` | Target a specific instance (dev, prod)                                          |
+| `--yes`           | Skip the confirmation prompt                                                    |
+| `--dry-run`       | Preview the patch without applying it                                           |
 
-| Flag                       | Description                                          |
-| -------------------------- | ---------------------------------------------------- |
-| `--for <org\|user>`        | **(required)** Target billing type                   |
-| `--require-payment-method` | Require payment method for free trials (enable only) |
-| `--app <id>`               | Target a specific application                        |
-| `--instance <id>`          | Target a specific instance (dev, prod)               |
+## Cascade behavior
 
-### `plans create`
-
-| Flag                      | Description                                                         |
-| ------------------------- | ------------------------------------------------------------------- |
-| `<slug>`                  | Plan slug (positional). Display name is auto-derived via title case |
-| `--name <name>`           | Override display name (default: title-cased slug)                   |
-| `--amount <cents>`        | **(required)** Monthly price in cents                               |
-| `--payer <org\|user>`     | **(required)** Who pays                                             |
-| `--currency <code>`       | Currency code (default: usd)                                        |
-| `--description <text>`    | Plan description                                                    |
-| `--trial-days <n>`        | Free trial length in days                                           |
-| `--annual-amount <cents>` | Monthly equivalent when billed annually, in cents                   |
-| `--hidden`                | Hide plan from end users                                            |
-| `--app <id>`              | Target a specific application                                       |
-| `--instance <id>`         | Target a specific instance (dev, prod)                              |
-
-### `plans list`
-
-| Flag              | Description                            |
-| ----------------- | -------------------------------------- |
-| `--json`          | Output as JSON                         |
-| `--app <id>`      | Target a specific application          |
-| `--instance <id>` | Target a specific instance (dev, prod) |
-
-### `plans update`
-
-| Flag                      | Description                            |
-| ------------------------- | -------------------------------------- |
-| `<slug>`                  | Plan slug to update (positional)       |
-| `--name <name>`           | Update display name                    |
-| `--amount <cents>`        | Update monthly price                   |
-| `--currency <code>`       | Update currency                        |
-| `--description <text>`    | Update description                     |
-| `--trial-days <n>`        | Update free trial days                 |
-| `--annual-amount <cents>` | Update annual amount                   |
-| `--hidden`                | Hide plan                              |
-| `--visible`               | Show plan                              |
-| `--app <id>`              | Target a specific application          |
-| `--instance <id>`         | Target a specific instance (dev, prod) |
-
-### `plans remove`
-
-| Flag              | Description                            |
-| ----------------- | -------------------------------------- |
-| `<slug>`          | Plan slug to remove (positional)       |
-| `--app <id>`      | Target a specific application          |
-| `--instance <id>` | Target a specific instance (dev, prod) |
+- `enable billing --for org` (or `org,user`, or no `--for`) **also** sets
+  `organization_settings.enabled = true`. Billing for organizations requires
+  organizations enabled, so this saves a separate command. The cascade is
+  idempotent — if organizations are already on, the diff is empty for that
+  field.
+- `disable billing` **never** touches `organization_settings`. To disable
+  organizations themselves, run `clerk disable orgs` separately.
 
 ## Clerk API endpoints
 
-| Method | Endpoint                                                          | Description                                  |
-| ------ | ----------------------------------------------------------------- | -------------------------------------------- |
-| GET    | `/v1/platform/applications/{appId}/instances/{instanceId}/config` | Fetch current config (for plans list/remove) |
-| PATCH  | `/v1/platform/applications/{appId}/instances/{instanceId}/config` | Patch billing and plans config               |
+| Method | Endpoint                                                          | Description                                                   |
+| ------ | ----------------------------------------------------------------- | ------------------------------------------------------------- |
+| GET    | `/v1/platform/applications/{appId}/instances/{instanceId}/config` | Fetch current config for diff before mutation                 |
+| PATCH  | `/v1/platform/applications/{appId}/instances/{instanceId}/config` | Patch `billing.*` (with `?dry_run=true` when `--dry-run` set) |

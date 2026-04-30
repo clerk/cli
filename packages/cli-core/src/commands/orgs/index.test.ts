@@ -18,7 +18,7 @@ mock.module("../../lib/spinner.ts", () => ({
   withSpinner: async (_msg: string, fn: () => Promise<unknown>) => fn(),
 }));
 
-describe("clerk orgs", () => {
+describe("clerk enable/disable orgs", () => {
   const originalEnv = { ...process.env };
   const originalFetch = globalThis.fetch;
   let tempDir: string;
@@ -59,7 +59,7 @@ describe("clerk orgs", () => {
     });
   }
 
-  // --- orgs enable ---
+  // --- enable ---
 
   test("enable sends PATCH with organization_settings.enabled = true", async () => {
     let capturedBody = "";
@@ -91,7 +91,7 @@ describe("clerk orgs", () => {
     expect(parsed.organization_settings.force_organization_selection).toBe(true);
   });
 
-  test("enable passes --max-members flag", async () => {
+  test("enable passes --max-members flag as integer", async () => {
     let capturedBody = "";
     stubFetch(async (_input, init) => {
       if (init?.method === "PATCH") capturedBody = init.body as string;
@@ -104,6 +104,37 @@ describe("clerk orgs", () => {
 
     const parsed = JSON.parse(capturedBody);
     expect(parsed.organization_settings.max_allowed_memberships).toBe(10);
+  });
+
+  test("enable rejects non-numeric --max-members before any API call", async () => {
+    let calls = 0;
+    stubFetch(async () => {
+      calls++;
+      return new Response(JSON.stringify({}), { status: 200 });
+    });
+
+    await setupProfile();
+    const { orgsEnable } = await import("./index.ts");
+    await expect(captured.run(() => orgsEnable({ maxMembers: "abc" }))).rejects.toThrow(
+      "--max-members must be a positive integer",
+    );
+    expect(calls).toBe(0);
+  });
+
+  test("enable rejects partial-numeric --max-members like '12abc'", async () => {
+    await setupProfile();
+    const { orgsEnable } = await import("./index.ts");
+    await expect(captured.run(() => orgsEnable({ maxMembers: "12abc" }))).rejects.toThrow(
+      "--max-members must be a positive integer",
+    );
+  });
+
+  test("enable rejects --max-members = 0", async () => {
+    await setupProfile();
+    const { orgsEnable } = await import("./index.ts");
+    await expect(captured.run(() => orgsEnable({ maxMembers: "0" }))).rejects.toThrow(
+      "--max-members must be a positive integer",
+    );
   });
 
   test("enable passes --domains flag", async () => {
@@ -139,6 +170,21 @@ describe("clerk orgs", () => {
     ).toBe(true);
   });
 
+  test("enable --dry-run plumbs dry_run=true to the API and prints dry-run output", async () => {
+    let capturedUrl = "";
+    stubFetch(async (input, init) => {
+      if (init?.method === "PATCH") capturedUrl = input.toString();
+      return new Response(JSON.stringify({}), { status: 200 });
+    });
+
+    await setupProfile();
+    const { orgsEnable } = await import("./index.ts");
+    await captured.run(() => orgsEnable({ dryRun: true }));
+
+    expect(capturedUrl).toContain("dry_run=true");
+    expect(captured.err).toContain("[dry-run]");
+  });
+
   test("enable shows success message", async () => {
     await setupProfile();
     const { orgsEnable } = await import("./index.ts");
@@ -147,12 +193,30 @@ describe("clerk orgs", () => {
     expect(captured.err).toContain("Organizations enabled");
   });
 
+  test("enable reports no changes when already enabled", async () => {
+    let patchCalls = 0;
+    stubFetch(async (_input, init) => {
+      if (init?.method === "PATCH") patchCalls++;
+      // Current config already has orgs enabled with no extra flags.
+      return new Response(JSON.stringify({ organization_settings: { enabled: true } }), {
+        status: 200,
+      });
+    });
+
+    await setupProfile();
+    const { orgsEnable } = await import("./index.ts");
+    await captured.run(() => orgsEnable({}));
+
+    expect(patchCalls).toBe(0);
+    expect(captured.err).toContain("No changes detected");
+  });
+
   test("enable errors when no profile is linked", async () => {
     const { orgsEnable } = await import("./index.ts");
     await expect(captured.run(() => orgsEnable({}))).rejects.toThrow("No Clerk project linked");
   });
 
-  // --- orgs disable ---
+  // --- disable ---
 
   test("disable sends PATCH with organization_settings.enabled = false", async () => {
     let capturedBody = "";
@@ -171,24 +235,41 @@ describe("clerk orgs", () => {
     expect(parsed.organization_settings.enabled).toBe(false);
   });
 
-  test("disable warns when org billing is enabled", async () => {
+  test("disable in agent mode refuses when org billing is enabled and no --yes is set", async () => {
+    let patchCalls = 0;
     stubFetch(async (_input, init) => {
-      if (!init?.method || init.method === "GET") {
-        return new Response(JSON.stringify({ billing: { organization_enabled: true } }), {
-          status: 200,
-        });
-      }
-      return new Response(JSON.stringify({}), { status: 200 });
+      if (init?.method === "PATCH") patchCalls++;
+      return new Response(JSON.stringify({ billing: { organization_enabled: true } }), {
+        status: 200,
+      });
     });
 
     await setupProfile();
     const { orgsDisable } = await import("./index.ts");
-    await captured.run(() => orgsDisable({}));
-
-    expect(captured.err).toContain("Organization billing is enabled");
+    await expect(captured.run(() => orgsDisable({}))).rejects.toThrow(
+      "Organization billing is enabled",
+    );
+    expect(patchCalls).toBe(0);
   });
 
-  test("disable shows success message", async () => {
+  test("disable in agent mode proceeds with --yes even when org billing is enabled", async () => {
+    let capturedBody = "";
+    stubFetch(async (_input, init) => {
+      if (init?.method === "PATCH") capturedBody = init.body as string;
+      return new Response(JSON.stringify({ billing: { organization_enabled: true } }), {
+        status: 200,
+      });
+    });
+
+    await setupProfile();
+    const { orgsDisable } = await import("./index.ts");
+    await captured.run(() => orgsDisable({ yes: true }));
+
+    const parsed = JSON.parse(capturedBody);
+    expect(parsed.organization_settings.enabled).toBe(false);
+  });
+
+  test("disable shows success message when billing is off", async () => {
     stubFetch(async () => {
       return new Response(JSON.stringify({ billing: { organization_enabled: false } }), {
         status: 200,
