@@ -3,12 +3,17 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { ApiError, AuthError } from "../../lib/errors.ts";
+import { _setConfigDir } from "../../lib/config.ts";
 import { gitStubs, tokenExchangeStubs, stubFetch } from "../../test/lib/stubs.ts";
 import type { CheckResult, CheckStatus, DoctorContext, ResolvedProfile } from "./types.ts";
 import type { Application } from "../../lib/plapi.ts";
 
 let mockUserInfo: { userId: string; email: string } | null = null;
 let mockUserInfoError: Error | null = null;
+let mockHostStateProbe = {
+  ok: true,
+  failures: [] as Array<{ label: string; path: string; error: string }>,
+};
 
 mock.module("../../lib/token-exchange.ts", () => ({
   ...tokenExchangeStubs,
@@ -19,8 +24,14 @@ mock.module("../../lib/token-exchange.ts", () => ({
 }));
 
 mock.module("../../lib/git.ts", () => gitStubs);
+mock.module("../../lib/host-execution.ts", () => ({
+  getAgentHostStateProbe: async () => mockHostStateProbe,
+  formatHostStateProbeFailures: (failures: Array<{ label: string; path: string; error: string }>) =>
+    failures.map((failure) => `${failure.label}: ${failure.error} (${failure.path})`).join("\n"),
+}));
 
 const {
+  checkHostExecution,
   checkLoggedIn,
   checkTokenValid,
   checkProjectLinked,
@@ -149,6 +160,7 @@ beforeEach(async () => {
 
   mockUserInfo = null;
   mockUserInfoError = null;
+  mockHostStateProbe = { ok: true, failures: [] };
 
   stubFetch(async () => new Response(JSON.stringify(mockApplication), { status: 200 }));
 });
@@ -157,6 +169,7 @@ afterEach(async () => {
   process.cwd = originalCwd;
   process.env = { ...originalEnv };
   globalThis.fetch = originalFetch;
+  _setConfigDir(undefined);
   await rm(tempDir, { recursive: true, force: true });
 });
 
@@ -175,6 +188,54 @@ describe("checkLoggedIn", () => {
       status: "fail",
       remedy: "clerk auth login",
       fix: true,
+    });
+  });
+});
+
+describe("checkHostExecution", () => {
+  test("pass when not in agent mode", async () => {
+    process.env.CLERK_MODE = "human";
+    const result = await checkHostExecution();
+    expectCheck(result, {
+      name: "Host execution",
+      status: "pass",
+      message: "Skipped (human mode)",
+    });
+  });
+
+  test("pass when agent mode has writable host state", async () => {
+    process.env.CLERK_MODE = "agent";
+    mockHostStateProbe = { ok: true, failures: [] };
+
+    const result = await checkHostExecution();
+    expectCheck(result, {
+      name: "Host execution",
+      status: "pass",
+      message: "writable in agent mode",
+    });
+  });
+
+  test("warn when agent mode cannot write host state", async () => {
+    process.env.CLERK_MODE = "agent";
+    mockHostStateProbe = {
+      ok: false,
+      failures: [
+        {
+          label: "CLI config directory",
+          path: "/Users/test/Library/Preferences/clerk-cli/.clerk-write-probe-1",
+          error: "EPERM: operation not permitted",
+        },
+      ],
+    };
+
+    const result = await checkHostExecution();
+    expectCheck(result, {
+      name: "Host execution",
+      status: "warn",
+      message: "not writable in agent mode",
+      remedy: "Re-run the command on the host shell",
+      detail: "EPERM: operation not permitted",
+      fix: false,
     });
   });
 });
@@ -542,7 +603,7 @@ describe("checkEnvVars", () => {
 
 describe("checkConfigFile", () => {
   test("pass when config is valid", async () => {
-    process.env.CLERK_CONFIG_DIR = tempDir;
+    _setConfigDir(tempDir);
     await Bun.write(
       join(tempDir, "config.json"),
       JSON.stringify({ profiles: { "/a": {} }, auth: { userId: "u_1" } }),
@@ -557,7 +618,7 @@ describe("checkConfigFile", () => {
   });
 
   test("warn when config file does not exist", async () => {
-    process.env.CLERK_CONFIG_DIR = join(tempDir, "nonexistent");
+    _setConfigDir(join(tempDir, "nonexistent"));
     const ctx = createMockContext();
     const result = await checkConfigFile(ctx);
     expectCheck(result, {
@@ -569,7 +630,7 @@ describe("checkConfigFile", () => {
   });
 
   test("fail when config has invalid JSON", async () => {
-    process.env.CLERK_CONFIG_DIR = tempDir;
+    _setConfigDir(tempDir);
     await Bun.write(join(tempDir, "config.json"), "{ invalid json }");
     const ctx = createMockContext();
     const result = await checkConfigFile(ctx);

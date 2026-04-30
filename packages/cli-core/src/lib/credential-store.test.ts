@@ -112,6 +112,32 @@ describe("credential-store", () => {
     });
   });
 
+  test("getValidToken recovers from a concurrent refresh race when another process completes the refresh first (invalid_grant)", async () => {
+    const session = {
+      accessToken: "expired-access-token",
+      refreshToken: "refresh-token",
+      expiresAt: Date.now() - 60_000,
+      tokenType: "Bearer",
+    };
+    const refreshedSession = {
+      accessToken: "other-process-access-token",
+      refreshToken: "other-process-refresh-token",
+      expiresAt: Date.now() + 60_000,
+      tokenType: "Bearer",
+    };
+    await storeToken(session);
+
+    mockRefreshAccessToken.mockImplementation(async () => {
+      setTimeout(() => {
+        void storeToken(refreshedSession);
+      }, 5);
+      throw new ApiError(400, "invalid_grant");
+    });
+
+    expect(await getValidToken()).toBe("other-process-access-token");
+    expect(await getStoredSession()).toEqual(refreshedSession);
+  });
+
   test("getValidToken deletes stored credentials when refresh returns invalid_grant", async () => {
     const session = {
       accessToken: "expired-access-token",

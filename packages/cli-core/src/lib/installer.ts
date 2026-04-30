@@ -12,6 +12,7 @@ import { access, realpath, stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import { delimiter, join, sep } from "node:path";
 import { UPDATE_PACKAGE_NAME } from "./constants.ts";
+import { pmInstallCommand, type PackageManager } from "./package-manager.ts";
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -31,10 +32,10 @@ export function isHomebrewPath(execPath: string): boolean {
 // ── PATH discovery ───────────────────────────────────────────────────────────
 
 // On a machine with more than one global install (bun + asdf-npm + Homebrew
-// is a common combo), runtime-based detection isn't enough: `npm install -g`
-// can land in the wrong prefix while the shell still resolves `clerk` to a
-// different binary. findClerkOnPath walks PATH so the caller can target the
-// first-on-PATH install, i.e. what the user's shell will actually execute.
+// is a common combo), the caller needs to enumerate every install so it can
+// report "other" installs and honor `--all`. Primary selection happens above
+// this layer: the update command uses `findRunningInstallIndex` to pick the
+// install that owns `process.execPath` rather than the first PATH hit.
 
 /**
  * Returns symlink-resolved absolute paths to every `clerk` binary on PATH, in
@@ -96,7 +97,14 @@ async function isExecutableFile(path: string): Promise<boolean> {
   }
 }
 
-async function safeRealpath(p: string): Promise<string> {
+/**
+ * `realpath` that returns the input path unchanged on any error (missing file,
+ * permission denied, etc.) instead of throwing. Used wherever a best-effort
+ * symlink resolution is good enough — matching against installer dirs still
+ * works if both sides stay unresolved, and callers can't meaningfully recover
+ * from a failed realpath on a path the user asked about.
+ */
+export async function safeRealpath(p: string): Promise<string> {
   try {
     return await realpath(p);
   } catch {
@@ -132,27 +140,69 @@ export async function getInstallerPackageDirs(): Promise<Partial<Record<Installe
   return out;
 }
 
+const PM_PROBE_TIMEOUT_MS = 1500;
+
+/**
+ * Run a package-manager probe with stdin detached and a hard timeout, capturing
+ * trimmed stdout on success. Returns null on any failure (spawn error, nonzero
+ * exit, timeout, empty output).
+ *
+ * Why stdin is detached: corepack-shimmed PMs (yarn/pnpm/npm under recent Node
+ * releases) prompt on stdin to download the requested package on first use.
+ * Inheriting the parent's TTY makes that prompt block forever waiting for a
+ * Y/n. `stdin: "ignore"` plus `COREPACK_ENABLE_DOWNLOAD_PROMPT=0` ensures
+ * corepack errors out instead of prompting.
+ *
+ * Why the timeout: defense in depth. Even with stdin handled, slow shims, alias
+ * scripts, or network-bound startup paths can still hang. 1500ms matches the
+ * registry timeout in `fetchLatestVersion`.
+ */
+async function probePmDir(args: string[]): Promise<string | null> {
+  let proc: ReturnType<typeof Bun.spawn> | undefined;
+  try {
+    proc = Bun.spawn(args, {
+      stdin: "ignore",
+      stdout: "pipe",
+      stderr: "ignore",
+      env: { ...process.env, COREPACK_ENABLE_DOWNLOAD_PROMPT: "0" },
+    });
+  } catch {
+    return null;
+  }
+  let timedOut = false;
+  const timer = setTimeout(() => {
+    timedOut = true;
+    proc?.kill();
+  }, PM_PROBE_TIMEOUT_MS);
+  try {
+    const exitCode = await proc.exited;
+    if (timedOut || exitCode !== 0) return null;
+    // `stdout: "pipe"` always yields a ReadableStream; the union in the type
+    // covers other stdout modes we don't use here.
+    const stdout = await new Response(proc.stdout as ReadableStream<Uint8Array>).text();
+    return stdout.trim() || null;
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 async function queryNpmPackageDir(): Promise<string | null> {
   // `npm root -g` reports the actual global node_modules dir on both platforms
   // (POSIX: `<prefix>/lib/node_modules`; Windows: `<prefix>\node_modules`, no
   // `lib` segment). Constructing the path manually breaks on Windows.
-  const result = await Bun.$`npm root -g`.quiet().nothrow();
-  if (result.exitCode !== 0) return null;
-  const dir = result.stdout.toString().trim();
+  const dir = await probePmDir(["npm", "root", "-g"]);
   return dir ? await safeRealpath(dir) : null;
 }
 
 async function queryPnpmPackageDir(): Promise<string | null> {
-  const result = await Bun.$`pnpm root -g`.quiet().nothrow();
-  if (result.exitCode !== 0) return null;
-  const dir = result.stdout.toString().trim();
+  const dir = await probePmDir(["pnpm", "root", "-g"]);
   return dir ? await safeRealpath(dir) : null;
 }
 
 async function queryYarnPackageDir(): Promise<string | null> {
-  const result = await Bun.$`yarn global dir`.quiet().nothrow();
-  if (result.exitCode !== 0) return null;
-  const dir = result.stdout.toString().trim();
+  const dir = await probePmDir(["yarn", "global", "dir"]);
   return dir ? await safeRealpath(join(dir, "node_modules")) : null;
 }
 
@@ -256,6 +306,40 @@ export function ownerOfBinary(
 }
 
 /**
+ * Index of the candidate install that owns `execPath` (the currently-running
+ * binary), or `-1` if none matches.
+ *
+ * Matching is by owning installer, not path equality: `PATH` exposes a
+ * symlink/shim (e.g. `~/.bun/bin/clerk`) while `process.execPath` lands on the
+ * platform binary beneath it (e.g.
+ * `~/.bun/install/global/node_modules/@clerk/cli-<arch>/bin/clerk`). Both
+ * resolve to the same owner under `installDirs`, which uniquely identifies
+ * the install (each installer tracks one active dir).
+ *
+ * Callers use this to promote the running install to "primary" regardless of
+ * `PATH` order — the binary the user just invoked is the authoritative
+ * update target. Shell hash caches (zsh/bash) and asdf-vs-bun `PATH` ordering
+ * can make a fresh `PATH` walk pick a different install than the one that
+ * actually ran.
+ *
+ * Inactive asdf-nodejs versions: when the running binary sits under an asdf
+ * nodejs install that is NOT the shell's currently-active one,
+ * `installDirs.npm` (from `npm root -g`) points at a sibling version, so
+ * `ownerOfBinary(execPath, installDirs)` returns `null` and this helper
+ * returns `-1`. Callers fall back to PATH order rather than mismatching
+ * against the active version.
+ */
+export function findRunningInstallIndex(
+  candidates: ReadonlyArray<{ resolvedPath: string }>,
+  execPath: string,
+  installDirs: Partial<Record<Installer, string>>,
+): number {
+  const execOwner = ownerOfBinary(execPath, installDirs);
+  if (execOwner === null) return -1;
+  return candidates.findIndex((c) => ownerOfBinary(c.resolvedPath, installDirs) === execOwner);
+}
+
+/**
  * Strips Win32 namespace prefixes (`\\?\` and `\\?\UNC\`), unifies slashes to
  * the platform separator, and lowercases on Windows. No-op on POSIX.
  */
@@ -271,16 +355,10 @@ function normalizeWindowsPath(p: string): string {
 
 /** Human-readable install/update command for the given installer. */
 export function globalInstallCommand(installer: Installer, packageSpec: string): string {
-  switch (installer) {
-    case "bun":
-      return `bun add -g ${packageSpec}`;
-    case "pnpm":
-      return `pnpm add -g ${packageSpec}`;
-    case "yarn":
-      return `yarn global add ${packageSpec}`;
-    case "homebrew":
-      return `brew upgrade ${UPDATE_PACKAGE_NAME}`;
-    default:
-      return `npm install -g ${packageSpec}`;
-  }
+  if (installer === "homebrew") return `brew upgrade ${UPDATE_PACKAGE_NAME}`;
+  if (installer === "yarn") return `yarn global add ${packageSpec}`;
+
+  // For bun, pnpm, and npm the global form is the local `<pm> add` command
+  // with a `-g` flag appended — reuse `pmInstallCommand` as the base.
+  return `${pmInstallCommand(installer as PackageManager)} -g ${packageSpec}`;
 }

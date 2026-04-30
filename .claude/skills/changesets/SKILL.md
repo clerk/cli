@@ -6,6 +6,8 @@ user-invocable: true
 disable-model-invocation: false
 effort: high
 allowed-tools: Bash(git:*), Bash(gh pr view:*), Bash(gh pr list:*), Bash(bun changeset status:*), Bash(bun changeset --empty:*), Bash(git add:*), Bash(git commit:*), Read, Write, Edit, Glob
+metadata:
+  internal: true
 ---
 
 # /changesets create

@@ -169,16 +169,6 @@ describe("init", () => {
     expect(bootstrapMod.promptAndBootstrap).not.toHaveBeenCalled();
   });
 
-  test("--prompt flag prints guidance and exits", async () => {
-    const { captured } = setup({ isAgent: false });
-
-    await captured.run(() => init({ prompt: true }));
-
-    expect(captured.out).toContain("clerk init -y");
-    expect(loginMod.login).not.toHaveBeenCalled();
-    expect(bootstrapMod.promptAndBootstrap).not.toHaveBeenCalled();
-  });
-
   test("blank dir in human mode triggers bootstrap flow", async () => {
     setup();
     setupBootstrapSuccess();
@@ -349,6 +339,119 @@ describe("init", () => {
     expect(heuristics.isAuthenticated).toHaveBeenCalled();
     expect(heuristics.printKeylessInfo).toHaveBeenCalled();
     expect(linkMod.link).not.toHaveBeenCalled();
+  });
+
+  test("agent mode with keyless framework uses keyless without an app target", async () => {
+    setup({ isAgent: true, email: "user@example.com" });
+
+    const keylessCtx = {
+      ...FAKE_CTX,
+      existingClerk: false,
+      framework: { ...FAKE_CTX.framework, supportsKeyless: true },
+    };
+    spyOn(context, "gatherContext").mockResolvedValue(keylessCtx);
+    spyOn(scaffoldMod, "scaffold").mockResolvedValue({
+      actions: [{ type: "create", path: "middleware.ts", content: "", description: "" }],
+      postInstructions: [],
+    });
+
+    await init({});
+
+    expect(heuristics.printKeylessInfo).toHaveBeenCalled();
+    expect(linkMod.link).not.toHaveBeenCalled();
+    expect(pullMod.pull).not.toHaveBeenCalled();
+  });
+
+  test("agent mode with keyless framework uses linked profile as a real app target", async () => {
+    setup({ isAgent: true, email: "user@example.com" });
+
+    const keylessCtx = {
+      ...FAKE_CTX,
+      existingClerk: false,
+      framework: { ...FAKE_CTX.framework, supportsKeyless: true },
+    };
+    spyOn(context, "gatherContext").mockResolvedValue(keylessCtx);
+    spyOn(config, "resolveProfile").mockResolvedValue({
+      profile: { appId: "app_123" },
+    } as never);
+    spyOn(scaffoldMod, "scaffold").mockResolvedValue({
+      actions: [{ type: "create", path: "middleware.ts", content: "", description: "" }],
+      postInstructions: [],
+    });
+
+    await init({});
+
+    expect(heuristics.printKeylessInfo).not.toHaveBeenCalled();
+    expect(linkMod.link).not.toHaveBeenCalled();
+    expect(pullMod.pull).toHaveBeenCalledWith({ file: ".env", cwd: keylessCtx.cwd });
+  });
+
+  test("agent mode with keyless framework and --app uses real app flow", async () => {
+    setup({ isAgent: true, email: "user@example.com" });
+
+    const keylessCtx = {
+      ...FAKE_CTX,
+      existingClerk: false,
+      framework: { ...FAKE_CTX.framework, supportsKeyless: true },
+    };
+    spyOn(context, "gatherContext").mockResolvedValue(keylessCtx);
+    spyOn(scaffoldMod, "scaffold").mockResolvedValue({
+      actions: [{ type: "create", path: "middleware.ts", content: "", description: "" }],
+      postInstructions: [],
+    });
+
+    await init({ app: "app_abc" });
+
+    expect(heuristics.printKeylessInfo).not.toHaveBeenCalled();
+    expect(linkMod.link).toHaveBeenCalledWith({
+      skipIfLinked: true,
+      app: "app_abc",
+      cwd: keylessCtx.cwd,
+    });
+    expect(pullMod.pull).toHaveBeenCalledWith({ file: ".env", cwd: keylessCtx.cwd });
+  });
+
+  test("agent mode with non-keyless framework and no app target prints manual setup", async () => {
+    const { captured } = setup({ isAgent: true, email: "user@example.com" });
+
+    const noKeylessCtx = {
+      ...FAKE_CTX,
+      existingClerk: false,
+      framework: {
+        dep: "vue",
+        name: "Vue",
+        sdk: "@clerk/vue",
+        envVar: "VITE_CLERK_PUBLISHABLE_KEY",
+        envFile: ".env.local" as const,
+      },
+      envFile: ".env.local",
+    };
+    spyOn(context, "gatherContext").mockResolvedValue(noKeylessCtx);
+    spyOn(scaffoldMod, "scaffold").mockResolvedValue({
+      actions: [{ type: "create", path: "src/main.ts", content: "", description: "" }],
+      postInstructions: [],
+    });
+
+    await captured.run(() => init({}));
+
+    expect(linkMod.link).not.toHaveBeenCalled();
+    expect(pullMod.pull).not.toHaveBeenCalled();
+    expect(loginMod.login).not.toHaveBeenCalled();
+    expect(captured.err).toContain("clerk init --app <app_id>");
+  });
+
+  test("agent mode with real app target and no auth launches login", async () => {
+    setup({ isAgent: true });
+    spyOn(context, "gatherContext").mockResolvedValue(FAKE_CTX);
+
+    await init({ app: "app_abc" });
+
+    expect(loginMod.login).toHaveBeenCalledWith({ showNextSteps: false });
+    expect(linkMod.link).toHaveBeenCalledWith({
+      skipIfLinked: true,
+      app: "app_abc",
+      cwd: FAKE_CTX.cwd,
+    });
   });
 
   test("-y flag skips auth prompt and defaults to unauthenticated mode", async () => {

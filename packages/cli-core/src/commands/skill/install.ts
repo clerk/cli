@@ -36,22 +36,22 @@ import {
 import { isNonEmpty } from "../../lib/helpers/arrays.js";
 import { detectPackageManager, type PackageManager } from "../../lib/package-manager.js";
 
-import clerkSkillMd from "../../../../../skills/clerk/SKILL.md" with { type: "text" };
-import clerkAuthMd from "../../../../../skills/clerk/references/auth.md" with { type: "text" };
-import clerkRecipesMd from "../../../../../skills/clerk/references/recipes.md" with { type: "text" };
-import clerkAgentModeMd from "../../../../../skills/clerk/references/agent-mode.md" with { type: "text" };
+import clerkSkillMd from "../../../../../skills/clerk-cli/SKILL.md" with { type: "text" };
+import clerkAuthMd from "../../../../../skills/clerk-cli/references/auth.md" with { type: "text" };
+import clerkRecipesMd from "../../../../../skills/clerk-cli/references/recipes.md" with { type: "text" };
+import clerkAgentModeMd from "../../../../../skills/clerk-cli/references/agent-mode.md" with { type: "text" };
 
 /**
- * The bundled clerk skill, as `(relativePath, content)` pairs. Text
- * imports resolve live from `<repo-root>/skills/clerk/` during
+ * The bundled clerk-cli skill, as `(relativePath, content)` pairs. Text
+ * imports resolve live from `<repo-root>/skills/clerk-cli/` during
  * `bun run dev` and get embedded into the compiled binary by
  * `bun build --compile`, so the content always matches the CLI being run.
  */
 const BUNDLED_CLERK_SKILL: ReadonlyArray<readonly [string, string]> = [
-  ["clerk/SKILL.md", clerkSkillMd],
-  ["clerk/references/auth.md", clerkAuthMd],
-  ["clerk/references/recipes.md", clerkRecipesMd],
-  ["clerk/references/agent-mode.md", clerkAgentModeMd],
+  ["clerk-cli/SKILL.md", clerkSkillMd],
+  ["clerk-cli/references/auth.md", clerkAuthMd],
+  ["clerk-cli/references/recipes.md", clerkRecipesMd],
+  ["clerk-cli/references/agent-mode.md", clerkAgentModeMd],
 ];
 
 /**
@@ -82,7 +82,7 @@ export async function withStagedClerkSkill<T>(
   version: string | undefined,
   fn: (stageDir: string) => Promise<T>,
 ): Promise<T> {
-  const stageDir = await mkdtemp(join(tmpdir(), "clerk-skill-"));
+  const stageDir = await mkdtemp(join(tmpdir(), "clerk-cli-skill-"));
   try {
     for (const [rel, content] of BUNDLED_CLERK_SKILL) {
       const dest = join(stageDir, rel);
@@ -223,7 +223,7 @@ export async function installClerkSkillCore(
   interactive: boolean,
 ): Promise<boolean> {
   return withStagedClerkSkill(resolveCliVersion(), (stageDir) =>
-    runSkillsAdd(runner, cwd, stageDir, [], interactive, true, "clerk skill"),
+    runSkillsAdd(runner, cwd, stageDir, [], interactive, true, "clerk-cli skill"),
   );
 }
 
@@ -248,6 +248,6 @@ export async function skillInstall(options: SkillInstallOptions): Promise<void> 
   const ok = await installClerkSkillCore(runner, cwd, interactive);
   if (ok) {
     log.blank();
-    log.success("clerk skill installed. AI agents now have Clerk context in this project.");
+    log.success("clerk-cli skill installed. AI agents now have Clerk context in this project.");
   }
 }

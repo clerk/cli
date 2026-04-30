@@ -1,22 +1,24 @@
 ---
 name: audit-clerk-skill
-description: Audits the Clerk CLI source tree and proposes updates to the bundled `clerk` skill so it stays in sync with the binary. Use when the user says "audit the clerk skill", "update the clerk skill", "check the skill against the code", "resync clerk skill", or after adding/renaming/removing CLI commands, flags, or agent-mode behavior.
+description: Audits the Clerk CLI source tree and proposes updates to the bundled `clerk-cli` skill so it stays in sync with the binary. Use when the user says "audit the clerk-cli skill", "update the clerk-cli skill", "check the skill against the code", "resync clerk-cli skill", or after adding/renaming/removing CLI commands, flags, or agent-mode behavior.
 effort: high
 user-invocable: true
 disable-model-invocation: true
 argument-hint: "[--apply]"
+metadata:
+  internal: true
 ---
 
-# Audit the clerk Skill
+# Audit the clerk-cli Skill
 
-Cross-check `skills/clerk/` against the actual CLI source in `packages/cli-core/` and propose precise edits wherever they have drifted. The binary is the source of truth; the skill is documentation that must track it.
+Cross-check `skills/clerk-cli/` against the actual CLI source in `packages/cli-core/` and propose precise edits wherever they have drifted. The binary is the source of truth; the skill is documentation that must track it.
 
 **ultrathink** on this task. It requires building a full command tree, comparing two representations of it, and making judgment calls about what belongs in the skill vs. in `references/*.md` vs. in `--help`. Shallow passes miss drift.
 
 ## Inputs
 
 - **Source of truth**: `packages/cli-core/src/commands/**` (one directory per top-level command), plus `packages/cli-core/src/cli.ts`, `cli-program.ts`, `mode.ts`, and anything in `packages/cli-core/src/lib/` referenced by commands (runner preference, agent mode, doctor checks, key resolution).
-- **Target**: `skills/clerk/SKILL.md` and `skills/clerk/references/*.md`.
+- **Target**: `skills/clerk-cli/SKILL.md` and `skills/clerk-cli/references/*.md`.
 - **Template markers**: the skill uses `{{CLI_VERSION}}` placeholders substituted at install time by `clerk skill install`. Preserve them; do not expand.
 
 ## Workflow
@@ -37,7 +39,7 @@ Read the per-command `README.md` (`packages/cli-core/src/commands/<name>/README.
 - Flag commands or sub-paths marked mocked/stubbed (blockquote at top of the README). The skill should not document these as production-ready.
 - Cross-check Clerk API endpoint claims in `references/recipes.md`.
 
-Do **not** propose bundling the READMEs into `skills/clerk/references/` (symlinks or text imports). They ship internal detail agents do not need, and inflate the compiled binary. They are a reference for the audit, not for the skill.
+Do **not** propose bundling the READMEs into `skills/clerk-cli/references/` (symlinks or text imports). They ship internal detail agents do not need, and inflate the compiled binary. They are a reference for the audit, not for the skill.
 
 Also capture cross-cutting behavior:
 
@@ -50,7 +52,7 @@ Don't memorize output. Prefer reading the source directly over running the binar
 
 ### 2. Extract the skill's current claims
 
-Read `skills/clerk/SKILL.md` and each file under `skills/clerk/references/`. Extract every concrete claim:
+Read `skills/clerk-cli/SKILL.md` and each file under `skills/clerk-cli/references/`. Extract every concrete claim:
 
 - Every command mentioned in the "Core commands at a glance" table and the Invoking-the-CLI table.
 - Every flag called out by name.
@@ -92,7 +94,7 @@ If a new reference file is warranted (e.g. a `references/commands.md` table), pr
 
 Emit a review-ready proposal. For each change:
 
-- Path (`skills/clerk/SKILL.md` or `skills/clerk/references/<file>.md`).
+- Path (`skills/clerk-cli/SKILL.md` or `skills/clerk-cli/references/<file>.md`).
 - Why (source citation: `packages/cli-core/src/commands/<cmd>/<file>.ts:<line>`).
 - Either a unified diff (preferred) or a before/after block for prose sections.
 - Severity: `drift` (factually wrong today), `gap` (missing coverage), `polish` (clearer wording, better placement, or cuts that route the agent to `--help` instead of duplicating it).
@@ -118,18 +120,18 @@ If invoked as `/audit-clerk-skill --apply`, apply `drift` and `gap` edits direct
 Return the proposal as:
 
 ```
-# clerk skill audit — <YYYY-MM-DD>
+# clerk-cli skill audit — <YYYY-MM-DD>
 
 ## Summary
 <counts per bucket, one-line headline of the biggest drift>
 
-## skills/clerk/SKILL.md
+## skills/clerk-cli/SKILL.md
 ### <section name>
 - [drift|gap|polish] <one-line description>
   - source: packages/cli-core/src/commands/<...>:<line>
   - <diff or before/after>
 
-## skills/clerk/references/<file>.md
+## skills/clerk-cli/references/<file>.md
 ...
 
 ## New files (if any)

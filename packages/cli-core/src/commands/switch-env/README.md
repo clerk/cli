@@ -24,7 +24,7 @@ clerk switch-env production
 - When called without an argument in interactive mode, shows an interactive picker listing available environments.
 - When called without an argument in non-interactive mode (agent, piped stdin), prints the current environment and available options.
 - Validates the environment name against the set of available profiles (injected at build time via `CLI_ENV_PROFILES`).
-- Persists the selection in `~/.clerk/config.json` under the `environment` key.
+- Persists the selection in the CLI config file under the `environment` key.
 - All subsequent commands use the selected environment's API endpoints and OAuth client.
 - If no auth token exists for the target environment, prints a reminder to run `clerk auth login`.
 

@@ -46,8 +46,6 @@ type InitOptions = {
   pm?: PackageManager;
   name?: string;
   yes?: boolean;
-  /** Output a prompt for an AI agent to integrate Clerk, then exit. */
-  prompt?: boolean;
   /** Install the optional agent skills (set to false via `--no-skills` to skip). */
   skills?: boolean;
   /** Create a new project from a starter template. */
@@ -58,21 +56,15 @@ type InitOptions = {
 
 export async function init(options: InitOptions = {}) {
   const cwd = process.cwd();
+  const agent = isAgent();
 
   const frameworkOverride = options.framework
     ? (lookupFramework(options.framework) ?? undefined)
     : undefined;
 
-  if (options.prompt) {
-    log.data(
-      "Run `clerk init -y` to automatically detect the framework, install the Clerk SDK, and scaffold authentication files without interactive prompts.",
-    );
-    return;
-  }
-
   // In agent mode, implicitly enable --yes to skip all confirmation prompts.
   const overrides: BootstrapOverrides = {
-    skipConfirm: options.yes || isAgent(),
+    skipConfirm: options.yes || agent,
     pmOverride: options.pm,
     nameOverride: options.name,
   };
@@ -94,12 +86,21 @@ export async function init(options: InitOptions = {}) {
   await enrichProjectContext(ctx);
 
   const authed = await isAuthenticated();
-  const keyless = resolveKeylessMode(bootstrap, ctx, authed);
+  const linkedProfile = agent && !options.app ? await resolveProfile(ctx.cwd) : undefined;
+  const hasRealAppTarget = Boolean(options.app || linkedProfile);
+  const keyless = resolveKeylessMode({
+    agent,
+    bootstrap,
+    ctx,
+    authed,
+    hasRealAppTarget,
+  });
   ctx.keyless = keyless;
 
-  const skipAuth = !keyless && bootstrap != null && overrides.skipConfirm && !authed;
+  const manualSetup =
+    !keyless && (agent ? !hasRealAppTarget : bootstrap != null && overrides.skipConfirm && !authed);
 
-  if (!keyless && !skipAuth) {
+  if (!keyless && !manualSetup) {
     bar();
     await authenticateAndLink(ctx.cwd, options.app);
   }
@@ -113,12 +114,15 @@ export async function init(options: InitOptions = {}) {
 
   if (alreadySetUp) {
     log.success("\nClerk is already set up in this project.");
+    if (agent && manualSetup) {
+      printBootstrapManualSetupInfo(ctx.framework.name);
+    }
     outro("Done");
     return;
   }
 
   bar();
-  if (skipAuth) {
+  if (manualSetup) {
     printBootstrapManualSetupInfo(ctx.framework.name);
   } else if (!keyless) {
     await pull({ file: ctx.envFile, cwd: ctx.cwd });
@@ -214,8 +218,7 @@ function printBootstrapNextSteps(
 function printBootstrapManualSetupInfo(frameworkName: string): void {
   const lines = [
     `\n  ${frameworkName} requires API keys — set them up manually:`,
-    "    clerk auth login",
-    "    clerk link",
+    "    clerk init --app <app_id>",
     "    clerk env pull",
   ];
   log.info(lines.map(dim).join("\n"));
@@ -223,19 +226,27 @@ function printBootstrapManualSetupInfo(frameworkName: string): void {
 
 // --- Keyless ---
 
-function resolveKeylessMode(
-  bootstrap: BootstrapResult | null,
-  ctx: ProjectContext,
-  authed: boolean,
-): boolean {
-  // Auto-keyless is scoped to bootstrap (new-project) flows only. For existing
-  // projects, fall through to the authenticated flow so `clerk init` still
-  // runs `authenticateAndLink` and pulls real keys — even when signed out the
-  // user gets a login prompt rather than being silently dropped into keyless
-  // (which would skip `env pull` and could overwrite permissive middleware).
-  if (!bootstrap) return false;
-
+function resolveKeylessMode({
+  agent,
+  bootstrap,
+  ctx,
+  authed,
+  hasRealAppTarget,
+}: {
+  agent: boolean;
+  bootstrap: BootstrapResult | null;
+  ctx: ProjectContext;
+  authed: boolean;
+  hasRealAppTarget: boolean;
+}): boolean {
   if (ctx.framework.supportsKeyless) {
+    if (agent) return !hasRealAppTarget;
+
+    // Auto-keyless is scoped to bootstrap (new-project) flows only in human
+    // mode. Existing projects keep the authenticated flow so real keys can be
+    // pulled unless an agent explicitly chooses keyless by omitting an app.
+    if (!bootstrap) return false;
+
     // Authenticated (OAuth token or CLERK_PLATFORM_API_KEY) — use the
     // authenticated flow so real keys get pulled into .env. Otherwise fall
     // back to keyless: the app runs on auto-generated dev keys and the user

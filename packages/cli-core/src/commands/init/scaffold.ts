@@ -25,7 +25,7 @@ const SCAFFOLDERS = [
 /**
  * Run the matching scaffolder's enrichContext to populate framework-specific
  * fields (variant, layoutPath, middlewareBasename) on the context.
- * Must be called before scaffold() or buildAgentPrompt().
+ * Must be called before scaffold().
  */
 export async function enrichProjectContext(ctx: ProjectContext): Promise<void> {
   const scaffolder = SCAFFOLDERS.find((s) => s.dep === ctx.framework.dep);

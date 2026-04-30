@@ -19,7 +19,7 @@ clerk update [options]
 ## Behavior
 
 1. Fetches the latest version for the given channel from the npm registry
-2. Walks `PATH` to find every `clerk` binary. For asdf shims (bash scripts, not symlinks), resolves through `asdf which <name>` so the underlying installer is visible. Picks the first one as the **primary target**
+2. Walks `PATH` to find every `clerk` binary. For asdf shims (bash scripts, not symlinks), resolves through `asdf which <name>` so the underlying installer is visible. The **primary target** is the install that owns `process.execPath` (the binary the user just invoked). If the running binary can't be matched against any enumerated install, falls back to the first PATH entry.
 3. Determines which installer owns the primary target via `ownerOfBinary()`:
    - Known installer (npm/bun/pnpm/yarn) → installs via that PM
    - Homebrew → runs `brew upgrade clerk` after confirmation (stable channel only; refuses on `canary` since there is no canary tap). After the brew command succeeds, verifies the installed version matches the npm registry's `latest`; fails loudly if the tap is stale.
@@ -30,9 +30,13 @@ clerk update [options]
 7. With `--all`, updates every on-PATH `clerk` install whose owner the CLI can drive. If the primary itself is blocked (e.g. Homebrew on `canary`, or `null` owner), the primary is skipped with a warning and the remaining installs still run; the run only refuses when every target is blocked. Failures on individual installs are recorded in the summary but don't short-circuit the rest.
 8. After a successful install, prints a shell-specific `hash -r` / `rehash` hint when applicable
 
-## Why PATH-walking matters
+## Primary target selection
 
-A machine can host multiple `clerk` installs (bun + asdf-npm + Homebrew is common). `process.execPath` tells you what is running right now, but the binary the user's shell will resolve next may be a different one (e.g. `~/.bun/bin/clerk` shadowing `~/.asdf/shims/clerk`). To ensure the update actually affects the user's next `clerk` invocation, the command resolves the target from `PATH` order, not from `process.execPath`.
+A machine can host multiple `clerk` installs (bun + asdf-npm + Homebrew is common). The command walks `PATH` to enumerate every install, then picks the one that owns `process.execPath` as the primary. This is the binary the user just invoked — updating any other install would leave `clerk -v` unchanged and silently diverge what the user sees from what the command reported as "updated".
+
+PATH order alone is insufficient because a fresh `PATH` walk can disagree with what actually ran: zsh and bash cache resolved command paths in a hash table, and `PATH` ordering under asdf + bun can place the asdf shim before `~/.bun/bin` even though the user's shell hash still points at bun's install. The running install is authoritative in every case.
+
+Remaining installs are reported as "others" and updated only with `--all`. If the running binary can't be classified (standalone `install.sh` binary, or `process.execPath` outside any known installer dir), the command falls back to PATH-first order.
 
 ## Version managers (asdf, nvm)
 

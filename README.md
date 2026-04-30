@@ -24,11 +24,12 @@ Usage: clerk [options] [command]
 Clerk CLI
 
 Options:
-  -v, --version  Output the version number
-  --mode <mode>  Force interaction mode (human or agent). Defaults to
-                 auto-detect based on TTY.
-  --verbose      Show detailed output (enables debug messages)
-  -h, --help     Display help for command
+  -v, --version        Output the version number
+  --input-json <json>  Pass command options as a JSON string, @file.json, or - for stdin
+  --mode <mode>        Force interaction mode (human or agent). Defaults to
+                       auto-detect based on TTY.
+  --verbose            Show detailed output (enables debug messages)
+  -h, --help           Display help for command
 
 Commands:
   init        [options]                      Initialize Clerk in your project

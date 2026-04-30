@@ -13,6 +13,14 @@ const PORT_CONFLICT = /EADDRINUSE|address already in use|port \S+ is (already )?
 const READINESS_TIMEOUT_MS = 60_000;
 const MAX_BIND_ATTEMPTS = 3;
 
+function isNextjsDevCommand(devCmd: string[]): boolean {
+  return devCmd[0] === "next";
+}
+
+function getDevServerHost(devCmd: string[]): string {
+  return isNextjsDevCommand(devCmd) ? "localhost" : "127.0.0.1";
+}
+
 /** Find an available port by binding to port 0 and reading the assigned port. */
 async function getAvailablePort(): Promise<number> {
   return new Promise((resolve, reject) => {
@@ -33,9 +41,10 @@ async function getAvailablePort(): Promise<number> {
 
 /** Build the full dev server command with the port flag appended. */
 export function buildDevCommand(devCmd: string[], port: number): string[] {
-  const isNextjs = devCmd[0] === "next";
+  const isNextjs = isNextjsDevCommand(devCmd);
   const portFlag = isNextjs ? "-p" : "--port";
-  return [...devCmd, portFlag, String(port)];
+  const hostFlag = isNextjs ? "-H" : "--host";
+  return [...devCmd, portFlag, String(port), hostFlag, getDevServerHost(devCmd)];
 }
 
 /**
@@ -67,6 +76,7 @@ async function canConnect(host: string, port: number, timeoutMs: number): Promis
 interface ReadyServer {
   proc: Subprocess;
   port: number;
+  host: string;
   stdout: string[];
   stderr: string[];
 }
@@ -88,6 +98,7 @@ async function tryStart(opts: {
 }): Promise<StartAttempt> {
   const { devCmd, port, projectDir, fixtureName } = opts;
   const fullCmd = buildDevCommand(devCmd, port);
+  const host = getDevServerHost(devCmd);
   const stderrLines: string[] = [];
   const stdoutLines: string[] = [];
 
@@ -159,9 +170,12 @@ async function tryStart(opts: {
       );
     }
 
-    if (await canConnect("127.0.0.1", port, 1000)) {
-      log(fixtureName, `dev server ready (accepting TCP on 127.0.0.1:${port})`);
-      return { kind: "ready", value: { proc, port, stdout: stdoutLines, stderr: stderrLines } };
+    if (await canConnect(host, port, 1000)) {
+      log(fixtureName, `dev server ready (accepting TCP on ${host}:${port})`);
+      return {
+        kind: "ready",
+        value: { proc, port, host, stdout: stdoutLines, stderr: stderrLines },
+      };
     }
     await Bun.sleep(500);
   }

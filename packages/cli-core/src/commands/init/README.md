@@ -1,6 +1,6 @@
 # Init Command
 
-Initializes Clerk in a project by authenticating the user, linking a Clerk application, installing the SDK, pulling environment variables, and scaffolding framework-specific boilerplate.
+Initializes Clerk in a project by detecting the framework, installing the SDK, and scaffolding framework-specific boilerplate. Depending on mode and framework support, init either uses keyless development keys or links to a real Clerk application and pulls environment variables.
 
 ## Usage
 
@@ -11,7 +11,6 @@ clerk init --framework next
 clerk init --starter
 clerk init --starter --framework next --pm bun
 clerk init --starter --framework next --pm bun --name my-app
-clerk init --prompt
 clerk init -y
 clerk init --yes
 clerk init --no-skills
@@ -26,7 +25,6 @@ clerk init --no-skills
 | `--name <project-name>` | Project name for `--starter` (skips prompt). Must be lowercase, no spaces, no path separators                                                                                         |
 | `--app <id>`            | Application ID to link (skips the interactive app picker during authenticated linking)                                                                                                |
 | `--starter`             | Bootstrap a new project from a starter template (runs the framework generator, installs deps, and scaffolds Clerk)                                                                    |
-| `--prompt`              | Output a prompt for an AI agent to integrate Clerk, then exit                                                                                                                         |
 | `-y, --yes`             | Skip confirmation prompts (also skips authentication after bootstrap, letting you connect your account later)                                                                         |
 | `--no-skills`           | Skip the optional agent skills install prompt at the end of init                                                                                                                      |
 
@@ -38,32 +36,32 @@ When running in agent mode (`--mode agent` or non-TTY), the command runs the ful
 - For **existing projects**: framework and package manager are auto-detected, no flags required
 - For **new projects** (`--starter` or blank directory): `--framework` is required (no way to auto-detect in an empty dir). Package manager is auto-selected by availability (bun → pnpm → yarn → npm) unless `--pm` is provided
 - Project name defaults to the framework's default (e.g. `my-clerk-next-app`) unless `--name` is provided
-
-Use `--prompt` to output a setup prompt for an AI agent without running init.
+- For keyless-capable frameworks with no `--app` and no linked profile, init uses keyless and does not require auth
+- For frameworks that require API keys, init will not pick or create an app in agent mode; pass `--app <id>` or link the project first to pull real keys
 
 ## Flow
 
-1. **`--prompt`**: outputs a framework-specific prompt, then exits
-2. Gathers project context (framework, router variant, TypeScript, `src/` directory, package manager)
-3. Determines auth mode from credential presence (no user prompt):
-   - **Authenticated** (OAuth token or `CLERK_PLATFORM_API_KEY` set): uses the authenticated flow — runs `clerk link` if not already linked and pulls real API keys into `.env` at the end
-   - **Bootstrap + keyless-capable framework + not authenticated**: automatically uses keyless mode — the app runs on auto-generated dev keys and the user can connect a Clerk account later with `clerk auth login`
-   - **Bootstrap + non-keyless framework + not authenticated** (with `--yes` or agent mode): skips authentication and prints manual setup instructions (run `clerk auth login` / `clerk link` / `clerk env pull` when ready)
-   - **Existing project + not authenticated**: runs the authenticated flow, which triggers an interactive login so real keys can be pulled
-4. **Authenticated mode only**: authenticates via `clerk auth login` (skipped if already authenticated) and links the project via `clerk link` (skipped if already linked)
-5. Displays detected framework and variant
-6. Detects existing auth libraries (NextAuth, Auth0, Supabase, Firebase, Passport, Better Auth, Kinde) and shows migration guidance
-7. Installs the appropriate Clerk SDK (skips if already present)
-8. Generates a scaffold plan for the detected framework
-9. Warns if the git working tree has uncommitted changes
-10. Previews planned file changes and asks for confirmation
-11. Writes scaffold files to disk
-12. Runs project formatters (Prettier/Biome) on generated files
-13. Scans for issues: hardcoded keys, leftover auth-library imports, stale API calls
-14. Prints a summary of created, modified, and skipped files with recommendations
-15. **Authenticated mode**: pulls development instance API keys via `clerk env pull`
-16. **Unauthenticated mode**: prints instructions for development without API keys and how to connect a Clerk account later
-17. Optionally installs Clerk agent skills (core + features, plus a framework-specific skill) via the project's package runner (see [Agent skills install](#agent-skills-install))
+1. Gathers project context (framework, router variant, TypeScript, `src/` directory, package manager)
+2. Determines auth mode:
+   - **Real app target** (`--app` or linked profile): authenticates, links if needed, and pulls real API keys into `.env`
+   - **Agent + keyless-capable framework + no real app target**: uses keyless mode — the app runs on auto-generated dev keys and the user can connect a Clerk account later with `clerk auth login`
+   - **Agent + non-keyless framework + no real app target**: scaffolds locally and prints manual setup instructions instead of selecting or creating an app
+   - **Human mode + bootstrap + keyless-capable framework + not authenticated**: uses keyless mode
+   - **Human mode + existing project + not authenticated**: runs the authenticated flow, which triggers an interactive login so real keys can be pulled
+3. **Authenticated mode only**: authenticates via `clerk auth login` (skipped if already authenticated) and links the project via `clerk link` (skipped if already linked)
+4. Displays detected framework and variant
+5. Detects existing auth libraries (NextAuth, Auth0, Supabase, Firebase, Passport, Better Auth, Kinde) and shows migration guidance
+6. Installs the appropriate Clerk SDK (skips if already present)
+7. Generates a scaffold plan for the detected framework
+8. Warns if the git working tree has uncommitted changes
+9. Previews planned file changes and asks for confirmation
+10. Writes scaffold files to disk
+11. Runs project formatters (Prettier/Biome) on generated files
+12. Scans for issues: hardcoded keys, leftover auth-library imports, stale API calls
+13. Prints a summary of created, modified, and skipped files with recommendations
+14. **Authenticated mode**: pulls development instance API keys via `clerk env pull`
+15. **Unauthenticated mode**: prints instructions for development without API keys and how to connect a Clerk account later
+16. Optionally installs Clerk agent skills (core + features, plus a framework-specific skill) via the project's package runner (see [Agent skills install](#agent-skills-install))
 
 ## Framework Detection
 
@@ -83,7 +81,7 @@ Detects the project's framework from `package.json` dependencies (checked top-to
 | `express`               | Express        | `@clerk/express`              | `CLERK_PUBLISHABLE_KEY`             | No      |
 | `fastify`               | Fastify        | `@clerk/fastify`              | `CLERK_PUBLISHABLE_KEY`             | No      |
 
-The **Keyless** column indicates whether the framework's Clerk SDK supports keyless mode (auto-generated temporary dev keys). Keyless auto-selection only applies during bootstrap (new projects) — re-running `clerk init` in an existing project always uses the authenticated flow (prompting login when signed out) so real keys can be pulled via `clerk env pull`. During bootstrap of a non-keyless framework with `--yes` and no credentials, `clerk init` skips authentication and prints manual setup instructions instead of blocking on a login prompt.
+The **Keyless** column indicates whether the framework's Clerk SDK supports keyless mode (auto-generated temporary dev keys). In human mode, keyless auto-selection only applies during bootstrap (new projects). In agent mode, keyless-capable frameworks use keyless whenever no real app target is provided by `--app` or a linked profile. For non-keyless frameworks without a real app target, agent mode prints manual setup instructions instead of selecting or creating an app.
 
 Package manager is detected from lock files: `bun.lockb`/`bun.lock` → bun, `yarn.lock` → yarn, `pnpm-lock.yaml` → pnpm, else npm.
 
@@ -185,17 +183,16 @@ After scaffolding (and after env keys are pulled or keyless instructions are pri
 
 - **Human mode**: prompts `Install agent skills? (...)` defaulting to yes. Pass `--no-skills` to suppress the prompt entirely, or `-y/--yes` to accept it without confirmation. When more than one runner is available, a second prompt picks which one to use (the project's package manager wins by default).
 - **Agent mode**: skills are installed non-interactively with `-y -g` flags (no prompt shown). Pass `--no-skills` to skip entirely.
-- **`--prompt`**: exits before the skills step runs. Agent users should run `skills add clerk/skills` via their preferred runner manually; the bundled `clerk` skill is only installable via `clerk init` itself, since its source lives inside the CLI binary.
 
 Two install commands run, sharing one runner:
 
-### 1. The bundled `clerk` skill
+### 1. The bundled `clerk-cli` skill
 
-The `clerk` skill ships **inside the CLI binary**. Its markdown files at [`<repo-root>/skills/clerk/`](../../../../../skills/clerk/) are pulled into [`skills.ts`](./skills.ts) as [text imports](https://bun.com/docs/bundler/loaders#text) (`import md from "./SKILL.md" with { type: "text" }`) and embedded by `bun build --compile`, so the skill content always matches the binary running it. No network, no tag, no version fallback.
+The `clerk-cli` skill ships **inside the CLI binary**. Its markdown files at [`<repo-root>/skills/clerk-cli/`](../../../../../skills/clerk-cli/) are pulled into [`skills.ts`](./skills.ts) as [text imports](https://bun.com/docs/bundler/loaders#text) (`import md from "./SKILL.md" with { type: "text" }`) and embedded by `bun build --compile`, so the skill content always matches the binary running it. No network, no tag, no version fallback.
 
 At install time, [`skills.ts`](./skills.ts) stages the bundled content into a fresh temp directory (`mkdtemp`) and invokes `<runner> skills add <tmpdir> --copy`. The `--copy` flag is required: the default symlink mode would point each agent's skill dir at the temp dir, which we delete immediately after the install completes.
 
-The `skills` CLI writes the installed files into each agent's skill directory (`.claude/skills/clerk/`, `.cursor/skills/clerk/`, etc.) and records the entry in the project's `skills-lock.json` with `sourceType: "local"`, which correctly excludes it from `skills update` (the skill can only change when the CLI itself is upgraded).
+The `skills` CLI writes the installed files into each agent's skill directory (`.claude/skills/clerk-cli/`, `.cursor/skills/clerk-cli/`, etc.) and records the entry in the project's `skills-lock.json` with `sourceType: "local"`, which correctly excludes it from `skills update` (the skill can only change when the CLI itself is upgraded).
 
 ### 2. The upstream skills
 
@@ -223,21 +220,21 @@ These skills version independently of the CLI, so no pin is applied.
 
 ### Failure handling
 
-The two install commands fail independently: a problem with the bundled `clerk` skill install (e.g. the `skills` CLI can't be fetched by the runner) does not block the upstream skills install, and vice versa. Each failure prints its own yellow warning with a manual install command (where applicable — the bundled `clerk` skill has no standalone manual command, since its source lives in the binary). Init continues and exits successfully either way.
+The two install commands fail independently: a problem with the bundled `clerk-cli` skill install (e.g. the `skills` CLI can't be fetched by the runner) does not block the upstream skills install, and vice versa. Each failure prints its own yellow warning with a manual install command (where applicable — the bundled `clerk-cli` skill has no standalone manual command, since its source lives in the binary). Init continues and exits successfully either way.
 
 Implementation lives in [`skills.ts`](./skills.ts). Note that the E2E fixture setup runs `clerk init --yes --no-skills` because the framework template skills reference auto-generated types (e.g. React Router's `./+types/root`) that don't exist outside a real app directory and would break the fixture's `tsc` step.
 
 ## API Endpoints
 
-| Step                   | Method | Base URL                        | Endpoint                       | Description                                                                                                                                         |
-| ---------------------- | ------ | ------------------------------- | ------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Create accountless app | `POST` | `CLERK_BAPI_URL` (default BAPI) | `/v1/accountless_applications` | Creates a temporary keyless Clerk application; returns `publishable_key`, `secret_key`, and `claim_url`. Only called in the keyless bootstrap path. |
+| Step                   | Method | Base URL                        | Endpoint                       | Description                                                                                                                           |
+| ---------------------- | ------ | ------------------------------- | ------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------- |
+| Create accountless app | `POST` | `CLERK_BAPI_URL` (default BAPI) | `/v1/accountless_applications` | Creates a temporary keyless Clerk application; returns `publishable_key`, `secret_key`, and `claim_url`. Only called in keyless mode. |
 
 See [auth/README.md](../auth/README.md), [link/README.md](../link/README.md), and [env/README.md](../env/README.md) for the API endpoints used by each step.
 
 ## Keyless breadcrumb
 
-In the keyless bootstrap path, after calling `POST /v1/accountless_applications`, `clerk init` writes `.clerk/keyless.json` to the project root. This file records the claim token extracted from `claim_url` so that `clerk auth login` can automatically claim the temporary application the next time the user authenticates.
+In keyless mode, after calling `POST /v1/accountless_applications`, `clerk init` writes `.clerk/keyless.json` to the project root. This file records the claim token extracted from `claim_url` so that `clerk auth login` can automatically claim the temporary application the next time the user authenticates.
 
 ```json
 {

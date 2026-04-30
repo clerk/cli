@@ -1,4 +1,5 @@
 import { Command, createOption, createArgument } from "@commander-js/extra-typings";
+import { expandInputJson } from "./lib/input-json.ts";
 import { setLogLevel } from "./lib/log.ts";
 import { setMode, type Mode } from "./mode.ts";
 import { init } from "./commands/init/index.ts";
@@ -54,6 +55,10 @@ export function createProgram() {
     .version(getCurrentVersion(), "-v, --version", "Output the version number")
     .helpOption("-h, --help", "Display help for command")
     .addHelpCommand("help [command]", "Display help for command")
+    .option(
+      "--input-json <json>",
+      "Pass command options as a JSON string, @file.json, or - for stdin",
+    )
     .option(
       "--mode <mode>",
       "Force interaction mode (human or agent). Defaults to auto-detect based on TTY.",
@@ -128,7 +133,6 @@ Give AI agents better Clerk context: install the Clerk skills
     )
     .option("--name <project-name>", "Project name for --starter (skips prompt)")
     .option("--app <id>", "Application ID to link (skips interactive picker)")
-    .option("--prompt", "Output a prompt for an AI agent to integrate Clerk")
     .option("--starter", "Create a new project from a starter template")
     .option("-y, --yes", "Skip confirmation prompts")
     .option("--no-skills", "Skip the optional agent skills install prompt")
@@ -147,7 +151,6 @@ Give AI agents better Clerk context: install the Clerk skills
         command: "clerk init --starter --framework next --pm bun",
         description: "Bootstrap with Bun",
       },
-      { command: "clerk init --prompt", description: "Output a setup prompt for an AI agent" },
       { command: "clerk init -y", description: "Skip all confirmation prompts" },
       { command: "clerk init --no-skills", description: "Skip the agent skills install prompt" },
     ])
@@ -773,6 +776,23 @@ function formatSingleError(err: {
   return msg;
 }
 
+type ParseFrom = "user" | "node";
+
+/**
+ * Resolve argv + `from` together so `--input-json` preprocessing always runs,
+ * whether the caller passed explicit args (tests) or let it default to
+ * `process.argv` (cli.ts entry point).
+ */
+async function resolveArgv(
+  args: string[] | undefined,
+  from: ParseFrom | undefined,
+): Promise<{ argv: string[]; from: ParseFrom }> {
+  const raw = args ?? process.argv;
+  const effectiveFrom = from ?? (args === undefined ? "node" : "user");
+  const argv = await expandInputJson([...raw]);
+  return { argv, from: effectiveFrom };
+}
+
 /**
  * Parse and run a program, handling all typed errors with user-facing messages.
  * Used by `cli.ts` for real execution and by integration tests.
@@ -780,10 +800,11 @@ function formatSingleError(err: {
 export async function runProgram(
   program: ReturnType<typeof createProgram>,
   args?: string[],
-  options?: { from: "user" | "node" },
+  options?: { from: ParseFrom },
 ): Promise<void> {
   try {
-    await program.parseAsync(args, options);
+    const { argv, from } = await resolveArgv(args, options?.from);
+    await program.parseAsync(argv, { from });
   } catch (error) {
     const verbose = program.opts().verbose ?? false;
 
