@@ -46,8 +46,6 @@ type InitOptions = {
   pm?: PackageManager;
   name?: string;
   yes?: boolean;
-  /** Output a prompt for an AI agent to integrate Clerk, then exit. */
-  prompt?: boolean;
   /** Install the optional agent skills (set to false via `--no-skills` to skip). */
   skills?: boolean;
   /** Create a new project from a starter template. */
@@ -62,13 +60,6 @@ export async function init(options: InitOptions = {}) {
   const frameworkOverride = options.framework
     ? (lookupFramework(options.framework) ?? undefined)
     : undefined;
-
-  if (options.prompt) {
-    log.data(
-      "Run `clerk init -y` to automatically detect the framework, install the Clerk SDK, and scaffold authentication files without interactive prompts.",
-    );
-    return;
-  }
 
   // In agent mode, implicitly enable --yes to skip all confirmation prompts.
   const overrides: BootstrapOverrides = {
