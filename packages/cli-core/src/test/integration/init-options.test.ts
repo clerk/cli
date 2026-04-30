@@ -10,11 +10,10 @@ import { useIntegrationTestHarness, clerk } from "./lib/harness.ts";
 useIntegrationTestHarness();
 
 test("init accepts --app without rejecting it as an unknown option", async () => {
-  // --prompt exits before any auth/link/scaffold side effects. If --app is
-  // not registered with Commander, parseAsync throws `commander.unknownOption`
-  // before --prompt can short-circuit, and `clerk` (strict) throws.
-  const { stdout, stderr, exitCode } = await clerk("init", "--app", "app_123", "--prompt");
-  expect(exitCode).toBe(0);
-  expect(stderr).not.toContain("unknown option");
-  expect(stdout).toContain("clerk init -y");
+  // If --app is not registered with Commander, parseAsync throws
+  // `commander.unknownOption` which surfaces as "unknown option" in stderr.
+  // Init exits non-zero in this test cwd (no framework detected) — that's
+  // expected; we only care that the option pipeline accepted --app.
+  const result = await clerk.raw("init", "--app", "app_123");
+  expect(result.stderr).not.toContain("unknown option");
 });

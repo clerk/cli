@@ -169,16 +169,6 @@ describe("init", () => {
     expect(bootstrapMod.promptAndBootstrap).not.toHaveBeenCalled();
   });
 
-  test("--prompt flag prints guidance and exits", async () => {
-    const { captured } = setup({ isAgent: false });
-
-    await captured.run(() => init({ prompt: true }));
-
-    expect(captured.out).toContain("clerk init -y");
-    expect(loginMod.login).not.toHaveBeenCalled();
-    expect(bootstrapMod.promptAndBootstrap).not.toHaveBeenCalled();
-  });
-
   test("blank dir in human mode triggers bootstrap flow", async () => {
     setup();
     setupBootstrapSuccess();

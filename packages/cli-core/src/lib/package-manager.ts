@@ -8,6 +8,18 @@ export const PACKAGE_MANAGERS = ["bun", "pnpm", "yarn", "npm"] as const;
 
 export type PackageManager = (typeof PACKAGE_MANAGERS)[number];
 
+const PM_INSTALL_COMMANDS = {
+  bun: "bun add",
+  yarn: "yarn add",
+  pnpm: "pnpm add",
+  npm: "npm install",
+} satisfies Record<PackageManager, string>;
+
+/** Returns the `<pm> add`-style command for installing dependencies. */
+export function pmInstallCommand(pm: PackageManager): string {
+  return PM_INSTALL_COMMANDS[pm];
+}
+
 /** Detects the package manager in use by checking for lockfiles in `cwd`. */
 export async function detectPackageManager(cwd: string): Promise<PackageManager> {
   const checks: Array<{ files: string[]; pm: PackageManager }> = [
