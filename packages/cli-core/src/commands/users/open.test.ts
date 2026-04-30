@@ -104,4 +104,13 @@ describe("users open", () => {
     expect(() => JSON.parse(captured.out)).toThrow();
     expect(mockOpenBrowser).not.toHaveBeenCalled();
   });
+
+  test("--secret-key alone: throws usage error pointing to --app", async () => {
+    mockResolveUsersInstanceContext.mockResolvedValue({ secretKey: "sk_test_loose" });
+
+    await expect(
+      captured.run(() => open({ secretKey: "sk_test_loose", userId: "user_2x9k" })),
+    ).rejects.toThrow(/--app/);
+    expect(mockOpenBrowser).not.toHaveBeenCalled();
+  });
 });
