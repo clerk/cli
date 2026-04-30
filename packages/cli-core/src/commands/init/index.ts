@@ -3,7 +3,7 @@ import { link } from "../link/index.js";
 import { pull } from "../env/pull.js";
 import { isAgent } from "../../mode.js";
 import { dim, bold } from "../../lib/color.js";
-import { throwUserAbort, CliError, errorMessage, throwUsageError } from "../../lib/errors.js";
+import { throwUserAbort, CliError, errorMessage } from "../../lib/errors.js";
 import { lookupFramework, type FrameworkInfo } from "../../lib/framework.js";
 import { resolveProfile } from "../../lib/config.js";
 import { log } from "../../lib/log.js";
@@ -111,7 +111,7 @@ export async function init(options: InitOptions = {}) {
 
   if (!keyless && !manualSetup) {
     bar();
-    await authenticateAndLink(ctx.cwd, options.app, { allowInteractiveLogin: !agent });
+    await authenticateAndLink(ctx.cwd, options.app);
   }
 
   // Short-circuit on a fully-clean re-run so env pull / skills prompt don't
@@ -273,33 +273,19 @@ function resolveKeylessMode({
 
 // --- Auth ---
 
-async function resolveAuthLabel({
-  allowInteractiveLogin,
-}: {
-  allowInteractiveLogin: boolean;
-}): Promise<string> {
+async function resolveAuthLabel(): Promise<string> {
   const hasApiKey = Boolean(process.env.CLERK_PLATFORM_API_KEY);
   if (hasApiKey) return "Using API key";
 
   const email = await getAuthenticatedEmail();
   if (email) return `Logged in as ${email}`;
 
-  if (!allowInteractiveLogin) {
-    throwUsageError(
-      "clerk init in agent mode requires CLERK_PLATFORM_API_KEY or a valid stored session when using a real Clerk application. Pass --app only with auth available, or omit --app for keyless-capable frameworks.",
-    );
-  }
-
   await login({ showNextSteps: false });
   return "";
 }
 
-async function authenticateAndLink(
-  cwd: string,
-  app: string | undefined,
-  options: { allowInteractiveLogin: boolean },
-): Promise<void> {
-  const label = await resolveAuthLabel(options);
+async function authenticateAndLink(cwd: string, app: string | undefined): Promise<void> {
+  const label = await resolveAuthLabel();
   const profile = await resolveProfile(cwd);
 
   const alreadyOnRequestedApp = profile && (!app || profile.profile.appId === app);

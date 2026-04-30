@@ -450,16 +450,18 @@ describe("init", () => {
     expect(captured.err).toContain("clerk init --app <app_id>");
   });
 
-  test("agent mode with real app target and no auth fails without launching login", async () => {
+  test("agent mode with real app target and no auth launches login", async () => {
     setup({ isAgent: true });
     spyOn(context, "gatherContext").mockResolvedValue(FAKE_CTX);
 
-    await expect(init({ app: "app_abc" })).rejects.toThrow(
-      "clerk init in agent mode requires CLERK_PLATFORM_API_KEY",
-    );
+    await init({ app: "app_abc" });
 
-    expect(loginMod.login).not.toHaveBeenCalled();
-    expect(linkMod.link).not.toHaveBeenCalled();
+    expect(loginMod.login).toHaveBeenCalledWith({ showNextSteps: false });
+    expect(linkMod.link).toHaveBeenCalledWith({
+      skipIfLinked: true,
+      app: "app_abc",
+      cwd: FAKE_CTX.cwd,
+    });
   });
 
   test("-y flag skips auth prompt and defaults to unauthenticated mode", async () => {
