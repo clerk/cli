@@ -7,6 +7,7 @@ import { isAgent } from "../../mode.ts";
 import { buildDashboardUrl } from "../open/index.ts";
 import { resolveUsersInstanceContext } from "./interactive/instance-context.ts";
 import { pickUser } from "./interactive/pick-user.ts";
+import { registerUsersAction } from "./registry.ts";
 
 export type UsersOpenOptions = {
   userId?: string;
@@ -79,3 +80,12 @@ export async function open(options: UsersOpenOptions = {}): Promise<void> {
 
   outro();
 }
+
+registerUsersAction({
+  key: "open",
+  label: "Open user in dashboard",
+  description: "Open a user's profile page in the Clerk dashboard",
+  handler: async (targeting) => {
+    await open(targeting);
+  },
+});

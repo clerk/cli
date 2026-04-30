@@ -158,4 +158,12 @@ describe("users open", () => {
 
     await expect(captured.run(() => open({ userId: "user_2x9k" }))).rejects.toThrow(/Not linked/);
   });
+
+  test("registers an action in the users registry", async () => {
+    const { listUsersActions } = await import("./registry.ts");
+    const actions = listUsersActions();
+    const action = actions.find((a) => a.key === "open");
+    expect(action).toBeDefined();
+    expect(action?.label).toBe("Open user in dashboard");
+  });
 });
