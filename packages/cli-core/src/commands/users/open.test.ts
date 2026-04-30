@@ -113,4 +113,26 @@ describe("users open", () => {
     ).rejects.toThrow(/--app/);
     expect(mockOpenBrowser).not.toHaveBeenCalled();
   });
+
+  test("no user-id + human mode: invokes pickUser and uses returned id", async () => {
+    mockPickUser.mockResolvedValue("user_picked");
+
+    await captured.run(() => open({ print: true }));
+
+    expect(mockPickUser).toHaveBeenCalledWith({
+      secretKey: "sk_test_123",
+      message: "Pick a user to open in the dashboard:",
+    });
+    expect(captured.out).toBe(
+      "https://dashboard.clerk.com/apps/app_abc123/instances/ins_dev789/users/user_picked",
+    );
+  });
+
+  test("no user-id + agent mode: throws usage error, does not invoke pickUser", async () => {
+    setMode("agent");
+
+    await expect(captured.run(() => open({}))).rejects.toThrow(/User ID is required/);
+    expect(mockPickUser).not.toHaveBeenCalled();
+    expect(mockOpenBrowser).not.toHaveBeenCalled();
+  });
 });

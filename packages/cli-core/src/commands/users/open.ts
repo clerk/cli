@@ -6,6 +6,7 @@ import { intro, outro } from "../../lib/spinner.ts";
 import { isAgent } from "../../mode.ts";
 import { buildDashboardUrl } from "../open/index.ts";
 import { resolveUsersInstanceContext } from "./interactive/instance-context.ts";
+import { pickUser } from "./interactive/pick-user.ts";
 
 export type UsersOpenOptions = {
   userId?: string;
@@ -28,9 +29,15 @@ export async function open(options: UsersOpenOptions = {}): Promise<void> {
     );
   }
 
-  const userId = options.userId;
+  let userId = options.userId;
   if (!userId) {
-    throw new Error("user picker not implemented yet");
+    if (isAgent()) {
+      throwUsageError("User ID is required in agent mode. Pass it as a positional argument.");
+    }
+    userId = await pickUser({
+      secretKey: ctx.secretKey,
+      message: "Pick a user to open in the dashboard:",
+    });
   }
 
   const subpath = `users/${userId}`;
