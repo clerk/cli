@@ -74,4 +74,34 @@ describe("users open", () => {
     );
     expect(mockOpenBrowser).not.toHaveBeenCalled();
   });
+
+  test("agent mode without --print: emits structured JSON, no browser", async () => {
+    setMode("agent");
+
+    await captured.run(() => open({ userId: "user_2x9k" }));
+
+    const payload = JSON.parse(captured.out);
+    expect(payload).toEqual({
+      url: "https://dashboard.clerk.com/apps/app_abc123/instances/ins_dev789/users/user_2x9k",
+      appId: "app_abc123",
+      appName: null,
+      instanceId: "ins_dev789",
+      instanceLabel: "development",
+      userId: "user_2x9k",
+      opened: false,
+    });
+    expect(mockOpenBrowser).not.toHaveBeenCalled();
+  });
+
+  test("agent mode with --print still wins: URL only, no JSON", async () => {
+    setMode("agent");
+
+    await captured.run(() => open({ userId: "user_2x9k", print: true }));
+
+    expect(captured.out).toBe(
+      "https://dashboard.clerk.com/apps/app_abc123/instances/ins_dev789/users/user_2x9k",
+    );
+    expect(() => JSON.parse(captured.out)).toThrow();
+    expect(mockOpenBrowser).not.toHaveBeenCalled();
+  });
 });

@@ -3,6 +3,7 @@ import { throwUsageError } from "../../lib/errors.ts";
 import { log } from "../../lib/log.ts";
 import { openBrowser } from "../../lib/open.ts";
 import { intro, outro } from "../../lib/spinner.ts";
+import { isAgent } from "../../mode.ts";
 import { buildDashboardUrl } from "../open/index.ts";
 import { resolveUsersInstanceContext } from "./interactive/instance-context.ts";
 
@@ -37,6 +38,21 @@ export async function open(options: UsersOpenOptions = {}): Promise<void> {
 
   if (options.print) {
     log.data(url);
+    return;
+  }
+
+  if (isAgent()) {
+    log.data(
+      JSON.stringify({
+        url,
+        appId: ctx.appId,
+        appName: null,
+        instanceId: ctx.instanceId,
+        instanceLabel: "development",
+        userId,
+        opened: false,
+      }),
+    );
     return;
   }
 
