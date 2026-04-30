@@ -33,6 +33,14 @@ export const NEXT_STEPS = {
     "Run `clerk auth login` again to retry auto-claim",
     "Run `clerk link` to connect your application manually",
   ],
+  ENABLE_ORGS: [
+    "Run `clerk config schema --keys organization_settings` to see all available settings",
+    "Run `clerk config pull --keys organization_settings` to see current values",
+  ],
+  ENABLE_BILLING: [
+    "Run `clerk config schema --keys billing` to see all available settings",
+    "Run `clerk config pull --keys billing` to see current values",
+  ],
 } as const;
 
 /**

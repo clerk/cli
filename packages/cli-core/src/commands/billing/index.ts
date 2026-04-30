@@ -4,6 +4,7 @@ import { isAgent, isHuman } from "../../mode.ts";
 import { log } from "../../lib/log.ts";
 import { confirm } from "../../lib/prompts.ts";
 import { detectPackageManager } from "../../lib/package-manager.ts";
+import { NEXT_STEPS, printNextSteps } from "../../lib/next-steps.ts";
 import { applyConfigPatch } from "../config/apply-patch.ts";
 import { resolveSkillsRunner, runSkillsAdd } from "../skill/install.ts";
 
@@ -73,6 +74,8 @@ export async function billingEnable(options: BillingOptions): Promise<void> {
   if (!options.dryRun && options.skills !== false) {
     await offerBillingSkillInstall(options);
   }
+
+  if (!options.dryRun) printNextSteps(NEXT_STEPS.ENABLE_BILLING);
 }
 
 async function offerBillingSkillInstall(options: BillingOptions): Promise<void> {

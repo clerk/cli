@@ -3,6 +3,7 @@ import { fetchInstanceConfig } from "../../lib/plapi.ts";
 import { throwUsageError, withApiContext } from "../../lib/errors.ts";
 import { withSpinner } from "../../lib/spinner.ts";
 import { isHuman } from "../../mode.ts";
+import { NEXT_STEPS, printNextSteps } from "../../lib/next-steps.ts";
 import { applyConfigPatch } from "../config/apply-patch.ts";
 
 interface OrgsOptions {
@@ -53,6 +54,8 @@ export async function orgsEnable(options: OrgsOptions): Promise<void> {
     yes: options.yes,
     dryRun: options.dryRun,
   });
+
+  if (!options.dryRun) printNextSteps(NEXT_STEPS.ENABLE_ORGS);
 }
 
 export async function orgsDisable(options: OrgsOptions): Promise<void> {
