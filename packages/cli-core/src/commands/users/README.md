@@ -91,19 +91,20 @@ Supported curated flags:
 
 ### `clerk users open`
 
-Open a user's dashboard page in your browser, or print the URL with `--print`. With no positional `<user-id>`, prompts a search-as-you-type picker. Without a linked project (or matching env var / targeting flag), prompts the same application picker as `clerk users list`.
+Open a user's dashboard page in your browser, or print the URL with `--print`. With no positional `<user-id>`, prompts a search-as-you-type picker. Without a linked project (or matching app targeting), prompts the same application picker as `clerk users list`.
 
 ```sh
 clerk users open
 clerk users open user_2x9k
 clerk users open user_2x9k --app app_123
 clerk users open user_2x9k --instance prod
+clerk users open user_2x9k --secret-key sk_test_123 --app app_123
 clerk users open user_2x9k --print
 ```
 
 In agent mode the user-id is required (no interactive picker) and output is a JSON object with `url`, `appId`, `appName`, `instanceId`, `instanceLabel`, `userId`, and `opened`. `--print` always wins and emits the plain URL on stdout.
 
-`--secret-key` cannot be used alone: building a dashboard URL requires the application ID. Combine `--secret-key` with `--app`, or use `--app` on its own.
+`--secret-key` chooses the Backend API key used for user lookup. `users open` still requires an app target to resolve the dashboard URL, either from `--app`, a linked project, or the human-mode app picker. Use `--instance` when you want something other than the default development instance.
 
 ## API Endpoints
 

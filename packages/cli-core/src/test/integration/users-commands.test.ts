@@ -345,4 +345,34 @@ describe("users commands", () => {
     );
     expect(fetchAppCall).toBeDefined();
   });
+
+  test("users open accepts --secret-key with --app and prints the dashboard URL", async () => {
+    http.mock({
+      [PLAPI_APP_ROUTE]: MOCK_APP,
+    });
+
+    const { stdout, exitCode } = await clerk.raw(
+      "--mode",
+      "agent",
+      "users",
+      "open",
+      "user_123",
+      "--secret-key",
+      "sk_test_directkey",
+      "--app",
+      "app_1",
+      "--print",
+    );
+
+    expect(exitCode).toBe(0);
+    expect(stdout).toBe(
+      `https://dashboard.clerk.com/apps/${MOCK_APP.application_id}/instances/${devInstance.instance_id}/users/user_123`,
+    );
+
+    const fetchAppCall = http.requests.find(
+      (request) =>
+        request.method === "GET" && request.url.includes("/v1/platform/applications/app_1"),
+    );
+    expect(fetchAppCall).toBeDefined();
+  });
 });
