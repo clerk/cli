@@ -1,5 +1,9 @@
-import { test, expect, describe, beforeEach, afterEach } from "bun:test";
-import {
+import { test, expect, describe, beforeEach, afterEach, spyOn } from "bun:test";
+import { join } from "node:path";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+
+const {
   readConfig,
   writeConfig,
   getAuth,
@@ -11,23 +15,26 @@ import {
   resolveProfile,
   resolveInstanceId,
   resolveAppContext,
+  resolveFetchedApplicationInstance,
   _setConfigDir,
-  type Profile,
-} from "./config.ts";
-import { join } from "node:path";
-import { mkdtemp, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
+} = await import("./config.ts");
+type Profile =
+  Awaited<ReturnType<typeof getProfile>> extends infer T ? Exclude<T, undefined> : never;
+const plapiModule = await import("./plapi.ts");
 
 describe("config", () => {
   let tempDir: string;
+  let fetchApplicationSpy: ReturnType<typeof spyOn>;
 
   beforeEach(async () => {
     tempDir = await mkdtemp(join(tmpdir(), "clerk-config-test-"));
     _setConfigDir(tempDir);
+    fetchApplicationSpy = spyOn(plapiModule, "fetchApplication");
   });
 
   afterEach(async () => {
     _setConfigDir(undefined);
+    fetchApplicationSpy.mockRestore();
     await rm(tempDir, { recursive: true, force: true });
   });
 
@@ -215,6 +222,92 @@ describe("config", () => {
 
       const ctx = await resolveAppContext({ cwd: projectDir });
       expect(ctx.appId).toBe("app_in_child");
+    });
+  });
+
+  describe("resolveFetchedApplicationInstance", () => {
+    const app = {
+      application_id: "app_123",
+      instances: [
+        {
+          instance_id: "ins_dev",
+          environment_type: "development",
+          publishable_key: "pk_test_123",
+        },
+        {
+          instance_id: "ins_custom_123",
+          environment_type: "staging",
+          publishable_key: "pk_test_custom_123",
+        },
+      ],
+    };
+
+    test("selects a literal existing instance id from fetched application data", () => {
+      const result = resolveFetchedApplicationInstance("app_123", app, "ins_custom_123");
+
+      expect(result).toMatchObject({
+        found: true,
+        instanceId: "ins_custom_123",
+        instanceLabel: "ins_custom_123",
+      });
+      if (result.found) {
+        expect(result.instance.instance_id).toBe("ins_custom_123");
+      }
+    });
+
+    test("returns explicit missing state for unknown literal instance ids", () => {
+      const result = resolveFetchedApplicationInstance("app_123", app, "ins_missing_123");
+
+      expect(result).toEqual({
+        found: false,
+        instanceId: "ins_missing_123",
+        instanceLabel: "ins_missing_123",
+      });
+    });
+  });
+
+  describe("resolveAppContext (explicit app)", () => {
+    test("resolves a literal existing instance id from fetched application data", async () => {
+      fetchApplicationSpy.mockResolvedValue({
+        application_id: "app_123",
+        name: "My App",
+        instances: [
+          {
+            instance_id: "ins_custom_123",
+            environment_type: "staging",
+            publishable_key: "pk_test_custom_123",
+          },
+        ],
+      });
+
+      await expect(
+        resolveAppContext({ app: "app_123", instance: "ins_custom_123" }),
+      ).resolves.toEqual({
+        appId: "app_123",
+        appLabel: "My App",
+        instanceId: "ins_custom_123",
+        instanceLabel: "ins_custom_123",
+      });
+    });
+
+    test("throws INSTANCE_NOT_FOUND when --instance does not match any fetched instance", async () => {
+      fetchApplicationSpy.mockResolvedValue({
+        application_id: "app_123",
+        name: "My App",
+        instances: [
+          {
+            instance_id: "ins_real_123",
+            environment_type: "staging",
+            publishable_key: "pk_test_real_123",
+          },
+        ],
+      });
+
+      await expect(
+        resolveAppContext({ app: "app_123", instance: "ins_missing_123" }),
+      ).rejects.toMatchObject({
+        code: "instance_not_found",
+      });
     });
   });
 });

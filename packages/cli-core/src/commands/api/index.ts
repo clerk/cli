@@ -1,15 +1,8 @@
-import { resolveAppContext } from "../../lib/config.ts";
-import { fetchApplication, getAuthToken, validateKeyPrefix } from "../../lib/plapi.ts";
+import { getAuthToken } from "../../lib/plapi.ts";
 import { getBapiBaseUrl, getPlapiBaseUrl } from "../../lib/environment.ts";
+import { normalizeBapiPath, resolveBapiSecretKey } from "../../lib/bapi-command.ts";
 import { bapiRequest } from "./bapi.ts";
-import {
-  BapiError,
-  CliError,
-  ERROR_CODE,
-  throwUsageError,
-  throwUserAbort,
-  withApiContext,
-} from "../../lib/errors.ts";
+import { BapiError, ERROR_CODE, throwUsageError, throwUserAbort } from "../../lib/errors.ts";
 import { isHuman } from "../../mode.ts";
 import { confirm } from "../../lib/prompts.ts";
 import { withSpinner } from "../../lib/spinner.ts";
@@ -61,13 +54,13 @@ export async function api(
     secretKey = await getAuthToken();
     baseUrl = getPlapiBaseUrl();
   } else {
-    secretKey = await resolveSecretKey(options);
+    secretKey = await resolveBapiSecretKey(options);
     baseUrl = getBapiBaseUrl();
   }
 
   // 4. Dry run
   if (options.dryRun) {
-    log.info(`[dry-run] ${method} ${baseUrl}${normalizePath(endpoint)}`);
+    log.info(`[dry-run] ${method} ${baseUrl}${normalizeBapiPath(endpoint)}`);
     if (body) {
       prettyPrint(body);
     }
@@ -117,52 +110,6 @@ export async function api(
   }
 }
 
-async function resolveSecretKey(options: ApiOptions): Promise<string> {
-  if (options.secretKey) {
-    validateKeyPrefix(options.secretKey, "sk_");
-    return options.secretKey;
-  }
-
-  if (process.env.CLERK_SECRET_KEY) {
-    validateKeyPrefix(process.env.CLERK_SECRET_KEY, "sk_");
-    return process.env.CLERK_SECRET_KEY;
-  }
-
-  // Resolve from linked profile via Platform API
-  let ctx: Awaited<ReturnType<typeof resolveAppContext>>;
-  try {
-    ctx = await resolveAppContext({ app: options.app, instance: options.instance });
-  } catch (error) {
-    if (error instanceof Error && error.message.startsWith("No Clerk project linked")) {
-      throwUsageError(
-        "No secret key found. Provide one via:\n" +
-          "  --secret-key <key>\n" +
-          "  CLERK_SECRET_KEY environment variable\n" +
-          "  Link a project with `clerk link`, or pass --app <app_id>",
-        "https://clerk.com/docs/guides/development/clerk-environment-variables",
-        ERROR_CODE.NO_SECRET_KEY,
-      );
-    }
-    throw error;
-  }
-
-  const app = await withApiContext(fetchApplication(ctx.appId), "Failed to resolve secret key");
-  const matched = app.instances.find((i) => i.instance_id === ctx.instanceId);
-  if (!matched) {
-    throw new CliError(`Instance ${ctx.instanceId} not found in application.`, {
-      code: ERROR_CODE.INSTANCE_NOT_FOUND,
-      docsUrl: "https://clerk.com/docs/guides/development/managing-environments",
-    });
-  }
-  if (!matched.secret_key) {
-    throw new CliError(`No secret key found for ${ctx.instanceLabel} instance.`, {
-      code: ERROR_CODE.NO_SECRET_KEY,
-      docsUrl: "https://clerk.com/docs/guides/development/clerk-environment-variables",
-    });
-  }
-  return matched.secret_key;
-}
-
 async function resolveBody(options: { data?: string; file?: string }): Promise<string | null> {
   if (options.data) return options.data;
 
@@ -185,13 +132,6 @@ async function resolveBody(options: { data?: string; file?: string }): Promise<s
   }
 
   return null;
-}
-
-function normalizePath(path: string): string {
-  let p = path;
-  if (!p.startsWith("/")) p = `/${p}`;
-  if (!p.startsWith("/v1/")) p = `/v1${p}`;
-  return p;
 }
 
 function printHeaders(status: number, headers: Headers): void {
