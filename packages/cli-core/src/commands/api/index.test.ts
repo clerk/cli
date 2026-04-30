@@ -2,6 +2,7 @@ import { test, expect, describe, beforeEach, afterEach, spyOn, mock } from "bun:
 import { mkdtemp, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
+import { CliError, ERROR_CODE } from "../../lib/errors.ts";
 import {
   captureLog,
   credentialStoreStubs,
@@ -55,6 +56,57 @@ mock.module("../../lib/config.ts", () => ({
     if (!id) throw new Error(`No ${env} instance configured.`);
     return { id, label: env };
   },
+  resolveFetchedApplicationInstance: (
+    appId: string,
+    app: { instances: Array<any> },
+    flag?: string,
+  ) => {
+    const aliases: Record<string, string> = {
+      dev: "development",
+      development: "development",
+      prod: "production",
+      production: "production",
+    };
+
+    if (!flag) {
+      const development = app.instances.find((entry) => entry.environment_type === "development");
+      if (!development) throw new Error(`No development instance found for application ${appId}.`);
+      return {
+        found: true as const,
+        instance: development,
+        instanceId: development.instance_id,
+        instanceLabel: "development",
+      };
+    }
+
+    const env = aliases[flag];
+    if (env) {
+      const matched = app.instances.find((entry) => entry.environment_type === env);
+      if (!matched) throw new Error(`No ${env} instance found for application ${appId}.`);
+      return {
+        found: true as const,
+        instance: matched,
+        instanceId: matched.instance_id,
+        instanceLabel: env,
+      };
+    }
+
+    const matched = app.instances.find((entry) => entry.instance_id === flag);
+    if (matched) {
+      return {
+        found: true as const,
+        instance: matched,
+        instanceId: matched.instance_id,
+        instanceLabel: flag,
+      };
+    }
+
+    return {
+      found: false as const,
+      instanceId: flag,
+      instanceLabel: flag,
+    };
+  },
   resolveAppContext: async (options: { app?: string; instance?: string }) => {
     if (options.app) {
       const aliases: Record<string, string> = {
@@ -89,7 +141,11 @@ mock.module("../../lib/config.ts", () => ({
     }
 
     const profile = _profiles[process.cwd()];
-    if (!profile) throw new Error("No Clerk project linked");
+    if (!profile) {
+      throw new CliError("No Clerk project linked to this directory.", {
+        code: ERROR_CODE.NOT_LINKED,
+      });
+    }
     const instance = !options.instance
       ? { id: profile.instances.development, label: "development" }
       : (() => {

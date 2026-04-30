@@ -14,6 +14,7 @@ import { api } from "./commands/api/index.ts";
 import { link } from "./commands/link/index.ts";
 import { unlink } from "./commands/unlink/index.ts";
 import { apps as appsHandlers } from "./commands/apps/index.ts";
+import { users as usersHandlers } from "./commands/users/index.ts";
 import { doctor } from "./commands/doctor/index.ts";
 import { switchEnv } from "./commands/switch-env/index.ts";
 import { openDashboard } from "./commands/open/index.ts";
@@ -34,6 +35,7 @@ import {
   UserAbortError,
   ApiError,
   PlapiError,
+  FapiError,
   EXIT_CODE,
   throwUsageError,
 } from "./lib/errors.ts";
@@ -257,6 +259,57 @@ Give AI agents better Clerk context: install the Clerk skills
       { command: 'clerk apps create "My App" --json', description: "Output as JSON" },
     ])
     .action(appsHandlers.create);
+
+  const users = program
+    .command("users")
+    .description("Manage Clerk users")
+    .option("--secret-key <key>", "Backend API secret key to use")
+    .option("--app <id>", "Application ID to target (works from any directory)")
+    .option("--instance <id>", "Instance to target (dev, prod, or a full instance ID)")
+    .setExamples([
+      {
+        command: "clerk users create --email alice@example.com --first-name Alice --yes",
+        description: "Create a user from curated flags",
+      },
+      {
+        command: 'clerk users create -d \'{"email_address":["alice@example.com"]}\' --yes',
+        description: "Create a user from an inline BAPI request body",
+      },
+    ])
+    .action(usersHandlers.menu);
+
+  users
+    .command("create")
+    .description("Create a user")
+    .option("--json", "Output as JSON")
+    .option("--email <email>", "Email address")
+    .option("--phone <phone>", "Phone number")
+    .option("--username <username>", "Username")
+    .option("--password <password>", "Password")
+    .option("--first-name <first-name>", "First name")
+    .option("--last-name <last-name>", "Last name")
+    .option("--external-id <external-id>", "External ID")
+    .option("-d, --data <json>", "Inline BAPI request body")
+    .option("--file <path>", "Read BAPI request body from a file")
+    .option("--dry-run", "Show the request without executing it")
+    .option("--yes", "Skip confirmation prompt")
+    .setExamples([
+      {
+        command: "clerk users create --email alice@example.com --first-name Alice --yes",
+        description: "Create a user from curated flags",
+      },
+      {
+        command: 'clerk users create -d \'{"email_address":["alice@example.com"]}\' --yes',
+        description: "Create a user from an inline BAPI request body",
+      },
+      {
+        command: "clerk users create --file user.json --dry-run",
+        description: "Preview a request from a file without executing",
+      },
+    ])
+    .action((_opts, cmd) =>
+      usersHandlers.create(cmd.optsWithGlobals() as Parameters<typeof usersHandlers.create>[0]),
+    );
 
   const env = program
     .command("env")
@@ -845,7 +898,7 @@ export async function runProgram(
         );
       } else {
         log.error(`${prefix} (${error.status}): ${detail}`);
-        if (verbose && error instanceof PlapiError && error.url) {
+        if (verbose && (error instanceof PlapiError || error instanceof FapiError) && error.url) {
           log.error(`       URL: ${error.url}`);
         }
       }

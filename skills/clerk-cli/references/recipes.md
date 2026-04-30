@@ -28,7 +28,15 @@ clerk api /users/user_abc123
 # Search by email
 clerk api '/users?email_address=alice@example.com'
 
-# Create a user
+# Create a user (preferred; curated flags)
+clerk users create \
+  --email alice@example.com \
+  --password 'SuperSecret123!' \
+  --first-name Alice \
+  --last-name Doe \
+  --yes
+
+# Equivalent raw BAPI call. Use only when curated flags don't cover a field.
 clerk api /users -d '{
   "email_address": ["alice@example.com"],
   "password": "SuperSecret123!",
@@ -60,22 +68,23 @@ For test accounts you need to sign into without real email or SMS delivery, Cler
 
 ```sh
 # Create a test user with a test email (dev instance)
-clerk api /users -d '{
+# `skip_password_checks` isn't a curated flag, so pass the body via `-d`.
+clerk users create -d '{
   "email_address": ["demo+clerk_test@example.com"],
   "password": "TestPass123!",
   "skip_password_checks": true
-}'
+}' --yes
 ```
 
 **By phone.** Any US fictional phone number in the `+1 (XXX) 555-0100` through `+1 (XXX) 555-0199` range is recognized as a test phone. Pass the E.164 form.
 
 ```sh
 # Create a test user with a test phone (dev instance)
-clerk api /users -d '{
+clerk users create -d '{
   "phone_number": ["+12015550100"],
   "password": "TestPass123!",
   "skip_password_checks": true
-}'
+}' --yes
 ```
 
 When signing in as either user in a browser or Playwright, enter `424242` at the OTP prompt.

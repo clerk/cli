@@ -7,8 +7,8 @@
   },
   "type": "module",
   "scripts": {
-    "build": "bun build ./src/cli.ts --outfile ./dist/cli.js --target node --external @napi-rs/keyring",
-    "build:compile": "bun build --compile --no-compile-autoload-dotenv ./src/cli.ts --outfile ./dist/clerk",
+    "build": "bun build ./src/cli.ts --outfile ./dist/cli.js --target node --external @napi-rs/keyring --minify",
+    "build:compile": "bun build --compile --minify --no-compile-autoload-dotenv ./src/cli.ts --outfile ./dist/clerk",
     "dev": "bun run ./src/cli.ts",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "lint": "oxlint src/",
@@ -29,6 +29,7 @@
     "yaml": "^2.8.3"
   },
   "devDependencies": {
+    "@clerk/shared": "^4.8.3",
     "@types/semver": "^7.7.1"
   }
 }

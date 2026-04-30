@@ -11,6 +11,7 @@ import { getGitRepoIdentifier, getGitNormalizedRemote } from "./git.ts";
 import { CliError, ERROR_CODE } from "./errors.ts";
 import { withHomeFsAccess } from "./host-execution.ts";
 import { log } from "./log.ts";
+import type { Application, ApplicationInstance } from "./plapi.ts";
 
 let overrideConfigFile: string | undefined;
 
@@ -251,6 +252,62 @@ interface AppContextOptions {
   cwd?: string;
 }
 
+export function resolveFetchedApplicationInstance(
+  appId: string,
+  app: Application,
+  instance?: string,
+):
+  | { found: true; instance: ApplicationInstance; instanceId: string; instanceLabel: string }
+  | { found: false; instanceId: string; instanceLabel: string } {
+  if (instance) {
+    const env = INSTANCE_ALIASES[instance];
+    if (env) {
+      const matched = app.instances.find((entry) => entry.environment_type === env);
+      if (!matched) {
+        throw new CliError(`No ${env} instance found for application ${appId}.`, {
+          code: ERROR_CODE.INSTANCE_NOT_FOUND,
+        });
+      }
+      return {
+        found: true,
+        instance: matched,
+        instanceId: matched.instance_id,
+        instanceLabel: env,
+      };
+    }
+
+    const matched = app.instances.find((entry) => entry.instance_id === instance);
+    if (matched) {
+      return {
+        found: true,
+        instance: matched,
+        instanceId: matched.instance_id,
+        instanceLabel: instance,
+      };
+    }
+
+    return {
+      found: false,
+      instanceId: instance,
+      instanceLabel: instance,
+    };
+  }
+
+  const development = app.instances.find((entry) => entry.environment_type === "development");
+  if (!development) {
+    throw new CliError(`No development instance found for application ${appId}.`, {
+      code: ERROR_CODE.INSTANCE_NOT_FOUND,
+    });
+  }
+
+  return {
+    found: true,
+    instance: development,
+    instanceId: development.instance_id,
+    instanceLabel: "development",
+  };
+}
+
 /**
  * Resolve app context from explicit flags or linked profile.
  * This is the isomorphic resolution chain used by profile-dependent commands:
@@ -265,46 +322,19 @@ export async function resolveAppContext(
     const { fetchApplication } = await import("./plapi.ts");
     const app = await fetchApplication(options.app);
     const appLabel = app.name || options.app;
-
-    if (options.instance) {
-      const env = INSTANCE_ALIASES[options.instance];
-      if (env) {
-        const matched = app.instances.find((instance) => instance.environment_type === env);
-        if (!matched) {
-          throw new CliError(`No ${env} instance found for application ${options.app}.`, {
-            code: ERROR_CODE.INSTANCE_NOT_FOUND,
-          });
-        }
-        return {
-          appId: options.app,
-          appLabel,
-          instanceId: matched.instance_id,
-          instanceLabel: env,
-        };
-      }
-
-      return {
-        appId: options.app,
-        appLabel,
-        instanceId: options.instance,
-        instanceLabel: options.instance,
-      };
-    }
-
-    const development = app.instances.find(
-      (instance) => instance.environment_type === "development",
-    );
-    if (!development) {
-      throw new CliError(`No development instance found for application ${options.app}.`, {
-        code: ERROR_CODE.INSTANCE_NOT_FOUND,
-      });
+    const resolved = resolveFetchedApplicationInstance(options.app, app, options.instance);
+    if (!resolved.found) {
+      throw new CliError(
+        `Instance ${resolved.instanceId} not found in application ${options.app}.`,
+        { code: ERROR_CODE.INSTANCE_NOT_FOUND },
+      );
     }
 
     return {
       appId: options.app,
       appLabel,
-      instanceId: development.instance_id,
-      instanceLabel: "development",
+      instanceId: resolved.instanceId,
+      instanceLabel: resolved.instanceLabel,
     };
   }
 
