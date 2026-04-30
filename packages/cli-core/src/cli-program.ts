@@ -416,6 +416,36 @@ Give AI agents better Clerk context: install the Clerk skills
       usersHandlers.create(cmd.optsWithGlobals() as Parameters<typeof usersHandlers.create>[0]),
     );
 
+  users
+    .command("open")
+    .description("Open a user's dashboard page in your browser")
+    .addArgument(createArgument("[user-id]", "User ID to open. Omit to pick interactively."))
+    .option("--print", "Print the URL without opening the browser")
+    .option("--secret-key <key>", "Backend API secret key to use")
+    .option("--app <id>", "Application ID to target (works from any directory)")
+    .option("--instance <id>", "Instance to target (dev, prod, or a full instance ID)")
+    .setExamples([
+      { command: "clerk users open", description: "Pick app (if not linked) and user, then open" },
+      {
+        command: "clerk users open user_2x9k",
+        description: "Open a specific user (pick app if not linked)",
+      },
+      {
+        command: "clerk users open user_2x9k --app app_123",
+        description: "Open a specific user against an explicit app",
+      },
+      {
+        command: "clerk users open user_2x9k --print",
+        description: "Print the dashboard URL instead of opening",
+      },
+    ])
+    .action((userId, _opts, cmd) =>
+      usersHandlers.open({
+        ...(cmd.optsWithGlobals() as Parameters<typeof usersHandlers.open>[0]),
+        userId,
+      }),
+    );
+
   const env = program
     .command("env")
     .description("Manage environment variables")
