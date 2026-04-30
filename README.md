@@ -189,11 +189,13 @@ clerk enable billing
   --instance <id>      Instance to target (dev, prod, or instance ID)
   --yes                Skip the confirmation prompt
   --dry-run            Preview the patch without applying it
+  --no-skills          Skip the post-enable `clerk-billing` agent skill install
   Examples:
     $ clerk enable billing                               Enable billing for organizations and users
     $ clerk enable billing --for org                     Enable billing for organizations only
     $ clerk enable billing --for user                    Enable billing for users only
     $ clerk enable billing --for org user                Enable billing for both targets
+    $ clerk enable billing --no-skills                   Enable without installing the agent skill
 
 clerk disable billing
   --for <targets...>   Billing targets (org and/or user), separated by spaces or commas (e.g. org user). Defaults to both when omitted.

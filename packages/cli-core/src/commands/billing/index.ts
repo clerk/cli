@@ -1,6 +1,11 @@
 import { resolveAppContext } from "../../lib/config.ts";
 import { throwUsageError } from "../../lib/errors.ts";
+import { isAgent, isHuman } from "../../mode.ts";
+import { log } from "../../lib/log.ts";
+import { confirm } from "../../lib/prompts.ts";
+import { detectPackageManager } from "../../lib/package-manager.ts";
 import { applyConfigPatch } from "../config/apply-patch.ts";
+import { resolveSkillsRunner, runSkillsAdd } from "../skill/install.ts";
 
 interface BillingOptions {
   app?: string;
@@ -8,19 +13,13 @@ interface BillingOptions {
   for?: string[];
   yes?: boolean;
   dryRun?: boolean;
+  skills?: boolean;
 }
 
 type Target = "org" | "user";
 
-/**
- * Parse the `--for` option, which accepts both variadic and comma-separated
- * forms (mirroring `--keys` on `clerk config pull`):
- *
- *   --for org user      → ["org", "user"]
- *   --for org,user      → ["org", "user"]
- *   --for org --for user → ["org", "user"]
- *   (omitted)           → ["org", "user"] (default to both)
- */
+// Accepts variadic (`--for org user`), CSV (`--for org,user`), or repeated
+// (`--for org --for user`) — mirrors `--keys` on `clerk config pull`.
 function parseForTargets(values: string[] | undefined): Target[] {
   if (!values?.length) return ["org", "user"];
   const seen = new Set<Target>();
@@ -53,8 +52,7 @@ export async function billingEnable(options: BillingOptions): Promise<void> {
   const payload: Record<string, unknown> = { billing };
   if (targets.includes("org")) {
     billing.organization_enabled = true;
-    // Cascade-enable orgs whenever billing is being turned on for orgs. This
-    // is idempotent — if orgs are already enabled the diff stays empty.
+    // Org billing requires orgs enabled; cascade is idempotent.
     payload.organization_settings = { enabled: true };
   }
   if (targets.includes("user")) {
@@ -70,14 +68,49 @@ export async function billingEnable(options: BillingOptions): Promise<void> {
     yes: options.yes,
     dryRun: options.dryRun,
   });
+
+  // `clerk init` doesn't bundle clerk-billing — it's opt-in. Surface it here.
+  if (!options.dryRun && options.skills !== false) {
+    await offerBillingSkillInstall(options);
+  }
+}
+
+async function offerBillingSkillInstall(options: BillingOptions): Promise<void> {
+  const skipPrompt = options.yes === true || isAgent();
+
+  if (isHuman() && !skipPrompt) {
+    const ok = await confirm({
+      message: "Install the `clerk-billing` agent skill? (gives AI agents Clerk billing context)",
+      default: true,
+    });
+    if (!ok) return;
+  }
+
+  const interactive = isHuman() && !skipPrompt;
+  const cwd = process.cwd();
+  const runner = await resolveSkillsRunner(await detectPackageManager(cwd), interactive);
+  if (!runner) return;
+
+  const installed = await runSkillsAdd(
+    runner,
+    cwd,
+    "clerk/skills",
+    ["clerk-billing"],
+    interactive,
+    false,
+    "clerk-billing",
+  );
+  if (installed) {
+    log.blank();
+    log.success("`clerk-billing` agent skill installed.");
+  }
 }
 
 export async function billingDisable(options: BillingOptions): Promise<void> {
   const targets = parseForTargets(options.for);
   const ctx = await resolveAppContext(options);
 
-  // Disabling billing never cascades to disabling organizations — leave
-  // `organization_settings` untouched per spec.
+  // No cascade: leave organization_settings untouched.
   const billing: Record<string, unknown> = {};
   if (targets.includes("org")) billing.organization_enabled = false;
   if (targets.includes("user")) billing.user_enabled = false;

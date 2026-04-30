@@ -35,6 +35,18 @@ clerk enable billing                   # defaults to both
 | `--instance <id>` | Target a specific instance (dev, prod)                                          |
 | `--yes`           | Skip the confirmation prompt                                                    |
 | `--dry-run`       | Preview the patch without applying it                                           |
+| `--no-skills`     | Skip the post-enable `clerk-billing` agent skill install (enable only)          |
+
+## Agent skill
+
+After a successful `enable billing`, the command offers to install the upstream `clerk-billing` agent skill from [`clerk/skills`](https://github.com/clerk/skills). `clerk init` doesn't bundle this one as a default — billing is opt-in — so this is the natural moment to surface it.
+
+- **Human mode**: prompts `Install the` `clerk-billing` `agent skill?` defaulting to yes. Decline returns silently.
+- **Agent mode (no TTY) or `--yes`**: installs non-interactively (`-y -g`).
+- **`--no-skills`**: skips the install entirely.
+- **`--dry-run`**: skips the install (no real side-effects in dry-run).
+
+The install runs via the user's package runner (`bunx`, `pnpm dlx`, `yarn dlx`, or `npx`), matching the `clerk init` flow.
 
 ## Cascade behavior
 

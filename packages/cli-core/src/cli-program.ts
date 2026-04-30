@@ -479,6 +479,7 @@ Give AI agents better Clerk context: install the Clerk skills
     .option("--instance <id>", "Instance to target (dev, prod, or instance ID)")
     .option("--yes", "Skip confirmation prompts")
     .option("--dry-run", "Show the patch that would be sent without applying it")
+    .option("--no-skills", "Skip the optional `clerk-billing` agent skill install")
     .setExamples([
       {
         command: "clerk enable billing",
@@ -495,6 +496,10 @@ Give AI agents better Clerk context: install the Clerk skills
       {
         command: "clerk enable billing --for org user",
         description: "Enable billing for both targets",
+      },
+      {
+        command: "clerk enable billing --no-skills",
+        description: "Enable without installing the agent skill",
       },
     ])
     .action(billingEnable);

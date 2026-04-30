@@ -18,6 +18,32 @@ mock.module("../../lib/spinner.ts", () => ({
   withSpinner: async (_msg: string, fn: () => Promise<unknown>) => fn(),
 }));
 
+// Stub the skill install primitives so post-enable skill installation is
+// observable from tests without spawning a real `bunx skills add` subprocess.
+// Tests reset these via `resetSkillStubs()` in beforeEach.
+type SkillCall = { source: string; skillNames: readonly string[] };
+const skillCalls: SkillCall[] = [];
+let resolveSkillsRunnerStub: () => Promise<unknown> | unknown = () => ({
+  id: "bunx",
+  display: "bunx",
+});
+function resetSkillStubs() {
+  skillCalls.length = 0;
+  resolveSkillsRunnerStub = () => ({ id: "bunx", display: "bunx" });
+}
+mock.module("../skill/install.ts", () => ({
+  resolveSkillsRunner: async () => resolveSkillsRunnerStub(),
+  runSkillsAdd: async (
+    _runner: unknown,
+    _cwd: string,
+    source: string,
+    skillNames: readonly string[],
+  ) => {
+    skillCalls.push({ source, skillNames });
+    return true;
+  },
+}));
+
 describe("clerk enable/disable billing", () => {
   const originalEnv = { ...process.env };
   const originalFetch = globalThis.fetch;
@@ -39,6 +65,7 @@ describe("clerk enable/disable billing", () => {
     stubFetch(async () => {
       return new Response(JSON.stringify({}), { status: 200 });
     });
+    resetSkillStubs();
   });
 
   afterEach(async () => {
@@ -286,5 +313,49 @@ describe("clerk enable/disable billing", () => {
 
     expect(capturedUrl).toContain("dry_run=true");
     expect(captured.err).toContain("[dry-run]");
+  });
+
+  // --- enable + clerk-billing skill install ---
+
+  test("enable installs the clerk-billing agent skill in agent mode", async () => {
+    await setupProfile();
+    const { billingEnable } = await import("./index.ts");
+    await captured.run(() => billingEnable({ for: ["org"] }));
+
+    expect(skillCalls).toEqual([{ source: "clerk/skills", skillNames: ["clerk-billing"] }]);
+  });
+
+  test("enable --no-skills suppresses the skill install", async () => {
+    await setupProfile();
+    const { billingEnable } = await import("./index.ts");
+    await captured.run(() => billingEnable({ for: ["org"], skills: false }));
+
+    expect(skillCalls).toHaveLength(0);
+  });
+
+  test("enable --dry-run does not install the skill", async () => {
+    await setupProfile();
+    const { billingEnable } = await import("./index.ts");
+    await captured.run(() => billingEnable({ for: ["org"], dryRun: true }));
+
+    expect(skillCalls).toHaveLength(0);
+  });
+
+  test("enable skips skill install when no runner is available", async () => {
+    resolveSkillsRunnerStub = () => null;
+
+    await setupProfile();
+    const { billingEnable } = await import("./index.ts");
+    await captured.run(() => billingEnable({ for: ["org"] }));
+
+    expect(skillCalls).toHaveLength(0);
+  });
+
+  test("disable does not trigger the skill install", async () => {
+    await setupProfile();
+    const { billingDisable } = await import("./index.ts");
+    await captured.run(() => billingDisable({ for: ["org"] }));
+
+    expect(skillCalls).toHaveLength(0);
   });
 });

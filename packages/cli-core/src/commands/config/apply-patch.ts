@@ -9,32 +9,17 @@ import { hasConfigChanges, printDiff } from "./push.ts";
 export interface ApplyPatchOptions {
   ctx: { appId: string; instanceId: string; appLabel: string; instanceLabel: string };
   payload: Record<string, unknown>;
-  /** Verb shown in dry-run/spinner headlines, e.g. "Enabling organizations". */
   verb: string;
-  /** Final success line in non-dry-run mode, e.g. "Organizations enabled". */
   successMessage: string;
-  /** Context attached to API errors when the PATCH fails. */
   failureContext: string;
-  /** Skip-confirmation flag from the calling command. */
   yes?: boolean;
-  /** Preview-only flag from the calling command. */
   dryRun?: boolean;
-  /** Optional human-mode warning printed just before the confirm prompt. */
   warning?: string;
-  /**
-   * Pre-fetched current config (e.g. when the caller already inspected it to
-   * decide on a warning). Skips the extra GET round-trip.
-   */
+  /** Pre-fetched current config; skips the extra GET when caller already has it. */
   currentConfig?: Record<string, unknown>;
 }
 
-/**
- * Shared flow for the `enable`/`disable` shortcut commands: fetch current
- * config, diff against the proposed patch, confirm in human mode, and apply.
- *
- * Mirrors the safety story from `clerk config patch` (see push.ts) so the
- * shortcut commands don't regress on diff/dry-run/confirmation.
- */
+/** Fetch + diff + confirm + PATCH, matching `clerk config patch` semantics. */
 export async function applyConfigPatch(opts: ApplyPatchOptions): Promise<void> {
   const { ctx, payload, verb, successMessage, failureContext, yes, dryRun, warning } = opts;
 

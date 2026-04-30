@@ -68,8 +68,8 @@ export async function orgsDisable(options: OrgsOptions): Promise<void> {
   const billing = current.billing as Record<string, unknown> | undefined;
   const orgBillingOn = billing?.organization_enabled === true;
 
-  // Wyatt's note: "warn-then-do" is worse than nothing in CI logs. In agent
-  // mode (no TTY), refuse and require an explicit override.
+  // Agent mode: refuse rather than warn-then-mutate (warn-then-mutate in CI
+  // logs reads as "the warning was heeded" when it wasn't).
   if (orgBillingOn && !isHuman() && !options.yes) {
     throwUsageError(
       "Organization billing is enabled. Disabling organizations would leave `billing.organization_enabled` stranded. " +
