@@ -232,4 +232,17 @@ describe("users open", () => {
     expect(action).toBeDefined();
     expect(action?.label).toBe("Open user in dashboard");
   });
+
+  test("rejects malformed user IDs with a usage error", async () => {
+    await expect(captured.run(() => open({ userId: "../foo", print: true }))).rejects.toThrow(
+      /Invalid user ID/,
+    );
+
+    await expect(
+      captured.run(() => open({ userId: "not-a-user-id", print: true })),
+    ).rejects.toThrow(/Invalid user ID/);
+
+    expect(mockResolveUsersInstanceContext).not.toHaveBeenCalled();
+    expect(mockResolveBapiSecretKey).not.toHaveBeenCalled();
+  });
 });

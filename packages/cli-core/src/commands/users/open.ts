@@ -19,6 +19,11 @@ export type UsersOpenOptions = {
 };
 
 export async function open(options: UsersOpenOptions = {}): Promise<void> {
+  let userId = options.userId;
+  if (userId !== undefined && !/^user_[A-Za-z0-9]+$/.test(userId)) {
+    throwUsageError(`Invalid user ID '${userId}'. Expected format: user_<id>.`);
+  }
+
   let target;
   try {
     target = await resolveUsersInstanceContext({
@@ -39,7 +44,6 @@ export async function open(options: UsersOpenOptions = {}): Promise<void> {
     instance: options.instance,
   });
 
-  let userId = options.userId;
   if (!userId) {
     if (isAgent()) {
       throwUsageError("User ID is required in agent mode. Pass it as a positional argument.");
