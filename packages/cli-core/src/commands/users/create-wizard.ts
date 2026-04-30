@@ -6,6 +6,7 @@ import {
   type InstanceType,
   type UserSettingsJSON,
 } from "../../lib/fapi.ts";
+import { log } from "../../lib/log.ts";
 import { withSpinner } from "../../lib/spinner.ts";
 import { isEnabled, isRequired, type AttributeName } from "./interactive/attributes.ts";
 import { resolveUsersInstanceContext } from "./interactive/instance-context.ts";
@@ -54,10 +55,21 @@ const ALL_FIELDS: FieldDef[] = [
 
 export async function runCreateWizard(options: WizardOptions): Promise<CreateWizardResult> {
   const ctx = await resolveUsersInstanceContext(options);
-  const settings =
-    ctx.fapiHost && ctx.publishableKey
-      ? await loadSettings(ctx.fapiHost, decodePublishableKey(ctx.publishableKey).instanceType)
-      : undefined;
+  let settings: UserSettingsJSON | undefined;
+  if (ctx.fapiHost && ctx.publishableKey) {
+    try {
+      settings = await loadSettings(
+        ctx.fapiHost,
+        decodePublishableKey(ctx.publishableKey).instanceType,
+      );
+    } catch (error) {
+      log.debug(
+        `create-wizard: failed to load FAPI user settings, prompting full curated set: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+    }
+  }
 
   const fields: CreateWizardFields = {};
   for (const field of ALL_FIELDS) {

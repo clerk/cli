@@ -89,66 +89,37 @@ export async function runUserLifecycleCommand(
   }
 }
 
-function getLifecycleSuccessMessage(path: string): string {
+const LIFECYCLE_LABELS: Record<string, { success: string; error: string }> = {
+  "/ban": { success: "Banned user", error: "Failed to ban user" },
+  "/unban": { success: "Unbanned user", error: "Failed to unban user" },
+  "/lock": { success: "Locked user", error: "Failed to lock user" },
+  "/unlock": { success: "Unlocked user", error: "Failed to unlock user" },
+  "/profile_image": {
+    success: "Removed profile image for user",
+    error: "Failed to remove profile image for user",
+  },
+  "/mfa": { success: "Disabled MFA for user", error: "Failed to disable MFA for user" },
+  "/totp": { success: "Removed TOTP for user", error: "Failed to remove TOTP for user" },
+  "/backup_code": {
+    success: "Removed backup codes for user",
+    error: "Failed to remove backup codes for user",
+  },
+};
+
+function getLifecycleLabel(path: string, type: "success" | "error"): string {
   const userId = getUserIdFromPath(path);
+  const suffix = "/" + (path.split("/").pop() ?? "");
+  const labels = LIFECYCLE_LABELS[suffix];
+  const fallback = type === "success" ? "Updated user" : "Failed to update user";
+  return `${labels?.[type] ?? fallback} ${userId}`;
+}
 
-  if (path.endsWith("/ban")) {
-    return `Banned user ${userId}`;
-  }
-  if (path.endsWith("/unban")) {
-    return `Unbanned user ${userId}`;
-  }
-  if (path.endsWith("/lock")) {
-    return `Locked user ${userId}`;
-  }
-  if (path.endsWith("/unlock")) {
-    return `Unlocked user ${userId}`;
-  }
-  if (path.endsWith("/profile_image")) {
-    return `Removed profile image for user ${userId}`;
-  }
-  if (path.endsWith("/mfa")) {
-    return `Disabled MFA for user ${userId}`;
-  }
-  if (path.endsWith("/totp")) {
-    return `Removed TOTP for user ${userId}`;
-  }
-  if (path.endsWith("/backup_code")) {
-    return `Removed backup codes for user ${userId}`;
-  }
-
-  return `Updated user ${userId}`;
+function getLifecycleSuccessMessage(path: string): string {
+  return getLifecycleLabel(path, "success");
 }
 
 function getLifecycleErrorMessage(path: string): string {
-  const userId = getUserIdFromPath(path);
-
-  if (path.endsWith("/ban")) {
-    return `Failed to ban user ${userId}`;
-  }
-  if (path.endsWith("/unban")) {
-    return `Failed to unban user ${userId}`;
-  }
-  if (path.endsWith("/lock")) {
-    return `Failed to lock user ${userId}`;
-  }
-  if (path.endsWith("/unlock")) {
-    return `Failed to unlock user ${userId}`;
-  }
-  if (path.endsWith("/profile_image")) {
-    return `Failed to remove profile image for user ${userId}`;
-  }
-  if (path.endsWith("/mfa")) {
-    return `Failed to disable MFA for user ${userId}`;
-  }
-  if (path.endsWith("/totp")) {
-    return `Failed to remove TOTP for user ${userId}`;
-  }
-  if (path.endsWith("/backup_code")) {
-    return `Failed to remove backup codes for user ${userId}`;
-  }
-
-  return `Failed to update user ${userId}`;
+  return getLifecycleLabel(path, "error");
 }
 
 function getUserIdFromPath(path: string): string {
