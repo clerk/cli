@@ -1,6 +1,6 @@
 # Init Command
 
-Initializes Clerk in a project by authenticating the user, linking a Clerk application, installing the SDK, pulling environment variables, and scaffolding framework-specific boilerplate.
+Initializes Clerk in a project by detecting the framework, installing the SDK, and scaffolding framework-specific boilerplate. Depending on mode and framework support, init either uses keyless development keys or links to a real Clerk application and pulls environment variables.
 
 ## Usage
 
