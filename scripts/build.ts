@@ -90,6 +90,7 @@ for (const target of selectedTargets) {
     "bun",
     "build",
     "--compile",
+    "--minify",
     "--no-compile-autoload-dotenv",
     `--target=${target.bunTarget}`,
     `--define`,
