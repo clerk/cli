@@ -34,6 +34,12 @@ export async function open(options: UsersOpenOptions = {}): Promise<void> {
 
   const subpath = `users/${userId}`;
   const url = buildDashboardUrl(ctx.appId, ctx.instanceId, subpath);
+
+  if (options.print) {
+    log.data(url);
+    return;
+  }
+
   const appLabel = ctx.appId;
   const instanceLabel = "development";
 

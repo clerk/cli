@@ -65,4 +65,13 @@ describe("users open", () => {
     expect(captured.err).toContain("Opening");
     expect(captured.err).toContain("users/user_2x9k");
   });
+
+  test("--print: plain URL only on stdout, no browser, no intro/outro", async () => {
+    await captured.run(() => open({ userId: "user_2x9k", print: true }));
+
+    expect(captured.out).toBe(
+      "https://dashboard.clerk.com/apps/app_abc123/instances/ins_dev789/users/user_2x9k",
+    );
+    expect(mockOpenBrowser).not.toHaveBeenCalled();
+  });
 });
