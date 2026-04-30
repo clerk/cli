@@ -40,7 +40,7 @@ Commands:
   whoami                                     Show the current logged-in user
   open                                       Open Clerk resources in your browser
   apps                                       Manage your Clerk applications
-  users                                      Manage Clerk users
+  users       [options]                      Manage Clerk users
   env                                        Manage environment variables
   config                                     Manage instance configuration
   api         [options] [endpoint] [filter]  Make authenticated requests to the Clerk API
@@ -49,4 +49,7 @@ Commands:
   skill                                      Manage the bundled Clerk CLI agent skill
   update      [options]                      Update the Clerk CLI to the latest version
   help        [command]                      Display help for command
+
+Give AI agents better Clerk context: install the Clerk skills
+  $ clerk skill install
 ```
