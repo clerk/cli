@@ -19,6 +19,7 @@ import { CliError } from "../../lib/errors.ts";
 import { log } from "../../lib/log.ts";
 import { isHuman } from "../../mode.ts";
 import { select } from "../../lib/listage.ts";
+import { NEXT_STEPS, printNextSteps } from "../../lib/next-steps.ts";
 
 export async function switchEnv(environmentArg: string | undefined): Promise<void> {
   const available = getAvailableEnvs();
@@ -70,9 +71,11 @@ export async function switchEnv(environmentArg: string | undefined): Promise<voi
 
   log.data(`Switched from ${previousEnv} to ${target}.`);
 
-  // Check if there's a stored token for the target environment
   const token = await getToken();
   if (!token) {
-    log.data(`No credentials found for ${target}. Run \`clerk auth login\` to authenticate.`);
+    log.data(`No credentials found for ${target}.`);
+    printNextSteps(NEXT_STEPS.SWITCH_ENV_NO_TOKEN);
+    return;
   }
+  printNextSteps(NEXT_STEPS.SWITCH_ENV);
 }

@@ -6,6 +6,7 @@ import { confirm } from "../../lib/prompts.ts";
 import { dim, bold, red, green } from "../../lib/color.ts";
 import { withSpinner } from "../../lib/spinner.ts";
 import { log } from "../../lib/log.ts";
+import { NEXT_STEPS, printNextSteps } from "../../lib/next-steps.ts";
 
 interface ConfigPushOptions {
   app?: string;
@@ -119,6 +120,9 @@ async function configPush(options: ConfigPushOptions, op: Operation): Promise<vo
       ? "[dry-run] Validation passed — no changes applied"
       : "Config pushed successfully",
   );
+  if (!options.dryRun) {
+    printNextSteps(NEXT_STEPS.CONFIG_PUSH);
+  }
 }
 
 export async function readInput(options: { file?: string; json?: string }): Promise<string> {

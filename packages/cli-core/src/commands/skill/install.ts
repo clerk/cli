@@ -35,6 +35,7 @@ import {
 } from "../../lib/runners.js";
 import { isNonEmpty } from "../../lib/helpers/arrays.js";
 import { detectPackageManager, type PackageManager } from "../../lib/package-manager.js";
+import { NEXT_STEPS, printNextSteps } from "../../lib/next-steps.js";
 
 import clerkSkillMd from "../../../../../skills/clerk-cli/SKILL.md" with { type: "text" };
 import clerkAuthMd from "../../../../../skills/clerk-cli/references/auth.md" with { type: "text" };
@@ -246,8 +247,9 @@ export async function skillInstall(options: SkillInstallOptions): Promise<void> 
   if (!runner) return;
 
   const ok = await installClerkSkillCore(runner, cwd, interactive);
-  if (ok) {
-    log.blank();
-    log.success("clerk-cli skill installed. AI agents now have Clerk context in this project.");
-  }
+  if (!ok) return;
+
+  log.blank();
+  log.success("clerk-cli skill installed. AI agents now have Clerk context in this project.");
+  printNextSteps(NEXT_STEPS.SKILL_INSTALL);
 }

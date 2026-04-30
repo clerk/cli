@@ -136,9 +136,8 @@ describe("switch-env", () => {
     logSpy = spyOn(console, "log").mockImplementation(() => {});
     await runSwitchEnv("staging");
 
-    expect(captured.out).toContain(
-      "No credentials found for staging. Run `clerk auth login` to authenticate.",
-    );
+    expect(captured.out).toContain("No credentials found for staging.");
+    expect(captured.err).toContain("clerk auth login");
   });
 
   test("does not warn about credentials when token exists", async () => {
