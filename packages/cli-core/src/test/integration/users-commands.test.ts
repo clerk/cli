@@ -280,7 +280,7 @@ describe("users commands", () => {
 
       http.mock({
         "/v1/platform/applications/app_1?include_secret_keys=true": MOCK_APP,
-        "/v1/users": { data: MOCK_USERS, totalCount: MOCK_USERS.length },
+        "/v1/users": MOCK_USERS,
       });
 
       const { stdout, stderr } = await clerk("--mode", mode, "users", "list");
@@ -288,12 +288,9 @@ describe("users commands", () => {
       if (mode === "human") {
         expect(stdout).toContain("John Doe");
         expect(stdout).toContain("john@example.com");
-        expect(stderr).toContain("1 user");
+        expect(stderr).toContain("1 user returned");
       } else {
-        expect(JSON.parse(stdout)).toEqual({
-          data: MOCK_USERS,
-          totalCount: MOCK_USERS.length,
-        });
+        expect(JSON.parse(stdout)).toEqual(MOCK_USERS);
       }
 
       expect(
@@ -319,7 +316,7 @@ describe("users commands", () => {
     // option, not silently fall through to the no-secret-key error.
     http.mock({
       [PLAPI_APP_ROUTE]: MOCK_APP,
-      "/v1/users": { data: MOCK_USERS, totalCount: MOCK_USERS.length },
+      "/v1/users": MOCK_USERS,
     });
 
     const { stdout, exitCode } = await clerk.raw(
@@ -334,10 +331,7 @@ describe("users commands", () => {
     );
 
     expect(exitCode).toBe(0);
-    expect(JSON.parse(stdout)).toEqual({
-      data: MOCK_USERS,
-      totalCount: MOCK_USERS.length,
-    });
+    expect(JSON.parse(stdout)).toEqual(MOCK_USERS);
 
     const fetchAppCall = http.requests.find(
       (request) =>

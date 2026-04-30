@@ -70,8 +70,8 @@ describe("users list", () => {
     mockBapiRequest.mockResolvedValue({
       status: 200,
       headers: new Headers(),
-      body: { data: mockUsers, totalCount: mockUsers.length },
-      rawBody: JSON.stringify({ data: mockUsers, totalCount: mockUsers.length }),
+      body: mockUsers,
+      rawBody: JSON.stringify(mockUsers),
     });
     logSpy = spyOn(console, "log").mockImplementation(() => {});
     errorSpy = spyOn(console, "error").mockImplementation(() => {});
@@ -147,13 +147,6 @@ describe("users list", () => {
     expect(url.searchParams.get("offset")).toBe("50");
   });
 
-  test("reads users from Clerk's paginated response shape", async () => {
-    await runList();
-
-    expect(captured.out).toContain("Alice Example");
-    expect(captured.out).toContain("bob");
-  });
-
   test("prints a concise human-readable table by default", async () => {
     await runList();
 
@@ -162,15 +155,15 @@ describe("users list", () => {
     expect(captured.out).toContain("user_123");
     expect(captured.out).toContain("bob");
     expect(captured.out).toContain("+15551234567");
-    expect(captured.err).toContain("2 users");
+    expect(captured.err).toContain("2 users returned");
   });
 
   test("prints a helpful message when no users are returned", async () => {
     mockBapiRequest.mockResolvedValue({
       status: 200,
       headers: new Headers(),
-      body: { data: [], totalCount: 0 },
-      rawBody: JSON.stringify({ data: [], totalCount: 0 }),
+      body: [],
+      rawBody: "[]",
     });
 
     await runList();
@@ -182,10 +175,7 @@ describe("users list", () => {
   test("outputs JSON when requested", async () => {
     await runList({ json: true });
 
-    expect(JSON.parse(captured.out)).toEqual({
-      data: mockUsers,
-      totalCount: mockUsers.length,
-    });
+    expect(JSON.parse(captured.out)).toEqual(mockUsers);
     expect(captured.err).toBe("");
   });
 
@@ -194,10 +184,7 @@ describe("users list", () => {
 
     await runList();
 
-    expect(JSON.parse(captured.out)).toEqual({
-      data: mockUsers,
-      totalCount: mockUsers.length,
-    });
+    expect(JSON.parse(captured.out)).toEqual(mockUsers);
   });
 
   test("falls back to the shared picker-aware resolver in human mode when no credentials resolve", async () => {
@@ -228,7 +215,7 @@ describe("users list", () => {
     expect(captured.err).toContain("Alice Example");
     expect(captured.err).toContain("user_123");
     expect(captured.err).toContain("alice@example.com");
-    expect(captured.err).toContain("2 users");
+    expect(captured.err).toContain("2 users returned");
   });
 
   test("re-throws the original NO_SECRET_KEY error in agent mode without invoking the picker", async () => {

@@ -37,11 +37,6 @@ type BapiUser = {
   phone_numbers?: UserIdentifier[];
 };
 
-type PaginatedUsersResponse = {
-  data?: unknown;
-  totalCount?: number;
-};
-
 const COLUMN_PADDING = 2;
 
 function printJson(data: unknown, options: UsersListOptions = {}): boolean {
@@ -184,18 +179,9 @@ export async function list(options: UsersListOptions = {}): Promise<void> {
   );
 
   const body = response.body;
-  const users = Array.isArray(body)
-    ? (body as BapiUser[])
-    : Array.isArray((body as PaginatedUsersResponse | undefined)?.data)
-      ? ((body as PaginatedUsersResponse).data as BapiUser[])
-      : [];
-  const totalCount =
-    typeof (body as PaginatedUsersResponse | undefined)?.totalCount === "number"
-      ? (body as PaginatedUsersResponse).totalCount
-      : users.length;
+  const users = Array.isArray(body) ? (body as BapiUser[]) : [];
 
-  const jsonBody = Array.isArray(body) ? users : body;
-  if (printJson(jsonBody, options)) return;
+  if (printJson(body, options)) return;
 
   if (users.length === 0) {
     log.warn("No users found.");
@@ -203,7 +189,7 @@ export async function list(options: UsersListOptions = {}): Promise<void> {
   }
 
   formatUsersTable(users);
-  log.info(`\n${totalCount} user${totalCount === 1 ? "" : "s"}`);
+  log.info(`\n${users.length} user${users.length === 1 ? "" : "s"} returned`);
 }
 
 registerUsersAction({

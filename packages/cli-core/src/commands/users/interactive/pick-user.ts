@@ -14,11 +14,6 @@ type UserSummary = {
   email_addresses?: Array<{ email_address?: string }> | null;
 };
 
-type PaginatedUsersResponse = {
-  data?: unknown;
-  totalCount?: number;
-};
-
 export function formatUserChoice(user: UserSummary): string {
   const email = user.email_addresses?.[0]?.email_address ?? "no email";
   const nameParts = [user.first_name, user.last_name].filter(
@@ -42,11 +37,7 @@ export async function pickUser(options: PickUserOptions): Promise<string> {
         secretKey: options.secretKey,
       });
       const body = response.body;
-      const users = Array.isArray(body)
-        ? (body as UserSummary[])
-        : Array.isArray((body as PaginatedUsersResponse | undefined)?.data)
-          ? ((body as PaginatedUsersResponse).data as UserSummary[])
-          : [];
+      const users = Array.isArray(body) ? (body as UserSummary[]) : [];
 
       return users.map((user) => ({
         value: user.id,

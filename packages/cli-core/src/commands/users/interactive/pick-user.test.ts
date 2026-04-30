@@ -47,41 +47,6 @@ describe("pickUser", () => {
     expect(choices).toHaveLength(1);
     expect((choices[0] as { value: string }).value).toBe("user_1");
   });
-
-  test("maps choices from Clerk's paginated { data, totalCount } response shape", async () => {
-    let capturedSource:
-      | ((term: string | undefined, opt: { signal: AbortSignal }) => Promise<unknown[]>)
-      | undefined;
-    mockSearch.mockImplementation(async (config: { source: typeof capturedSource }) => {
-      capturedSource = config.source;
-      return "user_picked";
-    });
-    mockBapiRequest.mockResolvedValue({
-      status: 200,
-      headers: new Headers(),
-      body: {
-        data: [
-          {
-            id: "user_2",
-            first_name: "Bea",
-            email_addresses: [{ email_address: "bea@example.com" }],
-          },
-        ],
-        totalCount: 1,
-      },
-      rawBody: "{}",
-    });
-
-    await pickUser({ secretKey: "sk_test_xyz" });
-    const choices = await capturedSource!("bea", { signal: new AbortController().signal });
-
-    expect(choices).toEqual([
-      {
-        value: "user_2",
-        name: "Bea (bea@example.com) — user_2",
-      },
-    ]);
-  });
 });
 
 describe("formatUserChoice", () => {
