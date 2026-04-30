@@ -54,9 +54,13 @@ export async function open(options: UsersOpenOptions = {}): Promise<void> {
     });
   }
 
+  // Invariant: `resolveUsersInstanceContext` populates appId and instanceId on the
+  // full-resolution path, and `users open` does not invoke the --secret-key shortcut.
+  // The runtime check exists only to satisfy `buildDashboardUrl`'s non-optional types.
   if (!target.appId || !target.instanceId) {
-    throwUsageError(
-      "Cannot build a dashboard URL because no app target could be resolved. Use --app <app-id> instead, or run `clerk link` to link this directory.",
+    throw new CliError(
+      "Internal: dashboard target missing appId/instanceId after resolveUsersInstanceContext.",
+      { code: ERROR_CODE.INSTANCE_NOT_FOUND },
     );
   }
 
