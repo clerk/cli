@@ -8,7 +8,9 @@ import { isHuman } from "../../../mode.ts";
 export type UsersInstanceContext = {
   secretKey: string;
   appId?: string;
+  appLabel?: string;
   instanceId?: string;
+  instanceLabel?: string;
   publishableKey?: string;
   fapiHost?: string;
 };
@@ -74,7 +76,9 @@ export async function resolveUsersInstanceContext(
   const ctx: UsersInstanceContext = {
     secretKey: instance.secret_key,
     appId,
+    appLabel: app.name || appId,
     instanceId: resolved.instanceId,
+    instanceLabel: resolved.instanceLabel,
   };
   if (instance.publishable_key) {
     ctx.publishableKey = instance.publishable_key;
