@@ -3,6 +3,11 @@ import { setMode } from "../../mode.ts";
 import { setCurrentEnv } from "../../lib/environment.ts";
 import { captureLog } from "../../test/lib/stubs.ts";
 
+const mockResolveBapiSecretKey = mock();
+mock.module("../../lib/bapi-command.ts", () => ({
+  resolveBapiSecretKey: (...args: unknown[]) => mockResolveBapiSecretKey(...args),
+}));
+
 const mockResolveUsersInstanceContext = mock();
 mock.module("./interactive/instance-context.ts", () => ({
   resolveUsersInstanceContext: (...args: unknown[]) => mockResolveUsersInstanceContext(...args),
@@ -29,7 +34,9 @@ const { open } = await import("./open.ts");
 const CTX = {
   secretKey: "sk_test_123",
   appId: "app_abc123",
-  instanceId: "ins_dev789",
+  appLabel: "My App",
+  instanceId: "ins_prod789",
+  instanceLabel: "production",
 };
 
 describe("users open", () => {
@@ -39,12 +46,14 @@ describe("users open", () => {
     setMode("human");
     setCurrentEnv("production");
     mockResolveUsersInstanceContext.mockResolvedValue(CTX);
+    mockResolveBapiSecretKey.mockResolvedValue("sk_test_resolved");
     mockOpenBrowser.mockResolvedValue({ ok: true, launcher: "open" });
     captured = captureLog();
   });
 
   afterEach(() => {
     captured.teardown();
+    mockResolveBapiSecretKey.mockReset();
     mockResolveUsersInstanceContext.mockReset();
     mockPickUser.mockReset();
     mockOpenBrowser.mockReset();
@@ -54,23 +63,29 @@ describe("users open", () => {
     await captured.run(() => open({ userId: "user_2x9k" }));
 
     expect(mockResolveUsersInstanceContext).toHaveBeenCalledWith({
+      app: undefined,
+      instance: undefined,
+    });
+    expect(mockResolveBapiSecretKey).toHaveBeenCalledWith({
       secretKey: undefined,
       app: undefined,
       instance: undefined,
     });
     expect(mockPickUser).not.toHaveBeenCalled();
     expect(mockOpenBrowser).toHaveBeenCalledWith(
-      "https://dashboard.clerk.com/apps/app_abc123/instances/ins_dev789/users/user_2x9k",
+      "https://dashboard.clerk.com/apps/app_abc123/instances/ins_prod789/users/user_2x9k",
     );
     expect(captured.err).toContain("Opening");
     expect(captured.err).toContain("users/user_2x9k");
+    expect(captured.err).toContain("My App");
+    expect(captured.err).toContain("(production)");
   });
 
   test("--print: plain URL only on stdout, no browser, no intro/outro", async () => {
     await captured.run(() => open({ userId: "user_2x9k", print: true }));
 
     expect(captured.out).toBe(
-      "https://dashboard.clerk.com/apps/app_abc123/instances/ins_dev789/users/user_2x9k",
+      "https://dashboard.clerk.com/apps/app_abc123/instances/ins_prod789/users/user_2x9k",
     );
     expect(mockOpenBrowser).not.toHaveBeenCalled();
   });
@@ -82,11 +97,11 @@ describe("users open", () => {
 
     const payload = JSON.parse(captured.out);
     expect(payload).toEqual({
-      url: "https://dashboard.clerk.com/apps/app_abc123/instances/ins_dev789/users/user_2x9k",
+      url: "https://dashboard.clerk.com/apps/app_abc123/instances/ins_prod789/users/user_2x9k",
       appId: "app_abc123",
-      appName: null,
-      instanceId: "ins_dev789",
-      instanceLabel: "development",
+      appName: "My App",
+      instanceId: "ins_prod789",
+      instanceLabel: "production",
       userId: "user_2x9k",
       opened: false,
     });
@@ -99,18 +114,43 @@ describe("users open", () => {
     await captured.run(() => open({ userId: "user_2x9k", print: true }));
 
     expect(captured.out).toBe(
-      "https://dashboard.clerk.com/apps/app_abc123/instances/ins_dev789/users/user_2x9k",
+      "https://dashboard.clerk.com/apps/app_abc123/instances/ins_prod789/users/user_2x9k",
     );
     expect(() => JSON.parse(captured.out)).toThrow();
     expect(mockOpenBrowser).not.toHaveBeenCalled();
   });
 
-  test("--secret-key alone: throws usage error pointing to --app", async () => {
-    mockResolveUsersInstanceContext.mockResolvedValue({ secretKey: "sk_test_loose" });
+  test("--secret-key alone: uses linked app context and direct BAPI auth", async () => {
+    await captured.run(() =>
+      open({ secretKey: "sk_test_loose", userId: "user_2x9k", print: true }),
+    );
+
+    expect(mockResolveUsersInstanceContext).toHaveBeenCalledWith({
+      app: undefined,
+      instance: undefined,
+    });
+    expect(mockResolveBapiSecretKey).toHaveBeenCalledWith({
+      secretKey: "sk_test_loose",
+      app: undefined,
+      instance: undefined,
+    });
+    expect(captured.out).toBe(
+      "https://dashboard.clerk.com/apps/app_abc123/instances/ins_prod789/users/user_2x9k",
+    );
+  });
+
+  test("--secret-key without a resolvable dashboard target: throws usage error", async () => {
+    setMode("agent");
+    mockResolveUsersInstanceContext.mockRejectedValue(
+      new (await import("../../lib/errors.ts")).CliError("Not linked.", {
+        code: (await import("../../lib/errors.ts")).ERROR_CODE.NOT_LINKED,
+      }),
+    );
 
     await expect(
       captured.run(() => open({ secretKey: "sk_test_loose", userId: "user_2x9k" })),
-    ).rejects.toThrow(/--app/);
+    ).rejects.toThrow(/dashboard URL|--app/);
+    expect(mockResolveBapiSecretKey).not.toHaveBeenCalled();
     expect(mockOpenBrowser).not.toHaveBeenCalled();
   });
 
@@ -120,11 +160,11 @@ describe("users open", () => {
     await captured.run(() => open({ print: true }));
 
     expect(mockPickUser).toHaveBeenCalledWith({
-      secretKey: "sk_test_123",
+      secretKey: "sk_test_resolved",
       message: "Pick a user to open in the dashboard:",
     });
     expect(captured.out).toBe(
-      "https://dashboard.clerk.com/apps/app_abc123/instances/ins_dev789/users/user_picked",
+      "https://dashboard.clerk.com/apps/app_abc123/instances/ins_prod789/users/user_picked",
     );
   });
 
@@ -142,7 +182,33 @@ describe("users open", () => {
     );
 
     expect(mockResolveUsersInstanceContext).toHaveBeenCalledWith({
+      app: "app_other",
+      instance: "prod",
+    });
+    expect(mockResolveBapiSecretKey).toHaveBeenCalledWith({
       secretKey: undefined,
+      app: "app_other",
+      instance: "prod",
+    });
+  });
+
+  test("accepts --secret-key combined with --app and --instance", async () => {
+    await captured.run(() =>
+      open({
+        userId: "user_2x9k",
+        print: true,
+        secretKey: "sk_test_direct",
+        app: "app_other",
+        instance: "prod",
+      }),
+    );
+
+    expect(mockResolveBapiSecretKey).toHaveBeenCalledWith({
+      secretKey: "sk_test_direct",
+      app: "app_other",
+      instance: "prod",
+    });
+    expect(mockResolveUsersInstanceContext).toHaveBeenCalledWith({
       app: "app_other",
       instance: "prod",
     });

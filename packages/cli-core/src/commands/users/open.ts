@@ -1,5 +1,6 @@
+import { resolveBapiSecretKey } from "../../lib/bapi-command.ts";
 import { bold, cyan, dim } from "../../lib/color.ts";
-import { throwUsageError } from "../../lib/errors.ts";
+import { CliError, ERROR_CODE, throwUsageError } from "../../lib/errors.ts";
 import { log } from "../../lib/log.ts";
 import { openBrowser } from "../../lib/open.ts";
 import { intro, outro } from "../../lib/spinner.ts";
@@ -18,17 +19,25 @@ export type UsersOpenOptions = {
 };
 
 export async function open(options: UsersOpenOptions = {}): Promise<void> {
-  const ctx = await resolveUsersInstanceContext({
+  let target;
+  try {
+    target = await resolveUsersInstanceContext({
+      app: options.app,
+      instance: options.instance,
+    });
+  } catch (error) {
+    if (options.secretKey && error instanceof CliError && error.code === ERROR_CODE.NOT_LINKED) {
+      throwUsageError(
+        "Cannot build a dashboard URL from --secret-key alone when no app target can be resolved. Use --app <app-id> instead, or run `clerk link` to link this directory.",
+      );
+    }
+    throw error;
+  }
+  const secretKey = await resolveBapiSecretKey({
     secretKey: options.secretKey,
     app: options.app,
     instance: options.instance,
   });
-
-  if (!ctx.appId || !ctx.instanceId) {
-    throwUsageError(
-      "Cannot build a dashboard URL from --secret-key alone. Use --app <app-id> instead, or run `clerk link` to link this directory.",
-    );
-  }
 
   let userId = options.userId;
   if (!userId) {
@@ -36,13 +45,19 @@ export async function open(options: UsersOpenOptions = {}): Promise<void> {
       throwUsageError("User ID is required in agent mode. Pass it as a positional argument.");
     }
     userId = await pickUser({
-      secretKey: ctx.secretKey,
+      secretKey,
       message: "Pick a user to open in the dashboard:",
     });
   }
 
+  if (!target.appId || !target.instanceId) {
+    throwUsageError(
+      "Cannot build a dashboard URL because no app target could be resolved. Use --app <app-id> instead, or run `clerk link` to link this directory.",
+    );
+  }
+
   const subpath = `users/${userId}`;
-  const url = buildDashboardUrl(ctx.appId, ctx.instanceId, subpath);
+  const url = buildDashboardUrl(target.appId, target.instanceId, subpath);
 
   if (options.print) {
     log.data(url);
@@ -53,10 +68,10 @@ export async function open(options: UsersOpenOptions = {}): Promise<void> {
     log.data(
       JSON.stringify({
         url,
-        appId: ctx.appId,
-        appName: null,
-        instanceId: ctx.instanceId,
-        instanceLabel: "development",
+        appId: target.appId,
+        appName: target.appLabel ?? null,
+        instanceId: target.instanceId,
+        instanceLabel: target.instanceLabel ?? target.instanceId,
         userId,
         opened: false,
       }),
@@ -64,8 +79,8 @@ export async function open(options: UsersOpenOptions = {}): Promise<void> {
     return;
   }
 
-  const appLabel = ctx.appId;
-  const instanceLabel = "development";
+  const appLabel = target.appLabel ?? target.appId;
+  const instanceLabel = target.instanceLabel ?? target.instanceId;
 
   intro("clerk users open");
   log.info(`↗ Opening ${bold(appLabel)} (${instanceLabel}) → ${cyan(subpath)}`);
