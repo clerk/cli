@@ -135,4 +135,27 @@ describe("users open", () => {
     expect(mockPickUser).not.toHaveBeenCalled();
     expect(mockOpenBrowser).not.toHaveBeenCalled();
   });
+
+  test("forwards --app and --instance to the resolver", async () => {
+    await captured.run(() =>
+      open({ userId: "user_2x9k", app: "app_other", instance: "prod", print: true }),
+    );
+
+    expect(mockResolveUsersInstanceContext).toHaveBeenCalledWith({
+      secretKey: undefined,
+      app: "app_other",
+      instance: "prod",
+    });
+  });
+
+  test("propagates NOT_LINKED when resolver throws (agent mode, no targeting)", async () => {
+    setMode("agent");
+    mockResolveUsersInstanceContext.mockRejectedValue(
+      new (await import("../../lib/errors.ts")).CliError("Not linked.", {
+        code: (await import("../../lib/errors.ts")).ERROR_CODE.NOT_LINKED,
+      }),
+    );
+
+    await expect(captured.run(() => open({ userId: "user_2x9k" }))).rejects.toThrow(/Not linked/);
+  });
 });
