@@ -91,11 +91,32 @@ function validateProjectName(value: string): string | true {
   return true;
 }
 
-async function askProjectName(entry: BootstrapEntry): Promise<string> {
+/**
+ * Find an unused project name by appending -2, -3, … until the directory does not exist.
+ * Returns the original name when nothing collides.
+ */
+export async function findAvailableProjectName(cwd: string, base: string): Promise<string> {
+  if (!(await dirExists(join(cwd, base)))) return base;
+  for (let i = 2; i < 1000; i++) {
+    const candidate = `${base}-${i}`;
+    if (!(await dirExists(join(cwd, candidate)))) return candidate;
+  }
+  throw new CliError(`Could not find an available project name based on '${base}'.`);
+}
+
+async function askProjectName(entry: BootstrapEntry, cwd: string): Promise<string> {
+  const defaultName = await findAvailableProjectName(cwd, entry.defaultProjectName);
   const name = await input({
     message: "Project name:",
-    default: entry.defaultProjectName,
-    validate: validateProjectName,
+    default: defaultName,
+    validate: async (value) => {
+      const valid = validateProjectName(value);
+      if (valid !== true) return valid;
+      if (await dirExists(join(cwd, value.trim()))) {
+        return `Directory '${value.trim()}' already exists. Pick a different name.`;
+      }
+      return true;
+    },
   });
   return name.trim();
 }
@@ -190,9 +211,14 @@ export async function promptAndBootstrap(
   const entry = await pickFramework(frameworkOverride);
   const pm = pmOverride ?? (skipConfirm ? resolvePackageManager() : await pickPackageManager());
   const projectName =
-    nameOverride ?? (skipConfirm ? entry.defaultProjectName : await askProjectName(entry));
+    nameOverride ??
+    (skipConfirm
+      ? await findAvailableProjectName(cwd, entry.defaultProjectName)
+      : await askProjectName(entry, cwd));
   const projectDir = join(cwd, projectName);
 
+  // `askProjectName` and `findAvailableProjectName` already guarantee an unused dir;
+  // this guard only fires for an explicit `--name` collision.
   if (await dirExists(projectDir)) {
     throw new CliError(
       `Directory '${projectName}' already exists. Pick a different name or remove it first.`,
