@@ -72,7 +72,7 @@ function parseIntegerOption(
   flag: string,
   { min, max }: { min: number; max?: number },
 ): number {
-  if (!/^\d+$/.test(value)) {
+  if (!/^-?\d+$/.test(value)) {
     throwUsageError(`Invalid ${flag} value "${value}". Must be an integer.`);
   }
 

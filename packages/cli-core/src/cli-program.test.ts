@@ -44,6 +44,47 @@ test("users list exposes common filters and pagination options", () => {
   );
 });
 
+describe("parseIntegerOption (via users list --limit / --offset)", () => {
+  function parseUsersList(args: readonly string[]) {
+    return createProgram().parseAsync(["users", "list", ...args], { from: "user" });
+  }
+
+  test.each([
+    {
+      label: "--limit 0",
+      args: ["--limit", "0"],
+      expected: /Must be 1-500/,
+    },
+    {
+      label: "--limit 501",
+      args: ["--limit", "501"],
+      expected: /Must be 1-500/,
+    },
+    {
+      label: "--limit -5 (post-fix surfaces range message)",
+      args: ["--limit", "-5"],
+      expected: /Must be 1-500/,
+    },
+    {
+      label: "--limit abc",
+      args: ["--limit", "abc"],
+      expected: /Must be an integer/,
+    },
+    {
+      label: "--limit 1.5",
+      args: ["--limit", "1.5"],
+      expected: /Must be an integer/,
+    },
+    {
+      label: "--offset -1",
+      args: ["--offset", "-1"],
+      expected: /Must be >= 0/,
+    },
+  ])("rejects $label", async ({ args, expected }) => {
+    await expect(parseUsersList(args)).rejects.toThrow(expected);
+  });
+});
+
 test("users create exposes --json output, curated flags, and -d/--data for inline request bodies", () => {
   const program = createProgram();
   const users = program.commands.find((command) => command.name() === "users")!;
