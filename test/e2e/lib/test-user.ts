@@ -10,24 +10,41 @@ export interface TestUser {
   password: string;
 }
 
-/** Build env for CLI commands with the secret key from the fixture's env files. */
-function clerkEnv(configDir: string, secretKey: string): Record<string, string | undefined> {
-  return {
+/**
+ * Identifies the target Clerk instance for the test user.
+ *
+ * - `secretKey`: the existing path used by framework fixtures, which resolve
+ *   the secret key from the linked profile's env file. The key is injected
+ *   as CLERK_SECRET_KEY in the CLI subprocess env.
+ * - `appId`: used by BAPI roundtrip tests that don't run a fixture. The CLI
+ *   resolves the secret key per-call via PLAPI using `--app <appId>`. Useful
+ *   when the test only has CLERK_CLI_TEST_APP_ID and CLERK_PLATFORM_API_KEY.
+ */
+export type TestUserTarget = { secretKey: string } | { appId: string };
+
+/** Build env for CLI commands. Only injects CLERK_SECRET_KEY when targeting by key. */
+function clerkEnv(configDir: string, target: TestUserTarget): Record<string, string | undefined> {
+  const env: Record<string, string | undefined> = {
     ...process.env,
     CLERK_CONFIG_DIR: configDir,
-    CLERK_SECRET_KEY: secretKey,
   };
+  if ("secretKey" in target) env.CLERK_SECRET_KEY = target.secretKey;
+  return env;
+}
+
+/** Append `--app <appId>` when targeting by app, otherwise nothing. */
+function targetArgs(target: TestUserTarget): string[] {
+  return "appId" in target ? ["--app", target.appId] : [];
 }
 
 /**
  * Create a test user via `clerk users create`. Uses +clerk_test email suffix
  * so OTP code 424242 works without real email delivery. Passes the BAPI body
- * via `-d` because `skip_password_checks` is not a curated flag. The instance
- * BAPI secret key comes from the fixture's env via `CLERK_SECRET_KEY`.
+ * via `-d` because `skip_password_checks` is not a curated flag.
  */
 export async function createTestUser(
   configDir: string,
-  secretKey: string,
+  target: TestUserTarget,
   fixtureName: string,
 ): Promise<TestUser> {
   const hex = randomBytes(8).toString("hex");
@@ -42,10 +59,11 @@ export async function createTestUser(
 
   log(fixtureName, `creating test user: ${email}`);
 
-  const result = await Bun.$`bun ${CLI_PATH} users create -d ${body} --json --yes`
-    .env(clerkEnv(configDir, secretKey))
-    .quiet()
-    .nothrow();
+  const result =
+    await Bun.$`bun ${CLI_PATH} users create -d ${body} --json --yes ${targetArgs(target)}`
+      .env(clerkEnv(configDir, target))
+      .quiet()
+      .nothrow();
 
   if (result.exitCode !== 0) {
     const stdout = result.stdout.toString().trim();
@@ -64,15 +82,16 @@ export async function createTestUser(
 export async function deleteTestUser(
   userId: string,
   configDir: string,
-  secretKey: string,
+  target: TestUserTarget,
   fixtureName: string,
 ): Promise<void> {
   log(fixtureName, `deleting test user: ${userId}`);
 
-  const result = await Bun.$`bun ${CLI_PATH} api /users/${userId} -X DELETE --yes`
-    .env(clerkEnv(configDir, secretKey))
-    .quiet()
-    .nothrow();
+  const result =
+    await Bun.$`bun ${CLI_PATH} api /users/${userId} -X DELETE --yes ${targetArgs(target)}`
+      .env(clerkEnv(configDir, target))
+      .quiet()
+      .nothrow();
 
   if (result.exitCode !== 0) {
     const stdout = result.stdout.toString().trim();

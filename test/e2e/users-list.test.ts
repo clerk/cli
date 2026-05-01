@@ -12,9 +12,9 @@ import { test, expect, afterAll, beforeAll } from "bun:test";
 import { join } from "node:path";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { randomBytes } from "node:crypto";
+import { createTestUser, deleteTestUser } from "./lib/test-user.ts";
 
-const CLI_PATH = join(import.meta.dir, "../../packages/cli-core/src/cli.ts");
+const FIXTURE_NAME = "users-list";
 const APP_ID = process.env.CLERK_CLI_TEST_APP_ID;
 const PLATFORM_KEY = process.env.CLERK_PLATFORM_API_KEY;
 
@@ -25,6 +25,8 @@ if (!APP_ID || !PLATFORM_KEY) {
   );
 }
 
+const CLI_PATH = join(import.meta.dir, "../../packages/cli-core/src/cli.ts");
+
 let configDir: string;
 const createdIds: string[] = [];
 
@@ -34,32 +36,19 @@ beforeAll(() => {
 
 afterAll(async () => {
   for (const id of createdIds) {
-    await Bun.$`bun ${CLI_PATH} api /users/${id} -X DELETE --app ${APP_ID} --yes`
-      .env({ ...process.env, CLERK_CONFIG_DIR: configDir })
-      .quiet()
-      .nothrow();
+    await deleteTestUser(id, configDir, { appId: APP_ID }, FIXTURE_NAME);
   }
   rmSync(configDir, { recursive: true, force: true });
 });
 
-async function createUser(): Promise<{ id: string; email: string }> {
-  const hex = randomBytes(8).toString("hex");
-  const email = `${hex}+clerk_test@clerkcookie.com`;
-  const body = JSON.stringify({
-    email_address: [email],
-    password: `Test${hex}!1`,
-    skip_password_checks: true,
-  });
-  const r = await Bun.$`bun ${CLI_PATH} users create -d ${body} --json --yes --app ${APP_ID}`
-    .env({ ...process.env, CLERK_CONFIG_DIR: configDir })
-    .quiet();
-  const u = JSON.parse(r.stdout.toString());
-  createdIds.push(u.id);
-  return { id: u.id as string, email };
-}
-
 test("users list --json returns a flat array containing created users", async () => {
-  const users = await Promise.all([createUser(), createUser(), createUser()]);
+  const users = await Promise.all(
+    [1, 2, 3].map(async () => {
+      const u = await createTestUser(configDir, { appId: APP_ID }, FIXTURE_NAME);
+      createdIds.push(u.id);
+      return u;
+    }),
+  );
 
   const result = await Bun.$`bun ${CLI_PATH} users list --json --app ${APP_ID} \
     --user-id ${users[0].id} --user-id ${users[1].id} --user-id ${users[2].id}`
