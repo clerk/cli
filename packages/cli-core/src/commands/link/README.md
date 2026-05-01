@@ -28,6 +28,12 @@ deterministic paths:
 - if no unambiguous app can be determined, the command exits with a usage error
   telling the caller to pass `--app`
 
+`clerk init` calls `link` with an internal `createIfMissing` option (the
+project name) so an authenticated agent run that finds no autolink match auto-
+creates a fresh app named after the project instead of erroring. The CLI does
+not expose `createIfMissing` as a flag — it is library-only and reserved for
+`clerk init`'s flow.
+
 ## Flow
 
 1. Resolves the normalized git remote URL (e.g., `github.com/org/repo`) for cross-clone matching

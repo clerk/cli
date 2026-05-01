@@ -104,25 +104,24 @@ test("unlink --yes removes the profile in agent mode", async () => {
   expect(config.profiles["github.com/test/project"]).toBeUndefined();
 });
 
-test("init uses keyless for keyless framework without an app target in agent mode", async () => {
+test("init creates and links a real app for keyless framework when authed in agent mode", async () => {
   await writeNextAppProject();
+  const devInstance = getInstance(MOCK_APP, "development");
   http.mock({
-    "/v1/accountless_applications": {
-      publishable_key: "pk_test_keyless",
-      secret_key: "sk_test_keyless",
-      claim_url: "/apps/claim?token=keyless_token",
-    },
+    [`/v1/platform/applications/${MOCK_APP.application_id}`]: MOCK_APP,
+    "/v1/platform/applications": MOCK_APP,
   });
 
   await clerk("--mode", "agent", "init", "--no-skills");
 
   const env = parseEnvFile(await Bun.file(join(h.tempDir, ".env.local")).text(), ".env.local");
-  expect(env.get("NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY")).toBe("pk_test_keyless");
-  expect(env.get("CLERK_SECRET_KEY")).toBe("sk_test_keyless");
+  expect(env.get("NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY")).toBe(devInstance.publishable_key);
+  expect(env.get("CLERK_SECRET_KEY")).toBe(devInstance.secret_key);
 
   const config = await readConfig();
-  expect(config.profiles["github.com/test/project"]).toBeUndefined();
-  expect(http.requests.some((r) => r.url.includes("/v1/platform/applications"))).toBe(false);
+  expect(config.profiles["github.com/test/project"]?.appId).toBe(MOCK_APP.application_id);
+  // Accountless endpoint should not be hit when the user is already authed.
+  expect(http.requests.some((r) => r.url.includes("/v1/accountless_applications"))).toBe(false);
 });
 
 test("init prints manual setup for non-keyless framework without an app target in agent mode", async () => {
