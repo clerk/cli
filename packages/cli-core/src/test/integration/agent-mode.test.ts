@@ -108,7 +108,6 @@ test("init creates and links a real app for keyless framework when authed in age
   await writeNextAppProject();
   const devInstance = getInstance(MOCK_APP, "development");
   http.mock({
-    [`/v1/platform/applications/${MOCK_APP.application_id}`]: MOCK_APP,
     "/v1/platform/applications": MOCK_APP,
   });
 

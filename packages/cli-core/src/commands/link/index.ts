@@ -76,7 +76,10 @@ export async function link(options: LinkOptions = {}): Promise<void> {
   const app = options.app
     ? await withApiContext(fetchApplication(options.app), "Failed to fetch application")
     : agent && options.createIfMissing
-      ? await createAndFetchApp(options.createIfMissing)
+      ? await withApiContext(
+          createApplication(options.createIfMissing),
+          "Failed to create application",
+        )
       : await resolveApp(cwd, displayPath, !existing);
 
   const devInstance = app.instances.find((i) => i.environment_type === "development");
@@ -192,9 +195,4 @@ async function resolveApp(
     apps,
     message: `Select a Clerk application to link ${dim(`(repo: ${basename(displayPath)})`)}`,
   });
-}
-
-async function createAndFetchApp(name: string): Promise<Application> {
-  const created = await withApiContext(createApplication(name), "Failed to create application");
-  return withApiContext(fetchApplication(created.application_id), "Failed to fetch application");
 }

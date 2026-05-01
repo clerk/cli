@@ -248,14 +248,13 @@ describe("link", () => {
     test("creates and links a new app when createIfMissing is provided", async () => {
       mockIsAgent.mockReturnValue(true);
       mockGetToken.mockResolvedValue("token");
-      mockCreateApplication.mockResolvedValue({ application_id: "app_new" });
-      mockFetchApplication.mockResolvedValue({ ...mockApp, application_id: "app_new" });
+      mockCreateApplication.mockResolvedValue({ ...mockApp, application_id: "app_new" });
       consoleSpy = spyOn(console, "log").mockImplementation(() => {});
 
       await runLink({ createIfMissing: "my-project" });
 
       expect(mockCreateApplication).toHaveBeenCalledWith("my-project");
-      expect(mockFetchApplication).toHaveBeenCalledWith("app_new");
+      expect(mockFetchApplication).not.toHaveBeenCalled();
       expect(mockSearch).not.toHaveBeenCalled();
       expect(mockListApplications).not.toHaveBeenCalled();
       expect(mockSetProfile).toHaveBeenCalled();
