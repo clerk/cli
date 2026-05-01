@@ -54,8 +54,18 @@ for (const testFile of testFiles) {
   matchedOnly = true;
 
   const { config } = (await import(testFile)) as {
-    config: import("../test/e2e/lib/types.ts").FixtureConfig;
+    config?: import("../test/e2e/lib/types.ts").FixtureConfig;
   };
+
+  // Skip non-fixture e2e tests (e.g. live-API roundtrip tests that don't
+  // scaffold a project and therefore don't export a FixtureConfig).
+  if (!config) {
+    if (onlyName) {
+      console.error(`❌ ${name} is not a fixture (no config export).`);
+      process.exit(1);
+    }
+    continue;
+  }
 
   if (config.pinned && !force) {
     console.log(`⏭  Skipping pinned fixture: ${name} (use --force to refresh)`);
