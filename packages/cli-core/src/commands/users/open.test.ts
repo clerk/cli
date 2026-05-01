@@ -3,9 +3,13 @@ import { setMode } from "../../mode.ts";
 import { setCurrentEnv } from "../../lib/environment.ts";
 import { captureLog } from "../../test/lib/stubs.ts";
 
-const mockResolveBapiSecretKey = mock();
-mock.module("../../lib/bapi-command.ts", () => ({
-  resolveBapiSecretKey: (...args: unknown[]) => mockResolveBapiSecretKey(...args),
+const mockResolveAppContext = mock();
+const mockResolveProfile = mock();
+const mockResolveInstanceId = mock();
+mock.module("../../lib/config.ts", () => ({
+  resolveAppContext: (...args: unknown[]) => mockResolveAppContext(...args),
+  resolveProfile: (...args: unknown[]) => mockResolveProfile(...args),
+  resolveInstanceId: (...args: unknown[]) => mockResolveInstanceId(...args),
 }));
 
 const mockResolveUsersInstanceContext = mock();
@@ -45,15 +49,27 @@ describe("users open", () => {
   beforeEach(() => {
     setMode("human");
     setCurrentEnv("production");
+    mockResolveAppContext.mockResolvedValue({
+      appId: CTX.appId,
+      appLabel: CTX.appLabel,
+      instanceId: CTX.instanceId,
+      instanceLabel: CTX.instanceLabel,
+    });
+    mockResolveProfile.mockResolvedValue(undefined);
+    mockResolveInstanceId.mockReturnValue({
+      id: CTX.instanceId,
+      label: CTX.instanceLabel,
+    });
     mockResolveUsersInstanceContext.mockResolvedValue(CTX);
-    mockResolveBapiSecretKey.mockResolvedValue("sk_test_resolved");
     mockOpenBrowser.mockResolvedValue({ ok: true, launcher: "open" });
     captured = captureLog();
   });
 
   afterEach(() => {
     captured.teardown();
-    mockResolveBapiSecretKey.mockReset();
+    mockResolveAppContext.mockReset();
+    mockResolveProfile.mockReset();
+    mockResolveInstanceId.mockReset();
     mockResolveUsersInstanceContext.mockReset();
     mockPickUser.mockReset();
     mockOpenBrowser.mockReset();
@@ -62,15 +78,10 @@ describe("users open", () => {
   test("explicit user-id + linked profile: opens dashboard URL for that user", async () => {
     await captured.run(() => open({ userId: "user_2x9k" }));
 
-    expect(mockResolveUsersInstanceContext).toHaveBeenCalledWith({
-      app: undefined,
+    expect(mockResolveAppContext).toHaveBeenCalledWith({
       instance: undefined,
     });
-    expect(mockResolveBapiSecretKey).toHaveBeenCalledWith({
-      secretKey: undefined,
-      app: undefined,
-      instance: undefined,
-    });
+    expect(mockResolveUsersInstanceContext).not.toHaveBeenCalled();
     expect(mockPickUser).not.toHaveBeenCalled();
     expect(mockOpenBrowser).toHaveBeenCalledWith(
       "https://dashboard.clerk.com/apps/app_abc123/instances/ins_prod789/users/user_2x9k",
@@ -125,15 +136,10 @@ describe("users open", () => {
       open({ secretKey: "sk_test_loose", userId: "user_2x9k", print: true }),
     );
 
-    expect(mockResolveUsersInstanceContext).toHaveBeenCalledWith({
-      app: undefined,
+    expect(mockResolveAppContext).toHaveBeenCalledWith({
       instance: undefined,
     });
-    expect(mockResolveBapiSecretKey).toHaveBeenCalledWith({
-      secretKey: "sk_test_loose",
-      app: undefined,
-      instance: undefined,
-    });
+    expect(mockResolveUsersInstanceContext).not.toHaveBeenCalled();
     expect(captured.out).toBe(
       "https://dashboard.clerk.com/apps/app_abc123/instances/ins_prod789/users/user_2x9k",
     );
@@ -141,16 +147,26 @@ describe("users open", () => {
 
   test("--secret-key without a resolvable dashboard target: throws usage error", async () => {
     setMode("agent");
-    mockResolveUsersInstanceContext.mockRejectedValue(
-      new (await import("../../lib/errors.ts")).CliError("Not linked.", {
-        code: (await import("../../lib/errors.ts")).ERROR_CODE.NOT_LINKED,
+    const { CliError, ERROR_CODE } = await import("../../lib/errors.ts");
+    mockResolveAppContext.mockRejectedValueOnce(
+      new CliError("Not linked.", {
+        code: ERROR_CODE.NOT_LINKED,
       }),
     );
+    mockResolveUsersInstanceContext
+      .mockRejectedValueOnce(
+        new CliError("Not linked.", {
+          code: ERROR_CODE.NOT_LINKED,
+        }),
+      )
+      .mockResolvedValueOnce({
+        secretKey: "sk_test_loose",
+      });
 
     await expect(
       captured.run(() => open({ secretKey: "sk_test_loose", userId: "user_2x9k" })),
     ).rejects.toThrow(/dashboard URL|--app/);
-    expect(mockResolveBapiSecretKey).not.toHaveBeenCalled();
+    expect(mockResolveUsersInstanceContext).toHaveBeenCalledTimes(2);
     expect(mockOpenBrowser).not.toHaveBeenCalled();
   });
 
@@ -160,7 +176,7 @@ describe("users open", () => {
     await captured.run(() => open({ print: true }));
 
     expect(mockPickUser).toHaveBeenCalledWith({
-      secretKey: "sk_test_resolved",
+      secretKey: CTX.secretKey,
       message: "Pick a user to open in the dashboard:",
     });
     expect(captured.out).toBe(
@@ -177,6 +193,8 @@ describe("users open", () => {
   });
 
   test("forwards --app and --instance to the resolver", async () => {
+    mockResolveProfile.mockResolvedValue(undefined);
+
     await captured.run(() =>
       open({ userId: "user_2x9k", app: "app_other", instance: "prod", print: true }),
     );
@@ -185,14 +203,15 @@ describe("users open", () => {
       app: "app_other",
       instance: "prod",
     });
-    expect(mockResolveBapiSecretKey).toHaveBeenCalledWith({
-      secretKey: undefined,
-      app: "app_other",
-      instance: "prod",
-    });
   });
 
   test("accepts --secret-key combined with --app and --instance", async () => {
+    mockResolveProfile.mockResolvedValue(undefined);
+    mockResolveUsersInstanceContext.mockReset();
+    mockResolveUsersInstanceContext
+      .mockRejectedValueOnce(new Error("Not authenticated"))
+      .mockResolvedValueOnce(CTX);
+
     await captured.run(() =>
       open({
         userId: "user_2x9k",
@@ -203,12 +222,12 @@ describe("users open", () => {
       }),
     );
 
-    expect(mockResolveBapiSecretKey).toHaveBeenCalledWith({
-      secretKey: "sk_test_direct",
+    expect(mockResolveUsersInstanceContext).toHaveBeenCalledWith({
       app: "app_other",
       instance: "prod",
     });
     expect(mockResolveUsersInstanceContext).toHaveBeenCalledWith({
+      secretKey: "sk_test_direct",
       app: "app_other",
       instance: "prod",
     });
@@ -216,9 +235,15 @@ describe("users open", () => {
 
   test("propagates NOT_LINKED when resolver throws (agent mode, no targeting)", async () => {
     setMode("agent");
-    mockResolveUsersInstanceContext.mockRejectedValue(
-      new (await import("../../lib/errors.ts")).CliError("Not linked.", {
-        code: (await import("../../lib/errors.ts")).ERROR_CODE.NOT_LINKED,
+    const { CliError, ERROR_CODE } = await import("../../lib/errors.ts");
+    mockResolveAppContext.mockRejectedValueOnce(
+      new CliError("Not linked.", {
+        code: ERROR_CODE.NOT_LINKED,
+      }),
+    );
+    mockResolveUsersInstanceContext.mockRejectedValueOnce(
+      new CliError("Not linked.", {
+        code: ERROR_CODE.NOT_LINKED,
       }),
     );
 
@@ -243,6 +268,5 @@ describe("users open", () => {
     ).rejects.toThrow(/Invalid user ID/);
 
     expect(mockResolveUsersInstanceContext).not.toHaveBeenCalled();
-    expect(mockResolveBapiSecretKey).not.toHaveBeenCalled();
   });
 });

@@ -1,7 +1,9 @@
-import { test, expect, describe, beforeEach, mock } from "bun:test";
+import { test, expect, describe, beforeEach, afterEach, mock } from "bun:test";
 import { CliError, ERROR_CODE } from "../../../lib/errors.ts";
+import { stubFetch } from "../../../test/lib/stubs.ts";
 
 const mockResolveAppContext = mock();
+const mockResolveProfile = mock();
 const mockFetchApplication = mock();
 const mockFetchAppsTolerantly = mock();
 const mockPickOrCreateApp = mock();
@@ -9,6 +11,7 @@ const mockIsHuman = mock(() => true);
 
 mock.module("../../../lib/config.ts", () => ({
   resolveAppContext: (...args: unknown[]) => mockResolveAppContext(...args),
+  resolveProfile: (...args: unknown[]) => mockResolveProfile(...args),
   resolveFetchedApplicationInstance: (
     _appId: string,
     app: {
@@ -50,12 +53,20 @@ mock.module("../../../mode.ts", () => ({
 const { resolveUsersInstanceContext } = await import("./instance-context.ts");
 
 describe("resolveUsersInstanceContext", () => {
+  const originalFetch = globalThis.fetch;
+
   beforeEach(() => {
     mockResolveAppContext.mockReset();
+    mockResolveProfile.mockReset();
     mockFetchApplication.mockReset();
     mockFetchAppsTolerantly.mockReset();
     mockPickOrCreateApp.mockReset();
     mockIsHuman.mockReturnValue(true);
+    mockResolveProfile.mockResolvedValue(undefined);
+  });
+
+  afterEach(() => {
+    globalThis.fetch = originalFetch;
   });
 
   test("returns app and instance labels when --app is provided", async () => {
@@ -128,17 +139,45 @@ describe("resolveUsersInstanceContext", () => {
     expect(mockPickOrCreateApp).not.toHaveBeenCalled();
   });
 
-  test("rejects --secret-key combined with --app", async () => {
-    await expect(
-      resolveUsersInstanceContext({ secretKey: "sk_test_raw", app: "app_123" }),
-    ).rejects.toThrow(/--secret-key cannot be combined with --app or --instance/);
+  test("resolves the current instance from BAPI when --secret-key and --app are provided", async () => {
+    stubFetch(
+      async () =>
+        new Response(
+          JSON.stringify({
+            id: "ins_dev",
+            publishable_key: "pk_test_aWRlYWwtbG91c2UtNjEuY2xlcmsuYWNjb3VudHMuZGV2JA",
+          }),
+          { status: 200 },
+        ),
+    );
+
+    const ctx = await resolveUsersInstanceContext({ secretKey: "sk_test_raw", app: "app_123" });
+
+    expect(ctx.secretKey).toBe("sk_test_raw");
+    expect(ctx.appId).toBe("app_123");
+    expect(ctx.appLabel).toBe("app_123");
+    expect(ctx.instanceId).toBe("ins_dev");
+    expect(ctx.instanceLabel).toBe("development");
+    expect(ctx.publishableKey).toBe("pk_test_aWRlYWwtbG91c2UtNjEuY2xlcmsuYWNjb3VudHMuZGV2JA");
+    expect(ctx.fapiHost).toBe("ideal-louse-61.clerk.accounts.dev");
     expect(mockFetchApplication).not.toHaveBeenCalled();
+    expect(mockResolveAppContext).not.toHaveBeenCalled();
   });
 
-  test("rejects --secret-key combined with --instance", async () => {
+  test("rejects a mismatched --instance when --secret-key already targets another instance", async () => {
+    stubFetch(
+      async () =>
+        new Response(
+          JSON.stringify({
+            id: "ins_dev",
+            publishable_key: "pk_test_aWRlYWwtbG91c2UtNjEuY2xlcmsuYWNjb3VudHMuZGV2JA",
+          }),
+          { status: 200 },
+        ),
+    );
+
     await expect(
-      resolveUsersInstanceContext({ secretKey: "sk_test_raw", instance: "ins_dev" }),
-    ).rejects.toThrow(/--secret-key cannot be combined with --app or --instance/);
-    expect(mockResolveAppContext).not.toHaveBeenCalled();
+      resolveUsersInstanceContext({ secretKey: "sk_test_raw", instance: "prod" }),
+    ).rejects.toThrow(/does not match the supplied --secret-key/);
   });
 });

@@ -1,5 +1,5 @@
-import { resolveBapiSecretKey } from "../../lib/bapi-command.ts";
 import { bold, cyan, dim } from "../../lib/color.ts";
+import { resolveAppContext, resolveInstanceId, resolveProfile } from "../../lib/config.ts";
 import { CliError, ERROR_CODE, throwUsageError } from "../../lib/errors.ts";
 import { log } from "../../lib/log.ts";
 import { openBrowser } from "../../lib/open.ts";
@@ -18,50 +18,163 @@ export type UsersOpenOptions = {
   instance?: string;
 };
 
+async function resolveKnownUserDashboardTarget(options: UsersOpenOptions): Promise<{
+  appId: string;
+  appLabel: string;
+  instanceId: string;
+  instanceLabel: string;
+}> {
+  if (options.app) {
+    const resolved = await resolveProfile(process.cwd());
+    if (resolved?.profile.appId === options.app) {
+      const instance = resolveInstanceId(resolved.profile, options.instance);
+      return {
+        appId: options.app,
+        appLabel: resolved.profile.appName || options.app,
+        instanceId: instance.id,
+        instanceLabel: instance.label,
+      };
+    }
+  } else {
+    try {
+      return await resolveAppContext({ instance: options.instance });
+    } catch (error) {
+      if (!(error instanceof CliError) || error.code !== ERROR_CODE.NOT_LINKED) {
+        throw error;
+      }
+    }
+  }
+
+  const target = await resolveUsersInstanceContext({
+    app: options.app,
+    instance: options.instance,
+  });
+
+  if (!target.appId || !target.instanceId) {
+    throw new CliError("Internal: dashboard target missing appId/instanceId after resolution.", {
+      code: ERROR_CODE.INSTANCE_NOT_FOUND,
+    });
+  }
+
+  return {
+    appId: target.appId,
+    appLabel: target.appLabel ?? target.appId,
+    instanceId: target.instanceId,
+    instanceLabel: target.instanceLabel ?? target.instanceId,
+  };
+}
+
 export async function open(options: UsersOpenOptions = {}): Promise<void> {
   let userId = options.userId;
   if (userId !== undefined && !/^user_[A-Za-z0-9]+$/.test(userId)) {
     throwUsageError(`Invalid user ID '${userId}'. Expected format: user_<id>.`);
   }
 
-  let target;
-  try {
-    target = await resolveUsersInstanceContext({
-      app: options.app,
-      instance: options.instance,
-    });
-  } catch (error) {
-    if (options.secretKey && error instanceof CliError && error.code === ERROR_CODE.NOT_LINKED) {
-      throwUsageError(
-        "Cannot build a dashboard URL from --secret-key alone when no app target can be resolved. Use --app <app-id> instead, or run `clerk link` to link this directory.",
+  if (userId) {
+    let target:
+      | {
+          appId: string;
+          appLabel: string;
+          instanceId: string;
+          instanceLabel: string;
+        }
+      | undefined;
+
+    try {
+      target = await resolveKnownUserDashboardTarget(options);
+    } catch (error) {
+      if (!options.secretKey) {
+        throw error;
+      }
+
+      const secretKeyTarget = await resolveUsersInstanceContext({
+        secretKey: options.secretKey,
+        app: options.app,
+        instance: options.instance,
+      });
+      if (!secretKeyTarget.appId || !secretKeyTarget.instanceId) {
+        throwUsageError(
+          "Cannot build a dashboard URL from --secret-key alone when no app target can be resolved. Use --app <app-id> instead, or run `clerk link` to link this directory.",
+        );
+      }
+
+      target = {
+        appId: secretKeyTarget.appId,
+        appLabel: secretKeyTarget.appLabel ?? secretKeyTarget.appId,
+        instanceId: secretKeyTarget.instanceId,
+        instanceLabel: secretKeyTarget.instanceLabel ?? secretKeyTarget.instanceId,
+      };
+    }
+
+    const subpath = `users/${userId}`;
+    const url = buildDashboardUrl(target.appId, target.instanceId, subpath);
+
+    if (options.print) {
+      log.data(url);
+      return;
+    }
+
+    if (isAgent()) {
+      log.data(
+        JSON.stringify({
+          url,
+          appId: target.appId,
+          appName: target.appLabel,
+          instanceId: target.instanceId,
+          instanceLabel: target.instanceLabel,
+          userId,
+          opened: false,
+        }),
+      );
+      return;
+    }
+
+    intro("clerk users open");
+    log.info(`↗ Opening ${bold(target.appLabel)} (${target.instanceLabel}) → ${cyan(subpath)}`);
+    log.info(`  ${dim(url)}`);
+
+    const result = await openBrowser(url);
+    if (!result.ok) {
+      log.warn(
+        `Could not open your browser automatically. Open this URL to continue:\n  ${cyan(url)}\n${dim(`(Reason: ${result.reason})`)}`,
       );
     }
-    throw error;
+
+    outro();
+    return;
   }
-  const secretKey = await resolveBapiSecretKey({
+
+  const target = await resolveUsersInstanceContext({
     secretKey: options.secretKey,
     app: options.app,
     instance: options.instance,
   });
 
-  if (!userId) {
-    if (isAgent()) {
-      throwUsageError("User ID is required in agent mode. Pass it as a positional argument.");
-    }
-    userId = await pickUser({
-      secretKey,
-      message: "Pick a user to open in the dashboard:",
+  if (isAgent()) {
+    throwUsageError("User ID is required in agent mode. Pass it as a positional argument.");
+  }
+
+  if (!target.secretKey) {
+    throw new CliError("Internal: users open target is missing a secret key for pickUser.", {
+      code: ERROR_CODE.NO_SECRET_KEY,
     });
   }
 
-  // Invariant: `resolveUsersInstanceContext` populates appId and instanceId on the
-  // full-resolution path, and `users open` does not invoke the --secret-key shortcut.
-  // The runtime check exists only to satisfy `buildDashboardUrl`'s non-optional types.
+  userId = await pickUser({
+    secretKey: target.secretKey,
+    message: "Pick a user to open in the dashboard:",
+  });
+
   if (!target.appId || !target.instanceId) {
-    throw new CliError(
-      "Internal: dashboard target missing appId/instanceId after resolveUsersInstanceContext.",
-      { code: ERROR_CODE.INSTANCE_NOT_FOUND },
-    );
+    if (options.secretKey) {
+      throwUsageError(
+        "Cannot build a dashboard URL from --secret-key alone when no app target can be resolved. Use --app <app-id> instead, or run `clerk link` to link this directory.",
+      );
+    }
+
+    throw new CliError("Internal: dashboard target missing appId/instanceId after resolution.", {
+      code: ERROR_CODE.INSTANCE_NOT_FOUND,
+    });
   }
 
   const subpath = `users/${userId}`;
@@ -69,21 +182,6 @@ export async function open(options: UsersOpenOptions = {}): Promise<void> {
 
   if (options.print) {
     log.data(url);
-    return;
-  }
-
-  if (isAgent()) {
-    log.data(
-      JSON.stringify({
-        url,
-        appId: target.appId,
-        appName: target.appLabel ?? null,
-        instanceId: target.instanceId,
-        instanceLabel: target.instanceLabel ?? target.instanceId,
-        userId,
-        opened: false,
-      }),
-    );
     return;
   }
 

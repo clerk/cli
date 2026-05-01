@@ -14,6 +14,7 @@ import {
   clerk,
   getInstance,
   http,
+  mockState,
   mockPrompts,
   setProfile,
   useIntegrationTestHarness,
@@ -340,9 +341,36 @@ describe("users commands", () => {
     expect(fetchAppCall).toBeDefined();
   });
 
-  test("users open accepts --secret-key with --app and prints the dashboard URL", async () => {
+  test("users open prints a linked-project URL without PLAPI auth when the user id is already known", async () => {
+    await linkDevProject();
+    delete process.env.CLERK_PLATFORM_API_KEY;
+    mockState.storedToken = null;
+    http.mock({});
+
+    const { stdout, exitCode } = await clerk.raw(
+      "--mode",
+      "agent",
+      "users",
+      "open",
+      "user_123",
+      "--print",
+    );
+
+    expect(exitCode).toBe(0);
+    expect(stdout).toBe(
+      `https://dashboard.clerk.com/apps/${MOCK_APP.application_id}/instances/${devInstance.instance_id}/users/user_123`,
+    );
+    expect(http.requests).toHaveLength(0);
+  });
+
+  test("users open accepts --secret-key with --app and prints the dashboard URL without PLAPI auth", async () => {
+    delete process.env.CLERK_PLATFORM_API_KEY;
+    mockState.storedToken = null;
     http.mock({
-      [PLAPI_APP_ROUTE]: MOCK_APP,
+      "/v1/instance": {
+        id: devInstance.instance_id,
+        publishable_key: devInstance.publishable_key,
+      },
     });
 
     const { stdout, exitCode } = await clerk.raw(
@@ -367,6 +395,6 @@ describe("users commands", () => {
       (request) =>
         request.method === "GET" && request.url.includes("/v1/platform/applications/app_1"),
     );
-    expect(fetchAppCall).toBeDefined();
+    expect(fetchAppCall).toBeUndefined();
   });
 });
