@@ -21,7 +21,7 @@ function App() {
             Edit <code>src/App.tsx</code> and save to test <code>HMR</code>
           </p>
         </div>
-        <button className="counter" onClick={() => setCount((count) => count + 1)}>
+        <button type="button" className="counter" onClick={() => setCount((count) => count + 1)}>
           Count is {count}
         </button>
       </section>

@@ -244,6 +244,35 @@ describe("link", () => {
       expect(mockSearch).not.toHaveBeenCalled();
       expect(mockListApplications).not.toHaveBeenCalled();
     });
+
+    test("creates and links a new app when createIfMissing is provided", async () => {
+      mockIsAgent.mockReturnValue(true);
+      mockGetToken.mockResolvedValue("token");
+      mockCreateApplication.mockResolvedValue({ ...mockApp, application_id: "app_new" });
+      consoleSpy = spyOn(console, "log").mockImplementation(() => {});
+
+      await runLink({ createIfMissing: "my-project" });
+
+      expect(mockCreateApplication).toHaveBeenCalledWith("my-project");
+      expect(mockFetchApplication).not.toHaveBeenCalled();
+      expect(mockSearch).not.toHaveBeenCalled();
+      expect(mockListApplications).not.toHaveBeenCalled();
+      expect(mockSetProfile).toHaveBeenCalled();
+    });
+
+    test("autolink takes precedence over createIfMissing when keys match", async () => {
+      mockIsAgent.mockReturnValue(true);
+      mockAutolink.mockResolvedValue({
+        path: "github.com/org/repo",
+        profile: { workspaceId: "", appId: "app_existing", instances: { development: "ins_1" } },
+      });
+      consoleSpy = spyOn(console, "log").mockImplementation(() => {});
+
+      await runLink({ createIfMissing: "my-project" });
+
+      expect(mockAutolink).toHaveBeenCalled();
+      expect(mockCreateApplication).not.toHaveBeenCalled();
+    });
   });
 
   describe("already linked", () => {
