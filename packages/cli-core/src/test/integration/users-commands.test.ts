@@ -291,7 +291,7 @@ describe("users commands", () => {
         expect(stdout).toContain("john@example.com");
         expect(stderr).toContain("1 user returned");
       } else {
-        expect(JSON.parse(stdout)).toEqual(MOCK_USERS);
+        expect(JSON.parse(stdout)).toEqual({ data: MOCK_USERS, hasMore: false });
       }
 
       expect(
@@ -332,7 +332,7 @@ describe("users commands", () => {
     );
 
     expect(exitCode).toBe(0);
-    expect(JSON.parse(stdout)).toEqual(MOCK_USERS);
+    expect(JSON.parse(stdout)).toEqual({ data: MOCK_USERS, hasMore: false });
 
     const fetchAppCall = http.requests.find(
       (request) =>

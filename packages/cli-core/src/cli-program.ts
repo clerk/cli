@@ -321,8 +321,8 @@ Give AI agents better Clerk context: install the Clerk skills
     .command("list")
     .description("List users")
     .option("--json", "Output as JSON")
-    .option("--limit <number>", "Maximum users to return (1-500)", (value) =>
-      parseIntegerOption(value, "--limit", { min: 1, max: 500 }),
+    .option("--limit <number>", "Maximum users to return (1-250, default 100)", (value) =>
+      parseIntegerOption(value, "--limit", { min: 1, max: 250 }),
     )
     .option("--offset <number>", "Users to skip before returning results (0+)", (value) =>
       parseIntegerOption(value, "--offset", { min: 0 }),

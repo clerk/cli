@@ -163,6 +163,33 @@ For instance config, prefer the dedicated `clerk config ...` commands over raw P
 
 See [references/recipes.md](references/recipes.md) for concrete patterns: listing/filtering users, creating orgs, impersonation sessions, etc.
 
+## Inspecting large outputs (do not flood your context)
+
+`users list`, `apps list`, `config pull`, and most `clerk api` GETs return payloads that can be many kilobytes or megabytes. Production tenants commonly have thousands of users; an instance config can be hundreds of fields deep. Reading those responses into the conversation costs context window for no benefit. Save the response to a file first, then query just what you need with `jq`:
+
+```sh
+# 1. Persist the response. Use --limit 250 to maximize page size for users list.
+clerk users list --json --limit 250 > /tmp/users.json
+clerk apps list --json                > /tmp/apps.json
+clerk api /users/user_abc123          > /tmp/user.json
+
+# 2. Inspect only what you need.
+jq '.data | length'                       /tmp/users.json   # current page size
+jq '.hasMore'                             /tmp/users.json   # are more pages available?
+jq '.data[0] | keys'                      /tmp/users.json   # discover the user shape once
+jq '.data[] | {id, email_addresses}'      /tmp/users.json   # project to a few fields
+jq '[.data[] | select(.banned)] | length' /tmp/users.json   # aggregate without reading rows
+```
+
+**If `jq` is not available**, fall back to Python or Node — both can stream the file without printing it whole:
+
+```sh
+python3 -c 'import json; d=json.load(open("/tmp/users.json")); print(len(d["data"]), d["hasMore"])'
+node -e 'const d=require("/tmp/users.json"); console.log(d.data.length, d.hasMore)'
+```
+
+`cat` / `head` the file only when you genuinely need to see the raw structure for one-off debugging. When walking pages, write each page to its own file (e.g. `page-${offset}.json`) so individual pages stay independently inspectable.
+
 ## Core commands at a glance
 
 | Command                       | Purpose                                                                                                                                                                                                                                                                                                             | Key flags                                                                                                                                                                        |
@@ -178,7 +205,7 @@ See [references/recipes.md](references/recipes.md) for concrete patterns: listin
 | `clerk config put`            | Full replacement (PUT) of instance config. Pass `--destructive` to actually delete removed sub-resources rather than resetting them to defaults.                                                                                                                                                                    | `--app`, `--instance`, `--file`, `--json`, `--dry-run`, `--yes`, `--destructive`                                                                                                 |
 | `clerk apps {list,create}`    | List or create Clerk applications. Defaults to JSON in agent mode.                                                                                                                                                                                                                                                  | (see `--help`)                                                                                                                                                                   |
 | `clerk users` (no subcommand) | Interactive picker for `users` actions in human mode; in agent mode prints the action list and exits `2`. Always pass an explicit subcommand from agents.                                                                                                                                                           | `--app`, `--instance`, `--secret-key`                                                                                                                                            |
-| `clerk users list`            | List users via curated BAPI flags. Defaults to JSON when piped or in agent mode.                                                                                                                                                                                                                                    | `--limit`, `--offset`, `--query`, `--email-address`, `--phone-number`, `--username`, `--user-id`, `--external-id`, `--order-by`, `--json`, `--app`, `--instance`, `--secret-key` |
+| `clerk users list`            | List users via curated BAPI flags. JSON output (default when piped or in agent mode) is `{data, hasMore}` so callers can paginate without `/users/count`. `--limit` defaults to 100 (max 250).                                                                                                                      | `--limit`, `--offset`, `--query`, `--email-address`, `--phone-number`, `--username`, `--user-id`, `--external-id`, `--order-by`, `--json`, `--app`, `--instance`, `--secret-key` |
 | `clerk users create`          | Create a user from curated flags or a raw BAPI body. Confirmation prompt unless `--yes`.                                                                                                                                                                                                                            | `--email`, `--phone`, `--username`, `--password`, `--first-name`, `--last-name`, `--external-id`, `-d, --data`, `--file`, `--dry-run`, `--yes`, `--json`                         |
 | `clerk users open [user-id]`  | Open a user's dashboard page. Agent mode requires `user-id` and prints a JSON descriptor instead of launching a browser.                                                                                                                                                                                            | (see `--help`)                                                                                                                                                                   |
 | `clerk open [subpath]`        | Open the linked app's dashboard in a browser. Agent mode: prints a JSON descriptor instead of opening.                                                                                                                                                                                                              | (see `--help`)                                                                                                                                                                   |

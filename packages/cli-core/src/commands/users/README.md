@@ -55,8 +55,8 @@ clerk users list --app app_123 --instance prod
 
 Common list filters:
 
-- `--limit <number>`
-- `--offset <number>`
+- `--limit <number>` page size, 1-250, defaults to 100
+- `--offset <number>` rows to skip before returning results
 - `--query <query>`
 - `--email-address <email>` repeat or comma-separate values
 - `--phone-number <phone>` repeat or comma-separate values
@@ -64,6 +64,19 @@ Common list filters:
 - `--user-id <user-id>` repeat or comma-separate values
 - `--external-id <external-id>` repeat or comma-separate values
 - `--order-by <field>` supports Clerk's common `getUserList()` order fields, with optional `+` or `-`
+
+`--json` output (and agent mode) wraps the page in an envelope so callers can paginate without a separate count call:
+
+```json
+{
+  "data": [
+    /* user objects */
+  ],
+  "hasMore": true
+}
+```
+
+`hasMore` is computed by requesting one more row than the page size and reporting whether BAPI returned it. When `true`, advance with `--offset $((offset + limit))` to fetch the next page. Human-mode table output appends the same hint as a footer.
 
 ### `clerk users create`
 

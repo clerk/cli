@@ -53,17 +53,17 @@ describe("parseIntegerOption (via users list --limit / --offset)", () => {
     {
       label: "--limit 0",
       args: ["--limit", "0"],
-      expected: /Must be 1-500/,
+      expected: /Must be 1-250/,
     },
     {
-      label: "--limit 501",
-      args: ["--limit", "501"],
-      expected: /Must be 1-500/,
+      label: "--limit 251",
+      args: ["--limit", "251"],
+      expected: /Must be 1-250/,
     },
     {
       label: "--limit -5 (post-fix surfaces range message)",
       args: ["--limit", "-5"],
-      expected: /Must be 1-500/,
+      expected: /Must be 1-250/,
     },
     {
       label: "--limit abc",

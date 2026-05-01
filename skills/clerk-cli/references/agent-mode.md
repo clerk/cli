@@ -135,7 +135,7 @@ Errors use the standard agent-mode format: bad JSON → `invalid_json`, missing 
 | `clerk doctor --json`                         | `[{name, status, message, detail?, remedy?, fix?}]`                                     |
 | `clerk apps list --json`                      | Array of application objects                                                            |
 | `clerk apps create --json`                    | Single application object                                                               |
-| `clerk users list` (agent mode or `--json`)   | Array of user objects (raw BAPI shape)                                                  |
+| `clerk users list` (agent mode or `--json`)   | `{data: [...users], hasMore}` envelope (BAPI user shape inside `data`)                  |
 | `clerk users create` (agent mode or `--json`) | Single user object (raw BAPI shape)                                                     |
 | `clerk users open` (agent mode)               | `{url, appId, appName, instanceId, instanceLabel, userId, opened: false}`               |
 | `clerk api <path>`                            | Raw API JSON (Backend or Platform) on stdout                                            |

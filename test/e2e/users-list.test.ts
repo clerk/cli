@@ -1,8 +1,9 @@
 /**
  * Live-BAPI roundtrip test for `clerk users list`. Pins the response shape
- * (flat array, not a `{ data, totalCount }` wrapper) against the real Clerk
- * Backend API. If BAPI ever changes the shape, this test fails immediately
- * rather than being masked by a fixture mock.
+ * (`{ data: [...users], hasMore: boolean }` envelope on top of BAPI's flat
+ * user array) against the real Clerk Backend API. If BAPI's underlying
+ * shape ever changes, this test fails immediately rather than being masked
+ * by a fixture mock.
  *
  * Requires `CLERK_PLATFORM_API_KEY` and `CLERK_CLI_TEST_APP_ID`. Locally,
  * run via `bun run test:e2e:op` so 1Password resolves both in-memory.
@@ -41,7 +42,7 @@ afterAll(async () => {
   rmSync(configDir, { recursive: true, force: true });
 });
 
-test("users list --json returns a flat array containing created users", async () => {
+test("users list --json returns a { data, hasMore } envelope around the BAPI users", async () => {
   const users = await Promise.all(
     [1, 2, 3].map(async () => {
       const u = await createTestUser(configDir, { appId: APP_ID }, FIXTURE_NAME);
@@ -55,10 +56,17 @@ test("users list --json returns a flat array containing created users", async ()
     .env({ ...process.env, CLERK_CONFIG_DIR: configDir })
     .quiet();
 
-  const body = JSON.parse(result.stdout.toString());
+  const body = JSON.parse(result.stdout.toString()) as {
+    data: Array<{ id: unknown }>;
+    hasMore: boolean;
+  };
 
-  expect(Array.isArray(body)).toBe(true);
-  expect(body.every((u: { id: unknown }) => typeof u.id === "string")).toBe(true);
-  const returned = body.map((u: { id: string }) => u.id).sort();
+  expect(Array.isArray(body.data)).toBe(true);
+  expect(typeof body.hasMore).toBe("boolean");
+  // Three explicit user_id filters and a 100-row default page size, so the
+  // page can never overflow.
+  expect(body.hasMore).toBe(false);
+  expect(body.data.every((u) => typeof u.id === "string")).toBe(true);
+  const returned = body.data.map((u) => u.id as string).sort();
   expect(returned).toEqual(users.map((u) => u.id).sort());
 });

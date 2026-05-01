@@ -102,9 +102,10 @@ describe("users list", () => {
       app: "app_123",
       instance: "prod",
     });
+    // Default page size 100; request limit is +1 to detect hasMore.
     expect(mockBapiRequest).toHaveBeenCalledWith({
       method: "GET",
-      path: "/users",
+      path: "/users?limit=101",
       secretKey: "sk_test_123",
     });
   });
@@ -143,7 +144,7 @@ describe("users list", () => {
     expect(url.searchParams.getAll("user_id")).toEqual(["user_123", "user_456"]);
     expect(url.searchParams.getAll("external_id")).toEqual(["ext_123"]);
     expect(url.searchParams.get("order_by")).toBe("-last_sign_in_at");
-    expect(url.searchParams.get("limit")).toBe("25");
+    expect(url.searchParams.get("limit")).toBe("26");
     expect(url.searchParams.get("offset")).toBe("50");
   });
 
@@ -175,7 +176,7 @@ describe("users list", () => {
   test("outputs JSON when requested", async () => {
     await runList({ json: true });
 
-    expect(JSON.parse(captured.out)).toEqual(mockUsers);
+    expect(JSON.parse(captured.out)).toEqual({ data: mockUsers, hasMore: false });
     expect(captured.err).toBe("");
   });
 
@@ -184,7 +185,76 @@ describe("users list", () => {
 
     await runList();
 
-    expect(JSON.parse(captured.out)).toEqual(mockUsers);
+    expect(JSON.parse(captured.out)).toEqual({ data: mockUsers, hasMore: false });
+  });
+
+  test("flags hasMore=true when BAPI returns one more row than the page size", async () => {
+    const overflowUsers = Array.from({ length: 4 }, (_, i) => ({ id: `user_${i}` }));
+    mockBapiRequest.mockResolvedValue({
+      status: 200,
+      headers: new Headers(),
+      body: overflowUsers,
+      rawBody: JSON.stringify(overflowUsers),
+    });
+
+    await runList({ json: true, limit: 3 });
+
+    const parsed = JSON.parse(captured.out) as { data: unknown[]; hasMore: boolean };
+    expect(parsed.hasMore).toBe(true);
+    expect(parsed.data).toHaveLength(3);
+    expect((parsed.data[0] as { id: string }).id).toBe("user_0");
+  });
+
+  test("flags hasMore=false when BAPI returns fewer than limit+1 rows", async () => {
+    const underflowUsers = [{ id: "user_0" }, { id: "user_1" }];
+    mockBapiRequest.mockResolvedValue({
+      status: 200,
+      headers: new Headers(),
+      body: underflowUsers,
+      rawBody: JSON.stringify(underflowUsers),
+    });
+
+    await runList({ json: true, limit: 3 });
+
+    const parsed = JSON.parse(captured.out) as { data: unknown[]; hasMore: boolean };
+    expect(parsed.hasMore).toBe(false);
+    expect(parsed.data).toHaveLength(2);
+  });
+
+  test("table footer hints at the next --offset when more results are available", async () => {
+    const overflowUsers = Array.from({ length: 4 }, (_, i) => ({
+      id: `user_${i}`,
+      first_name: `User${i}`,
+    }));
+    mockBapiRequest.mockResolvedValue({
+      status: 200,
+      headers: new Headers(),
+      body: overflowUsers,
+      rawBody: JSON.stringify(overflowUsers),
+    });
+
+    await runList({ limit: 3 });
+
+    expect(captured.err).toContain("3 users returned");
+    expect(captured.err).toContain("more available");
+    expect(captured.err).toContain("--offset 3");
+  });
+
+  test("offsets the next-page hint by the supplied --offset", async () => {
+    const overflowUsers = Array.from({ length: 4 }, (_, i) => ({
+      id: `user_${i}`,
+      first_name: `User${i}`,
+    }));
+    mockBapiRequest.mockResolvedValue({
+      status: 200,
+      headers: new Headers(),
+      body: overflowUsers,
+      rawBody: JSON.stringify(overflowUsers),
+    });
+
+    await runList({ limit: 3, offset: 9 });
+
+    expect(captured.err).toContain("--offset 12");
   });
 
   test("falls back to the shared picker-aware resolver in human mode when no credentials resolve", async () => {
@@ -198,7 +268,7 @@ describe("users list", () => {
     expect(mockResolveUsersInstanceContext).toHaveBeenCalledWith({});
     expect(mockBapiRequest).toHaveBeenCalledWith({
       method: "GET",
-      path: "/users",
+      path: "/users?limit=101",
       secretKey: "sk_test_picked",
     });
   });

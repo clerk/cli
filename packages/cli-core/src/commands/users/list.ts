@@ -38,6 +38,7 @@ type BapiUser = {
 };
 
 const COLUMN_PADDING = 2;
+const DEFAULT_LIMIT = 100;
 
 function printJson(data: unknown, options: UsersListOptions = {}): boolean {
   if (!options.json && !isAgent()) return false;
@@ -60,12 +61,10 @@ function appendMultiValueParam(
   }
 }
 
-function buildUsersListPath(options: UsersListOptions): string {
+function buildUsersListPath(options: UsersListOptions, requestLimit: number): string {
   const searchParams = new URLSearchParams();
 
-  if (typeof options.limit === "number") {
-    searchParams.set("limit", String(options.limit));
-  }
+  searchParams.set("limit", String(requestLimit));
   if (typeof options.offset === "number") {
     searchParams.set("offset", String(options.offset));
   }
@@ -170,18 +169,25 @@ async function resolveListSecretKey(options: UsersListOptions): Promise<string> 
 
 export async function list(options: UsersListOptions = {}): Promise<void> {
   const secretKey = await resolveListSecretKey(options);
+  const pageSize = options.limit ?? DEFAULT_LIMIT;
+  const offset = options.offset ?? 0;
+  // Request one extra row so we can detect whether more pages exist without
+  // a separate /users/count round-trip. The CLI's --limit caps at 250, so
+  // pageSize + 1 always fits under BAPI's MaxLimit of 500.
   const response = await withSpinner("Fetching users...", () =>
     bapiRequest({
       method: "GET",
-      path: buildUsersListPath(options),
+      path: buildUsersListPath(options, pageSize + 1),
       secretKey,
     }),
   );
 
   const body = response.body;
-  const users = Array.isArray(body) ? (body as BapiUser[]) : [];
+  const allUsers = Array.isArray(body) ? (body as BapiUser[]) : [];
+  const hasMore = allUsers.length > pageSize;
+  const users = hasMore ? allUsers.slice(0, pageSize) : allUsers;
 
-  if (printJson(body, options)) return;
+  if (printJson({ data: users, hasMore }, options)) return;
 
   if (users.length === 0) {
     log.warn("No users found.");
@@ -189,7 +195,13 @@ export async function list(options: UsersListOptions = {}): Promise<void> {
   }
 
   formatUsersTable(users);
-  log.info(`\n${users.length} user${users.length === 1 ? "" : "s"} returned`);
+  const summary = `\n${users.length} user${users.length === 1 ? "" : "s"} returned`;
+  if (hasMore) {
+    const nextOffset = offset + pageSize;
+    log.info(`${summary} (more available, re-run with \`--offset ${nextOffset}\`)`);
+  } else {
+    log.info(summary);
+  }
 }
 
 registerUsersAction({
