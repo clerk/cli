@@ -123,7 +123,6 @@ export async function open(options: UsersOpenOptions = {}): Promise<void> {
           instanceId: target.instanceId,
           instanceLabel: target.instanceLabel,
           userId,
-          opened: false,
         }),
       );
       return;
@@ -144,15 +143,15 @@ export async function open(options: UsersOpenOptions = {}): Promise<void> {
     return;
   }
 
+  if (isAgent()) {
+    throwUsageError("User ID is required in agent mode. Pass it as a positional argument.");
+  }
+
   const target = await resolveUsersInstanceContext({
     secretKey: options.secretKey,
     app: options.app,
     instance: options.instance,
   });
-
-  if (isAgent()) {
-    throwUsageError("User ID is required in agent mode. Pass it as a positional argument.");
-  }
 
   if (!target.secretKey) {
     throw new CliError("Internal: users open target is missing a secret key for pickUser.", {

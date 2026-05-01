@@ -115,7 +115,7 @@ clerk users open user_2x9k --secret-key sk_test_123 --app app_123
 clerk users open user_2x9k --print
 ```
 
-In agent mode the user-id is required (no interactive picker) and output is a JSON object with `url`, `appId`, `appName`, `instanceId`, `instanceLabel`, `userId`, and `opened`. `--print` always wins and emits the plain URL on stdout.
+In agent mode the user-id is required (no interactive picker) and output is a JSON object with `url`, `appId`, `appName`, `instanceId`, `instanceLabel`, and `userId`. `--print` always wins and emits the plain URL on stdout.
 
 `--secret-key` chooses the Backend API key used for user lookup. `users open` still requires an app target to resolve the dashboard URL, either from `--app`, a linked project, or the human-mode app picker. Use `--instance` when you want something other than the default development instance.
 

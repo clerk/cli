@@ -114,7 +114,6 @@ describe("users open", () => {
       instanceId: "ins_prod789",
       instanceLabel: "production",
       userId: "user_2x9k",
-      opened: false,
     });
     expect(mockOpenBrowser).not.toHaveBeenCalled();
   });
