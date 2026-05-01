@@ -1,10 +1,12 @@
-import { search } from "../../../lib/listage.ts";
+import { search, Separator } from "../../../lib/listage.ts";
 import { bapiRequest } from "../../api/bapi.ts";
 
 export type PickUserOptions = {
   secretKey: string;
   message?: string;
 };
+
+const PICKER_LIMIT = 20;
 
 type UserSummary = {
   id: string;
@@ -30,18 +32,30 @@ export async function pickUser(options: PickUserOptions): Promise<string> {
   return search<string>({
     message: options.message ?? "Pick a user:",
     source: async (term) => {
-      const query = term ? `?query=${encodeURIComponent(term)}&limit=20` : "?limit=20";
+      // Request one extra so we can flag overflow with a refine-search hint.
+      const params = new URLSearchParams();
+      if (term) params.set("query", term);
+      params.set("limit", String(PICKER_LIMIT + 1));
       const response = await bapiRequest({
         method: "GET",
-        path: `/users${query}`,
+        path: `/users?${params}`,
         secretKey: options.secretKey,
       });
-      const body = response.body as UserSummary[] | undefined;
-      if (!Array.isArray(body)) return [];
-      return body.map((user) => ({
+      const body = response.body;
+      const allUsers = Array.isArray(body) ? (body as UserSummary[]) : [];
+      const hasMore = allUsers.length > PICKER_LIMIT;
+      const users = hasMore ? allUsers.slice(0, PICKER_LIMIT) : allUsers;
+
+      const choices: Array<{ value: string; name: string } | Separator> = users.map((user) => ({
         value: user.id,
         name: formatUserChoice(user),
       }));
+
+      if (hasMore) {
+        choices.push(new Separator("More results available, type to refine your search"));
+      }
+
+      return choices;
     },
   });
 }

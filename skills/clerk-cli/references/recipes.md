@@ -10,23 +10,28 @@ clerk api ls users            # filter by keyword
 clerk api ls --platform       # Platform API (account-level)
 ```
 
-The bundled catalog is cached locally for 1 hour; run `clerk api ls` to force a refresh if needed.
+The bundled catalog is cached locally for 1 hour. There is no force-refresh flag — once the TTL expires the next `clerk api ls` re-fetches automatically; on fetch failure the CLI falls back to the stale cache and prints a warning.
 
 ## Users
 
 ```sh
-# List users (paginated)
-clerk api /users
-clerk api '/users?limit=10&offset=0&order_by=-created_at'
+# List users (preferred; curated flags). --limit defaults to 100 (max 250).
+# JSON output is `{ data: [...], hasMore }` so callers can paginate without /users/count.
+clerk users list
+clerk users list --limit 50 --offset 0 --order-by -created_at
 
-# Count users
+# Count users (no curated subcommand; use the raw API)
 clerk api /users/count
 
-# Fetch a user
+# Fetch a user (no curated subcommand; use the raw API)
 clerk api /users/user_abc123
 
 # Search by email
-clerk api '/users?email_address=alice@example.com'
+clerk users list --email-address alice@example.com
+
+# Open a user's profile in the dashboard
+clerk users open user_abc123
+clerk users open user_abc123 --print     # print the URL instead of opening
 
 # Create a user (preferred; curated flags)
 clerk users create \
@@ -213,14 +218,50 @@ clerk api /v1/platform/applications/app_abc123 --platform
 
 ## Scripting patterns
 
-### Pipe to `jq`
+### Save large responses to a file before reading them
+
+`users list`, `apps list`, `config pull`, and most `clerk api` GETs can return responses ranging from kilobytes to megabytes. Reading the full payload into an LLM-driven session burns context for no benefit. Persist the response, then query just the slice you need:
 
 ```sh
-# Get a list of user IDs
-clerk api /users | jq -r '.[] | .id'
+# Persist once, query as many times as you need.
+clerk users list --json --limit 250 > /tmp/users.json
 
-# Count banned users
-clerk api /users | jq '[.[] | select(.banned)] | length'
+jq '.data | length'                   /tmp/users.json   # count rows on the page
+jq '.hasMore'                         /tmp/users.json   # any more pages?
+jq '.data[0] | keys'                  /tmp/users.json   # learn the shape of one record
+jq '.data[] | {id, email_addresses}'  /tmp/users.json   # project to relevant fields only
+```
+
+If `jq` is not on `PATH`, fall back to Python or Node, which most environments have:
+
+```sh
+python3 -c 'import json; d=json.load(open("/tmp/users.json")); print(len(d["data"]), d["hasMore"])'
+node    -e 'const d=require("/tmp/users.json"); console.log(d.data.length, d.hasMore)'
+```
+
+Only `cat`/`head` the file when you genuinely need the raw structure for one-off debugging.
+
+### Pipe to `jq`
+
+For small responses (or one-shot lookups), inline piping to `jq` is fine:
+
+```sh
+# Get a list of user IDs from the current page (the page envelope is `{ data, hasMore }`)
+clerk users list --json | jq -r '.data[] | .id'
+
+# Count banned users on the current page
+clerk users list --json | jq '[.data[] | select(.banned)] | length'
+
+# Walk every page until hasMore is false. Save each page to its own file so you
+# can inspect them independently without re-fetching.
+offset=0
+while :; do
+  page="/tmp/users-${offset}.json"
+  clerk users list --json --limit 250 --offset "$offset" > "$page"
+  jq -r '.data[] | .id' "$page"
+  [ "$(jq -r '.hasMore' "$page")" = "true" ] || break
+  offset=$((offset + 250))
+done
 ```
 
 ### Read body from stdin
@@ -233,8 +274,9 @@ jq -n '{email_address:["c@d.co"]}' | clerk api /users
 ### Loop safely
 
 ```sh
-# Always --dry-run first across the whole set
-for id in $(clerk api /users | jq -r '.[] | .id'); do
+# Always --dry-run first across the whole set. `users list` paginates;
+# bump --limit (max 250) and walk pages with --offset until .hasMore is false.
+for id in $(clerk users list --json --limit 250 | jq -r '.data[] | .id'); do
   clerk api /users/$id -X PATCH -d '{"public_metadata":{"migrated":true}}' --dry-run
 done
 # Re-run without --dry-run once the previews look right

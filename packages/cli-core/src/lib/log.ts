@@ -40,6 +40,11 @@ export function popPrefix() {
   prefixDepth = Math.max(0, prefixDepth - 1);
 }
 
+/** True while an intro/outro block is active and stderr output is gutter-prefixed. */
+export function isInsideGutter(): boolean {
+  return prefixDepth > 0;
+}
+
 function applyPrefix(msg: string): string {
   if (prefixDepth === 0) return msg;
   const bar = dim(S_BAR);

@@ -187,7 +187,7 @@ export function runBrowserTest(getFixture: () => FixtureState, config: FixtureCo
 
       try {
         // 1. Create test user
-        testUser = await createTestUser(configDir, secretKey, fixtureName);
+        testUser = await createTestUser(configDir, { secretKey }, fixtureName);
 
         // 2. Start dev server (port is allocated inside, with retries on collision)
         const server = await startDevServer({
@@ -296,7 +296,7 @@ export function runBrowserTest(getFixture: () => FixtureState, config: FixtureCo
           );
         }
         if (testUser) {
-          await deleteTestUser(testUser.id, configDir, secretKey, fixtureName).catch(() => {});
+          await deleteTestUser(testUser.id, configDir, { secretKey }, fixtureName).catch(() => {});
         }
       }
     },
