@@ -174,7 +174,10 @@ async function handleStarter(
     await confirmOverwrite(cwd);
   }
 
-  return bootstrapAndDetect(cwd, frameworkOverride, { ...overrides, implicitBootstrap: true });
+  return bootstrapAndDetect(cwd, frameworkOverride, {
+    ...overrides,
+    implicitBootstrap: true,
+  });
 }
 
 async function resolveProjectContext(
@@ -182,6 +185,13 @@ async function resolveProjectContext(
   frameworkOverride: FrameworkInfo | undefined,
   overrides: BootstrapOverrides,
 ): Promise<ResolvedContext> {
+  // When --framework is provided, gatherContext will always return a truthy
+  // context because the override skips detectFramework. Guard against this in
+  // blank directories so the bootstrap path (e.g. create-next-app) still runs.
+  if (frameworkOverride && !(await hasPackageJson(cwd))) {
+    return bootstrapAndDetect(cwd, frameworkOverride, overrides);
+  }
+
   const ctx = await withSpinner("Detecting framework...", () =>
     gatherContext(cwd, frameworkOverride, overrides.pmOverride),
   );

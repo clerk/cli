@@ -583,7 +583,10 @@ describe("init", () => {
     setup({ email: "test@test.com" });
     spyOn(frameworkMod, "lookupFramework").mockReturnValue(fwOverride);
     spyOn(config, "resolveProfile").mockResolvedValue({ profile: { appId: "app_123" } } as never);
-    setupBootstrapSuccess();
+    // With --framework in a blank dir, resolveProjectContext skips the first
+    // gatherContext call and goes straight to bootstrapAndDetect, which calls
+    // gatherContext only once on the new project directory.
+    spyOn(context, "gatherContext").mockResolvedValueOnce(FAKE_CTX);
 
     await init({ framework: "next", yes: true });
 
@@ -662,6 +665,77 @@ describe("init", () => {
       "react",
       "npm",
       true,
+    );
+  });
+
+  test("--framework in blank dir triggers bootstrap (not existing-project flow)", async () => {
+    const fwOverride = {
+      dep: "next",
+      name: "Next.js",
+      sdk: "@clerk/nextjs",
+      envVar: "NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY",
+      envFile: ".env.local" as const,
+      supportsKeyless: true,
+    };
+    setup();
+    spyOn(context, "hasPackageJson").mockResolvedValue(false);
+    spyOn(frameworkMod, "lookupFramework").mockReturnValue(fwOverride);
+
+    // After bootstrap, gatherContext is called again on the new project dir.
+    const bootstrapCtx = {
+      ...FAKE_CTX,
+      cwd: FAKE_BOOTSTRAP.projectDir,
+      framework: fwOverride,
+      existingClerk: false,
+    };
+    spyOn(context, "gatherContext").mockResolvedValueOnce(bootstrapCtx);
+
+    spyOn(scaffoldMod, "scaffold").mockResolvedValue({
+      actions: [{ type: "create", path: "middleware.ts", content: "", description: "" }],
+      postInstructions: [],
+    });
+
+    await init({ framework: "next", yes: true });
+
+    expect(bootstrapMod.promptAndBootstrap).toHaveBeenCalledWith(
+      expect.any(String),
+      fwOverride,
+      expect.objectContaining({ skipConfirm: true }),
+    );
+  });
+
+  test("--framework with --pm in blank dir triggers bootstrap with correct pm", async () => {
+    const fwOverride = {
+      dep: "next",
+      name: "Next.js",
+      sdk: "@clerk/nextjs",
+      envVar: "NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY",
+      envFile: ".env.local" as const,
+      supportsKeyless: true,
+    };
+    setup();
+    spyOn(context, "hasPackageJson").mockResolvedValue(false);
+    spyOn(frameworkMod, "lookupFramework").mockReturnValue(fwOverride);
+
+    const bootstrapCtx = {
+      ...FAKE_CTX,
+      cwd: FAKE_BOOTSTRAP.projectDir,
+      framework: fwOverride,
+      existingClerk: false,
+    };
+    spyOn(context, "gatherContext").mockResolvedValueOnce(bootstrapCtx);
+
+    spyOn(scaffoldMod, "scaffold").mockResolvedValue({
+      actions: [{ type: "create", path: "middleware.ts", content: "", description: "" }],
+      postInstructions: [],
+    });
+
+    await init({ framework: "next", pm: "npm", yes: true });
+
+    expect(bootstrapMod.promptAndBootstrap).toHaveBeenCalledWith(
+      expect.any(String),
+      fwOverride,
+      expect.objectContaining({ skipConfirm: true, pmOverride: "npm" }),
     );
   });
 
