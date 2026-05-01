@@ -10,7 +10,7 @@ clerk api ls users            # filter by keyword
 clerk api ls --platform       # Platform API (account-level)
 ```
 
-The bundled catalog is cached locally for 1 hour; run `clerk api ls` to force a refresh if needed.
+The bundled catalog is cached locally for 1 hour. There is no force-refresh flag — once the TTL expires the next `clerk api ls` re-fetches automatically; on fetch failure the CLI falls back to the stale cache and prints a warning.
 
 ## Users
 
@@ -27,6 +27,10 @@ clerk api /users/user_abc123
 
 # Search by email
 clerk users list --email-address alice@example.com
+
+# Open a user's profile in the dashboard
+clerk users open user_abc123
+clerk users open user_abc123 --print     # print the URL instead of opening
 
 # Create a user (preferred; curated flags)
 clerk users create \
