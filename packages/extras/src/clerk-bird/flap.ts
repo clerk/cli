@@ -752,8 +752,10 @@ function render(cv: Canvas, gs: GameState): void {
 // ═══════════════════════════════════════════════════════
 
 export async function startFlap2(): Promise<void> {
-  if (!process.stdin.isTTY) {
-    throw new Error("clerk-bird requires an interactive terminal.");
+  if (!process.stdin.isTTY || !process.stdout.isTTY) {
+    throw new Error(
+      "clerk-bird requires an interactive terminal (stdin and stdout must be a TTY).",
+    );
   }
 
   const layout = computeLayout();
