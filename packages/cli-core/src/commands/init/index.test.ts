@@ -459,7 +459,7 @@ describe("init", () => {
       cwd: KEYLESS_CTX.cwd,
       createIfMissing: expect.any(String),
     });
-    expect(pullMod.pull).toHaveBeenCalledWith({ file: ".env", cwd: KEYLESS_CTX.cwd });
+    expect(pullMod.pull).toHaveBeenCalledWith({ file: ".env.local", cwd: KEYLESS_CTX.cwd });
   });
 
   test("agent mode with keyless framework uses linked profile as a real app target", async () => {
@@ -474,7 +474,7 @@ describe("init", () => {
 
     expect(heuristics.printKeylessInfo).not.toHaveBeenCalled();
     expect(linkMod.link).not.toHaveBeenCalled();
-    expect(pullMod.pull).toHaveBeenCalledWith({ file: ".env", cwd: KEYLESS_CTX.cwd });
+    expect(pullMod.pull).toHaveBeenCalledWith({ file: ".env.local", cwd: KEYLESS_CTX.cwd });
   });
 
   test("agent mode with keyless framework and --app uses real app flow", async () => {
@@ -491,7 +491,7 @@ describe("init", () => {
       cwd: KEYLESS_CTX.cwd,
       createIfMissing: expect.any(String),
     });
-    expect(pullMod.pull).toHaveBeenCalledWith({ file: ".env", cwd: KEYLESS_CTX.cwd });
+    expect(pullMod.pull).toHaveBeenCalledWith({ file: ".env.local", cwd: KEYLESS_CTX.cwd });
   });
 
   test("agent mode with non-keyless framework and no app target prints manual setup", async () => {
