@@ -1,6 +1,13 @@
 import { test, expect, describe, spyOn, afterAll } from "bun:test";
+import { mkdtempSync, mkdirSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { BOOTSTRAP_REGISTRY } from "./bootstrap-registry.ts";
-import { promptAndBootstrap, resolvePackageManager } from "./bootstrap.ts";
+import {
+  findAvailableProjectName,
+  promptAndBootstrap,
+  resolvePackageManager,
+} from "./bootstrap.ts";
 
 function entryFor(dep: string) {
   const entry = BOOTSTRAP_REGISTRY.find((e) => e.dep === dep);
@@ -167,6 +174,28 @@ describe("resolvePackageManager", () => {
   });
 });
 
+describe("findAvailableProjectName", () => {
+  test("returns the base name when no collision exists", async () => {
+    const tmp = mkdtempSync(join(tmpdir(), "clerk-bootstrap-"));
+    try {
+      expect(await findAvailableProjectName(tmp, "my-app")).toBe("my-app");
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  test("increments suffix until an unused name is found", async () => {
+    const tmp = mkdtempSync(join(tmpdir(), "clerk-bootstrap-"));
+    try {
+      mkdirSync(join(tmp, "my-app"));
+      mkdirSync(join(tmp, "my-app-2"));
+      expect(await findAvailableProjectName(tmp, "my-app")).toBe("my-app-3");
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+});
+
 describe("promptAndBootstrap", () => {
   test("throws a usage-exit CliError when skipConfirm is set without a framework override", async () => {
     await expect(
@@ -176,6 +205,24 @@ describe("promptAndBootstrap", () => {
       exitCode: 2,
       message: expect.stringContaining("Non-interactive mode requires --framework"),
     });
+  });
+
+  test("nameOverride collision still throws (explicit name)", async () => {
+    const tmp = mkdtempSync(join(tmpdir(), "clerk-bootstrap-"));
+    try {
+      mkdirSync(join(tmp, "my-app"));
+      await expect(
+        promptAndBootstrap(tmp, { name: "Next.js", dep: "next" } as never, {
+          skipConfirm: true,
+          nameOverride: "my-app",
+        }),
+      ).rejects.toMatchObject({
+        name: "CliError",
+        message: expect.stringContaining("already exists"),
+      });
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
   });
 
   test("guard still fires when implicitBootstrap is combined with skipConfirm", async () => {
