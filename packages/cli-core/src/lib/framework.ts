@@ -47,8 +47,6 @@ export const FRAMEWORK_MAP: FrameworkInfo[] = [
     dep: "nuxt",
     name: "Nuxt",
     sdk: "@clerk/nuxt",
-    // TODO: Remove sdkInstall once @clerk/nuxt stable (>=2.2.0) ships with keyless support
-    sdkInstall: "@clerk/nuxt@2.2.0-snapshot.v20260413174426",
     envVar: "NUXT_PUBLIC_CLERK_PUBLISHABLE_KEY",
     secretKeyEnvVar: "NUXT_CLERK_SECRET_KEY",
     envFile: ".env",
