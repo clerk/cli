@@ -6,6 +6,7 @@ import { dim, bold } from "../../lib/color.js";
 import { throwUserAbort, CliError, errorMessage } from "../../lib/errors.js";
 import { lookupFramework, type FrameworkInfo } from "../../lib/framework.js";
 import { resolveProfile } from "../../lib/config.js";
+import { deriveProjectName } from "../../lib/project-name.js";
 import { log } from "../../lib/log.js";
 import {
   createAccountlessApp,
@@ -97,12 +98,21 @@ export async function init(options: InitOptions = {}) {
   });
   ctx.keyless = keyless;
 
+  // Agents can auto-create an app on keyless-capable frameworks when authed (see
+  // `link`'s `createIfMissing` path). Non-keyless frameworks without a real app
+  // target still need explicit human input, so they fall through to manual setup.
   const manualSetup =
-    !keyless && (agent ? !hasRealAppTarget : bootstrap != null && overrides.skipConfirm && !authed);
+    !keyless &&
+    (agent
+      ? !hasRealAppTarget && !ctx.framework.supportsKeyless
+      : bootstrap != null && overrides.skipConfirm && !authed);
 
   if (!keyless && !manualSetup) {
     bar();
-    await authenticateAndLink(ctx.cwd, options.app);
+    const createIfMissing = agent
+      ? await deriveProjectName(ctx.cwd, bootstrap?.projectName)
+      : undefined;
+    await authenticateAndLink(ctx.cwd, options.app, createIfMissing);
   }
 
   // Short-circuit on a fully-clean re-run so env pull / skills prompt don't
@@ -240,17 +250,18 @@ function resolveKeylessMode({
   hasRealAppTarget: boolean;
 }): boolean {
   if (ctx.framework.supportsKeyless) {
-    if (agent) return !hasRealAppTarget;
+    // Authenticated (OAuth token or CLERK_PLATFORM_API_KEY) — use the
+    // authenticated flow so a real app is created/linked and real keys get
+    // pulled into .env. Otherwise fall back to keyless: the app runs on
+    // auto-generated dev keys and the user can connect their account later
+    // via `clerk auth login`.
+    if (agent) return !hasRealAppTarget && !authed;
 
     // Auto-keyless is scoped to bootstrap (new-project) flows only in human
     // mode. Existing projects keep the authenticated flow so real keys can be
-    // pulled unless an agent explicitly chooses keyless by omitting an app.
+    // pulled.
     if (!bootstrap) return false;
 
-    // Authenticated (OAuth token or CLERK_PLATFORM_API_KEY) — use the
-    // authenticated flow so real keys get pulled into .env. Otherwise fall
-    // back to keyless: the app runs on auto-generated dev keys and the user
-    // can connect their account later via `clerk auth login`.
     return !authed;
   }
 
@@ -275,7 +286,11 @@ async function resolveAuthLabel(): Promise<string> {
   return "";
 }
 
-async function authenticateAndLink(cwd: string, app: string | undefined): Promise<void> {
+async function authenticateAndLink(
+  cwd: string,
+  app: string | undefined,
+  createIfMissing: string | undefined,
+): Promise<void> {
   const label = await resolveAuthLabel();
   const profile = await resolveProfile(cwd);
 
@@ -290,7 +305,7 @@ async function authenticateAndLink(cwd: string, app: string | undefined): Promis
     log.info(dim(label));
   }
 
-  await link({ skipIfLinked: true, app, cwd });
+  await link({ skipIfLinked: true, app, cwd, createIfMissing });
 }
 
 // --- Keyless app setup ---

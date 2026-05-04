@@ -142,6 +142,7 @@ describe("init", () => {
       skipIfLinked: true,
       app: "app_abc",
       cwd: FAKE_CTX.cwd,
+      createIfMissing: undefined,
     });
   });
 
@@ -156,6 +157,7 @@ describe("init", () => {
       skipIfLinked: true,
       app: "app_abc",
       cwd: FAKE_CTX.cwd,
+      createIfMissing: undefined,
     });
   });
 
@@ -341,8 +343,8 @@ describe("init", () => {
     expect(linkMod.link).not.toHaveBeenCalled();
   });
 
-  test("agent mode with keyless framework uses keyless without an app target", async () => {
-    setup({ isAgent: true, email: "user@example.com" });
+  test("agent mode with keyless framework goes keyless when unauthenticated", async () => {
+    setup({ isAgent: true, email: null });
 
     const keylessCtx = {
       ...FAKE_CTX,
@@ -360,6 +362,35 @@ describe("init", () => {
     expect(heuristics.printKeylessInfo).toHaveBeenCalled();
     expect(linkMod.link).not.toHaveBeenCalled();
     expect(pullMod.pull).not.toHaveBeenCalled();
+  });
+
+  test("agent mode with keyless framework + authed creates and links a real app", async () => {
+    setup({ isAgent: true, email: "user@example.com" });
+
+    const keylessCtx = {
+      ...FAKE_CTX,
+      existingClerk: false,
+      framework: { ...FAKE_CTX.framework, supportsKeyless: true },
+    };
+    spyOn(context, "gatherContext").mockResolvedValue(keylessCtx);
+    // Override potential leakage from earlier tests that spy on resolveProfile
+    // with a non-undefined value but don't track those spies for restoration.
+    spyOn(config, "resolveProfile").mockResolvedValue(undefined);
+    spyOn(scaffoldMod, "scaffold").mockResolvedValue({
+      actions: [{ type: "create", path: "middleware.ts", content: "", description: "" }],
+      postInstructions: [],
+    });
+
+    await init({});
+
+    expect(heuristics.printKeylessInfo).not.toHaveBeenCalled();
+    expect(linkMod.link).toHaveBeenCalledWith({
+      skipIfLinked: true,
+      app: undefined,
+      cwd: keylessCtx.cwd,
+      createIfMissing: expect.any(String),
+    });
+    expect(pullMod.pull).toHaveBeenCalledWith({ file: ".env", cwd: keylessCtx.cwd });
   });
 
   test("agent mode with keyless framework uses linked profile as a real app target", async () => {
@@ -407,6 +438,7 @@ describe("init", () => {
       skipIfLinked: true,
       app: "app_abc",
       cwd: keylessCtx.cwd,
+      createIfMissing: expect.any(String),
     });
     expect(pullMod.pull).toHaveBeenCalledWith({ file: ".env", cwd: keylessCtx.cwd });
   });
@@ -451,6 +483,7 @@ describe("init", () => {
       skipIfLinked: true,
       app: "app_abc",
       cwd: FAKE_CTX.cwd,
+      createIfMissing: expect.any(String),
     });
   });
 

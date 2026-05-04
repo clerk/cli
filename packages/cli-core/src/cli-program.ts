@@ -48,6 +48,45 @@ import { update } from "./commands/update/index.ts";
 import { isClerkSkillInstalled } from "./lib/skill-detection.ts";
 import { orgsEnable, orgsDisable } from "./commands/orgs/index.ts";
 import { billingEnable, billingDisable } from "./commands/billing/index.ts";
+import { registerExtras } from "@clerk/cli-extras";
+
+const USER_LIST_ORDER_BY_FIELDS = [
+  "created_at",
+  "email_address",
+  "first_name",
+  "last_name",
+  "phone_number",
+  "username",
+  "last_sign_in_at",
+] as const;
+
+const USER_LIST_ORDER_BY_CHOICES = USER_LIST_ORDER_BY_FIELDS.flatMap((field) => [
+  field,
+  `+${field}`,
+  `-${field}`,
+]);
+
+function collectOptionValues(value: string, previous: string[] = []): string[] {
+  return [...previous, value];
+}
+
+function parseIntegerOption(
+  value: string,
+  flag: string,
+  { min, max }: { min: number; max?: number },
+): number {
+  if (!/^-?\d+$/.test(value)) {
+    throwUsageError(`Invalid ${flag} value "${value}". Must be an integer.`);
+  }
+
+  const parsed = Number.parseInt(value, 10);
+  if (parsed < min || (typeof max === "number" && parsed > max)) {
+    const range = typeof max === "number" ? `${min}-${max}` : `>= ${min}`;
+    throwUsageError(`Invalid ${flag} value "${value}". Must be ${range}.`);
+  }
+
+  return parsed;
+}
 
 export function createProgram() {
   const program = new Command()
@@ -267,6 +306,7 @@ Give AI agents better Clerk context: install the Clerk skills
     .option("--app <id>", "Application ID to target (works from any directory)")
     .option("--instance <id>", "Instance to target (dev, prod, or a full instance ID)")
     .setExamples([
+      { command: "clerk users list", description: "List users" },
       {
         command: "clerk users create --email alice@example.com --first-name Alice --yes",
         description: "Create a user from curated flags",
@@ -276,7 +316,75 @@ Give AI agents better Clerk context: install the Clerk skills
         description: "Create a user from an inline BAPI request body",
       },
     ])
-    .action(usersHandlers.menu);
+    .action((_opts, cmd) =>
+      usersHandlers.menu(cmd.optsWithGlobals() as Parameters<typeof usersHandlers.menu>[0]),
+    );
+
+  users
+    .command("list")
+    .description("List users")
+    .option("--json", "Output as JSON")
+    .option("--limit <number>", "Maximum users to return (1-250, default 100)", (value) =>
+      parseIntegerOption(value, "--limit", { min: 1, max: 250 }),
+    )
+    .option("--offset <number>", "Users to skip before returning results (0+)", (value) =>
+      parseIntegerOption(value, "--offset", { min: 0 }),
+    )
+    .option("--query <query>", "Search across common user fields")
+    .option(
+      "--email-address <email>",
+      "Filter by email address (repeat or comma-separate)",
+      collectOptionValues,
+      [],
+    )
+    .option(
+      "--phone-number <phone>",
+      "Filter by phone number (repeat or comma-separate)",
+      collectOptionValues,
+      [],
+    )
+    .option(
+      "--username <username>",
+      "Filter by username (repeat or comma-separate)",
+      collectOptionValues,
+      [],
+    )
+    .option(
+      "--user-id <user-id>",
+      "Filter by user ID (repeat or comma-separate)",
+      collectOptionValues,
+      [],
+    )
+    .option(
+      "--external-id <external-id>",
+      "Filter by external ID (repeat or comma-separate)",
+      collectOptionValues,
+      [],
+    )
+    .addOption(
+      createOption(
+        "--order-by <field>",
+        "Order by a supported field, optionally prefixed with + or -",
+      ).choices(USER_LIST_ORDER_BY_CHOICES),
+    )
+    .option("--secret-key <key>", "Backend API secret key to use")
+    .option("--app <id>", "Application ID to target (works from any directory)")
+    .option("--instance <id>", "Instance to target (dev, prod, or a full instance ID)")
+    .setExamples([
+      { command: "clerk users list", description: "List users with the default ordering" },
+      {
+        command: "clerk users list --query alice --limit 20",
+        description: "Search across common user fields with pagination",
+      },
+      {
+        command:
+          "clerk users list --email-address alice@example.com --external-id crm_123 --order-by -last_sign_in_at",
+        description: "Filter by common identifiers and sort by recent sign-in",
+      },
+    ])
+    .action((_opts, cmd) =>
+      usersHandlers.list(cmd.optsWithGlobals() as Parameters<typeof usersHandlers.list>[0]),
+    );
 
   users
     .command("create")
@@ -309,6 +417,36 @@ Give AI agents better Clerk context: install the Clerk skills
     ])
     .action((_opts, cmd) =>
       usersHandlers.create(cmd.optsWithGlobals() as Parameters<typeof usersHandlers.create>[0]),
+    );
+
+  users
+    .command("open")
+    .description("Open a user's dashboard page in your browser")
+    .addArgument(createArgument("[user-id]", "User ID to open. Omit to pick interactively."))
+    .option("--print", "Print the URL without opening the browser")
+    .option("--secret-key <key>", "Backend API secret key to use")
+    .option("--app <id>", "Application ID to target (works from any directory)")
+    .option("--instance <id>", "Instance to target (dev, prod, or a full instance ID)")
+    .setExamples([
+      { command: "clerk users open", description: "Pick app (if not linked) and user, then open" },
+      {
+        command: "clerk users open user_2x9k",
+        description: "Open a specific user (pick app if not linked)",
+      },
+      {
+        command: "clerk users open user_2x9k --app app_123",
+        description: "Open a specific user against an explicit app",
+      },
+      {
+        command: "clerk users open user_2x9k --print",
+        description: "Print the dashboard URL instead of opening",
+      },
+    ])
+    .action((userId, _opts, cmd) =>
+      usersHandlers.open({
+        ...(cmd.optsWithGlobals() as Parameters<typeof usersHandlers.open>[0]),
+        userId,
+      }),
     );
 
   const env = program
@@ -762,6 +900,8 @@ Tutorial — enable completions for your shell:
       { command: "clerk update --all", description: "Update every clerk install on PATH" },
     ])
     .action(update);
+
+  registerExtras(program);
 
   return program;
 }

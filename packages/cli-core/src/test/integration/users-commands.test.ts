@@ -1,7 +1,8 @@
 /**
  * Exercise primary users flows through the real CLI program.
  * Covers create against linked-project, --app, --secret-key, raw -d/--data,
- * --dry-run, and the wizard picker fallback when no project is linked.
+ * --dry-run, and the wizard picker fallback when no project is linked, plus
+ * list wired up against linked-project resolution.
  */
 
 import { writeFile } from "node:fs/promises";
@@ -9,9 +10,11 @@ import { join } from "node:path";
 import { describe, expect, test } from "bun:test";
 import {
   MOCK_APP,
+  MOCK_USERS,
   clerk,
   getInstance,
   http,
+  mockState,
   mockPrompts,
   setProfile,
   useIntegrationTestHarness,
@@ -264,5 +267,134 @@ describe("users commands", () => {
     expect(exitCode).not.toBe(0);
     expect(stderr + stdout).toContain("No input provided");
     expect(findBapiCreateRequest()).toBeUndefined();
+  });
+
+  test.each([{ mode: "human" }, { mode: "agent" }])(
+    "lists users from linked project context ($mode mode)",
+    async ({ mode }) => {
+      await setProfile("github.com/test/project", {
+        workspaceId: "",
+        appId: MOCK_APP.application_id,
+        appName: MOCK_APP.name,
+        instances: { development: devInstance.instance_id },
+      });
+
+      http.mock({
+        "/v1/platform/applications/app_1?include_secret_keys=true": MOCK_APP,
+        "/v1/users": MOCK_USERS,
+      });
+
+      const { stdout, stderr } = await clerk("--mode", mode, "users", "list");
+
+      if (mode === "human") {
+        expect(stdout).toContain("John Doe");
+        expect(stdout).toContain("john@example.com");
+        expect(stderr).toContain("1 user returned");
+      } else {
+        expect(JSON.parse(stdout)).toEqual({ data: MOCK_USERS, hasMore: false });
+      }
+
+      expect(
+        http.requests.some(
+          (request) =>
+            request.method === "GET" &&
+            request.url.includes("/v1/platform/applications/app_1") &&
+            request.url.includes("include_secret_keys=true"),
+        ),
+      ).toBe(true);
+      expect(
+        http.requests.some(
+          (request) =>
+            request.method === "GET" &&
+            request.url.includes("https://test-bapi.clerk.dev/v1/users"),
+        ),
+      ).toBe(true);
+    },
+  );
+
+  test("list resolves the secret key via --app without a linked project", async () => {
+    // No setProfile call: --app must thread through the parent command's
+    // option, not silently fall through to the no-secret-key error.
+    http.mock({
+      [PLAPI_APP_ROUTE]: MOCK_APP,
+      "/v1/users": MOCK_USERS,
+    });
+
+    const { stdout, exitCode } = await clerk.raw(
+      "--mode",
+      "agent",
+      "users",
+      "list",
+      "--app",
+      "app_1",
+      "--instance",
+      "development",
+    );
+
+    expect(exitCode).toBe(0);
+    expect(JSON.parse(stdout)).toEqual({ data: MOCK_USERS, hasMore: false });
+
+    const fetchAppCall = http.requests.find(
+      (request) =>
+        request.method === "GET" && request.url.includes("/v1/platform/applications/app_1"),
+    );
+    expect(fetchAppCall).toBeDefined();
+  });
+
+  test("users open prints a linked-project URL without PLAPI auth when the user id is already known", async () => {
+    await linkDevProject();
+    delete process.env.CLERK_PLATFORM_API_KEY;
+    mockState.storedToken = null;
+    http.mock({});
+
+    const { stdout, exitCode } = await clerk.raw(
+      "--mode",
+      "agent",
+      "users",
+      "open",
+      "user_123",
+      "--print",
+    );
+
+    expect(exitCode).toBe(0);
+    expect(stdout).toBe(
+      `https://dashboard.clerk.com/apps/${MOCK_APP.application_id}/instances/${devInstance.instance_id}/users/user_123`,
+    );
+    expect(http.requests).toHaveLength(0);
+  });
+
+  test("users open accepts --secret-key with --app and prints the dashboard URL without PLAPI auth", async () => {
+    delete process.env.CLERK_PLATFORM_API_KEY;
+    mockState.storedToken = null;
+    http.mock({
+      "/v1/instance": {
+        id: devInstance.instance_id,
+        publishable_key: devInstance.publishable_key,
+      },
+    });
+
+    const { stdout, exitCode } = await clerk.raw(
+      "--mode",
+      "agent",
+      "users",
+      "open",
+      "user_123",
+      "--secret-key",
+      "sk_test_directkey",
+      "--app",
+      "app_1",
+      "--print",
+    );
+
+    expect(exitCode).toBe(0);
+    expect(stdout).toBe(
+      `https://dashboard.clerk.com/apps/${MOCK_APP.application_id}/instances/${devInstance.instance_id}/users/user_123`,
+    );
+
+    const fetchAppCall = http.requests.find(
+      (request) =>
+        request.method === "GET" && request.url.includes("/v1/platform/applications/app_1"),
+    );
+    expect(fetchAppCall).toBeUndefined();
   });
 });

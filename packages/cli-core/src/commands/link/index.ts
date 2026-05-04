@@ -3,7 +3,7 @@ import { confirm } from "../../lib/prompts.ts";
 import { isAgent } from "../../mode.ts";
 import { getToken } from "../../lib/credential-store.ts";
 import { login } from "../auth/login.ts";
-import { fetchApplication, type Application } from "../../lib/plapi.ts";
+import { createApplication, fetchApplication, type Application } from "../../lib/plapi.ts";
 import { appLabel, fetchAppsTolerantly, pickOrCreateApp } from "../../lib/app-picker.ts";
 import { setProfile, resolveProfile, moveProfile } from "../../lib/config.ts";
 import { autolink, findClerkKeys, matchKeyToApp } from "../../lib/autolink.ts";
@@ -18,6 +18,13 @@ interface LinkOptions {
   app?: string;
   skipIfLinked?: boolean;
   cwd?: string;
+  /**
+   * In agent mode without `--app` and no existing profile, auto-create a new
+   * Clerk application with this name and link to it instead of failing with a
+   * usage error. Used by `clerk init` to keep the authed-agent flow non-
+   * interactive end-to-end.
+   */
+  createIfMissing?: string;
 }
 
 export async function link(options: LinkOptions = {}): Promise<void> {
@@ -42,7 +49,7 @@ export async function link(options: LinkOptions = {}): Promise<void> {
     if (autolinked) return;
   }
 
-  if (agent && !existing && !options.app) {
+  if (agent && !existing && !options.app && !options.createIfMissing) {
     throwUsageError(
       "Cannot select an application in agent mode. Pass --app <id>, or run `clerk apps list --json` and retry.",
     );
@@ -68,7 +75,12 @@ export async function link(options: LinkOptions = {}): Promise<void> {
 
   const app = options.app
     ? await withApiContext(fetchApplication(options.app), "Failed to fetch application")
-    : await resolveApp(cwd, displayPath, !existing);
+    : agent && options.createIfMissing
+      ? await withApiContext(
+          createApplication(options.createIfMissing),
+          "Failed to create application",
+        )
+      : await resolveApp(cwd, displayPath, !existing);
 
   const devInstance = app.instances.find((i) => i.environment_type === "development");
   const prodInstance = app.instances.find((i) => i.environment_type === "production");

@@ -36,7 +36,9 @@ When running in agent mode (`--mode agent` or non-TTY), the command runs the ful
 - For **existing projects**: framework and package manager are auto-detected, no flags required
 - For **new projects** (`--starter` or blank directory): `--framework` is required (no way to auto-detect in an empty dir). Package manager is auto-selected by availability (bun → pnpm → yarn → npm) unless `--pm` is provided
 - Project name defaults to the framework's default (e.g. `my-clerk-next-app`) unless `--name` is provided
-- For keyless-capable frameworks with no `--app` and no linked profile, init uses keyless and does not require auth
+- For keyless-capable frameworks with no `--app` and no linked profile:
+  - When **authenticated**, init creates a real Clerk app named after the project (`package.json#name`, `--name`, or directory basename) and links it. No keyless detour, no second `clerk auth login` to claim.
+  - When **unauthenticated**, init uses keyless and writes a breadcrumb so the next `clerk auth login` claims the app automatically.
 - For frameworks that require API keys, init will not pick or create an app in agent mode; pass `--app <id>` or link the project first to pull real keys
 
 ## Flow
@@ -44,7 +46,8 @@ When running in agent mode (`--mode agent` or non-TTY), the command runs the ful
 1. Gathers project context (framework, router variant, TypeScript, `src/` directory, package manager)
 2. Determines auth mode:
    - **Real app target** (`--app` or linked profile): authenticates, links if needed, and pulls real API keys into `.env`
-   - **Agent + keyless-capable framework + no real app target**: uses keyless mode — the app runs on auto-generated dev keys and the user can connect a Clerk account later with `clerk auth login`
+   - **Agent + keyless-capable framework + authenticated + no real app target**: creates a real Clerk app named after the project, links it, and pulls real API keys into `.env`
+   - **Agent + keyless-capable framework + unauthenticated + no real app target**: uses keyless mode — the app runs on auto-generated dev keys and the user can connect a Clerk account later with `clerk auth login`
    - **Agent + non-keyless framework + no real app target**: scaffolds locally and prints manual setup instructions instead of selecting or creating an app
    - **Human mode + bootstrap + keyless-capable framework + not authenticated**: uses keyless mode
    - **Human mode + existing project + not authenticated**: runs the authenticated flow, which triggers an interactive login so real keys can be pulled
@@ -81,7 +84,7 @@ Detects the project's framework from `package.json` dependencies (checked top-to
 | `express`               | Express        | `@clerk/express`              | `CLERK_PUBLISHABLE_KEY`             | No      |
 | `fastify`               | Fastify        | `@clerk/fastify`              | `CLERK_PUBLISHABLE_KEY`             | No      |
 
-The **Keyless** column indicates whether the framework's Clerk SDK supports keyless mode (auto-generated temporary dev keys). In human mode, keyless auto-selection only applies during bootstrap (new projects). In agent mode, keyless-capable frameworks use keyless whenever no real app target is provided by `--app` or a linked profile. For non-keyless frameworks without a real app target, agent mode prints manual setup instructions instead of selecting or creating an app.
+The **Keyless** column indicates whether the framework's Clerk SDK supports keyless mode (auto-generated temporary dev keys). In human mode, keyless auto-selection only applies during bootstrap (new projects) when the user is not authenticated. In agent mode, keyless-capable frameworks use keyless only when the user is not authenticated and no real app target is provided by `--app` or a linked profile; an authenticated agent run instead creates a real app named after the project and links it. For non-keyless frameworks without a real app target, agent mode prints manual setup instructions instead of selecting or creating an app.
 
 Package manager is detected from lock files: `bun.lockb`/`bun.lock` → bun, `yarn.lock` → yarn, `pnpm-lock.yaml` → pnpm, else npm.
 

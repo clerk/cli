@@ -48,19 +48,22 @@ Force human mode with `--mode human` or `CLERK_MODE=human`. Typical AI-agent inv
 
 ## What changes in agent mode
 
-| Behavior                                                         | Human mode                     | Agent mode                                                                                                                                                                                                  |
-| ---------------------------------------------------------------- | ------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Interactive pickers (`link` without `--app`, `api` with no args) | Show a TUI picker              | Print structured guidance and exit, or auto-resolve                                                                                                                                                         |
-| `clerk link --app <id>`                                          | Links directly                 | Links directly                                                                                                                                                                                              |
-| `clerk link` without `--app`                                     | Interactive picker / create UI | Tries silent autolink from detected publishable keys; if no deterministic match exists, exits with a usage error telling the caller to pass `--app`                                                         |
-| Confirmation prompts (`unlink`, `config patch`, `api -X DELETE`) | Prompt y/n                     | Require `--yes`, otherwise error                                                                                                                                                                            |
-| `clerk doctor --fix`                                             | Interactively offers fixes     | **Ignored**; output the `remedy` field and let the caller act                                                                                                                                               |
-| `clerk apps list` default output                                 | Table                          | JSON (when piped)                                                                                                                                                                                           |
-| `clerk apps create <name>` output                                | Human-readable summary         | JSON (auto-detected, same as `apps list`); `--json` also works explicitly                                                                                                                                   |
-| `clerk open [subpath]`                                           | Opens the browser to the URL   | Does not open a browser. Prints a JSON descriptor (`{url, appId, appName, instanceId, instanceLabel, subpath, opened: false}`) on stdout so the agent can surface it                                        |
-| `clerk auth login` when already authenticated                    | Prompt to re-auth              | Silent no-op                                                                                                                                                                                                |
-| `clerk init`                                                     | Full interactive scaffold flow | Runs non-interactively. Explicit `--app` or a linked profile uses the real-app auth/link/env flow; otherwise keyless-capable frameworks use keyless and non-keyless frameworks print manual setup guidance. |
-| Color / spinners                                                 | Enabled                        | Disabled                                                                                                                                                                                                    |
+| Behavior                                                         | Human mode                                | Agent mode                                                                                                                                                                                                  |
+| ---------------------------------------------------------------- | ----------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Interactive pickers (`link` without `--app`, `api` with no args) | Show a TUI picker                         | Print structured guidance and exit, or auto-resolve                                                                                                                                                         |
+| `clerk link --app <id>`                                          | Links directly                            | Links directly                                                                                                                                                                                              |
+| `clerk link` without `--app`                                     | Interactive picker / create UI            | Tries silent autolink from detected publishable keys; if no deterministic match exists, exits with a usage error telling the caller to pass `--app`                                                         |
+| Confirmation prompts (`unlink`, `config patch`, `api -X DELETE`) | Prompt y/n                                | Require `--yes`, otherwise error                                                                                                                                                                            |
+| `clerk doctor --fix`                                             | Interactively offers fixes                | **Ignored**; output the `remedy` field and let the caller act                                                                                                                                               |
+| `clerk apps list` default output                                 | Table                                     | JSON (when piped)                                                                                                                                                                                           |
+| `clerk apps create <name>` output                                | Human-readable summary                    | JSON (auto-detected, same as `apps list`); `--json` also works explicitly                                                                                                                                   |
+| `clerk users list` / `clerk users create` default output         | Table / human-readable                    | JSON (auto-detected when piped); `--json` also works explicitly                                                                                                                                             |
+| `clerk users` (no subcommand)                                    | Interactive action picker                 | Prints the action list and exits with a usage error (code `2`) — pass `list` / `create` / `open`                                                                                                            |
+| `clerk users open [user-id]`                                     | Picks a user interactively, opens browser | Requires `user-id`; prints `{url, appId, appName, instanceId, instanceLabel, userId, opened: false}` and does not open a browser                                                                            |
+| `clerk open [subpath]`                                           | Opens the browser to the URL              | Does not open a browser. Prints a JSON descriptor (`{url, appId, appName, instanceId, instanceLabel, subpath, opened: false}`) on stdout so the agent can surface it                                        |
+| `clerk auth login` when already authenticated                    | Prompt to re-auth                         | Silent no-op                                                                                                                                                                                                |
+| `clerk init`                                                     | Full interactive scaffold flow            | Runs non-interactively. Explicit `--app` or a linked profile uses the real-app auth/link/env flow; otherwise keyless-capable frameworks use keyless and non-keyless frameworks print manual setup guidance. |
+| Color / spinners                                                 | Enabled                                   | Disabled                                                                                                                                                                                                    |
 
 In addition, sandboxed agent-mode invocations may emit the warning above once
 per CLI invocation when a host-sensitive operation is blocked.
@@ -127,18 +130,21 @@ Errors use the standard agent-mode format: bad JSON → `invalid_json`, missing 
 
 ## Structured outputs you can rely on
 
-| Command                      | Structured output                                                                       |
-| ---------------------------- | --------------------------------------------------------------------------------------- |
-| `clerk doctor --json`        | `[{name, status, message, detail?, remedy?, fix?}]`                                     |
-| `clerk apps list --json`     | Array of application objects                                                            |
-| `clerk apps create --json`   | Single application object                                                               |
-| `clerk api <path>`           | Raw API JSON (Backend or Platform) on stdout                                            |
-| `clerk api <path> --include` | Response headers on stderr, body on stdout                                              |
-| `clerk config pull`          | Instance config JSON                                                                    |
-| `clerk config schema`        | JSON Schema                                                                             |
-| `clerk open [subpath]`       | `{url, appId, appName, instanceId, instanceLabel, subpath, opened: false}` (agent mode) |
-| `clerk open --print`         | Plain dashboard URL on stdout                                                           |
-| Any command (agent mode)     | On error: `{"error":{"code","message","docsUrl?","errors?"}}` on stderr                 |
+| Command                                       | Structured output                                                                       |
+| --------------------------------------------- | --------------------------------------------------------------------------------------- |
+| `clerk doctor --json`                         | `[{name, status, message, detail?, remedy?, fix?}]`                                     |
+| `clerk apps list --json`                      | Array of application objects                                                            |
+| `clerk apps create --json`                    | Single application object                                                               |
+| `clerk users list` (agent mode or `--json`)   | `{data: [...users], hasMore}` envelope (BAPI user shape inside `data`)                  |
+| `clerk users create` (agent mode or `--json`) | Single user object (raw BAPI shape)                                                     |
+| `clerk users open` (agent mode)               | `{url, appId, appName, instanceId, instanceLabel, userId, opened: false}`               |
+| `clerk api <path>`                            | Raw API JSON (Backend or Platform) on stdout                                            |
+| `clerk api <path> --include`                  | Response headers on stderr, body on stdout                                              |
+| `clerk config pull`                           | Instance config JSON                                                                    |
+| `clerk config schema`                         | JSON Schema                                                                             |
+| `clerk open [subpath]`                        | `{url, appId, appName, instanceId, instanceLabel, subpath, opened: false}` (agent mode) |
+| `clerk open --print`                          | Plain dashboard URL on stdout                                                           |
+| Any command (agent mode)                      | On error: `{"error":{"code","message","docsUrl?","errors?"}}` on stderr                 |
 
 For commands without an explicit `--json` flag, `clerk api` is your escape hatch: hit the underlying endpoint directly.
 

@@ -11,12 +11,78 @@ test("registers users as a top-level command", () => {
   expect(users).toBeDefined();
 });
 
-test("registers users create as a subcommand", () => {
+test("registers users create and list as subcommands", () => {
   const program = createProgram();
   const users = program.commands.find((command) => command.name() === "users")!;
   const names = users.commands.map((command) => command.name());
 
-  expect(names).toContain("create");
+  expect(names).toEqual(expect.arrayContaining(["create", "list"]));
+});
+
+test("users list exposes common filters and pagination options", () => {
+  const program = createProgram();
+  const users = program.commands.find((command) => command.name() === "users")!;
+  const list = users.commands.find((command) => command.name() === "list")!;
+  const optionNames = list.options.map((option) => option.long);
+
+  expect(optionNames).toEqual(
+    expect.arrayContaining([
+      "--json",
+      "--limit",
+      "--offset",
+      "--query",
+      "--email-address",
+      "--phone-number",
+      "--username",
+      "--user-id",
+      "--external-id",
+      "--order-by",
+      "--secret-key",
+      "--app",
+      "--instance",
+    ]),
+  );
+});
+
+describe("parseIntegerOption (via users list --limit / --offset)", () => {
+  function parseUsersList(args: readonly string[]) {
+    return createProgram().parseAsync(["users", "list", ...args], { from: "user" });
+  }
+
+  test.each([
+    {
+      label: "--limit 0",
+      args: ["--limit", "0"],
+      expected: /Must be 1-250/,
+    },
+    {
+      label: "--limit 251",
+      args: ["--limit", "251"],
+      expected: /Must be 1-250/,
+    },
+    {
+      label: "--limit -5 (post-fix surfaces range message)",
+      args: ["--limit", "-5"],
+      expected: /Must be 1-250/,
+    },
+    {
+      label: "--limit abc",
+      args: ["--limit", "abc"],
+      expected: /Must be an integer/,
+    },
+    {
+      label: "--limit 1.5",
+      args: ["--limit", "1.5"],
+      expected: /Must be an integer/,
+    },
+    {
+      label: "--offset -1",
+      args: ["--offset", "-1"],
+      expected: /Must be >= 0/,
+    },
+  ])("rejects $label", async ({ args, expected }) => {
+    await expect(parseUsersList(args)).rejects.toThrow(expected);
+  });
 });
 
 test("users create exposes --json output, curated flags, and -d/--data for inline request bodies", () => {
