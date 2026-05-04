@@ -358,4 +358,24 @@ describe("clerk enable/disable billing", () => {
 
     expect(skillCalls).toHaveLength(0);
   });
+
+  test("enable on an already-configured instance skips skill install and next-steps", async () => {
+    stubFetch(async () => {
+      return new Response(
+        JSON.stringify({
+          billing: { organization_enabled: true, user_enabled: true },
+          organization_settings: { enabled: true },
+        }),
+        { status: 200 },
+      );
+    });
+
+    await setupProfile();
+    const { billingEnable } = await import("./index.ts");
+    await captured.run(() => billingEnable({}));
+
+    expect(skillCalls).toHaveLength(0);
+    expect(captured.err).toContain("No changes detected");
+    expect(captured.err).not.toContain("clerk config schema --keys billing");
+  });
 });

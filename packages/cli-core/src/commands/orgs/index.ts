@@ -45,7 +45,7 @@ export async function orgsEnable(options: OrgsOptions): Promise<void> {
     orgSettings.max_allowed_memberships = parsePositiveInt(options.maxMembers, "--max-members");
   }
 
-  await applyConfigPatch({
+  const applied = await applyConfigPatch({
     ctx,
     payload: { organization_settings: orgSettings },
     verb: "Enabling organizations",
@@ -55,7 +55,7 @@ export async function orgsEnable(options: OrgsOptions): Promise<void> {
     dryRun: options.dryRun,
   });
 
-  if (!options.dryRun) printNextSteps(NEXT_STEPS.ENABLE_ORGS);
+  if (applied && !options.dryRun) printNextSteps(NEXT_STEPS.ENABLE_ORGS);
 }
 
 export async function orgsDisable(options: OrgsOptions): Promise<void> {

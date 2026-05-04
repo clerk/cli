@@ -20,7 +20,7 @@ export interface ApplyPatchOptions {
 }
 
 /** Fetch + diff + confirm + PATCH, matching `clerk config patch` semantics. */
-export async function applyConfigPatch(opts: ApplyPatchOptions): Promise<void> {
+export async function applyConfigPatch(opts: ApplyPatchOptions): Promise<boolean> {
   const { ctx, payload, verb, successMessage, failureContext, yes, dryRun, warning } = opts;
 
   const current =
@@ -31,7 +31,7 @@ export async function applyConfigPatch(opts: ApplyPatchOptions): Promise<void> {
 
   if (!hasConfigChanges(current, payload, true)) {
     log.info(dryRun ? "[dry-run] No changes detected" : "No changes detected");
-    return;
+    return false;
   }
 
   const headline = dryRun
@@ -40,8 +40,11 @@ export async function applyConfigPatch(opts: ApplyPatchOptions): Promise<void> {
   log.info(`\n${headline}\n`);
   printDiff(current, payload, true);
 
+  // Warning prints whenever it's set, even when --yes or agent mode skips the
+  // prompt — the warning is an audit signal, not a confirmation cue.
+  if (warning) log.warn(warning);
+
   if (!dryRun && isHuman() && !yes) {
-    if (warning) log.warn(warning);
     const ok = await confirm({ message: "Proceed?" });
     if (!ok) throwUserAbort();
   }
@@ -58,4 +61,5 @@ export async function applyConfigPatch(opts: ApplyPatchOptions): Promise<void> {
 
   log.debug(`plapi: ${JSON.stringify(result)}`);
   log.success(dryRun ? "[dry-run] Validation passed — no changes applied" : successMessage);
+  return true;
 }

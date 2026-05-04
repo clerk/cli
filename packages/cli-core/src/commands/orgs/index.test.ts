@@ -252,6 +252,24 @@ describe("clerk enable/disable orgs", () => {
     expect(patchCalls).toBe(0);
   });
 
+  test("disable with --yes still prints the stranded-billing warning before patching", async () => {
+    let capturedBody = "";
+    stubFetch(async (_input, init) => {
+      if (init?.method === "PATCH") capturedBody = init.body as string;
+      return new Response(JSON.stringify({ billing: { organization_enabled: true } }), {
+        status: 200,
+      });
+    });
+
+    await setupProfile();
+    const { orgsDisable } = await import("./index.ts");
+    await captured.run(() => orgsDisable({ yes: true }));
+
+    expect(captured.err).toContain("Organization billing is currently enabled");
+    const parsed = JSON.parse(capturedBody);
+    expect(parsed.organization_settings.enabled).toBe(false);
+  });
+
   test("disable in agent mode proceeds with --yes even when org billing is enabled", async () => {
     let capturedBody = "";
     stubFetch(async (_input, init) => {

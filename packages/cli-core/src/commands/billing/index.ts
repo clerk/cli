@@ -60,7 +60,7 @@ export async function billingEnable(options: BillingOptions): Promise<void> {
     billing.user_enabled = true;
   }
 
-  await applyConfigPatch({
+  const applied = await applyConfigPatch({
     ctx,
     payload,
     verb: `Enabling billing for ${describeTargets(targets)}`,
@@ -70,12 +70,11 @@ export async function billingEnable(options: BillingOptions): Promise<void> {
     dryRun: options.dryRun,
   });
 
-  // `clerk init` doesn't bundle clerk-billing — it's opt-in. Surface it here.
-  if (!options.dryRun && options.skills !== false) {
-    await offerBillingSkillInstall(options);
-  }
+  if (!applied || options.dryRun) return;
 
-  if (!options.dryRun) printNextSteps(NEXT_STEPS.ENABLE_BILLING);
+  // `clerk init` doesn't bundle clerk-billing — it's opt-in. Surface it here.
+  if (options.skills !== false) await offerBillingSkillInstall(options);
+  printNextSteps(NEXT_STEPS.ENABLE_BILLING);
 }
 
 async function offerBillingSkillInstall(options: BillingOptions): Promise<void> {
