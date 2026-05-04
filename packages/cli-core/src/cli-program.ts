@@ -46,6 +46,7 @@ import { log } from "./lib/log.ts";
 import { maybeNotifyUpdate, getCurrentVersion } from "./lib/update-check.ts";
 import { update } from "./commands/update/index.ts";
 import { isClerkSkillInstalled } from "./lib/skill-detection.ts";
+import { registerExtras } from "@clerk/cli-extras";
 
 const USER_LIST_ORDER_BY_FIELDS = [
   "created_at",
@@ -751,6 +752,8 @@ Tutorial — enable completions for your shell:
       { command: "clerk update --all", description: "Update every clerk install on PATH" },
     ])
     .action(update);
+
+  registerExtras(program);
 
   return program;
 }
