@@ -21,15 +21,17 @@ describe("PKCE", () => {
   test("generateCodeVerifier skips bytes at and above rejection threshold", () => {
     const REJECTION_THRESHOLD = 256 - (256 % 66);
     let callCount = 0;
-    const spy = spyOn(crypto, "getRandomValues").mockImplementation((array: Uint8Array) => {
-      callCount++;
-      if (callCount === 1) {
-        array.fill(REJECTION_THRESHOLD);
-      } else {
-        array.fill(REJECTION_THRESHOLD - 1);
-      }
-      return array;
-    });
+    const spy = spyOn(crypto, "getRandomValues").mockImplementation(
+      <T extends ArrayBufferView | null>(array: T): T => {
+        callCount++;
+        if (callCount === 1) {
+          (array as Uint8Array).fill(REJECTION_THRESHOLD);
+        } else {
+          (array as Uint8Array).fill(REJECTION_THRESHOLD - 1);
+        }
+        return array;
+      },
+    );
 
     try {
       const verifier = generateCodeVerifier();
