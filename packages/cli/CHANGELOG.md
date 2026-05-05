@@ -1,5 +1,43 @@
 # clerk
 
+## 1.1.0
+
+### Minor Changes
+
+- `clerk init` in agent mode now creates and links a real Clerk application when the user is authenticated, instead of falling back to keyless setup. Keyless still runs in agent mode when the user is not authenticated, but authenticated agent runs leave the project properly linked with real development keys in `.env`. ([#254](https://github.com/clerk/cli/pull/254)) by [@wyattjoh](https://github.com/wyattjoh)
+
+- Add `clerk enable` and `clerk disable` top-level commands for toggling features on the linked instance. ([#219](https://github.com/clerk/cli/pull/219)) by [@nicolas-angelo](https://github.com/nicolas-angelo)
+  - `clerk enable orgs` / `clerk disable orgs` — toggle organizations, with `--force-selection`, `--auto-create`, `--max-members <n>`, and `--domains` on enable.
+  - `clerk enable billing [--for org,user]` / `clerk disable billing [--for org,user]` — toggle billing for organizations and/or users. `--for` defaults to both; enabling for `org` cascades to enabling organizations. Enable also offers to install the `clerk-billing` agent skill (suppress with `--no-skills`).
+
+- Add `--input-json` to pass options as JSON for any command. Accepts an inline object or `@path/to/file.json`; keys are converted from camelCase/snake_case to kebab-case flags (e.g. `{"dryRun":true}` → `--dry-run`). Arrays expand to repeated flags, `true` becomes a bare flag, `false`/`null` are omitted. Designed for AI-agent and scripted invocations that prefer passing structured options over composing shell strings. ([#232](https://github.com/clerk/cli/pull/232)) by [@rafa-thayto](https://github.com/rafa-thayto)
+
+- Remove `clerk init --prompt` and the bundled per-framework agent prompt templates. Agents should run `clerk init -y` to perform the full setup non-interactively, or run `skills add clerk/skills` directly via their preferred package runner. The internal `pmInstallCommand` helper has moved from `commands/init/prompts/` to `lib/package-manager.ts`. ([#241](https://github.com/clerk/cli/pull/241)) by [@rafa-thayto](https://github.com/rafa-thayto)
+
+- Rename the bundled agent skill from `clerk` to `clerk-cli` for more clarity during install. After upgrading, `clerk skill install` (and the install step in `clerk init`) writes the skill to `<agent-dir>/skills/clerk-cli/` instead of `<agent-dir>/skills/clerk/`. Existing `skills/clerk/` directories from prior installs are left in place; remove them manually if you want to avoid duplicate context. ([#245](https://github.com/clerk/cli/pull/245)) by [@kylemac](https://github.com/kylemac)
+
+- Add direct user-management commands to `clerk users`: ([#237](https://github.com/clerk/cli/pull/237)) by [@wyattjoh](https://github.com/wyattjoh)
+  - `clerk users list` with pagination, query search, repeatable identifier filters (`--email-address`, `--phone-number`, `--username`, `--user-id`, `--external-id`), `--order-by` over Clerk's common user ordering fields, and an application picker when invoked without a linked project, env var, or targeting flag. `--limit` defaults to 100 and accepts 1-250. `--json` (and agent mode) emits `{ data, hasMore }` so callers can paginate without a separate count call; the human-mode table footer surfaces the next `--offset` when more pages are available. The interactive user picker (used by `clerk users open` and other update flows) shows a "More results, refine your search" hint when matches overflow its window.
+  - `clerk users open [user-id]` for opening a user's Clerk dashboard page in the browser, with interactive pickers for the application and the user, plus `--print` for emitting the URL.
+
+  Both commands appear in the interactive `clerk users` menu.
+
+- Add `clerk users` command scaffolding with `clerk users create`, plus an interactive mode for the `users` family. The create wizard reads instance settings from the Frontend API to prompt only for enabled fields, marking required ones. A top-level interactive menu (`clerk users` with no subcommand) routes to registered actions; agent mode preserves the strict flag-driven contract. The application picker (used by `clerk link` and the `clerk users` wizard fallback) now lists the "Create a new application" option at the bottom and de-emphasizes it until highlighted, so it reads as a fallback rather than a primary choice. ([#240](https://github.com/clerk/cli/pull/240)) by [@wyattjoh](https://github.com/wyattjoh)
+
+### Patch Changes
+
+- Allow `clerk init` to run in agent mode without requiring `--app`. For keyless-capable frameworks, agent init now uses keyless setup when no real Clerk app target is provided; explicit `--app` or an existing linked profile still uses the authenticated app-linking flow, including the normal login fallback when needed. Agent init no longer creates, auto-selects, or auto-links a Clerk application when no app target is provided. ([#244](https://github.com/clerk/cli/pull/244)) by [@djgould](https://github.com/djgould)
+
+- Reduce the size of the published `clerk` binary and JS bundle by enabling minification during the build. The compiled binary shrinks by ~1 MB across all platforms, and the bundled `cli.js` artifact shrinks by ~41% (2.37 MB → 1.40 MB), with no change to behavior. ([#251](https://github.com/clerk/cli/pull/251)) by [@rafa-thayto](https://github.com/rafa-thayto)
+
+- Avoid deleting refreshed OAuth credentials when parallel CLI processes race to refresh the same expired session. ([#213](https://github.com/clerk/cli/pull/213)) by [@wyattjoh](https://github.com/wyattjoh)
+
+- Fix `clerk update` hanging when a corepack-shimmed package manager (e.g. yarn) prompts on stdin to download itself on first use. Package-manager probes now run with stdin detached, `COREPACK_ENABLE_DOWNLOAD_PROMPT=0`, and a 1.5s timeout, so a missing or uninitialized PM is treated as not installed instead of blocking the command. ([#243](https://github.com/clerk/cli/pull/243)) by [@dmoerner](https://github.com/dmoerner)
+
+- After `clerk auth login`, the OAuth success page now points users to Clerk Skills with a copyable install command and a link to the AI building guide. ([#238](https://github.com/clerk/cli/pull/238)) by [@Railly](https://github.com/Railly)
+
+- Auto-increment the default project name in `clerk init` when a directory with that name already exists, and re-prompt instead of erroring out when the chosen name collides. ([#252](https://github.com/clerk/cli/pull/252)) by [@dmoerner](https://github.com/dmoerner)
+
 ## 1.0.3
 
 ### Patch Changes
