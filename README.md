@@ -43,6 +43,8 @@ Commands:
   users       [options]                      Manage Clerk users
   env                                        Manage environment variables
   config                                     Manage instance configuration
+  enable                                     Enable Clerk features on the linked instance
+  disable                                    Disable Clerk features on the linked instance
   api         [options] [endpoint] [filter]  Make authenticated requests to the Clerk API
   doctor      [options]                      Check your project's Clerk integration health
   completion  [shell]                        Generate shell autocompletion script
