@@ -1,5 +1,13 @@
 # clerk
 
+## 1.1.1
+
+### Patch Changes
+
+- Fix `clerk init --framework` in empty directories skipping project scaffolding and only writing Clerk-specific files. ([#256](https://github.com/clerk/cli/pull/256)) by [@alexcarpenter](https://github.com/alexcarpenter)
+
+- `clerk init --starter` now installs `@clerk/nuxt@latest` for new Nuxt projects instead of the pinned `@clerk/nuxt@2.2.0-snapshot.v20260413174426`. Keyless support shipped in stable `@clerk/nuxt@2.2.0`, so the snapshot pin (originally a workaround) is no longer needed. ([#257](https://github.com/clerk/cli/pull/257)) by [@rafa-thayto](https://github.com/rafa-thayto)
+
 ## 1.1.0
 
 ### Minor Changes
