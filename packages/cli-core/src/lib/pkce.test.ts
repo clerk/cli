@@ -1,4 +1,4 @@
-import { test, expect, describe } from "bun:test";
+import { test, expect, describe, spyOn } from "bun:test";
 import { generateCodeVerifier, generateCodeChallenge, generateState } from "./pkce.ts";
 
 describe("PKCE", () => {
@@ -18,24 +18,43 @@ describe("PKCE", () => {
     expect(a).not.toBe(b);
   });
 
-  test("generateCodeVerifier produces an unbiased distribution", () => {
-    // With 66 charset entries and 256-byte modulo, a naive `byte % 66`
-    // over-represents the first 58 characters by ~33%. Rejection sampling
-    // should keep per-character counts within ~10% of uniform over a
-    // large sample.
-    const CHARSET = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~";
-    const counts = new Map<string, number>(CHARSET.split("").map((c) => [c, 0]));
-    const iterations = 2000;
-    for (let i = 0; i < iterations; i++) {
-      for (const ch of generateCodeVerifier()) {
-        counts.set(ch, (counts.get(ch) ?? 0) + 1);
+  test("generateCodeVerifier skips bytes at and above rejection threshold", () => {
+    const REJECTION_THRESHOLD = 256 - (256 % 66);
+    let callCount = 0;
+    const spy = spyOn(crypto, "getRandomValues").mockImplementation((array: Uint8Array) => {
+      callCount++;
+      if (callCount === 1) {
+        array.fill(REJECTION_THRESHOLD);
+      } else {
+        array.fill(REJECTION_THRESHOLD - 1);
       }
+      return array;
+    });
+
+    try {
+      const verifier = generateCodeVerifier();
+      expect(callCount).toBe(2);
+      // byte 197 % 66 = 65 → last charset char '~'
+      expect(verifier).toBe("~".repeat(43));
+    } finally {
+      spy.mockRestore();
     }
-    const total = iterations * 43;
-    const expected = total / CHARSET.length;
-    const tolerance = expected * 0.1;
+  });
+
+  test("rejection sampling maps each accepted byte uniformly to charset", () => {
+    const CHARSET = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~";
+    const REJECTION_THRESHOLD = 256 - (256 % CHARSET.length);
+    const counts = new Map<number, number>();
+
+    for (let byte = 0; byte < REJECTION_THRESHOLD; byte++) {
+      const index = byte % CHARSET.length;
+      counts.set(index, (counts.get(index) ?? 0) + 1);
+    }
+
+    expect(counts.size).toBe(CHARSET.length);
+    const bytesPerChar = REJECTION_THRESHOLD / CHARSET.length;
     for (const [, count] of counts) {
-      expect(Math.abs(count - expected)).toBeLessThan(tolerance);
+      expect(count).toBe(bytesPerChar);
     }
   });
 
