@@ -1,4 +1,5 @@
 import { isAgent } from "../mode.ts";
+import { ExitPromptError } from "@inquirer/core";
 
 /** Standard process exit codes used by the CLI. */
 export const EXIT_CODE = {
@@ -214,6 +215,15 @@ function parseApiBody(status: number, body: string): ParsedApiBody {
     meta: first.meta ?? null,
     clerkTraceId: envelope.clerk_trace_id ?? null,
   };
+}
+
+export function isPromptExitError(error: unknown): boolean {
+  return (
+    error instanceof ExitPromptError ||
+    (error instanceof Error &&
+      error.name === "ExitPromptError" &&
+      error.message.includes("User force closed the prompt"))
+  );
 }
 
 /**

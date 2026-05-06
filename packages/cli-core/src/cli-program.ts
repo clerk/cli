@@ -37,14 +37,15 @@ import {
   PlapiError,
   FapiError,
   EXIT_CODE,
+  isPromptExitError,
   throwUsageError,
 } from "./lib/errors.ts";
 import { clerkHelpConfig } from "./lib/help.ts";
-import { ExitPromptError } from "@inquirer/core";
 import { isAgent } from "./mode.ts";
 import { log } from "./lib/log.ts";
 import { maybeNotifyUpdate, getCurrentVersion } from "./lib/update-check.ts";
 import { update } from "./commands/update/index.ts";
+import { deploy } from "./commands/deploy/index.ts";
 import { isClerkSkillInstalled } from "./lib/skill-detection.ts";
 import { orgsEnable, orgsDisable } from "./commands/orgs/index.ts";
 import { billingEnable, billingDisable } from "./commands/billing/index.ts";
@@ -921,6 +922,14 @@ Tutorial — enable completions for your shell:
     ])
     .action(update);
 
+  program
+    .command("deploy", { hidden: true })
+    .description("Deploy a Clerk application to production")
+    .option("--debug", "Show detailed deployment debug output")
+    .option("--continue", "Resume a paused deploy operation")
+    .option("--abort", "Abort and clear a paused deploy operation")
+    .action(deploy);
+
   registerExtras(program);
 
   return program;
@@ -1008,7 +1017,7 @@ export async function runProgram(
   } catch (error) {
     const verbose = program.opts().verbose ?? false;
 
-    if (error instanceof UserAbortError || error instanceof ExitPromptError) {
+    if (error instanceof UserAbortError || isPromptExitError(error)) {
       process.exit(EXIT_CODE.SUCCESS);
     }
 

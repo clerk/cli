@@ -1,6 +1,13 @@
 import { isHuman } from "../mode.ts";
 import { dim, cyan, green, red } from "./color.ts";
-import { pushPrefix, popPrefix } from "./log.ts";
+import {
+  formatPrefixSymbol,
+  getPrefixTone,
+  popPrefix,
+  pushPrefix,
+  setPrefixTone,
+  type PrefixTone,
+} from "./log.ts";
 
 const FRAMES = ["◒", "◐", "◓", "◑"];
 const INTERVAL = 80;
@@ -17,36 +24,38 @@ const isInteractive = () => stream.isTTY && !process.env.CI;
 // --- Public API ---
 
 /** Print intro bracket: ┌  title — prefixes log output with │ until outro(). */
-export function intro(title?: string) {
+export function intro(title?: string, options: { tone?: PrefixTone } = {}) {
   if (!isHuman()) return;
-  const line = title ? `${dim(S_BAR_START)}  ${title}` : dim(S_BAR_START);
+  const tone = options.tone ?? "neutral";
+  const line = title ? `${formatPrefixSymbol(S_BAR_START, tone)}  ${title}` : dim(S_BAR_START);
   stream.write(`${line}\n`);
-  pushPrefix();
+  pushPrefix(tone);
 }
 
 /** Print outro bracket: └  message — restores normal log output.
  *  Pass a string[] to render as next steps after the bracket. */
 export function outro(messageOrSteps?: string | readonly string[]) {
   if (!isHuman()) return;
+  const tone = getPrefixTone();
   popPrefix();
-  stream.write(`${dim(S_BAR)}\n`);
+  stream.write(`${formatPrefixSymbol(S_BAR, tone)}\n`);
 
   if (Array.isArray(messageOrSteps)) {
-    stream.write(`${dim(S_BAR_END)}  ${dim("Next steps")}\n`);
+    stream.write(`${formatPrefixSymbol(S_BAR_END, tone)}  ${dim("Next steps")}\n`);
     for (const step of messageOrSteps) {
       stream.write(`   ${cyan("\u2192")} ${step}\n`);
     }
     stream.write("\n");
   } else {
     const label = messageOrSteps ?? "Done";
-    stream.write(`${dim(S_BAR_END)}  ${label}\n\n`);
+    stream.write(`${formatPrefixSymbol(S_BAR_END, tone)}  ${label}\n\n`);
   }
 }
 
 /** Print a bar separator: │ */
 export function bar() {
   if (!isHuman()) return;
-  stream.write(`${dim(S_BAR)}\n`);
+  stream.write(`${formatPrefixSymbol(S_BAR)}\n`);
 }
 
 function createSpinner() {
@@ -105,6 +114,7 @@ export async function withSpinner<T>(
     s.stop(doneMessage ?? message.replace(/\.{3}$/, ""));
     return result;
   } catch (error) {
+    setPrefixTone("error");
     s.error("Failed");
     throw error;
   }
