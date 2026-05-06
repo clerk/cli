@@ -3,7 +3,12 @@ import { NEXT_STEPS } from "../../lib/next-steps.ts";
 import { isInsideGutter, log, setPrefixTone, type PrefixTone } from "../../lib/log.ts";
 import { sleep } from "../../lib/sleep.ts";
 import { bar, intro, outro, withSpinner } from "../../lib/spinner.ts";
-import { CliError, UserAbortError, isPromptExitError, throwUsageError } from "../../lib/errors.ts";
+import {
+  PlapiError,
+  UserAbortError,
+  isPromptExitError,
+  throwUsageError,
+} from "../../lib/errors.ts";
 import { resolveProfile, setProfile } from "../../lib/config.ts";
 import {
   type Application,
@@ -211,14 +216,15 @@ async function resolveDeployContext(options: DeployOptions): Promise<DeployConte
     profileKey: resolved.path,
     profile: resolved.profile,
     ...testFlags,
-    ...(await withSpinner("Checking for production instance...", () => {
-      if (testFlags.testFailProductionInstanceCheck) {
-        throw testDeployFailure("production instance check");
-      }
-      return resolveLiveApplicationContext(resolved.profile, {
-        forceMockProductionInstance: testFlags.testForceProductionInstance,
-      });
-    })),
+    ...(await withSpinner("Checking for production instance...", () =>
+      withTestFailureAfterApiCall(
+        resolveLiveApplicationContext(resolved.profile, {
+          forceMockProductionInstance: testFlags.testForceProductionInstance,
+        }),
+        testFlags.testFailProductionInstanceCheck,
+        "production instance check",
+      ),
+    )),
   };
 }
 
@@ -245,8 +251,24 @@ function resolveTestDeployFlags(
   };
 }
 
-function testDeployFailure(step: string): CliError {
-  return new CliError(`Simulated deploy failure: ${step}.`);
+function simulatedDeployApiFailure(step: string): PlapiError {
+  return new PlapiError(
+    500,
+    JSON.stringify({ errors: [{ message: `Simulated deploy failure: ${step}.` }] }),
+    "clerk deploy test flag",
+  );
+}
+
+async function withTestFailureAfterApiCall<T>(
+  promise: Promise<T>,
+  shouldFail: boolean | undefined,
+  step: string,
+): Promise<T> {
+  const result = await promise;
+  if (shouldFail) {
+    throw simulatedDeployApiFailure(step);
+  }
+  return result;
 }
 
 async function resolveLiveApplicationContext(
@@ -516,13 +538,13 @@ async function resolveLiveDeploySnapshot(
 }
 
 async function loadProductionDomain(ctx: DeployContext): Promise<ApplicationDomain | undefined> {
-  if (ctx.testFailDomainLookup) {
-    throw testDeployFailure("production domain lookup");
-  }
   if (ctx.testForceProductionInstance) {
     return mockProductionDomain();
   }
   const domains = await listApplicationDomains(ctx.appId);
+  if (ctx.testFailDomainLookup) {
+    throw simulatedDeployApiFailure("production domain lookup");
+  }
   return domains.data.find((domain) => !domain.is_satellite) ?? domains.data[0];
 }
 
@@ -635,10 +657,11 @@ function discoverEnabledOAuthProviders(config: Record<string, unknown>): Discove
 
 async function runValidateCloning(ctx: DeployContext): Promise<void> {
   await withSpinner("Validating subscription compatibility...", async () => {
-    if (ctx.testFailValidateCloning) {
-      throw testDeployFailure("cloning validation");
-    }
-    await validateCloning(ctx.appId, { clone_instance_id: ctx.developmentInstanceId });
+    await withTestFailureAfterApiCall(
+      validateCloning(ctx.appId, { clone_instance_id: ctx.developmentInstanceId }),
+      ctx.testFailValidateCloning,
+      "cloning validation",
+    );
   });
 }
 
@@ -647,13 +670,14 @@ async function createProductionInstance(
   domain: string,
 ): Promise<ProductionInstanceResponse> {
   return withSpinner("Creating production instance...", async () => {
-    if (ctx.testFailCreateProductionInstance) {
-      throw testDeployFailure("production instance creation");
-    }
-    return apiCreateProductionInstance(ctx.appId, {
-      home_url: domain,
-      clone_instance_id: ctx.developmentInstanceId,
-    });
+    return withTestFailureAfterApiCall(
+      apiCreateProductionInstance(ctx.appId, {
+        home_url: domain,
+        clone_instance_id: ctx.developmentInstanceId,
+      }),
+      ctx.testFailCreateProductionInstance,
+      "production instance creation",
+    );
   });
 }
 
@@ -757,11 +781,11 @@ async function runDnsVerification(
   }
 
   const verified = await withSpinner(`Verifying DNS for ${state.domain}...`, async () => {
-    if (ctx.testFailDnsVerification) {
-      return false;
-    }
     for (let attempt = 0; attempt < DEPLOY_STATUS_MAX_POLLS; attempt++) {
       const result = await getDeployStatus(ctx.appId, productionInstanceId);
+      if (ctx.testFailDnsVerification) {
+        throw simulatedDeployApiFailure("DNS verification");
+      }
       if (result.status === "complete") return true;
       await sleep(DEPLOY_STATUS_POLL_INTERVAL_MS);
     }
@@ -882,15 +906,16 @@ async function collectAndSaveOAuthCredentials(
   );
 
   await withSpinner(`Saving ${label} OAuth credentials...`, async () => {
-    if (ctx.testFailOAuthSave) {
-      throw testDeployFailure("OAuth credential save");
-    }
-    await patchInstanceConfig(ctx.appId, productionInstanceId, {
-      [`connection_oauth_${provider}`]: {
-        enabled: true,
-        ...credentials,
-      },
-    });
+    await withTestFailureAfterApiCall(
+      patchInstanceConfig(ctx.appId, productionInstanceId, {
+        [`connection_oauth_${provider}`]: {
+          enabled: true,
+          ...credentials,
+        },
+      }),
+      ctx.testFailOAuthSave,
+      "OAuth credential save",
+    );
   });
   log.success(`Saved ${label} OAuth credentials`);
   return true;
