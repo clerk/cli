@@ -20,7 +20,7 @@ export async function loggedFetch(url: URL | string, options: LoggedFetchInit): 
   log.debug(`${tag}: ${method} ${urlStr}`);
   const proxy = resolveProxy(urlStr);
   const fetchInit = proxy ? { ...init, proxy } : init;
-  if (proxy) log.debug(`${tag}: routing via proxy ${proxy}`);
+  if (proxy) log.debug(`${tag}: routing via proxy ${redactProxy(proxy)}`);
   const response = await withNetworkAccess(
     { operation: "connect", target: urlStr, label: tag },
     async () => fetch(url, fetchInit),
@@ -31,6 +31,20 @@ export async function loggedFetch(url: URL | string, options: LoggedFetchInit): 
     log.debug(`${tag}: ${response.status} ${method} ${urlStr} — ${body}`);
   }
   return response;
+}
+
+function redactProxy(proxy: string): string {
+  try {
+    const u = new URL(proxy);
+    if (u.username || u.password) {
+      u.username = "";
+      u.password = "";
+      return u.toString();
+    }
+    return proxy;
+  } catch {
+    return proxy;
+  }
 }
 
 /**
