@@ -39,7 +39,7 @@ export function validateDomain(value: string): true | string {
   if (domain.startsWith("http://") || domain.startsWith("https://")) {
     return "Enter a valid domain, such as example.com (without https://).";
   }
-  if (!/^[a-z0-9][a-z0-9.-]*\.[a-z]{2,}$/i.test(domain)) {
+  if (!/^([a-z0-9]([a-z0-9-]*[a-z0-9])?\.)+[a-z]{2,}$/i.test(domain)) {
     return "Enter a valid domain, such as example.com (without https://).";
   }
   if (PROVIDER_DOMAIN_SUFFIXES.some((suffix) => domain.toLowerCase().endsWith(suffix))) {
