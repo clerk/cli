@@ -239,7 +239,8 @@ async function startDeploy(ctx: DeployContext): Promise<void> {
     );
   }
 
-  const oauthProviders = await loadDevelopmentOAuthProviders(ctx);
+  const { known: oauthProviders, unknown: unknownOAuthProviders } =
+    await loadDevelopmentOAuthProviders(ctx);
 
   await runValidateCloning(ctx);
 
@@ -253,6 +254,16 @@ async function startDeploy(ctx: DeployContext): Promise<void> {
     log.info(line);
   }
   log.blank();
+
+  if (unknownOAuthProviders.length > 0) {
+    log.warn(
+      `These OAuth providers are enabled in development but not yet supported by \`clerk deploy\`: ${unknownOAuthProviders.join(", ")}.`,
+    );
+    log.warn(
+      "They will be cloned to production without working credentials. Configure them from the Clerk Dashboard before going live, or disable them in development first.",
+    );
+    log.blank();
+  }
 
   const proceed = await confirmProceed();
   if (!proceed) {
@@ -373,7 +384,14 @@ async function abortDeploy(ctx: DeployContext): Promise<void> {
   closeDeployGutter("cancel", "Aborted");
 }
 
-async function loadDevelopmentOAuthProviders(ctx: DeployContext): Promise<OAuthProvider[]> {
+type DiscoveredOAuthProviders = {
+  known: OAuthProvider[];
+  unknown: string[];
+};
+
+async function loadDevelopmentOAuthProviders(
+  ctx: DeployContext,
+): Promise<DiscoveredOAuthProviders> {
   return withSpinner("Reading development configuration...", async () => {
     const config = await fetchInstanceConfig(ctx.appId, ctx.developmentInstanceId);
     return discoverEnabledOAuthProviders(config);
@@ -382,16 +400,21 @@ async function loadDevelopmentOAuthProviders(ctx: DeployContext): Promise<OAuthP
 
 const OAUTH_KEY_PREFIX = "connection_oauth_";
 
-function discoverEnabledOAuthProviders(config: Record<string, unknown>): OAuthProvider[] {
-  const enabled: OAuthProvider[] = [];
+function discoverEnabledOAuthProviders(config: Record<string, unknown>): DiscoveredOAuthProviders {
+  const known: OAuthProvider[] = [];
+  const unknown: string[] = [];
   for (const [key, value] of Object.entries(config)) {
     if (!key.startsWith(OAUTH_KEY_PREFIX)) continue;
     if (!value || typeof value !== "object") continue;
     if ((value as Record<string, unknown>).enabled !== true) continue;
     const provider = key.slice(OAUTH_KEY_PREFIX.length);
-    if (provider in PROVIDER_LABELS) enabled.push(provider as OAuthProvider);
+    if (provider in PROVIDER_LABELS) {
+      known.push(provider as OAuthProvider);
+    } else {
+      unknown.push(provider);
+    }
   }
-  return enabled;
+  return { known, unknown };
 }
 
 async function runValidateCloning(ctx: DeployContext): Promise<void> {
@@ -476,7 +499,7 @@ async function runDnsVerification(
         "Run `clerk deploy --continue` once DNS has propagated, or check the dashboard for the failing component.",
     );
     log.blank();
-    setPrefixTone("error");
+    closeDeployGutter("error", "Paused");
     return false;
   }
 
@@ -505,7 +528,11 @@ async function runOAuthSetup(
     try {
       const setupNow = await confirmOAuthSetupNow(provider);
       if (!setupNow) {
-        await saveDeployState(ctx, { ...state, pending: { type: "oauth", provider } });
+        await saveDeployState(ctx, {
+          ...state,
+          pending: { type: "oauth", provider },
+          completedOAuthProviders: [...completed],
+        });
         log.blank();
         log.info(pausedOperationNotice());
         log.blank();
@@ -527,7 +554,11 @@ async function runOAuthSetup(
         productionInstanceId,
       );
       if (!saved) {
-        await saveDeployState(ctx, { ...state, pending: { type: "oauth", provider } });
+        await saveDeployState(ctx, {
+          ...state,
+          pending: { type: "oauth", provider },
+          completedOAuthProviders: [...completed],
+        });
         log.blank();
         log.info(pausedOperationNotice());
         log.blank();

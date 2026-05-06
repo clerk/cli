@@ -63,6 +63,10 @@ mock.module("./api.ts", () => ({
   patchInstanceConfig: (...args: unknown[]) => mockPatchInstanceConfig(...args),
 }));
 
+mock.module("../../lib/sleep.ts", () => ({
+  sleep: () => Promise.resolve(),
+}));
+
 const { _setConfigDir, readConfig, setProfile } = await import("../../lib/config.ts");
 const { deploy } = await import("./index.ts");
 
@@ -288,7 +292,8 @@ describe("deploy", () => {
       expect(err).toContain("Configure Google OAuth credentials");
       expect(err).toContain("Configure GitHub OAuth credentials");
       expect(err).not.toContain("Configure Microsoft OAuth credentials");
-      expect(err).not.toContain("unknown");
+      expect(err).toContain("not yet supported by `clerk deploy`: unknown");
+      expect(err).toContain("Configure them from the Clerk Dashboard before going live");
     });
 
     test("DNS verification polls getDeployStatus until complete", async () => {
@@ -345,6 +350,9 @@ describe("deploy", () => {
       expect(firstInputArg.message).toContain("Production domain");
       expect(firstInputArg.validate("x.io")).toBe(true);
       expect(firstInputArg.validate("https://example.com")).toContain("without https://");
+      expect(firstInputArg.validate("example..com")).toContain("Enter a valid domain");
+      expect(firstInputArg.validate("example-.com")).toContain("Enter a valid domain");
+      expect(firstInputArg.validate("-example.com")).toContain("Enter a valid domain");
       expect(firstInputArg.validate("demo.vercel.app")).toContain(
         "Production needs a domain you own",
       );
@@ -938,6 +946,105 @@ describe("deploy", () => {
       expect(config.profiles[process.cwd()]?.instances.production).toBe("ins_prod_mock");
       expect(err).toContain("Saved Google OAuth credentials");
       expect(err).toContain("Production ready at https://example.com");
+    });
+
+    test("Pausing OAuth mid-loop preserves earlier completed providers in saved state", async () => {
+      await linkedProject();
+      mockIsAgent.mockReturnValue(false);
+      mockFetchInstanceConfig.mockResolvedValue({
+        connection_oauth_google: { enabled: true },
+        connection_oauth_github: { enabled: true },
+      });
+      // Proceed → continue after DNS → setup google now → enter google creds → say no on github.
+      mockConfirm
+        .mockResolvedValueOnce(true)
+        .mockResolvedValueOnce(true)
+        .mockResolvedValueOnce(true)
+        .mockResolvedValueOnce(false);
+      mockInput
+        .mockResolvedValueOnce("example.com")
+        .mockResolvedValueOnce("google-client-id.apps.googleusercontent.com");
+      mockSelect.mockResolvedValueOnce("have-credentials");
+      mockPassword.mockResolvedValueOnce("google-secret");
+      mockPatchInstanceConfig.mockResolvedValueOnce({});
+
+      await runDeploy({});
+
+      let config = await readConfig();
+      expect(config.profiles[process.cwd()]?.deploy).toMatchObject({
+        pending: { type: "oauth", provider: "github" },
+        completedOAuthProviders: ["google"],
+        oauthProviders: ["google", "github"],
+      });
+
+      // Resume and finish: should not re-prompt for google, should finalize.
+      captured = captureLog();
+      mockConfirm.mockReset();
+      mockSelect.mockReset();
+      mockInput.mockReset();
+      mockPassword.mockReset();
+      mockPatchInstanceConfig.mockReset();
+      mockConfirm.mockResolvedValueOnce(true);
+      mockSelect.mockResolvedValueOnce("have-credentials");
+      mockInput.mockResolvedValueOnce("github-client-id");
+      mockPassword.mockResolvedValueOnce("github-secret");
+      mockPatchInstanceConfig.mockResolvedValueOnce({});
+
+      await runDeploy({ continue: true });
+      const err = stripAnsi(captured.err);
+
+      config = await readConfig();
+      expect(config.profiles[process.cwd()]?.deploy).toBeUndefined();
+      expect(mockPatchInstanceConfig).toHaveBeenCalledTimes(1);
+      expect(mockPatchInstanceConfig).toHaveBeenCalledWith("app_xyz789", "ins_prod_mock", {
+        connection_oauth_github: {
+          enabled: true,
+          client_id: "github-client-id",
+          client_secret: "github-secret",
+        },
+      });
+      expect(err).toContain("Production ready at https://example.com");
+    });
+
+    test("DNS verification timeout outros as paused, not failed", async () => {
+      await linkedProject();
+      mockIsAgent.mockReturnValue(false);
+      mockConfirm.mockResolvedValueOnce(true).mockResolvedValueOnce(true);
+      mockInput.mockResolvedValueOnce("example.com");
+      mockGetDeployStatus.mockResolvedValue({ status: "incomplete" });
+      stderrSpy = spyOn(process.stderr, "write").mockImplementation(() => true);
+
+      await runDeploy({});
+
+      const config = await readConfig();
+      expect(config.profiles[process.cwd()]?.deploy).toMatchObject({
+        pending: { type: "dns" },
+        domain: "example.com",
+      });
+      const terminalOutput = stderrSpy.mock.calls
+        .map((call: unknown[]) => String(call[0]))
+        .join("");
+      expect(terminalOutput).toContain("Paused");
+      expect(terminalOutput).not.toContain("Failed");
+    });
+
+    test("warns about enabled OAuth providers not yet supported by clerk deploy", async () => {
+      await linkedProject();
+      mockHumanFlow();
+      mockFetchInstanceConfig.mockResolvedValueOnce({
+        connection_oauth_google: { enabled: true },
+        connection_oauth_discord: { enabled: true },
+        connection_oauth_facebook: { enabled: true },
+      });
+
+      await runDeploy({});
+      const err = stripAnsi(captured.err);
+
+      expect(err).toContain("Configure Google OAuth credentials");
+      expect(err).toContain("not yet supported by `clerk deploy`");
+      expect(err).toContain("discord");
+      expect(err).toContain("facebook");
+      expect(err).toContain("Configure them from the Clerk Dashboard before going live");
     });
   });
 });
