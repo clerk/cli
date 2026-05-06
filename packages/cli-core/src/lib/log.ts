@@ -1,5 +1,5 @@
 import { AsyncLocalStorage } from "node:async_hooks";
-import { cyan, dim, green, red, yellow } from "./color.ts";
+import { dim, green, red, yellow } from "./color.ts";
 
 // ── Log level ────────────────────────────────────────────────────────────
 
@@ -30,50 +30,24 @@ function isLevelEnabled(level: LogLevel): boolean {
 // ── Pipe prefix state (for intro/outro flow) ──────────────────────────────
 
 const S_BAR = "│";
-export type PrefixTone = "neutral" | "active" | "error" | "cancel" | "success";
+let prefixDepth = 0;
 
-const prefixTones: PrefixTone[] = [];
-
-export function pushPrefix(tone: PrefixTone = "neutral") {
-  prefixTones.push(tone);
+export function pushPrefix() {
+  prefixDepth++;
 }
 
 export function popPrefix() {
-  prefixTones.pop();
-}
-
-export function setPrefixTone(tone: PrefixTone) {
-  if (prefixTones.length === 0) return;
-  prefixTones[prefixTones.length - 1] = tone;
-}
-
-export function getPrefixTone(): PrefixTone {
-  return prefixTones[prefixTones.length - 1] ?? "neutral";
-}
-
-export function formatPrefixSymbol(symbol: string, tone: PrefixTone = getPrefixTone()): string {
-  switch (tone) {
-    case "active":
-      return cyan(symbol);
-    case "error":
-      return yellow(symbol);
-    case "cancel":
-      return red(symbol);
-    case "success":
-      return green(symbol);
-    case "neutral":
-      return dim(symbol);
-  }
+  prefixDepth = Math.max(0, prefixDepth - 1);
 }
 
 /** True while an intro/outro block is active and stderr output is gutter-prefixed. */
 export function isInsideGutter(): boolean {
-  return prefixTones.length > 0;
+  return prefixDepth > 0;
 }
 
 function applyPrefix(msg: string): string {
-  if (prefixTones.length === 0) return msg;
-  const bar = formatPrefixSymbol(S_BAR);
+  if (prefixDepth === 0) return msg;
+  const bar = dim(S_BAR);
   if (!msg) return bar;
   return msg
     .split("\n")

@@ -7,7 +7,6 @@ import {
   getLogLevel,
   pushPrefix,
   popPrefix,
-  setPrefixTone,
   type LogLevel,
 } from "./log.ts";
 
@@ -255,25 +254,6 @@ describe("blank", () => {
 
     expect(cap.stderr.length).toBe(1);
     expect(cap.stderr[0]).toContain("│");
-  });
-
-  test("colors pipe prefix from the active gutter tone", () => {
-    const cap = createCapture();
-
-    withCapturedLogs(cap, () => {
-      pushPrefix("active");
-      log.info("working");
-      setPrefixTone("error");
-      log.info("needs attention");
-      setPrefixTone("cancel");
-      log.info("cancelled");
-      popPrefix();
-    });
-
-    expect(cap.stderr).toHaveLength(3);
-    expect(cap.stderr[0]).toContain("\x1b[36m│");
-    expect(cap.stderr[1]).toContain("\x1b[33m│");
-    expect(cap.stderr[2]).toContain("\x1b[31m│");
   });
 });
 

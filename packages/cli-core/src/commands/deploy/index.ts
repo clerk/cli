@@ -1,6 +1,6 @@
 import { isAgent } from "../../mode.ts";
 import { NEXT_STEPS } from "../../lib/next-steps.ts";
-import { isInsideGutter, log, setPrefixTone, type PrefixTone } from "../../lib/log.ts";
+import { isInsideGutter, log } from "../../lib/log.ts";
 import { sleep } from "../../lib/sleep.ts";
 import { bar, intro, outro, withSpinner } from "../../lib/spinner.ts";
 import {
@@ -165,16 +165,16 @@ export async function deploy(options: DeployOptions = {}) {
     setLogLevel("debug");
   }
 
-  intro("clerk deploy", { tone: "active" });
+  intro("clerk deploy");
   try {
     const ctx = await resolveDeployContext(options);
     await runDeploy(ctx);
   } catch (error) {
     if (error instanceof DeployPausedError && isInsideGutter()) {
-      closeDeployGutter("error", "Paused");
+      closeDeployGutter("Paused");
     }
     if (isPromptExitError(error) && isInsideGutter()) {
-      closeDeployGutter("cancel", "Cancelled");
+      closeDeployGutter("Cancelled");
       throw new UserAbortError();
     }
     throw error;
@@ -182,13 +182,12 @@ export async function deploy(options: DeployOptions = {}) {
     // Successful and paused paths call outro themselves. This balances the
     // intro gutter if an unexpected error escapes.
     if (isInsideGutter()) {
-      closeDeployGutter("error", "Failed");
+      closeDeployGutter("Failed");
     }
   }
 }
 
-function closeDeployGutter(tone: PrefixTone, messageOrSteps: string | readonly string[]): void {
-  setPrefixTone(tone);
+function closeDeployGutter(messageOrSteps: string | readonly string[]): void {
   outro(messageOrSteps);
 }
 
@@ -318,7 +317,7 @@ async function runDeploy(ctx: DeployContext): Promise<void> {
       "No Clerk project linked to this directory. Run `clerk link`, then rerun `clerk deploy`.",
     );
     log.blank();
-    closeDeployGutter("error", "Link required");
+    closeDeployGutter("Link required");
     return;
   }
 
@@ -357,7 +356,7 @@ async function startNewDeploy(ctx: DeployContext): Promise<void> {
   const proceed = await confirmProceed();
   if (!proceed) {
     log.info("No changes were made.");
-    closeDeployGutter("cancel", "Cancelled");
+    closeDeployGutter("Cancelled");
     return;
   }
 
@@ -415,7 +414,7 @@ async function reconcileExistingDeploy(ctx: DeployContext): Promise<void> {
     log.info("A production instance exists, but Clerk did not return a production domain yet.");
     log.info("Run `clerk deploy` again after the domain is available from the API.");
     log.blank();
-    closeDeployGutter("neutral", "No deploy actions available");
+    closeDeployGutter("No deploy actions available");
     return;
   }
 
@@ -708,7 +707,7 @@ async function confirmProductionInstanceCreation(
   log.blank();
   log.info("No production instance was created.");
   log.blank();
-  closeDeployGutter("cancel", "Cancelled");
+  closeDeployGutter("Cancelled");
   return false;
 }
 
@@ -736,7 +735,7 @@ async function runDnsSetup(
       log.blank();
       log.info(pausedOperationNotice());
       log.blank();
-      closeDeployGutter("error", "Paused");
+      closeDeployGutter("Paused");
       return false;
     }
     return await runDnsVerification(ctx, { ...state, cnameTargets });
@@ -857,7 +856,7 @@ async function runOAuthSetup(
         log.blank();
         log.info(pausedOperationNotice());
         log.blank();
-        closeDeployGutter("error", "Paused");
+        closeDeployGutter("Paused");
         return [...completed];
       }
     } catch (error) {
@@ -950,7 +949,7 @@ async function finishDeploy(
   log.blank();
   printNextSteps();
   log.blank();
-  closeDeployGutter("success", NEXT_STEPS.DEPLOY);
+  closeDeployGutter(NEXT_STEPS.DEPLOY);
 }
 
 function printNextSteps(): void {
