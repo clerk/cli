@@ -753,7 +753,7 @@ describe("checkShellCompletion", () => {
     });
   });
 
-  test("trusts SHELL over FISH_VERSION when SHELL is bash or zsh", async () => {
+  test("prefers FISH_VERSION over SHELL when both are set", async () => {
     process.env.SHELL = "/bin/zsh";
     process.env.FISH_VERSION = "3.7.0";
     process.env.HOME = tempDir;
@@ -761,8 +761,8 @@ describe("checkShellCompletion", () => {
     expectCheck(result, {
       name: "Shell completion",
       status: "warn",
-      message: "zsh",
-      remedy: "clerk completion zsh",
+      message: "fish",
+      remedy: "clerk completion fish",
     });
   });
 

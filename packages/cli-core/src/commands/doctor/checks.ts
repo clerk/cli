@@ -362,10 +362,11 @@ export async function checkCliVersion(): Promise<CheckResult> {
 type DetectedShell = "bash" | "zsh" | "fish";
 
 function detectShell(): DetectedShell | null {
+  // FISH_VERSION is set by fish itself, so it's a stronger signal than $SHELL — which only reflects
+  // the login shell and won't follow an interactive `chsh`-less switch into fish.
+  if (process.env.FISH_VERSION) return "fish";
   const name = process.env.SHELL?.split("/").pop();
-  if (name === "bash" || name === "zsh") return name;
-  // FISH_VERSION is always set inside fish, even when $SHELL still points to another shell.
-  if (name === "fish" || process.env.FISH_VERSION) return "fish";
+  if (name === "bash" || name === "zsh" || name === "fish") return name;
   return null;
 }
 
