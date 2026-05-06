@@ -207,7 +207,7 @@ function hashHint(): string | null {
   // but return early to be explicit.
   if (process.platform === "win32") return null;
   const shell = (process.env.SHELL ?? "").toLowerCase();
-  if (shell.endsWith("/fish")) return null; // auto-rehashes
+  if (shell.endsWith("/fish") || process.env.FISH_VERSION) return null; // auto-rehashes
   // pwsh can run on Linux/macOS via $SHELL=/usr/bin/pwsh; no command-hash cache.
   if (shell.endsWith("/pwsh")) return null;
   if (shell.endsWith("/tcsh") || shell.endsWith("/csh")) {

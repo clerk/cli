@@ -156,6 +156,7 @@ beforeEach(async () => {
   tempDir = await mkdtemp(join(tmpdir(), "clerk-doctor-test-"));
   process.cwd = () => tempDir;
   process.env = { ...originalEnv };
+  delete process.env.FISH_VERSION;
   process.env.CLERK_PLATFORM_API_KEY = "test_key";
 
   mockUserInfo = null;
@@ -736,6 +737,43 @@ describe("checkShellCompletion", () => {
       name: "Shell completion",
       status: "pass",
       message: "fish",
+    });
+  });
+
+  test("detects fish via FISH_VERSION when SHELL is unset", async () => {
+    process.env.SHELL = "";
+    process.env.FISH_VERSION = "3.7.0";
+    process.env.HOME = tempDir;
+    const result = await checkShellCompletion();
+    expectCheck(result, {
+      name: "Shell completion",
+      status: "warn",
+      message: "fish",
+      remedy: "clerk completion fish",
+    });
+  });
+
+  test("prefers FISH_VERSION over SHELL when both are set", async () => {
+    process.env.SHELL = "/bin/zsh";
+    process.env.FISH_VERSION = "3.7.0";
+    process.env.HOME = tempDir;
+    const result = await checkShellCompletion();
+    expectCheck(result, {
+      name: "Shell completion",
+      status: "warn",
+      message: "fish",
+      remedy: "clerk completion fish",
+    });
+  });
+
+  test("skips when SHELL points to an unrecognized shell", async () => {
+    process.env.SHELL = "/bin/csh";
+    process.env.HOME = tempDir;
+    const result = await checkShellCompletion();
+    expectCheck(result, {
+      name: "Shell completion",
+      status: "pass",
+      message: "skipped",
     });
   });
 
