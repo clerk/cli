@@ -120,7 +120,11 @@ async function configPush(options: ConfigPushOptions, op: Operation): Promise<vo
       ? "[dry-run] Validation passed — no changes applied"
       : "Config pushed successfully",
   );
-  if (!options.dryRun) {
+  if (options.dryRun) {
+    printNextSteps(
+      op.method === "PATCH" ? NEXT_STEPS.CONFIG_DRY_RUN_PATCH : NEXT_STEPS.CONFIG_DRY_RUN_PUT,
+    );
+  } else {
     printNextSteps(NEXT_STEPS.CONFIG_PUSH);
   }
 }

@@ -50,18 +50,19 @@ export const NEXT_STEPS = {
     "Run `clerk env pull` to fetch environment variables",
   ],
   UNLINK: [
-    "Run `clerk apps list` to browse your applications",
     "Run `clerk link` to connect this directory to a different application",
+    "Run `clerk apps list` to browse your applications",
   ],
   SKILL_INSTALL: [
-    "Start a new Claude Code session — the skill is now active for this project",
-    "Run `clerk init` to scaffold Clerk if you haven't already",
-    "Run `clerk config pull` to share your live Clerk instance configuration with the agent",
+    "Start a new Claude Code or Codex session — the skill is now active for this project",
+    "Or run `clerk init` to scaffold Clerk yourself",
   ],
   CONFIG_PUSH: [
     "Run `clerk config pull` to confirm the live configuration",
-    "Run `clerk doctor` to verify your integration",
+    "Run `clerk doctor` to verify your setup",
   ],
+  CONFIG_DRY_RUN_PATCH: ["Run `clerk config patch` without `--dry-run` to apply these changes"],
+  CONFIG_DRY_RUN_PUT: ["Run `clerk config put` without `--dry-run` to apply these changes"],
   LOGOUT: ["Run `clerk auth login` to sign in again"],
   WHOAMI: ["Run `clerk link` to connect this directory to an application"],
   WHOAMI_LINKED: [
