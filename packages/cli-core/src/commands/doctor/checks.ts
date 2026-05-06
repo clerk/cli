@@ -363,7 +363,9 @@ type DetectedShell = "bash" | "zsh" | "fish";
 
 function detectShell(): DetectedShell | null {
   const name = process.env.SHELL?.split("/").pop();
-  if (name === "zsh" || name === "bash" || name === "fish") return name;
+  if (name === "bash" || name === "zsh") return name;
+  // FISH_VERSION is always set inside fish, even when $SHELL still points to another shell.
+  if (name === "fish" || process.env.FISH_VERSION) return "fish";
   return null;
 }
 
