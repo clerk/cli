@@ -60,6 +60,24 @@ export const PROVIDER_REDIRECT_LABELS: Record<OAuthProvider, string> = {
   linear: "Callback URL",
 };
 
+export const PROVIDER_DOC_URLS: Record<OAuthProvider, string> = {
+  google: "https://clerk.com/docs/guides/configure/auth-strategies/social-connections/google",
+  github: "https://clerk.com/docs/guides/configure/auth-strategies/social-connections/github",
+  microsoft: "https://clerk.com/docs/guides/configure/auth-strategies/social-connections/microsoft",
+  apple: "https://clerk.com/docs/guides/configure/auth-strategies/social-connections/apple",
+  linear: "https://clerk.com/docs/guides/configure/auth-strategies/social-connections/linear",
+};
+
+export const PROVIDER_SETUP_COPY: Record<OAuthProvider, string> = {
+  google: "Production Google sign-in requires custom OAuth credentials from Google Cloud Console.",
+  github: "Production GitHub sign-in requires a GitHub OAuth app and custom credentials.",
+  microsoft:
+    "Production Microsoft sign-in requires a Microsoft Entra ID app and custom credentials.",
+  apple:
+    "Production Apple sign-in requires an Apple Services ID, Team ID, Key ID, and private key file.",
+  linear: "Production Linear sign-in requires a Linear OAuth app and custom credentials.",
+};
+
 export const PROVIDER_GOTCHAS: Record<OAuthProvider, string | null> = {
   google: `${yellow("IMPORTANT")}  Set the OAuth consent screen's publishing status to "In production". Apps left in "Testing" are limited to 100 test users and may break for end users.`,
   github: null,
@@ -72,9 +90,18 @@ export function providerLabel(provider: string): string {
   return PROVIDER_LABELS[provider as OAuthProvider] ?? provider;
 }
 
+export function providerSetupIntro(provider: OAuthProvider): string[] {
+  const label = PROVIDER_LABELS[provider];
+  return [
+    bold(`Configure ${label} OAuth for production`),
+    PROVIDER_SETUP_COPY[provider],
+    dim(`Reference: ${PROVIDER_DOC_URLS[provider]}`),
+  ];
+}
+
 export async function showOAuthWalkthrough(provider: OAuthProvider, domain: string): Promise<void> {
   const label = PROVIDER_LABELS[provider];
-  const docsUrl = `https://clerk.com/docs/guides/configure/auth-strategies/social-connections/${provider}`;
+  const docsUrl = PROVIDER_DOC_URLS[provider];
 
   log.info(`\nConfigure your ${bold(label)} OAuth app with these values:\n`);
   log.info(`  ${dim("Authorized JavaScript origins")}`);

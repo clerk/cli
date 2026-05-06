@@ -39,18 +39,6 @@ interface Profile {
     development: string;
     production?: string;
   };
-  deploy?: DeployOperationState;
-}
-
-interface DeployOperationState {
-  appId: string;
-  developmentInstanceId: string;
-  productionInstanceId?: string;
-  productionDomainId?: string;
-  domain: string;
-  pending: { type: "dns" } | { type: "oauth"; provider: string };
-  oauthProviders: string[];
-  completedOAuthProviders: string[];
 }
 
 interface ClerkConfig {
@@ -370,4 +358,4 @@ export async function resolveAppContext(
   };
 }
 
-export type { Auth, Profile, ClerkConfig, AppContextOptions, DeployOperationState };
+export type { Auth, Profile, ClerkConfig, AppContextOptions };

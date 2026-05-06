@@ -151,6 +151,26 @@ export type CnameTarget = {
   required: boolean;
 };
 
+export type ApplicationDomain = {
+  object: "domain";
+  id: string;
+  name: string;
+  is_satellite: boolean;
+  is_provider_domain: boolean;
+  frontend_api_url: string;
+  accounts_portal_url?: string;
+  proxy_url?: string;
+  development_origin: string;
+  cname_targets?: CnameTarget[];
+  created_at: string;
+  updated_at: string;
+};
+
+export type ListApplicationDomainsResponse = {
+  data: ApplicationDomain[];
+  total_count: number;
+};
+
 export type ProductionInstanceResponse = {
   instance_id: string;
   environment_type: "production";
@@ -181,6 +201,14 @@ export async function fetchApplication(applicationId: string): Promise<Applicati
   url.searchParams.set("include_secret_keys", "true");
   const response = await plapiFetch("GET", url);
   return response.json() as Promise<Application>;
+}
+
+export async function listApplicationDomains(
+  applicationId: string,
+): Promise<ListApplicationDomainsResponse> {
+  const url = new URL(`/v1/platform/applications/${applicationId}/domains`, getPlapiBaseUrl());
+  const response = await plapiFetch("GET", url);
+  return response.json() as Promise<ListApplicationDomainsResponse>;
 }
 
 export async function createProductionInstance(

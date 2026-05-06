@@ -19,6 +19,7 @@ const {
   getDeployStatus,
   retryApplicationDomainSSL,
   retryApplicationDomainMail,
+  listApplicationDomains,
 } = await import("./plapi.ts");
 const { AuthError, PlapiError } = await import("./errors.ts");
 
@@ -502,6 +503,44 @@ describe("plapi", () => {
       expect(capturedUrl).toBe(
         "https://api.clerk.com/v1/platform/applications/app_abc/domains/example.com/mail_retry",
       );
+    });
+  });
+
+  describe("listApplicationDomains", () => {
+    test("sends GET to application domains and returns parsed domains", async () => {
+      let capturedMethod = "";
+      let capturedUrl = "";
+      const responseBody = {
+        data: [
+          {
+            object: "domain" as const,
+            id: "dmn_123",
+            name: "example.com",
+            is_satellite: false,
+            is_provider_domain: false,
+            frontend_api_url: "https://clerk.example.com",
+            accounts_portal_url: "https://accounts.example.com",
+            development_origin: "",
+            cname_targets: [
+              { host: "clerk.example.com", value: "frontend-api.clerk.services", required: true },
+            ],
+            created_at: "2026-05-06T00:00:00Z",
+            updated_at: "2026-05-06T00:00:00Z",
+          },
+        ],
+        total_count: 1,
+      };
+      stubFetch(async (input, init) => {
+        capturedMethod = init?.method ?? "GET";
+        capturedUrl = input.toString();
+        return new Response(JSON.stringify(responseBody), { status: 200 });
+      });
+
+      const result = await listApplicationDomains("app_abc");
+
+      expect(capturedMethod).toBe("GET");
+      expect(capturedUrl).toBe("https://api.clerk.com/v1/platform/applications/app_abc/domains");
+      expect(result).toEqual(responseBody);
     });
   });
 });
