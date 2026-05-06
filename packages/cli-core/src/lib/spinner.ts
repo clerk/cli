@@ -115,7 +115,7 @@ export async function withSpinner<T>(
     return result;
   } catch (error) {
     setPrefixTone("error");
-    s.error("Failed");
+    s.error(message.replace(/\.{3}$/, ""));
     throw error;
   }
 }

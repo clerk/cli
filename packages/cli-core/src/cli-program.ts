@@ -930,43 +930,40 @@ Tutorial — enable completions for your shell:
       createOption(
         "--test-force-production-instance",
         "Force deploy to use a mocked production instance",
-      ).hideHelp(),
+      ),
     )
     .addOption(
       createOption(
         "--test-fail-production-instance-check",
         "Simulate a deploy failure while checking for a production instance",
-      ).hideHelp(),
+      ),
     )
     .addOption(
       createOption(
         "--test-fail-domain-lookup",
         "Simulate a deploy failure while loading the production domain",
-      ).hideHelp(),
+      ),
     )
     .addOption(
       createOption(
         "--test-fail-validate-cloning",
         "Simulate a deploy failure while validating cloning",
-      ).hideHelp(),
+      ),
     )
     .addOption(
       createOption(
         "--test-fail-create-production-instance",
         "Simulate a deploy failure while creating the production instance",
-      ).hideHelp(),
+      ),
     )
     .addOption(
-      createOption(
-        "--test-fail-dns-verification",
-        "Simulate a deploy failure while verifying DNS",
-      ).hideHelp(),
+      createOption("--test-fail-dns-verification", "Simulate a deploy failure while verifying DNS"),
     )
     .addOption(
       createOption(
         "--test-fail-oauth-save",
         "Simulate a deploy failure while saving OAuth credentials",
-      ).hideHelp(),
+      ),
     )
     .action(deploy);
 
