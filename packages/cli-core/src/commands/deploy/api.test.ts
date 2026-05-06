@@ -1,0 +1,70 @@
+import { test, expect, describe, beforeEach, mock } from "bun:test";
+
+const mockPlapiCreateProductionInstance = mock();
+const mockPlapiValidateCloning = mock();
+const mockPlapiGetDeployStatus = mock();
+const mockPlapiPatchInstanceConfig = mock();
+const mockSleep = mock();
+
+mock.module("../../lib/plapi.ts", () => ({
+  createProductionInstance: (...args: unknown[]) => mockPlapiCreateProductionInstance(...args),
+  validateCloning: (...args: unknown[]) => mockPlapiValidateCloning(...args),
+  getDeployStatus: (...args: unknown[]) => mockPlapiGetDeployStatus(...args),
+  patchInstanceConfig: (...args: unknown[]) => mockPlapiPatchInstanceConfig(...args),
+}));
+
+mock.module("../../lib/sleep.ts", () => ({
+  sleep: (...args: unknown[]) => mockSleep(...args),
+}));
+
+const deployApiModulePath = "./api.ts?adapter-test";
+const {
+  createProductionInstance,
+  getDeployStatus,
+  patchInstanceConfig,
+  validateCloning,
+  _resetDeployStatusMock,
+} = (await import(deployApiModulePath)) as typeof import("./api.ts");
+
+describe("deploy api adapter", () => {
+  beforeEach(() => {
+    mockPlapiCreateProductionInstance.mockImplementation(() => {
+      throw new Error("live createProductionInstance should not be called");
+    });
+    mockPlapiValidateCloning.mockImplementation(() => {
+      throw new Error("live validateCloning should not be called");
+    });
+    mockPlapiGetDeployStatus.mockImplementation(() => {
+      throw new Error("live getDeployStatus should not be called");
+    });
+    mockPlapiPatchInstanceConfig.mockImplementation(() => {
+      throw new Error("live patchInstanceConfig should not be called");
+    });
+    mockSleep.mockResolvedValue(undefined);
+    _resetDeployStatusMock();
+  });
+
+  test("uses mocked deploy lifecycle operations by default", async () => {
+    const production = await createProductionInstance("app_123", {
+      home_url: "example.com",
+      clone_instance_id: "ins_dev_123",
+    });
+    await validateCloning("app_123", { clone_instance_id: "ins_dev_123" });
+    await patchInstanceConfig("app_123", production.instance_id, {
+      connection_oauth_google: { enabled: true },
+    });
+
+    expect(production.active_domain.name).toBe("example.com");
+    expect(production.cname_targets).toHaveLength(3);
+    expect(mockPlapiCreateProductionInstance).not.toHaveBeenCalled();
+    expect(mockPlapiValidateCloning).not.toHaveBeenCalled();
+    expect(mockPlapiPatchInstanceConfig).not.toHaveBeenCalled();
+  });
+
+  test("mock deploy status progresses without calling live PLAPI", async () => {
+    expect(await getDeployStatus("app_123", "ins_prod_123")).toEqual({ status: "incomplete" });
+    expect(await getDeployStatus("app_123", "ins_prod_123")).toEqual({ status: "incomplete" });
+    expect(await getDeployStatus("app_123", "ins_prod_123")).toEqual({ status: "complete" });
+    expect(mockPlapiGetDeployStatus).not.toHaveBeenCalled();
+  });
+});

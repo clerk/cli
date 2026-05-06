@@ -59,8 +59,11 @@ mock.module("./api.ts", () => ({
   getDeployStatus: (...args: unknown[]) => mockGetDeployStatus(...args),
   retryApplicationDomainSSL: (...args: unknown[]) => mockRetrySSL(...args),
   retryApplicationDomainMail: (...args: unknown[]) => mockRetryMail(...args),
-  domainConnectUrl: (...args: unknown[]) => mockDomainConnectUrl(...args),
   patchInstanceConfig: (...args: unknown[]) => mockPatchInstanceConfig(...args),
+}));
+
+mock.module("./domain-connect.ts", () => ({
+  domainConnectUrl: (...args: unknown[]) => mockDomainConnectUrl(...args),
 }));
 
 mock.module("../../lib/sleep.ts", () => ({
