@@ -3,10 +3,15 @@ import { fetchUserInfo } from "../../lib/token-exchange.ts";
 import { withSpinner } from "../../lib/spinner.ts";
 import { log } from "../../lib/log.ts";
 import { AuthError } from "../../lib/errors.ts";
-import { resolveProfile } from "../../lib/config.ts";
+import { profileLabel, resolveProfile } from "../../lib/config.ts";
 import { NEXT_STEPS, printNextSteps } from "../../lib/next-steps.ts";
+import { isAgent } from "../../mode.ts";
 
-export async function whoami() {
+export interface WhoamiOptions {
+  json?: boolean;
+}
+
+export async function whoami(options: WhoamiOptions = {}) {
   const token = await getValidToken();
   if (!token) {
     throw new AuthError({ reason: "not_logged_in" });
@@ -18,13 +23,43 @@ export async function whoami() {
   } catch {
     throw new AuthError({ reason: "session_expired" });
   }
-  log.data(userInfo.email);
 
-  let isLinked = false;
+  let resolved: Awaited<ReturnType<typeof resolveProfile>>;
   try {
-    isLinked = Boolean(await resolveProfile(process.cwd()));
+    resolved = await resolveProfile(process.cwd());
   } catch {
     // Best-effort only: don't fail whoami when local profile resolution fails.
+    resolved = undefined;
   }
-  printNextSteps(isLinked ? NEXT_STEPS.WHOAMI_LINKED : NEXT_STEPS.WHOAMI);
+
+  if (options.json || isAgent()) {
+    log.data(
+      JSON.stringify(
+        {
+          email: userInfo.email,
+          linked: resolved
+            ? {
+                appId: resolved.profile.appId,
+                appName: resolved.profile.appName ?? null,
+                instances: {
+                  development: resolved.profile.instances.development,
+                  production: resolved.profile.instances.production ?? null,
+                },
+                resolvedVia: resolved.resolvedVia,
+                path: resolved.path,
+              }
+            : null,
+        },
+        null,
+        2,
+      ),
+    );
+    return;
+  }
+
+  log.data(userInfo.email);
+  if (resolved) {
+    log.info(`Linked to \`${profileLabel(resolved.profile)}\``);
+  }
+  printNextSteps(resolved ? NEXT_STEPS.WHOAMI_LINKED : NEXT_STEPS.WHOAMI);
 }

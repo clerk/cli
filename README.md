@@ -37,7 +37,7 @@ Commands:
   auth                                       Manage authentication
   link        [options]                      Link this project to a Clerk application
   unlink      [options]                      Unlink this project from its Clerk application
-  whoami                                     Show the current logged-in user
+  whoami      [options]                      Show the current logged-in user and linked application
   open                                       Open Clerk resources in your browser
   apps                                       Manage your Clerk applications
   users       [options]                      Manage Clerk users
