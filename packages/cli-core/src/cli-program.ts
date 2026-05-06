@@ -926,8 +926,48 @@ Tutorial — enable completions for your shell:
     .command("deploy", { hidden: true })
     .description("Deploy a Clerk application to production")
     .option("--debug", "Show detailed deployment debug output")
-    .option("--continue", "Resume a paused deploy operation")
-    .option("--abort", "Abort and clear a paused deploy operation")
+    .addOption(
+      createOption(
+        "--test-force-production-instance",
+        "Force deploy to use a mocked production instance",
+      ).hideHelp(),
+    )
+    .addOption(
+      createOption(
+        "--test-fail-production-instance-check",
+        "Simulate a deploy failure while checking for a production instance",
+      ).hideHelp(),
+    )
+    .addOption(
+      createOption(
+        "--test-fail-domain-lookup",
+        "Simulate a deploy failure while loading the production domain",
+      ).hideHelp(),
+    )
+    .addOption(
+      createOption(
+        "--test-fail-validate-cloning",
+        "Simulate a deploy failure while validating cloning",
+      ).hideHelp(),
+    )
+    .addOption(
+      createOption(
+        "--test-fail-create-production-instance",
+        "Simulate a deploy failure while creating the production instance",
+      ).hideHelp(),
+    )
+    .addOption(
+      createOption(
+        "--test-fail-dns-verification",
+        "Simulate a deploy failure while verifying DNS",
+      ).hideHelp(),
+    )
+    .addOption(
+      createOption(
+        "--test-fail-oauth-save",
+        "Simulate a deploy failure while saving OAuth credentials",
+      ).hideHelp(),
+    )
     .action(deploy);
 
   registerExtras(program);

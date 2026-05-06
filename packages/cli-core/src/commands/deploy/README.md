@@ -1,26 +1,22 @@
 # Deploy Command
 
-> **Mostly mocked.** Deploy lifecycle endpoints (`validate_cloning`, `production_instance`, `deploy_status`, `ssl_retry`, `mail_retry`) plus the production-instance config PATCH are mocked locally with the exact request/response shapes from the real Platform API, so swapping each to a live call is a one-import change in `commands/deploy/api.ts`. Production-targeted writes have to stay mocked while the production instance itself (`ins_prod_mock`) is a fake. The only real PLAPI call today is `fetchInstanceConfig` against the development instance for OAuth provider discovery.
+> **API-resolved state, mocked lifecycle.** Human mode resolves the linked application, production domains, deploy status, and instance config from the API layer on each run. Application/domain/config reads use live PLAPI helpers; production lifecycle calls (`validate_cloning`, `production_instance`, `deploy_status`, `ssl_retry`, `mail_retry`) plus production config PATCH still go through `commands/deploy/api.ts`, where they are mocked with the real Platform API request/response shapes.
 
 Guides a user through deploying their Clerk application to production.
 
 ## Usage
 
 ```sh
-clerk deploy              # Interactive wizard (human mode)
+clerk deploy              # Interactive, idempotent wizard (human mode)
 clerk deploy --debug      # With debug output
-clerk deploy --continue   # Resume a paused deploy operation
-clerk deploy --abort      # Clear a paused deploy operation after confirmation
 clerk deploy --mode agent # Output agent prompt instead of interactive flow
 ```
 
 ## Options
 
-| Flag         | Purpose                                                                                                                                                                          |
-| ------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `--debug`    | Show detailed mocked Platform API debug output.                                                                                                                                  |
-| `--continue` | Resume the DNS or OAuth step saved in local CLI config. Reports "no paused operation" when none exists; reports a project mismatch when the bookmark belongs to another project. |
-| `--abort`    | Confirm, then clear the saved paused deploy operation. Reports "no paused operation" when none exists; leaves server-side changes as-is.                                         |
+| Flag      | Purpose                                      |
+| --------- | -------------------------------------------- |
+| `--debug` | Show detailed deploy and PLAPI debug output. |
 
 ## Agent Mode
 
@@ -40,26 +36,28 @@ Agent mode is detected via the mode system (`src/mode.ts`), which checks in prio
 2. `CLERK_MODE` environment variable
 3. TTY detection (`process.stdout.isTTY`)
 
-Agent mode does not call PLAPI. It prints `DEPLOY_PROMPT` and exits before the human-mode mocked wizard starts. The prompt currently contains some stale endpoint guidance; see the TODO above `DEPLOY_PROMPT` in `index.ts` and `DEPLOY_MVP_UX_COPY_SPEC.md` §8.3.
+Agent mode does not call PLAPI. It prints `DEPLOY_PROMPT` and exits before the human-mode wizard starts. The prompt currently contains some stale endpoint guidance; see the TODO above `DEPLOY_PROMPT` in `index.ts` and `DEPLOY_MVP_UX_COPY_SPEC.md` §8.3.
 
-## Mocked PLAPI Calls
+## PLAPI And Mocked Lifecycle
 
-Human mode calls the helpers in `commands/deploy/api.ts`. They use the exact request/response shapes published in the Platform API OpenAPI spec, but the bodies are produced locally rather than sent over the network. Real implementations should replace each helper one at a time without touching the call sites.
+Human mode reads deploy state through the API layer: application instances, production domains, development config, production config, and deploy status. It does not write deploy progress to the CLI config profile. The only config compatibility write is the ordinary linked-profile `instances.production` value.
 
-| Step                       | Endpoint                                                                     | Mocked behavior                                                                                                                |
+The production-instance lifecycle still calls the helpers in `commands/deploy/api.ts`. They use the exact request/response shapes published in the Platform API OpenAPI spec, but the bodies are produced locally so the wizard can simulate server-side deploy states while the production-instance backend remains mocked.
+
+| Step                       | Endpoint                                                                     | Mocked state                                                                                                                   |
 | -------------------------- | ---------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
-| Validate cloning           | `POST /v1/platform/applications/{appID}/validate_cloning`                    | Resolves to 204; the helper exists so 402 `UnsupportedSubscriptionPlanFeatures` errors short-circuit before plan confirmation. |
+| Validate cloning           | `POST /v1/platform/applications/{appID}/validate_cloning`                    | Resolves to 204; the helper exists so 402 `UnsupportedSubscriptionPlanFeatures` errors can later short-circuit before summary. |
 | Create production instance | `POST /v1/platform/applications/{appID}/production_instance`                 | Returns `instance_id`, `environment_type`, `active_domain`, `publishable_key`, `secret_key`, and `cname_targets[]`.            |
 | Poll deploy status         | `GET /v1/platform/applications/{appID}/instances/{envOrInsID}/deploy_status` | Returns `incomplete` for the first two polls per `(appID, instanceID)` pair, then `complete`. CLI polls every 3s.              |
 | Retry SSL provisioning     | `POST /v1/platform/applications/{appID}/domains/{domainIDOrName}/ssl_retry`  | Resolves to 204; helper exposed for use when `deploy_status` stalls.                                                           |
 | Retry mail verification    | `POST /v1/platform/applications/{appID}/domains/{domainIDOrName}/mail_retry` | Resolves to 204; helper exposed for use when `deploy_status` stalls.                                                           |
-| Save OAuth credentials     | `PATCH /v1/platform/applications/{appID}/instances/{instanceID}/config`      | Resolves to `{}` without hitting the network. Mocked alongside the others while the production instance itself is a fake.      |
+| Save OAuth credentials     | `PATCH /v1/platform/applications/{appID}/instances/{instanceID}/config`      | Resolves to `{}` without hitting the network.                                                                                  |
 
-Local paused deploy state is written to the CLI config profile, not PLAPI. `--abort` only clears that local bookmark and does not undo anything already saved to a Clerk production instance. The production `home_url` collected during the wizard lives only on the deploy bookmark (`profile.deploy.domain`); it isn't mirrored onto `profile.instances`, so the bookmark is the single source of truth while the wizard is in flight. Re-running plain `clerk deploy` after the bookmark has been cleared and `instances.production` is set errors with guidance to run `clerk env pull --instance prod` instead.
+This keeps `clerk deploy` from drifting away from the server-side source of truth once these endpoints are backed by production data. Each run resolves the current production instance, domain, deploy status, and OAuth config from the API layer, then prints a checked-off plan before completing the next unfinished action. Re-running `clerk deploy` after production is fully configured shows every deploy action checked off and prints production next steps.
 
-Mocked endpoints in `commands/deploy/api.ts` pause for ~2s before returning so spinners and the deploy-status poll feel like real network calls. Real implementations remove the artificial delay.
+Mocked lifecycle endpoints in `commands/deploy/api.ts` pause for ~2s before returning so spinners and the deploy-status poll feel like real network calls.
 
-If the user presses Ctrl-C after the production instance has been created, the wizard saves the current DNS or OAuth step as a paused operation, prints the `clerk deploy --continue` recovery command, and exits with SIGINT code 130. Running plain `clerk deploy` while that bookmark exists exits with an error instead of starting another deploy.
+If the user presses Ctrl-C after the production instance has been created, the wizard tells them to run `clerk deploy` again and exits with SIGINT code 130. The next run derives the current DNS or OAuth step from API state and resumes without starting another production instance.
 
 ## Sequence Diagram
 
@@ -133,7 +131,9 @@ All endpoints are on the **Platform API** (`/v1/platform/...`). The "Real" rows 
 | -------------------------- | ------- | ------------------------------------------------------------------------ | ------ | ------------------------------------------------------------------------------------------------------------------------------------------ |
 | Auth                       | n/a     | Local config                                                             | Real   | Token stored from `clerk auth login` or `CLERK_PLATFORM_API_KEY`.                                                                          |
 | Read instance config       | `GET`   | `/v1/platform/applications/{appID}/instances/{instanceID}/config`        | Real   | `fetchInstanceConfig` from `lib/plapi.ts`. Used to discover enabled `connection_oauth_*` providers in dev.                                 |
-| Patch instance config      | `PATCH` | `/v1/platform/applications/{appID}/instances/{instanceID}/config`        | Real   | `patchInstanceConfig` from `lib/plapi.ts`. Writes production OAuth credentials.                                                            |
+| Patch instance config      | `PATCH` | `/v1/platform/applications/{appID}/instances/{instanceID}/config`        | Mock   | `patchInstanceConfig` in `commands/deploy/api.ts`. Writes production OAuth credentials once switched to live PLAPI.                        |
+| Read application           | `GET`   | `/v1/platform/applications/{appID}`                                      | Real   | `fetchApplication` from `lib/plapi.ts`. Resolves live development and production instance IDs.                                             |
+| List production domains    | `GET`   | `/v1/platform/applications/{appID}/domains`                              | Real   | `listApplicationDomains` from `lib/plapi.ts`. Recovers production domain name and CNAME targets on each run.                               |
 | Validate cloning           | `POST`  | `/v1/platform/applications/{appID}/validate_cloning`                     | Mock   | `validateCloning` in `commands/deploy/api.ts`. Pre-flights subscription/feature support before plan summary.                               |
 | Create production instance | `POST`  | `/v1/platform/applications/{appID}/production_instance`                  | Mock   | `createProductionInstance` in `commands/deploy/api.ts`. Returns prod instance, primary domain, keys, and `cname_targets[]`.                |
 | Poll deploy status         | `GET`   | `/v1/platform/applications/{appID}/instances/{envOrInsID}/deploy_status` | Mock   | `getDeployStatus` in `commands/deploy/api.ts`. CLI polls every 3 seconds while the production instance is provisioning DNS, SSL, and mail. |

@@ -11,6 +11,7 @@ import {
 } from "./providers.ts";
 
 type OAuthCredentialAction = "have-credentials" | "walkthrough" | "google-json" | "skip";
+type DnsVerificationAction = "check" | "skip";
 
 const PROVIDER_DOMAIN_SUFFIXES = [
   ".clerk.app",
@@ -55,10 +56,20 @@ export async function confirmContinueAfterDnsHandoff(): Promise<boolean> {
   });
 }
 
-export async function confirmOAuthSetupNow(provider: OAuthProvider): Promise<boolean> {
+export async function confirmCreateProductionInstance(): Promise<boolean> {
   return confirm({
-    message: `Set up ${PROVIDER_LABELS[provider]} OAuth now?`,
+    message: "Create production instance?",
     default: true,
+  });
+}
+
+export async function chooseDnsVerificationAction(): Promise<DnsVerificationAction> {
+  return select({
+    message: "DNS verification",
+    choices: [
+      { name: "Check DNS now", value: "check" },
+      { name: "Skip DNS verification for now", value: "skip" },
+    ],
   });
 }
 
@@ -76,7 +87,7 @@ export async function chooseOAuthCredentialAction(
     });
   }
   choices.push({
-    name: "Skip for now and resume later (`clerk deploy --continue`)",
+    name: "Skip for now and run `clerk deploy` again later",
     value: "skip",
   });
 

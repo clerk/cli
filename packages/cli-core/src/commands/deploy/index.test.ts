@@ -25,6 +25,8 @@ const mockConfirm = mock();
 const mockPassword = mock();
 const mockPatchInstanceConfig = mock();
 const mockFetchInstanceConfig = mock();
+const mockFetchApplication = mock();
+const mockListApplicationDomains = mock();
 const mockCreateProductionInstance = mock();
 const mockValidateCloning = mock();
 const mockGetDeployStatus = mock();
@@ -51,6 +53,8 @@ mock.module("../../lib/listage.ts", () => ({
 
 mock.module("../../lib/plapi.ts", () => ({
   fetchInstanceConfig: (...args: unknown[]) => mockFetchInstanceConfig(...args),
+  fetchApplication: (...args: unknown[]) => mockFetchApplication(...args),
+  listApplicationDomains: (...args: unknown[]) => mockListApplicationDomains(...args),
 }));
 
 mock.module("./api.ts", () => ({
@@ -72,6 +76,7 @@ mock.module("../../lib/sleep.ts", () => ({
 
 const { _setConfigDir, readConfig, setProfile } = await import("../../lib/config.ts");
 const { deploy } = await import("./index.ts");
+const { providerSetupIntro } = await import("./providers.ts");
 
 function stripAnsi(value: string): string {
   return value.replace(new RegExp(`${String.fromCharCode(27)}\\[[0-9;]*m`, "g"), "");
@@ -95,6 +100,41 @@ describe("deploy", () => {
     // Sensible defaults so most tests need only override what they exercise.
     mockFetchInstanceConfig.mockResolvedValue({
       connection_oauth_google: { enabled: true },
+    });
+    mockFetchApplication.mockResolvedValue({
+      application_id: "app_xyz789",
+      name: "my-saas-app",
+      instances: [
+        {
+          instance_id: "ins_dev_123",
+          environment_type: "development",
+          publishable_key: "pk_test_123",
+        },
+      ],
+    });
+    mockListApplicationDomains.mockResolvedValue({
+      data: [
+        {
+          object: "domain",
+          id: "dmn_prod_mock",
+          name: "example.com",
+          is_satellite: false,
+          is_provider_domain: false,
+          frontend_api_url: "https://clerk.example.com",
+          accounts_portal_url: "https://accounts.example.com",
+          development_origin: "",
+          cname_targets: [
+            {
+              host: "clerk.example.com",
+              value: "frontend-api.clerk.services",
+              required: true,
+            },
+          ],
+          created_at: "2026-05-06T00:00:00Z",
+          updated_at: "2026-05-06T00:00:00Z",
+        },
+      ],
+      total_count: 1,
     });
     mockValidateCloning.mockResolvedValue(undefined);
     mockGetDeployStatus.mockResolvedValue({ status: "complete" });
@@ -141,6 +181,8 @@ describe("deploy", () => {
     mockPassword.mockReset();
     mockPatchInstanceConfig.mockReset();
     mockFetchInstanceConfig.mockReset();
+    mockFetchApplication.mockReset();
+    mockListApplicationDomains.mockReset();
     mockCreateProductionInstance.mockReset();
     mockValidateCloning.mockReset();
     mockGetDeployStatus.mockReset();
@@ -158,14 +200,132 @@ describe("deploy", () => {
   async function linkedProject(profile: Record<string, unknown> = {}) {
     tempDir = await mkdtemp(join(tmpdir(), "clerk-deploy-test-"));
     _setConfigDir(tempDir);
-    await setProfile(process.cwd(), {
+    const nextProfile = {
       workspaceId: "workspace_123",
       appId: "app_xyz789",
       appName: "my-saas-app",
       instances: { development: "ins_dev_123" },
       ...profile,
-    } as never);
+    } as never;
+    await setProfile(process.cwd(), nextProfile);
+
+    const typedProfile = nextProfile as {
+      instances: { production?: string };
+    };
+    const productionInstanceId = typedProfile.instances.production;
+    if (productionInstanceId) {
+      mockLiveProduction({
+        instanceId: productionInstanceId,
+        domain: "example.com",
+        productionConfig: {
+          connection_oauth_google: {
+            enabled: true,
+            client_id: "google-client-id.apps.googleusercontent.com",
+            client_secret: "REDACTED",
+          },
+        },
+      });
+    }
   }
+
+  function mockLiveProduction(
+    options: {
+      instanceId?: string;
+      domain?: string;
+      domainId?: string;
+      productionConfig?: Record<string, unknown>;
+      developmentConfig?: Record<string, unknown>;
+    } = {},
+  ) {
+    const instanceId = options.instanceId ?? "ins_prod_mock";
+    const domain = options.domain ?? "example.com";
+    const domainId = options.domainId ?? "dmn_prod_mock";
+    const developmentConfig = options.developmentConfig ?? {
+      connection_oauth_google: { enabled: true },
+    };
+    const productionConfig = options.productionConfig ?? {
+      connection_oauth_google: { enabled: false, client_id: "", client_secret: "" },
+    };
+
+    mockFetchApplication.mockResolvedValue({
+      application_id: "app_xyz789",
+      name: "my-saas-app",
+      instances: [
+        {
+          instance_id: "ins_dev_123",
+          environment_type: "development",
+          publishable_key: "pk_test_123",
+        },
+        {
+          instance_id: instanceId,
+          environment_type: "production",
+          publishable_key: "pk_live_123",
+        },
+      ],
+    });
+    mockListApplicationDomains.mockResolvedValue({
+      data: [
+        {
+          object: "domain",
+          id: domainId,
+          name: domain,
+          is_satellite: false,
+          is_provider_domain: false,
+          frontend_api_url: `https://clerk.${domain}`,
+          accounts_portal_url: `https://accounts.${domain}`,
+          development_origin: "",
+          cname_targets: [
+            { host: `clerk.${domain}`, value: "frontend-api.clerk.services", required: true },
+          ],
+          created_at: "2026-05-06T00:00:00Z",
+          updated_at: "2026-05-06T00:00:00Z",
+        },
+      ],
+      total_count: 1,
+    });
+    mockFetchInstanceConfig.mockImplementation((_appId: string, instanceIdOrEnv: string) => {
+      if (instanceIdOrEnv === instanceId || instanceIdOrEnv === "production") {
+        return productionConfig;
+      }
+      return developmentConfig;
+    });
+  }
+
+  test("provider setup intro includes docs-backed copy for each OAuth provider", () => {
+    const intros = {
+      google: providerSetupIntro("google").map(stripAnsi),
+      github: providerSetupIntro("github").map(stripAnsi),
+      microsoft: providerSetupIntro("microsoft").map(stripAnsi),
+      apple: providerSetupIntro("apple").map(stripAnsi),
+      linear: providerSetupIntro("linear").map(stripAnsi),
+    };
+
+    expect(intros.google).toEqual([
+      "Configure Google OAuth for production",
+      "Production Google sign-in requires custom OAuth credentials from Google Cloud Console.",
+      "Reference: https://clerk.com/docs/guides/configure/auth-strategies/social-connections/google",
+    ]);
+    expect(intros.github).toEqual([
+      "Configure GitHub OAuth for production",
+      "Production GitHub sign-in requires a GitHub OAuth app and custom credentials.",
+      "Reference: https://clerk.com/docs/guides/configure/auth-strategies/social-connections/github",
+    ]);
+    expect(intros.microsoft).toEqual([
+      "Configure Microsoft OAuth for production",
+      "Production Microsoft sign-in requires a Microsoft Entra ID app and custom credentials.",
+      "Reference: https://clerk.com/docs/guides/configure/auth-strategies/social-connections/microsoft",
+    ]);
+    expect(intros.apple).toEqual([
+      "Configure Apple OAuth for production",
+      "Production Apple sign-in requires an Apple Services ID, Team ID, Key ID, and private key file.",
+      "Reference: https://clerk.com/docs/guides/configure/auth-strategies/social-connections/apple",
+    ]);
+    expect(intros.linear).toEqual([
+      "Configure Linear OAuth for production",
+      "Production Linear sign-in requires a Linear OAuth app and custom credentials.",
+      "Reference: https://clerk.com/docs/guides/configure/auth-strategies/social-connections/linear",
+    ]);
+  });
 
   describe("agent mode", () => {
     test("outputs deploy prompt and returns", async () => {
@@ -234,13 +394,17 @@ describe("deploy", () => {
     function mockHumanFlow() {
       mockIsAgent.mockReturnValue(false);
       // Proceed → pause after DNS handoff.
-      mockConfirm.mockResolvedValueOnce(true).mockResolvedValueOnce(false);
+      mockConfirm
+        .mockResolvedValueOnce(true)
+        .mockResolvedValueOnce(true)
+        .mockResolvedValueOnce(false);
       mockInput.mockResolvedValueOnce("example.com");
     }
 
     async function runDnsHandoff() {
       mockHumanFlow();
       await runDeploy({});
+      mockLiveProduction();
       captured = captureLog();
       mockConfirm.mockReset();
       mockSelect.mockReset();
@@ -249,7 +413,6 @@ describe("deploy", () => {
     }
 
     function mockOAuthCompletion() {
-      mockConfirm.mockResolvedValueOnce(true);
       mockSelect.mockResolvedValueOnce("have-credentials");
       mockInput.mockResolvedValueOnce("fake-client-id-12345");
       mockPassword.mockResolvedValueOnce("fake-secret");
@@ -275,6 +438,23 @@ describe("deploy", () => {
       expect(mockValidateCloning).toHaveBeenCalledWith("app_xyz789", {
         clone_instance_id: "ins_dev_123",
       });
+    });
+
+    test("checks for an existing production instance before reading development config", async () => {
+      await linkedProject();
+      mockHumanFlow();
+      stderrSpy = spyOn(process.stderr, "write").mockImplementation(() => true);
+
+      await runDeploy({});
+      const err = stripAnsi(
+        stderrSpy.mock.calls.map((call: unknown[]) => String(call[0])).join(""),
+      );
+
+      const productionCheckIndex = err.indexOf("Checking for production instance...");
+      const developmentConfigIndex = err.indexOf("Reading development configuration...");
+      expect(productionCheckIndex).toBeGreaterThan(-1);
+      expect(developmentConfigIndex).toBeGreaterThan(-1);
+      expect(productionCheckIndex).toBeLessThan(developmentConfigIndex);
     });
 
     test("discovers enabled OAuth providers by iterating the dev config response", async () => {
@@ -306,6 +486,7 @@ describe("deploy", () => {
       mockConfirm
         .mockResolvedValueOnce(true)
         .mockResolvedValueOnce(true)
+        .mockResolvedValueOnce(true)
         .mockResolvedValueOnce(true);
       mockInput
         .mockResolvedValueOnce("example.com")
@@ -335,8 +516,9 @@ describe("deploy", () => {
 
       expect(mockConfirm).toHaveBeenCalledWith({ message: "Proceed?", default: true });
       expect(err).toContain("clerk deploy will prepare my-saas-app for production");
-      expect(err).toContain("Create production instance");
-      expect(err).toContain("Configure Google OAuth credentials");
+      expect(err).toContain("[ ] Create production instance");
+      expect(err).toContain("[ ] Configure DNS records");
+      expect(err).toContain("[ ] Configure Google OAuth credentials");
       expect(err).toContain("Check the Domains section in the Clerk Dashboard");
     });
 
@@ -378,7 +560,6 @@ describe("deploy", () => {
       await expect(runDeploy({})).rejects.toBeInstanceOf(UserAbortError);
 
       const config = await readConfig();
-      expect(config.profiles[process.cwd()]?.deploy).toBeUndefined();
       expect(config.profiles[process.cwd()]?.instances.production).toBeUndefined();
       const terminalOutput = stderrSpy.mock.calls
         .map((call: unknown[]) => String(call[0]))
@@ -398,7 +579,6 @@ describe("deploy", () => {
       await expect(runDeploy({})).rejects.toBeInstanceOf(UserAbortError);
 
       const config = await readConfig();
-      expect(config.profiles[process.cwd()]?.deploy).toBeUndefined();
       expect(config.profiles[process.cwd()]?.instances.production).toBeUndefined();
       const terminalOutput = stderrSpy.mock.calls
         .map((call: unknown[]) => String(call[0]))
@@ -413,7 +593,7 @@ describe("deploy", () => {
       await runDnsHandoff();
       mockOAuthCompletion();
 
-      await runDeploy({ continue: true });
+      await runDeploy({});
       const err = stripAnsi(captured.err);
 
       expect(err).toContain("Next steps");
@@ -425,23 +605,28 @@ describe("deploy", () => {
     test("DNS setup prints dashboard handoff and asks before continuing", async () => {
       await linkedProject();
       mockIsAgent.mockReturnValue(false);
-      mockConfirm.mockResolvedValueOnce(true).mockResolvedValueOnce(false);
+      mockConfirm
+        .mockResolvedValueOnce(true)
+        .mockResolvedValueOnce(true)
+        .mockResolvedValueOnce(false);
       mockInput.mockResolvedValueOnce("example.com");
 
       await runDeploy({});
       const err = stripAnsi(captured.err);
-      const config = await readConfig();
-
-      expect(config.profiles[process.cwd()]?.deploy).toMatchObject({
-        pending: { type: "dns" },
-        domain: "example.com",
-      });
+      expect(err).toContain("Clerk will associate these subdomains with example.com");
+      expect(err).toContain("clerk.example.com");
+      expect(err).toContain("accounts.example.com");
+      expect(err).toContain("clkmail.example.com");
+      expect(err).toContain("This will create a Clerk production instance");
       expect(err).toContain("Add the following records at your DNS provider");
       expect(err).toContain("Check the Domains section in the Clerk Dashboard");
       expect(err).toContain("propagation and SSL issuance");
-      expect(err).toContain("clerk deploy --continue");
-      expect(err).toContain("clerk deploy --abort");
-      expect(mockConfirm).toHaveBeenCalledTimes(2);
+      expect(err).toContain("run `clerk deploy` again later");
+      expect(mockConfirm).toHaveBeenCalledTimes(3);
+      expect(mockConfirm).toHaveBeenCalledWith({
+        message: "Create production instance?",
+        default: true,
+      });
       expect(mockConfirm).toHaveBeenCalledWith({
         message: "Continue to OAuth setup?",
         default: true,
@@ -456,10 +641,31 @@ describe("deploy", () => {
       });
     });
 
-    test("Ctrl-C at the DNS handoff saves state and reports paused", async () => {
+    test("declining production instance creation does not call the production instance API", async () => {
       await linkedProject();
       mockIsAgent.mockReturnValue(false);
-      mockConfirm.mockResolvedValueOnce(true).mockRejectedValueOnce(promptExitError());
+      mockConfirm.mockResolvedValueOnce(true).mockResolvedValueOnce(false);
+      mockInput.mockResolvedValueOnce("example.com");
+
+      await runDeploy({});
+      const err = stripAnsi(captured.err);
+
+      expect(err).toContain("Clerk will associate these subdomains with example.com");
+      expect(err).toContain("No production instance was created.");
+      expect(mockCreateProductionInstance).not.toHaveBeenCalled();
+      expect(mockConfirm).toHaveBeenCalledWith({
+        message: "Create production instance?",
+        default: true,
+      });
+    });
+
+    test("Ctrl-C at the DNS handoff reports paused", async () => {
+      await linkedProject();
+      mockIsAgent.mockReturnValue(false);
+      mockConfirm
+        .mockResolvedValueOnce(true)
+        .mockResolvedValueOnce(true)
+        .mockRejectedValueOnce(promptExitError());
       mockInput.mockResolvedValueOnce("example.com");
       stderrSpy = spyOn(process.stderr, "write").mockImplementation(() => true);
 
@@ -469,18 +675,8 @@ describe("deploy", () => {
       } catch (caught) {
         error = caught as CliError;
       }
-
-      const config = await readConfig();
-      expect(config.profiles[process.cwd()]?.deploy).toMatchObject({
-        appId: "app_xyz789",
-        developmentInstanceId: "ins_dev_123",
-        productionInstanceId: "ins_prod_mock",
-        domain: "example.com",
-        pending: { type: "dns" },
-      });
       expect(error?.message).toContain("Deploy paused at: DNS verification");
-      expect(error?.message).toContain("clerk deploy --continue");
-      expect(error?.message).toContain("clerk deploy --abort");
+      expect(error?.message).toContain("Run `clerk deploy` again");
       expect(error?.exitCode).toBe(EXIT_CODE.SIGINT);
       const terminalOutput = stderrSpy.mock.calls
         .map((call: unknown[]) => String(call[0]))
@@ -507,7 +703,7 @@ describe("deploy", () => {
       mockConfirm.mockResolvedValueOnce(true);
       mockSelect.mockResolvedValueOnce("google-json");
       mockInput.mockResolvedValueOnce(googleJsonPath);
-      await runDeploy({ continue: true });
+      await runDeploy({});
       const oauthSelect = mockSelect.mock.calls.find((call) =>
         String((call[0] as { message?: string }).message).includes("Google OAuth"),
       )?.[0] as { choices: Array<{ name: string; value: string }> };
@@ -523,14 +719,20 @@ describe("deploy", () => {
     test("Apple .p8 file prompt validates path and PEM framing before continuing", async () => {
       await linkedProject({
         instances: { development: "ins_dev_123", production: "ins_prod_apple" },
-        deploy: {
-          appId: "app_xyz789",
-          developmentInstanceId: "ins_dev_123",
-          productionInstanceId: "ins_prod_apple",
-          domain: "example.com",
-          pending: { type: "oauth", provider: "apple" },
-          oauthProviders: ["apple"],
-          completedOAuthProviders: [],
+      });
+      mockLiveProduction({
+        instanceId: "ins_prod_apple",
+        developmentConfig: {
+          connection_oauth_apple: { enabled: true },
+        },
+        productionConfig: {
+          connection_oauth_apple: {
+            enabled: true,
+            client_id: "",
+            team_id: "",
+            key_id: "",
+            client_secret: "",
+          },
         },
       });
       mockIsAgent.mockReturnValue(false);
@@ -552,7 +754,7 @@ describe("deploy", () => {
         .mockResolvedValueOnce(validP8Path);
       mockPatchInstanceConfig.mockResolvedValueOnce({});
 
-      await runDeploy({ continue: true });
+      await runDeploy({});
 
       const p8Input = mockInput.mock.calls.find((call) =>
         String((call[0] as { message?: string }).message).includes("Apple Private Key"),
@@ -585,7 +787,7 @@ describe("deploy", () => {
       mockConfirm.mockResolvedValueOnce(true);
       mockSelect.mockResolvedValueOnce("google-json");
       mockInput.mockResolvedValueOnce(googleJsonPath);
-      await runDeploy({ continue: true });
+      await runDeploy({});
 
       const jsonInput = mockInput.mock.calls.find((call) =>
         String((call[0] as { message?: string }).message).includes("Google OAuth JSON file path"),
@@ -599,101 +801,269 @@ describe("deploy", () => {
       await expect(jsonInput.validate(relativeJsonPath)).resolves.toBe(true);
     });
 
-    test("plain deploy errors when a production instance is already linked", async () => {
-      await linkedProject({
-        instances: { development: "ins_dev_123", production: "ins_prod_123" },
-      });
-      mockIsAgent.mockReturnValue(false);
-
-      let error: CliError | undefined;
-      try {
-        await runDeploy({});
-      } catch (caught) {
-        error = caught as CliError;
-      }
-
-      expect(error?.message).toContain("This app already has a production instance configured");
-      expect(error?.message).toContain("clerk env pull --instance prod");
-      expect(error?.message).toContain("clerk deploy --continue");
-      expect(mockInput).not.toHaveBeenCalled();
-      expect(mockSelect).not.toHaveBeenCalled();
-    });
-
-    test("plain deploy errors while a deploy operation is paused", async () => {
-      await linkedProject({
-        deploy: {
-          appId: "app_xyz789",
-          developmentInstanceId: "ins_dev_123",
-          productionInstanceId: "ins_prod_123",
-          domain: "example.com",
-          pending: { type: "dns" },
-          oauthProviders: ["google"],
-          completedOAuthProviders: [],
+    test("plain deploy is a no-op when the API reports deploy is already complete", async () => {
+      await linkedProject();
+      mockLiveProduction({
+        instanceId: "ins_prod_from_api",
+        productionConfig: {
+          connection_oauth_google: {
+            enabled: true,
+            client_id: "google-client-id.apps.googleusercontent.com",
+            client_secret: "REDACTED",
+          },
         },
       });
       mockIsAgent.mockReturnValue(false);
 
+      await runDeploy({});
+      const err = stripAnsi(captured.err);
+
+      expect(err).toContain("clerk deploy will prepare my-saas-app for production");
+      expect(err).toContain("[x] Create production instance");
+      expect(err).toContain("[x] Configure DNS records");
+      expect(err).toContain("[x] Configure Google OAuth credentials");
+      expect(err).toContain("No deploy actions remain.");
+      expect(mockFetchApplication).toHaveBeenCalledWith("app_xyz789");
+      expect(mockInput).not.toHaveBeenCalled();
+      expect(mockSelect).not.toHaveBeenCalled();
+    });
+
+    test("--test-force-production-instance makes app retrieval include mocked production", async () => {
+      await linkedProject();
+      mockIsAgent.mockReturnValue(false);
+      mockSelect.mockResolvedValueOnce("skip");
+      mockListApplicationDomains.mockRejectedValueOnce(
+        new Error("domains should be mocked when forcing production"),
+      );
+      mockFetchInstanceConfig.mockImplementation((_appId: string, instanceIdOrEnv: string) => {
+        if (instanceIdOrEnv === "ins_prod_mock") {
+          throw new Error("production config should be mocked when forcing production");
+        }
+        return { connection_oauth_google: { enabled: true } };
+      });
+
+      await runDeploy({ testForceProductionInstance: true });
+      const err = stripAnsi(captured.err);
+
+      expect(err).toContain("[x] Create production instance");
+      expect(err).toContain("Use production domain example.com");
+      expect(mockCreateProductionInstance).not.toHaveBeenCalled();
+      expect(mockFetchApplication).toHaveBeenCalledWith("app_xyz789");
+      expect(mockListApplicationDomains).not.toHaveBeenCalled();
+      expect(mockFetchInstanceConfig).not.toHaveBeenCalledWith("app_xyz789", "ins_prod_mock");
+    });
+
+    test("--test-fail-production-instance-check simulates production instance lookup failure", async () => {
+      await linkedProject();
+      mockIsAgent.mockReturnValue(false);
+
+      await expect(runDeploy({ testFailProductionInstanceCheck: true })).rejects.toThrow(
+        "Simulated deploy failure: production instance check.",
+      );
+
+      expect(mockFetchApplication).not.toHaveBeenCalled();
+      expect(mockFetchInstanceConfig).not.toHaveBeenCalled();
+    });
+
+    test("--test-fail-domain-lookup simulates production domain lookup failure", async () => {
+      await linkedProject();
+      mockLiveProduction({
+        instanceId: "ins_prod_from_api",
+        productionConfig: {},
+      });
+      mockIsAgent.mockReturnValue(false);
+
+      await expect(runDeploy({ testFailDomainLookup: true })).rejects.toThrow(
+        "Simulated deploy failure: production domain lookup.",
+      );
+
+      expect(mockListApplicationDomains).not.toHaveBeenCalled();
+    });
+
+    test("--test-fail-validate-cloning simulates cloning validation failure", async () => {
+      await linkedProject();
+      mockIsAgent.mockReturnValue(false);
+
+      await expect(runDeploy({ testFailValidateCloning: true })).rejects.toThrow(
+        "Simulated deploy failure: cloning validation.",
+      );
+
+      expect(mockValidateCloning).not.toHaveBeenCalled();
+      expect(mockCreateProductionInstance).not.toHaveBeenCalled();
+    });
+
+    test("--test-fail-create-production-instance simulates production creation failure", async () => {
+      await linkedProject();
+      mockIsAgent.mockReturnValue(false);
+      mockConfirm.mockResolvedValueOnce(true).mockResolvedValueOnce(true);
+      mockInput.mockResolvedValueOnce("example.com");
+
+      await expect(runDeploy({ testFailCreateProductionInstance: true })).rejects.toThrow(
+        "Simulated deploy failure: production instance creation.",
+      );
+
+      expect(mockCreateProductionInstance).not.toHaveBeenCalled();
+    });
+
+    test("--test-fail-dns-verification simulates DNS verification failure", async () => {
+      await linkedProject();
+      mockIsAgent.mockReturnValue(false);
+      mockConfirm
+        .mockResolvedValueOnce(true)
+        .mockResolvedValueOnce(true)
+        .mockResolvedValueOnce(true)
+        .mockResolvedValueOnce(true);
+      mockSelect.mockResolvedValueOnce("skip").mockResolvedValueOnce("have-credentials");
+      mockInput
+        .mockResolvedValueOnce("example.com")
+        .mockResolvedValueOnce("google-client-id.apps.googleusercontent.com");
+      mockPassword.mockResolvedValueOnce("google-secret");
+      mockPatchInstanceConfig.mockResolvedValueOnce({});
+
+      await runDeploy({ testFailDnsVerification: true });
+      const err = stripAnsi(captured.err);
+
+      expect(mockGetDeployStatus).not.toHaveBeenCalled();
+      expect(err).toContain("DNS propagation can take time");
+      expect(err).toContain("Add the following records at your DNS provider:");
+      expect(err).toContain("Host:  clerk.example.com");
+      expect(err).toContain("Value: frontend-api.clerk.services");
+      expect(err).toContain("Skipping DNS verification for now.");
+      expect(err).toContain("Saved Google OAuth credentials");
+      expect(mockPatchInstanceConfig).toHaveBeenCalledWith("app_xyz789", "ins_prod_mock", {
+        connection_oauth_google: {
+          enabled: true,
+          client_id: "google-client-id.apps.googleusercontent.com",
+          client_secret: "google-secret",
+        },
+      });
+    });
+
+    test("--test-fail-oauth-save simulates OAuth credential save failure", async () => {
+      await linkedProject({
+        instances: { development: "ins_dev_123", production: "ins_prod_123" },
+      });
+      mockLiveProduction({
+        instanceId: "ins_prod_123",
+        productionConfig: {},
+      });
+      mockIsAgent.mockReturnValue(false);
+      mockSelect.mockResolvedValueOnce("have-credentials");
+      mockConfirm.mockResolvedValueOnce(true);
+      mockInput.mockResolvedValueOnce("google-client-id.apps.googleusercontent.com");
+      mockPassword.mockResolvedValueOnce("google-secret");
+
+      await expect(runDeploy({ testFailOAuthSave: true })).rejects.toThrow(
+        "Simulated deploy failure: OAuth credential save.",
+      );
+
+      expect(mockPatchInstanceConfig).not.toHaveBeenCalled();
+    });
+
+    test("plain deploy resumes DNS verification from live API state", async () => {
+      await linkedProject({
+        instances: { development: "ins_dev_123", production: "ins_prod_123" },
+      });
+      mockIsAgent.mockReturnValue(false);
+      mockLiveProduction({
+        instanceId: "ins_prod_123",
+        productionConfig: {},
+      });
+      mockGetDeployStatus
+        .mockResolvedValueOnce({ status: "incomplete" })
+        .mockResolvedValueOnce({ status: "complete" });
+      mockConfirm.mockResolvedValueOnce(true).mockResolvedValueOnce(true);
+      mockSelect.mockResolvedValueOnce("check").mockResolvedValueOnce("have-credentials");
+      mockInput.mockResolvedValueOnce("google-client-id.apps.googleusercontent.com");
+      mockPassword.mockResolvedValueOnce("google-secret");
+
+      await runDeploy({});
+      const err = stripAnsi(captured.err);
+
+      expect(err).toContain("[x] Create production instance");
+      expect(err).toContain("[ ] Configure DNS records");
+      expect(err).toContain("[ ] Configure Google OAuth credentials");
+      expect(err).toContain("DNS verified for example.com");
+      expect(mockSelect).toHaveBeenCalledWith({
+        message: "DNS verification",
+        choices: [
+          { name: "Check DNS now", value: "check" },
+          { name: "Skip DNS verification for now", value: "skip" },
+        ],
+      });
+      const firstInput = mockInput.mock.calls[0]?.[0] as { message?: string } | undefined;
+      expect(String(firstInput?.message)).not.toContain("Production domain");
+    });
+
+    test("plain deploy can skip DNS verification and continue configuring production", async () => {
+      await linkedProject({
+        instances: { development: "ins_dev_123", production: "ins_prod_123" },
+      });
+      mockIsAgent.mockReturnValue(false);
+      mockLiveProduction({
+        instanceId: "ins_prod_123",
+        productionConfig: {},
+      });
+      mockGetDeployStatus.mockResolvedValue({ status: "incomplete" });
+      mockSelect.mockResolvedValueOnce("skip").mockResolvedValueOnce("have-credentials");
+      mockConfirm.mockResolvedValueOnce(true);
+      mockInput.mockResolvedValueOnce("google-client-id.apps.googleusercontent.com");
+      mockPassword.mockResolvedValueOnce("google-secret");
+      mockPatchInstanceConfig.mockResolvedValueOnce({});
+
+      await runDeploy({});
+      const err = stripAnsi(captured.err);
+
+      expect(err).toContain("Saved Google OAuth credentials");
+      expect(err).toContain("Domain      DNS pending");
+      expect(err).not.toContain("Domain      Verified");
+      expect(mockSelect).toHaveBeenCalledWith({
+        message: "DNS verification",
+        choices: [
+          { name: "Check DNS now", value: "check" },
+          { name: "Skip DNS verification for now", value: "skip" },
+        ],
+      });
+      expect(mockGetDeployStatus).toHaveBeenCalledTimes(1);
+      expect(mockPatchInstanceConfig).toHaveBeenCalledWith("app_xyz789", "ins_prod_123", {
+        connection_oauth_google: {
+          enabled: true,
+          client_id: "google-client-id.apps.googleusercontent.com",
+          client_secret: "google-secret",
+        },
+      });
+    });
+
+    test("DNS handoff reports plain deploy for later continuation", async () => {
+      await linkedProject();
+      mockIsAgent.mockReturnValue(false);
+      mockConfirm
+        .mockResolvedValueOnce(true)
+        .mockResolvedValueOnce(true)
+        .mockResolvedValueOnce(false);
+      mockInput.mockResolvedValueOnce("example.com");
+
+      await runDeploy({});
+      const err = stripAnsi(captured.err);
+      expect(err).toContain("Check the Domains section in the Clerk Dashboard");
+      expect(err).toContain("run `clerk deploy` again later");
+    });
+
+    test("Ctrl-C during OAuth setup reports plain deploy continuation", async () => {
+      await linkedProject();
+      mockIsAgent.mockReturnValue(false);
+      await runDnsHandoff();
+      mockSelect.mockRejectedValueOnce(promptExitError());
+      stderrSpy = spyOn(process.stderr, "write").mockImplementation(() => true);
+
       let error: CliError | undefined;
       try {
         await runDeploy({});
       } catch (caught) {
         error = caught as CliError;
       }
-
-      expect(error?.message).toContain("There is an active deploy in progress");
-      expect(error?.message).toContain("Use `clerk deploy --continue`");
-      expect(error?.message).toContain("DNS verification");
-      expect(error?.exitCode).toBe(EXIT_CODE.GENERAL);
-      expect(mockSelect).not.toHaveBeenCalled();
-      expect(mockInput).not.toHaveBeenCalled();
-    });
-
-    test("DNS handoff saves DNS state and reports --continue", async () => {
-      await linkedProject();
-      mockIsAgent.mockReturnValue(false);
-      mockConfirm.mockResolvedValueOnce(true).mockResolvedValueOnce(false);
-      mockInput.mockResolvedValueOnce("example.com");
-
-      await runDeploy({});
-      const err = stripAnsi(captured.err);
-
-      const config = await readConfig();
-      expect(config.profiles[process.cwd()]?.deploy).toMatchObject({
-        appId: "app_xyz789",
-        developmentInstanceId: "ins_dev_123",
-        productionInstanceId: "ins_prod_mock",
-        domain: "example.com",
-        pending: { type: "dns" },
-      });
-      expect(err).toContain("Check the Domains section in the Clerk Dashboard");
-      expect(err).toContain("clerk deploy --continue");
-    });
-
-    test("Ctrl-C during OAuth setup saves provider state and reports --continue", async () => {
-      await linkedProject();
-      mockIsAgent.mockReturnValue(false);
-      await runDnsHandoff();
-      mockConfirm.mockRejectedValueOnce(promptExitError());
-      stderrSpy = spyOn(process.stderr, "write").mockImplementation(() => true);
-
-      let error: CliError | undefined;
-      try {
-        await runDeploy({ continue: true });
-      } catch (caught) {
-        error = caught as CliError;
-      }
-
-      const config = await readConfig();
-      expect(config.profiles[process.cwd()]?.deploy).toMatchObject({
-        appId: "app_xyz789",
-        developmentInstanceId: "ins_dev_123",
-        productionInstanceId: "ins_prod_mock",
-        domain: "example.com",
-        pending: { type: "oauth", provider: "google" },
-      });
       expect(error?.message).toContain("Deploy paused at: Google OAuth credential setup");
-      expect(error?.message).toContain("clerk deploy --continue");
-      expect(error?.message).toContain("clerk deploy --abort");
+      expect(error?.message).toContain("Run `clerk deploy` again");
       expect(error?.exitCode).toBe(EXIT_CODE.SIGINT);
       const terminalOutput = stderrSpy.mock.calls
         .map((call: unknown[]) => String(call[0]))
@@ -703,28 +1073,40 @@ describe("deploy", () => {
       expect(terminalOutput).not.toContain("Done");
     });
 
-    test("saves OAuth credentials to the production instance from deploy state", async () => {
+    test("saves OAuth credentials to the production instance from live deploy state", async () => {
       await linkedProject({
         instances: { development: "ins_dev_123", production: "ins_prod_created_456" },
-        deploy: {
-          appId: "app_xyz789",
-          developmentInstanceId: "ins_dev_123",
-          productionInstanceId: "ins_prod_created_456",
-          domain: "example.com",
-          pending: { type: "oauth", provider: "google" },
-          oauthProviders: ["google"],
-          completedOAuthProviders: [],
-        },
+      });
+      mockLiveProduction({
+        instanceId: "ins_prod_created_456",
+        productionConfig: {},
       });
       mockIsAgent.mockReturnValue(false);
-      mockConfirm.mockResolvedValueOnce(true);
-      mockSelect.mockResolvedValueOnce("have-credentials");
+      mockConfirm.mockResolvedValueOnce(true).mockResolvedValueOnce(true);
+      mockSelect.mockResolvedValueOnce("check").mockResolvedValueOnce("have-credentials");
       mockInput.mockResolvedValueOnce("google-client-id.apps.googleusercontent.com");
       mockPassword.mockResolvedValueOnce("google-secret");
       mockPatchInstanceConfig.mockResolvedValueOnce({});
+      mockGetDeployStatus.mockReset();
+      mockGetDeployStatus
+        .mockResolvedValueOnce({ status: "incomplete" })
+        .mockResolvedValueOnce({ status: "complete" });
 
-      await runDeploy({ continue: true });
+      await runDeploy({});
 
+      const err = stripAnsi(captured.err);
+      expect(captured.err).toContain("\x1b[1mConfigure OAuth credentials for production\x1b[0m");
+      expect(err).toContain("Configure Google OAuth for production");
+      expect(err).toContain(
+        "Production Google sign-in requires custom OAuth credentials from Google Cloud Console.",
+      );
+      expect(err).toContain(
+        "Reference: https://clerk.com/docs/guides/configure/auth-strategies/social-connections/google",
+      );
+      expect(mockConfirm).not.toHaveBeenCalledWith({
+        message: "Set up Google OAuth now?",
+        default: true,
+      });
       expect(mockPatchInstanceConfig).toHaveBeenCalledWith("app_xyz789", "ins_prod_created_456", {
         connection_oauth_google: {
           enabled: true,
@@ -734,153 +1116,38 @@ describe("deploy", () => {
       });
     });
 
-    test("--continue reports when there is no paused deploy operation", async () => {
-      await linkedProject();
-      mockIsAgent.mockReturnValue(false);
-
-      await runDeploy({ continue: true });
-
-      expect(captured.err).toContain("There is no paused deploy operation");
-      expect(mockSelect).not.toHaveBeenCalled();
-      expect(mockInput).not.toHaveBeenCalled();
-    });
-
-    test("--abort reports when there is no paused deploy operation", async () => {
-      await linkedProject();
-      mockIsAgent.mockReturnValue(false);
-
-      await runDeploy({ abort: true });
-
-      expect(captured.err).toContain("There is no paused deploy operation");
-      expect(mockConfirm).not.toHaveBeenCalled();
-      expect(mockSelect).not.toHaveBeenCalled();
-      expect(mockInput).not.toHaveBeenCalled();
-    });
-
-    test("--abort asks for confirmation and clears paused deploy state", async () => {
+    test("plain deploy resolves complete live API state without prompting", async () => {
       await linkedProject({
         instances: { development: "ins_dev_123", production: "ins_prod_123" },
-        deploy: {
-          appId: "app_xyz789",
-          developmentInstanceId: "ins_dev_123",
-          productionInstanceId: "ins_prod_123",
-          domain: "example.com",
-          pending: { type: "dns" },
-          oauthProviders: ["google"],
-          completedOAuthProviders: [],
-        },
       });
       mockIsAgent.mockReturnValue(false);
-      mockConfirm.mockResolvedValueOnce(true);
-
-      await runDeploy({ abort: true });
-
-      const config = await readConfig();
-      const err = stripAnsi(captured.err);
-      expect(config.profiles[process.cwd()]?.deploy).toBeUndefined();
-      expect(config.profiles[process.cwd()]?.instances.production).toBe("ins_prod_123");
-      expect(mockConfirm).toHaveBeenCalledWith({
-        message: "Abort the paused deploy operation?",
-        default: false,
+      mockLiveProduction({
+        instanceId: "ins_prod_123",
+        developmentConfig: {},
+        productionConfig: {},
       });
-      expect(err).toContain("Cleared the paused deploy bookmark");
-      expect(err).toContain("does not undo any changes already saved");
-      expect(err).not.toContain("rerun `clerk deploy`");
-      expect(mockSelect).not.toHaveBeenCalled();
-      expect(mockInput).not.toHaveBeenCalled();
-    });
 
-    test("--abort keeps paused deploy state when confirmation is declined", async () => {
-      await linkedProject({
-        deploy: {
-          appId: "app_xyz789",
-          developmentInstanceId: "ins_dev_123",
-          productionInstanceId: "ins_prod_123",
-          domain: "example.com",
-          pending: { type: "dns" },
-          oauthProviders: ["google"],
-          completedOAuthProviders: [],
-        },
-      });
-      mockIsAgent.mockReturnValue(false);
-      mockConfirm.mockResolvedValueOnce(false);
-
-      await runDeploy({ abort: true });
-
-      const config = await readConfig();
-      expect(config.profiles[process.cwd()]?.deploy).toMatchObject({
-        appId: "app_xyz789",
-        domain: "example.com",
-        pending: { type: "dns" },
-      });
-      expect(captured.err).toContain("Paused deploy abort cancelled");
-      expect(captured.err).toContain("clerk deploy --continue");
-      expect(captured.err).toContain("clerk deploy --abort");
-      expect(mockSelect).not.toHaveBeenCalled();
-      expect(mockInput).not.toHaveBeenCalled();
-    });
-
-    test("rejects --continue and --abort together", async () => {
-      await linkedProject({
-        deploy: {
-          appId: "app_xyz789",
-          developmentInstanceId: "ins_dev_123",
-          productionInstanceId: "ins_prod_123",
-          domain: "example.com",
-          pending: { type: "dns" },
-          oauthProviders: ["google"],
-          completedOAuthProviders: [],
-        },
-      });
-      mockIsAgent.mockReturnValue(false);
-
-      await expect(runDeploy({ continue: true, abort: true })).rejects.toThrow(
-        "Cannot use --continue and --abort together",
-      );
-      expect(mockConfirm).not.toHaveBeenCalled();
-      expect(mockSelect).not.toHaveBeenCalled();
-      expect(mockInput).not.toHaveBeenCalled();
-    });
-
-    test("--continue reports invalid paused state with recovery guidance", async () => {
-      await linkedProject({
-        deploy: {
-          appId: "other_app",
-          developmentInstanceId: "ins_dev_123",
-          productionInstanceId: "ins_prod_123",
-          domain: "example.com",
-          pending: { type: "dns" },
-          oauthProviders: ["google"],
-          completedOAuthProviders: [],
-        },
-      });
-      mockIsAgent.mockReturnValue(false);
-
-      await runDeploy({ continue: true });
+      await runDeploy({});
       const err = stripAnsi(captured.err);
 
-      expect(err).toContain("The paused deploy operation no longer matches this linked project");
-      expect(err).toContain(
-        "Run `clerk deploy` from the project that started the paused operation",
-      );
+      expect(err).toContain("[x] Create production instance");
+      expect(err).toContain("[x] Configure DNS records");
+      expect(err).toContain("No deploy actions remain.");
+      expect(mockSelect).not.toHaveBeenCalled();
+      expect(mockInput).not.toHaveBeenCalled();
     });
 
     test("custom-domain DNS setup can pause and later resume", async () => {
       await linkedProject();
       mockIsAgent.mockReturnValue(false);
-      mockConfirm.mockResolvedValueOnce(true).mockResolvedValueOnce(false);
+      mockConfirm
+        .mockResolvedValueOnce(true)
+        .mockResolvedValueOnce(true)
+        .mockResolvedValueOnce(false);
       mockInput.mockResolvedValueOnce("example.com");
 
       await runDeploy({});
-
-      let config = await readConfig();
-      expect(config.profiles[process.cwd()]?.deploy).toMatchObject({
-        appId: "app_xyz789",
-        developmentInstanceId: "ins_dev_123",
-        productionInstanceId: "ins_prod_mock",
-        domain: "example.com",
-        pending: { type: "dns" },
-      });
+      mockLiveProduction();
       expect(stripAnsi(captured.err)).toContain("Check the Domains section in the Clerk Dashboard");
 
       captured = captureLog();
@@ -888,17 +1155,20 @@ describe("deploy", () => {
       mockSelect.mockReset();
       mockInput.mockReset();
       mockPassword.mockReset();
-      mockConfirm.mockResolvedValueOnce(true);
-      mockSelect.mockResolvedValueOnce("have-credentials");
+      mockConfirm.mockResolvedValueOnce(true).mockResolvedValueOnce(true);
+      mockSelect.mockResolvedValueOnce("check").mockResolvedValueOnce("have-credentials");
       mockInput.mockResolvedValueOnce("google-client-id.apps.googleusercontent.com");
       mockPassword.mockResolvedValueOnce("google-secret");
       mockPatchInstanceConfig.mockResolvedValueOnce({});
+      mockGetDeployStatus.mockReset();
+      mockGetDeployStatus
+        .mockResolvedValueOnce({ status: "incomplete" })
+        .mockResolvedValueOnce({ status: "complete" });
 
-      await runDeploy({ continue: true });
+      await runDeploy({});
       const err = stripAnsi(captured.err);
 
-      config = await readConfig();
-      expect(config.profiles[process.cwd()]?.deploy).toBeUndefined();
+      const config = await readConfig();
       expect(config.profiles[process.cwd()]?.instances.production).toBe("ins_prod_mock");
       expect(mockPatchInstanceConfig).toHaveBeenCalledWith("app_xyz789", "ins_prod_mock", {
         connection_oauth_google: {
@@ -918,66 +1188,64 @@ describe("deploy", () => {
       await linkedProject();
       mockIsAgent.mockReturnValue(false);
       await runDnsHandoff();
-      mockConfirm.mockResolvedValueOnce(false);
+      mockSelect.mockResolvedValueOnce("skip");
 
-      await runDeploy({ continue: true });
-
-      let config = await readConfig();
-      expect(config.profiles[process.cwd()]?.deploy).toMatchObject({
-        pending: { type: "oauth", provider: "google" },
-        domain: "example.com",
-      });
-      expect(captured.err).toContain("Deploy paused");
-      expect(captured.err).toContain("clerk deploy --continue");
-      expect(captured.err).toContain("clerk deploy --abort");
+      await runDeploy({});
+      const pausedErr = stripAnsi(captured.err);
+      expect(pausedErr).toContain("Deploy paused");
+      expect(pausedErr).toContain("Run `clerk deploy` again");
 
       captured = captureLog();
       mockConfirm.mockReset();
       mockSelect.mockReset();
       mockInput.mockReset();
       mockPassword.mockReset();
-      mockConfirm.mockResolvedValueOnce(true);
       mockSelect.mockResolvedValueOnce("have-credentials");
       mockInput.mockResolvedValueOnce("google-client-id.apps.googleusercontent.com");
       mockPassword.mockResolvedValueOnce("google-secret");
 
-      await runDeploy({ continue: true });
+      await runDeploy({});
       const err = stripAnsi(captured.err);
 
-      config = await readConfig();
-      expect(config.profiles[process.cwd()]?.deploy).toBeUndefined();
+      const config = await readConfig();
       expect(config.profiles[process.cwd()]?.instances.production).toBe("ins_prod_mock");
       expect(err).toContain("Saved Google OAuth credentials");
       expect(err).toContain("Production ready at https://example.com");
     });
 
-    test("Pausing OAuth mid-loop preserves earlier completed providers in saved state", async () => {
+    test("Pausing OAuth mid-loop infers earlier completed providers from production config", async () => {
       await linkedProject();
       mockIsAgent.mockReturnValue(false);
       mockFetchInstanceConfig.mockResolvedValue({
         connection_oauth_google: { enabled: true },
         connection_oauth_github: { enabled: true },
       });
-      // Proceed → continue after DNS → setup google now → enter google creds → say no on github.
+      // Proceed → create prod → continue after DNS → enter google creds → skip github.
       mockConfirm
         .mockResolvedValueOnce(true)
         .mockResolvedValueOnce(true)
-        .mockResolvedValueOnce(true)
-        .mockResolvedValueOnce(false);
+        .mockResolvedValueOnce(true);
       mockInput
         .mockResolvedValueOnce("example.com")
         .mockResolvedValueOnce("google-client-id.apps.googleusercontent.com");
-      mockSelect.mockResolvedValueOnce("have-credentials");
+      mockSelect.mockResolvedValueOnce("have-credentials").mockResolvedValueOnce("skip");
       mockPassword.mockResolvedValueOnce("google-secret");
       mockPatchInstanceConfig.mockResolvedValueOnce({});
 
       await runDeploy({});
-
-      let config = await readConfig();
-      expect(config.profiles[process.cwd()]?.deploy).toMatchObject({
-        pending: { type: "oauth", provider: "github" },
-        completedOAuthProviders: ["google"],
-        oauthProviders: ["google", "github"],
+      mockLiveProduction({
+        developmentConfig: {
+          connection_oauth_google: { enabled: true },
+          connection_oauth_github: { enabled: true },
+        },
+        productionConfig: {
+          connection_oauth_google: {
+            enabled: true,
+            client_id: "google-client-id.apps.googleusercontent.com",
+            client_secret: "REDACTED",
+          },
+          connection_oauth_github: { enabled: true, client_id: "", client_secret: "" },
+        },
       });
 
       // Resume and finish: should not re-prompt for google, should finalize.
@@ -987,17 +1255,13 @@ describe("deploy", () => {
       mockInput.mockReset();
       mockPassword.mockReset();
       mockPatchInstanceConfig.mockReset();
-      mockConfirm.mockResolvedValueOnce(true);
       mockSelect.mockResolvedValueOnce("have-credentials");
       mockInput.mockResolvedValueOnce("github-client-id");
       mockPassword.mockResolvedValueOnce("github-secret");
       mockPatchInstanceConfig.mockResolvedValueOnce({});
 
-      await runDeploy({ continue: true });
+      await runDeploy({});
       const err = stripAnsi(captured.err);
-
-      config = await readConfig();
-      expect(config.profiles[process.cwd()]?.deploy).toBeUndefined();
       expect(mockPatchInstanceConfig).toHaveBeenCalledTimes(1);
       expect(mockPatchInstanceConfig).toHaveBeenCalledWith("app_xyz789", "ins_prod_mock", {
         connection_oauth_github: {
@@ -1009,26 +1273,84 @@ describe("deploy", () => {
       expect(err).toContain("Production ready at https://example.com");
     });
 
-    test("DNS verification timeout outros as paused, not failed", async () => {
-      await linkedProject();
+    test("OAuth success output stays attached to the save step before spacing the next provider", async () => {
+      await linkedProject({
+        instances: { development: "ins_dev_123", production: "ins_prod_multi" },
+      });
+      mockLiveProduction({
+        instanceId: "ins_prod_multi",
+        developmentConfig: {
+          connection_oauth_apple: { enabled: true },
+          connection_oauth_github: { enabled: true },
+        },
+        productionConfig: {
+          connection_oauth_apple: {
+            enabled: true,
+            client_id: "",
+            team_id: "",
+            key_id: "",
+            client_secret: "",
+          },
+          connection_oauth_github: { enabled: true, client_id: "", client_secret: "" },
+        },
+      });
       mockIsAgent.mockReturnValue(false);
-      mockConfirm.mockResolvedValueOnce(true).mockResolvedValueOnce(true);
-      mockInput.mockResolvedValueOnce("example.com");
-      mockGetDeployStatus.mockResolvedValue({ status: "incomplete" });
-      stderrSpy = spyOn(process.stderr, "write").mockImplementation(() => true);
+      const validP8Path = join(tempDir, "AuthKey.p8");
+      await Bun.write(
+        validP8Path,
+        "-----BEGIN PRIVATE KEY-----\nMIGTAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBHkwdwIBAQQg\n-----END PRIVATE KEY-----\n",
+      );
+      mockSelect
+        .mockResolvedValueOnce("have-credentials")
+        .mockResolvedValueOnce("have-credentials");
+      mockInput
+        .mockResolvedValueOnce("com.example.app")
+        .mockResolvedValueOnce("TEAMID1234")
+        .mockResolvedValueOnce("KEYID12345")
+        .mockResolvedValueOnce(validP8Path)
+        .mockResolvedValueOnce("github-client-id");
+      mockPassword.mockResolvedValueOnce("github-secret");
+      mockPatchInstanceConfig.mockResolvedValue({});
 
       await runDeploy({});
+      const err = stripAnsi(captured.err);
 
-      const config = await readConfig();
-      expect(config.profiles[process.cwd()]?.deploy).toMatchObject({
-        pending: { type: "dns" },
-        domain: "example.com",
+      expect(err).toContain(
+        "Saved Apple OAuth credentials\n│\n│  Configure GitHub OAuth for production",
+      );
+    });
+
+    test("DNS verification timeout can skip and continue configuring production", async () => {
+      await linkedProject();
+      mockIsAgent.mockReturnValue(false);
+      mockConfirm
+        .mockResolvedValueOnce(true)
+        .mockResolvedValueOnce(true)
+        .mockResolvedValueOnce(true)
+        .mockResolvedValueOnce(true);
+      mockSelect.mockResolvedValueOnce("skip").mockResolvedValueOnce("have-credentials");
+      mockInput
+        .mockResolvedValueOnce("example.com")
+        .mockResolvedValueOnce("google-client-id.apps.googleusercontent.com");
+      mockPassword.mockResolvedValueOnce("google-secret");
+      mockPatchInstanceConfig.mockResolvedValueOnce({});
+      mockGetDeployStatus.mockResolvedValue({ status: "incomplete" });
+
+      await runDeploy({});
+      const err = stripAnsi(captured.err);
+      expect(err).toContain("DNS propagation can take time");
+      expect(err.match(/Add the following records at your DNS provider:/g)).toHaveLength(2);
+      expect(err).toContain("Host:  clerk.example.com");
+      expect(err).toContain("Value: frontend-api.clerk.services");
+      expect(err).toContain("Skipping DNS verification for now.");
+      expect(err).toContain("Saved Google OAuth credentials");
+      expect(mockPatchInstanceConfig).toHaveBeenCalledWith("app_xyz789", "ins_prod_mock", {
+        connection_oauth_google: {
+          enabled: true,
+          client_id: "google-client-id.apps.googleusercontent.com",
+          client_secret: "google-secret",
+        },
       });
-      const terminalOutput = stderrSpy.mock.calls
-        .map((call: unknown[]) => String(call[0]))
-        .join("");
-      expect(terminalOutput).toContain("Paused");
-      expect(terminalOutput).not.toContain("Failed");
     });
 
     test("warns about enabled OAuth providers not yet supported by clerk deploy", async () => {

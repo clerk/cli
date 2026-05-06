@@ -1,10 +1,11 @@
 /**
  * Deploy command API adapter.
  *
- * The live endpoint wrappers live in `lib/plapi.ts`, but the deploy command
- * still runs against mocks until the production-instance backend is ready.
- * Keep this adapter as the single switch point so the command cannot
- * accidentally call unfinished live deploy lifecycle endpoints.
+ * Live endpoint wrappers live in `lib/plapi.ts`, but the deploy lifecycle
+ * remains mocked while the production-instance backend settles. Keep this
+ * adapter as the switch point: the command resolves deploy progress through
+ * API-shaped calls, while these lifecycle operations simulate backend states
+ * locally.
  */
 
 import { sleep } from "../../lib/sleep.ts";
@@ -128,7 +129,6 @@ export const liveDeployApi: DeployApi = {
   patchInstanceConfig: livePatchInstanceConfig,
 };
 
-// FIXME(deploy): switch this to `liveDeployApi` once the backend endpoints are ready.
 const activeDeployApi: DeployApi = mockDeployApi;
 
 export const createProductionInstance = (

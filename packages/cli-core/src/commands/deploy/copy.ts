@@ -1,5 +1,10 @@
-import { cyan, dim, green, red, yellow } from "../../lib/color.ts";
+import { bold, cyan, dim, green, yellow } from "../../lib/color.ts";
 import type { CnameTarget } from "./api.ts";
+
+export type DeployPlanStep = {
+  label: string;
+  status: "done" | "pending";
+};
 
 export const INTRO_PREAMBLE = `This will prepare your linked Clerk app for production by cloning your
 development instance into a new production instance and walking you through
@@ -12,17 +17,17 @@ Before you begin you will need:
 
 ${dim("Reference: https://clerk.com/docs/guides/development/deployment/production")}`;
 
-export function printPlan(appLabel: string, oauthProviderLabels: readonly string[]): string[] {
+export function printPlan(appLabel: string, steps: readonly DeployPlanStep[]): string[] {
   return [
     `clerk deploy will prepare ${cyan(appLabel)} for production:`,
     "",
-    `  ${green("CREATE")}  Create production instance`,
-    `  ${green("DOMAIN")}  Choose a production domain you own`,
-    `  ${green("DNS")}     Configure DNS records`,
-    ...oauthProviderLabels.map(
-      (label) => `  ${yellow("OAUTH")}   Configure ${label} OAuth credentials`,
-    ),
+    ...steps.map((step) => `  ${planStatus(step.status)} ${step.label}`),
   ];
+}
+
+function planStatus(status: DeployPlanStep["status"]): string {
+  if (status === "done") return green("[x]");
+  return yellow("[ ]");
 }
 
 export function dnsIntro(domain: string): string[] {
@@ -36,6 +41,19 @@ export function dnsIntro(domain: string): string[] {
     `${dim(cyan("TIP"))}   If you can't add a CNAME for the Frontend API, you can use a proxy:`,
     dim("      https://clerk.com/docs/guides/dashboard/dns-domains/proxy-fapi"),
     dim("Reference: https://clerk.com/docs/guides/development/deployment/production#dns-records"),
+  ];
+}
+
+export function domainAssociationSummary(
+  domain: string,
+  targets: readonly CnameTarget[],
+): string[] {
+  return [
+    `Clerk will associate these subdomains with ${cyan(domain)}:`,
+    "",
+    ...targets.map((target) => `  ${cnameTargetLabel(target.host)}  ${target.host}`),
+    "",
+    "This will create a Clerk production instance for your application.",
   ];
 }
 
@@ -78,7 +96,7 @@ function cnameTargetLabel(host: string): string {
 export function dnsDashboardHandoff(domain: string): string[] {
   return [
     `Check the Domains section in the Clerk Dashboard for ${domain} to monitor DNS propagation and SSL issuance.`,
-    "You can continue to the remaining setup now, or pause and run `clerk deploy --continue` later.",
+    "You can continue to the remaining setup now, or pause and run `clerk deploy` again later.",
   ];
 }
 
@@ -86,7 +104,7 @@ export function dnsVerified(domain: string): string[] {
   return [`DNS verified for ${domain}.`];
 }
 
-export const OAUTH_SECTION_INTRO = `Configure OAuth credentials for production
+export const OAUTH_SECTION_INTRO = `${bold("Configure OAuth credentials for production")}
 
 In development, Clerk provides shared OAuth credentials for most providers.
 In production, those are not secure. You need your own credentials for
@@ -97,16 +115,17 @@ ${dim("Reference: https://clerk.com/docs/guides/configure/auth-strategies/social
 export function productionSummary(
   domain: string,
   completedOAuthProviderLabels: readonly string[],
+  domainStatus: "verified" | "pending" = "verified",
 ): string[] {
   return [
     `Production ready at ${cyan(`https://${domain}`)}`,
     "",
-    "  Domain      Verified",
+    `  Domain      ${domainStatus === "verified" ? "Verified" : "DNS pending"}`,
     `  OAuth       ${completedOAuthProviderLabels.length ? completedOAuthProviderLabels.join(", ") : "Not applicable"}`,
   ];
 }
 
-export const NEXT_STEPS_BLOCK = `Next steps
+export const NEXT_STEPS_BLOCK = `${bold("Next steps")}
 
   1. Pull production keys into your environment
        clerk env pull --instance prod
@@ -137,18 +156,8 @@ export function pausedMessage(stepDescription: string): string {
 ${pausedOperationNotice()}`;
 }
 
-export function activeDeployInProgressMessage(stepDescription: string): string {
-  return `There is an active deploy in progress at: ${stepDescription}
-
-Use \`clerk deploy --continue\` to resume it, or \`clerk deploy --abort\` to clear it.`;
-}
-
 export function pausedOperationNotice(): string {
   return `Deploy paused.
 
-Use \`clerk deploy --continue\` to resume it, or \`clerk deploy --abort\` to clear it.`;
+Run \`clerk deploy\` again to continue from the current API state.`;
 }
-
-export const INVALID_CONTINUE_MESSAGE = `${red("The paused deploy operation no longer matches this linked project.")}
-Run \`clerk deploy\` from the project that started the paused operation, or run
-\`clerk link\` if you intend to deploy this one.`;
