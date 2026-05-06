@@ -29,7 +29,7 @@ const INSTALL_HINTS: Record<SupportedShell, readonly string[]> = {
   ],
   fish: [
     "Run `clerk completion fish | source` to enable completions in this session",
-    "Run `clerk completion fish > ~/.config/fish/completions/clerk.fish` to install permanently",
+    "Run `clerk completion fish > $__fish_config_dir/completions/clerk.fish` to install permanently",
   ],
   powershell: [
     "Run `clerk completion powershell | Out-String | Invoke-Expression` to enable completions in this session",
