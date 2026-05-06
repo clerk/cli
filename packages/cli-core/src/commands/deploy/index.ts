@@ -10,13 +10,13 @@ import { resolveProfile, setProfile, type DeployOperationState } from "../../lib
 import { fetchInstanceConfig } from "../../lib/plapi.ts";
 import {
   createProductionInstance as apiCreateProductionInstance,
-  domainConnectUrl,
   getDeployStatus,
   patchInstanceConfig,
   validateCloning,
   type CnameTarget,
   type ProductionInstanceResponse,
 } from "./api.ts";
+import { domainConnectUrl } from "./domain-connect.ts";
 import {
   INTRO_PREAMBLE,
   INVALID_CONTINUE_MESSAGE,
