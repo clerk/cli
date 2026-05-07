@@ -26,6 +26,7 @@ describe("attemptAutoclaim", () => {
   let linkAppSpy: ReturnType<typeof spyOn>;
   let readBreadcrumbSpy: ReturnType<typeof spyOn>;
   let clearBreadcrumbSpy: ReturnType<typeof spyOn>;
+  let clearSdkBreadcrumbSpy: ReturnType<typeof spyOn>;
   let pullSpy: ReturnType<typeof spyOn>;
 
   beforeEach(async () => {
@@ -39,7 +40,10 @@ describe("attemptAutoclaim", () => {
       profile: {} as Profile,
     });
     clearBreadcrumbSpy = spyOn(keylessMod, "clearKeylessBreadcrumb").mockResolvedValue(undefined);
-    readBreadcrumbSpy = spyOn(keylessMod, "readKeylessBreadcrumb").mockResolvedValue(undefined);
+    clearSdkBreadcrumbSpy = spyOn(keylessMod, "clearSdkKeylessBreadcrumb").mockResolvedValue(
+      undefined,
+    );
+    readBreadcrumbSpy = spyOn(keylessMod, "readAnyKeylessBreadcrumb").mockResolvedValue(undefined);
     pullSpy = spyOn(pullMod, "pull").mockResolvedValue(undefined);
   });
 
@@ -51,12 +55,13 @@ describe("attemptAutoclaim", () => {
     linkAppSpy.mockRestore();
     readBreadcrumbSpy.mockRestore();
     clearBreadcrumbSpy.mockRestore();
+    clearSdkBreadcrumbSpy.mockRestore();
     pullSpy.mockRestore();
     await rm(tempDir, { recursive: true, force: true });
   });
 
   function withBreadcrumb(token = "valid_token") {
-    readBreadcrumbSpy.mockResolvedValue({ claimToken: token, createdAt: new Date().toISOString() });
+    readBreadcrumbSpy.mockResolvedValue({ claimToken: token, source: "sdk" as const });
   }
 
   function run() {
@@ -98,16 +103,17 @@ describe("attemptAutoclaim", () => {
     expect(linkAppSpy).toHaveBeenCalled();
   });
 
-  test("clears breadcrumb after successful claim", async () => {
+  test("clears both breadcrumbs after successful claim", async () => {
     withBreadcrumb();
     stubFetch(async () => new Response(JSON.stringify(MOCK_APP), { status: 200 }));
 
     await run();
 
     expect(clearBreadcrumbSpy).toHaveBeenCalledWith(tempDir);
+    expect(clearSdkBreadcrumbSpy).toHaveBeenCalledWith(tempDir);
   });
 
-  test("returns not_found and clears breadcrumb on 404", async () => {
+  test("returns not_found and clears both breadcrumbs on 404", async () => {
     withBreadcrumb("expired_token");
     stubFetch(async () => new Response("Not Found", { status: 404 }));
 
@@ -115,9 +121,10 @@ describe("attemptAutoclaim", () => {
 
     expect(result.status).toBe("not_found");
     expect(clearBreadcrumbSpy).toHaveBeenCalled();
+    expect(clearSdkBreadcrumbSpy).toHaveBeenCalled();
   });
 
-  test("returns no_organization and clears breadcrumb on 403", async () => {
+  test("returns no_organization and clears both breadcrumbs on 403", async () => {
     withBreadcrumb("forbidden_token");
     stubFetch(async () => new Response("Forbidden", { status: 403 }));
 
@@ -125,9 +132,10 @@ describe("attemptAutoclaim", () => {
 
     expect(result.status).toBe("no_organization");
     expect(clearBreadcrumbSpy).toHaveBeenCalled();
+    expect(clearSdkBreadcrumbSpy).toHaveBeenCalled();
   });
 
-  test("returns failed (preserves breadcrumb) on 400 — could be recoverable (e.g. 401 re-login)", async () => {
+  test("returns failed (preserves breadcrumbs) on 400 — could be recoverable (e.g. 401 re-login)", async () => {
     withBreadcrumb("bad_token");
     stubFetch(async () => new Response("Bad Request", { status: 400 }));
 
@@ -135,9 +143,10 @@ describe("attemptAutoclaim", () => {
 
     expect(result.status).toBe("failed");
     expect(clearBreadcrumbSpy).not.toHaveBeenCalled();
+    expect(clearSdkBreadcrumbSpy).not.toHaveBeenCalled();
   });
 
-  test("returns failed (preserves breadcrumb) on 429 rate limit", async () => {
+  test("returns failed (preserves breadcrumbs) on 429 rate limit", async () => {
     withBreadcrumb("rate_limited_token");
     stubFetch(async () => new Response("Too Many Requests", { status: 429 }));
 
@@ -145,9 +154,10 @@ describe("attemptAutoclaim", () => {
 
     expect(result.status).toBe("failed");
     expect(clearBreadcrumbSpy).not.toHaveBeenCalled();
+    expect(clearSdkBreadcrumbSpy).not.toHaveBeenCalled();
   });
 
-  test("returns failed on server error without clearing breadcrumb", async () => {
+  test("returns failed on server error without clearing breadcrumbs", async () => {
     withBreadcrumb("server_error_token");
     stubFetch(async () => new Response("Internal Server Error", { status: 500 }));
 
@@ -158,6 +168,7 @@ describe("attemptAutoclaim", () => {
       expect(result.error).toBeInstanceOf(Error);
     }
     expect(clearBreadcrumbSpy).not.toHaveBeenCalled();
+    expect(clearSdkBreadcrumbSpy).not.toHaveBeenCalled();
   });
 
   test("does not call linkApp on failure", async () => {

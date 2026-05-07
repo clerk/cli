@@ -20,6 +20,7 @@ import * as skillsMod from "./skills.ts";
 import * as bootstrapMod from "./bootstrap.ts";
 import * as nextStepsMod from "../../lib/next-steps.ts";
 import * as keylessMod from "../../lib/keyless.ts";
+import * as autoclaimMod from "../../lib/autoclaim.ts";
 import { init } from "./index.ts";
 
 const FAKE_CTX = {
@@ -99,6 +100,7 @@ describe("init", () => {
       }),
       spyOn(keylessMod, "writeKeysToEnvFile").mockResolvedValue(undefined),
       spyOn(keylessMod, "writeKeylessBreadcrumb").mockResolvedValue(undefined),
+      spyOn(autoclaimMod, "attemptAutoclaim").mockResolvedValue({ status: "not_keyless" }),
     ];
 
     return { gatherContextSpy, captured };
@@ -271,7 +273,7 @@ describe("init", () => {
     await init({});
 
     expect(bootstrapMod.promptAndBootstrap).toHaveBeenCalled();
-    expect(heuristics.printKeylessInfo).toHaveBeenCalled();
+    expect(keylessMod.createAccountlessApp).not.toHaveBeenCalled();
     expect(linkMod.link).not.toHaveBeenCalled();
   });
 
@@ -339,7 +341,7 @@ describe("init", () => {
     await init({ yes: true });
 
     expect(heuristics.isAuthenticated).toHaveBeenCalled();
-    expect(heuristics.printKeylessInfo).toHaveBeenCalled();
+    expect(keylessMod.createAccountlessApp).not.toHaveBeenCalled();
     expect(linkMod.link).not.toHaveBeenCalled();
   });
 
@@ -359,7 +361,7 @@ describe("init", () => {
 
     await init({});
 
-    expect(heuristics.printKeylessInfo).toHaveBeenCalled();
+    expect(keylessMod.createAccountlessApp).not.toHaveBeenCalled();
     expect(linkMod.link).not.toHaveBeenCalled();
     expect(pullMod.pull).not.toHaveBeenCalled();
   });
@@ -903,5 +905,117 @@ describe("init", () => {
       app: undefined,
       cwd: FAKE_BOOTSTRAP.projectDir,
     });
+  });
+
+  // --- Autoclaim during init ---
+
+  test("authenticated init autoclaims SDK breadcrumb and skips link + pull", async () => {
+    setup({ email: "user@example.com" });
+
+    const keylessCtx = {
+      ...FAKE_CTX,
+      existingClerk: false,
+      framework: { ...FAKE_CTX.framework, supportsKeyless: true },
+    };
+    spyOn(context, "gatherContext").mockResolvedValue(keylessCtx);
+    spyOn(scaffoldMod, "scaffold").mockResolvedValue({
+      actions: [{ type: "create", path: "middleware.ts", content: "", description: "" }],
+      postInstructions: [],
+    });
+    spyOn(autoclaimMod, "attemptAutoclaim").mockResolvedValue({
+      status: "claimed",
+      app: { application_id: "app_claimed", name: "My App", instances: [] },
+      envPulled: true,
+    });
+
+    await init({});
+
+    expect(autoclaimMod.attemptAutoclaim).toHaveBeenCalled();
+    expect(linkMod.link).not.toHaveBeenCalled();
+    expect(pullMod.pull).not.toHaveBeenCalled();
+  });
+
+  test("autoclaim returning not_keyless falls through to authenticateAndLink", async () => {
+    setup({ email: "user@example.com" });
+
+    const keylessCtx = {
+      ...FAKE_CTX,
+      existingClerk: false,
+      framework: { ...FAKE_CTX.framework, supportsKeyless: true },
+    };
+    spyOn(context, "gatherContext").mockResolvedValue(keylessCtx);
+    spyOn(scaffoldMod, "scaffold").mockResolvedValue({
+      actions: [{ type: "create", path: "middleware.ts", content: "", description: "" }],
+      postInstructions: [],
+    });
+    spyOn(config, "resolveProfile").mockResolvedValue({ profile: { appId: "app_123" } } as never);
+
+    await init({});
+
+    expect(autoclaimMod.attemptAutoclaim).toHaveBeenCalled();
+    expect(pullMod.pull).toHaveBeenCalled();
+  });
+
+  test("autoclaim returning failed falls through to authenticateAndLink", async () => {
+    setup({ email: "user@example.com" });
+
+    const keylessCtx = {
+      ...FAKE_CTX,
+      existingClerk: false,
+      framework: { ...FAKE_CTX.framework, supportsKeyless: true },
+    };
+    spyOn(context, "gatherContext").mockResolvedValue(keylessCtx);
+    spyOn(scaffoldMod, "scaffold").mockResolvedValue({
+      actions: [{ type: "create", path: "middleware.ts", content: "", description: "" }],
+      postInstructions: [],
+    });
+    spyOn(autoclaimMod, "attemptAutoclaim").mockResolvedValue({
+      status: "failed",
+      error: new Error("temporary"),
+    });
+    spyOn(config, "resolveProfile").mockResolvedValue({ profile: { appId: "app_123" } } as never);
+
+    await init({});
+
+    expect(linkMod.link).not.toHaveBeenCalled();
+    expect(pullMod.pull).toHaveBeenCalled();
+  });
+
+  test("autoclaim is not attempted when --app is provided", async () => {
+    setup({ email: "user@example.com" });
+
+    const keylessCtx = {
+      ...FAKE_CTX,
+      existingClerk: false,
+      framework: { ...FAKE_CTX.framework, supportsKeyless: true },
+    };
+    spyOn(context, "gatherContext").mockResolvedValue(keylessCtx);
+    spyOn(scaffoldMod, "scaffold").mockResolvedValue({
+      actions: [{ type: "create", path: "middleware.ts", content: "", description: "" }],
+      postInstructions: [],
+    });
+
+    await init({ app: "app_specific" });
+
+    expect(autoclaimMod.attemptAutoclaim).not.toHaveBeenCalled();
+  });
+
+  test("autoclaim is not attempted when user is unauthenticated", async () => {
+    setup();
+
+    const keylessCtx = {
+      ...FAKE_CTX,
+      existingClerk: false,
+      framework: { ...FAKE_CTX.framework, supportsKeyless: true },
+    };
+    spyOn(context, "gatherContext").mockResolvedValueOnce(null).mockResolvedValueOnce(keylessCtx);
+    spyOn(scaffoldMod, "scaffold").mockResolvedValue({
+      actions: [{ type: "create", path: "middleware.ts", content: "", description: "" }],
+      postInstructions: [],
+    });
+
+    await init({});
+
+    expect(autoclaimMod.attemptAutoclaim).not.toHaveBeenCalled();
   });
 });

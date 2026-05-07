@@ -37,8 +37,8 @@ When running in agent mode (`--mode agent` or non-TTY), the command runs the ful
 - For **new projects** (`--starter` or blank directory): `--framework` is required (no way to auto-detect in an empty dir). Package manager is auto-selected by availability (bun → pnpm → yarn → npm) unless `--pm` is provided
 - Project name defaults to the framework's default (e.g. `my-clerk-next-app`) unless `--name` is provided
 - For keyless-capable frameworks with no `--app` and no linked profile:
-  - When **authenticated**, init creates a real Clerk app named after the project (`package.json#name`, `--name`, or directory basename) and links it. No keyless detour, no second `clerk auth login` to claim.
-  - When **unauthenticated**, init uses keyless and writes a breadcrumb so the next `clerk auth login` claims the app automatically.
+  - When **authenticated**, init first attempts to autoclaim any existing SDK keyless breadcrumb (`.clerk/.tmp/keyless.json`). If no breadcrumb exists, it creates a real Clerk app named after the project and links it.
+  - When **unauthenticated**, init uses keyless mode — the app scaffolds without API keys and the SDK handles keyless mode at runtime.
 - For frameworks that require API keys, init will not pick or create an app in agent mode; pass `--app <id>` or link the project first to pull real keys
 
 ## Flow
@@ -47,11 +47,11 @@ When running in agent mode (`--mode agent` or non-TTY), the command runs the ful
 2. Determines auth mode:
    - **Real app target** (`--app` or linked profile): authenticates, links if needed, and pulls real API keys into `.env`
    - **Agent + keyless-capable framework + authenticated + no real app target**: creates a real Clerk app named after the project, links it, and pulls real API keys into `.env`
-   - **Agent + keyless-capable framework + unauthenticated + no real app target**: uses keyless mode — the app runs on auto-generated dev keys and the user can connect a Clerk account later with `clerk auth login`
+   - **Agent + keyless-capable framework + unauthenticated + no real app target**: uses keyless mode — the SDK handles development keys at runtime and the user can connect a Clerk account later with `clerk auth login`
    - **Agent + non-keyless framework + no real app target**: scaffolds locally and prints manual setup instructions instead of selecting or creating an app
    - **Human mode + bootstrap + keyless-capable framework + not authenticated**: uses keyless mode
    - **Human mode + existing project + not authenticated**: runs the authenticated flow, which triggers an interactive login so real keys can be pulled
-3. **Authenticated mode only**: authenticates via `clerk auth login` (skipped if already authenticated) and links the project via `clerk link` (skipped if already linked)
+3. **Authenticated mode only**: attempts autoclaim of any SDK keyless breadcrumb; if none found, authenticates via `clerk auth login` (skipped if already authenticated) and links the project via `clerk link` (skipped if already linked)
 4. Displays detected framework and variant
 5. Detects existing auth libraries (NextAuth, Auth0, Supabase, Firebase, Passport, Better Auth, Kinde) and shows migration guidance
 6. Installs the appropriate Clerk SDK (skips if already present)
@@ -229,21 +229,18 @@ Implementation lives in [`skills.ts`](./skills.ts). Note that the E2E fixture se
 
 ## API Endpoints
 
-| Step                   | Method | Base URL                        | Endpoint                       | Description                                                                                                                           |
-| ---------------------- | ------ | ------------------------------- | ------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------- |
-| Create accountless app | `POST` | `CLERK_BAPI_URL` (default BAPI) | `/v1/accountless_applications` | Creates a temporary keyless Clerk application; returns `publishable_key`, `secret_key`, and `claim_url`. Only called in keyless mode. |
-
 See [auth/README.md](../auth/README.md), [link/README.md](../link/README.md), and [env/README.md](../env/README.md) for the API endpoints used by each step.
+
+## Autoclaim during init
+
+When an authenticated user runs `clerk init` without `--app`, the CLI checks for a keyless breadcrumb before falling through to the normal `authenticateAndLink` flow. If a breadcrumb is found, the CLI claims the temporary application via `POST /v1/platform/accountless_applications/claim`, links it locally, and pulls real API keys — skipping the interactive app picker entirely.
 
 ## Keyless breadcrumb
 
-In keyless mode, after calling `POST /v1/accountless_applications`, `clerk init` writes `.clerk/keyless.json` to the project root. This file records the claim token extracted from `claim_url` so that `clerk auth login` can automatically claim the temporary application the next time the user authenticates.
+The CLI reads keyless breadcrumbs from two sources:
 
-```json
-{
-  "claimToken": "<token>",
-  "createdAt": "<ISO timestamp>"
-}
-```
+1. **SDK breadcrumb** (`.clerk/.tmp/keyless.json`) — written by `@clerk/nextjs` (and other Clerk SDKs) at runtime when the app starts without API keys. Contains `publishableKey`, `secretKey`, `claimUrl`, and `apiKeysUrl`. The claim token is extracted from `claimUrl`.
 
-`.clerk/` is automatically added to `.gitignore` when the breadcrumb is written. The breadcrumb is removed after a successful claim (or when the claim token expires/is already consumed).
+2. **CLI breadcrumb** (`.clerk/keyless.json`) — legacy format written by older versions of the CLI. Contains `claimToken` and `createdAt`.
+
+The SDK breadcrumb is checked first (it represents the most recent keyless state). Both breadcrumbs are cleared after a successful claim or terminal error (404/403). On transient failures (500, 429), breadcrumbs are preserved for retry on the next `clerk auth login`.

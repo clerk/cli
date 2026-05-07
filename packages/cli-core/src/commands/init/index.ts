@@ -3,17 +3,12 @@ import { link } from "../link/index.js";
 import { pull } from "../env/pull.js";
 import { isAgent } from "../../mode.js";
 import { dim, bold } from "../../lib/color.js";
-import { throwUserAbort, CliError, errorMessage } from "../../lib/errors.js";
+import { throwUserAbort, CliError } from "../../lib/errors.js";
 import { lookupFramework, type FrameworkInfo } from "../../lib/framework.js";
 import { resolveProfile } from "../../lib/config.js";
 import { deriveProjectName } from "../../lib/project-name.js";
 import { log } from "../../lib/log.js";
-import {
-  createAccountlessApp,
-  writeKeysToEnvFile,
-  parseClaimToken,
-  writeKeylessBreadcrumb,
-} from "../../lib/keyless.js";
+import { attemptAutoclaim } from "../../lib/autoclaim.js";
 import { printNextSteps } from "../../lib/next-steps.js";
 import { gatherContext, hasPackageJson } from "./context.js";
 import { scaffold, enrichProjectContext } from "./scaffold.js";
@@ -26,7 +21,6 @@ import {
   writePlan,
   checkGitDirty,
   printOutro,
-  printKeylessInfo,
   getAuthenticatedEmail,
   isAuthenticated,
 } from "./heuristics.js";
@@ -107,12 +101,19 @@ export async function init(options: InitOptions = {}) {
       ? !hasRealAppTarget && !ctx.framework.supportsKeyless
       : bootstrap != null && overrides.skipConfirm && !authed);
 
+  let autoclaimPulled = false;
   if (!keyless && !manualSetup) {
     bar();
-    const createIfMissing = agent
-      ? await deriveProjectName(ctx.cwd, bootstrap?.projectName)
-      : undefined;
-    await authenticateAndLink(ctx.cwd, options.app, createIfMissing);
+
+    const claimed = !options.app && authed && (await tryInitAutoclaim(ctx.cwd));
+    if (!claimed) {
+      const createIfMissing = agent
+        ? await deriveProjectName(ctx.cwd, bootstrap?.projectName)
+        : undefined;
+      await authenticateAndLink(ctx.cwd, options.app, createIfMissing);
+    } else {
+      autoclaimPulled = true;
+    }
   }
 
   // Short-circuit on a fully-clean re-run so env pull / skills prompt don't
@@ -134,10 +135,8 @@ export async function init(options: InitOptions = {}) {
   bar();
   if (manualSetup) {
     printBootstrapManualSetupInfo(ctx.framework.name);
-  } else if (!keyless) {
+  } else if (!keyless && !autoclaimPulled) {
     await pull({ file: ctx.envFile, cwd: ctx.cwd });
-  } else {
-    await setupKeylessApp(ctx.cwd, ctx.framework.dep, ctx.envFile);
   }
 
   if (options.skills !== false) {
@@ -318,31 +317,19 @@ async function authenticateAndLink(
   await link({ skipIfLinked: true, app, cwd, createIfMissing });
 }
 
-// --- Keyless app setup ---
+// --- Autoclaim ---
 
-async function setupKeylessApp(cwd: string, frameworkDep: string, envFile: string): Promise<void> {
-  try {
-    const app = await withSpinner("Creating development application...", () =>
-      createAccountlessApp(frameworkDep),
-    );
-
-    await writeKeysToEnvFile(cwd, {
-      publishableKey: app.publishable_key,
-      secretKey: app.secret_key,
-    });
-
-    await writeKeylessBreadcrumb(cwd, parseClaimToken(app.claim_url));
-    printKeylessInfo(envFile);
-  } catch (error) {
-    log.debug(`Could not create accountless app: ${errorMessage(error)}`);
-    const isTimeout = error instanceof Error && error.name === "AbortError";
-    const prefix = isTimeout
-      ? "Could not reach api.clerk.com within 15s."
-      : "Could not set up development keys.";
-    log.warn(
-      `${prefix} Run \`clerk auth login\` then \`clerk link\` to connect your app manually.`,
-    );
+async function tryInitAutoclaim(cwd: string): Promise<boolean> {
+  const result = await attemptAutoclaim(cwd);
+  if (result.status === "claimed") {
+    const label = result.app.name || result.app.application_id;
+    log.success(`Claimed and linked \`${label}\``);
+    return true;
   }
+  if (result.status !== "not_keyless") {
+    log.debug(`init: autoclaim returned '${result.status}', falling through to link`);
+  }
+  return false;
 }
 
 // --- Detect & install ---

@@ -3,7 +3,7 @@ import { mkdir, unlink } from "node:fs/promises";
 import { getBapiBaseUrl } from "./environment.ts";
 import { detectPublishableKeyName, detectSecretKeyName, detectEnvFile } from "./framework.ts";
 import { parseEnvFile, mergeEnvVars, serializeEnvFile } from "./dotenv.ts";
-import { BapiError } from "./errors.ts";
+import { BapiError, errorMessage } from "./errors.ts";
 import { loggedFetch } from "./fetch.ts";
 import { log } from "./log.ts";
 
@@ -146,4 +146,78 @@ export async function clearKeylessBreadcrumb(cwd: string): Promise<void> {
   } catch {
     // idempotent
   }
+}
+
+// --- SDK breadcrumb (.clerk/.tmp/keyless.json) ---
+
+const SDK_BREADCRUMB_DIR = ".clerk/.tmp";
+
+interface SdkKeylessBreadcrumb {
+  publishableKey: string;
+  secretKey: string;
+  claimUrl: string;
+  apiKeysUrl?: string;
+}
+
+function isSdkKeylessBreadcrumb(value: unknown): value is SdkKeylessBreadcrumb {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    typeof (value as SdkKeylessBreadcrumb).publishableKey === "string" &&
+    typeof (value as SdkKeylessBreadcrumb).secretKey === "string" &&
+    typeof (value as SdkKeylessBreadcrumb).claimUrl === "string"
+  );
+}
+
+function sdkBreadcrumbPath(cwd: string): string {
+  return join(cwd, SDK_BREADCRUMB_DIR, BREADCRUMB_FILE);
+}
+
+export async function readSdkKeylessBreadcrumb(
+  cwd: string,
+): Promise<SdkKeylessBreadcrumb | undefined> {
+  try {
+    const data: unknown = await Bun.file(sdkBreadcrumbPath(cwd)).json();
+    if (isSdkKeylessBreadcrumb(data)) return data;
+    log.debug("keyless: SDK breadcrumb has wrong shape, ignoring");
+    return undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+export async function clearSdkKeylessBreadcrumb(cwd: string): Promise<void> {
+  try {
+    await unlink(sdkBreadcrumbPath(cwd));
+    log.debug("Cleared SDK keyless breadcrumb");
+  } catch {
+    // idempotent
+  }
+}
+
+// --- Unified breadcrumb reader ---
+
+export type NormalizedBreadcrumb = { claimToken: string; source: "cli" | "sdk" };
+
+export async function readAnyKeylessBreadcrumb(
+  cwd: string,
+): Promise<NormalizedBreadcrumb | undefined> {
+  const sdk = await readSdkKeylessBreadcrumb(cwd);
+  if (sdk) {
+    try {
+      const claimToken = parseClaimToken(sdk.claimUrl);
+      log.debug("keyless: found SDK breadcrumb (.clerk/.tmp/keyless.json)");
+      return { claimToken, source: "sdk" };
+    } catch (err) {
+      log.warn(`SDK keyless breadcrumb has invalid claimUrl: ${errorMessage(err)}`);
+    }
+  }
+
+  const cli = await readKeylessBreadcrumb(cwd);
+  if (cli) {
+    log.debug("keyless: found CLI breadcrumb (.clerk/keyless.json)");
+    return { claimToken: cli.claimToken, source: "cli" };
+  }
+
+  return undefined;
 }

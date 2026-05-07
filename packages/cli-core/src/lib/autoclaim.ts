@@ -1,4 +1,8 @@
-import { readKeylessBreadcrumb, clearKeylessBreadcrumb } from "./keyless.ts";
+import {
+  readAnyKeylessBreadcrumb,
+  clearKeylessBreadcrumb,
+  clearSdkKeylessBreadcrumb,
+} from "./keyless.ts";
 import { claimApplication, type Application } from "./plapi.ts";
 import { PlapiError, errorMessage } from "./errors.ts";
 import { linkApp } from "./autolink.ts";
@@ -22,7 +26,7 @@ const TERMINAL_BY_STATUS: Record<number, Terminal["status"]> = {
 
 /** Orchestrates post-login claim of a keyless app. Never throws. */
 export async function attemptAutoclaim(cwd: string): Promise<AutoclaimResult> {
-  const breadcrumb = await readKeylessBreadcrumb(cwd);
+  const breadcrumb = await readAnyKeylessBreadcrumb(cwd);
   if (!breadcrumb) return { status: "not_keyless" };
 
   const appName = await deriveProjectName(cwd);
@@ -31,6 +35,7 @@ export async function attemptAutoclaim(cwd: string): Promise<AutoclaimResult> {
   if (result.status === "failed") return result;
 
   await clearKeylessBreadcrumb(cwd);
+  await clearSdkKeylessBreadcrumb(cwd);
 
   if (result.status === "claimed") {
     const linked = await tryLinkApp(result.app, cwd);

@@ -15,16 +15,16 @@ Authenticates the user via an OAuth 2.0 PKCE flow. After a successful login (or 
 5. Waits for the redirect callback with an authorization code
 6. Exchanges the code for an access token
 7. Stores the token and user info in local config
-8. **Autoclaim**: if `.clerk/keyless.json` exists in the current directory, claims the temporary application, links it to the project, and pulls environment variables
+8. **Autoclaim**: if a keyless breadcrumb exists in the current directory (SDK's `.clerk/.tmp/keyless.json` or CLI's legacy `.clerk/keyless.json`), claims the temporary application, links it to the project, and pulls environment variables
 
 #### Keyless autoclaim breadcrumb lifecycle
 
-When `clerk init` runs in keyless mode it writes `.clerk/keyless.json` containing a claim token. On the next `clerk auth login`:
+When the Clerk SDK runs in keyless mode (no API keys in `.env`), it writes `.clerk/.tmp/keyless.json` containing the temporary keys and a claim URL. On the next `clerk auth login` (or `clerk init` when already authenticated):
 
-- **404** — claim token expired or application already deleted; breadcrumb is cleared and a warning is shown.
-- **403** — authenticated account has no active organization; breadcrumb is cleared and a warning is shown.
-- **Any other error** — treated as transient; breadcrumb is preserved so the next login retries.
-- **Success** — application is claimed and linked, `.env` is updated via `clerk env pull`, breadcrumb is deleted.
+- **404** — claim token expired or application already deleted; both breadcrumbs are cleared and a warning is shown.
+- **403** — authenticated account has no active organization; both breadcrumbs are cleared and a warning is shown.
+- **Any other error** — treated as transient; breadcrumbs are preserved so the next login retries.
+- **Success** — application is claimed and linked, `.env` is updated via `clerk env pull`, both breadcrumbs are deleted.
 
 #### API Endpoints
 

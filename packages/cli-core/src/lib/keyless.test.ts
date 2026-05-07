@@ -9,6 +9,9 @@ const {
   writeKeylessBreadcrumb,
   readKeylessBreadcrumb,
   clearKeylessBreadcrumb,
+  readSdkKeylessBreadcrumb,
+  clearSdkKeylessBreadcrumb,
+  readAnyKeylessBreadcrumb,
   writeKeysToEnvFile,
   createAccountlessApp,
 } = await import("./keyless.ts");
@@ -102,6 +105,150 @@ describe("breadcrumb", () => {
     const gitignore = await Bun.file(join(tempDir, ".gitignore")).text();
     const matches = gitignore.split("\n").filter((l) => l.trim() === ".clerk/");
     expect(matches.length).toBe(1);
+  });
+});
+
+describe("SDK breadcrumb", () => {
+  let tempDir: string;
+  let debugSpy: ReturnType<typeof spyOn>;
+
+  beforeEach(async () => {
+    tempDir = await mkdtemp(join(tmpdir(), "clerk-sdk-keyless-test-"));
+    debugSpy = spyOn(console, "debug").mockImplementation(() => {});
+  });
+
+  afterEach(async () => {
+    debugSpy.mockRestore();
+    await rm(tempDir, { recursive: true, force: true });
+  });
+
+  const SDK_BREADCRUMB = {
+    publishableKey: "pk_test_sdk",
+    secretKey: "sk_test_sdk",
+    claimUrl: "https://dashboard.clerk.com/apps/claim?token=sdk_token_123",
+    apiKeysUrl: "https://dashboard.clerk.com/apps/app_1/instances/ins_1/api-keys",
+  };
+
+  async function writeSdkBreadcrumb(data: object = SDK_BREADCRUMB) {
+    const dir = join(tempDir, ".clerk", ".tmp");
+    const { mkdir } = await import("node:fs/promises");
+    await mkdir(dir, { recursive: true });
+    await Bun.write(join(dir, "keyless.json"), JSON.stringify(data));
+  }
+
+  test("readSdkKeylessBreadcrumb returns data when file is valid", async () => {
+    await writeSdkBreadcrumb();
+    const result = await readSdkKeylessBreadcrumb(tempDir);
+    expect(result).toBeDefined();
+    expect(result!.publishableKey).toBe("pk_test_sdk");
+    expect(result!.claimUrl).toContain("sdk_token_123");
+  });
+
+  test("readSdkKeylessBreadcrumb returns undefined when no file exists", async () => {
+    const result = await readSdkKeylessBreadcrumb(tempDir);
+    expect(result).toBeUndefined();
+  });
+
+  test("readSdkKeylessBreadcrumb returns undefined when file has wrong shape", async () => {
+    await writeSdkBreadcrumb({ someOther: "data" });
+    const captured = captureLog();
+    const result = await captured.run(() => readSdkKeylessBreadcrumb(tempDir));
+    expect(result).toBeUndefined();
+  });
+
+  test("clearSdkKeylessBreadcrumb removes the file", async () => {
+    await writeSdkBreadcrumb();
+    const captured = captureLog();
+    await captured.run(() => clearSdkKeylessBreadcrumb(tempDir));
+    const result = await readSdkKeylessBreadcrumb(tempDir);
+    expect(result).toBeUndefined();
+  });
+
+  test("clearSdkKeylessBreadcrumb does not throw when file is missing", async () => {
+    const captured = captureLog();
+    await captured.run(() => clearSdkKeylessBreadcrumb(tempDir));
+  });
+});
+
+describe("readAnyKeylessBreadcrumb", () => {
+  let tempDir: string;
+  let debugSpy: ReturnType<typeof spyOn>;
+
+  beforeEach(async () => {
+    tempDir = await mkdtemp(join(tmpdir(), "clerk-any-keyless-test-"));
+    debugSpy = spyOn(console, "debug").mockImplementation(() => {});
+  });
+
+  afterEach(async () => {
+    debugSpy.mockRestore();
+    await rm(tempDir, { recursive: true, force: true });
+  });
+
+  async function writeSdkBreadcrumb(token = "sdk_token") {
+    const dir = join(tempDir, ".clerk", ".tmp");
+    const { mkdir } = await import("node:fs/promises");
+    await mkdir(dir, { recursive: true });
+    await Bun.write(
+      join(dir, "keyless.json"),
+      JSON.stringify({
+        publishableKey: "pk_test_sdk",
+        secretKey: "sk_test_sdk",
+        claimUrl: `https://dashboard.clerk.com/apps/claim?token=${token}`,
+      }),
+    );
+  }
+
+  test("returns undefined when neither breadcrumb exists", async () => {
+    const captured = captureLog();
+    const result = await captured.run(() => readAnyKeylessBreadcrumb(tempDir));
+    expect(result).toBeUndefined();
+  });
+
+  test("returns SDK breadcrumb token when SDK file exists", async () => {
+    await writeSdkBreadcrumb("my_sdk_token");
+    const captured = captureLog();
+    const result = await captured.run(() => readAnyKeylessBreadcrumb(tempDir));
+    expect(result).toBeDefined();
+    expect(result!.claimToken).toBe("my_sdk_token");
+    expect(result!.source).toBe("sdk");
+  });
+
+  test("returns CLI breadcrumb token when CLI file exists", async () => {
+    await writeKeylessBreadcrumb(tempDir, "my_cli_token");
+    const captured = captureLog();
+    const result = await captured.run(() => readAnyKeylessBreadcrumb(tempDir));
+    expect(result).toBeDefined();
+    expect(result!.claimToken).toBe("my_cli_token");
+    expect(result!.source).toBe("cli");
+  });
+
+  test("prefers SDK breadcrumb when both exist", async () => {
+    await writeSdkBreadcrumb("preferred_sdk_token");
+    await writeKeylessBreadcrumb(tempDir, "ignored_cli_token");
+    const captured = captureLog();
+    const result = await captured.run(() => readAnyKeylessBreadcrumb(tempDir));
+    expect(result!.claimToken).toBe("preferred_sdk_token");
+    expect(result!.source).toBe("sdk");
+  });
+
+  test("falls back to CLI breadcrumb when SDK file has invalid claimUrl", async () => {
+    const dir = join(tempDir, ".clerk", ".tmp");
+    const { mkdir } = await import("node:fs/promises");
+    await mkdir(dir, { recursive: true });
+    await Bun.write(
+      join(dir, "keyless.json"),
+      JSON.stringify({
+        publishableKey: "pk_test_sdk",
+        secretKey: "sk_test_sdk",
+        claimUrl: "/no-token-param",
+      }),
+    );
+    await writeKeylessBreadcrumb(tempDir, "fallback_cli_token");
+
+    const captured = captureLog();
+    const result = await captured.run(() => readAnyKeylessBreadcrumb(tempDir));
+    expect(result!.claimToken).toBe("fallback_cli_token");
+    expect(result!.source).toBe("cli");
   });
 });
 
