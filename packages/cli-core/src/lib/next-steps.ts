@@ -41,6 +41,34 @@ export const NEXT_STEPS = {
     "Run `clerk config schema --keys billing` to see all available settings",
     "Run `clerk config pull --keys billing` to see current values",
   ],
+  SWITCH_ENV: [
+    "Run `clerk env pull` to fetch environment variables for this environment",
+    "Run `clerk doctor` to verify your setup",
+  ],
+  SWITCH_ENV_NO_TOKEN: [
+    "Run `clerk auth login` to authenticate for this environment",
+    "Run `clerk env pull` to fetch environment variables",
+  ],
+  UNLINK: [
+    "Run `clerk link` to connect this directory to a different application",
+    "Run `clerk apps list` to browse your applications",
+  ],
+  SKILL_INSTALL: [
+    "Start a new Claude Code or Codex session — the skill is now active for this project",
+    "Or run `clerk init` to scaffold Clerk yourself",
+  ],
+  CONFIG_PUSH: [
+    "Run `clerk config pull` to confirm the live configuration",
+    "Run `clerk doctor` to verify your setup",
+  ],
+  CONFIG_DRY_RUN_PATCH: ["Run `clerk config patch` without `--dry-run` to apply these changes"],
+  CONFIG_DRY_RUN_PUT: ["Run `clerk config put` without `--dry-run` to apply these changes"],
+  LOGOUT: ["Run `clerk auth login` to sign in again"],
+  WHOAMI: ["Run `clerk link` to connect this directory to an application"],
+  WHOAMI_LINKED: [
+    "Run `clerk apps list` to see your other applications",
+    "Run `clerk config pull` to inspect the live configuration of this instance",
+  ],
 } as const;
 
 /**

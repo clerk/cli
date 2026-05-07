@@ -3,6 +3,8 @@ import { fetchUserInfo } from "../../lib/token-exchange.ts";
 import { withSpinner } from "../../lib/spinner.ts";
 import { log } from "../../lib/log.ts";
 import { AuthError } from "../../lib/errors.ts";
+import { resolveProfile } from "../../lib/config.ts";
+import { NEXT_STEPS, printNextSteps } from "../../lib/next-steps.ts";
 
 export async function whoami() {
   const token = await getValidToken();
@@ -10,10 +12,19 @@ export async function whoami() {
     throw new AuthError({ reason: "not_logged_in" });
   }
 
+  let userInfo;
   try {
-    const userInfo = await withSpinner("Fetching account info...", () => fetchUserInfo(token));
-    log.data(userInfo.email);
+    userInfo = await withSpinner("Fetching account info...", () => fetchUserInfo(token));
   } catch {
     throw new AuthError({ reason: "session_expired" });
   }
+  log.data(userInfo.email);
+
+  let isLinked = false;
+  try {
+    isLinked = Boolean(await resolveProfile(process.cwd()));
+  } catch {
+    // Best-effort only: don't fail whoami when local profile resolution fails.
+  }
+  printNextSteps(isLinked ? NEXT_STEPS.WHOAMI_LINKED : NEXT_STEPS.WHOAMI);
 }

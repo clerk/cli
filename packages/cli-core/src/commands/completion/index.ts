@@ -3,6 +3,7 @@ import { generate as generateZsh } from "./shells/zsh.ts";
 import { generate as generateFish } from "./shells/fish.ts";
 import { generate as generatePowershell } from "./shells/powershell.ts";
 import { throwUsageError } from "../../lib/errors.ts";
+import { printNextSteps } from "../../lib/next-steps.ts";
 
 type CompletionGenerator = (binaryName: string) => string;
 
@@ -15,6 +16,25 @@ const GENERATORS: Record<SupportedShell, CompletionGenerator> = {
   zsh: generateZsh,
   fish: generateFish,
   powershell: generatePowershell,
+};
+
+const INSTALL_HINTS: Record<SupportedShell, readonly string[]> = {
+  bash: [
+    'Run `eval "$(clerk completion bash)"` to enable completions in this session',
+    "Append the same line to ~/.bashrc to make it permanent",
+  ],
+  zsh: [
+    'Run `eval "$(clerk completion zsh)"` to enable completions in this session',
+    "Append the same line to ~/.zshrc to make it permanent",
+  ],
+  fish: [
+    "Run `clerk completion fish | source` to enable completions in this session",
+    "Run `clerk completion fish > $__fish_config_dir/completions/clerk.fish` to install permanently",
+  ],
+  powershell: [
+    "Run `clerk completion powershell | Out-String | Invoke-Expression` to enable completions in this session",
+    "Append the same line to your PowerShell profile to make it permanent",
+  ],
 };
 
 function isSupportedShell(shell: string): shell is SupportedShell {
@@ -41,4 +61,5 @@ Run 'clerk completion --help' for full setup instructions.`,
     throwUsageError(`Unsupported shell: ${shell}. Supported: ${SUPPORTED_SHELLS.join(", ")}`);
   }
   process.stdout.write(GENERATORS[shell]("clerk"));
+  printNextSteps(INSTALL_HINTS[shell]);
 }
