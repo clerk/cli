@@ -105,14 +105,14 @@ export async function init(options: InitOptions = {}) {
   if (!keyless && !manualSetup) {
     bar();
 
-    const claimed = !options.app && authed && (await tryInitAutoclaim(ctx.cwd));
-    if (!claimed) {
+    const autoclaim = !options.app && authed && (await tryInitAutoclaim(ctx.cwd));
+    if (!autoclaim) {
       const createIfMissing = agent
         ? await deriveProjectName(ctx.cwd, bootstrap?.projectName)
         : undefined;
       await authenticateAndLink(ctx.cwd, options.app, createIfMissing);
     } else {
-      autoclaimPulled = true;
+      autoclaimPulled = autoclaim.envPulled;
     }
   }
 
@@ -319,12 +319,12 @@ async function authenticateAndLink(
 
 // --- Autoclaim ---
 
-async function tryInitAutoclaim(cwd: string): Promise<boolean> {
+async function tryInitAutoclaim(cwd: string): Promise<{ envPulled: boolean } | false> {
   const result = await attemptAutoclaim(cwd);
   if (result.status === "claimed") {
     const label = result.app.name || result.app.application_id;
     log.success(`Claimed and linked \`${label}\``);
-    return true;
+    return { envPulled: result.envPulled };
   }
   if (result.status !== "not_keyless") {
     log.debug(`init: autoclaim returned '${result.status}', falling through to link`);

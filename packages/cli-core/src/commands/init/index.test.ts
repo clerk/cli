@@ -935,6 +935,34 @@ describe("init", () => {
     expect(pullMod.pull).not.toHaveBeenCalled();
   });
 
+  test("autoclaim with envPulled=false still pulls env", async () => {
+    setup({ email: "user@example.com" });
+
+    const keylessCtx = {
+      ...FAKE_CTX,
+      existingClerk: false,
+      framework: { ...FAKE_CTX.framework, supportsKeyless: true },
+    };
+    spyOn(context, "gatherContext").mockResolvedValue(keylessCtx);
+    spyOn(scaffoldMod, "scaffold").mockResolvedValue({
+      actions: [{ type: "create", path: "middleware.ts", content: "", description: "" }],
+      postInstructions: [],
+    });
+    spyOn(autoclaimMod, "attemptAutoclaim").mockResolvedValue({
+      status: "claimed",
+      app: { application_id: "app_claimed", name: "My App", instances: [] },
+      envPulled: false,
+    });
+
+    await init({});
+
+    expect(autoclaimMod.attemptAutoclaim).toHaveBeenCalled();
+    // Claim succeeded so link should not be called again
+    expect(linkMod.link).not.toHaveBeenCalled();
+    // But env pull failed during autoclaim, so init should retry it
+    expect(pullMod.pull).toHaveBeenCalledWith({ file: ".env", cwd: keylessCtx.cwd });
+  });
+
   test("autoclaim returning not_keyless falls through to authenticateAndLink", async () => {
     setup({ email: "user@example.com" });
 
