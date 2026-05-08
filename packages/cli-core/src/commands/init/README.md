@@ -1,6 +1,6 @@
 # Init Command
 
-Initializes Clerk in a project by detecting the framework, installing the SDK, and scaffolding framework-specific boilerplate. Depending on mode and framework support, init either uses keyless development keys or links to a real Clerk application and pulls environment variables.
+Initializes Clerk in a project by detecting the framework, installing the SDK, and scaffolding framework-specific boilerplate. By default, init logs the user in (interactively) and links the project to a real Clerk application. Pass `--keyless` to opt into auto-generated temporary development keys instead — useful when you want to scaffold a new project without authenticating.
 
 ## Usage
 
@@ -11,6 +11,7 @@ clerk init --framework next
 clerk init --starter
 clerk init --starter --framework next --pm bun
 clerk init --starter --framework next --pm bun --name my-app
+clerk init --starter --framework next --keyless
 clerk init -y
 clerk init --yes
 clerk init --no-skills
@@ -25,7 +26,8 @@ clerk init --no-skills
 | `--name <project-name>` | Project name for `--starter` (skips prompt). Must be lowercase, no spaces, no path separators                                                                                         |
 | `--app <id>`            | Application ID to link (skips the interactive app picker during authenticated linking)                                                                                                |
 | `--starter`             | Bootstrap a new project from a starter template (runs the framework generator, installs deps, and scaffolds Clerk)                                                                    |
-| `-y, --yes`             | Skip confirmation prompts (also skips authentication after bootstrap, letting you connect your account later)                                                                         |
+| `--keyless`             | Use auto-generated temporary development keys instead of logging in. Only valid when bootstrapping a new project on a keyless-capable framework                                       |
+| `-y, --yes`             | Skip y/n confirmation prompts. Authentication is still required — unauthenticated users are prompted to log in via the browser unless `--keyless` is also passed                      |
 | `--no-skills`           | Skip the optional agent skills install prompt at the end of init                                                                                                                      |
 
 ## Agent Mode
@@ -37,19 +39,20 @@ When running in agent mode (`--mode agent` or non-TTY), the command runs the ful
 - For **new projects** (`--starter` or blank directory): `--framework` is required (no way to auto-detect in an empty dir). Package manager is auto-selected by availability (bun → pnpm → yarn → npm) unless `--pm` is provided
 - Project name defaults to the framework's default (e.g. `my-clerk-next-app`) unless `--name` is provided
 - For keyless-capable frameworks with no `--app` and no linked profile:
-  - When **authenticated**, init creates a real Clerk app named after the project (`package.json#name`, `--name`, or directory basename) and links it. No keyless detour, no second `clerk auth login` to claim.
-  - When **unauthenticated**, init uses keyless and writes a breadcrumb so the next `clerk auth login` claims the app automatically.
+  - When **authenticated**, init creates a real Clerk app named after the project (`package.json#name`, `--name`, or directory basename) and links it.
+  - When **unauthenticated**, init prints manual setup guidance (pointing to `--keyless` or `clerk auth login`) and exits cleanly. Pass `--keyless` to opt into auto-generated dev keys; init writes a breadcrumb so the next `clerk auth login` claims the app automatically.
 - For frameworks that require API keys, init will not pick or create an app in agent mode; pass `--app <id>` or link the project first to pull real keys
 
 ## Flow
 
 1. Gathers project context (framework, router variant, TypeScript, `src/` directory, package manager)
 2. Determines auth mode:
+   - **`--keyless`**: opt-in to keyless mode. Only valid on a keyless-capable framework (otherwise init exits with a usage error). The app runs on auto-generated dev keys; init writes a `.clerk/keyless.json` breadcrumb so the next `clerk auth login` claims the app automatically
    - **Real app target** (`--app` or linked profile): authenticates, links if needed, and pulls real API keys into `.env`
    - **Agent + keyless-capable framework + authenticated + no real app target**: creates a real Clerk app named after the project, links it, and pulls real API keys into `.env`
-   - **Agent + keyless-capable framework + unauthenticated + no real app target**: uses keyless mode — the app runs on auto-generated dev keys and the user can connect a Clerk account later with `clerk auth login`
+   - **Agent + unauthenticated + no real app target + no `--keyless`**: scaffolds locally and prints manual setup guidance (`--keyless` or `clerk auth login`)
    - **Agent + non-keyless framework + no real app target**: scaffolds locally and prints manual setup instructions instead of selecting or creating an app
-   - **Human mode + bootstrap + keyless-capable framework + not authenticated**: uses keyless mode
+   - **Human mode + not authenticated + no `--keyless`**: triggers an interactive `clerk auth login` and links a real app. `-y` does not bypass this — it only suppresses y/n confirmation prompts, not authentication
    - **Human mode + existing project + not authenticated**: runs the authenticated flow, which triggers an interactive login so real keys can be pulled
 3. **Authenticated mode only**: authenticates via `clerk auth login` (skipped if already authenticated) and links the project via `clerk link` (skipped if already linked)
 4. Displays detected framework and variant
@@ -84,7 +87,7 @@ Detects the project's framework from `package.json` dependencies (checked top-to
 | `express`               | Express        | `@clerk/express`              | `CLERK_PUBLISHABLE_KEY`             | No      |
 | `fastify`               | Fastify        | `@clerk/fastify`              | `CLERK_PUBLISHABLE_KEY`             | No      |
 
-The **Keyless** column indicates whether the framework's Clerk SDK supports keyless mode (auto-generated temporary dev keys). In human mode, keyless auto-selection only applies during bootstrap (new projects) when the user is not authenticated. In agent mode, keyless-capable frameworks use keyless only when the user is not authenticated and no real app target is provided by `--app` or a linked profile; an authenticated agent run instead creates a real app named after the project and links it. For non-keyless frameworks without a real app target, agent mode prints manual setup instructions instead of selecting or creating an app.
+The **Keyless** column indicates whether the framework's Clerk SDK supports keyless mode (auto-generated temporary dev keys). Keyless mode is opt-in via `--keyless` and is only valid when bootstrapping a new project on a Yes-row framework — passing `--keyless` for a No-row framework or for an existing project exits with a usage error. By default, init authenticates the user (interactively when needed) and links a real app. In agent mode, an authenticated run on a keyless-capable framework creates a real app named after the project and links it; an unauthenticated agent run without `--keyless` prints manual setup guidance instead of selecting or creating an app.
 
 Package manager is detected from lock files: `bun.lockb`/`bun.lock` → bun, `yarn.lock` → yarn, `pnpm-lock.yaml` → pnpm, else npm.
 

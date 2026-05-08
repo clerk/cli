@@ -3,7 +3,7 @@ import { link } from "../link/index.js";
 import { pull } from "../env/pull.js";
 import { isAgent } from "../../mode.js";
 import { dim, bold } from "../../lib/color.js";
-import { throwUserAbort, CliError, errorMessage } from "../../lib/errors.js";
+import { throwUserAbort, throwUsageError, CliError, errorMessage } from "../../lib/errors.js";
 import { lookupFramework, type FrameworkInfo } from "../../lib/framework.js";
 import { resolveProfile } from "../../lib/config.js";
 import { deriveProjectName } from "../../lib/project-name.js";
@@ -53,6 +53,8 @@ type InitOptions = {
   starter?: boolean;
   /** Link to a specific Clerk application by ID (skips the interactive picker). */
   app?: string;
+  /** Opt into keyless mode (auto-generated dev keys, no login). Only valid on keyless-capable frameworks. */
+  keyless?: boolean;
 };
 
 export async function init(options: InitOptions = {}) {
@@ -86,28 +88,24 @@ export async function init(options: InitOptions = {}) {
 
   await enrichProjectContext(ctx);
 
-  const authed = await isAuthenticated();
-  const linkedProfile = agent && !options.app ? await resolveProfile(ctx.cwd) : undefined;
+  const optsKeyless = options.keyless === true;
+  // Skip auth-related I/O entirely when the user opted into keyless — those
+  // values are not consumed once the strategy resolves to "keyless".
+  const authed = optsKeyless ? false : await isAuthenticated();
+  const linkedProfile =
+    !optsKeyless && agent && !options.app ? await resolveProfile(ctx.cwd) : undefined;
   const hasRealAppTarget = Boolean(options.app || linkedProfile);
-  const keyless = resolveKeylessMode({
+
+  const strategy = pickStrategy({
+    optsKeyless,
     agent,
-    bootstrap,
-    ctx,
     authed,
     hasRealAppTarget,
+    framework: ctx.framework,
   });
-  ctx.keyless = keyless;
+  ctx.keyless = strategy === "keyless";
 
-  // Agents can auto-create an app on keyless-capable frameworks when authed (see
-  // `link`'s `createIfMissing` path). Non-keyless frameworks without a real app
-  // target still need explicit human input, so they fall through to manual setup.
-  const manualSetup =
-    !keyless &&
-    (agent
-      ? !hasRealAppTarget && !ctx.framework.supportsKeyless
-      : bootstrap != null && overrides.skipConfirm && !authed);
-
-  if (!keyless && !manualSetup) {
+  if (strategy === "authenticate") {
     bar();
     const createIfMissing = agent
       ? await deriveProjectName(ctx.cwd, bootstrap?.projectName)
@@ -124,21 +122,15 @@ export async function init(options: InitOptions = {}) {
 
   if (alreadySetUp) {
     log.success("\nClerk is already set up in this project.");
-    if (agent && manualSetup) {
-      printBootstrapManualSetupInfo(ctx.framework.name);
+    if (agent && strategy === "manual") {
+      printBootstrapManualSetupInfo(ctx.framework);
     }
     outro("Done");
     return;
   }
 
   bar();
-  if (manualSetup) {
-    printBootstrapManualSetupInfo(ctx.framework.name);
-  } else if (!keyless) {
-    await pull({ file: ctx.envFile, cwd: ctx.cwd });
-  } else {
-    await setupKeylessApp(ctx.cwd, ctx.framework.dep, ctx.envFile);
-  }
+  await runStrategy(strategy, ctx);
 
   if (options.skills !== false) {
     bar();
@@ -148,7 +140,7 @@ export async function init(options: InitOptions = {}) {
   // Next steps print last so they stay on screen as the final thing the user sees.
   if (bootstrap) {
     bar();
-    printBootstrapNextSteps(bootstrap, keyless);
+    printBootstrapNextSteps(bootstrap, strategy === "keyless");
   }
 
   outro("Done");
@@ -235,52 +227,69 @@ function printBootstrapNextSteps(
   printNextSteps(steps);
 }
 
-function printBootstrapManualSetupInfo(frameworkName: string): void {
-  const lines = [
-    `\n  ${frameworkName} requires API keys — set them up manually:`,
-    "    clerk init --app <app_id>",
-    "    clerk env pull",
-  ];
+function printBootstrapManualSetupInfo(framework: FrameworkInfo): void {
+  const lines = [`\n  Set up Clerk for ${framework.name}:`];
+  if (framework.supportsKeyless) {
+    lines.push(
+      "    clerk init --keyless     (use temporary development keys)",
+      "    clerk auth login         (then re-run clerk init to link a real app)",
+    );
+  } else {
+    lines.push(
+      `    ${framework.name} requires API keys — set them up manually:`,
+      "    clerk init --app <app_id>",
+      "    clerk env pull",
+    );
+  }
   log.info(lines.map(dim).join("\n"));
 }
 
-// --- Keyless ---
+// --- Strategy ---
 
-function resolveKeylessMode({
+type InitStrategy = "keyless" | "manual" | "authenticate";
+
+// Picks how `clerk init` will reach a working Clerk setup:
+// - "keyless"      → user opted in via `--keyless`; needs a keyless-capable framework (else: usage error).
+// - "manual"       → agent mode can't auto-resolve (no real app target, plus either a non-keyless framework
+//                    or no auth) — scaffold locally and print guidance instead of running OAuth.
+// - "authenticate" → default; log in (interactively if needed) and link a real Clerk application.
+function pickStrategy({
+  optsKeyless,
   agent,
-  bootstrap,
-  ctx,
   authed,
   hasRealAppTarget,
+  framework,
 }: {
+  optsKeyless: boolean;
   agent: boolean;
-  bootstrap: BootstrapResult | null;
-  ctx: ProjectContext;
   authed: boolean;
   hasRealAppTarget: boolean;
-}): boolean {
-  if (ctx.framework.supportsKeyless) {
-    // Authenticated (OAuth token or CLERK_PLATFORM_API_KEY) — use the
-    // authenticated flow so a real app is created/linked and real keys get
-    // pulled into .env. Otherwise fall back to keyless: the app runs on
-    // auto-generated dev keys and the user can connect their account later
-    // via `clerk auth login`.
-    if (agent) return !hasRealAppTarget && !authed;
-
-    // Auto-keyless is scoped to bootstrap (new-project) flows only in human
-    // mode. Existing projects keep the authenticated flow so real keys can be
-    // pulled.
-    if (!bootstrap) return false;
-
-    return !authed;
+  framework: FrameworkInfo;
+}): InitStrategy {
+  if (optsKeyless) {
+    if (!framework.supportsKeyless) {
+      throwUsageError(
+        `--keyless is not supported for ${framework.name}. Run \`clerk auth login\` and use \`clerk init --app <app_id>\` instead.`,
+      );
+    }
+    return "keyless";
   }
+  if (agent && !hasRealAppTarget && (!framework.supportsKeyless || !authed)) return "manual";
+  return "authenticate";
+}
 
-  log.info(
-    dim(
-      `\n  ${ctx.framework.name} requires API keys — keyless mode is not yet supported for this framework.`,
-    ),
-  );
-  return false;
+async function runStrategy(strategy: InitStrategy, ctx: ProjectContext): Promise<void> {
+  switch (strategy) {
+    case "manual":
+      printBootstrapManualSetupInfo(ctx.framework);
+      return;
+    case "authenticate":
+      await pull({ file: ctx.envFile, cwd: ctx.cwd });
+      return;
+    case "keyless":
+      await setupKeylessApp(ctx.cwd, ctx.framework.dep, ctx.envFile);
+      return;
+  }
 }
 
 // --- Auth ---

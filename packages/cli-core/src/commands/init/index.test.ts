@@ -45,6 +45,38 @@ const FAKE_BOOTSTRAP = {
   packageManager: "npm" as const,
 };
 
+type FakeFramework = {
+  dep: string;
+  name: string;
+  sdk: string;
+  envVar: string;
+  envFile: ".env" | ".env.local";
+  supportsKeyless?: boolean;
+};
+
+type FakeCtx = Omit<typeof FAKE_CTX, "framework"> & { framework: FakeFramework };
+
+const KEYLESS_CTX: FakeCtx = {
+  ...FAKE_CTX,
+  existingClerk: false,
+  framework: { ...FAKE_CTX.framework, supportsKeyless: true },
+};
+
+function mockBootstrapTo(ctx: FakeCtx): void {
+  spyOn(context, "gatherContext").mockResolvedValueOnce(null).mockResolvedValueOnce(ctx);
+}
+
+function mockExistingProject(ctx: FakeCtx): void {
+  spyOn(context, "gatherContext").mockResolvedValue(ctx);
+}
+
+function mockMiddlewareScaffold(): void {
+  spyOn(scaffoldMod, "scaffold").mockResolvedValue({
+    actions: [{ type: "create", path: "middleware.ts", content: "", description: "" }],
+    postInstructions: [],
+  });
+}
+
 describe("init", () => {
   let spies: ReturnType<typeof spyOn>[];
   let captured: ReturnType<typeof captureLog>;
@@ -251,38 +283,84 @@ describe("init", () => {
     expect(callOrder.indexOf("installSkills")).toBeLessThan(callOrder.indexOf("printNextSteps"));
   });
 
-  test("blank dir with keyless framework auto-selects keyless when unauthenticated", async () => {
+  test("blank dir with keyless framework triggers login by default when unauthenticated", async () => {
     setup();
-
-    const keylessCtx = {
-      ...FAKE_CTX,
-      existingClerk: false,
-      framework: {
-        ...FAKE_CTX.framework,
-        supportsKeyless: true,
-      },
-    };
-    spyOn(context, "gatherContext").mockResolvedValueOnce(null).mockResolvedValueOnce(keylessCtx);
-    spyOn(scaffoldMod, "scaffold").mockResolvedValue({
-      actions: [{ type: "create", path: "middleware.ts", content: "", description: "" }],
-      postInstructions: [],
-    });
+    mockBootstrapTo(KEYLESS_CTX);
+    mockMiddlewareScaffold();
 
     await init({});
 
     expect(bootstrapMod.promptAndBootstrap).toHaveBeenCalled();
+    // Default flow now requires login; keyless is opt-in via --keyless.
+    expect(heuristics.printKeylessInfo).not.toHaveBeenCalled();
+    expect(loginMod.login).toHaveBeenCalledWith({ showNextSteps: false });
+    expect(linkMod.link).toHaveBeenCalled();
+  });
+
+  test("--keyless on a keyless-capable framework uses keyless mode without logging in", async () => {
+    setup();
+    mockBootstrapTo(KEYLESS_CTX);
+    mockMiddlewareScaffold();
+
+    await init({ keyless: true });
+
+    expect(bootstrapMod.promptAndBootstrap).toHaveBeenCalled();
+    expect(heuristics.printKeylessInfo).toHaveBeenCalled();
+    expect(loginMod.login).not.toHaveBeenCalled();
+    expect(linkMod.link).not.toHaveBeenCalled();
+    expect(keylessMod.createAccountlessApp).toHaveBeenCalled();
+  });
+
+  test("--keyless takes precedence over an authed user", async () => {
+    setup({ email: "user@example.com" });
+    mockBootstrapTo(KEYLESS_CTX);
+    mockMiddlewareScaffold();
+
+    await init({ keyless: true });
+
     expect(heuristics.printKeylessInfo).toHaveBeenCalled();
     expect(linkMod.link).not.toHaveBeenCalled();
+    expect(pullMod.pull).not.toHaveBeenCalled();
+  });
+
+  test("--keyless on a non-keyless framework throws a usage error", async () => {
+    setup();
+    const nonKeylessCtx: FakeCtx = {
+      ...FAKE_CTX,
+      existingClerk: false,
+      framework: {
+        dep: "vue",
+        name: "Vue",
+        sdk: "@clerk/vue",
+        envVar: "VITE_CLERK_PUBLISHABLE_KEY",
+        envFile: ".env.local",
+      },
+      envFile: ".env.local",
+    };
+    mockBootstrapTo(nonKeylessCtx);
+
+    await expect(init({ keyless: true })).rejects.toThrow(/--keyless is not supported for Vue/);
+    expect(keylessMod.createAccountlessApp).not.toHaveBeenCalled();
+    expect(linkMod.link).not.toHaveBeenCalled();
+  });
+
+  test("--keyless on an existing keyless-capable project uses keyless mode", async () => {
+    setup();
+    mockExistingProject(KEYLESS_CTX);
+    mockMiddlewareScaffold();
+
+    await init({ keyless: true });
+
+    expect(bootstrapMod.promptAndBootstrap).not.toHaveBeenCalled();
+    expect(keylessMod.createAccountlessApp).toHaveBeenCalled();
+    expect(heuristics.printKeylessInfo).toHaveBeenCalled();
+    expect(linkMod.link).not.toHaveBeenCalled();
+    expect(loginMod.login).not.toHaveBeenCalled();
   });
 
   test("bootstrap with keyless framework goes authenticated when already signed in", async () => {
     setup({ email: "user@example.com" });
-
-    const keylessCtx = {
-      ...FAKE_CTX,
-      framework: { ...FAKE_CTX.framework, supportsKeyless: true },
-    };
-    spyOn(context, "gatherContext").mockResolvedValueOnce(null).mockResolvedValueOnce(keylessCtx);
+    mockBootstrapTo({ ...KEYLESS_CTX, existingClerk: true });
 
     await init({});
 
@@ -293,12 +371,7 @@ describe("init", () => {
 
   test("-y flag with keyless framework uses authenticated flow when signed in", async () => {
     setup({ email: "user@example.com" });
-
-    const keylessCtx = {
-      ...FAKE_CTX,
-      framework: { ...FAKE_CTX.framework, supportsKeyless: true },
-    };
-    spyOn(context, "gatherContext").mockResolvedValueOnce(null).mockResolvedValueOnce(keylessCtx);
+    mockBootstrapTo({ ...KEYLESS_CTX, existingClerk: true });
 
     await init({ yes: true });
 
@@ -308,12 +381,7 @@ describe("init", () => {
 
   test("-y flag with keyless framework uses authenticated flow when CLERK_PLATFORM_API_KEY is set", async () => {
     setup({ apiKey: true });
-
-    const keylessCtx = {
-      ...FAKE_CTX,
-      framework: { ...FAKE_CTX.framework, supportsKeyless: true },
-    };
-    spyOn(context, "gatherContext").mockResolvedValueOnce(null).mockResolvedValueOnce(keylessCtx);
+    mockBootstrapTo({ ...KEYLESS_CTX, existingClerk: true });
 
     await init({ yes: true });
 
@@ -322,64 +390,69 @@ describe("init", () => {
     expect(linkMod.link).toHaveBeenCalled();
   });
 
-  test("-y flag with keyless framework goes keyless when not authenticated", async () => {
+  test("-y flag with keyless framework triggers login when unauthenticated (no --keyless)", async () => {
+    // `-y` skips y/n confirmations but does not skip authentication. Without
+    // `--keyless`, init must prompt the user to log in.
     setup();
-
-    const keylessCtx = {
-      ...FAKE_CTX,
-      existingClerk: false,
-      framework: { ...FAKE_CTX.framework, supportsKeyless: true },
-    };
-    spyOn(context, "gatherContext").mockResolvedValueOnce(null).mockResolvedValueOnce(keylessCtx);
-    spyOn(scaffoldMod, "scaffold").mockResolvedValue({
-      actions: [{ type: "create", path: "middleware.ts", content: "", description: "" }],
-      postInstructions: [],
-    });
+    mockBootstrapTo(KEYLESS_CTX);
+    mockMiddlewareScaffold();
 
     await init({ yes: true });
 
     expect(heuristics.isAuthenticated).toHaveBeenCalled();
-    expect(heuristics.printKeylessInfo).toHaveBeenCalled();
-    expect(linkMod.link).not.toHaveBeenCalled();
+    expect(heuristics.printKeylessInfo).not.toHaveBeenCalled();
+    expect(loginMod.login).toHaveBeenCalledWith({ showNextSteps: false });
+    expect(linkMod.link).toHaveBeenCalled();
   });
 
-  test("agent mode with keyless framework goes keyless when unauthenticated", async () => {
-    setup({ isAgent: true, email: null });
+  test("-y --keyless with keyless framework uses keyless mode", async () => {
+    setup();
+    mockBootstrapTo(KEYLESS_CTX);
+    mockMiddlewareScaffold();
 
-    const keylessCtx = {
-      ...FAKE_CTX,
-      existingClerk: false,
-      framework: { ...FAKE_CTX.framework, supportsKeyless: true },
-    };
-    spyOn(context, "gatherContext").mockResolvedValue(keylessCtx);
-    spyOn(scaffoldMod, "scaffold").mockResolvedValue({
-      actions: [{ type: "create", path: "middleware.ts", content: "", description: "" }],
-      postInstructions: [],
-    });
-
-    await init({});
+    await init({ yes: true, keyless: true });
 
     expect(heuristics.printKeylessInfo).toHaveBeenCalled();
     expect(linkMod.link).not.toHaveBeenCalled();
+    expect(loginMod.login).not.toHaveBeenCalled();
+  });
+
+  test("agent mode with keyless framework prints manual setup when unauthenticated", async () => {
+    // Agents can't run interactive OAuth and didn't opt into keyless via
+    // --keyless, so the safe path is to scaffold locally and emit guidance.
+    const { captured } = setup({ isAgent: true, email: null });
+    mockExistingProject(KEYLESS_CTX);
+    mockMiddlewareScaffold();
+
+    await captured.run(() => init({}));
+
+    expect(heuristics.printKeylessInfo).not.toHaveBeenCalled();
+    expect(linkMod.link).not.toHaveBeenCalled();
     expect(pullMod.pull).not.toHaveBeenCalled();
+    expect(loginMod.login).not.toHaveBeenCalled();
+    expect(captured.err).toContain("clerk init --keyless");
+  });
+
+  test("agent mode with --keyless uses keyless mode without authentication", async () => {
+    setup({ isAgent: true, email: null });
+    mockExistingProject(KEYLESS_CTX);
+    mockMiddlewareScaffold();
+
+    await init({ keyless: true });
+
+    expect(heuristics.printKeylessInfo).toHaveBeenCalled();
+    expect(linkMod.link).not.toHaveBeenCalled();
+    expect(loginMod.login).not.toHaveBeenCalled();
+    expect(keylessMod.createAccountlessApp).toHaveBeenCalled();
   });
 
   test("agent mode with keyless framework + authed creates and links a real app", async () => {
     setup({ isAgent: true, email: "user@example.com" });
-
-    const keylessCtx = {
-      ...FAKE_CTX,
-      existingClerk: false,
-      framework: { ...FAKE_CTX.framework, supportsKeyless: true },
-    };
-    spyOn(context, "gatherContext").mockResolvedValue(keylessCtx);
+    mockExistingProject(KEYLESS_CTX);
     // Override potential leakage from earlier tests that spy on resolveProfile
     // with a non-undefined value but don't track those spies for restoration.
     spyOn(config, "resolveProfile").mockResolvedValue(undefined);
-    spyOn(scaffoldMod, "scaffold").mockResolvedValue({
-      actions: [{ type: "create", path: "middleware.ts", content: "", description: "" }],
-      postInstructions: [],
-    });
+    mockMiddlewareScaffold();
 
     await init({});
 
@@ -387,49 +460,31 @@ describe("init", () => {
     expect(linkMod.link).toHaveBeenCalledWith({
       skipIfLinked: true,
       app: undefined,
-      cwd: keylessCtx.cwd,
+      cwd: KEYLESS_CTX.cwd,
       createIfMissing: expect.any(String),
     });
-    expect(pullMod.pull).toHaveBeenCalledWith({ file: ".env", cwd: keylessCtx.cwd });
+    expect(pullMod.pull).toHaveBeenCalledWith({ file: ".env", cwd: KEYLESS_CTX.cwd });
   });
 
   test("agent mode with keyless framework uses linked profile as a real app target", async () => {
     setup({ isAgent: true, email: "user@example.com" });
-
-    const keylessCtx = {
-      ...FAKE_CTX,
-      existingClerk: false,
-      framework: { ...FAKE_CTX.framework, supportsKeyless: true },
-    };
-    spyOn(context, "gatherContext").mockResolvedValue(keylessCtx);
+    mockExistingProject(KEYLESS_CTX);
     spyOn(config, "resolveProfile").mockResolvedValue({
       profile: { appId: "app_123" },
     } as never);
-    spyOn(scaffoldMod, "scaffold").mockResolvedValue({
-      actions: [{ type: "create", path: "middleware.ts", content: "", description: "" }],
-      postInstructions: [],
-    });
+    mockMiddlewareScaffold();
 
     await init({});
 
     expect(heuristics.printKeylessInfo).not.toHaveBeenCalled();
     expect(linkMod.link).not.toHaveBeenCalled();
-    expect(pullMod.pull).toHaveBeenCalledWith({ file: ".env", cwd: keylessCtx.cwd });
+    expect(pullMod.pull).toHaveBeenCalledWith({ file: ".env", cwd: KEYLESS_CTX.cwd });
   });
 
   test("agent mode with keyless framework and --app uses real app flow", async () => {
     setup({ isAgent: true, email: "user@example.com" });
-
-    const keylessCtx = {
-      ...FAKE_CTX,
-      existingClerk: false,
-      framework: { ...FAKE_CTX.framework, supportsKeyless: true },
-    };
-    spyOn(context, "gatherContext").mockResolvedValue(keylessCtx);
-    spyOn(scaffoldMod, "scaffold").mockResolvedValue({
-      actions: [{ type: "create", path: "middleware.ts", content: "", description: "" }],
-      postInstructions: [],
-    });
+    mockExistingProject(KEYLESS_CTX);
+    mockMiddlewareScaffold();
 
     await init({ app: "app_abc" });
 
@@ -437,10 +492,10 @@ describe("init", () => {
     expect(linkMod.link).toHaveBeenCalledWith({
       skipIfLinked: true,
       app: "app_abc",
-      cwd: keylessCtx.cwd,
+      cwd: KEYLESS_CTX.cwd,
       createIfMissing: expect.any(String),
     });
-    expect(pullMod.pull).toHaveBeenCalledWith({ file: ".env", cwd: keylessCtx.cwd });
+    expect(pullMod.pull).toHaveBeenCalledWith({ file: ".env", cwd: KEYLESS_CTX.cwd });
   });
 
   test("agent mode with non-keyless framework and no app target prints manual setup", async () => {
@@ -487,18 +542,19 @@ describe("init", () => {
     });
   });
 
-  test("-y flag skips auth prompt and defaults to unauthenticated mode", async () => {
+  test("-y flag triggers login when unauthenticated", async () => {
     setup();
     setupBootstrapSuccess();
 
     await init({ yes: true });
 
     expect(bootstrapMod.promptAndBootstrap).toHaveBeenCalled();
-    // isAuthenticated is called during skipAuth check
     expect(heuristics.isAuthenticated).toHaveBeenCalled();
+    // `-y` skips y/n confirmations but not authentication.
+    expect(loginMod.login).toHaveBeenCalledWith({ showNextSteps: false });
   });
 
-  test("-y flag skips auth for frameworks without keyless support in bootstrap", async () => {
+  test("-y flag triggers login for non-keyless frameworks in bootstrap", async () => {
     setup();
 
     const noKeylessCtx = {
@@ -518,9 +574,8 @@ describe("init", () => {
     await init({ yes: true });
 
     expect(bootstrapMod.promptAndBootstrap).toHaveBeenCalled();
-    // isAuthenticated is called during skipAuth check, returns false → skip auth
     expect(heuristics.isAuthenticated).toHaveBeenCalled();
-    expect(loginMod.login).not.toHaveBeenCalled();
+    expect(loginMod.login).toHaveBeenCalledWith({ showNextSteps: false });
     expect(heuristics.printKeylessInfo).not.toHaveBeenCalled();
   });
 
