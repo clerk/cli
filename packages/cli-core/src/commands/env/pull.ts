@@ -30,8 +30,7 @@ async function resolveTargetFile(
   flag?: string,
   fallbackFile: string = ".env.local",
 ): Promise<string> {
-  // resolve (not join) so absolute paths like `--file /tmp/foo.env` aren't
-  // silently nested under cwd. Relative paths still resolve against cwd.
+  // resolve (not join) so absolute --file paths aren't nested under cwd.
   if (flag) return resolve(cwd, flag);
 
   const devLocal = join(cwd, DEV_LOCAL_ENV_FILE);

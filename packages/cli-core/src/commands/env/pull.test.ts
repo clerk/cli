@@ -393,28 +393,26 @@ describe("env pull", () => {
       expect(content).toContain("CLERK_PUBLISHABLE_KEY=pk_test_abc123");
       expect(content).toContain("CLERK_SECRET_KEY=sk_test_xyz789");
 
-      // Nothing should have been written inside the project cwd
-      expect(await Bun.file(join(tempDir, absoluteTarget)).exists()).toBe(false);
+      // Default fallback location inside cwd must not have been touched
+      expect(await Bun.file(join(tempDir, ".env.local")).exists()).toBe(false);
       expect(captured.err).toContain(`Environment variables written to ${absoluteTarget}`);
     } finally {
       await rm(outsideDir, { recursive: true, force: true });
     }
   });
 
-  test("writes --file with no package.json present (framework detection fails)", async () => {
-    // Reproduces issue #269: env pull --file <abs path> in a non-framework dir
+  test("writes --file to absolute path when package.json is absent", async () => {
     await setProfile(tempDir, {
       workspaceId: "org_1",
       appId: "app_1",
       instances: { development: "ins_dev" },
     });
-    // Remove the package.json the beforeEach hook writes
     await rm(join(tempDir, "package.json"));
 
     const outsideDir = await mkdtemp(join(tmpdir(), "clerk-env-pull-noframework-"));
     const absoluteTarget = join(outsideDir, "clerk-dev.env");
     try {
-      await runEnvPull({ app: "app_1", instance: "dev", file: absoluteTarget });
+      await runEnvPull({ file: absoluteTarget });
 
       const content = await Bun.file(absoluteTarget).text();
       expect(content).toContain("CLERK_PUBLISHABLE_KEY=pk_test_abc123");
