@@ -1,5 +1,24 @@
 # clerk
 
+## 1.2.0
+
+### Minor Changes
+
+- Make keyless mode opt-in via a new `--keyless` flag on `clerk init`. Previously, `clerk init` on a keyless-capable framework (Next.js, Astro, Nuxt, TanStack Start, React Router) would silently fall back to auto-generated temporary dev keys whenever the user wasn't authenticated. The default now triggers `clerk auth login` and links a real Clerk application. ([#268](https://github.com/clerk/cli/pull/268)) by [@rafa-thayto](https://github.com/rafa-thayto)
+  - `clerk init` (default): authenticates and links a real app.
+  - `clerk init --keyless`: scaffolds with auto-generated dev keys; the user can run `clerk auth login` later to claim the temporary application.
+  - `clerk init --keyless` on a non-keyless framework exits with a usage error rather than silently ignoring the flag.
+  - `clerk init -y` no longer bypasses authentication. `-y` only skips y/n confirmation prompts; without `--keyless`, an unauthenticated user is still prompted to log in via the browser.
+  - Agent-mode `clerk init` without authentication and without `--keyless` (or `--app`) prints manual setup guidance instead of generating dev keys, since agents cannot run interactive OAuth.
+
+### Patch Changes
+
+- Fix shell detection for fish users whose login shell is zsh. `clerk doctor` now correctly identifies fish via `FISH_VERSION`, and `clerk update` no longer shows an irrelevant `hash -r` hint. ([#264](https://github.com/clerk/cli/pull/264)) by [@rafa-thayto](https://github.com/rafa-thayto)
+
+- Fix `clerk env pull --file <path>` to honor absolute paths. Previously, absolute paths were silently nested under the current working directory (e.g. `--file /Users/u/clerk-dev.env` wrote to `<cwd>/Users/u/clerk-dev.env`), making the file appear missing at the expected location while the success message claimed it was written there. Both absolute and relative paths now resolve correctly. ([#270](https://github.com/clerk/cli/pull/270)) by [@rafa-thayto](https://github.com/rafa-thayto)
+
+- Show contextual next-step suggestions after `clerk auth logout`, `clerk switch-env`, `clerk unlink`, `clerk whoami`, `clerk completion`, `clerk skill install`, `clerk config patch`, and `clerk config put` to point users to the natural follow-up action. ([#250](https://github.com/clerk/cli/pull/250)) by [@rafa-thayto](https://github.com/rafa-thayto)
+
 ## 1.1.1
 
 ### Patch Changes
