@@ -374,6 +374,45 @@ describe("login", () => {
     expect(mockStartAuthServer).toHaveBeenCalled();
   });
 
+  test("in human mode, skips prompt and runs OAuth when yes is true", async () => {
+    mockIsHuman.mockReturnValue(true);
+    mockGetValidToken.mockResolvedValue("existing-token");
+    mockGetAuth.mockResolvedValue({ userId: "user_123" });
+    mockFetchUserInfo
+      .mockResolvedValueOnce({ userId: "user_123", email: "old@example.com" })
+      .mockResolvedValueOnce({ userId: "user_new", email: "new@example.com" });
+    mockBunSpawn();
+
+    const mockServer = {
+      port: 54321,
+      waitForCallback: mock().mockResolvedValue({ code: "reauth-code" }),
+      stop: mock(),
+    };
+    mockStartAuthServer.mockReturnValue(mockServer);
+
+    mockExchangeCodeForToken.mockResolvedValue({
+      access_token: "new-token",
+      token_type: "Bearer",
+      expires_in: 3600,
+      refresh_token: "new-refresh-token",
+    });
+    mockCreateOAuthSession.mockReturnValue({
+      accessToken: "new-token",
+      refreshToken: "new-refresh-token",
+      expiresAt: 999,
+      tokenType: "Bearer",
+    });
+    mockStoreToken.mockResolvedValue(undefined);
+    mockSetAuth.mockResolvedValue(undefined);
+
+    consoleSpy = spyOn(console, "log").mockImplementation(() => {});
+    const result = await runLogin({ yes: true });
+
+    expect(mockConfirm).not.toHaveBeenCalled();
+    expect(mockStartAuthServer).toHaveBeenCalled();
+    expect(result).toEqual({ userId: "user_new", email: "new@example.com" });
+  });
+
   test("in human mode, throws UserAbortError when user declines re-auth", async () => {
     mockIsHuman.mockReturnValue(true);
     mockGetValidToken.mockResolvedValue("existing-token");
