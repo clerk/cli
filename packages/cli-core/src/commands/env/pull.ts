@@ -1,4 +1,4 @@
-import { join } from "node:path";
+import { resolve, join, basename } from "node:path";
 import { resolveAppContext, type AppContextOptions } from "../../lib/config.ts";
 import { fetchApplication } from "../../lib/plapi.ts";
 import { parseEnvFile, mergeEnvVars, serializeEnvFile } from "../../lib/dotenv.ts";
@@ -30,7 +30,8 @@ async function resolveTargetFile(
   flag?: string,
   fallbackFile: string = ".env.local",
 ): Promise<string> {
-  if (flag) return join(cwd, flag);
+  // resolve (not join) so absolute --file paths aren't nested under cwd.
+  if (flag) return resolve(cwd, flag);
 
   const devLocal = join(cwd, DEV_LOCAL_ENV_FILE);
   if (await Bun.file(devLocal).exists()) return devLocal;
@@ -53,7 +54,7 @@ export async function pull(options: EnvPullOptions): Promise<void> {
     detectEnvFile(cwd),
   ]);
   const targetFile = await resolveTargetFile(cwd, options.file, preferredEnvFile);
-  const displayPath = options.file ?? targetFile.split("/").pop()!;
+  const displayPath = options.file ?? basename(targetFile);
 
   await withSpinner(`Pulling env vars from ${ctx.instanceLabel} instance...`, async () => {
     const app = await withApiContext(fetchApplication(ctx.appId), "Failed to fetch API keys");

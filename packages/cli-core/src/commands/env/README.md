@@ -10,11 +10,11 @@ clerk env pull [--app <app_id>] [--instance dev|prod|<instance_id>] [--file <pat
 
 ### Options
 
-| Option            | Description                                                  |
-| ----------------- | ------------------------------------------------------------ |
-| `--app <id>`      | Application ID to target directly (works from any directory) |
-| `--instance <id>` | Instance to target (`dev`, `prod`, or a full instance ID)    |
-| `--file <path>`   | Target env file (default: auto-detect)                       |
+| Option            | Description                                                         |
+| ----------------- | ------------------------------------------------------------------- |
+| `--app <id>`      | Application ID to target directly (works from any directory)        |
+| `--instance <id>` | Instance to target (`dev`, `prod`, or a full instance ID)           |
+| `--file <path>`   | Target env file, relative to cwd or absolute (default: auto-detect) |
 
 ## Sequence Diagram
 

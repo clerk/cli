@@ -376,6 +376,52 @@ describe("env pull", () => {
     expect(content).toContain("CLERK_SECRET_KEY=sk_test_xyz789");
   });
 
+  test("writes --file to an absolute path outside cwd", async () => {
+    await setProfile(tempDir, {
+      workspaceId: "org_1",
+      appId: "app_1",
+      instances: { development: "ins_dev" },
+    });
+
+    const outsideDir = await mkdtemp(join(tmpdir(), "clerk-env-pull-outside-"));
+    const absoluteTarget = join(outsideDir, "clerk-dev.env");
+    try {
+      await runEnvPull({ file: absoluteTarget });
+
+      // File must land at the absolute path the user specified, not joined under cwd
+      const content = await Bun.file(absoluteTarget).text();
+      expect(content).toContain("CLERK_PUBLISHABLE_KEY=pk_test_abc123");
+      expect(content).toContain("CLERK_SECRET_KEY=sk_test_xyz789");
+
+      // Default fallback location inside cwd must not have been touched
+      expect(await Bun.file(join(tempDir, ".env.local")).exists()).toBe(false);
+      expect(captured.err).toContain(`Environment variables written to ${absoluteTarget}`);
+    } finally {
+      await rm(outsideDir, { recursive: true, force: true });
+    }
+  });
+
+  test("writes --file to absolute path when package.json is absent", async () => {
+    await setProfile(tempDir, {
+      workspaceId: "org_1",
+      appId: "app_1",
+      instances: { development: "ins_dev" },
+    });
+    await rm(join(tempDir, "package.json"));
+
+    const outsideDir = await mkdtemp(join(tmpdir(), "clerk-env-pull-noframework-"));
+    const absoluteTarget = join(outsideDir, "clerk-dev.env");
+    try {
+      await runEnvPull({ file: absoluteTarget });
+
+      const content = await Bun.file(absoluteTarget).text();
+      expect(content).toContain("CLERK_PUBLISHABLE_KEY=pk_test_abc123");
+      expect(content).toContain("CLERK_SECRET_KEY=sk_test_xyz789");
+    } finally {
+      await rm(outsideDir, { recursive: true, force: true });
+    }
+  });
+
   test("uses --instance prod to target production", async () => {
     await setProfile(tempDir, {
       workspaceId: "org_1",
