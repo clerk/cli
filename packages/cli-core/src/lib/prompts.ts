@@ -4,7 +4,11 @@
  * call sites never deal with the symbol directly.
  */
 
-import { confirm as clackConfirm, text as clackText } from "@clack/prompts";
+import {
+  confirm as clackConfirm,
+  text as clackText,
+  password as clackPassword,
+} from "@clack/prompts";
 import { isCancel } from "@clack/core";
 import { throwUserAbort } from "./errors.ts";
 
@@ -33,6 +37,18 @@ export async function text(config: {
     message: config.message,
     initialValue: config.default,
     placeholder: config.placeholder,
+    validate: config.validate,
+  });
+  return unwrap(result);
+}
+
+/** Masked password input. */
+export async function password(config: {
+  message: string;
+  validate?: (value: string | undefined) => string | Error | undefined;
+}): Promise<string> {
+  const result = await clackPassword({
+    message: config.message,
     validate: config.validate,
   });
   return unwrap(result);

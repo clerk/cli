@@ -47,7 +47,7 @@ mock.module("external-editor", () => ({
   },
 }));
 
-const { confirm, text } = await import("./prompts.ts");
+const { confirm, text, password } = await import("./prompts.ts");
 
 beforeEach(() => {
   lastConfirmConfig = undefined;
@@ -117,6 +117,30 @@ test("text throws UserAbortError when clack returns cancel symbol", async () => 
   textResult = cancelSymbol;
 
   await expect(text({ message: "Name?" })).rejects.toMatchObject({
+    name: "UserAbortError",
+  });
+});
+
+test("password passes message to clack and returns the typed value", async () => {
+  passwordResult = "s3cret";
+  const result = await password({ message: "Secret?" });
+
+  expect(result).toBe("s3cret");
+  expect(lastPasswordConfig).toEqual({ message: "Secret?", validate: undefined });
+});
+
+test("password forwards validate to clack", async () => {
+  passwordResult = "ok";
+  const validate = (v: string | undefined) => ((v?.length ?? 0) >= 8 ? undefined : "too short");
+  await password({ message: "Secret?", validate });
+
+  expect(lastPasswordConfig).toEqual({ message: "Secret?", validate });
+});
+
+test("password throws UserAbortError when clack returns cancel symbol", async () => {
+  passwordResult = cancelSymbol;
+
+  await expect(password({ message: "Secret?" })).rejects.toMatchObject({
     name: "UserAbortError",
   });
 });
