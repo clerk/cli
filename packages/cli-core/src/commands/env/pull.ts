@@ -8,7 +8,7 @@ import {
   detectEnvFile,
 } from "../../lib/framework.ts";
 import { CliError, ERROR_CODE, withApiContext } from "../../lib/errors.ts";
-import { withSpinner } from "../../lib/spinner.ts";
+import { withSpinner, intro, outro } from "../../lib/spinner.ts";
 import { log } from "../../lib/log.ts";
 
 const DEV_LOCAL_ENV_FILE = ".env.development.local";
@@ -48,6 +48,8 @@ async function resolveTargetFile(
 }
 
 export async function pull(options: EnvPullOptions): Promise<void> {
+  intro("Pulling environment variables");
+
   const cwd = options.cwd ?? process.cwd();
   const [ctx, preferredEnvFile] = await Promise.all([
     resolveAppContext({ ...options, cwd }),
@@ -87,4 +89,5 @@ export async function pull(options: EnvPullOptions): Promise<void> {
   });
 
   log.info(`Environment variables written to ${displayPath}`);
+  outro();
 }

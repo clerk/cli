@@ -36,6 +36,7 @@ import {
 import { isNonEmpty } from "../../lib/helpers/arrays.js";
 import { detectPackageManager, type PackageManager } from "../../lib/package-manager.js";
 import { NEXT_STEPS, printNextSteps } from "../../lib/next-steps.js";
+import { intro, outro } from "../../lib/spinner.js";
 
 import clerkSkillMd from "../../../../../skills/clerk-cli/SKILL.md" with { type: "text" };
 import clerkAuthMd from "../../../../../skills/clerk-cli/references/auth.md" with { type: "text" };
@@ -237,6 +238,8 @@ export interface SkillInstallOptions {
  * `clerk skill install` — standalone install of the bundled clerk skill.
  */
 export async function skillInstall(options: SkillInstallOptions): Promise<void> {
+  intro("Installing Clerk skill");
+
   const cwd = process.cwd();
   const skipPrompt = options.yes ?? false;
   const interactive = isHuman() && !skipPrompt;
@@ -244,12 +247,19 @@ export async function skillInstall(options: SkillInstallOptions): Promise<void> 
   const packageManager = options.pm ?? (await detectPackageManager(cwd));
 
   const runner = await resolveSkillsRunner(packageManager, interactive);
-  if (!runner) return;
+  if (!runner) {
+    outro();
+    return;
+  }
 
   const ok = await installClerkSkillCore(runner, cwd, interactive);
-  if (!ok) return;
+  if (!ok) {
+    outro();
+    return;
+  }
 
   log.blank();
   log.success("clerk-cli skill installed. AI agents now have Clerk context in this project.");
   printNextSteps(NEXT_STEPS.SKILL_INSTALL);
+  outro();
 }
