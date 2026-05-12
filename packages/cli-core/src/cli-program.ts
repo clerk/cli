@@ -626,10 +626,10 @@ Give AI agents better Clerk context: install the Clerk skills
       { command: "clerk enable orgs", description: "Enable organizations" },
       {
         command: "clerk enable orgs --force-selection --max-members 10",
-        description: "Enable organizations with options",
+        description: "Enable orgs with options",
       },
       {
-        command: "clerk enable billing --for org",
+        command: "clerk enable billing --for orgs",
         description: "Enable billing for organizations only",
       },
       {
@@ -672,7 +672,7 @@ Give AI agents better Clerk context: install the Clerk skills
     .description("Enable billing for organizations and/or users")
     .option(
       "--for <targets...>",
-      "Billing targets (org and/or user), separated by spaces or commas (e.g. org user). Defaults to both when omitted.",
+      "Billing targets (orgs and/or users), separated by spaces or commas (e.g. orgs users). Defaults to both when omitted.",
     )
     .option("--app <id>", "Application ID to target")
     .option("--instance <id>", "Instance to target (dev, prod, or instance ID)")
@@ -685,15 +685,15 @@ Give AI agents better Clerk context: install the Clerk skills
         description: "Enable billing for organizations and users",
       },
       {
-        command: "clerk enable billing --for org",
+        command: "clerk enable billing --for orgs",
         description: "Enable billing for organizations only",
       },
       {
-        command: "clerk enable billing --for user",
+        command: "clerk enable billing --for users",
         description: "Enable billing for users only",
       },
       {
-        command: "clerk enable billing --for org user",
+        command: "clerk enable billing --for orgs users",
         description: "Enable billing for both targets",
       },
       {
@@ -709,7 +709,7 @@ Give AI agents better Clerk context: install the Clerk skills
     .setExamples([
       { command: "clerk disable orgs", description: "Disable organizations" },
       {
-        command: "clerk disable billing --for org",
+        command: "clerk disable billing --for orgs",
         description: "Disable billing for organizations only (leaves organizations enabled)",
       },
       {
@@ -742,7 +742,7 @@ Give AI agents better Clerk context: install the Clerk skills
     )
     .option(
       "--for <targets...>",
-      "Billing targets (org and/or user), separated by spaces or commas (e.g. org user). Defaults to both when omitted.",
+      "Billing targets (orgs and/or users), separated by spaces or commas (e.g. orgs users). Defaults to both when omitted.",
     )
     .option("--app <id>", "Application ID to target")
     .option("--instance <id>", "Instance to target (dev, prod, or instance ID)")
@@ -754,11 +754,11 @@ Give AI agents better Clerk context: install the Clerk skills
         description: "Disable billing for organizations and users",
       },
       {
-        command: "clerk disable billing --for org",
+        command: "clerk disable billing --for orgs",
         description: "Disable billing for organizations only",
       },
       {
-        command: "clerk disable billing --for user",
+        command: "clerk disable billing --for users",
         description: "Disable billing for users only",
       },
     ])

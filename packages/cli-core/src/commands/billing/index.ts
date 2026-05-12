@@ -17,31 +17,41 @@ interface BillingOptions {
   skills?: boolean;
 }
 
-type Target = "org" | "user";
+type Target = "orgs" | "users";
 
-// Accepts variadic (`--for org user`), CSV (`--for org,user`), or repeated
-// (`--for org --for user`) — mirrors `--keys` on `clerk config pull`.
+// `org`/`user` are accepted as aliases for backward compatibility with the
+// initial release that used singular tokens.
+const TARGET_ALIASES: Record<string, Target> = {
+  org: "orgs",
+  orgs: "orgs",
+  user: "users",
+  users: "users",
+};
+
+// Accepts variadic (`--for orgs users`), CSV (`--for orgs,users`), or repeated
+// (`--for orgs --for users`) — mirrors `--keys` on `clerk config pull`.
 function parseForTargets(values: string[] | undefined): Target[] {
-  if (!values?.length) return ["org", "user"];
+  if (!values?.length) return ["orgs", "users"];
   const seen = new Set<Target>();
   for (const value of values) {
     for (const part of value.split(",")) {
       const trimmed = part.trim();
       if (!trimmed) continue;
-      if (trimmed !== "org" && trimmed !== "user") {
-        throwUsageError(`Invalid --for value: "${trimmed}". Expected "org" and/or "user".`);
+      const canonical = TARGET_ALIASES[trimmed];
+      if (!canonical) {
+        throwUsageError(`Invalid --for value: "${trimmed}". Expected "orgs" and/or "users".`);
       }
-      seen.add(trimmed);
+      seen.add(canonical);
     }
   }
   if (seen.size === 0) {
-    throwUsageError('--for must include at least one of: "org", "user".');
+    throwUsageError('--for must include at least one of: "orgs", "users".');
   }
   return [...seen];
 }
 
 function describeTargets(targets: Target[]): string {
-  const parts = targets.map((t) => (t === "org" ? "organizations" : "users"));
+  const parts = targets.map((t) => (t === "orgs" ? "organizations" : "users"));
   return parts.length === 2 ? `${parts[0]} and ${parts[1]}` : parts[0]!;
 }
 
@@ -51,12 +61,12 @@ export async function billingEnable(options: BillingOptions): Promise<void> {
 
   const billing: Record<string, unknown> = {};
   const payload: Record<string, unknown> = { billing };
-  if (targets.includes("org")) {
+  if (targets.includes("orgs")) {
     billing.organization_enabled = true;
     // Org billing requires orgs enabled; cascade is idempotent.
     payload.organization_settings = { enabled: true };
   }
-  if (targets.includes("user")) {
+  if (targets.includes("users")) {
     billing.user_enabled = true;
   }
 
@@ -114,8 +124,8 @@ export async function billingDisable(options: BillingOptions): Promise<void> {
 
   // No cascade: leave organization_settings untouched.
   const billing: Record<string, unknown> = {};
-  if (targets.includes("org")) billing.organization_enabled = false;
-  if (targets.includes("user")) billing.user_enabled = false;
+  if (targets.includes("orgs")) billing.organization_enabled = false;
+  if (targets.includes("users")) billing.user_enabled = false;
 
   await applyConfigPatch({
     ctx,

@@ -42,7 +42,7 @@ When `billing.organization_enabled` is currently true, `disable` warns and asks
 for confirmation in human mode. In agent mode (no TTY), the command refuses
 unless `--yes` is passed — this avoids stranding org billing in a stale state.
 Disabling organizations never disables organization billing automatically; run
-`clerk disable billing --for org` first if that's what you intend.
+`clerk disable billing --for orgs` first if that's what you intend.
 
 ## Clerk API endpoints
 

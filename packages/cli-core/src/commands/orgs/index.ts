@@ -76,7 +76,7 @@ export async function orgsDisable(options: OrgsOptions): Promise<void> {
   if (orgBillingOn && !isHuman() && !options.yes) {
     throwUsageError(
       "Organization billing is enabled. Disabling organizations would leave `billing.organization_enabled` stranded. " +
-        "Run `clerk disable billing --for org` first, or pass --yes to override.",
+        "Run `clerk disable billing --for orgs` first, or pass --yes to override.",
     );
   }
 
@@ -89,7 +89,7 @@ export async function orgsDisable(options: OrgsOptions): Promise<void> {
     yes: options.yes,
     dryRun: options.dryRun,
     warning: orgBillingOn
-      ? "Organization billing is currently enabled. Disabling organizations will leave `billing.organization_enabled` stranded — consider running `clerk disable billing --for org` separately."
+      ? "Organization billing is currently enabled. Disabling organizations will leave `billing.organization_enabled` stranded — consider running `clerk disable billing --for orgs` separately."
       : undefined,
     currentConfig: current,
   });

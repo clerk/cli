@@ -53,9 +53,9 @@ const KNOWN_OPTION_VALUES: Record<string, Completion[]> = {
     { name: "canary", description: "Latest canary (pre-release) build" },
   ],
   "--for": [
-    { name: "org", description: "Organizations only" },
-    { name: "user", description: "Users only" },
-    { name: "org,user", description: "Both organizations and users" },
+    { name: "orgs", description: "Organizations only" },
+    { name: "users", description: "Users only" },
+    { name: "orgs,users", description: "Both organizations and users" },
   ],
 };
 
