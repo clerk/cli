@@ -48,6 +48,7 @@ import { update } from "./commands/update/index.ts";
 import { isClerkSkillInstalled } from "./lib/skill-detection.ts";
 import { orgsEnable, orgsDisable } from "./commands/orgs/index.ts";
 import { billingEnable, billingDisable } from "./commands/billing/index.ts";
+import { apiKeysEnable, apiKeysDisable } from "./commands/api-keys/index.ts";
 import { registerExtras } from "@clerk/cli-extras";
 
 const USER_LIST_ORDER_BY_FIELDS = [
@@ -636,6 +637,10 @@ Give AI agents better Clerk context: install the Clerk skills
         command: "clerk enable billing",
         description: "Enable billing for organizations and users",
       },
+      {
+        command: "clerk enable api-keys",
+        description: "Enable API Keys for users",
+      },
     ]);
 
   enable
@@ -703,6 +708,38 @@ Give AI agents better Clerk context: install the Clerk skills
     ])
     .action(billingEnable);
 
+  enable
+    .command("api-keys")
+    .aliases(["apikeys", "api_keys"])
+    .description("Enable API Keys on the linked instance")
+    .option(
+      "--for <targets...>",
+      "API Keys targets (orgs and/or users), separated by spaces or commas (e.g. orgs users). Defaults to users when omitted.",
+    )
+    .option("--app <id>", "Application ID to target")
+    .option("--instance <id>", "Instance to target (dev, prod, or instance ID)")
+    .option("--yes", "Skip confirmation prompts")
+    .option("--dry-run", "Show the patch that would be sent without applying it")
+    .setExamples([
+      {
+        command: "clerk enable api-keys",
+        description: "Enable API Keys for users",
+      },
+      {
+        command: "clerk enable api-keys --for orgs",
+        description: "Enable API Keys for organizations",
+      },
+      {
+        command: "clerk enable api-keys --for users orgs",
+        description: "Enable API Keys for users and organizations",
+      },
+      {
+        command: "clerk enable api-keys --dry-run",
+        description: "Preview the patch without applying it",
+      },
+    ])
+    .action(apiKeysEnable);
+
   const disable = program
     .command("disable")
     .description("Disable Clerk features on the linked instance")
@@ -715,6 +752,10 @@ Give AI agents better Clerk context: install the Clerk skills
       {
         command: "clerk disable billing",
         description: "Disable billing for organizations and users",
+      },
+      {
+        command: "clerk disable api-keys",
+        description: "Disable API Keys",
       },
     ]);
 
@@ -763,6 +804,34 @@ Give AI agents better Clerk context: install the Clerk skills
       },
     ])
     .action(billingDisable);
+
+  disable
+    .command("api-keys")
+    .aliases(["apikeys", "api_keys"])
+    .description("Disable API Keys on the linked instance")
+    .option(
+      "--for <targets...>",
+      "API Keys targets (orgs and/or users), separated by spaces or commas (e.g. orgs users). Omit to disable API Keys entirely.",
+    )
+    .option("--app <id>", "Application ID to target")
+    .option("--instance <id>", "Instance to target (dev, prod, or instance ID)")
+    .option("--yes", "Skip confirmation prompts")
+    .option("--dry-run", "Show the patch that would be sent without applying it")
+    .setExamples([
+      {
+        command: "clerk disable api-keys",
+        description: "Disable API Keys entirely",
+      },
+      {
+        command: "clerk disable api-keys --for orgs",
+        description: "Disable API Keys for organizations only",
+      },
+      {
+        command: "clerk disable api-keys --for users",
+        description: "Disable API Keys for users only",
+      },
+    ])
+    .action(apiKeysDisable);
 
   program
     .command("api")
