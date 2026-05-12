@@ -1,9 +1,9 @@
 import { resolveAppContext } from "../../lib/config.ts";
 import { fetchInstanceConfig } from "../../lib/plapi.ts";
 import { throwUsageError, withApiContext } from "../../lib/errors.ts";
-import { withSpinner } from "../../lib/spinner.ts";
+import { withSpinner, intro, outro } from "../../lib/spinner.ts";
 import { isHuman } from "../../mode.ts";
-import { NEXT_STEPS, printNextSteps } from "../../lib/next-steps.ts";
+import { NEXT_STEPS } from "../../lib/next-steps.ts";
 import { applyConfigPatch } from "../config/apply-patch.ts";
 
 interface OrgsOptions {
@@ -45,6 +45,8 @@ export async function orgsEnable(options: OrgsOptions): Promise<void> {
     orgSettings.max_allowed_memberships = parsePositiveInt(options.maxMembers, "--max-members");
   }
 
+  intro("Enabling organizations");
+
   const applied = await applyConfigPatch({
     ctx,
     payload: { organization_settings: orgSettings },
@@ -55,11 +57,17 @@ export async function orgsEnable(options: OrgsOptions): Promise<void> {
     dryRun: options.dryRun,
   });
 
-  if (applied && !options.dryRun) printNextSteps(NEXT_STEPS.ENABLE_ORGS);
+  if (applied && !options.dryRun) {
+    outro(NEXT_STEPS.ENABLE_ORGS);
+  } else {
+    outro();
+  }
 }
 
 export async function orgsDisable(options: OrgsOptions): Promise<void> {
   const ctx = await resolveAppContext(options);
+
+  intro("Disabling organizations");
 
   const current = await withSpinner("Fetching current config...", () =>
     withApiContext(
@@ -93,4 +101,6 @@ export async function orgsDisable(options: OrgsOptions): Promise<void> {
       : undefined,
     currentConfig: current,
   });
+
+  outro();
 }

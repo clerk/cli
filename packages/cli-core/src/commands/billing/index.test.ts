@@ -15,6 +15,9 @@ mock.module("../../lib/credential-store.ts", () => credentialStoreStubs);
 mock.module("../../lib/git.ts", () => gitStubs);
 mock.module("../../lib/prompts.ts", () => libPromptsStubs);
 mock.module("../../lib/spinner.ts", () => ({
+  intro: () => {},
+  outro: () => {},
+  bar: () => {},
   withSpinner: async (_msg: string, fn: () => Promise<unknown>) => fn(),
 }));
 
