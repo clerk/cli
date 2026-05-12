@@ -26,10 +26,6 @@ export type DeployContext = {
   testForceProductionInstance?: boolean;
   testFailProductionInstanceCheck?: boolean;
   testFailDomainLookup?: boolean;
-  testFailValidateCloning?: boolean;
-  testFailCreateProductionInstance?: boolean;
-  testFailDnsVerification?: boolean;
-  testFailOAuthSave?: boolean;
 };
 
 export function pausedStepDescription(state: DeployOperationState): string {
