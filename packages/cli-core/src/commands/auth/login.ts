@@ -18,6 +18,7 @@ import { ensureFirstApplication } from "../../lib/first-application.ts";
 
 interface LoginOptions {
   showNextSteps?: boolean;
+  yes?: boolean;
 }
 
 async function getExistingSession(): Promise<UserInfo | null> {
@@ -90,7 +91,7 @@ async function performOAuthFlow(): Promise<UserInfo> {
 }
 
 export async function login(options: LoginOptions = {}): Promise<UserInfo> {
-  const { showNextSteps = true } = options;
+  const { showNextSteps = true, yes } = options;
   intro("clerk auth login");
   const existingSession = await withSpinner("Checking session...", () => getExistingSession());
 
@@ -105,7 +106,7 @@ export async function login(options: LoginOptions = {}): Promise<UserInfo> {
     return existingSession;
   }
 
-  if (existingSession) {
+  if (existingSession && isHuman() && !yes) {
     const reauthenticate = await confirm({
       message: `You're already logged in as ${existingSession.email}. Re-authenticate?`,
       default: false,

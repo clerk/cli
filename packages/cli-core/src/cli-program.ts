@@ -217,9 +217,16 @@ Give AI agents better Clerk context: install the Clerk skills
     .command("login")
     .aliases(["signup", "signin", "sign-in"])
     .description("Log in to your Clerk account")
-    .setExamples([{ command: "clerk auth login", description: "Log in via browser (OAuth)" }])
-    .action(async () => {
-      await login();
+    .option("-y, --yes", "Proceed with OAuth without prompting when already logged in")
+    .setExamples([
+      { command: "clerk auth login", description: "Log in via browser (OAuth)" },
+      {
+        command: "clerk auth login -y",
+        description: "Re-authenticate via OAuth without confirmation when already signed in",
+      },
+    ])
+    .action(async (opts) => {
+      await login(opts);
     });
 
   auth
@@ -232,8 +239,9 @@ Give AI agents better Clerk context: install the Clerk skills
   program
     .command("login", { hidden: true })
     .description("Log in to your Clerk account")
-    .action(async () => {
-      await login();
+    .option("-y, --yes", "Proceed with OAuth without prompting when already logged in")
+    .action(async (opts) => {
+      await login(opts);
     });
 
   program
