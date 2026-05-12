@@ -8,6 +8,9 @@ import { captureLog, credentialStoreStubs, gitStubs, stubFetch } from "../../tes
 mock.module("../../lib/credential-store.ts", () => credentialStoreStubs);
 mock.module("../../lib/git.ts", () => gitStubs);
 mock.module("../../lib/spinner.ts", () => ({
+  intro: () => {},
+  outro: () => {},
+  bar: () => {},
   withSpinner: async (msg: string, fn: () => Promise<unknown>) => {
     const { log } = await import("../../lib/log.ts");
     log.info(msg);

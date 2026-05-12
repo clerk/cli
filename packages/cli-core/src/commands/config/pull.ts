@@ -1,7 +1,7 @@
 import { resolveAppContext } from "../../lib/config.ts";
 import { fetchInstanceConfig } from "../../lib/plapi.ts";
 import { withApiContext } from "../../lib/errors.ts";
-import { withSpinner } from "../../lib/spinner.ts";
+import { withSpinner, intro, outro } from "../../lib/spinner.ts";
 import { log } from "../../lib/log.ts";
 
 interface ConfigPullOptions {
@@ -12,6 +12,8 @@ interface ConfigPullOptions {
 }
 
 export async function configPull(options: ConfigPullOptions): Promise<void> {
+  intro("Pulling configuration");
+
   const ctx = await resolveAppContext(options);
 
   const config = await withSpinner(
@@ -31,4 +33,6 @@ export async function configPull(options: ConfigPullOptions): Promise<void> {
   } else {
     log.data(json);
   }
+
+  outro();
 }

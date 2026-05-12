@@ -4,7 +4,7 @@ import { isHuman } from "../../mode.ts";
 import { throwUsageError, throwUserAbort, withApiContext, ERROR_CODE } from "../../lib/errors.ts";
 import { confirm } from "../../lib/prompts.ts";
 import { dim, bold, red, green } from "../../lib/color.ts";
-import { withSpinner } from "../../lib/spinner.ts";
+import { withSpinner, intro, outro } from "../../lib/spinner.ts";
 import { log } from "../../lib/log.ts";
 import { NEXT_STEPS, printNextSteps } from "../../lib/next-steps.ts";
 
@@ -28,6 +28,7 @@ type Operation = {
     config: Record<string, unknown>,
     options?: { destructive?: boolean; dryRun?: boolean },
   ) => Promise<Record<string, unknown>>;
+  title: string;
 };
 
 const PUT_OP: Operation = {
@@ -35,12 +36,14 @@ const PUT_OP: Operation = {
   verb: "Replacing",
   warning: "This will overwrite the entire instance configuration.",
   apiFn: putInstanceConfig,
+  title: "Replacing configuration",
 };
 
 const PATCH_OP: Operation = {
   method: "PATCH",
   verb: "Updating",
   apiFn: patchInstanceConfig,
+  title: "Patching configuration",
 };
 
 export async function configPut(options: ConfigPushOptions): Promise<void> {
@@ -73,6 +76,8 @@ async function configPush(options: ConfigPushOptions, op: Operation): Promise<vo
   // Strip config_version — it's returned by pull but not accepted by the backend
   delete configPayload.config_version;
 
+  intro(op.title);
+
   const currentConfig = await withSpinner("Fetching current config...", () =>
     withApiContext(
       fetchInstanceConfig(ctx.appId, ctx.instanceId),
@@ -85,6 +90,7 @@ async function configPush(options: ConfigPushOptions, op: Operation): Promise<vo
 
   if (!hasConfigChanges(currentConfig, configPayload, isPatch)) {
     log.info(options.dryRun ? "[dry-run] No changes detected" : "No changes detected");
+    outro();
     return;
   }
 
@@ -127,6 +133,7 @@ async function configPush(options: ConfigPushOptions, op: Operation): Promise<vo
   } else {
     printNextSteps(NEXT_STEPS.CONFIG_PUSH);
   }
+  outro();
 }
 
 export async function readInput(options: { file?: string; json?: string }): Promise<string> {

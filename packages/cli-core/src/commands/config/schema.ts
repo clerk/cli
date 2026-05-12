@@ -1,6 +1,7 @@
 import { resolveAppContext } from "../../lib/config.ts";
 import { fetchInstanceConfigSchema } from "../../lib/plapi.ts";
 import { withApiContext } from "../../lib/errors.ts";
+import { intro, outro } from "../../lib/spinner.ts";
 import { log } from "../../lib/log.ts";
 
 interface ConfigSchemaOptions {
@@ -11,6 +12,8 @@ interface ConfigSchemaOptions {
 }
 
 export async function configSchema(options: ConfigSchemaOptions): Promise<void> {
+  intro("Fetching configuration schema");
+
   const ctx = await resolveAppContext(options);
 
   log.info(`Pulling config schema from ${ctx.appLabel} (${ctx.instanceLabel})...`);
@@ -28,4 +31,6 @@ export async function configSchema(options: ConfigSchemaOptions): Promise<void> 
   } else {
     log.data(json);
   }
+
+  outro();
 }
