@@ -5,8 +5,9 @@ inputs:
   cache:
     description: >
       Cache mode for Bun dependencies.
-      "none" skips caching, "restore" uses read-only cache restore,
-      "read-write" populates the cache after install.
+      "none" skips caching, "restore" uses read-only cache restore.
+      The cache is populated by the warm-bun-cache.yml workflow on push to
+      main; PR and workflow_call runs only restore.
     default: "none"
 
 runs:
@@ -14,10 +15,8 @@ runs:
   steps:
     - uses: oven-sh/setup-bun@v2
 
-    # Restore on both 'restore' and 'read-write'. Save is the only difference.
     - name: Restore Bun cache
-      id: bun-cache
-      if: inputs.cache != 'none'
+      if: inputs.cache == 'restore'
       uses: actions/cache/restore@v5
       with:
         path: ~/.bun/install/cache
@@ -26,19 +25,3 @@ runs:
 
     - run: bun install --frozen-lockfile
       shell: bash
-
-    # Save only on push to main. PR (pull_request) and snapshot (issue_comment)
-    # runs both check out PR-author-controlled code, so they must not write the
-    # shared cache. Push-to-main reaches this composite via workflow_call from
-    # release.yml; the called workflow inherits github.event_name == 'push'.
-    # Skip the save when the restore was a full hit — actions/cache/save warns
-    # noisily when the key already exists.
-    - name: Save Bun cache
-      if: >-
-        inputs.cache == 'read-write' &&
-        github.event_name == 'push' &&
-        steps.bun-cache.outputs.cache-hit != 'true'
-      uses: actions/cache/save@v5
-      with:
-        path: ~/.bun/install/cache
-        key: bun-${{ runner.os }}-${{ hashFiles('bun.lock') }}

@@ -32,7 +32,7 @@ jobs:
           ref: ${{ inputs.ref }}
       - uses: ./.github/actions/setup-bun
         with:
-          cache: read-write
+          cache: restore
       - run: bun run build
 
   lint:

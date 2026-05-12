@@ -1,0 +1,33 @@
+name: Warm Bun cache
+
+# Populates ~/.bun/install/cache for PRs to read via the setup-bun composite's
+# restore step. Runs only on push to main so untrusted (PR/snapshot) code can
+# never reach a cache save action.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - bun.lock
+      - .github/workflows/warm-bun-cache.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: warm-bun-cache-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  warm:
+    runs-on: blacksmith-2vcpu-ubuntu-2404
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+      - uses: oven-sh/setup-bun@v2
+      - uses: actions/cache@v5
+        with:
+          path: ~/.bun/install/cache
+          key: bun-${{ runner.os }}-${{ hashFiles('bun.lock') }}
+          restore-keys: bun-${{ runner.os }}-
+      - run: bun install --frozen-lockfile
