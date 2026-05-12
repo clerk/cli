@@ -86,19 +86,10 @@ export const gitStubs = {
   normalizeGitRemoteUrl: (url: string) => url,
 };
 
-export const promptsStubs = {
-  select: async () => undefined,
-  search: async () => undefined,
-  input: async () => "",
-  confirm: async () => true,
-  password: async () => "",
-  editor: async () => "{}",
-};
-
 /**
- * Stubs for `lib/prompts.ts`. Use these when mocking the wrapper module
- * directly rather than `@inquirer/prompts`. The wrapper exposes `text` in
- * place of inquirer's `input`.
+ * Stubs for `lib/prompts.ts` — the @clack/prompts-backed wrapper. Default
+ * responses return benign values so tests can mock the module without
+ * configuring each prompt explicitly.
  */
 export const libPromptsStubs = {
   confirm: async () => true,
