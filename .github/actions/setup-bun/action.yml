@@ -16,6 +16,7 @@ runs:
 
     # Restore on both 'restore' and 'read-write'. Save is the only difference.
     - name: Restore Bun cache
+      id: bun-cache
       if: inputs.cache != 'none'
       uses: actions/cache/restore@v5
       with:
@@ -26,12 +27,17 @@ runs:
     - run: bun install --frozen-lockfile
       shell: bash
 
-    # Save only from trusted contexts. PR-triggered runs (github.event_name
-    # == 'pull_request') skip the save so PR-controlled code cannot poison
-    # the cache for future runs. Push to main and workflow_call invocations
-    # from release.yml (which inherit 'push' or 'issue_comment') do save.
+    # Save only on push to main. PR (pull_request) and snapshot (issue_comment)
+    # runs both check out PR-author-controlled code, so they must not write the
+    # shared cache. Push-to-main reaches this composite via workflow_call from
+    # release.yml; the called workflow inherits github.event_name == 'push'.
+    # Skip the save when the restore was a full hit — actions/cache/save warns
+    # noisily when the key already exists.
     - name: Save Bun cache
-      if: inputs.cache == 'read-write' && github.event_name != 'pull_request'
+      if: >-
+        inputs.cache == 'read-write' &&
+        github.event_name == 'push' &&
+        steps.bun-cache.outputs.cache-hit != 'true'
       uses: actions/cache/save@v5
       with:
         path: ~/.bun/install/cache
