@@ -9,7 +9,7 @@ Guides a user through deploying their Clerk application to production.
 ```sh
 clerk deploy              # Interactive, idempotent wizard (human mode)
 clerk deploy --debug      # With debug output
-clerk deploy --mode agent # Output agent prompt instead of interactive flow
+clerk deploy --mode agent # Exit with human-mode-required guidance
 ```
 
 ## Options
@@ -20,15 +20,7 @@ clerk deploy --mode agent # Output agent prompt instead of interactive flow
 
 ## Agent Mode
 
-> **TODO:** The `DEPLOY_PROMPT` string is hardcoded. It should probably fetch from the quickstart prompt in the Clerk docs instead.
-
-When running in agent mode (`--mode agent`, `CLERK_MODE=agent`, or non-TTY context), this command outputs a structured prompt describing the full deployment flow instead of running the interactive wizard. The prompt includes:
-
-- Prerequisites and pre-flight checks
-- Production domain collection and DNS setup
-- Production instance creation steps
-- OAuth credential collection for social providers
-- All relevant Platform API endpoints
+When running in agent mode (`--mode agent`, `CLERK_MODE=agent`, or non-TTY context), this command exits with a usage error explaining that human mode is required. Production deploy configuration depends on interactive prompts for domain, DNS, and OAuth credential collection, so agents should hand off to a human-run terminal session.
 
 Agent mode is detected via the mode system (`src/mode.ts`), which checks in priority order:
 
@@ -36,7 +28,7 @@ Agent mode is detected via the mode system (`src/mode.ts`), which checks in prio
 2. `CLERK_MODE` environment variable
 3. TTY detection (`process.stdout.isTTY`)
 
-Agent mode does not call PLAPI. It prints `DEPLOY_PROMPT` and exits before the human-mode wizard starts. The prompt currently contains some stale endpoint guidance; see the TODO above `DEPLOY_PROMPT` in `index.ts` and `DEPLOY_MVP_UX_COPY_SPEC.md` §8.3.
+Agent mode does not call PLAPI and exits before the human-mode wizard starts.
 
 ## PLAPI And Mocked Lifecycle
 
