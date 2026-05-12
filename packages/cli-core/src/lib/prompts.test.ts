@@ -1,284 +1,88 @@
-import { test, expect, mock, spyOn, beforeEach } from "bun:test";
+import { test, expect, mock, beforeEach } from "bun:test";
 
-// Track calls to the underlying inquirer primitives
-let lastConfirmArgs: unknown[] = [];
-let confirmResult: boolean | Error = true;
-let lastInputArgs: unknown[] = [];
-let inputResult: string | Error = "";
-let lastPasswordArgs: unknown[] = [];
-let passwordResult: string | Error = "";
-let lastEditorArgs: unknown[] = [];
-let editorResult: string | Error = "";
+// Sentinel for cancellation. Tests choose this symbol; the mocked
+// @clack/core.isCancel below treats it as the clack cancel signal.
+const cancelSymbol = Symbol.for("clack:cancel");
 
-mock.module("@inquirer/prompts", () => ({
-  confirm: async (...args: unknown[]) => {
-    lastConfirmArgs = args;
-    if (confirmResult instanceof Error) throw confirmResult;
+let lastConfirmConfig: Record<string, unknown> | undefined;
+let confirmResult: boolean | symbol = true;
+let lastTextConfig: Record<string, unknown> | undefined;
+let textResult: string | symbol = "";
+let lastPasswordConfig: Record<string, unknown> | undefined;
+let passwordResult: string | symbol = "";
+
+mock.module("@clack/prompts", () => ({
+  confirm: async (config: Record<string, unknown>) => {
+    lastConfirmConfig = config;
     return confirmResult;
   },
-  input: async (...args: unknown[]) => {
-    lastInputArgs = args;
-    if (inputResult instanceof Error) throw inputResult;
-    return inputResult;
+  text: async (config: Record<string, unknown>) => {
+    lastTextConfig = config;
+    return textResult;
   },
-  password: async (...args: unknown[]) => {
-    lastPasswordArgs = args;
-    if (passwordResult instanceof Error) throw passwordResult;
+  password: async (config: Record<string, unknown>) => {
+    lastPasswordConfig = config;
     return passwordResult;
   },
-  editor: async (...args: unknown[]) => {
-    lastEditorArgs = args;
-    if (editorResult instanceof Error) throw editorResult;
-    return editorResult;
-  },
-  // Stub the other exports so this mock doesn't break other test files
-  // that share this process and import @inquirer/prompts.
-  select: async () => {},
-  search: async () => {},
+  // Stubs for other exports so this mock doesn't break sibling test files
+  // that share this process and may import @clack/prompts.
+  intro: () => {},
+  outro: () => {},
+  cancel: () => {},
+  log: { info: () => {}, warn: () => {}, error: () => {}, success: () => {} },
+  spinner: () => ({ start: () => {}, stop: () => {}, message: () => {} }),
 }));
 
-const { confirm, text, password, editor } = await import("./prompts.ts");
+mock.module("@clack/core", () => ({
+  isCancel: (value: unknown): value is symbol => value === cancelSymbol,
+}));
 
-const originalIsTTY = process.stdin.isTTY;
-const originalPlatform = process.platform;
+mock.module("external-editor", () => ({
+  editAsync: (
+    _text: string,
+    _cb: (err: Error | null, value: string) => void,
+    _opts?: Record<string, unknown>,
+  ) => {
+    // Real implementation overridden in editor tests via spyOn.
+  },
+}));
+
+const { confirm } = await import("./prompts.ts");
 
 beforeEach(() => {
-  lastConfirmArgs = [];
+  lastConfirmConfig = undefined;
   confirmResult = true;
-  lastInputArgs = [];
-  inputResult = "";
-  lastPasswordArgs = [];
+  lastTextConfig = undefined;
+  textResult = "";
+  lastPasswordConfig = undefined;
   passwordResult = "";
-  lastEditorArgs = [];
-  editorResult = "";
-  process.stdin.isTTY = originalIsTTY;
-  Object.defineProperty(process, "platform", { value: originalPlatform, writable: true });
 });
 
-test("passes config through to inquirer confirm", async () => {
-  process.stdin.isTTY = true;
+test("confirm passes message to clack and returns true", async () => {
+  confirmResult = true;
   const result = await confirm({ message: "Continue?" });
 
   expect(result).toBe(true);
-  expect(lastConfirmArgs[0]).toEqual({ message: "Continue?" });
+  expect(lastConfirmConfig).toEqual({ message: "Continue?", initialValue: undefined });
 });
 
-test("returns false when user declines", async () => {
-  process.stdin.isTTY = true;
+test("confirm returns false when user declines", async () => {
   confirmResult = false;
   const result = await confirm({ message: "Continue?" });
   expect(result).toBe(false);
 });
 
-test("does not open tty when stdin is a TTY", async () => {
-  process.stdin.isTTY = true;
-  await confirm({ message: "Continue?" });
+test("confirm translates default to initialValue", async () => {
+  confirmResult = true;
+  await confirm({ message: "Continue?", default: false });
 
-  // Second arg (context) should be undefined — no tty input needed
-  expect(lastConfirmArgs[1]).toBeUndefined();
+  expect(lastConfirmConfig).toEqual({ message: "Continue?", initialValue: false });
 });
 
-test("opens controlling terminal as input when stdin is not a TTY", async () => {
-  process.stdin.isTTY = false;
+test("confirm throws UserAbortError when clack returns cancel symbol", async () => {
+  confirmResult = cancelSymbol;
 
-  const mockStream = { close: mock(() => {}), on: mock(() => mockStream) };
-  const createReadStreamSpy = spyOn(await import("node:fs"), "createReadStream").mockReturnValue(
-    mockStream as any,
-  );
-
-  await confirm({ message: "Continue?" });
-
-  // Should use the platform-appropriate TTY path
-  const expectedPath = process.platform === "win32" ? "CONIN$" : "/dev/tty";
-  expect(createReadStreamSpy).toHaveBeenCalledWith(expectedPath);
-  expect(lastConfirmArgs[1]).toEqual({ input: mockStream });
-  expect(mockStream.close).toHaveBeenCalled();
-
-  createReadStreamSpy.mockRestore();
-});
-
-test("closes tty stream even when confirm throws", async () => {
-  process.stdin.isTTY = false;
-  confirmResult = new Error("user cancelled");
-
-  const mockStream = { close: mock(() => {}), on: mock(() => mockStream) };
-  const createReadStreamSpy = spyOn(await import("node:fs"), "createReadStream").mockReturnValue(
-    mockStream as any,
-  );
-
-  await expect(confirm({ message: "Continue?" })).rejects.toThrow("user cancelled");
-  expect(mockStream.close).toHaveBeenCalled();
-
-  createReadStreamSpy.mockRestore();
-});
-
-test("text passes config through to inquirer input", async () => {
-  process.stdin.isTTY = true;
-  inputResult = "hello";
-  const result = await text({ message: "Name?" });
-
-  expect(result).toBe("hello");
-  expect(lastInputArgs[0]).toEqual({ message: "Name?" });
-});
-
-test("text forwards default and validate options", async () => {
-  process.stdin.isTTY = true;
-  inputResult = "value";
-  const validate = (v: string) => v.length > 0;
-  await text({ message: "Name?", default: "anon", validate });
-
-  expect(lastInputArgs[0]).toEqual({ message: "Name?", default: "anon", validate });
-});
-
-test("text does not open tty when stdin is a TTY", async () => {
-  process.stdin.isTTY = true;
-  await text({ message: "Name?" });
-
-  expect(lastInputArgs[1]).toBeUndefined();
-});
-
-test("text opens controlling terminal when stdin is not a TTY", async () => {
-  process.stdin.isTTY = false;
-
-  const mockStream = { close: mock(() => {}), on: mock(() => mockStream) };
-  const createReadStreamSpy = spyOn(await import("node:fs"), "createReadStream").mockReturnValue(
-    mockStream as any,
-  );
-
-  await text({ message: "Name?" });
-
-  expect(lastInputArgs[1]).toEqual({ input: mockStream });
-  expect(mockStream.close).toHaveBeenCalled();
-
-  createReadStreamSpy.mockRestore();
-});
-
-test("text closes tty stream even when inquirer input throws", async () => {
-  process.stdin.isTTY = false;
-  inputResult = new Error("cancelled");
-
-  const mockStream = { close: mock(() => {}), on: mock(() => mockStream) };
-  const createReadStreamSpy = spyOn(await import("node:fs"), "createReadStream").mockReturnValue(
-    mockStream as any,
-  );
-
-  await expect(text({ message: "Name?" })).rejects.toThrow("cancelled");
-  expect(mockStream.close).toHaveBeenCalled();
-
-  createReadStreamSpy.mockRestore();
-});
-
-test("password passes config through to inquirer password", async () => {
-  process.stdin.isTTY = true;
-  passwordResult = "s3cret";
-  const result = await password({ message: "Secret?" });
-
-  expect(result).toBe("s3cret");
-  expect(lastPasswordArgs[0]).toEqual({ message: "Secret?" });
-});
-
-test("password forwards validate option", async () => {
-  process.stdin.isTTY = true;
-  const validate = (v: string) => v.length >= 8;
-  await password({ message: "Secret?", validate });
-
-  expect(lastPasswordArgs[0]).toEqual({ message: "Secret?", validate });
-});
-
-test("password does not open tty when stdin is a TTY", async () => {
-  process.stdin.isTTY = true;
-  await password({ message: "Secret?" });
-
-  expect(lastPasswordArgs[1]).toBeUndefined();
-});
-
-test("password opens controlling terminal when stdin is not a TTY", async () => {
-  process.stdin.isTTY = false;
-
-  const mockStream = { close: mock(() => {}), on: mock(() => mockStream) };
-  const createReadStreamSpy = spyOn(await import("node:fs"), "createReadStream").mockReturnValue(
-    mockStream as any,
-  );
-
-  await password({ message: "Secret?" });
-
-  expect(lastPasswordArgs[1]).toEqual({ input: mockStream });
-  expect(mockStream.close).toHaveBeenCalled();
-
-  createReadStreamSpy.mockRestore();
-});
-
-test("password closes tty stream even when inquirer password throws", async () => {
-  process.stdin.isTTY = false;
-  passwordResult = new Error("cancelled");
-
-  const mockStream = { close: mock(() => {}), on: mock(() => mockStream) };
-  const createReadStreamSpy = spyOn(await import("node:fs"), "createReadStream").mockReturnValue(
-    mockStream as any,
-  );
-
-  await expect(password({ message: "Secret?" })).rejects.toThrow("cancelled");
-  expect(mockStream.close).toHaveBeenCalled();
-
-  createReadStreamSpy.mockRestore();
-});
-
-test("editor passes config through to inquirer editor", async () => {
-  process.stdin.isTTY = true;
-  editorResult = "body content";
-  const result = await editor({ message: "Notes?" });
-
-  expect(result).toBe("body content");
-  expect(lastEditorArgs[0]).toEqual({ message: "Notes?" });
-});
-
-test("editor forwards default, postfix, and validate options", async () => {
-  process.stdin.isTTY = true;
-  const validate = (v: string) => v.length > 0;
-  await editor({ message: "Notes?", default: "draft", postfix: ".md", validate });
-
-  expect(lastEditorArgs[0]).toEqual({
-    message: "Notes?",
-    default: "draft",
-    postfix: ".md",
-    validate,
+  await expect(confirm({ message: "Continue?" })).rejects.toMatchObject({
+    name: "UserAbortError",
   });
-});
-
-test("editor does not open tty when stdin is a TTY", async () => {
-  process.stdin.isTTY = true;
-  await editor({ message: "Notes?" });
-
-  expect(lastEditorArgs[1]).toBeUndefined();
-});
-
-test("editor opens controlling terminal when stdin is not a TTY", async () => {
-  process.stdin.isTTY = false;
-
-  const mockStream = { close: mock(() => {}), on: mock(() => mockStream) };
-  const createReadStreamSpy = spyOn(await import("node:fs"), "createReadStream").mockReturnValue(
-    mockStream as any,
-  );
-
-  await editor({ message: "Notes?" });
-
-  expect(lastEditorArgs[1]).toEqual({ input: mockStream });
-  expect(mockStream.close).toHaveBeenCalled();
-
-  createReadStreamSpy.mockRestore();
-});
-
-test("editor closes tty stream even when inquirer editor throws", async () => {
-  process.stdin.isTTY = false;
-  editorResult = new Error("cancelled");
-
-  const mockStream = { close: mock(() => {}), on: mock(() => mockStream) };
-  const createReadStreamSpy = spyOn(await import("node:fs"), "createReadStream").mockReturnValue(
-    mockStream as any,
-  );
-
-  await expect(editor({ message: "Notes?" })).rejects.toThrow("cancelled");
-  expect(mockStream.close).toHaveBeenCalled();
-
-  createReadStreamSpy.mockRestore();
 });
