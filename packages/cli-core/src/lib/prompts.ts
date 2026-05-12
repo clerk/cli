@@ -10,7 +10,9 @@ import {
   password as clackPassword,
 } from "@clack/prompts";
 import { isCancel } from "@clack/core";
+import { editAsync } from "external-editor";
 import { throwUserAbort } from "./errors.ts";
+import { log } from "./log.ts";
 
 function unwrap<T>(value: T | symbol): T {
   if (isCancel(value)) throwUserAbort();
@@ -52,4 +54,29 @@ export async function password(config: {
     validate: config.validate,
   });
   return unwrap(result);
+}
+
+/** Multi-line editor input. Shells out to $EDITOR via external-editor. */
+export async function editor(config: {
+  message: string;
+  default?: string;
+  postfix?: string;
+  validate?: (value: string | undefined) => string | Error | undefined;
+}): Promise<string> {
+  log.info(config.message);
+
+  for (;;) {
+    const raw = await new Promise<string>((resolve, reject) => {
+      editAsync(config.default ?? "", (err, value) => (err ? reject(err) : resolve(value)), {
+        postfix: config.postfix,
+      });
+    });
+
+    const trimmed = raw.replace(/\n$/, "");
+    if (!config.validate) return trimmed;
+
+    const verdict = config.validate(trimmed);
+    if (verdict === undefined) return trimmed;
+    log.warn(typeof verdict === "string" ? verdict : verdict.message);
+  }
 }

@@ -1,4 +1,5 @@
 import { test, expect, mock, beforeEach } from "bun:test";
+import { captureLog } from "../test/lib/stubs.ts";
 
 // Sentinel for cancellation. Tests choose this symbol; the mocked
 // @clack/core.isCancel below treats it as the clack cancel signal.
@@ -10,6 +11,13 @@ let lastTextConfig: Record<string, unknown> | undefined;
 let textResult: string | symbol = "";
 let lastPasswordConfig: Record<string, unknown> | undefined;
 let passwordResult: string | symbol = "";
+
+interface EditorCall {
+  text: string;
+  opts: Record<string, unknown> | undefined;
+}
+let editorCalls: EditorCall[] = [];
+let editorResults: string[] = [];
 
 mock.module("@clack/prompts", () => ({
   confirm: async (config: Record<string, unknown>) => {
@@ -39,15 +47,19 @@ mock.module("@clack/core", () => ({
 
 mock.module("external-editor", () => ({
   editAsync: (
-    _text: string,
-    _cb: (err: Error | null, value: string) => void,
-    _opts?: Record<string, unknown>,
+    text: string,
+    cb: (err: Error | null, value: string) => void,
+    opts?: Record<string, unknown>,
   ) => {
-    // Real implementation overridden in editor tests via spyOn.
+    editorCalls.push({ text, opts });
+    const next = editorResults.shift() ?? "";
+    // Defer to next microtask so the wrapper's Promise resolves
+    // through the same path it would in production.
+    queueMicrotask(() => cb(null, next));
   },
 }));
 
-const { confirm, text, password } = await import("./prompts.ts");
+const { confirm, text, password, editor } = await import("./prompts.ts");
 
 beforeEach(() => {
   lastConfirmConfig = undefined;
@@ -56,6 +68,8 @@ beforeEach(() => {
   textResult = "";
   lastPasswordConfig = undefined;
   passwordResult = "";
+  editorCalls = [];
+  editorResults = [];
 });
 
 test("confirm passes message to clack and returns true", async () => {
@@ -143,4 +157,59 @@ test("password throws UserAbortError when clack returns cancel symbol", async ()
   await expect(password({ message: "Secret?" })).rejects.toMatchObject({
     name: "UserAbortError",
   });
+});
+
+test("editor invokes external-editor with the default body and postfix", async () => {
+  editorResults = ["my notes"];
+  const captured = captureLog();
+
+  const result = await captured.run(() =>
+    editor({ message: "Notes?", default: "draft", postfix: ".md" }),
+  );
+
+  expect(result).toBe("my notes");
+  expect(editorCalls).toHaveLength(1);
+  expect(editorCalls[0]?.text).toBe("draft");
+  expect(editorCalls[0]?.opts).toEqual({ postfix: ".md" });
+  expect(captured.err).toContain("Notes?");
+});
+
+test("editor strips a single trailing newline from the editor output", async () => {
+  editorResults = ["body\n"];
+  const captured = captureLog();
+
+  const result = await captured.run(() => editor({ message: "Notes?" }));
+
+  expect(result).toBe("body");
+});
+
+test("editor re-prompts when validate returns an error message", async () => {
+  editorResults = ["", "good"];
+  const captured = captureLog();
+
+  const result = await captured.run(() =>
+    editor({
+      message: "Notes?",
+      validate: (v) => (v?.trim() ? undefined : "required"),
+    }),
+  );
+
+  expect(result).toBe("good");
+  expect(editorCalls).toHaveLength(2);
+  expect(captured.err).toContain("required");
+});
+
+test("editor re-prompts when validate returns an Error", async () => {
+  editorResults = ["bad", "ok"];
+  const captured = captureLog();
+
+  const result = await captured.run(() =>
+    editor({
+      message: "Notes?",
+      validate: (v) => (v === "ok" ? undefined : new Error("not ok")),
+    }),
+  );
+
+  expect(result).toBe("ok");
+  expect(captured.err).toContain("not ok");
 });
