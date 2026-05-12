@@ -9,7 +9,12 @@
  * Uses the shared ttyContext from lib/listage.ts for consistent error handling.
  */
 
-import { confirm as inquirerConfirm } from "@inquirer/prompts";
+import {
+  confirm as inquirerConfirm,
+  input as inquirerInput,
+  password as inquirerPassword,
+  editor as inquirerEditor,
+} from "@inquirer/prompts";
 import { ttyContext } from "./listage.ts";
 
 /**
@@ -21,6 +26,48 @@ export async function confirm(config: { message: string; default?: boolean }): P
   const tty = ttyContext();
   try {
     return await inquirerConfirm(config, tty ? { input: tty.input } : undefined);
+  } finally {
+    tty?.close();
+  }
+}
+
+/** Single-line text input. Named `text` to match the post-clack API. */
+export async function text(config: {
+  message: string;
+  default?: string;
+  validate?: (value: string) => boolean | string | Promise<boolean | string>;
+}): Promise<string> {
+  const tty = ttyContext();
+  try {
+    return await inquirerInput(config, tty ? { input: tty.input } : undefined);
+  } finally {
+    tty?.close();
+  }
+}
+
+/** Masked password input. */
+export async function password(config: {
+  message: string;
+  validate?: (value: string) => boolean | string | Promise<boolean | string>;
+}): Promise<string> {
+  const tty = ttyContext();
+  try {
+    return await inquirerPassword(config, tty ? { input: tty.input } : undefined);
+  } finally {
+    tty?.close();
+  }
+}
+
+/** Multiline editor input ($EDITOR shellout). */
+export async function editor(config: {
+  message: string;
+  default?: string;
+  postfix?: string;
+  validate?: (value: string) => boolean | string | Promise<boolean | string>;
+}): Promise<string> {
+  const tty = ttyContext();
+  try {
+    return await inquirerEditor(config, tty ? { input: tty.input } : undefined);
   } finally {
     tty?.close();
   }
