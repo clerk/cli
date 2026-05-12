@@ -55,7 +55,7 @@ export async function link(options: LinkOptions = {}): Promise<void> {
     );
   }
 
-  intro("clerk link");
+  intro("Linking project");
 
   if (existing && agent) {
     printExistingStatus(existing, normalizedRemote);
