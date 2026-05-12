@@ -47,7 +47,7 @@ mock.module("external-editor", () => ({
   },
 }));
 
-const { confirm } = await import("./prompts.ts");
+const { confirm, text } = await import("./prompts.ts");
 
 beforeEach(() => {
   lastConfirmConfig = undefined;
@@ -83,6 +83,40 @@ test("confirm throws UserAbortError when clack returns cancel symbol", async () 
   confirmResult = cancelSymbol;
 
   await expect(confirm({ message: "Continue?" })).rejects.toMatchObject({
+    name: "UserAbortError",
+  });
+});
+
+test("text passes message to clack and returns the typed value", async () => {
+  textResult = "hello";
+  const result = await text({ message: "Name?" });
+
+  expect(result).toBe("hello");
+  expect(lastTextConfig).toEqual({
+    message: "Name?",
+    initialValue: undefined,
+    placeholder: undefined,
+    validate: undefined,
+  });
+});
+
+test("text forwards default, placeholder, and validate to clack", async () => {
+  textResult = "value";
+  const validate = (v: string | undefined) => (v?.trim() ? undefined : "required");
+  await text({ message: "Name?", default: "anon", placeholder: "type a name", validate });
+
+  expect(lastTextConfig).toEqual({
+    message: "Name?",
+    initialValue: "anon",
+    placeholder: "type a name",
+    validate,
+  });
+});
+
+test("text throws UserAbortError when clack returns cancel symbol", async () => {
+  textResult = cancelSymbol;
+
+  await expect(text({ message: "Name?" })).rejects.toMatchObject({
     name: "UserAbortError",
   });
 });

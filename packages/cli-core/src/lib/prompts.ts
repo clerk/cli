@@ -4,7 +4,7 @@
  * call sites never deal with the symbol directly.
  */
 
-import { confirm as clackConfirm } from "@clack/prompts";
+import { confirm as clackConfirm, text as clackText } from "@clack/prompts";
 import { isCancel } from "@clack/core";
 import { throwUserAbort } from "./errors.ts";
 
@@ -18,6 +18,22 @@ export async function confirm(config: { message: string; default?: boolean }): P
   const result = await clackConfirm({
     message: config.message,
     initialValue: config.default,
+  });
+  return unwrap(result);
+}
+
+/** Single-line text input. */
+export async function text(config: {
+  message: string;
+  default?: string;
+  placeholder?: string;
+  validate?: (value: string | undefined) => string | Error | undefined;
+}): Promise<string> {
+  const result = await clackText({
+    message: config.message,
+    initialValue: config.default,
+    placeholder: config.placeholder,
+    validate: config.validate,
   });
   return unwrap(result);
 }
