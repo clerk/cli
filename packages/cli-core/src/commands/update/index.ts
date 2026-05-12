@@ -242,7 +242,7 @@ function detectPackageRunner(): "npx" | "bunx" | null {
 // ── Confirmation ─────────────────────────────────────────────────────────────
 
 async function confirmUpdate(currentVersion: string, latestVersion: string): Promise<boolean> {
-  const { confirm } = await import("@inquirer/prompts");
+  const { confirm } = await import("../../lib/prompts.ts");
   return confirm({
     message: `Update clerk ${currentVersion} → ${latestVersion}?`,
     default: true,

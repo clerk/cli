@@ -93,7 +93,7 @@ export async function doctor(options: DoctorOptions = {}): Promise<void> {
       log.info(bold("Auto-fix"));
       log.blank();
 
-      const { confirm } = await import("@inquirer/prompts");
+      const { confirm } = await import("../../lib/prompts.ts");
 
       for (const result of uniqueFixable) {
         const fix = result.fix;
