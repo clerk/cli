@@ -342,60 +342,23 @@ describe("deploy", () => {
   });
 
   describe("agent mode", () => {
-    test("outputs deploy prompt and returns", async () => {
+    test("exits with human mode guidance", async () => {
       mockIsAgent.mockReturnValue(true);
-      consoleSpy = spyOn(console, "log").mockImplementation(() => {});
 
-      await runDeploy({});
+      await expect(runDeploy({})).rejects.toMatchObject({
+        code: "usage_error",
+        exitCode: EXIT_CODE.USAGE,
+        message:
+          "clerk deploy requires human mode because production configuration uses interactive prompts. Run `clerk deploy --mode human` from an interactive terminal.",
+      });
 
-      expect(captured.out).toContain("deploying a Clerk application to production");
-    });
-
-    test("prompt includes all deployment steps", async () => {
-      mockIsAgent.mockReturnValue(true);
-      consoleSpy = spyOn(console, "log").mockImplementation(() => {});
-
-      await runDeploy({});
-
-      const output = captured.out;
-      expect(output).toContain("Prerequisites");
-      expect(output).toContain("Validate Cloning");
-      expect(output).toContain("Discover enabled OAuth providers");
-      expect(output).toContain("Create the Production Instance");
-      expect(output).toContain("Configure Social OAuth Providers");
-      expect(output).toContain("Finalize");
-    });
-
-    test("prompt includes API reference for new deploy lifecycle endpoints", async () => {
-      mockIsAgent.mockReturnValue(true);
-      consoleSpy = spyOn(console, "log").mockImplementation(() => {});
-
-      await runDeploy({});
-
-      const output = captured.out;
-      expect(output).toContain("/v1/platform/applications");
-      expect(output).toContain("validate_cloning");
-      expect(output).toContain("production_instance");
-      expect(output).toContain("deploy_status");
-      expect(output).toContain("ssl_retry");
-      expect(output).toContain("mail_retry");
-    });
-
-    test("prompt includes OAuth redirect URI pattern", async () => {
-      mockIsAgent.mockReturnValue(true);
-      consoleSpy = spyOn(console, "log").mockImplementation(() => {});
-
-      await runDeploy({});
-
-      const output = captured.out;
-      expect(output).toContain("accounts.{domain}/v1/oauth_callback");
+      expect(captured.out).toBe("");
     });
 
     test("does not trigger interactive prompts", async () => {
       mockIsAgent.mockReturnValue(true);
-      consoleSpy = spyOn(console, "log").mockImplementation(() => {});
 
-      await runDeploy({ debug: true });
+      await expect(runDeploy({ debug: true })).rejects.toBeInstanceOf(CliError);
 
       expect(mockSelect).not.toHaveBeenCalled();
       expect(mockInput).not.toHaveBeenCalled();

@@ -24,8 +24,17 @@ export function intro(title?: string) {
   pushPrefix();
 }
 
-/** Print outro bracket: └  message — restores normal log output.
- *  Pass a string[] to render as next steps after the bracket. */
+/**
+ * Print outro bracket:
+ *
+ * ```
+ *  │
+ *  └  $message
+ * ```
+ *
+ * Then restores normal log output. Pass a string[] to render as next steps
+ * after the bracket.
+ **/
 export function outro(messageOrSteps?: string | readonly string[]) {
   if (!isHuman()) return;
   popPrefix();
