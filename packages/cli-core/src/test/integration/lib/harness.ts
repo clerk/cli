@@ -202,7 +202,6 @@ mock.module("../../../lib/listage.ts", () => ({
       return item instanceof Separator;
     }
   },
-  ttyContext: () => undefined,
 }));
 
 mock.module("../../../lib/prompts.ts", () => ({
