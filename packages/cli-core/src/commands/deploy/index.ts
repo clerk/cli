@@ -1,6 +1,5 @@
-import { input, password } from "@inquirer/prompts";
 import { select } from "../../lib/listage.ts";
-import { confirm } from "../../lib/prompts.ts";
+import { confirm, password, text } from "../../lib/prompts.ts";
 import { isAgent } from "../../mode.ts";
 import { dim, bold, cyan, green, blue } from "../../lib/color.ts";
 import { printNextSteps, NEXT_STEPS } from "../../lib/next-steps.ts";
@@ -142,7 +141,7 @@ export async function deploy(options: { debug?: boolean }) {
   let domain: string;
 
   if (domainChoice === "custom-domain") {
-    domain = await input({
+    domain = await text({
       message: "Enter your domain:",
     });
     log.debug(`User provided custom domain: ${domain}`);
@@ -228,7 +227,7 @@ export async function deploy(options: { debug?: boolean }) {
         log.data("Once you've created your credentials, enter them below:\n");
       }
 
-      const clientId = await input({
+      const clientId = await text({
         message: `${displayName} OAuth Client ID:`,
       });
 
