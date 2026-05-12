@@ -13,17 +13,26 @@ runs:
   using: composite
   steps:
     - uses: oven-sh/setup-bun@v2
-    - uses: actions/cache@v5
-      if: inputs.cache == 'read-write'
+
+    # Restore on both 'restore' and 'read-write'. Save is the only difference.
+    - name: Restore Bun cache
+      if: inputs.cache != 'none'
+      uses: actions/cache/restore@v5
       with:
         path: ~/.bun/install/cache
         key: bun-${{ runner.os }}-${{ hashFiles('bun.lock') }}
         restore-keys: bun-${{ runner.os }}-
-    - uses: actions/cache/restore@v5
-      if: inputs.cache == 'restore'
-      with:
-        path: ~/.bun/install/cache
-        key: bun-${{ runner.os }}-${{ hashFiles('bun.lock') }}
-        restore-keys: bun-${{ runner.os }}-
+
     - run: bun install --frozen-lockfile
       shell: bash
+
+    # Save only from trusted contexts. PR-triggered runs (github.event_name
+    # == 'pull_request') skip the save so PR-controlled code cannot poison
+    # the cache for future runs. Push to main and workflow_call invocations
+    # from release.yml (which inherit 'push' or 'issue_comment') do save.
+    - name: Save Bun cache
+      if: inputs.cache == 'read-write' && github.event_name != 'pull_request'
+      uses: actions/cache/save@v5
+      with:
+        path: ~/.bun/install/cache
+        key: bun-${{ runner.os }}-${{ hashFiles('bun.lock') }}
