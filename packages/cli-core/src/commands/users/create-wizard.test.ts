@@ -17,8 +17,8 @@ mock.module("../../lib/fapi.ts", () => ({
     instanceType: pk.startsWith("pk_test_") ? "development" : "production",
   }),
 }));
-mock.module("@inquirer/prompts", () => ({
-  input: (...args: unknown[]) => mockInput(...args),
+mock.module("../../lib/prompts.ts", () => ({
+  text: (...args: unknown[]) => mockInput(...args),
   password: (...args: unknown[]) => mockPassword(...args),
   confirm: async () => true,
   editor: async () => "",

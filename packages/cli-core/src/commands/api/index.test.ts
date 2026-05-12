@@ -8,7 +8,7 @@ import {
   credentialStoreStubs,
   gitStubs,
   configStubs,
-  promptsStubs,
+  libPromptsStubs,
   stubFetch,
 } from "../../test/lib/stubs.ts";
 
@@ -171,7 +171,7 @@ mock.module("../../lib/config.ts", () => ({
   },
 }));
 
-mock.module("@inquirer/prompts", () => promptsStubs);
+mock.module("../../lib/prompts.ts", () => libPromptsStubs);
 
 const { _setConfigDir } = (await import("../../lib/config.ts")) as any;
 const { setMode } = (await import("../../mode.ts")) as any;

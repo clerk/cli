@@ -1,5 +1,5 @@
 import { test, expect, describe, beforeEach, afterEach, mock, spyOn } from "bun:test";
-import { captureLog, promptsStubs, listageStubs } from "../../test/lib/stubs.ts";
+import { captureLog, listageStubs } from "../../test/lib/stubs.ts";
 
 const mockIsAgent = mock();
 let _modeOverride: string | undefined;
@@ -19,14 +19,6 @@ const mockSelect = mock();
 const mockInput = mock();
 const mockConfirm = mock();
 const mockPassword = mock();
-
-mock.module("@inquirer/prompts", () => ({
-  ...promptsStubs,
-  select: (...args: unknown[]) => mockSelect(...args),
-  input: (...args: unknown[]) => mockInput(...args),
-  confirm: (...args: unknown[]) => mockConfirm(...args),
-  password: (...args: unknown[]) => mockPassword(...args),
-}));
 
 mock.module("../../lib/prompts.ts", () => ({
   confirm: (...args: unknown[]) => mockConfirm(...args),

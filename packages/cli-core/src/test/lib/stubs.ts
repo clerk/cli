@@ -95,6 +95,18 @@ export const promptsStubs = {
   editor: async () => "{}",
 };
 
+/**
+ * Stubs for `lib/prompts.ts`. Use these when mocking the wrapper module
+ * directly rather than `@inquirer/prompts`. The wrapper exposes `text` in
+ * place of inquirer's `input`.
+ */
+export const libPromptsStubs = {
+  confirm: async () => true,
+  text: async () => "",
+  password: async () => "",
+  editor: async () => "{}",
+};
+
 export { listageStubs } from "./listage-stubs.ts";
 
 export const tokenExchangeStubs = {

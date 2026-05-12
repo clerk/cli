@@ -1,5 +1,5 @@
 import { test, expect, describe, beforeEach, afterEach, mock, spyOn } from "bun:test";
-import { captureLog, configStubs, gitStubs, promptsStubs } from "../../test/lib/stubs.ts";
+import { captureLog, configStubs, gitStubs } from "../../test/lib/stubs.ts";
 
 const mockIsAgent = mock();
 const mockIsHuman = mock();
@@ -30,11 +30,6 @@ mock.module("../../lib/git.ts", () => ({
 }));
 
 const mockConfirm = mock();
-mock.module("@inquirer/prompts", () => ({
-  ...promptsStubs,
-  confirm: (...args: unknown[]) => mockConfirm(...args),
-}));
-
 mock.module("../../lib/prompts.ts", () => ({
   confirm: (...args: unknown[]) => mockConfirm(...args),
   text: async () => "",

@@ -7,14 +7,14 @@ import {
   captureLog,
   credentialStoreStubs,
   gitStubs,
-  promptsStubs,
+  libPromptsStubs,
   stubFetch,
 } from "../../test/lib/stubs.ts";
 import { printDiff, hasConfigChanges } from "./push.ts";
 
 mock.module("../../lib/credential-store.ts", () => credentialStoreStubs);
 mock.module("../../lib/git.ts", () => gitStubs);
-mock.module("@inquirer/prompts", () => promptsStubs);
+mock.module("../../lib/prompts.ts", () => libPromptsStubs);
 mock.module("../../lib/spinner.ts", () => ({
   withSpinner: async (_msg: string, fn: () => Promise<unknown>) => fn(),
 }));

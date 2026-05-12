@@ -2,7 +2,7 @@ import { test, expect, describe, beforeEach, afterEach, spyOn, mock } from "bun:
 import { mkdtemp, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { captureLog, promptsStubs, listageStubs, stubFetch } from "../../test/lib/stubs.ts";
+import { captureLog, listageStubs, stubFetch } from "../../test/lib/stubs.ts";
 
 let _mode = "human";
 mock.module("../../mode.ts", () => ({
@@ -55,13 +55,6 @@ let confirmResponses: boolean[] = [];
 
 // Track fetch calls made by the real api handler
 let fetchCalls: { url: string; method: string }[] = [];
-
-mock.module("@inquirer/prompts", () => ({
-  ...promptsStubs,
-  select: async () => selectResponses.shift(),
-  input: async () => inputResponses.shift(),
-  confirm: async () => confirmResponses.shift(),
-}));
 
 mock.module("../../lib/prompts.ts", () => ({
   confirm: async () => confirmResponses.shift(),

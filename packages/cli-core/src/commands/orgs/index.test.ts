@@ -3,17 +3,10 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { _setConfigDir, setProfile } from "../../lib/config.ts";
-import {
-  captureLog,
-  credentialStoreStubs,
-  gitStubs,
-  promptsStubs,
-  stubFetch,
-} from "../../test/lib/stubs.ts";
+import { captureLog, credentialStoreStubs, gitStubs, stubFetch } from "../../test/lib/stubs.ts";
 
 mock.module("../../lib/credential-store.ts", () => credentialStoreStubs);
 mock.module("../../lib/git.ts", () => gitStubs);
-mock.module("@inquirer/prompts", () => promptsStubs);
 mock.module("../../lib/spinner.ts", () => ({
   withSpinner: async (_msg: string, fn: () => Promise<unknown>) => fn(),
 }));
