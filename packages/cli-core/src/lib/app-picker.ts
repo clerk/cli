@@ -4,7 +4,7 @@
  * project is linked and no --app was provided.
  */
 
-import { input } from "@inquirer/prompts";
+import { text } from "./prompts.ts";
 import { cyan, dim } from "./color.ts";
 import { CliError, ERROR_CODE, PlapiError, withApiContext } from "./errors.ts";
 import { search } from "./listage.ts";
@@ -63,7 +63,7 @@ export async function pickOrCreateApp(opts: {
   });
 
   if (selectedId === CREATE_NEW_APP) {
-    const name = await input({
+    const name = await text({
       message: "Application name:",
       validate: (v) => (v.trim() ? true : "Application name cannot be empty"),
     });
