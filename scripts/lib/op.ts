@@ -6,7 +6,7 @@
 
 import { $ } from "bun";
 
-const OP_ACCOUNT = "team-clerk";
+const TEAM_CLERK_ACCOUNT = "team-clerk";
 
 const INSTALL_HINT =
   "1Password CLI is not installed. Install it with `brew install 1password-cli`.";
@@ -28,10 +28,44 @@ export async function ensureOpInstalled(): Promise<void> {
 }
 
 /**
+ * Finds the number of 1Password accounts available locally.
+ *
+ * @returns `0` if `op` is missing, the command fails, or the output is not a JSON array.
+ */
+async function getOpAccountCount(): Promise<number> {
+  const res = await $`op account list --format json`
+    .env({ ...process.env })
+    .quiet()
+    .nothrow();
+
+  if (res.exitCode !== 0) {
+    return 0;
+  }
+
+  try {
+    const parsed: unknown = JSON.parse(res.stdout.toString());
+    return Array.isArray(parsed) ? parsed.length : 0;
+  } catch {
+    return 0;
+  }
+}
+
+/**
+ * Gets the 1Password account to use for the current operation.
+ *
+ * @returns the team-clerk account if there are multiple accounts, otherwise an empty string.
+ */
+async function getOpAccount(): Promise<string> {
+  const opAccountCount = await getOpAccountCount();
+  return opAccountCount > 1 ? TEAM_CLERK_ACCOUNT : "";
+}
+
+/**
  * Read a secret or document from 1Password by `op://` reference.
  * Throws with a helpful hint if the read fails.
  */
 export async function readOpItem(reference: string): Promise<string> {
+  const OP_ACCOUNT = await getOpAccount();
   const result = await $`op read ${reference}`
     .env({ ...process.env, OP_ACCOUNT })
     .quiet()
@@ -58,6 +92,7 @@ export async function runWithOpSecrets(
     throw new Error("runWithOpSecrets requires at least one command argument.");
   }
 
+  const OP_ACCOUNT = await getOpAccount();
   const proc = Bun.spawn(["op", "run", "--", ...command], {
     stdio: ["inherit", "inherit", "inherit"],
     env: { ...process.env, OP_ACCOUNT, ...references },
