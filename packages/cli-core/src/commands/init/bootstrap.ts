@@ -1,4 +1,5 @@
 import { join } from "node:path";
+import { statSync } from "node:fs";
 import { confirm, text } from "../../lib/prompts.ts";
 import { search, filterChoices } from "../../lib/listage.ts";
 import { throwUserAbort, throwUsageError, CliError } from "../../lib/errors.js";
@@ -81,6 +82,14 @@ export function resolvePackageManager(): PackageManager {
   return "npm";
 }
 
+function dirExistsSync(path: string): boolean {
+  try {
+    return statSync(path).isDirectory();
+  } catch {
+    return false;
+  }
+}
+
 function validateProjectName(value: string): string | true {
   if (!value.trim()) return "Project name is required";
   if (/[A-Z]/.test(value)) return "Project name must be lowercase";
@@ -108,13 +117,14 @@ async function askProjectName(entry: BootstrapEntry, cwd: string): Promise<strin
   const name = await text({
     message: "Project name:",
     default: defaultName,
-    validate: async (value) => {
-      const valid = validateProjectName(value);
+    validate: (value) => {
+      const trimmed = value?.trim() ?? "";
+      const valid = validateProjectName(trimmed);
       if (valid !== true) return valid;
-      if (await dirExists(join(cwd, value.trim()))) {
-        return `Directory '${value.trim()}' already exists. Pick a different name.`;
+      if (dirExistsSync(join(cwd, trimmed))) {
+        return `Directory '${trimmed}' already exists. Pick a different name.`;
       }
-      return true;
+      return undefined;
     },
   });
   return name.trim();

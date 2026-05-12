@@ -52,7 +52,7 @@ export async function apiInteractive(options: ApiOptions): Promise<void> {
   for (const param of endpoint.pathParams) {
     const value = await text({
       message: param.description ? `${param.name} (${param.description}):` : `${param.name}:`,
-      validate: (v: string) => v.trim().length > 0 || `${param.name} is required`,
+      validate: (v) => (v?.trim() ? undefined : `${param.name} is required`),
     });
     resolvedPath = resolvedPath.replace(`{${param.name}}`, value.trim());
   }
@@ -70,10 +70,10 @@ export async function apiInteractive(options: ApiOptions): Promise<void> {
         message: "Enter request body (JSON):",
         default: "{}",
         postfix: ".json",
-        validate: (v: string) => {
+        validate: (v) => {
           try {
-            JSON.parse(v);
-            return true;
+            JSON.parse(v ?? "");
+            return undefined;
           } catch {
             return "Invalid JSON";
           }

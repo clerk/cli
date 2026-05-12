@@ -65,7 +65,7 @@ export async function pickOrCreateApp(opts: {
   if (selectedId === CREATE_NEW_APP) {
     const name = await text({
       message: "Application name:",
-      validate: (v) => (v.trim() ? true : "Application name cannot be empty"),
+      validate: (v) => (v?.trim() ? undefined : "Application name cannot be empty"),
     });
     const created = await withApiContext(
       createApplication(name.trim()),
