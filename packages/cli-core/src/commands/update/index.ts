@@ -261,7 +261,7 @@ export async function update(options: UpdateOptions): Promise<void> {
 
   const channel = options.channel ?? getUpdateChannel();
 
-  if (isHuman()) intro("clerk update");
+  if (isHuman()) intro("Checking for updates");
 
   const [latest, installDirs] = await Promise.all([
     withSpinner("Checking for updates...", () => fetchLatestVersion(channel)).catch(() => {

@@ -84,7 +84,7 @@ export async function openDashboard(
 
   // Human mode — use intro/outro logging flow
   const target = subpath ? ` → ${cyan(subpath)}` : "";
-  intro("clerk open");
+  intro("Opening dashboard");
 
   if (unknownPath) {
     log.warn(`"${subpath}" is not a known dashboard path. Opening anyway — verify the URL.`);

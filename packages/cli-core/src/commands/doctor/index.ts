@@ -62,7 +62,7 @@ function printResults(results: CheckResult[], options: DoctorOptions): void {
 
 export async function doctor(options: DoctorOptions = {}): Promise<void> {
   if (!options.json) {
-    intro("clerk doctor");
+    intro("Running diagnostics");
   }
 
   const ctx = createDoctorContext();
