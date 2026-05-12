@@ -626,7 +626,7 @@ Give AI agents better Clerk context: install the Clerk skills
       { command: "clerk enable orgs", description: "Enable organizations" },
       {
         command: "clerk enable orgs --force-selection --max-members 10",
-        description: "Enable orgs with options",
+        description: "Enable organizations with options",
       },
       {
         command: "clerk enable billing --for orgs",
