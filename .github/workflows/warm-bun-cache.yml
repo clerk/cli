@@ -1,8 +1,8 @@
 name: Warm Bun cache
 
-# Populates ~/.bun/install/cache for PRs to read via the setup-bun composite's
-# restore step. Runs only on push to main so untrusted (PR/snapshot) code can
-# never reach a cache save action.
+# Populates ~/.bun/install/cache for PR and release runs to read.
+# Runs only on push to main so untrusted (PR/snapshot) code never reaches
+# the cache save action.
 
 on:
   push:

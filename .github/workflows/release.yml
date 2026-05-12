@@ -36,9 +36,13 @@ jobs:
       version: ${{ steps.check.outputs.version }}
     steps:
       - uses: actions/checkout@v6
-      - uses: ./.github/actions/setup-bun
+      - uses: oven-sh/setup-bun@v2
+      - uses: actions/cache/restore@v5
         with:
-          cache: restore
+          path: ~/.bun/install/cache
+          key: bun-${{ runner.os }}-${{ hashFiles('bun.lock') }}
+          restore-keys: bun-${{ runner.os }}-
+      - run: bun install --frozen-lockfile
 
       - name: Check if release needed
         id: check
@@ -194,9 +198,13 @@ jobs:
       version: ${{ steps.version.outputs.version }}
     steps:
       - uses: actions/checkout@v6
-      - uses: ./.github/actions/setup-bun
+      - uses: oven-sh/setup-bun@v2
+      - uses: actions/cache/restore@v5
         with:
-          cache: restore
+          path: ~/.bun/install/cache
+          key: bun-${{ runner.os }}-${{ hashFiles('bun.lock') }}
+          restore-keys: bun-${{ runner.os }}-
+      - run: bun install --frozen-lockfile
 
       - name: Version packages for canary
         id: version
