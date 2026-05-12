@@ -20,6 +20,8 @@ mock.module("../../lib/fapi.ts", () => ({
 mock.module("@inquirer/prompts", () => ({
   input: (...args: unknown[]) => mockInput(...args),
   password: (...args: unknown[]) => mockPassword(...args),
+  confirm: async () => true,
+  editor: async () => "",
 }));
 mock.module("../../lib/spinner.ts", () => ({
   withSpinner: async (_msg: string, fn: () => Promise<unknown>) => fn(),

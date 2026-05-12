@@ -1,4 +1,4 @@
-import { input, password } from "@inquirer/prompts";
+import { password, text } from "../../lib/prompts.ts";
 import {
   bootstrapDevBrowser,
   decodePublishableKey,
@@ -106,6 +106,6 @@ async function promptField(field: FieldDef, required: boolean): Promise<string> 
   if (field.isPassword) {
     return password({ message, validate });
   }
-  const value = await input({ message, validate });
+  const value = await text({ message, validate });
   return value.trim();
 }
