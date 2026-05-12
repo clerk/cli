@@ -1,7 +1,7 @@
 import { listApplications, type Application } from "../../lib/plapi.ts";
 import { withApiContext } from "../../lib/errors.ts";
 import { dim, cyan } from "../../lib/color.ts";
-import { withSpinner } from "../../lib/spinner.ts";
+import { withSpinner, intro, outro } from "../../lib/spinner.ts";
 import { stripSecrets, displayName, printJson, type AppsOptions } from "./shared.ts";
 import { log } from "../../lib/log.ts";
 
@@ -25,14 +25,20 @@ function formatAppsTable(apps: Application[]): void {
 }
 
 export async function list(options: AppsOptions = {}): Promise<void> {
+  intro("Listing applications");
+
   const result = await withSpinner("Fetching applications...", () =>
     withApiContext(listApplications(), "Failed to list applications"),
   );
 
-  if (printJson(result.map(stripSecrets), options)) return;
+  if (printJson(result.map(stripSecrets), options)) {
+    outro();
+    return;
+  }
 
   if (result.length === 0) {
     log.warn("No applications found. Create one at https://dashboard.clerk.com");
+    outro();
     return;
   }
 
@@ -40,4 +46,5 @@ export async function list(options: AppsOptions = {}): Promise<void> {
 
   const count = result.length;
   log.info(`\n${count} application${count === 1 ? "" : "s"}`);
+  outro();
 }
