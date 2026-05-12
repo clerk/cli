@@ -2,9 +2,8 @@
  * Interactive API request builder for `clerk api` (no args, human mode).
  */
 
-import { input, editor } from "@inquirer/prompts";
 import { select } from "../../lib/listage.ts";
-import { confirm } from "../../lib/prompts.ts";
+import { confirm, editor, text } from "../../lib/prompts.ts";
 import { isHuman } from "../../mode.ts";
 import { loadCatalog, endpointsByTag, type EndpointInfo } from "./catalog.ts";
 import type { ApiOptions } from "./index.ts";
@@ -51,7 +50,7 @@ export async function apiInteractive(options: ApiOptions): Promise<void> {
   // 4. Fill path parameters
   let resolvedPath = endpoint.path;
   for (const param of endpoint.pathParams) {
-    const value = await input({
+    const value = await text({
       message: param.description ? `${param.name} (${param.description}):` : `${param.name}:`,
       validate: (v: string) => v.trim().length > 0 || `${param.name} is required`,
     });
