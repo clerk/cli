@@ -5,7 +5,7 @@
  */
 
 import { text } from "./prompts.ts";
-import { cyan, dim } from "./color.ts";
+import { cyan } from "./color.ts";
 import { CliError, ERROR_CODE, PlapiError, withApiContext } from "./errors.ts";
 import { search } from "./listage.ts";
 import { log } from "./log.ts";
@@ -47,9 +47,8 @@ export async function pickOrCreateApp(opts: {
 }): Promise<Application> {
   const appChoices = opts.apps.map((a) => ({ name: appLabel(a), value: a.application_id }));
   const createChoice = {
-    name: "+ Create a new application",
+    name: cyan("+ Create a new application"),
     value: CREATE_NEW_APP,
-    style: (text: string, isActive: boolean) => (isActive ? cyan(text) : dim(text)),
   };
 
   const selectedId = await search<string>({
