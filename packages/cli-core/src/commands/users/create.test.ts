@@ -28,6 +28,9 @@ mock.module("./create-wizard.ts", () => ({
 }));
 
 mock.module("../../lib/spinner.ts", () => ({
+  intro: () => {},
+  outro: () => {},
+  bar: () => {},
   withSpinner: async (_msg: string, fn: () => Promise<unknown>) => fn(),
 }));
 

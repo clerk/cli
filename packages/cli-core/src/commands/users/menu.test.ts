@@ -60,7 +60,7 @@ describe("usersMenu", () => {
 
     await usersMenu({ app: "app_123" });
 
-    expect(mockIntro).toHaveBeenCalledWith("clerk users");
+    expect(mockIntro).toHaveBeenCalledWith("Managing users");
     expect(mockSelect).toHaveBeenCalled();
     expect(handlerCalls).toEqual([{ app: "app_123" }]);
   });

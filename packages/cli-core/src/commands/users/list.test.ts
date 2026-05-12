@@ -20,6 +20,9 @@ mock.module("./interactive/instance-context.ts", () => ({
 
 const mockWithSpinner = mock((_msg: string, fn: () => Promise<unknown>) => fn());
 mock.module("../../lib/spinner.ts", () => ({
+  intro: () => {},
+  outro: () => {},
+  bar: () => {},
   withSpinner: (...args: Parameters<typeof mockWithSpinner>) => mockWithSpinner(...args),
 }));
 
@@ -273,7 +276,7 @@ describe("users list", () => {
     });
   });
 
-  test("routes the table to stderr (under the gutter) when invoked inside an intro/outro block", async () => {
+  test("keeps the table on stdout even when invoked inside an intro/outro block", async () => {
     pushPrefix();
     try {
       await runList();
@@ -281,10 +284,9 @@ describe("users list", () => {
       popPrefix();
     }
 
-    expect(captured.out).toBe("");
-    expect(captured.err).toContain("Alice Example");
-    expect(captured.err).toContain("user_123");
-    expect(captured.err).toContain("alice@example.com");
+    expect(captured.out).toContain("Alice Example");
+    expect(captured.out).toContain("user_123");
+    expect(captured.out).toContain("alice@example.com");
     expect(captured.err).toContain("2 users returned");
   });
 

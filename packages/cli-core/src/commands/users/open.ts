@@ -128,7 +128,7 @@ export async function open(options: UsersOpenOptions = {}): Promise<void> {
       return;
     }
 
-    intro("clerk users open");
+    intro("Opening user");
     log.info(`↗ Opening ${bold(target.appLabel)} (${target.instanceLabel}) → ${cyan(subpath)}`);
     log.info(`  ${dim(url)}`);
 

@@ -3,7 +3,7 @@ import { dim, cyan } from "../../lib/color.ts";
 import { CliError, ERROR_CODE } from "../../lib/errors.ts";
 import { isInsideGutter, log } from "../../lib/log.ts";
 import { isAgent, isHuman } from "../../mode.ts";
-import { withSpinner } from "../../lib/spinner.ts";
+import { withSpinner, intro, outro } from "../../lib/spinner.ts";
 import { bapiRequest } from "../api/bapi.ts";
 import { resolveUsersInstanceContext } from "./interactive/instance-context.ts";
 import { registerUsersAction } from "./registry.ts";
@@ -118,20 +118,14 @@ function formatUsersTable(users: BapiUser[]): void {
   const idWidth =
     Math.max("USER ID".length, ...users.map((user) => user.id.length)) + COLUMN_PADDING;
 
-  // Inside an intro/outro block, route rows to stderr so the gutter prefix is
-  // applied. Direct invocations still get the table on stdout for piping.
-  const emit = isInsideGutter()
-    ? (line: string) => log.info(line)
-    : (line: string) => log.data(line);
-
-  emit(
+  log.data(
     `${dim("NAME".padEnd(nameWidth))}${dim("USER ID".padEnd(idWidth))}${dim("PRIMARY IDENTIFIER")}`,
   );
 
   for (const user of users) {
     const name = cyan(userDisplayName(user).padEnd(nameWidth));
     const id = dim(user.id.padEnd(idWidth));
-    emit(`${name}${id}${primaryIdentifier(user)}`);
+    log.data(`${name}${id}${primaryIdentifier(user)}`);
   }
 }
 
@@ -168,6 +162,9 @@ async function resolveListSecretKey(options: UsersListOptions): Promise<string> 
 }
 
 export async function list(options: UsersListOptions = {}): Promise<void> {
+  const nested = isInsideGutter();
+  if (!nested) intro("Listing users");
+
   const secretKey = await resolveListSecretKey(options);
   const pageSize = options.limit ?? DEFAULT_LIMIT;
   const offset = options.offset ?? 0;
@@ -187,10 +184,14 @@ export async function list(options: UsersListOptions = {}): Promise<void> {
   const hasMore = allUsers.length > pageSize;
   const users = hasMore ? allUsers.slice(0, pageSize) : allUsers;
 
-  if (printJson({ data: users, hasMore }, options)) return;
+  if (printJson({ data: users, hasMore }, options)) {
+    if (!nested) outro();
+    return;
+  }
 
   if (users.length === 0) {
     log.warn("No users found.");
+    if (!nested) outro();
     return;
   }
 
@@ -202,6 +203,7 @@ export async function list(options: UsersListOptions = {}): Promise<void> {
   } else {
     log.info(summary);
   }
+  if (!nested) outro();
 }
 
 registerUsersAction({

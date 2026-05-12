@@ -1,6 +1,6 @@
 import { handleBapiError, resolveBapiSecretKey } from "../../lib/bapi-command.ts";
 import { throwUsageError } from "../../lib/errors.ts";
-import { log } from "../../lib/log.ts";
+import { isInsideGutter, log } from "../../lib/log.ts";
 import {
   buildCreateUserPayload,
   mergeUsersPayload,
@@ -10,7 +10,7 @@ import {
 } from "../../lib/users.ts";
 import { isHuman } from "../../mode.ts";
 import { bapiRequest } from "../api/bapi.ts";
-import { withSpinner } from "../../lib/spinner.ts";
+import { withSpinner, intro, outro } from "../../lib/spinner.ts";
 import { handleUsersBapiError, printUsersMutationResult } from "./output.ts";
 import { registerUsersAction } from "./registry.ts";
 import { runCreateWizard } from "./create-wizard.ts";
@@ -41,9 +41,13 @@ type ResolvedCreate = {
 export async function create(options: CreateUserOptions): Promise<void> {
   const { payload, resolved } = await resolveCreate(options);
 
+  const nested = isInsideGutter();
+
   if (resolved.dryRun) {
+    if (!nested) intro("Creating user");
     log.info("[dry-run] POST /v1/users");
     log.data(JSON.stringify(redactUsersDisplayPayload(payload), null, 2));
+    if (!nested) outro();
     return;
   }
 
@@ -52,6 +56,8 @@ export async function create(options: CreateUserOptions): Promise<void> {
     app: resolved.app,
     instance: resolved.instance,
   });
+
+  if (!nested) intro("Creating user");
 
   try {
     const response = await withSpinner("Creating user...", () =>
@@ -64,15 +70,31 @@ export async function create(options: CreateUserOptions): Promise<void> {
     );
 
     printUsersMutationResult("Created user", response.body, resolved);
+    if (!nested) {
+      const userId = extractUserId(response.body);
+      if (userId) {
+        outro([`Run \`clerk users open ${userId}\` to view this user in the dashboard`]);
+      } else {
+        outro();
+      }
+    }
   } catch (error) {
     if (handleUsersBapiError(error, "Failed to create user", resolved)) {
+      if (!nested) outro("Failed");
       return;
     }
     if (handleBapiError(error)) {
+      if (!nested) outro("Failed");
       return;
     }
     throw error;
   }
+}
+
+function extractUserId(body: unknown): string | undefined {
+  if (!body || typeof body !== "object" || Array.isArray(body)) return undefined;
+  const { id } = body as { id?: unknown };
+  return typeof id === "string" && id.length > 0 ? id : undefined;
 }
 
 async function resolveCreate(options: CreateUserOptions): Promise<ResolvedCreate> {

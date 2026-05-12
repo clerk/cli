@@ -22,7 +22,7 @@ export async function usersMenu(targeting: UsersActionTargeting = {}): Promise<v
     return;
   }
 
-  intro("clerk users");
+  intro("Managing users");
   const chosenKey = await select<string>({
     message: "What would you like to do?",
     choices: actions.map((action) => ({
