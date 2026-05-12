@@ -15,27 +15,28 @@ clerk enable billing [--for <targets>] [options]
 clerk disable billing [--for <targets>] [options]
 ```
 
-`<targets>` is `org` and/or `user`, accepted as space-separated, comma-separated,
-or repeated `--for` flags (matching `clerk config pull --keys`). When omitted,
-the command targets both:
+`<targets>` is `orgs` and/or `users`, accepted as space-separated, comma-separated,
+or repeated `--for` flags (matching `clerk config pull --keys`). The singular
+forms `org` and `user` are still accepted as aliases for backward compatibility.
+When omitted, the command targets both:
 
 ```sh
-clerk enable billing --for org user
-clerk enable billing --for org,user
-clerk enable billing --for org --for user
-clerk enable billing                   # defaults to both
+clerk enable billing --for orgs users
+clerk enable billing --for orgs,users
+clerk enable billing --for orgs --for users
+clerk enable billing                     # defaults to both
 ```
 
 ## Options
 
-| Flag              | Description                                                                     |
-| ----------------- | ------------------------------------------------------------------------------- |
-| `--for <targets>` | Targets (`org` and/or `user`), separated by spaces or commas. Defaults to both. |
-| `--app <id>`      | Target a specific application                                                   |
-| `--instance <id>` | Target a specific instance (dev, prod)                                          |
-| `--yes`           | Skip the confirmation prompt                                                    |
-| `--dry-run`       | Preview the patch without applying it                                           |
-| `--no-skills`     | Skip the post-enable `clerk-billing` agent skill install (enable only)          |
+| Flag              | Description                                                                       |
+| ----------------- | --------------------------------------------------------------------------------- |
+| `--for <targets>` | Targets (`orgs` and/or `users`), separated by spaces or commas. Defaults to both. |
+| `--app <id>`      | Target a specific application                                                     |
+| `--instance <id>` | Target a specific instance (dev, prod)                                            |
+| `--yes`           | Skip the confirmation prompt                                                      |
+| `--dry-run`       | Preview the patch without applying it                                             |
+| `--no-skills`     | Skip the post-enable `clerk-billing` agent skill install (enable only)            |
 
 ## Agent skill
 
@@ -50,7 +51,7 @@ The install runs via the user's package runner (`bunx`, `pnpm dlx`, `yarn dlx`, 
 
 ## Cascade behavior
 
-- `enable billing --for org` (or `org,user`, or no `--for`) **also** sets
+- `enable billing --for orgs` (or `orgs,users`, or no `--for`) **also** sets
   `organization_settings.enabled = true`. Billing for organizations requires
   organizations enabled, so this saves a separate command. The cascade is
   idempotent — if organizations are already on, the diff is empty for that
