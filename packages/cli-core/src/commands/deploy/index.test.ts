@@ -32,7 +32,26 @@ const mockValidateCloning = mock();
 const mockGetDeployStatus = mock();
 const mockRetrySSL = mock();
 const mockRetryMail = mock();
+const mockConfigureMockDeployApi = mock();
 const mockDomainConnectUrl = mock();
+
+type DeployApiMockOptions = {
+  failValidateCloning?: boolean;
+  failCreateProductionInstance?: boolean;
+  failDnsVerification?: boolean;
+  failOAuthSave?: boolean;
+};
+
+let mockDeployApiOptions: DeployApiMockOptions = {};
+
+function configureMockDeployApi(options: DeployApiMockOptions = {}) {
+  mockConfigureMockDeployApi(options);
+  mockDeployApiOptions = { ...options };
+}
+
+function simulatedDeployApiFailure(step: string): Error {
+  return new Error(`Simulated deploy failure: ${step}.`);
+}
 
 mock.module("@inquirer/prompts", () => ({
   ...promptsStubs,
@@ -55,15 +74,46 @@ mock.module("../../lib/plapi.ts", () => ({
   fetchInstanceConfig: (...args: unknown[]) => mockFetchInstanceConfig(...args),
   fetchApplication: (...args: unknown[]) => mockFetchApplication(...args),
   listApplicationDomains: (...args: unknown[]) => mockListApplicationDomains(...args),
-}));
-
-mock.module("./api.ts", () => ({
   createProductionInstance: (...args: unknown[]) => mockCreateProductionInstance(...args),
   validateCloning: (...args: unknown[]) => mockValidateCloning(...args),
   getDeployStatus: (...args: unknown[]) => mockGetDeployStatus(...args),
+  patchInstanceConfig: (...args: unknown[]) => mockPatchInstanceConfig(...args),
   retryApplicationDomainSSL: (...args: unknown[]) => mockRetrySSL(...args),
   retryApplicationDomainMail: (...args: unknown[]) => mockRetryMail(...args),
-  patchInstanceConfig: (...args: unknown[]) => mockPatchInstanceConfig(...args),
+}));
+
+mock.module("./api.ts", () => ({
+  configureMockDeployApi,
+  createProductionInstance: (...args: unknown[]) => {
+    const result = mockCreateProductionInstance(...args);
+    if (mockDeployApiOptions.failCreateProductionInstance) {
+      throw simulatedDeployApiFailure("production instance creation");
+    }
+    return result;
+  },
+  validateCloning: (...args: unknown[]) => {
+    const result = mockValidateCloning(...args);
+    if (mockDeployApiOptions.failValidateCloning) {
+      throw simulatedDeployApiFailure("cloning validation");
+    }
+    return result;
+  },
+  getDeployStatus: (...args: unknown[]) => {
+    const result = mockGetDeployStatus(...args);
+    if (mockDeployApiOptions.failDnsVerification) {
+      throw simulatedDeployApiFailure("DNS verification");
+    }
+    return result;
+  },
+  retryApplicationDomainSSL: (...args: unknown[]) => mockRetrySSL(...args),
+  retryApplicationDomainMail: (...args: unknown[]) => mockRetryMail(...args),
+  patchInstanceConfig: (...args: unknown[]) => {
+    const result = mockPatchInstanceConfig(...args);
+    if (mockDeployApiOptions.failOAuthSave) {
+      throw simulatedDeployApiFailure("OAuth credential save");
+    }
+    return result;
+  },
 }));
 
 mock.module("./domain-connect.ts", () => ({
@@ -188,6 +238,8 @@ describe("deploy", () => {
     mockGetDeployStatus.mockReset();
     mockRetrySSL.mockReset();
     mockRetryMail.mockReset();
+    mockConfigureMockDeployApi.mockReset();
+    mockDeployApiOptions = {};
     mockDomainConnectUrl.mockReset();
     consoleSpy?.mockRestore();
     stderrSpy?.mockRestore();
@@ -900,6 +952,9 @@ describe("deploy", () => {
       expect(mockValidateCloning).toHaveBeenCalledWith("app_xyz789", {
         clone_instance_id: "ins_dev_123",
       });
+      expect(mockConfigureMockDeployApi).toHaveBeenCalledWith(
+        expect.objectContaining({ failValidateCloning: true }),
+      );
       expect(mockCreateProductionInstance).not.toHaveBeenCalled();
     });
 
@@ -918,6 +973,9 @@ describe("deploy", () => {
         home_url: "example.com",
         clone_instance_id: "ins_dev_123",
       });
+      expect(mockConfigureMockDeployApi).toHaveBeenCalledWith(
+        expect.objectContaining({ failCreateProductionInstance: true }),
+      );
     });
 
     test("--test-fail-dns-verification simulates DNS verification failure", async () => {
@@ -941,6 +999,9 @@ describe("deploy", () => {
       );
 
       expect(mockGetDeployStatus).toHaveBeenCalledWith("app_xyz789", "ins_prod_mock");
+      expect(mockConfigureMockDeployApi).toHaveBeenCalledWith(
+        expect.objectContaining({ failDnsVerification: true }),
+      );
       expect(mockPatchInstanceConfig).not.toHaveBeenCalled();
     });
 
@@ -970,6 +1031,9 @@ describe("deploy", () => {
           client_secret: "google-secret",
         },
       });
+      expect(mockConfigureMockDeployApi).toHaveBeenCalledWith(
+        expect.objectContaining({ failOAuthSave: true }),
+      );
     });
 
     test("plain deploy resumes DNS verification from live API state", async () => {

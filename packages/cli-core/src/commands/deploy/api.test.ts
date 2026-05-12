@@ -24,6 +24,7 @@ mock.module("../../lib/sleep.ts", () => ({
 const deployApiModulePath = "./api.ts?adapter-test";
 const {
   createProductionInstance,
+  configureMockDeployApi,
   getDeployStatus,
   patchInstanceConfig,
   validateCloning,
@@ -77,5 +78,46 @@ describe("deploy api adapter", () => {
     expect(await getDeployStatus("app_123", "ins_prod_123")).toEqual({ status: "incomplete" });
     expect(await getDeployStatus("app_123", "ins_prod_123")).toEqual({ status: "complete" });
     expect(mockPlapiGetDeployStatus).not.toHaveBeenCalled();
+  });
+
+  test("mock deploy api can fail lifecycle operations with PLAPI-shaped errors", async () => {
+    configureMockDeployApi({
+      failValidateCloning: true,
+      failCreateProductionInstance: true,
+      failDnsVerification: true,
+      failOAuthSave: true,
+    });
+
+    await expect(validateCloning("app_123", { clone_instance_id: "ins_dev_123" })).rejects.toThrow(
+      "Simulated deploy failure: cloning validation.",
+    );
+    await expect(
+      createProductionInstance("app_123", {
+        home_url: "example.com",
+        clone_instance_id: "ins_dev_123",
+      }),
+    ).rejects.toThrow("Simulated deploy failure: production instance creation.");
+    await expect(getDeployStatus("app_123", "ins_prod_123")).rejects.toThrow(
+      "Simulated deploy failure: DNS verification.",
+    );
+    await expect(
+      patchInstanceConfig("app_123", "ins_prod_123", {
+        connection_oauth_google: { enabled: true },
+      }),
+    ).rejects.toThrow("Simulated deploy failure: OAuth credential save.");
+
+    expect(mockPlapiValidateCloning).not.toHaveBeenCalled();
+    expect(mockPlapiCreateProductionInstance).not.toHaveBeenCalled();
+    expect(mockPlapiGetDeployStatus).not.toHaveBeenCalled();
+    expect(mockPlapiPatchInstanceConfig).not.toHaveBeenCalled();
+  });
+
+  test("reset mock deploy api clears lifecycle failure flags", async () => {
+    configureMockDeployApi({ failValidateCloning: true });
+    _resetDeployStatusMock();
+
+    await expect(
+      validateCloning("app_123", { clone_instance_id: "ins_dev_123" }),
+    ).resolves.toBeUndefined();
   });
 });

@@ -1,5 +1,4 @@
 import { isAgent } from "../../mode.ts";
-import { NEXT_STEPS } from "../../lib/next-steps.ts";
 import { isInsideGutter, log } from "../../lib/log.ts";
 import { sleep } from "../../lib/sleep.ts";
 import { bar, intro, outro, withSpinner } from "../../lib/spinner.ts";
@@ -18,6 +17,7 @@ import {
   type ApplicationDomain,
 } from "../../lib/plapi.ts";
 import {
+  configureMockDeployApi,
   createProductionInstance as apiCreateProductionInstance,
   getDeployStatus,
   patchInstanceConfig,
@@ -75,6 +75,16 @@ type DeployOptions = {
   testFailOAuthSave?: boolean;
 };
 
+type DeployTestFlags = Pick<
+  DeployContext,
+  "testForceProductionInstance" | "testFailProductionInstanceCheck" | "testFailDomainLookup"
+> & {
+  testFailValidateCloning?: boolean;
+  testFailCreateProductionInstance?: boolean;
+  testFailDnsVerification?: boolean;
+  testFailOAuthSave?: boolean;
+};
+
 const DEPLOY_STATUS_POLL_INTERVAL_MS = 3000;
 const DEPLOY_STATUS_MAX_POLLS = 100;
 
@@ -113,9 +123,11 @@ export async function deploy(options: DeployOptions = {}) {
 
 async function resolveDeployContext(options: DeployOptions): Promise<DeployContext> {
   const testFlags = resolveTestDeployFlags(options);
+  configureDeployApiMocks(testFlags);
   const resolved = await withSpinner("Resolving linked Clerk application...", () =>
     resolveProfile(process.cwd()),
   );
+  const commandTestFlags = resolveCommandTestFlags(testFlags);
   if (!resolved) {
     return {
       profileKey: process.cwd(),
@@ -127,14 +139,14 @@ async function resolveDeployContext(options: DeployOptions): Promise<DeployConte
       appId: "",
       appLabel: "",
       developmentInstanceId: "",
-      ...testFlags,
+      ...commandTestFlags,
     };
   }
 
   return {
     profileKey: resolved.path,
     profile: resolved.profile,
-    ...testFlags,
+    ...commandTestFlags,
     ...(await withSpinner("Checking for production instance...", () =>
       withTestFailureAfterApiCall(
         resolveLiveApplicationContext(resolved.profile, {
@@ -147,18 +159,7 @@ async function resolveDeployContext(options: DeployOptions): Promise<DeployConte
   };
 }
 
-function resolveTestDeployFlags(
-  options: DeployOptions,
-): Pick<
-  DeployContext,
-  | "testForceProductionInstance"
-  | "testFailProductionInstanceCheck"
-  | "testFailDomainLookup"
-  | "testFailValidateCloning"
-  | "testFailCreateProductionInstance"
-  | "testFailDnsVerification"
-  | "testFailOAuthSave"
-> {
+function resolveTestDeployFlags(options: DeployOptions): DeployTestFlags {
   return {
     testForceProductionInstance: options.testForceProductionInstance === true,
     testFailProductionInstanceCheck: options.testFailProductionInstanceCheck === true,
@@ -168,6 +169,28 @@ function resolveTestDeployFlags(
     testFailDnsVerification: options.testFailDnsVerification === true,
     testFailOAuthSave: options.testFailOAuthSave === true,
   };
+}
+
+function resolveCommandTestFlags(
+  testFlags: DeployTestFlags,
+): Pick<
+  DeployContext,
+  "testForceProductionInstance" | "testFailProductionInstanceCheck" | "testFailDomainLookup"
+> {
+  return {
+    testForceProductionInstance: testFlags.testForceProductionInstance,
+    testFailProductionInstanceCheck: testFlags.testFailProductionInstanceCheck,
+    testFailDomainLookup: testFlags.testFailDomainLookup,
+  };
+}
+
+function configureDeployApiMocks(testFlags: DeployTestFlags): void {
+  configureMockDeployApi({
+    failValidateCloning: testFlags.testFailValidateCloning,
+    failCreateProductionInstance: testFlags.testFailCreateProductionInstance,
+    failDnsVerification: testFlags.testFailDnsVerification,
+    failOAuthSave: testFlags.testFailOAuthSave,
+  });
 }
 
 function simulatedDeployApiFailure(step: string): PlapiError {
@@ -574,11 +597,7 @@ function discoverEnabledOAuthProviders(config: Record<string, unknown>): Discove
 
 async function runValidateCloning(ctx: DeployContext): Promise<void> {
   await withSpinner("Validating subscription compatibility...", async () => {
-    await withTestFailureAfterApiCall(
-      validateCloning(ctx.appId, { clone_instance_id: ctx.developmentInstanceId }),
-      ctx.testFailValidateCloning,
-      "cloning validation",
-    );
+    await validateCloning(ctx.appId, { clone_instance_id: ctx.developmentInstanceId });
   });
 }
 
@@ -587,14 +606,10 @@ async function createProductionInstance(
   domain: string,
 ): Promise<ProductionInstanceResponse> {
   return withSpinner("Creating production instance...", async () => {
-    return withTestFailureAfterApiCall(
-      apiCreateProductionInstance(ctx.appId, {
-        home_url: domain,
-        clone_instance_id: ctx.developmentInstanceId,
-      }),
-      ctx.testFailCreateProductionInstance,
-      "production instance creation",
-    );
+    return apiCreateProductionInstance(ctx.appId, {
+      home_url: domain,
+      clone_instance_id: ctx.developmentInstanceId,
+    });
   });
 }
 
@@ -698,9 +713,6 @@ async function runDnsVerification(
   const verified = await withSpinner(`Verifying DNS for ${state.domain}...`, async () => {
     for (let attempt = 0; attempt < DEPLOY_STATUS_MAX_POLLS; attempt++) {
       const result = await getDeployStatus(ctx.appId, productionInstanceId);
-      if (ctx.testFailDnsVerification) {
-        throw simulatedDeployApiFailure("DNS verification");
-      }
       if (result.status === "complete") return true;
       await sleep(DEPLOY_STATUS_POLL_INTERVAL_MS);
     }
@@ -820,16 +832,12 @@ async function collectAndSaveOAuthCredentials(
   );
 
   await withSpinner(`Saving ${label} OAuth credentials...`, async () => {
-    await withTestFailureAfterApiCall(
-      patchInstanceConfig(ctx.appId, productionInstanceId, {
-        [`connection_oauth_${provider}`]: {
-          enabled: true,
-          ...credentials,
-        },
-      }),
-      ctx.testFailOAuthSave,
-      "OAuth credential save",
-    );
+    await patchInstanceConfig(ctx.appId, productionInstanceId, {
+      [`connection_oauth_${provider}`]: {
+        enabled: true,
+        ...credentials,
+      },
+    });
   });
   log.success(`Saved ${label} OAuth credentials`);
   return true;

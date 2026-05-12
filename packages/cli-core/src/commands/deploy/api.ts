@@ -9,6 +9,7 @@
  */
 
 import { sleep } from "../../lib/sleep.ts";
+import { PlapiError } from "../../lib/errors.ts";
 import {
   createProductionInstance as liveCreateProductionInstance,
   getDeployStatus as liveGetDeployStatus,
@@ -54,6 +55,27 @@ const MOCK_SECRET_KEY = "MOCKED_NOT_REAL_FIXME";
 const MOCK_LATENCY_MS = 2000;
 const MOCK_INCOMPLETE_POLLS = 2;
 
+type DeployApiMockOptions = {
+  failValidateCloning?: boolean;
+  failCreateProductionInstance?: boolean;
+  failDnsVerification?: boolean;
+  failOAuthSave?: boolean;
+};
+
+let mockOptions: DeployApiMockOptions = {};
+
+export function configureMockDeployApi(options: DeployApiMockOptions = {}): void {
+  mockOptions = { ...options };
+}
+
+function simulatedDeployApiFailure(step: string): PlapiError {
+  return new PlapiError(
+    500,
+    JSON.stringify({ errors: [{ message: `Simulated deploy failure: ${step}.` }] }),
+    "clerk deploy test flag",
+  );
+}
+
 async function simulateServerLatency(): Promise<void> {
   await sleep(MOCK_LATENCY_MS);
 }
@@ -74,11 +96,15 @@ const deployStatusPollCounts = new Map<string, number>();
 
 export function _resetDeployStatusMock(): void {
   deployStatusPollCounts.clear();
+  configureMockDeployApi();
 }
 
 export const mockDeployApi: DeployApi = {
   async createProductionInstance(_applicationId, params) {
     await simulateServerLatency();
+    if (mockOptions.failCreateProductionInstance) {
+      throw simulatedDeployApiFailure("production instance creation");
+    }
     return {
       instance_id: MOCK_PRODUCTION_INSTANCE_ID,
       environment_type: "production",
@@ -94,10 +120,16 @@ export const mockDeployApi: DeployApi = {
 
   async validateCloning() {
     await simulateServerLatency();
+    if (mockOptions.failValidateCloning) {
+      throw simulatedDeployApiFailure("cloning validation");
+    }
   },
 
   async getDeployStatus(applicationId, envOrInsId) {
     await simulateServerLatency();
+    if (mockOptions.failDnsVerification) {
+      throw simulatedDeployApiFailure("DNS verification");
+    }
     const key = `${applicationId}:${envOrInsId}`;
     const count = (deployStatusPollCounts.get(key) ?? 0) + 1;
     deployStatusPollCounts.set(key, count);
@@ -116,6 +148,9 @@ export const mockDeployApi: DeployApi = {
 
   async patchInstanceConfig() {
     await simulateServerLatency();
+    if (mockOptions.failOAuthSave) {
+      throw simulatedDeployApiFailure("OAuth credential save");
+    }
     return {};
   },
 };
