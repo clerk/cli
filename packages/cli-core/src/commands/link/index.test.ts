@@ -89,6 +89,9 @@ mock.module("@inquirer/prompts", () => ({
 
 mock.module("../../lib/prompts.ts", () => ({
   confirm: (...args: unknown[]) => mockConfirm(...args),
+  text: (...args: unknown[]) => mockInput(...args),
+  password: async () => "",
+  editor: async () => "",
 }));
 
 mock.module("../../lib/listage.ts", () => ({

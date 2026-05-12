@@ -37,6 +37,9 @@ mock.module("@inquirer/prompts", () => ({
 
 mock.module("../../lib/prompts.ts", () => ({
   confirm: (...args: unknown[]) => mockConfirm(...args),
+  text: async () => "",
+  password: async () => "",
+  editor: async () => "",
 }));
 
 const { unlink } = await import("./index.ts");

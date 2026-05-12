@@ -207,6 +207,9 @@ mock.module("../../../lib/listage.ts", () => ({
 
 mock.module("../../../lib/prompts.ts", () => ({
   confirm: dequeuePrompt("confirm"),
+  text: dequeuePrompt("input"),
+  password: dequeuePrompt("password"),
+  editor: dequeuePrompt("editor"),
 }));
 
 mock.module(
