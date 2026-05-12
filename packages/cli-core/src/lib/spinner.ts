@@ -18,9 +18,9 @@ export function intro(title?: string) {
 /** Print outro bracket; restores normal `log.*` output. Pass a string[] to render next steps. */
 export function outro(messageOrSteps?: string | readonly string[]) {
   if (!isHuman()) return;
+  popPrefix();
 
-  if (Array.isArray(messageOrSteps)) {
-    popPrefix();
+  if (typeof messageOrSteps === "object") {
     stream.write(`${dim(S_BAR)}\n`);
     stream.write(`${dim(S_BAR_END)}  ${dim("Next steps")}\n`);
     for (const step of messageOrSteps) {
@@ -30,7 +30,6 @@ export function outro(messageOrSteps?: string | readonly string[]) {
     return;
   }
 
-  popPrefix();
   clackOutro(messageOrSteps ?? "Done");
 }
 

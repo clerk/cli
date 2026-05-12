@@ -40,7 +40,6 @@ import {
   throwUsageError,
 } from "./lib/errors.ts";
 import { clerkHelpConfig } from "./lib/help.ts";
-import { ExitPromptError } from "@inquirer/core";
 import { isAgent } from "./mode.ts";
 import { log } from "./lib/log.ts";
 import { maybeNotifyUpdate, getCurrentVersion } from "./lib/update-check.ts";
@@ -1022,7 +1021,7 @@ export async function runProgram(
   } catch (error) {
     const verbose = program.opts().verbose ?? false;
 
-    if (error instanceof UserAbortError || error instanceof ExitPromptError) {
+    if (error instanceof UserAbortError) {
       process.exit(EXIT_CODE.SUCCESS);
     }
 
