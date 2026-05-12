@@ -1,85 +1,49 @@
-import { test, expect, describe, beforeEach } from "bun:test";
-import {
-  filterChoices,
-  normalizeChoices,
-  renderSearchItem,
-  scrollBounds,
-  Separator,
-  ttyContext,
-  withScrollIndicators,
-} from "./listage.ts";
+import { test, expect, describe, mock, beforeEach } from "bun:test";
 
-describe("scrollBounds", () => {
-  test("returns zeros when all items fit on page", () => {
-    expect(scrollBounds(5, 0, 7)).toEqual({ above: 0, below: 0 });
-    expect(scrollBounds(7, 3, 7)).toEqual({ above: 0, below: 0 });
-  });
+// Sentinel for cancellation. Tests choose this symbol; the mocked
+// @clack/core.isCancel below treats it as the clack cancel signal.
+const cancelSymbol = Symbol.for("clack:cancel");
 
-  test("at the top of a long list", () => {
-    // 20 items, active=0, pageSize=5 → first 5 visible
-    expect(scrollBounds(20, 0, 5)).toEqual({ above: 0, below: 15 });
-    expect(scrollBounds(20, 1, 5)).toEqual({ above: 0, below: 15 });
-  });
+interface RecordedCall {
+  config: Record<string, unknown>;
+}
 
-  test("in the middle of a long list", () => {
-    // 20 items, active=10, pageSize=5, middle=2 → firstVisible=8
-    const result = scrollBounds(20, 10, 5);
-    expect(result.above).toBe(8);
-    expect(result.below).toBe(7);
-    expect(result.above + result.below + 5).toBe(20);
-  });
+let lastSelectCall: RecordedCall | undefined;
+let selectResult: unknown = undefined;
+let lastAutocompleteCall: RecordedCall | undefined;
+let autocompleteResult: unknown = undefined;
 
-  test("near the bottom of a long list", () => {
-    // 20 items, active=19, pageSize=5 → last 5 visible
-    expect(scrollBounds(20, 19, 5)).toEqual({ above: 15, below: 0 });
-  });
+mock.module("@clack/prompts", () => ({
+  select: async (config: Record<string, unknown>) => {
+    lastSelectCall = { config };
+    return selectResult;
+  },
+  autocomplete: async (config: Record<string, unknown>) => {
+    lastAutocompleteCall = { config };
+    return autocompleteResult;
+  },
+  // Stubs for sibling tests that may share this process.
+  confirm: async () => true,
+  text: async () => "",
+  password: async () => "",
+  intro: () => {},
+  outro: () => {},
+  cancel: () => {},
+  log: { info: () => {}, warn: () => {}, error: () => {}, success: () => {} },
+  spinner: () => ({ start: () => {}, stop: () => {}, message: () => {} }),
+}));
 
-  test("above + below + pageSize = totalItems (pageSize=5)", () => {
-    for (let active = 0; active < 20; active++) {
-      const { above, below } = scrollBounds(20, active, 5);
-      expect(above + below + 5).toBe(20);
-    }
-  });
+mock.module("@clack/core", () => ({
+  isCancel: (value: unknown): value is symbol => value === cancelSymbol,
+}));
 
-  test("above + below + pageSize = totalItems (pageSize=7, odd)", () => {
-    // Odd pageSize may drift by ±1 at boundaries but must never be catastrophically wrong
-    for (let active = 0; active < 20; active++) {
-      const { above, below } = scrollBounds(20, active, 7);
-      expect(above + below + 7).toBe(20);
-    }
-  });
-});
+const { select, search, filterChoices, normalizeChoices, Separator } = await import("./listage.ts");
 
-describe("withScrollIndicators", () => {
-  test("wraps page with indicator lines", () => {
-    const page = "  item1\n❯ item2\n  item3";
-    const result = withScrollIndicators(page, 20, 10, 3);
-    const lines = result.split("\n");
-    // Should always have top indicator, page lines, bottom indicator
-    expect(lines.length).toBe(5); // top + 3 page lines + bottom
-    expect(lines[0]).toContain("more above");
-    expect(lines[4]).toContain("more below");
-  });
-
-  test("shows empty placeholder lines at edges for stable height", () => {
-    const page = "❯ item1\n  item2\n  item3";
-    // active=0, at top — above=0 but still shows a placeholder line
-    const result = withScrollIndicators(page, 10, 0, 3);
-    const lines = result.split("\n");
-    expect(lines.length).toBe(5);
-    expect(lines[0]).toBe(" "); // empty placeholder
-    expect(lines[4]).toContain("more below");
-  });
-
-  test("always renders both indicator lines for stable height", () => {
-    const page = "❯ item1\n  item2\n  item3";
-    // Both at top (above=0) and bottom visible — both placeholders shown
-    const result = withScrollIndicators(page, 10, 0, 3);
-    const lines = result.split("\n");
-    expect(lines.length).toBe(5); // top placeholder + 3 page lines + bottom
-    expect(lines[0]).toBe(" "); // empty top placeholder
-    expect(lines[4]).toContain("more below");
-  });
+beforeEach(() => {
+  lastSelectCall = undefined;
+  selectResult = undefined;
+  lastAutocompleteCall = undefined;
+  autocompleteResult = undefined;
 });
 
 describe("filterChoices", () => {
@@ -105,7 +69,7 @@ describe("filterChoices", () => {
 
   test("matches partial names", () => {
     const result = filterChoices(choices, "xt");
-    expect(result).toEqual([choices[0]!, choices[3]!]); // Next.js, Nuxt
+    expect(result).toEqual([choices[0]!, choices[3]!]);
   });
 
   test("returns empty array when nothing matches", () => {
@@ -114,108 +78,195 @@ describe("filterChoices", () => {
 });
 
 describe("normalizeChoices", () => {
-  test("forwards style hook from choice to normalized item", () => {
-    const style = (text: string, isActive: boolean) => `[${isActive ? "on" : "off"}]${text}`;
-    // Cast through unknown: SelectChoice doesn't expose `style` at the type
-    // level, but normalizeChoices preserves it at runtime so SearchChoice
-    // callers can opt in.
-    const choices = [
-      { value: "a", name: "A" },
-      { value: "b", name: "B", style },
-    ] as unknown as Parameters<typeof normalizeChoices<string>>[0];
-    const result = normalizeChoices(choices);
-    const a = result[0] as Exclude<(typeof result)[number], Separator>;
-    const b = result[1] as Exclude<(typeof result)[number], Separator>;
-    expect(a.style).toBeUndefined();
-    expect(b.style).toBe(style);
+  test("normalizes primitive choices into name/value pairs", () => {
+    const result = normalizeChoices(["a", "b"]);
+    expect(result).toEqual([
+      { value: "a", name: "a", short: "a", disabled: false },
+      { value: "b", name: "b", short: "b", disabled: false },
+    ]);
   });
 
-  test("preserves separators", () => {
-    const sep = new Separator();
+  test("normalizes object choices and defaults name/short to value", () => {
+    const result = normalizeChoices([{ value: "x" }, { value: "y", name: "Y label" }]);
+    expect(result).toEqual([
+      { value: "x", name: "x", short: "x", disabled: false },
+      { value: "y", name: "Y label", short: "Y label", disabled: false },
+    ]);
+  });
+
+  test("preserves description and disabled when present", () => {
+    const result = normalizeChoices([
+      { value: "a", name: "A", description: "the A", disabled: "soon" },
+    ]);
+    expect(result[0]).toEqual({
+      value: "a",
+      name: "A",
+      short: "A",
+      disabled: "soon",
+      description: "the A",
+    });
+  });
+
+  test("preserves separators verbatim", () => {
+    const sep = new Separator("---");
     const result = normalizeChoices([{ value: "a", name: "A" }, sep, { value: "b", name: "B" }]);
     expect(Separator.isSeparator(result[0])).toBe(false);
     expect(Separator.isSeparator(result[1])).toBe(true);
+    expect(result[1]).toBe(sep);
     expect(Separator.isSeparator(result[2])).toBe(false);
   });
 });
 
-describe("renderSearchItem", () => {
-  const theme = {
-    icon: { cursor: ">" },
-    style: {
-      disabled: (text: string) => `[disabled]${text}`,
-      highlight: (text: string) => `[highlight]${text}`,
-    },
-  };
-  const baseItem = {
-    value: "a",
-    name: "Choice A",
-    short: "A",
-    disabled: false as boolean | string,
-  };
-
-  test("uses default highlight when active and no style hook is set", () => {
-    expect(renderSearchItem(baseItem, true, theme)).toBe("[highlight]> Choice A");
+describe("Separator", () => {
+  test("has a default rule string and identifies itself", () => {
+    const sep = new Separator();
+    expect(Separator.isSeparator(sep)).toBe(true);
+    expect(typeof sep.separator).toBe("string");
+    expect(sep.separator.length).toBeGreaterThan(0);
   });
 
-  test("returns plain text when inactive and no style hook is set", () => {
-    expect(renderSearchItem(baseItem, false, theme)).toBe("  Choice A");
+  test("accepts a custom separator label", () => {
+    const sep = new Separator("---");
+    expect(sep.separator).toBe("---");
   });
 
-  test("invokes the style hook when set, bypassing the default highlight", () => {
-    const style = (text: string, isActive: boolean) => `[${isActive ? "on" : "off"}]${text}`;
-    const styled = { ...baseItem, style };
-    expect(renderSearchItem(styled, true, theme)).toBe("[on]> Choice A");
-    expect(renderSearchItem(styled, false, theme)).toBe("[off]  Choice A");
-  });
-
-  test("style hook receives cursor + name with no extra wrapping", () => {
-    let received: { text: string; isActive: boolean } | undefined;
-    const style = (text: string, isActive: boolean) => {
-      received = { text, isActive };
-      return text;
-    };
-    renderSearchItem({ ...baseItem, style }, true, theme);
-    expect(received).toEqual({ text: "> Choice A", isActive: true });
-  });
-
-  test("renders separators verbatim with a leading space", () => {
-    expect(renderSearchItem(new Separator("---"), false, theme)).toBe(" ---");
-  });
-
-  test("renders disabled choices with the disabled style and ignores style hook", () => {
-    const style = (text: string) => `[styled]${text}`;
-    const disabled = { ...baseItem, disabled: true as boolean | string, style };
-    expect(renderSearchItem(disabled, false, theme)).toBe("[disabled]Choice A (disabled)");
-  });
-
-  test("uses the disabled string label when provided", () => {
-    const disabled = { ...baseItem, disabled: "coming soon" as boolean | string };
-    expect(renderSearchItem(disabled, false, theme)).toBe("[disabled]Choice A coming soon");
+  test("isSeparator rejects non-separator values", () => {
+    expect(Separator.isSeparator({ separator: "---" })).toBe(false);
+    expect(Separator.isSeparator(undefined)).toBe(false);
+    expect(Separator.isSeparator("---")).toBe(false);
   });
 });
 
-describe("ttyContext", () => {
-  const originalIsTTY = process.stdin.isTTY;
+describe("select", () => {
+  test("passes message, options, initialValue, and maxItems through to clack", async () => {
+    selectResult = "a";
+    const result = await select<string>({
+      message: "Pick one",
+      choices: [
+        { value: "a", name: "A", description: "first" },
+        { value: "b", name: "B" },
+      ],
+      default: "b",
+      pageSize: 5,
+    });
 
-  beforeEach(() => {
-    process.stdin.isTTY = originalIsTTY;
+    expect(result).toBe("a");
+    expect(lastSelectCall?.config.message).toBe("Pick one");
+    expect(lastSelectCall?.config.initialValue).toBe("b");
+    expect(lastSelectCall?.config.maxItems).toBe(5);
+    const options = lastSelectCall?.config.options as Array<Record<string, unknown>>;
+    expect(options).toHaveLength(2);
+    expect(options[0]).toMatchObject({ value: "a", label: "A", hint: "first" });
+    expect(options[1]).toMatchObject({ value: "b", label: "B" });
   });
 
-  test("returns undefined when stdin is a TTY", () => {
-    process.stdin.isTTY = true;
-    expect(ttyContext()).toBeUndefined();
+  test("renders separators as disabled options with the separator label", async () => {
+    selectResult = "b";
+    await select<string>({
+      message: "Pick",
+      choices: [{ value: "a", name: "A" }, new Separator("--- divider ---"), { value: "b" }],
+    });
+    const options = lastSelectCall?.config.options as Array<Record<string, unknown>>;
+    expect(options).toHaveLength(3);
+    expect(options[1]).toMatchObject({ label: "--- divider ---", disabled: true });
+    // The separator value is a sentinel symbol — not equal to either real value.
+    expect(typeof options[1]?.value).toBe("symbol");
   });
 
-  test("returns context with input and close when stdin is not a TTY", () => {
-    process.stdin.isTTY = false;
-    const ctx = ttyContext();
-    // On macOS/Linux with /dev/tty available, this should return a context
-    if (ctx) {
-      expect(ctx.input).toBeDefined();
-      expect(typeof ctx.close).toBe("function");
-      ctx.close();
-    }
-    // On CI/Docker without a TTY, ttyContext may return undefined — both are valid
+  test("marks disabled choices on the clack option", async () => {
+    selectResult = "a";
+    await select<string>({
+      message: "Pick",
+      choices: [
+        { value: "a", name: "A" },
+        { value: "b", name: "B", disabled: true },
+      ],
+    });
+    const options = lastSelectCall?.config.options as Array<Record<string, unknown>>;
+    expect(options[0]?.disabled).toBeUndefined();
+    expect(options[1]?.disabled).toBe(true);
+  });
+
+  test("throws UserAbortError when clack returns the cancel symbol", async () => {
+    selectResult = cancelSymbol;
+    await expect(
+      select<string>({ message: "Pick", choices: [{ value: "a" }] }),
+    ).rejects.toMatchObject({ name: "UserAbortError" });
+  });
+});
+
+describe("search", () => {
+  test("invokes source once, forwards options to clack, and returns the result", async () => {
+    autocompleteResult = "a";
+    let sourceCalls = 0;
+    let lastTerm: string | undefined = "initial-marker";
+
+    const result = await search<string>({
+      message: "Search",
+      pageSize: 4,
+      default: "a",
+      source: (term) => {
+        sourceCalls += 1;
+        lastTerm = term;
+        return [
+          { value: "a", name: "Apple" },
+          { value: "b", name: "Banana" },
+        ];
+      },
+    });
+
+    expect(result).toBe("a");
+    expect(sourceCalls).toBe(1);
+    expect(lastTerm).toBeUndefined();
+    expect(lastAutocompleteCall?.config.message).toBe("Search");
+    expect(lastAutocompleteCall?.config.maxItems).toBe(4);
+    expect(lastAutocompleteCall?.config.initialValue).toBe("a");
+    const options = lastAutocompleteCall?.config.options as Array<Record<string, unknown>>;
+    expect(options).toHaveLength(2);
+    expect(options[0]).toMatchObject({ value: "a", label: "Apple" });
+    expect(options[1]).toMatchObject({ value: "b", label: "Banana" });
+  });
+
+  test("filter callback matches labels case-insensitively", async () => {
+    autocompleteResult = "a";
+    await search<string>({
+      message: "Search",
+      source: () => [
+        { value: "a", name: "Apple" },
+        { value: "b", name: "Banana" },
+      ],
+    });
+
+    const filter = lastAutocompleteCall?.config.filter as (
+      term: string,
+      opt: { label?: string; value: unknown },
+    ) => boolean;
+    expect(typeof filter).toBe("function");
+    expect(filter("APP", { label: "Apple", value: "a" })).toBe(true);
+    expect(filter("ban", { label: "Banana", value: "b" })).toBe(true);
+    expect(filter("xyz", { label: "Apple", value: "a" })).toBe(false);
+    // Falls back to stringifying value when label is absent.
+    expect(filter("a", { value: "a" })).toBe(true);
+  });
+
+  test("throws UserAbortError when clack returns the cancel symbol", async () => {
+    autocompleteResult = cancelSymbol;
+    await expect(
+      search<string>({
+        message: "Search",
+        source: () => [{ value: "a", name: "A" }],
+      }),
+    ).rejects.toMatchObject({ name: "UserAbortError" });
+  });
+
+  test("accepts a Promise from source", async () => {
+    autocompleteResult = "a";
+    const result = await search<string>({
+      message: "Search",
+      source: async () => [{ value: "a", name: "A" }],
+    });
+    expect(result).toBe("a");
+    const options = lastAutocompleteCall?.config.options as Array<Record<string, unknown>>;
+    expect(options[0]).toMatchObject({ value: "a", label: "A" });
   });
 });
