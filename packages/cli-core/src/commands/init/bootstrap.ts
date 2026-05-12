@@ -1,6 +1,5 @@
 import { join } from "node:path";
-import { input } from "@inquirer/prompts";
-import { confirm } from "../../lib/prompts.ts";
+import { confirm, text } from "../../lib/prompts.ts";
 import { search, filterChoices } from "../../lib/listage.ts";
 import { throwUserAbort, throwUsageError, CliError } from "../../lib/errors.js";
 import { log } from "../../lib/log.js";
@@ -106,7 +105,7 @@ export async function findAvailableProjectName(cwd: string, base: string): Promi
 
 async function askProjectName(entry: BootstrapEntry, cwd: string): Promise<string> {
   const defaultName = await findAvailableProjectName(cwd, entry.defaultProjectName);
-  const name = await input({
+  const name = await text({
     message: "Project name:",
     default: defaultName,
     validate: async (value) => {
