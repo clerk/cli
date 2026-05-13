@@ -2,7 +2,7 @@ import { test, expect, describe, beforeEach, afterEach, spyOn } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { stubFetch, captureLog } from "../test/lib/stubs.ts";
+import { stubFetch, useCaptureLog } from "../test/lib/stubs.ts";
 
 const {
   parseClaimToken,
@@ -32,6 +32,7 @@ describe("parseClaimToken", () => {
 });
 
 describe("breadcrumb", () => {
+  useCaptureLog();
   let tempDir: string;
   let debugSpy: ReturnType<typeof spyOn>;
 
@@ -61,18 +62,14 @@ describe("breadcrumb", () => {
 
   test("read returns undefined when breadcrumb is malformed JSON", async () => {
     await Bun.write(join(tempDir, ".clerk", "keyless.json"), "not json{{{");
-
-    const captured = captureLog();
-    const result = await captured.run(() => readKeylessBreadcrumb(tempDir));
+    const result = await readKeylessBreadcrumb(tempDir);
     expect(result).toBeUndefined();
   });
 
   test("read returns undefined and clears file when breadcrumb has wrong shape", async () => {
     const breadcrumbFile = join(tempDir, ".clerk", "keyless.json");
     await Bun.write(breadcrumbFile, JSON.stringify({ claimToken: 12345, createdAt: "2024-01-01" }));
-
-    const captured = captureLog();
-    const result = await captured.run(() => readKeylessBreadcrumb(tempDir));
+    const result = await readKeylessBreadcrumb(tempDir);
     expect(result).toBeUndefined();
     expect(await Bun.file(breadcrumbFile).exists()).toBe(false);
   });
@@ -106,6 +103,7 @@ describe("breadcrumb", () => {
 });
 
 describe("writeKeysToEnvFile", () => {
+  useCaptureLog();
   let tempDir: string;
 
   beforeEach(async () => {
@@ -117,13 +115,10 @@ describe("writeKeysToEnvFile", () => {
   });
 
   test("writes keys to .env.local", async () => {
-    const captured = captureLog();
-    await captured.run(() =>
-      writeKeysToEnvFile(tempDir, {
-        publishableKey: "pk_test_123",
-        secretKey: "sk_test_456",
-      }),
-    );
+    await writeKeysToEnvFile(tempDir, {
+      publishableKey: "pk_test_123",
+      secretKey: "sk_test_456",
+    });
 
     const content = await Bun.file(join(tempDir, ".env.local")).text();
     expect(content).toContain("CLERK_PUBLISHABLE_KEY=pk_test_123");
@@ -132,14 +127,10 @@ describe("writeKeysToEnvFile", () => {
 
   test("merges with existing env file content", async () => {
     await Bun.write(join(tempDir, ".env.local"), "EXISTING_VAR=hello\n");
-
-    const captured = captureLog();
-    await captured.run(() =>
-      writeKeysToEnvFile(tempDir, {
-        publishableKey: "pk_test_abc",
-        secretKey: "sk_test_def",
-      }),
-    );
+    await writeKeysToEnvFile(tempDir, {
+      publishableKey: "pk_test_abc",
+      secretKey: "sk_test_def",
+    });
 
     const content = await Bun.file(join(tempDir, ".env.local")).text();
     expect(content).toContain("EXISTING_VAR=hello");
@@ -151,14 +142,10 @@ describe("writeKeysToEnvFile", () => {
       join(tempDir, "package.json"),
       JSON.stringify({ dependencies: { next: "latest" } }),
     );
-
-    const captured = captureLog();
-    await captured.run(() =>
-      writeKeysToEnvFile(tempDir, {
-        publishableKey: "pk_test_next",
-        secretKey: "sk_test_next",
-      }),
-    );
+    await writeKeysToEnvFile(tempDir, {
+      publishableKey: "pk_test_next",
+      secretKey: "sk_test_next",
+    });
 
     // Next.js declares envFile: ".env.local" in FRAMEWORK_MAP
     const content = await Bun.file(join(tempDir, ".env.local")).text();

@@ -1,9 +1,11 @@
 import { afterEach, describe, expect, spyOn, test } from "bun:test";
 import { startAuthServer } from "./auth-server.ts";
+import { useCaptureLog } from "../test/lib/stubs.ts";
 
 describe("auth-server", () => {
   let serveSpy: ReturnType<typeof spyOn> | undefined;
   let clearTimeoutSpy: ReturnType<typeof spyOn> | undefined;
+  useCaptureLog();
 
   afterEach(() => {
     serveSpy?.mockRestore();

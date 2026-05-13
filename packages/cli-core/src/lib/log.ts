@@ -1,4 +1,3 @@
-import { AsyncLocalStorage } from "node:async_hooks";
 import { dim, green, red, yellow } from "./color.ts";
 
 // ── Log level ────────────────────────────────────────────────────────────
@@ -87,7 +86,7 @@ function shouldWrite(channel: "stdout" | "stderr", msg: string): boolean {
   // Only throttle stderr (UI messages), never stdout (data)
   if (channel === "stdout") return true;
   // Don't throttle in test capture mode
-  if (captureStorage.getStore()) return true;
+  if (activeCapture) return true;
 
   const key = msg;
   const now = Date.now();
@@ -133,20 +132,23 @@ export type CapturedLogs = {
   stderr: string[];
 };
 
-const captureStorage = new AsyncLocalStorage<CapturedLogs>();
+let activeCapture: CapturedLogs | null = null;
 
-export function withCapturedLogs<T>(captured: CapturedLogs, fn: () => T): T {
-  return captureStorage.run(captured, fn);
+export function getActiveCapture(): CapturedLogs | null {
+  return activeCapture;
+}
+
+export function setActiveCapture(captured: CapturedLogs | null): void {
+  activeCapture = captured;
 }
 
 function writeln(stream: NodeJS.WriteStream, channel: "stdout" | "stderr", msg: string) {
-  const captured = captureStorage.getStore();
-  if (captured) {
-    captured[channel].push(msg);
-  } else {
-    if (!shouldWrite(channel, msg)) return;
-    stream.write(msg + "\n");
+  if (activeCapture) {
+    activeCapture[channel].push(msg);
+    return;
   }
+  if (!shouldWrite(channel, msg)) return;
+  stream.write(msg + "\n");
 }
 
 // ── Tagged child logger ──────────────────────────────────────────────────
@@ -160,6 +162,7 @@ export interface Logger {
   blank(): void;
   raw(msg: string): void;
   data(msg: string): void;
+  ui(msg: string): void;
   withTag(childTag: string): Logger;
 }
 
@@ -200,18 +203,16 @@ function createLogger(tag?: string): Logger {
     /** Blank line to stderr. Preserves pipe prefix inside intro/outro flow. */
     blank() {
       const prefix = applyPrefix("");
-      const captured = captureStorage.getStore();
-      if (captured) {
-        captured.stderr.push(prefix);
+      if (activeCapture) {
+        activeCapture.stderr.push(prefix);
       } else {
         process.stderr.write(prefix + "\n");
       }
     },
     /** Raw stderr — no color, no prefix, no throttle. For machine-readable output (agent JSON). */
     raw(msg: string) {
-      const captured = captureStorage.getStore();
-      if (captured) {
-        captured.stderr.push(msg);
+      if (activeCapture) {
+        activeCapture.stderr.push(msg);
       } else {
         process.stderr.write(msg + "\n");
       }
@@ -219,6 +220,19 @@ function createLogger(tag?: string): Logger {
     /** Primary data output to stdout (pipeable, never prefixed). */
     data(msg: string) {
       writeln(process.stdout, "stdout", msg);
+    },
+    /**
+     * Pre-formatted UI to stderr (no color, no prefix, no throttle, no auto-newline).
+     * Callers include their own trailing `\n` for line-terminated output. Used by
+     * the spinner for in-place cursor writes (`\r`, `\x1b[?25l`, etc.) where an
+     * appended newline would break the redraw.
+     */
+    ui(msg: string) {
+      if (activeCapture) {
+        activeCapture.stderr.push(msg);
+      } else {
+        process.stderr.write(msg);
+      }
     },
     /** Create a child logger with a tag prefix. */
     withTag(childTag: string): Logger {

@@ -24,6 +24,7 @@ Adjust the relative path to `lib/log.ts` based on the file's location under `pac
 | `log.error()`   | stderr     | Errors (red, auto-prefixed `error:`)            |
 | `log.debug()`   | stderr     | Diagnostic info, only with `--verbose`          |
 | `log.raw()`     | stderr     | Machine-readable JSON for agent mode            |
+| `log.ui()`      | stderr     | Pre-formatted UI (spinner, intro/outro brackets) |
 | `log.blank()`   | stderr     | Blank line                                      |
 
 `log.data()` writes to **stdout** — this is what gets piped (e.g., `clerk apps list | jq`). Everything else writes to **stderr** as UI for humans. Never mix these.
@@ -57,15 +58,27 @@ log.info("Linked to `my-app` on `development`");
 
 ## Testing log output
 
-Use `captureLog()` from `src/test/lib/stubs.ts`. Capture is scoped via `AsyncLocalStorage` — no teardown needed:
+Use `useCaptureLog()` from `src/test/lib/stubs.ts` at file or `describe` scope. It registers `beforeEach`/`afterEach` hooks that install a fresh buffer for each test and clear it after — no per-test wiring needed:
 
 ```ts
-import { captureLog } from "../../test/lib/stubs.ts";
+import { useCaptureLog } from "../../test/lib/stubs.ts";
 
-test("outputs result", async () => {
-  const captured = captureLog();
-  await captured.run(() => myCommand());
-  expect(captured.out).toContain("expected stdout"); // log.data()
-  expect(captured.err).toContain("expected stderr"); // log.info/warn/etc.
+describe("my command", () => {
+  const captured = useCaptureLog();
+
+  test("outputs result", async () => {
+    await myCommand();
+    expect(captured.out).toContain("expected stdout"); // log.data()
+    expect(captured.err).toContain("expected stderr"); // log.info/warn/etc.
+  });
+
+  test("ignores setup noise", async () => {
+    await setUp();
+    captured.clear();
+    await myCommand();
+    expect(captured.err).toContain("done");
+  });
 });
 ```
+
+Just suppressing log noise without assertions? Call `useCaptureLog()` without keeping the return.

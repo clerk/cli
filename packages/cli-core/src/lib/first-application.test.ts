@@ -1,6 +1,7 @@
 import { describe, it, expect, mock, beforeEach, afterEach } from "bun:test";
 
 import { DEFAULT_FIRST_APPLICATION_NAME } from "./constants.ts";
+import { useCaptureLog } from "../test/lib/stubs.ts";
 
 // Mock the plapi module so the tests don't hit a real server. Match the
 // project convention used elsewhere (see apps/create.test.ts, apps/list.test.ts).
@@ -14,6 +15,8 @@ mock.module("./plapi.ts", () => ({
 const { ensureFirstApplication } = await import("./first-application.ts");
 
 describe("ensureFirstApplication", () => {
+  useCaptureLog();
+
   beforeEach(() => {
     mockListApplications.mockReset();
     mockCreateApplication.mockReset();
