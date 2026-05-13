@@ -42,11 +42,7 @@ function targetArgs(target: TestUserTarget): string[] {
  * so OTP code 424242 works without real email delivery. Passes the BAPI body
  * via `-d` because `skip_password_checks` is not a curated flag.
  */
-export async function createTestUser(
-  configDir: string,
-  target: TestUserTarget,
-  fixtureName: string,
-): Promise<TestUser> {
+export async function createTestUser(configDir: string, target: TestUserTarget): Promise<TestUser> {
   const hex = randomBytes(8).toString("hex");
   const email = `${hex}+clerk_test@clerkcookie.com`;
   const password = `Test${hex}!1`;
@@ -57,7 +53,7 @@ export async function createTestUser(
     skip_password_checks: true,
   });
 
-  log(fixtureName, `creating test user: ${email}`);
+  log(`creating test user: ${email}`);
 
   const result =
     await Bun.$`bun ${CLI_PATH} users create -d ${body} --json --yes ${targetArgs(target)}`
@@ -72,8 +68,8 @@ export async function createTestUser(
     throw new Error(`Failed to create test user:\n${detail}`);
   }
 
-  const user = JSON.parse(result.stdout.toString());
-  log(fixtureName, `test user created: ${user.id}`);
+  const user: { id: string } = JSON.parse(result.stdout.toString());
+  log(`test user created: ${user.id}`);
 
   return { id: user.id, email, password };
 }
@@ -83,9 +79,8 @@ export async function deleteTestUser(
   userId: string,
   configDir: string,
   target: TestUserTarget,
-  fixtureName: string,
 ): Promise<void> {
-  log(fixtureName, `deleting test user: ${userId}`);
+  log(`deleting test user: ${userId}`);
 
   const result =
     await Bun.$`bun ${CLI_PATH} api /users/${userId} -X DELETE --yes ${targetArgs(target)}`
@@ -97,8 +92,8 @@ export async function deleteTestUser(
     const stdout = result.stdout.toString().trim();
     const stderr = result.stderr.toString().trim();
     const detail = stderr || stdout || "(no output)";
-    log(fixtureName, `warning: failed to delete test user ${userId}: ${detail}`);
+    log(`warning: failed to delete test user ${userId}: ${detail}`);
   } else {
-    log(fixtureName, `test user deleted: ${userId}`);
+    log(`test user deleted: ${userId}`);
   }
 }

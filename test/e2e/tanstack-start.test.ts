@@ -1,19 +1,22 @@
 import { join } from "node:path";
-import { useFixture, runFixtureTest, runBrowserTest } from "./lib/fixture-test.ts";
+import { describe } from "bun:test";
+import { createGetFixture, runFixtureTest, runBrowserTest } from "./lib/fixture-test.ts";
 import type { FixtureConfig } from "./lib/types.ts";
 
 const fixtureDir = join(import.meta.dir, "fixtures/tanstack-start");
 
 export const config = {
-  description: "TanStack Start with TypeScript",
   scaffoldCmd: [
-    "bunx",
+    "npx",
+    "--yes",
     "@tanstack/cli@latest",
     "create",
     "myapp",
     "--target-dir",
     ".",
     "--no-install",
+    "--package-manager",
+    "npm",
     "--no-git",
     "--no-toolchain",
     "--no-examples",
@@ -22,9 +25,20 @@ export const config = {
   clerkSdk: "@clerk/tanstack-react-start",
   buildCmd: ["vite", "build"],
   devCmd: ["vite", "dev"],
-  pinned: false,
+  packageJsonOverrides: {
+    devDependencies: {
+      // TanStack Start's current scaffold omits this peer dependency even
+      // though the Vite plugin imports it during config evaluation.
+      "@rsbuild/core": "^2.0.0",
+    },
+  },
 } satisfies FixtureConfig;
 
-const getFixture = useFixture(fixtureDir, config);
-runFixtureTest(getFixture, config);
-runBrowserTest(getFixture, config);
+describe("TanStack Start with TypeScript", () => {
+  const getFixture = createGetFixture(fixtureDir);
+
+  describe("clerk init", () => {
+    runFixtureTest(getFixture, config);
+    runBrowserTest(getFixture, config);
+  });
+});

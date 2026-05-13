@@ -15,13 +15,12 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { createTestUser, deleteTestUser } from "./lib/test-user.ts";
 
-const FIXTURE_NAME = "users-list";
 const CLI_PATH = join(import.meta.dir, "../../packages/cli-core/src/cli.ts");
 
 // Skip when imported by scripts/refresh-e2e-fixtures.ts; the env-var check
 // and bun:test hooks below would otherwise throw on a metadata-only import.
 if (!process.env.CLERK_REFRESH_FIXTURES) {
-  let APP_ID!: string;
+  let APP_ID: string;
   let configDir: string;
   const createdIds: string[] = [];
 
@@ -40,19 +39,22 @@ if (!process.env.CLERK_REFRESH_FIXTURES) {
 
   afterAll(async () => {
     for (const id of createdIds) {
-      await deleteTestUser(id, configDir, { appId: APP_ID }, FIXTURE_NAME);
+      await deleteTestUser(id, configDir, { appId: APP_ID });
     }
     rmSync(configDir, { recursive: true, force: true });
   });
 
   test("users list --json returns a { data, hasMore } envelope around the BAPI users", async () => {
-    const users = await Promise.all(
-      [1, 2, 3].map(async () => {
-        const u = await createTestUser(configDir, { appId: APP_ID }, FIXTURE_NAME);
-        createdIds.push(u.id);
-        return u;
-      }),
-    );
+    const createTrackedUser = async () => {
+      const user = await createTestUser(configDir, { appId: APP_ID });
+      createdIds.push(user.id);
+      return user;
+    };
+    const users = await Promise.all([
+      createTrackedUser(),
+      createTrackedUser(),
+      createTrackedUser(),
+    ]);
 
     const result = await Bun.$`bun ${CLI_PATH} users list --json --app ${APP_ID} \
       --user-id ${users[0].id} --user-id ${users[1].id} --user-id ${users[2].id}`

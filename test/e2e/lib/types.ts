@@ -1,5 +1,4 @@
 export interface FixtureConfig {
-  description: string;
   /** Command run by refresh script to scaffold a fresh copy of this project. */
   scaffoldCmd: string[];
   /** Clerk SDK package name, e.g. "@clerk/nextjs" */
@@ -8,8 +7,13 @@ export interface FixtureConfig {
   buildCmd: string[];
   /** Dev server command, e.g. ["next", "dev"]. Port flag appended automatically. */
   devCmd: string[];
-  /** When true, refresh script skips this fixture unless --force is passed */
-  pinned: boolean;
-  /** Required when pinned - explains why this variant exists */
+  /** Required when pinned dependency ranges explain why this variant exists. */
   notes?: string;
+  /** Allowed generated dependency ranges when refreshing pinned fixtures. */
+  pinnedDependencyRanges?: Record<string, string>;
+  /** package.json fields to merge after scaffolding and before copying the fixture. */
+  packageJsonOverrides?: {
+    dependencies?: Record<string, string>;
+    devDependencies?: Record<string, string>;
+  };
 }

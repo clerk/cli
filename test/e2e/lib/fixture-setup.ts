@@ -118,24 +118,28 @@ async function parseEnvFiles(projectDir: string): Promise<Record<string, string>
   return result;
 }
 
-/**
- * Shared setup: copy fixture to temp dir, pre-link, run clerk init, bun install.
- */
-export async function setupFixture(fixtureDir: string): Promise<{
+export type Fixture = {
+  name: string;
   projectDir: string;
   configDir: string;
   publishableKey: string;
   secretKey: string;
   cleanup: () => Promise<void>;
-}> {
+};
+
+/**
+ * Shared setup: copy fixture to temp dir, pre-link, run clerk init, npm ci.
+ */
+export async function setupFixture(fixtureDir: string): Promise<Fixture> {
   const name = basename(fixtureDir);
-  log(name, "setup started");
+  log("setup started");
+
   // Resolve symlinks (macOS /var -> /private/var) so profile keys match across commands
   const tmp = await realpath(tmpdir());
   const projectDir = await mkdtemp(join(tmp, `clerk-e2e-${name}-`));
   const configDir = await mkdtemp(join(tmp, "clerk-e2e-config-"));
   await copyFixture(fixtureDir, projectDir);
-  log(name, "fixture copied");
+  log("fixture copied");
 
   let publishableKey = "";
   let secretKey = "";
@@ -143,11 +147,14 @@ export async function setupFixture(fixtureDir: string): Promise<{
   try {
     // Git-init before linking so the profile key matches for later commands
     await gitInit(projectDir);
-    log(name, "git init done");
+    log("git init done");
+
+    // The magic happens here, we actually test out `clerk link` and `clerk init`
     await linkProject(projectDir, configDir);
-    log(name, "clerk link done");
+    log("clerk link done");
+
     await runClerkInit(projectDir, configDir);
-    log(name, "clerk init done");
+    log("clerk init done");
 
     // Verify clerk init wrote env files and extract keys.
     const envVars = await parseEnvFiles(projectDir);
@@ -162,24 +169,26 @@ export async function setupFixture(fixtureDir: string): Promise<{
       throw new Error(`${secretKeyName} not found in env files written by clerk init.`);
     }
 
-    const install = await Bun.$`bun install`.cwd(projectDir).quiet().nothrow();
-    assertSuccess("bun install failed", install);
-    log(name, "bun install done");
+    const install = await Bun.$`npm ci --ignore-scripts --legacy-peer-deps`
+      .cwd(projectDir)
+      .quiet()
+      .nothrow();
+    assertSuccess("npm ci failed", install);
+    log("npm ci done");
   } catch (err) {
-    log(name, `setup FAILED: ${err}`);
     await rm(projectDir, { recursive: true, force: true });
     await rm(configDir, { recursive: true, force: true });
-    throw err;
+    throw new Error("setup failed", { cause: err });
   }
 
-  log(name, "setup complete");
+  log("setup complete");
 
   const cleanup = async () => {
-    log(name, "cleanup started");
+    log("cleanup started");
     await rm(projectDir, { recursive: true, force: true });
     await rm(configDir, { recursive: true, force: true });
-    log(name, "cleanup done");
+    log("cleanup done");
   };
 
-  return { projectDir, configDir, publishableKey, secretKey, cleanup };
+  return { name, projectDir, configDir, publishableKey, secretKey, cleanup };
 }

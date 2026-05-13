@@ -131,7 +131,7 @@ In CI, use `bunx playwright install chromium --with-deps` to include system-leve
 
 Fixture files run in parallel (concurrency controlled by the runner, defaults to CPU count). Each fixture uses an isolated temp directory and `CLERK_CONFIG_DIR`, so there is no shared mutable state. Do not use `test.concurrent` within individual fixture files.
 
-Within each test file, `useFixture()` runs `setupFixture()` once in `beforeAll` and shares the result with both the build test and browser test. This avoids duplicating the expensive setup.
+Within each test file, `createGetFixture()` runs `setupFixture()` once in `beforeAll` and shares the result with both the build test and browser test. This avoids duplicating the expensive setup.
 
 ## Adding a new fixture
 
@@ -143,7 +143,7 @@ Within each test file, `useFixture()` runs `setupFixture()` once in `beforeAll` 
 Helper functions are in `test/e2e/lib/`:
 
 - `fixture-setup.ts` - `setupFixture`
-- `fixture-test.ts` - `useFixture`, `runFixtureTest`, `runBrowserTest`
+- `fixture-test.ts` - `createGetFixture`, `runFixtureTest`, `runFileExistsTest`, `runBrowserTest`
 - `dev-server.ts` - `startDevServer` (allocates a port internally and retries on collision), `killDevServer`, `buildDevCommand`
 - `test-user.ts` - `createTestUser`, `deleteTestUser`
 - `logger.ts` - `log`, `debug` (shared logging; set `CLERK_E2E_DEBUG=1` for verbose output)
