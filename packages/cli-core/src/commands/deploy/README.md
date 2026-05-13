@@ -176,3 +176,12 @@ When the user chooses the guided walkthrough, these values are derived from thei
 | ----------------------------- | --------------------------------------------- |
 | Authorized JavaScript origins | `https://{domain}`, `https://www.{domain}`    |
 | Authorized redirect URI       | `https://accounts.{domain}/v1/oauth_callback` |
+
+### Recovery paths
+
+- **`production_instance_exists`** (HTTP 400) on production-instance creation —
+  the wizard refetches the application, persists the existing instance ID, and
+  jumps into the reconcile flow as if local state had been intact.
+- **`unsupported_subscription_plan_features`** (HTTP 402) on cloning validation —
+  the wizard rethrows a `CliError` listing the unsupported features and pointing
+  at `https://clerk.com/docs/billing/plans`.
