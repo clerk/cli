@@ -22,14 +22,11 @@ mock.module("../../lib/sleep.ts", () => ({
 }));
 
 const deployApiModulePath = "./api.ts?adapter-test";
-const {
-  createProductionInstance,
-  configureMockDeployApi,
-  getDeployStatus,
-  patchInstanceConfig,
-  validateCloning,
-  _resetDeployStatusMock,
-} = (await import(deployApiModulePath)) as typeof import("./api.ts");
+const apiModule = (await import(deployApiModulePath)) as typeof import("./api.ts");
+const mockModule = (await import("./mock.ts")) as typeof import("./mock.ts");
+const { createProductionInstance, getDeployStatus, patchInstanceConfig, validateCloning } =
+  apiModule;
+const { configureMockDeployApi, _resetDeployStatusMock } = mockModule;
 
 describe("deploy api adapter", () => {
   beforeEach(() => {

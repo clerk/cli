@@ -1,6 +1,6 @@
 # Deploy Command
 
-> **API-resolved state, mocked lifecycle.** Human mode resolves the linked application, production domains, deploy status, and instance config from the API layer on each run. Application/domain/config reads use live PLAPI helpers; production lifecycle calls (`validate_cloning`, `production_instance`, `deploy_status`, `ssl_retry`, `mail_retry`) plus production config PATCH still go through `commands/deploy/api.ts`, where they are mocked with the real Platform API request/response shapes.
+> **API-resolved state, mocked lifecycle.** Human mode resolves the linked application, production domains, deploy status, and instance config from the API layer on each run. Application/domain/config reads use live PLAPI helpers; production lifecycle calls (`validate_cloning`, `production_instance`, `deploy_status`, `ssl_retry`, `mail_retry`) plus production config PATCH still go through the dispatchers in `commands/deploy/api.ts`, which route to `commands/deploy/mock.ts`, where they are mocked with the real Platform API request/response shapes. All test-flag plumbing and failure-injection helpers also live in `mock.ts` so the surface to delete when the real backend lands is contained to one file.
 
 Guides a user through deploying their Clerk application to production.
 
@@ -47,7 +47,7 @@ The production-instance lifecycle still calls the helpers in `commands/deploy/ap
 
 This keeps `clerk deploy` from drifting away from the server-side source of truth once these endpoints are backed by production data. Each run resolves the current production instance, domain, deploy status, and OAuth config from the API layer, then prints a checked-off plan before completing the next unfinished action. Re-running `clerk deploy` after production is fully configured shows every deploy action checked off and prints production next steps.
 
-Mocked lifecycle endpoints in `commands/deploy/api.ts` pause for ~2s before returning so spinners and the deploy-status poll feel like real network calls.
+Mocked lifecycle endpoints in `commands/deploy/mock.ts` pause for ~2s before returning so spinners and the deploy-status poll feel like real network calls.
 
 If the user presses Ctrl-C after the production instance has been created, the wizard tells them to run `clerk deploy` again and exits with SIGINT code 130. The next run derives the current DNS or OAuth step from API state and resumes without starting another production instance.
 
