@@ -30,7 +30,7 @@
     "yaml": "^2.8.4"
   },
   "devDependencies": {
-    "@clerk/shared": "^4.8.3",
+    "@clerk/shared": "^4.10.2",
     "@types/semver": "^7.7.1"
   }
 }
