@@ -63,7 +63,7 @@ export function resolveTestDeployFlags(options: {
 }
 
 export function simulatedDeployApiFailure(step: string): PlapiError {
-  return new PlapiError(
+  return PlapiError.fromBody(
     500,
     JSON.stringify({ errors: [{ message: `Simulated deploy failure: ${step}.` }] }),
     "clerk deploy test flag",
