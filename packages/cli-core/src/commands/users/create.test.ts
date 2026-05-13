@@ -124,7 +124,10 @@ describe("users create", () => {
     });
 
     expect(captured.err).toContain("[dry-run] POST /v1/users");
-    expect(JSON.parse(captured.out)).toEqual({
+    // Dry-run preview now renders to stderr (with gutter); stdout stays clean.
+    const previewMatch = captured.err.match(/\{[\s\S]*\}/);
+    expect(previewMatch).not.toBeNull();
+    expect(JSON.parse(previewMatch![0])).toEqual({
       email_address: ["alice@example.com"],
       password: "[REDACTED]",
     });

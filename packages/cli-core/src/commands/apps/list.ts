@@ -14,13 +14,13 @@ function formatAppsTable(apps: Application[]): void {
     Math.max("APP ID".length, ...apps.map((a) => a.application_id.length)) + COLUMN_PADDING;
 
   const header = `${"NAME".padEnd(nameWidth)}${"APP ID".padEnd(idWidth)}ENVIRONMENTS`;
-  log.data(dim(header));
+  log.info(dim(header));
 
   for (const app of apps) {
     const name = displayName(app).padEnd(nameWidth);
     const id = dim(app.application_id.padEnd(idWidth));
     const envs = app.instances.map((i) => i.environment_type).join(", ");
-    log.data(`${cyan(name)}${id}${envs}`);
+    log.info(`${cyan(name)}${id}${envs}`);
   }
 }
 
@@ -32,9 +32,10 @@ export async function list(options: AppsOptions = {}): Promise<void> {
   );
 
   if (printJson(result.map(stripSecrets), options)) {
-    outro();
     return;
   }
+
+  log.blank()
 
   if (result.length === 0) {
     log.warn("No applications found. Create one at https://dashboard.clerk.com");

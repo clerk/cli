@@ -118,14 +118,14 @@ function formatUsersTable(users: BapiUser[]): void {
   const idWidth =
     Math.max("USER ID".length, ...users.map((user) => user.id.length)) + COLUMN_PADDING;
 
-  log.data(
+  log.info(
     `${dim("NAME".padEnd(nameWidth))}${dim("USER ID".padEnd(idWidth))}${dim("PRIMARY IDENTIFIER")}`,
   );
 
   for (const user of users) {
     const name = cyan(userDisplayName(user).padEnd(nameWidth));
     const id = dim(user.id.padEnd(idWidth));
-    log.data(`${name}${id}${primaryIdentifier(user)}`);
+    log.info(`${name}${id}${primaryIdentifier(user)}`);
   }
 }
 
@@ -166,7 +166,7 @@ export async function list(options: UsersListOptions = {}): Promise<void> {
   if (!nested) intro("Listing users");
 
   const secretKey = await resolveListSecretKey(options);
-  const pageSize = options.limit ?? DEFAULT_LIMIT;
+  const limit = options.limit ?? DEFAULT_LIMIT;
   const offset = options.offset ?? 0;
   // Request one extra row so we can detect whether more pages exist without
   // a separate /users/count round-trip. The CLI's --limit caps at 250, so
@@ -174,20 +174,21 @@ export async function list(options: UsersListOptions = {}): Promise<void> {
   const response = await withSpinner("Fetching users...", () =>
     bapiRequest({
       method: "GET",
-      path: buildUsersListPath(options, pageSize + 1),
+      path: buildUsersListPath(options, limit + 1),
       secretKey,
     }),
   );
 
   const body = response.body;
   const allUsers = Array.isArray(body) ? (body as BapiUser[]) : [];
-  const hasMore = allUsers.length > pageSize;
-  const users = hasMore ? allUsers.slice(0, pageSize) : allUsers;
+  const hasMore = allUsers.length > limit;
+  const users = hasMore ? allUsers.slice(0, limit) : allUsers;
 
   if (printJson({ data: users, hasMore }, options)) {
-    if (!nested) outro();
     return;
   }
+
+  log.blank();
 
   if (users.length === 0) {
     log.warn("No users found.");
@@ -198,8 +199,7 @@ export async function list(options: UsersListOptions = {}): Promise<void> {
   formatUsersTable(users);
   const summary = `\n${users.length} user${users.length === 1 ? "" : "s"} returned`;
   if (hasMore) {
-    const nextOffset = offset + pageSize;
-    log.info(`${summary} (more available, re-run with \`--offset ${nextOffset}\`)`);
+    log.info(`${summary} (more available, re-run with \`--offset ${offset + limit}\`)`);
   } else {
     log.info(summary);
   }

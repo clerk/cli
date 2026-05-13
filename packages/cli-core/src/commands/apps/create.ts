@@ -14,10 +14,10 @@ export async function create(name: string, options: AppsOptions = {}): Promise<v
   });
 
   if (printJson(stripSecrets(app), options)) {
-    outro();
     return;
   }
 
+  log.blank();
   log.info(`Created ${cyan(displayName(app))} ${dim(app.application_id)}`);
   outro([
     `Run \`clerk link --app ${app.application_id}\` to connect this directory`,

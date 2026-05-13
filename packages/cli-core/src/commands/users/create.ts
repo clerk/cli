@@ -46,8 +46,8 @@ export async function create(options: CreateUserOptions): Promise<void> {
   if (resolved.dryRun) {
     if (!nested) intro("Creating user");
     log.info("[dry-run] POST /v1/users");
-    log.data(JSON.stringify(redactUsersDisplayPayload(payload), null, 2));
-    if (!nested) outro();
+    log.blank();
+    log.info(JSON.stringify(redactUsersDisplayPayload(payload), null, 2));
     return;
   }
 

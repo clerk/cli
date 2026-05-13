@@ -20,6 +20,7 @@ export async function whoami() {
   } catch {
     throw new AuthError({ reason: "session_expired" });
   }
+
   log.data(userInfo.email);
 
   let isLinked = false;

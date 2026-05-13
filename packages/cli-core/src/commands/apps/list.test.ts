@@ -79,11 +79,11 @@ describe("apps list", () => {
 
       await runList();
 
-      expect(captured.out).toContain("My SaaS App");
-      expect(captured.out).toContain("app_abc123");
-      expect(captured.out).toContain("development, production");
-      expect(captured.out).toContain("Side Project");
-      expect(captured.out).toContain("app_xyz789");
+      expect(captured.err).toContain("My SaaS App");
+      expect(captured.err).toContain("app_abc123");
+      expect(captured.err).toContain("development, production");
+      expect(captured.err).toContain("Side Project");
+      expect(captured.err).toContain("app_xyz789");
     });
 
     test("shows app id as name when name is absent", async () => {
@@ -98,7 +98,7 @@ describe("apps list", () => {
 
       await runList();
 
-      expect(captured.out).toContain("app_noname");
+      expect(captured.err).toContain("app_noname");
     });
 
     test("does not show secret keys", async () => {
@@ -106,8 +106,8 @@ describe("apps list", () => {
 
       await runList();
 
-      expect(captured.out).not.toContain("sk_test_xxx");
-      expect(captured.out).not.toContain("sk_live_xxx");
+      expect(captured.err).not.toContain("sk_test_xxx");
+      expect(captured.err).not.toContain("sk_live_xxx");
     });
 
     test("shows count summary on stderr", async () => {

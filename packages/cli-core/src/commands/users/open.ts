@@ -187,7 +187,7 @@ export async function open(options: UsersOpenOptions = {}): Promise<void> {
   const appLabel = target.appLabel ?? target.appId;
   const instanceLabel = target.instanceLabel ?? target.instanceId;
 
-  intro("clerk users open");
+  intro("Opening user");
   log.info(`↗ Opening ${bold(appLabel)} (${instanceLabel}) → ${cyan(subpath)}`);
   log.info(`  ${dim(url)}`);
 

@@ -154,11 +154,11 @@ describe("users list", () => {
   test("prints a concise human-readable table by default", async () => {
     await runList();
 
-    expect(captured.out).toContain("Alice Example");
-    expect(captured.out).toContain("alice@example.com");
-    expect(captured.out).toContain("user_123");
-    expect(captured.out).toContain("bob");
-    expect(captured.out).toContain("+15551234567");
+    expect(captured.err).toContain("Alice Example");
+    expect(captured.err).toContain("alice@example.com");
+    expect(captured.err).toContain("user_123");
+    expect(captured.err).toContain("bob");
+    expect(captured.err).toContain("+15551234567");
     expect(captured.err).toContain("2 users returned");
   });
 
@@ -276,7 +276,7 @@ describe("users list", () => {
     });
   });
 
-  test("keeps the table on stdout even when invoked inside an intro/outro block", async () => {
+  test("routes the table to stderr (gutter rail) when invoked inside an intro/outro block", async () => {
     pushPrefix();
     try {
       await runList();
@@ -284,9 +284,9 @@ describe("users list", () => {
       popPrefix();
     }
 
-    expect(captured.out).toContain("Alice Example");
-    expect(captured.out).toContain("user_123");
-    expect(captured.out).toContain("alice@example.com");
+    expect(captured.err).toContain("Alice Example");
+    expect(captured.err).toContain("user_123");
+    expect(captured.err).toContain("alice@example.com");
     expect(captured.err).toContain("2 users returned");
   });
 
