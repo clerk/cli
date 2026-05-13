@@ -5,6 +5,9 @@ import {
   resolveTestDeployFlags,
   withMockProductionInstance,
   withTestFailureAfterApiCall,
+  mockDeployApi,
+  configureMockDeployApi,
+  _resetDeployStatusMock,
 } from "./mock.ts";
 
 describe("resolveTestDeployFlags", () => {
@@ -14,7 +17,9 @@ describe("resolveTestDeployFlags", () => {
       testFailProductionInstanceCheck: false,
       testFailDomainLookup: false,
       testFailValidateCloning: false,
+      testFailValidateCloningUnsupportedFeatures: undefined,
       testFailCreateProductionInstance: false,
+      testFailCreateProductionInstanceExists: false,
       testFailDnsVerification: false,
       testFailOAuthSave: false,
     });
@@ -31,7 +36,9 @@ describe("resolveTestDeployFlags", () => {
       testFailProductionInstanceCheck: false,
       testFailDomainLookup: false,
       testFailValidateCloning: false,
+      testFailValidateCloningUnsupportedFeatures: undefined,
       testFailCreateProductionInstance: false,
+      testFailCreateProductionInstanceExists: false,
       testFailDnsVerification: true,
       testFailOAuthSave: false,
     });
@@ -156,8 +163,41 @@ describe("withMockProductionInstance", () => {
 
     const result = withMockProductionInstance(stagingOnly);
     expect(result.instances).toHaveLength(2);
-    expect(
-      result.instances.some((instance) => instance.environment_type === "production"),
-    ).toBe(true);
+    expect(result.instances.some((instance) => instance.environment_type === "production")).toBe(
+      true,
+    );
+  });
+});
+
+describe("mockDeployApi failure injection — specific error codes", () => {
+  test("failCreateProductionInstanceExists throws PlapiError with code production_instance_exists", async () => {
+    _resetDeployStatusMock();
+    configureMockDeployApi({ failCreateProductionInstanceExists: true });
+    let thrown: unknown;
+    try {
+      await mockDeployApi.createProductionInstance("app_x", { home_url: "https://example.com" });
+    } catch (e) {
+      thrown = e;
+    }
+    expect(thrown).toBeInstanceOf(PlapiError);
+    const err = thrown as PlapiError;
+    expect(err.status).toBe(400);
+    expect(err.code).toBe("production_instance_exists");
+  });
+
+  test("failValidateCloningUnsupportedFeatures throws 402 with meta.unsupported_features", async () => {
+    _resetDeployStatusMock();
+    configureMockDeployApi({ failValidateCloningUnsupportedFeatures: ["saml", "mfa"] });
+    let thrown: unknown;
+    try {
+      await mockDeployApi.validateCloning("app_x", { clone_instance_id: "ins_dev" });
+    } catch (e) {
+      thrown = e;
+    }
+    expect(thrown).toBeInstanceOf(PlapiError);
+    const err = thrown as PlapiError;
+    expect(err.status).toBe(402);
+    expect(err.code).toBe("unsupported_subscription_plan_features");
+    expect(err.meta).toEqual({ unsupported_features: ["saml", "mfa"] });
   });
 });
