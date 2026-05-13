@@ -8,8 +8,6 @@
  * locally.
  */
 
-import { sleep } from "../../lib/sleep.ts";
-import { PlapiError } from "../../lib/errors.ts";
 import {
   createProductionInstance as liveCreateProductionInstance,
   getDeployStatus as liveGetDeployStatus,
@@ -23,6 +21,9 @@ import {
   type ProductionInstanceResponse,
   type ValidateCloningParams,
 } from "../../lib/plapi.ts";
+import { mockDeployApi } from "./mock.ts";
+
+export { configureMockDeployApi } from "./mock.ts";
 
 export type {
   CnameTarget,
@@ -32,7 +33,7 @@ export type {
   ValidateCloningParams,
 } from "../../lib/plapi.ts";
 
-type DeployApi = {
+export type DeployApi = {
   createProductionInstance: (
     applicationId: string,
     params: CreateProductionInstanceParams,
@@ -46,113 +47,6 @@ type DeployApi = {
     instanceId: string,
     config: Record<string, unknown>,
   ) => Promise<Record<string, unknown>>;
-};
-
-const MOCK_PRODUCTION_INSTANCE_ID = "MOCKED_NOT_REAL_FIXME";
-const MOCK_DOMAIN_ID = "MOCKED_NOT_REAL_FIXME";
-const MOCK_PUBLISHABLE_KEY = "MOCKED_NOT_REAL_FIXME";
-const MOCK_SECRET_KEY = "MOCKED_NOT_REAL_FIXME";
-const MOCK_LATENCY_MS = 2000;
-const MOCK_INCOMPLETE_POLLS = 2;
-
-type DeployApiMockOptions = {
-  failValidateCloning?: boolean;
-  failCreateProductionInstance?: boolean;
-  failDnsVerification?: boolean;
-  failOAuthSave?: boolean;
-};
-
-let mockOptions: DeployApiMockOptions = {};
-
-export function configureMockDeployApi(options: DeployApiMockOptions = {}): void {
-  mockOptions = { ...options };
-}
-
-function simulatedDeployApiFailure(step: string): PlapiError {
-  return new PlapiError(
-    500,
-    JSON.stringify({ errors: [{ message: `Simulated deploy failure: ${step}.` }] }),
-    "clerk deploy test flag",
-  );
-}
-
-async function simulateServerLatency(): Promise<void> {
-  await sleep(MOCK_LATENCY_MS);
-}
-
-function defaultCnameTargets(domain: string): CnameTarget[] {
-  return [
-    { host: `clerk.${domain}`, value: "frontend-api.clerk.services", required: true },
-    { host: `accounts.${domain}`, value: "accounts.clerk.services", required: true },
-    {
-      host: `clkmail.${domain}`,
-      value: `mail.${domain}.nam1.clerk.services`,
-      required: true,
-    },
-  ];
-}
-
-const deployStatusPollCounts = new Map<string, number>();
-
-export function _resetDeployStatusMock(): void {
-  deployStatusPollCounts.clear();
-  configureMockDeployApi();
-}
-
-export const mockDeployApi: DeployApi = {
-  async createProductionInstance(_applicationId, params) {
-    await simulateServerLatency();
-    if (mockOptions.failCreateProductionInstance) {
-      throw simulatedDeployApiFailure("production instance creation");
-    }
-    return {
-      instance_id: MOCK_PRODUCTION_INSTANCE_ID,
-      environment_type: "production",
-      active_domain: {
-        id: MOCK_DOMAIN_ID,
-        name: params.home_url,
-      },
-      secret_key: MOCK_SECRET_KEY,
-      publishable_key: MOCK_PUBLISHABLE_KEY,
-      cname_targets: defaultCnameTargets(params.home_url),
-    };
-  },
-
-  async validateCloning() {
-    await simulateServerLatency();
-    if (mockOptions.failValidateCloning) {
-      throw simulatedDeployApiFailure("cloning validation");
-    }
-  },
-
-  async getDeployStatus(applicationId, envOrInsId) {
-    await simulateServerLatency();
-    if (mockOptions.failDnsVerification) {
-      throw simulatedDeployApiFailure("DNS verification");
-    }
-    const key = `${applicationId}:${envOrInsId}`;
-    const count = (deployStatusPollCounts.get(key) ?? 0) + 1;
-    deployStatusPollCounts.set(key, count);
-    return {
-      status: count > MOCK_INCOMPLETE_POLLS ? "complete" : "incomplete",
-    };
-  },
-
-  async retryApplicationDomainSSL() {
-    await simulateServerLatency();
-  },
-
-  async retryApplicationDomainMail() {
-    await simulateServerLatency();
-  },
-
-  async patchInstanceConfig() {
-    await simulateServerLatency();
-    if (mockOptions.failOAuthSave) {
-      throw simulatedDeployApiFailure("OAuth credential save");
-    }
-    return {};
-  },
 };
 
 export const liveDeployApi: DeployApi = {

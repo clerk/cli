@@ -2,15 +2,9 @@ import { isAgent } from "../../mode.ts";
 import { isInsideGutter, log } from "../../lib/log.ts";
 import { sleep } from "../../lib/sleep.ts";
 import { bar, intro, outro, withSpinner } from "../../lib/spinner.ts";
-import {
-  PlapiError,
-  UserAbortError,
-  isPromptExitError,
-  throwUsageError,
-} from "../../lib/errors.ts";
+import { UserAbortError, isPromptExitError, throwUsageError } from "../../lib/errors.ts";
 import { resolveProfile, setProfile } from "../../lib/config.ts";
 import {
-  type Application,
   fetchApplication,
   fetchInstanceConfig,
   listApplicationDomains,
@@ -25,6 +19,15 @@ import {
   type CnameTarget,
   type ProductionInstanceResponse,
 } from "./api.ts";
+import {
+  mockProductionDomain,
+  mockProductionInstanceConfig,
+  resolveTestDeployFlags,
+  simulatedDeployApiFailure,
+  withMockProductionInstance,
+  withTestFailureAfterApiCall,
+  type DeployTestFlags,
+} from "./mock.ts";
 import { domainConnectUrl } from "./domain-connect.ts";
 import {
   INTRO_PREAMBLE,
@@ -69,16 +72,6 @@ type DeployOptions = {
   testForceProductionInstance?: boolean;
   testFailProductionInstanceCheck?: boolean;
   testFailDomainLookup?: boolean;
-  testFailValidateCloning?: boolean;
-  testFailCreateProductionInstance?: boolean;
-  testFailDnsVerification?: boolean;
-  testFailOAuthSave?: boolean;
-};
-
-type DeployTestFlags = Pick<
-  DeployContext,
-  "testForceProductionInstance" | "testFailProductionInstanceCheck" | "testFailDomainLookup"
-> & {
   testFailValidateCloning?: boolean;
   testFailCreateProductionInstance?: boolean;
   testFailDnsVerification?: boolean;
@@ -159,18 +152,6 @@ async function resolveDeployContext(options: DeployOptions): Promise<DeployConte
   };
 }
 
-function resolveTestDeployFlags(options: DeployOptions): DeployTestFlags {
-  return {
-    testForceProductionInstance: options.testForceProductionInstance === true,
-    testFailProductionInstanceCheck: options.testFailProductionInstanceCheck === true,
-    testFailDomainLookup: options.testFailDomainLookup === true,
-    testFailValidateCloning: options.testFailValidateCloning === true,
-    testFailCreateProductionInstance: options.testFailCreateProductionInstance === true,
-    testFailDnsVerification: options.testFailDnsVerification === true,
-    testFailOAuthSave: options.testFailOAuthSave === true,
-  };
-}
-
 function resolveCommandTestFlags(
   testFlags: DeployTestFlags,
 ): Pick<
@@ -193,26 +174,6 @@ function configureDeployApiMocks(testFlags: DeployTestFlags): void {
   });
 }
 
-function simulatedDeployApiFailure(step: string): PlapiError {
-  return new PlapiError(
-    500,
-    JSON.stringify({ errors: [{ message: `Simulated deploy failure: ${step}.` }] }),
-    "clerk deploy test flag",
-  );
-}
-
-async function withTestFailureAfterApiCall<T>(
-  promise: Promise<T>,
-  shouldFail: boolean | undefined,
-  step: string,
-): Promise<T> {
-  const result = await promise;
-  if (shouldFail) {
-    throw simulatedDeployApiFailure(step);
-  }
-  return result;
-}
-
 async function resolveLiveApplicationContext(
   profile: DeployContext["profile"],
   options: { forceMockProductionInstance?: boolean } = {},
@@ -233,23 +194,6 @@ async function resolveLiveApplicationContext(
     appLabel: app.name || profile.appName || app.application_id,
     developmentInstanceId: development?.instance_id ?? profile.instances.development,
     productionInstanceId: production?.instance_id,
-  };
-}
-
-function withMockProductionInstance(app: Application): Application {
-  if (app.instances.some((entry) => entry.environment_type === "production")) {
-    return app;
-  }
-  return {
-    ...app,
-    instances: [
-      ...app.instances,
-      {
-        instance_id: "ins_prod_mock",
-        environment_type: "production",
-        publishable_key: "pk_live_test",
-      },
-    ],
   };
 }
 
@@ -486,34 +430,6 @@ async function loadProductionDomain(ctx: DeployContext): Promise<ApplicationDoma
     throw simulatedDeployApiFailure("production domain lookup");
   }
   return domains.data.find((domain) => !domain.is_satellite) ?? domains.data[0];
-}
-
-function mockProductionDomain(): ApplicationDomain {
-  return {
-    object: "domain",
-    id: "dmn_prod_mock",
-    name: "example.com",
-    is_satellite: false,
-    is_provider_domain: false,
-    frontend_api_url: "https://clerk.example.com",
-    accounts_portal_url: "https://accounts.example.com",
-    development_origin: "",
-    cname_targets: [
-      { host: "clerk.example.com", value: "frontend-api.clerk.services", required: true },
-      { host: "accounts.example.com", value: "accounts.clerk.services", required: true },
-      {
-        host: "clkmail.example.com",
-        value: "mail.example.com.nam1.clerk.services",
-        required: true,
-      },
-    ],
-    created_at: "2026-05-06T00:00:00Z",
-    updated_at: "2026-05-06T00:00:00Z",
-  };
-}
-
-function mockProductionInstanceConfig(): Record<string, unknown> {
-  return {};
 }
 
 function hasProductionOAuthCredentials(
