@@ -183,7 +183,6 @@ export type ProductionInstanceResponse = {
 export type CreateProductionInstanceParams = {
   home_url: string;
   clone_instance_id?: string;
-  is_secondary?: boolean;
 };
 
 export type ValidateCloningParams = {
