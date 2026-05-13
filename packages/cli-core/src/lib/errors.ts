@@ -269,6 +269,11 @@ export class PlapiError extends ApiError {
   static fromBody(status: number, body: string, url?: string): PlapiError {
     return new PlapiError(status, body, url);
   }
+
+  static async fromResponse(response: Response): Promise<PlapiError> {
+    const body = await response.text();
+    return new PlapiError(response.status, body, response.url || undefined);
+  }
 }
 
 /**
@@ -296,6 +301,11 @@ export class FapiError extends ApiError {
   static fromBody(status: number, body: string, url?: string): FapiError {
     return new FapiError(status, body, url);
   }
+
+  static async fromResponse(response: Response): Promise<FapiError> {
+    const body = await response.text();
+    return new FapiError(response.status, body, response.url || undefined);
+  }
 }
 
 /**
@@ -319,6 +329,11 @@ export class BapiError extends ApiError {
 
   static fromBody(status: number, body: string, headers: Headers): BapiError {
     return new BapiError(status, body, headers);
+  }
+
+  static async fromResponse(response: Response): Promise<BapiError> {
+    const body = await response.text();
+    return new BapiError(response.status, body, response.headers);
   }
 }
 

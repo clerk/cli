@@ -1,5 +1,5 @@
 import { test, expect, describe } from "bun:test";
-import { PlapiError } from "./errors.ts";
+import { PlapiError, FapiError, BapiError } from "./errors.ts";
 
 describe("ApiError envelope parsing (via PlapiError.fromBody)", () => {
   test("parses a standard single-error envelope", () => {
@@ -81,5 +81,60 @@ describe("ApiError envelope parsing (via PlapiError.fromBody)", () => {
     });
     const err = PlapiError.fromBody(400, body);
     expect(err.meta).toEqual({});
+  });
+});
+
+describe("PlapiError factories", () => {
+  test("fromResponse reads body, status, and response.url", async () => {
+    const body = JSON.stringify({ errors: [{ code: "x", message: "y" }] });
+    const response = new Response(body, {
+      status: 422,
+      headers: { "content-type": "application/json" },
+    });
+    Object.defineProperty(response, "url", {
+      value: "https://api.example.com/r",
+    });
+    const err = await PlapiError.fromResponse(response);
+    expect(err).toBeInstanceOf(PlapiError);
+    expect(err.status).toBe(422);
+    expect(err.code).toBe("x");
+    expect(err.url).toBe("https://api.example.com/r");
+  });
+
+  test("fromBody is synchronous and accepts an optional url", () => {
+    const err = PlapiError.fromBody(500, "boom", "https://api.example.com/r");
+    expect(err).toBeInstanceOf(PlapiError);
+    expect(err.url).toBe("https://api.example.com/r");
+    expect(err.code).toBeNull();
+  });
+});
+
+describe("FapiError factories", () => {
+  test("fromResponse reads body, status, and response.url", async () => {
+    const response = new Response("not json", { status: 503 });
+    Object.defineProperty(response, "url", { value: "https://fapi.example.com/x" });
+    const err = await FapiError.fromResponse(response);
+    expect(err).toBeInstanceOf(FapiError);
+    expect(err.status).toBe(503);
+    expect(err.url).toBe("https://fapi.example.com/x");
+  });
+});
+
+describe("BapiError factories", () => {
+  test("fromResponse captures headers", async () => {
+    const response = new Response("err", {
+      status: 400,
+      headers: { "x-clerk-trace": "abc" },
+    });
+    const err = await BapiError.fromResponse(response);
+    expect(err).toBeInstanceOf(BapiError);
+    expect(err.headers.get("x-clerk-trace")).toBe("abc");
+  });
+
+  test("fromBody requires headers explicitly", () => {
+    const headers = new Headers({ "x-y": "z" });
+    const err = BapiError.fromBody(400, "boom", headers);
+    expect(err).toBeInstanceOf(BapiError);
+    expect(err.headers.get("x-y")).toBe("z");
   });
 });
