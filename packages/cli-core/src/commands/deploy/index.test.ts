@@ -987,6 +987,23 @@ describe("deploy", () => {
       expect(mockCreateProductionInstance).not.toHaveBeenCalled();
     });
 
+    test("rethrows unsupported_subscription_plan_features as a CliError with feature list", async () => {
+      await linkedProject();
+      mockIsAgent.mockReturnValue(false);
+
+      let thrown: unknown;
+      try {
+        await runDeploy({ testFailValidateCloningUnsupportedFeatures: ["saml", "mfa"] });
+      } catch (e) {
+        thrown = e;
+      }
+      expect(thrown).toBeInstanceOf(CliError);
+      const err = thrown as CliError;
+      expect(err.message).toContain("saml");
+      expect(err.message).toContain("mfa");
+      expect(err.docsUrl).toContain("clerk.com/docs");
+    });
+
     test("--test-fail-create-production-instance simulates production creation failure", async () => {
       await linkedProject();
       mockIsAgent.mockReturnValue(false);

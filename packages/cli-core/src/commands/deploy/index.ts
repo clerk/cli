@@ -81,6 +81,7 @@ type DeployOptions = {
   testFailValidateCloning?: boolean;
   testFailCreateProductionInstance?: boolean;
   testFailCreateProductionInstanceExists?: boolean;
+  testFailValidateCloningUnsupportedFeatures?: string[];
   testFailDnsVerification?: boolean;
   testFailOAuthSave?: boolean;
 };
@@ -177,6 +178,7 @@ function configureDeployApiMocks(testFlags: DeployTestFlags): void {
     failValidateCloning: testFlags.testFailValidateCloning,
     failCreateProductionInstance: testFlags.testFailCreateProductionInstance,
     failCreateProductionInstanceExists: testFlags.testFailCreateProductionInstanceExists,
+    failValidateCloningUnsupportedFeatures: testFlags.testFailValidateCloningUnsupportedFeatures,
     failDnsVerification: testFlags.testFailDnsVerification,
     failOAuthSave: testFlags.testFailOAuthSave,
   });
@@ -532,7 +534,22 @@ function discoverEnabledOAuthProviders(config: Record<string, unknown>): Discove
 
 async function runValidateCloning(ctx: DeployContext): Promise<void> {
   await withSpinner("Validating subscription compatibility...", async () => {
-    await validateCloning(ctx.appId, { clone_instance_id: ctx.developmentInstanceId });
+    try {
+      await validateCloning(ctx.appId, { clone_instance_id: ctx.developmentInstanceId });
+    } catch (error) {
+      if (error instanceof PlapiError && error.code === "unsupported_subscription_plan_features") {
+        const features = Array.isArray(error.meta?.unsupported_features)
+          ? (error.meta.unsupported_features as string[])
+          : [];
+        const featureList = features.length > 0 ? features.join(", ") : "this plan";
+        throw new CliError(
+          `Your subscription plan doesn't support: ${featureList}.\n` +
+            "Upgrade your plan or disable these features in development before deploying.",
+          { docsUrl: "https://clerk.com/docs/billing/plans" },
+        );
+      }
+      throw error;
+    }
   });
 }
 
