@@ -43,7 +43,7 @@ describe("bapi-command", () => {
     const handled = await captured.run(() =>
       Promise.resolve(
         handleBapiError(
-          new BapiError(
+          BapiError.fromBody(
             422,
             JSON.stringify({
               errors: [

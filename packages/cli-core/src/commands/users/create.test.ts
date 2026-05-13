@@ -171,7 +171,7 @@ describe("users create", () => {
   test("prints raw BAPI validation errors to stdout for machine use", async () => {
     mockHandleBapiError.mockImplementation((error: unknown) => error instanceof BapiError);
     mockBapiRequest.mockRejectedValue(
-      new BapiError(
+      BapiError.fromBody(
         422,
         JSON.stringify({
           errors: [
