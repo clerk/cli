@@ -278,6 +278,14 @@ async function startNewDeploy(ctx: DeployContext): Promise<void> {
     throw error;
   }
   await persistProductionInstance(ctx, production.instance_id);
+
+  if (!production.active_domain) {
+    throw new CliError(
+      "Production instance was created but Clerk did not return a domain. " +
+        "Run `clerk deploy` again to retry domain provisioning.",
+    );
+  }
+
   log.blank();
 
   const productionDomain = production.active_domain.name;

@@ -1493,6 +1493,43 @@ describe("deploy", () => {
       expect(err).toContain("Configure them from the Clerk Dashboard before going live");
     });
 
+    test("throws a CliError when createProductionInstance returns no active_domain", async () => {
+      _modeOverride = "human";
+      await linkedProject({
+        appId: "app_test",
+        appName: "Test App",
+        instances: { development: "ins_dev" },
+      });
+      mockFetchApplication.mockResolvedValue({
+        application_id: "app_test",
+        name: "Test App",
+        instances: [
+          { instance_id: "ins_dev", environment_type: "development", publishable_key: "pk_test" },
+        ],
+      });
+      mockFetchInstanceConfig.mockResolvedValue({});
+      mockConfirm.mockResolvedValue(true);
+      mockInput.mockResolvedValue("https://example.com");
+
+      mockCreateProductionInstance.mockResolvedValue({
+        instance_id: "ins_prod",
+        environment_type: "production",
+        active_domain: null,
+        secret_key: "sk_live_x",
+        publishable_key: "pk_live_x",
+        cname_targets: [],
+      });
+
+      let thrown: unknown;
+      try {
+        await runDeploy({});
+      } catch (e) {
+        thrown = e;
+      }
+      expect(thrown).toBeInstanceOf(CliError);
+      expect((thrown as CliError).message).toContain("did not return a domain");
+    });
+
     test("recovers from production_instance_exists by resuming reconcileExistingDeploy", async () => {
       _modeOverride = "human";
       await linkedProject({
