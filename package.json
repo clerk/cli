@@ -42,10 +42,10 @@
   },
   "nano-staged": {
     "*.{ts,tsx,js,jsx}": [
-      "oxfmt --write",
-      "oxlint -c .oxlintrc.json"
+      "oxfmt --write --no-error-on-unmatched-pattern",
+      "oxlint -c .oxlintrc.json --no-error-on-unmatched-pattern"
     ],
-    "*.{md,json,css}": "oxfmt --write"
+    "*.{md,json,css}": "oxfmt --write --no-error-on-unmatched-pattern"
   },
   "engines": {
     "bun": ">=1.3.10"
