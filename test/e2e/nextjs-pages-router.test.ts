@@ -1,40 +1,17 @@
-import { join } from "node:path";
 import { describe } from "bun:test";
 import {
-  createGetFixture,
-  runFixtureTest,
+  createFixtureHarness,
+  runFixtureTests,
   runFileExistsTest,
-  runBrowserTest,
+  runBrowserTests,
 } from "./lib/fixture-test.ts";
-import type { FixtureConfig } from "./lib/types.ts";
-
-const fixtureDir = join(import.meta.dir, "fixtures/nextjs-pages-router");
-
-export const config = {
-  scaffoldCmd: [
-    "npx",
-    "--yes",
-    "create-next-app@latest",
-    ".",
-    "--ts",
-    "--no-app",
-    "--no-tailwind",
-    "--no-eslint",
-    "--use-npm",
-    "--skip-install",
-    "--yes",
-  ],
-  clerkSdk: "@clerk/nextjs",
-  buildCmd: ["next", "build"],
-  devCmd: ["next", "dev"],
-} satisfies FixtureConfig;
 
 describe("Next.js Pages Router with TypeScript", () => {
-  const getFixture = createGetFixture(fixtureDir);
+  const harness = createFixtureHarness("nextjs-pages-router");
 
   describe("clerk init", () => {
-    runFixtureTest(getFixture, config);
-    runFileExistsTest(getFixture, config, ["proxy.ts"]);
-    runBrowserTest(getFixture, config);
+    runFixtureTests(harness);
+    runFileExistsTest(harness, ["proxy.ts"]);
+    runBrowserTests(harness);
   });
 });

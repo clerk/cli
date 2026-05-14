@@ -1,5 +1,5 @@
 import { mkdtemp, cp, rm, realpath } from "node:fs/promises";
-import { join, basename } from "node:path";
+import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { parseEnv } from "node:util";
 // NOTE: These helpers are imported from the CLI source (the SUT). This couples
@@ -11,7 +11,11 @@ import {
   detectPublishableKeyName,
   detectSecretKeyName,
 } from "../../../packages/cli-core/src/lib/framework.ts";
+import { fixtures, type FixtureName } from "../fixtures.manifest.ts";
+import type { FixtureConfig } from "./types.ts";
 import { log } from "./logger.ts";
+
+const FIXTURES_DIR = join(import.meta.dir, "..", "fixtures");
 // Path to CLI entry point relative to this file (test/e2e/lib/ -> packages/cli-core/src/cli.ts)
 const CLI_PATH = join(import.meta.dir, "../../../packages/cli-core/src/cli.ts");
 
@@ -119,7 +123,9 @@ async function parseEnvFiles(projectDir: string): Promise<Record<string, string>
 }
 
 export type Fixture = {
-  name: string;
+  name: FixtureName;
+  config: FixtureConfig;
+  fixtureDir: string;
   projectDir: string;
   configDir: string;
   publishableKey: string;
@@ -128,10 +134,14 @@ export type Fixture = {
 };
 
 /**
- * Shared setup: copy fixture to temp dir, pre-link, run clerk init, npm ci.
+ * Shared setup: look up the fixture in the manifest, copy it to a temp dir,
+ * pre-link, run clerk init, npm ci. Returns a `Fixture` that embeds the
+ * resolved config and fixtureDir so downstream helpers don't need to thread
+ * them separately.
  */
-export async function setupFixture(fixtureDir: string): Promise<Fixture> {
-  const name = basename(fixtureDir);
+export async function setupFixture(name: FixtureName): Promise<Fixture> {
+  const config = fixtures[name];
+  const fixtureDir = join(FIXTURES_DIR, name);
   log("setup started");
 
   // Resolve symlinks (macOS /var -> /private/var) so profile keys match across commands
@@ -190,5 +200,14 @@ export async function setupFixture(fixtureDir: string): Promise<Fixture> {
     log("cleanup done");
   };
 
-  return { name, projectDir, configDir, publishableKey, secretKey, cleanup };
+  return {
+    name,
+    config,
+    fixtureDir,
+    projectDir,
+    configDir,
+    publishableKey,
+    secretKey,
+    cleanup,
+  };
 }

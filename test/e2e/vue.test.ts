@@ -1,22 +1,11 @@
-import { join } from "node:path";
 import { describe } from "bun:test";
-import { createGetFixture, runFixtureTest, runBrowserTest } from "./lib/fixture-test.ts";
-import type { FixtureConfig } from "./lib/types.ts";
-
-const fixtureDir = join(import.meta.dir, "fixtures/vue");
-
-export const config = {
-  scaffoldCmd: ["npx", "--yes", "create-vite@latest", ".", "--template", "vue-ts"],
-  clerkSdk: "@clerk/vue",
-  buildCmd: ["vite", "build"],
-  devCmd: ["vite"],
-} satisfies FixtureConfig;
+import { createFixtureHarness, runFixtureTests, runBrowserTests } from "./lib/fixture-test.ts";
 
 describe("Vue with Vite and TypeScript", () => {
-  const getFixture = createGetFixture(fixtureDir);
+  const harness = createFixtureHarness("vue");
 
   describe("clerk init", () => {
-    runFixtureTest(getFixture, config);
-    runBrowserTest(getFixture, config);
+    runFixtureTests(harness);
+    runBrowserTests(harness);
   });
 });

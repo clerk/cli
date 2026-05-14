@@ -1,7 +1,7 @@
 import { join } from "node:path";
 import { test, expect, beforeAll, afterAll, afterEach } from "bun:test";
 import { setupFixture, type Fixture } from "./fixture-setup.ts";
-import type { FixtureConfig } from "./types.ts";
+import type { FixtureName } from "../fixtures.manifest.ts";
 import { chromium } from "playwright";
 import { clerkSetup, setupClerkTestingToken, clerk } from "@clerk/testing/playwright";
 import { startDevServer, killDevServer } from "./dev-server.ts";
@@ -82,42 +82,27 @@ function createUsers(fixture: Fixture): Users {
   };
 }
 
-type GetFixture = () => {
+type FixtureHarness = () => {
   fixture: Omit<Fixture, "cleanup">;
   users: FixtureUsers;
 };
 
 /**
- * Shared fixture lifecycle hook. Calls `setupFixture()` once in `beforeAll`,
- * cleans up the fixture in `afterAll`, and cleans up per-test users in
- * `afterEach`. Returns a getter that yields `{ fixture, users }` for tests in
- * the file: `fixture` exposes the project metadata (without the internal
- * cleanup hook) and `users` provides per-test `create`/`delete` helpers.
+ * Shared fixture lifecycle hook. Calls `setupFixture(name)` once in
+ * `beforeAll` (which looks up the manifest entry and embeds `config` +
+ * `fixtureDir` on the returned `Fixture`), cleans up the fixture in
+ * `afterAll`, and cleans up per-test users in `afterEach`. Returns a harness
+ * that yields `{ fixture, users }` for tests in the file.
  *
- * Must be called at the top level of a test file (not inside `describe`).
+ * Must be called at the top level of a `describe(...)` block (not deeper).
  */
-export function createGetFixture(fixtureDir: string): GetFixture {
-  // Skip when imported by the refresh script
-  if (process.env.CLERK_REFRESH_FIXTURES) {
-    return () => ({
-      fixture: { name: "", projectDir: "", configDir: "", publishableKey: "", secretKey: "" },
-      users: {
-        create: () => {
-          throw new Error("users.create unavailable in refresh-fixtures mode");
-        },
-        delete: () => {
-          throw new Error("users.delete unavailable in refresh-fixtures mode");
-        },
-      },
-    });
-  }
-
+export function createFixtureHarness(name: FixtureName): FixtureHarness {
   let fixture: Fixture | null = null;
   let users: Users | null = null;
 
   beforeAll(async () => {
     log("beforeAll started");
-    fixture = await setupFixture(fixtureDir);
+    fixture = await setupFixture(name);
     users = createUsers(fixture);
     log("beforeAll finished");
   }, 300_000);
@@ -134,14 +119,14 @@ export function createGetFixture(fixtureDir: string): GetFixture {
 
   return () => {
     if (!fixture || !users)
-      throw new Error("Fixture not initialized - createGetFixture() beforeAll has not run yet");
+      throw new Error("Fixture not initialized - createFixtureHarness() beforeAll has not run yet");
     return { fixture, users };
   };
 }
 
 /**
  * Register a bun test that verifies the framework build command and
- * `tsc --noEmit` both pass using the shared fixture from `createGetFixture()`.
+ * `tsc --noEmit` both pass using the shared fixture from `createFixtureHarness()`.
  *
  * Build runs first so frameworks that generate types during build
  * (TanStack Router routeTree.gen) have them available for tsc.
@@ -149,14 +134,12 @@ export function createGetFixture(fixtureDir: string): GetFixture {
  * bare `tsc --noEmit` (e.g. React Router needs `react-router typegen`
  * before tsc).
  */
-export function runFixtureTest(getFixture: GetFixture, config: FixtureConfig): void {
-  if (process.env.CLERK_REFRESH_FIXTURES) return;
-
+export function runFixtureTests(harness: FixtureHarness): void {
   test(
     "project builds with no errors",
     async () => {
-      const { fixture } = getFixture();
-      const { projectDir } = fixture;
+      const { fixture } = harness();
+      const { projectDir, config } = fixture;
 
       // Build first so type generation artifacts are available for tsc.
       log("build started");
@@ -174,7 +157,7 @@ export function runFixtureTest(getFixture: GetFixture, config: FixtureConfig): v
   test(
     "typecheck passes with no errors",
     async () => {
-      const { fixture } = getFixture();
+      const { fixture } = harness();
       const { projectDir } = fixture;
 
       // Use the project's typecheck script if available (handles
@@ -202,16 +185,10 @@ export function runFixtureTest(getFixture: GetFixture, config: FixtureConfig): v
  * @param expectedFiles - filenames to look for (relative to projectDir).
  *   The test passes if at least one exists.
  */
-export function runFileExistsTest(
-  getFixture: GetFixture,
-  config: FixtureConfig,
-  expectedFiles: string[],
-): void {
-  if (process.env.CLERK_REFRESH_FIXTURES) return;
-
+export function runFileExistsTest(harness: FixtureHarness, expectedFiles: string[]): void {
   const label = expectedFiles.join(" or ");
   test(`\`clerk init\` creates ${label}`, async () => {
-    const { fixture } = getFixture();
+    const { fixture } = harness();
     const { projectDir } = fixture;
     const found = await Promise.all(
       expectedFiles.map(async (f) => {
@@ -229,14 +206,12 @@ export function runFileExistsTest(
  * Register a bun test that starts a dev server, creates a test user,
  * and verifies sign-in works via @clerk/testing in a real browser.
  */
-export function runBrowserTest(getFixture: GetFixture, config: FixtureConfig): void {
-  if (process.env.CLERK_REFRESH_FIXTURES) return;
-
+export function runBrowserTests(harness: FixtureHarness): void {
   test(
     "app loads and auth flow works",
     async () => {
-      const { fixture, users } = getFixture();
-      const { projectDir, publishableKey, secretKey } = fixture;
+      const { fixture, users } = harness();
+      const { projectDir, publishableKey, secretKey, config } = fixture;
 
       let port: number | undefined;
       let host: string | undefined;

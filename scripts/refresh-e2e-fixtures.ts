@@ -2,26 +2,28 @@
 /**
  * Regenerates e2e fixture directories from real framework CLI tools.
  *
+ * Reads the fixture catalog from `test/e2e/fixtures.manifest.ts`, which is
+ * the single source of truth for both this script and the test files. The
+ * script never imports the test files themselves, so it doesn't depend on
+ * `bun:test` being available at module load.
+ *
  * Usage:
- *   bun run scripts/refresh-e2e-fixtures.ts           # refresh fixtures without pinned ranges
+ *   bun run scripts/refresh-e2e-fixtures.ts           # refresh every fixture
  *   bun run scripts/refresh-e2e-fixtures.ts --only nextjs-app-router
  */
 
 import { rm, cp, mkdir } from "node:fs/promises";
-import { join, basename } from "node:path";
+import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { parseArgs } from "node:util";
-import { Glob } from "bun";
 import semver from "semver";
 import {
   applyPackageJsonOverrides,
   assertPinnedDependencyRanges,
   resolveDependencySpecsToExactVersions,
 } from "./lib/fixture-deps.ts";
-
-// Set env var to signal that we're importing fixtures for config reading only,
-// not for test registration. This must be set BEFORE importing any fixture files.
-process.env.CLERK_REFRESH_FIXTURES = "1";
+import { fixtures, type FixtureName } from "../test/e2e/fixtures.manifest.ts";
+import type { FixtureConfig } from "../test/e2e/lib/types.ts";
 
 const { values } = parseArgs({
   args: Bun.argv.slice(2),
@@ -59,40 +61,21 @@ async function resolveNpmDependencyVersion(name: string, spec: string): Promise<
   return version;
 }
 
-// Ensure fixtures directory exists
 await mkdir(FIXTURES_DIR, { recursive: true });
 
-const glob = new Glob("*.test.ts");
-const testFiles: string[] = [];
-for await (const file of glob.scan(E2E_DIR)) {
-  testFiles.push(join(E2E_DIR, file));
+const entries = Object.entries(fixtures) as Array<[FixtureName, FixtureConfig]>;
+
+if (onlyName && !entries.some(([name]) => name === onlyName)) {
+  console.error(
+    `⚠️  --only "${onlyName}" did not match any fixture. Available: ${entries.map(([name]) => name).join(", ")}`,
+  );
+  process.exit(1);
 }
 
-const fixtureNames: string[] = [];
-let matchedOnly = false;
-
-for (const testFile of testFiles) {
-  const name = basename(testFile, ".test.ts");
-  fixtureNames.push(name);
-  const fixtureDir = join(FIXTURES_DIR, name);
-
+for (const [name, config] of entries) {
   if (onlyName && name !== onlyName) continue;
-  matchedOnly = true;
 
-  const { config } = (await import(testFile)) as {
-    config?: import("../test/e2e/lib/types.ts").FixtureConfig;
-  };
-
-  // Skip non-fixture e2e tests (e.g. live-API roundtrip tests that don't
-  // scaffold a project and therefore don't export a FixtureConfig).
-  if (!config) {
-    if (onlyName) {
-      console.error(`❌ ${name} is not a fixture (no config export).`);
-      process.exit(1);
-    }
-    continue;
-  }
-
+  const fixtureDir = join(FIXTURES_DIR, name);
   console.log(`🔄 Refreshing: ${name}`);
 
   // Use a lowercase-only suffix so framework scaffolders (e.g. create-next-app)
@@ -169,11 +152,4 @@ for (const testFile of testFiles) {
   } finally {
     await rm(tmpProject, { recursive: true, force: true });
   }
-}
-
-if (onlyName && !matchedOnly) {
-  console.error(
-    `⚠️  --only "${onlyName}" did not match any fixture. Available: ${fixtureNames.join(", ")}`,
-  );
-  process.exit(1);
 }

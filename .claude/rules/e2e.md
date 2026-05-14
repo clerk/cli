@@ -79,7 +79,7 @@ A single test runner used by both `bun run test` and `bun run test:e2e`. Each te
 Each fixture directory contains:
 
 - Framework source files (scaffolded by `config.scaffoldCmd`)
-- A `.test.ts` file that exports a `config: FixtureConfig` and calls `runFixtureTest()` and `runBrowserTest()`
+- A `.test.ts` file that exports a `config: FixtureConfig` and calls `runFixtureTests()` and `runBrowserTests()`
 
 ### FixtureConfig
 
@@ -102,11 +102,11 @@ Defined in `test/e2e/lib/types.ts`:
 5. Parse `.env` / `.env.local` for publishable and secret keys (uses `detectPublishableKeyName` / `detectSecretKeyName` from CLI source)
 6. `bun install`
 
-### Build + typecheck test (`runFixtureTest`)
+### Build + typecheck test (`runFixtureTests`)
 
 Runs the framework build command, then `tsc --noEmit`. If the fixture has a `typecheck` script in its `package.json`, that's used instead of bare `tsc` (handles React Router's `react-router typegen`).
 
-### Browser auth test (`runBrowserTest`)
+### Browser auth test (`runBrowserTests`)
 
 1. Creates a disposable test user via `clerk api /users -X POST` (uses `+clerk_test` email suffix for OTP bypass)
 2. Starts the framework's dev server on a dynamic port
@@ -131,19 +131,19 @@ In CI, use `bunx playwright install chromium --with-deps` to include system-leve
 
 Fixture files run in parallel (concurrency controlled by the runner, defaults to CPU count). Each fixture uses an isolated temp directory and `CLERK_CONFIG_DIR`, so there is no shared mutable state. Do not use `test.concurrent` within individual fixture files.
 
-Within each test file, `createGetFixture()` runs `setupFixture()` once in `beforeAll` and shares the result with both the build test and browser test. This avoids duplicating the expensive setup.
+Within each test file, `createFixtureHarness()` runs `setupFixture()` once in `beforeAll` and shares the result with both the build test and browser test. This avoids duplicating the expensive setup.
 
 ## Adding a new fixture
 
 1. Create `test/e2e/fixtures/<name>/`
 2. Scaffold the framework manually or via `bun run e2e:refresh-fixtures`
-3. Add a `<name>.test.ts` exporting `config: FixtureConfig` and calling `runFixtureTest()` and `runBrowserTest()`
+3. Add a `<name>.test.ts` exporting `config: FixtureConfig` and calling `runFixtureTests()` and `runBrowserTests()`
 4. Add a `README.md` in the fixture directory describing the project
 
 Helper functions are in `test/e2e/lib/`:
 
 - `fixture-setup.ts` - `setupFixture`
-- `fixture-test.ts` - `createGetFixture`, `runFixtureTest`, `runFileExistsTest`, `runBrowserTest`
+- `fixture-test.ts` - `createFixtureHarness`, `runFixtureTests`, `runFileExistsTest`, `runBrowserTests`
 - `dev-server.ts` - `startDevServer` (allocates a port internally and retries on collision), `killDevServer`, `buildDevCommand`
 - `test-user.ts` - `createTestUser`, `deleteTestUser`
 - `logger.ts` - `log`, `debug` (shared logging; set `CLERK_E2E_DEBUG=1` for verbose output)
