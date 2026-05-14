@@ -40,6 +40,7 @@ export async function resolveDependencySpecsToExactVersions(
     const deps = pkg[field];
     if (!deps) continue;
 
+    const tasks: Promise<void>[] = [];
     for (const [name, spec] of Object.entries(deps)) {
       if (EXACT_VERSION_EXCLUDED_PACKAGE_SCOPES.some((scope) => name.startsWith(scope))) {
         continue;
@@ -51,14 +52,18 @@ export async function resolveDependencySpecsToExactVersions(
         continue;
       }
 
-      const resolved = await resolveVersion(name, spec);
-      const resolvedExact = semver.valid(resolved);
-      if (!resolvedExact) {
-        throw new Error(`${name}@${spec} resolved to non-exact version "${resolved}"`);
-      }
-
-      deps[name] = resolvedExact;
+      tasks.push(
+        (async () => {
+          const resolved = await resolveVersion(name, spec);
+          const resolvedExact = semver.valid(resolved);
+          if (!resolvedExact) {
+            throw new Error(`${name}@${spec} resolved to non-exact version "${resolved}"`);
+          }
+          deps[name] = resolvedExact;
+        })(),
+      );
     }
+    await Promise.all(tasks);
   }
 }
 
@@ -81,9 +86,9 @@ export function validatePinnedDependencyRanges(
   const warnings: string[] = [];
 
   for (const [dep, range] of Object.entries(pinnedDependencyRanges)) {
-    const deps = pkg.dependencies;
-    const devDeps = pkg.devDependencies;
-    const target = deps?.[dep] !== undefined ? deps : devDeps?.[dep] !== undefined ? devDeps : null;
+    const target = [pkg.dependencies, pkg.devDependencies].find(
+      (candidate) => candidate?.[dep] !== undefined,
+    );
 
     if (!target) {
       warnings.push(`${dep} was not generated, so pinned range "${range}" was not applied`);
