@@ -1,8 +1,10 @@
 {
+  "$schema": "./node_modules/oxlint/configuration_schema.json",
   "rules": {
     "unicorn/no-process-exit": "error",
     "no-console": "error"
   },
+  "ignorePatterns": ["test/e2e/fixtures/**"],
   "overrides": [
     {
       "files": [
@@ -18,7 +20,8 @@
       "files": [
         "scripts/**",
         "packages/cli-core/src/**/*.test.ts",
-        "packages/cli-core/src/test/**"
+        "packages/cli-core/src/test/**",
+        "test/e2e/**"
       ],
       "rules": {
         "no-console": "off"

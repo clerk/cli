@@ -13,7 +13,8 @@
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "lint": "oxlint src/",
     "format": "oxfmt --write src/",
-    "format:check": "oxfmt --check src/"
+    "format:check": "oxfmt --check src/",
+    "test": "bun test src/ --parallel"
   },
   "dependencies": {
     "@clerk/cli-extras": "workspace:*",

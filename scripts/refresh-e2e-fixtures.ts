@@ -2,76 +2,80 @@
 /**
  * Regenerates e2e fixture directories from real framework CLI tools.
  *
+ * Reads the fixture catalog from `test/e2e/fixtures.manifest.ts`, which is
+ * the single source of truth for both this script and the test files. The
+ * script never imports the test files themselves, so it doesn't depend on
+ * `bun:test` being available at module load.
+ *
  * Usage:
- *   bun run scripts/refresh-e2e-fixtures.ts           # refresh all non-pinned
- *   bun run scripts/refresh-e2e-fixtures.ts --force   # include pinned fixtures
+ *   bun run scripts/refresh-e2e-fixtures.ts           # refresh every fixture
  *   bun run scripts/refresh-e2e-fixtures.ts --only nextjs-app-router
  */
 
 import { rm, cp, mkdir } from "node:fs/promises";
-import { join, basename } from "node:path";
+import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { Glob } from "bun";
+import { parseArgs } from "node:util";
+import semver from "semver";
+import {
+  applyPackageJsonOverrides,
+  assertPinnedDependencyRanges,
+  resolveDependencySpecsToExactVersions,
+} from "./lib/fixture-deps.ts";
+import { fixtures, type FixtureName } from "../test/e2e/fixtures.manifest.ts";
+import type { FixtureConfig } from "../test/e2e/lib/types.ts";
 
-// Set env var to signal that we're importing fixtures for config reading only,
-// not for test registration. This must be set BEFORE importing any fixture files.
-process.env.CLERK_REFRESH_FIXTURES = "1";
-
-const args = process.argv.slice(2);
-const force = args.includes("--force");
-const onlyIndex = args.indexOf("--only");
-let onlyName: string | null = null;
-if (onlyIndex !== -1) {
-  const value = args[onlyIndex + 1];
-  if (!value || value.startsWith("--")) {
-    console.error("--only requires a fixture name (e.g. `--only nextjs-app-router`).");
-    process.exit(1);
-  }
-  onlyName = value;
-}
+const { values } = parseArgs({
+  args: Bun.argv.slice(2),
+  options: {
+    only: { type: "string" },
+  },
+  strict: true,
+});
+const onlyName = values.only ?? null;
 
 const E2E_DIR = join(import.meta.dir, "../test/e2e");
 const FIXTURES_DIR = join(E2E_DIR, "fixtures");
+const NPM_ENV = {
+  ...process.env,
+  npm_config_user_agent: `npm/10 node/${process.version} ${process.platform} ${process.arch}`,
+};
 
-// Ensure fixtures directory exists
-await mkdir(FIXTURES_DIR, { recursive: true });
+async function resolveNpmDependencyVersion(name: string, spec: string): Promise<string> {
+  const packageSpec = `${name}@${spec}`;
+  const result = await Bun.$`npm view ${packageSpec} version --json`.env(NPM_ENV).quiet().nothrow();
 
-const glob = new Glob("*.test.ts");
-const testFiles: string[] = [];
-for await (const file of glob.scan(E2E_DIR)) {
-  testFiles.push(join(E2E_DIR, file));
+  if (result.exitCode !== 0) {
+    throw new Error(
+      `Failed to resolve ${packageSpec}:\n${result.stderr.toString() || result.stdout.toString()}`,
+    );
+  }
+
+  const version = JSON.parse(result.stdout.toString()) as string | string[];
+  if (Array.isArray(version)) {
+    const highest = semver.rsort(version)[0];
+    if (!highest) throw new Error(`No versions resolved for ${packageSpec}`);
+    return highest;
+  }
+
+  return version;
 }
 
-const fixtureNames: string[] = [];
-let matchedOnly = false;
+await mkdir(FIXTURES_DIR, { recursive: true });
 
-for (const testFile of testFiles) {
-  const name = basename(testFile, ".test.ts");
-  fixtureNames.push(name);
-  const fixtureDir = join(FIXTURES_DIR, name);
+const entries = Object.entries(fixtures) as Array<[FixtureName, FixtureConfig]>;
 
+if (onlyName && !entries.some(([name]) => name === onlyName)) {
+  console.error(
+    `⚠️  --only "${onlyName}" did not match any fixture. Available: ${entries.map(([name]) => name).join(", ")}`,
+  );
+  process.exit(1);
+}
+
+for (const [name, config] of entries) {
   if (onlyName && name !== onlyName) continue;
-  matchedOnly = true;
 
-  const { config } = (await import(testFile)) as {
-    config?: import("../test/e2e/lib/types.ts").FixtureConfig;
-  };
-
-  // Skip non-fixture e2e tests (e.g. live-API roundtrip tests that don't
-  // scaffold a project and therefore don't export a FixtureConfig).
-  if (!config) {
-    if (onlyName) {
-      console.error(`❌ ${name} is not a fixture (no config export).`);
-      process.exit(1);
-    }
-    continue;
-  }
-
-  if (config.pinned && !force) {
-    console.log(`⏭  Skipping pinned fixture: ${name} (use --force to refresh)`);
-    continue;
-  }
-
+  const fixtureDir = join(FIXTURES_DIR, name);
   console.log(`🔄 Refreshing: ${name}`);
 
   // Use a lowercase-only suffix so framework scaffolders (e.g. create-next-app)
@@ -82,7 +86,7 @@ for (const testFile of testFiles) {
 
   try {
     // Scaffold the framework project
-    const scaffold = await Bun.$`${config.scaffoldCmd}`.cwd(tmpProject).nothrow();
+    const scaffold = await Bun.$`${config.scaffoldCmd}`.cwd(tmpProject).env(NPM_ENV).nothrow();
 
     if (scaffold.exitCode !== 0) {
       console.error(`❌ Scaffold failed for ${name}:\n${scaffold.stderr.toString()}`);
@@ -101,13 +105,21 @@ for (const testFile of testFiles) {
     pkg.name = `clerk-fixture-${name}`;
     pkg.dependencies ??= {};
     pkg.dependencies[config.clerkSdk] = "latest";
-    if (name === "tanstack-start") {
-      pkg.devDependencies ??= {};
-      // TanStack Start's current scaffold omits this peer dependency even
-      // though the Vite plugin imports it during config evaluation.
-      pkg.devDependencies["@rsbuild/core"] = "^2.0.0";
-    }
+    assertPinnedDependencyRanges(pkg, config.pinnedDependencyRanges, name);
+    applyPackageJsonOverrides(pkg, config.packageJsonOverrides);
+    await resolveDependencySpecsToExactVersions(pkg, resolveNpmDependencyVersion);
+    assertPinnedDependencyRanges(pkg, config.pinnedDependencyRanges, name);
     await Bun.write(pkgPath, JSON.stringify(pkg, null, 2) + "\n");
+
+    const lockfile =
+      await Bun.$`npm install --package-lock-only --ignore-scripts --legacy-peer-deps`
+        .cwd(tmpProject)
+        .env(NPM_ENV)
+        .quiet()
+        .nothrow();
+    if (lockfile.exitCode !== 0) {
+      throw new Error(`package-lock generation failed for ${name}:\n${lockfile.stderr.toString()}`);
+    }
 
     // Strip generated artifacts that shouldn't be committed
     const toRemove = [
@@ -122,7 +134,6 @@ for (const testFile of testFiles) {
       ".cta.json",
       "Dockerfile",
       ".dockerignore",
-      "package-lock.json",
       "yarn.lock",
       "pnpm-lock.yaml",
       "bun.lock",
@@ -141,11 +152,4 @@ for (const testFile of testFiles) {
   } finally {
     await rm(tmpProject, { recursive: true, force: true });
   }
-}
-
-if (onlyName && !matchedOnly) {
-  console.error(
-    `⚠️  --only "${onlyName}" did not match any fixture. Available: ${fixtureNames.join(", ")}`,
-  );
-  process.exit(1);
 }

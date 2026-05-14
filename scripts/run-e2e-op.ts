@@ -19,6 +19,7 @@ const exitCode = await runWithOpSecrets(["bun", "run", "test:e2e", ...process.ar
     "op://AI Enablement/Clerk CLI - E2E Production Secrets/CLERK_PLATFORM_API_KEY",
   CLERK_CLI_TEST_APP_ID:
     "op://AI Enablement/Clerk CLI - E2E Production Secrets/CLERK_CLI_TEST_APP_ID",
+  FORCE_COLOR: "1", // ensure color in subprocess output for better readability
 });
 
 process.exit(exitCode);
