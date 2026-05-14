@@ -43,6 +43,20 @@ async function copyFixture(fixtureDir: string, projectDir: string): Promise<void
 }
 
 /**
+ * Best-effort recursive remove. Cleanup runs after the test has already
+ * passed, so a stray filesystem error here must not fail the test. Bun's
+ * node:fs/promises is known to surface transient EFAULT from rm under
+ * concurrent load (oven-sh/bun#28958, #9298); the OS reclaims /tmp anyway.
+ */
+async function safeRm(path: string): Promise<void> {
+  try {
+    await rm(path, { recursive: true, force: true });
+  } catch (err) {
+    log(`rm failed for ${path}: ${err}`);
+  }
+}
+
+/**
  * Pre-link the project to the test Clerk application using an isolated
  * CLERK_CONFIG_DIR, so `clerk init` finds an existing link and skips the
  * interactive app picker.
@@ -184,8 +198,8 @@ export async function setupFixture(name: FixtureName): Promise<Fixture> {
     assertSuccess("npm ci failed", install);
     log("npm ci done");
   } catch (err) {
-    await rm(projectDir, { recursive: true, force: true });
-    await rm(configDir, { recursive: true, force: true });
+    await safeRm(projectDir);
+    await safeRm(configDir);
     throw new Error("setup failed", { cause: err });
   }
 
@@ -193,8 +207,8 @@ export async function setupFixture(name: FixtureName): Promise<Fixture> {
 
   const cleanup = async () => {
     log("cleanup started");
-    await rm(projectDir, { recursive: true, force: true });
-    await rm(configDir, { recursive: true, force: true });
+    await safeRm(projectDir);
+    await safeRm(configDir);
     log("cleanup done");
   };
 
