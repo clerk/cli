@@ -1,3 +1,4 @@
+import { expect } from "bun:test";
 import { mkdtemp, cp, rm, realpath } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
@@ -25,19 +26,6 @@ function requireEnv(name: string): string {
   return val;
 }
 
-/** Build a shared env object for CLI commands. Requires CLERK_PLATFORM_API_KEY. */
-function clerkEnv(configDir?: string): Record<string, string | undefined> {
-  if (!process.env.CLERK_PLATFORM_API_KEY) {
-    throw new Error(
-      "Missing required env var: set CLERK_PLATFORM_API_KEY before running e2e tests.",
-    );
-  }
-  return {
-    ...process.env,
-    ...(configDir ? { CLERK_CONFIG_DIR: configDir } : {}),
-  };
-}
-
 /** Throw with a descriptive message if a shell command failed. */
 function assertSuccess(
   label: string,
@@ -62,10 +50,14 @@ async function copyFixture(fixtureDir: string, projectDir: string): Promise<void
  */
 async function linkProject(projectDir: string, configDir: string): Promise<void> {
   const appId = requireEnv("CLERK_CLI_TEST_APP_ID");
+  const platformAPIKey = requireEnv("CLERK_PLATFORM_API_KEY");
 
   const result = await Bun.$`bun ${CLI_PATH} --mode human link --app ${appId}`
     .cwd(projectDir)
-    .env(clerkEnv(configDir))
+    .env({
+      CLERK_CONFIG_DIR: configDir,
+      CLERK_PLATFORM_API_KEY: platformAPIKey,
+    })
     .quiet()
     .nothrow();
 
@@ -95,9 +87,14 @@ async function gitInit(projectDir: string): Promise<void> {
  * with skill template files that break framework typecheck.
  */
 async function runClerkInit(projectDir: string, configDir: string): Promise<void> {
+  const platformAPIKey = requireEnv("CLERK_PLATFORM_API_KEY");
+
   const result = await Bun.$`bun ${CLI_PATH} --mode human init --yes --no-skills`
     .cwd(projectDir)
-    .env(clerkEnv(configDir))
+    .env({
+      CLERK_CONFIG_DIR: configDir,
+      CLERK_PLATFORM_API_KEY: platformAPIKey,
+    })
     .quiet()
     .nothrow();
 
@@ -168,16 +165,14 @@ export async function setupFixture(name: FixtureName): Promise<Fixture> {
 
     // Verify clerk init wrote env files and extract keys.
     const envVars = await parseEnvFiles(projectDir);
+
     const publishableKeyName = await detectPublishableKeyName(projectDir);
     publishableKey = envVars[publishableKeyName] ?? "";
-    if (!publishableKey) {
-      throw new Error(`${publishableKeyName} not found in env files written by clerk init.`);
-    }
+    expect(publishableKey).toMatch(/^pk_(test|live)_[a-z0-9]+$/);
+
     const secretKeyName = await detectSecretKeyName(projectDir);
     secretKey = envVars[secretKeyName] ?? "";
-    if (!secretKey) {
-      throw new Error(`${secretKeyName} not found in env files written by clerk init.`);
-    }
+    expect(secretKey).toMatch(/^sk_(test|live)_[a-z0-9]+$/);
 
     const install = await Bun.$`npm ci --ignore-scripts --legacy-peer-deps`
       .cwd(projectDir)
