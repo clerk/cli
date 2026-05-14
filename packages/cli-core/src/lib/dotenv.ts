@@ -17,11 +17,16 @@ export const ENV_FILE_CANDIDATES = [
   ".env",
 ] as const;
 
+export type EnvFileName = (typeof ENV_FILE_CANDIDATES)[number];
+
 /**
  * Returns the first candidate from ENV_FILE_CANDIDATES that exists on disk,
  * or `fallback` if none do.
  */
-export async function findExistingEnvFile(cwd: string, fallback: string): Promise<string> {
+export async function findExistingEnvFile(
+  cwd: string,
+  fallback: EnvFileName,
+): Promise<EnvFileName> {
   for (const candidate of ENV_FILE_CANDIDATES) {
     if (await Bun.file(join(cwd, candidate)).exists()) return candidate;
   }

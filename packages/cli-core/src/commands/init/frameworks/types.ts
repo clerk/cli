@@ -1,3 +1,4 @@
+import type { EnvFileName } from "../../../lib/dotenv.js";
 import type { FrameworkInfo } from "../../../lib/framework.js";
 import type { PackageManager } from "../../../lib/package-manager.js";
 
@@ -9,7 +10,7 @@ export interface ProjectContext {
   packageManager: PackageManager;
   existingClerk: boolean;
   deps: Record<string, string>;
-  envFile: string;
+  envFile: EnvFileName;
   /** Framework-specific variant (e.g., "app-router" | "pages-router"). Populated by enrichContext. */
   variant?: "app-router" | "pages-router" | null;
   /** Path to the layout/entry file. Populated by enrichContext. */

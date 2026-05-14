@@ -36,7 +36,7 @@ const FAKE_CTX = {
   packageManager: "npm" as const,
   existingClerk: true,
   deps: { react: "^19.0.0" },
-  envFile: ".env.local",
+  envFile: ".env.local" as const,
 };
 
 const FAKE_BOOTSTRAP = {
@@ -507,7 +507,7 @@ describe("init", () => {
         envVar: "VITE_CLERK_PUBLISHABLE_KEY",
         envFile: ".env.local" as const,
       },
-      envFile: ".env.local",
+      envFile: ".env.local" as const,
     };
     spyOn(context, "gatherContext").mockResolvedValue(noKeylessCtx);
     spyOn(scaffoldMod, "scaffold").mockResolvedValue({
@@ -918,7 +918,7 @@ describe("init", () => {
       packageManager: "npm" as const,
       existingClerk: false,
       deps: { next: "15.0.0" },
-      envFile: ".env.local",
+      envFile: ".env.local" as const,
     };
 
     gatherContextSpy.mockResolvedValue(mockCtx);
