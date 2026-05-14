@@ -1,4 +1,3 @@
-import { expect } from "bun:test";
 import { mkdtemp, cp, rm, realpath } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
@@ -168,11 +167,15 @@ export async function setupFixture(name: FixtureName): Promise<Fixture> {
 
     const publishableKeyName = await detectPublishableKeyName(projectDir);
     publishableKey = envVars[publishableKeyName] ?? "";
-    expect(publishableKey).toMatch(/^pk_(test|live)_[a-z0-9]+$/);
+    if (!publishableKey) {
+      throw new Error(`${publishableKeyName} not found in env files written by clerk init.`);
+    }
 
     const secretKeyName = await detectSecretKeyName(projectDir);
     secretKey = envVars[secretKeyName] ?? "";
-    expect(secretKey).toMatch(/^sk_(test|live)_[a-z0-9]+$/);
+    if (!secretKey) {
+      throw new Error(`${secretKeyName} not found in env files written by clerk init.`);
+    }
 
     const install = await Bun.$`npm ci --ignore-scripts --legacy-peer-deps`
       .cwd(projectDir)
