@@ -59,6 +59,11 @@ mock.module(
       storeToken: async (value: { accessToken: string }) => {
         mockState.storedToken = value.accessToken;
       },
+      storeAccessToken: async (accessToken: string) => {
+        mockState.storedToken = accessToken;
+      },
+      assertValidAccessToken: () => Date.now() + 3_600_000,
+      getJwtAuthorizedParty: () => null,
       deleteToken: async () => {
         mockState.storedToken = null;
       },

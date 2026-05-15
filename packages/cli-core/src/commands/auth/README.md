@@ -17,6 +17,18 @@ Authenticates the user via an OAuth 2.0 PKCE flow. After a successful login (or 
 7. Stores the token and user info in local config
 8. **Autoclaim**: if `.clerk/keyless.json` exists in the current directory, claims the temporary application, links it to the project, and pulls environment variables
 
+#### Headless authentication (`--token`)
+
+For CI and AI agents, pass a Clerk PLAPI access token directly with `--token <key>`:
+
+- `clerk auth login --token sk_test_…` — token as an inline argument
+- `clerk auth login --token -` — read the token from stdin (e.g. piped from a secret store)
+- `clerk auth login --token "$CLERK_OAUTH_TOKEN"` — from an env var
+
+The flow short-circuits OAuth: the token is validated against `/oauth/userinfo`, then stored in the credential store with no refresh token. When the token expires, the next API call surfaces a clear `AUTH_REQUIRED` error and the user must re-run login with a fresh token.
+
+For per-instance API access (e.g. `clerk api`, `clerk users`, `clerk config`), `CLERK_SECRET_KEY=sk_…` in the environment works directly — no login needed.
+
 #### Keyless autoclaim breadcrumb lifecycle
 
 When `clerk init` runs in keyless mode it writes `.clerk/keyless.json` containing a claim token. On the next `clerk auth login`:
