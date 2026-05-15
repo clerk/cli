@@ -262,19 +262,32 @@ function encodeStoredValue(value: OAuthSession): string {
   return JSON.stringify(value);
 }
 
-function getJwtExpiryMs(token: string): number | null {
-  const [, payload] = token.split(".");
+function decodeJwtPayload(token: string): Record<string, unknown> | null {
+  const parts = token.split(".");
+  if (parts.length !== 3) return null;
+  const payload = parts[1];
   if (!payload) return null;
 
   try {
     const normalized = payload.replace(/-/g, "+").replace(/_/g, "/");
     const padded = normalized.padEnd(Math.ceil(normalized.length / 4) * 4, "=");
     const decoded = Buffer.from(padded, "base64").toString("utf8");
-    const parsed = JSON.parse(decoded) as Record<string, unknown>;
-    return typeof parsed.exp === "number" ? parsed.exp * 1000 : null;
+    return JSON.parse(decoded) as Record<string, unknown>;
   } catch {
     return null;
   }
+}
+
+/** Read `azp` (authorized party) from a JWT, or null if absent or unparseable. */
+export function getJwtAuthorizedParty(token: string): string | null {
+  const parsed = decodeJwtPayload(token);
+  const azp = parsed?.azp;
+  return typeof azp === "string" ? azp : null;
+}
+
+function getJwtExpiryMs(token: string): number | null {
+  const parsed = decodeJwtPayload(token);
+  return typeof parsed?.exp === "number" ? parsed.exp * 1000 : null;
 }
 
 function isExpiredJwt(token: string): boolean {
@@ -335,6 +348,11 @@ async function getValidAccessToken(session: OAuthSession): Promise<string> {
  * session was written by another process.
  */
 async function awaitConcurrentRefresh(session: OAuthSession): Promise<string | null> {
+  // Token-only sessions (stored via `auth login --token`) carry refreshToken="".
+  // The race-detection compares refresh tokens, so two such sessions would
+  // collide on the empty-string sentinel and never converge. Skip outright.
+  if (!session.refreshToken) return null;
+
   for (const delayMs of [0, ...INVALID_GRANT_RETRY_DELAYS_MS]) {
     if (delayMs > 0) {
       await sleep(delayMs);
@@ -356,6 +374,15 @@ async function awaitConcurrentRefresh(session: OAuthSession): Promise<string | n
 }
 
 async function refreshStoredSession(session: OAuthSession): Promise<string> {
+  if (!session.refreshToken) {
+    // Token was stored without a refresh credential (e.g. via `auth login
+    // --token`). The caller has to obtain a fresh token externally and re-run
+    // login — we can't rotate it on their behalf.
+    throw authRequiredError(
+      "Stored access token has expired and cannot be auto-refreshed. " +
+        "Re-run `clerk auth login` (or `clerk auth login --token <key>`) with a fresh token.",
+    );
+  }
   let tokenResponse: TokenResponse;
   try {
     log.debug("credentials: refreshing OAuth session");
@@ -411,6 +438,53 @@ export async function storeToken(value: OAuthSession): Promise<void> {
   }
 
   await fileStore(encoded);
+}
+
+// Realistic Clerk OAuth JWTs are well under 4 KB. The cap is a defense-in-depth
+// bound against a pathological / hostile input rather than a precise limit.
+const MAX_TOKEN_BYTES = 8 * 1024;
+
+function authRequiredError(message: string): CliError {
+  return new CliError(message, { code: ERROR_CODE.AUTH_REQUIRED });
+}
+
+/**
+ * Validate that a token has the shape we expect for a Clerk PLAPI access token
+ * (a JWT with a future `exp` claim) without touching the network. Throws on
+ * invalid input; returns the expiry millis on success.
+ */
+export function assertValidAccessToken(accessToken: string): number {
+  if (accessToken.length > MAX_TOKEN_BYTES) {
+    throw authRequiredError(`Token exceeds the ${MAX_TOKEN_BYTES}-byte maximum.`);
+  }
+  const jwtExpiry = getJwtExpiryMs(accessToken);
+  if (jwtExpiry === null) {
+    throw authRequiredError(
+      "Token does not look like a Clerk access token (expected a JWT with an `exp` claim). " +
+        "Pass a Clerk PLAPI access token, not a secret key (sk_…).",
+    );
+  }
+  // Mirror the leeway used by isExpiredSession so a token accepted here
+  // doesn't immediately fail the next getValidAccessToken check.
+  if (jwtExpiry <= Date.now() + JWT_EXPIRY_LEEWAY_MS) {
+    throw authRequiredError("The provided token is already expired.");
+  }
+  return jwtExpiry;
+}
+
+/**
+ * Persist a raw access token (no refresh) — used by `auth login --token <key>`
+ * for headless / CI use. Without a refresh token, the user must obtain a new
+ * token and re-run login when it expires.
+ */
+export async function storeAccessToken(accessToken: string): Promise<void> {
+  const expiresAt = assertValidAccessToken(accessToken);
+  await storeToken({
+    accessToken,
+    refreshToken: "",
+    expiresAt,
+    tokenType: "Bearer",
+  });
 }
 
 let tokenOverride: string | null | undefined;

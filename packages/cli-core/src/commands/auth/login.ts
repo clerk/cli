@@ -2,12 +2,19 @@ import { generateCodeVerifier, generateCodeChallenge, generateState } from "../.
 import { startAuthServer } from "../../lib/auth-server.ts";
 import { exchangeCodeForToken, fetchUserInfo, type UserInfo } from "../../lib/token-exchange.ts";
 import { getOAuthConfig } from "../../lib/environment.ts";
-import { createOAuthSession, getValidToken, storeToken } from "../../lib/credential-store.ts";
+import {
+  assertValidAccessToken,
+  createOAuthSession,
+  getJwtAuthorizedParty,
+  getValidToken,
+  storeAccessToken,
+  storeToken,
+} from "../../lib/credential-store.ts";
 import { getAuth, setAuth, resolveProfile } from "../../lib/config.ts";
 import { AUTH_TIMEOUT_MS, CALLBACK_PATH, CLERK_CLIENT_CLI } from "../../lib/constants.ts";
 import { confirm } from "../../lib/prompts.ts";
 import { isHuman } from "../../mode.ts";
-import { throwUserAbort } from "../../lib/errors.ts";
+import { CliError, ERROR_CODE, throwUsageError, throwUserAbort } from "../../lib/errors.ts";
 import { intro, outro, bar, withSpinner } from "../../lib/spinner.ts";
 import { NEXT_STEPS } from "../../lib/next-steps.ts";
 import { attemptAutoclaim, type AutoclaimResult } from "../../lib/autoclaim.ts";
@@ -19,6 +26,63 @@ import { ensureFirstApplication } from "../../lib/first-application.ts";
 interface LoginOptions {
   showNextSteps?: boolean;
   yes?: boolean;
+  token?: string;
+}
+
+async function resolveTokenInput(raw: string): Promise<string> {
+  if (raw !== "-") return assertNonEmpty(raw.trim());
+
+  // "-" reads from stdin; matches the `--input-json -` convention. Refuse a
+  // TTY so the user gets immediate feedback instead of a hung process waiting
+  // for EOF.
+  if (process.stdin.isTTY) {
+    throwUsageError("--token - expects a token piped on stdin, but stdin is a TTY.");
+  }
+  const text = await Bun.stdin.text();
+  return assertNonEmpty(text.trim());
+}
+
+function assertNonEmpty(value: string): string {
+  if (!value) {
+    throwUsageError("--token requires a value (or pipe a token via `--token -`).");
+  }
+  return value;
+}
+
+/**
+ * Soft audience check: when the JWT carries an `azp` claim, require it to
+ * match this CLI's OAuth client. A foreign-app token that happens to pass
+ * userinfo would otherwise be persisted as a valid CLI session. Tokens
+ * without `azp` are accepted for back-compat with older Clerk OAuth issuance.
+ */
+function assertTokenAudience(token: string): void {
+  const azp = getJwtAuthorizedParty(token);
+  if (azp === null) {
+    log.debug("oauth: token has no azp claim — skipping audience check (back-compat)");
+    return;
+  }
+  if (azp !== CLERK_CLIENT_CLI) {
+    throw new CliError(
+      "Token was issued for a different OAuth client and cannot be used by the CLI.",
+      { code: ERROR_CODE.AUTH_REQUIRED },
+    );
+  }
+}
+
+async function performTokenLogin(rawToken: string): Promise<UserInfo> {
+  const token = await resolveTokenInput(rawToken);
+
+  // Validate everything locally first — shape, audience — so a non-JWT or a
+  // foreign-app token never reaches the userinfo endpoint over the network.
+  assertValidAccessToken(token);
+  assertTokenAudience(token);
+
+  const userInfo = await withSpinner("Validating token...", () => fetchUserInfo(token));
+
+  await storeAccessToken(token);
+  await setAuth({ userId: userInfo.userId });
+
+  return userInfo;
 }
 
 async function getExistingSession(): Promise<UserInfo | null> {
@@ -90,19 +154,28 @@ async function performOAuthFlow(): Promise<UserInfo> {
   return userInfo;
 }
 
+function finishLogin(message: string | readonly string[], showNextSteps: boolean): void {
+  outro(showNextSteps ? message : "Done");
+}
+
 export async function login(options: LoginOptions = {}): Promise<UserInfo> {
-  const { showNextSteps = true, yes } = options;
+  const { showNextSteps = true, yes, token } = options;
   intro("clerk auth login");
+
+  if (token) {
+    const userInfo = await performTokenLogin(token);
+    bar();
+    log.success(`Logged in as ${userInfo.email}`);
+    finishLogin(NEXT_STEPS.LOGIN, showNextSteps);
+    return userInfo;
+  }
+
   const existingSession = await withSpinner("Checking session...", () => getExistingSession());
 
   if (existingSession && !isHuman()) {
     log.success(`Logged in as ${existingSession.email}`);
     const claimResult = await handleAutoclaim(process.cwd());
-    if (showNextSteps) {
-      outro(await loginNextSteps(claimResult));
-    } else {
-      outro("Done");
-    }
+    finishLogin(await loginNextSteps(claimResult), showNextSteps);
     return existingSession;
   }
 
@@ -127,12 +200,7 @@ export async function login(options: LoginOptions = {}): Promise<UserInfo> {
   log.success(`Logged in as ${userInfo.email}`);
 
   const claimResult = await handleAutoclaim(process.cwd());
-
-  if (showNextSteps) {
-    outro(await loginNextSteps(claimResult));
-  } else {
-    outro("Done");
-  }
+  finishLogin(await loginNextSteps(claimResult), showNextSteps);
 
   return userInfo;
 }

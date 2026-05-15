@@ -66,6 +66,12 @@ const USER_LIST_ORDER_BY_CHOICES = USER_LIST_ORDER_BY_FIELDS.flatMap((field) => 
   `-${field}`,
 ]);
 
+const APPS_JSON_FIELDS =
+  "Output as JSON. Fields: application_id, name, instances[] (instance_id, environment_type, publishable_key)";
+
+const TOKEN_OPTION_DESC =
+  "Headless authentication with a Clerk PLAPI access token (skips OAuth; use `-` to read from stdin). For per-instance API access, CLERK_SECRET_KEY also works directly with `clerk api` / `users` / `config`.";
+
 function collectOptionValues(value: string, previous: string[] = []): string[] {
   return [...previous, value];
 }
@@ -105,6 +111,44 @@ export function createProgram() {
       "Force interaction mode (human or agent). Defaults to auto-detect based on TTY.",
     )
     .option("--verbose", "Show detailed output (enables debug messages)")
+    .setExamples([
+      { command: "clerk init", description: "Initialize Clerk in this project" },
+      { command: "clerk auth login", description: "Authenticate via browser OAuth" },
+      {
+        command: "clerk apps list --json",
+        description: "List applications as JSON (agent-pipeable)",
+      },
+      {
+        command: "clerk users list --json | jq '.data'",
+        description: "Pipe user list to jq",
+      },
+      {
+        command: "clerk --mode agent api /users",
+        description: "Force agent mode for non-interactive use",
+      },
+    ])
+    .setEnvVars([
+      {
+        name: "CLERK_SECRET_KEY",
+        description: "Backend API secret key for the linked instance (sk_test_… / sk_live_…)",
+      },
+      {
+        name: "CLERK_MODE",
+        description: "Force interaction mode: human or agent (default: TTY auto-detect)",
+      },
+      {
+        name: "CLERK_CONFIG_DIR",
+        description: "Override the directory for stored credentials and config",
+      },
+      {
+        name: "CLERK_UPDATE_CHANNEL",
+        description: "Release channel for `clerk update` (e.g. latest, canary)",
+      },
+      {
+        name: "CLERK_NO_UPDATE_CHECK",
+        description: "Set to any value to disable the post-command update notification",
+      },
+    ])
     .addHelpText("after", () =>
       isClerkSkillInstalled()
         ? ""
@@ -218,11 +262,20 @@ Give AI agents better Clerk context: install the Clerk skills
     .aliases(["signup", "signin", "sign-in"])
     .description("Log in to your Clerk account")
     .option("-y, --yes", "Proceed with OAuth without prompting when already logged in")
+    .option("--token <key>", TOKEN_OPTION_DESC)
     .setExamples([
       { command: "clerk auth login", description: "Log in via browser (OAuth)" },
       {
         command: "clerk auth login -y",
         description: "Re-authenticate via OAuth without confirmation when already signed in",
+      },
+      {
+        command: "clerk auth login --token $CLERK_OAUTH_TOKEN",
+        description: "Headless login with a PLAPI access token (CI / agents)",
+      },
+      {
+        command: "cat token.txt | clerk auth login --token -",
+        description: "Read the token from stdin",
       },
     ])
     .action(async (opts) => {
@@ -240,6 +293,7 @@ Give AI agents better Clerk context: install the Clerk skills
     .command("login", { hidden: true })
     .description("Log in to your Clerk account")
     .option("-y, --yes", "Proceed with OAuth without prompting when already logged in")
+    .option("--token <key>", TOKEN_OPTION_DESC)
     .action(async (opts) => {
       await login(opts);
     });
@@ -297,7 +351,7 @@ Give AI agents better Clerk context: install the Clerk skills
   apps
     .command("list")
     .description("List your Clerk applications")
-    .option("--json", "Output as JSON")
+    .option("--json", APPS_JSON_FIELDS)
     .setExamples([
       { command: "clerk apps list", description: "List all applications" },
       { command: "clerk apps list --json", description: "Output as JSON" },
@@ -308,7 +362,7 @@ Give AI agents better Clerk context: install the Clerk skills
     .command("create")
     .description("Create a new Clerk application")
     .argument("<name>", "Application name")
-    .option("--json", "Output as JSON")
+    .option("--json", APPS_JSON_FIELDS)
     .setExamples([
       { command: 'clerk apps create "My App"', description: "Create a new application" },
       { command: 'clerk apps create "My App" --json', description: "Output as JSON" },
@@ -339,7 +393,10 @@ Give AI agents better Clerk context: install the Clerk skills
   users
     .command("list")
     .description("List users")
-    .option("--json", "Output as JSON")
+    .option(
+      "--json",
+      "Output as JSON. Shape: {data: User[], hasMore: boolean}. User fields: id, first_name, last_name, username, email_addresses, phone_numbers, created_at, last_sign_in_at, external_id",
+    )
     .option("--limit <number>", "Maximum users to return (1-250, default 100)", (value) =>
       parseIntegerOption(value, "--limit", { min: 1, max: 250 }),
     )
@@ -405,7 +462,10 @@ Give AI agents better Clerk context: install the Clerk skills
   users
     .command("create")
     .description("Create a user")
-    .option("--json", "Output as JSON")
+    .option(
+      "--json",
+      "Output as JSON. Fields: id, first_name, last_name, username, email_addresses, phone_numbers, created_at, external_id",
+    )
     .option("--email <email>", "Email address")
     .option("--phone <phone>", "Phone number")
     .option("--username <username>", "Username")
@@ -805,7 +865,10 @@ Give AI agents better Clerk context: install the Clerk skills
     .command("doctor")
     .description("Check your project's Clerk integration health")
     .option("--verbose", "Show detailed output for each check")
-    .option("--json", "Output results as JSON")
+    .option(
+      "--json",
+      "Output results as JSON. Each entry has fields: name, status (pass|warn|fail), message, detail, remedy",
+    )
     .option("--spotlight", "Only show warnings and failures")
     .option("--fix", "Attempt to auto-fix issues")
     .setExamples([
