@@ -1,17 +1,26 @@
 import { Command, type Help } from "@commander-js/extra-typings";
 
-export interface Example {
-  command: string;
+interface HelpItem {
   description: string;
 }
 
-const examplesMap = new WeakMap<object, Example[]>();
+export interface Example extends HelpItem {
+  command: string;
+}
 
-// Augment Commander's Command type with .setExamples()
+export interface EnvVar extends HelpItem {
+  name: string;
+}
+
+const examplesMap = new WeakMap<object, Example[]>();
+const envVarsMap = new WeakMap<object, EnvVar[]>();
+
+// Augment Commander's Command type with .setExamples() and .setEnvVars()
 declare module "@commander-js/extra-typings" {
   // eslint-disable-next-line @typescript-eslint/no-unused-vars -- generics required for declaration merging
   interface Command<Args, Opts, GlobalOpts> {
     setExamples(examples: Example[]): this;
+    setEnvVars(vars: EnvVar[]): this;
   }
 }
 
@@ -20,12 +29,40 @@ Command.prototype.setExamples = function (examples: Example[]) {
   return this;
 };
 
+Command.prototype.setEnvVars = function (vars: EnvVar[]) {
+  envVarsMap.set(this, vars);
+  return this;
+};
+
+/**
+ * Render a `Title:` section whose rows are `term` + `description` aligned
+ * to the longest term. Used by the Examples and Environment sections, which
+ * share the same shape but differ in how the term is derived.
+ */
+function appendItemSection<T extends HelpItem>(
+  output: string[],
+  helper: Help,
+  title: string,
+  items: T[] | undefined,
+  term: (item: T) => string,
+): string[] {
+  if (!items || items.length === 0) return output;
+  // Resolve terms once — the lambda may be non-trivial and avoiding the
+  // Math.max(...spread) keeps the call stack bounded for large lists.
+  const terms = items.map(term);
+  const termWidth = terms.reduce((max, t) => Math.max(max, helper.displayWidth(t)), 0);
+  const formatted = items.map((item, i) =>
+    helper.formatItem(terms[i]!, termWidth, item.description, helper),
+  );
+  return output.concat(helper.formatItemList(title, formatted, helper));
+}
+
 /**
  * Custom help formatter with three improvements over Commander defaults:
  *
  * 1. Commands display in three aligned columns: name | args | description
  * 2. Each section (Arguments, Options, Commands) computes its own column width
- * 3. Examples are a first-class section with auto `$ ` prefix and aligned columns
+ * 3. Examples and Environment are first-class sections via setExamples / setEnvVars
  */
 export function clerkHelpConfig(): Partial<Help> {
   return {
@@ -119,15 +156,20 @@ export function clerkHelpConfig(): Partial<Help> {
         output = output.concat(helper.formatItemList("Commands:", items, helper));
       }
 
-      // Examples — auto `$ ` prefix and aligned columns
-      const examples = examplesMap.get(cmd);
-      if (examples && examples.length > 0) {
-        const maxTermLen = Math.max(...examples.map((e) => helper.displayWidth(`$ ${e.command}`)));
-        const items = examples.map((e) =>
-          helper.formatItem(`$ ${e.command}`, maxTermLen, e.description, helper),
-        );
-        output = output.concat(helper.formatItemList("Examples:", items, helper));
-      }
+      output = appendItemSection(
+        output,
+        helper,
+        "Examples:",
+        examplesMap.get(cmd),
+        (e) => `$ ${e.command}`,
+      );
+      output = appendItemSection(
+        output,
+        helper,
+        "Environment:",
+        envVarsMap.get(cmd),
+        (e) => e.name,
+      );
 
       return output.join("\n");
     },

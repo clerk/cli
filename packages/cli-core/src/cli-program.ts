@@ -92,7 +92,57 @@ export function createProgram(): Program {
       "--mode <mode>",
       "Force interaction mode (human or agent). Defaults to auto-detect based on TTY.",
     )
-    .option("--verbose", "Show detailed output (enables debug messages)") as Program;
+    .option("--verbose", "Show detailed output (enables debug messages)")
+    .setExamples([
+      { command: "clerk init", description: "Initialize Clerk in this project" },
+      { command: "clerk auth login", description: "Authenticate via browser OAuth" },
+      {
+        command: "clerk apps list --json",
+        description: "List applications as JSON (agent-pipeable)",
+      },
+      {
+        command: "clerk users list --json | jq '.data'",
+        description: "Pipe user list to jq",
+      },
+      {
+        command: "clerk --mode agent api /users",
+        description: "Force agent mode for non-interactive use",
+      },
+    ])
+    .setEnvVars([
+      {
+        name: "CLERK_SECRET_KEY",
+        description: "Backend API secret key for the linked instance (sk_test_… / sk_live_…)",
+      },
+      {
+        name: "CLERK_MODE",
+        description: "Force interaction mode: human or agent (default: TTY auto-detect)",
+      },
+      {
+        name: "CLERK_CONFIG_DIR",
+        description: "Override the directory for stored credentials and config",
+      },
+      {
+        name: "CLERK_UPDATE_CHANNEL",
+        description: "Release channel for `clerk update` (e.g. latest, canary)",
+      },
+      {
+        name: "CLERK_NO_UPDATE_CHECK",
+        description: "Set to any value to disable the post-command update notification",
+      },
+    ])
+    .addHelpText(
+      "after",
+      `
+Next:
+  $ clerk auth login           Authenticate (or set CLERK_SECRET_KEY for headless use)
+  $ clerk init                 Set up Clerk in this project
+  $ clerk doctor               Check that everything is wired up
+
+Documentation:
+  https://clerk.com/docs/cli
+  https://github.com/clerk/cli`,
+    ) as Program;
 
   program.hook("preAction", async () => {
     // Reset log level at the start of each command invocation so a previous
