@@ -271,9 +271,13 @@ Give AI agents better Clerk context: install the Clerk skills
 
   program
     .command("whoami")
-    .description("Show the current logged-in user")
-    .setExamples([{ command: "clerk whoami", description: "Show your email address" }])
-    .action(whoami);
+    .description("Show the current logged-in user and linked application")
+    .option("--json", "Output JSON")
+    .setExamples([
+      { command: "clerk whoami", description: "Show your email and linked app" },
+      { command: "clerk whoami --json", description: "Emit a structured payload on stdout" },
+    ])
+    .action((options) => whoami({ json: options.json }));
 
   const open = program.command("open").description("Open Clerk resources in your browser");
 

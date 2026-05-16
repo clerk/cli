@@ -50,6 +50,8 @@ export const configStubs = {
   resolveProfileOrAutolink: noop,
   resolveInstanceId: () => ({ id: "", label: "" }),
   resolveAppContext: async () => ({ appId: "", appLabel: "", instanceId: "", instanceLabel: "" }),
+  profileLabel: (profile: { appName?: string; appId: string }) =>
+    profile.appName ? `${profile.appName} (${profile.appId})` : profile.appId,
 };
 
 export const autolinkStubs = {
