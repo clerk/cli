@@ -65,6 +65,9 @@ export const credentialStoreStubs = {
   getStoredSession: async () => null,
   hasStoredCredentials: async () => false,
   storeToken: async () => {},
+  storeAccessToken: async () => {},
+  assertValidAccessToken: () => Date.now() + 3_600_000,
+  getJwtAuthorizedParty: () => null,
   deleteToken: async () => {},
   createOAuthSession: (tokenResponse: {
     access_token: string;
