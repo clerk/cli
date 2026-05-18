@@ -3,9 +3,11 @@ import { useCaptureLog } from "../../test/lib/stubs.ts";
 
 const mockCreateApplication = mock();
 const mockFetchApplication = mock();
+const mockListApplications = mock();
 mock.module("../../lib/plapi.ts", () => ({
   createApplication: (...args: unknown[]) => mockCreateApplication(...args),
   fetchApplication: (...args: unknown[]) => mockFetchApplication(...args),
+  listApplications: (...args: unknown[]) => mockListApplications(...args),
   PlapiError: class PlapiError extends Error {},
 }));
 
