@@ -20,6 +20,7 @@ import { users as usersHandlers } from "./commands/users/index.ts";
 import { doctor } from "./commands/doctor/index.ts";
 import { switchEnv } from "./commands/switch-env/index.ts";
 import { openDashboard } from "./commands/open/index.ts";
+import { schema as schemaCommand } from "./commands/schema/index.ts";
 import { getEnvironment } from "./lib/config.ts";
 import {
   setCurrentEnv,
@@ -937,6 +938,19 @@ Documentation:
       { command: "clerk switch-env production", description: "Switch back to production" },
     ])
     .action(switchEnv);
+
+  program
+    .command("schema")
+    .description("Print the full CLI command tree as JSON (for agents and tooling)")
+    .option("--json", "No-op for symmetry with other commands — `schema` always emits JSON.")
+    .setExamples([
+      { command: "clerk schema", description: "Dump command tree to stdout" },
+      {
+        command: "clerk schema | jq '.command.subcommands[].name'",
+        description: "List every subcommand",
+      },
+    ])
+    .action((opts, cmd) => schemaCommand(opts, cmd));
 
   program
     .command("completion")
