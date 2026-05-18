@@ -1,6 +1,40 @@
-import type { Command } from "@commander-js/extra-typings";
 import { log } from "../../lib/log.ts";
 import { getCurrentVersion } from "../../lib/update-check.ts";
+
+// Commander's recursive `parent` chain is typed with concrete generic
+// parameters that don't unify across heterogeneous subcommands. We only
+// need the introspection surface (name/aliases/description/registeredArguments
+// /options/commands), so type the walker against a structural minimum.
+interface ArgumentLike {
+  name(): string;
+  description?: string;
+  required: boolean;
+  variadic: boolean;
+  defaultValue?: unknown;
+  argChoices?: readonly string[];
+}
+
+interface OptionLike {
+  flags: string;
+  description?: string;
+  defaultValue?: unknown;
+  required: boolean;
+  optional: boolean;
+  argChoices?: readonly string[];
+  variadic: boolean;
+  negate: boolean;
+  hidden: boolean;
+}
+
+interface CommandLike {
+  name(): string;
+  aliases(): string[];
+  description(): string;
+  registeredArguments: readonly ArgumentLike[];
+  options: readonly OptionLike[];
+  commands: readonly CommandLike[];
+  parent?: CommandLike | null;
+}
 
 interface SchemaOption {
   flags: string;
@@ -40,7 +74,7 @@ interface SchemaDocument {
   command: SchemaCommand;
 }
 
-function describeCommand(cmd: Command): SchemaCommand {
+function describeCommand(cmd: CommandLike): SchemaCommand {
   return {
     name: cmd.name(),
     aliases: cmd.aliases(),
@@ -65,15 +99,13 @@ function describeCommand(cmd: Command): SchemaCommand {
       negate: opt.negate,
       hidden: opt.hidden,
     })),
-    subcommands: cmd.commands
-      .filter((sub) => sub.name() !== "help")
-      .map((sub) => describeCommand(sub as unknown as Command)),
+    subcommands: cmd.commands.filter((sub) => sub.name() !== "help").map(describeCommand),
   };
 }
 
-export function schema(_opts: unknown, cmd: { parent?: Command | null }) {
+export function schema(_opts: unknown, cmd: { parent?: CommandLike | null }) {
   // Walk from the program root regardless of where `schema` is mounted.
-  let root: Command | null | undefined = cmd.parent;
+  let root: CommandLike | null | undefined = cmd.parent;
   while (root?.parent) root = root.parent;
   if (!root) {
     throw new Error("Unable to resolve root command for schema dump");
