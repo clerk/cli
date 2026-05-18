@@ -1,6 +1,7 @@
 import { Command } from "@commander-js/extra-typings";
 import { expandInputJson } from "./lib/input-json.ts";
 import { setLogLevel } from "./lib/log.ts";
+import { setColorEnabled } from "./lib/color.ts";
 import { setMode, type Mode } from "./mode.ts";
 import { registerInit } from "./commands/init/index.ts";
 import { registerAuth } from "./commands/auth/index.ts";
@@ -94,6 +95,7 @@ export function createProgram(): Program {
     )
     .option("--verbose", "Show detailed output (enables debug messages)")
     .option("--quiet", "Suppress non-essential output (info, warnings, spinners)")
+    .option("--no-color", "Disable ANSI color output (also respects the NO_COLOR env var)")
     .setExamples([
       { command: "clerk init", description: "Initialize Clerk in this project" },
       { command: "clerk auth login", description: "Authenticate via browser OAuth" },
@@ -157,6 +159,10 @@ Documentation:
       setLogLevel("debug");
     } else if (opts.quiet) {
       setLogLevel("error");
+    }
+    // Commander's negation maps `--no-color` to `opts.color === false`.
+    if (opts.color === false) {
+      setColorEnabled(false);
     }
     if (opts.mode) {
       if (opts.mode !== "human" && opts.mode !== "agent") {
