@@ -93,6 +93,7 @@ export function createProgram(): Program {
       "Force interaction mode (human or agent). Defaults to auto-detect based on TTY.",
     )
     .option("--verbose", "Show detailed output (enables debug messages)")
+    .option("--quiet", "Suppress non-essential output (info, warnings, spinners)")
     .setExamples([
       { command: "clerk init", description: "Initialize Clerk in this project" },
       { command: "clerk auth login", description: "Authenticate via browser OAuth" },
@@ -149,8 +150,13 @@ Documentation:
     // --verbose doesn't leak into subsequent runs.
     setLogLevel("info");
     const opts = program.opts();
+    if (opts.verbose && opts.quiet) {
+      throwUsageError("--verbose and --quiet are mutually exclusive");
+    }
     if (opts.verbose) {
       setLogLevel("debug");
+    } else if (opts.quiet) {
+      setLogLevel("error");
     }
     if (opts.mode) {
       if (opts.mode !== "human" && opts.mode !== "agent") {
