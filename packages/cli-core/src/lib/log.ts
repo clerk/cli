@@ -1,4 +1,4 @@
-import { dim, green, red, yellow } from "./color.ts";
+import { dim, green, red, yellow, isColorEnabled } from "./color.ts";
 
 // ── Log level ────────────────────────────────────────────────────────────
 
@@ -120,6 +120,7 @@ function shouldWrite(channel: "stdout" | "stderr", msg: string): boolean {
  * Highlights `backtick` spans in cyan within a message.
  */
 function highlight(msg: string): string {
+  if (!isColorEnabled()) return msg;
   // Use targeted foreground color set/reset (\x1b[39m = default fg) instead of
   // cyan() which uses \x1b[0m (full reset) and kills surrounding styles.
   return msg.replace(/`([^`]+)`/g, (_, content) => `\x1b[36m\`${content}\`\x1b[39m`);
@@ -165,6 +166,7 @@ export interface Logger {
 function createLogger(tag?: string): Logger {
   function formatTag(msg: string): string {
     if (!tag) return msg;
+    if (!isColorEnabled()) return `[${tag}] ${msg}`;
     // Use targeted dim on/off (\x1b[22m = normal intensity) instead of dim()
     // which uses \x1b[0m (full reset) and kills surrounding color styles.
     return `\x1b[2m[${tag}]\x1b[22m ${msg}`;
