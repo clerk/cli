@@ -1109,7 +1109,10 @@ export async function runProgram(
       const isUsage = COMMANDER_USAGE_CODES.has(error.code);
       const exitCode = isUsage ? EXIT_CODE.USAGE : (error.exitCode ?? EXIT_CODE.GENERAL);
       if (isAgent()) {
-        outputJsonError(isUsage ? "usage_error" : error.code, error.message);
+        outputJsonError(isUsage ? "usage_error" : error.code, error.message, {
+          retryable: false,
+          nextStep: "Run `clerk --help` to see available commands and flags.",
+        });
       }
       // Commander already wrote its own error message to stderr before throwing.
       process.exit(exitCode);
@@ -1117,7 +1120,11 @@ export async function runProgram(
 
     if (error instanceof CliError) {
       if (isAgent() && error.code) {
-        outputJsonError(error.code, error.message, error.docsUrl);
+        outputJsonError(error.code, error.message, {
+          docsUrl: error.docsUrl,
+          // CliError is a known, user-caused failure: not transient.
+          retryable: false,
+        });
       } else {
         if (error.message) {
           log.error(error.message);
@@ -1132,6 +1139,7 @@ export async function runProgram(
     if (error instanceof ApiError) {
       const detail = formatApiBody(error, verbose);
       const prefix = error.context ?? "Request failed";
+      const retryable = isHttpStatusRetryable(error.status);
       if (isAgent()) {
         const apiErrors: ApiErrorEntry[] | undefined =
           error.code || error.meta
@@ -1143,12 +1151,13 @@ export async function runProgram(
                 },
               ]
             : undefined;
-        outputJsonError(
-          error.code ?? "api_error",
-          `${prefix} (${error.status}): ${detail}`,
-          undefined,
-          apiErrors,
-        );
+        outputJsonError(error.code ?? "api_error", `${prefix} (${error.status}): ${detail}`, {
+          errors: apiErrors,
+          retryable,
+          nextStep: retryable
+            ? "Retry with backoff (1s, 2s, 4s). If 429 persists, slow down request rate."
+            : undefined,
+        });
       } else {
         log.error(`${prefix} (${error.status}): ${detail}`);
         if (verbose && (error instanceof PlapiError || error instanceof FapiError) && error.url) {
@@ -1158,24 +1167,35 @@ export async function runProgram(
           log.error(`       Trace: ${error.clerkTraceId}`);
         }
       }
-      process.exit(EXIT_CODE.GENERAL);
+      process.exit(exitCodeForHttpStatus(error.status));
     }
 
     if (error instanceof Error) {
+      // Network errors (ECONNREFUSED, ETIMEDOUT, fetch failed) are retryable.
+      const networkRetryable = /ECONNREFUSED|ECONNRESET|ETIMEDOUT|EAI_AGAIN|fetch failed/i.test(
+        error.message,
+      );
       if (isAgent()) {
-        outputJsonError("unexpected_error", error.message);
+        outputJsonError("unexpected_error", error.message, {
+          retryable: networkRetryable,
+          nextStep: networkRetryable
+            ? "Network failure — retry, then check connectivity with `clerk doctor`."
+            : "Re-run with --verbose for diagnostic output, or run `clerk doctor`.",
+        });
       } else {
         log.error(error.message);
       }
-      process.exit(EXIT_CODE.GENERAL);
+      process.exit(networkRetryable ? EXIT_CODE.TEMPFAIL : EXIT_CODE.SOFTWARE);
     }
 
     if (isAgent()) {
-      outputJsonError("unexpected_error", "An unexpected error occurred");
+      outputJsonError("unexpected_error", "An unexpected error occurred", {
+        retryable: false,
+      });
     } else {
       log.error("An unexpected error occurred");
     }
-    process.exit(EXIT_CODE.GENERAL);
+    process.exit(EXIT_CODE.SOFTWARE);
   }
 }
 
@@ -1185,24 +1205,48 @@ interface ApiErrorEntry {
   meta?: Record<string, unknown>;
 }
 
+interface JsonErrorExtras {
+  docsUrl?: string;
+  errors?: ApiErrorEntry[];
+  retryable?: boolean;
+  nextStep?: string;
+}
+
 /** Output a structured JSON error to stderr for agent/CI consumption. */
-function outputJsonError(
-  code: string,
-  message: string,
-  docsUrl?: string,
-  errors?: ApiErrorEntry[],
-): void {
+function outputJsonError(code: string, message: string, extras: JsonErrorExtras = {}): void {
   const payload: {
     error: {
       code: string;
       message: string;
       docsUrl?: string;
       errors?: ApiErrorEntry[];
+      retryable?: boolean;
+      nextStep?: string;
     };
   } = {
     error: { code, message },
   };
-  if (docsUrl) payload.error.docsUrl = docsUrl;
-  if (errors?.length) payload.error.errors = errors;
+  if (extras.docsUrl) payload.error.docsUrl = extras.docsUrl;
+  if (extras.errors?.length) payload.error.errors = extras.errors;
+  if (typeof extras.retryable === "boolean") payload.error.retryable = extras.retryable;
+  if (extras.nextStep) payload.error.nextStep = extras.nextStep;
   log.raw(JSON.stringify(payload));
+}
+
+/** Classify an HTTP status as retryable or terminal. */
+function isHttpStatusRetryable(status: number): boolean {
+  // 408 Request Timeout, 425 Too Early, 429 Too Many, and all 5xx are retryable.
+  // 4xx other than the above (e.g. 400, 401, 403, 404, 422) are terminal.
+  if (status === 408 || status === 425 || status === 429) return true;
+  return status >= 500 && status < 600;
+}
+
+/** Map an HTTP status to a sysexits-aligned exit code. */
+function exitCodeForHttpStatus(status: number): number {
+  if (status === 401 || status === 403) return EXIT_CODE.NOPERM;
+  if (isHttpStatusRetryable(status)) {
+    // 5xx → upstream unavailable; 408/425/429 → transient client/server condition.
+    return status >= 500 ? EXIT_CODE.UNAVAILABLE : EXIT_CODE.TEMPFAIL;
+  }
+  return EXIT_CODE.GENERAL;
 }
