@@ -443,13 +443,15 @@ Documentation:
     .description("List users")
     .option(
       "--json",
-      "Output as JSON. Shape: {data: User[], hasMore: boolean}. User fields: id, first_name, last_name, username, email_addresses, phone_numbers, created_at, last_sign_in_at, external_id",
+      "Output as JSON. Shape: {data: User[], hasMore: boolean, nextCursor: string|null, pagination: {offset, limit}}. User fields: id, first_name, last_name, username, email_addresses, phone_numbers, created_at, last_sign_in_at, external_id",
     )
     .option("--limit <number>", "Maximum users to return (1-250, default 100)", (value) =>
       parseIntegerOption(value, "--limit", { min: 1, max: 250 }),
     )
-    .option("--offset <number>", "Users to skip before returning results (0+)", (value) =>
-      parseIntegerOption(value, "--offset", { min: 0 }),
+    .option(
+      "--offset <number>",
+      "Users to skip before returning results (0+). Pass the nextCursor value from a previous response for forward pagination.",
+      (value) => parseIntegerOption(value, "--offset", { min: 0 }),
     )
     .option("--query <query>", "Search across common user fields")
     .option(
