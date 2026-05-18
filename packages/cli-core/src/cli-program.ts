@@ -1,4 +1,5 @@
 import { Command, createOption, createArgument } from "@commander-js/extra-typings";
+import { CommanderError } from "commander";
 import { expandInputJson } from "./lib/input-json.ts";
 import { setLogLevel } from "./lib/log.ts";
 import { setColorEnabled } from "./lib/color.ts";
@@ -95,8 +96,29 @@ function parseIntegerOption(
   return parsed;
 }
 
+/**
+ * Commander's `commander.*` error codes that represent invocation problems
+ * (unknown flag, unknown subcommand, missing argument). We funnel these to
+ * EX_USAGE so agents can branch on exit code 64 instead of parsing stderr.
+ */
+const COMMANDER_USAGE_CODES = new Set([
+  "commander.unknownOption",
+  "commander.unknownCommand",
+  "commander.missingArgument",
+  "commander.missingMandatoryOptionValue",
+  "commander.optionMissingArgument",
+  "commander.invalidArgument",
+  "commander.invalidOptionArgument",
+  "commander.excessArguments",
+  "commander.conflictingOption",
+  "commander.help",
+  "commander.helpDisplayed",
+  "commander.version",
+]);
+
 export function createProgram() {
   const program = new Command()
+    .exitOverride()
     .name("clerk")
     .description("Clerk CLI")
     .configureHelp(clerkHelpConfig())
@@ -1074,6 +1096,23 @@ export async function runProgram(
 
     if (error instanceof UserAbortError || isPromptExitError(error)) {
       process.exit(EXIT_CODE.SUCCESS);
+    }
+
+    if (error instanceof CommanderError) {
+      // --help / --version exit 0 in Commander but reach us via exitOverride.
+      if (error.code === "commander.help" || error.code === "commander.helpDisplayed") {
+        process.exit(EXIT_CODE.SUCCESS);
+      }
+      if (error.code === "commander.version") {
+        process.exit(EXIT_CODE.SUCCESS);
+      }
+      const isUsage = COMMANDER_USAGE_CODES.has(error.code);
+      const exitCode = isUsage ? EXIT_CODE.USAGE : (error.exitCode ?? EXIT_CODE.GENERAL);
+      if (isAgent()) {
+        outputJsonError(isUsage ? "usage_error" : error.code, error.message);
+      }
+      // Commander already wrote its own error message to stderr before throwing.
+      process.exit(exitCode);
     }
 
     if (error instanceof CliError) {
