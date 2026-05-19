@@ -346,7 +346,7 @@ describe("checkLinkedAppExists", () => {
     const ctx = createMockContext({
       token: "test_token",
       profile: mockProfile,
-      applicationError: new PlapiError(404, "Not found"),
+      applicationError: PlapiError.fromBody(404, "Not found"),
     });
     const result = await checkLinkedAppExists(ctx);
     expectCheck(result, {

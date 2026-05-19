@@ -275,6 +275,6 @@ describe("config schema", () => {
       instances: { development: "ins_dev" },
     });
 
-    await expect(runConfigSchema()).rejects.toThrow("API error");
+    await expect(runConfigSchema()).rejects.toThrow("Unauthorized");
   });
 });
