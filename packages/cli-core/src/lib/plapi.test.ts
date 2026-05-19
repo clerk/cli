@@ -455,7 +455,10 @@ describe("plapi", () => {
       stubFetch(async (input, init) => {
         capturedMethod = init?.method ?? "GET";
         capturedUrl = input.toString();
-        return new Response(JSON.stringify({ status: "complete" }), { status: 200 });
+        return new Response(
+          JSON.stringify({ status: "complete", dns_ok: true, ssl_ok: true, mail_ok: true }),
+          { status: 200 },
+        );
       });
 
       const result = await getDeployStatus("app_abc", "production");
@@ -464,7 +467,12 @@ describe("plapi", () => {
       expect(capturedUrl).toBe(
         "https://api.clerk.com/v1/platform/applications/app_abc/instances/production/deploy_status",
       );
-      expect(result).toEqual({ status: "complete" });
+      expect(result).toEqual({
+        status: "complete",
+        dns_ok: true,
+        ssl_ok: true,
+        mail_ok: true,
+      });
     });
   });
 

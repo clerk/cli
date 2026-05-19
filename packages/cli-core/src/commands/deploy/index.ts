@@ -33,7 +33,10 @@ import {
   INTRO_PREAMBLE,
   NEXT_STEPS_BLOCK,
   OAUTH_SECTION_INTRO,
+  type DeployComponentStatus,
   type DeployPlanStep,
+  deployComponentStatus,
+  deployStatusPendingFooter,
   domainAssociationSummary,
   dnsDashboardHandoff,
   dnsIntro,
@@ -43,6 +46,7 @@ import {
   printPlan,
   productionSummary,
 } from "./copy.ts";
+import { mapDeployError } from "./errors.ts";
 import {
   PROVIDER_LABELS,
   PROVIDER_FIELDS,
@@ -255,7 +259,21 @@ async function startNewDeploy(ctx: DeployContext): Promise<void> {
   );
   if (!shouldCreateProductionInstance) return;
 
-  const production = await createProductionInstance(ctx, domain);
+  const productionOrExists = await createProductionInstance(ctx, domain);
+  if (productionOrExists === "exists") {
+    log.blank();
+    log.info(
+      "A production instance already exists for this application. Resuming the existing deploy.",
+    );
+    log.blank();
+    const refreshed = await withSpinner("Refreshing application state...", () =>
+      resolveLiveApplicationContext(ctx.profile),
+    );
+    ctx.productionInstanceId = refreshed.productionInstanceId;
+    await reconcileExistingDeploy(ctx);
+    return;
+  }
+  const production = productionOrExists;
   await persistProductionInstance(ctx, production.instance_id);
   log.blank();
 
@@ -391,7 +409,7 @@ async function resolveLiveDeploySnapshot(
   const [{ known: oauthProviders }, productionConfig, deployStatus] = await Promise.all([
     loadDevelopmentOAuthProviders(ctx),
     productionConfigPromise,
-    getDeployStatus(ctx.appId, productionInstanceId),
+    mapDeployError(getDeployStatus(ctx.appId, productionInstanceId)),
   ]);
   const completedOAuthProviders = oauthProviders.filter((provider) =>
     hasProductionOAuthCredentials(productionConfig, provider),
@@ -513,19 +531,24 @@ function discoverEnabledOAuthProviders(config: Record<string, unknown>): Discove
 
 async function runValidateCloning(ctx: DeployContext): Promise<void> {
   await withSpinner("Validating subscription compatibility...", async () => {
-    await validateCloning(ctx.appId, { clone_instance_id: ctx.developmentInstanceId });
+    await mapDeployError(
+      validateCloning(ctx.appId, { clone_instance_id: ctx.developmentInstanceId }),
+    );
   });
 }
 
 async function createProductionInstance(
   ctx: DeployContext,
   domain: string,
-): Promise<ProductionInstanceResponse> {
+): Promise<ProductionInstanceResponse | "exists"> {
   return withSpinner("Creating production instance...", async () => {
-    return apiCreateProductionInstance(ctx.appId, {
-      home_url: domain,
-      clone_instance_id: ctx.developmentInstanceId,
-    });
+    return mapDeployError<ProductionInstanceResponse | "exists">(
+      apiCreateProductionInstance(ctx.appId, {
+        home_url: `https://${domain}`,
+        clone_instance_id: ctx.developmentInstanceId,
+      }),
+      { onProductionInstanceExists: async () => "exists" },
+    );
   });
 }
 
@@ -626,41 +649,53 @@ async function runDnsVerification(
     );
   }
 
-  const verified = await withSpinner(`Verifying DNS for ${state.domain}...`, async () => {
-    for (let attempt = 0; attempt < DEPLOY_STATUS_MAX_POLLS; attempt++) {
-      const result = await getDeployStatus(ctx.appId, productionInstanceId);
-      if (result.status === "complete") return true;
-      await sleep(DEPLOY_STATUS_POLL_INTERVAL_MS);
-    }
-    return false;
-  });
+  const outcome = await withSpinner(`Verifying production setup for ${state.domain}...`, () =>
+    pollDeployStatus(ctx.appId, productionInstanceId),
+  );
 
-  if (!verified) {
+  if (outcome.verified) {
     log.blank();
-    log.warn(
-      `DNS, SSL, or mail verification is still pending for ${state.domain}. ` +
-        "Run `clerk deploy` again once DNS has propagated, or check the dashboard for the failing component.",
-    );
-    log.info(
-      "DNS propagation can take time. Some providers may take several hours to serve the new records everywhere.",
-    );
-    if (state.cnameTargets && state.cnameTargets.length > 0) {
-      log.blank();
-      for (const line of dnsRecords(state.cnameTargets)) log.info(line);
-    }
-    log.blank();
-    const action = await chooseDnsVerificationAction();
-    if (action === "skip") {
-      log.blank();
-      log.info("Skipping DNS verification for now.");
-      return "pending";
-    }
-    return runDnsVerification(ctx, state);
+    for (const line of dnsVerified(state.domain)) log.success(line);
+    log.info(deployComponentStatus(outcome.status));
+    return "verified";
   }
 
   log.blank();
-  for (const line of dnsVerified(state.domain)) log.success(line);
-  return "verified";
+  log.info(deployComponentStatus(outcome.status));
+  log.blank();
+  for (const line of deployStatusPendingFooter(state.domain, outcome.status)) {
+    log.warn(line);
+  }
+  if (state.cnameTargets && state.cnameTargets.length > 0) {
+    log.blank();
+    for (const line of dnsRecords(state.cnameTargets)) log.info(line);
+  }
+  log.blank();
+  const action = await chooseDnsVerificationAction();
+  if (action === "skip") {
+    log.blank();
+    log.info("Skipping DNS verification for now.");
+    return "pending";
+  }
+  return runDnsVerification(ctx, state);
+}
+
+type DeployStatusOutcome =
+  | { verified: true; status: DeployComponentStatus }
+  | { verified: false; status: DeployComponentStatus };
+
+async function pollDeployStatus(
+  appId: string,
+  productionInstanceId: string,
+): Promise<DeployStatusOutcome> {
+  let status: DeployComponentStatus = { dns: false, ssl: false, mail: false };
+  for (let attempt = 0; attempt < DEPLOY_STATUS_MAX_POLLS; attempt++) {
+    const result = await mapDeployError(getDeployStatus(appId, productionInstanceId));
+    status = { dns: result.dns_ok, ssl: result.ssl_ok, mail: result.mail_ok };
+    if (result.status === "complete") return { verified: true, status };
+    await sleep(DEPLOY_STATUS_POLL_INTERVAL_MS);
+  }
+  return { verified: false, status };
 }
 
 async function runOAuthSetup(

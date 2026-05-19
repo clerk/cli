@@ -919,7 +919,7 @@ Tutorial — enable completions for your shell:
     .action(update);
 
   program
-    .command("deploy", { hidden: true })
+    .command("deploy")
     .description("Deploy a Clerk application to production")
     .option("--debug", "Show detailed deployment debug output")
     .addOption(
@@ -938,27 +938,6 @@ Tutorial — enable completions for your shell:
       createOption(
         "--test-fail-domain-lookup",
         "Simulate a deploy failure while loading the production domain",
-      ),
-    )
-    .addOption(
-      createOption(
-        "--test-fail-validate-cloning",
-        "Simulate a deploy failure while validating cloning",
-      ),
-    )
-    .addOption(
-      createOption(
-        "--test-fail-create-production-instance",
-        "Simulate a deploy failure while creating the production instance",
-      ),
-    )
-    .addOption(
-      createOption("--test-fail-dns-verification", "Simulate a deploy failure while verifying DNS"),
-    )
-    .addOption(
-      createOption(
-        "--test-fail-oauth-save",
-        "Simulate a deploy failure while saving OAuth credentials",
       ),
     )
     .action(deploy);

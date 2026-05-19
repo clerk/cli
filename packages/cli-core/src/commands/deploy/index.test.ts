@@ -187,32 +187,40 @@ describe("deploy", () => {
       total_count: 1,
     });
     mockValidateCloning.mockResolvedValue(undefined);
-    mockGetDeployStatus.mockResolvedValue({ status: "complete" });
+    mockGetDeployStatus.mockResolvedValue({
+      status: "complete",
+      dns_ok: true,
+      ssl_ok: true,
+      mail_ok: true,
+    });
     mockCreateProductionInstance.mockImplementation(
-      (_appId: string, params: { home_url: string }) => ({
-        instance_id: "ins_prod_mock",
-        environment_type: "production" as const,
-        active_domain: { id: "dmn_prod_mock", name: params.home_url },
-        publishable_key: "pk_live_test",
-        secret_key: "sk_live_test",
-        cname_targets: [
-          {
-            host: `clerk.${params.home_url}`,
-            value: "frontend-api.clerk.services",
-            required: true,
-          },
-          {
-            host: `accounts.${params.home_url}`,
-            value: "accounts.clerk.services",
-            required: true,
-          },
-          {
-            host: `clkmail.${params.home_url}`,
-            value: `mail.${params.home_url}.nam1.clerk.services`,
-            required: true,
-          },
-        ],
-      }),
+      (_appId: string, params: { home_url: string }) => {
+        const hostname = params.home_url.replace(/^https?:\/\//, "");
+        return {
+          instance_id: "ins_prod_mock",
+          environment_type: "production" as const,
+          active_domain: { id: "dmn_prod_mock", name: hostname },
+          publishable_key: "pk_live_test",
+          secret_key: "sk_live_test",
+          cname_targets: [
+            {
+              host: `clerk.${hostname}`,
+              value: "frontend-api.clerk.services",
+              required: true,
+            },
+            {
+              host: `accounts.${hostname}`,
+              value: "accounts.clerk.services",
+              required: true,
+            },
+            {
+              host: `clkmail.${hostname}`,
+              value: `mail.${hostname}.nam1.clerk.services`,
+              required: true,
+            },
+          ],
+        };
+      },
     );
     mockDomainConnectUrl.mockReturnValue(undefined);
   });
@@ -523,8 +531,13 @@ describe("deploy", () => {
       mockSelect.mockResolvedValueOnce("have-credentials");
       mockPassword.mockResolvedValueOnce("google-secret");
       mockGetDeployStatus
-        .mockResolvedValueOnce({ status: "incomplete" })
-        .mockResolvedValueOnce({ status: "complete" });
+        .mockResolvedValueOnce({
+          status: "incomplete",
+          dns_ok: false,
+          ssl_ok: false,
+          mail_ok: false,
+        })
+        .mockResolvedValueOnce({ status: "complete", dns_ok: true, ssl_ok: true, mail_ok: true });
       mockPatchInstanceConfig.mockResolvedValueOnce({});
 
       await runDeploy({});
@@ -970,7 +983,7 @@ describe("deploy", () => {
       );
 
       expect(mockCreateProductionInstance).toHaveBeenCalledWith("app_xyz789", {
-        home_url: "example.com",
+        home_url: "https://example.com",
         clone_instance_id: "ins_dev_123",
       });
       expect(mockConfigureMockDeployApi).toHaveBeenCalledWith(
@@ -1046,8 +1059,13 @@ describe("deploy", () => {
         productionConfig: {},
       });
       mockGetDeployStatus
-        .mockResolvedValueOnce({ status: "incomplete" })
-        .mockResolvedValueOnce({ status: "complete" });
+        .mockResolvedValueOnce({
+          status: "incomplete",
+          dns_ok: false,
+          ssl_ok: false,
+          mail_ok: false,
+        })
+        .mockResolvedValueOnce({ status: "complete", dns_ok: true, ssl_ok: true, mail_ok: true });
       mockConfirm.mockResolvedValueOnce(true).mockResolvedValueOnce(true);
       mockSelect.mockResolvedValueOnce("check").mockResolvedValueOnce("have-credentials");
       mockInput.mockResolvedValueOnce("google-client-id.apps.googleusercontent.com");
@@ -1080,7 +1098,12 @@ describe("deploy", () => {
         instanceId: "ins_prod_123",
         productionConfig: {},
       });
-      mockGetDeployStatus.mockResolvedValue({ status: "incomplete" });
+      mockGetDeployStatus.mockResolvedValue({
+        status: "incomplete",
+        dns_ok: false,
+        ssl_ok: false,
+        mail_ok: false,
+      });
       mockSelect.mockResolvedValueOnce("skip").mockResolvedValueOnce("have-credentials");
       mockConfirm.mockResolvedValueOnce(true);
       mockInput.mockResolvedValueOnce("google-client-id.apps.googleusercontent.com");
@@ -1164,8 +1187,13 @@ describe("deploy", () => {
       mockPatchInstanceConfig.mockResolvedValueOnce({});
       mockGetDeployStatus.mockReset();
       mockGetDeployStatus
-        .mockResolvedValueOnce({ status: "incomplete" })
-        .mockResolvedValueOnce({ status: "complete" });
+        .mockResolvedValueOnce({
+          status: "incomplete",
+          dns_ok: false,
+          ssl_ok: false,
+          mail_ok: false,
+        })
+        .mockResolvedValueOnce({ status: "complete", dns_ok: true, ssl_ok: true, mail_ok: true });
 
       await runDeploy({});
 
@@ -1237,8 +1265,13 @@ describe("deploy", () => {
       mockPatchInstanceConfig.mockResolvedValueOnce({});
       mockGetDeployStatus.mockReset();
       mockGetDeployStatus
-        .mockResolvedValueOnce({ status: "incomplete" })
-        .mockResolvedValueOnce({ status: "complete" });
+        .mockResolvedValueOnce({
+          status: "incomplete",
+          dns_ok: false,
+          ssl_ok: false,
+          mail_ok: false,
+        })
+        .mockResolvedValueOnce({ status: "complete", dns_ok: true, ssl_ok: true, mail_ok: true });
 
       await runDeploy({});
       const err = stripAnsi(captured.err);
@@ -1409,11 +1442,18 @@ describe("deploy", () => {
         .mockResolvedValueOnce("google-client-id.apps.googleusercontent.com");
       mockPassword.mockResolvedValueOnce("google-secret");
       mockPatchInstanceConfig.mockResolvedValueOnce({});
-      mockGetDeployStatus.mockResolvedValue({ status: "incomplete" });
+      mockGetDeployStatus.mockResolvedValue({
+        status: "incomplete",
+        dns_ok: false,
+        ssl_ok: false,
+        mail_ok: false,
+      });
 
       await runDeploy({});
       const err = stripAnsi(captured.err);
-      expect(err).toContain("DNS propagation can take time");
+      expect(err).toContain("DNS propagation can take several hours");
+      expect(err).toContain("DNS, SSL, mail still pending for example.com");
+      expect(err).toContain("DNS: pending");
       expect(err.match(/Add the following records at your DNS provider:/g)).toHaveLength(2);
       expect(err).toContain("Host:  clerk.example.com");
       expect(err).toContain("Value: frontend-api.clerk.services");

@@ -55,10 +55,6 @@ test("deploy exposes the expected options", () => {
     "--test-force-production-instance",
     "--test-fail-production-instance-check",
     "--test-fail-domain-lookup",
-    "--test-fail-validate-cloning",
-    "--test-fail-create-production-instance",
-    "--test-fail-dns-verification",
-    "--test-fail-oauth-save",
   ]);
 });
 
