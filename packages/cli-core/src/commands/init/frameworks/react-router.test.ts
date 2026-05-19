@@ -22,7 +22,7 @@ function makeCtx(overrides?: Partial<ProjectContext>): ProjectContext {
     packageManager: "npm",
     existingClerk: false,
     deps: { "react-router": "7.0.0" },
-    envFile: ".env",
+    envFile: ".env.local",
     ...overrides,
   };
 }

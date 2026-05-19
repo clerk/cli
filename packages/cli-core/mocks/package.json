@@ -6,7 +6,7 @@
     "dev": "vite"
   },
   "devDependencies": {
-    "typescript": "^5",
+    "typescript": "^6.0.2",
     "vite": "^6.3.5"
   }
 }

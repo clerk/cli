@@ -2,7 +2,7 @@ import { isHuman } from "../mode.ts";
 import { dim, cyan, green, red } from "./color.ts";
 import { pushPrefix, popPrefix } from "./log.ts";
 
-const FRAMES = ["◒", "◐", "◓", "◑"];
+const FRAMES = ["◒", "◐", "◓", "◑"] as const;
 const INTERVAL = 80;
 
 const S_BAR = "│";
@@ -62,7 +62,7 @@ function createSpinner() {
       }
       stream.write("\x1b[?25l"); // hide cursor
       timer = setInterval(() => {
-        const char = cyan(FRAMES[frame++ % FRAMES.length]!);
+        const char = cyan(FRAMES[frame++ % FRAMES.length] ?? FRAMES[0]);
         stream.write(`\r\x1b[K${char}  ${message}`);
       }, INTERVAL);
     },

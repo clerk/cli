@@ -121,7 +121,7 @@ export function wrapBodyWithProvider(content: string, provider: string): string 
   const providerIndent = bodyIndent + "  ";
   const contentIndent = providerIndent + "  ";
 
-  const trimmedInner = inner.trim();
+  const trimmedInner = (inner ?? "").trim();
   const reindented = trimmedInner
     .split("\n")
     .map((line) => {

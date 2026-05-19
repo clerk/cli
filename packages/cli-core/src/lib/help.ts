@@ -102,14 +102,15 @@ export function clerkHelpConfig(): Partial<Help> {
           c.argsStr ? c.name.padEnd(maxNameLen + 2) + c.argsStr : c.name,
         );
         const termWidth = Math.max(...terms.map((t) => helper.displayWidth(t)));
-        const items = terms.map((term, i) =>
-          helper.formatItem(
+        const items = terms.map((term, i) => {
+          const description = cmdData[i]?.description ?? "";
+          return helper.formatItem(
             helper.styleSubcommandTerm(term),
             termWidth,
-            helper.styleSubcommandDescription(cmdData[i]!.description),
+            helper.styleSubcommandDescription(description),
             helper,
-          ),
-        );
+          );
+        });
         output = output.concat(helper.formatItemList("Commands:", items, helper));
       }
 
