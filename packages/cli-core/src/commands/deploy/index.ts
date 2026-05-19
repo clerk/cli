@@ -15,8 +15,10 @@ import {
   createProductionInstance as apiCreateProductionInstance,
   getDeployStatus,
   patchInstanceConfig,
+  triggerDomainDnsCheck,
   validateCloning,
   type CnameTarget,
+  type DeployStatusResponse,
   type ProductionInstanceResponse,
 } from "./api.ts";
 import {
@@ -402,14 +404,8 @@ async function resolveLiveDeploySnapshot(
   const domain = await loadProductionDomain(ctx);
   if (!domain) return undefined;
 
-  const productionConfigPromise = ctx.testForceProductionInstance
-    ? Promise.resolve(mockProductionInstanceConfig())
-    : fetchInstanceConfig(ctx.appId, productionInstanceId);
-  const [{ known: oauthProviders }, productionConfig, deployStatus] = await Promise.all([
-    loadDevelopmentOAuthProviders(ctx),
-    productionConfigPromise,
-    mapDeployError(getDeployStatus(ctx.appId, productionInstanceId)),
-  ]);
+  const { known: oauthProviders } = await loadDevelopmentOAuthProviders(ctx);
+  const { productionConfig, deployStatus } = await loadProductionState(ctx, productionInstanceId);
   const completedOAuthProviders = oauthProviders.filter((provider) =>
     hasProductionOAuthCredentials(productionConfig, provider),
   );
@@ -436,6 +432,39 @@ async function resolveLiveDeploySnapshot(
       : undefined;
 
   return { ...baseState, dnsComplete, pending };
+}
+
+async function loadInitialDeployStatus(
+  appId: string,
+  productionInstanceId: string,
+): Promise<DeployStatusResponse> {
+  try {
+    return await getDeployStatus(appId, productionInstanceId);
+  } catch (error) {
+    log.debug(
+      `deploy: snapshot deploy-status read failed, treating DNS as pending: ${error instanceof Error ? error.message : String(error)}`,
+    );
+    return { status: "incomplete", dns_ok: false, ssl_ok: false, mail_ok: false };
+  }
+}
+
+async function loadProductionState(
+  ctx: DeployContext,
+  productionInstanceId: string,
+): Promise<{
+  productionConfig: Record<string, unknown>;
+  deployStatus: DeployStatusResponse;
+}> {
+  return withSpinner("Reading production configuration...", async () => {
+    const productionConfigPromise = ctx.testForceProductionInstance
+      ? Promise.resolve(mockProductionInstanceConfig())
+      : fetchInstanceConfig(ctx.appId, productionInstanceId);
+    const [productionConfig, deployStatus] = await Promise.all([
+      productionConfigPromise,
+      loadInitialDeployStatus(ctx.appId, productionInstanceId),
+    ]);
+    return { productionConfig, deployStatus };
+  });
 }
 
 async function loadProductionDomain(ctx: DeployContext): Promise<ApplicationDomain | undefined> {
@@ -647,6 +676,8 @@ async function runDnsVerification(
     );
   }
 
+  await requestDomainDnsCheck(ctx.appId, state.productionDomainId ?? state.domain);
+
   const outcome = await withSpinner(`Verifying production setup for ${state.domain}...`, () =>
     pollDeployStatus(ctx.appId, productionInstanceId),
   );
@@ -694,6 +725,16 @@ async function pollDeployStatus(
     await sleep(DEPLOY_STATUS_POLL_INTERVAL_MS);
   }
   return { verified: false, status };
+}
+
+async function requestDomainDnsCheck(appId: string, domainIdOrName: string): Promise<void> {
+  try {
+    await triggerDomainDnsCheck(appId, domainIdOrName);
+  } catch (error) {
+    log.debug(
+      `deploy: dns_check trigger failed, falling back to passive polling: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
 }
 
 async function runOAuthSetup(

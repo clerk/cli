@@ -249,6 +249,17 @@ export async function getDeployStatus(
   return response.json() as Promise<DeployStatusResponse>;
 }
 
+export async function triggerDomainDnsCheck(
+  applicationId: string,
+  domainIdOrName: string,
+): Promise<void> {
+  const url = new URL(
+    `/v1/platform/applications/${applicationId}/domains/${domainIdOrName}/dns_check`,
+    getPlapiBaseUrl(),
+  );
+  await plapiFetch("POST", url);
+}
+
 export async function retryApplicationDomainSSL(
   applicationId: string,
   domainIdOrName: string,

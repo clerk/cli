@@ -30,6 +30,7 @@ const mockListApplicationDomains = mock();
 const mockCreateProductionInstance = mock();
 const mockValidateCloning = mock();
 const mockGetDeployStatus = mock();
+const mockTriggerDomainDnsCheck = mock();
 const mockRetrySSL = mock();
 const mockRetryMail = mock();
 const mockConfigureMockDeployApi = mock();
@@ -78,6 +79,7 @@ mock.module("../../lib/plapi.ts", () => ({
   validateCloning: (...args: unknown[]) => mockValidateCloning(...args),
   getDeployStatus: (...args: unknown[]) => mockGetDeployStatus(...args),
   patchInstanceConfig: (...args: unknown[]) => mockPatchInstanceConfig(...args),
+  triggerDomainDnsCheck: (...args: unknown[]) => mockTriggerDomainDnsCheck(...args),
   retryApplicationDomainSSL: (...args: unknown[]) => mockRetrySSL(...args),
   retryApplicationDomainMail: (...args: unknown[]) => mockRetryMail(...args),
 }));
@@ -105,6 +107,7 @@ mock.module("./api.ts", () => ({
     }
     return result;
   },
+  triggerDomainDnsCheck: (...args: unknown[]) => mockTriggerDomainDnsCheck(...args),
   retryApplicationDomainSSL: (...args: unknown[]) => mockRetrySSL(...args),
   retryApplicationDomainMail: (...args: unknown[]) => mockRetryMail(...args),
   patchInstanceConfig: (...args: unknown[]) => {
@@ -244,6 +247,7 @@ describe("deploy", () => {
     mockCreateProductionInstance.mockReset();
     mockValidateCloning.mockReset();
     mockGetDeployStatus.mockReset();
+    mockTriggerDomainDnsCheck.mockReset();
     mockRetrySSL.mockReset();
     mockRetryMail.mockReset();
     mockConfigureMockDeployApi.mockReset();
@@ -1000,6 +1004,34 @@ describe("deploy", () => {
       expect(mockPatchInstanceConfig).not.toHaveBeenCalled();
     });
 
+    test("--test-fail-dns-verification defers to the verify prompt when reconciling an existing production instance", async () => {
+      await linkedProject({
+        instances: { development: "ins_dev_123", production: "ins_prod_123" },
+      });
+      mockIsAgent.mockReturnValue(false);
+      mockLiveProduction({
+        instanceId: "ins_prod_123",
+        productionConfig: {},
+      });
+      mockSelect.mockResolvedValueOnce("check");
+
+      await expectTestApiFailure(
+        runDeploy({ testFailDnsVerification: true }),
+        "Simulated deploy failure: DNS verification.",
+      );
+
+      expect(mockSelect).toHaveBeenCalledWith({
+        message: "DNS verification",
+        choices: [
+          { name: "Check DNS now", value: "check" },
+          { name: "Skip DNS verification for now", value: "skip" },
+        ],
+      });
+      expect(mockGetDeployStatus).toHaveBeenCalledTimes(2);
+      expect(mockGetDeployStatus).toHaveBeenCalledWith("app_xyz789", "ins_prod_123");
+      expect(mockPatchInstanceConfig).not.toHaveBeenCalled();
+    });
+
     test("--test-fail-oauth-save simulates OAuth credential save failure", async () => {
       await linkedProject({
         instances: { development: "ins_dev_123", production: "ins_prod_123" },
@@ -1067,8 +1099,34 @@ describe("deploy", () => {
           { name: "Skip DNS verification for now", value: "skip" },
         ],
       });
+      expect(mockTriggerDomainDnsCheck).toHaveBeenCalledWith("app_xyz789", "dmn_prod_mock");
       const firstInput = mockInput.mock.calls[0]?.[0] as { message?: string } | undefined;
       expect(String(firstInput?.message)).not.toContain("Production domain");
+    });
+
+    test("DNS verification timeout names the specific pending components from deploy_status", async () => {
+      await linkedProject({
+        instances: { development: "ins_dev_123", production: "ins_prod_123" },
+      });
+      mockIsAgent.mockReturnValue(false);
+      mockLiveProduction({
+        instanceId: "ins_prod_123",
+        developmentConfig: {},
+        productionConfig: {},
+      });
+      mockGetDeployStatus.mockResolvedValue({
+        status: "incomplete",
+        dns_ok: true,
+        ssl_ok: false,
+        mail_ok: false,
+      });
+      mockSelect.mockResolvedValueOnce("check").mockResolvedValueOnce("skip");
+
+      await runDeploy({});
+      const err = stripAnsi(captured.err);
+
+      expect(err).toContain("SSL, mail still pending for example.com");
+      expect(err).not.toContain("DNS, SSL, mail still pending");
     });
 
     test("plain deploy can skip DNS verification and continue configuring production", async () => {

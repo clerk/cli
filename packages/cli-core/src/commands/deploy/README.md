@@ -1,6 +1,6 @@
 # Deploy Command
 
-> **Live PLAPI lifecycle.** Human mode resolves the linked application, production domains, deploy status, and instance config from the Platform API on each run. The production-instance lifecycle calls (`validate_cloning`, `production_instance`, `deploy_status`, `ssl_retry`, `mail_retry`) route through `commands/deploy/api.ts` to the live PLAPI helpers in `lib/plapi.ts`. PLAPI error codes are translated to typed `CliError`s by `commands/deploy/errors.ts`. The mock helpers in `commands/deploy/mock.ts` remain for tests that mock `lib/plapi.ts` directly.
+> **Live PLAPI lifecycle.** Human mode resolves the linked application, production domains, deploy status, and instance config from the Platform API on each run. The production-instance lifecycle calls (`validate_cloning`, `production_instance`, `deploy_status`, `dns_check`, `ssl_retry`, `mail_retry`) route through `commands/deploy/api.ts` to the live PLAPI helpers in `lib/plapi.ts`. PLAPI error codes are translated to typed `CliError`s by `commands/deploy/errors.ts`. The mock helpers in `commands/deploy/mock.ts` remain for tests that mock `lib/plapi.ts` directly.
 
 Guides a user through deploying their Clerk application to production.
 
@@ -39,6 +39,7 @@ Human mode reads and writes deploy state through the Platform API on every run. 
 | Validate cloning           | `POST /v1/platform/applications/{appID}/validate_cloning`                    | 204 on success. 402 `unsupported_subscription_plan_features` → `ERROR_CODE.PLAN_INSUFFICIENT` listing missing features.           |
 | Create production instance | `POST /v1/platform/applications/{appID}/production_instance`                 | Returns `instance_id`, `environment_type`, `active_domain`, `publishable_key`, `secret_key` (once), and `cname_targets[]`.        |
 |                            |                                                                              | 409 `production_instance_exists` → CLI re-derives state via `fetchApplication` and falls through to `reconcileExistingDeploy`.    |
+| Trigger DNS check          | `POST /v1/platform/applications/{appID}/domains/{domainIDOrName}/dns_check`  | Fired best-effort once per "Check DNS now" selection to actively kick the check job. Idempotent (no-op if a check is in flight). |
 | Poll deploy status         | `GET /v1/platform/applications/{appID}/instances/{envOrInsID}/deploy_status` | Returns `status` plus the three component booleans `dns_ok`, `ssl_ok`, `mail_ok`. CLI polls every 3s up to ~5 minutes.            |
 | Retry SSL provisioning     | `POST /v1/platform/applications/{appID}/domains/{domainIDOrName}/ssl_retry`  | 204 on success. 409 `ssl_retry_throttled` carries `meta.retry_after_seconds` (12-min per-domain throttle).                        |
 | Retry mail verification    | `POST /v1/platform/applications/{appID}/domains/{domainIDOrName}/mail_retry` | 204 on success. 409 `mail_retry_inflight` → poll `deploy_status`. 403 `operation_not_allowed_on_satellite_domain` for satellites. |
@@ -86,10 +87,16 @@ sequenceDiagram
 
     CLI->>User: Add these CNAME records to your DNS provider
 
+    %% Trigger an active DNS check when the user opts to verify now
+    opt User selects "Check DNS now"
+        CLI->>API: POST /v1/platform/applications/{appID}/domains/{domain_id_or_name}/dns_check
+        API-->>CLI: 204
+    end
+
     %% Poll deploy status
     loop every 3s until status == "complete"
         CLI->>API: GET /v1/platform/applications/{appID}/instances/{instance_id}/deploy_status
-        API-->>CLI: { status: "incomplete" | "complete" }
+        API-->>CLI: { status, dns_ok, ssl_ok, mail_ok }
     end
 
     opt Stalled provisioning
@@ -125,6 +132,7 @@ All endpoints are on the **Platform API** (`/v1/platform/...`) and are live HTTP
 | List production domains    | `GET`   | `/v1/platform/applications/{appID}/domains`                              | `listApplicationDomains`. Recovers production domain name and CNAME targets on each run.                                 |
 | Validate cloning           | `POST`  | `/v1/platform/applications/{appID}/validate_cloning`                     | `validateCloning`. Pre-flights subscription/feature support.                                                             |
 | Create production instance | `POST`  | `/v1/platform/applications/{appID}/production_instance`                  | `createProductionInstance`. Returns prod instance, primary domain, keys, and `cname_targets[]`.                          |
+| Trigger DNS check          | `POST`  | `/v1/platform/applications/{appID}/domains/{domainIDOrName}/dns_check`   | `triggerDomainDnsCheck`. Fired best-effort when the user picks "Check DNS now" to actively kick the check job.           |
 | Poll deploy status         | `GET`   | `/v1/platform/applications/{appID}/instances/{envOrInsID}/deploy_status` | `getDeployStatus`. Polls every 3s; surfaces `dns_ok`/`ssl_ok`/`mail_ok` to the user on timeout.                          |
 | Retry SSL provisioning     | `POST`  | `/v1/platform/applications/{appID}/domains/{domainIDOrName}/ssl_retry`   | `retryApplicationDomainSSL`. Exposed on the API surface; not invoked from the deploy flow yet (handled by re-running).   |
 | Retry mail verification    | `POST`  | `/v1/platform/applications/{appID}/domains/{domainIDOrName}/mail_retry`  | `retryApplicationDomainMail`. Same — rejected on satellite domains with 403 `operation_not_allowed_on_satellite_domain`. |

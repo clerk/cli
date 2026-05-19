@@ -4,6 +4,7 @@ const mockPlapiCreateProductionInstance = mock();
 const mockPlapiValidateCloning = mock();
 const mockPlapiGetDeployStatus = mock();
 const mockPlapiPatchInstanceConfig = mock();
+const mockPlapiTriggerDomainDnsCheck = mock();
 const mockPlapiRetryApplicationDomainSSL = mock();
 const mockPlapiRetryApplicationDomainMail = mock();
 
@@ -12,6 +13,7 @@ mock.module("../../lib/plapi.ts", () => ({
   validateCloning: (...args: unknown[]) => mockPlapiValidateCloning(...args),
   getDeployStatus: (...args: unknown[]) => mockPlapiGetDeployStatus(...args),
   patchInstanceConfig: (...args: unknown[]) => mockPlapiPatchInstanceConfig(...args),
+  triggerDomainDnsCheck: (...args: unknown[]) => mockPlapiTriggerDomainDnsCheck(...args),
   retryApplicationDomainSSL: (...args: unknown[]) => mockPlapiRetryApplicationDomainSSL(...args),
   retryApplicationDomainMail: (...args: unknown[]) => mockPlapiRetryApplicationDomainMail(...args),
 }));
@@ -24,6 +26,7 @@ const {
   patchInstanceConfig,
   retryApplicationDomainMail,
   retryApplicationDomainSSL,
+  triggerDomainDnsCheck,
   validateCloning,
 } = apiModule;
 
@@ -33,6 +36,7 @@ describe("deploy api adapter (live routing)", () => {
     mockPlapiValidateCloning.mockReset();
     mockPlapiGetDeployStatus.mockReset();
     mockPlapiPatchInstanceConfig.mockReset();
+    mockPlapiTriggerDomainDnsCheck.mockReset();
     mockPlapiRetryApplicationDomainSSL.mockReset();
     mockPlapiRetryApplicationDomainMail.mockReset();
   });
@@ -92,6 +96,12 @@ describe("deploy api adapter (live routing)", () => {
       connection_oauth_google: { enabled: true },
     });
     expect(result).toEqual({ ok: true });
+  });
+
+  test("triggerDomainDnsCheck delegates to lib/plapi.ts", async () => {
+    mockPlapiTriggerDomainDnsCheck.mockResolvedValue(undefined);
+    await triggerDomainDnsCheck("app_123", "example.com");
+    expect(mockPlapiTriggerDomainDnsCheck).toHaveBeenCalledWith("app_123", "example.com");
   });
 
   test("retryApplicationDomainSSL delegates to lib/plapi.ts", async () => {

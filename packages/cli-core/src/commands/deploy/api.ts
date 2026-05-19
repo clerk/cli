@@ -12,6 +12,7 @@ export {
   patchInstanceConfig,
   retryApplicationDomainMail,
   retryApplicationDomainSSL,
+  triggerDomainDnsCheck,
   validateCloning,
 } from "../../lib/plapi.ts";
 
