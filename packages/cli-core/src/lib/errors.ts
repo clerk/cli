@@ -46,6 +46,22 @@ export const ERROR_CODE = {
   DOCTOR_FAILED: "doctor_failed",
   /** Frontend API request failed. */
   FAPI_ERROR: "fapi_error",
+  /** Subscription plan does not cover the dev instance's enabled features. */
+  PLAN_INSUFFICIENT: "plan_insufficient",
+  /** Application already has a production instance; flow should re-derive state. */
+  PRODUCTION_INSTANCE_EXISTS: "production_instance_exists",
+  /** `home_url` is a provider domain (e.g. *.vercel.app) and not allowed. */
+  PROVIDER_DOMAIN_NOT_ALLOWED: "provider_domain_not_allowed",
+  /** `home_url` is already claimed by another instance. */
+  HOME_URL_TAKEN: "home_url_taken",
+  /** SSL retry refused: under the 12-minute per-domain throttle. */
+  SSL_RETRY_THROTTLED: "ssl_retry_throttled",
+  /** Mail retry refused: a SendGrid verification job is already running. */
+  MAIL_RETRY_INFLIGHT: "mail_retry_inflight",
+  /** Mail retry refused: domain is a satellite — mail inherits from primary. */
+  MAIL_RETRY_SATELLITE: "mail_retry_satellite",
+  /** PLAPI rejected a request parameter as malformed. */
+  FORM_PARAM_INVALID: "form_param_invalid",
 } as const;
 
 export type ErrorCode = (typeof ERROR_CODE)[keyof typeof ERROR_CODE];

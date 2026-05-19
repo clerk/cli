@@ -194,6 +194,9 @@ export type DeployStatus = "complete" | "incomplete";
 
 export type DeployStatusResponse = {
   status: DeployStatus;
+  dns_ok: boolean;
+  ssl_ok: boolean;
+  mail_ok: boolean;
 };
 
 export async function fetchApplication(applicationId: string): Promise<Application> {

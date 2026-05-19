@@ -156,8 +156,8 @@ describe("withMockProductionInstance", () => {
 
     const result = withMockProductionInstance(stagingOnly);
     expect(result.instances).toHaveLength(2);
-    expect(
-      result.instances.some((instance) => instance.environment_type === "production"),
-    ).toBe(true);
+    expect(result.instances.some((instance) => instance.environment_type === "production")).toBe(
+      true,
+    );
   });
 });

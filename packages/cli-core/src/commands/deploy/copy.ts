@@ -104,6 +104,46 @@ export function dnsVerified(domain: string): string[] {
   return [`DNS verified for ${domain}.`];
 }
 
+export type DeployComponentStatus = {
+  dns: boolean;
+  ssl: boolean;
+  mail: boolean;
+};
+
+/**
+ * Status line for the three independent components Clerk verifies after
+ * `production_instance` is created: DNS propagation, SSL issuance via Let's
+ * Encrypt, and SendGrid mail sender verification. Each flips true on its own
+ * schedule — see the deploy endpoints handbook for timing details.
+ */
+export function deployComponentStatus(status: DeployComponentStatus): string {
+  const mark = (ok: boolean) => (ok ? green("✓") : yellow("pending"));
+  return `DNS: ${mark(status.dns)}  SSL: ${mark(status.ssl)}  Mail: ${mark(status.mail)}`;
+}
+
+/**
+ * Footer printed when `deploy_status` polling times out before all three
+ * booleans flip true. The user keeps the deploy state; rerunning
+ * `clerk deploy` resumes from whichever component is still pending.
+ */
+export function deployStatusPendingFooter(domain: string, status: DeployComponentStatus): string[] {
+  const pending: string[] = [];
+  if (!status.dns) pending.push("DNS");
+  if (!status.ssl) pending.push("SSL");
+  if (!status.mail) pending.push("mail");
+
+  const lead =
+    pending.length === 0
+      ? `Production setup for ${domain} is still finalizing.`
+      : `${pending.join(", ")} still pending for ${domain}.`;
+
+  return [
+    lead,
+    "DNS propagation can take several hours depending on your provider.",
+    "Run `clerk deploy` again to resume — the production instance is already created.",
+  ];
+}
+
 export const OAUTH_SECTION_INTRO = `${bold("Configure OAuth credentials for production")}
 
 In development, Clerk provides shared OAuth credentials for most providers.

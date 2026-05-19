@@ -6,7 +6,6 @@ const mockPlapiGetDeployStatus = mock();
 const mockPlapiPatchInstanceConfig = mock();
 const mockPlapiRetryApplicationDomainSSL = mock();
 const mockPlapiRetryApplicationDomainMail = mock();
-const mockSleep = mock();
 
 mock.module("../../lib/plapi.ts", () => ({
   createProductionInstance: (...args: unknown[]) => mockPlapiCreateProductionInstance(...args),
@@ -17,104 +16,93 @@ mock.module("../../lib/plapi.ts", () => ({
   retryApplicationDomainMail: (...args: unknown[]) => mockPlapiRetryApplicationDomainMail(...args),
 }));
 
-mock.module("../../lib/sleep.ts", () => ({
-  sleep: (...args: unknown[]) => mockSleep(...args),
-}));
-
 const deployApiModulePath = "./api.ts?adapter-test";
 const apiModule = (await import(deployApiModulePath)) as typeof import("./api.ts");
-const mockModule = (await import("./mock.ts")) as typeof import("./mock.ts");
-const { createProductionInstance, getDeployStatus, patchInstanceConfig, validateCloning } =
-  apiModule;
-const { configureMockDeployApi, _resetDeployStatusMock } = mockModule;
+const {
+  createProductionInstance,
+  getDeployStatus,
+  patchInstanceConfig,
+  retryApplicationDomainMail,
+  retryApplicationDomainSSL,
+  validateCloning,
+} = apiModule;
 
-describe("deploy api adapter", () => {
+describe("deploy api adapter (live routing)", () => {
   beforeEach(() => {
-    mockPlapiCreateProductionInstance.mockImplementation(() => {
-      throw new Error("live createProductionInstance should not be called");
-    });
-    mockPlapiValidateCloning.mockImplementation(() => {
-      throw new Error("live validateCloning should not be called");
-    });
-    mockPlapiGetDeployStatus.mockImplementation(() => {
-      throw new Error("live getDeployStatus should not be called");
-    });
-    mockPlapiPatchInstanceConfig.mockImplementation(() => {
-      throw new Error("live patchInstanceConfig should not be called");
-    });
-    mockPlapiRetryApplicationDomainSSL.mockImplementation(() => {
-      throw new Error("live retryApplicationDomainSSL should not be called");
-    });
-    mockPlapiRetryApplicationDomainMail.mockImplementation(() => {
-      throw new Error("live retryApplicationDomainMail should not be called");
-    });
-    mockSleep.mockResolvedValue(undefined);
-    _resetDeployStatusMock();
+    mockPlapiCreateProductionInstance.mockReset();
+    mockPlapiValidateCloning.mockReset();
+    mockPlapiGetDeployStatus.mockReset();
+    mockPlapiPatchInstanceConfig.mockReset();
+    mockPlapiRetryApplicationDomainSSL.mockReset();
+    mockPlapiRetryApplicationDomainMail.mockReset();
   });
 
-  test("uses mocked deploy lifecycle operations by default", async () => {
-    const production = await createProductionInstance("app_123", {
+  test("createProductionInstance delegates to lib/plapi.ts", async () => {
+    mockPlapiCreateProductionInstance.mockResolvedValue({
+      instance_id: "ins_prod_live",
+      environment_type: "production",
+      active_domain: { id: "dmn_live", name: "example.com" },
+      publishable_key: "pk_live_test",
+      cname_targets: [],
+    });
+
+    const result = await createProductionInstance("app_123", {
       home_url: "example.com",
       clone_instance_id: "ins_dev_123",
     });
+
+    expect(mockPlapiCreateProductionInstance).toHaveBeenCalledWith("app_123", {
+      home_url: "example.com",
+      clone_instance_id: "ins_dev_123",
+    });
+    expect(result.instance_id).toBe("ins_prod_live");
+  });
+
+  test("validateCloning delegates to lib/plapi.ts", async () => {
+    mockPlapiValidateCloning.mockResolvedValue(undefined);
     await validateCloning("app_123", { clone_instance_id: "ins_dev_123" });
-    await patchInstanceConfig("app_123", production.instance_id, {
+    expect(mockPlapiValidateCloning).toHaveBeenCalledWith("app_123", {
+      clone_instance_id: "ins_dev_123",
+    });
+  });
+
+  test("getDeployStatus delegates to lib/plapi.ts and surfaces booleans", async () => {
+    mockPlapiGetDeployStatus.mockResolvedValue({
+      status: "incomplete",
+      dns_ok: true,
+      ssl_ok: false,
+      mail_ok: false,
+    });
+    const result = await getDeployStatus("app_123", "production");
+    expect(mockPlapiGetDeployStatus).toHaveBeenCalledWith("app_123", "production");
+    expect(result).toEqual({
+      status: "incomplete",
+      dns_ok: true,
+      ssl_ok: false,
+      mail_ok: false,
+    });
+  });
+
+  test("patchInstanceConfig delegates to lib/plapi.ts", async () => {
+    mockPlapiPatchInstanceConfig.mockResolvedValue({ ok: true });
+    const result = await patchInstanceConfig("app_123", "ins_prod_live", {
       connection_oauth_google: { enabled: true },
     });
-
-    expect(production.instance_id).toBe("MOCKED_NOT_REAL_FIXME");
-    expect(production.active_domain.name).toBe("example.com");
-    expect(production.cname_targets).toHaveLength(3);
-    expect(mockPlapiCreateProductionInstance).not.toHaveBeenCalled();
-    expect(mockPlapiValidateCloning).not.toHaveBeenCalled();
-    expect(mockPlapiPatchInstanceConfig).not.toHaveBeenCalled();
-  });
-
-  test("mock deploy status represents incomplete then complete server state", async () => {
-    expect(await getDeployStatus("app_123", "ins_prod_123")).toEqual({ status: "incomplete" });
-    expect(await getDeployStatus("app_123", "ins_prod_123")).toEqual({ status: "incomplete" });
-    expect(await getDeployStatus("app_123", "ins_prod_123")).toEqual({ status: "complete" });
-    expect(mockPlapiGetDeployStatus).not.toHaveBeenCalled();
-  });
-
-  test("mock deploy api can fail lifecycle operations with PLAPI-shaped errors", async () => {
-    configureMockDeployApi({
-      failValidateCloning: true,
-      failCreateProductionInstance: true,
-      failDnsVerification: true,
-      failOAuthSave: true,
+    expect(mockPlapiPatchInstanceConfig).toHaveBeenCalledWith("app_123", "ins_prod_live", {
+      connection_oauth_google: { enabled: true },
     });
-
-    await expect(validateCloning("app_123", { clone_instance_id: "ins_dev_123" })).rejects.toThrow(
-      "Simulated deploy failure: cloning validation.",
-    );
-    await expect(
-      createProductionInstance("app_123", {
-        home_url: "example.com",
-        clone_instance_id: "ins_dev_123",
-      }),
-    ).rejects.toThrow("Simulated deploy failure: production instance creation.");
-    await expect(getDeployStatus("app_123", "ins_prod_123")).rejects.toThrow(
-      "Simulated deploy failure: DNS verification.",
-    );
-    await expect(
-      patchInstanceConfig("app_123", "ins_prod_123", {
-        connection_oauth_google: { enabled: true },
-      }),
-    ).rejects.toThrow("Simulated deploy failure: OAuth credential save.");
-
-    expect(mockPlapiValidateCloning).not.toHaveBeenCalled();
-    expect(mockPlapiCreateProductionInstance).not.toHaveBeenCalled();
-    expect(mockPlapiGetDeployStatus).not.toHaveBeenCalled();
-    expect(mockPlapiPatchInstanceConfig).not.toHaveBeenCalled();
+    expect(result).toEqual({ ok: true });
   });
 
-  test("reset mock deploy api clears lifecycle failure flags", async () => {
-    configureMockDeployApi({ failValidateCloning: true });
-    _resetDeployStatusMock();
+  test("retryApplicationDomainSSL delegates to lib/plapi.ts", async () => {
+    mockPlapiRetryApplicationDomainSSL.mockResolvedValue(undefined);
+    await retryApplicationDomainSSL("app_123", "example.com");
+    expect(mockPlapiRetryApplicationDomainSSL).toHaveBeenCalledWith("app_123", "example.com");
+  });
 
-    await expect(
-      validateCloning("app_123", { clone_instance_id: "ins_dev_123" }),
-    ).resolves.toBeUndefined();
+  test("retryApplicationDomainMail delegates to lib/plapi.ts", async () => {
+    mockPlapiRetryApplicationDomainMail.mockResolvedValue(undefined);
+    await retryApplicationDomainMail("app_123", "example.com");
+    expect(mockPlapiRetryApplicationDomainMail).toHaveBeenCalledWith("app_123", "example.com");
   });
 });

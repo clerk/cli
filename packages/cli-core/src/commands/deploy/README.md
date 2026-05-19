@@ -1,6 +1,6 @@
 # Deploy Command
 
-> **API-resolved state, mocked lifecycle.** Human mode resolves the linked application, production domains, deploy status, and instance config from the API layer on each run. Application/domain/config reads use live PLAPI helpers; production lifecycle calls (`validate_cloning`, `production_instance`, `deploy_status`, `ssl_retry`, `mail_retry`) plus production config PATCH still go through the dispatchers in `commands/deploy/api.ts`, which route to `commands/deploy/mock.ts`, where they are mocked with the real Platform API request/response shapes. All test-flag plumbing and failure-injection helpers also live in `mock.ts` so the surface to delete when the real backend lands is contained to one file.
+> **Live PLAPI lifecycle.** Human mode resolves the linked application, production domains, deploy status, and instance config from the Platform API on each run. The production-instance lifecycle calls (`validate_cloning`, `production_instance`, `deploy_status`, `ssl_retry`, `mail_retry`) route through `commands/deploy/api.ts` to the live PLAPI helpers in `lib/plapi.ts`. PLAPI error codes are translated to typed `CliError`s by `commands/deploy/errors.ts`. The mock helpers in `commands/deploy/mock.ts` remain for tests that mock `lib/plapi.ts` directly.
 
 Guides a user through deploying their Clerk application to production.
 
@@ -30,24 +30,21 @@ Agent mode is detected via the mode system (`src/mode.ts`), which checks in prio
 
 Agent mode does not call PLAPI and exits before the human-mode wizard starts.
 
-## PLAPI And Mocked Lifecycle
+## PLAPI Lifecycle
 
-Human mode reads deploy state through the API layer: application instances, production domains, development config, production config, and deploy status. It does not write deploy progress to the CLI config profile. The only config compatibility write is the ordinary linked-profile `instances.production` value.
+Human mode reads and writes deploy state through the Platform API on every run. The CLI does not persist deploy progress locally — the only profile write is the ordinary `instances.production` value once the production instance has been created.
 
-The production-instance lifecycle still calls the helpers in `commands/deploy/api.ts`. They use the exact request/response shapes published in the Platform API OpenAPI spec, but the bodies are produced locally so the wizard can simulate server-side deploy states while the production-instance backend remains mocked.
+| Step                       | Endpoint                                                                     | Behavior                                                                                                                          |
+| -------------------------- | ---------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
+| Validate cloning           | `POST /v1/platform/applications/{appID}/validate_cloning`                    | 204 on success. 402 `unsupported_subscription_plan_features` → `ERROR_CODE.PLAN_INSUFFICIENT` listing missing features.           |
+| Create production instance | `POST /v1/platform/applications/{appID}/production_instance`                 | Returns `instance_id`, `environment_type`, `active_domain`, `publishable_key`, `secret_key` (once), and `cname_targets[]`.        |
+|                            |                                                                              | 409 `production_instance_exists` → CLI re-derives state via `fetchApplication` and falls through to `reconcileExistingDeploy`.    |
+| Poll deploy status         | `GET /v1/platform/applications/{appID}/instances/{envOrInsID}/deploy_status` | Returns `status` plus the three component booleans `dns_ok`, `ssl_ok`, `mail_ok`. CLI polls every 3s up to ~5 minutes.            |
+| Retry SSL provisioning     | `POST /v1/platform/applications/{appID}/domains/{domainIDOrName}/ssl_retry`  | 204 on success. 409 `ssl_retry_throttled` carries `meta.retry_after_seconds` (12-min per-domain throttle).                        |
+| Retry mail verification    | `POST /v1/platform/applications/{appID}/domains/{domainIDOrName}/mail_retry` | 204 on success. 409 `mail_retry_inflight` → poll `deploy_status`. 403 `operation_not_allowed_on_satellite_domain` for satellites. |
+| Save OAuth credentials     | `PATCH /v1/platform/applications/{appID}/instances/{instanceID}/config`      | Returns the updated config snapshot. Used to persist production `connection_oauth_*` credentials.                                 |
 
-| Step                       | Endpoint                                                                     | Mocked state                                                                                                                   |
-| -------------------------- | ---------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
-| Validate cloning           | `POST /v1/platform/applications/{appID}/validate_cloning`                    | Resolves to 204; the helper exists so 402 `UnsupportedSubscriptionPlanFeatures` errors can later short-circuit before summary. |
-| Create production instance | `POST /v1/platform/applications/{appID}/production_instance`                 | Returns `instance_id`, `environment_type`, `active_domain`, `publishable_key`, `secret_key`, and `cname_targets[]`.            |
-| Poll deploy status         | `GET /v1/platform/applications/{appID}/instances/{envOrInsID}/deploy_status` | Returns `incomplete` for the first two polls per `(appID, instanceID)` pair, then `complete`. CLI polls every 3s.              |
-| Retry SSL provisioning     | `POST /v1/platform/applications/{appID}/domains/{domainIDOrName}/ssl_retry`  | Resolves to 204; helper exposed for use when `deploy_status` stalls.                                                           |
-| Retry mail verification    | `POST /v1/platform/applications/{appID}/domains/{domainIDOrName}/mail_retry` | Resolves to 204; helper exposed for use when `deploy_status` stalls.                                                           |
-| Save OAuth credentials     | `PATCH /v1/platform/applications/{appID}/instances/{instanceID}/config`      | Resolves to `{}` without hitting the network.                                                                                  |
-
-This keeps `clerk deploy` from drifting away from the server-side source of truth once these endpoints are backed by production data. Each run resolves the current production instance, domain, deploy status, and OAuth config from the API layer, then prints a checked-off plan before completing the next unfinished action. Re-running `clerk deploy` after production is fully configured shows every deploy action checked off and prints production next steps.
-
-Mocked lifecycle endpoints in `commands/deploy/mock.ts` pause for ~2s before returning so spinners and the deploy-status poll feel like real network calls.
+PLAPI errors are translated to typed `CliError`s by `commands/deploy/errors.ts`. The CLI does not auto-retry SSL or mail provisioning — when `deploy_status` polling times out with `ssl_ok` or `mail_ok` still false, the CLI surfaces the component status and instructs the user to rerun `clerk deploy` once DNS propagates.
 
 If the user presses Ctrl-C after the production instance has been created, the wizard tells them to run `clerk deploy` again and exits with SIGINT code 130. The next run derives the current DNS or OAuth step from API state and resumes without starting another production instance.
 
@@ -117,20 +114,20 @@ sequenceDiagram
 
 ## API Endpoints
 
-All endpoints are on the **Platform API** (`/v1/platform/...`). The "Real" rows are live HTTP calls today; the "Mock" rows are wired through `commands/deploy/api.ts` with shapes that match the published OpenAPI spec exactly.
+All endpoints are on the **Platform API** (`/v1/platform/...`) and are live HTTP calls. The lifecycle endpoints route through `commands/deploy/api.ts` to the helpers in `lib/plapi.ts`.
 
-| Step                       | Method  | Endpoint                                                                 | Status | Helper                                                                                                                                     |
-| -------------------------- | ------- | ------------------------------------------------------------------------ | ------ | ------------------------------------------------------------------------------------------------------------------------------------------ |
-| Auth                       | n/a     | Local config                                                             | Real   | Token stored from `clerk auth login` or `CLERK_PLATFORM_API_KEY`.                                                                          |
-| Read instance config       | `GET`   | `/v1/platform/applications/{appID}/instances/{instanceID}/config`        | Real   | `fetchInstanceConfig` from `lib/plapi.ts`. Used to discover enabled `connection_oauth_*` providers in dev.                                 |
-| Patch instance config      | `PATCH` | `/v1/platform/applications/{appID}/instances/{instanceID}/config`        | Mock   | `patchInstanceConfig` in `commands/deploy/api.ts`. Writes production OAuth credentials once switched to live PLAPI.                        |
-| Read application           | `GET`   | `/v1/platform/applications/{appID}`                                      | Real   | `fetchApplication` from `lib/plapi.ts`. Resolves live development and production instance IDs.                                             |
-| List production domains    | `GET`   | `/v1/platform/applications/{appID}/domains`                              | Real   | `listApplicationDomains` from `lib/plapi.ts`. Recovers production domain name and CNAME targets on each run.                               |
-| Validate cloning           | `POST`  | `/v1/platform/applications/{appID}/validate_cloning`                     | Mock   | `validateCloning` in `commands/deploy/api.ts`. Pre-flights subscription/feature support before plan summary.                               |
-| Create production instance | `POST`  | `/v1/platform/applications/{appID}/production_instance`                  | Mock   | `createProductionInstance` in `commands/deploy/api.ts`. Returns prod instance, primary domain, keys, and `cname_targets[]`.                |
-| Poll deploy status         | `GET`   | `/v1/platform/applications/{appID}/instances/{envOrInsID}/deploy_status` | Mock   | `getDeployStatus` in `commands/deploy/api.ts`. CLI polls every 3 seconds while the production instance is provisioning DNS, SSL, and mail. |
-| Retry SSL provisioning     | `POST`  | `/v1/platform/applications/{appID}/domains/{domainIDOrName}/ssl_retry`   | Mock   | `retryApplicationDomainSSL` in `commands/deploy/api.ts`. Available for surfacing to the user when `deploy_status` stalls.                  |
-| Retry mail verification    | `POST`  | `/v1/platform/applications/{appID}/domains/{domainIDOrName}/mail_retry`  | Mock   | `retryApplicationDomainMail` in `commands/deploy/api.ts`. Same as above, for SendGrid mail. Rejected on satellite domains.                 |
+| Step                       | Method  | Endpoint                                                                 | Helper                                                                                                                   |
+| -------------------------- | ------- | ------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------ |
+| Auth                       | n/a     | Local config                                                             | Token stored from `clerk auth login` or `CLERK_PLATFORM_API_KEY`.                                                        |
+| Read instance config       | `GET`   | `/v1/platform/applications/{appID}/instances/{instanceID}/config`        | `fetchInstanceConfig` from `lib/plapi.ts`. Discovers enabled `connection_oauth_*` providers.                             |
+| Patch instance config      | `PATCH` | `/v1/platform/applications/{appID}/instances/{instanceID}/config`        | `patchInstanceConfig`. Writes production OAuth credentials.                                                              |
+| Read application           | `GET`   | `/v1/platform/applications/{appID}`                                      | `fetchApplication`. Resolves development and production instance IDs.                                                    |
+| List production domains    | `GET`   | `/v1/platform/applications/{appID}/domains`                              | `listApplicationDomains`. Recovers production domain name and CNAME targets on each run.                                 |
+| Validate cloning           | `POST`  | `/v1/platform/applications/{appID}/validate_cloning`                     | `validateCloning`. Pre-flights subscription/feature support.                                                             |
+| Create production instance | `POST`  | `/v1/platform/applications/{appID}/production_instance`                  | `createProductionInstance`. Returns prod instance, primary domain, keys, and `cname_targets[]`.                          |
+| Poll deploy status         | `GET`   | `/v1/platform/applications/{appID}/instances/{envOrInsID}/deploy_status` | `getDeployStatus`. Polls every 3s; surfaces `dns_ok`/`ssl_ok`/`mail_ok` to the user on timeout.                          |
+| Retry SSL provisioning     | `POST`  | `/v1/platform/applications/{appID}/domains/{domainIDOrName}/ssl_retry`   | `retryApplicationDomainSSL`. Exposed on the API surface; not invoked from the deploy flow yet (handled by re-running).   |
+| Retry mail verification    | `POST`  | `/v1/platform/applications/{appID}/domains/{domainIDOrName}/mail_retry`  | `retryApplicationDomainMail`. Same — rejected on satellite domains with 403 `operation_not_allowed_on_satellite_domain`. |
 
 ## OAuth Provider Config Format
 
