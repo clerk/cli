@@ -140,11 +140,135 @@ export interface Application {
   instances: ApplicationInstance[];
 }
 
+export type DomainSummary = {
+  id: string;
+  name: string;
+};
+
+export type CnameTarget = {
+  host: string;
+  value: string;
+  required: boolean;
+};
+
+export type ApplicationDomain = {
+  object: "domain";
+  id: string;
+  name: string;
+  is_satellite: boolean;
+  is_provider_domain: boolean;
+  frontend_api_url: string;
+  accounts_portal_url?: string;
+  proxy_url?: string;
+  development_origin: string;
+  cname_targets?: CnameTarget[];
+  created_at: string;
+  updated_at: string;
+};
+
+export type ListApplicationDomainsResponse = {
+  data: ApplicationDomain[];
+  total_count: number;
+};
+
+export type ProductionInstanceResponse = {
+  instance_id: string;
+  environment_type: "production";
+  active_domain: DomainSummary;
+  secret_key?: string;
+  publishable_key: string;
+  cname_targets: CnameTarget[];
+};
+
+export type CreateProductionInstanceParams = {
+  home_url: string;
+  clone_instance_id?: string;
+  is_secondary?: boolean;
+};
+
+export type ValidateCloningParams = {
+  clone_instance_id: string;
+};
+
+export type DeployStatus = "complete" | "incomplete";
+
+export type DeployStatusResponse = {
+  status: DeployStatus;
+  dns_ok: boolean;
+  ssl_ok: boolean;
+  mail_ok: boolean;
+};
+
 export async function fetchApplication(applicationId: string): Promise<Application> {
   const url = new URL(`/v1/platform/applications/${applicationId}`, getPlapiBaseUrl());
   url.searchParams.set("include_secret_keys", "true");
   const response = await plapiFetch("GET", url);
   return response.json() as Promise<Application>;
+}
+
+export async function listApplicationDomains(
+  applicationId: string,
+): Promise<ListApplicationDomainsResponse> {
+  const url = new URL(`/v1/platform/applications/${applicationId}/domains`, getPlapiBaseUrl());
+  const response = await plapiFetch("GET", url);
+  return response.json() as Promise<ListApplicationDomainsResponse>;
+}
+
+export async function createProductionInstance(
+  applicationId: string,
+  params: CreateProductionInstanceParams,
+): Promise<ProductionInstanceResponse> {
+  const url = new URL(
+    `/v1/platform/applications/${applicationId}/production_instance`,
+    getPlapiBaseUrl(),
+  );
+  const response = await plapiFetch("POST", url, { body: JSON.stringify(params) });
+  return response.json() as Promise<ProductionInstanceResponse>;
+}
+
+export async function validateCloning(
+  applicationId: string,
+  params: ValidateCloningParams,
+): Promise<void> {
+  const url = new URL(
+    `/v1/platform/applications/${applicationId}/validate_cloning`,
+    getPlapiBaseUrl(),
+  );
+  await plapiFetch("POST", url, { body: JSON.stringify(params) });
+}
+
+export async function getDeployStatus(
+  applicationId: string,
+  envOrInsId: string,
+): Promise<DeployStatusResponse> {
+  const url = new URL(
+    `/v1/platform/applications/${applicationId}/instances/${envOrInsId}/deploy_status`,
+    getPlapiBaseUrl(),
+  );
+  const response = await plapiFetch("GET", url);
+  return response.json() as Promise<DeployStatusResponse>;
+}
+
+export async function retryApplicationDomainSSL(
+  applicationId: string,
+  domainIdOrName: string,
+): Promise<void> {
+  const url = new URL(
+    `/v1/platform/applications/${applicationId}/domains/${domainIdOrName}/ssl_retry`,
+    getPlapiBaseUrl(),
+  );
+  await plapiFetch("POST", url);
+}
+
+export async function retryApplicationDomainMail(
+  applicationId: string,
+  domainIdOrName: string,
+): Promise<void> {
+  const url = new URL(
+    `/v1/platform/applications/${applicationId}/domains/${domainIdOrName}/mail_retry`,
+    getPlapiBaseUrl(),
+  );
+  await plapiFetch("POST", url);
 }
 
 async function sendInstanceConfig(

@@ -45,6 +45,19 @@ test("users list exposes common filters and pagination options", () => {
   );
 });
 
+test("deploy exposes the expected options", () => {
+  const program = createProgram();
+  const deploy = program.commands.find((command) => command.name() === "deploy")!;
+  const optionNames = deploy.options.map((option) => option.long);
+
+  expect(optionNames).toEqual([
+    "--debug",
+    "--test-force-production-instance",
+    "--test-fail-production-instance-check",
+    "--test-fail-domain-lookup",
+  ]);
+});
+
 describe("parseIntegerOption (via users list --limit / --offset)", () => {
   function parseUsersList(args: readonly string[]) {
     return createProgram().parseAsync(["users", "list", ...args], { from: "user" });

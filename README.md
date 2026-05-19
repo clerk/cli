@@ -50,6 +50,7 @@ Commands:
   completion  [shell]                        Generate shell autocompletion script
   skill                                      Manage the bundled Clerk CLI agent skill
   update      [options]                      Update the Clerk CLI to the latest version
+  deploy      [options]                      Deploy a Clerk application to production
   help        [command]                      Display help for command
 
 Give AI agents better Clerk context: install the Clerk skills

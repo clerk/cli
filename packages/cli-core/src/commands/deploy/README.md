@@ -1,34 +1,52 @@
 # Deploy Command
 
-> **Fully mocked.** This command uses hardcoded test data and is not yet wired to real APIs. The interactive prompts are real, but all API calls (application lookup, instance creation, DNS, OAuth credential storage) are simulated.
+> **Live PLAPI lifecycle.** Human mode resolves the linked application, production domains, deploy status, and instance config from the Platform API on each run. The production-instance lifecycle calls (`validate_cloning`, `production_instance`, `deploy_status`, `ssl_retry`, `mail_retry`) route through `commands/deploy/api.ts` to the live PLAPI helpers in `lib/plapi.ts`. PLAPI error codes are translated to typed `CliError`s by `commands/deploy/errors.ts`. The mock helpers in `commands/deploy/mock.ts` remain for tests that mock `lib/plapi.ts` directly.
 
 Guides a user through deploying their Clerk application to production.
 
 ## Usage
 
 ```sh
-clerk deploy              # Interactive wizard (human mode)
+clerk deploy              # Interactive, idempotent wizard (human mode)
 clerk deploy --debug      # With debug output
-clerk deploy --mode agent # Output agent prompt instead of interactive flow
+clerk deploy --mode agent # Exit with human-mode-required guidance
 ```
+
+## Options
+
+| Flag      | Purpose                                      |
+| --------- | -------------------------------------------- |
+| `--debug` | Show detailed deploy and PLAPI debug output. |
 
 ## Agent Mode
 
-> **TODO:** The `DEPLOY_PROMPT` string is hardcoded. It should probably fetch from the quickstart prompt in the Clerk docs instead.
-
-When running in agent mode (`--mode agent`, `CLERK_MODE=agent`, or non-TTY context), this command outputs a structured prompt describing the full deployment flow instead of running the interactive wizard. The prompt includes:
-
-- Prerequisites and pre-flight checks
-- Domain selection options (custom vs. Clerk subdomain)
-- Production instance creation steps
-- OAuth credential collection for social providers
-- All relevant Platform API endpoints
+When running in agent mode (`--mode agent`, `CLERK_MODE=agent`, or non-TTY context), this command exits with a usage error explaining that human mode is required. Production deploy configuration depends on interactive prompts for domain, DNS, and OAuth credential collection, so agents should hand off to a human-run terminal session.
 
 Agent mode is detected via the mode system (`src/mode.ts`), which checks in priority order:
 
 1. `--mode` CLI flag
 2. `CLERK_MODE` environment variable
 3. TTY detection (`process.stdout.isTTY`)
+
+Agent mode does not call PLAPI and exits before the human-mode wizard starts.
+
+## PLAPI Lifecycle
+
+Human mode reads and writes deploy state through the Platform API on every run. The CLI does not persist deploy progress locally — the only profile write is the ordinary `instances.production` value once the production instance has been created.
+
+| Step                       | Endpoint                                                                     | Behavior                                                                                                                          |
+| -------------------------- | ---------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
+| Validate cloning           | `POST /v1/platform/applications/{appID}/validate_cloning`                    | 204 on success. 402 `unsupported_subscription_plan_features` → `ERROR_CODE.PLAN_INSUFFICIENT` listing missing features.           |
+| Create production instance | `POST /v1/platform/applications/{appID}/production_instance`                 | Returns `instance_id`, `environment_type`, `active_domain`, `publishable_key`, `secret_key` (once), and `cname_targets[]`.        |
+|                            |                                                                              | 409 `production_instance_exists` → CLI re-derives state via `fetchApplication` and falls through to `reconcileExistingDeploy`.    |
+| Poll deploy status         | `GET /v1/platform/applications/{appID}/instances/{envOrInsID}/deploy_status` | Returns `status` plus the three component booleans `dns_ok`, `ssl_ok`, `mail_ok`. CLI polls every 3s up to ~5 minutes.            |
+| Retry SSL provisioning     | `POST /v1/platform/applications/{appID}/domains/{domainIDOrName}/ssl_retry`  | 204 on success. 409 `ssl_retry_throttled` carries `meta.retry_after_seconds` (12-min per-domain throttle).                        |
+| Retry mail verification    | `POST /v1/platform/applications/{appID}/domains/{domainIDOrName}/mail_retry` | 204 on success. 409 `mail_retry_inflight` → poll `deploy_status`. 403 `operation_not_allowed_on_satellite_domain` for satellites. |
+| Save OAuth credentials     | `PATCH /v1/platform/applications/{appID}/instances/{instanceID}/config`      | Returns the updated config snapshot. Used to persist production `connection_oauth_*` credentials.                                 |
+
+PLAPI errors are translated to typed `CliError`s by `commands/deploy/errors.ts`. The CLI does not auto-retry SSL or mail provisioning — when `deploy_status` polling times out with `ssl_ok` or `mail_ok` still false, the CLI surfaces the component status and instructs the user to rerun `clerk deploy` once DNS propagates.
+
+If the user presses Ctrl-C after the production instance has been created, the wizard tells them to run `clerk deploy` again and exits with SIGINT code 130. The next run derives the current DNS or OAuth step from API state and resumes without starting another production instance.
 
 ## Sequence Diagram
 
@@ -37,146 +55,79 @@ sequenceDiagram
     actor User
     participant CLI as Clerk CLI
     participant API as Clerk Platform API
-    participant DNS as DNS Provider
     participant Browser
 
     Note over CLI: clerk deploy
 
-    %% Auth & App Check
+    %% Auth & app context
     Note over CLI: Auth token from local config<br/>(stored during `clerk auth login`)
-    CLI->>API: GET /v1/platform/applications/{appID}
-    API-->>CLI: { application }
 
-    %% Production Instance Check
-    CLI->>API: GET /v1/platform/applications/{appID}/instances/production/config
-    alt 200 — production instance exists
-        API-->>CLI: { config }
-        CLI->>User: Production instance already exists
-        Note over CLI: Update flow — TBD
-    else 404 — no production instance
-        API-->>CLI: 404 Not Found
-    end
+    %% Discover enabled OAuth providers in dev
+    CLI->>API: GET /v1/platform/applications/{appID}/instances/{dev_instance_id}/config?keys=connection_oauth_*
+    API-->>CLI: { connection_oauth_google: { enabled: true }, ... }
 
-    %% Read Dev Instance Config (features + social providers)
-    CLI->>API: GET /v1/platform/applications/{appID}/instances/development/config
-    API-->>CLI: { config_version, connection_oauth_google: {...}, ... }
-
-    %% Subscription Check
-    CLI->>API: GET /v1/platform/applications/{appID}/subscription
-    API-->>CLI: { id, stripe_subscription_id }
-    CLI->>CLI: Compare dev features vs plan features
-    alt Unsupported features found
+    %% Pre-flight subscription check
+    CLI->>API: POST /v1/platform/applications/{appID}/validate_cloning { clone_instance_id }
+    alt 402 Payment Required
+        API-->>CLI: UnsupportedSubscriptionPlanFeatures
         CLI->>User: Upgrade plan to continue
+    else 204 No Content
+        API-->>CLI: ok
     end
 
-    %% Domain Selection
-    CLI->>User: How would you like to set up your production domain?
-    alt Custom domain
-        User->>CLI: "Use my own domain"
-        CLI->>User: Enter your domain:
-        User->>CLI: example.com
-    else Clerk subdomain
-        User->>CLI: "Use a Clerk-provided subdomain"
+    %% Plan summary + domain
+    CLI->>User: Plan summary
+    CLI->>User: Production domain (e.g. example.com)
+    User->>CLI: example.com
+
+    %% Create production instance + domain in one round-trip
+    CLI->>API: POST /v1/platform/applications/{appID}/production_instance { home_url, clone_instance_id }
+    API-->>CLI: { instance_id, active_domain, publishable_key, secret_key, cname_targets }
+
+    CLI->>User: Add these CNAME records to your DNS provider
+
+    %% Poll deploy status
+    loop every 3s until status == "complete"
+        CLI->>API: GET /v1/platform/applications/{appID}/instances/{instance_id}/deploy_status
+        API-->>CLI: { status: "incomplete" | "complete" }
     end
 
-    %% Create Production Instance
-    Note over CLI,API: No "add production instance" endpoint exists.<br/>Current API only creates instances at app creation.<br/>Needs a new endpoint or re-creation via<br/>POST /v1/platform/applications<br/>with environment_types: ["development","production"]
-    CLI->>API: POST /v1/platform/applications (TBD — needs new endpoint?)
-    API-->>CLI: { application, instances: [dev, prod] }
-
-    %% Domain Setup
-    opt Custom domain selected
-        CLI->>API: POST /v1/platform/applications/{appID}/domains
-        Note right of API: { name: "example.com",<br/>is_satellite: false }
-        API-->>CLI: { domain }
-
-        CLI->>DNS: Lookup NS records for domain
-        DNS-->>CLI: { provider, supportsDomainConnect }
-
-        alt Supports Domain Connect
-            CLI->>User: Open browser to configure DNS?
-            User->>CLI: Yes
-            CLI->>Browser: Open Domain Connect URL
-        else No Domain Connect
-            CLI->>User: Add these DNS records manually
+    opt Stalled provisioning
+        alt SSL stalled
+            CLI->>API: POST /v1/platform/applications/{appID}/domains/{domain_id_or_name}/ssl_retry
+            API-->>CLI: 204
+        else Mail stalled
+            CLI->>API: POST /v1/platform/applications/{appID}/domains/{domain_id_or_name}/mail_retry
+            API-->>CLI: 204
         end
-
-        CLI->>API: POST /v1/platform/applications/{appID}/domains/{domainID}/dns_check
-        API-->>CLI: { status }
     end
 
-    %% Social Provider Credential Collection
-    Note over CLI: Dev config already fetched above —<br/>check for enabled connection_oauth_* keys
-
-    loop Each enabled social provider (e.g. google)
-        CLI->>User: Your app uses {Provider} OAuth. Have credentials?
-
-        alt Walk me through it
-            User->>CLI: "Walk me through setting it up"
-            CLI->>User: Use these values:<br/>  JS origins: https://example.com<br/>  Redirect URI: https://accounts.example.com/v1/oauth_callback
-            CLI->>Browser: Open Clerk docs for provider
-            CLI->>User: Enter credentials below:
-        else Already have credentials
-            User->>CLI: "I already have my credentials"
-        end
-
-        CLI->>User: Client ID:
-        User->>CLI: {client_id}
-        CLI->>User: Client Secret:
-        User->>CLI: {client_secret}
-
-        CLI->>API: PATCH /v1/platform/applications/{appID}/instances/production/config
-        Note right of API: { connection_oauth_google:<br/>{ enabled: true,<br/>client_id: "...",<br/>client_secret: "..." } }
+    %% OAuth credential loop
+    loop Each enabled social provider
+        CLI->>User: Provider credentials
+        CLI->>API: PATCH /v1/platform/applications/{appID}/instances/{instance_id}/config { connection_oauth_{provider} }
         API-->>CLI: { before, after, config_version }
     end
 
-    %% Done
     CLI->>User: Production ready at https://{domain}
-    CLI->>User: (Redeploy with updated secret keys if needed)
 ```
 
 ## API Endpoints
 
-All endpoints are on the **Platform API** (`/v1/platform/...`).
+All endpoints are on the **Platform API** (`/v1/platform/...`) and are live HTTP calls. The lifecycle endpoints route through `commands/deploy/api.ts` to the helpers in `lib/plapi.ts`.
 
-| Step                 | Method  | Endpoint                            | Notes                                                                             |
-| -------------------- | ------- | ----------------------------------- | --------------------------------------------------------------------------------- |
-| Auth                 | —       | Local config                        | Token stored from `clerk auth login`                                              |
-| Get application      | `GET`   | `/v1/platform/applications/{appID}` |                                                                                   |
-| Check prod instance  | `GET`   | `.../instances/production/config`   | 404 if none exists                                                                |
-| Read dev config      | `GET`   | `.../instances/development/config`  | Returns all settings including `connection_oauth_*` keys                          |
-| Subscription check   | `GET`   | `.../subscription`                  | Returns `{ id, stripe_subscription_id }` only — feature comparison is client-side |
-| Create prod instance | `POST`  | `/v1/platform/applications`         | **Gap: no endpoint to add a production instance to an existing app**              |
-| Add domain           | `POST`  | `.../domains`                       | Body: `{ name, is_satellite }`                                                    |
-| DNS check            | `POST`  | `.../domains/{domainID}/dns_check`  | Triggers async DNS verification                                                   |
-| Write OAuth creds    | `PATCH` | `.../instances/production/config`   | Body: `{ connection_oauth_{provider}: { enabled, client_id, client_secret } }`    |
-
-## API Gaps
-
-### Creating a production instance for an existing app
-
-The current Platform API only creates instances during application creation via `POST /v1/platform/applications` with the `environment_types` parameter:
-
-```json
-POST /v1/platform/applications
-{
-  "name": "my-app",
-  "environment_types": ["development", "production"],
-  "domain": "example.com"
-}
-```
-
-There is **no endpoint** to add a production instance to an application that was originally created with only a development instance. This needs either:
-
-1. A new `POST /v1/platform/applications/{appID}/instances` endpoint
-2. Or a different approach (e.g., re-creating the application)
-
-### Subscription feature comparison
-
-`GET /v1/platform/applications/{appID}/subscription` returns only basic metadata (`id`, `stripe_subscription_id`), not feature lists. Feature detection is done server-side in `pkg/pricing/pricing.go` by inspecting instance config. The CLI would need either:
-
-1. A new endpoint that returns the feature comparison result
-2. Or access to plan feature lists to compare client-side
+| Step                       | Method  | Endpoint                                                                 | Helper                                                                                                                   |
+| -------------------------- | ------- | ------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------ |
+| Auth                       | n/a     | Local config                                                             | Token stored from `clerk auth login` or `CLERK_PLATFORM_API_KEY`.                                                        |
+| Read instance config       | `GET`   | `/v1/platform/applications/{appID}/instances/{instanceID}/config`        | `fetchInstanceConfig` from `lib/plapi.ts`. Discovers enabled `connection_oauth_*` providers.                             |
+| Patch instance config      | `PATCH` | `/v1/platform/applications/{appID}/instances/{instanceID}/config`        | `patchInstanceConfig`. Writes production OAuth credentials.                                                              |
+| Read application           | `GET`   | `/v1/platform/applications/{appID}`                                      | `fetchApplication`. Resolves development and production instance IDs.                                                    |
+| List production domains    | `GET`   | `/v1/platform/applications/{appID}/domains`                              | `listApplicationDomains`. Recovers production domain name and CNAME targets on each run.                                 |
+| Validate cloning           | `POST`  | `/v1/platform/applications/{appID}/validate_cloning`                     | `validateCloning`. Pre-flights subscription/feature support.                                                             |
+| Create production instance | `POST`  | `/v1/platform/applications/{appID}/production_instance`                  | `createProductionInstance`. Returns prod instance, primary domain, keys, and `cname_targets[]`.                          |
+| Poll deploy status         | `GET`   | `/v1/platform/applications/{appID}/instances/{envOrInsID}/deploy_status` | `getDeployStatus`. Polls every 3s; surfaces `dns_ok`/`ssl_ok`/`mail_ok` to the user on timeout.                          |
+| Retry SSL provisioning     | `POST`  | `/v1/platform/applications/{appID}/domains/{domainIDOrName}/ssl_retry`   | `retryApplicationDomainSSL`. Exposed on the API surface; not invoked from the deploy flow yet (handled by re-running).   |
+| Retry mail verification    | `POST`  | `/v1/platform/applications/{appID}/domains/{domainIDOrName}/mail_retry`  | `retryApplicationDomainMail`. Same — rejected on satellite domains with 403 `operation_not_allowed_on_satellite_domain`. |
 
 ## OAuth Provider Config Format
 
@@ -196,19 +147,23 @@ PATCH /v1/platform/applications/{appID}/instances/production/config
 
 ### Provider-specific required fields
 
-| Provider  | Required Fields                                   |
-| --------- | ------------------------------------------------- |
-| Google    | `client_id`, `client_secret`                      |
-| GitHub    | `client_id`, `client_secret`                      |
-| Microsoft | `client_id`, `client_secret`                      |
-| Apple     | `client_id`, `client_secret`, `key_id`, `team_id` |
-| Linear    | `client_id`, `client_secret`                      |
+| Provider  | Required Fields                                                  |
+| --------- | ---------------------------------------------------------------- |
+| Google    | `client_id`, `client_secret`                                     |
+| GitHub    | `client_id`, `client_secret`                                     |
+| Microsoft | `client_id`, `client_secret`                                     |
+| Apple     | `client_id`, `team_id`, `key_id`, `client_secret` (.p8 contents) |
+| Linear    | `client_id`, `client_secret`                                     |
 
 Production instances return `422` if you try to enable a provider without credentials.
 
 ### Google OAuth `client_id` validation
 
 Google enforces a pattern: `^[0-9]+-[a-z0-9]+\.apps\.googleusercontent\.com$`
+
+### Google OAuth JSON import
+
+For Google, the wizard offers `Load credentials from a Google Cloud Console JSON file`. It reads the `client_id` and `client_secret` from the top-level `web` object in the downloaded OAuth client JSON, or from `installed` for desktop-style client downloads. The file contents are used in memory and are not written to CLI config.
 
 ## Helpful values for OAuth walkthrough
 
