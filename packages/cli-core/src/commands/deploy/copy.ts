@@ -96,7 +96,7 @@ function cnameTargetLabel(host: string): string {
 export function dnsDashboardHandoff(domain: string): string[] {
   return [
     `Check the Domains section in the Clerk Dashboard for ${domain} to monitor DNS propagation and SSL issuance.`,
-    "You can continue to the remaining setup now, or pause and run `clerk deploy` again later.",
+    "You can verify DNS now, or skip and continue. DNS propagation can take time.",
   ];
 }
 

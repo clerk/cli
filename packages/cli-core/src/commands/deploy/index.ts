@@ -60,7 +60,6 @@ import {
   chooseOAuthCredentialAction,
   collectCustomDomain,
   collectOAuthCredentials,
-  confirmContinueAfterDnsHandoff,
   confirmCreateProductionInstance,
   confirmProceed,
 } from "./prompts.ts";
@@ -601,12 +600,11 @@ async function runDnsSetup(
   for (const line of dnsDashboardHandoff(state.domain)) log.info(line);
   log.blank();
   try {
-    const continueSetup = await confirmContinueAfterDnsHandoff();
-    if (!continueSetup) {
+    const action = await chooseDnsVerificationAction();
+    if (action === "skip") {
       log.blank();
-      log.info(pausedOperationNotice());
-      outro("Paused");
-      return false;
+      log.info("Skipping DNS verification for now.");
+      return "pending";
     }
     return await runDnsVerification(ctx, { ...state, cnameTargets });
   } catch (error) {

@@ -49,13 +49,6 @@ export function validateDomain(value: string): true | string {
   return true;
 }
 
-export async function confirmContinueAfterDnsHandoff(): Promise<boolean> {
-  return confirm({
-    message: "Continue to OAuth setup?",
-    default: true,
-  });
-}
-
 export async function confirmCreateProductionInstance(): Promise<boolean> {
   return confirm({
     message: "Create production instance?",
