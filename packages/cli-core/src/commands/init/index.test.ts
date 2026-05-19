@@ -1,5 +1,5 @@
 import { test, expect, describe, afterEach, spyOn } from "bun:test";
-import { captureLog } from "../../test/lib/stubs.ts";
+import { useCaptureLog } from "../../test/lib/stubs.ts";
 
 // Pure spyOn approach — Bun's mock.module globally replaces modules for the
 // entire test run, which pollutes other test files (link, env/pull, config,
@@ -79,10 +79,9 @@ function mockMiddlewareScaffold(): void {
 
 describe("init", () => {
   let spies: ReturnType<typeof spyOn>[];
-  let captured: ReturnType<typeof captureLog>;
+  const captured = useCaptureLog();
 
   afterEach(() => {
-    captured.teardown();
     for (const s of spies) s.mockRestore();
   });
 
@@ -91,9 +90,6 @@ describe("init", () => {
     const apiKey = overrides.apiKey ?? false;
     const agent = overrides.isAgent ?? false;
     const authed = email != null || apiKey;
-
-    captured = captureLog();
-
     const gatherContextSpy = spyOn(context, "gatherContext").mockResolvedValue(null);
 
     spies = [
@@ -424,7 +420,7 @@ describe("init", () => {
     mockExistingProject(KEYLESS_CTX);
     mockMiddlewareScaffold();
 
-    await captured.run(() => init({}));
+    await init({});
 
     expect(heuristics.printKeylessInfo).not.toHaveBeenCalled();
     expect(linkMod.link).not.toHaveBeenCalled();
@@ -519,7 +515,7 @@ describe("init", () => {
       postInstructions: [],
     });
 
-    await captured.run(() => init({}));
+    await init({});
 
     expect(linkMod.link).not.toHaveBeenCalled();
     expect(pullMod.pull).not.toHaveBeenCalled();

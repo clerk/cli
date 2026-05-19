@@ -3,7 +3,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { _setConfigDir, setProfile } from "../../lib/config.ts";
-import { credentialStoreStubs, gitStubs, stubFetch, captureLog } from "../../test/lib/stubs.ts";
+import { credentialStoreStubs, gitStubs, stubFetch, useCaptureLog } from "../../test/lib/stubs.ts";
 
 mock.module("../../lib/credential-store.ts", () => credentialStoreStubs);
 mock.module("../../lib/git.ts", () => gitStubs);
@@ -15,7 +15,7 @@ describe("config schema", () => {
   let logSpy: ReturnType<typeof spyOn>;
   let errorSpy: ReturnType<typeof spyOn>;
   let exitSpy: ReturnType<typeof spyOn>;
-  let captured: ReturnType<typeof captureLog>;
+  const captured = useCaptureLog();
 
   const mockSchema = {
     type: "object",
@@ -38,13 +38,10 @@ describe("config schema", () => {
     exitSpy = spyOn(process, "exit").mockImplementation(() => {
       throw new Error("process.exit");
     });
-    captured = captureLog();
-
     stubFetch(async () => new Response(JSON.stringify(mockSchema), { status: 200 }));
   });
 
   afterEach(async () => {
-    captured.teardown();
     _setConfigDir(undefined);
     process.env = { ...originalEnv };
     globalThis.fetch = originalFetch;
@@ -58,7 +55,7 @@ describe("config schema", () => {
     options: { app?: string; instance?: string; output?: string; keys?: string[] } = {},
   ) {
     const { configSchema } = await import("./schema.ts");
-    return captured.run(() => configSchema(options));
+    return configSchema(options);
   }
 
   test("errors when no profile is linked", async () => {

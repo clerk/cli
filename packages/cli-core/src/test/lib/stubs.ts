@@ -1,33 +1,63 @@
-import type { spyOn } from "bun:test";
-import { withCapturedLogs } from "../../lib/log.ts";
+import { afterEach, beforeEach, type spyOn } from "bun:test";
+import { type CapturedLogs, setActiveCapture } from "../../lib/log.ts";
 
 export function capturedOutput(spy: ReturnType<typeof spyOn>): string {
   return spy.mock.calls.map((c: unknown[]) => c[0]).join("\n");
 }
 
 /**
- * Create a scoped capture buffer for `log.*` calls.
+ * Capture `log.*` output for every test in the enclosing scope.
  *
- * Use `run()` to execute code inside the capture context in unit tests that
- * exercise migrated commands (which use `log.*` instead of `console.log`/`console.error`).
+ * Registers `beforeEach`/`afterEach` hooks that install a fresh buffer
+ * before each test and clear it after. The returned proxy exposes getters
+ * that always reflect the active test's buffer, plus a `clear()` helper
+ * for ignoring setup noise mid-test.
+ *
+ * @example
+ * ```ts
+ * const captured = useCaptureLog();
+ *
+ * test("emits success", async () => {
+ *   await myCommand();
+ *   expect(captured.err).toContain("done");
+ * });
+ *
+ * test("ignores setup noise", async () => {
+ *   await setUp();
+ *   captured.clear();
+ *   await myCommand();
+ *   expect(captured.err).toContain("done");
+ * });
+ * ```
  */
-export function captureLog() {
-  const captured = { stdout: [] as string[], stderr: [] as string[] };
+export function useCaptureLog() {
+  let buf: CapturedLogs = { stdout: [], stderr: [] };
+  beforeEach(() => {
+    buf = { stdout: [], stderr: [] };
+    setActiveCapture(buf);
+  });
+  afterEach(() => {
+    setActiveCapture(null);
+  });
   return {
-    ...captured,
+    get stdout(): string[] {
+      return buf.stdout;
+    },
+    get stderr(): string[] {
+      return buf.stderr;
+    },
     /** Joined stdout output. */
-    get out() {
-      return captured.stdout.join("\n");
+    get out(): string {
+      return buf.stdout.join("\n");
     },
     /** Joined stderr output. */
-    get err() {
-      return captured.stderr.join("\n");
+    get err(): string {
+      return buf.stderr.join("\n");
     },
-    run<T>(fn: () => T): T {
-      return withCapturedLogs(captured, fn);
-    },
-    teardown() {
-      // No-op: capture scope is tied to run(), not process-global state.
+    /** Reset the capture buffer mid-test (e.g., to ignore setup noise). */
+    clear(): void {
+      buf.stdout.length = 0;
+      buf.stderr.length = 0;
     },
   };
 }

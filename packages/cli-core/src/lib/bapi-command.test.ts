@@ -1,6 +1,6 @@
 import { test, expect, describe, beforeEach, afterEach, spyOn } from "bun:test";
 import { BapiError, CliError, ERROR_CODE } from "./errors.ts";
-import { captureLog } from "../test/lib/stubs.ts";
+import { useCaptureLog } from "../test/lib/stubs.ts";
 
 const configModule = await import("./config.ts");
 const plapiModule = await import("./plapi.ts");
@@ -12,20 +12,18 @@ describe("bapi-command", () => {
   let resolveAppContextSpy: ReturnType<typeof spyOn>;
   let fetchApplicationSpy: ReturnType<typeof spyOn>;
   let validateKeyPrefixSpy: ReturnType<typeof spyOn>;
-  let captured: ReturnType<typeof captureLog>;
+  const captured = useCaptureLog();
 
   beforeEach(() => {
     delete process.env.CLERK_SECRET_KEY;
     resolveAppContextSpy = spyOn(configModule, "resolveAppContext");
     fetchApplicationSpy = spyOn(plapiModule, "fetchApplication");
     validateKeyPrefixSpy = spyOn(plapiModule, "validateKeyPrefix");
-    captured = captureLog();
   });
 
   afterEach(() => {
     delete process.env.CLERK_SECRET_KEY;
     process.exitCode = 0;
-    captured.teardown();
     resolveAppContextSpy.mockRestore();
     fetchApplicationSpy.mockRestore();
     validateKeyPrefixSpy.mockRestore();
@@ -39,23 +37,19 @@ describe("bapi-command", () => {
     expect(normalizeBapiPath("/v1")).toBe("/v1");
   });
 
-  test("prints raw BAPI error bodies for machine use", async () => {
-    const handled = await captured.run(() =>
-      Promise.resolve(
-        handleBapiError(
-          new BapiError(
-            422,
-            JSON.stringify({
-              errors: [
-                {
-                  code: "form_param_missing",
-                  message: "email_address is required",
-                },
-              ],
-            }),
-            new Headers(),
-          ),
-        ),
+  test("prints raw BAPI error bodies for machine use", () => {
+    const handled = handleBapiError(
+      new BapiError(
+        422,
+        JSON.stringify({
+          errors: [
+            {
+              code: "form_param_missing",
+              message: "email_address is required",
+            },
+          ],
+        }),
+        new Headers(),
       ),
     );
 

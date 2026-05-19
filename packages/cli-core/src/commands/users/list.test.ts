@@ -1,7 +1,7 @@
 import { test, expect, describe, beforeEach, afterEach, mock, spyOn } from "bun:test";
 import { CliError, ERROR_CODE } from "../../lib/errors.ts";
 import { popPrefix, pushPrefix } from "../../lib/log.ts";
-import { captureLog } from "../../test/lib/stubs.ts";
+import { useCaptureLog } from "../../test/lib/stubs.ts";
 
 const mockBapiRequest = mock();
 mock.module("../../commands/api/bapi.ts", () => ({
@@ -62,7 +62,7 @@ const mockUsers = [
 describe("users list", () => {
   let logSpy: ReturnType<typeof spyOn>;
   let errorSpy: ReturnType<typeof spyOn>;
-  let captured: ReturnType<typeof captureLog>;
+  const captured = useCaptureLog();
 
   beforeEach(() => {
     mockIsAgent.mockReturnValue(false);
@@ -75,11 +75,9 @@ describe("users list", () => {
     });
     logSpy = spyOn(console, "log").mockImplementation(() => {});
     errorSpy = spyOn(console, "error").mockImplementation(() => {});
-    captured = captureLog();
   });
 
   afterEach(() => {
-    captured.teardown();
     mockBapiRequest.mockReset();
     mockResolveBapiSecretKey.mockReset();
     mockResolveUsersInstanceContext.mockReset();
@@ -91,7 +89,7 @@ describe("users list", () => {
   });
 
   function runList(options: Parameters<typeof list>[0] = {}) {
-    return captured.run(() => list(options));
+    return list(options);
   }
 
   test("forwards targeting options when resolving the secret key", async () => {

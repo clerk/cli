@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { _setConfigDir, setProfile } from "../../lib/config.ts";
 import {
-  captureLog,
+  useCaptureLog,
   credentialStoreStubs,
   gitStubs,
   promptsStubs,
@@ -24,7 +24,7 @@ describe("clerk enable/disable orgs", () => {
   let tempDir: string;
   let logSpy: ReturnType<typeof spyOn>;
   let errorSpy: ReturnType<typeof spyOn>;
-  let captured: ReturnType<typeof captureLog>;
+  const captured = useCaptureLog();
 
   beforeEach(async () => {
     tempDir = await mkdtemp(join(tmpdir(), "clerk-orgs-test-"));
@@ -34,15 +34,12 @@ describe("clerk enable/disable orgs", () => {
 
     logSpy = spyOn(console, "log").mockImplementation(() => {});
     errorSpy = spyOn(console, "error").mockImplementation(() => {});
-    captured = captureLog();
-
     stubFetch(async () => {
       return new Response(JSON.stringify({}), { status: 200 });
     });
   });
 
   afterEach(async () => {
-    captured.teardown();
     _setConfigDir(undefined);
     process.env = { ...originalEnv };
     globalThis.fetch = originalFetch;
@@ -70,7 +67,7 @@ describe("clerk enable/disable orgs", () => {
 
     await setupProfile();
     const { orgsEnable } = await import("./index.ts");
-    await captured.run(() => orgsEnable({}));
+    await orgsEnable({});
 
     const parsed = JSON.parse(capturedBody);
     expect(parsed.organization_settings.enabled).toBe(true);
@@ -85,7 +82,7 @@ describe("clerk enable/disable orgs", () => {
 
     await setupProfile();
     const { orgsEnable } = await import("./index.ts");
-    await captured.run(() => orgsEnable({ forceSelection: true }));
+    await orgsEnable({ forceSelection: true });
 
     const parsed = JSON.parse(capturedBody);
     expect(parsed.organization_settings.force_organization_selection).toBe(true);
@@ -100,7 +97,7 @@ describe("clerk enable/disable orgs", () => {
 
     await setupProfile();
     const { orgsEnable } = await import("./index.ts");
-    await captured.run(() => orgsEnable({ maxMembers: "10" }));
+    await orgsEnable({ maxMembers: "10" });
 
     const parsed = JSON.parse(capturedBody);
     expect(parsed.organization_settings.max_allowed_memberships).toBe(10);
@@ -115,7 +112,7 @@ describe("clerk enable/disable orgs", () => {
 
     await setupProfile();
     const { orgsEnable } = await import("./index.ts");
-    await expect(captured.run(() => orgsEnable({ maxMembers: "abc" }))).rejects.toThrow(
+    await expect(orgsEnable({ maxMembers: "abc" })).rejects.toThrow(
       "--max-members must be a positive integer",
     );
     expect(calls).toBe(0);
@@ -124,7 +121,7 @@ describe("clerk enable/disable orgs", () => {
   test("enable rejects partial-numeric --max-members like '12abc'", async () => {
     await setupProfile();
     const { orgsEnable } = await import("./index.ts");
-    await expect(captured.run(() => orgsEnable({ maxMembers: "12abc" }))).rejects.toThrow(
+    await expect(orgsEnable({ maxMembers: "12abc" })).rejects.toThrow(
       "--max-members must be a positive integer",
     );
   });
@@ -132,7 +129,7 @@ describe("clerk enable/disable orgs", () => {
   test("enable rejects --max-members = 0", async () => {
     await setupProfile();
     const { orgsEnable } = await import("./index.ts");
-    await expect(captured.run(() => orgsEnable({ maxMembers: "0" }))).rejects.toThrow(
+    await expect(orgsEnable({ maxMembers: "0" })).rejects.toThrow(
       "--max-members must be a positive integer",
     );
   });
@@ -146,7 +143,7 @@ describe("clerk enable/disable orgs", () => {
 
     await setupProfile();
     const { orgsEnable } = await import("./index.ts");
-    await captured.run(() => orgsEnable({ domains: true }));
+    await orgsEnable({ domains: true });
 
     const parsed = JSON.parse(capturedBody);
     expect(parsed.organization_settings.domains_enabled).toBe(true);
@@ -161,7 +158,7 @@ describe("clerk enable/disable orgs", () => {
 
     await setupProfile();
     const { orgsEnable } = await import("./index.ts");
-    await captured.run(() => orgsEnable({ autoCreate: true }));
+    await orgsEnable({ autoCreate: true });
 
     const parsed = JSON.parse(capturedBody);
     expect(
@@ -179,7 +176,7 @@ describe("clerk enable/disable orgs", () => {
 
     await setupProfile();
     const { orgsEnable } = await import("./index.ts");
-    await captured.run(() => orgsEnable({ dryRun: true }));
+    await orgsEnable({ dryRun: true });
 
     expect(capturedUrl).toContain("dry_run=true");
     expect(captured.err).toContain("[dry-run]");
@@ -188,7 +185,7 @@ describe("clerk enable/disable orgs", () => {
   test("enable shows success message", async () => {
     await setupProfile();
     const { orgsEnable } = await import("./index.ts");
-    await captured.run(() => orgsEnable({}));
+    await orgsEnable({});
 
     expect(captured.err).toContain("Organizations enabled");
   });
@@ -205,7 +202,7 @@ describe("clerk enable/disable orgs", () => {
 
     await setupProfile();
     const { orgsEnable } = await import("./index.ts");
-    await captured.run(() => orgsEnable({}));
+    await orgsEnable({});
 
     expect(patchCalls).toBe(0);
     expect(captured.err).toContain("No changes detected");
@@ -213,7 +210,7 @@ describe("clerk enable/disable orgs", () => {
 
   test("enable errors when no profile is linked", async () => {
     const { orgsEnable } = await import("./index.ts");
-    await expect(captured.run(() => orgsEnable({}))).rejects.toThrow("No Clerk project linked");
+    await expect(orgsEnable({})).rejects.toThrow("No Clerk project linked");
   });
 
   // --- disable ---
@@ -229,7 +226,7 @@ describe("clerk enable/disable orgs", () => {
 
     await setupProfile();
     const { orgsDisable } = await import("./index.ts");
-    await captured.run(() => orgsDisable({}));
+    await orgsDisable({});
 
     const parsed = JSON.parse(capturedBody);
     expect(parsed.organization_settings.enabled).toBe(false);
@@ -246,9 +243,7 @@ describe("clerk enable/disable orgs", () => {
 
     await setupProfile();
     const { orgsDisable } = await import("./index.ts");
-    await expect(captured.run(() => orgsDisable({}))).rejects.toThrow(
-      "Organization billing is enabled",
-    );
+    await expect(orgsDisable({})).rejects.toThrow("Organization billing is enabled");
     expect(patchCalls).toBe(0);
   });
 
@@ -263,7 +258,7 @@ describe("clerk enable/disable orgs", () => {
 
     await setupProfile();
     const { orgsDisable } = await import("./index.ts");
-    await captured.run(() => orgsDisable({ yes: true }));
+    await orgsDisable({ yes: true });
 
     expect(captured.err).toContain("Organization billing is currently enabled");
     const parsed = JSON.parse(capturedBody);
@@ -281,7 +276,7 @@ describe("clerk enable/disable orgs", () => {
 
     await setupProfile();
     const { orgsDisable } = await import("./index.ts");
-    await captured.run(() => orgsDisable({ yes: true }));
+    await orgsDisable({ yes: true });
 
     const parsed = JSON.parse(capturedBody);
     expect(parsed.organization_settings.enabled).toBe(false);
@@ -296,7 +291,7 @@ describe("clerk enable/disable orgs", () => {
 
     await setupProfile();
     const { orgsDisable } = await import("./index.ts");
-    await captured.run(() => orgsDisable({}));
+    await orgsDisable({});
 
     expect(captured.err).toContain("Organizations disabled");
   });

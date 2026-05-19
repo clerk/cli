@@ -1,5 +1,5 @@
 import { test, expect, describe, beforeEach, afterEach, spyOn } from "bun:test";
-import { captureLog } from "../../test/lib/stubs.ts";
+import { useCaptureLog } from "../../test/lib/stubs.ts";
 import { join } from "node:path";
 import { mkdtemp, rm, mkdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -7,20 +7,18 @@ import { detectAuthLibraries, scanForIssues } from "./scan.ts";
 
 describe("detectAuthLibraries", () => {
   let consoleSpy: ReturnType<typeof spyOn>;
-  let captured: ReturnType<typeof captureLog>;
+  const captured = useCaptureLog();
 
   beforeEach(() => {
-    captured = captureLog();
     consoleSpy = spyOn(console, "log").mockImplementation(() => {});
   });
 
   afterEach(() => {
-    captured.teardown();
     consoleSpy.mockRestore();
   });
 
   function runDetectAuthLibraries(deps: Parameters<typeof detectAuthLibraries>[0]) {
-    return captured.run(() => detectAuthLibraries(deps));
+    return detectAuthLibraries(deps);
   }
 
   test("detects NextAuth", () => {

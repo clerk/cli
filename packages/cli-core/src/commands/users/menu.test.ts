@@ -1,4 +1,5 @@
 import { test, expect, describe, beforeEach, mock } from "bun:test";
+import { useCaptureLog } from "../../test/lib/stubs.ts";
 
 const mockSelect = mock();
 const mockIntro = mock();
@@ -36,6 +37,8 @@ const { __resetUsersActionRegistryForTesting, registerUsersAction } = await impo
 const { usersMenu } = await import("./menu.ts");
 
 describe("usersMenu", () => {
+  useCaptureLog();
+
   beforeEach(() => {
     __resetUsersActionRegistryForTesting();
     mockSelect.mockReset();

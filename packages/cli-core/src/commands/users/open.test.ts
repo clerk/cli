@@ -1,7 +1,7 @@
 import { test, expect, describe, afterEach, beforeEach, mock } from "bun:test";
 import { setMode } from "../../mode.ts";
 import { setCurrentEnv } from "../../lib/environment.ts";
-import { captureLog } from "../../test/lib/stubs.ts";
+import { useCaptureLog } from "../../test/lib/stubs.ts";
 
 const mockResolveAppContext = mock();
 const mockResolveProfile = mock();
@@ -44,7 +44,7 @@ const CTX = {
 };
 
 describe("users open", () => {
-  let captured: ReturnType<typeof captureLog>;
+  const captured = useCaptureLog();
 
   beforeEach(() => {
     setMode("human");
@@ -62,11 +62,9 @@ describe("users open", () => {
     });
     mockResolveUsersInstanceContext.mockResolvedValue(CTX);
     mockOpenBrowser.mockResolvedValue({ ok: true, launcher: "open" });
-    captured = captureLog();
   });
 
   afterEach(() => {
-    captured.teardown();
     mockResolveAppContext.mockReset();
     mockResolveProfile.mockReset();
     mockResolveInstanceId.mockReset();
@@ -76,7 +74,7 @@ describe("users open", () => {
   });
 
   test("explicit user-id + linked profile: opens dashboard URL for that user", async () => {
-    await captured.run(() => open({ userId: "user_2x9k" }));
+    await open({ userId: "user_2x9k" });
 
     expect(mockResolveAppContext).toHaveBeenCalledWith({
       instance: undefined,
@@ -93,7 +91,7 @@ describe("users open", () => {
   });
 
   test("--print: plain URL only on stdout, no browser, no intro/outro", async () => {
-    await captured.run(() => open({ userId: "user_2x9k", print: true }));
+    await open({ userId: "user_2x9k", print: true });
 
     expect(captured.out).toBe(
       "https://dashboard.clerk.com/apps/app_abc123/instances/ins_prod789/users/user_2x9k",
@@ -104,7 +102,7 @@ describe("users open", () => {
   test("agent mode without --print: emits structured JSON, no browser", async () => {
     setMode("agent");
 
-    await captured.run(() => open({ userId: "user_2x9k" }));
+    await open({ userId: "user_2x9k" });
 
     const payload = JSON.parse(captured.out);
     expect(payload).toEqual({
@@ -121,7 +119,7 @@ describe("users open", () => {
   test("agent mode with --print still wins: URL only, no JSON", async () => {
     setMode("agent");
 
-    await captured.run(() => open({ userId: "user_2x9k", print: true }));
+    await open({ userId: "user_2x9k", print: true });
 
     expect(captured.out).toBe(
       "https://dashboard.clerk.com/apps/app_abc123/instances/ins_prod789/users/user_2x9k",
@@ -131,9 +129,7 @@ describe("users open", () => {
   });
 
   test("--secret-key alone: uses linked app context and direct BAPI auth", async () => {
-    await captured.run(() =>
-      open({ secretKey: "sk_test_loose", userId: "user_2x9k", print: true }),
-    );
+    await open({ secretKey: "sk_test_loose", userId: "user_2x9k", print: true });
 
     expect(mockResolveAppContext).toHaveBeenCalledWith({
       instance: undefined,
@@ -162,9 +158,9 @@ describe("users open", () => {
         secretKey: "sk_test_loose",
       });
 
-    await expect(
-      captured.run(() => open({ secretKey: "sk_test_loose", userId: "user_2x9k" })),
-    ).rejects.toThrow(/dashboard URL|--app/);
+    await expect(open({ secretKey: "sk_test_loose", userId: "user_2x9k" })).rejects.toThrow(
+      /dashboard URL|--app/,
+    );
     expect(mockResolveUsersInstanceContext).toHaveBeenCalledTimes(2);
     expect(mockOpenBrowser).not.toHaveBeenCalled();
   });
@@ -172,7 +168,7 @@ describe("users open", () => {
   test("no user-id + human mode: invokes pickUser and uses returned id", async () => {
     mockPickUser.mockResolvedValue("user_picked");
 
-    await captured.run(() => open({ print: true }));
+    await open({ print: true });
 
     expect(mockPickUser).toHaveBeenCalledWith({
       secretKey: CTX.secretKey,
@@ -186,7 +182,7 @@ describe("users open", () => {
   test("no user-id + agent mode: throws usage error, does not invoke pickUser", async () => {
     setMode("agent");
 
-    await expect(captured.run(() => open({}))).rejects.toThrow(/User ID is required/);
+    await expect(open({})).rejects.toThrow(/User ID is required/);
     expect(mockPickUser).not.toHaveBeenCalled();
     expect(mockOpenBrowser).not.toHaveBeenCalled();
   });
@@ -194,9 +190,7 @@ describe("users open", () => {
   test("forwards --app and --instance to the resolver", async () => {
     mockResolveProfile.mockResolvedValue(undefined);
 
-    await captured.run(() =>
-      open({ userId: "user_2x9k", app: "app_other", instance: "prod", print: true }),
-    );
+    await open({ userId: "user_2x9k", app: "app_other", instance: "prod", print: true });
 
     expect(mockResolveUsersInstanceContext).toHaveBeenCalledWith({
       app: "app_other",
@@ -211,15 +205,13 @@ describe("users open", () => {
       .mockRejectedValueOnce(new Error("Not authenticated"))
       .mockResolvedValueOnce(CTX);
 
-    await captured.run(() =>
-      open({
-        userId: "user_2x9k",
-        print: true,
-        secretKey: "sk_test_direct",
-        app: "app_other",
-        instance: "prod",
-      }),
-    );
+    await open({
+      userId: "user_2x9k",
+      print: true,
+      secretKey: "sk_test_direct",
+      app: "app_other",
+      instance: "prod",
+    });
 
     expect(mockResolveUsersInstanceContext).toHaveBeenCalledWith({
       app: "app_other",
@@ -246,7 +238,7 @@ describe("users open", () => {
       }),
     );
 
-    await expect(captured.run(() => open({ userId: "user_2x9k" }))).rejects.toThrow(/Not linked/);
+    await expect(open({ userId: "user_2x9k" })).rejects.toThrow(/Not linked/);
   });
 
   test("registers an action in the users registry", async () => {
@@ -258,13 +250,9 @@ describe("users open", () => {
   });
 
   test("rejects malformed user IDs with a usage error", async () => {
-    await expect(captured.run(() => open({ userId: "../foo", print: true }))).rejects.toThrow(
-      /Invalid user ID/,
-    );
+    await expect(open({ userId: "../foo", print: true })).rejects.toThrow(/Invalid user ID/);
 
-    await expect(
-      captured.run(() => open({ userId: "not-a-user-id", print: true })),
-    ).rejects.toThrow(/Invalid user ID/);
+    await expect(open({ userId: "not-a-user-id", print: true })).rejects.toThrow(/Invalid user ID/);
 
     expect(mockResolveUsersInstanceContext).not.toHaveBeenCalled();
   });
