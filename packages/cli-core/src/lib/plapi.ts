@@ -174,7 +174,8 @@ export type ListApplicationDomainsResponse = {
 export type ProductionInstanceResponse = {
   instance_id: string;
   environment_type: "production";
-  active_domain: DomainSummary;
+  /** Server contract permits null; CLI currently throws if the server omits it. */
+  active_domain: DomainSummary | null;
   secret_key?: string;
   publishable_key: string;
   cname_targets: CnameTarget[];
@@ -183,7 +184,6 @@ export type ProductionInstanceResponse = {
 export type CreateProductionInstanceParams = {
   home_url: string;
   clone_instance_id?: string;
-  is_secondary?: boolean;
 };
 
 export type ValidateCloningParams = {

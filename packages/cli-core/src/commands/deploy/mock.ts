@@ -21,7 +21,11 @@ const MOCK_INCOMPLETE_POLLS = 2;
 
 export type DeployApiMockOptions = {
   failValidateCloning?: boolean;
+  /** Simulates HTTP 402 unsupported_subscription_plan_features with this feature list. */
+  failValidateCloningUnsupportedFeatures?: string[];
   failCreateProductionInstance?: boolean;
+  /** Simulates HTTP 400 production_instance_exists. */
+  failCreateProductionInstanceExists?: boolean;
   failDnsVerification?: boolean;
   failOAuthSave?: boolean;
 };
@@ -31,7 +35,9 @@ export type DeployTestFlags = {
   testFailProductionInstanceCheck?: boolean;
   testFailDomainLookup?: boolean;
   testFailValidateCloning?: boolean;
+  testFailValidateCloningUnsupportedFeatures?: string[];
   testFailCreateProductionInstance?: boolean;
+  testFailCreateProductionInstanceExists?: boolean;
   testFailDnsVerification?: boolean;
   testFailOAuthSave?: boolean;
 };
@@ -47,7 +53,9 @@ export function resolveTestDeployFlags(options: {
   testFailProductionInstanceCheck?: boolean;
   testFailDomainLookup?: boolean;
   testFailValidateCloning?: boolean;
+  testFailValidateCloningUnsupportedFeatures?: string[];
   testFailCreateProductionInstance?: boolean;
+  testFailCreateProductionInstanceExists?: boolean;
   testFailDnsVerification?: boolean;
   testFailOAuthSave?: boolean;
 }): DeployTestFlags {
@@ -56,14 +64,16 @@ export function resolveTestDeployFlags(options: {
     testFailProductionInstanceCheck: options.testFailProductionInstanceCheck === true,
     testFailDomainLookup: options.testFailDomainLookup === true,
     testFailValidateCloning: options.testFailValidateCloning === true,
+    testFailValidateCloningUnsupportedFeatures: options.testFailValidateCloningUnsupportedFeatures,
     testFailCreateProductionInstance: options.testFailCreateProductionInstance === true,
+    testFailCreateProductionInstanceExists: options.testFailCreateProductionInstanceExists === true,
     testFailDnsVerification: options.testFailDnsVerification === true,
     testFailOAuthSave: options.testFailOAuthSave === true,
   };
 }
 
 export function simulatedDeployApiFailure(step: string): PlapiError {
-  return new PlapiError(
+  return PlapiError.fromBody(
     500,
     JSON.stringify({ errors: [{ message: `Simulated deploy failure: ${step}.` }] }),
     "clerk deploy test flag",
@@ -105,11 +115,30 @@ export function _resetDeployStatusMock(): void {
   configureMockDeployApi();
 }
 
+function simulatedSpecificFailure(
+  status: number,
+  code: string,
+  message: string,
+  meta?: Record<string, unknown>,
+): PlapiError {
+  const body = JSON.stringify({
+    errors: [{ code, message, ...(meta ? { meta } : {}) }],
+  });
+  return PlapiError.fromBody(status, body, "clerk deploy mock");
+}
+
 export const mockDeployApi: DeployApi = {
   async createProductionInstance(_applicationId, params) {
     await simulateServerLatency();
     if (mockOptions.failCreateProductionInstance) {
       throw simulatedDeployApiFailure("production instance creation");
+    }
+    if (mockOptions.failCreateProductionInstanceExists) {
+      throw simulatedSpecificFailure(
+        400,
+        "production_instance_exists",
+        "You can only have one production instance.",
+      );
     }
     return {
       instance_id: MOCK_PRODUCTION_INSTANCE_ID,
@@ -128,6 +157,14 @@ export const mockDeployApi: DeployApi = {
     await simulateServerLatency();
     if (mockOptions.failValidateCloning) {
       throw simulatedDeployApiFailure("cloning validation");
+    }
+    if (mockOptions.failValidateCloningUnsupportedFeatures) {
+      throw simulatedSpecificFailure(
+        402,
+        "unsupported_subscription_plan_features",
+        "Unsupported plan features",
+        { unsupported_features: mockOptions.failValidateCloningUnsupportedFeatures },
+      );
     }
   },
 

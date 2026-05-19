@@ -3,7 +3,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { join, relative } from "node:path";
 import { tmpdir } from "node:os";
 import { captureLog, promptsStubs, listageStubs } from "../../test/lib/stubs.ts";
-import { CliError, EXIT_CODE, UserAbortError } from "../../lib/errors.ts";
+import { CliError, EXIT_CODE, PlapiError, UserAbortError } from "../../lib/errors.ts";
 
 const mockIsAgent = mock();
 let _modeOverride: string | undefined;
@@ -40,6 +40,8 @@ type DeployApiMockOptions = {
   failCreateProductionInstance?: boolean;
   failDnsVerification?: boolean;
   failOAuthSave?: boolean;
+  failValidateCloningUnsupportedFeatures?: string[];
+  failCreateProductionInstanceExists?: boolean;
 };
 
 let mockDeployApiOptions: DeployApiMockOptions = {};
@@ -51,6 +53,18 @@ function configureMockDeployApi(options: DeployApiMockOptions = {}) {
 
 function simulatedDeployApiFailure(step: string): Error {
   return new Error(`Simulated deploy failure: ${step}.`);
+}
+
+function simulatedSpecificFailure(
+  status: number,
+  code: string,
+  message: string,
+  meta?: Record<string, unknown>,
+): PlapiError {
+  const body = JSON.stringify({
+    errors: [{ code, message, ...(meta ? { meta } : {}) }],
+  });
+  return PlapiError.fromBody(status, body, "clerk deploy test mock");
 }
 
 mock.module("@inquirer/prompts", () => ({
@@ -85,6 +99,13 @@ mock.module("../../lib/plapi.ts", () => ({
 mock.module("./api.ts", () => ({
   configureMockDeployApi,
   createProductionInstance: (...args: unknown[]) => {
+    if (mockDeployApiOptions.failCreateProductionInstanceExists) {
+      throw simulatedSpecificFailure(
+        400,
+        "production_instance_exists",
+        "You can only have one production instance.",
+      );
+    }
     const result = mockCreateProductionInstance(...args);
     if (mockDeployApiOptions.failCreateProductionInstance) {
       throw simulatedDeployApiFailure("production instance creation");
@@ -92,6 +113,14 @@ mock.module("./api.ts", () => ({
     return result;
   },
   validateCloning: (...args: unknown[]) => {
+    if (mockDeployApiOptions.failValidateCloningUnsupportedFeatures) {
+      throw simulatedSpecificFailure(
+        402,
+        "unsupported_subscription_plan_features",
+        "Unsupported plan features",
+        { unsupported_features: mockDeployApiOptions.failValidateCloningUnsupportedFeatures },
+      );
+    }
     const result = mockValidateCloning(...args);
     if (mockDeployApiOptions.failValidateCloning) {
       throw simulatedDeployApiFailure("cloning validation");
@@ -958,6 +987,23 @@ describe("deploy", () => {
       expect(mockCreateProductionInstance).not.toHaveBeenCalled();
     });
 
+    test("rethrows unsupported_subscription_plan_features as a CliError with feature list", async () => {
+      await linkedProject();
+      mockIsAgent.mockReturnValue(false);
+
+      let thrown: unknown;
+      try {
+        await runDeploy({ testFailValidateCloningUnsupportedFeatures: ["saml", "mfa"] });
+      } catch (e) {
+        thrown = e;
+      }
+      expect(thrown).toBeInstanceOf(CliError);
+      const err = thrown as CliError;
+      expect(err.message).toContain("saml");
+      expect(err.message).toContain("mfa");
+      expect(err.docsUrl).toContain("clerk.com/docs");
+    });
+
     test("--test-fail-create-production-instance simulates production creation failure", async () => {
       await linkedProject();
       mockIsAgent.mockReturnValue(false);
@@ -1445,6 +1491,104 @@ describe("deploy", () => {
       expect(err).toContain("discord");
       expect(err).toContain("facebook");
       expect(err).toContain("Configure them from the Clerk Dashboard before going live");
+    });
+
+    test("throws a CliError when createProductionInstance returns no active_domain", async () => {
+      _modeOverride = "human";
+      await linkedProject({
+        appId: "app_test",
+        appName: "Test App",
+        instances: { development: "ins_dev" },
+      });
+      mockFetchApplication.mockResolvedValue({
+        application_id: "app_test",
+        name: "Test App",
+        instances: [
+          { instance_id: "ins_dev", environment_type: "development", publishable_key: "pk_test" },
+        ],
+      });
+      mockFetchInstanceConfig.mockResolvedValue({});
+      mockConfirm.mockResolvedValue(true);
+      mockInput.mockResolvedValue("https://example.com");
+
+      mockCreateProductionInstance.mockResolvedValue({
+        instance_id: "ins_prod",
+        environment_type: "production",
+        active_domain: null,
+        secret_key: "sk_live_x",
+        publishable_key: "pk_live_x",
+        cname_targets: [],
+      });
+
+      let thrown: unknown;
+      try {
+        await runDeploy({});
+      } catch (e) {
+        thrown = e;
+      }
+      expect(thrown).toBeInstanceOf(CliError);
+      expect((thrown as CliError).message).toContain("did not return a domain");
+    });
+
+    test("recovers from production_instance_exists by resuming reconcileExistingDeploy", async () => {
+      _modeOverride = "human";
+      await linkedProject({
+        appId: "app_test",
+        appName: "Test App",
+        instances: { development: "ins_dev" },
+      });
+      // First call (resolveDeployContext): no production instance yet.
+      // Second call (reloadProductionState after recovery): production instance exists.
+      mockFetchApplication
+        .mockResolvedValueOnce({
+          application_id: "app_test",
+          name: "Test App",
+          instances: [
+            { instance_id: "ins_dev", environment_type: "development", publishable_key: "pk_test" },
+          ],
+        })
+        .mockResolvedValueOnce({
+          application_id: "app_test",
+          name: "Test App",
+          instances: [
+            { instance_id: "ins_dev", environment_type: "development", publishable_key: "pk_test" },
+            {
+              instance_id: "ins_prod_existing",
+              environment_type: "production",
+              publishable_key: "pk_live",
+            },
+          ],
+        });
+      mockListApplicationDomains.mockResolvedValue({
+        data: [
+          {
+            object: "domain",
+            id: "dmn_existing",
+            name: "example.com",
+            is_satellite: false,
+            is_provider_domain: false,
+            frontend_api_url: "https://clerk.example.com",
+            development_origin: "",
+            cname_targets: [],
+            created_at: "2026-05-12T00:00:00Z",
+            updated_at: "2026-05-12T00:00:00Z",
+          },
+        ],
+        total_count: 1,
+      });
+      mockGetDeployStatus.mockResolvedValue({ status: "complete" });
+      mockFetchInstanceConfig.mockResolvedValue({});
+      mockConfirm.mockResolvedValue(true);
+      mockInput.mockResolvedValueOnce("example.com");
+
+      captured = captureLog();
+      await runDeploy({ testFailCreateProductionInstanceExists: true });
+
+      expect(captured.err).toContain(
+        "A production instance already exists for this application. Resuming",
+      );
+      // Confirm reconcile path ran (plan renders "Use production domain").
+      expect(captured.err).toContain("Use production domain example.com");
     });
   });
 });

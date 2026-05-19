@@ -63,7 +63,7 @@ describe("deploy api adapter", () => {
     });
 
     expect(production.instance_id).toBe("MOCKED_NOT_REAL_FIXME");
-    expect(production.active_domain.name).toBe("example.com");
+    expect(production.active_domain?.name).toBe("example.com");
     expect(production.cname_targets).toHaveLength(3);
     expect(mockPlapiCreateProductionInstance).not.toHaveBeenCalled();
     expect(mockPlapiValidateCloning).not.toHaveBeenCalled();

@@ -2,7 +2,13 @@ import { isAgent } from "../../mode.ts";
 import { isInsideGutter, log } from "../../lib/log.ts";
 import { sleep } from "../../lib/sleep.ts";
 import { bar, intro, outro, withSpinner } from "../../lib/spinner.ts";
-import { UserAbortError, isPromptExitError, throwUsageError } from "../../lib/errors.ts";
+import {
+  CliError,
+  PlapiError,
+  UserAbortError,
+  isPromptExitError,
+  throwUsageError,
+} from "../../lib/errors.ts";
 import { resolveProfile, setProfile } from "../../lib/config.ts";
 import {
   fetchApplication,
@@ -74,6 +80,8 @@ type DeployOptions = {
   testFailDomainLookup?: boolean;
   testFailValidateCloning?: boolean;
   testFailCreateProductionInstance?: boolean;
+  testFailCreateProductionInstanceExists?: boolean;
+  testFailValidateCloningUnsupportedFeatures?: string[];
   testFailDnsVerification?: boolean;
   testFailOAuthSave?: boolean;
 };
@@ -169,6 +177,8 @@ function configureDeployApiMocks(testFlags: DeployTestFlags): void {
   configureMockDeployApi({
     failValidateCloning: testFlags.testFailValidateCloning,
     failCreateProductionInstance: testFlags.testFailCreateProductionInstance,
+    failCreateProductionInstanceExists: testFlags.testFailCreateProductionInstanceExists,
+    failValidateCloningUnsupportedFeatures: testFlags.testFailValidateCloningUnsupportedFeatures,
     failDnsVerification: testFlags.testFailDnsVerification,
     failOAuthSave: testFlags.testFailOAuthSave,
   });
@@ -255,8 +265,27 @@ async function startNewDeploy(ctx: DeployContext): Promise<void> {
   );
   if (!shouldCreateProductionInstance) return;
 
-  const production = await createProductionInstance(ctx, domain);
+  let production: ProductionInstanceResponse;
+  try {
+    production = await createProductionInstance(ctx, domain);
+  } catch (error) {
+    if (error instanceof PlapiError && error.code === "production_instance_exists") {
+      log.info("A production instance already exists for this application. Resuming…");
+      const reconciledCtx = await reloadProductionState(ctx);
+      await reconcileExistingDeploy(reconciledCtx);
+      return;
+    }
+    throw error;
+  }
   await persistProductionInstance(ctx, production.instance_id);
+
+  if (!production.active_domain) {
+    throw new CliError(
+      "Production instance was created but Clerk did not return a domain. " +
+        "Run `clerk deploy` again to retry domain provisioning.",
+    );
+  }
+
   log.blank();
 
   const productionDomain = production.active_domain.name;
@@ -513,7 +542,22 @@ function discoverEnabledOAuthProviders(config: Record<string, unknown>): Discove
 
 async function runValidateCloning(ctx: DeployContext): Promise<void> {
   await withSpinner("Validating subscription compatibility...", async () => {
-    await validateCloning(ctx.appId, { clone_instance_id: ctx.developmentInstanceId });
+    try {
+      await validateCloning(ctx.appId, { clone_instance_id: ctx.developmentInstanceId });
+    } catch (error) {
+      if (error instanceof PlapiError && error.code === "unsupported_subscription_plan_features") {
+        const features = Array.isArray(error.meta?.unsupported_features)
+          ? (error.meta.unsupported_features as string[])
+          : [];
+        const featureList = features.length > 0 ? features.join(", ") : "this plan";
+        throw new CliError(
+          `Your subscription plan doesn't support: ${featureList}.\n` +
+            "Upgrade your plan or disable these features in development before deploying.",
+          { docsUrl: "https://clerk.com/docs/billing/plans" },
+        );
+      }
+      throw error;
+    }
   });
 }
 
@@ -757,6 +801,30 @@ async function collectAndSaveOAuthCredentials(
   });
   log.success(`Saved ${label} OAuth credentials`);
   return true;
+}
+
+/**
+ * Refresh the deploy context from the server after a recovery branch.
+ *
+ * Used when the server tells us a production instance exists but our local
+ * context doesn't know about it yet (e.g. state was lost between runs). Pulls
+ * the application down again, finds the production instance, and persists the
+ * resolved ID so subsequent `clerk deploy` invocations short-circuit to
+ * `reconcileExistingDeploy` directly.
+ */
+async function reloadProductionState(ctx: DeployContext): Promise<DeployContext> {
+  const app = await fetchApplication(ctx.appId);
+  const production = app.instances.find((entry) => entry.environment_type === "production");
+  if (!production) {
+    throw new CliError(
+      "Server reports a production instance exists but did not return one when refetching the application.",
+    );
+  }
+  await persistProductionInstance(ctx, production.instance_id);
+  return {
+    ...ctx,
+    productionInstanceId: production.instance_id,
+  };
 }
 
 async function persistProductionInstance(ctx: DeployContext, productionInstanceId: string) {
