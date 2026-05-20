@@ -41,6 +41,10 @@ interface Profile {
   };
 }
 
+export function profileLabel(profile: Profile): string {
+  return profile.appName ? `${profile.appName} (${profile.appId})` : profile.appId;
+}
+
 interface ClerkConfig {
   environment?: string;
   auth?: Record<string, Auth>;
