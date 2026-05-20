@@ -477,6 +477,80 @@ describe("deploy", () => {
       expect(err).toContain("Production ready at https://example.com");
     });
 
+    test("DNS verification emits per-component spinner labels in mail/dns/ssl order", async () => {
+      await linkedProject();
+      mockIsAgent.mockReturnValue(false);
+      mockConfirm
+        .mockResolvedValueOnce(true) // Proceed?
+        .mockResolvedValueOnce(true) // Create production instance?
+        .mockResolvedValueOnce(false); // Export BIND zone file? (wired in Task 5; harmless when not yet consumed)
+      mockInput
+        .mockResolvedValueOnce("example.com")
+        .mockResolvedValueOnce("google-client-id.apps.googleusercontent.com");
+      mockSelect.mockResolvedValueOnce("check").mockResolvedValueOnce("have-credentials");
+      mockPassword.mockResolvedValueOnce("google-secret");
+      mockGetDeployStatus
+        .mockResolvedValueOnce({
+          status: "incomplete",
+          dns_ok: false,
+          ssl_ok: false,
+          mail_ok: false,
+        })
+        .mockResolvedValueOnce({
+          status: "incomplete",
+          dns_ok: false,
+          ssl_ok: false,
+          mail_ok: true,
+        })
+        .mockResolvedValueOnce({
+          status: "incomplete",
+          dns_ok: true,
+          ssl_ok: false,
+          mail_ok: true,
+        })
+        .mockResolvedValueOnce({ status: "complete", dns_ok: true, ssl_ok: true, mail_ok: true });
+      mockPatchInstanceConfig.mockResolvedValueOnce({});
+
+      await runDeploy({});
+      const err = stripAnsi(captured.err);
+
+      const mailIdx = err.indexOf("Mail sender verified");
+      const dnsIdx = err.indexOf("DNS verified for example.com");
+      const sslIdx = err.indexOf("SSL certificate issued for example.com");
+      expect(mailIdx).toBeGreaterThan(-1);
+      expect(dnsIdx).toBeGreaterThan(-1);
+      expect(sslIdx).toBeGreaterThan(-1);
+      expect(mailIdx).toBeLessThan(dnsIdx);
+      expect(dnsIdx).toBeLessThan(sslIdx);
+    });
+
+    test("DNS verification fails closed when status stays incomplete despite all exposed booleans true (proxy_ok case)", async () => {
+      await linkedProject({
+        instances: { development: "ins_dev_123", production: "ins_prod_123" },
+      });
+      mockIsAgent.mockReturnValue(false);
+      mockLiveProduction({
+        instanceId: "ins_prod_123",
+        developmentConfig: {},
+        productionConfig: {},
+      });
+      // Every poll returns dns/ssl/mail all true but status incomplete (proxy_ok = false on server).
+      mockGetDeployStatus.mockResolvedValue({
+        status: "incomplete",
+        dns_ok: true,
+        ssl_ok: true,
+        mail_ok: true,
+      });
+      mockConfirm.mockResolvedValueOnce(false); // BIND export prompt: skip (wired in Task 5)
+      mockSelect.mockResolvedValueOnce("check").mockResolvedValueOnce("skip");
+
+      await runDeploy({});
+      const err = stripAnsi(captured.err);
+
+      expect(err).toContain("Production setup for example.com is still finalizing.");
+      expect(err).not.toContain("Production ready at");
+    });
+
     test("uses existing wizard framing and concise plan confirmation", async () => {
       await linkedProject();
       mockHumanFlow();

@@ -25,13 +25,14 @@ import {
   OAUTH_SECTION_INTRO,
   type DeployComponentStatus,
   type DeployPlanStep,
+  DEPLOY_COMPONENT_ORDER,
+  deployComponentLabels,
   deployComponentStatus,
   deployStatusPendingFooter,
   domainAssociationSummary,
   dnsDashboardHandoff,
   dnsIntro,
   dnsRecords,
-  dnsVerified,
   pausedOperationNotice,
   printPlan,
   productionSummary,
@@ -581,7 +582,7 @@ async function runExistingDomainDnsVerification(
 async function runDnsVerification(
   ctx: DeployContext,
   state: DeployOperationState,
-): Promise<DnsVerificationResult> {
+): Promise<DnsVerificationResult | false> {
   const productionInstanceId =
     state.productionInstanceId ?? ctx.productionInstanceId ?? ctx.profile.instances.production;
   if (!productionInstanceId) {
@@ -592,13 +593,10 @@ async function runDnsVerification(
 
   await requestDomainDnsCheck(ctx.appId, state.productionDomainId ?? state.domain);
 
-  const outcome = await withSpinner(`Verifying production setup for ${state.domain}...`, () =>
-    pollDeployStatus(ctx.appId, productionInstanceId),
-  );
+  const outcome = await pollDeployStatus(ctx.appId, productionInstanceId, state.domain);
 
   if (outcome.verified) {
     log.blank();
-    for (const line of dnsVerified(state.domain)) log.success(line);
     log.info(deployComponentStatus(outcome.status));
     return "verified";
   }
@@ -609,6 +607,15 @@ async function runDnsVerification(
   for (const line of deployStatusPendingFooter(state.domain, outcome.status)) {
     log.warn(line);
   }
+
+  // When all DNS components are verified but the server has not yet marked the
+  // deployment complete (proxy_ok or another server-side gate is still pending),
+  // do not offer a retry — the user cannot influence the remaining wait. Fail
+  // closed so the caller exits without reaching finishDeploy.
+  if (outcome.status.dns && outcome.status.ssl && outcome.status.mail) {
+    return false;
+  }
+
   if (state.cnameTargets && state.cnameTargets.length > 0) {
     log.blank();
     for (const line of dnsRecords(state.cnameTargets)) log.info(line);
@@ -630,15 +637,41 @@ type DeployStatusOutcome =
 async function pollDeployStatus(
   appId: string,
   productionInstanceId: string,
+  domain: string,
 ): Promise<DeployStatusOutcome> {
-  let status: DeployComponentStatus = { dns: false, ssl: false, mail: false };
-  for (let attempt = 0; attempt < DEPLOY_STATUS_MAX_POLLS; attempt++) {
-    const result = await mapDeployError(getDeployStatus(appId, productionInstanceId));
-    status = { dns: result.dns_ok, ssl: result.ssl_ok, mail: result.mail_ok };
-    if (result.status === "complete") return { verified: true, status };
-    await sleep(DEPLOY_STATUS_POLL_INTERVAL_MS);
+  let response = await mapDeployError(getDeployStatus(appId, productionInstanceId));
+  let status: DeployComponentStatus = {
+    dns: response.dns_ok,
+    ssl: response.ssl_ok,
+    mail: response.mail_ok,
+  };
+  let pollsRemaining = DEPLOY_STATUS_MAX_POLLS - 1;
+
+  for (const component of DEPLOY_COMPONENT_ORDER) {
+    const labels = deployComponentLabels(component, domain);
+    const flipped = await withSpinner(labels.progress, async () => {
+      if (status[component]) return true;
+      while (pollsRemaining > 0) {
+        await sleep(DEPLOY_STATUS_POLL_INTERVAL_MS);
+        pollsRemaining--;
+        response = await mapDeployError(getDeployStatus(appId, productionInstanceId));
+        status = {
+          dns: response.dns_ok,
+          ssl: response.ssl_ok,
+          mail: response.mail_ok,
+        };
+        if (status[component]) return true;
+      }
+      return false;
+    });
+    if (!flipped) return { verified: false, status };
+    log.success(labels.done);
   }
-  return { verified: false, status };
+
+  if (response.status !== "complete") {
+    return { verified: false, status };
+  }
+  return { verified: true, status };
 }
 
 async function requestDomainDnsCheck(appId: string, domainIdOrName: string): Promise<void> {
