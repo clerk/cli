@@ -108,6 +108,37 @@ export type DeployComponentStatus = {
   mail: boolean;
 };
 
+export type DeployComponent = "mail" | "dns" | "ssl";
+
+export const DEPLOY_COMPONENT_ORDER = [
+  "mail",
+  "dns",
+  "ssl",
+] as const satisfies readonly DeployComponent[];
+
+export function deployComponentLabels(
+  component: DeployComponent,
+  domain: string,
+): { progress: string; done: string } {
+  switch (component) {
+    case "mail":
+      return {
+        progress: `Verifying mail sender for ${domain}...`,
+        done: "Mail sender verified",
+      };
+    case "dns":
+      return {
+        progress: `Verifying DNS records for ${domain}...`,
+        done: `DNS verified for ${domain}.`,
+      };
+    case "ssl":
+      return {
+        progress: `Issuing SSL certificate for ${domain}...`,
+        done: `SSL certificate issued for ${domain}`,
+      };
+  }
+}
+
 /**
  * Status line for the three independent components Clerk verifies after
  * `production_instance` is created: DNS propagation, SSL issuance via Let's

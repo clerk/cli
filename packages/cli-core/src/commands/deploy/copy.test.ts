@@ -1,5 +1,5 @@
 import { test, expect, describe } from "bun:test";
-import { bindZoneFile } from "./copy.ts";
+import { bindZoneFile, deployComponentLabels } from "./copy.ts";
 import type { CnameTarget } from "../../lib/plapi.ts";
 
 describe("bindZoneFile", () => {
@@ -50,5 +50,28 @@ describe("bindZoneFile", () => {
 
     expect(output).toContain("clerk.example.com.\tIN\tCNAME\tfrontend-api.clerk.services.");
     expect(output).not.toContain("frontend-api.clerk.services..");
+  });
+});
+
+describe("deployComponentLabels", () => {
+  test("returns mail in-progress and done labels", () => {
+    expect(deployComponentLabels("mail", "example.com")).toEqual({
+      progress: "Verifying mail sender for example.com...",
+      done: "Mail sender verified",
+    });
+  });
+
+  test("returns dns labels matching the existing dnsVerified string", () => {
+    expect(deployComponentLabels("dns", "example.com")).toEqual({
+      progress: "Verifying DNS records for example.com...",
+      done: "DNS verified for example.com.",
+    });
+  });
+
+  test("returns ssl labels", () => {
+    expect(deployComponentLabels("ssl", "example.com")).toEqual({
+      progress: "Issuing SSL certificate for example.com...",
+      done: "SSL certificate issued for example.com",
+    });
   });
 });
