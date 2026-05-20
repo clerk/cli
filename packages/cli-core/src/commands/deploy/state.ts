@@ -1,6 +1,6 @@
 import { CliError, EXIT_CODE } from "../../lib/errors.ts";
 import { pausedMessage } from "./copy.ts";
-import type { CnameTarget } from "./api.ts";
+import type { CnameTarget } from "../../lib/plapi.ts";
 import { providerLabel, type OAuthProvider } from "./providers.ts";
 import type { Profile } from "../../lib/config.ts";
 
@@ -23,9 +23,6 @@ export type DeployContext = {
   appLabel: string;
   developmentInstanceId: string;
   productionInstanceId?: string;
-  testForceProductionInstance?: boolean;
-  testFailProductionInstanceCheck?: boolean;
-  testFailDomainLookup?: boolean;
 };
 
 export function pausedStepDescription(state: DeployOperationState): string {

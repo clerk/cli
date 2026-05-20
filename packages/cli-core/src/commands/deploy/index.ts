@@ -5,31 +5,19 @@ import { bar, intro, outro, withSpinner } from "../../lib/spinner.ts";
 import { UserAbortError, isPromptExitError, throwUsageError } from "../../lib/errors.ts";
 import { resolveProfile, setProfile } from "../../lib/config.ts";
 import {
+  createProductionInstance as apiCreateProductionInstance,
   fetchApplication,
   fetchInstanceConfig,
-  listApplicationDomains,
-  type ApplicationDomain,
-} from "../../lib/plapi.ts";
-import {
-  configureMockDeployApi,
-  createProductionInstance as apiCreateProductionInstance,
   getDeployStatus,
+  listApplicationDomains,
   patchInstanceConfig,
   triggerDomainDnsCheck,
   validateCloning,
+  type ApplicationDomain,
   type CnameTarget,
   type DeployStatusResponse,
   type ProductionInstanceResponse,
-} from "./api.ts";
-import {
-  mockProductionDomain,
-  mockProductionInstanceConfig,
-  resolveTestDeployFlags,
-  simulatedDeployApiFailure,
-  withMockProductionInstance,
-  withTestFailureAfterApiCall,
-  type DeployTestFlags,
-} from "./mock.ts";
+} from "../../lib/plapi.ts";
 import { domainConnectUrl } from "./domain-connect.ts";
 import {
   INTRO_PREAMBLE,
@@ -74,13 +62,6 @@ import {
 
 type DeployOptions = {
   debug?: boolean;
-  testForceProductionInstance?: boolean;
-  testFailProductionInstanceCheck?: boolean;
-  testFailDomainLookup?: boolean;
-  testFailValidateCloning?: boolean;
-  testFailCreateProductionInstance?: boolean;
-  testFailDnsVerification?: boolean;
-  testFailOAuthSave?: boolean;
 };
 
 const DEPLOY_STATUS_POLL_INTERVAL_MS = 3000;
@@ -99,7 +80,7 @@ export async function deploy(options: DeployOptions = {}) {
 
   intro("clerk deploy");
   try {
-    const ctx = await resolveDeployContext(options);
+    const ctx = await resolveDeployContext();
     await runDeploy(ctx);
   } catch (error) {
     if (error instanceof DeployPausedError && isInsideGutter()) {
@@ -119,13 +100,10 @@ export async function deploy(options: DeployOptions = {}) {
   }
 }
 
-async function resolveDeployContext(options: DeployOptions): Promise<DeployContext> {
-  const testFlags = resolveTestDeployFlags(options);
-  configureDeployApiMocks(testFlags);
+async function resolveDeployContext(): Promise<DeployContext> {
   const resolved = await withSpinner("Resolving linked Clerk application...", () =>
     resolveProfile(process.cwd()),
   );
-  const commandTestFlags = resolveCommandTestFlags(testFlags);
   if (!resolved) {
     return {
       profileKey: process.cwd(),
@@ -137,61 +115,25 @@ async function resolveDeployContext(options: DeployOptions): Promise<DeployConte
       appId: "",
       appLabel: "",
       developmentInstanceId: "",
-      ...commandTestFlags,
     };
   }
 
   return {
     profileKey: resolved.path,
     profile: resolved.profile,
-    ...commandTestFlags,
     ...(await withSpinner("Checking for production instance...", () =>
-      withTestFailureAfterApiCall(
-        resolveLiveApplicationContext(resolved.profile, {
-          forceMockProductionInstance: testFlags.testForceProductionInstance,
-        }),
-        testFlags.testFailProductionInstanceCheck,
-        "production instance check",
-      ),
+      resolveLiveApplicationContext(resolved.profile),
     )),
   };
 }
 
-function resolveCommandTestFlags(
-  testFlags: DeployTestFlags,
-): Pick<
-  DeployContext,
-  "testForceProductionInstance" | "testFailProductionInstanceCheck" | "testFailDomainLookup"
-> {
-  return {
-    testForceProductionInstance: testFlags.testForceProductionInstance,
-    testFailProductionInstanceCheck: testFlags.testFailProductionInstanceCheck,
-    testFailDomainLookup: testFlags.testFailDomainLookup,
-  };
-}
-
-function configureDeployApiMocks(testFlags: DeployTestFlags): void {
-  configureMockDeployApi({
-    failValidateCloning: testFlags.testFailValidateCloning,
-    failCreateProductionInstance: testFlags.testFailCreateProductionInstance,
-    failDnsVerification: testFlags.testFailDnsVerification,
-    failOAuthSave: testFlags.testFailOAuthSave,
-  });
-}
-
-async function resolveLiveApplicationContext(
-  profile: DeployContext["profile"],
-  options: { forceMockProductionInstance?: boolean } = {},
-): Promise<{
+async function resolveLiveApplicationContext(profile: DeployContext["profile"]): Promise<{
   appId: string;
   appLabel: string;
   developmentInstanceId: string;
   productionInstanceId?: string;
 }> {
-  const fetchedApp = await fetchApplication(profile.appId);
-  const app = options.forceMockProductionInstance
-    ? withMockProductionInstance(fetchedApp)
-    : fetchedApp;
+  const app = await fetchApplication(profile.appId);
   const development = app.instances.find((entry) => entry.environment_type === "development");
   const production = app.instances.find((entry) => entry.environment_type === "production");
   return {
@@ -253,11 +195,7 @@ async function startNewDeploy(ctx: DeployContext): Promise<void> {
 
   bar();
   const domain = await collectCustomDomain();
-  const plannedCnameTargets = plannedProductionCnameTargets(domain);
-  const shouldCreateProductionInstance = await confirmProductionInstanceCreation(
-    domain,
-    plannedCnameTargets,
-  );
+  const shouldCreateProductionInstance = await confirmProductionInstanceCreation(domain);
   if (!shouldCreateProductionInstance) return;
 
   const productionOrExists = await createProductionInstance(ctx, domain);
@@ -456,11 +394,8 @@ async function loadProductionState(
   deployStatus: DeployStatusResponse;
 }> {
   return withSpinner("Reading production configuration...", async () => {
-    const productionConfigPromise = ctx.testForceProductionInstance
-      ? Promise.resolve(mockProductionInstanceConfig())
-      : fetchInstanceConfig(ctx.appId, productionInstanceId);
     const [productionConfig, deployStatus] = await Promise.all([
-      productionConfigPromise,
+      fetchInstanceConfig(ctx.appId, productionInstanceId),
       loadInitialDeployStatus(ctx.appId, productionInstanceId),
     ]);
     return { productionConfig, deployStatus };
@@ -468,13 +403,7 @@ async function loadProductionState(
 }
 
 async function loadProductionDomain(ctx: DeployContext): Promise<ApplicationDomain | undefined> {
-  if (ctx.testForceProductionInstance) {
-    return mockProductionDomain();
-  }
   const domains = await listApplicationDomains(ctx.appId);
-  if (ctx.testFailDomainLookup) {
-    throw simulatedDeployApiFailure("production domain lookup");
-  }
   return domains.data.find((domain) => !domain.is_satellite) ?? domains.data[0];
 }
 
@@ -580,23 +509,8 @@ async function createProductionInstance(
   });
 }
 
-function plannedProductionCnameTargets(domain: string): CnameTarget[] {
-  return [
-    { host: `clerk.${domain}`, value: "frontend-api.clerk.services", required: true },
-    { host: `accounts.${domain}`, value: "accounts.clerk.services", required: true },
-    {
-      host: `clkmail.${domain}`,
-      value: `mail.${domain}.nam1.clerk.services`,
-      required: true,
-    },
-  ];
-}
-
-async function confirmProductionInstanceCreation(
-  domain: string,
-  cnameTargets: readonly CnameTarget[],
-): Promise<boolean> {
-  for (const line of domainAssociationSummary(domain, cnameTargets)) log.info(line);
+async function confirmProductionInstanceCreation(domain: string): Promise<boolean> {
+  for (const line of domainAssociationSummary(domain)) log.info(line);
   log.blank();
   const confirmed = await confirmCreateProductionInstance();
   if (confirmed) {

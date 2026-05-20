@@ -1,5 +1,5 @@
 import { bold, cyan, dim, green, yellow } from "../../lib/color.ts";
-import type { CnameTarget } from "./api.ts";
+import type { CnameTarget } from "../../lib/plapi.ts";
 
 export type DeployPlanStep = {
   label: string;
@@ -44,14 +44,12 @@ export function dnsIntro(domain: string): string[] {
   ];
 }
 
-export function domainAssociationSummary(
-  domain: string,
-  targets: readonly CnameTarget[],
-): string[] {
+export function domainAssociationSummary(domain: string): string[] {
+  const hosts = [`clerk.${domain}`, `accounts.${domain}`, `clkmail.${domain}`];
   return [
     `Clerk will associate these subdomains with ${cyan(domain)}:`,
     "",
-    ...targets.map((target) => `  ${cnameTargetLabel(target.host)}  ${target.host}`),
+    ...hosts.map((host) => `  ${cnameTargetLabel(host)}  ${host}`),
     "",
     "This will create a Clerk production instance for your application.",
   ];

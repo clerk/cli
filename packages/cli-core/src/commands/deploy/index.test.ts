@@ -33,26 +33,7 @@ const mockGetDeployStatus = mock();
 const mockTriggerDomainDnsCheck = mock();
 const mockRetrySSL = mock();
 const mockRetryMail = mock();
-const mockConfigureMockDeployApi = mock();
 const mockDomainConnectUrl = mock();
-
-type DeployApiMockOptions = {
-  failValidateCloning?: boolean;
-  failCreateProductionInstance?: boolean;
-  failDnsVerification?: boolean;
-  failOAuthSave?: boolean;
-};
-
-let mockDeployApiOptions: DeployApiMockOptions = {};
-
-function configureMockDeployApi(options: DeployApiMockOptions = {}) {
-  mockConfigureMockDeployApi(options);
-  mockDeployApiOptions = { ...options };
-}
-
-function simulatedDeployApiFailure(step: string): Error {
-  return new Error(`Simulated deploy failure: ${step}.`);
-}
 
 mock.module("@inquirer/prompts", () => ({
   ...promptsStubs,
@@ -82,41 +63,6 @@ mock.module("../../lib/plapi.ts", () => ({
   triggerDomainDnsCheck: (...args: unknown[]) => mockTriggerDomainDnsCheck(...args),
   retryApplicationDomainSSL: (...args: unknown[]) => mockRetrySSL(...args),
   retryApplicationDomainMail: (...args: unknown[]) => mockRetryMail(...args),
-}));
-
-mock.module("./api.ts", () => ({
-  configureMockDeployApi,
-  createProductionInstance: (...args: unknown[]) => {
-    const result = mockCreateProductionInstance(...args);
-    if (mockDeployApiOptions.failCreateProductionInstance) {
-      throw simulatedDeployApiFailure("production instance creation");
-    }
-    return result;
-  },
-  validateCloning: (...args: unknown[]) => {
-    const result = mockValidateCloning(...args);
-    if (mockDeployApiOptions.failValidateCloning) {
-      throw simulatedDeployApiFailure("cloning validation");
-    }
-    return result;
-  },
-  getDeployStatus: (...args: unknown[]) => {
-    const result = mockGetDeployStatus(...args);
-    if (mockDeployApiOptions.failDnsVerification) {
-      throw simulatedDeployApiFailure("DNS verification");
-    }
-    return result;
-  },
-  triggerDomainDnsCheck: (...args: unknown[]) => mockTriggerDomainDnsCheck(...args),
-  retryApplicationDomainSSL: (...args: unknown[]) => mockRetrySSL(...args),
-  retryApplicationDomainMail: (...args: unknown[]) => mockRetryMail(...args),
-  patchInstanceConfig: (...args: unknown[]) => {
-    const result = mockPatchInstanceConfig(...args);
-    if (mockDeployApiOptions.failOAuthSave) {
-      throw simulatedDeployApiFailure("OAuth credential save");
-    }
-    return result;
-  },
 }));
 
 mock.module("./domain-connect.ts", () => ({
@@ -250,8 +196,6 @@ describe("deploy", () => {
     mockTriggerDomainDnsCheck.mockReset();
     mockRetrySSL.mockReset();
     mockRetryMail.mockReset();
-    mockConfigureMockDeployApi.mockReset();
-    mockDeployApiOptions = {};
     mockDomainConnectUrl.mockReset();
     consoleSpy?.mockRestore();
     stderrSpy?.mockRestore();
@@ -259,20 +203,6 @@ describe("deploy", () => {
 
   function runDeploy(options: Parameters<typeof deploy>[0]) {
     return captured.run(() => deploy(options));
-  }
-
-  async function expectTestApiFailure(promise: Promise<unknown>, message: string): Promise<Error> {
-    let error: Error | undefined;
-    try {
-      await promise;
-    } catch (caught) {
-      error = caught as Error;
-    }
-
-    expect(error).toBeInstanceOf(Error);
-    expect(error).not.toBeInstanceOf(CliError);
-    expect(error?.message).toContain(message);
-    return error!;
   }
 
   async function linkedProject(profile: Record<string, unknown> = {}) {
@@ -859,208 +789,6 @@ describe("deploy", () => {
       expect(mockFetchApplication).toHaveBeenCalledWith("app_xyz789");
       expect(mockInput).not.toHaveBeenCalled();
       expect(mockSelect).not.toHaveBeenCalled();
-    });
-
-    test("--test-force-production-instance makes app retrieval include mocked production", async () => {
-      await linkedProject();
-      mockIsAgent.mockReturnValue(false);
-      mockSelect.mockResolvedValueOnce("skip");
-      mockListApplicationDomains.mockRejectedValueOnce(
-        new Error("domains should be mocked when forcing production"),
-      );
-      mockFetchInstanceConfig.mockImplementation((_appId: string, instanceIdOrEnv: string) => {
-        if (instanceIdOrEnv === "ins_prod_mock") {
-          throw new Error("production config should be mocked when forcing production");
-        }
-        return { connection_oauth_google: { enabled: true } };
-      });
-
-      await runDeploy({ testForceProductionInstance: true });
-      const err = stripAnsi(captured.err);
-
-      expect(err).toContain("[x] Create production instance");
-      expect(err).toContain("Use production domain example.com");
-      expect(mockCreateProductionInstance).not.toHaveBeenCalled();
-      expect(mockFetchApplication).toHaveBeenCalledWith("app_xyz789");
-      expect(mockListApplicationDomains).not.toHaveBeenCalled();
-      expect(mockFetchInstanceConfig).not.toHaveBeenCalledWith("app_xyz789", "ins_prod_mock");
-    });
-
-    test("--test-fail-production-instance-check simulates production instance lookup failure", async () => {
-      await linkedProject();
-      mockIsAgent.mockReturnValue(false);
-
-      await expectTestApiFailure(
-        runDeploy({ testFailProductionInstanceCheck: true }),
-        "Simulated deploy failure: production instance check.",
-      );
-
-      expect(mockFetchApplication).toHaveBeenCalledWith("app_xyz789");
-      expect(mockFetchInstanceConfig).not.toHaveBeenCalled();
-    });
-
-    test("--test-fail-production-instance-check prints Failed in interactive output", async () => {
-      await linkedProject();
-      mockIsAgent.mockReturnValue(false);
-      stderrSpy = spyOn(process.stderr, "write").mockImplementation(() => true);
-      const originalCi = process.env.CI;
-      const originalIsTty = process.stderr.isTTY;
-      Object.defineProperty(process.stderr, "isTTY", { configurable: true, value: true });
-      delete process.env.CI;
-
-      try {
-        await expectTestApiFailure(
-          runDeploy({ testFailProductionInstanceCheck: true }),
-          "Simulated deploy failure: production instance check.",
-        );
-      } finally {
-        Object.defineProperty(process.stderr, "isTTY", {
-          configurable: true,
-          value: originalIsTty,
-        });
-        if (originalCi === undefined) {
-          delete process.env.CI;
-        } else {
-          process.env.CI = originalCi;
-        }
-      }
-
-      const terminalOutput = stripAnsi(
-        stderrSpy.mock.calls.map((call: unknown[]) => String(call[0])).join(""),
-      );
-      expect(terminalOutput).toContain("Failed");
-    });
-
-    test("--test-fail-domain-lookup simulates production domain lookup failure", async () => {
-      await linkedProject();
-      mockLiveProduction({
-        instanceId: "ins_prod_from_api",
-        productionConfig: {},
-      });
-      mockIsAgent.mockReturnValue(false);
-
-      await expectTestApiFailure(
-        runDeploy({ testFailDomainLookup: true }),
-        "Simulated deploy failure: production domain lookup.",
-      );
-
-      expect(mockListApplicationDomains).toHaveBeenCalledWith("app_xyz789");
-    });
-
-    test("--test-fail-validate-cloning simulates cloning validation failure", async () => {
-      await linkedProject();
-      mockIsAgent.mockReturnValue(false);
-
-      await expectTestApiFailure(
-        runDeploy({ testFailValidateCloning: true }),
-        "Simulated deploy failure: cloning validation.",
-      );
-
-      expect(mockValidateCloning).toHaveBeenCalledWith("app_xyz789", {
-        clone_instance_id: "ins_dev_123",
-      });
-      expect(mockConfigureMockDeployApi).toHaveBeenCalledWith(
-        expect.objectContaining({ failValidateCloning: true }),
-      );
-      expect(mockCreateProductionInstance).not.toHaveBeenCalled();
-    });
-
-    test("--test-fail-create-production-instance simulates production creation failure", async () => {
-      await linkedProject();
-      mockIsAgent.mockReturnValue(false);
-      mockConfirm.mockResolvedValueOnce(true).mockResolvedValueOnce(true);
-      mockInput.mockResolvedValueOnce("example.com");
-
-      await expectTestApiFailure(
-        runDeploy({ testFailCreateProductionInstance: true }),
-        "Simulated deploy failure: production instance creation.",
-      );
-
-      expect(mockCreateProductionInstance).toHaveBeenCalledWith("app_xyz789", {
-        home_url: "https://example.com",
-        clone_instance_id: "ins_dev_123",
-      });
-      expect(mockConfigureMockDeployApi).toHaveBeenCalledWith(
-        expect.objectContaining({ failCreateProductionInstance: true }),
-      );
-    });
-
-    test("--test-fail-dns-verification simulates DNS verification failure", async () => {
-      await linkedProject();
-      mockIsAgent.mockReturnValue(false);
-      mockConfirm.mockResolvedValueOnce(true).mockResolvedValueOnce(true);
-      mockSelect.mockResolvedValueOnce("check");
-      mockInput.mockResolvedValueOnce("example.com");
-
-      await expectTestApiFailure(
-        runDeploy({ testFailDnsVerification: true }),
-        "Simulated deploy failure: DNS verification.",
-      );
-
-      expect(mockGetDeployStatus).toHaveBeenCalledWith("app_xyz789", "ins_prod_mock");
-      expect(mockConfigureMockDeployApi).toHaveBeenCalledWith(
-        expect.objectContaining({ failDnsVerification: true }),
-      );
-      expect(mockPatchInstanceConfig).not.toHaveBeenCalled();
-    });
-
-    test("--test-fail-dns-verification defers to the verify prompt when reconciling an existing production instance", async () => {
-      await linkedProject({
-        instances: { development: "ins_dev_123", production: "ins_prod_123" },
-      });
-      mockIsAgent.mockReturnValue(false);
-      mockLiveProduction({
-        instanceId: "ins_prod_123",
-        productionConfig: {},
-      });
-      mockSelect.mockResolvedValueOnce("check");
-
-      await expectTestApiFailure(
-        runDeploy({ testFailDnsVerification: true }),
-        "Simulated deploy failure: DNS verification.",
-      );
-
-      expect(mockSelect).toHaveBeenCalledWith({
-        message: "DNS verification",
-        choices: [
-          { name: "Check DNS now", value: "check" },
-          { name: "Skip DNS verification for now", value: "skip" },
-        ],
-      });
-      expect(mockGetDeployStatus).toHaveBeenCalledTimes(2);
-      expect(mockGetDeployStatus).toHaveBeenCalledWith("app_xyz789", "ins_prod_123");
-      expect(mockPatchInstanceConfig).not.toHaveBeenCalled();
-    });
-
-    test("--test-fail-oauth-save simulates OAuth credential save failure", async () => {
-      await linkedProject({
-        instances: { development: "ins_dev_123", production: "ins_prod_123" },
-      });
-      mockLiveProduction({
-        instanceId: "ins_prod_123",
-        productionConfig: {},
-      });
-      mockIsAgent.mockReturnValue(false);
-      mockSelect.mockResolvedValueOnce("have-credentials");
-      mockConfirm.mockResolvedValueOnce(true);
-      mockInput.mockResolvedValueOnce("google-client-id.apps.googleusercontent.com");
-      mockPassword.mockResolvedValueOnce("google-secret");
-
-      await expectTestApiFailure(
-        runDeploy({ testFailOAuthSave: true }),
-        "Simulated deploy failure: OAuth credential save.",
-      );
-
-      expect(mockPatchInstanceConfig).toHaveBeenCalledWith("app_xyz789", "ins_prod_123", {
-        connection_oauth_google: {
-          enabled: true,
-          client_id: "google-client-id.apps.googleusercontent.com",
-          client_secret: "google-secret",
-        },
-      });
-      expect(mockConfigureMockDeployApi).toHaveBeenCalledWith(
-        expect.objectContaining({ failOAuthSave: true }),
-      );
     });
 
     test("plain deploy resumes DNS verification from live API state", async () => {

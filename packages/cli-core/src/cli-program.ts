@@ -926,24 +926,6 @@ Tutorial — enable completions for your shell:
     .command("deploy")
     .description("Deploy a Clerk application to production")
     .option("--debug", "Show detailed deployment debug output")
-    .addOption(
-      createOption(
-        "--test-force-production-instance",
-        "Force deploy to use a mocked production instance",
-      ),
-    )
-    .addOption(
-      createOption(
-        "--test-fail-production-instance-check",
-        "Simulate a deploy failure while checking for a production instance",
-      ),
-    )
-    .addOption(
-      createOption(
-        "--test-fail-domain-lookup",
-        "Simulate a deploy failure while loading the production domain",
-      ),
-    )
     .action(deploy);
 
   registerExtras(program);

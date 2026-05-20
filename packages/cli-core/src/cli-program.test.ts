@@ -50,12 +50,7 @@ test("deploy exposes the expected options", () => {
   const deploy = program.commands.find((command) => command.name() === "deploy")!;
   const optionNames = deploy.options.map((option) => option.long);
 
-  expect(optionNames).toEqual([
-    "--debug",
-    "--test-force-production-instance",
-    "--test-fail-production-instance-check",
-    "--test-fail-domain-lookup",
-  ]);
+  expect(optionNames).toEqual(["--debug"]);
 });
 
 describe("parseIntegerOption (via users list --limit / --offset)", () => {

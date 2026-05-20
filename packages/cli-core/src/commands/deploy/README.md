@@ -1,6 +1,6 @@
 # Deploy Command
 
-> **Live PLAPI lifecycle.** Human mode resolves the linked application, production domains, deploy status, and instance config from the Platform API on each run. The production-instance lifecycle calls (`validate_cloning`, `production_instance`, `deploy_status`, `dns_check`, `ssl_retry`, `mail_retry`) route through `commands/deploy/api.ts` to the live PLAPI helpers in `lib/plapi.ts`. PLAPI error codes are translated to typed `CliError`s by `commands/deploy/errors.ts`. The mock helpers in `commands/deploy/mock.ts` remain for tests that mock `lib/plapi.ts` directly.
+> **Live PLAPI lifecycle.** Human mode resolves the linked application, production domains, deploy status, and instance config from the Platform API on each run. The production-instance lifecycle calls (`validate_cloning`, `production_instance`, `deploy_status`, `dns_check`, `ssl_retry`, `mail_retry`) call the helpers in `lib/plapi.ts` directly. PLAPI error codes are translated to typed `CliError`s by `commands/deploy/errors.ts`.
 
 Guides a user through deploying their Clerk application to production.
 
@@ -39,7 +39,7 @@ Human mode reads and writes deploy state through the Platform API on every run. 
 | Validate cloning           | `POST /v1/platform/applications/{appID}/validate_cloning`                    | 204 on success. 402 `unsupported_subscription_plan_features` → `ERROR_CODE.PLAN_INSUFFICIENT` listing missing features.           |
 | Create production instance | `POST /v1/platform/applications/{appID}/production_instance`                 | Returns `instance_id`, `environment_type`, `active_domain`, `publishable_key`, `secret_key` (once), and `cname_targets[]`.        |
 |                            |                                                                              | 409 `production_instance_exists` → CLI re-derives state via `fetchApplication` and falls through to `reconcileExistingDeploy`.    |
-| Trigger DNS check          | `POST /v1/platform/applications/{appID}/domains/{domainIDOrName}/dns_check`  | Fired best-effort once per "Check DNS now" selection to actively kick the check job. Idempotent (no-op if a check is in flight). |
+| Trigger DNS check          | `POST /v1/platform/applications/{appID}/domains/{domainIDOrName}/dns_check`  | Fired best-effort once per "Check DNS now" selection to actively kick the check job. Idempotent (no-op if a check is in flight).  |
 | Poll deploy status         | `GET /v1/platform/applications/{appID}/instances/{envOrInsID}/deploy_status` | Returns `status` plus the three component booleans `dns_ok`, `ssl_ok`, `mail_ok`. CLI polls every 3s up to ~5 minutes.            |
 | Retry SSL provisioning     | `POST /v1/platform/applications/{appID}/domains/{domainIDOrName}/ssl_retry`  | 204 on success. 409 `ssl_retry_throttled` carries `meta.retry_after_seconds` (12-min per-domain throttle).                        |
 | Retry mail verification    | `POST /v1/platform/applications/{appID}/domains/{domainIDOrName}/mail_retry` | 204 on success. 409 `mail_retry_inflight` → poll `deploy_status`. 403 `operation_not_allowed_on_satellite_domain` for satellites. |
@@ -121,7 +121,7 @@ sequenceDiagram
 
 ## API Endpoints
 
-All endpoints are on the **Platform API** (`/v1/platform/...`) and are live HTTP calls. The lifecycle endpoints route through `commands/deploy/api.ts` to the helpers in `lib/plapi.ts`.
+All endpoints are on the **Platform API** (`/v1/platform/...`) and are live HTTP calls. The deploy command calls the helpers in `lib/plapi.ts` directly.
 
 | Step                       | Method  | Endpoint                                                                 | Helper                                                                                                                   |
 | -------------------------- | ------- | ------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------ |
