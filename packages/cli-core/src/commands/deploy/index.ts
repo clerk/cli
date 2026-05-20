@@ -30,6 +30,7 @@ import {
   deployComponentStatus,
   deployStatusPendingFooter,
   domainAssociationSummary,
+  bindZoneFile,
   dnsDashboardHandoff,
   dnsIntro,
   dnsRecords,
@@ -52,6 +53,7 @@ import {
   collectCustomDomain,
   collectOAuthCredentials,
   confirmCreateProductionInstance,
+  confirmExportBindZone,
   confirmProceed,
 } from "./prompts.ts";
 import {
@@ -543,6 +545,8 @@ async function runDnsSetup(
 
   for (const line of dnsDashboardHandoff(state.domain)) log.info(line);
   log.blank();
+  await offerBindZoneExport(state.domain, cnameTargets);
+  log.blank();
   try {
     const action = await chooseDnsVerificationAction();
     if (action === "skip") {
@@ -575,6 +579,8 @@ async function runExistingDomainDnsVerification(
     log.blank();
   }
   for (const line of dnsDashboardHandoff(state.domain)) log.info(line);
+  log.blank();
+  await offerBindZoneExport(state.domain, state.cnameTargets);
   log.blank();
 
   try {
@@ -686,6 +692,19 @@ async function pollDeployStatus(
     return { verified: false, status };
   }
   return { verified: true, status };
+}
+
+async function offerBindZoneExport(
+  domain: string,
+  cnameTargets: readonly CnameTarget[] | undefined,
+): Promise<void> {
+  if (!cnameTargets || cnameTargets.length === 0) return;
+  const accepted = await confirmExportBindZone();
+  if (!accepted) return;
+  const contents = bindZoneFile(domain, cnameTargets, new Date());
+  const filePath = `${process.cwd()}/clerk-${domain}.zone`;
+  await Bun.write(filePath, contents);
+  log.success(`Wrote ${filePath}`);
 }
 
 async function requestDomainDnsCheck(appId: string, domainIdOrName: string): Promise<void> {

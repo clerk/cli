@@ -66,6 +66,13 @@ export async function chooseDnsVerificationAction(): Promise<DnsVerificationActi
   });
 }
 
+export async function confirmExportBindZone(): Promise<boolean> {
+  return confirm({
+    message: "Export DNS records as a BIND zone file?",
+    default: false,
+  });
+}
+
 export async function chooseOAuthCredentialAction(
   provider: OAuthProvider,
 ): Promise<OAuthCredentialAction> {

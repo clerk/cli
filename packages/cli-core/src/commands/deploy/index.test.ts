@@ -243,6 +243,7 @@ describe("deploy", () => {
       domainId?: string;
       productionConfig?: Record<string, unknown>;
       developmentConfig?: Record<string, unknown>;
+      cnameTargets?: readonly { host: string; value: string; required: boolean }[];
     } = {},
   ) {
     const instanceId = options.instanceId ?? "ins_prod_mock";
@@ -254,6 +255,9 @@ describe("deploy", () => {
     const productionConfig = options.productionConfig ?? {
       connection_oauth_google: { enabled: false, client_id: "", client_secret: "" },
     };
+    const cnameTargets = options.cnameTargets ?? [
+      { host: `clerk.${domain}`, value: "frontend-api.clerk.services", required: true },
+    ];
 
     mockFetchApplication.mockResolvedValue({
       application_id: "app_xyz789",
@@ -282,9 +286,7 @@ describe("deploy", () => {
           frontend_api_url: `https://clerk.${domain}`,
           accounts_portal_url: `https://accounts.${domain}`,
           development_origin: "",
-          cname_targets: [
-            { host: `clerk.${domain}`, value: "frontend-api.clerk.services", required: true },
-          ],
+          cname_targets: cnameTargets,
           created_at: "2026-05-06T00:00:00Z",
           updated_at: "2026-05-06T00:00:00Z",
         },
@@ -647,7 +649,10 @@ describe("deploy", () => {
     test("DNS setup prints dashboard handoff and asks about verifying DNS", async () => {
       await linkedProject();
       mockIsAgent.mockReturnValue(false);
-      mockConfirm.mockResolvedValueOnce(true).mockResolvedValueOnce(true);
+      mockConfirm
+        .mockResolvedValueOnce(true) // Proceed?
+        .mockResolvedValueOnce(true) // Create production instance?
+        .mockResolvedValueOnce(false); // Export DNS records as a BIND zone file?
       mockSelect.mockResolvedValueOnce("skip").mockResolvedValueOnce("skip");
       mockInput.mockResolvedValueOnce("example.com");
 
@@ -663,10 +668,14 @@ describe("deploy", () => {
       expect(err).toContain("propagation and SSL issuance");
       expect(err).toContain("DNS propagation can take time");
       expect(err).toContain("Skipping DNS verification for now.");
-      expect(mockConfirm).toHaveBeenCalledTimes(2);
+      expect(mockConfirm).toHaveBeenCalledTimes(3);
       expect(mockConfirm).toHaveBeenCalledWith({
         message: "Create production instance?",
         default: true,
+      });
+      expect(mockConfirm).toHaveBeenCalledWith({
+        message: "Export DNS records as a BIND zone file?",
+        default: false,
       });
       expect(mockConfirm).not.toHaveBeenCalledWith({
         message: "Continue to OAuth setup?",
@@ -935,6 +944,119 @@ describe("deploy", () => {
       expect(recordsIdx).toBeGreaterThan(-1);
       expect(promptIdx).toBeGreaterThan(-1);
       expect(recordsIdx).toBeLessThan(promptIdx);
+    });
+
+    test("BIND export prompt writes the zone file when the user accepts", async () => {
+      await linkedProject({
+        instances: { development: "ins_dev_123", production: "ins_prod_123" },
+      });
+      mockIsAgent.mockReturnValue(false);
+      mockLiveProduction({
+        instanceId: "ins_prod_123",
+        productionConfig: {},
+      });
+      mockGetDeployStatus.mockResolvedValue({
+        status: "incomplete",
+        dns_ok: false,
+        ssl_ok: false,
+        mail_ok: false,
+      });
+      mockConfirm.mockResolvedValueOnce(true); // BIND export prompt: yes
+      mockSelect.mockResolvedValueOnce("skip").mockResolvedValueOnce("have-credentials");
+      mockInput.mockResolvedValueOnce("google-client-id.apps.googleusercontent.com");
+      mockPassword.mockResolvedValueOnce("google-secret");
+      mockPatchInstanceConfig.mockResolvedValueOnce({});
+
+      const writeSpy = spyOn(Bun, "write").mockResolvedValue(0);
+      try {
+        await runDeploy({});
+        const err = stripAnsi(captured.err);
+
+        const zoneCall = writeSpy.mock.calls.find((call) => String(call[0]).endsWith(".zone"));
+        expect(zoneCall).toBeDefined();
+        const pathArg = zoneCall![0];
+        const contentArg = zoneCall![1];
+        expect(String(pathArg)).toMatch(/clerk-example\.com\.zone$/);
+        expect(String(contentArg)).toContain("$ORIGIN example.com.");
+        expect(String(contentArg)).toContain("$TTL 300");
+        expect(String(contentArg)).toContain("IN\tCNAME");
+        expect(err).toContain("Wrote ");
+        expect(err).toContain("clerk-example.com.zone");
+      } finally {
+        writeSpy.mockRestore();
+      }
+    });
+
+    test("BIND export prompt writes no file when the user declines", async () => {
+      await linkedProject({
+        instances: { development: "ins_dev_123", production: "ins_prod_123" },
+      });
+      mockIsAgent.mockReturnValue(false);
+      mockLiveProduction({
+        instanceId: "ins_prod_123",
+        productionConfig: {},
+      });
+      mockGetDeployStatus.mockResolvedValue({
+        status: "incomplete",
+        dns_ok: false,
+        ssl_ok: false,
+        mail_ok: false,
+      });
+      mockConfirm.mockResolvedValueOnce(false); // BIND export prompt: no
+      mockSelect.mockResolvedValueOnce("skip").mockResolvedValueOnce("have-credentials");
+      mockInput.mockResolvedValueOnce("google-client-id.apps.googleusercontent.com");
+      mockPassword.mockResolvedValueOnce("google-secret");
+      mockPatchInstanceConfig.mockResolvedValueOnce({});
+
+      const writeSpy = spyOn(Bun, "write").mockResolvedValue(0);
+      try {
+        await runDeploy({});
+        const err = stripAnsi(captured.err);
+
+        const zoneCall = writeSpy.mock.calls.find((call) => String(call[0]).endsWith(".zone"));
+        expect(zoneCall).toBeUndefined();
+        expect(err).not.toContain("Wrote ");
+      } finally {
+        writeSpy.mockRestore();
+      }
+    });
+
+    test("BIND export prompt is skipped when cnameTargets is empty", async () => {
+      await linkedProject({
+        instances: { development: "ins_dev_123", production: "ins_prod_123" },
+      });
+      mockIsAgent.mockReturnValue(false);
+      mockLiveProduction({
+        instanceId: "ins_prod_123",
+        productionConfig: {},
+        cnameTargets: [], // override: domain has no CNAME targets
+      });
+      mockGetDeployStatus.mockResolvedValue({
+        status: "incomplete",
+        dns_ok: false,
+        ssl_ok: false,
+        mail_ok: false,
+      });
+      mockSelect.mockResolvedValueOnce("skip").mockResolvedValueOnce("have-credentials");
+      mockInput.mockResolvedValueOnce("google-client-id.apps.googleusercontent.com");
+      mockPassword.mockResolvedValueOnce("google-secret");
+      mockPatchInstanceConfig.mockResolvedValueOnce({});
+
+      const writeSpy = spyOn(Bun, "write").mockResolvedValue(0);
+      try {
+        await runDeploy({});
+
+        // confirm() was never called for the BIND prompt in this run.
+        const bindPromptCalls = mockConfirm.mock.calls.filter((call) => {
+          const arg = call[0] as { message?: string } | undefined;
+          return typeof arg?.message === "string" && arg.message.includes("BIND zone file");
+        });
+        expect(bindPromptCalls.length).toBe(0);
+        const zoneCall = writeSpy.mock.calls.find((call) => String(call[0]).endsWith(".zone"));
+        expect(zoneCall).toBeUndefined();
+      } finally {
+        writeSpy.mockRestore();
+      }
     });
 
     test("DNS verification timeout names the specific pending components from deploy_status", async () => {
