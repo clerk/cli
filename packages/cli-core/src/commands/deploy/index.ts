@@ -563,6 +563,20 @@ async function runExistingDomainDnsVerification(
   ctx: DeployContext,
   state: DeployOperationState,
 ): Promise<DnsVerificationResult | false> {
+  for (const line of dnsIntro(state.domain)) log.info(line);
+  log.blank();
+  if (state.cnameTargets && state.cnameTargets.length > 0) {
+    for (const line of dnsRecords(state.cnameTargets)) log.info(line);
+    log.blank();
+  }
+  const connectUrl = domainConnectUrl(state.domain);
+  if (connectUrl) {
+    log.info(`Domain Connect: ${connectUrl}`);
+    log.blank();
+  }
+  for (const line of dnsDashboardHandoff(state.domain)) log.info(line);
+  log.blank();
+
   try {
     const action = await chooseDnsVerificationAction();
     if (action === "skip") {

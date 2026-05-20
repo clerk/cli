@@ -906,6 +906,37 @@ describe("deploy", () => {
       expect(String(firstInput?.message)).not.toContain("Production domain");
     });
 
+    test("resume DNS verification prints CNAME records before the verification prompt", async () => {
+      await linkedProject({
+        instances: { development: "ins_dev_123", production: "ins_prod_123" },
+      });
+      mockIsAgent.mockReturnValue(false);
+      mockLiveProduction({
+        instanceId: "ins_prod_123",
+        productionConfig: {},
+      });
+      mockGetDeployStatus.mockResolvedValue({
+        status: "incomplete",
+        dns_ok: false,
+        ssl_ok: false,
+        mail_ok: false,
+      });
+      mockConfirm.mockResolvedValueOnce(false); // BIND export prompt placeholder (wired in Task 5)
+      mockSelect.mockResolvedValueOnce("skip").mockResolvedValueOnce("have-credentials");
+      mockInput.mockResolvedValueOnce("google-client-id.apps.googleusercontent.com");
+      mockPassword.mockResolvedValueOnce("google-secret");
+      mockPatchInstanceConfig.mockResolvedValueOnce({});
+
+      await runDeploy({});
+      const err = stripAnsi(captured.err);
+
+      const recordsIdx = err.indexOf("Add the following records at your DNS provider");
+      const promptIdx = err.indexOf("DNS verification");
+      expect(recordsIdx).toBeGreaterThan(-1);
+      expect(promptIdx).toBeGreaterThan(-1);
+      expect(recordsIdx).toBeLessThan(promptIdx);
+    });
+
     test("DNS verification timeout names the specific pending components from deploy_status", async () => {
       await linkedProject({
         instances: { development: "ins_dev_123", production: "ins_prod_123" },
