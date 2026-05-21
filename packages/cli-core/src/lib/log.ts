@@ -134,10 +134,6 @@ export type CapturedLogs = {
 
 let activeCapture: CapturedLogs | null = null;
 
-export function getActiveCapture(): CapturedLogs | null {
-  return activeCapture;
-}
-
 export function setActiveCapture(captured: CapturedLogs | null): void {
   activeCapture = captured;
 }
