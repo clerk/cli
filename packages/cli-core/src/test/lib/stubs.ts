@@ -1,5 +1,7 @@
+import { Writable } from "node:stream";
 import type { spyOn } from "bun:test";
 import { withCapturedLogs } from "../../lib/log.ts";
+import { setUiOutput } from "../../lib/ui.ts";
 
 export function capturedOutput(spy: ReturnType<typeof spyOn>): string {
   return spy.mock.calls.map((c: unknown[]) => c[0]).join("\n");
@@ -28,6 +30,42 @@ export function captureLog() {
     },
     teardown() {
       // No-op: capture scope is tied to run(), not process-global state.
+    },
+  };
+}
+
+class MockWritable extends Writable {
+  buffer: string[] = [];
+  isTTY = false;
+  columns = 80;
+  rows = 20;
+
+  override _write(
+    chunk: Buffer | string,
+    _encoding: BufferEncoding,
+    callback: (error?: Error | null) => void,
+  ): void {
+    this.buffer.push(typeof chunk === "string" ? chunk : chunk.toString());
+    callback();
+  }
+}
+
+/**
+ * Route `ui.*` (clack-backed log helpers) output into an in-memory buffer.
+ * Install in `beforeEach`, tear down in `afterEach`.
+ */
+export function captureUi() {
+  const stream = new MockWritable();
+  return {
+    stream,
+    get out() {
+      return stream.buffer.join("");
+    },
+    install() {
+      setUiOutput(stream);
+    },
+    teardown() {
+      setUiOutput(undefined);
     },
   };
 }

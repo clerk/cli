@@ -2,6 +2,7 @@ import { intro as clackIntro, outro as clackOutro, spinner as clackSpinner } fro
 import { isHuman } from "../mode.ts";
 import { dim, cyan } from "./color.ts";
 import { pushPrefix, popPrefix } from "./log.ts";
+import { getUiOutput } from "./ui.ts";
 
 const S_BAR = "│";
 const S_BAR_END = "└";
@@ -11,7 +12,7 @@ const stream = process.stderr;
 /** Print intro bracket and arrange for subsequent `log.*` lines to be gutter-prefixed. */
 export function intro(title?: string) {
   if (!isHuman()) return;
-  clackIntro(title);
+  clackIntro(title, { output: getUiOutput() });
   pushPrefix();
 }
 
@@ -30,7 +31,7 @@ export function outro(messageOrSteps?: string | readonly string[]) {
     return;
   }
 
-  clackOutro(messageOrSteps ?? "Done");
+  clackOutro(messageOrSteps ?? "Done", { output: getUiOutput() });
 }
 
 /** Print a bar separator: │ */
@@ -46,7 +47,7 @@ export async function withSpinner<T>(
 ): Promise<T> {
   if (!isHuman()) return fn();
 
-  const s = clackSpinner();
+  const s = clackSpinner({ output: getUiOutput() });
   s.start(message);
   try {
     const result = await fn();
