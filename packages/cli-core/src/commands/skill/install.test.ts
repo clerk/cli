@@ -121,23 +121,23 @@ const ALL_BUNDLED_FILES = [
 ] as const;
 
 describe("withStagedClerkSkill version rendering", () => {
-  test("substitutes CLI_VERSION in every staged file", async () => {
-    await withStagedClerkSkill("4.5.6", async (stageDir) => {
-      for (const rel of ALL_BUNDLED_FILES) {
-        const content = await readFile(join(stageDir, rel), "utf8");
-        expect(content, rel).not.toContain("{{CLI_VERSION}}");
-      }
-    });
-  });
+  const VERSION_CASES: { version: string | undefined; label: string }[] = [
+    { version: "4.5.6", label: "explicit 4.5.6" },
+    { version: undefined, label: "undefined → latest" },
+  ];
+  const VERSION_FILE_CASES = VERSION_CASES.flatMap(({ version, label }) =>
+    ALL_BUNDLED_FILES.map((rel) => ({ version, label, rel })),
+  );
 
-  test("resolves undefined version to `latest` in every staged file", async () => {
-    await withStagedClerkSkill(undefined, async (stageDir) => {
-      for (const rel of ALL_BUNDLED_FILES) {
+  test.each(VERSION_FILE_CASES)(
+    "substitutes {{CLI_VERSION}} ($label) in $rel",
+    async ({ version, rel }) => {
+      await withStagedClerkSkill(version, async (stageDir) => {
         const content = await readFile(join(stageDir, rel), "utf8");
         expect(content, rel).not.toContain("{{CLI_VERSION}}");
-      }
-    });
-  });
+      });
+    },
+  );
 });
 
 describe("bundled SKILL.md frontmatter", () => {

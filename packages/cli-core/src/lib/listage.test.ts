@@ -34,20 +34,20 @@ describe("scrollBounds", () => {
     expect(scrollBounds(20, 19, 5)).toEqual({ above: 15, below: 0 });
   });
 
-  test("above + below + pageSize = totalItems (pageSize=5)", () => {
-    for (let active = 0; active < 20; active++) {
-      const { above, below } = scrollBounds(20, active, 5);
-      expect(above + below + 5).toBe(20);
-    }
-  });
+  // Invariant must hold for any active position and any pageSize — including
+  // odd pageSizes where above/below may drift by ±1 at boundaries.
+  const PAGE_SIZES = [5, 7];
+  const SCROLL_CASES = PAGE_SIZES.flatMap((pageSize) =>
+    Array.from({ length: 20 }, (_, active) => ({ pageSize, active })),
+  );
 
-  test("above + below + pageSize = totalItems (pageSize=7, odd)", () => {
-    // Odd pageSize may drift by ±1 at boundaries but must never be catastrophically wrong
-    for (let active = 0; active < 20; active++) {
-      const { above, below } = scrollBounds(20, active, 7);
-      expect(above + below + 7).toBe(20);
-    }
-  });
+  test.each(SCROLL_CASES)(
+    "above + below + pageSize = totalItems (pageSize=$pageSize, active=$active)",
+    ({ pageSize, active }) => {
+      const { above, below } = scrollBounds(20, active, pageSize);
+      expect(above + below + pageSize).toBe(20);
+    },
+  );
 });
 
 describe("withScrollIndicators", () => {
