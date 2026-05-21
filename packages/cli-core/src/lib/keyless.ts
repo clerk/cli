@@ -59,8 +59,7 @@ export async function createAccountlessApp(framework?: string): Promise<Accountl
   }
 
   if (!response.ok) {
-    const text = await response.text();
-    throw new BapiError(response.status, text, response.headers);
+    throw await BapiError.fromResponse(response);
   }
 
   return response.json() as Promise<AccountlessAppResponse>;

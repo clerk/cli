@@ -926,40 +926,23 @@ Tutorial — enable completions for your shell:
   return program;
 }
 
-export function formatApiBody(body: string, verbose: boolean): string {
+export function formatApiBody(error: ApiError, verbose: boolean): string {
   if (verbose) {
     try {
-      return "\n" + JSON.stringify(JSON.parse(body), null, 2);
+      return "\n" + JSON.stringify(JSON.parse(error.body), null, 2);
     } catch {
-      return "\n" + body;
+      return "\n" + error.body;
     }
   }
-
-  try {
-    const parsed = JSON.parse(body);
-    if (Array.isArray(parsed.errors) && parsed.errors.length > 0) {
-      return parsed.errors.map(formatSingleError).join("\n");
-    }
-    if (parsed.error) return parsed.error;
-    if (parsed.message) return parsed.message;
-  } catch {
-    // not JSON
-  }
-
-  if (body.length > 200) return body.slice(0, 200) + "...";
-  return body;
+  return formatStructuredError(error);
 }
 
-function formatSingleError(err: {
-  message?: string;
-  code?: string;
-  meta?: Record<string, unknown>;
-}): string {
-  let msg = err.message ?? "Unknown error";
-  const meta = err.meta;
+function formatStructuredError(error: ApiError): string {
+  let msg = error.message;
+  const { meta, code } = error;
   if (!meta) return msg;
 
-  switch (err.code) {
+  switch (code) {
     case "unsupported_subscription_plan_features": {
       const features = meta.unsupported_features;
       if (Array.isArray(features) && features.length > 0) {
@@ -990,7 +973,6 @@ function formatSingleError(err: {
       break;
     }
   }
-
   return msg;
 }
 
@@ -1045,13 +1027,21 @@ export async function runProgram(
     }
 
     if (error instanceof ApiError) {
-      const detail = formatApiBody(error.body, verbose);
+      const detail = formatApiBody(error, verbose);
       const prefix = error.context ?? "Request failed";
       if (isAgent()) {
-        const apiCode = extractApiErrorCode(error.body);
-        const apiErrors = extractApiErrors(error.body);
+        const apiErrors: ApiErrorEntry[] | undefined =
+          error.code || error.meta
+            ? [
+                {
+                  ...(error.code ? { code: error.code } : {}),
+                  ...(error.message ? { message: error.message } : {}),
+                  ...(error.meta ? { meta: error.meta } : {}),
+                },
+              ]
+            : undefined;
         outputJsonError(
-          apiCode ?? "api_error",
+          error.code ?? "api_error",
           `${prefix} (${error.status}): ${detail}`,
           undefined,
           apiErrors,
@@ -1060,6 +1050,9 @@ export async function runProgram(
         log.error(`${prefix} (${error.status}): ${detail}`);
         if (verbose && (error instanceof PlapiError || error instanceof FapiError) && error.url) {
           log.error(`       URL: ${error.url}`);
+        }
+        if (verbose && error.clerkTraceId) {
+          log.error(`       Trace: ${error.clerkTraceId}`);
         }
       }
       process.exit(EXIT_CODE.GENERAL);
@@ -1109,33 +1102,4 @@ function outputJsonError(
   if (docsUrl) payload.error.docsUrl = docsUrl;
   if (errors?.length) payload.error.errors = errors;
   log.raw(JSON.stringify(payload));
-}
-
-/** Extract the error code from a Clerk API JSON response body, if present. */
-function extractApiErrorCode(body: string): string | undefined {
-  try {
-    const parsed = JSON.parse(body);
-    return parsed.errors?.[0]?.code;
-  } catch {
-    return undefined;
-  }
-}
-
-/** Extract the full errors array from a Clerk API JSON response body, if present. */
-function extractApiErrors(body: string): ApiErrorEntry[] | undefined {
-  try {
-    const parsed = JSON.parse(body);
-    if (Array.isArray(parsed.errors) && parsed.errors.length > 0) {
-      return parsed.errors.map((e: ApiErrorEntry) => {
-        const entry: ApiErrorEntry = {};
-        if (e.code) entry.code = e.code;
-        if (e.message) entry.message = e.message;
-        if (e.meta && Object.keys(e.meta).length > 0) entry.meta = e.meta;
-        return entry;
-      });
-    }
-  } catch {
-    // not JSON
-  }
-  return undefined;
 }
