@@ -10,6 +10,9 @@
 
 import { log } from "./log.ts";
 import { withNetworkAccess } from "./host-execution.ts";
+import { buildUserAgent } from "./user-agent.ts";
+
+const USER_AGENT = buildUserAgent();
 
 export type LoggedFetchInit = RequestInit & { tag: string };
 
@@ -17,10 +20,12 @@ export async function loggedFetch(url: URL | string, options: LoggedFetchInit): 
   const { tag, ...init } = options;
   const method = init.method ?? "GET";
   const urlStr = url.toString();
+  const headers = new Headers(init.headers);
+  if (!headers.has("user-agent")) headers.set("User-Agent", USER_AGENT);
   log.debug(`${tag}: ${method} ${urlStr}`);
   const response = await withNetworkAccess(
     { operation: "connect", target: urlStr, label: tag },
-    async () => fetch(url, init),
+    async () => fetch(url, { ...init, headers }),
   );
   if (!response.ok) {
     // Clone so the caller can still consume the body for error construction.
