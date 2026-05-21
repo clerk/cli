@@ -197,6 +197,10 @@ function parseApiBody(status: number, body: string): ParsedApiBody {
     return fallback(truncateBody(body));
   }
 
+  if (parsed === null || typeof parsed !== "object") {
+    return fallback(truncateBody(body));
+  }
+
   const envelope = parsed as ClerkErrorEnvelope;
   const first = envelope.errors?.[0];
   if (!first) {

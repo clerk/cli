@@ -75,6 +75,19 @@ describe("ApiError envelope parsing (via PlapiError.fromBody)", () => {
     expect(err.message).toBe("API error (500)");
   });
 
+  test("falls back when body is the JSON literal null", () => {
+    const err = PlapiError.fromBody(500, "null");
+    expect(err.code).toBeNull();
+    expect(err.message).toBe("null");
+    expect(err.meta).toBeNull();
+  });
+
+  test("falls back when body is a JSON primitive (number)", () => {
+    const err = PlapiError.fromBody(500, "42");
+    expect(err.code).toBeNull();
+    expect(err.message).toBe("42");
+  });
+
   test("preserves an empty meta object rather than coercing to null", () => {
     const body = JSON.stringify({
       errors: [{ code: "x", message: "y", meta: {} }],
