@@ -34,7 +34,7 @@ describe("exchangeCodeForToken", () => {
 
     const [, calledInit] = (globalThis.fetch as unknown as ReturnType<typeof mock>).mock.calls[0]!;
     expect(calledInit.method).toBe("POST");
-    expect(calledInit.headers["Content-Type"]).toBe("application/x-www-form-urlencoded");
+    expect(calledInit.headers.get("Content-Type")).toBe("application/x-www-form-urlencoded");
 
     const body = new URLSearchParams(calledInit.body);
     expect(body.get("grant_type")).toBe("authorization_code");
@@ -118,7 +118,7 @@ describe("fetchUserInfo", () => {
     await fetchUserInfo("my-secret-token");
 
     const [, init] = (globalThis.fetch as unknown as ReturnType<typeof mock>).mock.calls[0]!;
-    expect(init.headers.Authorization).toBe("Bearer my-secret-token");
+    expect(init.headers.get("Authorization")).toBe("Bearer my-secret-token");
   });
 
   test("throws on non-OK response with status code", async () => {
@@ -165,7 +165,7 @@ describe("refreshAccessToken", () => {
 
     const [, calledInit] = (globalThis.fetch as unknown as ReturnType<typeof mock>).mock.calls[0]!;
     expect(calledInit.method).toBe("POST");
-    expect(calledInit.headers["Content-Type"]).toBe("application/x-www-form-urlencoded");
+    expect(calledInit.headers.get("Content-Type")).toBe("application/x-www-form-urlencoded");
 
     const body = new URLSearchParams(calledInit.body);
     expect(body.get("grant_type")).toBe("refresh_token");
