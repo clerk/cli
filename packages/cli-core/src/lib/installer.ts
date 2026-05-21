@@ -12,7 +12,7 @@ import { access, realpath, stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import { delimiter, join, sep } from "node:path";
 import { UPDATE_PACKAGE_NAME } from "./constants.ts";
-import { pmInstallCommand, type PackageManager } from "./package-manager.ts";
+import type { PackageManager } from "./package-manager.ts";
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -353,12 +353,21 @@ function normalizeWindowsPath(p: string): string {
 
 // ── Install command strings ─────────────────────────────────────────────────
 
+// Human-facing upgrade-Clerk commands. Intentionally NOT built from
+// `pmInstallCommand`: that helper adds `--ignore-pnpmfile` / `--ignore-scripts`
+// to defend `clerk init`'s spawn in attacker-controlled cwd. Those flags
+// don't belong in an upgrade hint a user copy-pastes to install the trusted
+// `clerk` package globally — postinstall scripts are how some PMs link the
+// binary into PATH.
+const GLOBAL_UPDATE_COMMANDS = {
+  bun: "bun add -g",
+  pnpm: "pnpm add -g",
+  npm: "npm install -g",
+} satisfies Record<Exclude<PackageManager, "yarn">, string>;
+
 /** Human-readable install/update command for the given installer. */
 export function globalInstallCommand(installer: Installer, packageSpec: string): string {
   if (installer === "homebrew") return `brew upgrade ${UPDATE_PACKAGE_NAME}`;
   if (installer === "yarn") return `yarn global add ${packageSpec}`;
-
-  // For bun, pnpm, and npm the global form is the local `<pm> add` command
-  // with a `-g` flag appended — reuse `pmInstallCommand` as the base.
-  return `${pmInstallCommand(installer as PackageManager)} -g ${packageSpec}`;
+  return `${GLOBAL_UPDATE_COMMANDS[installer]} ${packageSpec}`;
 }

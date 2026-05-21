@@ -8,11 +8,20 @@ export const PACKAGE_MANAGERS = ["bun", "pnpm", "yarn", "npm"] as const;
 
 export type PackageManager = (typeof PACKAGE_MANAGERS)[number];
 
+// Security: `clerk init` runs the user's package manager in attacker-controlled
+// cwd to install the framework SDK. Two cwd-reachable code-exec primitives
+// exist on a vanilla `<pm> add`:
+//   1. pnpm autoloads `.pnpmfile.cjs` at install startup (top-level code runs
+//      via `require()` before any package resolves). `--ignore-pnpmfile`
+//      disables that loader.
+//   2. Every PM runs lifecycle scripts (preinstall/install/postinstall) from
+//      the project's package.json on every install. `--ignore-scripts` skips
+//      them; the legitimate user re-runs install later for native modules.
 const PM_INSTALL_COMMANDS = {
-  bun: "bun add",
-  yarn: "yarn add",
-  pnpm: "pnpm add",
-  npm: "npm install",
+  bun: "bun add --ignore-scripts",
+  yarn: "yarn add --ignore-scripts",
+  pnpm: "pnpm add --ignore-pnpmfile --ignore-scripts",
+  npm: "npm install --ignore-scripts",
 } satisfies Record<PackageManager, string>;
 
 /** Returns the `<pm> add`-style command for installing dependencies. */
