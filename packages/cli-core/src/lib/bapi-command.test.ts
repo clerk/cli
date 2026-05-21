@@ -210,7 +210,7 @@ describe("bapi-command", () => {
     const error = await resolveBapiSecretKey({}).catch((error_) => error_);
     expect(error).toBeInstanceOf(CliError);
     expect(error.code).toBe(ERROR_CODE.NO_SECRET_KEY);
-    expect(error.exitCode).toBe(2);
+    expect(error.exitCode).toBe(64);
     expect(error.docsUrl).toContain(
       "https://clerk.com/docs/guides/development/clerk-environment-variables",
     );
