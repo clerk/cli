@@ -7,7 +7,7 @@ import {
   gitStubs,
   configStubs,
   stubFetch,
-  captureLog,
+  useCaptureLog,
 } from "../../test/lib/stubs.ts";
 
 mock.module("../../lib/credential-store.ts", () => credentialStoreStubs);
@@ -127,7 +127,7 @@ describe("env pull", () => {
   let errorSpy: ReturnType<typeof spyOn>;
   let logSpy: ReturnType<typeof spyOn>;
   let exitSpy: ReturnType<typeof spyOn>;
-  let captured: ReturnType<typeof captureLog>;
+  const captured = useCaptureLog();
 
   const mockApplication = {
     application_id: "app_1",
@@ -168,13 +168,10 @@ describe("env pull", () => {
     exitSpy = spyOn(process, "exit").mockImplementation(() => {
       throw new Error("process.exit");
     });
-    captured = captureLog();
-
     stubFetch(async () => new Response(JSON.stringify(mockApplication), { status: 200 }));
   });
 
   afterEach(async () => {
-    captured.teardown();
     _setConfigDir(undefined);
     process.env = { ...originalEnv };
     process.cwd = originalCwd;
@@ -189,7 +186,7 @@ describe("env pull", () => {
     options: { app?: string; instance?: string; file?: string; cwd?: string } = {},
   ) {
     const { pull } = await import("./pull.ts");
-    return captured.run(() => pull(options));
+    return pull(options);
   }
 
   test("errors when no profile is linked", async () => {
@@ -490,7 +487,7 @@ describe("env pull", () => {
       instances: { development: "ins_dev" },
     });
 
-    await expect(runEnvPull()).rejects.toThrow("API error");
+    await expect(runEnvPull()).rejects.toThrow("Unauthorized");
   });
 
   test("sends include_secret_keys=true in API request", async () => {

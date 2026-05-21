@@ -1,6 +1,6 @@
 import { Writable } from "node:stream";
-import type { spyOn } from "bun:test";
-import { withCapturedLogs } from "../../lib/log.ts";
+import { afterEach, beforeEach, type spyOn } from "bun:test";
+import { type CapturedLogs, setActiveCapture } from "../../lib/log.ts";
 import { setUiOutput } from "../../lib/ui.ts";
 
 export function capturedOutput(spy: ReturnType<typeof spyOn>): string {
@@ -8,28 +8,82 @@ export function capturedOutput(spy: ReturnType<typeof spyOn>): string {
 }
 
 /**
- * Create a scoped capture buffer for `log.*` calls.
+ * Capture `log.*` output for every test in the enclosing scope.
  *
- * Use `run()` to execute code inside the capture context in unit tests that
- * exercise migrated commands (which use `log.*` instead of `console.log`/`console.error`).
+ * Registers `beforeEach`/`afterEach` hooks that install a fresh buffer
+ * before each test and clear it after. The returned proxy exposes getters
+ * that always reflect the active test's buffer, plus a `clear()` helper
+ * for ignoring setup noise mid-test.
+ *
+ * @example
+ * ```ts
+ * const captured = useCaptureLog();
+ *
+ * test("emits success", async () => {
+ *   await myCommand();
+ *   expect(captured.err).toContain("done");
+ * });
+ *
+ * test("ignores setup noise", async () => {
+ *   await setUp();
+ *   captured.clear();
+ *   await myCommand();
+ *   expect(captured.err).toContain("done");
+ * });
+ * ```
  */
-export function captureLog() {
-  const captured = { stdout: [] as string[], stderr: [] as string[] };
+export function useCaptureLog() {
+  let buf: CapturedLogs = { stdout: [], stderr: [] };
+  beforeEach(() => {
+    buf = { stdout: [], stderr: [] };
+    setActiveCapture(buf);
+  });
+  afterEach(() => {
+    setActiveCapture(null);
+  });
   return {
-    ...captured,
+    get stdout(): string[] {
+      return buf.stdout;
+    },
+    get stderr(): string[] {
+      return buf.stderr;
+    },
     /** Joined stdout output. */
-    get out() {
-      return captured.stdout.join("\n");
+    get out(): string {
+      return buf.stdout.join("\n");
     },
     /** Joined stderr output. */
-    get err() {
+    get err(): string {
+      return buf.stderr.join("\n");
+    },
+    /** Reset the capture buffer mid-test (e.g., to ignore setup noise). */
+    clear(): void {
+      buf.stdout.length = 0;
+      buf.stderr.length = 0;
+    },
+  };
+}
+
+export function captureLog() {
+  const captured: CapturedLogs = { stdout: [], stderr: [] };
+  return {
+    ...captured,
+    get out(): string {
+      return captured.stdout.join("\n");
+    },
+    get err(): string {
       return captured.stderr.join("\n");
     },
-    run<T>(fn: () => T): T {
-      return withCapturedLogs(captured, fn);
+    async run<T>(fn: () => T | Promise<T>): Promise<T> {
+      setActiveCapture(captured);
+      try {
+        return await fn();
+      } finally {
+        setActiveCapture(null);
+      }
     },
-    teardown() {
-      // No-op: capture scope is tied to run(), not process-global state.
+    teardown(): void {
+      setActiveCapture(null);
     },
   };
 }
@@ -88,6 +142,8 @@ export const configStubs = {
   resolveProfileOrAutolink: noop,
   resolveInstanceId: () => ({ id: "", label: "" }),
   resolveAppContext: async () => ({ appId: "", appLabel: "", instanceId: "", instanceLabel: "" }),
+  profileLabel: (profile: { appName?: string; appId: string }) =>
+    profile.appName ? `${profile.appName} (${profile.appId})` : profile.appId,
 };
 
 export const autolinkStubs = {
@@ -135,6 +191,8 @@ export const libPromptsStubs = {
   password: async () => "",
   editor: async () => "{}",
 };
+
+export const promptsStubs = libPromptsStubs;
 
 export { listageStubs } from "./listage-stubs.ts";
 

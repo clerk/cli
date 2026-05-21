@@ -7,9 +7,9 @@
 import {
   select as clackSelect,
   autocomplete as clackAutocomplete,
+  isCancel,
   type Option as ClackOption,
 } from "@clack/prompts";
-import { isCancel } from "@clack/core";
 import { throwUserAbort } from "./errors.ts";
 
 // ---------------------------------------------------------------------------

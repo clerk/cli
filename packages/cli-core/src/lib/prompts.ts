@@ -6,10 +6,10 @@
 
 import {
   confirm as clackConfirm,
+  isCancel,
   text as clackText,
   password as clackPassword,
 } from "@clack/prompts";
-import { isCancel } from "@clack/core";
 import { editAsync } from "external-editor";
 import { throwUserAbort } from "./errors.ts";
 import { log } from "./log.ts";

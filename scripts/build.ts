@@ -92,6 +92,7 @@ for (const target of selectedTargets) {
     "--compile",
     "--minify",
     "--no-compile-autoload-dotenv",
+    "--no-compile-autoload-bunfig",
     `--target=${target.bunTarget}`,
     `--define`,
     `CLI_VERSION="${version}"`,

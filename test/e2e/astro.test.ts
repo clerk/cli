@@ -1,28 +1,11 @@
-import { join } from "node:path";
-import { useFixture, runFixtureTest, runBrowserTest } from "./lib/fixture-test.ts";
-import type { FixtureConfig } from "./lib/types.ts";
+import { describe } from "bun:test";
+import { createFixtureHarness, runFixtureTests, runBrowserTests } from "./lib/fixture-test.ts";
 
-const fixtureDir = join(import.meta.dir, "fixtures/astro");
+describe("Astro with Typescript", () => {
+  const harness = createFixtureHarness("astro");
 
-export const config = {
-  description: "Astro with TypeScript",
-  scaffoldCmd: [
-    "bunx",
-    "create-astro@latest",
-    ".",
-    "--template",
-    "minimal",
-    "--typescript",
-    "strict",
-    "--no-install",
-    "--yes",
-  ],
-  clerkSdk: "@clerk/astro",
-  buildCmd: ["astro", "build"],
-  devCmd: ["astro", "dev"],
-  pinned: false,
-} satisfies FixtureConfig;
-
-const getFixture = useFixture(fixtureDir, config);
-runFixtureTest(getFixture, config);
-runBrowserTest(getFixture, config);
+  describe("clerk init", () => {
+    runFixtureTests(harness);
+    runBrowserTests(harness);
+  });
+});

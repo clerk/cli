@@ -17,7 +17,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { capturedOutput } from "../../lib/stubs.ts";
-import { withCapturedLogs } from "../../../lib/log.ts";
+import { setActiveCapture } from "../../../lib/log.ts";
 import { http } from "../../lib/http.ts";
 import type { Application, ApplicationInstance } from "../../../lib/plapi.ts";
 
@@ -250,7 +250,24 @@ mock.module(
 
 // ── Real config module ───────────────────────────────────────────────────────
 
-export const { _setConfigDir, readConfig, setProfile } = await import("../../../lib/config.ts");
+type ConfigModule = typeof import("../../../lib/config.ts");
+
+let configModulePromise: Promise<ConfigModule> | null = null;
+
+function getConfigModule(): Promise<ConfigModule> {
+  configModulePromise ??= import("../../../lib/config.ts");
+  return configModulePromise;
+}
+
+export async function readConfig(): ReturnType<ConfigModule["readConfig"]> {
+  return (await getConfigModule()).readConfig();
+}
+
+export async function setProfile(
+  ...args: Parameters<ConfigModule["setProfile"]>
+): ReturnType<ConfigModule["setProfile"]> {
+  return (await getConfigModule()).setProfile(...args);
+}
 
 // ── Mock data ────────────────────────────────────────────────────────────────
 
@@ -439,9 +456,7 @@ async function execCLI(...args: string[]): Promise<CLIResult> {
   let exitCode = 0;
 
   try {
-    await withCapturedLogs(currentHarness.captured, () =>
-      runProgram(program, args, { from: "user" }),
-    );
+    await runProgram(program, args, { from: "user" });
   } catch (error: unknown) {
     if ((error as any)?.code?.startsWith?.("commander.")) {
       exitCode = (error as any).exitCode ?? 1;
@@ -520,6 +535,7 @@ function setEnv(key: string, value: string) {
  */
 export async function setupTest(): Promise<TestHarness> {
   const tempDir = await mkdtemp(join(tmpdir(), "clerk-integration-"));
+  const { _setConfigDir } = await getConfigModule();
   _setConfigDir(tempDir);
   process.cwd = () => tempDir;
   setEnv("CLERK_PLATFORM_API_KEY", "test_platform_key");
@@ -540,6 +556,7 @@ export async function setupTest(): Promise<TestHarness> {
   });
 
   const captured = { stdout: [] as string[], stderr: [] as string[] };
+  setActiveCapture(captured);
   const harness = { tempDir, logSpy, errorSpy, exitSpy, captured };
   currentHarness = harness;
   return harness;
@@ -552,7 +569,9 @@ export async function setupTest(): Promise<TestHarness> {
  * temporary directory.
  */
 export async function teardownTest(harness: TestHarness): Promise<void> {
+  const { _setConfigDir } = await getConfigModule();
   currentHarness = null;
+  setActiveCapture(null);
   assertPromptQueuesEmpty();
   http.assertRoutesConsumed();
   _setConfigDir(undefined);

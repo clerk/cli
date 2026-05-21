@@ -2,7 +2,7 @@ import { test, expect, mock, beforeEach } from "bun:test";
 import { captureLog } from "../test/lib/stubs.ts";
 
 // Sentinel for cancellation. Tests choose this symbol; the mocked
-// @clack/core.isCancel below treats it as the clack cancel signal.
+// @clack/prompts.isCancel below treats it as the clack cancel signal.
 const cancelSymbol = Symbol.for("clack:cancel");
 
 let lastConfirmConfig: Record<string, unknown> | undefined;
@@ -32,6 +32,7 @@ mock.module("@clack/prompts", () => ({
     lastPasswordConfig = config;
     return passwordResult;
   },
+  isCancel: (value: unknown): value is symbol => value === cancelSymbol,
   // Stubs for other exports so this mock doesn't break sibling test files
   // that share this process and may import @clack/prompts.
   intro: () => {},
@@ -39,10 +40,6 @@ mock.module("@clack/prompts", () => ({
   cancel: () => {},
   log: { info: () => {}, warn: () => {}, error: () => {}, success: () => {} },
   spinner: () => ({ start: () => {}, stop: () => {}, message: () => {} }),
-}));
-
-mock.module("@clack/core", () => ({
-  isCancel: (value: unknown): value is symbol => value === cancelSymbol,
 }));
 
 mock.module("external-editor", () => ({

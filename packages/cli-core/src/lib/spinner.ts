@@ -7,7 +7,9 @@ import { getUiOutput } from "./ui.ts";
 const S_BAR = "│";
 const S_BAR_END = "└";
 
-const stream = process.stderr;
+function writeUi(message: string) {
+  (getUiOutput() ?? process.stderr).write(message);
+}
 
 /** Print intro bracket and arrange for subsequent `log.*` lines to be gutter-prefixed. */
 export function intro(title?: string) {
@@ -21,23 +23,25 @@ export function outro(messageOrSteps?: string | readonly string[]) {
   if (!isHuman()) return;
   popPrefix();
 
-  if (typeof messageOrSteps === "object") {
-    stream.write(`${dim(S_BAR)}\n`);
-    stream.write(`${dim(S_BAR_END)}  ${dim("Next steps")}\n`);
+  if (Array.isArray(messageOrSteps)) {
+    writeUi(`${dim(S_BAR)}\n`);
+    writeUi(`${dim(S_BAR_END)}  ${dim("Next steps")}\n`);
     for (const step of messageOrSteps) {
-      stream.write(`   ${cyan("→")} ${step}\n`);
+      writeUi(`   ${cyan("→")} ${step}\n`);
     }
-    stream.write("\n");
+    writeUi("\n");
     return;
   }
 
-  clackOutro(messageOrSteps ?? "Done", { output: getUiOutput() });
+  clackOutro(typeof messageOrSteps === "string" ? messageOrSteps : "Done", {
+    output: getUiOutput(),
+  });
 }
 
 /** Print a bar separator: │ */
 export function bar() {
   if (!isHuman()) return;
-  stream.write(`${dim(S_BAR)}\n`);
+  writeUi(`${dim(S_BAR)}\n`);
 }
 
 export async function withSpinner<T>(

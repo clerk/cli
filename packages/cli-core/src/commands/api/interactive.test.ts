@@ -2,7 +2,7 @@ import { test, expect, describe, beforeEach, afterEach, spyOn, mock } from "bun:
 import { mkdtemp, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { captureLog, listageStubs, stubFetch } from "../../test/lib/stubs.ts";
+import { useCaptureLog, promptsStubs, listageStubs, stubFetch } from "../../test/lib/stubs.ts";
 
 let _mode = "human";
 mock.module("../../mode.ts", () => ({
@@ -72,7 +72,7 @@ describe("apiInteractive", () => {
   let errorSpy: ReturnType<typeof spyOn>;
   let logSpy: ReturnType<typeof spyOn>;
   let exitSpy: ReturnType<typeof spyOn>;
-  let captured: ReturnType<typeof captureLog>;
+  const captured = useCaptureLog();
   const originalFetch = globalThis.fetch;
   const originalIsTTY = process.stdin.isTTY;
 
@@ -100,7 +100,6 @@ describe("apiInteractive", () => {
     exitSpy = spyOn(process, "exit").mockImplementation(() => {
       throw new Error("process.exit");
     });
-    captured = captureLog();
     // Capture fetch calls from the real api handler
     stubFetch(async (input, init) => {
       fetchCalls.push({ url: input.toString(), method: init?.method ?? "GET" });
@@ -115,7 +114,6 @@ describe("apiInteractive", () => {
   });
 
   afterEach(async () => {
-    captured.teardown();
     _setCacheDir(undefined);
     process.env = { ...originalEnv };
     globalThis.fetch = originalFetch;
@@ -132,7 +130,7 @@ describe("apiInteractive", () => {
 
   async function runApiInteractive(options: Record<string, unknown> = {}) {
     const { apiInteractive } = await import("./interactive.ts");
-    return captured.run(() => apiInteractive(options));
+    return apiInteractive(options);
   }
 
   test("shows help and returns in agent mode", async () => {

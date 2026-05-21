@@ -1,5 +1,5 @@
-import { test, expect, describe, beforeEach, afterEach, mock, spyOn } from "bun:test";
-import { captureLog, listageStubs } from "../../test/lib/stubs.ts";
+import { test, expect, describe, afterEach, mock, spyOn } from "bun:test";
+import { useCaptureLog, promptsStubs, listageStubs } from "../../test/lib/stubs.ts";
 
 const mockIsAgent = mock();
 let _modeOverride: string | undefined;
@@ -35,14 +35,9 @@ const { deploy } = await import("./index.ts");
 
 describe("deploy", () => {
   let consoleSpy: ReturnType<typeof spyOn>;
-  let captured: ReturnType<typeof captureLog>;
-
-  beforeEach(() => {
-    captured = captureLog();
-  });
+  const captured = useCaptureLog();
 
   afterEach(() => {
-    captured.teardown();
     _modeOverride = undefined;
     mockIsAgent.mockReset();
     mockSelect.mockReset();
@@ -53,7 +48,7 @@ describe("deploy", () => {
   });
 
   function runDeploy(options: Parameters<typeof deploy>[0]) {
-    return captured.run(() => deploy(options));
+    return deploy(options);
   }
 
   describe("agent mode", () => {

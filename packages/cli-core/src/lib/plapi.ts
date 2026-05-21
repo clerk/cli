@@ -83,8 +83,7 @@ async function plapiFetch(method: string, url: URL, init?: { body?: string }): P
     body: init?.body,
   });
   if (!response.ok) {
-    const body = await response.text();
-    throw new PlapiError(response.status, body, url.toString());
+    throw await PlapiError.fromResponse(response);
   }
   return response;
 }

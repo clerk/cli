@@ -1,5 +1,5 @@
 import { test, expect, describe, beforeEach, afterEach, mock, spyOn } from "bun:test";
-import { captureLog, captureUi } from "../../test/lib/stubs.ts";
+import { captureUi, useCaptureLog } from "../../test/lib/stubs.ts";
 
 const mockListApplications = mock();
 mock.module("../../lib/plapi.ts", () => ({
@@ -52,8 +52,8 @@ const mockApps = [
 describe("apps list", () => {
   let logSpy: ReturnType<typeof spyOn>;
   let errorSpy: ReturnType<typeof spyOn>;
-  let captured: ReturnType<typeof captureLog>;
   let uiCapture: ReturnType<typeof captureUi>;
+  const captured = useCaptureLog();
 
   beforeEach(() => {
     mockIsAgent.mockReturnValue(false);
@@ -61,12 +61,10 @@ describe("apps list", () => {
     errorSpy = spyOn(console, "error").mockImplementation(() => {});
     uiCapture = captureUi();
     uiCapture.install();
-    captured = captureLog();
   });
 
   afterEach(() => {
     uiCapture.teardown();
-    captured.teardown();
     mockListApplications.mockReset();
     mockIsAgent.mockReset();
     logSpy.mockRestore();
@@ -74,7 +72,7 @@ describe("apps list", () => {
   });
 
   function runList(options: Parameters<typeof list>[0] = {}) {
-    return captured.run(() => list(options));
+    return list(options);
   }
 
   const stdoutOut = () => uiCapture.out;

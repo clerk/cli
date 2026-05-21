@@ -1,5 +1,5 @@
 import { mkdtemp, cp, rm, realpath } from "node:fs/promises";
-import { join, basename } from "node:path";
+import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { parseEnv } from "node:util";
 // NOTE: These helpers are imported from the CLI source (the SUT). This couples
@@ -11,7 +11,11 @@ import {
   detectPublishableKeyName,
   detectSecretKeyName,
 } from "../../../packages/cli-core/src/lib/framework.ts";
+import { fixtures, type FixtureName } from "../fixtures.manifest.ts";
+import type { FixtureConfig } from "./types.ts";
 import { log } from "./logger.ts";
+
+const FIXTURES_DIR = join(import.meta.dir, "..", "fixtures");
 // Path to CLI entry point relative to this file (test/e2e/lib/ -> packages/cli-core/src/cli.ts)
 const CLI_PATH = join(import.meta.dir, "../../../packages/cli-core/src/cli.ts");
 
@@ -19,19 +23,6 @@ function requireEnv(name: string): string {
   const val = process.env[name];
   if (!val) throw new Error(`Missing required env var: ${name}. Set it before running e2e tests.`);
   return val;
-}
-
-/** Build a shared env object for CLI commands. Requires CLERK_PLATFORM_API_KEY. */
-function clerkEnv(configDir?: string): Record<string, string | undefined> {
-  if (!process.env.CLERK_PLATFORM_API_KEY) {
-    throw new Error(
-      "Missing required env var: set CLERK_PLATFORM_API_KEY before running e2e tests.",
-    );
-  }
-  return {
-    ...process.env,
-    ...(configDir ? { CLERK_CONFIG_DIR: configDir } : {}),
-  };
 }
 
 /** Throw with a descriptive message if a shell command failed. */
@@ -52,16 +43,34 @@ async function copyFixture(fixtureDir: string, projectDir: string): Promise<void
 }
 
 /**
+ * Best-effort recursive remove. Cleanup runs after the test has already
+ * passed, so a stray filesystem error here must not fail the test. Bun's
+ * node:fs/promises is known to surface transient EFAULT from rm under
+ * concurrent load (oven-sh/bun#28958, #9298); the OS reclaims /tmp anyway.
+ */
+async function safeRm(path: string): Promise<void> {
+  try {
+    await rm(path, { recursive: true, force: true });
+  } catch (err) {
+    log(`rm failed for ${path}: ${err}`);
+  }
+}
+
+/**
  * Pre-link the project to the test Clerk application using an isolated
  * CLERK_CONFIG_DIR, so `clerk init` finds an existing link and skips the
  * interactive app picker.
  */
 async function linkProject(projectDir: string, configDir: string): Promise<void> {
   const appId = requireEnv("CLERK_CLI_TEST_APP_ID");
+  const platformAPIKey = requireEnv("CLERK_PLATFORM_API_KEY");
 
   const result = await Bun.$`bun ${CLI_PATH} --mode human link --app ${appId}`
     .cwd(projectDir)
-    .env(clerkEnv(configDir))
+    .env({
+      CLERK_CONFIG_DIR: configDir,
+      CLERK_PLATFORM_API_KEY: platformAPIKey,
+    })
     .quiet()
     .nothrow();
 
@@ -91,9 +100,14 @@ async function gitInit(projectDir: string): Promise<void> {
  * with skill template files that break framework typecheck.
  */
 async function runClerkInit(projectDir: string, configDir: string): Promise<void> {
+  const platformAPIKey = requireEnv("CLERK_PLATFORM_API_KEY");
+
   const result = await Bun.$`bun ${CLI_PATH} --mode human init --yes --no-skills`
     .cwd(projectDir)
-    .env(clerkEnv(configDir))
+    .env({
+      CLERK_CONFIG_DIR: configDir,
+      CLERK_PLATFORM_API_KEY: platformAPIKey,
+    })
     .quiet()
     .nothrow();
 
@@ -118,24 +132,34 @@ async function parseEnvFiles(projectDir: string): Promise<Record<string, string>
   return result;
 }
 
-/**
- * Shared setup: copy fixture to temp dir, pre-link, run clerk init, bun install.
- */
-export async function setupFixture(fixtureDir: string): Promise<{
+export type Fixture = {
+  name: FixtureName;
+  config: FixtureConfig;
+  fixtureDir: string;
   projectDir: string;
   configDir: string;
   publishableKey: string;
   secretKey: string;
   cleanup: () => Promise<void>;
-}> {
-  const name = basename(fixtureDir);
-  log(name, "setup started");
+};
+
+/**
+ * Shared setup: look up the fixture in the manifest, copy it to a temp dir,
+ * pre-link, run clerk init, npm ci. Returns a `Fixture` that embeds the
+ * resolved config and fixtureDir so downstream helpers don't need to thread
+ * them separately.
+ */
+export async function setupFixture(name: FixtureName): Promise<Fixture> {
+  const config = fixtures[name];
+  const fixtureDir = join(FIXTURES_DIR, name);
+  log("setup started");
+
   // Resolve symlinks (macOS /var -> /private/var) so profile keys match across commands
   const tmp = await realpath(tmpdir());
   const projectDir = await mkdtemp(join(tmp, `clerk-e2e-${name}-`));
   const configDir = await mkdtemp(join(tmp, "clerk-e2e-config-"));
   await copyFixture(fixtureDir, projectDir);
-  log(name, "fixture copied");
+  log("fixture copied");
 
   let publishableKey = "";
   let secretKey = "";
@@ -143,43 +167,59 @@ export async function setupFixture(fixtureDir: string): Promise<{
   try {
     // Git-init before linking so the profile key matches for later commands
     await gitInit(projectDir);
-    log(name, "git init done");
+    log("git init done");
+
+    // The magic happens here, we actually test out `clerk link` and `clerk init`
     await linkProject(projectDir, configDir);
-    log(name, "clerk link done");
+    log("clerk link done");
+
     await runClerkInit(projectDir, configDir);
-    log(name, "clerk init done");
+    log("clerk init done");
 
     // Verify clerk init wrote env files and extract keys.
     const envVars = await parseEnvFiles(projectDir);
+
     const publishableKeyName = await detectPublishableKeyName(projectDir);
     publishableKey = envVars[publishableKeyName] ?? "";
     if (!publishableKey) {
       throw new Error(`${publishableKeyName} not found in env files written by clerk init.`);
     }
+
     const secretKeyName = await detectSecretKeyName(projectDir);
     secretKey = envVars[secretKeyName] ?? "";
     if (!secretKey) {
       throw new Error(`${secretKeyName} not found in env files written by clerk init.`);
     }
 
-    const install = await Bun.$`bun install`.cwd(projectDir).quiet().nothrow();
-    assertSuccess("bun install failed", install);
-    log(name, "bun install done");
+    const install = await Bun.$`npm ci --ignore-scripts --legacy-peer-deps`
+      .cwd(projectDir)
+      .quiet()
+      .nothrow();
+    assertSuccess("npm ci failed", install);
+    log("npm ci done");
   } catch (err) {
-    log(name, `setup FAILED: ${err}`);
-    await rm(projectDir, { recursive: true, force: true });
-    await rm(configDir, { recursive: true, force: true });
-    throw err;
+    await safeRm(projectDir);
+    await safeRm(configDir);
+    throw new Error("setup failed", { cause: err });
   }
 
-  log(name, "setup complete");
+  log("setup complete");
 
   const cleanup = async () => {
-    log(name, "cleanup started");
-    await rm(projectDir, { recursive: true, force: true });
-    await rm(configDir, { recursive: true, force: true });
-    log(name, "cleanup done");
+    log("cleanup started");
+    await safeRm(projectDir);
+    await safeRm(configDir);
+    log("cleanup done");
   };
 
-  return { projectDir, configDir, publishableKey, secretKey, cleanup };
+  return {
+    name,
+    config,
+    fixtureDir,
+    projectDir,
+    configDir,
+    publishableKey,
+    secretKey,
+    cleanup,
+  };
 }

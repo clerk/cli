@@ -1,5 +1,17 @@
 # clerk
 
+## 1.3.0
+
+### Minor Changes
+
+- Accept plural `orgs` and `users` as the canonical values for `--for` on `clerk enable billing` and `clerk disable billing`. The singular `org` and `user` continue to work as aliases. ([#274](https://github.com/clerk/cli/pull/274)) by [@kylemac](https://github.com/kylemac)
+
+- Add `-y` / `--yes` to `clerk auth login` and `clerk login` to suppress prompt "You're already logged in... Re-Authenticate?" ([#272](https://github.com/clerk/cli/pull/272)) by [@jfoshee](https://github.com/jfoshee)
+
+### Patch Changes
+
+- Disable `bunfig.toml` autoload in the compiled CLI binary. Previously, an attacker-supplied `bunfig.toml` in the current working directory could execute arbitrary JavaScript (via `preload`) before argv parsing on any `clerk` invocation — including `clerk --version` and unknown subcommands. The release and local compile scripts now pass `--no-compile-autoload-bunfig` to `bun build --compile`, mirroring the existing `--no-compile-autoload-dotenv` hardening. ([#292](https://github.com/clerk/cli/pull/292)) by [@rafa-thayto](https://github.com/rafa-thayto)
+
 ## 1.2.0
 
 ### Minor Changes

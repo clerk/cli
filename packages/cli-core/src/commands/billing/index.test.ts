@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { _setConfigDir, setProfile } from "../../lib/config.ts";
 import {
-  captureLog,
+  useCaptureLog,
   credentialStoreStubs,
   gitStubs,
   libPromptsStubs,
@@ -53,7 +53,7 @@ describe("clerk enable/disable billing", () => {
   let tempDir: string;
   let logSpy: ReturnType<typeof spyOn>;
   let errorSpy: ReturnType<typeof spyOn>;
-  let captured: ReturnType<typeof captureLog>;
+  const captured = useCaptureLog();
 
   beforeEach(async () => {
     tempDir = await mkdtemp(join(tmpdir(), "clerk-billing-test-"));
@@ -63,8 +63,6 @@ describe("clerk enable/disable billing", () => {
 
     logSpy = spyOn(console, "log").mockImplementation(() => {});
     errorSpy = spyOn(console, "error").mockImplementation(() => {});
-    captured = captureLog();
-
     stubFetch(async () => {
       return new Response(JSON.stringify({}), { status: 200 });
     });
@@ -72,7 +70,6 @@ describe("clerk enable/disable billing", () => {
   });
 
   afterEach(async () => {
-    captured.teardown();
     _setConfigDir(undefined);
     process.env = { ...originalEnv };
     globalThis.fetch = originalFetch;
@@ -100,7 +97,7 @@ describe("clerk enable/disable billing", () => {
 
     await setupProfile();
     const { billingEnable } = await import("./index.ts");
-    await captured.run(() => billingEnable({ for: ["orgs"] }));
+    await billingEnable({ for: ["orgs"] });
 
     const parsed = JSON.parse(capturedBody);
     expect(parsed.billing.organization_enabled).toBe(true);
@@ -117,7 +114,7 @@ describe("clerk enable/disable billing", () => {
 
     await setupProfile();
     const { billingEnable } = await import("./index.ts");
-    await captured.run(() => billingEnable({ for: ["users"] }));
+    await billingEnable({ for: ["users"] });
 
     const parsed = JSON.parse(capturedBody);
     expect(parsed.billing.user_enabled).toBe(true);
@@ -134,7 +131,7 @@ describe("clerk enable/disable billing", () => {
 
     await setupProfile();
     const { billingEnable } = await import("./index.ts");
-    await captured.run(() => billingEnable({ for: ["orgs,users"] }));
+    await billingEnable({ for: ["orgs,users"] });
 
     const parsed = JSON.parse(capturedBody);
     expect(parsed.billing.organization_enabled).toBe(true);
@@ -153,7 +150,7 @@ describe("clerk enable/disable billing", () => {
     const { billingEnable } = await import("./index.ts");
     // Commander variadic produces a string[] when the user writes
     // `--for orgs users` or `--for orgs --for users`.
-    await captured.run(() => billingEnable({ for: ["orgs", "users"] }));
+    await billingEnable({ for: ["orgs", "users"] });
 
     const parsed = JSON.parse(capturedBody);
     expect(parsed.billing.organization_enabled).toBe(true);
@@ -170,7 +167,7 @@ describe("clerk enable/disable billing", () => {
 
     await setupProfile();
     const { billingEnable } = await import("./index.ts");
-    await captured.run(() => billingEnable({ for: ["org", "user"] }));
+    await billingEnable({ for: ["org", "user"] });
 
     const parsed = JSON.parse(capturedBody);
     expect(parsed.billing.organization_enabled).toBe(true);
@@ -187,7 +184,7 @@ describe("clerk enable/disable billing", () => {
 
     await setupProfile();
     const { billingEnable } = await import("./index.ts");
-    await captured.run(() => billingEnable({}));
+    await billingEnable({});
 
     const parsed = JSON.parse(capturedBody);
     expect(parsed.billing.organization_enabled).toBe(true);
@@ -198,15 +195,13 @@ describe("clerk enable/disable billing", () => {
   test("enable rejects invalid --for token", async () => {
     await setupProfile();
     const { billingEnable } = await import("./index.ts");
-    await expect(captured.run(() => billingEnable({ for: ["foo"] }))).rejects.toThrow(
-      'Invalid --for value: "foo"',
-    );
+    await expect(billingEnable({ for: ["foo"] })).rejects.toThrow('Invalid --for value: "foo"');
   });
 
   test("enable rejects empty --for value", async () => {
     await setupProfile();
     const { billingEnable } = await import("./index.ts");
-    await expect(captured.run(() => billingEnable({ for: [","] }))).rejects.toThrow(
+    await expect(billingEnable({ for: [","] })).rejects.toThrow(
       "--for must include at least one of",
     );
   });
@@ -220,7 +215,7 @@ describe("clerk enable/disable billing", () => {
 
     await setupProfile();
     const { billingEnable } = await import("./index.ts");
-    await captured.run(() => billingEnable({ for: [" orgs , orgs , users "] }));
+    await billingEnable({ for: [" orgs , orgs , users "] });
 
     const parsed = JSON.parse(capturedBody);
     expect(parsed.billing.organization_enabled).toBe(true);
@@ -230,7 +225,7 @@ describe("clerk enable/disable billing", () => {
   test("enable shows success message", async () => {
     await setupProfile();
     const { billingEnable } = await import("./index.ts");
-    await captured.run(() => billingEnable({ for: ["orgs"] }));
+    await billingEnable({ for: ["orgs"] });
 
     expect(captured.err).toContain("Billing enabled for organizations");
   });
@@ -244,7 +239,7 @@ describe("clerk enable/disable billing", () => {
 
     await setupProfile();
     const { billingEnable } = await import("./index.ts");
-    await captured.run(() => billingEnable({ for: ["orgs"], dryRun: true }));
+    await billingEnable({ for: ["orgs"], dryRun: true });
 
     expect(capturedUrl).toContain("dry_run=true");
     expect(captured.err).toContain("[dry-run]");
@@ -261,7 +256,7 @@ describe("clerk enable/disable billing", () => {
 
     await setupProfile();
     const { billingDisable } = await import("./index.ts");
-    await captured.run(() => billingDisable({ for: ["orgs"] }));
+    await billingDisable({ for: ["orgs"] });
 
     const parsed = JSON.parse(capturedBody);
     expect(parsed.billing.organization_enabled).toBe(false);
@@ -278,7 +273,7 @@ describe("clerk enable/disable billing", () => {
 
     await setupProfile();
     const { billingDisable } = await import("./index.ts");
-    await captured.run(() => billingDisable({ for: ["users"] }));
+    await billingDisable({ for: ["users"] });
 
     const parsed = JSON.parse(capturedBody);
     expect(parsed.billing.user_enabled).toBe(false);
@@ -301,7 +296,7 @@ describe("clerk enable/disable billing", () => {
 
     await setupProfile();
     const { billingDisable } = await import("./index.ts");
-    await captured.run(() => billingDisable({}));
+    await billingDisable({});
 
     const parsed = JSON.parse(capturedBody);
     expect(parsed.billing.organization_enabled).toBe(false);
@@ -312,7 +307,7 @@ describe("clerk enable/disable billing", () => {
   test("disable shows success message", async () => {
     await setupProfile();
     const { billingDisable } = await import("./index.ts");
-    await captured.run(() => billingDisable({ for: ["orgs"] }));
+    await billingDisable({ for: ["orgs"] });
 
     expect(captured.err).toContain("Billing disabled for organizations");
   });
@@ -329,7 +324,7 @@ describe("clerk enable/disable billing", () => {
 
     await setupProfile();
     const { billingDisable } = await import("./index.ts");
-    await captured.run(() => billingDisable({ dryRun: true }));
+    await billingDisable({ dryRun: true });
 
     expect(capturedUrl).toContain("dry_run=true");
     expect(captured.err).toContain("[dry-run]");
@@ -340,7 +335,7 @@ describe("clerk enable/disable billing", () => {
   test("enable installs the clerk-billing agent skill in agent mode", async () => {
     await setupProfile();
     const { billingEnable } = await import("./index.ts");
-    await captured.run(() => billingEnable({ for: ["orgs"] }));
+    await billingEnable({ for: ["orgs"] });
 
     expect(skillCalls).toEqual([{ source: "clerk/skills", skillNames: ["clerk-billing"] }]);
   });
@@ -348,7 +343,7 @@ describe("clerk enable/disable billing", () => {
   test("enable --no-skills suppresses the skill install", async () => {
     await setupProfile();
     const { billingEnable } = await import("./index.ts");
-    await captured.run(() => billingEnable({ for: ["orgs"], skills: false }));
+    await billingEnable({ for: ["orgs"], skills: false });
 
     expect(skillCalls).toHaveLength(0);
   });
@@ -356,7 +351,7 @@ describe("clerk enable/disable billing", () => {
   test("enable --dry-run does not install the skill", async () => {
     await setupProfile();
     const { billingEnable } = await import("./index.ts");
-    await captured.run(() => billingEnable({ for: ["orgs"], dryRun: true }));
+    await billingEnable({ for: ["orgs"], dryRun: true });
 
     expect(skillCalls).toHaveLength(0);
   });
@@ -366,7 +361,7 @@ describe("clerk enable/disable billing", () => {
 
     await setupProfile();
     const { billingEnable } = await import("./index.ts");
-    await captured.run(() => billingEnable({ for: ["orgs"] }));
+    await billingEnable({ for: ["orgs"] });
 
     expect(skillCalls).toHaveLength(0);
   });
@@ -374,7 +369,7 @@ describe("clerk enable/disable billing", () => {
   test("disable does not trigger the skill install", async () => {
     await setupProfile();
     const { billingDisable } = await import("./index.ts");
-    await captured.run(() => billingDisable({ for: ["orgs"] }));
+    await billingDisable({ for: ["orgs"] });
 
     expect(skillCalls).toHaveLength(0);
   });
@@ -392,7 +387,7 @@ describe("clerk enable/disable billing", () => {
 
     await setupProfile();
     const { billingEnable } = await import("./index.ts");
-    await captured.run(() => billingEnable({}));
+    await billingEnable({});
 
     expect(skillCalls).toHaveLength(0);
     expect(captured.err).toContain("No changes detected");

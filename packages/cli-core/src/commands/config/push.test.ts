@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { _setConfigDir, setProfile } from "../../lib/config.ts";
 import {
-  captureLog,
+  useCaptureLog,
   credentialStoreStubs,
   gitStubs,
   libPromptsStubs,
@@ -29,7 +29,7 @@ describe("config push", () => {
   let logSpy: ReturnType<typeof spyOn>;
   let errorSpy: ReturnType<typeof spyOn>;
   let exitSpy: ReturnType<typeof spyOn>;
-  let captured: ReturnType<typeof captureLog>;
+  const captured = useCaptureLog();
 
   const mockResponse = {
     session: { lifetime: 3600 },
@@ -54,8 +54,6 @@ describe("config push", () => {
     exitSpy = spyOn(process, "exit").mockImplementation(() => {
       throw new Error("process.exit");
     });
-    captured = captureLog();
-
     stubFetch(async (_input, init) => {
       const isGet = !init?.method || init.method === "GET";
       const body = isGet ? currentConfig : mockResponse;
@@ -64,7 +62,6 @@ describe("config push", () => {
   });
 
   afterEach(async () => {
-    captured.teardown();
     _setConfigDir(undefined);
     process.env = { ...originalEnv };
     globalThis.fetch = originalFetch;
@@ -86,7 +83,7 @@ describe("config push", () => {
     } = {},
   ) {
     const { configPatch } = await import("./push.ts");
-    return captured.run(() => configPatch(options));
+    return configPatch(options);
   }
 
   async function runConfigPut(
@@ -101,7 +98,7 @@ describe("config push", () => {
     } = {},
   ) {
     const { configPut } = await import("./push.ts");
-    return captured.run(() => configPut(options));
+    return configPut(options);
   }
 
   // --- Shared error cases ---
@@ -635,7 +632,7 @@ describe("config push", () => {
       instances: { development: "ins_dev" },
     });
 
-    await expect(runConfigPatch({ json: '{"a":1}', yes: true })).rejects.toThrow("API error");
+    await expect(runConfigPatch({ json: '{"a":1}', yes: true })).rejects.toThrow("Bad Request");
   });
 
   test("shows success message after push", async () => {
@@ -678,7 +675,7 @@ describe("config push", () => {
 });
 
 describe("printDiff", () => {
-  let captured: ReturnType<typeof captureLog>;
+  const captured = useCaptureLog();
   const ANSI_ESCAPE_PATTERN = new RegExp(String.raw`\u001b\[[0-9;]*m`, "g");
 
   /** Return captured stderr lines with ANSI codes stripped. */
@@ -686,19 +683,11 @@ describe("printDiff", () => {
     return captured.stderr.map((l) => l.replace(ANSI_ESCAPE_PATTERN, ""));
   }
 
-  beforeEach(() => {
-    captured = captureLog();
-  });
-
-  afterEach(() => {
-    captured.teardown();
-  });
-
   test("patch mode: shows only changed leaf values", () => {
     const current = { session: { lifetime: 604800, cookie: "__session" } };
     const patch = { session: { lifetime: 3600 } };
 
-    captured.run(() => printDiff(current, patch, true));
+    printDiff(current, patch, true);
 
     expect(lines()).toEqual(["  session:", "    lifetime:", "      - 604800", "      + 3600"]);
   });
@@ -707,7 +696,7 @@ describe("printDiff", () => {
     const current = { session: { lifetime: 3600 }, sign_up: { mode: "public" } };
     const patch = { session: { lifetime: 3600 } };
 
-    captured.run(() => printDiff(current, patch, true));
+    printDiff(current, patch, true);
 
     expect(lines()).toEqual([]);
   });
@@ -716,7 +705,7 @@ describe("printDiff", () => {
     const current = {};
     const patch = { session: { lifetime: 3600 } };
 
-    captured.run(() => printDiff(current, patch, true));
+    printDiff(current, patch, true);
 
     expect(lines()).toEqual(["  session:", '    + {"lifetime":3600}']);
   });
@@ -725,7 +714,7 @@ describe("printDiff", () => {
     const current = { session: { lifetime: 604800 }, sign_up: { mode: "public" } };
     const patch = { session: { lifetime: 3600 } };
 
-    captured.run(() => printDiff(current, patch, true));
+    printDiff(current, patch, true);
 
     // sign_up should not appear
     expect(lines().some((l) => l.includes("sign_up"))).toBe(false);
@@ -735,7 +724,7 @@ describe("printDiff", () => {
     const current = { session: { lifetime: 604800 }, sign_up: { mode: "public" } };
     const payload = { session: { lifetime: 604800 } };
 
-    captured.run(() => printDiff(current, payload, false));
+    printDiff(current, payload, false);
 
     // session is unchanged, sign_up is being removed
     expect(lines().some((l) => l.includes("sign_up"))).toBe(true);
@@ -746,7 +735,7 @@ describe("printDiff", () => {
     const current = { session: { lifetime: 604800 } };
     const payload = { session: { lifetime: 3600 } };
 
-    captured.run(() => printDiff(current, payload, false));
+    printDiff(current, payload, false);
 
     expect(lines()).toContainEqual(expect.stringContaining("- 604800"));
     expect(lines()).toContainEqual(expect.stringContaining("+ 3600"));
@@ -756,7 +745,7 @@ describe("printDiff", () => {
     const current = { a: { b: { c: { d: 1 } } } };
     const patch = { a: { b: { c: { d: 2 } } } };
 
-    captured.run(() => printDiff(current, patch, true));
+    printDiff(current, patch, true);
 
     expect(lines()).toEqual(["  a:", "    b.c.d:", "      - 1", "      + 2"]);
   });
@@ -765,7 +754,7 @@ describe("printDiff", () => {
     const current = { allowed: { origins: ["a.com", "b.com"] } };
     const patch = { allowed: { origins: ["a.com", "c.com"] } };
 
-    captured.run(() => printDiff(current, patch, true));
+    printDiff(current, patch, true);
 
     expect(lines()).toContainEqual(expect.stringContaining('- ["a.com","b.com"]'));
     expect(lines()).toContainEqual(expect.stringContaining('+ ["a.com","c.com"]'));

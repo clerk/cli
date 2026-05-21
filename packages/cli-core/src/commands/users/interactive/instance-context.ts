@@ -51,10 +51,10 @@ async function fetchCurrentBapiInstance(secretKey: string): Promise<CurrentBapiI
     },
   });
 
-  const rawBody = await response.text();
   if (!response.ok) {
-    throw new BapiError(response.status, rawBody, response.headers);
+    throw await BapiError.fromResponse(response);
   }
+  const rawBody = await response.text();
 
   let body: unknown;
   try {

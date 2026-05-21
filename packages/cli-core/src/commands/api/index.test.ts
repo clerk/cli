@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { CliError, ERROR_CODE } from "../../lib/errors.ts";
 import {
-  captureLog,
+  useCaptureLog,
   credentialStoreStubs,
   gitStubs,
   configStubs,
@@ -183,7 +183,7 @@ describe("api command", () => {
   let logSpy: ReturnType<typeof spyOn>;
   let errorSpy: ReturnType<typeof spyOn>;
   let exitSpy: ReturnType<typeof spyOn>;
-  let captured: ReturnType<typeof captureLog>;
+  const captured = useCaptureLog();
 
   const mockUsers = { data: [{ id: "user_1", email: "test@example.com" }] };
 
@@ -208,13 +208,10 @@ describe("api command", () => {
     exitSpy = spyOn(process, "exit").mockImplementation(() => {
       throw new Error("process.exit");
     });
-    captured = captureLog();
-
     stubFetch(async () => new Response(JSON.stringify(mockUsers), { status: 200 }));
   });
 
   afterEach(async () => {
-    captured.teardown();
     _setConfigDir(undefined);
     process.env = { ...originalEnv };
     globalThis.fetch = originalFetch;
@@ -232,7 +229,7 @@ describe("api command", () => {
 
   async function runApi(endpoint: string, options: Record<string, unknown> = {}) {
     const { api } = await import("./index.ts");
-    return captured.run(() => api(endpoint, undefined, options));
+    return api(endpoint, undefined, options);
   }
 
   // --- GET requests ---

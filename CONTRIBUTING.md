@@ -88,7 +88,7 @@ bunx playwright install chromium
 
 bun run test:e2e:op                          # Run all E2E tests (secrets from 1Password)
 bun run test:e2e:op -- --filter react        # Run only tests matching "react"
-bun run test:e2e:op -- --debug               # Verbose helper logging (sets CLERK_E2E_DEBUG=1)
+bun run test:e2e:op -- --debug               # Force serial execution for parsing logs (sets CLERK_E2E_DEBUG=1)
 bun run test:e2e:op -- --har                 # Capture HAR files to test/e2e/.har for network debugging
 bun run test:e2e:op -- --har-dir ./out       # Capture HAR files to a custom directory
 bun run e2e:refresh-fixtures                 # Re-scaffold fixture projects from upstream CLIs

@@ -75,8 +75,7 @@ export type { UserSettingsJSON };
 async function fapiFetch(method: "GET" | "POST", url: URL): Promise<Response> {
   const response = await loggedFetch(url, { tag: "fapi", method });
   if (!response.ok) {
-    const body = await response.text();
-    throw new FapiError(response.status, body, url.toString());
+    throw await FapiError.fromResponse(response);
   }
   return response;
 }

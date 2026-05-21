@@ -1,7 +1,7 @@
 import { test, expect, describe, beforeEach, afterEach, mock, spyOn } from "bun:test";
 import { log } from "../../lib/log.ts";
 import {
-  captureLog,
+  useCaptureLog,
   configStubs,
   credentialStoreStubs,
   listageStubs,
@@ -63,16 +63,14 @@ const { switchEnv } = await import("./index.ts");
 
 describe("switch-env", () => {
   let logSpy: ReturnType<typeof spyOn>;
-  let captured: ReturnType<typeof captureLog>;
+  const captured = useCaptureLog();
   const originalIsTTY = process.stdin.isTTY;
 
   beforeEach(() => {
-    captured = captureLog();
     process.stdin.isTTY = true;
   });
 
   afterEach(() => {
-    captured.teardown();
     mockSetEnvironment.mockReset();
     mockGetToken.mockReset();
     mockSelect.mockReset();
@@ -83,7 +81,7 @@ describe("switch-env", () => {
   });
 
   function runSwitchEnv(environment: string | undefined) {
-    return captured.run(() => switchEnv(environment));
+    return switchEnv(environment);
   }
 
   test("prints current environment in non-interactive mode", async () => {

@@ -9,15 +9,15 @@
     "lint": "next lint"
   },
   "dependencies": {
-    "@clerk/nextjs": "latest",
+    "react": "18.3.1",
+    "react-dom": "18.3.1",
     "next": "14.2.35",
-    "react": "^18",
-    "react-dom": "^18"
+    "@clerk/nextjs": "latest"
   },
   "devDependencies": {
-    "@types/node": "^20",
-    "@types/react": "^18",
-    "@types/react-dom": "^18",
-    "typescript": "^5"
+    "typescript": "5.9.3",
+    "@types/node": "20.19.41",
+    "@types/react": "18.3.28",
+    "@types/react-dom": "18.3.7"
   }
 }

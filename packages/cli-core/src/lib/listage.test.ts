@@ -1,7 +1,7 @@
 import { test, expect, describe, mock, beforeEach } from "bun:test";
 
 // Sentinel for cancellation. Tests choose this symbol; the mocked
-// @clack/core.isCancel below treats it as the clack cancel signal.
+// @clack/prompts.isCancel below treats it as the clack cancel signal.
 const cancelSymbol = Symbol.for("clack:cancel");
 
 interface RecordedCall {
@@ -22,6 +22,7 @@ mock.module("@clack/prompts", () => ({
     lastAutocompleteCall = { config };
     return autocompleteResult;
   },
+  isCancel: (value: unknown): value is symbol => value === cancelSymbol,
   // Stubs for sibling tests that may share this process.
   confirm: async () => true,
   text: async () => "",
@@ -31,10 +32,6 @@ mock.module("@clack/prompts", () => ({
   cancel: () => {},
   log: { info: () => {}, warn: () => {}, error: () => {}, success: () => {} },
   spinner: () => ({ start: () => {}, stop: () => {}, message: () => {} }),
-}));
-
-mock.module("@clack/core", () => ({
-  isCancel: (value: unknown): value is symbol => value === cancelSymbol,
 }));
 
 const { select, search, filterChoices, normalizeChoices, Separator } = await import("./listage.ts");

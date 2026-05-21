@@ -1,5 +1,11 @@
 import { test, expect, describe, mock, beforeEach, afterEach } from "bun:test";
-import { credentialStoreStubs, configStubs, gitStubs, stubFetch } from "../../test/lib/stubs.ts";
+import {
+  useCaptureLog,
+  credentialStoreStubs,
+  configStubs,
+  gitStubs,
+  stubFetch,
+} from "../../test/lib/stubs.ts";
 import type { Application } from "../../lib/plapi.ts";
 
 const mockGetToken = mock();
@@ -27,6 +33,7 @@ const { createDoctorContext } = await import("./context.ts");
 
 describe("createDoctorContext", () => {
   const originalFetch = globalThis.fetch;
+  useCaptureLog();
 
   beforeEach(() => {
     mockGetToken.mockReset();

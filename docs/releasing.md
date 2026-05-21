@@ -109,7 +109,7 @@ The release workflow (`.github/workflows/release.yml`) runs on every push to `ma
 
 Defined in [`.github/workflows/build-binaries.yml`](../.github/workflows/build-binaries.yml) and called by the release, canary, and snapshot pipelines. Runs as a **single sequential job** on a Blacksmith runner that cross-compiles all 8 targets in ~5.5 seconds total using `scripts/build.ts`. For each target, the script:
 
-1. Cross-compiles the CLI using `bun build --compile --no-compile-autoload-dotenv --target=<bun_target>`
+1. Cross-compiles the CLI using `bun build --compile --no-compile-autoload-dotenv --no-compile-autoload-bunfig --target=<bun_target>`
 2. Injects the version via `--define "CLI_VERSION=\"$CLI_VERSION\""`
 3. Verifies the binary format using `file` output
 4. The workflow then uploads each binary as a separate GitHub Actions artifact

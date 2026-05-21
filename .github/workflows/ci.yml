@@ -31,7 +31,12 @@ jobs:
         with:
           ref: ${{ inputs.ref }}
       - uses: oven-sh/setup-bun@v2
-      - uses: actions/cache@v5
+      # Skip cache restore when invoked via workflow_call from release.yml's
+      # snapshot path (issue_comment trigger). That path checks out
+      # PR-author-controlled code in the default branch's privileged context;
+      # consuming a cached install in that context is a poisoning surface.
+      - if: github.event_name != 'issue_comment'
+        uses: actions/cache/restore@v5
         with:
           path: ~/.bun/install/cache
           key: bun-${{ runner.os }}-${{ hashFiles('bun.lock') }}
@@ -49,7 +54,8 @@ jobs:
         with:
           ref: ${{ inputs.ref }}
       - uses: oven-sh/setup-bun@v2
-      - uses: actions/cache/restore@v5
+      - if: github.event_name != 'issue_comment'
+        uses: actions/cache/restore@v5
         with:
           path: ~/.bun/install/cache
           key: bun-${{ runner.os }}-${{ hashFiles('bun.lock') }}
@@ -69,7 +75,8 @@ jobs:
         with:
           ref: ${{ inputs.ref }}
       - uses: oven-sh/setup-bun@v2
-      - uses: actions/cache/restore@v5
+      - if: github.event_name != 'issue_comment'
+        uses: actions/cache/restore@v5
         with:
           path: ~/.bun/install/cache
           key: bun-${{ runner.os }}-${{ hashFiles('bun.lock') }}
@@ -114,7 +121,8 @@ jobs:
       - name: Mark workspace as safe for git
         run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
       - uses: oven-sh/setup-bun@v2
-      - uses: actions/cache/restore@v5
+      - if: github.event_name != 'issue_comment'
+        uses: actions/cache/restore@v5
         with:
           path: ~/.bun/install/cache
           key: bun-${{ runner.os }}-${{ hashFiles('bun.lock') }}

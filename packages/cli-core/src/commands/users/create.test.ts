@@ -1,5 +1,5 @@
 import { test, expect, describe, beforeEach, afterEach, mock, spyOn } from "bun:test";
-import { captureLog } from "../../test/lib/stubs.ts";
+import { useCaptureLog, promptsStubs } from "../../test/lib/stubs.ts";
 import { BapiError, CliError, ERROR_CODE, EXIT_CODE } from "../../lib/errors.ts";
 
 const mockResolveBapiSecretKey = mock();
@@ -39,7 +39,7 @@ const { create } = await import("./create.ts");
 describe("users create", () => {
   let logSpy: ReturnType<typeof spyOn>;
   let errorSpy: ReturnType<typeof spyOn>;
-  let captured: ReturnType<typeof captureLog>;
+  const captured = useCaptureLog();
 
   beforeEach(() => {
     mockIsAgent.mockReturnValue(false);
@@ -53,11 +53,9 @@ describe("users create", () => {
     });
     logSpy = spyOn(console, "log").mockImplementation(() => {});
     errorSpy = spyOn(console, "error").mockImplementation(() => {});
-    captured = captureLog();
   });
 
   afterEach(() => {
-    captured.teardown();
     process.exitCode = 0;
     mockResolveBapiSecretKey.mockReset();
     mockHandleBapiError.mockReset();
@@ -70,7 +68,7 @@ describe("users create", () => {
   });
 
   function runCreate(options: Parameters<typeof create>[0]) {
-    return captured.run(() => create(options));
+    return create(options);
   }
 
   test("curated flags override conflicting JSON payload fields and forward targeting to the secret key resolver", async () => {
@@ -176,7 +174,7 @@ describe("users create", () => {
   test("prints raw BAPI validation errors to stdout for machine use", async () => {
     mockHandleBapiError.mockImplementation((error: unknown) => error instanceof BapiError);
     mockBapiRequest.mockRejectedValue(
-      new BapiError(
+      BapiError.fromBody(
         422,
         JSON.stringify({
           errors: [

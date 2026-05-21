@@ -1,5 +1,5 @@
 import { test, expect, describe, beforeEach, afterEach, mock, spyOn } from "bun:test";
-import { captureLog } from "../../test/lib/stubs.ts";
+import { useCaptureLog } from "../../test/lib/stubs.ts";
 
 const mockCreateApplication = mock();
 const mockFetchApplication = mock();
@@ -51,7 +51,7 @@ const mockApp = {
 describe("apps create", () => {
   let logSpy: ReturnType<typeof spyOn>;
   let errorSpy: ReturnType<typeof spyOn>;
-  let captured: ReturnType<typeof captureLog>;
+  const captured = useCaptureLog();
 
   beforeEach(() => {
     mockIsAgent.mockReturnValue(false);
@@ -62,11 +62,9 @@ describe("apps create", () => {
     mockFetchApplication.mockResolvedValue(mockApp);
     logSpy = spyOn(console, "log").mockImplementation(() => {});
     errorSpy = spyOn(console, "error").mockImplementation(() => {});
-    captured = captureLog();
   });
 
   afterEach(() => {
-    captured.teardown();
     mockCreateApplication.mockReset();
     mockFetchApplication.mockReset();
     mockIsAgent.mockReset();
@@ -75,7 +73,7 @@ describe("apps create", () => {
   });
 
   function runCreate(name: string, options?: Parameters<typeof create>[1]) {
-    return captured.run(() => create(name, options));
+    return create(name, options);
   }
 
   test("calls createApplication then fetchApplication", async () => {
@@ -170,14 +168,14 @@ describe("apps create", () => {
     test("propagates createApplication failure without fetching", async () => {
       mockCreateApplication.mockRejectedValue(new Error("Unprocessable Entity"));
 
-      await expect(create("Bad App")).rejects.toThrow("Unprocessable Entity");
+      await expect(runCreate("Bad App")).rejects.toThrow("Unprocessable Entity");
       expect(mockFetchApplication).not.toHaveBeenCalled();
     });
 
     test("propagates fetchApplication failure after create", async () => {
       mockFetchApplication.mockRejectedValue(new Error("Service Unavailable"));
 
-      await expect(create("My SaaS App")).rejects.toThrow("Service Unavailable");
+      await expect(runCreate("My SaaS App")).rejects.toThrow("Service Unavailable");
     });
   });
 });

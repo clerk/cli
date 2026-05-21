@@ -8,12 +8,13 @@
   "type": "module",
   "scripts": {
     "build": "bun build ./src/cli.ts --outfile ./dist/cli.js --target node --external @napi-rs/keyring --minify",
-    "build:compile": "bun build --compile --minify --no-compile-autoload-dotenv ./src/cli.ts --outfile ./dist/clerk",
+    "build:compile": "bun build --compile --minify --no-compile-autoload-dotenv --no-compile-autoload-bunfig ./src/cli.ts --outfile ./dist/clerk",
     "dev": "bun run ./src/cli.ts",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "lint": "oxlint src/",
     "format": "oxfmt --write src/",
-    "format:check": "oxfmt --check src/"
+    "format:check": "oxfmt --check src/",
+    "test": "bun test src/ --parallel"
   },
   "dependencies": {
     "@clack/prompts": "^1.3.0",
@@ -24,11 +25,11 @@
     "env-paths": "^4.0.0",
     "external-editor": "^3.1.0",
     "magicast": "^0.5.2",
-    "semver": "^7.7.4",
-    "yaml": "^2.8.4"
+    "semver": "^7.8.0",
+    "yaml": "^2.9.0"
   },
   "devDependencies": {
-    "@clerk/shared": "^4.8.3",
+    "@clerk/shared": "^4.10.2",
     "@types/semver": "^7.7.1"
   }
 }

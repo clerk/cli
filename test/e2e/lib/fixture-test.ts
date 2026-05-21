@@ -1,11 +1,15 @@
 import { join } from "node:path";
-import { test, expect, beforeAll, afterAll } from "bun:test";
-import { setupFixture } from "./fixture-setup.ts";
-import type { FixtureConfig } from "./types.ts";
+import { test, expect, beforeAll, afterAll, afterEach } from "bun:test";
+import { setupFixture, type Fixture } from "./fixture-setup.ts";
+import type { FixtureName } from "../fixtures.manifest.ts";
 import { chromium } from "playwright";
 import { clerkSetup, setupClerkTestingToken, clerk } from "@clerk/testing/playwright";
 import { startDevServer, killDevServer } from "./dev-server.ts";
-import { createTestUser, deleteTestUser } from "./test-user.ts";
+import {
+  createTestUser as baseCreateTestUser,
+  deleteTestUser as baseDeleteTestUser,
+  type TestUser,
+} from "./test-user.ts";
 import { log } from "./logger.ts";
 
 // Bridge CLERK_BACKEND_API_URL -> CLERK_API_URL for @clerk/testing
@@ -18,14 +22,19 @@ if (process.env.CLERK_BACKEND_API_URL && !process.env.CLERK_API_URL) {
 let clerkSetupDone: Promise<void> | null = null;
 function ensureClerkSetup(opts: { publishableKey: string; secretKey: string }): Promise<void> {
   if (!clerkSetupDone) {
-    clerkSetupDone = clerkSetup(opts);
+    clerkSetupDone = clerkSetup({
+      ...opts,
+      // We do our own environment loading so we can test out our own
+      // expectations for how it behaves with the CLI.
+      dotenv: false,
+    });
   }
   return clerkSetupDone;
 }
 
 /**
  * Read the fixture's package.json and check if it has a `typecheck` script.
- * If so, use `bun run typecheck` instead of bare `tsc --noEmit` so
+ * If so, use `npm run typecheck` instead of bare `bunx tsc --noEmit` so
  * framework-specific type generation (e.g. `react-router typegen`) runs first.
  */
 async function hasTypecheckScript(projectDir: string): Promise<boolean> {
@@ -37,54 +46,87 @@ async function hasTypecheckScript(projectDir: string): Promise<boolean> {
   }
 }
 
-type FixtureState = {
-  projectDir: string;
-  configDir: string;
-  publishableKey: string;
-  secretKey: string;
+type Users = {
+  create: () => Promise<TestUser>;
+  delete: (userId: string) => Promise<void>;
+  cleanup: () => Promise<void>;
+};
+
+type FixtureUsers = Omit<Users, "cleanup">;
+
+function createUsers(fixture: Fixture): Users {
+  const createdUserIDs = new Set<string>();
+
+  return {
+    create: async () => {
+      const user = await baseCreateTestUser(fixture.configDir, { secretKey: fixture.secretKey });
+      createdUserIDs.add(user.id);
+      return user;
+    },
+    delete: async (userID) => {
+      createdUserIDs.delete(userID);
+      await baseDeleteTestUser(userID, fixture.configDir, { secretKey: fixture.secretKey });
+    },
+    cleanup: async () => {
+      if (createdUserIDs.size === 0) return;
+      const ids = Array.from(createdUserIDs);
+      createdUserIDs.clear();
+      await Promise.all(
+        ids.map((id) =>
+          baseDeleteTestUser(id, fixture.configDir, { secretKey: fixture.secretKey }).catch((err) =>
+            log(`afterEach delete failed for ${id}: ${err}`),
+          ),
+        ),
+      );
+    },
+  };
+}
+
+type FixtureHarness = () => {
+  fixture: Omit<Fixture, "cleanup">;
+  users: FixtureUsers;
 };
 
 /**
- * Shared fixture lifecycle hook. Calls `setupFixture()` once in `beforeAll`
- * and cleans up in `afterAll`. Returns a getter that provides the shared
- * `{ projectDir }` to all tests in the file.
+ * Shared fixture lifecycle hook. Calls `setupFixture(name)` once in
+ * `beforeAll` (which looks up the manifest entry and embeds `config` +
+ * `fixtureDir` on the returned `Fixture`), cleans up the fixture in
+ * `afterAll`, and cleans up per-test users in `afterEach`. Returns a harness
+ * that yields `{ fixture, users }` for tests in the file.
  *
- * Must be called at the top level of a test file (not inside `describe`).
+ * Must be called at the top level of a `describe(...)` block (not deeper).
  */
-export function useFixture(fixtureDir: string, config: FixtureConfig): () => FixtureState {
-  // Skip when imported by the refresh script
-  if (process.env.CLERK_REFRESH_FIXTURES) {
-    return () => ({
-      projectDir: "",
-      configDir: "",
-      publishableKey: "",
-      secretKey: "",
-    });
-  }
-
-  let state: (FixtureState & { cleanup: () => Promise<void> }) | null = null;
+export function createFixtureHarness(name: FixtureName): FixtureHarness {
+  let fixture: Fixture | null = null;
+  let users: Users | null = null;
 
   beforeAll(async () => {
-    log(config.description, "beforeAll started");
-    state = await setupFixture(fixtureDir);
-    log(config.description, "beforeAll finished");
+    log("beforeAll started");
+    fixture = await setupFixture(name);
+    users = createUsers(fixture);
+    log("beforeAll finished");
   }, 300_000);
 
+  afterEach(async () => {
+    await users?.cleanup();
+  });
+
   afterAll(async () => {
-    log(config.description, "afterAll started");
-    await state?.cleanup();
-    log(config.description, "afterAll finished");
+    log("afterAll started");
+    await fixture?.cleanup();
+    log("afterAll finished");
   }, 60_000);
 
   return () => {
-    if (!state) throw new Error("Fixture not initialized - useFixture() beforeAll has not run yet");
-    return state;
+    if (!fixture || !users)
+      throw new Error("Fixture not initialized - createFixtureHarness() beforeAll has not run yet");
+    return { fixture, users };
   };
 }
 
 /**
  * Register a bun test that verifies the framework build command and
- * `tsc --noEmit` both pass using the shared fixture from `useFixture()`.
+ * `tsc --noEmit` both pass using the shared fixture from `createFixtureHarness()`.
  *
  * Build runs first so frameworks that generate types during build
  * (TanStack Router routeTree.gen) have them available for tsc.
@@ -92,42 +134,46 @@ export function useFixture(fixtureDir: string, config: FixtureConfig): () => Fix
  * bare `tsc --noEmit` (e.g. React Router needs `react-router typegen`
  * before tsc).
  */
-export function runFixtureTest(getFixture: () => FixtureState, config: FixtureConfig): void {
-  if (process.env.CLERK_REFRESH_FIXTURES) return;
-
+export function runFixtureTests(harness: FixtureHarness): void {
   test(
-    `clerk init [${config.description}]: tsc and build pass`,
+    "project builds with no errors",
     async () => {
-      const { projectDir } = getFixture();
+      const { fixture } = harness();
+      const { projectDir, config } = fixture;
 
       // Build first so type generation artifacts are available for tsc.
-      log(config.description, "build started");
-      const build = await Bun.$`bunx ${config.buildCmd}`.cwd(projectDir).quiet().nothrow();
+      log("build started");
+      const build = await Bun.$`npx ${config.buildCmd}`.cwd(projectDir).quiet().nothrow();
       if (build.exitCode !== 0) {
         throw new Error(
           `${config.buildCmd.join(" ")} failed:\n${build.stdout.toString()}\n${build.stderr.toString()}`,
         );
       }
-      log(config.description, "build done");
+      log("build succeeded");
+    },
+    { timeout: 300_000 }, // 5 minutes - install + build can be slow)
+  );
+
+  test(
+    "typecheck passes with no errors",
+    async () => {
+      const { fixture } = harness();
+      const { projectDir } = fixture;
 
       // Use the project's typecheck script if available (handles
       // framework-specific type generation), otherwise plain tsc.
       const useTypecheck = await hasTypecheckScript(projectDir);
-      log(
-        config.description,
-        `typecheck started (${useTypecheck ? "bun run typecheck" : "tsc --noEmit"})`,
-      );
-      const tsc = useTypecheck
-        ? await Bun.$`bun run typecheck`.cwd(projectDir).quiet().nothrow()
-        : await Bun.$`bunx tsc --noEmit`.cwd(projectDir).quiet().nothrow();
-      if (tsc.exitCode !== 0) {
-        throw new Error(
-          `${useTypecheck ? "typecheck" : "tsc --noEmit"} failed:\n${tsc.stdout.toString()}\n${tsc.stderr.toString()}`,
-        );
+      const command = useTypecheck ? "npm run typecheck" : "bunx tsc --noEmit";
+      log(`typecheck started (${command} in ${projectDir})`);
+      const shell = useTypecheck
+        ? await Bun.$`npm run typecheck 2>&1`.cwd(projectDir).quiet().nothrow()
+        : await Bun.$`bunx tsc --noEmit 2>&1`.cwd(projectDir).quiet().nothrow();
+      if (shell.exitCode !== 0) {
+        throw new Error(`${command} failed in ${projectDir}:\n${shell.text()}`);
       }
-      log(config.description, "typecheck done");
+      log("typecheck succeeded");
     },
-    { timeout: 300_000 }, // 5 minutes - install + build can be slow
+    { timeout: 300_000 }, // 5 minutes - install + typecheck can be slow
   );
 }
 
@@ -139,16 +185,11 @@ export function runFixtureTest(getFixture: () => FixtureState, config: FixtureCo
  * @param expectedFiles - filenames to look for (relative to projectDir).
  *   The test passes if at least one exists.
  */
-export function runFileExistsTest(
-  getFixture: () => FixtureState,
-  config: FixtureConfig,
-  expectedFiles: string[],
-): void {
-  if (process.env.CLERK_REFRESH_FIXTURES) return;
-
+export function runFileExistsTest(harness: FixtureHarness, expectedFiles: string[]): void {
   const label = expectedFiles.join(" or ");
-  test(`clerk init [${config.description}]: creates ${label}`, async () => {
-    const { projectDir } = getFixture();
+  test(`\`clerk init\` creates ${label}`, async () => {
+    const { fixture } = harness();
+    const { projectDir } = fixture;
     const found = await Promise.all(
       expectedFiles.map(async (f) => {
         const file = Bun.file(join(projectDir, f));
@@ -157,7 +198,7 @@ export function runFileExistsTest(
     );
     const existing = found.filter(Boolean);
     expect(existing.length).toBeGreaterThanOrEqual(1);
-    log(config.description, `found: ${existing.join(", ")}`);
+    log(`found: ${existing.join(", ")}`);
   });
 }
 
@@ -165,35 +206,32 @@ export function runFileExistsTest(
  * Register a bun test that starts a dev server, creates a test user,
  * and verifies sign-in works via @clerk/testing in a real browser.
  */
-export function runBrowserTest(getFixture: () => FixtureState, config: FixtureConfig): void {
-  if (process.env.CLERK_REFRESH_FIXTURES) return;
-
+export function runBrowserTests(harness: FixtureHarness): void {
   test(
-    `clerk init [${config.description}]: app loads and auth flow works`,
+    "app loads and auth flow works",
     async () => {
-      const { projectDir, configDir, publishableKey, secretKey } = getFixture();
-      const fixtureName = config.description;
+      const { fixture, users } = harness();
+      const { projectDir, publishableKey, secretKey, config } = fixture;
 
       let port: number | undefined;
       let host: string | undefined;
       let proc: import("bun").Subprocess | undefined;
       let stderrLines: string[] = [];
       let stdoutLines: string[] = [];
-      let testUser: { id: string; email: string; password: string } | undefined;
+      let testUser: TestUser | undefined;
       let browser: import("playwright").Browser | undefined;
       const harPath = process.env.E2E_HAR_DIR
-        ? `${process.env.E2E_HAR_DIR}/${fixtureName.replace(/\s+/g, "-")}.har`
+        ? `${process.env.E2E_HAR_DIR}/${fixture.name.replace(/\s+/g, "-")}.har`
         : undefined;
 
       try {
         // 1. Create test user
-        testUser = await createTestUser(configDir, { secretKey }, fixtureName);
+        testUser = await users.create();
 
         // 2. Start dev server (port is allocated inside, with retries on collision)
         const server = await startDevServer({
           devCmd: config.devCmd,
           projectDir,
-          fixtureName,
         });
         proc = server.proc;
         port = server.port;
@@ -227,11 +265,11 @@ export function runBrowserTest(getFixture: () => FixtureState, config: FixtureCo
           context,
           options: frontendApiUrl ? { frontendApiUrl } : undefined,
         });
-        log(fixtureName, `navigating to http://${host}:${port}`);
+        log(`navigating to http://${host}:${port}`);
         await page.goto(`http://${host}:${port}`, { waitUntil: "load" });
 
         // 5. Sign in
-        log(fixtureName, "signing in");
+        log("signing in");
         await clerk.signIn({
           page,
           signInParams: {
@@ -243,7 +281,7 @@ export function runBrowserTest(getFixture: () => FixtureState, config: FixtureCo
 
         // 6. Verify Clerk loaded
         await clerk.loaded({ page });
-        log(fixtureName, "clerk has been loaded");
+        log("clerk has been loaded");
 
         // 7. Check to see that the user is now on the window object.
         await page.waitForFunction(
@@ -251,11 +289,11 @@ export function runBrowserTest(getFixture: () => FixtureState, config: FixtureCo
           null,
           { timeout: 10_000 },
         );
-        log(fixtureName, "auth flow passed");
+        log("auth flow passed");
 
         // Log any console errors as warnings (non-fatal)
         if (consoleErrors.length > 0) {
-          log(fixtureName, `console errors during test:\n${consoleErrors.join("\n")}`);
+          log(`console errors during test:\n${consoleErrors.join("\n")}`);
         }
       } catch (err) {
         // Take screenshot on failure for debugging
@@ -263,21 +301,25 @@ export function runBrowserTest(getFixture: () => FixtureState, config: FixtureCo
           if (browser) {
             const pages = browser.contexts()[0]?.pages() ?? [];
             if (pages.length > 0) {
-              const screenshotPath = `/tmp/clerk-e2e-${fixtureName.replace(/\s+/g, "-")}-failure.png`;
-              await pages[0].screenshot({ path: screenshotPath, fullPage: true, timeout: 5_000 });
-              log(fixtureName, `failure screenshot saved: ${screenshotPath}`);
+              const screenshotPath = `/tmp/clerk-e2e-${fixture.name.replace(/\s+/g, "-")}-failure.png`;
+              await pages[0]!.screenshot({
+                path: screenshotPath,
+                fullPage: true,
+                timeout: 5_000,
+              });
+              log(`failure screenshot saved: ${screenshotPath}`);
             }
           }
         } catch (screenshotErr) {
-          log(fixtureName, `screenshot failed: ${screenshotErr}`);
+          log(`screenshot failed: ${screenshotErr}`);
         }
 
         // Attach dev server output to the error
         if (stdoutLines.length > 0) {
-          log(fixtureName, `dev server stdout:\n${stdoutLines.join("")}`);
+          log(`dev server stdout:\n${stdoutLines.join("")}`);
         }
         if (stderrLines.length > 0) {
-          log(fixtureName, `dev server stderr:\n${stderrLines.join("")}`);
+          log(`dev server stderr:\n${stderrLines.join("")}`);
         }
 
         throw err;
@@ -285,18 +327,13 @@ export function runBrowserTest(getFixture: () => FixtureState, config: FixtureCo
         // Always clean up - close context first to flush HAR, then browser
         if (browser) {
           for (const ctx of browser.contexts()) {
-            await ctx.close().catch((e) => log(fixtureName, `context close failed: ${e}`));
+            await ctx.close().catch((e) => log(`context close failed: ${e}`));
           }
-          await browser.close().catch((e) => log(fixtureName, `browser close failed: ${e}`));
-          if (harPath) log(fixtureName, `HAR file saved: ${harPath}`);
+          await browser.close().catch((e) => log(`browser close failed: ${e}`));
+          if (harPath) log(`HAR file saved: ${harPath}`);
         }
         if (proc) {
-          await killDevServer(proc, fixtureName).catch((e) =>
-            log(fixtureName, `dev server kill failed: ${e}`),
-          );
-        }
-        if (testUser) {
-          await deleteTestUser(testUser.id, configDir, { secretKey }, fixtureName).catch(() => {});
+          await killDevServer(proc).catch((e) => log(`dev server kill failed: ${e}`));
         }
       }
     },

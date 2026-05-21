@@ -94,17 +94,16 @@ async function tryStart(opts: {
   devCmd: string[];
   port: number;
   projectDir: string;
-  fixtureName: string;
 }): Promise<StartAttempt> {
-  const { devCmd, port, projectDir, fixtureName } = opts;
+  const { devCmd, port, projectDir } = opts;
   const fullCmd = buildDevCommand(devCmd, port);
   const host = getDevServerHost(devCmd);
   const stderrLines: string[] = [];
   const stdoutLines: string[] = [];
 
-  log(fixtureName, `starting dev server: bunx ${fullCmd.join(" ")} on port ${port}`);
+  log(`starting dev server: npx ${fullCmd.join(" ")} on port ${port}`);
 
-  const proc = Bun.spawn(["bunx", ...fullCmd], {
+  const proc = Bun.spawn(["npx", ...fullCmd], {
     cwd: projectDir,
     stdout: "pipe",
     stderr: "pipe",
@@ -152,7 +151,7 @@ async function tryStart(opts: {
   while (Date.now() < deadline) {
     // Early-bail: framework reported the port is taken. Don't wait the full timeout.
     if (hasPortConflict()) {
-      log(fixtureName, `port ${port} reported in use by dev server`);
+      log(`port ${port} reported in use by dev server`);
       await killAndAwait();
       return { kind: "port_conflict" };
     }
@@ -161,7 +160,7 @@ async function tryStart(opts: {
     // retrying. Detect that as a port conflict if the output supports it.
     if (proc.exitCode !== null) {
       if (hasPortConflict()) {
-        log(fixtureName, `dev server exited (port ${port} in use)`);
+        log(`dev server exited (port ${port} in use)`);
         return { kind: "port_conflict" };
       }
       throw new Error(
@@ -171,7 +170,7 @@ async function tryStart(opts: {
     }
 
     if (await canConnect(host, port, 1000)) {
-      log(fixtureName, `dev server ready (accepting TCP on ${host}:${port})`);
+      log(`dev server ready (accepting TCP on ${host}:${port})`);
       return {
         kind: "ready",
         value: { proc, port, host, stdout: stdoutLines, stderr: stderrLines },
@@ -204,7 +203,6 @@ async function tryStart(opts: {
 export async function startDevServer(opts: {
   devCmd: string[];
   projectDir: string;
-  fixtureName: string;
 }): Promise<ReadyServer> {
   for (let attempt = 1; attempt <= MAX_BIND_ATTEMPTS; attempt++) {
     const port = await getAvailablePort();
@@ -217,14 +215,14 @@ export async function startDevServer(opts: {
           `(last attempted port: ${port}).`,
       );
     }
-    log(opts.fixtureName, `port ${port} collided, retrying (${attempt + 1}/${MAX_BIND_ATTEMPTS})`);
+    log(`port ${port} collided, retrying (${attempt + 1}/${MAX_BIND_ATTEMPTS})`);
   }
   throw new Error("unreachable");
 }
 
 /** Kill a dev server process, falling back to SIGKILL after 5 seconds. */
-export async function killDevServer(proc: Subprocess, fixtureName: string): Promise<void> {
-  log(fixtureName, "killing dev server");
+export async function killDevServer(proc: Subprocess): Promise<void> {
+  log("killing dev server");
   proc.kill("SIGTERM");
 
   const timeout = setTimeout(() => {
@@ -237,5 +235,5 @@ export async function killDevServer(proc: Subprocess, fixtureName: string): Prom
     clearTimeout(timeout);
   }
 
-  log(fixtureName, "dev server stopped");
+  log("dev server stopped");
 }
