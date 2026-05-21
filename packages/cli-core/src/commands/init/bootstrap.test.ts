@@ -205,7 +205,7 @@ describe("promptAndBootstrap", () => {
       promptAndBootstrap("/tmp", undefined, { skipConfirm: true }),
     ).rejects.toMatchObject({
       name: "CliError",
-      exitCode: 2,
+      exitCode: 64,
       message: expect.stringContaining("Non-interactive mode requires --framework"),
     });
   });
@@ -234,7 +234,7 @@ describe("promptAndBootstrap", () => {
       promptAndBootstrap("/tmp", undefined, { skipConfirm: true, implicitBootstrap: true }),
     ).rejects.toMatchObject({
       name: "CliError",
-      exitCode: 2,
+      exitCode: 64,
       message: expect.stringContaining("--framework"),
     });
   });
