@@ -151,6 +151,71 @@ export class UserAbortError extends Error {
   }
 }
 
+interface ClerkErrorEntry {
+  code?: string;
+  message?: string;
+  long_message?: string;
+  meta?: Record<string, unknown>;
+}
+
+interface ClerkErrorEnvelope {
+  errors?: ClerkErrorEntry[];
+  clerk_trace_id?: string;
+}
+
+interface ParsedApiBody {
+  code: string | null;
+  message: string;
+  longMessage: string | null;
+  meta: Record<string, unknown> | null;
+  clerkTraceId: string | null;
+}
+
+const MAX_BODY_PREVIEW = 200;
+
+function truncateBody(body: string): string {
+  return body.length > MAX_BODY_PREVIEW ? body.slice(0, MAX_BODY_PREVIEW) + "..." : body;
+}
+
+function parseApiBody(status: number, body: string): ParsedApiBody {
+  const fallback = (msg: string): ParsedApiBody => ({
+    code: null,
+    message: msg,
+    longMessage: null,
+    meta: null,
+    clerkTraceId: null,
+  });
+
+  if (body.length === 0) {
+    return fallback(`API error (${status})`);
+  }
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(body);
+  } catch {
+    return fallback(truncateBody(body));
+  }
+
+  if (parsed === null || typeof parsed !== "object") {
+    return fallback(truncateBody(body));
+  }
+
+  const envelope = parsed as ClerkErrorEnvelope;
+  const first = envelope.errors?.[0];
+  if (!first) {
+    return fallback(truncateBody(body));
+  }
+
+  return {
+    code: first.code ?? null,
+    message: first.message ?? `API error (${status})`,
+    longMessage: first.long_message ?? null,
+    meta: first.meta ?? null,
+    clerkTraceId: envelope.clerk_trace_id ?? null,
+  };
+}
+
 /**
  * Base class for HTTP API errors.
  *
@@ -165,14 +230,23 @@ export class UserAbortError extends Error {
  */
 export class ApiError extends Error {
   public context?: string;
+  public code: string | null;
+  public longMessage: string | null;
+  public meta: Record<string, unknown> | null;
+  public clerkTraceId: string | null;
 
   constructor(
     public status: number,
     public body: string,
     public headers?: Headers,
   ) {
-    super(`API error (${status}): ${body}`);
+    const parsed = parseApiBody(status, body);
+    super(parsed.message);
     this.name = "ApiError";
+    this.code = parsed.code;
+    this.longMessage = parsed.longMessage;
+    this.meta = parsed.meta;
+    this.clerkTraceId = parsed.clerkTraceId;
   }
 }
 
@@ -194,6 +268,15 @@ export class PlapiError extends ApiError {
   ) {
     super(status, body);
     this.name = "PlapiError";
+  }
+
+  static fromBody(status: number, body: string, url?: string): PlapiError {
+    return new PlapiError(status, body, url);
+  }
+
+  static async fromResponse(response: Response): Promise<PlapiError> {
+    const body = await response.text();
+    return new PlapiError(response.status, body, response.url || undefined);
   }
 }
 
@@ -218,6 +301,15 @@ export class FapiError extends ApiError {
     super(status, body);
     this.name = "FapiError";
   }
+
+  static fromBody(status: number, body: string, url?: string): FapiError {
+    return new FapiError(status, body, url);
+  }
+
+  static async fromResponse(response: Response): Promise<FapiError> {
+    const body = await response.text();
+    return new FapiError(response.status, body, response.url || undefined);
+  }
 }
 
 /**
@@ -237,6 +329,15 @@ export class BapiError extends ApiError {
   constructor(status: number, body: string, headers: Headers) {
     super(status, body, headers);
     this.name = "BapiError";
+  }
+
+  static fromBody(status: number, body: string, headers: Headers): BapiError {
+    return new BapiError(status, body, headers);
+  }
+
+  static async fromResponse(response: Response): Promise<BapiError> {
+    const body = await response.text();
+    return new BapiError(response.status, body, response.headers);
   }
 }
 

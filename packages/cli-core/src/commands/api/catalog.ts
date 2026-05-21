@@ -8,7 +8,8 @@ import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import { CLERK_CACHE_DIR, CACHE_TTL_MS, OPENAPI_SPEC_URLS } from "../../lib/constants.ts";
 import { CliError, ERROR_CODE } from "../../lib/errors.ts";
-import { withHomeFsAccess, withNetworkAccess } from "../../lib/host-execution.ts";
+import { loggedFetch } from "../../lib/fetch.ts";
+import { withHomeFsAccess } from "../../lib/host-execution.ts";
 import { withSpinner } from "../../lib/spinner.ts";
 import { log } from "../../lib/log.ts";
 
@@ -141,10 +142,7 @@ export async function loadCatalog(options: { platform?: boolean } = {}): Promise
   const url = platform ? OPENAPI_SPEC_URLS.platform : OPENAPI_SPEC_URLS.bapi;
   try {
     const catalog = await withSpinner("Fetching API catalog...", async () => {
-      const response = await withNetworkAccess(
-        { operation: "connect", target: url, label: "api-catalog" },
-        async () => fetch(url),
-      );
+      const response = await loggedFetch(url, { tag: "api-catalog" });
       if (!response.ok) {
         throw new Error(`HTTP ${response.status}`);
       }

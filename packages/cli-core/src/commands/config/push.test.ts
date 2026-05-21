@@ -629,7 +629,7 @@ describe("config push", () => {
       instances: { development: "ins_dev" },
     });
 
-    await expect(runConfigPatch({ json: '{"a":1}', yes: true })).rejects.toThrow("API error");
+    await expect(runConfigPatch({ json: '{"a":1}', yes: true })).rejects.toThrow("Bad Request");
   });
 
   test("shows success message after push", async () => {

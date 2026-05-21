@@ -34,7 +34,7 @@ describe("exchangeCodeForToken", () => {
 
     const [, calledInit] = (globalThis.fetch as unknown as ReturnType<typeof mock>).mock.calls[0]!;
     expect(calledInit.method).toBe("POST");
-    expect(calledInit.headers["Content-Type"]).toBe("application/x-www-form-urlencoded");
+    expect(calledInit.headers.get("Content-Type")).toBe("application/x-www-form-urlencoded");
 
     const body = new URLSearchParams(calledInit.body);
     expect(body.get("grant_type")).toBe("authorization_code");
@@ -75,7 +75,7 @@ describe("exchangeCodeForToken", () => {
         codeVerifier: "verifier",
         redirectUri: "http://127.0.0.1:3000/callback",
       }),
-    ).rejects.toThrow("API error (400)");
+    ).rejects.toThrow("invalid_grant");
   });
 
   test("includes error body in thrown message", async () => {
@@ -118,7 +118,7 @@ describe("fetchUserInfo", () => {
     await fetchUserInfo("my-secret-token");
 
     const [, init] = (globalThis.fetch as unknown as ReturnType<typeof mock>).mock.calls[0]!;
-    expect(init.headers.Authorization).toBe("Bearer my-secret-token");
+    expect(init.headers.get("Authorization")).toBe("Bearer my-secret-token");
   });
 
   test("throws on non-OK response with status code", async () => {
@@ -126,7 +126,7 @@ describe("fetchUserInfo", () => {
       return new Response("Unauthorized", { status: 401 });
     }) as unknown as typeof fetch;
 
-    await expect(fetchUserInfo("expired-token")).rejects.toThrow("API error (401)");
+    await expect(fetchUserInfo("expired-token")).rejects.toThrow("Unauthorized");
   });
 
   test("includes response body in error message", async () => {
@@ -165,7 +165,7 @@ describe("refreshAccessToken", () => {
 
     const [, calledInit] = (globalThis.fetch as unknown as ReturnType<typeof mock>).mock.calls[0]!;
     expect(calledInit.method).toBe("POST");
-    expect(calledInit.headers["Content-Type"]).toBe("application/x-www-form-urlencoded");
+    expect(calledInit.headers.get("Content-Type")).toBe("application/x-www-form-urlencoded");
 
     const body = new URLSearchParams(calledInit.body);
     expect(body.get("grant_type")).toBe("refresh_token");

@@ -484,7 +484,7 @@ describe("env pull", () => {
       instances: { development: "ins_dev" },
     });
 
-    await expect(runEnvPull()).rejects.toThrow("API error");
+    await expect(runEnvPull()).rejects.toThrow("Unauthorized");
   });
 
   test("sends include_secret_keys=true in API request", async () => {

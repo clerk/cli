@@ -307,6 +307,6 @@ describe("config pull", () => {
       instances: { development: "ins_dev" },
     });
 
-    await expect(runConfigPull()).rejects.toThrow("API error");
+    await expect(runConfigPull()).rejects.toThrow("Unauthorized");
   });
 });

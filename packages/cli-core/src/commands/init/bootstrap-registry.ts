@@ -1,4 +1,4 @@
-import type { PackageManager } from "../../lib/package-manager.ts";
+import { PM_INSTALL_HARDENING_FLAGS, type PackageManager } from "../../lib/package-manager.ts";
 
 export type BootstrapEntry = {
   label: string;
@@ -147,9 +147,15 @@ export const BOOTSTRAP_REGISTRY: BootstrapEntry[] = [
   ...BOOTSTRAP_AUTHENTICATED_REGISTRY,
 ];
 
+// Hardening flags come from PM_INSTALL_HARDENING_FLAGS (see package-manager.ts
+// for the threat model). `clerk init --starter` runs this in projectDir,
+// which is freshly scaffolded from an official template but lives inside the
+// user's cwd — defense-in-depth covers a hypothetical attacker-planted
+// `.pnpmfile.cjs` or lifecycle script in the template, and keeps both install
+// surfaces (this one and the SDK install in heuristics.ts) symmetric.
 export const PM_INSTALL_COMMANDS: Record<PackageManager, string[]> = {
-  npm: ["npm", "install"],
-  yarn: ["yarn", "install"],
-  pnpm: ["pnpm", "install"],
-  bun: ["bun", "install"],
+  npm: ["npm", "install", ...PM_INSTALL_HARDENING_FLAGS.npm],
+  yarn: ["yarn", "install", ...PM_INSTALL_HARDENING_FLAGS.yarn],
+  pnpm: ["pnpm", "install", ...PM_INSTALL_HARDENING_FLAGS.pnpm],
+  bun: ["bun", "install", ...PM_INSTALL_HARDENING_FLAGS.bun],
 };

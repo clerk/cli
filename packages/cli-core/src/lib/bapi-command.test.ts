@@ -39,7 +39,7 @@ describe("bapi-command", () => {
 
   test("prints raw BAPI error bodies for machine use", () => {
     const handled = handleBapiError(
-      new BapiError(
+      BapiError.fromBody(
         422,
         JSON.stringify({
           errors: [

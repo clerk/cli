@@ -582,7 +582,7 @@ describe("link", () => {
     test("shows picker with only create option when listApplications fails with 500", async () => {
       mockIsAgent.mockReturnValue(false);
       mockGetToken.mockResolvedValue("token");
-      mockListApplications.mockRejectedValue(new PlapiError(500, "Internal Server Error"));
+      mockListApplications.mockRejectedValue(PlapiError.fromBody(500, "Internal Server Error"));
       mockSearch.mockImplementation(
         async (config: {
           source: (term: string | undefined) => { name: string; value: string }[];
@@ -617,7 +617,7 @@ describe("link", () => {
     test("propagates listApplications errors that are not 5xx", async () => {
       mockIsAgent.mockReturnValue(false);
       mockGetToken.mockResolvedValue("token");
-      mockListApplications.mockRejectedValue(new PlapiError(401, "Unauthorized"));
+      mockListApplications.mockRejectedValue(PlapiError.fromBody(401, "Unauthorized"));
 
       await expect(runLink()).rejects.toBeInstanceOf(PlapiError);
     });
@@ -1243,7 +1243,7 @@ describe("link", () => {
       mockListApplications.mockResolvedValue([mockApp]);
       mockSearch.mockResolvedValue("__create_new__");
       mockInput.mockResolvedValue("My App");
-      mockCreateApplication.mockRejectedValue(new PlapiError(422, "Unprocessable Entity"));
+      mockCreateApplication.mockRejectedValue(PlapiError.fromBody(422, "Unprocessable Entity"));
 
       await expect(link()).rejects.toBeInstanceOf(PlapiError);
       expect(mockSetProfile).not.toHaveBeenCalled();
@@ -1260,7 +1260,7 @@ describe("link", () => {
         name: "My App",
         instances: [],
       });
-      mockFetchApplication.mockRejectedValue(new PlapiError(503, "Service Unavailable"));
+      mockFetchApplication.mockRejectedValue(PlapiError.fromBody(503, "Service Unavailable"));
 
       await expect(link()).rejects.toBeInstanceOf(PlapiError);
       expect(mockSetProfile).not.toHaveBeenCalled();
