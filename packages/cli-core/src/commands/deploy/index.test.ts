@@ -3,7 +3,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { join, relative } from "node:path";
 import { tmpdir } from "node:os";
 import { useCaptureLog, promptsStubs, listageStubs } from "../../test/lib/stubs.ts";
-import { CliError, EXIT_CODE, UserAbortError } from "../../lib/errors.ts";
+import { CliError, ERROR_CODE, EXIT_CODE, PlapiError, UserAbortError } from "../../lib/errors.ts";
 
 const mockIsAgent = mock();
 let _modeOverride: string | undefined;
@@ -33,7 +33,6 @@ const mockGetDeployStatus = mock();
 const mockTriggerDomainDnsCheck = mock();
 const mockRetrySSL = mock();
 const mockRetryMail = mock();
-const mockDomainConnectUrl = mock();
 
 mock.module("@inquirer/prompts", () => ({
   ...promptsStubs,
@@ -63,10 +62,6 @@ mock.module("../../lib/plapi.ts", () => ({
   triggerDomainDnsCheck: (...args: unknown[]) => mockTriggerDomainDnsCheck(...args),
   retryApplicationDomainSSL: (...args: unknown[]) => mockRetrySSL(...args),
   retryApplicationDomainMail: (...args: unknown[]) => mockRetryMail(...args),
-}));
-
-mock.module("./domain-connect.ts", () => ({
-  domainConnectUrl: (...args: unknown[]) => mockDomainConnectUrl(...args),
 }));
 
 mock.module("../../lib/sleep.ts", () => ({
@@ -169,7 +164,6 @@ describe("deploy", () => {
         };
       },
     );
-    mockDomainConnectUrl.mockReturnValue(undefined);
   });
 
   afterEach(async () => {
@@ -193,12 +187,21 @@ describe("deploy", () => {
     mockTriggerDomainDnsCheck.mockReset();
     mockRetrySSL.mockReset();
     mockRetryMail.mockReset();
-    mockDomainConnectUrl.mockReset();
     consoleSpy?.mockRestore();
   });
 
   function runDeploy(options: Parameters<typeof deploy>[0]) {
     return deploy(options);
+  }
+
+  async function runDeployUntilPause(options: Parameters<typeof deploy>[0] = {}) {
+    try {
+      await runDeploy(options);
+    } catch (error) {
+      if (!(error instanceof CliError) || !error.message.includes("Deploy paused")) {
+        throw error;
+      }
+    }
   }
 
   async function linkedProject(profile: Record<string, unknown> = {}) {
@@ -370,7 +373,7 @@ describe("deploy", () => {
 
     async function runDnsHandoff() {
       mockHumanFlow();
-      await runDeploy({});
+      await runDeployUntilPause();
       mockLiveProduction();
       captured.clear();
       mockConfirm.mockReset();
@@ -390,7 +393,7 @@ describe("deploy", () => {
       mockHumanFlow();
       consoleSpy = spyOn(console, "log").mockImplementation(() => {});
 
-      await runDeploy({});
+      await runDeployUntilPause();
 
       const allOutput = captured.out;
       expect(allOutput).not.toContain("deploying a Clerk application to production");
@@ -400,7 +403,7 @@ describe("deploy", () => {
       await linkedProject();
       mockHumanFlow();
 
-      await runDeploy({});
+      await runDeployUntilPause();
 
       expect(mockValidateCloning).toHaveBeenCalledWith("app_xyz789", {
         clone_instance_id: "ins_dev_123",
@@ -411,7 +414,7 @@ describe("deploy", () => {
       await linkedProject();
       mockHumanFlow();
 
-      await runDeploy({});
+      await runDeployUntilPause();
       const err = stripAnsi(captured.err);
 
       const productionCheckIndex = err.indexOf("Checking for production instance...");
@@ -432,7 +435,7 @@ describe("deploy", () => {
         unrelated_key: "ignored",
       });
 
-      await runDeploy({});
+      await runDeployUntilPause();
       const err = stripAnsi(captured.err);
 
       expect(mockFetchInstanceConfig).toHaveBeenCalledWith("app_xyz789", "ins_dev_123");
@@ -550,7 +553,7 @@ describe("deploy", () => {
       await linkedProject();
       mockHumanFlow();
 
-      await runDeploy({});
+      await runDeployUntilPause();
       const err = stripAnsi(captured.err);
 
       expect(mockConfirm).toHaveBeenCalledWith({ message: "Proceed?", default: true });
@@ -565,7 +568,7 @@ describe("deploy", () => {
       await linkedProject();
       mockHumanFlow();
 
-      await runDeploy({});
+      await runDeployUntilPause();
 
       const firstInputArg = mockInput.mock.calls[0]?.[0] as {
         message: string;
@@ -643,7 +646,7 @@ describe("deploy", () => {
       mockSelect.mockResolvedValueOnce("skip").mockResolvedValueOnce("skip");
       mockInput.mockResolvedValueOnce("example.com");
 
-      await runDeploy({});
+      await runDeployUntilPause();
       const err = stripAnsi(captured.err);
       expect(err).toContain("Clerk will associate these subdomains with example.com");
       expect(err).toContain("clerk.example.com");
@@ -1143,7 +1146,7 @@ describe("deploy", () => {
       mockSelect.mockResolvedValueOnce("skip").mockResolvedValueOnce("skip");
       mockInput.mockResolvedValueOnce("example.com");
 
-      await runDeploy({});
+      await runDeployUntilPause();
       const err = stripAnsi(captured.err);
       expect(err).toContain("Check the Domains section in the Clerk Dashboard");
       expect(err).toContain("DNS propagation can take time");
@@ -1246,7 +1249,7 @@ describe("deploy", () => {
       mockSelect.mockResolvedValueOnce("skip").mockResolvedValueOnce("skip");
       mockInput.mockResolvedValueOnce("example.com");
 
-      await runDeploy({});
+      await runDeployUntilPause();
       mockLiveProduction();
       expect(stripAnsi(captured.err)).toContain("Check the Domains section in the Clerk Dashboard");
       expect(stripAnsi(captured.err)).toContain("Skipping DNS verification for now.");
@@ -1296,10 +1299,17 @@ describe("deploy", () => {
       await runDnsHandoff();
       mockSelect.mockResolvedValueOnce("skip");
 
-      await runDeploy({});
+      let pauseError: CliError | undefined;
+      try {
+        await runDeploy({});
+      } catch (caught) {
+        pauseError = caught as CliError;
+      }
+      expect(pauseError?.message).toContain("Deploy paused at: Google OAuth credential setup");
+      expect(pauseError?.message).toContain("Run `clerk deploy` again");
+      expect(pauseError?.exitCode).toBe(EXIT_CODE.GENERAL);
       const pausedErr = stripAnsi(captured.err);
-      expect(pausedErr).toContain("Deploy paused");
-      expect(pausedErr).toContain("Run `clerk deploy` again");
+      expect(pausedErr).toContain("Paused");
 
       captured.clear();
       mockConfirm.mockReset();
@@ -1338,7 +1348,14 @@ describe("deploy", () => {
       mockPassword.mockResolvedValueOnce("google-secret");
       mockPatchInstanceConfig.mockResolvedValueOnce({});
 
-      await runDeploy({});
+      let pauseError: CliError | undefined;
+      try {
+        await runDeploy({});
+      } catch (caught) {
+        pauseError = caught as CliError;
+      }
+      expect(pauseError?.message).toContain("Deploy paused at: GitHub OAuth credential setup");
+      expect(pauseError?.exitCode).toBe(EXIT_CODE.GENERAL);
       mockLiveProduction({
         developmentConfig: {
           connection_oauth_google: { enabled: true },
@@ -1474,7 +1491,7 @@ describe("deploy", () => {
         connection_oauth_facebook: { enabled: true },
       });
 
-      await runDeploy({});
+      await runDeployUntilPause();
       const err = stripAnsi(captured.err);
 
       expect(err).toContain("Configure Google OAuth credentials");
@@ -1482,6 +1499,72 @@ describe("deploy", () => {
       expect(err).toContain("discord");
       expect(err).toContain("facebook");
       expect(err).toContain("Configure them from the Clerk Dashboard before going live");
+    });
+
+    test("unlinked directory throws NOT_LINKED instead of warning and exiting 0", async () => {
+      tempDir = await mkdtemp(join(tmpdir(), "clerk-deploy-test-"));
+      _setConfigDir(tempDir);
+      mockIsAgent.mockReturnValue(false);
+
+      let thrown: CliError | undefined;
+      try {
+        await runDeploy({});
+      } catch (caught) {
+        thrown = caught as CliError;
+      }
+      expect(thrown).toBeInstanceOf(CliError);
+      expect(thrown?.code).toBe(ERROR_CODE.NOT_LINKED);
+      expect(thrown?.message).toContain("No Clerk project linked");
+      expect(mockFetchApplication).not.toHaveBeenCalled();
+    });
+
+    test("recovers from 409 production_instance_exists and persists the recovered instance id", async () => {
+      await linkedProject();
+      mockIsAgent.mockReturnValue(false);
+      mockConfirm.mockResolvedValueOnce(true).mockResolvedValueOnce(true);
+      mockInput.mockResolvedValueOnce("example.com");
+      mockCreateProductionInstance.mockReset();
+      mockCreateProductionInstance.mockRejectedValueOnce(
+        new PlapiError(
+          409,
+          JSON.stringify({ errors: [{ code: "production_instance_exists", message: "exists" }] }),
+        ),
+      );
+      // First fetchApplication call (during resolveDeployContext) sees no production
+      // instance, so the wizard takes the startNewDeploy path and hits the 409.
+      mockFetchApplication.mockResolvedValueOnce({
+        application_id: "app_xyz789",
+        name: "my-saas-app",
+        instances: [
+          {
+            instance_id: "ins_dev_123",
+            environment_type: "development",
+            publishable_key: "pk_test_123",
+          },
+        ],
+      });
+      // Subsequent reads (the recovery refresh + reconcile) see the production
+      // instance that another flow created, with google OAuth already configured.
+      mockLiveProduction({
+        instanceId: "ins_prod_recovered",
+        productionConfig: {
+          connection_oauth_google: {
+            enabled: true,
+            client_id: "google-client-id.apps.googleusercontent.com",
+            client_secret: "REDACTED",
+          },
+        },
+      });
+
+      await runDeploy({});
+
+      const err = stripAnsi(captured.err);
+      expect(err).toContain("A production instance already exists");
+      expect(err).toContain("Resuming the existing deploy");
+      expect(err).toContain("Production ready at https://example.com");
+      expect(mockFetchApplication.mock.calls.length).toBeGreaterThanOrEqual(2);
+      const config = await readConfig();
+      expect(config.profiles[process.cwd()]?.instances.production).toBe("ins_prod_recovered");
     });
   });
 });

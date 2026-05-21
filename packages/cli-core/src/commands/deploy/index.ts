@@ -2,7 +2,13 @@ import { isAgent } from "../../mode.ts";
 import { isInsideGutter, log } from "../../lib/log.ts";
 import { sleep } from "../../lib/sleep.ts";
 import { bar, intro, outro, withSpinner } from "../../lib/spinner.ts";
-import { CliError, UserAbortError, isPromptExitError, throwUsageError } from "../../lib/errors.ts";
+import {
+  CliError,
+  ERROR_CODE,
+  UserAbortError,
+  isPromptExitError,
+  throwUsageError,
+} from "../../lib/errors.ts";
 import { resolveProfile, setProfile } from "../../lib/config.ts";
 import {
   createProductionInstance as apiCreateProductionInstance,
@@ -18,7 +24,6 @@ import {
   type DeployStatusResponse,
   type ProductionInstanceResponse,
 } from "../../lib/plapi.ts";
-import { domainConnectUrl } from "./domain-connect.ts";
 import {
   INTRO_PREAMBLE,
   NEXT_STEPS_BLOCK,
@@ -34,7 +39,6 @@ import {
   dnsDashboardHandoff,
   dnsIntro,
   dnsRecords,
-  pausedOperationNotice,
   printPlan,
   productionSummary,
 } from "./copy.ts";
@@ -149,12 +153,10 @@ async function resolveLiveApplicationContext(profile: DeployContext["profile"]):
 
 async function runDeploy(ctx: DeployContext): Promise<void> {
   if (!ctx.appId || !ctx.developmentInstanceId) {
-    log.blank();
-    log.warn(
+    throw new CliError(
       "No Clerk project linked to this directory. Run `clerk link`, then rerun `clerk deploy`.",
+      { code: ERROR_CODE.NOT_LINKED },
     );
-    outro("Link required");
-    return;
   }
 
   if (ctx.productionInstanceId) {
@@ -212,6 +214,9 @@ async function startNewDeploy(ctx: DeployContext): Promise<void> {
       resolveLiveApplicationContext(ctx.profile),
     );
     ctx.productionInstanceId = refreshed.productionInstanceId;
+    if (refreshed.productionInstanceId) {
+      await persistProductionInstance(ctx, refreshed.productionInstanceId);
+    }
     await reconcileExistingDeploy(ctx);
     return;
   }
@@ -545,12 +550,6 @@ async function runDnsSetup(
   for (const line of dnsRecords(cnameTargets)) log.info(line);
   log.blank();
 
-  const connectUrl = domainConnectUrl(state.domain);
-  if (connectUrl) {
-    log.info(`Domain Connect: ${connectUrl}`);
-    log.blank();
-  }
-
   for (const line of dnsDashboardHandoff(state.domain)) log.info(line);
   log.blank();
   await offerBindZoneExport(state.domain, cnameTargets);
@@ -579,11 +578,6 @@ async function runExistingDomainDnsVerification(
   log.blank();
   if (state.cnameTargets && state.cnameTargets.length > 0) {
     for (const line of dnsRecords(state.cnameTargets)) log.info(line);
-    log.blank();
-  }
-  const connectUrl = domainConnectUrl(state.domain);
-  if (connectUrl) {
-    log.info(`Domain Connect: ${connectUrl}`);
     log.blank();
   }
   for (const line of dnsDashboardHandoff(state.domain)) log.info(line);
@@ -619,43 +613,44 @@ async function runDnsVerification(
     );
   }
 
-  await requestDomainDnsCheck(ctx.appId, state.productionDomainId ?? state.domain);
+  while (true) {
+    await requestDomainDnsCheck(ctx.appId, state.productionDomainId ?? state.domain);
 
-  const outcome = await pollDeployStatus(ctx.appId, productionInstanceId, state.domain);
+    const outcome = await pollDeployStatus(ctx.appId, productionInstanceId, state.domain);
 
-  if (outcome.verified) {
+    if (outcome.verified) {
+      log.blank();
+      log.info(deployComponentStatus(outcome.status));
+      return "verified";
+    }
+
     log.blank();
     log.info(deployComponentStatus(outcome.status));
-    return "verified";
-  }
-
-  log.blank();
-  log.info(deployComponentStatus(outcome.status));
-  log.blank();
-  for (const line of deployStatusPendingFooter(state.domain, outcome.status)) {
-    log.warn(line);
-  }
-
-  // When all DNS components are verified but the server has not yet marked the
-  // deployment complete (proxy_ok or another server-side gate is still pending),
-  // do not offer a retry — the user cannot influence the remaining wait. Fail
-  // closed so the caller exits without reaching finishDeploy.
-  if (outcome.status.dns && outcome.status.ssl && outcome.status.mail) {
-    return false;
-  }
-
-  if (state.cnameTargets && state.cnameTargets.length > 0) {
     log.blank();
-    for (const line of dnsRecords(state.cnameTargets)) log.info(line);
-  }
-  log.blank();
-  const action = await chooseDnsVerificationAction();
-  if (action === "skip") {
+    for (const line of deployStatusPendingFooter(state.domain, outcome.status)) {
+      log.warn(line);
+    }
+
+    // When all DNS components are verified but the server has not yet marked the
+    // deployment complete (proxy_ok or another server-side gate is still pending),
+    // do not offer a retry — the user cannot influence the remaining wait. Fail
+    // closed so the caller exits without reaching finishDeploy.
+    if (outcome.status.dns && outcome.status.ssl && outcome.status.mail) {
+      return false;
+    }
+
+    if (state.cnameTargets && state.cnameTargets.length > 0) {
+      log.blank();
+      for (const line of dnsRecords(state.cnameTargets)) log.info(line);
+    }
     log.blank();
-    log.info("Skipping DNS verification for now.");
-    return "pending";
+    const action = await chooseDnsVerificationAction();
+    if (action === "skip") {
+      log.blank();
+      log.info("Skipping DNS verification for now.");
+      return "pending";
+    }
   }
-  return runDnsVerification(ctx, state);
 }
 
 type DeployStatusOutcome =
@@ -730,18 +725,14 @@ async function runOAuthSetup(
   state: DeployOperationState,
 ): Promise<OAuthProvider[]> {
   const completed = new Set(state.completedOAuthProviders as OAuthProvider[]);
-  const startIndex =
-    state.pending.type === "oauth"
-      ? Math.max(0, state.oauthProviders.indexOf(state.pending.provider as OAuthProvider))
-      : 0;
+  const providers = state.oauthProviders as OAuthProvider[];
 
-  if (state.oauthProviders.length > 0) {
+  if (providers.length > 0) {
     log.info(OAUTH_SECTION_INTRO);
     log.blank();
   }
 
-  const pendingProviders = state.oauthProviders.slice(startIndex) as OAuthProvider[];
-  for (const provider of pendingProviders) {
+  for (const provider of providers) {
     if (completed.has(provider)) continue;
     try {
       const productionInstanceId =
@@ -759,24 +750,27 @@ async function runOAuthSetup(
         productionInstanceId,
       );
       if (!saved) {
-        log.blank();
-        log.info(pausedOperationNotice());
-        outro("Paused");
-        return [...completed];
+        throw deployPausedError({
+          ...state,
+          pending: { type: "oauth", provider },
+          completedOAuthProviders: [...completed],
+        });
       }
     } catch (error) {
       if (isPromptExitError(error)) {
-        const interruptedState = {
-          ...state,
-          pending: { type: "oauth" as const, provider },
-          completedOAuthProviders: [...completed],
-        };
-        throw deployPausedError(interruptedState, { interrupted: true });
+        throw deployPausedError(
+          {
+            ...state,
+            pending: { type: "oauth", provider },
+            completedOAuthProviders: [...completed],
+          },
+          { interrupted: true },
+        );
       }
       throw error;
     }
     completed.add(provider);
-    if (pendingProviders.some((nextProvider) => !completed.has(nextProvider))) {
+    if (providers.some((nextProvider) => !completed.has(nextProvider))) {
       log.blank();
     }
   }

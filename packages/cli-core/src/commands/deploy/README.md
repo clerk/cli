@@ -4,7 +4,7 @@
 
 Guides a user through deploying their Clerk application to production.
 
-When the CLI reaches the DNS configuration step, it displays the required CNAME records and a Domain Connect URL, then prompts the user to export those records as a BIND zone file (`./clerk-<domain>.zone`). The prompt defaults to "no" and the file is overwritten silently on subsequent runs. This applies to both new deploys and resumed deploys, so users who return to finish an interrupted deploy see the same records preamble that the initial run shows.
+When the CLI reaches the DNS configuration step, it displays the required CNAME records and then prompts the user to export those records as a BIND zone file (`./clerk-<domain>.zone`). The prompt defaults to "no" and the file is overwritten silently on subsequent runs. This applies to both new deploys and resumed deploys, so users who return to finish an interrupted deploy see the same records preamble that the initial run shows.
 
 Once DNS records are added and the user proceeds to verification, the CLI runs a chain of three per-component spinners covering mail, DNS, and SSL in sequence. Each spinner resolves independently and emits a confirmation line as its component flips true, so the user sees incremental progress instead of a single opaque wait. All three spinners share the same five-minute wall-clock cap.
 
