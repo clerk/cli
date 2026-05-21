@@ -52,9 +52,24 @@ const KEY = {
   P_UPPER: 80,
   Q_LOWER: 113,
   Q_UPPER: 81,
+  N_LOWER: 110,
+  N_UPPER: 78,
+  L_LOWER: 108,
+  L_UPPER: 76,
+  D_LOWER: 100,
+  D_UPPER: 68,
+  Y_LOWER: 121,
+  Y_UPPER: 89,
+  J_LOWER: 106,
+  J_UPPER: 74,
+  K_LOWER: 107,
+  K_UPPER: 75,
   ESC: 27,
   CTRL_C: 3,
+  CTRL_H: 8,
+  BACKSPACE: 127,
   ARROW_UP_SEQ: [27, 91, 65] as const,
+  ARROW_DOWN_SEQ: [27, 91, 66] as const,
 } as const;
 
 // ═══════════════════════════════════════════════════════
@@ -165,7 +180,7 @@ interface Cloud {
   y: number;
   w: number;
 }
-type Phase = "title" | "play" | "paused" | "dead";
+type Phase = "title" | "play" | "paused" | "dead" | "name-entry" | "leaderboard";
 
 interface GameState {
   W: number;
@@ -191,9 +206,20 @@ interface GameState {
   shake: { frames: number; intensity: number };
   stopped: boolean;
   stop: () => void;
+  rankings: RankingEntry[];
+  nameInput: string;
+  lastSavedEntry: RankingEntry | null;
+  selectedRank: number | null;
+  confirmingDelete: boolean;
 }
 
-function makeState(W: number, H: number, offsetX: number, best: number): GameState {
+function makeState(
+  W: number,
+  H: number,
+  offsetX: number,
+  best: number,
+  rankings: RankingEntry[],
+): GameState {
   const gs: GameState = {
     W,
     H,
@@ -218,6 +244,11 @@ function makeState(W: number, H: number, offsetX: number, best: number): GameSta
     shake: { frames: 0, intensity: 0 },
     stopped: false,
     stop: () => {},
+    rankings,
+    nameInput: "",
+    lastSavedEntry: null,
+    selectedRank: null,
+    confirmingDelete: false,
   };
   initClouds(gs);
   return gs;
@@ -238,6 +269,9 @@ function resetGame(gs: GameState): void {
     gap: BASE_GAP,
     shake: { frames: 0, intensity: 0 },
     phase: "play" as Phase,
+    lastSavedEntry: null,
+    selectedRank: null,
+    confirmingDelete: false,
   });
   for (let i = 0; i < 4; i++) spawnPipe(gs, gs.W + i * DIST);
 }
@@ -259,6 +293,107 @@ async function loadBest(): Promise<number> {
 
 function saveBest(n: number): void {
   void Bun.write(BEST_FILE, String(n)).catch(() => {
+    /* best-effort */
+  });
+}
+
+// ═══════════════════════════════════════════════════════
+// Audio
+// ═══════════════════════════════════════════════════════
+
+// ASCII BEL — the host terminal plays/flashes/ignores per the user's bell setting.
+export function beep(stream: { write(chunk: string): unknown } = process.stdout): void {
+  stream.write("\x07");
+}
+
+// ═══════════════════════════════════════════════════════
+// Farewell
+// ═══════════════════════════════════════════════════════
+
+const CHANGELOG_URL = "https://clerk.com/changelog";
+
+function printFarewell(): void {
+  // OSC 8 hyperlink — clickable in modern terminals, plain URL in older ones.
+  const link = `\x1b]8;;${CHANGELOG_URL}\x1b\\${CHANGELOG_URL}\x1b]8;;\x1b\\`;
+  process.stdout.write(
+    "\n" +
+      `${COL.dim}Thanks for flying with us!${ansi.reset}\n` +
+      `${COL.dim}See what we're shipping next →${ansi.reset} ${COL.title}${ansi.bold}${link}${ansi.reset}\n` +
+      "\n",
+  );
+}
+
+// ═══════════════════════════════════════════════════════
+// Rankings I/O
+// ═══════════════════════════════════════════════════════
+
+const RANKINGS_FILE = join(homedir(), ".flap-rankings.json");
+const MAX_RANKINGS = 10;
+const MAX_NAME_LEN = 12;
+const NAME_FRAME_INNER = MAX_NAME_LEN + 2;
+const NAME_FRAME_TOP = "┌" + "─".repeat(NAME_FRAME_INNER) + "┐";
+const NAME_FRAME_BOT = "└" + "─".repeat(NAME_FRAME_INNER) + "┘";
+
+interface RankingEntry {
+  name: string;
+  score: number;
+  ts: number;
+}
+
+interface RankingsFile {
+  version: 1;
+  entries: RankingEntry[];
+}
+
+function sortRankings(entries: RankingEntry[]): RankingEntry[] {
+  return [...entries].sort((a, b) => b.score - a.score || a.ts - b.ts);
+}
+
+export function insertEntry(
+  list: RankingEntry[],
+  entry: RankingEntry,
+  cap: number = MAX_RANKINGS,
+): { list: RankingEntry[]; rank: number | null } {
+  const next = sortRankings([...list, entry]).slice(0, cap);
+  const rank = next.indexOf(entry);
+  return { list: next, rank: rank === -1 ? null : rank + 1 };
+}
+
+export function removeRanking(list: RankingEntry[], rank: number): RankingEntry[] {
+  if (rank < 1 || rank > list.length) return list;
+  return [...list.slice(0, rank - 1), ...list.slice(rank)];
+}
+
+function sanitizeEntry(raw: unknown): RankingEntry | null {
+  if (!raw || typeof raw !== "object") return null;
+  const r = raw as Record<string, unknown>;
+  if (typeof r["name"] !== "string") return null;
+  if (typeof r["score"] !== "number" || !Number.isFinite(r["score"])) return null;
+  if (typeof r["ts"] !== "number" || !Number.isFinite(r["ts"])) return null;
+  const name = r["name"].slice(0, MAX_NAME_LEN).replace(/[^\x20-\x7e]/g, "");
+  return { name, score: Math.floor(r["score"]), ts: Math.floor(r["ts"]) };
+}
+
+export async function loadRankings(file: string = RANKINGS_FILE): Promise<RankingEntry[]> {
+  try {
+    const text = await Bun.file(file).text();
+    const parsed = JSON.parse(text) as unknown;
+    const entriesRaw = (parsed as { entries?: unknown })?.entries;
+    if (!Array.isArray(entriesRaw)) return [];
+    const cleaned: RankingEntry[] = [];
+    for (const e of entriesRaw) {
+      const ok = sanitizeEntry(e);
+      if (ok) cleaned.push(ok);
+    }
+    return sortRankings(cleaned).slice(0, MAX_RANKINGS);
+  } catch {
+    return [];
+  }
+}
+
+function saveRankings(entries: RankingEntry[], file: string = RANKINGS_FILE): void {
+  const payload: RankingsFile = { version: 1, entries: entries.slice(0, MAX_RANKINGS) };
+  void Bun.write(file, JSON.stringify(payload, null, 2)).catch(() => {
     /* best-effort */
   });
 }
@@ -286,11 +421,19 @@ function computeLayout(): Layout | null {
 // Input
 // ═══════════════════════════════════════════════════════
 
+const FLAP_KEYS = new Set<number>([
+  KEY.SPACE,
+  KEY.ENTER,
+  KEY.W_LOWER,
+  KEY.W_UPPER,
+  KEY.K_LOWER,
+  KEY.K_UPPER,
+]);
+
 function isFlap(data: Buffer): boolean {
   const k = data[0];
-  if (k === KEY.SPACE || k === KEY.ENTER || k === KEY.W_LOWER || k === KEY.W_UPPER) return true;
-  const [a, b, c] = KEY.ARROW_UP_SEQ;
-  return data.length >= 3 && k === a && data[1] === b && data[2] === c;
+  if (k !== undefined && FLAP_KEYS.has(k)) return true;
+  return isArrowSeq(data, KEY.ARROW_UP_SEQ);
 }
 
 function isPause(data: Buffer): boolean {
@@ -303,7 +446,180 @@ function isQuit(data: Buffer): boolean {
   return k === KEY.Q_LOWER || k === KEY.Q_UPPER || k === KEY.CTRL_C;
 }
 
+function isOpenNameEntry(data: Buffer): boolean {
+  const k = data[0];
+  return data.length === 1 && (k === KEY.N_LOWER || k === KEY.N_UPPER);
+}
+
+function isOpenLeaderboard(data: Buffer): boolean {
+  const k = data[0];
+  return data.length === 1 && (k === KEY.L_LOWER || k === KEY.L_UPPER);
+}
+
+function isArrowSeq(data: Buffer, seq: readonly [number, number, number]): boolean {
+  return data.length >= 3 && data[0] === seq[0] && data[1] === seq[1] && data[2] === seq[2];
+}
+
+function newRankOf(gs: GameState): number | null {
+  if (!gs.lastSavedEntry) return null;
+  const idx = gs.rankings.indexOf(gs.lastSavedEntry);
+  return idx === -1 ? null : idx + 1;
+}
+
+function enterLeaderboard(gs: GameState): void {
+  gs.phase = "leaderboard";
+  gs.confirmingDelete = false;
+  gs.pendingFlap = false;
+  gs.selectedRank = newRankOf(gs) ?? (gs.rankings.length > 0 ? 1 : null);
+}
+
+function moveSelection(gs: GameState, delta: number): void {
+  if (gs.rankings.length === 0) {
+    gs.selectedRank = null;
+    return;
+  }
+  const cur = gs.selectedRank ?? 1;
+  gs.selectedRank = Math.max(1, Math.min(gs.rankings.length, cur + delta));
+}
+
+function deleteSelected(gs: GameState): void {
+  gs.confirmingDelete = false;
+  if (gs.selectedRank === null) return;
+  const next = removeRanking(gs.rankings, gs.selectedRank);
+  if (next === gs.rankings) return; // nothing changed (out of range)
+  gs.rankings = next;
+  saveRankings(next);
+  gs.selectedRank = next.length === 0 ? null : Math.min(gs.selectedRank, next.length);
+}
+
+function commitNameEntry(gs: GameState): void {
+  const trimmed = gs.nameInput.trim().slice(0, MAX_NAME_LEN);
+  if (trimmed.length === 0) {
+    gs.lastSavedEntry = null;
+    enterLeaderboard(gs);
+    return;
+  }
+  const entry: RankingEntry = { name: trimmed, score: gs.score, ts: Date.now() };
+  const { list, rank } = insertEntry(gs.rankings, entry);
+  gs.rankings = list;
+  gs.lastSavedEntry = rank !== null ? entry : null;
+  saveRankings(list);
+  enterLeaderboard(gs);
+}
+
+function handleNameInput(data: Buffer, gs: GameState): void {
+  const k = data[0];
+
+  // ESC alone cancels — note that arrow keys also start with ESC but have length 3+.
+  if (k === KEY.ESC && data.length === 1) {
+    gs.lastSavedEntry = null;
+    enterLeaderboard(gs);
+    return;
+  }
+
+  if (k === KEY.ENTER) {
+    commitNameEntry(gs);
+    return;
+  }
+
+  if (k === KEY.BACKSPACE || k === KEY.CTRL_H) {
+    if (gs.nameInput.length > 0) gs.nameInput = gs.nameInput.slice(0, -1);
+    return;
+  }
+
+  if (data.length !== 1 || k === undefined || k < 32 || k > 126) return;
+  if (gs.nameInput.length >= MAX_NAME_LEN) return;
+  gs.nameInput += String.fromCharCode(k);
+}
+
+function handleDeleteConfirm(data: Buffer, gs: GameState): void {
+  const k = data[0];
+  if (data.length === 1 && (k === KEY.Y_LOWER || k === KEY.Y_UPPER)) {
+    deleteSelected(gs);
+    return;
+  }
+  // Anything else (N, ESC, D, even Q) just cancels the prompt.
+  // Q won't quit during a confirmation — user can press Q again afterwards.
+  gs.confirmingDelete = false;
+}
+
+function isLeaderboardRetry(data: Buffer): boolean {
+  if (data.length !== 1) return false;
+  const k = data[0];
+  return k === KEY.SPACE || k === KEY.ENTER || k === KEY.W_LOWER || k === KEY.W_UPPER;
+}
+
+function handleLeaderboardInput(data: Buffer, gs: GameState): void {
+  if (gs.confirmingDelete) {
+    handleDeleteConfirm(data, gs);
+    return;
+  }
+
+  const k = data[0];
+  if (data.length === 1 && (k === KEY.Q_LOWER || k === KEY.Q_UPPER)) {
+    gs.stop();
+    return;
+  }
+
+  if (
+    isArrowSeq(data, KEY.ARROW_UP_SEQ) ||
+    (data.length === 1 && (k === KEY.K_LOWER || k === KEY.K_UPPER))
+  ) {
+    moveSelection(gs, -1);
+    return;
+  }
+  if (
+    isArrowSeq(data, KEY.ARROW_DOWN_SEQ) ||
+    (data.length === 1 && (k === KEY.J_LOWER || k === KEY.J_UPPER))
+  ) {
+    moveSelection(gs, 1);
+    return;
+  }
+
+  if (data.length === 1 && (k === KEY.D_LOWER || k === KEY.D_UPPER)) {
+    if (gs.selectedRank !== null && gs.rankings.length > 0) gs.confirmingDelete = true;
+    return;
+  }
+
+  if (isLeaderboardRetry(data)) {
+    resetGame(gs);
+  }
+}
+
+function handleDeadOverlayKeys(data: Buffer, gs: GameState): boolean {
+  if (isOpenNameEntry(data)) {
+    gs.nameInput = "";
+    gs.lastSavedEntry = null;
+    gs.pendingFlap = false;
+    gs.phase = "name-entry";
+    return true;
+  }
+  if (isOpenLeaderboard(data)) {
+    enterLeaderboard(gs);
+    return true;
+  }
+  return false;
+}
+
 function onInput(data: Buffer, gs: GameState): void {
+  // Ctrl+C always kills the game, regardless of phase — never a literal name char.
+  if (data[0] === KEY.CTRL_C) {
+    gs.stop();
+    return;
+  }
+
+  if (gs.phase === "name-entry") {
+    handleNameInput(data, gs);
+    return;
+  }
+
+  if (gs.phase === "leaderboard") {
+    handleLeaderboardInput(data, gs);
+    return;
+  }
+
+  if (gs.phase === "dead" && handleDeadOverlayKeys(data, gs)) return;
+
   if (isQuit(data)) {
     gs.stop();
     return;
@@ -411,6 +727,7 @@ function checkScoring(gs: GameState): void {
     if (p.scored || p.x + PIPE_W >= gs.birdX) continue;
     p.scored = true;
     gs.score++;
+    beep();
     gs.popups.push({ x: Math.round(p.x) + PIPE_W + 1, y: Math.round(gs.by), life: 10 });
   }
 }
@@ -481,6 +798,7 @@ function update(gs: GameState, dt: number): void {
 }
 
 function die(gs: GameState): void {
+  beep();
   gs.phase = "dead";
   gs.flash = 4;
   gs.deadTimer = 15;
@@ -504,6 +822,25 @@ function padBox(content: string, width: number): string {
 function makeBox(width: number, rows: string[]): string[] {
   const bar = "═".repeat(width - 2);
   return ["╔" + bar + "╗", ...rows.map((r) => padBox(r, width)), "╚" + bar + "╝"];
+}
+
+type Row = { text: string; color: string };
+
+function drawBoxed(
+  cv: Canvas,
+  gs: GameState,
+  width: number,
+  rows: readonly Row[],
+  border: string,
+): void {
+  const lines = makeBox(
+    width,
+    rows.map((r) => r.text),
+  );
+  drawOverlay(cv, gs, lines, (i) => {
+    if (i === 0 || i === lines.length - 1) return border;
+    return rows[i - 1]?.color ?? COL.white;
+  });
 }
 
 function drawOverlay(
@@ -575,7 +912,7 @@ function drawBird(cv: Canvas, gs: GameState): void {
   const wingY = cy + wing.dy;
   if (wingY >= 1 && wingY <= gs.H) sc(cv, gs.birdX - 1, wingY, wing.ch, COL.wing);
 
-  const isDead = gs.phase === "dead";
+  const isDead = gs.phase === "dead" || gs.phase === "name-entry" || gs.phase === "leaderboard";
   scWide(cv, gs.birdX, cy, isDead ? "💀" : "🍪", isDead ? COL.dead : COL.bird);
   sc(cv, gs.birdX + 2, cy, "▸", COL.beak);
 }
@@ -616,19 +953,19 @@ function drawPopups(cv: Canvas, gs: GameState): void {
 // ═══════════════════════════════════════════════════════
 
 function drawHud(cv: Canvas, gs: GameState): void {
-  writeText(cv, 2, 0, `Score: ${gs.score}`, COL.white + ansi.bold);
-
   if (gs.phase === "play" || gs.phase === "paused") {
     const pct = Math.min(1, (gs.speed - BASE_SPEED) / (MAX_SPEED - BASE_SPEED));
     const filled = Math.round(pct * 5);
-    const label = `Spd ${"█".repeat(filled)}${"░".repeat(5 - filled)}`;
-    writeText(cv, Math.floor((gs.W - label.length) / 2), 0, label, COL.dim);
+    writeText(cv, 2, 0, `Spd ${"█".repeat(filled)}${"░".repeat(5 - filled)}`, COL.dim);
   }
 
-  if (gs.best > 0) {
-    const text = `★ Best: ${gs.best}`;
-    writeText(cv, gs.W - text.length - 2, 0, text, COL.title + ansi.bold);
-  }
+  const scoreText = `Score: ${gs.score}`;
+  const bestText = gs.best > 0 ? `★ Best: ${gs.best}` : "";
+  const gap = bestText ? "  " : "";
+  const xRight = gs.W - (scoreText.length + gap.length + bestText.length) - 2;
+  writeText(cv, xRight, 0, scoreText, COL.white + ansi.bold);
+  if (bestText)
+    writeText(cv, xRight + scoreText.length + gap.length, 0, bestText, COL.title + ansi.bold);
 }
 
 // ═══════════════════════════════════════════════════════
@@ -655,21 +992,113 @@ function drawPause(cv: Canvas, gs: GameState): void {
 
 function drawDead(cv: Canvas, gs: GameState): void {
   const isNew = gs.score === gs.best && gs.score > 0;
-  const bestLine = isNew ? "★ NEW BEST! ★" : `Best: ${gs.best}`;
-  const lines = makeBox(22, [
-    "GAME  OVER",
-    "",
-    `Score: ${gs.score}`,
-    bestLine,
-    "",
-    "SPACE to retry",
-    "Q to quit",
-  ]);
-  drawOverlay(cv, gs, lines, (i) => {
-    if (i === 1) return COL.dead + ansi.bold;
-    if (i === 4 && isNew) return COL.title;
-    return COL.white;
-  });
+  const rows: Row[] = [
+    { text: "GAME  OVER", color: COL.dead + ansi.bold },
+    { text: "", color: COL.white },
+    { text: `Score: ${gs.score}`, color: COL.white },
+    { text: isNew ? "★ NEW BEST! ★" : `Best: ${gs.best}`, color: isNew ? COL.title : COL.white },
+    { text: "", color: COL.white },
+    { text: "SPACE to retry", color: COL.white },
+    { text: "Q to quit", color: COL.white },
+    { text: "N submit name", color: COL.dim },
+    { text: "L leaderboard", color: COL.dim },
+  ];
+  drawBoxed(cv, gs, 22, rows, COL.white);
+}
+
+function drawNameEntry(cv: Canvas, gs: GameState): void {
+  const showCursor = gs.tick % 30 < 15 && gs.nameInput.length < MAX_NAME_LEN;
+  const display = (gs.nameInput + (showCursor ? "▏" : "")).padEnd(MAX_NAME_LEN, " ");
+  const frameMid = "│ " + display + " │";
+
+  const rows: Row[] = [
+    { text: "", color: COL.white },
+    { text: "Save your score?", color: COL.title + ansi.bold },
+    { text: "", color: COL.white },
+    { text: `Score: ${gs.score}`, color: COL.white + ansi.bold },
+    { text: "", color: COL.white },
+    { text: NAME_FRAME_TOP, color: COL.pause },
+    { text: frameMid, color: COL.pause },
+    { text: NAME_FRAME_BOT, color: COL.pause },
+    { text: "", color: COL.white },
+    { text: "ENTER save · ESC skip", color: COL.dim },
+    { text: "", color: COL.white },
+  ];
+
+  drawBoxed(cv, gs, 34, rows, COL.pipe + ansi.bold);
+}
+
+function leaderboardRow(
+  prefix: string,
+  rank: string,
+  name: string,
+  score: string,
+  marker: string,
+): string {
+  return `${prefix} ${rank.padStart(2)}  ${name.padEnd(MAX_NAME_LEN)} ${score.padStart(5)}  ${marker}`;
+}
+
+function drawLeaderboard(cv: Canvas, gs: GameState): void {
+  const header = leaderboardRow(" ", "#", "NAME", "SCORE", "   ");
+  const sep = "  ──  ────────────  ─────     ";
+
+  const newRank = newRankOf(gs);
+  const empty = gs.rankings.length === 0;
+
+  const rows: Row[] = [
+    { text: "", color: COL.white },
+    { text: "★ TOP CLERK BIRDS ★", color: COL.title + ansi.bold },
+    { text: "", color: COL.white },
+  ];
+
+  if (empty) {
+    rows.push(
+      { text: "No scores yet.", color: COL.dim },
+      { text: "Press N on the dead screen", color: COL.dim },
+      { text: "to enter one.", color: COL.dim },
+    );
+  } else {
+    rows.push({ text: header, color: COL.dim }, { text: sep, color: COL.dim });
+    for (let i = 0; i < gs.rankings.length && i < MAX_RANKINGS; i++) {
+      const entry = gs.rankings[i];
+      if (!entry) continue;
+      const rank = i + 1;
+      const isSelected = gs.selectedRank === rank;
+      const isNew = newRank === rank;
+      rows.push({
+        text: leaderboardRow(
+          isSelected ? "▶" : " ",
+          String(rank),
+          entry.name,
+          String(entry.score),
+          isNew ? "NEW" : "   ",
+        ),
+        color: isSelected || isNew ? COL.title + ansi.bold : COL.white,
+      });
+    }
+  }
+
+  rows.push({ text: "", color: COL.white });
+
+  const sel =
+    gs.confirmingDelete && gs.selectedRank !== null ? gs.rankings[gs.selectedRank - 1] : null;
+  if (sel) {
+    rows.push(
+      { text: `Delete "${sel.name}" (${sel.score})?`, color: COL.dead + ansi.bold },
+      { text: "Y confirm · N cancel", color: COL.dim },
+    );
+  } else if (empty) {
+    rows.push({ text: "SPACE retry · Q quit", color: COL.dim });
+  } else {
+    rows.push(
+      { text: "↑↓/jk select · D delete", color: COL.dim },
+      { text: "SPACE retry · Q quit", color: COL.dim },
+    );
+  }
+
+  rows.push({ text: "", color: COL.white });
+
+  drawBoxed(cv, gs, 40, rows, COL.pipe + ansi.bold);
 }
 
 // ═══════════════════════════════════════════════════════
@@ -728,6 +1157,8 @@ const PHASE_OVERLAYS: Record<string, (cv: Canvas, gs: GameState) => void> = {
   title: drawTitle,
   paused: drawPause,
   dead: drawDead,
+  "name-entry": drawNameEntry,
+  leaderboard: drawLeaderboard,
 };
 
 function render(cv: Canvas, gs: GameState): void {
@@ -763,8 +1194,8 @@ export async function startFlap2(): Promise<void> {
     throw new Error(`Terminal too small (need ${MIN_COLS}x${MIN_ROWS}). Resize and try again.`);
   }
 
-  const best = await loadBest();
-  const gs = makeState(layout.W, layout.H, layout.offsetX, best);
+  const [best, rankings] = await Promise.all([loadBest(), loadRankings()]);
+  const gs = makeState(layout.W, layout.H, layout.offsetX, best, rankings);
   const cv = mkCanvas(gs.frameH, gs.W);
 
   return new Promise<void>((resolve, reject) => {
@@ -786,6 +1217,7 @@ export async function startFlap2(): Promise<void> {
       if (gs.stopped) return;
       gs.stopped = true;
       teardown();
+      printFarewell();
       resolve();
     };
 
@@ -821,7 +1253,14 @@ export async function startFlap2(): Promise<void> {
 
       while (accumulator >= TICK_MS) {
         update(gs, dt);
-        if (gs.phase === "title" || gs.phase === "dead") updateClouds(gs, dt);
+        if (
+          gs.phase === "title" ||
+          gs.phase === "dead" ||
+          gs.phase === "name-entry" ||
+          gs.phase === "leaderboard"
+        ) {
+          updateClouds(gs, dt);
+        }
         accumulator -= TICK_MS;
       }
 
