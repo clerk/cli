@@ -708,6 +708,30 @@ describe("deploy", () => {
       });
     });
 
+    test("throws a CliError when createProductionInstance returns no active_domain", async () => {
+      await linkedProject();
+      mockIsAgent.mockReturnValue(false);
+      mockConfirm.mockResolvedValueOnce(true).mockResolvedValueOnce(true);
+      mockInput.mockResolvedValueOnce("example.com");
+      mockCreateProductionInstance.mockResolvedValueOnce({
+        instance_id: "ins_prod_mock",
+        environment_type: "production" as const,
+        active_domain: null,
+        publishable_key: "pk_live_test",
+        secret_key: "sk_live_test",
+        cname_targets: [],
+      });
+
+      let thrown: unknown;
+      try {
+        await runDeploy({});
+      } catch (e) {
+        thrown = e;
+      }
+      expect(thrown).toBeInstanceOf(CliError);
+      expect((thrown as CliError).message).toContain("did not return a domain");
+    });
+
     test("Ctrl-C at the DNS handoff reports paused", async () => {
       await linkedProject();
       mockIsAgent.mockReturnValue(false);

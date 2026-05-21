@@ -174,7 +174,7 @@ export type ListApplicationDomainsResponse = {
 export type ProductionInstanceResponse = {
   instance_id: string;
   environment_type: "production";
-  active_domain: DomainSummary;
+  active_domain: DomainSummary | null;
   secret_key?: string;
   publishable_key: string;
   cname_targets: CnameTarget[];

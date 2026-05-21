@@ -2,7 +2,7 @@ import { isAgent } from "../../mode.ts";
 import { isInsideGutter, log } from "../../lib/log.ts";
 import { sleep } from "../../lib/sleep.ts";
 import { bar, intro, outro, withSpinner } from "../../lib/spinner.ts";
-import { UserAbortError, isPromptExitError, throwUsageError } from "../../lib/errors.ts";
+import { CliError, UserAbortError, isPromptExitError, throwUsageError } from "../../lib/errors.ts";
 import { resolveProfile, setProfile } from "../../lib/config.ts";
 import {
   createProductionInstance as apiCreateProductionInstance,
@@ -217,6 +217,14 @@ async function startNewDeploy(ctx: DeployContext): Promise<void> {
   }
   const production = productionOrExists;
   await persistProductionInstance(ctx, production.instance_id);
+
+  if (!production.active_domain) {
+    throw new CliError(
+      "Production instance was created but Clerk did not return a domain. " +
+        "Run `clerk deploy` again to retry domain provisioning.",
+    );
+  }
+
   log.blank();
 
   const productionDomain = production.active_domain.name;
