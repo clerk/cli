@@ -5,7 +5,7 @@ import { throwUsageError, throwUserAbort, withApiContext, ERROR_CODE } from "../
 import { confirm } from "../../lib/prompts.ts";
 import { dim, bold, red, green } from "../../lib/color.ts";
 import { withSpinner, intro, outro } from "../../lib/spinner.ts";
-import { log } from "../../lib/log.ts";
+import { isInsideGutter, log } from "../../lib/log.ts";
 import { NEXT_STEPS, printNextSteps } from "../../lib/next-steps.ts";
 
 interface ConfigPushOptions {
@@ -76,64 +76,67 @@ async function configPush(options: ConfigPushOptions, op: Operation): Promise<vo
   // Strip config_version — it's returned by pull but not accepted by the backend
   delete configPayload.config_version;
 
-  intro(op.title);
+  const shouldWrap = !isInsideGutter();
+  if (shouldWrap) intro(op.title);
 
-  const currentConfig = await withSpinner("Fetching current config...", () =>
-    withApiContext(
-      fetchInstanceConfig(ctx.appId, ctx.instanceId),
-      "Failed to fetch current config",
-    ),
-  );
-  delete currentConfig.config_version;
-
-  const isPatch = op.method === "PATCH";
-
-  if (!hasConfigChanges(currentConfig, configPayload, isPatch)) {
-    log.info(options.dryRun ? "[dry-run] No changes detected" : "No changes detected");
-    outro();
-    return;
-  }
-
-  const prefix = options.dryRun ? `[dry-run] Proposing ${op.method}` : op.verb;
-  log.info(`\n${prefix} config on ${ctx.appLabel} (${ctx.instanceLabel}):\n`);
-  printDiff(currentConfig, configPayload, isPatch);
-
-  if (!options.dryRun && isHuman() && !options.yes) {
-    if (op.warning) {
-      log.warn(`${op.warning}`);
-    }
-    const ok = await confirm({ message: "Proceed?" });
-    if (!ok) {
-      throwUserAbort();
-    }
-  }
-
-  const spinnerMsg = options.dryRun
-    ? `[dry-run] Validating config on ${ctx.appLabel} (${ctx.instanceLabel})...`
-    : `${op.verb} config on ${ctx.appLabel} (${ctx.instanceLabel})...`;
-  const result = await withSpinner(spinnerMsg, () =>
-    withApiContext(
-      op.apiFn(ctx.appId, ctx.instanceId, configPayload, {
-        destructive: options.destructive,
-        dryRun: options.dryRun,
-      }),
-      options.dryRun ? "Dry-run failed" : "Failed to push config",
-    ),
-  );
-  log.data(JSON.stringify(result, null, 2));
-  log.success(
-    options.dryRun
-      ? "[dry-run] Validation passed — no changes applied"
-      : "Config pushed successfully",
-  );
-  if (options.dryRun) {
-    printNextSteps(
-      op.method === "PATCH" ? NEXT_STEPS.CONFIG_DRY_RUN_PATCH : NEXT_STEPS.CONFIG_DRY_RUN_PUT,
+  try {
+    const currentConfig = await withSpinner("Fetching current config...", () =>
+      withApiContext(
+        fetchInstanceConfig(ctx.appId, ctx.instanceId),
+        "Failed to fetch current config",
+      ),
     );
-  } else {
-    printNextSteps(NEXT_STEPS.CONFIG_PUSH);
+    delete currentConfig.config_version;
+
+    const isPatch = op.method === "PATCH";
+
+    if (!hasConfigChanges(currentConfig, configPayload, isPatch)) {
+      log.info(options.dryRun ? "[dry-run] No changes detected" : "No changes detected");
+      return;
+    }
+
+    const prefix = options.dryRun ? `[dry-run] Proposing ${op.method}` : op.verb;
+    log.info(`\n${prefix} config on ${ctx.appLabel} (${ctx.instanceLabel}):\n`);
+    printDiff(currentConfig, configPayload, isPatch);
+
+    if (!options.dryRun && isHuman() && !options.yes) {
+      if (op.warning) {
+        log.warn(`${op.warning}`);
+      }
+      const ok = await confirm({ message: "Proceed?" });
+      if (!ok) {
+        throwUserAbort();
+      }
+    }
+
+    const spinnerMsg = options.dryRun
+      ? `[dry-run] Validating config on ${ctx.appLabel} (${ctx.instanceLabel})...`
+      : `${op.verb} config on ${ctx.appLabel} (${ctx.instanceLabel})...`;
+    const result = await withSpinner(spinnerMsg, () =>
+      withApiContext(
+        op.apiFn(ctx.appId, ctx.instanceId, configPayload, {
+          destructive: options.destructive,
+          dryRun: options.dryRun,
+        }),
+        options.dryRun ? "Dry-run failed" : "Failed to push config",
+      ),
+    );
+    log.data(JSON.stringify(result, null, 2));
+    log.success(
+      options.dryRun
+        ? "[dry-run] Validation passed — no changes applied"
+        : "Config pushed successfully",
+    );
+    if (options.dryRun) {
+      printNextSteps(
+        op.method === "PATCH" ? NEXT_STEPS.CONFIG_DRY_RUN_PATCH : NEXT_STEPS.CONFIG_DRY_RUN_PUT,
+      );
+    } else {
+      printNextSteps(NEXT_STEPS.CONFIG_PUSH);
+    }
+  } finally {
+    if (shouldWrap) outro();
   }
-  outro();
 }
 
 export async function readInput(options: { file?: string; json?: string }): Promise<string> {

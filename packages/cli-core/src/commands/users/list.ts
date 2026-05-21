@@ -163,47 +163,50 @@ async function resolveListSecretKey(options: UsersListOptions): Promise<string> 
 
 export async function list(options: UsersListOptions = {}): Promise<void> {
   const nested = isInsideGutter();
-  if (!nested) intro("Listing users");
+  const shouldWrap = !nested && !options.json && !isAgent();
+  if (shouldWrap) intro("Listing users");
 
-  const secretKey = await resolveListSecretKey(options);
-  const limit = options.limit ?? DEFAULT_LIMIT;
-  const offset = options.offset ?? 0;
-  // Request one extra row so we can detect whether more pages exist without
-  // a separate /users/count round-trip. The CLI's --limit caps at 250, so
-  // pageSize + 1 always fits under BAPI's MaxLimit of 500.
-  const response = await withSpinner("Fetching users...", () =>
-    bapiRequest({
-      method: "GET",
-      path: buildUsersListPath(options, limit + 1),
-      secretKey,
-    }),
-  );
+  try {
+    const secretKey = await resolveListSecretKey(options);
+    const limit = options.limit ?? DEFAULT_LIMIT;
+    const offset = options.offset ?? 0;
+    // Request one extra row so we can detect whether more pages exist without
+    // a separate /users/count round-trip. The CLI's --limit caps at 250, so
+    // pageSize + 1 always fits under BAPI's MaxLimit of 500.
+    const response = await withSpinner("Fetching users...", () =>
+      bapiRequest({
+        method: "GET",
+        path: buildUsersListPath(options, limit + 1),
+        secretKey,
+      }),
+    );
 
-  const body = response.body;
-  const allUsers = Array.isArray(body) ? (body as BapiUser[]) : [];
-  const hasMore = allUsers.length > limit;
-  const users = hasMore ? allUsers.slice(0, limit) : allUsers;
+    const body = response.body;
+    const allUsers = Array.isArray(body) ? (body as BapiUser[]) : [];
+    const hasMore = allUsers.length > limit;
+    const users = hasMore ? allUsers.slice(0, limit) : allUsers;
 
-  if (printJson({ data: users, hasMore }, options)) {
-    return;
+    if (printJson({ data: users, hasMore }, options)) {
+      return;
+    }
+
+    log.blank();
+
+    if (users.length === 0) {
+      log.warn("No users found.");
+      return;
+    }
+
+    formatUsersTable(users);
+    const summary = `\n${users.length} user${users.length === 1 ? "" : "s"} returned`;
+    if (hasMore) {
+      log.info(`${summary} (more available, re-run with \`--offset ${offset + limit}\`)`);
+    } else {
+      log.info(summary);
+    }
+  } finally {
+    if (shouldWrap) outro();
   }
-
-  log.blank();
-
-  if (users.length === 0) {
-    log.warn("No users found.");
-    if (!nested) outro();
-    return;
-  }
-
-  formatUsersTable(users);
-  const summary = `\n${users.length} user${users.length === 1 ? "" : "s"} returned`;
-  if (hasMore) {
-    log.info(`${summary} (more available, re-run with \`--offset ${offset + limit}\`)`);
-  } else {
-    log.info(summary);
-  }
-  if (!nested) outro();
 }
 
 registerUsersAction({
