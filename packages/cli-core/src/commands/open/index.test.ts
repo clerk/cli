@@ -1,7 +1,7 @@
 import { test, expect, describe, afterEach, beforeEach, mock } from "bun:test";
 import { setMode } from "../../mode.ts";
 import { setCurrentEnv } from "../../lib/environment.ts";
-import { captureLog } from "../../test/lib/stubs.ts";
+import { useCaptureLog } from "../../test/lib/stubs.ts";
 import { isKnownDashboardPath } from "./dashboard-paths.ts";
 
 const mockResolveProfile = mock();
@@ -78,17 +78,15 @@ describe("buildDashboardUrl", () => {
 });
 
 describe("openDashboard", () => {
-  let captured: ReturnType<typeof captureLog>;
+  const captured = useCaptureLog();
 
   beforeEach(() => {
     setMode("human");
     setCurrentEnv("production");
     mockOpenBrowser.mockResolvedValue({ ok: true, launcher: "open" });
-    captured = captureLog();
   });
 
   afterEach(() => {
-    captured.teardown();
     mockResolveProfile.mockReset();
     mockOpenBrowser.mockReset();
   });
@@ -96,7 +94,7 @@ describe("openDashboard", () => {
   test("human mode: prints arrow + app + dim URL, opens browser", async () => {
     mockResolveProfile.mockResolvedValue(PROFILE);
 
-    await captured.run(() => openDashboard(undefined));
+    await openDashboard(undefined);
 
     expect(captured.err).toContain("Opening");
     expect(captured.err).toContain("Test App");
@@ -113,7 +111,7 @@ describe("openDashboard", () => {
   test("human mode with subpath: shows target in header", async () => {
     mockResolveProfile.mockResolvedValue(PROFILE);
 
-    await captured.run(() => openDashboard("users"));
+    await openDashboard("users");
 
     expect(captured.err).toContain("→");
     expect(captured.err).toContain("users");
@@ -122,7 +120,7 @@ describe("openDashboard", () => {
   test("--print: plain URL only on stdout, no browser", async () => {
     mockResolveProfile.mockResolvedValue(PROFILE);
 
-    await captured.run(() => openDashboard(undefined, { print: true }));
+    await openDashboard(undefined, { print: true });
 
     expect(captured.out).toBe("https://dashboard.clerk.com/apps/app_abc123/instances/ins_dev789");
     expect(mockOpenBrowser).not.toHaveBeenCalled();
@@ -132,7 +130,7 @@ describe("openDashboard", () => {
     setMode("agent");
     mockResolveProfile.mockResolvedValue(PROFILE);
 
-    await captured.run(() => openDashboard("users"));
+    await openDashboard("users");
 
     const payload = JSON.parse(captured.out);
     expect(payload).toEqual({
@@ -151,7 +149,7 @@ describe("openDashboard", () => {
     setMode("agent");
     mockResolveProfile.mockResolvedValue(PROFILE);
 
-    await captured.run(() => openDashboard(undefined));
+    await openDashboard(undefined);
 
     const payload = JSON.parse(captured.out);
     expect(payload.subpath).toBeNull();
@@ -160,7 +158,7 @@ describe("openDashboard", () => {
   test("multi-segment known path (platform/api-keys) does not warn", async () => {
     mockResolveProfile.mockResolvedValue(PROFILE);
 
-    await captured.run(() => openDashboard("platform/api-keys", { print: true }));
+    await openDashboard("platform/api-keys", { print: true });
 
     expect(captured.err).not.toContain("not a known dashboard path");
     expect(captured.out).toBe(
@@ -171,7 +169,7 @@ describe("openDashboard", () => {
   test("known subpath does not warn", async () => {
     mockResolveProfile.mockResolvedValue(PROFILE);
 
-    await captured.run(() => openDashboard("users", { print: true }));
+    await openDashboard("users", { print: true });
 
     expect(captured.err).not.toContain("not a known dashboard path");
   });
@@ -179,7 +177,7 @@ describe("openDashboard", () => {
   test("unknown subpath warns to stderr but still emits URL", async () => {
     mockResolveProfile.mockResolvedValue(PROFILE);
 
-    await captured.run(() => openDashboard("not-a-real-page", { print: true }));
+    await openDashboard("not-a-real-page", { print: true });
 
     expect(captured.err).toContain("not a known dashboard path");
     expect(captured.out).toBe(
@@ -190,7 +188,7 @@ describe("openDashboard", () => {
   test("throws NOT_LINKED when no profile", async () => {
     mockResolveProfile.mockResolvedValue(null);
 
-    await expect(captured.run(() => openDashboard(undefined))).rejects.toThrow(/clerk link/);
+    await expect(openDashboard(undefined)).rejects.toThrow(/clerk link/);
     expect(mockOpenBrowser).not.toHaveBeenCalled();
   });
 
@@ -203,9 +201,7 @@ describe("openDashboard", () => {
       },
     });
 
-    await expect(captured.run(() => openDashboard(undefined))).rejects.toThrow(
-      /development instance/,
-    );
+    await expect(openDashboard(undefined)).rejects.toThrow(/development instance/);
     expect(mockOpenBrowser).not.toHaveBeenCalled();
   });
 });

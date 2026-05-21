@@ -3,7 +3,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { parseSpec, _setCacheDir } from "./catalog.ts";
-import { captureLog, stubFetch } from "../../test/lib/stubs.ts";
+import { useCaptureLog, stubFetch } from "../../test/lib/stubs.ts";
 import { apiLs } from "./ls.ts";
 
 const MINIMAL_SPEC = `
@@ -45,7 +45,7 @@ describe("apiLs", () => {
   let tempDir: string;
   let logSpy: ReturnType<typeof spyOn>;
   let errorSpy: ReturnType<typeof spyOn>;
-  let captured: ReturnType<typeof captureLog>;
+  const captured = useCaptureLog();
   const originalFetch = globalThis.fetch;
 
   beforeEach(async () => {
@@ -59,14 +59,12 @@ describe("apiLs", () => {
 
     logSpy = spyOn(console, "log").mockImplementation(() => {});
     errorSpy = spyOn(console, "error").mockImplementation(() => {});
-    captured = captureLog();
     stubFetch(async () => {
       throw new Error("Should not fetch");
     });
   });
 
   afterEach(async () => {
-    captured.teardown();
     _setCacheDir(undefined);
     globalThis.fetch = originalFetch;
     logSpy.mockRestore();
@@ -75,7 +73,7 @@ describe("apiLs", () => {
   });
 
   function runApiLs(filter: string | undefined, options: Parameters<typeof apiLs>[1]) {
-    return captured.run(() => apiLs(filter, options));
+    return apiLs(filter, options);
   }
 
   test("prints all endpoints in table format", async () => {

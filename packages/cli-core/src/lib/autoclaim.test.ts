@@ -2,7 +2,7 @@ import { test, expect, describe, beforeEach, afterEach, spyOn } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { join, basename } from "node:path";
 import { tmpdir } from "node:os";
-import { stubFetch, captureLog } from "../test/lib/stubs.ts";
+import { stubFetch, useCaptureLog } from "../test/lib/stubs.ts";
 
 import * as autolinkMod from "./autolink.ts";
 import * as keylessMod from "./keyless.ts";
@@ -22,7 +22,7 @@ const MOCK_APP = {
 describe("attemptAutoclaim", () => {
   const originalFetch = globalThis.fetch;
   let tempDir: string;
-  let captured: ReturnType<typeof captureLog>;
+  useCaptureLog();
   let linkAppSpy: ReturnType<typeof spyOn>;
   let readBreadcrumbSpy: ReturnType<typeof spyOn>;
   let clearBreadcrumbSpy: ReturnType<typeof spyOn>;
@@ -32,8 +32,6 @@ describe("attemptAutoclaim", () => {
     tempDir = await mkdtemp(join(tmpdir(), "clerk-autoclaim-test-"));
     process.env.CLERK_PLATFORM_API_KEY = "ak_test_key";
     process.env.CLERK_PLATFORM_API_URL = "https://test-api.clerk.com";
-    captured = captureLog();
-
     linkAppSpy = spyOn(autolinkMod, "linkApp").mockResolvedValue({
       path: tempDir,
       profile: {} as Profile,
@@ -44,7 +42,6 @@ describe("attemptAutoclaim", () => {
   });
 
   afterEach(async () => {
-    captured.teardown();
     delete process.env.CLERK_PLATFORM_API_KEY;
     delete process.env.CLERK_PLATFORM_API_URL;
     globalThis.fetch = originalFetch;
@@ -60,7 +57,7 @@ describe("attemptAutoclaim", () => {
   }
 
   function run() {
-    return captured.run(() => attemptAutoclaim(tempDir));
+    return attemptAutoclaim(tempDir);
   }
 
   test("returns not_keyless when no breadcrumb exists", async () => {

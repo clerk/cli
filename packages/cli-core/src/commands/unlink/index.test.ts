@@ -1,5 +1,5 @@
-import { test, expect, describe, beforeEach, afterEach, mock, spyOn } from "bun:test";
-import { captureLog, configStubs, gitStubs, promptsStubs } from "../../test/lib/stubs.ts";
+import { test, expect, describe, afterEach, mock, spyOn } from "bun:test";
+import { useCaptureLog, configStubs, gitStubs, promptsStubs } from "../../test/lib/stubs.ts";
 
 const mockIsAgent = mock();
 const mockIsHuman = mock();
@@ -50,14 +50,9 @@ describe("unlink", () => {
   let consoleSpy: ReturnType<typeof spyOn>;
   let errorSpy: ReturnType<typeof spyOn>;
   let exitSpy: ReturnType<typeof spyOn>;
-  let captured: ReturnType<typeof captureLog>;
-
-  beforeEach(() => {
-    captured = captureLog();
-  });
+  const captured = useCaptureLog();
 
   afterEach(() => {
-    captured.teardown();
     _modeOverride = undefined;
     mockIsAgent.mockReset();
     mockIsHuman.mockReset();
@@ -72,7 +67,7 @@ describe("unlink", () => {
   });
 
   function runUnlink(options?: Parameters<typeof unlink>[0]) {
-    return captured.run(() => unlink(options));
+    return unlink(options);
   }
 
   describe("agent mode", () => {

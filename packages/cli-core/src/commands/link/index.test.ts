@@ -1,6 +1,6 @@
-import { test, expect, describe, beforeEach, afterEach, mock, spyOn } from "bun:test";
+import { test, expect, describe, afterEach, mock, spyOn } from "bun:test";
 import {
-  captureLog,
+  useCaptureLog,
   configStubs,
   credentialStoreStubs,
   autolinkStubs,
@@ -125,14 +125,9 @@ const mockApp = {
 
 describe("link", () => {
   let consoleSpy: ReturnType<typeof spyOn>;
-  let captured: ReturnType<typeof captureLog>;
-
-  beforeEach(() => {
-    captured = captureLog();
-  });
+  const captured = useCaptureLog();
 
   afterEach(() => {
-    captured.teardown();
     _modeOverride = undefined;
     mockIsAgent.mockReset();
     mockGetToken.mockReset();
@@ -163,7 +158,7 @@ describe("link", () => {
   });
 
   function runLink(options?: Parameters<typeof link>[0]) {
-    return captured.run(() => link(options));
+    return link(options);
   }
 
   describe("agent mode", () => {

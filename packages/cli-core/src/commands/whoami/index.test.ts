@@ -1,9 +1,9 @@
 import { test, expect, describe, beforeEach, afterEach, mock, spyOn } from "bun:test";
 import {
-  captureLog,
   configStubs,
   credentialStoreStubs,
   tokenExchangeStubs,
+  useCaptureLog,
 } from "../../test/lib/stubs.ts";
 import { CliError } from "../../lib/errors.ts";
 
@@ -49,16 +49,14 @@ const linkedProfile = {
 
 describe("whoami", () => {
   let consoleSpy: ReturnType<typeof spyOn>;
-  let captured: ReturnType<typeof captureLog>;
+  const captured = useCaptureLog();
 
   beforeEach(() => {
-    captured = captureLog();
     mockIsAgent.mockReturnValue(false);
     mockResolveProfile.mockResolvedValue(undefined);
   });
 
   afterEach(() => {
-    captured.teardown();
     mockGetValidToken.mockReset();
     mockFetchUserInfo.mockReset();
     mockResolveProfile.mockReset();
@@ -67,7 +65,7 @@ describe("whoami", () => {
   });
 
   function runWhoami(options?: { json?: boolean }) {
-    return captured.run(() => whoami(options));
+    return whoami(options);
   }
 
   test("prints email when authenticated", async () => {
@@ -87,7 +85,7 @@ describe("whoami", () => {
     mockGetValidToken.mockResolvedValue(null);
 
     await expect(runWhoami()).rejects.toThrow(CliError);
-    await expect(captured.run(() => whoami())).rejects.toThrow(/Not logged in/);
+    await expect(whoami()).rejects.toThrow(/Not logged in/);
     expect(captured.out).toBe("");
     expect(mockFetchUserInfo).not.toHaveBeenCalled();
   });
@@ -97,7 +95,7 @@ describe("whoami", () => {
     mockFetchUserInfo.mockRejectedValue(new Error("Unauthorized"));
 
     await expect(runWhoami()).rejects.toThrow(CliError);
-    await expect(captured.run(() => whoami())).rejects.toThrow(/Session expired/);
+    await expect(whoami()).rejects.toThrow(/Session expired/);
     expect(captured.out).toBe("");
   });
 

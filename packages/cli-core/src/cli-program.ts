@@ -93,6 +93,10 @@ export function createProgram() {
     .name("clerk")
     .description("Clerk CLI")
     .configureHelp(clerkHelpConfig())
+    .configureOutput({
+      writeOut: (msg) => log.data(msg.replace(/\n$/, "")),
+      writeErr: (msg) => log.ui(msg),
+    })
     .version(getCurrentVersion(), "-v, --version", "Output the version number")
     .helpOption("-h, --help", "Display help for command")
     .addHelpCommand("help [command]", "Display help for command")

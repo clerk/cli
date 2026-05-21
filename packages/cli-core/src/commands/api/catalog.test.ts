@@ -1,5 +1,5 @@
 import { test, expect, describe, beforeEach, afterEach, spyOn } from "bun:test";
-import { captureLog, stubFetch } from "../../test/lib/stubs.ts";
+import { useCaptureLog, stubFetch } from "../../test/lib/stubs.ts";
 import { mkdtemp, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
@@ -179,17 +179,15 @@ describe("loadCatalog", () => {
   const originalFetch = globalThis.fetch;
   let tempDir: string;
   let errorSpy: ReturnType<typeof spyOn>;
-  let captured: ReturnType<typeof captureLog>;
+  const captured = useCaptureLog();
 
   beforeEach(async () => {
     tempDir = await mkdtemp(join(tmpdir(), "clerk-catalog-test-"));
     _setCacheDir(tempDir);
     errorSpy = spyOn(console, "error").mockImplementation(() => {});
-    captured = captureLog();
   });
 
   afterEach(async () => {
-    captured.teardown();
     _setCacheDir(undefined);
     globalThis.fetch = originalFetch;
     errorSpy.mockRestore();
@@ -197,7 +195,7 @@ describe("loadCatalog", () => {
   });
 
   function runLoadCatalog(options?: Parameters<typeof loadCatalog>[0]) {
-    return captured.run(() => loadCatalog(options));
+    return loadCatalog(options);
   }
 
   test("fetches and caches on first load", async () => {
