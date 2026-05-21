@@ -1,6 +1,6 @@
-import { test, expect, describe, beforeEach, afterEach, mock, spyOn } from "bun:test";
+import { test, expect, describe, afterEach, mock, spyOn } from "bun:test";
 import { AuthError } from "../../lib/errors.ts";
-import { captureLog, credentialStoreStubs, configStubs } from "../../test/lib/stubs.ts";
+import { useCaptureLog, credentialStoreStubs, configStubs } from "../../test/lib/stubs.ts";
 
 const actualConstants = await import("../../lib/constants.ts");
 const actualEnvironment = await import("../../lib/environment.ts");
@@ -94,15 +94,10 @@ const { login } = await import("./login.ts");
 describe("login", () => {
   let consoleSpy: ReturnType<typeof spyOn>;
   let consoleErrorSpy: ReturnType<typeof spyOn>;
-  let captured: ReturnType<typeof captureLog>;
+  const captured = useCaptureLog();
   const origSpawn = Bun.spawn;
 
-  beforeEach(() => {
-    captured = captureLog();
-  });
-
   afterEach(() => {
-    captured.teardown();
     mockGetValidToken.mockReset();
     mockStoreToken.mockReset();
     mockCreateOAuthSession.mockReset();
@@ -129,7 +124,7 @@ describe("login", () => {
   });
 
   function runLogin(options?: Parameters<typeof login>[0]) {
-    return captured.run(() => login(options));
+    return login(options);
   }
 
   function mockBunSpawn() {

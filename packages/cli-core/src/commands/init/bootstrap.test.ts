@@ -31,15 +31,18 @@ describe("BOOTSTRAP_REGISTRY", () => {
     expect(deps).toContain("vite");
   });
 
-  test("each entry produces a non-empty string[] for all package managers", () => {
-    for (const entry of BOOTSTRAP_REGISTRY) {
-      for (const pm of packageManagers) {
-        const cmd = entry.buildCommand(pm, "test-app");
-        expect(cmd.length).toBeGreaterThan(0);
-        expect(cmd.every((arg) => typeof arg === "string")).toBe(true);
-      }
-    }
-  });
+  const REGISTRY_PM_PAIRS = BOOTSTRAP_REGISTRY.flatMap((entry) =>
+    packageManagers.map((pm) => ({ dep: entry.dep, entry, pm })),
+  );
+
+  test.each(REGISTRY_PM_PAIRS)(
+    "entry $dep produces a non-empty string[] for package manager $pm",
+    ({ entry, pm }) => {
+      const cmd = entry.buildCommand(pm, "test-app");
+      expect(cmd.length).toBeGreaterThan(0);
+      expect(cmd.every((arg) => typeof arg === "string")).toBe(true);
+    },
+  );
 
   test("Next.js uses project name as target directory", () => {
     const cmd = entryFor("next").buildCommand("bun", "my-cool-app");

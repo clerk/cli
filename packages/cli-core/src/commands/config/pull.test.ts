@@ -3,7 +3,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { _setConfigDir, setProfile } from "../../lib/config.ts";
-import { captureLog, credentialStoreStubs, gitStubs, stubFetch } from "../../test/lib/stubs.ts";
+import { useCaptureLog, credentialStoreStubs, gitStubs, stubFetch } from "../../test/lib/stubs.ts";
 
 mock.module("../../lib/credential-store.ts", () => credentialStoreStubs);
 mock.module("../../lib/git.ts", () => gitStubs);
@@ -22,7 +22,7 @@ describe("config pull", () => {
   let logSpy: ReturnType<typeof spyOn>;
   let errorSpy: ReturnType<typeof spyOn>;
   let exitSpy: ReturnType<typeof spyOn>;
-  let captured: ReturnType<typeof captureLog>;
+  const captured = useCaptureLog();
 
   const mockConfig = {
     session: { lifetime: 604800 },
@@ -40,13 +40,10 @@ describe("config pull", () => {
     exitSpy = spyOn(process, "exit").mockImplementation(() => {
       throw new Error("process.exit");
     });
-    captured = captureLog();
-
     stubFetch(async () => new Response(JSON.stringify(mockConfig), { status: 200 }));
   });
 
   afterEach(async () => {
-    captured.teardown();
     _setConfigDir(undefined);
     process.env = { ...originalEnv };
     globalThis.fetch = originalFetch;
@@ -61,7 +58,7 @@ describe("config pull", () => {
     options: { app?: string; instance?: string; output?: string; keys?: string[] } = {},
   ) {
     const { configPull } = await import("./pull.ts");
-    return captured.run(() => configPull(options));
+    return configPull(options);
   }
 
   test("errors when no profile is linked", async () => {

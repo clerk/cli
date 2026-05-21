@@ -1,6 +1,6 @@
 import { isHuman } from "../mode.ts";
 import { dim, cyan, green, red } from "./color.ts";
-import { pushPrefix, popPrefix } from "./log.ts";
+import { log, pushPrefix, popPrefix } from "./log.ts";
 
 const FRAMES = ["◒", "◐", "◓", "◑"];
 const INTERVAL = 80;
@@ -11,8 +11,7 @@ const S_BAR_END = "└";
 const S_STEP_DONE = "◇";
 const S_STEP_ERROR = "■";
 
-const stream = process.stderr;
-const isInteractive = () => stream.isTTY && !process.env.CI;
+const isInteractive = () => process.stderr.isTTY && !process.env.CI;
 
 // --- Public API ---
 
@@ -20,7 +19,7 @@ const isInteractive = () => stream.isTTY && !process.env.CI;
 export function intro(title?: string) {
   if (!isHuman()) return;
   const line = title ? `${dim(S_BAR_START)}  ${title}` : dim(S_BAR_START);
-  stream.write(`${line}\n`);
+  log.ui(`${line}\n`);
   pushPrefix();
 }
 
@@ -38,24 +37,24 @@ export function intro(title?: string) {
 export function outro(messageOrSteps?: string | readonly string[]) {
   if (!isHuman()) return;
   popPrefix();
-  stream.write(`${dim(S_BAR)}\n`);
+  log.ui(`${dim(S_BAR)}\n`);
 
   if (Array.isArray(messageOrSteps)) {
-    stream.write(`${dim(S_BAR_END)}  ${dim("Next steps")}\n`);
+    log.ui(`${dim(S_BAR_END)}  ${dim("Next steps")}\n`);
     for (const step of messageOrSteps) {
-      stream.write(`   ${cyan("\u2192")} ${step}\n`);
+      log.ui(`   ${cyan("→")} ${step}\n`);
     }
-    stream.write("\n");
+    log.ui("\n");
   } else {
     const label = messageOrSteps ?? "Done";
-    stream.write(`${dim(S_BAR_END)}  ${label}\n\n`);
+    log.ui(`${dim(S_BAR_END)}  ${label}\n\n`);
   }
 }
 
 /** Print a bar separator: │ */
 export function bar() {
   if (!isHuman()) return;
-  stream.write(`${dim(S_BAR)}\n`);
+  log.ui(`${dim(S_BAR)}\n`);
 }
 
 function createSpinner() {
@@ -66,13 +65,13 @@ function createSpinner() {
   return {
     start(message: string) {
       if (!interactive) {
-        stream.write(`${S_STEP_DONE}  ${message}\n`);
+        log.ui(`${S_STEP_DONE}  ${message}\n`);
         return;
       }
-      stream.write("\x1b[?25l"); // hide cursor
+      log.ui("\x1b[?25l"); // hide cursor
       timer = setInterval(() => {
         const char = cyan(FRAMES[frame++ % FRAMES.length]!);
-        stream.write(`\r\x1b[K${char}  ${message}`);
+        log.ui(`\r\x1b[K${char}  ${message}`);
       }, INTERVAL);
     },
     stop(finalMessage?: string) {
@@ -81,11 +80,11 @@ function createSpinner() {
         timer = undefined;
       }
       if (!interactive) return;
-      stream.write(`\r\x1b[K`);
+      log.ui("\r\x1b[K");
       if (finalMessage) {
-        stream.write(`${green(S_STEP_DONE)}  ${finalMessage}\n`);
+        log.ui(`${green(S_STEP_DONE)}  ${finalMessage}\n`);
       }
-      stream.write("\x1b[?25h"); // show cursor
+      log.ui("\x1b[?25h"); // show cursor
     },
     error(finalMessage?: string) {
       if (timer) {
@@ -93,9 +92,9 @@ function createSpinner() {
         timer = undefined;
       }
       if (!interactive) return;
-      stream.write(`\r\x1b[K`);
-      stream.write(`${red(S_STEP_ERROR)}  ${finalMessage ?? "Failed"}\n`);
-      stream.write("\x1b[?25h");
+      log.ui("\r\x1b[K");
+      log.ui(`${red(S_STEP_ERROR)}  ${finalMessage ?? "Failed"}\n`);
+      log.ui("\x1b[?25h");
     },
   };
 }

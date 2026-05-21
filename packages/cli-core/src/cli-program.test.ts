@@ -387,28 +387,25 @@ describe("help: clerk skill install tip", () => {
     expect(help).toContain("clerk skill install");
   });
 
-  for (const dir of STANDARD_AGENT_DIRS) {
-    test(`hides the tip when ${dir}/skills/clerk-cli/SKILL.md exists under HOME`, () => {
-      const target = join(tmpHome, dir, "skills/clerk-cli");
+  const AGENT_DIR_CASES = STANDARD_AGENT_DIRS.flatMap((dir) =>
+    (["HOME", "cwd"] as const).map((root) => ({ dir, root })),
+  );
+
+  test.each(AGENT_DIR_CASES)(
+    "hides the tip when $dir/skills/clerk-cli/SKILL.md exists under $root",
+    ({ dir, root }) => {
+      const base = root === "HOME" ? tmpHome : tmpCwd;
+      const target = join(base, dir, "skills/clerk-cli");
       mkdirSync(target, { recursive: true });
       writeFileSync(join(target, "SKILL.md"), "ok");
       expect(renderHelp()).not.toContain(TIP_SUBSTR);
-    });
+    },
+  );
 
-    test(`hides the tip when ${dir}/skills/clerk-cli/SKILL.md exists under cwd`, () => {
-      const target = join(tmpCwd, dir, "skills/clerk-cli");
-      mkdirSync(target, { recursive: true });
-      writeFileSync(join(target, "SKILL.md"), "ok");
-      expect(renderHelp()).not.toContain(TIP_SUBSTR);
-    });
-  }
-
-  for (const rel of EXTRA_REL_PATHS) {
-    test(`hides the tip when ${rel} exists under cwd`, () => {
-      const full = join(tmpCwd, rel);
-      mkdirSync(dirname(full), { recursive: true });
-      writeFileSync(full, "ok");
-      expect(renderHelp()).not.toContain(TIP_SUBSTR);
-    });
-  }
+  test.each([...EXTRA_REL_PATHS])("hides the tip when %s exists under cwd", (rel) => {
+    const full = join(tmpCwd, rel);
+    mkdirSync(dirname(full), { recursive: true });
+    writeFileSync(full, "ok");
+    expect(renderHelp()).not.toContain(TIP_SUBSTR);
+  });
 });

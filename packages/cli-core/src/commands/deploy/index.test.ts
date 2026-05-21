@@ -2,7 +2,7 @@ import { test, expect, describe, beforeEach, afterEach, mock, spyOn } from "bun:
 import { mkdtemp, rm } from "node:fs/promises";
 import { join, relative } from "node:path";
 import { tmpdir } from "node:os";
-import { captureLog, promptsStubs, listageStubs } from "../../test/lib/stubs.ts";
+import { useCaptureLog, promptsStubs, listageStubs } from "../../test/lib/stubs.ts";
 import { CliError, EXIT_CODE, UserAbortError } from "../../lib/errors.ts";
 
 const mockIsAgent = mock();
@@ -89,12 +89,10 @@ function promptExitError(): Error {
 
 describe("deploy", () => {
   let consoleSpy: ReturnType<typeof spyOn>;
-  let stderrSpy: ReturnType<typeof spyOn> | undefined;
-  let captured: ReturnType<typeof captureLog>;
+  const captured = useCaptureLog();
   let tempDir: string;
 
   beforeEach(() => {
-    captured = captureLog();
     tempDir = "";
     // Sensible defaults so most tests need only override what they exercise.
     mockFetchInstanceConfig.mockResolvedValue({
@@ -175,7 +173,6 @@ describe("deploy", () => {
   });
 
   afterEach(async () => {
-    captured.teardown();
     _setConfigDir(undefined);
     if (tempDir) {
       await rm(tempDir, { recursive: true, force: true });
@@ -198,11 +195,10 @@ describe("deploy", () => {
     mockRetryMail.mockReset();
     mockDomainConnectUrl.mockReset();
     consoleSpy?.mockRestore();
-    stderrSpy?.mockRestore();
   });
 
   function runDeploy(options: Parameters<typeof deploy>[0]) {
-    return captured.run(() => deploy(options));
+    return deploy(options);
   }
 
   async function linkedProject(profile: Record<string, unknown> = {}) {
@@ -376,7 +372,7 @@ describe("deploy", () => {
       mockHumanFlow();
       await runDeploy({});
       mockLiveProduction();
-      captured = captureLog();
+      captured.clear();
       mockConfirm.mockReset();
       mockSelect.mockReset();
       mockInput.mockReset();
@@ -414,12 +410,9 @@ describe("deploy", () => {
     test("checks for an existing production instance before reading development config", async () => {
       await linkedProject();
       mockHumanFlow();
-      stderrSpy = spyOn(process.stderr, "write").mockImplementation(() => true);
 
       await runDeploy({});
-      const err = stripAnsi(
-        stderrSpy.mock.calls.map((call: unknown[]) => String(call[0])).join(""),
-      );
+      const err = stripAnsi(captured.err);
 
       const productionCheckIndex = err.indexOf("Checking for production instance...");
       const developmentConfigIndex = err.indexOf("Reading development configuration...");
@@ -601,15 +594,12 @@ describe("deploy", () => {
       await linkedProject();
       mockIsAgent.mockReturnValue(false);
       mockConfirm.mockRejectedValueOnce(promptExitError());
-      stderrSpy = spyOn(process.stderr, "write").mockImplementation(() => true);
 
       await expect(runDeploy({})).rejects.toBeInstanceOf(UserAbortError);
 
       const config = await readConfig();
       expect(config.profiles[process.cwd()]?.instances.production).toBeUndefined();
-      const terminalOutput = stderrSpy.mock.calls
-        .map((call: unknown[]) => String(call[0]))
-        .join("");
+      const terminalOutput = stripAnsi(captured.err);
       expect(terminalOutput).toContain("Cancelled");
       expect(terminalOutput).not.toContain("Done");
     });
@@ -619,15 +609,12 @@ describe("deploy", () => {
       mockIsAgent.mockReturnValue(false);
       mockConfirm.mockResolvedValueOnce(true);
       mockInput.mockRejectedValueOnce(promptExitError());
-      stderrSpy = spyOn(process.stderr, "write").mockImplementation(() => true);
 
       await expect(runDeploy({})).rejects.toBeInstanceOf(UserAbortError);
 
       const config = await readConfig();
       expect(config.profiles[process.cwd()]?.instances.production).toBeUndefined();
-      const terminalOutput = stderrSpy.mock.calls
-        .map((call: unknown[]) => String(call[0]))
-        .join("");
+      const terminalOutput = stripAnsi(captured.err);
       expect(terminalOutput).toContain("Cancelled");
       expect(terminalOutput).not.toContain("Done");
     });
@@ -738,7 +725,6 @@ describe("deploy", () => {
       mockConfirm.mockResolvedValueOnce(true).mockResolvedValueOnce(true);
       mockSelect.mockRejectedValueOnce(promptExitError());
       mockInput.mockResolvedValueOnce("example.com");
-      stderrSpy = spyOn(process.stderr, "write").mockImplementation(() => true);
 
       let error: CliError | undefined;
       try {
@@ -749,9 +735,7 @@ describe("deploy", () => {
       expect(error?.message).toContain("Deploy paused at: DNS verification");
       expect(error?.message).toContain("Run `clerk deploy` again");
       expect(error?.exitCode).toBe(EXIT_CODE.SIGINT);
-      const terminalOutput = stderrSpy.mock.calls
-        .map((call: unknown[]) => String(call[0]))
-        .join("");
+      const terminalOutput = stripAnsi(captured.err);
       expect(terminalOutput).toContain("Paused");
       expect(terminalOutput).not.toContain("Done");
     });
@@ -1171,7 +1155,6 @@ describe("deploy", () => {
       mockIsAgent.mockReturnValue(false);
       await runDnsHandoff();
       mockSelect.mockRejectedValueOnce(promptExitError());
-      stderrSpy = spyOn(process.stderr, "write").mockImplementation(() => true);
 
       let error: CliError | undefined;
       try {
@@ -1182,9 +1165,7 @@ describe("deploy", () => {
       expect(error?.message).toContain("Deploy paused at: Google OAuth credential setup");
       expect(error?.message).toContain("Run `clerk deploy` again");
       expect(error?.exitCode).toBe(EXIT_CODE.SIGINT);
-      const terminalOutput = stderrSpy.mock.calls
-        .map((call: unknown[]) => String(call[0]))
-        .join("");
+      const terminalOutput = stripAnsi(captured.err);
       expect(terminalOutput).toContain("Paused");
       expect(terminalOutput).not.toContain("Done");
     });
@@ -1270,7 +1251,7 @@ describe("deploy", () => {
       expect(stripAnsi(captured.err)).toContain("Check the Domains section in the Clerk Dashboard");
       expect(stripAnsi(captured.err)).toContain("Skipping DNS verification for now.");
 
-      captured = captureLog();
+      captured.clear();
       mockConfirm.mockReset();
       mockSelect.mockReset();
       mockInput.mockReset();
@@ -1320,7 +1301,7 @@ describe("deploy", () => {
       expect(pausedErr).toContain("Deploy paused");
       expect(pausedErr).toContain("Run `clerk deploy` again");
 
-      captured = captureLog();
+      captured.clear();
       mockConfirm.mockReset();
       mockSelect.mockReset();
       mockInput.mockReset();
@@ -1374,7 +1355,7 @@ describe("deploy", () => {
       });
 
       // Resume and finish: should not re-prompt for google, should finalize.
-      captured = captureLog();
+      captured.clear();
       mockConfirm.mockReset();
       mockSelect.mockReset();
       mockInput.mockReset();

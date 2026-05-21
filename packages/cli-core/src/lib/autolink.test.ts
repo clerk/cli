@@ -2,7 +2,7 @@ import { test, expect, describe, beforeEach, afterEach, mock, spyOn } from "bun:
 import { mkdtemp, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { credentialStoreStubs, gitStubs, stubFetch, captureLog } from "../test/lib/stubs.ts";
+import { credentialStoreStubs, gitStubs, stubFetch, useCaptureLog } from "../test/lib/stubs.ts";
 
 mock.module("./credential-store.ts", () => credentialStoreStubs);
 
@@ -223,7 +223,7 @@ describe("autolink", () => {
   let tempDir: string;
   let errorSpy: ReturnType<typeof spyOn>;
   let debugSpy: ReturnType<typeof spyOn>;
-  let captured: ReturnType<typeof captureLog>;
+  const captured = useCaptureLog();
 
   beforeEach(async () => {
     tempDir = await mkdtemp(join(tmpdir(), "clerk-autolink-test-"));
@@ -238,13 +238,10 @@ describe("autolink", () => {
     mockGetGitNormalizedRemote.mockResolvedValue(undefined);
     errorSpy = spyOn(console, "error").mockImplementation(() => {});
     debugSpy = spyOn(console, "debug").mockImplementation(() => {});
-    captured = captureLog();
-
     stubFetch(async () => new Response(JSON.stringify(mockApps), { status: 200 }));
   });
 
   afterEach(async () => {
-    captured.teardown();
     _setConfigDir(undefined);
     process.env = { ...originalEnv };
     globalThis.fetch = originalFetch;
@@ -254,7 +251,7 @@ describe("autolink", () => {
   });
 
   function runAutolink(cwd: string) {
-    return captured.run(() => autolink(cwd));
+    return autolink(cwd);
   }
 
   test("returns undefined when no keys detected", async () => {

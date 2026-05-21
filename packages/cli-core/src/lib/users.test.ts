@@ -56,8 +56,9 @@ describe("users helpers", () => {
     expect((error as CliError).exitCode).toBe(EXIT_CODE.USAGE);
   });
 
-  test("parseUsersPayload rejects non-object JSON (arrays, primitives, null)", () => {
-    for (const input of ['["email@example.com"]', '"just a string"', "42", "null"]) {
+  test.each(['["email@example.com"]', '"just a string"', "42", "null"])(
+    "parseUsersPayload rejects non-object JSON: %s",
+    (input) => {
       let error: unknown;
       try {
         parseUsersPayload(input);
@@ -66,8 +67,8 @@ describe("users helpers", () => {
       }
       expect(error).toBeInstanceOf(CliError);
       expect((error as CliError).code).toBe(ERROR_CODE.INVALID_JSON);
-    }
-  });
+    },
+  );
 
   test("redactUsersDisplayPayload masks passwords, codes, and private/unsafe metadata", () => {
     expect(
