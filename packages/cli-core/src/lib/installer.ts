@@ -12,7 +12,6 @@ import { access, realpath, stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import { delimiter, join, sep } from "node:path";
 import { UPDATE_PACKAGE_NAME } from "./constants.ts";
-import type { PackageManager } from "./package-manager.ts";
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -363,7 +362,7 @@ const GLOBAL_UPDATE_COMMANDS = {
   bun: "bun add -g",
   pnpm: "pnpm add -g",
   npm: "npm install -g",
-} satisfies Record<Exclude<PackageManager, "yarn">, string>;
+} satisfies Record<Exclude<Installer, "homebrew" | "yarn">, string>;
 
 /** Human-readable install/update command for the given installer. */
 export function globalInstallCommand(installer: Installer, packageSpec: string): string {
