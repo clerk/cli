@@ -77,8 +77,14 @@ export function clerkHelpConfig(): Partial<Help> {
         output = output.concat(helper.formatItemList("Options:", items, helper));
       }
 
-      // Commands — three-column layout: name | args | description
-      const visibleCmds = helper.visibleCommands(cmd);
+      // Commands — three-column layout: name | args | description.
+      // Easter-egg commands (`bird`) render after the help row so the
+      // serious surface stays at the top.
+      const allCmds = helper.visibleCommands(cmd);
+      const eastereggs = allCmds.filter((c) => c.name() === "bird");
+      const visibleCmds = eastereggs.length
+        ? [...allCmds.filter((c) => c.name() !== "bird"), ...eastereggs]
+        : allCmds;
       if (visibleCmds.length > 0) {
         let maxNameLen = 0;
         const cmdData = visibleCmds.map((sub) => {
