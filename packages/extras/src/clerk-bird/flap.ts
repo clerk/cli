@@ -330,6 +330,7 @@ function printFarewell(): void {
 const RANKINGS_FILE = join(homedir(), ".flap-rankings.json");
 const MAX_RANKINGS = 10;
 const MAX_NAME_LEN = 12;
+const MAX_SCORE = 99999;
 const NAME_FRAME_INNER = MAX_NAME_LEN + 2;
 const NAME_FRAME_TOP = "┌" + "─".repeat(NAME_FRAME_INNER) + "┐";
 const NAME_FRAME_BOT = "└" + "─".repeat(NAME_FRAME_INNER) + "┘";
@@ -371,7 +372,8 @@ function sanitizeEntry(raw: unknown): RankingEntry | null {
   if (typeof r["score"] !== "number" || !Number.isFinite(r["score"])) return null;
   if (typeof r["ts"] !== "number" || !Number.isFinite(r["ts"])) return null;
   const name = r["name"].slice(0, MAX_NAME_LEN).replace(/[^\x20-\x7e]/g, "");
-  return { name, score: Math.floor(r["score"]), ts: Math.floor(r["ts"]) };
+  const score = Math.max(0, Math.min(Math.floor(r["score"]), MAX_SCORE));
+  return { name, score, ts: Math.floor(r["ts"]) };
 }
 
 export async function loadRankings(file: string = RANKINGS_FILE): Promise<RankingEntry[]> {
