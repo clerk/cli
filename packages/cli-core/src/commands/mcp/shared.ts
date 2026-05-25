@@ -2,7 +2,6 @@
  * Shared options and helpers for `clerk mcp` subcommands.
  */
 
-import { checkbox } from "@inquirer/prompts";
 import { ttyContext } from "../../lib/listage.ts";
 import { getMcpUrl } from "../../lib/environment.ts";
 import { CliError, ERROR_CODE, errorMessage, throwUsageError } from "../../lib/errors.ts";
@@ -71,6 +70,10 @@ export function resolveClients(ids: readonly string[]): McpClient[] {
 export async function pickClients(detected: McpClient[]): Promise<McpClient[]> {
   if (detected.length === 0) return [];
   if (detected.length === 1) return detected;
+  // Imported lazily (like `doctor`/`update` do): a top-level import of
+  // `@inquirer/prompts` is resolved at module load, which breaks tests that
+  // mock the module with a partial shape that omits `checkbox`.
+  const { checkbox } = await import("@inquirer/prompts");
   const tty = ttyContext();
   try {
     const selected = await checkbox<ClientId>(
