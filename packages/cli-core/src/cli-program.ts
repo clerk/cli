@@ -15,6 +15,7 @@ import { link } from "./commands/link/index.ts";
 import { unlink } from "./commands/unlink/index.ts";
 import { apps as appsHandlers } from "./commands/apps/index.ts";
 import { users as usersHandlers } from "./commands/users/index.ts";
+import { mcp as mcpHandlers, CLIENT_IDS as MCP_CLIENT_IDS } from "./commands/mcp/index.ts";
 import { doctor } from "./commands/doctor/index.ts";
 import { switchEnv } from "./commands/switch-env/index.ts";
 import { openDashboard } from "./commands/open/index.ts";
@@ -465,6 +466,75 @@ export function createProgram() {
         userId,
       }),
     );
+
+  const mcp = program
+    .command("mcp")
+    .description("Manage the Clerk remote MCP server connection for AI editors and CLIs")
+    .setExamples([
+      { command: "clerk mcp install", description: "Install into all detected MCP clients" },
+      { command: "clerk mcp install --client cursor", description: "Install into Cursor only" },
+      {
+        command: "clerk mcp install --url http://localhost:8787/mcp",
+        description: "Use a local worker URL",
+      },
+      { command: "clerk mcp list", description: "Show registered Clerk entries" },
+      { command: "clerk mcp uninstall", description: "Remove the Clerk entry from all clients" },
+    ]);
+
+  mcp
+    .command("install")
+    .description("Register the Clerk remote MCP server in supported clients")
+    .addOption(
+      createOption("--client <id>", "MCP client to target (repeatable). Default: all detected.")
+        .choices([...MCP_CLIENT_IDS])
+        .argParser(collectOptionValues)
+        .default([] as string[]),
+    )
+    .option("--url <url>", "Override the MCP server URL (default: from active env profile)")
+    .option("--name <name>", 'Entry name in the client config (default: "clerk")')
+    .option("--all", "Install into every detected client without prompting")
+    .option("--force", "Overwrite an existing entry pointing at a different URL")
+    .option("--json", "Output as JSON")
+    .setExamples([
+      {
+        command: "clerk mcp install",
+        description: "Pick clients interactively (or all in agent mode)",
+      },
+      { command: "clerk mcp install --all", description: "Install into every detected client" },
+      {
+        command: "clerk mcp install --client cursor --client vscode",
+        description: "Install into specific clients",
+      },
+      {
+        command: "clerk mcp install --url http://localhost:8787/mcp",
+        description: "Target a local worker for development",
+      },
+    ])
+    .action((options) => mcpHandlers.install(options));
+
+  mcp
+    .command("list")
+    .description("List Clerk MCP entries registered across detected clients")
+    .option("--json", "Output as JSON")
+    .setExamples([{ command: "clerk mcp list", description: "List Clerk entries everywhere" }])
+    .action((options) => mcpHandlers.list(options));
+
+  mcp
+    .command("uninstall")
+    .description("Remove the Clerk MCP entry from supported clients")
+    .addOption(
+      createOption("--client <id>", "MCP client to target (repeatable). Default: all clients.")
+        .choices([...MCP_CLIENT_IDS])
+        .argParser(collectOptionValues)
+        .default([] as string[]),
+    )
+    .option("--name <name>", 'Entry name to remove (default: "clerk")')
+    .option("--json", "Output as JSON")
+    .setExamples([
+      { command: "clerk mcp uninstall", description: "Remove from every client" },
+      { command: "clerk mcp uninstall --client cursor", description: "Remove from Cursor only" },
+    ])
+    .action((options) => mcpHandlers.uninstall(options));
 
   const env = program
     .command("env")
