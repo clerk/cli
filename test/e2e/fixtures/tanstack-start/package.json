@@ -14,11 +14,11 @@
   "dependencies": {
     "@tailwindcss/vite": "4.3.0",
     "@tanstack/react-devtools": "0.10.5",
-    "@tanstack/react-router": "1.169.2",
-    "@tanstack/react-router-devtools": "1.166.13",
-    "@tanstack/react-router-ssr-query": "1.166.12",
-    "@tanstack/react-start": "1.167.65",
-    "@tanstack/router-plugin": "1.167.35",
+    "@tanstack/react-router": "1.170.8",
+    "@tanstack/react-router-devtools": "1.167.0",
+    "@tanstack/react-router-ssr-query": "1.167.0",
+    "@tanstack/react-start": "1.168.13",
+    "@tanstack/router-plugin": "1.168.11",
     "lucide-react": "0.545.0",
     "react": "19.2.6",
     "react-dom": "19.2.6",
@@ -31,14 +31,14 @@
     "@testing-library/dom": "10.4.1",
     "@testing-library/react": "16.3.2",
     "@types/node": "22.19.19",
-    "@types/react": "19.2.14",
+    "@types/react": "19.2.15",
     "@types/react-dom": "19.2.3",
-    "@vitejs/plugin-react": "6.0.1",
+    "@vitejs/plugin-react": "6.0.2",
     "jsdom": "28.1.0",
     "typescript": "6.0.3",
-    "vite": "8.0.13",
-    "vitest": "4.1.6",
-    "@rsbuild/core": "2.0.6"
+    "vite": "8.0.14",
+    "vitest": "4.1.7",
+    "@rsbuild/core": "2.0.7"
   },
   "pnpm": {
     "onlyBuiltDependencies": [
