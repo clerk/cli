@@ -25,16 +25,17 @@ clerk doctor --fix       # Offer to auto-fix issues
 
 ## Checks
 
-| Check                 | Category       | What it verifies                                                   |
-| --------------------- | -------------- | ------------------------------------------------------------------ |
-| Authentication token  | Authentication | Credential store has a stored token                                |
-| Token validity        | Authentication | Token is still valid (calls `/oauth/userinfo`)                     |
-| Project linkage       | Project        | Current directory is linked to a Clerk app                         |
-| Linked application    | Project        | Linked application ID is accessible via the API                    |
-| Instances             | Project        | Configured dev/prod instance IDs match the application's instances |
-| Environment variables | Environment    | .env.local or .env has Clerk keys                                  |
-| CLI configuration     | Configuration  | CLI config file exists and parses                                  |
-| Shell completion      | Configuration  | Shell autocompletion is installed for the detected shell           |
+| Check                 | Category       | What it verifies                                                                                                                    |
+| --------------------- | -------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
+| Authentication token  | Authentication | Credential store has a stored token                                                                                                 |
+| Token validity        | Authentication | Token is still valid (calls `/oauth/userinfo`)                                                                                      |
+| Project linkage       | Project        | Current directory is linked to a Clerk app                                                                                          |
+| Linked application    | Project        | Linked application ID is accessible via the API                                                                                     |
+| Instances             | Project        | Configured dev/prod instance IDs match the application's instances                                                                  |
+| Environment variables | Environment    | .env.local or .env has Clerk keys                                                                                                   |
+| CLI configuration     | Configuration  | CLI config file exists and parses                                                                                                   |
+| Shell completion      | Configuration  | Shell autocompletion is installed for the detected shell                                                                            |
+| MCP server            | Integration    | If a Clerk MCP entry is installed, the configured server answers the `initialize` handshake (skipped otherwise; warns, never fails) |
 
 ## Auto-Fix (`--fix`)
 
