@@ -141,9 +141,9 @@ export function deployComponentLabels(
 
 /**
  * Status line for the three independent components Clerk verifies after
- * `production_instance` is created: DNS propagation, SSL issuance via Let's
+ * the production instance is created: DNS propagation, SSL issuance via Let's
  * Encrypt, and SendGrid mail sender verification. Each flips true on its own
- * schedule — see the deploy endpoints handbook for timing details.
+ * schedule, see the deploy endpoints handbook for timing details.
  */
 export function deployComponentStatus(status: DeployComponentStatus): string {
   const mark = (ok: boolean) => (ok ? green("✓") : yellow("pending"));
@@ -151,8 +151,8 @@ export function deployComponentStatus(status: DeployComponentStatus): string {
 }
 
 /**
- * Footer printed when `deploy_status` polling times out before all three
- * booleans flip true. The user keeps the deploy state; rerunning
+ * Footer printed when domain status polling times out before all three
+ * components are complete. The user keeps the deploy state; rerunning
  * `clerk deploy` resumes from whichever component is still pending.
  */
 export function deployStatusPendingFooter(domain: string, status: DeployComponentStatus): string[] {
@@ -169,7 +169,7 @@ export function deployStatusPendingFooter(domain: string, status: DeployComponen
   return [
     lead,
     "DNS propagation can take several hours depending on your provider.",
-    "Run `clerk deploy` again to resume — the production instance is already created.",
+    "Run `clerk deploy` again to resume. The production instance is already created.",
   ];
 }
 

@@ -1,12 +1,12 @@
 # Deploy Command
 
-> **Live PLAPI lifecycle.** Human mode resolves the linked application, production domains, deploy status, and instance config from the Platform API on each run. The production-instance lifecycle calls (`validate_cloning`, `production_instance`, `deploy_status`, `dns_check`, `ssl_retry`, `mail_retry`) call the helpers in `lib/plapi.ts` directly. PLAPI error codes are translated to typed `CliError`s by `commands/deploy/errors.ts`.
+> **Live PLAPI lifecycle.** Human mode resolves the linked application, production domains, domain status, and instance config from the Platform API on each run. The production-instance lifecycle calls (`instances` and domain `status`) call the helpers in `lib/plapi.ts` directly. PLAPI error codes are translated to typed `CliError`s by `commands/deploy/errors.ts`.
 
 Guides a user through deploying their Clerk application to production.
 
 When the CLI reaches the DNS configuration step, it displays the required CNAME records and then prompts the user to export those records as a BIND zone file (`./clerk-<domain>.zone`). The prompt defaults to "no" and the file is overwritten silently on subsequent runs. This applies to both new deploys and resumed deploys, so users who return to finish an interrupted deploy see the same records preamble that the initial run shows.
 
-Once DNS records are added and the user proceeds to verification, the CLI runs a chain of three per-component spinners covering mail, DNS, and SSL in sequence. Each spinner resolves independently and emits a confirmation line as its component flips true, so the user sees incremental progress instead of a single opaque wait. All three spinners share the same five-minute wall-clock cap.
+Once DNS records are added and the user proceeds to verification, the CLI runs a chain of three per-component spinners covering mail, DNS, and SSL in sequence. Each spinner resolves independently and emits a confirmation line as its component flips true, so the user sees incremental progress instead of a single opaque wait. All three spinners share the same 10-second cap.
 
 ## Usage
 
@@ -36,22 +36,18 @@ Agent mode does not call PLAPI and exits before the human-mode wizard starts.
 
 ## PLAPI Lifecycle
 
-Human mode reads and writes deploy state through the Platform API on every run. The CLI does not persist deploy progress locally — the only profile write is the ordinary `instances.production` value once the production instance has been created.
+Human mode reads and writes deploy state through the Platform API on every run. The CLI does not persist deploy progress locally; the only profile write is the ordinary `instances.production` value once the production instance has been created.
 
-| Step                       | Endpoint                                                                     | Behavior                                                                                                                                                                                                                                                                                                                                        |
-| -------------------------- | ---------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Validate cloning           | `POST /v1/platform/applications/{appID}/validate_cloning`                    | 204 on success. 402 `unsupported_subscription_plan_features` → `ERROR_CODE.PLAN_INSUFFICIENT` listing missing features.                                                                                                                                                                                                                         |
-| Create production instance | `POST /v1/platform/applications/{appID}/production_instance`                 | Returns `instance_id`, `environment_type`, `active_domain`, `publishable_key`, `secret_key` (once), and `cname_targets[]`.                                                                                                                                                                                                                      |
-|                            |                                                                              | 409 `production_instance_exists` → CLI re-derives state via `fetchApplication` and falls through to `reconcileExistingDeploy`.                                                                                                                                                                                                                  |
-| Trigger DNS check          | `POST /v1/platform/applications/{appID}/domains/{domainIDOrName}/dns_check`  | Fired best-effort once per "Check DNS now" selection to actively kick the check job. Idempotent (no-op if a check is in flight).                                                                                                                                                                                                                |
-| Poll deploy status         | `GET /v1/platform/applications/{appID}/instances/{envOrInsID}/deploy_status` | Returns `status` plus the three component booleans `dns_ok`, `ssl_ok`, `mail_ok`. The CLI drives three sequential per-component spinners (mail, DNS, SSL) that all share the same five-minute wall-clock cap; each spinner emits a success line as its boolean flips true. A `proxy_ok` defensive check guards the DNS spinner. Polls every 3s. |
-| Retry SSL provisioning     | `POST /v1/platform/applications/{appID}/domains/{domainIDOrName}/ssl_retry`  | 204 on success. 409 `ssl_retry_throttled` carries `meta.retry_after_seconds` (12-min per-domain throttle).                                                                                                                                                                                                                                      |
-| Retry mail verification    | `POST /v1/platform/applications/{appID}/domains/{domainIDOrName}/mail_retry` | 204 on success. 409 `mail_retry_inflight` → poll `deploy_status`. 403 `operation_not_allowed_on_satellite_domain` for satellites.                                                                                                                                                                                                               |
-| Save OAuth credentials     | `PATCH /v1/platform/applications/{appID}/instances/{instanceID}/config`      | Returns the updated config snapshot. Used to persist production `connection_oauth_*` credentials.                                                                                                                                                                                                                                               |
+| Step                       | Endpoint                                                                | Behavior                                                                                                                                                                                                                                                                                                                                                                                                    |
+| -------------------------- | ----------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Create production instance | `POST /v1/platform/applications/{appID}/instances`                      | Returns `instance_id`, `environment_type`, `active_domain`, `publishable_key`, `secret_key` (once), and `cname_targets[]`.                                                                                                                                                                                                                                                                                  |
+|                            |                                                                         | Performs clone feature compatibility validation before creating production resources. 402 `unsupported_subscription_plan_features` → `ERROR_CODE.PLAN_INSUFFICIENT` listing missing features. 409 `production_instance_exists` → CLI re-derives state via `fetchApplication` and falls through to `reconcileExistingDeploy`.                                                                                |
+| Poll domain status         | `GET /v1/platform/applications/{appID}/domains/{domainIDOrName}/status` | Returns aggregate `status` plus nested DNS, SSL, mail, and proxy component status. The CLI drives three sequential per-component spinners (mail, DNS, SSL) that all share the same 10-second cap; each spinner emits a success line as its component flips complete. The aggregate `status` guards proxy and other server-side readiness gates. It performs one immediate status read, then polls every 3s. |
+| Save OAuth credentials     | `PATCH /v1/platform/applications/{appID}/instances/{instanceID}/config` | Returns the updated config snapshot. Used to persist production `connection_oauth_*` credentials.                                                                                                                                                                                                                                                                                                           |
 
 After displaying the DNS records block, when CNAME records are present the CLI prompts "Export DNS records as a BIND zone file? (y/N)". On yes, it writes `./clerk-<domain>.zone` in the current working directory. The file is a standard BIND fragment containing `$ORIGIN`, `$TTL 300`, and one fully-qualified CNAME per record. The default is "no" and the file is overwritten silently on subsequent runs. Most major DNS providers (Cloudflare, Route 53, Google Cloud DNS, and others) support importing BIND zone fragments. The same prompt appears on both new deploys and resumed deploys.
 
-PLAPI errors are translated to typed `CliError`s by `commands/deploy/errors.ts`. The CLI does not auto-retry SSL or mail provisioning — when `deploy_status` polling times out with `ssl_ok` or `mail_ok` still false, the CLI surfaces the component status and instructs the user to rerun `clerk deploy` once DNS propagates.
+PLAPI errors are translated to typed `CliError`s by `commands/deploy/errors.ts`. The CLI does not auto-retry SSL or mail provisioning. When domain status polling times out with SSL or mail still incomplete, the CLI surfaces the component status and instructs the user to rerun `clerk deploy` once DNS propagates.
 
 If the user presses Ctrl-C after the production instance has been created, the wizard tells them to run `clerk deploy` again and exits with SIGINT code 130. The next run derives the current DNS or OAuth step from API state and resumes without starting another production instance.
 
@@ -73,46 +69,21 @@ sequenceDiagram
     CLI->>API: GET /v1/platform/applications/{appID}/instances/{dev_instance_id}/config?keys=connection_oauth_*
     API-->>CLI: { connection_oauth_google: { enabled: true }, ... }
 
-    %% Pre-flight subscription check
-    CLI->>API: POST /v1/platform/applications/{appID}/validate_cloning { clone_instance_id }
-    alt 402 Payment Required
-        API-->>CLI: UnsupportedSubscriptionPlanFeatures
-        CLI->>User: Upgrade plan to continue
-    else 204 No Content
-        API-->>CLI: ok
-    end
-
     %% Plan summary + domain
     CLI->>User: Plan summary
     CLI->>User: Production domain (e.g. example.com)
     User->>CLI: example.com
 
-    %% Create production instance + domain in one round-trip
-    CLI->>API: POST /v1/platform/applications/{appID}/production_instance { home_url, clone_instance_id }
+    %% Create production instance + domain in one round-trip, including clone validation
+    CLI->>API: POST /v1/platform/applications/{appID}/instances { home_url, clone_instance_id }
     API-->>CLI: { instance_id, active_domain, publishable_key, secret_key, cname_targets }
 
     CLI->>User: Add these CNAME records to your DNS provider
 
-    %% Trigger an active DNS check when the user opts to verify now
-    opt User selects "Check DNS now"
-        CLI->>API: POST /v1/platform/applications/{appID}/domains/{domain_id_or_name}/dns_check
-        API-->>CLI: 204
-    end
-
-    %% Poll deploy status
+    %% Poll domain status
     loop every 3s until status == "complete"
-        CLI->>API: GET /v1/platform/applications/{appID}/instances/{instance_id}/deploy_status
-        API-->>CLI: { status, dns_ok, ssl_ok, mail_ok }
-    end
-
-    opt Stalled provisioning
-        alt SSL stalled
-            CLI->>API: POST /v1/platform/applications/{appID}/domains/{domain_id_or_name}/ssl_retry
-            API-->>CLI: 204
-        else Mail stalled
-            CLI->>API: POST /v1/platform/applications/{appID}/domains/{domain_id_or_name}/mail_retry
-            API-->>CLI: 204
-        end
+        CLI->>API: GET /v1/platform/applications/{appID}/domains/{domain_id_or_name}/status
+        API-->>CLI: { status, dns, ssl, mail, proxy }
     end
 
     %% OAuth credential loop
@@ -129,19 +100,15 @@ sequenceDiagram
 
 All endpoints are on the **Platform API** (`/v1/platform/...`) and are live HTTP calls. The deploy command calls the helpers in `lib/plapi.ts` directly.
 
-| Step                       | Method  | Endpoint                                                                 | Helper                                                                                                                                                             |
-| -------------------------- | ------- | ------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Auth                       | n/a     | Local config                                                             | Token stored from `clerk auth login` or `CLERK_PLATFORM_API_KEY`.                                                                                                  |
-| Read instance config       | `GET`   | `/v1/platform/applications/{appID}/instances/{instanceID}/config`        | `fetchInstanceConfig` from `lib/plapi.ts`. Discovers enabled `connection_oauth_*` providers.                                                                       |
-| Patch instance config      | `PATCH` | `/v1/platform/applications/{appID}/instances/{instanceID}/config`        | `patchInstanceConfig`. Writes production OAuth credentials.                                                                                                        |
-| Read application           | `GET`   | `/v1/platform/applications/{appID}`                                      | `fetchApplication`. Resolves development and production instance IDs.                                                                                              |
-| List production domains    | `GET`   | `/v1/platform/applications/{appID}/domains`                              | `listApplicationDomains`. Recovers production domain name and CNAME targets on each run.                                                                           |
-| Validate cloning           | `POST`  | `/v1/platform/applications/{appID}/validate_cloning`                     | `validateCloning`. Pre-flights subscription/feature support.                                                                                                       |
-| Create production instance | `POST`  | `/v1/platform/applications/{appID}/production_instance`                  | `createProductionInstance`. Returns prod instance, primary domain, keys, and `cname_targets[]`.                                                                    |
-| Trigger DNS check          | `POST`  | `/v1/platform/applications/{appID}/domains/{domainIDOrName}/dns_check`   | `triggerDomainDnsCheck`. Fired best-effort when the user picks "Check DNS now" to actively kick the check job.                                                     |
-| Poll deploy status         | `GET`   | `/v1/platform/applications/{appID}/instances/{envOrInsID}/deploy_status` | `getDeployStatus`. Drives the mail, DNS, and SSL sequential spinners in `pollDeployStatus`; each spinner resolves independently within the shared five-minute cap. |
-| Retry SSL provisioning     | `POST`  | `/v1/platform/applications/{appID}/domains/{domainIDOrName}/ssl_retry`   | `retryApplicationDomainSSL`. Exposed on the API surface; not invoked from the deploy flow yet (handled by re-running).                                             |
-| Retry mail verification    | `POST`  | `/v1/platform/applications/{appID}/domains/{domainIDOrName}/mail_retry`  | `retryApplicationDomainMail`. Same — rejected on satellite domains with 403 `operation_not_allowed_on_satellite_domain`.                                           |
+| Step                       | Method  | Endpoint                                                            | Helper                                                                                                                                                                      |
+| -------------------------- | ------- | ------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Auth                       | n/a     | Local config                                                        | Token stored from `clerk auth login` or `CLERK_PLATFORM_API_KEY`.                                                                                                           |
+| Read instance config       | `GET`   | `/v1/platform/applications/{appID}/instances/{instanceID}/config`   | `fetchInstanceConfig` from `lib/plapi.ts`. Discovers enabled `connection_oauth_*` providers.                                                                                |
+| Patch instance config      | `PATCH` | `/v1/platform/applications/{appID}/instances/{instanceID}/config`   | `patchInstanceConfig`. Writes production OAuth credentials.                                                                                                                 |
+| Read application           | `GET`   | `/v1/platform/applications/{appID}`                                 | `fetchApplication`. Resolves development and production instance IDs.                                                                                                       |
+| List production domains    | `GET`   | `/v1/platform/applications/{appID}/domains`                         | `listApplicationDomains`. Recovers production domain name and CNAME targets on each run.                                                                                    |
+| Create production instance | `POST`  | `/v1/platform/applications/{appID}/instances`                       | `createProductionInstance`. Returns prod instance, primary domain, keys, and `cname_targets[]`.                                                                             |
+| Poll domain status         | `GET`   | `/v1/platform/applications/{appID}/domains/{domainIDOrName}/status` | `getApplicationDomainStatus`. Drives the mail, DNS, and SSL sequential spinners in `pollDeployStatus`; each spinner resolves independently within the shared 10-second cap. |
 
 ## OAuth Provider Config Format
 

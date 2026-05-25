@@ -57,6 +57,7 @@ async function performOAuthFlow(): Promise<UserInfo> {
   // Critical fallback: the OAuth callback can't complete unless the user
   // reaches the authorize URL somehow.
   const urlString = authorizeUrl.toString();
+  log.debug(`Opening browser to URL: ${urlString}`);
   const result = await openBrowser(urlString);
   if (!result.ok) {
     log.warn(

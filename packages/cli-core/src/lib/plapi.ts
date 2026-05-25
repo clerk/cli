@@ -67,7 +67,7 @@ export async function getAuthToken(): Promise<string> {
 /**
  * Local wrapper that adds the standard Bearer auth + Accept headers and
  * throws PlapiError on non-ok responses. Debug logging is centralized in
- * `loggedFetch` — don't add inline `log.debug` calls here or in callers.
+ * `loggedFetch`; don't add inline `log.debug` calls here or in callers.
  */
 async function plapiFetch(method: string, url: URL, init?: { body?: string }): Promise<Response> {
   const token = await getAuthToken();
@@ -185,17 +185,21 @@ export type CreateProductionInstanceParams = {
   clone_instance_id?: string;
 };
 
-export type ValidateCloningParams = {
-  clone_instance_id: string;
-};
-
 export type DeployStatus = "complete" | "incomplete";
 
-export type DeployStatusResponse = {
+type DomainCheckStatus = {
+  status: string;
+  required: boolean;
+};
+
+export type DomainStatusResponse = {
   status: DeployStatus;
-  dns_ok: boolean;
-  ssl_ok: boolean;
-  mail_ok: boolean;
+  dns?: {
+    status: string;
+  };
+  ssl?: DomainCheckStatus;
+  mail?: DomainCheckStatus;
+  proxy?: DomainCheckStatus;
 };
 
 export async function fetchApplication(applicationId: string): Promise<Application> {
@@ -217,68 +221,21 @@ export async function createProductionInstance(
   applicationId: string,
   params: CreateProductionInstanceParams,
 ): Promise<ProductionInstanceResponse> {
-  const url = new URL(
-    `/v1/platform/applications/${applicationId}/production_instance`,
-    getPlapiBaseUrl(),
-  );
+  const url = new URL(`/v1/platform/applications/${applicationId}/instances`, getPlapiBaseUrl());
   const response = await plapiFetch("POST", url, { body: JSON.stringify(params) });
   return response.json() as Promise<ProductionInstanceResponse>;
 }
 
-export async function validateCloning(
+export async function getApplicationDomainStatus(
   applicationId: string,
-  params: ValidateCloningParams,
-): Promise<void> {
+  domainIdOrName: string,
+): Promise<DomainStatusResponse> {
   const url = new URL(
-    `/v1/platform/applications/${applicationId}/validate_cloning`,
-    getPlapiBaseUrl(),
-  );
-  await plapiFetch("POST", url, { body: JSON.stringify(params) });
-}
-
-export async function getDeployStatus(
-  applicationId: string,
-  envOrInsId: string,
-): Promise<DeployStatusResponse> {
-  const url = new URL(
-    `/v1/platform/applications/${applicationId}/instances/${envOrInsId}/deploy_status`,
+    `/v1/platform/applications/${applicationId}/domains/${domainIdOrName}/status`,
     getPlapiBaseUrl(),
   );
   const response = await plapiFetch("GET", url);
-  return response.json() as Promise<DeployStatusResponse>;
-}
-
-export async function triggerDomainDnsCheck(
-  applicationId: string,
-  domainIdOrName: string,
-): Promise<void> {
-  const url = new URL(
-    `/v1/platform/applications/${applicationId}/domains/${domainIdOrName}/dns_check`,
-    getPlapiBaseUrl(),
-  );
-  await plapiFetch("POST", url);
-}
-
-export async function retryApplicationDomainSSL(
-  applicationId: string,
-  domainIdOrName: string,
-): Promise<void> {
-  const url = new URL(
-    `/v1/platform/applications/${applicationId}/domains/${domainIdOrName}/ssl_retry`,
-    getPlapiBaseUrl(),
-  );
-  await plapiFetch("POST", url);
-}
-
-export async function retryApplicationDomainMail(
-  applicationId: string,
-  domainIdOrName: string,
-): Promise<void> {
-  const url = new URL(
-    `/v1/platform/applications/${applicationId}/domains/${domainIdOrName}/mail_retry`,
-    getPlapiBaseUrl(),
-  );
-  await plapiFetch("POST", url);
+  return response.json() as Promise<DomainStatusResponse>;
 }
 
 async function sendInstanceConfig(

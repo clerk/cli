@@ -14,14 +14,12 @@ import {
   createProductionInstance as apiCreateProductionInstance,
   fetchApplication,
   fetchInstanceConfig,
-  getDeployStatus,
+  getApplicationDomainStatus,
   listApplicationDomains,
   patchInstanceConfig,
-  triggerDomainDnsCheck,
-  validateCloning,
   type ApplicationDomain,
   type CnameTarget,
-  type DeployStatusResponse,
+  type DomainStatusResponse,
   type ProductionInstanceResponse,
 } from "../../lib/plapi.ts";
 import {
@@ -72,7 +70,9 @@ type DeployOptions = {
 };
 
 const DEPLOY_STATUS_POLL_INTERVAL_MS = 3000;
-const DEPLOY_STATUS_MAX_POLLS = 100;
+const DEPLOY_STATUS_MAX_WAIT_MS = 10_000;
+const DEPLOY_STATUS_MAX_POLLS =
+  Math.floor(DEPLOY_STATUS_MAX_WAIT_MS / DEPLOY_STATUS_POLL_INTERVAL_MS) + 1;
 
 export async function deploy(options: DeployOptions = {}) {
   if (isAgent()) {
@@ -170,8 +170,6 @@ async function runDeploy(ctx: DeployContext): Promise<void> {
 async function startNewDeploy(ctx: DeployContext): Promise<void> {
   const { known: oauthProviders, unknown: unknownOAuthProviders } =
     await loadDevelopmentOAuthProviders(ctx);
-
-  await runValidateCloning(ctx);
 
   log.blank();
   log.info(INTRO_PREAMBLE);
@@ -359,7 +357,11 @@ async function resolveLiveDeploySnapshot(
   if (!domain) return undefined;
 
   const { known: oauthProviders } = await loadDevelopmentOAuthProviders(ctx);
-  const { productionConfig, deployStatus } = await loadProductionState(ctx, productionInstanceId);
+  const { productionConfig, deployStatus } = await loadProductionState(
+    ctx,
+    productionInstanceId,
+    domain.id,
+  );
   const completedOAuthProviders = oauthProviders.filter((provider) =>
     hasProductionOAuthCredentials(productionConfig, provider),
   );
@@ -390,32 +392,42 @@ async function resolveLiveDeploySnapshot(
 
 async function loadInitialDeployStatus(
   appId: string,
-  productionInstanceId: string,
-): Promise<DeployStatusResponse> {
+  domainIdOrName: string,
+): Promise<DomainStatusResponse> {
   try {
-    return await getDeployStatus(appId, productionInstanceId);
+    return await getApplicationDomainStatus(appId, domainIdOrName);
   } catch (error) {
     log.debug(
-      `deploy: snapshot deploy-status read failed, treating DNS as pending: ${error instanceof Error ? error.message : String(error)}`,
+      `deploy: snapshot domain-status read failed, treating DNS as pending: ${error instanceof Error ? error.message : String(error)}`,
     );
-    return { status: "incomplete", dns_ok: false, ssl_ok: false, mail_ok: false };
+    return pendingDomainStatus();
   }
 }
 
 async function loadProductionState(
   ctx: DeployContext,
   productionInstanceId: string,
+  domainIdOrName: string,
 ): Promise<{
   productionConfig: Record<string, unknown>;
-  deployStatus: DeployStatusResponse;
+  deployStatus: DomainStatusResponse;
 }> {
   return withSpinner("Reading production configuration...", async () => {
     const [productionConfig, deployStatus] = await Promise.all([
       fetchInstanceConfig(ctx.appId, productionInstanceId),
-      loadInitialDeployStatus(ctx.appId, productionInstanceId),
+      loadInitialDeployStatus(ctx.appId, domainIdOrName),
     ]);
     return { productionConfig, deployStatus };
   });
+}
+
+function pendingDomainStatus(): DomainStatusResponse {
+  return {
+    status: "incomplete",
+    dns: { status: "not_started" },
+    ssl: { status: "not_started", required: true },
+    mail: { status: "not_started", required: true },
+  };
 }
 
 async function loadProductionDomain(ctx: DeployContext): Promise<ApplicationDomain | undefined> {
@@ -500,14 +512,6 @@ function discoverEnabledOAuthProviders(config: Record<string, unknown>): Discove
     }
   }
   return { known, unknown };
-}
-
-async function runValidateCloning(ctx: DeployContext): Promise<void> {
-  await withSpinner("Validating subscription compatibility...", async () => {
-    await mapDeployError(
-      validateCloning(ctx.appId, { clone_instance_id: ctx.developmentInstanceId }),
-    );
-  });
 }
 
 async function createProductionInstance(
@@ -605,18 +609,10 @@ async function runDnsVerification(
   ctx: DeployContext,
   state: DeployOperationState,
 ): Promise<DnsVerificationResult | false> {
-  const productionInstanceId =
-    state.productionInstanceId ?? ctx.productionInstanceId ?? ctx.profile.instances.production;
-  if (!productionInstanceId) {
-    throwUsageError(
-      "Cannot verify DNS because the production instance could not be resolved. Run `clerk deploy` after confirming the production instance in the Clerk Dashboard.",
-    );
-  }
+  const domainIdOrName = state.productionDomainId ?? state.domain;
 
   while (true) {
-    await requestDomainDnsCheck(ctx.appId, state.productionDomainId ?? state.domain);
-
-    const outcome = await pollDeployStatus(ctx.appId, productionInstanceId, state.domain);
+    const outcome = await pollDeployStatus(ctx.appId, domainIdOrName, state.domain);
 
     if (outcome.verified) {
       log.blank();
@@ -659,16 +655,14 @@ type DeployStatusOutcome =
 
 async function pollDeployStatus(
   appId: string,
-  productionInstanceId: string,
+  domainIdOrName: string,
   domain: string,
 ): Promise<DeployStatusOutcome> {
-  let response = await mapDeployError(getDeployStatus(appId, productionInstanceId));
-  let status: DeployComponentStatus = {
-    dns: response.dns_ok,
-    ssl: response.ssl_ok,
-    mail: response.mail_ok,
-  };
+  let response = await mapDeployError(getApplicationDomainStatus(appId, domainIdOrName));
+  let status = deployComponentStatusFromDomainStatus(response);
   let pollsRemaining = DEPLOY_STATUS_MAX_POLLS - 1;
+
+  log.debug(`Response from domain status endpoint: ${JSON.stringify(response)}`);
 
   for (const component of DEPLOY_COMPONENT_ORDER) {
     const labels = deployComponentLabels(component, domain);
@@ -677,12 +671,8 @@ async function pollDeployStatus(
       while (pollsRemaining > 0) {
         await sleep(DEPLOY_STATUS_POLL_INTERVAL_MS);
         pollsRemaining--;
-        response = await mapDeployError(getDeployStatus(appId, productionInstanceId));
-        status = {
-          dns: response.dns_ok,
-          ssl: response.ssl_ok,
-          mail: response.mail_ok,
-        };
+        response = await mapDeployError(getApplicationDomainStatus(appId, domainIdOrName));
+        status = deployComponentStatusFromDomainStatus(response);
         if (status[component]) return true;
       }
       return false;
@@ -697,6 +687,20 @@ async function pollDeployStatus(
   return { verified: true, status };
 }
 
+function deployComponentStatusFromDomainStatus(
+  response: DomainStatusResponse,
+): DeployComponentStatus {
+  return {
+    dns: response.dns?.status === "complete",
+    ssl: response.ssl ? checkStatusComplete(response.ssl) : false,
+    mail: checkStatusComplete(response.mail),
+  };
+}
+
+function checkStatusComplete(check: { status: string; required: boolean } | undefined): boolean {
+  return !check?.required || check.status === "complete";
+}
+
 async function offerBindZoneExport(
   domain: string,
   cnameTargets: readonly CnameTarget[] | undefined,
@@ -708,16 +712,6 @@ async function offerBindZoneExport(
   const filePath = `${process.cwd()}/clerk-${domain}.zone`;
   await Bun.write(filePath, contents);
   log.success(`Wrote ${filePath}`);
-}
-
-async function requestDomainDnsCheck(appId: string, domainIdOrName: string): Promise<void> {
-  try {
-    await triggerDomainDnsCheck(appId, domainIdOrName);
-  } catch (error) {
-    log.debug(
-      `deploy: dns_check trigger failed, falling back to passive polling: ${error instanceof Error ? error.message : String(error)}`,
-    );
-  }
 }
 
 async function runOAuthSetup(

@@ -15,10 +15,7 @@ const {
   listApplications,
   createApplication,
   createProductionInstance,
-  validateCloning,
-  getDeployStatus,
-  retryApplicationDomainSSL,
-  retryApplicationDomainMail,
+  getApplicationDomainStatus,
   listApplicationDomains,
 } = await import("./plapi.ts");
 const { AuthError, PlapiError } = await import("./errors.ts");
@@ -388,7 +385,7 @@ describe("plapi", () => {
   });
 
   describe("createProductionInstance", () => {
-    test("sends POST to production_instance with clone params", async () => {
+    test("sends POST to instances with clone params", async () => {
       let capturedMethod = "";
       let capturedUrl = "";
       let capturedBody = "";
@@ -415,9 +412,7 @@ describe("plapi", () => {
       });
 
       expect(capturedMethod).toBe("POST");
-      expect(capturedUrl).toBe(
-        "https://api.clerk.com/v1/platform/applications/app_abc/production_instance",
-      );
+      expect(capturedUrl).toBe("https://api.clerk.com/v1/platform/applications/app_abc/instances");
       expect(JSON.parse(capturedBody)).toEqual({
         home_url: "example.com",
         clone_instance_id: "ins_dev_123",
@@ -426,91 +421,29 @@ describe("plapi", () => {
     });
   });
 
-  describe("validateCloning", () => {
-    test("sends POST to validate_cloning and accepts empty success response", async () => {
+  describe("getApplicationDomainStatus", () => {
+    test("sends GET to domain status and returns parsed status", async () => {
       let capturedMethod = "";
       let capturedUrl = "";
-      let capturedBody = "";
+      const responseBody = {
+        status: "complete",
+        dns: { status: "complete", cnames: {} },
+        ssl: { status: "complete", required: true, failure_hints: [] },
+        mail: { status: "complete", required: true },
+      } as const;
       stubFetch(async (input, init) => {
         capturedMethod = init?.method ?? "GET";
         capturedUrl = input.toString();
-        capturedBody = init?.body as string;
-        return new Response(null, { status: 204 });
+        return new Response(JSON.stringify(responseBody), { status: 200 });
       });
 
-      await validateCloning("app_abc", { clone_instance_id: "ins_dev_123" });
-
-      expect(capturedMethod).toBe("POST");
-      expect(capturedUrl).toBe(
-        "https://api.clerk.com/v1/platform/applications/app_abc/validate_cloning",
-      );
-      expect(JSON.parse(capturedBody)).toEqual({ clone_instance_id: "ins_dev_123" });
-    });
-  });
-
-  describe("getDeployStatus", () => {
-    test("sends GET to deploy_status and returns parsed status", async () => {
-      let capturedMethod = "";
-      let capturedUrl = "";
-      stubFetch(async (input, init) => {
-        capturedMethod = init?.method ?? "GET";
-        capturedUrl = input.toString();
-        return new Response(
-          JSON.stringify({ status: "complete", dns_ok: true, ssl_ok: true, mail_ok: true }),
-          { status: 200 },
-        );
-      });
-
-      const result = await getDeployStatus("app_abc", "production");
+      const result = await getApplicationDomainStatus("app_abc", "dmn_123");
 
       expect(capturedMethod).toBe("GET");
       expect(capturedUrl).toBe(
-        "https://api.clerk.com/v1/platform/applications/app_abc/instances/production/deploy_status",
+        "https://api.clerk.com/v1/platform/applications/app_abc/domains/dmn_123/status",
       );
-      expect(result).toEqual({
-        status: "complete",
-        dns_ok: true,
-        ssl_ok: true,
-        mail_ok: true,
-      });
-    });
-  });
-
-  describe("retryApplicationDomainSSL", () => {
-    test("sends POST to ssl_retry and accepts empty success response", async () => {
-      let capturedMethod = "";
-      let capturedUrl = "";
-      stubFetch(async (input, init) => {
-        capturedMethod = init?.method ?? "GET";
-        capturedUrl = input.toString();
-        return new Response(null, { status: 204 });
-      });
-
-      await retryApplicationDomainSSL("app_abc", "dmn_123");
-
-      expect(capturedMethod).toBe("POST");
-      expect(capturedUrl).toBe(
-        "https://api.clerk.com/v1/platform/applications/app_abc/domains/dmn_123/ssl_retry",
-      );
-    });
-  });
-
-  describe("retryApplicationDomainMail", () => {
-    test("sends POST to mail_retry and accepts empty success response", async () => {
-      let capturedMethod = "";
-      let capturedUrl = "";
-      stubFetch(async (input, init) => {
-        capturedMethod = init?.method ?? "GET";
-        capturedUrl = input.toString();
-        return new Response(null, { status: 204 });
-      });
-
-      await retryApplicationDomainMail("app_abc", "example.com");
-
-      expect(capturedMethod).toBe("POST");
-      expect(capturedUrl).toBe(
-        "https://api.clerk.com/v1/platform/applications/app_abc/domains/example.com/mail_retry",
-      );
+      expect(result).toEqual(responseBody);
     });
   });
 

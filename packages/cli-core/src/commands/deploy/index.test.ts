@@ -28,11 +28,8 @@ const mockFetchInstanceConfig = mock();
 const mockFetchApplication = mock();
 const mockListApplicationDomains = mock();
 const mockCreateProductionInstance = mock();
-const mockValidateCloning = mock();
-const mockGetDeployStatus = mock();
-const mockTriggerDomainDnsCheck = mock();
-const mockRetrySSL = mock();
-const mockRetryMail = mock();
+const mockGetApplicationDomainStatus = mock();
+const mockSleep = mock();
 
 mock.module("@inquirer/prompts", () => ({
   ...promptsStubs,
@@ -56,16 +53,15 @@ mock.module("../../lib/plapi.ts", () => ({
   fetchApplication: (...args: unknown[]) => mockFetchApplication(...args),
   listApplicationDomains: (...args: unknown[]) => mockListApplicationDomains(...args),
   createProductionInstance: (...args: unknown[]) => mockCreateProductionInstance(...args),
-  validateCloning: (...args: unknown[]) => mockValidateCloning(...args),
-  getDeployStatus: (...args: unknown[]) => mockGetDeployStatus(...args),
+  getApplicationDomainStatus: (...args: unknown[]) => mockGetApplicationDomainStatus(...args),
   patchInstanceConfig: (...args: unknown[]) => mockPatchInstanceConfig(...args),
-  triggerDomainDnsCheck: (...args: unknown[]) => mockTriggerDomainDnsCheck(...args),
-  retryApplicationDomainSSL: (...args: unknown[]) => mockRetrySSL(...args),
-  retryApplicationDomainMail: (...args: unknown[]) => mockRetryMail(...args),
 }));
 
 mock.module("../../lib/sleep.ts", () => ({
-  sleep: () => Promise.resolve(),
+  sleep: (...args: unknown[]) => {
+    mockSleep(...args);
+    return Promise.resolve();
+  },
 }));
 
 const { _setConfigDir, readConfig, setProfile } = await import("../../lib/config.ts");
@@ -80,6 +76,25 @@ function promptExitError(): Error {
   const error = new Error("User force closed the prompt with SIGINT");
   error.name = "ExitPromptError";
   return error;
+}
+
+function domainStatus({
+  status,
+  dns,
+  ssl,
+  mail,
+}: {
+  status: "complete" | "incomplete";
+  dns: boolean;
+  ssl: boolean;
+  mail: boolean;
+}) {
+  return {
+    status,
+    dns: { status: dns ? "complete" : "not_started", cnames: {} },
+    ssl: { status: ssl ? "complete" : "not_started", required: true, failure_hints: [] },
+    mail: { status: mail ? "complete" : "not_started", required: true },
+  };
 }
 
 describe("deploy", () => {
@@ -128,13 +143,9 @@ describe("deploy", () => {
       ],
       total_count: 1,
     });
-    mockValidateCloning.mockResolvedValue(undefined);
-    mockGetDeployStatus.mockResolvedValue({
-      status: "complete",
-      dns_ok: true,
-      ssl_ok: true,
-      mail_ok: true,
-    });
+    mockGetApplicationDomainStatus.mockResolvedValue(
+      domainStatus({ status: "complete", dns: true, ssl: true, mail: true }),
+    );
     mockCreateProductionInstance.mockImplementation(
       (_appId: string, params: { home_url: string }) => {
         const hostname = params.home_url.replace(/^https?:\/\//, "");
@@ -182,11 +193,8 @@ describe("deploy", () => {
     mockFetchApplication.mockReset();
     mockListApplicationDomains.mockReset();
     mockCreateProductionInstance.mockReset();
-    mockValidateCloning.mockReset();
-    mockGetDeployStatus.mockReset();
-    mockTriggerDomainDnsCheck.mockReset();
-    mockRetrySSL.mockReset();
-    mockRetryMail.mockReset();
+    mockGetApplicationDomainStatus.mockReset();
+    mockSleep.mockReset();
     consoleSpy?.mockRestore();
   });
 
@@ -399,15 +407,17 @@ describe("deploy", () => {
       expect(allOutput).not.toContain("deploying a Clerk application to production");
     });
 
-    test("calls validate_cloning preflight before plan summary", async () => {
+    test("creates production instance without a separate clone-validation preflight", async () => {
       await linkedProject();
       mockHumanFlow();
 
       await runDeployUntilPause();
 
-      expect(mockValidateCloning).toHaveBeenCalledWith("app_xyz789", {
+      expect(mockCreateProductionInstance).toHaveBeenCalledWith("app_xyz789", {
         clone_instance_id: "ins_dev_123",
+        home_url: "https://example.com",
       });
+      expect(stripAnsi(captured.err)).not.toContain("Validating subscription compatibility");
     });
 
     test("checks for an existing production instance before reading development config", async () => {
@@ -446,7 +456,7 @@ describe("deploy", () => {
       expect(err).toContain("Configure them from the Clerk Dashboard before going live");
     });
 
-    test("DNS verification polls getDeployStatus until complete", async () => {
+    test("DNS verification polls getApplicationDomainStatus until complete", async () => {
       await linkedProject();
       // Proceed → create instance → check DNS now → complete OAuth.
       mockIsAgent.mockReturnValue(false);
@@ -456,23 +466,46 @@ describe("deploy", () => {
         .mockResolvedValueOnce("google-client-id.apps.googleusercontent.com");
       mockSelect.mockResolvedValueOnce("check").mockResolvedValueOnce("have-credentials");
       mockPassword.mockResolvedValueOnce("google-secret");
-      mockGetDeployStatus
-        .mockResolvedValueOnce({
-          status: "incomplete",
-          dns_ok: false,
-          ssl_ok: false,
-          mail_ok: false,
-        })
-        .mockResolvedValueOnce({ status: "complete", dns_ok: true, ssl_ok: true, mail_ok: true });
+      mockGetApplicationDomainStatus
+        .mockResolvedValueOnce(
+          domainStatus({ status: "incomplete", dns: false, ssl: false, mail: false }),
+        )
+        .mockResolvedValueOnce(
+          domainStatus({ status: "complete", dns: true, ssl: true, mail: true }),
+        );
       mockPatchInstanceConfig.mockResolvedValueOnce({});
 
       await runDeploy({});
       const err = stripAnsi(captured.err);
 
-      expect(mockGetDeployStatus).toHaveBeenCalledWith("app_xyz789", "ins_prod_mock");
-      expect(mockGetDeployStatus.mock.calls.length).toBeGreaterThanOrEqual(2);
+      expect(mockGetApplicationDomainStatus).toHaveBeenCalledWith("app_xyz789", "dmn_prod_mock");
+      expect(mockGetApplicationDomainStatus.mock.calls.length).toBeGreaterThanOrEqual(2);
       expect(err).toContain("DNS verified for example.com");
       expect(err).toContain("Production ready at https://example.com");
+    });
+
+    test("DNS verification caps polling to the 10 second budget", async () => {
+      await linkedProject();
+      mockIsAgent.mockReturnValue(false);
+      mockConfirm.mockResolvedValueOnce(true).mockResolvedValueOnce(true);
+      mockInput
+        .mockResolvedValueOnce("example.com")
+        .mockResolvedValueOnce("google-client-id.apps.googleusercontent.com");
+      mockSelect
+        .mockResolvedValueOnce("check")
+        .mockResolvedValueOnce("skip")
+        .mockResolvedValueOnce("have-credentials");
+      mockPassword.mockResolvedValueOnce("google-secret");
+      mockGetApplicationDomainStatus.mockResolvedValue(
+        domainStatus({ status: "incomplete", dns: false, ssl: false, mail: false }),
+      );
+      mockPatchInstanceConfig.mockResolvedValueOnce({});
+
+      await runDeploy({});
+
+      expect(mockGetApplicationDomainStatus).toHaveBeenCalledTimes(4);
+      expect(mockSleep).toHaveBeenCalledTimes(3);
+      expect(mockSleep).toHaveBeenCalledWith(3000);
     });
 
     test("DNS verification emits per-component spinner labels in mail/dns/ssl order", async () => {
@@ -487,26 +520,19 @@ describe("deploy", () => {
         .mockResolvedValueOnce("google-client-id.apps.googleusercontent.com");
       mockSelect.mockResolvedValueOnce("check").mockResolvedValueOnce("have-credentials");
       mockPassword.mockResolvedValueOnce("google-secret");
-      mockGetDeployStatus
-        .mockResolvedValueOnce({
-          status: "incomplete",
-          dns_ok: false,
-          ssl_ok: false,
-          mail_ok: false,
-        })
-        .mockResolvedValueOnce({
-          status: "incomplete",
-          dns_ok: false,
-          ssl_ok: false,
-          mail_ok: true,
-        })
-        .mockResolvedValueOnce({
-          status: "incomplete",
-          dns_ok: true,
-          ssl_ok: false,
-          mail_ok: true,
-        })
-        .mockResolvedValueOnce({ status: "complete", dns_ok: true, ssl_ok: true, mail_ok: true });
+      mockGetApplicationDomainStatus
+        .mockResolvedValueOnce(
+          domainStatus({ status: "incomplete", dns: false, ssl: false, mail: false }),
+        )
+        .mockResolvedValueOnce(
+          domainStatus({ status: "incomplete", dns: false, ssl: false, mail: true }),
+        )
+        .mockResolvedValueOnce(
+          domainStatus({ status: "incomplete", dns: true, ssl: false, mail: true }),
+        )
+        .mockResolvedValueOnce(
+          domainStatus({ status: "complete", dns: true, ssl: true, mail: true }),
+        );
       mockPatchInstanceConfig.mockResolvedValueOnce({});
 
       await runDeploy({});
@@ -533,12 +559,9 @@ describe("deploy", () => {
         productionConfig: {},
       });
       // Every poll returns dns/ssl/mail all true but status incomplete (proxy_ok = false on server).
-      mockGetDeployStatus.mockResolvedValue({
-        status: "incomplete",
-        dns_ok: true,
-        ssl_ok: true,
-        mail_ok: true,
-      });
+      mockGetApplicationDomainStatus.mockResolvedValue(
+        domainStatus({ status: "incomplete", dns: true, ssl: true, mail: true }),
+      );
       mockConfirm.mockResolvedValueOnce(false); // BIND export prompt: skip (wired in Task 5)
       mockSelect.mockResolvedValueOnce("check").mockResolvedValueOnce("skip");
 
@@ -894,14 +917,13 @@ describe("deploy", () => {
         instanceId: "ins_prod_123",
         productionConfig: {},
       });
-      mockGetDeployStatus
-        .mockResolvedValueOnce({
-          status: "incomplete",
-          dns_ok: false,
-          ssl_ok: false,
-          mail_ok: false,
-        })
-        .mockResolvedValueOnce({ status: "complete", dns_ok: true, ssl_ok: true, mail_ok: true });
+      mockGetApplicationDomainStatus
+        .mockResolvedValueOnce(
+          domainStatus({ status: "incomplete", dns: false, ssl: false, mail: false }),
+        )
+        .mockResolvedValueOnce(
+          domainStatus({ status: "complete", dns: true, ssl: true, mail: true }),
+        );
       mockConfirm.mockResolvedValueOnce(true).mockResolvedValueOnce(true);
       mockSelect.mockResolvedValueOnce("check").mockResolvedValueOnce("have-credentials");
       mockInput.mockResolvedValueOnce("google-client-id.apps.googleusercontent.com");
@@ -921,7 +943,6 @@ describe("deploy", () => {
           { name: "Skip DNS verification for now", value: "skip" },
         ],
       });
-      expect(mockTriggerDomainDnsCheck).toHaveBeenCalledWith("app_xyz789", "dmn_prod_mock");
       const firstInput = mockInput.mock.calls[0]?.[0] as { message?: string } | undefined;
       expect(String(firstInput?.message)).not.toContain("Production domain");
     });
@@ -935,12 +956,9 @@ describe("deploy", () => {
         instanceId: "ins_prod_123",
         productionConfig: {},
       });
-      mockGetDeployStatus.mockResolvedValue({
-        status: "incomplete",
-        dns_ok: false,
-        ssl_ok: false,
-        mail_ok: false,
-      });
+      mockGetApplicationDomainStatus.mockResolvedValue(
+        domainStatus({ status: "incomplete", dns: false, ssl: false, mail: false }),
+      );
       mockConfirm.mockResolvedValueOnce(false); // BIND export prompt placeholder (wired in Task 5)
       mockSelect.mockResolvedValueOnce("skip").mockResolvedValueOnce("have-credentials");
       mockInput.mockResolvedValueOnce("google-client-id.apps.googleusercontent.com");
@@ -966,12 +984,9 @@ describe("deploy", () => {
         instanceId: "ins_prod_123",
         productionConfig: {},
       });
-      mockGetDeployStatus.mockResolvedValue({
-        status: "incomplete",
-        dns_ok: false,
-        ssl_ok: false,
-        mail_ok: false,
-      });
+      mockGetApplicationDomainStatus.mockResolvedValue(
+        domainStatus({ status: "incomplete", dns: false, ssl: false, mail: false }),
+      );
       mockConfirm.mockResolvedValueOnce(true); // BIND export prompt: yes
       mockSelect.mockResolvedValueOnce("skip").mockResolvedValueOnce("have-credentials");
       mockInput.mockResolvedValueOnce("google-client-id.apps.googleusercontent.com");
@@ -1007,12 +1022,9 @@ describe("deploy", () => {
         instanceId: "ins_prod_123",
         productionConfig: {},
       });
-      mockGetDeployStatus.mockResolvedValue({
-        status: "incomplete",
-        dns_ok: false,
-        ssl_ok: false,
-        mail_ok: false,
-      });
+      mockGetApplicationDomainStatus.mockResolvedValue(
+        domainStatus({ status: "incomplete", dns: false, ssl: false, mail: false }),
+      );
       mockConfirm.mockResolvedValueOnce(false); // BIND export prompt: no
       mockSelect.mockResolvedValueOnce("skip").mockResolvedValueOnce("have-credentials");
       mockInput.mockResolvedValueOnce("google-client-id.apps.googleusercontent.com");
@@ -1042,12 +1054,9 @@ describe("deploy", () => {
         productionConfig: {},
         cnameTargets: [], // override: domain has no CNAME targets
       });
-      mockGetDeployStatus.mockResolvedValue({
-        status: "incomplete",
-        dns_ok: false,
-        ssl_ok: false,
-        mail_ok: false,
-      });
+      mockGetApplicationDomainStatus.mockResolvedValue(
+        domainStatus({ status: "incomplete", dns: false, ssl: false, mail: false }),
+      );
       mockSelect.mockResolvedValueOnce("skip").mockResolvedValueOnce("have-credentials");
       mockInput.mockResolvedValueOnce("google-client-id.apps.googleusercontent.com");
       mockPassword.mockResolvedValueOnce("google-secret");
@@ -1070,7 +1079,7 @@ describe("deploy", () => {
       }
     });
 
-    test("DNS verification timeout names the specific pending components from deploy_status", async () => {
+    test("DNS verification timeout names the specific pending components from domain status", async () => {
       await linkedProject({
         instances: { development: "ins_dev_123", production: "ins_prod_123" },
       });
@@ -1080,12 +1089,9 @@ describe("deploy", () => {
         developmentConfig: {},
         productionConfig: {},
       });
-      mockGetDeployStatus.mockResolvedValue({
-        status: "incomplete",
-        dns_ok: true,
-        ssl_ok: false,
-        mail_ok: false,
-      });
+      mockGetApplicationDomainStatus.mockResolvedValue(
+        domainStatus({ status: "incomplete", dns: true, ssl: false, mail: false }),
+      );
       mockSelect.mockResolvedValueOnce("check").mockResolvedValueOnce("skip");
 
       await runDeploy({});
@@ -1104,12 +1110,9 @@ describe("deploy", () => {
         instanceId: "ins_prod_123",
         productionConfig: {},
       });
-      mockGetDeployStatus.mockResolvedValue({
-        status: "incomplete",
-        dns_ok: false,
-        ssl_ok: false,
-        mail_ok: false,
-      });
+      mockGetApplicationDomainStatus.mockResolvedValue(
+        domainStatus({ status: "incomplete", dns: false, ssl: false, mail: false }),
+      );
       mockSelect.mockResolvedValueOnce("skip").mockResolvedValueOnce("have-credentials");
       mockConfirm.mockResolvedValueOnce(true);
       mockInput.mockResolvedValueOnce("google-client-id.apps.googleusercontent.com");
@@ -1129,7 +1132,7 @@ describe("deploy", () => {
           { name: "Skip DNS verification for now", value: "skip" },
         ],
       });
-      expect(mockGetDeployStatus).toHaveBeenCalledTimes(1);
+      expect(mockGetApplicationDomainStatus).toHaveBeenCalledTimes(1);
       expect(mockPatchInstanceConfig).toHaveBeenCalledWith("app_xyz789", "ins_prod_123", {
         connection_oauth_google: {
           enabled: true,
@@ -1187,15 +1190,14 @@ describe("deploy", () => {
       mockInput.mockResolvedValueOnce("google-client-id.apps.googleusercontent.com");
       mockPassword.mockResolvedValueOnce("google-secret");
       mockPatchInstanceConfig.mockResolvedValueOnce({});
-      mockGetDeployStatus.mockReset();
-      mockGetDeployStatus
-        .mockResolvedValueOnce({
-          status: "incomplete",
-          dns_ok: false,
-          ssl_ok: false,
-          mail_ok: false,
-        })
-        .mockResolvedValueOnce({ status: "complete", dns_ok: true, ssl_ok: true, mail_ok: true });
+      mockGetApplicationDomainStatus.mockReset();
+      mockGetApplicationDomainStatus
+        .mockResolvedValueOnce(
+          domainStatus({ status: "incomplete", dns: false, ssl: false, mail: false }),
+        )
+        .mockResolvedValueOnce(
+          domainStatus({ status: "complete", dns: true, ssl: true, mail: true }),
+        );
 
       await runDeploy({});
 
@@ -1264,15 +1266,14 @@ describe("deploy", () => {
       mockInput.mockResolvedValueOnce("google-client-id.apps.googleusercontent.com");
       mockPassword.mockResolvedValueOnce("google-secret");
       mockPatchInstanceConfig.mockResolvedValueOnce({});
-      mockGetDeployStatus.mockReset();
-      mockGetDeployStatus
-        .mockResolvedValueOnce({
-          status: "incomplete",
-          dns_ok: false,
-          ssl_ok: false,
-          mail_ok: false,
-        })
-        .mockResolvedValueOnce({ status: "complete", dns_ok: true, ssl_ok: true, mail_ok: true });
+      mockGetApplicationDomainStatus.mockReset();
+      mockGetApplicationDomainStatus
+        .mockResolvedValueOnce(
+          domainStatus({ status: "incomplete", dns: false, ssl: false, mail: false }),
+        )
+        .mockResolvedValueOnce(
+          domainStatus({ status: "complete", dns: true, ssl: true, mail: true }),
+        );
 
       await runDeploy({});
       const err = stripAnsi(captured.err);
@@ -1456,12 +1457,9 @@ describe("deploy", () => {
         .mockResolvedValueOnce("google-client-id.apps.googleusercontent.com");
       mockPassword.mockResolvedValueOnce("google-secret");
       mockPatchInstanceConfig.mockResolvedValueOnce({});
-      mockGetDeployStatus.mockResolvedValue({
-        status: "incomplete",
-        dns_ok: false,
-        ssl_ok: false,
-        mail_ok: false,
-      });
+      mockGetApplicationDomainStatus.mockResolvedValue(
+        domainStatus({ status: "incomplete", dns: false, ssl: false, mail: false }),
+      );
 
       await runDeploy({});
       const err = stripAnsi(captured.err);

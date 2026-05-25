@@ -83,29 +83,6 @@ function translatePlapiError(error: PlapiError): CliError | PlapiError {
     );
   }
 
-  if (status === 409 && code === "ssl_retry_throttled") {
-    const retryAfter = readRetryAfterSeconds(error.meta);
-    const wait = retryAfter ? ` Retry available in ${formatSeconds(retryAfter)}.` : "";
-    return new CliError(`SSL provisioning was already requested recently.${wait}`, {
-      code: ERROR_CODE.SSL_RETRY_THROTTLED,
-    });
-  }
-
-  if (status === 409 && code === "mail_retry_inflight") {
-    return new CliError(
-      "Mail verification is already in progress for this domain. " +
-        "Run `clerk deploy` again once the verification job completes.",
-      { code: ERROR_CODE.MAIL_RETRY_INFLIGHT },
-    );
-  }
-
-  if (status === 403 && code === "operation_not_allowed_on_satellite_domain") {
-    return new CliError(
-      "Mail settings are inherited from the primary domain on satellite domains and cannot be retried here.",
-      { code: ERROR_CODE.MAIL_RETRY_SATELLITE },
-    );
-  }
-
   if (status === 404 && code === "resource_not_found") {
     return new CliError(
       "Clerk couldn't find this application (it may have been deleted or your workspace no longer has access). " +
@@ -152,18 +129,4 @@ function readParamName(meta: Record<string, unknown> | null): string | undefined
   if (!meta) return undefined;
   const value = meta.param_name;
   return typeof value === "string" && value.length > 0 ? value : undefined;
-}
-
-function readRetryAfterSeconds(meta: Record<string, unknown> | null): number | undefined {
-  if (!meta) return undefined;
-  const value = meta.retry_after_seconds;
-  if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) return undefined;
-  return Math.ceil(value);
-}
-
-function formatSeconds(seconds: number): string {
-  if (seconds < 60) return `${seconds}s`;
-  const minutes = Math.floor(seconds / 60);
-  const rest = seconds % 60;
-  return rest === 0 ? `${minutes}m` : `${minutes}m ${rest}s`;
 }
