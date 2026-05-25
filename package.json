@@ -51,6 +51,6 @@
     "bun": ">=1.3.10"
   },
   "patchedDependencies": {
-    "playwright-core@1.59.1": "patches/playwright-core@1.59.1.patch"
+    "playwright-core@1.60.0": "patches/playwright-core@1.60.0.patch"
   }
 }
