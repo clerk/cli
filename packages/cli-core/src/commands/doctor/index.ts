@@ -1,3 +1,4 @@
+import type { Command } from "@commander-js/extra-typings";
 import { isAgent, isHuman } from "../../mode.ts";
 import { bold, green, red } from "../../lib/color.ts";
 import { log } from "../../lib/log.ts";
@@ -137,4 +138,22 @@ export async function doctor(options: DoctorOptions = {}): Promise<void> {
     });
   }
   outro("All checks passing");
+}
+
+export function registerDoctor(program: Command): void {
+  program
+    .command("doctor")
+    .description("Check your project's Clerk integration health")
+    .option("--verbose", "Show detailed output for each check")
+    .option("--json", "Output results as JSON")
+    .option("--spotlight", "Only show warnings and failures")
+    .option("--fix", "Attempt to auto-fix issues")
+    .setExamples([
+      { command: "clerk doctor", description: "Run all health checks" },
+      { command: "clerk doctor --verbose", description: "Show detailed output for each check" },
+      { command: "clerk doctor --json", description: "Output results as machine-readable JSON" },
+      { command: "clerk doctor --fix", description: "Auto-fix detected issues" },
+      { command: "clerk doctor --spotlight", description: "Only show warnings and failures" },
+    ])
+    .action(doctor);
 }

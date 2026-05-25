@@ -1,3 +1,5 @@
+import type { Command } from "@commander-js/extra-typings";
+import { deployStatus } from "./status-command.ts";
 import { isAgent } from "../../mode.ts";
 import { isInsideGutter, log } from "../../lib/log.ts";
 import { bold, dim } from "../../lib/color.ts";
@@ -631,4 +633,16 @@ async function finishDeploy(
   });
   log.info(nextStepsBody(ctx.appId, productionInstanceId));
   outro("Success");
+}
+
+export function registerDeploy(program: Command): void {
+  const deployCmd = program
+    .command("deploy")
+    .description("Deploy a Clerk application to production");
+  deployCmd.command("run", { isDefault: true, hidden: true }).action(deploy);
+  deployCmd
+    .command("status")
+    .description("Show production deploy status (read-only)")
+    .option("--wait", "Wait for DNS, SSL, and email DNS verification with retries")
+    .action(deployStatus);
 }

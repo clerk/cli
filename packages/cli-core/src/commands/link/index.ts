@@ -1,3 +1,4 @@
+import type { Command } from "@commander-js/extra-typings";
 import { basename } from "node:path";
 import { confirm } from "../../lib/prompts.ts";
 import { isAgent } from "../../mode.ts";
@@ -195,4 +196,16 @@ async function resolveApp(
     apps,
     message: `Select a Clerk application to link ${dim(`(repo: ${basename(displayPath)})`)}`,
   });
+}
+
+export function registerLink(program: Command): void {
+  program
+    .command("link")
+    .description("Link this project to a Clerk application")
+    .option("--app <id>", "Application ID to link (skips interactive picker)")
+    .setExamples([
+      { command: "clerk link", description: "Pick an app interactively" },
+      { command: "clerk link --app app_abc123", description: "Link directly by application ID" },
+    ])
+    .action(link);
 }

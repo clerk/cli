@@ -1,3 +1,4 @@
+import type { Command } from "@commander-js/extra-typings";
 import { confirm } from "../../lib/prompts.ts";
 import { isAgent, isHuman } from "../../mode.ts";
 import { resolveProfile, removeProfile } from "../../lib/config.ts";
@@ -45,4 +46,16 @@ export async function unlink(options: UnlinkOptions = {}): Promise<void> {
   await removeProfile(existing.path);
   log.data(`\nUnlinked ${cyan(label)} from ${dim(displayPath)}`);
   outro(NEXT_STEPS.UNLINK);
+}
+
+export function registerUnlink(program: Command): void {
+  program
+    .command("unlink")
+    .description("Unlink this project from its Clerk application")
+    .option("--yes", "Skip confirmation prompt")
+    .setExamples([
+      { command: "clerk unlink", description: "Unlink with confirmation prompt" },
+      { command: "clerk unlink --yes", description: "Skip confirmation" },
+    ])
+    .action(unlink);
 }

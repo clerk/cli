@@ -7,6 +7,7 @@
  * require re-authentication.
  */
 
+import type { Command } from "@commander-js/extra-typings";
 import { setEnvironment } from "../../lib/config.ts";
 import { getToken } from "../../lib/credential-store.ts";
 import {
@@ -84,4 +85,17 @@ export async function switchEnv(environmentArg: string | undefined): Promise<voi
     return;
   }
   outro(NEXT_STEPS.SWITCH_ENV);
+}
+
+export function registerSwitchEnv(program: Command): void {
+  program
+    .command("switch-env", { hidden: true })
+    .description("Switch the active Clerk CLI environment")
+    .argument("[environment]", "Environment to switch to (e.g. production, staging)")
+    .setExamples([
+      { command: "clerk switch-env", description: "Show current environment" },
+      { command: "clerk switch-env staging", description: "Switch to staging" },
+      { command: "clerk switch-env production", description: "Switch back to production" },
+    ])
+    .action(switchEnv);
 }
