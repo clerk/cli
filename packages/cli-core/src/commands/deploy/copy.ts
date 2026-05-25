@@ -75,6 +75,25 @@ export function dnsRecords(targets: readonly CnameTarget[]): string[] {
   return lines;
 }
 
+export function pendingDnsRecords(
+  targets: readonly CnameTarget[],
+  status: DeployComponentStatus,
+): string[] {
+  const pendingTargets = targets.filter((target) => cnameTargetPending(target, status));
+  if (pendingTargets.length === 0) return [];
+  return dnsRecords(pendingTargets);
+}
+
+function cnameTargetPending(target: CnameTarget, status: DeployComponentStatus): boolean {
+  if (isMailCnameTarget(target)) return !status.mail;
+  return !status.dns;
+}
+
+function isMailCnameTarget(target: CnameTarget): boolean {
+  const prefix = target.host.split(".", 1)[0];
+  return prefix === "clkmail" || prefix === "clk" || prefix === "clk2";
+}
+
 function cnameTargetLabel(host: string): string {
   const prefix = host.split(".", 1)[0];
   switch (prefix) {
@@ -94,7 +113,7 @@ function cnameTargetLabel(host: string): string {
 export function dnsDashboardHandoff(domain: string): string[] {
   return [
     `Check the Domains section in the Clerk Dashboard for ${domain} to monitor DNS propagation and SSL issuance.`,
-    "You can verify DNS now, or skip and continue. DNS propagation can take time.",
+    "After OAuth setup, you can verify DNS or skip and finish. DNS propagation can take time.",
   ];
 }
 

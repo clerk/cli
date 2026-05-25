@@ -1,5 +1,5 @@
 import { test, expect, describe } from "bun:test";
-import { bindZoneFile, deployComponentLabels } from "./copy.ts";
+import { bindZoneFile, deployComponentLabels, pendingDnsRecords } from "./copy.ts";
 import type { CnameTarget } from "../../lib/plapi.ts";
 
 describe("bindZoneFile", () => {
@@ -73,5 +73,37 @@ describe("deployComponentLabels", () => {
       progress: "Issuing SSL certificate for example.com...",
       done: "SSL certificate issued for example.com",
     });
+  });
+});
+
+describe("pendingDnsRecords", () => {
+  const targets: CnameTarget[] = [
+    { host: "clerk.example.com", value: "frontend-api.clerk.services", required: true },
+    { host: "accounts.example.com", value: "accounts.clerk.services", required: true },
+    {
+      host: "clkmail.example.com",
+      value: "mail.example.com.nam1.clerk.services",
+      required: true,
+    },
+  ];
+
+  test("returns no records when only SSL remains pending", () => {
+    expect(pendingDnsRecords(targets, { dns: true, ssl: false, mail: true })).toEqual([]);
+  });
+
+  test("returns only email records when mail remains pending", () => {
+    const output = pendingDnsRecords(targets, { dns: true, ssl: true, mail: false }).join("\n");
+
+    expect(output).toContain("clkmail.example.com");
+    expect(output).not.toContain("clerk.example.com");
+    expect(output).not.toContain("accounts.example.com");
+  });
+
+  test("returns non-email records when DNS remains pending", () => {
+    const output = pendingDnsRecords(targets, { dns: false, ssl: true, mail: true }).join("\n");
+
+    expect(output).toContain("clerk.example.com");
+    expect(output).toContain("accounts.example.com");
+    expect(output).not.toContain("clkmail.example.com");
   });
 });

@@ -4,9 +4,9 @@
 
 Guides a user through deploying their Clerk application to production.
 
-When the CLI reaches the DNS configuration step, it displays the required CNAME records and then prompts the user to export those records as a BIND zone file (`./clerk-<domain>.zone`). The prompt defaults to "no" and the file is overwritten silently on subsequent runs. This applies to both new deploys and resumed deploys, so users who return to finish an interrupted deploy see the same records preamble that the initial run shows.
+When the CLI reaches the DNS configuration step, it displays the required CNAME records and then prompts the user to export those records as a BIND zone file (`./clerk-<domain>.zone`). The prompt defaults to "no" and the file is overwritten silently on subsequent runs. On new deploys, this handoff happens before OAuth setup so DNS propagation can start while the user configures providers.
 
-Once DNS records are added and the user proceeds to verification, the CLI runs a chain of three per-component spinners covering mail, DNS, and SSL in sequence. Each spinner resolves independently and emits a confirmation line as its component flips true, so the user sees incremental progress instead of a single opaque wait. All three spinners share the same 10-second cap.
+After all OAuth providers are configured, DNS verification runs a chain of three per-component spinners covering mail, DNS, and SSL in sequence. Each spinner resolves independently and emits a confirmation line as its component flips true, so the user sees incremental progress instead of a single opaque wait. All three spinners share the same 10-second cap. If polling times out, the retry handoff lists only DNS records tied to still-pending DNS-backed checks. For example, when DNS and mail are verified but SSL is still pending, the CLI shows green checks for the verified components and does not reprint already verified records.
 
 ## Usage
 
@@ -80,17 +80,17 @@ sequenceDiagram
 
     CLI->>User: Add these CNAME records to your DNS provider
 
-    %% Poll domain status
-    loop every 3s until status == "complete"
-        CLI->>API: GET /v1/platform/applications/{appID}/domains/{domain_id_or_name}/status
-        API-->>CLI: { status, dns, ssl, mail, proxy }
-    end
-
     %% OAuth credential loop
     loop Each enabled social provider
         CLI->>User: Provider credentials
         CLI->>API: PATCH /v1/platform/applications/{appID}/instances/{instance_id}/config { connection_oauth_{provider} }
         API-->>CLI: { before, after, config_version }
+    end
+
+    %% Poll domain status
+    loop every 3s until status == "complete"
+        CLI->>API: GET /v1/platform/applications/{appID}/domains/{domain_id_or_name}/status
+        API-->>CLI: { status, dns, ssl, mail, proxy }
     end
 
     CLI->>User: Production ready at https://{domain}

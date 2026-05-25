@@ -37,6 +37,7 @@ import {
   dnsDashboardHandoff,
   dnsIntro,
   dnsRecords,
+  pendingDnsRecords,
   printPlan,
   productionSummary,
 } from "./copy.ts";
@@ -51,6 +52,7 @@ import {
 } from "./providers.ts";
 import {
   chooseDnsVerificationAction,
+  chooseDnsVerificationRetryAction,
   chooseOAuthCredentialAction,
   collectCustomDomain,
   collectOAuthCredentials,
@@ -232,24 +234,7 @@ async function startNewDeploy(ctx: DeployContext): Promise<void> {
 
   const productionDomain = production.active_domain.name;
   let completedOAuthProviders: OAuthProvider[] = [];
-  const dnsStatus = await runDnsSetup(
-    ctx,
-    {
-      appId: ctx.appId,
-      developmentInstanceId: ctx.developmentInstanceId,
-      productionInstanceId: production.instance_id,
-      productionDomainId: production.active_domain.id,
-      domain: productionDomain,
-      pending: { type: "dns" },
-      oauthProviders,
-      completedOAuthProviders,
-    },
-    production.cname_targets,
-  );
-  if (!dnsStatus) return;
-
-  bar();
-  completedOAuthProviders = await runOAuthSetup(ctx, {
+  const operationState: DeployOperationState = {
     appId: ctx.appId,
     developmentInstanceId: ctx.developmentInstanceId,
     productionInstanceId: production.instance_id,
@@ -258,8 +243,25 @@ async function startNewDeploy(ctx: DeployContext): Promise<void> {
     pending: { type: "oauth", provider: oauthProviders[0] ?? "google" },
     oauthProviders,
     completedOAuthProviders,
-  });
+    cnameTargets: production.cname_targets,
+  };
+
+  await runDnsRecordHandoff(
+    { ...operationState, pending: { type: "dns" } },
+    production.cname_targets,
+  );
+
+  bar();
+  completedOAuthProviders = await runOAuthSetup(ctx, operationState);
   if (completedOAuthProviders.length < oauthProviders.length) return;
+
+  bar();
+  const dnsStatus = await runDnsVerificationPrompt(ctx, {
+    ...operationState,
+    pending: { type: "dns" },
+    completedOAuthProviders,
+  });
+  if (!dnsStatus) return;
 
   await finishDeploy(ctx, productionDomain, completedOAuthProviders, dnsStatus);
 }
@@ -287,14 +289,6 @@ async function reconcileExistingDeploy(ctx: DeployContext): Promise<void> {
   }
 
   let dnsStatus: DnsVerificationResult = snapshot.dnsComplete ? "verified" : "pending";
-  if (snapshot.pending.type === "dns") {
-    const nextDnsStatus = await runExistingDomainDnsVerification(
-      ctx,
-      snapshotToOperationState(snapshot, { type: "dns" }),
-    );
-    if (!nextDnsStatus) return;
-    dnsStatus = nextDnsStatus;
-  }
 
   if (
     snapshot.pending.type === "oauth" ||
@@ -315,6 +309,15 @@ async function reconcileExistingDeploy(ctx: DeployContext): Promise<void> {
     );
     if (completed.length < snapshot.oauthProviders.length) return;
     snapshot.completedOAuthProviders = completed;
+  }
+
+  if (!snapshot.dnsComplete) {
+    const nextDnsStatus = await runExistingDomainDnsVerification(
+      ctx,
+      snapshotToOperationState(snapshot, { type: "dns" }),
+    );
+    if (!nextDnsStatus) return;
+    dnsStatus = nextDnsStatus;
   }
 
   await finishDeploy(ctx, snapshot.domain, snapshot.completedOAuthProviders, dnsStatus);
@@ -381,10 +384,10 @@ async function resolveLiveDeploySnapshot(
   };
 
   const dnsComplete = deployStatus.status === "complete";
-  const pending = !dnsComplete
-    ? ({ type: "dns" } as const)
-    : pendingOAuthProvider
-      ? ({ type: "oauth", provider: pendingOAuthProvider } as const)
+  const pending = pendingOAuthProvider
+    ? ({ type: "oauth", provider: pendingOAuthProvider } as const)
+    : !dnsComplete
+      ? ({ type: "dns" } as const)
       : undefined;
 
   return { ...baseState, dnsComplete, pending };
@@ -455,11 +458,11 @@ function buildNewDeployPlan(oauthProviders: readonly OAuthProvider[]): DeployPla
   return [
     { label: "Create production instance", status: "pending" },
     { label: "Choose a production domain you own", status: "pending" },
-    { label: "Configure DNS records", status: "pending" },
     ...oauthProviders.map((provider) => ({
       label: `Configure ${PROVIDER_LABELS[provider]} OAuth credentials`,
       status: "pending" as const,
     })),
+    { label: "Verify DNS records", status: "pending" },
   ];
 }
 
@@ -467,7 +470,6 @@ function buildLiveDeployPlan(snapshot: LiveDeploySnapshot): DeployPlanStep[] {
   return [
     { label: "Create production instance", status: "done" },
     { label: `Use production domain ${snapshot.domain}`, status: "done" },
-    { label: "Configure DNS records", status: snapshot.dnsComplete ? "done" : "pending" },
     ...snapshot.oauthProviders.map((provider): DeployPlanStep => {
       const status: DeployPlanStep["status"] = snapshot.completedOAuthProviders.includes(provider)
         ? "done"
@@ -477,6 +479,7 @@ function buildLiveDeployPlan(snapshot: LiveDeploySnapshot): DeployPlanStep[] {
         status,
       };
     }),
+    { label: "Verify DNS records", status: snapshot.dnsComplete ? "done" : "pending" },
   ];
 }
 
@@ -544,28 +547,22 @@ async function confirmProductionInstanceCreation(domain: string): Promise<boolea
   return false;
 }
 
-async function runDnsSetup(
-  ctx: DeployContext,
+async function runDnsRecordHandoff(
   state: DeployOperationState,
   cnameTargets: readonly CnameTarget[],
-): Promise<DnsVerificationResult | false> {
+): Promise<void> {
   for (const line of dnsIntro(state.domain)) log.info(line);
   log.blank();
-  for (const line of dnsRecords(cnameTargets)) log.info(line);
-  log.blank();
+  if (cnameTargets.length > 0) {
+    for (const line of dnsRecords(cnameTargets)) log.info(line);
+    log.blank();
+  }
 
   for (const line of dnsDashboardHandoff(state.domain)) log.info(line);
   log.blank();
-  await offerBindZoneExport(state.domain, cnameTargets);
-  log.blank();
   try {
-    const action = await chooseDnsVerificationAction();
-    if (action === "skip") {
-      log.blank();
-      log.info("Skipping DNS verification for now.");
-      return "pending";
-    }
-    return await runDnsVerification(ctx, { ...state, cnameTargets });
+    await offerBindZoneExport(state.domain, cnameTargets);
+    log.blank();
   } catch (error) {
     if (isPromptExitError(error)) {
       throw deployPausedError(state, { interrupted: true });
@@ -578,17 +575,14 @@ async function runExistingDomainDnsVerification(
   ctx: DeployContext,
   state: DeployOperationState,
 ): Promise<DnsVerificationResult | false> {
-  for (const line of dnsIntro(state.domain)) log.info(line);
-  log.blank();
-  if (state.cnameTargets && state.cnameTargets.length > 0) {
-    for (const line of dnsRecords(state.cnameTargets)) log.info(line);
-    log.blank();
-  }
-  for (const line of dnsDashboardHandoff(state.domain)) log.info(line);
-  log.blank();
-  await offerBindZoneExport(state.domain, state.cnameTargets);
-  log.blank();
+  await runDnsRecordHandoff(state, state.cnameTargets ?? []);
+  return runDnsVerificationPrompt(ctx, state);
+}
 
+async function runDnsVerificationPrompt(
+  ctx: DeployContext,
+  state: DeployOperationState,
+): Promise<DnsVerificationResult | false> {
   try {
     const action = await chooseDnsVerificationAction();
     if (action === "skip") {
@@ -635,12 +629,15 @@ async function runDnsVerification(
       return false;
     }
 
-    if (state.cnameTargets && state.cnameTargets.length > 0) {
+    const pendingRecords = state.cnameTargets
+      ? pendingDnsRecords(state.cnameTargets, outcome.status)
+      : [];
+    if (pendingRecords.length > 0) {
       log.blank();
-      for (const line of dnsRecords(state.cnameTargets)) log.info(line);
+      for (const line of pendingRecords) log.info(line);
     }
     log.blank();
-    const action = await chooseDnsVerificationAction();
+    const action = await chooseDnsVerificationRetryAction();
     if (action === "skip") {
       log.blank();
       log.info("Skipping DNS verification for now.");

@@ -373,9 +373,9 @@ describe("deploy", () => {
   describe("human mode", () => {
     function mockHumanFlow() {
       mockIsAgent.mockReturnValue(false);
-      // Proceed → create instance → skip DNS verification → pause at OAuth.
+      // Proceed → create instance → show DNS records → pause at OAuth.
       mockConfirm.mockResolvedValueOnce(true).mockResolvedValueOnce(true);
-      mockSelect.mockResolvedValueOnce("skip").mockResolvedValueOnce("skip");
+      mockSelect.mockResolvedValueOnce("skip");
       mockInput.mockResolvedValueOnce("example.com");
     }
 
@@ -464,7 +464,7 @@ describe("deploy", () => {
       mockInput
         .mockResolvedValueOnce("example.com")
         .mockResolvedValueOnce("google-client-id.apps.googleusercontent.com");
-      mockSelect.mockResolvedValueOnce("check").mockResolvedValueOnce("have-credentials");
+      mockSelect.mockResolvedValueOnce("have-credentials").mockResolvedValueOnce("check");
       mockPassword.mockResolvedValueOnce("google-secret");
       mockGetApplicationDomainStatus
         .mockResolvedValueOnce(
@@ -492,9 +492,9 @@ describe("deploy", () => {
         .mockResolvedValueOnce("example.com")
         .mockResolvedValueOnce("google-client-id.apps.googleusercontent.com");
       mockSelect
+        .mockResolvedValueOnce("have-credentials")
         .mockResolvedValueOnce("check")
-        .mockResolvedValueOnce("skip")
-        .mockResolvedValueOnce("have-credentials");
+        .mockResolvedValueOnce("skip");
       mockPassword.mockResolvedValueOnce("google-secret");
       mockGetApplicationDomainStatus.mockResolvedValue(
         domainStatus({ status: "incomplete", dns: false, ssl: false, mail: false }),
@@ -518,7 +518,7 @@ describe("deploy", () => {
       mockInput
         .mockResolvedValueOnce("example.com")
         .mockResolvedValueOnce("google-client-id.apps.googleusercontent.com");
-      mockSelect.mockResolvedValueOnce("check").mockResolvedValueOnce("have-credentials");
+      mockSelect.mockResolvedValueOnce("have-credentials").mockResolvedValueOnce("check");
       mockPassword.mockResolvedValueOnce("google-secret");
       mockGetApplicationDomainStatus
         .mockResolvedValueOnce(
@@ -582,7 +582,7 @@ describe("deploy", () => {
       expect(mockConfirm).toHaveBeenCalledWith({ message: "Proceed?", default: true });
       expect(err).toContain("clerk deploy will prepare my-saas-app for production");
       expect(err).toContain("[ ] Create production instance");
-      expect(err).toContain("[ ] Configure DNS records");
+      expect(err).toContain("[ ] Verify DNS records");
       expect(err).toContain("[ ] Configure Google OAuth credentials");
       expect(err).toContain("Check the Domains section in the Clerk Dashboard");
     });
@@ -659,7 +659,7 @@ describe("deploy", () => {
       expect(err).toContain("Production keys only work on your production domain");
     });
 
-    test("DNS setup prints dashboard handoff and asks about verifying DNS", async () => {
+    test("DNS setup prints dashboard handoff before OAuth without asking for verification", async () => {
       await linkedProject();
       mockIsAgent.mockReturnValue(false);
       mockConfirm
@@ -680,7 +680,6 @@ describe("deploy", () => {
       expect(err).toContain("Check the Domains section in the Clerk Dashboard");
       expect(err).toContain("propagation and SSL issuance");
       expect(err).toContain("DNS propagation can take time");
-      expect(err).toContain("Skipping DNS verification for now.");
       expect(mockConfirm).toHaveBeenCalledTimes(3);
       expect(mockConfirm).toHaveBeenCalledWith({
         message: "Create production instance?",
@@ -694,7 +693,7 @@ describe("deploy", () => {
         message: "Continue to OAuth setup?",
         default: true,
       });
-      expect(mockSelect).toHaveBeenCalledWith({
+      expect(mockSelect).not.toHaveBeenCalledWith({
         message: "DNS verification",
         choices: [
           { name: "Check DNS now", value: "check" },
@@ -748,8 +747,10 @@ describe("deploy", () => {
     test("Ctrl-C at the DNS handoff reports paused", async () => {
       await linkedProject();
       mockIsAgent.mockReturnValue(false);
-      mockConfirm.mockResolvedValueOnce(true).mockResolvedValueOnce(true);
-      mockSelect.mockRejectedValueOnce(promptExitError());
+      mockConfirm
+        .mockResolvedValueOnce(true)
+        .mockResolvedValueOnce(true)
+        .mockRejectedValueOnce(promptExitError());
       mockInput.mockResolvedValueOnce("example.com");
 
       let error: CliError | undefined;
@@ -900,7 +901,7 @@ describe("deploy", () => {
 
       expect(err).toContain("clerk deploy will prepare my-saas-app for production");
       expect(err).toContain("[x] Create production instance");
-      expect(err).toContain("[x] Configure DNS records");
+      expect(err).toContain("[x] Verify DNS records");
       expect(err).toContain("[x] Configure Google OAuth credentials");
       expect(err).toContain("No deploy actions remain.");
       expect(mockFetchApplication).toHaveBeenCalledWith("app_xyz789");
@@ -925,7 +926,7 @@ describe("deploy", () => {
           domainStatus({ status: "complete", dns: true, ssl: true, mail: true }),
         );
       mockConfirm.mockResolvedValueOnce(true).mockResolvedValueOnce(true);
-      mockSelect.mockResolvedValueOnce("check").mockResolvedValueOnce("have-credentials");
+      mockSelect.mockResolvedValueOnce("have-credentials").mockResolvedValueOnce("check");
       mockInput.mockResolvedValueOnce("google-client-id.apps.googleusercontent.com");
       mockPassword.mockResolvedValueOnce("google-secret");
 
@@ -933,7 +934,7 @@ describe("deploy", () => {
       const err = stripAnsi(captured.err);
 
       expect(err).toContain("[x] Create production instance");
-      expect(err).toContain("[ ] Configure DNS records");
+      expect(err).toContain("[ ] Verify DNS records");
       expect(err).toContain("[ ] Configure Google OAuth credentials");
       expect(err).toContain("DNS verified for example.com");
       expect(mockSelect).toHaveBeenCalledWith({
@@ -954,6 +955,7 @@ describe("deploy", () => {
       mockIsAgent.mockReturnValue(false);
       mockLiveProduction({
         instanceId: "ins_prod_123",
+        developmentConfig: {},
         productionConfig: {},
       });
       mockGetApplicationDomainStatus.mockResolvedValue(
@@ -982,6 +984,7 @@ describe("deploy", () => {
       mockIsAgent.mockReturnValue(false);
       mockLiveProduction({
         instanceId: "ins_prod_123",
+        developmentConfig: {},
         productionConfig: {},
       });
       mockGetApplicationDomainStatus.mockResolvedValue(
@@ -1020,6 +1023,7 @@ describe("deploy", () => {
       mockIsAgent.mockReturnValue(false);
       mockLiveProduction({
         instanceId: "ins_prod_123",
+        developmentConfig: {},
         productionConfig: {},
       });
       mockGetApplicationDomainStatus.mockResolvedValue(
@@ -1051,6 +1055,7 @@ describe("deploy", () => {
       mockIsAgent.mockReturnValue(false);
       mockLiveProduction({
         instanceId: "ins_prod_123",
+        developmentConfig: {},
         productionConfig: {},
         cnameTargets: [], // override: domain has no CNAME targets
       });
@@ -1101,6 +1106,33 @@ describe("deploy", () => {
       expect(err).not.toContain("DNS, SSL, mail still pending");
     });
 
+    test("DNS verification timeout does not reprint DNS records when only SSL remains pending", async () => {
+      await linkedProject();
+      mockIsAgent.mockReturnValue(false);
+      mockConfirm
+        .mockResolvedValueOnce(true)
+        .mockResolvedValueOnce(true)
+        .mockResolvedValueOnce(false);
+      mockInput.mockResolvedValueOnce("example.com");
+      mockSelect
+        .mockResolvedValueOnce("have-credentials")
+        .mockResolvedValueOnce("check")
+        .mockResolvedValueOnce("skip");
+      mockInput.mockResolvedValueOnce("google-client-id.apps.googleusercontent.com");
+      mockPassword.mockResolvedValueOnce("google-secret");
+      mockPatchInstanceConfig.mockResolvedValueOnce({});
+      mockGetApplicationDomainStatus.mockResolvedValue(
+        domainStatus({ status: "incomplete", dns: true, ssl: false, mail: true }),
+      );
+
+      await runDeploy({});
+      const err = stripAnsi(captured.err);
+
+      expect(err).toContain("DNS: ✓  SSL: pending  Mail: ✓");
+      expect(err).toContain("SSL still pending for example.com");
+      expect(err.match(/Add the following records at your DNS provider:/g)).toHaveLength(1);
+    });
+
     test("plain deploy can skip DNS verification and continue configuring production", async () => {
       await linkedProject({
         instances: { development: "ins_dev_123", production: "ins_prod_123" },
@@ -1113,7 +1145,7 @@ describe("deploy", () => {
       mockGetApplicationDomainStatus.mockResolvedValue(
         domainStatus({ status: "incomplete", dns: false, ssl: false, mail: false }),
       );
-      mockSelect.mockResolvedValueOnce("skip").mockResolvedValueOnce("have-credentials");
+      mockSelect.mockResolvedValueOnce("have-credentials").mockResolvedValueOnce("skip");
       mockConfirm.mockResolvedValueOnce(true);
       mockInput.mockResolvedValueOnce("google-client-id.apps.googleusercontent.com");
       mockPassword.mockResolvedValueOnce("google-secret");
@@ -1153,7 +1185,7 @@ describe("deploy", () => {
       const err = stripAnsi(captured.err);
       expect(err).toContain("Check the Domains section in the Clerk Dashboard");
       expect(err).toContain("DNS propagation can take time");
-      expect(err).toContain("Skipping DNS verification for now.");
+      expect(err).toContain("Configure Google OAuth for production");
     });
 
     test("Ctrl-C during OAuth setup reports plain deploy continuation", async () => {
@@ -1186,7 +1218,7 @@ describe("deploy", () => {
       });
       mockIsAgent.mockReturnValue(false);
       mockConfirm.mockResolvedValueOnce(true).mockResolvedValueOnce(true);
-      mockSelect.mockResolvedValueOnce("check").mockResolvedValueOnce("have-credentials");
+      mockSelect.mockResolvedValueOnce("have-credentials").mockResolvedValueOnce("check");
       mockInput.mockResolvedValueOnce("google-client-id.apps.googleusercontent.com");
       mockPassword.mockResolvedValueOnce("google-secret");
       mockPatchInstanceConfig.mockResolvedValueOnce({});
@@ -1238,7 +1270,7 @@ describe("deploy", () => {
       const err = stripAnsi(captured.err);
 
       expect(err).toContain("[x] Create production instance");
-      expect(err).toContain("[x] Configure DNS records");
+      expect(err).toContain("[x] Verify DNS records");
       expect(err).toContain("No deploy actions remain.");
       expect(mockSelect).not.toHaveBeenCalled();
       expect(mockInput).not.toHaveBeenCalled();
@@ -1254,7 +1286,7 @@ describe("deploy", () => {
       await runDeployUntilPause();
       mockLiveProduction();
       expect(stripAnsi(captured.err)).toContain("Check the Domains section in the Clerk Dashboard");
-      expect(stripAnsi(captured.err)).toContain("Skipping DNS verification for now.");
+      expect(stripAnsi(captured.err)).toContain("Configure Google OAuth for production");
 
       captured.clear();
       mockConfirm.mockReset();
@@ -1262,7 +1294,7 @@ describe("deploy", () => {
       mockInput.mockReset();
       mockPassword.mockReset();
       mockConfirm.mockResolvedValueOnce(true).mockResolvedValueOnce(true);
-      mockSelect.mockResolvedValueOnce("check").mockResolvedValueOnce("have-credentials");
+      mockSelect.mockResolvedValueOnce("have-credentials").mockResolvedValueOnce("check");
       mockInput.mockResolvedValueOnce("google-client-id.apps.googleusercontent.com");
       mockPassword.mockResolvedValueOnce("google-secret");
       mockPatchInstanceConfig.mockResolvedValueOnce({});
@@ -1337,15 +1369,12 @@ describe("deploy", () => {
         connection_oauth_google: { enabled: true },
         connection_oauth_github: { enabled: true },
       });
-      // Proceed → create prod → check DNS → enter google creds → skip github.
+      // Proceed → create prod → enter google creds → skip github before DNS verification.
       mockConfirm.mockResolvedValueOnce(true).mockResolvedValueOnce(true);
       mockInput
         .mockResolvedValueOnce("example.com")
         .mockResolvedValueOnce("google-client-id.apps.googleusercontent.com");
-      mockSelect
-        .mockResolvedValueOnce("check")
-        .mockResolvedValueOnce("have-credentials")
-        .mockResolvedValueOnce("skip");
+      mockSelect.mockResolvedValueOnce("have-credentials").mockResolvedValueOnce("skip");
       mockPassword.mockResolvedValueOnce("google-secret");
       mockPatchInstanceConfig.mockResolvedValueOnce({});
 
@@ -1449,9 +1478,9 @@ describe("deploy", () => {
       mockIsAgent.mockReturnValue(false);
       mockConfirm.mockResolvedValueOnce(true).mockResolvedValueOnce(true);
       mockSelect
+        .mockResolvedValueOnce("have-credentials")
         .mockResolvedValueOnce("check")
-        .mockResolvedValueOnce("skip")
-        .mockResolvedValueOnce("have-credentials");
+        .mockResolvedValueOnce("skip");
       mockInput
         .mockResolvedValueOnce("example.com")
         .mockResolvedValueOnce("google-client-id.apps.googleusercontent.com");
@@ -1471,6 +1500,13 @@ describe("deploy", () => {
       expect(err).toContain("Value: frontend-api.clerk.services");
       expect(err).toContain("Skipping DNS verification for now.");
       expect(err).toContain("Saved Google OAuth credentials");
+      expect(mockSelect).toHaveBeenCalledWith({
+        message: "DNS verification",
+        choices: [
+          { name: "Skip DNS verification for now", value: "skip" },
+          { name: "Check again", value: "check" },
+        ],
+      });
       expect(mockPatchInstanceConfig).toHaveBeenCalledWith("app_xyz789", "ins_prod_mock", {
         connection_oauth_google: {
           enabled: true,

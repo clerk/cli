@@ -66,6 +66,16 @@ export async function chooseDnsVerificationAction(): Promise<DnsVerificationActi
   });
 }
 
+export async function chooseDnsVerificationRetryAction(): Promise<DnsVerificationAction> {
+  return select({
+    message: "DNS verification",
+    choices: [
+      { name: "Skip DNS verification for now", value: "skip" },
+      { name: "Check again", value: "check" },
+    ],
+  });
+}
+
 export async function confirmExportBindZone(): Promise<boolean> {
   return confirm({
     message: "Export DNS records as a BIND zone file?",
