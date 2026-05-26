@@ -137,6 +137,21 @@ const appleOAuthSchema = oauthSchema({
   },
 });
 
+const linearOAuthSchema = oauthSchema({
+  client_id: { type: "string", description: "Linear OAuth client ID" },
+  client_secret: {
+    type: "string",
+    description: "Linear OAuth client secret",
+    "x-clerk-sensitive": true,
+  },
+  actor: {
+    type: "string",
+    description: "Linear OAuth actor",
+    enum: ["user", "application"],
+    default: "user",
+  },
+});
+
 const schemaResponse = (properties: Record<string, unknown>) => ({
   $schema: "https://json-schema.org/draft/2020-12/schema",
   $id: "https://clerk.com/schemas/platform-config/2025-01-01",
@@ -987,6 +1002,9 @@ describe("deploy", () => {
           },
         },
       });
+      mockFetchInstanceConfigSchema.mockResolvedValueOnce(
+        schemaResponse({ connection_oauth_apple: appleOAuthSchema }),
+      );
       mockIsAgent.mockReturnValue(false);
 
       const invalidP8Path = join(tempDir, "not-a-key.p8");
@@ -1008,6 +1026,16 @@ describe("deploy", () => {
 
       await runDeploy({});
 
+      expect(mockPatchInstanceConfig).toHaveBeenCalledWith("app_xyz789", "ins_prod_apple", {
+        connection_oauth_apple: {
+          enabled: true,
+          client_id: "apple-services-id",
+          team_id: "apple-team-id",
+          key_id: "apple-key-id",
+          client_secret:
+            "-----BEGIN PRIVATE KEY-----\nMIGTAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBHkwdwIBAQQg\n-----END PRIVATE KEY-----\n",
+        },
+      });
       const p8Input = mockInput.mock.calls.find((call) =>
         String((call[0] as { message?: string }).message).includes("Apple Private Key"),
       )?.[0] as { validate: (value: string) => Promise<true | string> };
@@ -1018,6 +1046,39 @@ describe("deploy", () => {
       await expect(p8Input.validate(validP8Path)).resolves.toBe(true);
       const relativeP8Path = relative(process.cwd(), validP8Path);
       await expect(p8Input.validate(relativeP8Path)).resolves.toBe(true);
+    });
+
+    test("Linear OAuth actor is collected from a select prompt", async () => {
+      await linkedProject();
+      mockIsAgent.mockReturnValue(false);
+      await runDnsHandoff();
+      mockLiveProduction({
+        developmentConfig: {
+          connection_oauth_linear: { enabled: true },
+        },
+        productionConfig: {
+          connection_oauth_linear: { enabled: true },
+        },
+      });
+      mockFetchInstanceConfigSchema.mockResolvedValueOnce(
+        schemaResponse({ connection_oauth_linear: linearOAuthSchema }),
+      );
+      mockConfirm.mockResolvedValueOnce(true);
+      mockSelect.mockResolvedValueOnce("have-credentials").mockResolvedValueOnce("application");
+      mockInput.mockResolvedValueOnce("linear-client-id");
+      mockPassword.mockResolvedValueOnce("linear-secret");
+      mockPatchInstanceConfig.mockResolvedValueOnce({});
+
+      await runDeploy({});
+
+      expect(mockPatchInstanceConfig).toHaveBeenCalledWith("app_xyz789", "ins_prod_mock", {
+        connection_oauth_linear: {
+          enabled: true,
+          client_id: "linear-client-id",
+          client_secret: "linear-secret",
+          actor: "application",
+        },
+      });
     });
 
     test("Google OAuth JSON file prompt validates path and shape before continuing", async () => {

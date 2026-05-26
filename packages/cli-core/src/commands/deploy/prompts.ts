@@ -154,7 +154,7 @@ async function collectOAuthField(
       validate: required(field.label),
     });
   }
-  return value.trim();
+  return field.filePath ? value : value.trim();
 }
 
 function validateSecretFilePath(label: string) {
