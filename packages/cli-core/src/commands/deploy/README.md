@@ -100,15 +100,16 @@ sequenceDiagram
 
 All endpoints are on the **Platform API** (`/v1/platform/...`) and are live HTTP calls. The deploy command calls the helpers in `lib/plapi.ts` directly.
 
-| Step                       | Method  | Endpoint                                                            | Helper                                                                                                                                                                      |
-| -------------------------- | ------- | ------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Auth                       | n/a     | Local config                                                        | Token stored from `clerk auth login` or `CLERK_PLATFORM_API_KEY`.                                                                                                           |
-| Read instance config       | `GET`   | `/v1/platform/applications/{appID}/instances/{instanceID}/config`   | `fetchInstanceConfig` from `lib/plapi.ts`. Discovers enabled `connection_oauth_*` providers.                                                                                |
-| Patch instance config      | `PATCH` | `/v1/platform/applications/{appID}/instances/{instanceID}/config`   | `patchInstanceConfig`. Writes production OAuth credentials.                                                                                                                 |
-| Read application           | `GET`   | `/v1/platform/applications/{appID}`                                 | `fetchApplication`. Resolves development and production instance IDs.                                                                                                       |
-| List production domains    | `GET`   | `/v1/platform/applications/{appID}/domains`                         | `listApplicationDomains`. Recovers production domain name and CNAME targets on each run.                                                                                    |
-| Create production instance | `POST`  | `/v1/platform/applications/{appID}/instances`                       | `createProductionInstance`. Returns prod instance, primary domain, keys, and `cname_targets[]`.                                                                             |
-| Poll domain status         | `GET`   | `/v1/platform/applications/{appID}/domains/{domainIDOrName}/status` | `getApplicationDomainStatus`. Drives the mail, DNS, and SSL sequential spinners in `pollDeployStatus`; each spinner resolves independently within the shared 10-second cap. |
+| Step                        | Method  | Endpoint                                                                 | Helper                                                                                                                                                                      |
+| --------------------------- | ------- | ------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Auth                        | n/a     | Local config                                                             | Token stored from `clerk auth login` or `CLERK_PLATFORM_API_KEY`.                                                                                                           |
+| Read instance config        | `GET`   | `/v1/platform/applications/{appID}/instances/{instanceID}/config`        | `fetchInstanceConfig` from `lib/plapi.ts`. Discovers enabled `connection_oauth_*` providers.                                                                                |
+| Read instance config schema | `GET`   | `/v1/platform/applications/{appID}/instances/{instanceID}/config/schema` | `fetchInstanceConfigSchema`. Reads schemas for supported OAuth config keys so deploy can derive credential prompts.                                                         |
+| Patch instance config       | `PATCH` | `/v1/platform/applications/{appID}/instances/{instanceID}/config`        | `patchInstanceConfig`. Writes production OAuth credentials.                                                                                                                 |
+| Read application            | `GET`   | `/v1/platform/applications/{appID}`                                      | `fetchApplication`. Resolves development and production instance IDs.                                                                                                       |
+| List production domains     | `GET`   | `/v1/platform/applications/{appID}/domains`                              | `listApplicationDomains`. Recovers production domain name and CNAME targets on each run.                                                                                    |
+| Create production instance  | `POST`  | `/v1/platform/applications/{appID}/instances`                            | `createProductionInstance`. Returns prod instance, primary domain, keys, and `cname_targets[]`.                                                                             |
+| Poll domain status          | `GET`   | `/v1/platform/applications/{appID}/domains/{domainIDOrName}/status`      | `getApplicationDomainStatus`. Drives the mail, DNS, and SSL sequential spinners in `pollDeployStatus`; each spinner resolves independently within the shared 10-second cap. |
 
 ## OAuth Provider Config Format
 
@@ -126,25 +127,26 @@ PATCH /v1/platform/applications/{appID}/instances/production/config
 }
 ```
 
-### Provider-specific required fields
+### OAuth provider support
 
-| Provider  | Required Fields                                                  |
-| --------- | ---------------------------------------------------------------- |
-| Google    | `client_id`, `client_secret`                                     |
-| GitHub    | `client_id`, `client_secret`                                     |
-| Microsoft | `client_id`, `client_secret`                                     |
-| Apple     | `client_id`, `team_id`, `key_id`, `client_secret` (.p8 contents) |
-| Linear    | `client_id`, `client_secret`                                     |
+`clerk deploy` discovers enabled built-in OAuth providers from development config keys named `connection_oauth_{provider}`. For public built-in providers supported by the deploy flow, the command reads `GET /config/schema` and derives credential prompts from the provider schema.
+
+Most providers ask for `client_id` and `client_secret`. Provider-specific schema fields are prompted when they are safe for deploy setup, such as Linear `actor`.
+
+The CLI keeps small local overrides for provider setup details that schema does not fully describe:
+
+| Provider  | Override                                                                                   |
+| --------- | ------------------------------------------------------------------------------------------ |
+| Google    | Optional Google Cloud Console JSON import and OAuth consent screen warning                 |
+| Apple     | `.p8` file import, production-required `team_id` and `key_id`, native-only field omissions |
+| Microsoft | Client secret expiry warning                                                               |
+| Linear    | Workspace admin warning                                                                    |
+
+For Google, the wizard can load `client_id` and `client_secret` from the top-level `web` object in a Google Cloud Console OAuth client JSON file, or from `installed` for desktop-style client downloads. The file contents are used in memory and are not written to CLI config.
+
+Providers not currently supported by automated deploy setup are cloned to production without automated credential setup. Configure those providers from the Clerk Dashboard before going live.
 
 Production instances return `422` if you try to enable a provider without credentials.
-
-### Google OAuth `client_id` validation
-
-Google enforces a pattern: `^[0-9]+-[a-z0-9]+\.apps\.googleusercontent\.com$`
-
-### Google OAuth JSON import
-
-For Google, the wizard offers `Load credentials from a Google Cloud Console JSON file`. It reads the `client_id` and `client_secret` from the top-level `web` object in the downloaded OAuth client JSON, or from `installed` for desktop-style client downloads. The file contents are used in memory and are not written to CLI config.
 
 ## Helpful values for OAuth walkthrough
 
