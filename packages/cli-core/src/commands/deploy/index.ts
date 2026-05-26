@@ -15,6 +15,7 @@ import {
   createProductionInstance as apiCreateProductionInstance,
   fetchApplication,
   fetchInstanceConfig,
+  fetchInstanceConfigSchema,
   getApplicationDomainStatus,
   listApplicationDomains,
   patchInstanceConfig,
@@ -46,12 +47,14 @@ import {
 } from "./copy.ts";
 import { mapDeployError } from "./errors.ts";
 import {
-  PROVIDER_LABELS,
-  providerFields,
+  OAUTH_KEY_PREFIX,
+  buildOAuthProviderDescriptors,
+  isDeployOAuthProviderSupported,
   providerLabel,
   providerSetupIntro,
   showOAuthWalkthrough,
   type OAuthProvider,
+  type OAuthProviderDescriptor,
 } from "./providers.ts";
 import {
   chooseDnsVerificationAction,
@@ -172,8 +175,7 @@ async function runDeploy(ctx: DeployContext): Promise<void> {
 }
 
 async function startNewDeploy(ctx: DeployContext): Promise<void> {
-  const { known: oauthProviders, unknown: unknownOAuthProviders } =
-    await loadDevelopmentOAuthProviders(ctx);
+  const { descriptors: oauthProviders, unsupported } = await loadDevelopmentOAuthProviders(ctx);
 
   log.blank();
   log.info(INTRO_PREAMBLE);
@@ -183,16 +185,15 @@ async function startNewDeploy(ctx: DeployContext): Promise<void> {
   }
   log.blank();
 
-  if (unknownOAuthProviders.length > 0) {
+  if (unsupported.length > 0) {
     log.warn(
-      `These OAuth providers are enabled in development but not yet supported by \`clerk deploy\`: ${unknownOAuthProviders.join(", ")}.`,
+      `These OAuth providers are enabled in development but not yet supported by automated \`clerk deploy\` setup: ${unsupported.join(", ")}.`,
     );
     log.warn(
       "They will be cloned to production without working credentials. Configure them from the Clerk Dashboard before going live, or disable them in development first.",
     );
     log.blank();
   }
-
   const proceed = await confirmProceed();
   if (!proceed) {
     log.info("No changes were made.");
@@ -242,8 +243,8 @@ async function startNewDeploy(ctx: DeployContext): Promise<void> {
     productionInstanceId: production.instance_id,
     productionDomainId: production.active_domain.id,
     domain: productionDomain,
-    pending: { type: "oauth", provider: oauthProviders[0] ?? "google" },
-    oauthProviders,
+    pending: { type: "oauth", provider: oauthProviders[0]?.provider ?? "google" },
+    oauthProviders: oauthProviders.map((descriptor) => descriptor.provider),
     completedOAuthProviders,
     cnameTargets: production.cname_targets,
   };
@@ -254,7 +255,7 @@ async function startNewDeploy(ctx: DeployContext): Promise<void> {
   );
 
   bar();
-  completedOAuthProviders = await runOAuthSetup(ctx, operationState);
+  completedOAuthProviders = await runOAuthSetup(ctx, operationState, oauthProviders);
   if (completedOAuthProviders.length < oauthProviders.length) return;
 
   bar();
@@ -296,18 +297,22 @@ async function reconcileExistingDeploy(ctx: DeployContext): Promise<void> {
     snapshot.oauthProviders.length > snapshot.completedOAuthProviders.length
   ) {
     bar();
-    const completed = await runOAuthSetup(ctx, {
-      ...snapshot,
-      pending: {
-        type: "oauth",
-        provider:
-          snapshot.oauthProviders.find(
-            (provider) => !snapshot.completedOAuthProviders.includes(provider),
-          ) ??
-          snapshot.oauthProviders[0] ??
-          "google",
+    const completed = await runOAuthSetup(
+      ctx,
+      {
+        ...snapshot,
+        pending: {
+          type: "oauth",
+          provider:
+            snapshot.oauthProviders.find(
+              (provider) => !snapshot.completedOAuthProviders.includes(provider),
+            ) ??
+            snapshot.oauthProviders[0] ??
+            "google",
+        },
       },
-    });
+      snapshot.oauthProviderDescriptors,
+    );
     if (completed.length < snapshot.oauthProviders.length) return;
     snapshot.completedOAuthProviders = completed;
   }
@@ -329,14 +334,15 @@ type LiveDeploySnapshot = Omit<
 > & {
   pending?: DeployOperationState["pending"];
   oauthProviders: OAuthProvider[];
+  oauthProviderDescriptors: OAuthProviderDescriptor[];
   completedOAuthProviders: OAuthProvider[];
   cnameTargets?: readonly CnameTarget[];
   dnsComplete: boolean;
 };
 
 type DiscoveredOAuthProviders = {
-  known: OAuthProvider[];
-  unknown: string[];
+  descriptors: OAuthProviderDescriptor[];
+  unsupported: string[];
 };
 
 type DnsVerificationResult = "verified" | "pending";
@@ -346,7 +352,19 @@ async function loadDevelopmentOAuthProviders(
 ): Promise<DiscoveredOAuthProviders> {
   return withSpinner("Reading development configuration...", async () => {
     const config = await fetchInstanceConfig(ctx.appId, ctx.developmentInstanceId);
-    return discoverEnabledOAuthProviders(config);
+    const providerSlugs = discoverEnabledOAuthProviderSlugs(config);
+    const schemaKeys = providerSlugs
+      .filter((provider) => isDeployOAuthProviderSupported(provider))
+      .map((provider) => `${OAUTH_KEY_PREFIX}${provider}`);
+    const schema =
+      schemaKeys.length > 0
+        ? await fetchInstanceConfigSchema(ctx.appId, ctx.developmentInstanceId, schemaKeys)
+        : { properties: {} };
+    const result = buildOAuthProviderDescriptors(providerSlugs, schema);
+    return {
+      descriptors: result.supported,
+      unsupported: result.unsupported,
+    };
   });
 }
 
@@ -359,17 +377,18 @@ async function resolveLiveDeploySnapshot(
   const domain = await loadProductionDomain(ctx);
   if (!domain) return undefined;
 
-  const { known: oauthProviders } = await loadDevelopmentOAuthProviders(ctx);
+  const { descriptors: oauthProviderDescriptors } = await loadDevelopmentOAuthProviders(ctx);
+  const oauthProviders = oauthProviderDescriptors.map((descriptor) => descriptor.provider);
   const { productionConfig, deployStatus } = await loadProductionState(
     ctx,
     productionInstanceId,
     domain.id,
   );
-  const completedOAuthProviders = oauthProviders.filter((provider) =>
-    hasProductionOAuthCredentials(productionConfig, provider),
-  );
-  const pendingOAuthProvider = oauthProviders.find(
-    (provider) => !completedOAuthProviders.includes(provider),
+  const completedOAuthProviders = oauthProviderDescriptors
+    .filter((descriptor) => hasProductionOAuthCredentials(productionConfig, descriptor))
+    .map((descriptor) => descriptor.provider);
+  const pendingOAuthDescriptor = oauthProviderDescriptors.find(
+    (descriptor) => !completedOAuthProviders.includes(descriptor.provider),
   );
 
   const baseState = {
@@ -379,13 +398,14 @@ async function resolveLiveDeploySnapshot(
     productionDomainId: domain.id,
     domain: domain.name,
     oauthProviders,
+    oauthProviderDescriptors,
     completedOAuthProviders,
     cnameTargets: domain.cname_targets ?? [],
   };
 
   const dnsComplete = deployStatus.status === "complete";
-  const pending = pendingOAuthProvider
-    ? ({ type: "oauth", provider: pendingOAuthProvider } as const)
+  const pending = pendingOAuthDescriptor
+    ? ({ type: "oauth", provider: pendingOAuthDescriptor.provider } as const)
     : !dnsComplete
       ? ({ type: "dns" } as const)
       : undefined;
@@ -440,26 +460,24 @@ async function loadProductionDomain(ctx: DeployContext): Promise<ApplicationDoma
 
 function hasProductionOAuthCredentials(
   config: Record<string, unknown>,
-  provider: OAuthProvider,
+  descriptor: OAuthProviderDescriptor,
 ): boolean {
-  const value = config[`${OAUTH_KEY_PREFIX}${provider}`];
+  const value = config[descriptor.configKey];
   if (!value || typeof value !== "object") return false;
   const providerConfig = value as Record<string, unknown>;
   if (providerConfig.enabled !== true) return false;
-  return providerFields(provider).every((field) => {
-    const fieldValue = providerConfig[field.key];
+  return descriptor.requiredCredentialKeys.every((key) => {
+    const fieldValue = providerConfig[key];
     return typeof fieldValue === "string" && fieldValue.length > 0;
   });
 }
 
-const OAUTH_KEY_PREFIX = "connection_oauth_";
-
-function buildNewDeployPlan(oauthProviders: readonly OAuthProvider[]): DeployPlanStep[] {
+function buildNewDeployPlan(oauthProviders: readonly OAuthProviderDescriptor[]): DeployPlanStep[] {
   return [
     { label: "Create production instance", status: "pending" },
     { label: "Choose a production domain you own", status: "pending" },
-    ...oauthProviders.map((provider) => ({
-      label: `Configure ${providerLabel(provider)} OAuth credentials`,
+    ...oauthProviders.map((descriptor) => ({
+      label: `Configure ${descriptor.label} OAuth credentials`,
       status: "pending" as const,
     })),
     { label: "Verify DNS records", status: "pending" },
@@ -470,12 +488,14 @@ function buildLiveDeployPlan(snapshot: LiveDeploySnapshot): DeployPlanStep[] {
   return [
     { label: "Create production instance", status: "done" },
     { label: `Use production domain ${snapshot.domain}`, status: "done" },
-    ...snapshot.oauthProviders.map((provider): DeployPlanStep => {
-      const status: DeployPlanStep["status"] = snapshot.completedOAuthProviders.includes(provider)
+    ...snapshot.oauthProviderDescriptors.map((descriptor): DeployPlanStep => {
+      const status: DeployPlanStep["status"] = snapshot.completedOAuthProviders.includes(
+        descriptor.provider,
+      )
         ? "done"
         : "pending";
       return {
-        label: `Configure ${providerLabel(provider)} OAuth credentials`,
+        label: `Configure ${descriptor.label} OAuth credentials`,
         status,
       };
     }),
@@ -483,21 +503,15 @@ function buildLiveDeployPlan(snapshot: LiveDeploySnapshot): DeployPlanStep[] {
   ];
 }
 
-function discoverEnabledOAuthProviders(config: Record<string, unknown>): DiscoveredOAuthProviders {
-  const known: OAuthProvider[] = [];
-  const unknown: string[] = [];
+function discoverEnabledOAuthProviderSlugs(config: Record<string, unknown>): string[] {
+  const providers: string[] = [];
   for (const [key, value] of Object.entries(config)) {
     if (!key.startsWith(OAUTH_KEY_PREFIX)) continue;
     if (!value || typeof value !== "object") continue;
     if ((value as Record<string, unknown>).enabled !== true) continue;
-    const provider = key.slice(OAUTH_KEY_PREFIX.length);
-    if (provider in PROVIDER_LABELS) {
-      known.push(provider as OAuthProvider);
-    } else {
-      unknown.push(provider);
-    }
+    providers.push(key.slice(OAUTH_KEY_PREFIX.length));
   }
-  return { known, unknown };
+  return providers;
 }
 
 async function createProductionInstance(
@@ -740,17 +754,17 @@ async function offerBindZoneExport(
 async function runOAuthSetup(
   ctx: DeployContext,
   state: DeployOperationState,
+  descriptors: readonly OAuthProviderDescriptor[],
 ): Promise<OAuthProvider[]> {
   const completed = new Set(state.completedOAuthProviders as OAuthProvider[]);
-  const providers = state.oauthProviders as OAuthProvider[];
 
-  if (providers.length > 0) {
+  if (descriptors.length > 0) {
     log.info(OAUTH_SECTION_INTRO);
     log.blank();
   }
 
-  for (const provider of providers) {
-    if (completed.has(provider)) continue;
+  for (const descriptor of descriptors) {
+    if (completed.has(descriptor.provider)) continue;
     try {
       const productionInstanceId =
         state.productionInstanceId ?? ctx.productionInstanceId ?? ctx.profile.instances.production;
@@ -762,14 +776,14 @@ async function runOAuthSetup(
 
       const saved = await collectAndSaveOAuthCredentials(
         ctx,
-        provider,
+        descriptor,
         state.domain,
         productionInstanceId,
       );
       if (!saved) {
         throw deployPausedError({
           ...state,
-          pending: { type: "oauth", provider },
+          pending: { type: "oauth", provider: descriptor.provider },
           completedOAuthProviders: [...completed],
         });
       }
@@ -778,7 +792,7 @@ async function runOAuthSetup(
         throw deployPausedError(
           {
             ...state,
-            pending: { type: "oauth", provider },
+            pending: { type: "oauth", provider: descriptor.provider },
             completedOAuthProviders: [...completed],
           },
           { interrupted: true },
@@ -786,8 +800,8 @@ async function runOAuthSetup(
       }
       throw error;
     }
-    completed.add(provider);
-    if (providers.some((nextProvider) => !completed.has(nextProvider))) {
+    completed.add(descriptor.provider);
+    if (descriptors.some((nextDescriptor) => !completed.has(nextDescriptor.provider))) {
       log.blank();
     }
   }
@@ -797,38 +811,37 @@ async function runOAuthSetup(
 
 async function collectAndSaveOAuthCredentials(
   ctx: DeployContext,
-  provider: OAuthProvider,
+  descriptor: OAuthProviderDescriptor,
   domain: string,
   productionInstanceId: string,
 ): Promise<boolean> {
-  const label = providerLabel(provider);
-  for (const line of providerSetupIntro(provider)) log.info(line);
+  for (const line of providerSetupIntro(descriptor)) log.info(line);
   log.blank();
 
-  const choice = await chooseOAuthCredentialAction(provider);
+  const choice = await chooseOAuthCredentialAction(descriptor);
 
   if (choice === "skip") {
     return false;
   }
 
   if (choice === "walkthrough") {
-    await showOAuthWalkthrough(provider, domain);
+    await showOAuthWalkthrough(descriptor, domain);
   }
 
   const credentials = await collectOAuthCredentials(
-    provider,
+    descriptor,
     choice === "google-json" ? "google-json" : "manual",
   );
 
-  await withSpinner(`Saving ${label} OAuth credentials...`, async () => {
+  await withSpinner(`Saving ${descriptor.label} OAuth credentials...`, async () => {
     await patchInstanceConfig(ctx.appId, productionInstanceId, {
-      [`connection_oauth_${provider}`]: {
+      [descriptor.configKey]: {
         enabled: true,
         ...credentials,
       },
     });
   });
-  log.success(`Saved ${label} OAuth credentials`);
+  log.success(`Saved ${descriptor.label} OAuth credentials`);
   return true;
 }
 

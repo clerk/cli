@@ -3,12 +3,7 @@ import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { select } from "../../lib/listage.ts";
 import { confirm } from "../../lib/prompts.ts";
-import {
-  providerCredentialLabel,
-  providerFields,
-  providerLabel,
-  type OAuthProvider,
-} from "./providers.ts";
+import { type OAuthPromptField, type OAuthProviderDescriptor } from "./providers.ts";
 
 type OAuthCredentialAction = "have-credentials" | "walkthrough" | "google-json" | "skip";
 type DnsVerificationAction = "check" | "skip";
@@ -84,13 +79,13 @@ export async function confirmExportBindZone(): Promise<boolean> {
 }
 
 export async function chooseOAuthCredentialAction(
-  provider: OAuthProvider,
+  descriptor: OAuthProviderDescriptor,
 ): Promise<OAuthCredentialAction> {
   const choices: Array<{ name: string; value: OAuthCredentialAction }> = [
-    { name: providerCredentialLabel(provider), value: "have-credentials" },
+    { name: descriptor.credentialLabel, value: "have-credentials" },
     { name: "Walk me through creating them", value: "walkthrough" },
   ];
-  if (provider === "google") {
+  if (descriptor.credentialSources.includes("google-json")) {
     choices.push({
       name: "Load credentials from a Google Cloud Console JSON file",
       value: "google-json",
@@ -102,7 +97,7 @@ export async function chooseOAuthCredentialAction(
   });
 
   return select({
-    message: `${providerLabel(provider)} OAuth`,
+    message: `${descriptor.label} OAuth`,
     choices,
   });
 }
@@ -121,29 +116,45 @@ export async function chooseExistingProductionAction(): Promise<
 }
 
 export async function collectOAuthCredentials(
-  provider: OAuthProvider,
+  descriptor: OAuthProviderDescriptor,
   source: "manual" | "google-json" = "manual",
 ): Promise<Record<string, string>> {
-  if (provider === "google" && source === "google-json") {
+  if (descriptor.provider === "google" && source === "google-json") {
     return collectGoogleJsonCredentials();
   }
 
-  const label = providerLabel(provider);
   const credentials: Record<string, string> = {};
-  for (const field of providerFields(provider)) {
-    const message = `${label} OAuth ${field.label}`;
-    let value: string;
-    if (field.filePath) {
-      const path = await input({ message, validate: validateSecretFilePath(field.label) });
-      value = await readSecretFile(path);
-    } else if (field.secret) {
-      value = await password({ message, validate: required(field.label) });
-    } else {
-      value = await input({ message, validate: required(field.label) });
-    }
-    credentials[field.key] = value.trim();
+  for (const field of descriptor.fields) {
+    credentials[field.key] = await collectOAuthField(descriptor, field);
   }
   return credentials;
+}
+
+async function collectOAuthField(
+  descriptor: OAuthProviderDescriptor,
+  field: OAuthPromptField,
+): Promise<string> {
+  const message = `${descriptor.label} OAuth ${field.label}`;
+  let value: string;
+  if (field.filePath) {
+    const path = await input({ message, validate: validateSecretFilePath(field.label) });
+    value = await readSecretFile(path);
+  } else if (field.type === "select") {
+    value = await select({
+      message,
+      choices: (field.options ?? []).map((option) => ({ name: option, value: option })),
+      default: field.defaultValue,
+    });
+  } else if (field.secret) {
+    value = await password({ message, validate: required(field.label) });
+  } else {
+    value = await input({
+      message,
+      default: field.defaultValue,
+      validate: required(field.label),
+    });
+  }
+  return value.trim();
 }
 
 function validateSecretFilePath(label: string) {

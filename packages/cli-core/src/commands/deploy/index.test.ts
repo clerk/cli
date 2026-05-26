@@ -25,6 +25,7 @@ const mockConfirm = mock();
 const mockPassword = mock();
 const mockPatchInstanceConfig = mock();
 const mockFetchInstanceConfig = mock();
+const mockFetchInstanceConfigSchema = mock();
 const mockFetchApplication = mock();
 const mockListApplicationDomains = mock();
 const mockCreateProductionInstance = mock();
@@ -51,6 +52,7 @@ mock.module("../../lib/listage.ts", () => ({
 
 mock.module("../../lib/plapi.ts", () => ({
   fetchInstanceConfig: (...args: unknown[]) => mockFetchInstanceConfig(...args),
+  fetchInstanceConfigSchema: (...args: unknown[]) => mockFetchInstanceConfigSchema(...args),
   fetchApplication: (...args: unknown[]) => mockFetchApplication(...args),
   listApplicationDomains: (...args: unknown[]) => mockListApplicationDomains(...args),
   createProductionInstance: (...args: unknown[]) => mockCreateProductionInstance(...args),
@@ -100,6 +102,59 @@ function domainStatus({
   };
 }
 
+const oauthSchema = (properties: Record<string, unknown>) => ({
+  type: "object",
+  description: "OAuth SSO connection configuration",
+  properties: {
+    enabled: { type: "boolean", default: false },
+    authenticatable: { type: "boolean", default: true },
+    block_email_subaddresses: { type: "boolean", default: false },
+    ...properties,
+  },
+});
+
+const basicOAuthSchema = oauthSchema({
+  client_id: { type: "string", description: "OAuth client ID" },
+  client_secret: {
+    type: "string",
+    description: "OAuth client secret",
+    "x-clerk-sensitive": true,
+  },
+});
+
+const appleOAuthSchema = oauthSchema({
+  client_id: { type: "string", description: "Apple Services ID" },
+  client_secret: {
+    type: "string",
+    description: "Apple Private Key",
+    "x-clerk-sensitive": true,
+  },
+  key_id: { type: "string", description: "Apple Key ID" },
+  team_id: { type: "string", description: "Apple Team ID" },
+  bundle_id: {
+    type: "string",
+    description: "iOS app Bundle ID for native Sign in with Apple",
+  },
+});
+
+const schemaResponse = (properties: Record<string, unknown>) => ({
+  $schema: "https://json-schema.org/draft/2020-12/schema",
+  $id: "https://clerk.com/schemas/platform-config/2025-01-01",
+  type: "object",
+  properties,
+});
+
+function schemaForEnabledOAuth(config: Record<string, unknown>) {
+  const properties: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(config)) {
+    if (!key.startsWith("connection_oauth_")) continue;
+    if (!value || typeof value !== "object") continue;
+    if ((value as Record<string, unknown>).enabled !== true) continue;
+    properties[key] = key === "connection_oauth_apple" ? appleOAuthSchema : basicOAuthSchema;
+  }
+  return schemaResponse(properties);
+}
+
 describe("deploy", () => {
   let consoleSpy: ReturnType<typeof spyOn>;
   const captured = useCaptureLog();
@@ -111,6 +166,11 @@ describe("deploy", () => {
     mockFetchInstanceConfig.mockResolvedValue({
       connection_oauth_google: { enabled: true },
     });
+    mockFetchInstanceConfigSchema.mockResolvedValue(
+      schemaResponse({
+        connection_oauth_google: basicOAuthSchema,
+      }),
+    );
     mockFetchApplication.mockResolvedValue({
       application_id: "app_xyz789",
       name: "my-saas-app",
@@ -196,6 +256,7 @@ describe("deploy", () => {
     mockPassword.mockReset();
     mockPatchInstanceConfig.mockReset();
     mockFetchInstanceConfig.mockReset();
+    mockFetchInstanceConfigSchema.mockReset();
     mockFetchApplication.mockReset();
     mockListApplicationDomains.mockReset();
     mockCreateProductionInstance.mockReset();
@@ -313,6 +374,7 @@ describe("deploy", () => {
       }
       return developmentConfig;
     });
+    mockFetchInstanceConfigSchema.mockResolvedValue(schemaForEnabledOAuth(developmentConfig));
   }
 
   test("provider setup intro includes docs-backed copy for each OAuth provider", () => {
@@ -451,6 +513,12 @@ describe("deploy", () => {
         connection_oauth_unknown: { enabled: true },
         unrelated_key: "ignored",
       });
+      mockFetchInstanceConfigSchema.mockResolvedValueOnce(
+        schemaResponse({
+          connection_oauth_google: basicOAuthSchema,
+          connection_oauth_github: basicOAuthSchema,
+        }),
+      );
 
       await runDeployUntilPause();
       const err = stripAnsi(captured.err);
@@ -459,7 +527,7 @@ describe("deploy", () => {
       expect(err).toContain("Configure Google OAuth credentials");
       expect(err).toContain("Configure GitHub OAuth credentials");
       expect(err).not.toContain("Configure Microsoft OAuth credentials");
-      expect(err).toContain("not yet supported by `clerk deploy`: unknown");
+      expect(err).toContain("not yet supported by automated `clerk deploy` setup: unknown");
       expect(err).toContain("Configure them from the Clerk Dashboard before going live");
     });
 
@@ -1318,7 +1386,7 @@ describe("deploy", () => {
         "Production Google sign-in requires custom OAuth credentials from Google Cloud Console.",
       );
       expect(err).toContain(
-        "Reference: https://clerk.com/docs/guides/configure/auth-strategies/social-connections/google",
+        "Reference: https://clerk.com/docs/authentication/social-connections/google",
       );
       expect(mockConfirm).not.toHaveBeenCalledWith({
         message: "Set up Google OAuth now?",
@@ -1447,6 +1515,12 @@ describe("deploy", () => {
         connection_oauth_google: { enabled: true },
         connection_oauth_github: { enabled: true },
       });
+      mockFetchInstanceConfigSchema.mockResolvedValue(
+        schemaResponse({
+          connection_oauth_google: basicOAuthSchema,
+          connection_oauth_github: basicOAuthSchema,
+        }),
+      );
       // Proceed → create prod → enter google creds → skip github before DNS verification.
       mockConfirm.mockResolvedValueOnce(true).mockResolvedValueOnce(true);
       mockInput
@@ -1594,23 +1668,34 @@ describe("deploy", () => {
       });
     });
 
-    test("warns about enabled OAuth providers not yet supported by clerk deploy", async () => {
+    test("discovers and supports enabled OAuth providers from API schema", async () => {
       await linkedProject();
       mockHumanFlow();
       mockFetchInstanceConfig.mockResolvedValueOnce({
         connection_oauth_google: { enabled: true },
         connection_oauth_discord: { enabled: true },
-        connection_oauth_facebook: { enabled: true },
+        connection_oauth_microsoft: { enabled: false },
+        unrelated_key: "ignored",
       });
+      mockFetchInstanceConfigSchema.mockResolvedValueOnce(
+        schemaResponse({
+          connection_oauth_google: basicOAuthSchema,
+          connection_oauth_discord: basicOAuthSchema,
+        }),
+      );
 
       await runDeployUntilPause();
       const err = stripAnsi(captured.err);
 
+      expect(mockFetchInstanceConfig).toHaveBeenCalledWith("app_xyz789", "ins_dev_123");
+      expect(mockFetchInstanceConfigSchema).toHaveBeenCalledWith("app_xyz789", "ins_dev_123", [
+        "connection_oauth_google",
+        "connection_oauth_discord",
+      ]);
       expect(err).toContain("Configure Google OAuth credentials");
-      expect(err).toContain("not yet supported by `clerk deploy`");
-      expect(err).toContain("discord");
-      expect(err).toContain("facebook");
-      expect(err).toContain("Configure them from the Clerk Dashboard before going live");
+      expect(err).toContain("Configure Discord OAuth credentials");
+      expect(err).not.toContain("Configure Microsoft OAuth credentials");
+      expect(err).not.toContain("not yet supported by `clerk deploy`: discord");
     });
 
     test("unlinked directory throws NOT_LINKED instead of warning and exiting 0", async () => {

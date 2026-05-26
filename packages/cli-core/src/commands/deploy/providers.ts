@@ -6,8 +6,17 @@ import type { ConfigSchemaProperty, InstanceConfigSchema } from "../../lib/plapi
 
 const DEFAULT_DOCS_URL_PREFIX =
   "https://clerk.com/docs/guides/configure/auth-strategies/social-connections";
+const DEPLOY_OAUTH_PROVIDER_ALLOWLIST = [
+  "google",
+  "github",
+  "microsoft",
+  "apple",
+  "linear",
+  "discord",
+] as const;
 const COMPATIBLE_OAUTH_PROVIDERS = ["google", "github", "microsoft", "apple", "linear"] as const;
 
+type DeployOAuthProvider = (typeof DEPLOY_OAUTH_PROVIDER_ALLOWLIST)[number];
 type CompatibleOAuthProvider = (typeof COMPATIBLE_OAUTH_PROVIDERS)[number];
 
 /**
@@ -61,7 +70,6 @@ export type OAuthProviderDescriptor = {
  */
 export type OAuthProviderDescriptorResult = {
   supported: OAuthProviderDescriptor[];
-  excluded: string[];
   unsupported: string[];
 };
 
@@ -78,7 +86,7 @@ type ProviderOverride = {
   requiredCredentialKeys?: string[];
 };
 
-const PROVIDER_OVERRIDES: Record<CompatibleOAuthProvider, ProviderOverride> &
+const PROVIDER_OVERRIDES: Partial<Record<DeployOAuthProvider, ProviderOverride>> &
   Record<string, ProviderOverride | undefined> = {
   google: {
     credentialLabel: "I already have my Client ID and Client Secret",
@@ -129,9 +137,9 @@ const PROVIDER_OVERRIDES: Record<CompatibleOAuthProvider, ProviderOverride> &
   },
 };
 
-const EXCLUDED_DEPLOY_OAUTH_PROVIDERS = new Set(["expressen", "enstall"]);
 const SYSTEM_FIELD_KEYS = new Set(["enabled", "authenticatable", "block_email_subaddresses"]);
 const DEFAULT_FIELD_ORDER = ["client_id", "client_secret"];
+export const OAUTH_KEY_PREFIX = "connection_oauth_";
 
 const SHARED_OAUTH_METADATA = new Map<string, (typeof OAUTH_PROVIDERS)[number]>(
   OAUTH_PROVIDERS.map((provider) => [provider.provider, provider]),
@@ -207,10 +215,10 @@ export const PROVIDER_GOTCHAS: Record<CompatibleOAuthProvider, string | null> = 
 ) as Record<CompatibleOAuthProvider, string | null>;
 
 /**
- * Determine whether a provider is intentionally unavailable in deploy.
+ * Determine whether automated deploy can configure this public OAuth provider.
  */
-export function isDeployOAuthProviderExcluded(provider: string): boolean {
-  return EXCLUDED_DEPLOY_OAUTH_PROVIDERS.has(provider);
+export function isDeployOAuthProviderSupported(provider: string): boolean {
+  return (DEPLOY_OAUTH_PROVIDER_ALLOWLIST as readonly string[]).includes(provider);
 }
 
 /**
@@ -221,12 +229,11 @@ export function buildOAuthProviderDescriptors(
   schema: InstanceConfigSchema,
 ): OAuthProviderDescriptorResult {
   const supported: OAuthProviderDescriptor[] = [];
-  const excluded: string[] = [];
   const unsupported: string[] = [];
 
   for (const provider of providers) {
-    if (isDeployOAuthProviderExcluded(provider)) {
-      excluded.push(provider);
+    if (!isDeployOAuthProviderSupported(provider)) {
+      unsupported.push(provider);
       continue;
     }
 
@@ -239,14 +246,14 @@ export function buildOAuthProviderDescriptors(
     supported.push(descriptor);
   }
 
-  return { supported, excluded, unsupported };
+  return { supported, unsupported };
 }
 
 function buildOAuthProviderDescriptor(
   provider: string,
   schema: InstanceConfigSchema,
 ): OAuthProviderDescriptor | null {
-  const configKey = `connection_oauth_${provider}`;
+  const configKey = `${OAUTH_KEY_PREFIX}${provider}`;
   const configSchema = schema.properties?.[configKey];
   if (configSchema?.type !== "object" || !configSchema.properties) return null;
 
@@ -354,7 +361,7 @@ function credentialListLabel(requiredCredentialKeys: readonly string[]): string 
 function buildCompatibilityDescriptors(): OAuthProviderDescriptor[] {
   const schemas = Object.fromEntries(
     Object.keys(PROVIDER_OVERRIDES).map((provider) => [
-      `connection_oauth_${provider}`,
+      `${OAUTH_KEY_PREFIX}${provider}`,
       {
         type: "object",
         properties: compatibilityProviderProperties(provider),
@@ -432,30 +439,43 @@ function isCompatibleOAuthProvider(provider: string): provider is CompatibleOAut
   return (COMPATIBLE_OAUTH_PROVIDERS as readonly string[]).includes(provider);
 }
 
+function providerDescriptorFromInput(
+  provider: OAuthProvider | OAuthProviderDescriptor,
+): OAuthProviderDescriptor | undefined {
+  return typeof provider === "string" ? undefined : provider;
+}
+
 /**
  * Build the provider setup intro shown before credential collection.
  */
-export function providerSetupIntro(provider: OAuthProvider): string[] {
-  const label = providerLabel(provider);
-  const setupCopy = providerSetupCopy(provider);
-  const docsUrl = providerLegacyDocsUrl(provider);
+export function providerSetupIntro(provider: OAuthProvider | OAuthProviderDescriptor): string[] {
+  const descriptor = providerDescriptorFromInput(provider);
+  const slug = descriptor?.provider ?? (provider as OAuthProvider);
+  const label = descriptor?.label ?? providerLabel(slug);
+  const setupCopy = descriptor?.setupCopy ?? providerSetupCopy(slug);
+  const docsUrl = descriptor?.docsUrl ?? providerLegacyDocsUrl(slug);
   return [bold(`Configure ${label} OAuth for production`), setupCopy, dim(`Reference: ${docsUrl}`)];
 }
 
 /**
  * Show OAuth provider walkthrough values and open provider docs.
  */
-export async function showOAuthWalkthrough(provider: OAuthProvider, domain: string): Promise<void> {
-  const label = providerLabel(provider);
-  const docsUrl = providerLegacyDocsUrl(provider);
+export async function showOAuthWalkthrough(
+  provider: OAuthProvider | OAuthProviderDescriptor,
+  domain: string,
+): Promise<void> {
+  const descriptor = providerDescriptorFromInput(provider);
+  const slug = descriptor?.provider ?? (provider as OAuthProvider);
+  const label = descriptor?.label ?? providerLabel(slug);
+  const docsUrl = descriptor?.docsUrl ?? providerLegacyDocsUrl(slug);
 
   log.info(`\nConfigure your ${bold(label)} OAuth app with these values:\n`);
   log.info(`  ${dim("Authorized JavaScript origins")}`);
   log.info(`    ${cyan(`https://${domain}`)}`);
   log.info(`    ${cyan(`https://www.${domain}`)}`);
-  log.info(`  ${dim(providerRedirectLabel(provider))}`);
+  log.info(`  ${dim(descriptor?.redirectLabel ?? providerRedirectLabel(slug))}`);
   log.info(`    ${cyan(`https://accounts.${domain}/v1/oauth_callback`)}`);
-  const gotcha = providerGotcha(provider);
+  const gotcha = descriptor?.gotcha ?? providerGotcha(slug);
   if (gotcha) {
     log.blank();
     log.info(gotcha);

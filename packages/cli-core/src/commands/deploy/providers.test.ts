@@ -1,7 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import {
   buildOAuthProviderDescriptors,
-  isDeployOAuthProviderExcluded,
   providerFields,
   providerLabel,
   type OAuthProviderDescriptor,
@@ -51,7 +50,6 @@ describe("deploy OAuth provider descriptors", () => {
       schemaResponse({ connection_oauth_discord: basicOAuthSchema }),
     );
 
-    expect(result.excluded).toEqual([]);
     expect(result.unsupported).toEqual([]);
     const discord = descriptorByProvider(result.supported, "discord");
     expect(discord.label).toBe("Discord");
@@ -63,17 +61,27 @@ describe("deploy OAuth provider descriptors", () => {
     expect(discord.requiredCredentialKeys).toEqual(["client_id", "client_secret"]);
   });
 
-  test("excludes customer-specific providers", () => {
-    expect(isDeployOAuthProviderExcluded("expressen")).toBe(true);
-    expect(isDeployOAuthProviderExcluded("enstall")).toBe(true);
-
+  test("marks providers outside the public deploy allowlist as unsupported", () => {
     const result = buildOAuthProviderDescriptors(
-      ["google", "expressen", "enstall"],
-      schemaResponse({ connection_oauth_google: basicOAuthSchema }),
+      ["google", "example_private_provider"],
+      schemaResponse({
+        connection_oauth_google: basicOAuthSchema,
+        connection_oauth_example_private_provider: basicOAuthSchema,
+      }),
     );
 
     expect(result.supported.map((item) => item.provider)).toEqual(["google"]);
-    expect(result.excluded).toEqual(["expressen", "enstall"]);
+    expect(result.unsupported).toEqual(["example_private_provider"]);
+  });
+
+  test("Google descriptor exposes manual and JSON credential sources", () => {
+    const result = buildOAuthProviderDescriptors(
+      ["google"],
+      schemaResponse({ connection_oauth_google: basicOAuthSchema }),
+    );
+
+    const google = descriptorByProvider(result.supported, "google");
+    expect(google.credentialSources).toEqual(["manual", "google-json"]);
   });
 
   test("marks missing schema as unsupported", () => {
