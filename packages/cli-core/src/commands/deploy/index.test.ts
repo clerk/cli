@@ -531,6 +531,31 @@ describe("deploy", () => {
       expect(err).toContain("Configure them from the Clerk Dashboard before going live");
     });
 
+    test("warns when enabled provider schema is not usable", async () => {
+      await linkedProject();
+      mockHumanFlow();
+      mockFetchInstanceConfig.mockResolvedValueOnce({
+        connection_oauth_discord: { enabled: true },
+      });
+      mockFetchInstanceConfigSchema.mockResolvedValueOnce(
+        schemaResponse({
+          connection_oauth_discord: {
+            type: "object",
+            properties: {
+              enabled: { type: "boolean" },
+              client_id: { type: "number" },
+            },
+          },
+        }),
+      );
+
+      await runDeployUntilPause();
+      const err = stripAnsi(captured.err);
+
+      expect(err).toContain("not yet supported by automated `clerk deploy` setup: discord");
+      expect(err).not.toContain("Configure Discord OAuth credentials");
+    });
+
     test("DNS verification polls getApplicationDomainStatus until complete", async () => {
       await linkedProject();
       // Proceed → create instance → check DNS now → complete OAuth.
@@ -1053,6 +1078,36 @@ describe("deploy", () => {
       expect(mockFetchApplication).toHaveBeenCalledWith("app_xyz789");
       expect(mockInput).not.toHaveBeenCalled();
       expect(mockSelect).not.toHaveBeenCalled();
+    });
+
+    test("resume treats redacted sensitive OAuth credentials as present", async () => {
+      await linkedProject({
+        instances: { development: "ins_dev_123", production: "ins_prod_discord" },
+      });
+      mockLiveProduction({
+        instanceId: "ins_prod_discord",
+        developmentConfig: {
+          connection_oauth_discord: { enabled: true },
+        },
+        productionConfig: {
+          connection_oauth_discord: {
+            enabled: true,
+            client_id: "discord-client-id",
+            client_secret: "••••••••",
+          },
+        },
+      });
+      mockFetchInstanceConfigSchema.mockResolvedValueOnce(
+        schemaResponse({ connection_oauth_discord: basicOAuthSchema }),
+      );
+      mockIsAgent.mockReturnValue(false);
+      mockSelect.mockResolvedValueOnce("next-steps");
+
+      await runDeploy({});
+      const err = stripAnsi(captured.err);
+
+      expect(err).toContain("[x] Configure Discord OAuth credentials");
+      expect(mockPassword).not.toHaveBeenCalled();
     });
 
     test("plain deploy resumes DNS verification from live API state", async () => {

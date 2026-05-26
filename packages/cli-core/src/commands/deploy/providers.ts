@@ -249,6 +249,24 @@ export function buildOAuthProviderDescriptors(
   return { supported, unsupported };
 }
 
+/**
+ * Determine whether production config already contains every credential
+ * required by a schema-derived provider descriptor.
+ */
+export function hasProviderRequiredCredentials(
+  config: Record<string, unknown>,
+  descriptor: OAuthProviderDescriptor,
+): boolean {
+  const value = config[descriptor.configKey];
+  if (!value || typeof value !== "object") return false;
+  const providerConfig = value as Record<string, unknown>;
+  if (providerConfig.enabled !== true) return false;
+  return descriptor.requiredCredentialKeys.every((key) => {
+    const fieldValue = providerConfig[key];
+    return typeof fieldValue === "string" && fieldValue.length > 0;
+  });
+}
+
 function buildOAuthProviderDescriptor(
   provider: string,
   schema: InstanceConfigSchema,

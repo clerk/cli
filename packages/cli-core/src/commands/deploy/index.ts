@@ -49,6 +49,7 @@ import { mapDeployError } from "./errors.ts";
 import {
   OAUTH_KEY_PREFIX,
   buildOAuthProviderDescriptors,
+  hasProviderRequiredCredentials,
   isDeployOAuthProviderSupported,
   providerLabel,
   providerSetupIntro,
@@ -385,7 +386,7 @@ async function resolveLiveDeploySnapshot(
     domain.id,
   );
   const completedOAuthProviders = oauthProviderDescriptors
-    .filter((descriptor) => hasProductionOAuthCredentials(productionConfig, descriptor))
+    .filter((descriptor) => hasProviderRequiredCredentials(productionConfig, descriptor))
     .map((descriptor) => descriptor.provider);
   const pendingOAuthDescriptor = oauthProviderDescriptors.find(
     (descriptor) => !completedOAuthProviders.includes(descriptor.provider),
@@ -456,20 +457,6 @@ function pendingDomainStatus(): DomainStatusResponse {
 async function loadProductionDomain(ctx: DeployContext): Promise<ApplicationDomain | undefined> {
   const domains = await listApplicationDomains(ctx.appId);
   return domains.data.find((domain) => !domain.is_satellite) ?? domains.data[0];
-}
-
-function hasProductionOAuthCredentials(
-  config: Record<string, unknown>,
-  descriptor: OAuthProviderDescriptor,
-): boolean {
-  const value = config[descriptor.configKey];
-  if (!value || typeof value !== "object") return false;
-  const providerConfig = value as Record<string, unknown>;
-  if (providerConfig.enabled !== true) return false;
-  return descriptor.requiredCredentialKeys.every((key) => {
-    const fieldValue = providerConfig[key];
-    return typeof fieldValue === "string" && fieldValue.length > 0;
-  });
 }
 
 function buildNewDeployPlan(oauthProviders: readonly OAuthProviderDescriptor[]): DeployPlanStep[] {
