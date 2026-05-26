@@ -1840,6 +1840,8 @@ describe("deploy", () => {
       mockHumanFlow();
       mockFetchInstanceConfig.mockResolvedValueOnce({
         connection_oauth_google: { enabled: true },
+        connection_oauth_coinbase: { enabled: true },
+        connection_oauth_twitter: { enabled: true },
         connection_oauth_discord: { enabled: true },
         connection_oauth_microsoft: { enabled: false },
         unrelated_key: "ignored",
@@ -1847,6 +1849,8 @@ describe("deploy", () => {
       mockFetchInstanceConfigSchema.mockResolvedValueOnce(
         schemaResponse({
           connection_oauth_google: basicOAuthSchema,
+          connection_oauth_coinbase: basicOAuthSchema,
+          connection_oauth_twitter: basicOAuthSchema,
           connection_oauth_discord: basicOAuthSchema,
         }),
       );
@@ -1857,9 +1861,13 @@ describe("deploy", () => {
       expect(mockFetchInstanceConfig).toHaveBeenCalledWith("app_xyz789", "ins_dev_123");
       expect(mockFetchInstanceConfigSchema).toHaveBeenCalledWith("app_xyz789", "ins_dev_123", [
         "connection_oauth_google",
+        "connection_oauth_coinbase",
+        "connection_oauth_twitter",
         "connection_oauth_discord",
       ]);
       expect(err).toContain("Configure Google OAuth credentials");
+      expect(err).toContain("Configure Coinbase OAuth credentials");
+      expect(err).toContain("Configure Twitter OAuth credentials");
       expect(err).toContain("Configure Discord OAuth credentials");
       expect(err).not.toContain("Configure Microsoft OAuth credentials");
       expect(err).not.toContain("not yet supported by automated `clerk deploy` setup");
