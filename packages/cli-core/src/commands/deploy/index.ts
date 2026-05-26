@@ -47,7 +47,7 @@ import {
 import { mapDeployError } from "./errors.ts";
 import {
   PROVIDER_LABELS,
-  PROVIDER_FIELDS,
+  providerFields,
   providerLabel,
   providerSetupIntro,
   showOAuthWalkthrough,
@@ -446,7 +446,7 @@ function hasProductionOAuthCredentials(
   if (!value || typeof value !== "object") return false;
   const providerConfig = value as Record<string, unknown>;
   if (providerConfig.enabled !== true) return false;
-  return PROVIDER_FIELDS[provider].every((field) => {
+  return providerFields(provider).every((field) => {
     const fieldValue = providerConfig[field.key];
     return typeof fieldValue === "string" && fieldValue.length > 0;
   });
@@ -459,7 +459,7 @@ function buildNewDeployPlan(oauthProviders: readonly OAuthProvider[]): DeployPla
     { label: "Create production instance", status: "pending" },
     { label: "Choose a production domain you own", status: "pending" },
     ...oauthProviders.map((provider) => ({
-      label: `Configure ${PROVIDER_LABELS[provider]} OAuth credentials`,
+      label: `Configure ${providerLabel(provider)} OAuth credentials`,
       status: "pending" as const,
     })),
     { label: "Verify DNS records", status: "pending" },
@@ -475,7 +475,7 @@ function buildLiveDeployPlan(snapshot: LiveDeploySnapshot): DeployPlanStep[] {
         ? "done"
         : "pending";
       return {
-        label: `Configure ${PROVIDER_LABELS[provider]} OAuth credentials`,
+        label: `Configure ${providerLabel(provider)} OAuth credentials`,
         status,
       };
     }),
@@ -801,7 +801,7 @@ async function collectAndSaveOAuthCredentials(
   domain: string,
   productionInstanceId: string,
 ): Promise<boolean> {
-  const label = PROVIDER_LABELS[provider];
+  const label = providerLabel(provider);
   for (const line of providerSetupIntro(provider)) log.info(line);
   log.blank();
 

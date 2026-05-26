@@ -4,9 +4,9 @@ import { join, resolve } from "node:path";
 import { select } from "../../lib/listage.ts";
 import { confirm } from "../../lib/prompts.ts";
 import {
-  PROVIDER_CREDENTIAL_LABELS,
-  PROVIDER_FIELDS,
-  PROVIDER_LABELS,
+  providerCredentialLabel,
+  providerFields,
+  providerLabel,
   type OAuthProvider,
 } from "./providers.ts";
 
@@ -87,7 +87,7 @@ export async function chooseOAuthCredentialAction(
   provider: OAuthProvider,
 ): Promise<OAuthCredentialAction> {
   const choices: Array<{ name: string; value: OAuthCredentialAction }> = [
-    { name: PROVIDER_CREDENTIAL_LABELS[provider], value: "have-credentials" },
+    { name: providerCredentialLabel(provider), value: "have-credentials" },
     { name: "Walk me through creating them", value: "walkthrough" },
   ];
   if (provider === "google") {
@@ -102,7 +102,7 @@ export async function chooseOAuthCredentialAction(
   });
 
   return select({
-    message: `${PROVIDER_LABELS[provider]} OAuth`,
+    message: `${providerLabel(provider)} OAuth`,
     choices,
   });
 }
@@ -128,9 +128,9 @@ export async function collectOAuthCredentials(
     return collectGoogleJsonCredentials();
   }
 
-  const label = PROVIDER_LABELS[provider];
+  const label = providerLabel(provider);
   const credentials: Record<string, string> = {};
-  for (const field of PROVIDER_FIELDS[provider]) {
+  for (const field of providerFields(provider)) {
     const message = `${label} OAuth ${field.label}`;
     let value: string;
     if (field.filePath) {
