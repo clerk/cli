@@ -544,6 +544,40 @@ describe("deploy", () => {
       expect(mockSleep.mock.calls.every(([delay]) => delay === 1000)).toBe(true);
     });
 
+    test("Ctrl-C at the DNS retry prompt reports paused", async () => {
+      await linkedProject({
+        instances: { development: "ins_dev_123", production: "ins_prod_123" },
+      });
+      mockIsAgent.mockReturnValue(false);
+      mockLiveProduction({
+        instanceId: "ins_prod_123",
+        productionConfig: {
+          connection_oauth_google: {
+            enabled: true,
+            client_id: "google-client-id.apps.googleusercontent.com",
+            client_secret: "REDACTED",
+          },
+        },
+      });
+      mockGetApplicationDomainStatus.mockResolvedValue(
+        domainStatus({ status: "incomplete", dns: false, ssl: false, mail: false }),
+      );
+      mockSelect.mockResolvedValueOnce("check").mockRejectedValueOnce(promptExitError());
+
+      let error: CliError | undefined;
+      try {
+        await runDeploy({});
+      } catch (caught) {
+        error = caught as CliError;
+      }
+
+      expect(error?.message).toContain("Deploy paused at: DNS verification");
+      expect(error?.exitCode).toBe(EXIT_CODE.SIGINT);
+      const terminalOutput = stripAnsi(captured.err);
+      expect(terminalOutput).toContain("Paused");
+      expect(terminalOutput).not.toContain("Done");
+    });
+
     test("DNS verification emits per-component spinner labels in mail/dns/ssl order", async () => {
       await linkedProject();
       mockIsAgent.mockReturnValue(false);
@@ -584,7 +618,7 @@ describe("deploy", () => {
       expect(dnsIdx).toBeLessThan(sslIdx);
     });
 
-    test("DNS verification fails closed when status stays incomplete despite all exposed booleans true (proxy_ok case)", async () => {
+    test("DNS verification pauses when status stays incomplete despite all exposed booleans true (proxy_ok case)", async () => {
       await linkedProject({
         instances: { development: "ins_dev_123", production: "ins_prod_123" },
       });
@@ -599,12 +633,20 @@ describe("deploy", () => {
         domainStatus({ status: "incomplete", dns: true, ssl: true, mail: true }),
       );
       mockConfirm.mockResolvedValueOnce(false); // BIND export prompt: skip (wired in Task 5)
-      mockSelect.mockResolvedValueOnce("check").mockResolvedValueOnce("skip");
+      mockSelect.mockResolvedValueOnce("check");
 
-      await runDeploy({});
+      let error: CliError | undefined;
+      try {
+        await runDeploy({});
+      } catch (caught) {
+        error = caught as CliError;
+      }
       const err = stripAnsi(captured.err);
 
+      expect(error?.message).toContain("Deploy paused at: DNS verification");
+      expect(error?.exitCode).toBe(EXIT_CODE.GENERAL);
       expect(err).toContain("Production setup for example.com is still finalizing.");
+      expect(err).toContain("Paused");
       expect(err).not.toContain("Production ready at");
     });
 

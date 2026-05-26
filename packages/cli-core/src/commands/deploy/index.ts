@@ -263,7 +263,6 @@ async function startNewDeploy(ctx: DeployContext): Promise<void> {
     pending: { type: "dns" },
     completedOAuthProviders,
   });
-  if (!dnsStatus) return;
 
   await finishDeploy(ctx, productionDomain, completedOAuthProviders, dnsStatus);
 }
@@ -297,9 +296,9 @@ async function reconcileExistingDeploy(ctx: DeployContext): Promise<void> {
     snapshot.oauthProviders.length > snapshot.completedOAuthProviders.length
   ) {
     bar();
-    const completed = await runOAuthSetup(
-      ctx,
-      snapshotToOperationState(snapshot, {
+    const completed = await runOAuthSetup(ctx, {
+      ...snapshot,
+      pending: {
         type: "oauth",
         provider:
           snapshot.oauthProviders.find(
@@ -307,18 +306,17 @@ async function reconcileExistingDeploy(ctx: DeployContext): Promise<void> {
           ) ??
           snapshot.oauthProviders[0] ??
           "google",
-      }),
-    );
+      },
+    });
     if (completed.length < snapshot.oauthProviders.length) return;
     snapshot.completedOAuthProviders = completed;
   }
 
   if (!snapshot.dnsComplete) {
-    const nextDnsStatus = await runExistingDomainDnsVerification(
-      ctx,
-      snapshotToOperationState(snapshot, { type: "dns" }),
-    );
-    if (!nextDnsStatus) return;
+    const nextDnsStatus = await runExistingDomainDnsVerification(ctx, {
+      ...snapshot,
+      pending: { type: "dns" },
+    });
     dnsStatus = nextDnsStatus;
   }
 
@@ -485,23 +483,6 @@ function buildLiveDeployPlan(snapshot: LiveDeploySnapshot): DeployPlanStep[] {
   ];
 }
 
-function snapshotToOperationState(
-  snapshot: LiveDeploySnapshot,
-  pending: DeployOperationState["pending"],
-): DeployOperationState {
-  return {
-    appId: snapshot.appId,
-    developmentInstanceId: snapshot.developmentInstanceId,
-    productionInstanceId: snapshot.productionInstanceId,
-    productionDomainId: snapshot.productionDomainId,
-    domain: snapshot.domain,
-    pending,
-    oauthProviders: snapshot.oauthProviders,
-    completedOAuthProviders: snapshot.completedOAuthProviders,
-    cnameTargets: snapshot.cnameTargets,
-  };
-}
-
 function discoverEnabledOAuthProviders(config: Record<string, unknown>): DiscoveredOAuthProviders {
   const known: OAuthProvider[] = [];
   const unknown: string[] = [];
@@ -576,7 +557,7 @@ async function runDnsRecordHandoff(
 async function runExistingDomainDnsVerification(
   ctx: DeployContext,
   state: DeployOperationState,
-): Promise<DnsVerificationResult | false> {
+): Promise<DnsVerificationResult> {
   await runDnsRecordHandoff(state, state.cnameTargets ?? []);
   return runDnsVerificationPrompt(ctx, state);
 }
@@ -584,7 +565,7 @@ async function runExistingDomainDnsVerification(
 async function runDnsVerificationPrompt(
   ctx: DeployContext,
   state: DeployOperationState,
-): Promise<DnsVerificationResult | false> {
+): Promise<DnsVerificationResult> {
   try {
     const action = await chooseDnsVerificationAction();
     if (action === "skip") {
@@ -604,7 +585,7 @@ async function runDnsVerificationPrompt(
 async function runDnsVerification(
   ctx: DeployContext,
   state: DeployOperationState,
-): Promise<DnsVerificationResult | false> {
+): Promise<DnsVerificationResult> {
   const domainIdOrName = state.productionDomainId ?? state.domain;
 
   while (true) {
@@ -624,11 +605,9 @@ async function runDnsVerification(
     }
 
     // When all DNS components are verified but the server has not yet marked the
-    // deployment complete (proxy_ok or another server-side gate is still pending),
-    // do not offer a retry — the user cannot influence the remaining wait. Fail
-    // closed so the caller exits without reaching finishDeploy.
+    // deployment complete, the user cannot influence the remaining wait.
     if (outcome.status.dns && outcome.status.ssl && outcome.status.mail) {
-      return false;
+      throw deployPausedError(state);
     }
 
     const pendingRecords = state.cnameTargets
@@ -639,7 +618,15 @@ async function runDnsVerification(
       for (const line of pendingRecords) log.info(line);
     }
     log.blank();
-    const action = await chooseDnsVerificationRetryAction();
+    let action: Awaited<ReturnType<typeof chooseDnsVerificationRetryAction>>;
+    try {
+      action = await chooseDnsVerificationRetryAction();
+    } catch (error) {
+      if (isPromptExitError(error)) {
+        throw deployPausedError(state, { interrupted: true });
+      }
+      throw error;
+    }
     if (action === "skip") {
       log.blank();
       log.info("Skipping DNS verification for now.");
