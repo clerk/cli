@@ -404,27 +404,27 @@ describe("deploy", () => {
     expect(intros.google).toEqual([
       "Configure Google OAuth for production",
       "Production Google sign-in requires custom OAuth credentials from Google Cloud Console.",
-      "Reference: https://clerk.com/docs/guides/configure/auth-strategies/social-connections/google",
+      "Reference: https://clerk.com/docs/authentication/social-connections/google",
     ]);
     expect(intros.github).toEqual([
       "Configure GitHub OAuth for production",
-      "Production GitHub sign-in requires a GitHub OAuth app and custom credentials.",
-      "Reference: https://clerk.com/docs/guides/configure/auth-strategies/social-connections/github",
+      "Production GitHub sign-in requires custom OAuth credentials.",
+      "Reference: https://clerk.com/docs/authentication/social-connections/github",
     ]);
     expect(intros.microsoft).toEqual([
       "Configure Microsoft OAuth for production",
-      "Production Microsoft sign-in requires a Microsoft Entra ID app and custom credentials.",
-      "Reference: https://clerk.com/docs/guides/configure/auth-strategies/social-connections/microsoft",
+      "Production Microsoft sign-in requires custom OAuth credentials.",
+      "Reference: https://clerk.com/docs/authentication/social-connections/microsoft",
     ]);
     expect(intros.apple).toEqual([
       "Configure Apple OAuth for production",
       "Production Apple sign-in requires an Apple Services ID, Team ID, Key ID, and private key file.",
-      "Reference: https://clerk.com/docs/guides/configure/auth-strategies/social-connections/apple",
+      "Reference: https://clerk.com/docs/authentication/social-connections/apple",
     ]);
     expect(intros.linear).toEqual([
       "Configure Linear OAuth for production",
-      "Production Linear sign-in requires a Linear OAuth app and custom credentials.",
-      "Reference: https://clerk.com/docs/guides/configure/auth-strategies/social-connections/linear",
+      "Production Linear sign-in requires custom OAuth credentials.",
+      "Reference: https://clerk.com/docs/authentication/social-connections/linear",
     ]);
   });
 

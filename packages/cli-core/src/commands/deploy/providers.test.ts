@@ -190,13 +190,13 @@ describe("deploy OAuth provider descriptors", () => {
     ]);
   });
 
-  test("preserves existing compatibility prompt labels", () => {
+  test("keeps compatibility prompt labels only for behavioral overrides", () => {
     expect(providerFields("google").map((field) => field.label)).toEqual([
       "Client ID",
       "Client Secret",
     ]);
     expect(providerFields("microsoft").map((field) => field.label)).toEqual([
-      "Application (Client) ID",
+      "Client ID",
       "Client Secret",
     ]);
     expect(providerFields("apple").map((field) => field.label)).toEqual([

@@ -1,5 +1,5 @@
 import { OAUTH_PROVIDERS } from "@clerk/shared/oauth";
-import { bold, cyan, dim, yellow, red } from "../../lib/color.ts";
+import { bold, cyan, dim, yellow } from "../../lib/color.ts";
 import { log } from "../../lib/log.ts";
 import { openBrowser } from "../../lib/open.ts";
 import type { ConfigSchemaProperty, InstanceConfigSchema } from "../../lib/plapi.ts";
@@ -83,22 +83,6 @@ const PROVIDER_OVERRIDES = {
     gotcha: `${yellow("IMPORTANT")}  Set the OAuth consent screen's publishing status to "In production". Apps left in "Testing" are limited to 100 test users and may break for end users.`,
     credentialSources: ["manual", "google-json"],
   },
-  github: {
-    credentialLabel: "I already have my Client ID and Client Secret",
-    redirectLabel: "Authorization Callback URL",
-    setupCopy: "Production GitHub sign-in requires a GitHub OAuth app and custom credentials.",
-    gotcha: null,
-  },
-  microsoft: {
-    credentialLabel: "I already have my Application (Client) ID and Client Secret",
-    redirectLabel: "Redirect URI",
-    setupCopy:
-      "Production Microsoft sign-in requires a Microsoft Entra ID app and custom credentials.",
-    gotcha: `${red("WARNING")}  Microsoft client secrets expire (default 6 months, max 24). Set a calendar reminder to rotate before expiration or sign-in will break.`,
-    fieldLabels: {
-      client_id: "Application (Client) ID",
-    },
-  },
   apple: {
     credentialLabel: "I already have my Services ID, Team ID, Key ID, and .p8 file",
     redirectLabel: "Return URL",
@@ -115,12 +99,6 @@ const PROVIDER_OVERRIDES = {
     filePathFields: ["client_secret"],
     omittedFields: ["bundle_id"],
     requiredCredentialKeys: ["client_id", "team_id", "key_id", "client_secret"],
-  },
-  linear: {
-    credentialLabel: "I already have my Client ID and Client Secret",
-    redirectLabel: "Callback URL",
-    setupCopy: "Production Linear sign-in requires a Linear OAuth app and custom credentials.",
-    gotcha: `${yellow("IMPORTANT")}  You must be a workspace admin in Linear to create OAuth apps.`,
   },
 } satisfies Record<string, ProviderOverride>;
 
@@ -175,16 +153,6 @@ export const PROVIDER_REDIRECT_LABELS: Record<ProviderWithOverride, string> = Ob
   COMPATIBLE_PROVIDER_DESCRIPTORS.map((descriptor) => [
     descriptor.provider,
     descriptor.redirectLabel,
-  ]),
-) as Record<ProviderWithOverride, string>;
-
-/**
- * Compatibility docs URLs for the current walkthrough flow.
- */
-export const PROVIDER_DOC_URLS: Record<ProviderWithOverride, string> = Object.fromEntries(
-  Object.keys(PROVIDER_OVERRIDES).map((provider) => [
-    provider,
-    `${DEFAULT_DOCS_URL_PREFIX}/${provider}`,
   ]),
 ) as Record<ProviderWithOverride, string>;
 
@@ -422,11 +390,6 @@ function providerRedirectLabel(provider: OAuthProvider): string {
   return "Redirect URI";
 }
 
-function providerLegacyDocsUrl(provider: OAuthProvider): string {
-  if (hasProviderOverride(provider)) return PROVIDER_DOC_URLS[provider];
-  return providerDocsUrl(provider);
-}
-
 function providerSetupCopy(provider: OAuthProvider): string {
   if (hasProviderOverride(provider)) return PROVIDER_SETUP_COPY[provider];
   return `Production ${providerLabel(provider)} sign-in requires custom OAuth credentials.`;
@@ -455,7 +418,7 @@ export function providerSetupIntro(provider: OAuthProvider | OAuthProviderDescri
   const slug = descriptor?.provider ?? (provider as OAuthProvider);
   const label = descriptor?.label ?? providerLabel(slug);
   const setupCopy = descriptor?.setupCopy ?? providerSetupCopy(slug);
-  const docsUrl = descriptor?.docsUrl ?? providerLegacyDocsUrl(slug);
+  const docsUrl = descriptor?.docsUrl ?? providerDocsUrl(slug);
   return [bold(`Configure ${label} OAuth for production`), setupCopy, dim(`Reference: ${docsUrl}`)];
 }
 
@@ -469,7 +432,7 @@ export async function showOAuthWalkthrough(
   const descriptor = providerDescriptorFromInput(provider);
   const slug = descriptor?.provider ?? (provider as OAuthProvider);
   const label = descriptor?.label ?? providerLabel(slug);
-  const docsUrl = descriptor?.docsUrl ?? providerLegacyDocsUrl(slug);
+  const docsUrl = descriptor?.docsUrl ?? providerDocsUrl(slug);
 
   log.info(`\nConfigure your ${bold(label)} OAuth app with these values:\n`);
   log.info(`  ${dim("Authorized JavaScript origins")}`);

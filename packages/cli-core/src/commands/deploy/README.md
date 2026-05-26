@@ -137,12 +137,10 @@ Most providers ask for `client_id` and `client_secret`. Provider-specific schema
 
 The CLI keeps small local overrides for provider setup details that schema does not fully describe:
 
-| Provider  | Override                                                                                   |
-| --------- | ------------------------------------------------------------------------------------------ |
-| Google    | Optional Google Cloud Console JSON import and OAuth consent screen warning                 |
-| Apple     | `.p8` file import, production-required `team_id` and `key_id`, native-only field omissions |
-| Microsoft | Client secret expiry warning                                                               |
-| Linear    | Workspace admin warning                                                                    |
+| Provider | Override                                                                                   |
+| -------- | ------------------------------------------------------------------------------------------ |
+| Google   | Optional Google Cloud Console JSON import and OAuth consent screen warning                 |
+| Apple    | `.p8` file import, production-required `team_id` and `key_id`, native-only field omissions |
 
 For Google, the wizard can load `client_id` and `client_secret` from the top-level `web` object in a Google Cloud Console OAuth client JSON file, or from `installed` for desktop-style client downloads. The file contents are used in memory and are not written to CLI config.
 
