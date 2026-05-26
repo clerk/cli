@@ -277,13 +277,17 @@ function buildOAuthProviderDescriptor(
 
   const override = PROVIDER_OVERRIDES[provider] ?? {};
   const omittedFields = new Set(override.omittedFields ?? []);
+  const requiredFieldKeys = new Set(override.requiredCredentialKeys ?? DEFAULT_FIELD_ORDER);
   const fields: OAuthPromptField[] = [];
 
   for (const [key, property] of Object.entries(configSchema.properties)) {
     if (SYSTEM_FIELD_KEYS.has(key) || omittedFields.has(key) || property.readOnly) continue;
 
     const field = buildPromptField(key, property, override);
-    if (!field) return null;
+    if (!field) {
+      if (requiredFieldKeys.has(key)) return null;
+      continue;
+    }
     fields.push(field);
   }
 

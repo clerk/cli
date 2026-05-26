@@ -77,11 +77,27 @@ describe("deploy OAuth provider descriptors", () => {
   test("Google descriptor exposes manual and JSON credential sources", () => {
     const result = buildOAuthProviderDescriptors(
       ["google"],
-      schemaResponse({ connection_oauth_google: basicOAuthSchema }),
+      schemaResponse({
+        connection_oauth_google: oauthSchema({
+          client_id: { type: "string", description: "Google OAuth client ID" },
+          client_secret: {
+            type: "string",
+            description: "Google OAuth client secret",
+            "x-clerk-sensitive": true,
+          },
+          show_account_selector_prompt: {
+            type: "boolean",
+            description: "Whether to show the account selector prompt during OAuth flow",
+            default: false,
+          },
+        }),
+      }),
     );
 
     const google = descriptorByProvider(result.supported, "google");
     expect(google.credentialSources).toEqual(["manual", "google-json"]);
+    expect(google.fields.map((field) => field.key)).toEqual(["client_id", "client_secret"]);
+    expect(result.unsupported).toEqual([]);
   });
 
   test("marks missing schema as unsupported", () => {
