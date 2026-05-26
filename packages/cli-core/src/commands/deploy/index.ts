@@ -186,15 +186,7 @@ async function startNewDeploy(ctx: DeployContext): Promise<void> {
   }
   log.blank();
 
-  if (unsupported.length > 0) {
-    log.warn(
-      `These OAuth providers are enabled in development but not yet supported by automated \`clerk deploy\` setup: ${unsupported.join(", ")}.`,
-    );
-    log.warn(
-      "They will be cloned to production without working credentials. Configure them from the Clerk Dashboard before going live, or disable them in development first.",
-    );
-    log.blank();
-  }
+  warnUnsupportedOAuthProviders(unsupported.length);
   const proceed = await confirmProceed();
   if (!proceed) {
     log.info("No changes were made.");
@@ -285,6 +277,8 @@ async function reconcileExistingDeploy(ctx: DeployContext): Promise<void> {
   }
   log.blank();
 
+  warnUnsupportedOAuthProviders(snapshot.unsupportedOAuthProviderCount);
+
   if (!snapshot.pending) {
     log.info("No deploy actions remain.");
     await finishDeploy(ctx, snapshot.domain, snapshot.completedOAuthProviders, "verified");
@@ -339,6 +333,7 @@ type LiveDeploySnapshot = Omit<
   completedOAuthProviders: OAuthProvider[];
   cnameTargets?: readonly CnameTarget[];
   dnsComplete: boolean;
+  unsupportedOAuthProviderCount: number;
 };
 
 type DiscoveredOAuthProviders = {
@@ -347,6 +342,20 @@ type DiscoveredOAuthProviders = {
 };
 
 type DnsVerificationResult = "verified" | "pending";
+
+function warnUnsupportedOAuthProviders(count: number): void {
+  if (count === 0) return;
+
+  const plural = count === 1 ? "" : "s";
+  const verb = count === 1 ? "is" : "are";
+  log.warn(
+    `${count} OAuth provider${plural} ${verb} enabled in development but not yet supported by automated \`clerk deploy\` setup.`,
+  );
+  log.warn(
+    "These providers may not have working production credentials. Configure them from the Clerk Dashboard before going live, or disable them in development first.",
+  );
+  log.blank();
+}
 
 async function loadDevelopmentOAuthProviders(
   ctx: DeployContext,
@@ -378,7 +387,8 @@ async function resolveLiveDeploySnapshot(
   const domain = await loadProductionDomain(ctx);
   if (!domain) return undefined;
 
-  const { descriptors: oauthProviderDescriptors } = await loadDevelopmentOAuthProviders(ctx);
+  const { descriptors: oauthProviderDescriptors, unsupported } =
+    await loadDevelopmentOAuthProviders(ctx);
   const oauthProviders = oauthProviderDescriptors.map((descriptor) => descriptor.provider);
   const { productionConfig, deployStatus } = await loadProductionState(
     ctx,
@@ -402,6 +412,7 @@ async function resolveLiveDeploySnapshot(
     oauthProviderDescriptors,
     completedOAuthProviders,
     cnameTargets: domain.cname_targets ?? [],
+    unsupportedOAuthProviderCount: unsupported.length,
   };
 
   const dnsComplete = deployStatus.status === "complete";

@@ -68,6 +68,8 @@ sequenceDiagram
     %% Discover enabled OAuth providers in dev
     CLI->>API: GET /v1/platform/applications/{appID}/instances/{dev_instance_id}/config?keys=connection_oauth_*
     API-->>CLI: { connection_oauth_google: { enabled: true }, ... }
+    CLI->>API: GET /v1/platform/applications/{appID}/instances/{dev_instance_id}/config/schema?keys=connection_oauth_google,...
+    API-->>CLI: { properties: { connection_oauth_google: { properties: ... } } }
 
     %% Plan summary + domain
     CLI->>User: Plan summary
@@ -81,7 +83,7 @@ sequenceDiagram
     CLI->>User: Add these CNAME records to your DNS provider
 
     %% OAuth credential loop
-    loop Each enabled social provider
+    loop Each supported schema-backed OAuth provider
         CLI->>User: Provider credentials
         CLI->>API: PATCH /v1/platform/applications/{appID}/instances/{instance_id}/config { connection_oauth_{provider} }
         API-->>CLI: { before, after, config_version }

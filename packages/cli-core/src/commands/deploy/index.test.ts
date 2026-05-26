@@ -542,7 +542,10 @@ describe("deploy", () => {
       expect(err).toContain("Configure Google OAuth credentials");
       expect(err).toContain("Configure GitHub OAuth credentials");
       expect(err).not.toContain("Configure Microsoft OAuth credentials");
-      expect(err).toContain("not yet supported by automated `clerk deploy` setup: unknown");
+      expect(err).toContain(
+        "1 OAuth provider is enabled in development but not yet supported by automated `clerk deploy` setup.",
+      );
+      expect(err).not.toContain("unknown");
       expect(err).toContain("Configure them from the Clerk Dashboard before going live");
     });
 
@@ -567,7 +570,11 @@ describe("deploy", () => {
       await runDeployUntilPause();
       const err = stripAnsi(captured.err);
 
-      expect(err).toContain("not yet supported by automated `clerk deploy` setup: discord");
+      expect(err).toContain(
+        "1 OAuth provider is enabled in development but not yet supported by automated `clerk deploy` setup.",
+      );
+      expect(err).not.toContain("discord");
+      expect(err).not.toContain("Discord");
       expect(err).not.toContain("Configure Discord OAuth credentials");
     });
 
@@ -1139,6 +1146,50 @@ describe("deploy", () => {
       expect(mockFetchApplication).toHaveBeenCalledWith("app_xyz789");
       expect(mockInput).not.toHaveBeenCalled();
       expect(mockSelect).not.toHaveBeenCalled();
+    });
+
+    test("existing production warns generically when an enabled provider schema is not usable", async () => {
+      await linkedProject({
+        instances: { development: "ins_dev_123", production: "ins_prod_discord" },
+      });
+      mockLiveProduction({
+        instanceId: "ins_prod_discord",
+        developmentConfig: {
+          connection_oauth_discord: { enabled: true },
+        },
+        productionConfig: {
+          connection_oauth_discord: { enabled: true },
+        },
+      });
+      mockFetchInstanceConfigSchema.mockResolvedValueOnce(
+        schemaResponse({
+          connection_oauth_discord: {
+            type: "object",
+            properties: {
+              enabled: { type: "boolean" },
+              client_id: { type: "number" },
+            },
+          },
+        }),
+      );
+      mockIsAgent.mockReturnValue(false);
+
+      await runDeploy({});
+      const err = stripAnsi(captured.err);
+      const warningIndex = err.indexOf(
+        "1 OAuth provider is enabled in development but not yet supported by automated `clerk deploy` setup.",
+      );
+      const noActionsIndex = err.indexOf("No deploy actions remain.");
+      const readyIndex = err.indexOf("Production ready at https://example.com");
+
+      expect(warningIndex).toBeGreaterThan(-1);
+      expect(noActionsIndex).toBeGreaterThan(-1);
+      expect(readyIndex).toBeGreaterThan(-1);
+      expect(warningIndex).toBeLessThan(noActionsIndex);
+      expect(warningIndex).toBeLessThan(readyIndex);
+      expect(err).not.toContain("discord");
+      expect(err).not.toContain("Discord");
+      expect(err).not.toContain("Configure Discord OAuth credentials");
     });
 
     test("resume treats redacted sensitive OAuth credentials as present", async () => {
@@ -1811,7 +1862,7 @@ describe("deploy", () => {
       expect(err).toContain("Configure Google OAuth credentials");
       expect(err).toContain("Configure Discord OAuth credentials");
       expect(err).not.toContain("Configure Microsoft OAuth credentials");
-      expect(err).not.toContain("not yet supported by `clerk deploy`: discord");
+      expect(err).not.toContain("not yet supported by automated `clerk deploy` setup");
     });
 
     test("unlinked directory throws NOT_LINKED instead of warning and exiting 0", async () => {
