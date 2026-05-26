@@ -205,6 +205,10 @@ describe("deploy OAuth provider descriptors", () => {
       "Apple Key ID",
       "Apple Private Key - path to .p8 file",
     ]);
+    expect(providerFields("linear").map((field) => field.label)).toEqual([
+      "Client ID",
+      "Client Secret",
+    ]);
   });
 
   test("providerLabel falls back to title-cased unknown slugs", () => {

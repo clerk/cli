@@ -6,9 +6,6 @@ import type { ConfigSchemaProperty, InstanceConfigSchema } from "../../lib/plapi
 
 const DEFAULT_DOCS_URL_PREFIX =
   "https://clerk.com/docs/guides/configure/auth-strategies/social-connections";
-const COMPATIBLE_OAUTH_PROVIDERS = ["google", "github", "microsoft", "apple", "linear"] as const;
-
-type CompatibleOAuthProvider = (typeof COMPATIBLE_OAUTH_PROVIDERS)[number];
 
 /**
  * OAuth provider slug used by deploy.
@@ -77,7 +74,7 @@ type ProviderOverride = {
   requiredCredentialKeys?: string[];
 };
 
-const PROVIDER_OVERRIDES: Record<string, ProviderOverride | undefined> = {
+const PROVIDER_OVERRIDES = {
   google: {
     credentialLabel: "I already have my Client ID and Client Secret",
     redirectLabel: "Authorized Redirect URI",
@@ -125,7 +122,9 @@ const PROVIDER_OVERRIDES: Record<string, ProviderOverride | undefined> = {
     setupCopy: "Production Linear sign-in requires a Linear OAuth app and custom credentials.",
     gotcha: `${yellow("IMPORTANT")}  You must be a workspace admin in Linear to create OAuth apps.`,
   },
-};
+} satisfies Record<string, ProviderOverride>;
+
+type ProviderWithOverride = keyof typeof PROVIDER_OVERRIDES;
 
 const SYSTEM_FIELD_KEYS = new Set(["enabled", "authenticatable", "block_email_subaddresses"]);
 const DEFAULT_FIELD_ORDER = ["client_id", "client_secret"];
@@ -140,14 +139,14 @@ const COMPATIBLE_PROVIDER_DESCRIPTORS = buildCompatibilityDescriptors();
 /**
  * Compatibility labels for the deploy flow that still consumes provider maps.
  */
-export const PROVIDER_LABELS: Record<CompatibleOAuthProvider, string> = Object.fromEntries(
+export const PROVIDER_LABELS: Record<ProviderWithOverride, string> = Object.fromEntries(
   COMPATIBLE_PROVIDER_DESCRIPTORS.map((descriptor) => [descriptor.provider, descriptor.label]),
-) as Record<CompatibleOAuthProvider, string>;
+) as Record<ProviderWithOverride, string>;
 
 /**
  * Compatibility fields for the deploy flow that still consumes provider maps.
  */
-export const PROVIDER_FIELDS: Record<CompatibleOAuthProvider, OAuthField[]> = Object.fromEntries(
+export const PROVIDER_FIELDS: Record<ProviderWithOverride, OAuthField[]> = Object.fromEntries(
   COMPATIBLE_PROVIDER_DESCRIPTORS.map((descriptor) => [
     descriptor.provider,
     descriptor.fields.map((field) => ({
@@ -157,52 +156,51 @@ export const PROVIDER_FIELDS: Record<CompatibleOAuthProvider, OAuthField[]> = Ob
       filePath: field.filePath || undefined,
     })),
   ]),
-) as Record<CompatibleOAuthProvider, OAuthField[]>;
+) as Record<ProviderWithOverride, OAuthField[]>;
 
 /**
  * Compatibility credential action labels for the current prompt flow.
  */
-export const PROVIDER_CREDENTIAL_LABELS: Record<CompatibleOAuthProvider, string> =
-  Object.fromEntries(
-    COMPATIBLE_PROVIDER_DESCRIPTORS.map((descriptor) => [
-      descriptor.provider,
-      descriptor.credentialLabel,
-    ]),
-  ) as Record<CompatibleOAuthProvider, string>;
+export const PROVIDER_CREDENTIAL_LABELS: Record<ProviderWithOverride, string> = Object.fromEntries(
+  COMPATIBLE_PROVIDER_DESCRIPTORS.map((descriptor) => [
+    descriptor.provider,
+    descriptor.credentialLabel,
+  ]),
+) as Record<ProviderWithOverride, string>;
 
 /**
  * Compatibility redirect labels for the current walkthrough flow.
  */
-export const PROVIDER_REDIRECT_LABELS: Record<CompatibleOAuthProvider, string> = Object.fromEntries(
+export const PROVIDER_REDIRECT_LABELS: Record<ProviderWithOverride, string> = Object.fromEntries(
   COMPATIBLE_PROVIDER_DESCRIPTORS.map((descriptor) => [
     descriptor.provider,
     descriptor.redirectLabel,
   ]),
-) as Record<CompatibleOAuthProvider, string>;
+) as Record<ProviderWithOverride, string>;
 
 /**
  * Compatibility docs URLs for the current walkthrough flow.
  */
-export const PROVIDER_DOC_URLS: Record<CompatibleOAuthProvider, string> = Object.fromEntries(
-  COMPATIBLE_OAUTH_PROVIDERS.map((provider) => [
+export const PROVIDER_DOC_URLS: Record<ProviderWithOverride, string> = Object.fromEntries(
+  Object.keys(PROVIDER_OVERRIDES).map((provider) => [
     provider,
     `${DEFAULT_DOCS_URL_PREFIX}/${provider}`,
   ]),
-) as Record<CompatibleOAuthProvider, string>;
+) as Record<ProviderWithOverride, string>;
 
 /**
  * Compatibility setup copy for the current walkthrough flow.
  */
-export const PROVIDER_SETUP_COPY: Record<CompatibleOAuthProvider, string> = Object.fromEntries(
+export const PROVIDER_SETUP_COPY: Record<ProviderWithOverride, string> = Object.fromEntries(
   COMPATIBLE_PROVIDER_DESCRIPTORS.map((descriptor) => [descriptor.provider, descriptor.setupCopy]),
-) as Record<CompatibleOAuthProvider, string>;
+) as Record<ProviderWithOverride, string>;
 
 /**
  * Compatibility gotchas for the current walkthrough flow.
  */
-export const PROVIDER_GOTCHAS: Record<CompatibleOAuthProvider, string | null> = Object.fromEntries(
+export const PROVIDER_GOTCHAS: Record<ProviderWithOverride, string | null> = Object.fromEntries(
   COMPATIBLE_PROVIDER_DESCRIPTORS.map((descriptor) => [descriptor.provider, descriptor.gotcha]),
-) as Record<CompatibleOAuthProvider, string | null>;
+) as Record<ProviderWithOverride, string | null>;
 
 /**
  * Build deploy OAuth provider descriptors from the instance config schema.
@@ -253,7 +251,7 @@ function buildOAuthProviderDescriptor(
   const configSchema = schema.properties?.[configKey];
   if (configSchema?.type !== "object" || !configSchema.properties) return null;
 
-  const override = PROVIDER_OVERRIDES[provider] ?? {};
+  const override = providerOverride(provider) ?? {};
   const omittedFields = new Set(override.omittedFields ?? []);
   const requiredFieldKeys = new Set(override.requiredCredentialKeys ?? DEFAULT_FIELD_ORDER);
   const fields: OAuthPromptField[] = [];
@@ -320,6 +318,10 @@ function buildPromptField(
   };
 }
 
+function providerOverride(provider: string): ProviderOverride | undefined {
+  return (PROVIDER_OVERRIDES as Record<string, ProviderOverride | undefined>)[provider];
+}
+
 function compareFields(a: string, b: string, overrideOrder: string[] | undefined): number {
   const order = overrideOrder ?? DEFAULT_FIELD_ORDER;
   const aIndex = order.indexOf(a);
@@ -376,7 +378,7 @@ function buildCompatibilityDescriptors(): OAuthProviderDescriptor[] {
 }
 
 function compatibilityProviderProperties(provider: string): Record<string, ConfigSchemaProperty> {
-  const override = PROVIDER_OVERRIDES[provider];
+  const override = providerOverride(provider);
   const keys = override?.requiredCredentialKeys ?? DEFAULT_FIELD_ORDER;
   return Object.fromEntries(
     keys.map((key) => [
@@ -400,7 +402,7 @@ export function providerLabel(provider: string): string {
  * Prompt fields for existing deploy callers, falling back to standard OAuth credentials.
  */
 export function providerFields(provider: OAuthProvider): OAuthField[] {
-  if (isCompatibleOAuthProvider(provider)) return PROVIDER_FIELDS[provider];
+  if (hasProviderOverride(provider)) return PROVIDER_FIELDS[provider];
   return [
     { key: "client_id", label: "Client ID" },
     { key: "client_secret", label: "Client Secret", secret: true },
@@ -411,32 +413,32 @@ export function providerFields(provider: OAuthProvider): OAuthField[] {
  * Credential action label for existing deploy callers.
  */
 export function providerCredentialLabel(provider: OAuthProvider): string {
-  if (isCompatibleOAuthProvider(provider)) return PROVIDER_CREDENTIAL_LABELS[provider];
+  if (hasProviderOverride(provider)) return PROVIDER_CREDENTIAL_LABELS[provider];
   return "I already have my Client ID and Client Secret";
 }
 
 function providerRedirectLabel(provider: OAuthProvider): string {
-  if (isCompatibleOAuthProvider(provider)) return PROVIDER_REDIRECT_LABELS[provider];
+  if (hasProviderOverride(provider)) return PROVIDER_REDIRECT_LABELS[provider];
   return "Redirect URI";
 }
 
 function providerLegacyDocsUrl(provider: OAuthProvider): string {
-  if (isCompatibleOAuthProvider(provider)) return PROVIDER_DOC_URLS[provider];
+  if (hasProviderOverride(provider)) return PROVIDER_DOC_URLS[provider];
   return providerDocsUrl(provider);
 }
 
 function providerSetupCopy(provider: OAuthProvider): string {
-  if (isCompatibleOAuthProvider(provider)) return PROVIDER_SETUP_COPY[provider];
+  if (hasProviderOverride(provider)) return PROVIDER_SETUP_COPY[provider];
   return `Production ${providerLabel(provider)} sign-in requires custom OAuth credentials.`;
 }
 
 function providerGotcha(provider: OAuthProvider): string | null {
-  if (isCompatibleOAuthProvider(provider)) return PROVIDER_GOTCHAS[provider];
+  if (hasProviderOverride(provider)) return PROVIDER_GOTCHAS[provider];
   return null;
 }
 
-function isCompatibleOAuthProvider(provider: string): provider is CompatibleOAuthProvider {
-  return (COMPATIBLE_OAUTH_PROVIDERS as readonly string[]).includes(provider);
+function hasProviderOverride(provider: string): provider is ProviderWithOverride {
+  return provider in PROVIDER_OVERRIDES;
 }
 
 function providerDescriptorFromInput(
