@@ -99,18 +99,39 @@ function appendKeys(url: URL, keys?: string[]): void {
   }
 }
 
+export type ConfigSchemaProperty = {
+  type?: string;
+  description?: string;
+  default?: unknown;
+  enum?: string[];
+  readOnly?: boolean;
+  properties?: Record<string, ConfigSchemaProperty>;
+  required?: string[];
+  minLength?: number;
+  maxLength?: number;
+  pattern?: string;
+  "x-clerk-sensitive"?: boolean;
+};
+
+export type InstanceConfigSchema = {
+  $schema?: string;
+  $id?: string;
+  type?: string;
+  properties?: Record<string, ConfigSchemaProperty>;
+};
+
 export async function fetchInstanceConfigSchema(
   applicationId: string,
   instanceId: string,
   keys?: string[],
-): Promise<Record<string, unknown>> {
+): Promise<InstanceConfigSchema> {
   const url = new URL(
     `/v1/platform/applications/${applicationId}/instances/${instanceId}/config/schema`,
     getPlapiBaseUrl(),
   );
   appendKeys(url, keys);
   const response = await plapiFetch("GET", url);
-  return response.json() as Promise<Record<string, unknown>>;
+  return response.json() as Promise<InstanceConfigSchema>;
 }
 
 export async function fetchInstanceConfig(

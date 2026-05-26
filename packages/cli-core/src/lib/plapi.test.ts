@@ -10,6 +10,7 @@ mock.module("./credential-store.ts", () => ({
 const {
   fetchApplication,
   fetchInstanceConfig,
+  fetchInstanceConfigSchema,
   putInstanceConfig,
   patchInstanceConfig,
   listApplications,
@@ -124,6 +125,39 @@ describe("plapi", () => {
 
     await fetchInstanceConfig("app_1", "ins_1");
     expect(requestedUrl).toStartWith("https://api.clerk.com/");
+  });
+
+  describe("fetchInstanceConfigSchema", () => {
+    test("constructs schema URL without keys", async () => {
+      let requestedUrl = "";
+      stubFetch(async (input) => {
+        requestedUrl = input.toString();
+        return new Response(JSON.stringify({ properties: {} }), { status: 200 });
+      });
+
+      await fetchInstanceConfigSchema("app_abc", "ins_def");
+
+      expect(requestedUrl).toBe(
+        "https://api.clerk.com/v1/platform/applications/app_abc/instances/ins_def/config/schema",
+      );
+    });
+
+    test("appends repeated keys query params", async () => {
+      let requestedUrl = "";
+      stubFetch(async (input) => {
+        requestedUrl = input.toString();
+        return new Response(JSON.stringify({ properties: {} }), { status: 200 });
+      });
+
+      await fetchInstanceConfigSchema("app_abc", "ins_def", [
+        "connection_oauth_google,connection_oauth_discord",
+        "connection_oauth_apple",
+      ]);
+
+      expect(requestedUrl).toBe(
+        "https://api.clerk.com/v1/platform/applications/app_abc/instances/ins_def/config/schema?keys=connection_oauth_google&keys=connection_oauth_discord&keys=connection_oauth_apple",
+      );
+    });
   });
 
   describe("putInstanceConfig", () => {
