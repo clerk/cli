@@ -202,6 +202,11 @@ export type DomainStatusResponse = {
   proxy?: DomainCheckStatus;
 };
 
+export type TriggerDNSCheckResponse = DomainStatusResponse & {
+  domain_id: string;
+  last_run_at: number | null;
+};
+
 export async function fetchApplication(applicationId: string): Promise<Application> {
   const url = new URL(`/v1/platform/applications/${applicationId}`, getPlapiBaseUrl());
   url.searchParams.set("include_secret_keys", "true");
@@ -236,6 +241,18 @@ export async function getApplicationDomainStatus(
   );
   const response = await plapiFetch("GET", url);
   return response.json() as Promise<DomainStatusResponse>;
+}
+
+export async function triggerApplicationDomainDNSCheck(
+  applicationId: string,
+  domainIdOrName: string,
+): Promise<TriggerDNSCheckResponse> {
+  const url = new URL(
+    `/v1/platform/applications/${applicationId}/domains/${domainIdOrName}/dns_check`,
+    getPlapiBaseUrl(),
+  );
+  const response = await plapiFetch("POST", url);
+  return response.json() as Promise<TriggerDNSCheckResponse>;
 }
 
 async function sendInstanceConfig(

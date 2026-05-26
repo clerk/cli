@@ -29,6 +29,7 @@ const mockFetchApplication = mock();
 const mockListApplicationDomains = mock();
 const mockCreateProductionInstance = mock();
 const mockGetApplicationDomainStatus = mock();
+const mockTriggerApplicationDomainDNSCheck = mock();
 const mockSleep = mock();
 
 mock.module("@inquirer/prompts", () => ({
@@ -54,6 +55,8 @@ mock.module("../../lib/plapi.ts", () => ({
   listApplicationDomains: (...args: unknown[]) => mockListApplicationDomains(...args),
   createProductionInstance: (...args: unknown[]) => mockCreateProductionInstance(...args),
   getApplicationDomainStatus: (...args: unknown[]) => mockGetApplicationDomainStatus(...args),
+  triggerApplicationDomainDNSCheck: (...args: unknown[]) =>
+    mockTriggerApplicationDomainDNSCheck(...args),
   patchInstanceConfig: (...args: unknown[]) => mockPatchInstanceConfig(...args),
 }));
 
@@ -175,6 +178,9 @@ describe("deploy", () => {
         };
       },
     );
+    mockTriggerApplicationDomainDNSCheck.mockResolvedValue(
+      domainStatus({ status: "complete", dns: true, ssl: true, mail: true }),
+    );
   });
 
   afterEach(async () => {
@@ -194,6 +200,7 @@ describe("deploy", () => {
     mockListApplicationDomains.mockReset();
     mockCreateProductionInstance.mockReset();
     mockGetApplicationDomainStatus.mockReset();
+    mockTriggerApplicationDomainDNSCheck.mockReset();
     mockSleep.mockReset();
     consoleSpy?.mockRestore();
   });
@@ -484,7 +491,36 @@ describe("deploy", () => {
       expect(err).toContain("Production ready at https://example.com");
     });
 
-    test("DNS verification caps polling to the 10 second budget", async () => {
+    test("DNS verification triggers a fresh DNS check before polling status", async () => {
+      await linkedProject();
+      mockIsAgent.mockReturnValue(false);
+      mockConfirm.mockResolvedValueOnce(true).mockResolvedValueOnce(true);
+      mockInput
+        .mockResolvedValueOnce("example.com")
+        .mockResolvedValueOnce("google-client-id.apps.googleusercontent.com");
+      mockSelect.mockResolvedValueOnce("have-credentials").mockResolvedValueOnce("check");
+      mockPassword.mockResolvedValueOnce("google-secret");
+      mockTriggerApplicationDomainDNSCheck.mockResolvedValueOnce(
+        domainStatus({ status: "incomplete", dns: false, ssl: false, mail: false }),
+      );
+      mockGetApplicationDomainStatus.mockResolvedValueOnce(
+        domainStatus({ status: "complete", dns: true, ssl: true, mail: true }),
+      );
+      mockPatchInstanceConfig.mockResolvedValueOnce({});
+
+      await runDeploy({});
+
+      expect(mockTriggerApplicationDomainDNSCheck).toHaveBeenCalledWith(
+        "app_xyz789",
+        "dmn_prod_mock",
+      );
+      expect(mockGetApplicationDomainStatus).toHaveBeenCalledWith("app_xyz789", "dmn_prod_mock");
+      expect(mockTriggerApplicationDomainDNSCheck.mock.invocationCallOrder[0]).toBeLessThan(
+        mockGetApplicationDomainStatus.mock.invocationCallOrder[0]!,
+      );
+    });
+
+    test("DNS verification retries status polling five times with exponential backoff", async () => {
       await linkedProject();
       mockIsAgent.mockReturnValue(false);
       mockConfirm.mockResolvedValueOnce(true).mockResolvedValueOnce(true);
@@ -503,9 +539,9 @@ describe("deploy", () => {
 
       await runDeploy({});
 
-      expect(mockGetApplicationDomainStatus).toHaveBeenCalledTimes(4);
-      expect(mockSleep).toHaveBeenCalledTimes(3);
-      expect(mockSleep).toHaveBeenCalledWith(3000);
+      expect(mockGetApplicationDomainStatus).toHaveBeenCalledTimes(6);
+      expect(mockSleep).toHaveBeenCalledTimes(93);
+      expect(mockSleep.mock.calls.every(([delay]) => delay === 1000)).toBe(true);
     });
 
     test("DNS verification emits per-component spinner labels in mail/dns/ssl order", async () => {

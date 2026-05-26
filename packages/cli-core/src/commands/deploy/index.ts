@@ -1,10 +1,11 @@
 import { isAgent } from "../../mode.ts";
 import { isInsideGutter, log } from "../../lib/log.ts";
 import { sleep } from "../../lib/sleep.ts";
-import { bar, intro, outro, withSpinner } from "../../lib/spinner.ts";
+import { bar, intro, outro, withSpinner, type SpinnerControls } from "../../lib/spinner.ts";
 import {
   CliError,
   ERROR_CODE,
+  PlapiError,
   UserAbortError,
   isPromptExitError,
   throwUsageError,
@@ -17,6 +18,7 @@ import {
   getApplicationDomainStatus,
   listApplicationDomains,
   patchInstanceConfig,
+  triggerApplicationDomainDNSCheck,
   type ApplicationDomain,
   type CnameTarget,
   type DomainStatusResponse,
@@ -31,6 +33,7 @@ import {
   DEPLOY_COMPONENT_ORDER,
   deployComponentLabels,
   deployComponentStatus,
+  deployStatusRetryMessage,
   deployStatusPendingFooter,
   domainAssociationSummary,
   bindZoneFile,
@@ -71,10 +74,9 @@ type DeployOptions = {
   debug?: boolean;
 };
 
-const DEPLOY_STATUS_POLL_INTERVAL_MS = 3000;
-const DEPLOY_STATUS_MAX_WAIT_MS = 10_000;
-const DEPLOY_STATUS_MAX_POLLS =
-  Math.floor(DEPLOY_STATUS_MAX_WAIT_MS / DEPLOY_STATUS_POLL_INTERVAL_MS) + 1;
+const DEPLOY_STATUS_INITIAL_RETRY_DELAY_MS = 3000;
+const DEPLOY_STATUS_MAX_RETRIES = 5;
+const DEPLOY_STATUS_BACKOFF_FACTOR = 2;
 
 export async function deploy(options: DeployOptions = {}) {
   if (isAgent()) {
@@ -655,19 +657,26 @@ async function pollDeployStatus(
   domainIdOrName: string,
   domain: string,
 ): Promise<DeployStatusOutcome> {
+  await triggerDeployStatusCheck(appId, domainIdOrName);
   let response = await mapDeployError(getApplicationDomainStatus(appId, domainIdOrName));
   let status = deployComponentStatusFromDomainStatus(response);
-  let pollsRemaining = DEPLOY_STATUS_MAX_POLLS - 1;
-
-  log.debug(`Response from domain status endpoint: ${JSON.stringify(response)}`);
+  let retriesRemaining = DEPLOY_STATUS_MAX_RETRIES;
+  let nextRetryDelay = DEPLOY_STATUS_INITIAL_RETRY_DELAY_MS;
 
   for (const component of DEPLOY_COMPONENT_ORDER) {
     const labels = deployComponentLabels(component, domain);
-    const flipped = await withSpinner(labels.progress, async () => {
+    const flipped = await withSpinner(labels.progress, async (spinner) => {
       if (status[component]) return true;
-      while (pollsRemaining > 0) {
-        await sleep(DEPLOY_STATUS_POLL_INTERVAL_MS);
-        pollsRemaining--;
+      while (retriesRemaining > 0) {
+        await sleepWithRetryCountdown(
+          labels.progress,
+          DEPLOY_STATUS_MAX_RETRIES - retriesRemaining + 1,
+          DEPLOY_STATUS_MAX_RETRIES,
+          nextRetryDelay,
+          spinner,
+        );
+        retriesRemaining--;
+        nextRetryDelay *= DEPLOY_STATUS_BACKOFF_FACTOR;
         response = await mapDeployError(getApplicationDomainStatus(appId, domainIdOrName));
         status = deployComponentStatusFromDomainStatus(response);
         if (status[component]) return true;
@@ -682,6 +691,36 @@ async function pollDeployStatus(
     return { verified: false, status };
   }
   return { verified: true, status };
+}
+
+async function sleepWithRetryCountdown(
+  message: string,
+  currentRetry: number,
+  totalRetries: number,
+  delayMs: number,
+  spinner: SpinnerControls,
+): Promise<void> {
+  let remainingMs = delayMs;
+  while (remainingMs > 0) {
+    const tickMs = Math.min(1000, remainingMs);
+    spinner.update(
+      deployStatusRetryMessage(message, currentRetry, totalRetries, Math.ceil(remainingMs / 1000)),
+    );
+    await sleep(tickMs);
+    remainingMs -= tickMs;
+  }
+}
+
+async function triggerDeployStatusCheck(appId: string, domainIdOrName: string): Promise<void> {
+  try {
+    await mapDeployError(triggerApplicationDomainDNSCheck(appId, domainIdOrName));
+  } catch (error) {
+    if (error instanceof PlapiError && error.status === 409 && error.code === "conflict") {
+      log.debug("DNS check is already in flight; continuing to poll domain status.");
+      return;
+    }
+    throw error;
+  }
 }
 
 function deployComponentStatusFromDomainStatus(

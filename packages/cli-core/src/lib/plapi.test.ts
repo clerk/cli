@@ -16,6 +16,7 @@ const {
   createApplication,
   createProductionInstance,
   getApplicationDomainStatus,
+  triggerApplicationDomainDNSCheck,
   listApplicationDomains,
 } = await import("./plapi.ts");
 const { AuthError, PlapiError } = await import("./errors.ts");
@@ -442,6 +443,34 @@ describe("plapi", () => {
       expect(capturedMethod).toBe("GET");
       expect(capturedUrl).toBe(
         "https://api.clerk.com/v1/platform/applications/app_abc/domains/dmn_123/status",
+      );
+      expect(result).toEqual(responseBody);
+    });
+  });
+
+  describe("triggerApplicationDomainDNSCheck", () => {
+    test("sends POST to domain dns_check and returns parsed status", async () => {
+      let capturedMethod = "";
+      let capturedUrl = "";
+      const responseBody = {
+        status: "incomplete",
+        domain_id: "dmn_123",
+        last_run_at: 1779739200000,
+        dns: { status: "not_started", cnames: {} },
+        ssl: { status: "not_started", required: true, failure_hints: [] },
+        mail: { status: "not_started", required: true },
+      } as const;
+      stubFetch(async (input, init) => {
+        capturedMethod = init?.method ?? "GET";
+        capturedUrl = input.toString();
+        return new Response(JSON.stringify(responseBody), { status: 200 });
+      });
+
+      const result = await triggerApplicationDomainDNSCheck("app_abc", "dmn_123");
+
+      expect(capturedMethod).toBe("POST");
+      expect(capturedUrl).toBe(
+        "https://api.clerk.com/v1/platform/applications/app_abc/domains/dmn_123/dns_check",
       );
       expect(result).toEqual(responseBody);
     });

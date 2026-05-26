@@ -1,5 +1,10 @@
 import { test, expect, describe } from "bun:test";
-import { bindZoneFile, deployComponentLabels, pendingDnsRecords } from "./copy.ts";
+import {
+  bindZoneFile,
+  deployComponentLabels,
+  deployStatusRetryMessage,
+  pendingDnsRecords,
+} from "./copy.ts";
 import type { CnameTarget } from "../../lib/plapi.ts";
 
 describe("bindZoneFile", () => {
@@ -73,6 +78,14 @@ describe("deployComponentLabels", () => {
       progress: "Issuing SSL certificate for example.com...",
       done: "SSL certificate issued for example.com",
     });
+  });
+});
+
+describe("deployStatusRetryMessage", () => {
+  test("includes current retry count and countdown", () => {
+    expect(deployStatusRetryMessage("Verifying mail sender for example.com...", 2, 5, 30)).toBe(
+      "Verifying mail sender for example.com... (2/5 Retrying in 30s)",
+    );
   });
 });
 

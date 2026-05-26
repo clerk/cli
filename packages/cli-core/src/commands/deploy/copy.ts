@@ -169,6 +169,15 @@ export function deployComponentStatus(status: DeployComponentStatus): string {
   return `DNS: ${mark(status.dns)}  SSL: ${mark(status.ssl)}  Mail: ${mark(status.mail)}`;
 }
 
+export function deployStatusRetryMessage(
+  message: string,
+  currentRetry: number,
+  totalRetries: number,
+  seconds: number,
+): string {
+  return `${message} (${currentRetry}/${totalRetries} Retrying in ${seconds}s)`;
+}
+
 /**
  * Footer printed when domain status polling times out before all three
  * components are complete. The user keeps the deploy state; rerunning
