@@ -61,17 +61,20 @@ describe("deploy OAuth provider descriptors", () => {
     expect(discord.requiredCredentialKeys).toEqual(["client_id", "client_secret"]);
   });
 
-  test("marks providers outside the public deploy allowlist as unsupported", () => {
+  test("supports schema-compatible providers without a static deploy allowlist", () => {
     const result = buildOAuthProviderDescriptors(
-      ["google", "example_private_provider"],
+      ["google", "example_schema_provider"],
       schemaResponse({
         connection_oauth_google: basicOAuthSchema,
-        connection_oauth_example_private_provider: basicOAuthSchema,
+        connection_oauth_example_schema_provider: basicOAuthSchema,
       }),
     );
 
-    expect(result.supported.map((item) => item.provider)).toEqual(["google"]);
-    expect(result.unsupported).toEqual(["example_private_provider"]);
+    expect(result.supported.map((item) => item.provider)).toEqual([
+      "google",
+      "example_schema_provider",
+    ]);
+    expect(result.unsupported).toEqual([]);
   });
 
   test("Google descriptor exposes manual and JSON credential sources", () => {

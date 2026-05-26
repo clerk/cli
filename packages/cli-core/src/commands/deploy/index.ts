@@ -50,7 +50,6 @@ import {
   OAUTH_KEY_PREFIX,
   buildOAuthProviderDescriptors,
   hasProviderRequiredCredentials,
-  isDeployOAuthProviderSupported,
   providerLabel,
   providerSetupIntro,
   showOAuthWalkthrough,
@@ -357,9 +356,7 @@ async function loadDevelopmentOAuthProviders(
   return withSpinner("Reading development configuration...", async () => {
     const config = await fetchInstanceConfig(ctx.appId, ctx.developmentInstanceId);
     const providerSlugs = discoverEnabledOAuthProviderSlugs(config);
-    const schemaKeys = providerSlugs
-      .filter((provider) => isDeployOAuthProviderSupported(provider))
-      .map((provider) => `${OAUTH_KEY_PREFIX}${provider}`);
+    const schemaKeys = providerSlugs.map((provider) => `${OAUTH_KEY_PREFIX}${provider}`);
     const schema =
       schemaKeys.length > 0
         ? await fetchInstanceConfigSchema(ctx.appId, ctx.developmentInstanceId, schemaKeys)

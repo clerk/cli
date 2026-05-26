@@ -6,39 +6,8 @@ import type { ConfigSchemaProperty, InstanceConfigSchema } from "../../lib/plapi
 
 const DEFAULT_DOCS_URL_PREFIX =
   "https://clerk.com/docs/guides/configure/auth-strategies/social-connections";
-const DEPLOY_OAUTH_PROVIDER_ALLOWLIST = [
-  "google",
-  "facebook",
-  "apple",
-  "github",
-  "x",
-  "twitter",
-  "microsoft",
-  "linkedin",
-  "linkedin_oidc",
-  "dropbox",
-  "discord",
-  "twitch",
-  "tiktok",
-  "gitlab",
-  "huggingface",
-  "slack",
-  "linear",
-  "atlassian",
-  "bitbucket",
-  "instagram",
-  "hubspot",
-  "coinbase",
-  "spotify",
-  "notion",
-  "line",
-  "box",
-  "xero",
-  "vercel",
-] as const;
 const COMPATIBLE_OAUTH_PROVIDERS = ["google", "github", "microsoft", "apple", "linear"] as const;
 
-type DeployOAuthProvider = (typeof DEPLOY_OAUTH_PROVIDER_ALLOWLIST)[number];
 type CompatibleOAuthProvider = (typeof COMPATIBLE_OAUTH_PROVIDERS)[number];
 
 /**
@@ -108,8 +77,7 @@ type ProviderOverride = {
   requiredCredentialKeys?: string[];
 };
 
-const PROVIDER_OVERRIDES: Partial<Record<DeployOAuthProvider, ProviderOverride>> &
-  Record<string, ProviderOverride | undefined> = {
+const PROVIDER_OVERRIDES: Record<string, ProviderOverride | undefined> = {
   google: {
     credentialLabel: "I already have my Client ID and Client Secret",
     redirectLabel: "Authorized Redirect URI",
@@ -237,13 +205,6 @@ export const PROVIDER_GOTCHAS: Record<CompatibleOAuthProvider, string | null> = 
 ) as Record<CompatibleOAuthProvider, string | null>;
 
 /**
- * Determine whether automated deploy can configure this public OAuth provider.
- */
-export function isDeployOAuthProviderSupported(provider: string): boolean {
-  return (DEPLOY_OAUTH_PROVIDER_ALLOWLIST as readonly string[]).includes(provider);
-}
-
-/**
  * Build deploy OAuth provider descriptors from the instance config schema.
  */
 export function buildOAuthProviderDescriptors(
@@ -254,11 +215,6 @@ export function buildOAuthProviderDescriptors(
   const unsupported: string[] = [];
 
   for (const provider of providers) {
-    if (!isDeployOAuthProviderSupported(provider)) {
-      unsupported.push(provider);
-      continue;
-    }
-
     const descriptor = buildOAuthProviderDescriptor(provider, schema);
     if (!descriptor) {
       unsupported.push(provider);
