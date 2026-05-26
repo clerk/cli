@@ -12,15 +12,15 @@ After all OAuth providers are configured, DNS verification runs a chain of three
 
 ```sh
 clerk deploy              # Interactive, idempotent wizard (human mode)
-clerk deploy --debug      # With debug output
+clerk deploy --verbose    # With debug output
 clerk deploy --mode agent # Exit with human-mode-required guidance
 ```
 
-## Options
+## Global Options
 
-| Flag      | Purpose                                      |
-| --------- | -------------------------------------------- |
-| `--debug` | Show detailed deploy and PLAPI debug output. |
+| Flag        | Purpose                                      |
+| ----------- | -------------------------------------------- |
+| `--verbose` | Show detailed deploy and PLAPI debug output. |
 
 ## Agent Mode
 

@@ -120,7 +120,7 @@ Give AI agents better Clerk context: install the Clerk skills
 
   program.hook("preAction", async () => {
     // Reset log level at the start of each command invocation so a previous
-    // --verbose or --debug flag doesn't leak into subsequent runs.
+    // --verbose doesn't leak into subsequent runs.
     setLogLevel("info");
     const opts = program.opts();
     if (opts.verbose) {
@@ -926,11 +926,7 @@ Tutorial — enable completions for your shell:
     ])
     .action(update);
 
-  program
-    .command("deploy")
-    .description("Deploy a Clerk application to production")
-    .option("--debug", "Show detailed deployment debug output")
-    .action(deploy);
+  program.command("deploy").description("Deploy a Clerk application to production").action(deploy);
 
   registerExtras(program);
 

@@ -281,7 +281,7 @@ describe("deploy", () => {
     consoleSpy?.mockRestore();
   });
 
-  function runDeploy(options: Parameters<typeof deploy>[0]) {
+  function runDeploy(options: Parameters<typeof deploy>[0] = {}) {
     return deploy(options);
   }
 
@@ -445,7 +445,7 @@ describe("deploy", () => {
     test("does not trigger interactive prompts", async () => {
       mockIsAgent.mockReturnValue(true);
 
-      await expect(runDeploy({ debug: true })).rejects.toBeInstanceOf(CliError);
+      await expect(runDeploy()).rejects.toBeInstanceOf(CliError);
 
       expect(mockSelect).not.toHaveBeenCalled();
       expect(mockInput).not.toHaveBeenCalled();

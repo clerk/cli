@@ -74,23 +74,17 @@ import {
   type DeployOperationState,
 } from "./state.ts";
 
-type DeployOptions = {
-  debug?: boolean;
-};
-
 const DEPLOY_STATUS_INITIAL_RETRY_DELAY_MS = 3000;
 const DEPLOY_STATUS_MAX_RETRIES = 5;
 const DEPLOY_STATUS_BACKOFF_FACTOR = 2;
 
-export async function deploy(options: DeployOptions = {}) {
+type DeployOptions = Record<string, never>;
+
+export async function deploy(_options: DeployOptions = {}) {
   if (isAgent()) {
     throwUsageError(
       "clerk deploy requires human mode because production configuration uses interactive prompts. Run `clerk deploy --mode human` from an interactive terminal.",
     );
-  }
-  if (options.debug) {
-    const { setLogLevel } = await import("../../lib/log.ts");
-    setLogLevel("debug");
   }
 
   intro("clerk deploy");

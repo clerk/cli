@@ -45,12 +45,12 @@ test("users list exposes common filters and pagination options", () => {
   );
 });
 
-test("deploy exposes the expected options", () => {
+test("deploy relies on global options", () => {
   const program = createProgram();
   const deploy = program.commands.find((command) => command.name() === "deploy")!;
   const optionNames = deploy.options.map((option) => option.long);
 
-  expect(optionNames).toEqual(["--debug"]);
+  expect(optionNames).toEqual([]);
 });
 
 describe("parseIntegerOption (via users list --limit / --offset)", () => {
