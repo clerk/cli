@@ -114,6 +114,8 @@ export function dnsDashboardHandoff(domain: string): string[] {
   return [
     `Check the Domains section in the Clerk Dashboard for ${domain} to monitor DNS propagation and SSL issuance.`,
     "After OAuth setup, you can verify DNS or skip and finish. DNS propagation can take time.",
+    "After OAuth setup, you can verify DNS or skip and finish. DNS propagation can take time.",
+    "https://dashboard.clerk.com/last-active?path=domains"
   ];
 }
 
