@@ -210,7 +210,7 @@ async function startNewDeploy(ctx: DeployContext): Promise<void> {
     return;
   }
   const production = productionOrExists;
-  await persistProductionInstance(ctx, production.instance_id);
+  await persistProductionInstance(ctx, production.id);
 
   if (!production.active_domain) {
     throw new CliError(
@@ -222,23 +222,21 @@ async function startNewDeploy(ctx: DeployContext): Promise<void> {
   log.blank();
 
   const productionDomain = production.active_domain.name;
+  const cnameTargets = production.active_domain.cname_targets ?? [];
   let completedOAuthProviders: OAuthProvider[] = [];
   const operationState: DeployOperationState = {
     appId: ctx.appId,
     developmentInstanceId: ctx.developmentInstanceId,
-    productionInstanceId: production.instance_id,
+    productionInstanceId: production.id,
     productionDomainId: production.active_domain.id,
     domain: productionDomain,
     pending: { type: "oauth", provider: oauthProviders[0]?.provider ?? "google" },
     oauthProviders: oauthProviders.map((descriptor) => descriptor.provider),
     completedOAuthProviders,
-    cnameTargets: production.cname_targets,
+    cnameTargets,
   };
 
-  await runDnsRecordHandoff(
-    { ...operationState, pending: { type: "dns" } },
-    production.cname_targets,
-  );
+  await runDnsRecordHandoff({ ...operationState, pending: { type: "dns" } }, cnameTargets);
 
   bar();
   completedOAuthProviders = await runOAuthSetup(ctx, operationState, oauthProviders);
@@ -510,7 +508,8 @@ async function createProductionInstance(
   return withSpinner("Creating production instance...", async () => {
     return mapDeployError<ProductionInstanceResponse | "exists">(
       apiCreateProductionInstance(ctx.appId, {
-        home_url: `https://${domain}`,
+        domain,
+        environment_type: "production",
         clone_instance_id: ctx.developmentInstanceId,
       }),
       { onProductionInstanceExists: async () => "exists" },

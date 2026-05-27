@@ -193,16 +193,19 @@ export type ListApplicationDomainsResponse = {
 };
 
 export type ProductionInstanceResponse = {
-  instance_id: string;
+  id: string;
+  object: "instance";
   environment_type: "production";
-  active_domain: DomainSummary | null;
+  active_domain: ApplicationDomain | null;
   secret_key?: string;
   publishable_key: string;
-  cname_targets: CnameTarget[];
+  created_at: number;
+  updated_at: number;
 };
 
 export type CreateProductionInstanceParams = {
-  home_url: string;
+  domain: string;
+  environment_type: "production";
   clone_instance_id?: string;
 };
 

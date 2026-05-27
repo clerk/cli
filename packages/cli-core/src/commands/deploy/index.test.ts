@@ -225,31 +225,44 @@ describe("deploy", () => {
       domainStatus({ status: "complete", dns: true, ssl: true, mail: true }),
     );
     mockCreateProductionInstance.mockImplementation(
-      (_appId: string, params: { home_url: string }) => {
-        const hostname = params.home_url.replace(/^https?:\/\//, "");
+      (_appId: string, params: { domain: string }) => {
+        const hostname = params.domain;
         return {
-          instance_id: "ins_prod_mock",
+          object: "instance",
+          id: "ins_prod_mock",
           environment_type: "production" as const,
-          active_domain: { id: "dmn_prod_mock", name: hostname },
+          active_domain: {
+            object: "domain",
+            id: "dmn_prod_mock",
+            name: hostname,
+            is_satellite: false,
+            is_provider_domain: false,
+            frontend_api_url: `https://clerk.${hostname}`,
+            development_origin: "",
+            cname_targets: [
+              {
+                host: `clerk.${hostname}`,
+                value: "frontend-api.clerk.services",
+                required: true,
+              },
+              {
+                host: `accounts.${hostname}`,
+                value: "accounts.clerk.services",
+                required: true,
+              },
+              {
+                host: `clkmail.${hostname}`,
+                value: `mail.${hostname}.nam1.clerk.services`,
+                required: true,
+              },
+            ],
+            created_at: "2026-05-06T00:00:00Z",
+            updated_at: "2026-05-06T00:00:00Z",
+          },
           publishable_key: "pk_live_test",
           secret_key: "sk_live_test",
-          cname_targets: [
-            {
-              host: `clerk.${hostname}`,
-              value: "frontend-api.clerk.services",
-              required: true,
-            },
-            {
-              host: `accounts.${hostname}`,
-              value: "accounts.clerk.services",
-              required: true,
-            },
-            {
-              host: `clkmail.${hostname}`,
-              value: `mail.${hostname}.nam1.clerk.services`,
-              required: true,
-            },
-          ],
+          created_at: 1770000000000,
+          updated_at: 1770000000000,
         };
       },
     );
@@ -499,7 +512,8 @@ describe("deploy", () => {
 
       expect(mockCreateProductionInstance).toHaveBeenCalledWith("app_xyz789", {
         clone_instance_id: "ins_dev_123",
-        home_url: "https://example.com",
+        domain: "example.com",
+        environment_type: "production",
       });
       expect(stripAnsi(captured.err)).not.toContain("Validating subscription compatibility");
     });
@@ -919,12 +933,14 @@ describe("deploy", () => {
       mockConfirm.mockResolvedValueOnce(true).mockResolvedValueOnce(true);
       mockInput.mockResolvedValueOnce("example.com");
       mockCreateProductionInstance.mockResolvedValueOnce({
-        instance_id: "ins_prod_mock",
+        object: "instance",
+        id: "ins_prod_mock",
         environment_type: "production" as const,
         active_domain: null,
         publishable_key: "pk_live_test",
         secret_key: "sk_live_test",
-        cname_targets: [],
+        created_at: 1770000000000,
+        updated_at: 1770000000000,
       });
 
       let thrown: unknown;

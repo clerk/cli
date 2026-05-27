@@ -425,14 +425,27 @@ describe("plapi", () => {
       let capturedUrl = "";
       let capturedBody = "";
       const responseBody = {
-        instance_id: "ins_prod_123",
+        object: "instance" as const,
+        id: "ins_prod_123",
         environment_type: "production" as const,
-        active_domain: { id: "dmn_123", name: "example.com" },
+        active_domain: {
+          object: "domain" as const,
+          id: "dmn_123",
+          name: "example.com",
+          is_satellite: false,
+          is_provider_domain: false,
+          frontend_api_url: "https://clerk.example.com",
+          development_origin: "",
+          cname_targets: [
+            { host: "clerk.example.com", value: "frontend-api.clerk.services", required: true },
+          ],
+          created_at: "2026-05-06T00:00:00Z",
+          updated_at: "2026-05-06T00:00:00Z",
+        },
         publishable_key: "pk_live_123",
         secret_key: "sk_live_123",
-        cname_targets: [
-          { host: "clerk.example.com", value: "frontend-api.clerk.services", required: true },
-        ],
+        created_at: 1770000000000,
+        updated_at: 1770000000000,
       };
       stubFetch(async (input, init) => {
         capturedMethod = init?.method ?? "GET";
@@ -442,14 +455,16 @@ describe("plapi", () => {
       });
 
       const result = await createProductionInstance("app_abc", {
-        home_url: "example.com",
+        domain: "example.com",
+        environment_type: "production",
         clone_instance_id: "ins_dev_123",
       });
 
       expect(capturedMethod).toBe("POST");
       expect(capturedUrl).toBe("https://api.clerk.com/v1/platform/applications/app_abc/instances");
       expect(JSON.parse(capturedBody)).toEqual({
-        home_url: "example.com",
+        domain: "example.com",
+        environment_type: "production",
         clone_instance_id: "ins_dev_123",
       });
       expect(result).toEqual(responseBody);
