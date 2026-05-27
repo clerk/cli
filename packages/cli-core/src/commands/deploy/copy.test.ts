@@ -84,7 +84,7 @@ describe("deployComponentLabels", () => {
 describe("deployStatusRetryMessage", () => {
   test("includes current retry count and countdown", () => {
     expect(deployStatusRetryMessage("Verifying mail sender for example.com...", 2, 5, 30)).toBe(
-      "Verifying mail sender for example.com... (2/5 Retrying in 30s)",
+      "Verifying mail sender for example.com... 2/5 attempts, retrying in 30s",
     );
   });
 });

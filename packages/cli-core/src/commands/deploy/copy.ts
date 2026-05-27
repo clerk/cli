@@ -175,7 +175,7 @@ export function deployStatusRetryMessage(
   totalRetries: number,
   seconds: number,
 ): string {
-  return `${message} (${currentRetry}/${totalRetries} Retrying in ${seconds}s)`;
+  return `${message} ${currentRetry}/${totalRetries} attempts, retrying in ${seconds}s`;
 }
 
 /**
