@@ -763,7 +763,7 @@ describe("deploy", () => {
       expect(terminalOutput).not.toContain("Done");
     });
 
-    test("DNS verification emits per-component spinner labels in mail/dns/ssl order", async () => {
+    test("DNS verification checks all domain status components together", async () => {
       await linkedProject();
       mockIsAgent.mockReturnValue(false);
       mockConfirm
@@ -780,12 +780,6 @@ describe("deploy", () => {
           domainStatus({ status: "incomplete", dns: false, ssl: false, mail: false }),
         )
         .mockResolvedValueOnce(
-          domainStatus({ status: "incomplete", dns: false, ssl: false, mail: true }),
-        )
-        .mockResolvedValueOnce(
-          domainStatus({ status: "incomplete", dns: true, ssl: false, mail: true }),
-        )
-        .mockResolvedValueOnce(
           domainStatus({ status: "complete", dns: true, ssl: true, mail: true }),
         );
       mockPatchInstanceConfig.mockResolvedValueOnce({});
@@ -793,17 +787,12 @@ describe("deploy", () => {
       await runDeploy({});
       const err = stripAnsi(captured.err);
 
-      const mailIdx = err.indexOf("Mail sender verified");
-      const dnsIdx = err.indexOf("DNS verified for example.com");
-      const sslIdx = err.indexOf("SSL certificate issued for example.com");
-      expect(mailIdx).toBeGreaterThan(-1);
-      expect(dnsIdx).toBeGreaterThan(-1);
-      expect(sslIdx).toBeGreaterThan(-1);
-      expect(mailIdx).toBeLessThan(dnsIdx);
-      expect(dnsIdx).toBeLessThan(sslIdx);
+      expect(err).toContain("DNS verified for example.com");
+      expect(err).not.toContain("Mail sender verified");
+      expect(err).not.toContain("SSL certificate issued for example.com");
     });
 
-    test("DNS verification gives each component its own retry budget", async () => {
+    test("DNS verification uses one shared retry budget for all domain status components", async () => {
       await linkedProject();
       mockIsAgent.mockReturnValue(false);
       mockConfirm
@@ -833,22 +822,14 @@ describe("deploy", () => {
           domainStatus({ status: "incomplete", dns: false, ssl: false, mail: false }),
         )
         .mockResolvedValueOnce(
-          domainStatus({ status: "incomplete", dns: false, ssl: false, mail: true }),
-        )
-        .mockResolvedValueOnce(
-          domainStatus({ status: "incomplete", dns: true, ssl: false, mail: true }),
-        )
-        .mockResolvedValueOnce(
           domainStatus({ status: "complete", dns: true, ssl: true, mail: true }),
         );
 
       await runDeploy({});
       const err = stripAnsi(captured.err);
 
-      expect(err).toContain("Mail sender verified");
       expect(err).toContain("DNS verified for example.com");
-      expect(err).toContain("SSL certificate issued for example.com");
-      expect(mockGetApplicationDomainStatus).toHaveBeenCalledTimes(8);
+      expect(mockGetApplicationDomainStatus).toHaveBeenCalledTimes(6);
     });
 
     test("DNS verification pauses when status stays incomplete despite all exposed booleans true (proxy_ok case)", async () => {
@@ -1538,8 +1519,8 @@ describe("deploy", () => {
       await runDeploy({});
       const err = stripAnsi(captured.err);
 
-      expect(err).toContain("SSL, mail still pending for example.com");
-      expect(err).not.toContain("DNS, SSL, mail still pending");
+      expect(err).toContain("SSL, email DNS still pending for example.com");
+      expect(err).not.toContain("DNS, SSL, email DNS still pending");
     });
 
     test("DNS verification treats absent components as pending", async () => {
@@ -1560,7 +1541,7 @@ describe("deploy", () => {
       await runDeploy({});
       const err = stripAnsi(captured.err);
 
-      expect(err).toContain("DNS: pending  SSL: ✓  Mail: ✓");
+      expect(err).toContain("DNS: pending  SSL: ✓  Email DNS: ✓");
       expect(err).toContain("DNS still pending for example.com");
       expect(err).not.toContain("Domain      Verified");
     });
@@ -1587,7 +1568,7 @@ describe("deploy", () => {
       await runDeploy({});
       const err = stripAnsi(captured.err);
 
-      expect(err).toContain("DNS: ✓  SSL: pending  Mail: ✓");
+      expect(err).toContain("DNS: ✓  SSL: pending  Email DNS: ✓");
       expect(err).toContain("SSL still pending for example.com");
       expect(err.match(/Add the following records at your DNS provider:/g)).toHaveLength(1);
     });
@@ -1958,7 +1939,7 @@ describe("deploy", () => {
       await runDeploy({});
       const err = stripAnsi(captured.err);
       expect(err).toContain("DNS propagation can take several hours");
-      expect(err).toContain("DNS, SSL, mail still pending for example.com");
+      expect(err).toContain("DNS, SSL, email DNS still pending for example.com");
       expect(err).toContain("DNS: pending");
       expect(err.match(/Add the following records at your DNS provider:/g)).toHaveLength(2);
       expect(err).toContain("Host:  clerk.example.com");

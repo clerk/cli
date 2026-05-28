@@ -15,11 +15,9 @@ import {
 import { sleep } from "../../lib/sleep.ts";
 import { withSpinner, type SpinnerControls } from "../../lib/spinner.ts";
 import {
-  DEPLOY_COMPONENT_ORDER,
   cnameTargetPending,
   deployComponentLabels,
   deployStatusRetryMessage,
-  type DeployComponent,
   type DeployComponentStatus,
 } from "./copy.ts";
 import { mapDeployError } from "./errors.ts";
@@ -37,12 +35,11 @@ const DEPLOY_STATUS_MAX_RETRIES = 5;
 const DEPLOY_STATUS_BACKOFF_FACTOR = 2;
 
 export interface DeployProgressHandlers {
-  runComponent<T>(
-    component: DeployComponent,
+  runVerification<T>(
     progressLabel: string,
     work: (controls: SpinnerControls) => Promise<T>,
   ): Promise<T>;
-  onComponentDone?(component: DeployComponent): void;
+  onVerified?(): void;
 }
 
 export type DeployStatusOutcome = { verified: boolean; status: DeployComponentStatus };
@@ -376,7 +373,7 @@ function deployNextAction(
   const pendingComponents = [
     !componentStatus.dns ? "DNS" : null,
     !componentStatus.ssl ? "SSL" : null,
-    !componentStatus.mail ? "mail" : null,
+    !componentStatus.mail ? "email DNS" : null,
   ].filter((value): value is string => value !== null);
 
   if (pendingComponents.length === 0) {
@@ -419,35 +416,34 @@ export async function waitForDeployStatus(
   await triggerDeployStatusCheck(appId, domainIdOrName);
   let response = await mapDeployError(getApplicationDomainStatus(appId, domainIdOrName));
   let status = deployComponentStatusFromDomainStatus(response);
-  for (const component of DEPLOY_COMPONENT_ORDER) {
+
+  const labels = deployComponentLabels("dns", domain);
+  const verified = await handlers.runVerification(labels.progress, async (spinner) => {
+    if (response.status === "complete") return true;
+
     let retriesRemaining = DEPLOY_STATUS_MAX_RETRIES;
     let nextRetryDelay = DEPLOY_STATUS_INITIAL_RETRY_DELAY_MS;
-    const labels = deployComponentLabels(component, domain);
-    const flipped = await handlers.runComponent(component, labels.progress, async (spinner) => {
-      if (status[component]) return true;
-      while (retriesRemaining > 0) {
-        await sleepWithRetryCountdown(
-          labels.progress,
-          DEPLOY_STATUS_MAX_RETRIES - retriesRemaining + 1,
-          DEPLOY_STATUS_MAX_RETRIES,
-          nextRetryDelay,
-          spinner,
-        );
-        retriesRemaining--;
-        nextRetryDelay *= DEPLOY_STATUS_BACKOFF_FACTOR;
-        response = await mapDeployError(getApplicationDomainStatus(appId, domainIdOrName));
-        status = deployComponentStatusFromDomainStatus(response);
-        if (status[component]) return true;
-      }
-      return false;
-    });
-    if (!flipped) return { verified: false, status };
-    handlers.onComponentDone?.(component);
-  }
+    while (retriesRemaining > 0) {
+      await sleepWithRetryCountdown(
+        labels.progress,
+        DEPLOY_STATUS_MAX_RETRIES - retriesRemaining + 1,
+        DEPLOY_STATUS_MAX_RETRIES,
+        nextRetryDelay,
+        spinner,
+      );
+      retriesRemaining--;
+      nextRetryDelay *= DEPLOY_STATUS_BACKOFF_FACTOR;
+      response = await mapDeployError(getApplicationDomainStatus(appId, domainIdOrName));
+      status = deployComponentStatusFromDomainStatus(response);
+      if (response.status === "complete") return true;
+    }
+    return false;
+  });
 
-  if (response.status !== "complete") {
+  if (!verified) {
     return { verified: false, status };
   }
+  handlers.onVerified?.();
   return { verified: true, status };
 }
 

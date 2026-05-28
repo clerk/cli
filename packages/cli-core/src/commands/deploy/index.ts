@@ -465,8 +465,8 @@ async function pollDeployStatus(
   domain: string,
 ): Promise<DeployStatusOutcome> {
   return waitForDeployStatus(appId, domainIdOrName, domain, {
-    runComponent: (_component, progressLabel, work) => withSpinner(progressLabel, work),
-    onComponentDone: (component) => log.success(deployComponentLabels(component, domain).done),
+    runVerification: (progressLabel, work) => withSpinner(progressLabel, work),
+    onVerified: () => log.success(deployComponentLabels("dns", domain).done),
   });
 }
 

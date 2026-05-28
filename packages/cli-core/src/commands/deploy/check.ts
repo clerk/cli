@@ -50,9 +50,9 @@ function runWait(state: Extract<DeployState, { kind: "active" }>): Promise<Deplo
   const { snapshot } = state;
   const domainIdOrName = snapshot.productionDomainId ?? snapshot.domain;
   return waitForDeployStatus(snapshot.appId, domainIdOrName, snapshot.domain, {
-    runComponent: (_component, progressLabel, work) => withSpinner(progressLabel, work),
-    onComponentDone: (component) => {
-      if (!isAgent()) log.success(deployComponentLabels(component, snapshot.domain).done);
+    runVerification: (progressLabel, work) => withSpinner(progressLabel, work),
+    onVerified: () => {
+      if (!isAgent()) log.success(deployComponentLabels("dns", snapshot.domain).done);
     },
   });
 }
@@ -75,7 +75,7 @@ function renderHuman(report: DeployStatusReport): void {
 
   if (report.domainStatus) {
     log.info(
-      `  Domain   DNS: ${report.domainStatus.dns}  SSL: ${report.domainStatus.ssl}  Mail: ${report.domainStatus.mail}`,
+      `  Domain   DNS: ${report.domainStatus.dns}  SSL: ${report.domainStatus.ssl}  Email DNS: ${report.domainStatus.mail}`,
     );
   }
 

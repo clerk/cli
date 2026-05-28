@@ -42,11 +42,8 @@ const completeStatus = {
 };
 
 const passthroughHandlers = {
-  runComponent: <T>(
-    _component: unknown,
-    _label: string,
-    work: (controls: { update: () => void }) => Promise<T>,
-  ) => work({ update: () => {} }),
+  runVerification: <T>(_label: string, work: (controls: { update: () => void }) => Promise<T>) =>
+    work({ update: () => {} }),
 };
 
 beforeEach(() => {
@@ -286,7 +283,7 @@ describe("buildDeployStatusReport", () => {
     expect(report.oauth.pending).toEqual(["github"]);
   });
 
-  test("active with pending mail reports only mail CNAME records", () => {
+  test("active with pending email DNS reports only email CNAME records", () => {
     const report = buildDeployStatusReport(
       { kind: "active", snapshot: activeSnapshot },
       { verified: false, status: { dns: true, ssl: true, mail: false } },

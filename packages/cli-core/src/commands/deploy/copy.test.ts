@@ -60,10 +60,10 @@ describe("bindZoneFile", () => {
 });
 
 describe("deployComponentLabels", () => {
-  test("returns mail in-progress and done labels", () => {
+  test("returns email DNS in-progress and done labels", () => {
     expect(deployComponentLabels("mail", "example.com")).toEqual({
-      progress: "Verifying mail sender for example.com...",
-      done: "Mail sender verified",
+      progress: "Verifying email DNS records for example.com...",
+      done: "Email DNS records verified",
     });
   });
 
@@ -84,8 +84,8 @@ describe("deployComponentLabels", () => {
 
 describe("deployStatusRetryMessage", () => {
   test("includes current retry count and countdown", () => {
-    expect(deployStatusRetryMessage("Verifying mail sender for example.com...", 2, 5, 30)).toBe(
-      "Verifying mail sender for example.com... 2/5 attempts, retrying in 30s",
+    expect(deployStatusRetryMessage("Verifying DNS records for example.com...", 2, 5, 30)).toBe(
+      "Verifying DNS records for example.com... 2/5 attempts, retrying in 30s",
     );
   });
 });
@@ -114,7 +114,7 @@ describe("pendingDnsRecords", () => {
     expect(pendingDnsRecords(targets, { dns: true, ssl: false, mail: true })).toEqual([]);
   });
 
-  test("returns only email records when mail remains pending", () => {
+  test("returns only email records when email DNS remains pending", () => {
     const output = pendingDnsRecords(targets, { dns: true, ssl: true, mail: false }).join("\n");
 
     expect(output).toContain("clkmail.example.com");

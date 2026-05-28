@@ -129,12 +129,6 @@ export type DeployComponentStatus = {
 
 export type DeployComponent = "mail" | "dns" | "ssl";
 
-export const DEPLOY_COMPONENT_ORDER = [
-  "mail",
-  "dns",
-  "ssl",
-] as const satisfies readonly DeployComponent[];
-
 export function deployComponentLabels(
   component: DeployComponent,
   domain: string,
@@ -142,8 +136,8 @@ export function deployComponentLabels(
   switch (component) {
     case "mail":
       return {
-        progress: `Verifying mail sender for ${domain}...`,
-        done: "Mail sender verified",
+        progress: `Verifying email DNS records for ${domain}...`,
+        done: "Email DNS records verified",
       };
     case "dns":
       return {
@@ -159,14 +153,13 @@ export function deployComponentLabels(
 }
 
 /**
- * Status line for the three independent components Clerk verifies after
- * the production instance is created: DNS propagation, SSL issuance via Let's
- * Encrypt, and SendGrid mail sender verification. Each flips true on its own
- * schedule, see the deploy endpoints handbook for timing details.
+ * Status line for the domain checks Clerk verifies after the production
+ * instance is created: DNS propagation, SSL issuance via Let's Encrypt, and
+ * email DNS records. Each value comes from the same domain status response.
  */
 export function deployComponentStatus(status: DeployComponentStatus): string {
   const mark = (ok: boolean) => (ok ? green("✓") : yellow("pending"));
-  return `DNS: ${mark(status.dns)}  SSL: ${mark(status.ssl)}  Mail: ${mark(status.mail)}`;
+  return `DNS: ${mark(status.dns)}  SSL: ${mark(status.ssl)}  Email DNS: ${mark(status.mail)}`;
 }
 
 export function deployStatusRetryMessage(
@@ -187,7 +180,7 @@ export function deployStatusPendingFooter(domain: string, status: DeployComponen
   const pending: string[] = [];
   if (!status.dns) pending.push("DNS");
   if (!status.ssl) pending.push("SSL");
-  if (!status.mail) pending.push("mail");
+  if (!status.mail) pending.push("email DNS");
 
   const lead =
     pending.length === 0
