@@ -1,5 +1,19 @@
 # clerk
 
+## 1.4.0
+
+### Minor Changes
+
+- Show the linked Clerk application in `clerk whoami` output, and add a `--json` flag that emits a structured payload covering email and link state. ([#265](https://github.com/clerk/cli/pull/265)) by [@rafa-thayto](https://github.com/rafa-thayto)
+
+### Patch Changes
+
+- Add a local leaderboard to the hidden `clerk bird` easter egg: from the GAME OVER screen, press `N` to enter your name and `L` to view the top scores. On the leaderboard, use `↑`/`↓` (or `j`/`k`) to select a row and `D` to delete it (with `Y`/`N` confirmation). `k` now also flaps in-game, alongside `SPACE`, `↑`, `W`, and `ENTER`. Rankings are stored as JSON in `~/.flap-rankings.json` (top 10, ties broken by older entry). The existing `~/.flap-best` file is unchanged. Pipe-passes and the death event now emit a short bell tone (ASCII BEL) so the `+1` and the GAME OVER moment each have audio feedback; terminals with the bell disabled stay silent and the host terminal handles cross-platform behavior on Windows, macOS, Linux, and any POSIX TTY. The `bird` command is no longer hidden and now appears at the bottom of `clerk --help` (after the `help` row) so the easter egg is discoverable without cluttering the main command surface. ([#304](https://github.com/clerk/cli/pull/304)) by [@rafa-thayto](https://github.com/rafa-thayto)
+
+- Harden the dependency-install step of `clerk init`. Previously, the package-manager spawn in attacker-controlled cwd could execute arbitrary JavaScript via pnpm's `.pnpmfile.cjs` autoload or via lifecycle scripts (`preinstall`/`install`/`postinstall`) in the project's `package.json`. The install command now passes `--ignore-pnpmfile` (pnpm) and `--ignore-scripts` (all package managers). ([#302](https://github.com/clerk/cli/pull/302)) by [@rafa-thayto](https://github.com/rafa-thayto)
+
+- Identify the CLI in outbound HTTP requests with a `User-Agent` like `Clerk-CLI/<version> (Bun/<bun-version>; <platform>-<arch>)` instead of the default Bun user agent. Allow callers to override the header. ([#301](https://github.com/clerk/cli/pull/301)) by [@rafa-thayto](https://github.com/rafa-thayto)
+
 ## 1.3.0
 
 ### Minor Changes

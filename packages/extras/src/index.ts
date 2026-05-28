@@ -7,7 +7,7 @@ import { clerkBird } from "./clerk-bird/index.ts";
  */
 export function registerExtras(program: Command): void {
   program
-    .command("bird", { hidden: true })
+    .command("bird")
     .description("Play Clerk Bird, a Flappy Bird game in your terminal")
     .action(clerkBird);
 }
