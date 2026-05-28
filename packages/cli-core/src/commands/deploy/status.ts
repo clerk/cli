@@ -60,6 +60,11 @@ export type LiveDeploySnapshot = Omit<
   unsupportedOAuthProviderCount: number;
 };
 
+export type DeployState =
+  | { kind: "not_started" }
+  | { kind: "domain_provisioning"; productionInstanceId: string }
+  | { kind: "active"; snapshot: LiveDeploySnapshot };
+
 export type DiscoveredOAuthProviders = {
   descriptors: OAuthProviderDescriptor[];
   unsupported: string[];
@@ -107,6 +112,20 @@ export async function resolveLiveApplicationContext(profile: DeployContext["prof
     developmentInstanceId: development?.instance_id ?? profile.instances.development,
     productionInstanceId: production?.instance_id,
   };
+}
+
+export async function resolveDeployState(ctx: DeployContext): Promise<DeployState> {
+  const live = await resolveLiveApplicationContext(ctx.profile);
+  if (!live.productionInstanceId) return { kind: "not_started" };
+
+  const snapshot = await resolveLiveDeploySnapshot({
+    ...ctx,
+    productionInstanceId: live.productionInstanceId,
+  });
+  if (!snapshot) {
+    return { kind: "domain_provisioning", productionInstanceId: live.productionInstanceId };
+  }
+  return { kind: "active", snapshot };
 }
 
 export async function loadDevelopmentOAuthProviders(
