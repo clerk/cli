@@ -19,7 +19,7 @@ mock.module("../../lib/plapi.ts", () => ({
     mockTriggerApplicationDomainDNSCheck(...args),
 }));
 
-const { buildDeployStatusReport, resolveDeployState, waitForDeployStatus } =
+const { buildDeployStatusReport, checkDeployStatusOnce, resolveDeployState, waitForDeployStatus } =
   await import("./status.ts");
 
 const ctx = {
@@ -182,6 +182,43 @@ describe("waitForDeployStatus", () => {
 
     const outcome = await waitForDeployStatus("app_1", "dmn_1", "example.com", passthroughHandlers);
 
+    expect(outcome).toEqual({
+      verified: true,
+      status: { dns: true, ssl: true, mail: true },
+    });
+  });
+});
+
+describe("checkDeployStatusOnce", () => {
+  test("uses the DNS check response without polling status", async () => {
+    mockTriggerApplicationDomainDNSCheck.mockResolvedValue({
+      status: "incomplete",
+      dns: { status: "not_started" },
+      ssl: { status: "complete", required: true },
+      mail: { status: "complete", required: true },
+      domain_id: "dmn_1",
+      last_run_at: 1779739200000,
+    });
+
+    const outcome = await checkDeployStatusOnce("app_1", "dmn_1");
+
+    expect(mockTriggerApplicationDomainDNSCheck).toHaveBeenCalledWith("app_1", "dmn_1");
+    expect(mockGetApplicationDomainStatus).not.toHaveBeenCalled();
+    expect(outcome).toEqual({
+      verified: false,
+      status: { dns: false, ssl: true, mail: true },
+    });
+  });
+
+  test("reads status once when a DNS check is already in flight", async () => {
+    mockTriggerApplicationDomainDNSCheck.mockRejectedValue(
+      new PlapiError(409, JSON.stringify({ errors: [{ code: "conflict" }] }), "https://x"),
+    );
+    mockGetApplicationDomainStatus.mockResolvedValue(completeStatus);
+
+    const outcome = await checkDeployStatusOnce("app_1", "dmn_1");
+
+    expect(mockGetApplicationDomainStatus).toHaveBeenCalledTimes(1);
     expect(outcome).toEqual({
       verified: true,
       status: { dns: true, ssl: true, mail: true },

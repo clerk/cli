@@ -5,6 +5,7 @@ import { withSpinner } from "../../lib/spinner.ts";
 import { deployComponentLabels } from "./copy.ts";
 import {
   buildDeployStatusReport,
+  checkDeployStatusOnce,
   resolveDeployContext,
   resolveDeployState,
   waitForDeployStatus,
@@ -25,11 +26,24 @@ export async function deployCheck(_options: DeployCheckOptions = {}): Promise<vo
   }
 
   const state = await resolveDeployState(ctx, { statusFailureMode: "throw" });
-  const outcome = state.kind === "active" ? await runWait(state) : null;
+  const outcome = state.kind === "active" ? await runCheck(state) : null;
   const report = buildDeployStatusReport(state, outcome);
 
   emitReport(report);
   process.exitCode = report.complete ? EXIT_CODE.SUCCESS : EXIT_CODE.GENERAL;
+}
+
+function runCheck(state: Extract<DeployState, { kind: "active" }>): Promise<DeployStatusOutcome> {
+  if (isAgent()) return runQuickCheck(state);
+  return runWait(state);
+}
+
+function runQuickCheck(
+  state: Extract<DeployState, { kind: "active" }>,
+): Promise<DeployStatusOutcome> {
+  const { snapshot } = state;
+  const domainIdOrName = snapshot.productionDomainId ?? snapshot.domain;
+  return checkDeployStatusOnce(snapshot.appId, domainIdOrName);
 }
 
 function runWait(state: Extract<DeployState, { kind: "active" }>): Promise<DeployStatusOutcome> {

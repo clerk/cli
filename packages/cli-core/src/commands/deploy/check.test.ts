@@ -200,6 +200,7 @@ describe("deploy check", () => {
     await deployCheck();
 
     expect(process.exitCode).toBe(EXIT_CODE.GENERAL);
+    expect(mockGetApplicationDomainStatus).toHaveBeenCalledTimes(1);
     const payload = JSON.parse(captured.out);
     expect(payload.state).toBe("domain_pending");
     expect(payload.complete).toBe(false);
