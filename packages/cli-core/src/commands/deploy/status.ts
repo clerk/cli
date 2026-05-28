@@ -303,7 +303,9 @@ export function buildDeployStatusReport(
   }
 
   if (state.kind === "domain_provisioning") {
-    const domainsUrl = domainsDashboardUrl(state.appId, state.productionInstanceId);
+    const domainsAction = domainSettingsNextAction(
+      domainsDashboardUrl(state.appId, state.productionInstanceId),
+    );
     return {
       complete: false,
       state: "domain_provisioning",
@@ -315,7 +317,7 @@ export function buildDeployStatusReport(
       nextAction:
         "A production instance exists but its domain is still provisioning. " +
         "Run `clerk deploy check` again shortly, or ask the user to finish `clerk deploy`. " +
-        `View domain settings: ${domainsUrl}`,
+        domainsAction,
     };
   }
 
@@ -376,7 +378,7 @@ function deployNextAction(
   oauthPending: string[],
   domainsUrl: string | null,
 ): string {
-  const domainsAction = domainsUrl ? ` View domain settings: ${domainsUrl}` : "";
+  const domainsAction = domainsUrl ? ` ${domainSettingsNextAction(domainsUrl)}` : "";
 
   if (state === "complete") {
     return `Production is deployed and verified at https://${domain}. No action needed.${domainsAction}`;
@@ -407,6 +409,10 @@ function deployNextAction(
     `Re-run \`clerk deploy check\` in a few minutes, DNS propagation can take time.` +
     domainsAction
   );
+}
+
+function domainSettingsNextAction(domainsUrl: string): string {
+  return `Ask the user to visit the Clerk Dashboard domains page, or offer to open it: ${domainsUrl}`;
 }
 
 export async function loadProductionDomain(

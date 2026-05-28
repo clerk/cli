@@ -281,6 +281,8 @@ describe("buildDeployStatusReport", () => {
     expect(report.nextAction).toContain(
       "https://dashboard.clerk.com/apps/app_1/instances/ins_prod/domains",
     );
+    expect(report.nextAction).toContain("Ask the user to visit");
+    expect(report.nextAction).toContain("offer to open it");
     expect(report.domainStatus).toEqual({ dns: "pending", ssl: "complete", mail: "complete" });
     expect(report.pendingDnsRecords).toContainEqual({
       type: "CNAME",

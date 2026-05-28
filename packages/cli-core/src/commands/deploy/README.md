@@ -50,7 +50,7 @@ In agent mode, `clerk deploy check` emits JSON on stdout with:
 - `domainStatus`: per-component DNS, SSL, and email DNS status when a domain exists.
 - `pendingDnsRecords`: CNAME records still tied to pending DNS-backed checks.
 - `oauth`: configured, pending, and unsupported provider slugs.
-- `nextAction`: the next step an agent should present to the user, including the Clerk Dashboard domains URL when a production instance exists.
+- `nextAction`: the next step an agent should present to the user, including the Clerk Dashboard domains URL when a production instance exists. Agents should ask whether to open that URL for the user.
 
 Exit codes:
 
