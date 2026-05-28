@@ -24,7 +24,7 @@ export async function deployCheck(_options: DeployCheckOptions = {}): Promise<vo
     );
   }
 
-  const state = await resolveDeployState(ctx);
+  const state = await resolveDeployState(ctx, { statusFailureMode: "throw" });
   const outcome = state.kind === "active" ? await runWait(state) : null;
   const report = buildDeployStatusReport(state, outcome);
 

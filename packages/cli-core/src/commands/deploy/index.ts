@@ -108,7 +108,7 @@ async function emitAgentDeployHandoff(): Promise<void> {
     );
   }
 
-  const state = await resolveDeployState(ctx);
+  const state = await resolveDeployState(ctx, { statusFailureMode: "throw" });
   const report = buildDeployStatusReport(state, null);
   log.data(JSON.stringify(report, null, 2));
 }

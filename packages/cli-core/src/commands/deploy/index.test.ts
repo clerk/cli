@@ -498,6 +498,29 @@ describe("deploy", () => {
       expect(mockCreateProductionInstance).not.toHaveBeenCalled();
       expect(mockPatchInstanceConfig).not.toHaveBeenCalled();
     });
+
+    test("domain status read failures surface as errors", async () => {
+      mockIsAgent.mockReturnValue(true);
+      await linkedProject({
+        instances: { development: "ins_dev_123", production: "ins_prod_mock" },
+      });
+      mockLiveProduction({
+        instanceId: "ins_prod_mock",
+        domain: "example.com",
+      });
+      mockGetApplicationDomainStatus.mockRejectedValue(
+        new PlapiError(500, JSON.stringify({ errors: [{ code: "server_error" }] }), "https://x"),
+      );
+
+      await expect(runDeploy({})).rejects.toBeInstanceOf(PlapiError);
+
+      expect(captured.out).toBe("");
+      expect(mockTriggerApplicationDomainDNSCheck).not.toHaveBeenCalled();
+      expect(mockSelect).not.toHaveBeenCalled();
+      expect(mockInput).not.toHaveBeenCalled();
+      expect(mockConfirm).not.toHaveBeenCalled();
+      expect(mockPassword).not.toHaveBeenCalled();
+    });
   });
 
   describe("human mode", () => {

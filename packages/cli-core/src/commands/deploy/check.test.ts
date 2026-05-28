@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { EXIT_CODE } from "../../lib/errors.ts";
+import { EXIT_CODE, PlapiError } from "../../lib/errors.ts";
 import { useCaptureLog } from "../../test/lib/stubs.ts";
 
 let _modeOverride: string | undefined;
@@ -209,5 +209,19 @@ describe("deploy check", () => {
       host: "clerk.example.com",
       value: "frontend-api.clerk.services",
     });
+  });
+
+  test("agent mode status snapshot failures surface as errors", async () => {
+    mockFetchApplication.mockResolvedValue(appWith(true));
+    mockDomain();
+    mockOAuthComplete();
+    mockGetApplicationDomainStatus.mockRejectedValue(
+      new PlapiError(500, JSON.stringify({ errors: [{ code: "server_error" }] }), "https://x"),
+    );
+
+    await expect(deployCheck()).rejects.toBeInstanceOf(PlapiError);
+
+    expect(captured.out).toBe("");
+    expect(mockTriggerApplicationDomainDNSCheck).not.toHaveBeenCalled();
   });
 });

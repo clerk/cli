@@ -85,6 +85,12 @@ export type DeployState =
   | { kind: "domain_provisioning"; productionInstanceId: string }
   | { kind: "active"; snapshot: LiveDeploySnapshot };
 
+export type DeployStatusFailureMode = "pending" | "throw";
+
+type DeployStateResolveOptions = {
+  statusFailureMode?: DeployStatusFailureMode;
+};
+
 export type DiscoveredOAuthProviders = {
   descriptors: OAuthProviderDescriptor[];
   unsupported: string[];
@@ -134,14 +140,20 @@ export async function resolveLiveApplicationContext(profile: DeployContext["prof
   };
 }
 
-export async function resolveDeployState(ctx: DeployContext): Promise<DeployState> {
+export async function resolveDeployState(
+  ctx: DeployContext,
+  options: DeployStateResolveOptions = {},
+): Promise<DeployState> {
   const live = await resolveLiveApplicationContext(ctx.profile);
   if (!live.productionInstanceId) return { kind: "not_started" };
 
-  const snapshot = await resolveLiveDeploySnapshot({
-    ...ctx,
-    productionInstanceId: live.productionInstanceId,
-  });
+  const snapshot = await resolveLiveDeploySnapshot(
+    {
+      ...ctx,
+      productionInstanceId: live.productionInstanceId,
+    },
+    options,
+  );
   if (!snapshot) {
     return { kind: "domain_provisioning", productionInstanceId: live.productionInstanceId };
   }
@@ -169,6 +181,7 @@ export async function loadDevelopmentOAuthProviders(
 
 export async function resolveLiveDeploySnapshot(
   ctx: DeployContext,
+  options: DeployStateResolveOptions = {},
 ): Promise<LiveDeploySnapshot | undefined> {
   const productionInstanceId = ctx.productionInstanceId;
   if (!productionInstanceId) return undefined;
@@ -185,6 +198,7 @@ export async function resolveLiveDeploySnapshot(
     ctx,
     productionInstanceId,
     domain.id,
+    options,
   );
   const completedOAuthProviders = oauthProviderDescriptors
     .filter((descriptor) => hasProviderRequiredCredentials(productionConfig, descriptor))
@@ -221,9 +235,13 @@ export async function resolveLiveDeploySnapshot(
 export async function loadInitialDeployStatus(
   appId: string,
   domainIdOrName: string,
+  options: DeployStateResolveOptions = {},
 ): Promise<DomainStatusResponse> {
+  const status = mapDeployError(getApplicationDomainStatus(appId, domainIdOrName));
+  if (options.statusFailureMode === "throw") return status;
+
   try {
-    return await getApplicationDomainStatus(appId, domainIdOrName);
+    return await status;
   } catch (error) {
     log.debug(
       `deploy: snapshot domain-status read failed, treating DNS as pending: ${error instanceof Error ? error.message : String(error)}`,
@@ -236,6 +254,7 @@ export async function loadProductionState(
   ctx: DeployContext,
   productionInstanceId: string,
   domainIdOrName: string,
+  options: DeployStateResolveOptions = {},
 ): Promise<{
   productionConfig: Record<string, unknown>;
   deployStatus: DomainStatusResponse;
@@ -243,7 +262,7 @@ export async function loadProductionState(
   return withSpinner("Reading production configuration...", async () => {
     const [productionConfig, deployStatus] = await Promise.all([
       fetchInstanceConfig(ctx.appId, productionInstanceId),
-      loadInitialDeployStatus(ctx.appId, domainIdOrName),
+      loadInitialDeployStatus(ctx.appId, domainIdOrName, options),
     ]);
     return { productionConfig, deployStatus };
   });
