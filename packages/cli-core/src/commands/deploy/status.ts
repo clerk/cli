@@ -1,12 +1,19 @@
+import { resolveProfile } from "../../lib/config.ts";
 import { PlapiError } from "../../lib/errors.ts";
 import { log } from "../../lib/log.ts";
 import {
+  fetchApplication,
+  fetchInstanceConfig,
+  fetchInstanceConfigSchema,
   getApplicationDomainStatus,
+  listApplicationDomains,
   triggerApplicationDomainDNSCheck,
+  type ApplicationDomain,
+  type CnameTarget,
   type DomainStatusResponse,
 } from "../../lib/plapi.ts";
 import { sleep } from "../../lib/sleep.ts";
-import type { SpinnerControls } from "../../lib/spinner.ts";
+import { withSpinner, type SpinnerControls } from "../../lib/spinner.ts";
 import {
   DEPLOY_COMPONENT_ORDER,
   deployComponentLabels,
@@ -15,6 +22,14 @@ import {
   type DeployComponentStatus,
 } from "./copy.ts";
 import { mapDeployError } from "./errors.ts";
+import {
+  OAUTH_KEY_PREFIX,
+  buildOAuthProviderDescriptors,
+  hasProviderRequiredCredentials,
+  type OAuthProvider,
+  type OAuthProviderDescriptor,
+} from "./providers.ts";
+import type { DeployContext, DeployOperationState } from "./state.ts";
 
 const DEPLOY_STATUS_INITIAL_RETRY_DELAY_MS = 3000;
 const DEPLOY_STATUS_MAX_RETRIES = 5;
@@ -30,6 +45,196 @@ export interface DeployProgressHandlers {
 }
 
 export type DeployStatusOutcome = { verified: boolean; status: DeployComponentStatus };
+
+export type LiveDeploySnapshot = Omit<
+  DeployOperationState,
+  "pending" | "oauthProviders" | "completedOAuthProviders"
+> & {
+  pending?: DeployOperationState["pending"];
+  oauthProviders: OAuthProvider[];
+  oauthProviderDescriptors: OAuthProviderDescriptor[];
+  completedOAuthProviders: OAuthProvider[];
+  cnameTargets?: readonly CnameTarget[];
+  domainComplete: boolean;
+  componentStatus: DeployComponentStatus;
+  unsupportedOAuthProviderCount: number;
+};
+
+export type DiscoveredOAuthProviders = {
+  descriptors: OAuthProviderDescriptor[];
+  unsupported: string[];
+};
+
+export async function resolveDeployContext(): Promise<DeployContext> {
+  const resolved = await withSpinner("Resolving linked Clerk application...", () =>
+    resolveProfile(process.cwd()),
+  );
+  if (!resolved) {
+    return {
+      profileKey: process.cwd(),
+      profile: {
+        workspaceId: "",
+        appId: "",
+        instances: { development: "" },
+      },
+      appId: "",
+      appLabel: "",
+      developmentInstanceId: "",
+    };
+  }
+
+  return {
+    profileKey: resolved.path,
+    profile: resolved.profile,
+    ...(await withSpinner("Checking for production instance...", () =>
+      resolveLiveApplicationContext(resolved.profile),
+    )),
+  };
+}
+
+export async function resolveLiveApplicationContext(profile: DeployContext["profile"]): Promise<{
+  appId: string;
+  appLabel: string;
+  developmentInstanceId: string;
+  productionInstanceId?: string;
+}> {
+  const app = await fetchApplication(profile.appId);
+  const development = app.instances.find((entry) => entry.environment_type === "development");
+  const production = app.instances.find((entry) => entry.environment_type === "production");
+  return {
+    appId: app.application_id,
+    appLabel: app.name || profile.appName || app.application_id,
+    developmentInstanceId: development?.instance_id ?? profile.instances.development,
+    productionInstanceId: production?.instance_id,
+  };
+}
+
+export async function loadDevelopmentOAuthProviders(
+  ctx: DeployContext,
+): Promise<DiscoveredOAuthProviders> {
+  return withSpinner("Reading development configuration...", async () => {
+    const config = await fetchInstanceConfig(ctx.appId, ctx.developmentInstanceId);
+    const providerSlugs = discoverEnabledOAuthProviderSlugs(config);
+    const schemaKeys = providerSlugs.map((provider) => `${OAUTH_KEY_PREFIX}${provider}`);
+    const schema =
+      schemaKeys.length > 0
+        ? await fetchInstanceConfigSchema(ctx.appId, ctx.developmentInstanceId, schemaKeys)
+        : { properties: {} };
+    const result = buildOAuthProviderDescriptors(providerSlugs, schema);
+    return {
+      descriptors: result.supported,
+      unsupported: result.unsupported,
+    };
+  });
+}
+
+export async function resolveLiveDeploySnapshot(
+  ctx: DeployContext,
+): Promise<LiveDeploySnapshot | undefined> {
+  const productionInstanceId = ctx.productionInstanceId;
+  if (!productionInstanceId) return undefined;
+
+  const [domain, oauth] = await Promise.all([
+    loadProductionDomain(ctx),
+    loadDevelopmentOAuthProviders(ctx),
+  ]);
+  if (!domain) return undefined;
+
+  const { descriptors: oauthProviderDescriptors, unsupported } = oauth;
+  const oauthProviders = oauthProviderDescriptors.map((descriptor) => descriptor.provider);
+  const { productionConfig, deployStatus } = await loadProductionState(
+    ctx,
+    productionInstanceId,
+    domain.id,
+  );
+  const completedOAuthProviders = oauthProviderDescriptors
+    .filter((descriptor) => hasProviderRequiredCredentials(productionConfig, descriptor))
+    .map((descriptor) => descriptor.provider);
+  const pendingOAuthDescriptor = oauthProviderDescriptors.find(
+    (descriptor) => !completedOAuthProviders.includes(descriptor.provider),
+  );
+
+  const baseState = {
+    appId: ctx.appId,
+    developmentInstanceId: ctx.developmentInstanceId,
+    productionInstanceId,
+    productionDomainId: domain.id,
+    domain: domain.name,
+    oauthProviders,
+    oauthProviderDescriptors,
+    completedOAuthProviders,
+    cnameTargets: domain.cname_targets ?? [],
+    componentStatus: deployComponentStatusFromDomainStatus(deployStatus),
+    unsupportedOAuthProviderCount: unsupported.length,
+  };
+
+  const domainComplete = deployStatus.status === "complete";
+  const pending = pendingOAuthDescriptor
+    ? ({ type: "oauth", provider: pendingOAuthDescriptor.provider } as const)
+    : !domainComplete
+      ? ({ type: "dns" } as const)
+      : undefined;
+
+  return { ...baseState, domainComplete, pending };
+}
+
+export async function loadInitialDeployStatus(
+  appId: string,
+  domainIdOrName: string,
+): Promise<DomainStatusResponse> {
+  try {
+    return await getApplicationDomainStatus(appId, domainIdOrName);
+  } catch (error) {
+    log.debug(
+      `deploy: snapshot domain-status read failed, treating DNS as pending: ${error instanceof Error ? error.message : String(error)}`,
+    );
+    return pendingDomainStatus();
+  }
+}
+
+export async function loadProductionState(
+  ctx: DeployContext,
+  productionInstanceId: string,
+  domainIdOrName: string,
+): Promise<{
+  productionConfig: Record<string, unknown>;
+  deployStatus: DomainStatusResponse;
+}> {
+  return withSpinner("Reading production configuration...", async () => {
+    const [productionConfig, deployStatus] = await Promise.all([
+      fetchInstanceConfig(ctx.appId, productionInstanceId),
+      loadInitialDeployStatus(ctx.appId, domainIdOrName),
+    ]);
+    return { productionConfig, deployStatus };
+  });
+}
+
+export function pendingDomainStatus(): DomainStatusResponse {
+  return {
+    status: "incomplete",
+    dns: { status: "not_started" },
+    ssl: { status: "not_started", required: true },
+    mail: { status: "not_started", required: true },
+  };
+}
+
+export async function loadProductionDomain(
+  ctx: DeployContext,
+): Promise<ApplicationDomain | undefined> {
+  const domains = await listApplicationDomains(ctx.appId);
+  return domains.data.find((domain) => !domain.is_satellite) ?? domains.data[0];
+}
+
+export function discoverEnabledOAuthProviderSlugs(config: Record<string, unknown>): string[] {
+  const providers: string[] = [];
+  for (const [key, value] of Object.entries(config)) {
+    if (!key.startsWith(OAUTH_KEY_PREFIX)) continue;
+    if (!value || typeof value !== "object") continue;
+    if ((value as Record<string, unknown>).enabled !== true) continue;
+    providers.push(key.slice(OAUTH_KEY_PREFIX.length));
+  }
+  return providers;
+}
 
 export async function waitForDeployStatus(
   appId: string,
