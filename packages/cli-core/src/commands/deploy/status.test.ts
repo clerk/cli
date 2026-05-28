@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { PlapiError } from "../../lib/errors.ts";
+import type { LiveDeploySnapshot } from "./status.ts";
 
 const mockFetchApplication = mock();
 const mockListApplicationDomains = mock();
@@ -18,7 +19,8 @@ mock.module("../../lib/plapi.ts", () => ({
     mockTriggerApplicationDomainDNSCheck(...args),
 }));
 
-const { resolveDeployState, waitForDeployStatus } = await import("./status.ts");
+const { buildDeployStatusReport, resolveDeployState, waitForDeployStatus } =
+  await import("./status.ts");
 
 const ctx = {
   profileKey: "/tmp/x",
@@ -184,5 +186,128 @@ describe("waitForDeployStatus", () => {
       verified: true,
       status: { dns: true, ssl: true, mail: true },
     });
+  });
+});
+
+describe("buildDeployStatusReport", () => {
+  const activeSnapshot = {
+    appId: "app_1",
+    developmentInstanceId: "ins_dev",
+    productionInstanceId: "ins_prod",
+    productionDomainId: "dmn_1",
+    domain: "example.com",
+    oauthProviders: ["google", "github"],
+    oauthProviderDescriptors: [],
+    completedOAuthProviders: ["google"],
+    cnameTargets: [
+      { host: "clerk.example.com", value: "frontend-api.clerk.services", required: true },
+      { host: "clkmail.example.com", value: "mail.clerk.services", required: true },
+    ],
+    domainComplete: false,
+    componentStatus: { dns: false, ssl: false, mail: false },
+    unsupportedOAuthProviderCount: 0,
+    unsupportedOAuthProviders: [],
+    pending: { type: "oauth" as const, provider: "github" },
+  } satisfies LiveDeploySnapshot;
+
+  test("not_started reports incomplete with deploy next action", () => {
+    const report = buildDeployStatusReport({ kind: "not_started" }, null);
+
+    expect(report.complete).toBe(false);
+    expect(report.state).toBe("not_started");
+    expect(report.domain).toBeNull();
+    expect(report.productionInstanceId).toBeNull();
+    expect(report.domainStatus).toBeNull();
+    expect(report.nextAction).toContain("clerk deploy");
+  });
+
+  test("domain_provisioning reports production instance", () => {
+    const report = buildDeployStatusReport(
+      { kind: "domain_provisioning", productionInstanceId: "ins_prod" },
+      null,
+    );
+
+    expect(report.state).toBe("domain_provisioning");
+    expect(report.complete).toBe(false);
+    expect(report.productionInstanceId).toBe("ins_prod");
+  });
+
+  test("active with pending domain gives domain precedence over OAuth", () => {
+    const report = buildDeployStatusReport(
+      { kind: "active", snapshot: activeSnapshot },
+      { verified: false, status: { dns: false, ssl: true, mail: true } },
+    );
+
+    expect(report.state).toBe("domain_pending");
+    expect(report.complete).toBe(false);
+    expect(report.domainStatus).toEqual({ dns: "pending", ssl: "complete", mail: "complete" });
+    expect(report.pendingDnsRecords).toContainEqual({
+      type: "CNAME",
+      host: "clerk.example.com",
+      value: "frontend-api.clerk.services",
+    });
+    expect(report.oauth.pending).toEqual(["github"]);
+  });
+
+  test("active with pending mail reports only mail CNAME records", () => {
+    const report = buildDeployStatusReport(
+      { kind: "active", snapshot: activeSnapshot },
+      { verified: false, status: { dns: true, ssl: true, mail: false } },
+    );
+
+    expect(report.pendingDnsRecords).toEqual([
+      {
+        type: "CNAME",
+        host: "clkmail.example.com",
+        value: "mail.clerk.services",
+      },
+    ]);
+  });
+
+  test("active with complete domain but pending OAuth reports oauth_pending", () => {
+    const report = buildDeployStatusReport(
+      { kind: "active", snapshot: activeSnapshot },
+      { verified: true, status: { dns: true, ssl: true, mail: true } },
+    );
+
+    expect(report.state).toBe("oauth_pending");
+    expect(report.complete).toBe(false);
+    expect(report.oauth).toMatchObject({
+      complete: false,
+      configured: ["google"],
+      pending: ["github"],
+    });
+  });
+
+  test("active with complete domain and OAuth reports complete", () => {
+    const allDone = {
+      ...activeSnapshot,
+      completedOAuthProviders: ["google", "github"],
+    } satisfies LiveDeploySnapshot;
+    const report = buildDeployStatusReport(
+      { kind: "active", snapshot: allDone },
+      { verified: true, status: { dns: true, ssl: true, mail: true } },
+    );
+
+    expect(report.state).toBe("complete");
+    expect(report.complete).toBe(true);
+    expect(report.domainStatus).toEqual({ dns: "complete", ssl: "complete", mail: "complete" });
+    expect(report.nextAction).toContain("https://example.com");
+  });
+
+  test("unsupported OAuth providers surface without blocking completion", () => {
+    const withUnsupported = {
+      ...activeSnapshot,
+      completedOAuthProviders: ["google", "github"],
+      unsupportedOAuthProviders: ["discord"],
+      unsupportedOAuthProviderCount: 1,
+    } satisfies LiveDeploySnapshot;
+    const report = buildDeployStatusReport(
+      { kind: "active", snapshot: withUnsupported },
+      { verified: true, status: { dns: true, ssl: true, mail: true } },
+    );
+
+    expect(report.complete).toBe(true);
+    expect(report.oauth.unsupported).toEqual(["discord"]);
   });
 });

@@ -84,7 +84,7 @@ export function pendingDnsRecords(
   return dnsRecords(pendingTargets);
 }
 
-function cnameTargetPending(target: CnameTarget, status: DeployComponentStatus): boolean {
+export function cnameTargetPending(target: CnameTarget, status: DeployComponentStatus): boolean {
   if (isMailCnameTarget(target)) return !status.mail;
   return !status.dns;
 }

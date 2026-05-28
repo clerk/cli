@@ -16,6 +16,7 @@ import { sleep } from "../../lib/sleep.ts";
 import { withSpinner, type SpinnerControls } from "../../lib/spinner.ts";
 import {
   DEPLOY_COMPONENT_ORDER,
+  cnameTargetPending,
   deployComponentLabels,
   deployStatusRetryMessage,
   type DeployComponent,
@@ -46,6 +47,24 @@ export interface DeployProgressHandlers {
 
 export type DeployStatusOutcome = { verified: boolean; status: DeployComponentStatus };
 
+export type DeployStatusState =
+  | "complete"
+  | "domain_pending"
+  | "oauth_pending"
+  | "domain_provisioning"
+  | "not_started";
+
+export interface DeployStatusReport {
+  complete: boolean;
+  state: DeployStatusState;
+  domain: string | null;
+  productionInstanceId: string | null;
+  domainStatus: { dns: string; ssl: string; mail: string } | null;
+  pendingDnsRecords: { type: "CNAME"; host: string; value: string }[];
+  oauth: { complete: boolean; configured: string[]; pending: string[]; unsupported: string[] };
+  nextAction: string;
+}
+
 export type LiveDeploySnapshot = Omit<
   DeployOperationState,
   "pending" | "oauthProviders" | "completedOAuthProviders"
@@ -58,6 +77,7 @@ export type LiveDeploySnapshot = Omit<
   domainComplete: boolean;
   componentStatus: DeployComponentStatus;
   unsupportedOAuthProviderCount: number;
+  unsupportedOAuthProviders: string[];
 };
 
 export type DeployState =
@@ -185,6 +205,7 @@ export async function resolveLiveDeploySnapshot(
     cnameTargets: domain.cname_targets ?? [],
     componentStatus: deployComponentStatusFromDomainStatus(deployStatus),
     unsupportedOAuthProviderCount: unsupported.length,
+    unsupportedOAuthProviders: unsupported,
   };
 
   const domainComplete = deployStatus.status === "complete";
@@ -235,6 +256,121 @@ export function pendingDomainStatus(): DomainStatusResponse {
     ssl: { status: "not_started", required: true },
     mail: { status: "not_started", required: true },
   };
+}
+
+function domainComponentState(value: boolean): "complete" | "pending" {
+  return value ? "complete" : "pending";
+}
+
+export function buildDeployStatusReport(
+  state: DeployState,
+  outcome: DeployStatusOutcome | null,
+): DeployStatusReport {
+  if (state.kind === "not_started") {
+    return {
+      complete: false,
+      state: "not_started",
+      domain: null,
+      productionInstanceId: null,
+      domainStatus: null,
+      pendingDnsRecords: [],
+      oauth: { complete: false, configured: [], pending: [], unsupported: [] },
+      nextAction:
+        "No production instance yet. `clerk deploy` configures production interactively and " +
+        "needs a human terminal, ask the user to run `clerk deploy`, then run `clerk deploy check` to verify.",
+    };
+  }
+
+  if (state.kind === "domain_provisioning") {
+    return {
+      complete: false,
+      state: "domain_provisioning",
+      domain: null,
+      productionInstanceId: state.productionInstanceId,
+      domainStatus: null,
+      pendingDnsRecords: [],
+      oauth: { complete: false, configured: [], pending: [], unsupported: [] },
+      nextAction:
+        "A production instance exists but its domain is still provisioning. " +
+        "Run `clerk deploy check` again shortly, or ask the user to finish `clerk deploy`.",
+    };
+  }
+
+  const { snapshot } = state;
+  const componentStatus = outcome?.status ?? snapshot.componentStatus;
+  const domainComplete = outcome ? outcome.verified : snapshot.domainComplete;
+  const oauthPending = snapshot.oauthProviders.filter(
+    (provider) => !snapshot.completedOAuthProviders.includes(provider),
+  );
+  const oauthComplete = oauthPending.length === 0;
+  const complete = domainComplete && oauthComplete;
+
+  const reportState: DeployStatusState = complete
+    ? "complete"
+    : !domainComplete
+      ? "domain_pending"
+      : "oauth_pending";
+
+  const pendingDnsRecords: DeployStatusReport["pendingDnsRecords"] = !domainComplete
+    ? (snapshot.cnameTargets ?? [])
+        .filter((target) => cnameTargetPending(target, componentStatus))
+        .map((target) => ({ type: "CNAME" as const, host: target.host, value: target.value }))
+    : [];
+
+  return {
+    complete,
+    state: reportState,
+    domain: snapshot.domain,
+    productionInstanceId: snapshot.productionInstanceId ?? null,
+    domainStatus: {
+      dns: domainComponentState(componentStatus.dns),
+      ssl: domainComponentState(componentStatus.ssl),
+      mail: domainComponentState(componentStatus.mail),
+    },
+    pendingDnsRecords,
+    oauth: {
+      complete: oauthComplete,
+      configured: [...snapshot.completedOAuthProviders],
+      pending: oauthPending,
+      unsupported: [...snapshot.unsupportedOAuthProviders],
+    },
+    nextAction: deployNextAction(reportState, snapshot.domain, componentStatus, oauthPending),
+  };
+}
+
+function deployNextAction(
+  state: DeployStatusState,
+  domain: string,
+  componentStatus: DeployComponentStatus,
+  oauthPending: string[],
+): string {
+  if (state === "complete") {
+    return `Production is deployed and verified at https://${domain}. No action needed.`;
+  }
+  if (state === "oauth_pending") {
+    return (
+      `Domain verified, but these OAuth providers are missing production credentials: ` +
+      `${oauthPending.join(", ")}. Ask the user to finish \`clerk deploy\`, then run \`clerk deploy check\`.`
+    );
+  }
+
+  const pendingComponents = [
+    !componentStatus.dns ? "DNS" : null,
+    !componentStatus.ssl ? "SSL" : null,
+    !componentStatus.mail ? "mail" : null,
+  ].filter((value): value is string => value !== null);
+
+  if (pendingComponents.length === 0) {
+    return (
+      `Production setup for ${domain} is still finalizing on Clerk's side. ` +
+      `Re-run \`clerk deploy check\` in a few minutes.`
+    );
+  }
+
+  return (
+    `${pendingComponents.join(", ")} still provisioning for ${domain}. ` +
+    `Re-run \`clerk deploy check\` in a few minutes, DNS propagation can take time.`
+  );
 }
 
 export async function loadProductionDomain(
