@@ -57,8 +57,10 @@ import {
   type DeployOperationState,
 } from "./state.ts";
 import {
+  buildDeployStatusReport,
   loadDevelopmentOAuthProviders,
   resolveDeployContext,
+  resolveDeployState,
   resolveLiveApplicationContext,
   resolveLiveDeploySnapshot,
   waitForDeployStatus,
@@ -71,9 +73,8 @@ type DeployOptions = Record<string, never>;
 
 export async function deploy(_options: DeployOptions = {}) {
   if (isAgent()) {
-    throwUsageError(
-      "clerk deploy requires human mode because production configuration uses interactive prompts. Run `clerk deploy --mode human` from an interactive terminal.",
-    );
+    await emitAgentDeployHandoff();
+    return;
   }
 
   intro("clerk deploy");
@@ -96,6 +97,20 @@ export async function deploy(_options: DeployOptions = {}) {
       outro("Failed");
     }
   }
+}
+
+async function emitAgentDeployHandoff(): Promise<void> {
+  const ctx = await resolveDeployContext();
+  if (!ctx.appId || !ctx.developmentInstanceId) {
+    throw new CliError(
+      "No Clerk project linked to this directory. Run `clerk link`, then rerun `clerk deploy`.",
+      { code: ERROR_CODE.NOT_LINKED },
+    );
+  }
+
+  const state = await resolveDeployState(ctx);
+  const report = buildDeployStatusReport(state, null);
+  log.data(JSON.stringify(report, null, 2));
 }
 
 async function runDeploy(ctx: DeployContext): Promise<void> {

@@ -446,28 +446,57 @@ describe("deploy", () => {
   });
 
   describe("agent mode", () => {
-    test("exits with human mode guidance", async () => {
+    test("not_started emits JSON handoff telling human to run wizard", async () => {
       mockIsAgent.mockReturnValue(true);
+      await linkedProject();
 
-      await expect(runDeploy({})).rejects.toMatchObject({
-        code: "usage_error",
-        exitCode: EXIT_CODE.USAGE,
-        message:
-          "clerk deploy requires human mode because production configuration uses interactive prompts. Run `clerk deploy --mode human` from an interactive terminal.",
-      });
+      await runDeploy({});
 
-      expect(captured.out).toBe("");
+      const payload = JSON.parse(captured.out);
+      expect(payload.state).toBe("not_started");
+      expect(payload.nextAction).toContain("clerk deploy");
+      expect(payload.nextAction).toContain("clerk deploy check");
     });
 
     test("does not trigger interactive prompts", async () => {
       mockIsAgent.mockReturnValue(true);
+      await linkedProject();
 
-      await expect(runDeploy()).rejects.toBeInstanceOf(CliError);
+      await runDeploy();
 
       expect(mockSelect).not.toHaveBeenCalled();
       expect(mockInput).not.toHaveBeenCalled();
       expect(mockConfirm).not.toHaveBeenCalled();
       expect(mockPassword).not.toHaveBeenCalled();
+    });
+
+    test("complete deploy emits no-action handoff", async () => {
+      mockIsAgent.mockReturnValue(true);
+      await linkedProject({
+        instances: { development: "ins_dev_123", production: "ins_prod_mock" },
+      });
+      mockLiveProduction({
+        instanceId: "ins_prod_mock",
+        domain: "example.com",
+        productionConfig: {
+          connection_oauth_google: {
+            enabled: true,
+            client_id: "google-client-id.apps.googleusercontent.com",
+            client_secret: "REDACTED",
+          },
+        },
+      });
+
+      await runDeploy({});
+
+      const payload = JSON.parse(captured.out);
+      expect(payload.state).toBe("complete");
+      expect(payload.complete).toBe(true);
+      expect(captured.err).toBe("");
+      expect(mockTriggerApplicationDomainDNSCheck).not.toHaveBeenCalled();
+      expect(mockSleep).not.toHaveBeenCalled();
+      expect(mockCreateProductionInstance).not.toHaveBeenCalled();
+      expect(mockPatchInstanceConfig).not.toHaveBeenCalled();
     });
   });
 
