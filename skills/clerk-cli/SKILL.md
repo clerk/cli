@@ -2,11 +2,12 @@
 name: clerk-cli
 description: >-
   Operate the Clerk CLI (`clerk` binary) for authentication, user/org/session management,
-  instance config, env keys, and any Clerk Backend or Platform API call. Use when the user
-  mentions Clerk management tasks, "list clerk users", "create a clerk user", "update
-  organization", "pull clerk config", "clerk env pull", "clerk doctor", "clerk api", or
-  any ad-hoc Clerk API request. Prefer the CLI over raw HTTP: it handles auth, key
-  resolution, app/instance targeting, and formatting automatically.
+  deploy verification, instance config, env keys, and any Clerk Backend or Platform API
+  call. Use when the user mentions Clerk management tasks, "list clerk users", "create a
+  clerk user", "update organization", "pull clerk config", "clerk env pull",
+  "clerk doctor", "clerk deploy", "clerk deploy check", "clerk api", or any ad-hoc
+  Clerk API request. Prefer the CLI over raw HTTP: it handles auth, key resolution,
+  app/instance targeting, and formatting automatically.
 ---
 
 # Clerk CLI
@@ -209,6 +210,8 @@ node -e 'const d=require("/tmp/users.json"); console.log(d.data.length, d.hasMor
 | `clerk users create`          | Create a user from curated flags or a raw BAPI body. Confirmation prompt unless `--yes`.                                                                                                                                                                                                                            | `--email`, `--phone`, `--username`, `--password`, `--first-name`, `--last-name`, `--external-id`, `-d, --data`, `--file`, `--dry-run`, `--yes`, `--json`                         |
 | `clerk users open [user-id]`  | Open a user's dashboard page. Agent mode requires `user-id` and prints a JSON descriptor instead of launching a browser.                                                                                                                                                                                            | (see `--help`)                                                                                                                                                                   |
 | `clerk open [subpath]`        | Open the linked app's dashboard in a browser. Agent mode: prints a JSON descriptor instead of opening.                                                                                                                                                                                                              | (see `--help`)                                                                                                                                                                   |
+| `clerk deploy`                | Human-mode production deploy wizard. Agent mode: emits a read-only JSON handoff and tells the agent whether to ask the human to run the wizard, wait for provisioning, finish OAuth, or do nothing.                                                                                                                 | `--mode agent`, `--mode human`, `--verbose`                                                                                                                                      |
+| `clerk deploy check`          | Read-only deploy verification for agents and automation. Triggers a DNS check for active production domains, waits with backoff, reports DNS, SSL, mail, and OAuth completeness, and exits `0` only when complete.                                                                                                  | `--mode agent`, `--verbose`                                                                                                                                                      |
 | `clerk doctor`                | Health check (CLI version, login, link, env, config, completion; plus host-execution probe in agent mode).                                                                                                                                                                                                          | `--json`, `--spotlight`, `--verbose`, `--fix`                                                                                                                                    |
 | `clerk api [path]`            | Authenticated HTTP to Backend/Platform API.                                                                                                                                                                                                                                                                         | `-X`, `-d`, `--file`, `--dry-run`, `--yes`, `--include`, `--app`, `--secret-key`, `--instance`, `--platform`                                                                     |
 | `clerk api ls [filter]`       | Discover endpoints from the bundled OpenAPI catalog.                                                                                                                                                                                                                                                                | (see `--help`)                                                                                                                                                                   |
@@ -232,6 +235,7 @@ The CLI auto-detects agent mode when stdout is not a TTY, or when `--mode agent`
 - **`doctor --fix` is ignored.** Parse `doctor --json` output's `remedy` field and act on it yourself.
 - **`apps list` and `apps create` default to JSON** when piped.
 - **`users` defaults to JSON when piped, like `apps`.** `clerk users list` and `clerk users create` emit JSON in agent mode. Bare `clerk users` (no subcommand) is a usage error in agent mode — pass `list`, `create`, or `open` explicitly. `clerk users open` requires the `user-id` positional in agent mode and prints a JSON descriptor instead of launching a browser.
+- **`deploy` has an agent handoff plus a verification gate.** In agent mode, bare `clerk deploy` is read-only and emits a JSON handoff. It never drives the interactive wizard. Ask the human to run `clerk deploy` in a human terminal when needed, then run `clerk deploy check --mode agent` to verify completion. See [references/agent-mode.md](references/agent-mode.md#deploy-handoff-and-verification).
 - **`--input-json <json|@file|->`** expands JSON into flags on any command (e.g. `clerk init --input-json '{"framework":"next","yes":true}'`). Piped stdin is also accepted: `echo '{"yes":true}' | clerk init`. Place `--input-json` after the leaf subcommand. Full rules in [references/agent-mode.md](references/agent-mode.md#passing-options-as-json---input-json).
 
 Full matrix and sandbox details in [references/agent-mode.md](references/agent-mode.md).

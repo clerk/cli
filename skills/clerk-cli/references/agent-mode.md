@@ -61,6 +61,8 @@ Force human mode with `--mode human` or `CLERK_MODE=human`. Typical AI-agent inv
 | `clerk users` (no subcommand)                                    | Interactive action picker                 | Prints the action list and exits with a usage error (code `2`) — pass `list` / `create` / `open`                                                                                                                                                                                                                                                                                                                                     |
 | `clerk users open [user-id]`                                     | Picks a user interactively, opens browser | Requires `user-id`; prints `{url, appId, appName, instanceId, instanceLabel, userId, opened: false}` and does not open a browser                                                                                                                                                                                                                                                                                                     |
 | `clerk open [subpath]`                                           | Opens the browser to the URL              | Does not open a browser. Prints a JSON descriptor (`{url, appId, appName, instanceId, instanceLabel, subpath, opened: false}`) on stdout so the agent can surface it                                                                                                                                                                                                                                                                 |
+| `clerk deploy`                                                   | Interactive production deploy wizard      | Read-only handoff. Emits deploy status JSON on stdout and exits `0` for linked projects. Does not prompt, mutate, trigger DNS checks, or poll.                                                                                                                                                                                                                                                                                       |
+| `clerk deploy check`                                             | Verify production deploy state            | Read-only verification gate. Triggers a DNS check for active production domains, waits with backoff, emits status JSON on stdout, exits `0` when complete and `1` when incomplete.                                                                                                                                                                                                                                                   |
 | `clerk auth login` when already authenticated                    | Prompt to re-auth                         | Silent no-op                                                                                                                                                                                                                                                                                                                                                                                                                         |
 | `clerk init`                                                     | Full interactive scaffold flow            | Runs non-interactively. Explicit `--app` or a linked profile uses the real-app auth/link/env flow; without it, an authenticated agent on a keyless-capable framework creates a real app and links it. Pass `--keyless` to opt into auto-generated dev keys for new projects on keyless-capable frameworks. Without `--keyless`, an unauthenticated agent (or non-keyless framework with no app target) prints manual setup guidance. |
 | Color / spinners                                                 | Enabled                                   | Disabled                                                                                                                                                                                                                                                                                                                                                                                                                             |
@@ -130,21 +132,23 @@ Errors use the standard agent-mode format: bad JSON → `invalid_json`, missing 
 
 ## Structured outputs you can rely on
 
-| Command                                       | Structured output                                                                       |
-| --------------------------------------------- | --------------------------------------------------------------------------------------- |
-| `clerk doctor --json`                         | `[{name, status, message, detail?, remedy?, fix?}]`                                     |
-| `clerk apps list --json`                      | Array of application objects                                                            |
-| `clerk apps create --json`                    | Single application object                                                               |
-| `clerk users list` (agent mode or `--json`)   | `{data: [...users], hasMore}` envelope (BAPI user shape inside `data`)                  |
-| `clerk users create` (agent mode or `--json`) | Single user object (raw BAPI shape)                                                     |
-| `clerk users open` (agent mode)               | `{url, appId, appName, instanceId, instanceLabel, userId, opened: false}`               |
-| `clerk api <path>`                            | Raw API JSON (Backend or Platform) on stdout                                            |
-| `clerk api <path> --include`                  | Response headers on stderr, body on stdout                                              |
-| `clerk config pull`                           | Instance config JSON                                                                    |
-| `clerk config schema`                         | JSON Schema                                                                             |
-| `clerk open [subpath]`                        | `{url, appId, appName, instanceId, instanceLabel, subpath, opened: false}` (agent mode) |
-| `clerk open --print`                          | Plain dashboard URL on stdout                                                           |
-| Any command (agent mode)                      | On error: `{"error":{"code","message","docsUrl?","errors?"}}` on stderr                 |
+| Command                                       | Structured output                                                                             |
+| --------------------------------------------- | --------------------------------------------------------------------------------------------- |
+| `clerk doctor --json`                         | `[{name, status, message, detail?, remedy?, fix?}]`                                           |
+| `clerk apps list --json`                      | Array of application objects                                                                  |
+| `clerk apps create --json`                    | Single application object                                                                     |
+| `clerk users list` (agent mode or `--json`)   | `{data: [...users], hasMore}` envelope (BAPI user shape inside `data`)                        |
+| `clerk users create` (agent mode or `--json`) | Single user object (raw BAPI shape)                                                           |
+| `clerk users open` (agent mode)               | `{url, appId, appName, instanceId, instanceLabel, userId, opened: false}`                     |
+| `clerk api <path>`                            | Raw API JSON (Backend or Platform) on stdout                                                  |
+| `clerk api <path> --include`                  | Response headers on stderr, body on stdout                                                    |
+| `clerk config pull`                           | Instance config JSON                                                                          |
+| `clerk config schema`                         | JSON Schema                                                                                   |
+| `clerk open [subpath]`                        | `{url, appId, appName, instanceId, instanceLabel, subpath, opened: false}` (agent mode)       |
+| `clerk open --print`                          | Plain dashboard URL on stdout                                                                 |
+| `clerk deploy` (agent mode)                   | Deploy handoff report with `complete`, `state`, domain status, OAuth status, and `nextAction` |
+| `clerk deploy check` (agent mode)             | Deploy verification report with the same shape, plus exit `0` complete or `1` incomplete      |
+| Any command (agent mode)                      | On error: `{"error":{"code","message","docsUrl?","errors?"}}` on stderr                       |
 
 For commands without an explicit `--json` flag, `clerk api` is your escape hatch: hit the underlying endpoint directly.
 
@@ -180,6 +184,58 @@ clerk api /users --app app_abc123 --instance prod
 ```
 
 The same advice applies to linking in agent mode: `clerk link --app app_abc123` is deterministic and works non-interactively. If you omit `--app`, the command only succeeds when silent autolink can prove the target app from existing publishable keys.
+
+### Deploy handoff and verification
+
+Do not try to drive the interactive deploy wizard from an agent. Use the handoff and check commands instead.
+
+```sh
+# 1. Inspect current production deploy state without mutating anything.
+clerk deploy --mode agent
+
+# 2. If the handoff says a human action is needed, ask the user to run:
+clerk deploy --mode human
+
+# 3. After the user finishes or DNS has had time to propagate, verify:
+clerk deploy check --mode agent
+```
+
+`clerk deploy --mode agent` is read-only. It resolves the linked app and current production deploy snapshot, then emits JSON on stdout. It does **not** trigger DNS checks, poll, create production instances, patch OAuth config, or prompt. Linked projects exit `0` because this is an informational handoff. Not-linked and API failures still use the normal agent error envelope on stderr.
+
+`clerk deploy check --mode agent` is the gate. It is also read-only with respect to deploy configuration, but for an active production domain it triggers Clerk's DNS check, waits with the same backoff loop as the wizard, then reports final DNS, SSL, mail, and OAuth completeness. It exits:
+
+| Exit | Meaning                                                                              |
+| ---- | ------------------------------------------------------------------------------------ |
+| `0`  | Deploy is complete and verified.                                                     |
+| `1`  | The check ran successfully, but deploy is incomplete. Read `state` and `nextAction`. |
+| else | A real CLI error occurred. Read the standard agent error envelope on stderr.         |
+
+The deploy report has this shape:
+
+```json
+{
+  "complete": false,
+  "state": "domain_pending",
+  "domain": "example.com",
+  "productionInstanceId": "ins_...",
+  "domainStatus": { "dns": "complete", "ssl": "pending", "mail": "complete" },
+  "pendingDnsRecords": [{ "type": "CNAME", "host": "clerk.example.com", "value": "..." }],
+  "oauth": { "complete": true, "configured": ["google"], "pending": [], "unsupported": [] },
+  "nextAction": "SSL still provisioning for example.com. Re-run `clerk deploy check` in a few minutes."
+}
+```
+
+State precedence:
+
+| State                 | What to do                                                                                                          |
+| --------------------- | ------------------------------------------------------------------------------------------------------------------- |
+| `not_started`         | Ask the human to run `clerk deploy --mode human`, then run `clerk deploy check --mode agent`.                       |
+| `domain_provisioning` | Wait briefly or ask the human to finish `clerk deploy`, then run `clerk deploy check --mode agent`.                 |
+| `domain_pending`      | Surface `pendingDnsRecords` when present. Re-run `clerk deploy check --mode agent` after DNS/SSL/mail propagation.  |
+| `oauth_pending`       | Ask the human to finish the OAuth credential steps in `clerk deploy --mode human`, then verify with `deploy check`. |
+| `complete`            | No action needed.                                                                                                   |
+
+Unsupported OAuth providers do not block `complete`, because the wizard cannot configure them automatically. They are still surfaced in `oauth.unsupported` so you can warn the user to review them in the Clerk Dashboard.
 
 ### Use the catalog, not hard-coded paths
 
