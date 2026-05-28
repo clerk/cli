@@ -237,12 +237,16 @@ export function nextStepsBlock(appId: string, productionInstanceId: string): str
      ${dim("https://clerk.com/docs/guides/secure/best-practices/csp-headers")}
 
   6. View and manage domain configuration in the Clerk Dashboard
-     ${dim(`https://dashboard.clerk.com/apps/${appId}/instances/${productionInstanceId}/domains`)}
+     ${dim(domainsDashboardUrl(appId, productionInstanceId))}
 
 ${yellow("NOTE")}  Production keys only work on your production domain. They will not work on localhost.
       To run your dev environment, keep using your dev keys.
 
 ${dim("Reference: https://clerk.com/docs/guides/development/deployment/production#api-keys-and-environment-variables")}`;
+}
+
+export function domainsDashboardUrl(appId: string, productionInstanceId: string): string {
+  return `https://dashboard.clerk.com/apps/${appId}/instances/${productionInstanceId}/domains`;
 }
 
 export function pausedMessage(stepDescription: string): string {

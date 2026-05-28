@@ -18,6 +18,7 @@ import {
   cnameTargetPending,
   deployComponentLabels,
   deployStatusRetryMessage,
+  domainsDashboardUrl,
   type DeployComponentStatus,
 } from "./copy.ts";
 import { mapDeployError } from "./errors.ts";
@@ -79,7 +80,7 @@ export type LiveDeploySnapshot = Omit<
 
 export type DeployState =
   | { kind: "not_started" }
-  | { kind: "domain_provisioning"; productionInstanceId: string }
+  | { kind: "domain_provisioning"; appId: string; productionInstanceId: string }
   | { kind: "active"; snapshot: LiveDeploySnapshot };
 
 export type DeployStatusFailureMode = "pending" | "throw";
@@ -152,7 +153,11 @@ export async function resolveDeployState(
     options,
   );
   if (!snapshot) {
-    return { kind: "domain_provisioning", productionInstanceId: live.productionInstanceId };
+    return {
+      kind: "domain_provisioning",
+      appId: live.appId,
+      productionInstanceId: live.productionInstanceId,
+    };
   }
   return { kind: "active", snapshot };
 }
@@ -298,6 +303,7 @@ export function buildDeployStatusReport(
   }
 
   if (state.kind === "domain_provisioning") {
+    const domainsUrl = domainsDashboardUrl(state.appId, state.productionInstanceId);
     return {
       complete: false,
       state: "domain_provisioning",
@@ -308,7 +314,8 @@ export function buildDeployStatusReport(
       oauth: { complete: false, configured: [], pending: [], unsupported: [] },
       nextAction:
         "A production instance exists but its domain is still provisioning. " +
-        "Run `clerk deploy check` again shortly, or ask the user to finish `clerk deploy`.",
+        "Run `clerk deploy check` again shortly, or ask the user to finish `clerk deploy`. " +
+        `View domain settings: ${domainsUrl}`,
     };
   }
 
@@ -350,7 +357,15 @@ export function buildDeployStatusReport(
       pending: oauthPending,
       unsupported: [...snapshot.unsupportedOAuthProviders],
     },
-    nextAction: deployNextAction(reportState, snapshot.domain, componentStatus, oauthPending),
+    nextAction: deployNextAction(
+      reportState,
+      snapshot.domain,
+      componentStatus,
+      oauthPending,
+      snapshot.productionInstanceId
+        ? domainsDashboardUrl(snapshot.appId, snapshot.productionInstanceId)
+        : null,
+    ),
   };
 }
 
@@ -359,14 +374,18 @@ function deployNextAction(
   domain: string,
   componentStatus: DeployComponentStatus,
   oauthPending: string[],
+  domainsUrl: string | null,
 ): string {
+  const domainsAction = domainsUrl ? ` View domain settings: ${domainsUrl}` : "";
+
   if (state === "complete") {
-    return `Production is deployed and verified at https://${domain}. No action needed.`;
+    return `Production is deployed and verified at https://${domain}. No action needed.${domainsAction}`;
   }
   if (state === "oauth_pending") {
     return (
       `Domain verified, but these OAuth providers are missing production credentials: ` +
-      `${oauthPending.join(", ")}. Ask the user to finish \`clerk deploy\`, then run \`clerk deploy check\`.`
+      `${oauthPending.join(", ")}. Ask the user to finish \`clerk deploy\`, then run \`clerk deploy check\`.` +
+      domainsAction
     );
   }
 
@@ -379,13 +398,14 @@ function deployNextAction(
   if (pendingComponents.length === 0) {
     return (
       `Production setup for ${domain} is still finalizing on Clerk's side. ` +
-      `Re-run \`clerk deploy check\` in a few minutes.`
+      `Re-run \`clerk deploy check\` in a few minutes.${domainsAction}`
     );
   }
 
   return (
     `${pendingComponents.join(", ")} still provisioning for ${domain}. ` +
-    `Re-run \`clerk deploy check\` in a few minutes, DNS propagation can take time.`
+    `Re-run \`clerk deploy check\` in a few minutes, DNS propagation can take time.` +
+    domainsAction
   );
 }
 

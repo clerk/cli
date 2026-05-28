@@ -210,6 +210,8 @@ clerk deploy check --mode agent
 | `1`  | The check ran successfully, but deploy is incomplete. Read `state` and `nextAction`. |
 | else | A real CLI error occurred. Read the standard agent error envelope on stderr.         |
 
+When a production instance exists, `nextAction` includes the full Clerk Dashboard domains URL so agents can send the user directly to the same page the human CLI prints in its next steps.
+
 The deploy report has this shape:
 
 ```json
@@ -221,7 +223,7 @@ The deploy report has this shape:
   "domainStatus": { "dns": "complete", "ssl": "pending", "mail": "complete" },
   "pendingDnsRecords": [{ "type": "CNAME", "host": "clerk.example.com", "value": "..." }],
   "oauth": { "complete": true, "configured": ["google"], "pending": [], "unsupported": [] },
-  "nextAction": "SSL still provisioning for example.com. Re-run `clerk deploy check` in a few minutes."
+  "nextAction": "SSL still provisioning for example.com. Re-run `clerk deploy check` in a few minutes, DNS propagation can take time. View domain settings: https://dashboard.clerk.com/apps/app_.../instances/ins_.../domains"
 }
 ```
 

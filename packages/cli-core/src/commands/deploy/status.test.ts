@@ -88,6 +88,7 @@ describe("resolveDeployState", () => {
 
     expect(state).toEqual({
       kind: "domain_provisioning",
+      appId: "app_1",
       productionInstanceId: "ins_prod",
     });
   });
@@ -257,13 +258,16 @@ describe("buildDeployStatusReport", () => {
 
   test("domain_provisioning reports production instance", () => {
     const report = buildDeployStatusReport(
-      { kind: "domain_provisioning", productionInstanceId: "ins_prod" },
+      { kind: "domain_provisioning", appId: "app_1", productionInstanceId: "ins_prod" },
       null,
     );
 
     expect(report.state).toBe("domain_provisioning");
     expect(report.complete).toBe(false);
     expect(report.productionInstanceId).toBe("ins_prod");
+    expect(report.nextAction).toContain(
+      "https://dashboard.clerk.com/apps/app_1/instances/ins_prod/domains",
+    );
   });
 
   test("active with pending domain gives domain precedence over OAuth", () => {
@@ -274,6 +278,9 @@ describe("buildDeployStatusReport", () => {
 
     expect(report.state).toBe("domain_pending");
     expect(report.complete).toBe(false);
+    expect(report.nextAction).toContain(
+      "https://dashboard.clerk.com/apps/app_1/instances/ins_prod/domains",
+    );
     expect(report.domainStatus).toEqual({ dns: "pending", ssl: "complete", mail: "complete" });
     expect(report.pendingDnsRecords).toContainEqual({
       type: "CNAME",
@@ -306,6 +313,9 @@ describe("buildDeployStatusReport", () => {
 
     expect(report.state).toBe("oauth_pending");
     expect(report.complete).toBe(false);
+    expect(report.nextAction).toContain(
+      "https://dashboard.clerk.com/apps/app_1/instances/ins_prod/domains",
+    );
     expect(report.oauth).toMatchObject({
       complete: false,
       configured: ["google"],
@@ -327,6 +337,9 @@ describe("buildDeployStatusReport", () => {
     expect(report.complete).toBe(true);
     expect(report.domainStatus).toEqual({ dns: "complete", ssl: "complete", mail: "complete" });
     expect(report.nextAction).toContain("https://example.com");
+    expect(report.nextAction).toContain(
+      "https://dashboard.clerk.com/apps/app_1/instances/ins_prod/domains",
+    );
   });
 
   test("unsupported OAuth providers surface without blocking completion", () => {
