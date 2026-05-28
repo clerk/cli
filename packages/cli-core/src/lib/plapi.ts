@@ -213,14 +213,12 @@ export type DeployStatus = "complete" | "incomplete";
 
 type DomainCheckStatus = {
   status: string;
-  required: boolean;
+  required?: boolean;
 };
 
 export type DomainStatusResponse = {
   status: DeployStatus;
-  dns?: {
-    status: string;
-  };
+  dns?: DomainCheckStatus;
   ssl?: DomainCheckStatus;
   mail?: DomainCheckStatus;
   proxy?: DomainCheckStatus;

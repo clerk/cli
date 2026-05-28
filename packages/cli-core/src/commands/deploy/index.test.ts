@@ -90,15 +90,19 @@ function domainStatus({
   mail,
 }: {
   status: "complete" | "incomplete";
-  dns: boolean;
-  ssl: boolean;
-  mail: boolean;
+  dns?: boolean;
+  ssl?: boolean;
+  mail?: boolean;
 }) {
   return {
     status,
-    dns: { status: dns ? "complete" : "not_started", cnames: {} },
-    ssl: { status: ssl ? "complete" : "not_started", required: true, failure_hints: [] },
-    mail: { status: mail ? "complete" : "not_started", required: true },
+    ...(dns === undefined ? {} : { dns: { status: dns ? "complete" : "not_started", cnames: {} } }),
+    ...(ssl === undefined
+      ? {}
+      : { ssl: { status: ssl ? "complete" : "not_started", required: true, failure_hints: [] } }),
+    ...(mail === undefined
+      ? {}
+      : { mail: { status: mail ? "complete" : "not_started", required: true } }),
   };
 }
 
@@ -745,6 +749,54 @@ describe("deploy", () => {
       expect(sslIdx).toBeGreaterThan(-1);
       expect(mailIdx).toBeLessThan(dnsIdx);
       expect(dnsIdx).toBeLessThan(sslIdx);
+    });
+
+    test("DNS verification gives each component its own retry budget", async () => {
+      await linkedProject();
+      mockIsAgent.mockReturnValue(false);
+      mockConfirm
+        .mockResolvedValueOnce(true) // Proceed?
+        .mockResolvedValueOnce(true) // Create production instance?
+        .mockResolvedValueOnce(false); // Export BIND zone file?
+      mockInput
+        .mockResolvedValueOnce("example.com")
+        .mockResolvedValueOnce("google-client-id.apps.googleusercontent.com");
+      mockSelect.mockResolvedValueOnce("have-credentials").mockResolvedValueOnce("check");
+      mockPassword.mockResolvedValueOnce("google-secret");
+      mockPatchInstanceConfig.mockResolvedValueOnce({});
+      mockGetApplicationDomainStatus
+        .mockResolvedValueOnce(
+          domainStatus({ status: "incomplete", dns: false, ssl: false, mail: false }),
+        )
+        .mockResolvedValueOnce(
+          domainStatus({ status: "incomplete", dns: false, ssl: false, mail: false }),
+        )
+        .mockResolvedValueOnce(
+          domainStatus({ status: "incomplete", dns: false, ssl: false, mail: false }),
+        )
+        .mockResolvedValueOnce(
+          domainStatus({ status: "incomplete", dns: false, ssl: false, mail: false }),
+        )
+        .mockResolvedValueOnce(
+          domainStatus({ status: "incomplete", dns: false, ssl: false, mail: false }),
+        )
+        .mockResolvedValueOnce(
+          domainStatus({ status: "incomplete", dns: false, ssl: false, mail: true }),
+        )
+        .mockResolvedValueOnce(
+          domainStatus({ status: "incomplete", dns: true, ssl: false, mail: true }),
+        )
+        .mockResolvedValueOnce(
+          domainStatus({ status: "complete", dns: true, ssl: true, mail: true }),
+        );
+
+      await runDeploy({});
+      const err = stripAnsi(captured.err);
+
+      expect(err).toContain("Mail sender verified");
+      expect(err).toContain("DNS verified for example.com");
+      expect(err).toContain("SSL certificate issued for example.com");
+      expect(mockGetApplicationDomainStatus).toHaveBeenCalledTimes(8);
     });
 
     test("DNS verification pauses when status stays incomplete despite all exposed booleans true (proxy_ok case)", async () => {
@@ -1433,6 +1485,29 @@ describe("deploy", () => {
 
       expect(err).toContain("SSL, mail still pending for example.com");
       expect(err).not.toContain("DNS, SSL, mail still pending");
+    });
+
+    test("DNS verification treats absent components as pending", async () => {
+      await linkedProject({
+        instances: { development: "ins_dev_123", production: "ins_prod_123" },
+      });
+      mockIsAgent.mockReturnValue(false);
+      mockLiveProduction({
+        instanceId: "ins_prod_123",
+        developmentConfig: {},
+        productionConfig: {},
+      });
+      mockGetApplicationDomainStatus.mockResolvedValue(
+        domainStatus({ status: "incomplete", ssl: true, mail: true }),
+      );
+      mockSelect.mockResolvedValueOnce("check").mockResolvedValueOnce("skip");
+
+      await runDeploy({});
+      const err = stripAnsi(captured.err);
+
+      expect(err).toContain("DNS: pending  SSL: ✓  Mail: ✓");
+      expect(err).toContain("DNS still pending for example.com");
+      expect(err).not.toContain("Domain      Verified");
     });
 
     test("DNS verification timeout does not reprint DNS records when only SSL remains pending", async () => {

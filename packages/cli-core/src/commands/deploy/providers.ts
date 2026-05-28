@@ -370,34 +370,45 @@ export function providerLabel(provider: string): string {
  * Prompt fields for existing deploy callers, falling back to standard OAuth credentials.
  */
 export function providerFields(provider: OAuthProvider): OAuthField[] {
-  if (hasProviderOverride(provider)) return PROVIDER_FIELDS[provider];
-  return [
+  return fromOverride(provider, PROVIDER_FIELDS, [
     { key: "client_id", label: "Client ID" },
     { key: "client_secret", label: "Client Secret", secret: true },
-  ];
+  ]);
 }
 
 /**
  * Credential action label for existing deploy callers.
  */
 export function providerCredentialLabel(provider: OAuthProvider): string {
-  if (hasProviderOverride(provider)) return PROVIDER_CREDENTIAL_LABELS[provider];
-  return "I already have my Client ID and Client Secret";
+  return fromOverride(
+    provider,
+    PROVIDER_CREDENTIAL_LABELS,
+    "I already have my Client ID and Client Secret",
+  );
 }
 
 function providerRedirectLabel(provider: OAuthProvider): string {
-  if (hasProviderOverride(provider)) return PROVIDER_REDIRECT_LABELS[provider];
-  return "Redirect URI";
+  return fromOverride(provider, PROVIDER_REDIRECT_LABELS, "Redirect URI");
 }
 
 function providerSetupCopy(provider: OAuthProvider): string {
-  if (hasProviderOverride(provider)) return PROVIDER_SETUP_COPY[provider];
-  return `Production ${providerLabel(provider)} sign-in requires custom OAuth credentials.`;
+  return fromOverride(
+    provider,
+    PROVIDER_SETUP_COPY,
+    `Production ${providerLabel(provider)} sign-in requires custom OAuth credentials.`,
+  );
 }
 
 function providerGotcha(provider: OAuthProvider): string | null {
-  if (hasProviderOverride(provider)) return PROVIDER_GOTCHAS[provider];
-  return null;
+  return fromOverride(provider, PROVIDER_GOTCHAS, null);
+}
+
+function fromOverride<T>(
+  provider: OAuthProvider,
+  map: Record<ProviderWithOverride, T>,
+  fallback: T,
+): T {
+  return hasProviderOverride(provider) ? map[provider] : fallback;
 }
 
 function hasProviderOverride(provider: string): provider is ProviderWithOverride {

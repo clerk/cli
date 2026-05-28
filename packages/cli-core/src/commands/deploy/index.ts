@@ -373,11 +373,13 @@ async function resolveLiveDeploySnapshot(
   const productionInstanceId = ctx.productionInstanceId;
   if (!productionInstanceId) return undefined;
 
-  const domain = await loadProductionDomain(ctx);
+  const [domain, oauth] = await Promise.all([
+    loadProductionDomain(ctx),
+    loadDevelopmentOAuthProviders(ctx),
+  ]);
   if (!domain) return undefined;
 
-  const { descriptors: oauthProviderDescriptors, unsupported } =
-    await loadDevelopmentOAuthProviders(ctx);
+  const { descriptors: oauthProviderDescriptors, unsupported } = oauth;
   const oauthProviders = oauthProviderDescriptors.map((descriptor) => descriptor.provider);
   const { productionConfig, deployStatus } = await loadProductionState(
     ctx,
@@ -649,10 +651,9 @@ async function pollDeployStatus(
   await triggerDeployStatusCheck(appId, domainIdOrName);
   let response = await mapDeployError(getApplicationDomainStatus(appId, domainIdOrName));
   let status = deployComponentStatusFromDomainStatus(response);
-  let retriesRemaining = DEPLOY_STATUS_MAX_RETRIES;
-  let nextRetryDelay = DEPLOY_STATUS_INITIAL_RETRY_DELAY_MS;
-
   for (const component of DEPLOY_COMPONENT_ORDER) {
+    let retriesRemaining = DEPLOY_STATUS_MAX_RETRIES;
+    let nextRetryDelay = DEPLOY_STATUS_INITIAL_RETRY_DELAY_MS;
     const labels = deployComponentLabels(component, domain);
     const flipped = await withSpinner(labels.progress, async (spinner) => {
       if (status[component]) return true;
@@ -716,14 +717,16 @@ function deployComponentStatusFromDomainStatus(
   response: DomainStatusResponse,
 ): DeployComponentStatus {
   return {
-    dns: response.dns?.status === "complete",
-    ssl: response.ssl ? checkStatusComplete(response.ssl) : false,
+    dns: checkStatusComplete(response.dns),
+    ssl: checkStatusComplete(response.ssl),
     mail: checkStatusComplete(response.mail),
   };
 }
 
-function checkStatusComplete(check: { status: string; required: boolean } | undefined): boolean {
-  return !check?.required || check.status === "complete";
+function checkStatusComplete(check: { status: string; required?: boolean } | undefined): boolean {
+  if (!check) return false;
+  if (check.required === false) return true;
+  return check.status === "complete";
 }
 
 async function offerBindZoneExport(
