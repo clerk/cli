@@ -3,6 +3,7 @@ import {
   bindZoneFile,
   deployComponentLabels,
   deployStatusRetryMessage,
+  nextStepsBlock,
   pendingDnsRecords,
 } from "./copy.ts";
 import type { CnameTarget } from "../../lib/plapi.ts";
@@ -86,6 +87,15 @@ describe("deployStatusRetryMessage", () => {
     expect(deployStatusRetryMessage("Verifying mail sender for example.com...", 2, 5, 30)).toBe(
       "Verifying mail sender for example.com... 2/5 attempts, retrying in 30s",
     );
+  });
+});
+
+describe("nextStepsBlock", () => {
+  test("links directly to the production instance domain settings", () => {
+    const output = nextStepsBlock("app_123", "ins_456");
+
+    expect(output).toContain("View and manage domain configuration in the Clerk Dashboard");
+    expect(output).toContain("https://dashboard.clerk.com/apps/app_123/instances/ins_456/domains");
   });
 });
 

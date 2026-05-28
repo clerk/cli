@@ -915,6 +915,9 @@ describe("deploy", () => {
       expect(err).toContain("Next steps");
       expect(err).toContain("clerk env pull --instance prod");
       expect(err).toContain("Update env vars on your hosting provider");
+      expect(err).toContain(
+        "https://dashboard.clerk.com/apps/app_xyz789/instances/ins_prod_mock/domains",
+      );
       expect(err).toContain("Production keys only work on your production domain");
     });
 
@@ -1218,10 +1221,10 @@ describe("deploy", () => {
 
     test("existing production warns generically when an enabled provider schema is not usable", async () => {
       await linkedProject({
-        instances: { development: "ins_dev_123", production: "ins_prod_discord" },
+        instances: { development: "ins_dev_123", production: "ins_prod_unsupported" },
       });
       mockLiveProduction({
-        instanceId: "ins_prod_discord",
+        instanceId: "ins_prod_unsupported",
         developmentConfig: {
           connection_oauth_discord: { enabled: true },
         },

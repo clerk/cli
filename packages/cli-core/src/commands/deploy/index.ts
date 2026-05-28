@@ -27,7 +27,6 @@ import {
 } from "../../lib/plapi.ts";
 import {
   INTRO_PREAMBLE,
-  NEXT_STEPS_BLOCK,
   OAUTH_SECTION_INTRO,
   type DeployComponentStatus,
   type DeployPlanStep,
@@ -41,6 +40,7 @@ import {
   dnsDashboardHandoff,
   dnsIntro,
   dnsRecords,
+  nextStepsBlock,
   pendingDnsRecords,
   printPlan,
   productionSummary,
@@ -863,6 +863,12 @@ async function finishDeploy(
     log.info(line);
   }
   log.blank();
-  log.info(NEXT_STEPS_BLOCK);
+  const productionInstanceId = ctx.productionInstanceId ?? ctx.profile.instances.production;
+  if (!productionInstanceId) {
+    throwUsageError(
+      "Cannot print deploy next steps because the production instance could not be resolved. Run `clerk deploy` after confirming the production instance in the Clerk Dashboard.",
+    );
+  }
+  log.info(nextStepsBlock(ctx.appId, productionInstanceId));
   outro("Success");
 }
