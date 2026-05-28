@@ -193,7 +193,8 @@ Do not try to drive the interactive deploy wizard from an agent. Use the handoff
 # 1. Inspect current production deploy state without mutating anything.
 clerk deploy --mode agent
 
-# 2. If the handoff says a human action is needed, ask the user to run:
+# 2. If the handoff says a human action is needed, ask the user to run this
+#    in a new terminal window, not through `! clerk deploy`:
 clerk deploy --mode human
 
 # 3. After the user finishes or DNS has had time to propagate, verify:
@@ -201,6 +202,8 @@ clerk deploy check --mode agent
 ```
 
 `clerk deploy --mode agent` is read-only. It resolves the linked app and current production deploy snapshot, then emits JSON on stdout. It does **not** trigger DNS checks, poll, create production instances, patch OAuth config, or prompt. Linked projects exit `0` because this is an informational handoff. Not-linked and API failures still use the normal agent error envelope on stderr.
+
+Never try to run the human wizard through Claude's `! clerk deploy` shell escape or any non-interactive agent shell. The deploy wizard asks for domain, DNS export, OAuth, and verification inputs over stdin, so it needs a real human terminal. Tell the user to open a new terminal window in the project directory and run `clerk deploy` or `clerk deploy --mode human` there. After they finish, return to agent mode and run `clerk deploy check --mode agent`.
 
 `clerk deploy check --mode agent` is the gate. It is also read-only with respect to deploy configuration, but for an active production domain it triggers one Clerk DNS check, uses that response immediately, then reports DNS, SSL, email DNS, and OAuth completeness. It does not wait or exponentially back off in agent mode. It exits:
 
