@@ -202,7 +202,6 @@ async function startNewDeploy(ctx: DeployContext): Promise<void> {
 
   bar();
   completedOAuthProviders = await runOAuthSetup(ctx, operationState, oauthProviders);
-  if (completedOAuthProviders.length < oauthProviders.length) return;
 
   bar();
   const dnsStatus = await runDnsVerificationPrompt(ctx, {
@@ -265,7 +264,6 @@ async function reconcileExistingDeploy(ctx: DeployContext): Promise<void> {
       },
       snapshot.oauthProviderDescriptors,
     );
-    if (completed.length < snapshot.oauthProviders.length) return;
     snapshot.completedOAuthProviders = completed;
   }
 
@@ -486,6 +484,12 @@ async function offerBindZoneExport(
   log.success(`Wrote ${filePath}`);
 }
 
+/**
+ * Configures every provider in `descriptors`, returning the full set of
+ * completed providers. If the user skips a provider or interrupts the prompt,
+ * this pauses by throwing `DeployPausedError` rather than returning a partial
+ * list, so a successful return always means OAuth is fully complete.
+ */
 async function runOAuthSetup(
   ctx: DeployContext,
   state: DeployOperationState,
