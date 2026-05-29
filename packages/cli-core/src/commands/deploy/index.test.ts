@@ -72,6 +72,7 @@ mock.module("../../lib/sleep.ts", () => ({
 const { _setConfigDir, readConfig, setProfile } = await import("../../lib/config.ts");
 const { deploy } = await import("./index.ts");
 const { providerSetupIntro } = await import("./providers.ts");
+const { collectCustomDomain } = await import("./prompts.ts");
 
 function stripAnsi(value: string): string {
   return value.replace(new RegExp(`${String.fromCharCode(27)}\\[[0-9;]*m`, "g"), "");
@@ -176,6 +177,7 @@ function schemaForEnabledOAuth(config: Record<string, unknown>) {
 
 describe("deploy", () => {
   let consoleSpy: ReturnType<typeof spyOn>;
+  let writeSpy: ReturnType<typeof spyOn>;
   const captured = useCaptureLog();
   let tempDir: string;
 
@@ -273,6 +275,15 @@ describe("deploy", () => {
     mockTriggerApplicationDomainDNSCheck.mockResolvedValue(
       domainStatus({ status: "complete", dns: true, ssl: true, mail: true }),
     );
+    // Guard the real filesystem. When the BIND export prompt is accepted the
+    // deploy flow writes `clerk-<domain>.zone` to the cwd, which would otherwise
+    // leak an artifact into the repo on every run. Intercept only `.zone` writes
+    // so config writes (setProfile) still hit disk in the temp dir.
+    const realBunWrite = Bun.write.bind(Bun) as (...args: unknown[]) => Promise<number>;
+    writeSpy = spyOn(Bun, "write").mockImplementation(((destination: unknown, ...rest: unknown[]) =>
+      String(destination).endsWith(".zone")
+        ? Promise.resolve(0)
+        : realBunWrite(destination, ...rest)) as typeof Bun.write);
   });
 
   afterEach(async () => {
@@ -296,6 +307,7 @@ describe("deploy", () => {
     mockTriggerApplicationDomainDNSCheck.mockReset();
     mockSleep.mockReset();
     consoleSpy?.mockRestore();
+    writeSpy?.mockRestore();
   });
 
   function runDeploy(options: Parameters<typeof deploy>[0] = {}) {
@@ -446,24 +458,76 @@ describe("deploy", () => {
   });
 
   describe("agent mode", () => {
-    test("exits with human mode guidance", async () => {
+    test("not_started emits JSON handoff telling human to run wizard", async () => {
       mockIsAgent.mockReturnValue(true);
+      await linkedProject();
 
-      await expect(runDeploy({})).rejects.toMatchObject({
-        code: "usage_error",
-        exitCode: EXIT_CODE.USAGE,
-        message:
-          "clerk deploy requires human mode because production configuration uses interactive prompts. Run `clerk deploy --mode human` from an interactive terminal.",
-      });
+      await runDeploy({});
 
-      expect(captured.out).toBe("");
+      const payload = JSON.parse(captured.out);
+      expect(payload.state).toBe("not_started");
+      expect(payload.nextAction).toContain("clerk deploy");
+      expect(payload.nextAction).toContain("clerk deploy status");
     });
 
     test("does not trigger interactive prompts", async () => {
       mockIsAgent.mockReturnValue(true);
+      await linkedProject();
 
-      await expect(runDeploy()).rejects.toBeInstanceOf(CliError);
+      await runDeploy();
 
+      expect(mockSelect).not.toHaveBeenCalled();
+      expect(mockInput).not.toHaveBeenCalled();
+      expect(mockConfirm).not.toHaveBeenCalled();
+      expect(mockPassword).not.toHaveBeenCalled();
+    });
+
+    test("complete deploy emits no-action handoff", async () => {
+      mockIsAgent.mockReturnValue(true);
+      await linkedProject({
+        instances: { development: "ins_dev_123", production: "ins_prod_mock" },
+      });
+      mockLiveProduction({
+        instanceId: "ins_prod_mock",
+        domain: "example.com",
+        productionConfig: {
+          connection_oauth_google: {
+            enabled: true,
+            client_id: "google-client-id.apps.googleusercontent.com",
+            client_secret: "REDACTED",
+          },
+        },
+      });
+
+      await runDeploy({});
+
+      const payload = JSON.parse(captured.out);
+      expect(payload.state).toBe("complete");
+      expect(payload.complete).toBe(true);
+      expect(captured.err).toBe("");
+      expect(mockTriggerApplicationDomainDNSCheck).not.toHaveBeenCalled();
+      expect(mockSleep).not.toHaveBeenCalled();
+      expect(mockCreateProductionInstance).not.toHaveBeenCalled();
+      expect(mockPatchInstanceConfig).not.toHaveBeenCalled();
+    });
+
+    test("domain status read failures surface as errors", async () => {
+      mockIsAgent.mockReturnValue(true);
+      await linkedProject({
+        instances: { development: "ins_dev_123", production: "ins_prod_mock" },
+      });
+      mockLiveProduction({
+        instanceId: "ins_prod_mock",
+        domain: "example.com",
+      });
+      mockGetApplicationDomainStatus.mockRejectedValue(
+        new PlapiError(500, JSON.stringify({ errors: [{ code: "server_error" }] }), "https://x"),
+      );
+
+      await expect(runDeploy({})).rejects.toBeInstanceOf(PlapiError);
+
+      expect(captured.out).toBe("");
+      expect(mockTriggerApplicationDomainDNSCheck).not.toHaveBeenCalled();
       expect(mockSelect).not.toHaveBeenCalled();
       expect(mockInput).not.toHaveBeenCalled();
       expect(mockConfirm).not.toHaveBeenCalled();
@@ -711,7 +775,7 @@ describe("deploy", () => {
       expect(terminalOutput).not.toContain("Done");
     });
 
-    test("DNS verification emits per-component spinner labels in mail/dns/ssl order", async () => {
+    test("DNS verification checks all domain status components together", async () => {
       await linkedProject();
       mockIsAgent.mockReturnValue(false);
       mockConfirm
@@ -728,12 +792,6 @@ describe("deploy", () => {
           domainStatus({ status: "incomplete", dns: false, ssl: false, mail: false }),
         )
         .mockResolvedValueOnce(
-          domainStatus({ status: "incomplete", dns: false, ssl: false, mail: true }),
-        )
-        .mockResolvedValueOnce(
-          domainStatus({ status: "incomplete", dns: true, ssl: false, mail: true }),
-        )
-        .mockResolvedValueOnce(
           domainStatus({ status: "complete", dns: true, ssl: true, mail: true }),
         );
       mockPatchInstanceConfig.mockResolvedValueOnce({});
@@ -741,17 +799,12 @@ describe("deploy", () => {
       await runDeploy({});
       const err = stripAnsi(captured.err);
 
-      const mailIdx = err.indexOf("Mail sender verified");
-      const dnsIdx = err.indexOf("DNS verified for example.com");
-      const sslIdx = err.indexOf("SSL certificate issued for example.com");
-      expect(mailIdx).toBeGreaterThan(-1);
-      expect(dnsIdx).toBeGreaterThan(-1);
-      expect(sslIdx).toBeGreaterThan(-1);
-      expect(mailIdx).toBeLessThan(dnsIdx);
-      expect(dnsIdx).toBeLessThan(sslIdx);
+      expect(err).toContain("DNS verified for example.com");
+      expect(err).not.toContain("Mail sender verified");
+      expect(err).not.toContain("SSL certificate issued for example.com");
     });
 
-    test("DNS verification gives each component its own retry budget", async () => {
+    test("DNS verification uses one shared retry budget for all domain status components", async () => {
       await linkedProject();
       mockIsAgent.mockReturnValue(false);
       mockConfirm
@@ -781,22 +834,14 @@ describe("deploy", () => {
           domainStatus({ status: "incomplete", dns: false, ssl: false, mail: false }),
         )
         .mockResolvedValueOnce(
-          domainStatus({ status: "incomplete", dns: false, ssl: false, mail: true }),
-        )
-        .mockResolvedValueOnce(
-          domainStatus({ status: "incomplete", dns: true, ssl: false, mail: true }),
-        )
-        .mockResolvedValueOnce(
           domainStatus({ status: "complete", dns: true, ssl: true, mail: true }),
         );
 
       await runDeploy({});
       const err = stripAnsi(captured.err);
 
-      expect(err).toContain("Mail sender verified");
       expect(err).toContain("DNS verified for example.com");
-      expect(err).toContain("SSL certificate issued for example.com");
-      expect(mockGetApplicationDomainStatus).toHaveBeenCalledTimes(8);
+      expect(mockGetApplicationDomainStatus).toHaveBeenCalledTimes(6);
     });
 
     test("DNS verification pauses when status stays incomplete despite all exposed booleans true (proxy_ok case)", async () => {
@@ -873,6 +918,12 @@ describe("deploy", () => {
           message: "How would you like to set up your production domain?",
         }),
       );
+    });
+
+    test("trims the collected production domain before returning it", async () => {
+      mockInput.mockResolvedValueOnce(" example.com ");
+
+      await expect(collectCustomDomain()).resolves.toBe("example.com");
     });
 
     test("Ctrl-C before changes are made reports cancelled instead of done", async () => {
@@ -1380,24 +1431,21 @@ describe("deploy", () => {
       mockPassword.mockResolvedValueOnce("google-secret");
       mockPatchInstanceConfig.mockResolvedValueOnce({});
 
-      const writeSpy = spyOn(Bun, "write").mockResolvedValue(0);
-      try {
-        await runDeploy({});
-        const err = stripAnsi(captured.err);
+      await runDeploy({});
+      const err = stripAnsi(captured.err);
 
-        const zoneCall = writeSpy.mock.calls.find((call) => String(call[0]).endsWith(".zone"));
-        expect(zoneCall).toBeDefined();
-        const pathArg = zoneCall![0];
-        const contentArg = zoneCall![1];
-        expect(String(pathArg)).toMatch(/clerk-example\.com\.zone$/);
-        expect(String(contentArg)).toContain("$ORIGIN example.com.");
-        expect(String(contentArg)).toContain("$TTL 300");
-        expect(String(contentArg)).toContain("IN\tCNAME");
-        expect(err).toContain("Wrote ");
-        expect(err).toContain("clerk-example.com.zone");
-      } finally {
-        writeSpy.mockRestore();
-      }
+      const zoneCall = writeSpy.mock.calls.find((call: unknown[]) =>
+        String(call[0]).endsWith(".zone"),
+      );
+      expect(zoneCall).toBeDefined();
+      const pathArg = zoneCall![0];
+      const contentArg = zoneCall![1];
+      expect(String(pathArg)).toMatch(/clerk-example\.com\.zone$/);
+      expect(String(contentArg)).toContain("$ORIGIN example.com.");
+      expect(String(contentArg)).toContain("$TTL 300");
+      expect(String(contentArg)).toContain("IN\tCNAME");
+      expect(err).toContain("Wrote ");
+      expect(err).toContain("clerk-example.com.zone");
     });
 
     test("BIND export prompt writes no file when the user declines", async () => {
@@ -1419,17 +1467,14 @@ describe("deploy", () => {
       mockPassword.mockResolvedValueOnce("google-secret");
       mockPatchInstanceConfig.mockResolvedValueOnce({});
 
-      const writeSpy = spyOn(Bun, "write").mockResolvedValue(0);
-      try {
-        await runDeploy({});
-        const err = stripAnsi(captured.err);
+      await runDeploy({});
+      const err = stripAnsi(captured.err);
 
-        const zoneCall = writeSpy.mock.calls.find((call) => String(call[0]).endsWith(".zone"));
-        expect(zoneCall).toBeUndefined();
-        expect(err).not.toContain("Wrote ");
-      } finally {
-        writeSpy.mockRestore();
-      }
+      const zoneCall = writeSpy.mock.calls.find((call: unknown[]) =>
+        String(call[0]).endsWith(".zone"),
+      );
+      expect(zoneCall).toBeUndefined();
+      expect(err).not.toContain("Wrote ");
     });
 
     test("BIND export prompt is skipped when cnameTargets is empty", async () => {
@@ -1451,21 +1496,18 @@ describe("deploy", () => {
       mockPassword.mockResolvedValueOnce("google-secret");
       mockPatchInstanceConfig.mockResolvedValueOnce({});
 
-      const writeSpy = spyOn(Bun, "write").mockResolvedValue(0);
-      try {
-        await runDeploy({});
+      await runDeploy({});
 
-        // confirm() was never called for the BIND prompt in this run.
-        const bindPromptCalls = mockConfirm.mock.calls.filter((call) => {
-          const arg = call[0] as { message?: string } | undefined;
-          return typeof arg?.message === "string" && arg.message.includes("BIND zone file");
-        });
-        expect(bindPromptCalls.length).toBe(0);
-        const zoneCall = writeSpy.mock.calls.find((call) => String(call[0]).endsWith(".zone"));
-        expect(zoneCall).toBeUndefined();
-      } finally {
-        writeSpy.mockRestore();
-      }
+      // confirm() was never called for the BIND prompt in this run.
+      const bindPromptCalls = mockConfirm.mock.calls.filter((call) => {
+        const arg = call[0] as { message?: string } | undefined;
+        return typeof arg?.message === "string" && arg.message.includes("BIND zone file");
+      });
+      expect(bindPromptCalls.length).toBe(0);
+      const zoneCall = writeSpy.mock.calls.find((call: unknown[]) =>
+        String(call[0]).endsWith(".zone"),
+      );
+      expect(zoneCall).toBeUndefined();
     });
 
     test("DNS verification timeout names the specific pending components from domain status", async () => {
@@ -1486,8 +1528,8 @@ describe("deploy", () => {
       await runDeploy({});
       const err = stripAnsi(captured.err);
 
-      expect(err).toContain("SSL, mail still pending for example.com");
-      expect(err).not.toContain("DNS, SSL, mail still pending");
+      expect(err).toContain("SSL, email DNS still pending for example.com");
+      expect(err).not.toContain("DNS, SSL, email DNS still pending");
     });
 
     test("DNS verification treats absent components as pending", async () => {
@@ -1508,7 +1550,7 @@ describe("deploy", () => {
       await runDeploy({});
       const err = stripAnsi(captured.err);
 
-      expect(err).toContain("DNS: pending  SSL: ✓  Mail: ✓");
+      expect(err).toContain("DNS: pending  SSL: ✓  Email DNS: ✓");
       expect(err).toContain("DNS still pending for example.com");
       expect(err).not.toContain("Domain      Verified");
     });
@@ -1535,7 +1577,7 @@ describe("deploy", () => {
       await runDeploy({});
       const err = stripAnsi(captured.err);
 
-      expect(err).toContain("DNS: ✓  SSL: pending  Mail: ✓");
+      expect(err).toContain("DNS: ✓  SSL: pending  Email DNS: ✓");
       expect(err).toContain("SSL still pending for example.com");
       expect(err.match(/Add the following records at your DNS provider:/g)).toHaveLength(1);
     });
@@ -1681,6 +1723,21 @@ describe("deploy", () => {
       expect(err).toContain("No deploy actions remain.");
       expect(mockSelect).not.toHaveBeenCalled();
       expect(mockInput).not.toHaveBeenCalled();
+    });
+
+    test("plain deploy persists production instance discovered from live API", async () => {
+      await linkedProject();
+      mockIsAgent.mockReturnValue(false);
+      mockLiveProduction({
+        instanceId: "ins_prod_live",
+        developmentConfig: {},
+        productionConfig: {},
+      });
+
+      await runDeploy({});
+
+      const config = await readConfig();
+      expect(config.profiles[process.cwd()]?.instances.production).toBe("ins_prod_live");
     });
 
     test("custom-domain DNS setup can skip verification and later resume", async () => {
@@ -1906,7 +1963,7 @@ describe("deploy", () => {
       await runDeploy({});
       const err = stripAnsi(captured.err);
       expect(err).toContain("DNS propagation can take several hours");
-      expect(err).toContain("DNS, SSL, mail still pending for example.com");
+      expect(err).toContain("DNS, SSL, email DNS still pending for example.com");
       expect(err).toContain("DNS: pending");
       expect(err.match(/Add the following records at your DNS provider:/g)).toHaveLength(2);
       expect(err).toContain("Host:  clerk.example.com");

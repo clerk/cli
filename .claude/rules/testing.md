@@ -24,6 +24,8 @@ bun run test
 
 This runs each unit and integration test file as a separate `bun test` subprocess via `scripts/run-tests.ts`, isolating module state between files. E2E fixtures are excluded and require separate setup (see `rules/e2e.md`).
 
+When running multiple test files directly with `bun test`, always pass `--isolate` or `--parallel`. `--parallel` implies `--isolate`. Without isolation, Bun can share module mocks across files and produce order-dependent failures.
+
 Prefer `spyOn()` for mocking, and always restore spies in `afterAll` with `mockRestore()`.
 
 Never use `for` or `forEach` loops inside a single test to verify multiple inputs or cases — use `test.each` (or `it.each` / `describe.each`) so each case is its own reported test case with its own name, setup/teardown, and pinpointed failure output.
