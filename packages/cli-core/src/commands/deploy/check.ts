@@ -1,22 +1,29 @@
 import { isAgent } from "../../mode.ts";
 import { CliError, ERROR_CODE, EXIT_CODE } from "../../lib/errors.ts";
 import { log } from "../../lib/log.ts";
+import { sleep } from "../../lib/sleep.ts";
 import { withSpinner } from "../../lib/spinner.ts";
 import { deployComponentLabels } from "./copy.ts";
 import {
   buildDeployStatusReport,
-  checkDeployStatusOnce,
+  loadProductionDomain,
   resolveDeployContext,
   resolveDeployState,
+  triggerDeployStatusCheck,
   waitForDeployStatus,
   type DeployState,
   type DeployStatusOutcome,
   type DeployStatusReport,
 } from "./status.ts";
+import type { DeployContext } from "./state.ts";
 
-type DeployCheckOptions = Record<string, never>;
+type DeployCheckOptions = {
+  wait?: boolean;
+};
 
-export async function deployCheck(_options: DeployCheckOptions = {}): Promise<void> {
+const DEPLOY_CHECK_PREFLIGHT_DELAY_MS = 2000;
+
+export async function deployCheck(options: DeployCheckOptions = {}): Promise<void> {
   const ctx = await resolveDeployContext();
   if (!ctx.appId || !ctx.developmentInstanceId) {
     throw new CliError(
@@ -25,36 +32,49 @@ export async function deployCheck(_options: DeployCheckOptions = {}): Promise<vo
     );
   }
 
+  const preflightTriggered = await runPreflightDeployStatusCheck(ctx);
   const state = await resolveDeployState(ctx, { statusFailureMode: "throw" });
-  const outcome = state.kind === "active" ? await runCheck(state) : null;
+  const shouldWait = options.wait === true || !isAgent();
+  const outcome =
+    state.kind === "active" && shouldWait
+      ? await runWait(state, { triggerCheck: !preflightTriggered })
+      : null;
   const report = buildDeployStatusReport(state, outcome);
 
   emitReport(report);
   process.exitCode = report.complete ? EXIT_CODE.SUCCESS : EXIT_CODE.GENERAL;
 }
 
-function runCheck(state: Extract<DeployState, { kind: "active" }>): Promise<DeployStatusOutcome> {
-  if (isAgent()) return runQuickCheck(state);
-  return runWait(state);
+async function runPreflightDeployStatusCheck(ctx: DeployContext): Promise<boolean> {
+  if (!ctx.productionInstanceId) return false;
+
+  const domain = await loadProductionDomain(ctx);
+  if (!domain) return false;
+
+  const domainIdOrName = domain.id ?? domain.name;
+  await triggerDeployStatusCheck(ctx.appId, domainIdOrName);
+  await sleep(DEPLOY_CHECK_PREFLIGHT_DELAY_MS);
+  return true;
 }
 
-function runQuickCheck(
+function runWait(
   state: Extract<DeployState, { kind: "active" }>,
+  options: { triggerCheck?: boolean } = {},
 ): Promise<DeployStatusOutcome> {
   const { snapshot } = state;
   const domainIdOrName = snapshot.productionDomainId ?? snapshot.domain;
-  return checkDeployStatusOnce(snapshot.appId, domainIdOrName);
-}
-
-function runWait(state: Extract<DeployState, { kind: "active" }>): Promise<DeployStatusOutcome> {
-  const { snapshot } = state;
-  const domainIdOrName = snapshot.productionDomainId ?? snapshot.domain;
-  return waitForDeployStatus(snapshot.appId, domainIdOrName, snapshot.domain, {
-    runVerification: (progressLabel, work) => withSpinner(progressLabel, work),
-    onVerified: () => {
-      if (!isAgent()) log.success(deployComponentLabels("dns", snapshot.domain).done);
+  return waitForDeployStatus(
+    snapshot.appId,
+    domainIdOrName,
+    snapshot.domain,
+    {
+      runVerification: (progressLabel, work) => withSpinner(progressLabel, work),
+      onVerified: () => {
+        if (!isAgent()) log.success(deployComponentLabels("dns", snapshot.domain).done);
+      },
     },
-  });
+    options,
+  );
 }
 
 function emitReport(report: DeployStatusReport): void {

@@ -23,10 +23,11 @@ export async function confirmProceed(): Promise<boolean> {
 }
 
 export async function collectCustomDomain(): Promise<string> {
-  return input({
+  const domain = await input({
     message: "Production domain (e.g. example.com)",
     validate: (value) => validateDomain(value),
   });
+  return domain.trim();
 }
 
 export function validateDomain(value: string): true | string {

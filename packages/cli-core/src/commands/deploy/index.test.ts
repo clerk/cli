@@ -72,6 +72,7 @@ mock.module("../../lib/sleep.ts", () => ({
 const { _setConfigDir, readConfig, setProfile } = await import("../../lib/config.ts");
 const { deploy } = await import("./index.ts");
 const { providerSetupIntro } = await import("./providers.ts");
+const { collectCustomDomain } = await import("./prompts.ts");
 
 function stripAnsi(value: string): string {
   return value.replace(new RegExp(`${String.fromCharCode(27)}\\[[0-9;]*m`, "g"), "");
@@ -906,6 +907,12 @@ describe("deploy", () => {
           message: "How would you like to set up your production domain?",
         }),
       );
+    });
+
+    test("trims the collected production domain before returning it", async () => {
+      mockInput.mockResolvedValueOnce(" example.com ");
+
+      await expect(collectCustomDomain()).resolves.toBe("example.com");
     });
 
     test("Ctrl-C before changes are made reports cancelled instead of done", async () => {

@@ -934,6 +934,7 @@ Tutorial — enable completions for your shell:
   deployCmd
     .command("check")
     .description("Verify a production deploy (read-only)")
+    .option("--wait", "Wait for DNS, SSL, and email DNS verification with retries")
     .action(deployCheck);
 
   registerExtras(program);

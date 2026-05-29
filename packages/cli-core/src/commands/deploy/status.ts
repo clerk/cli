@@ -438,8 +438,11 @@ export async function waitForDeployStatus(
   domainIdOrName: string,
   domain: string,
   handlers: DeployProgressHandlers,
+  options: { triggerCheck?: boolean } = {},
 ): Promise<DeployStatusOutcome> {
-  await triggerDeployStatusCheck(appId, domainIdOrName);
+  if (options.triggerCheck !== false) {
+    await triggerDeployStatusCheck(appId, domainIdOrName);
+  }
   let response = await mapDeployError(getApplicationDomainStatus(appId, domainIdOrName));
   let status = deployComponentStatusFromDomainStatus(response);
 
@@ -511,7 +514,10 @@ async function sleepWithRetryCountdown(
   }
 }
 
-async function triggerDeployStatusCheck(appId: string, domainIdOrName: string): Promise<void> {
+export async function triggerDeployStatusCheck(
+  appId: string,
+  domainIdOrName: string,
+): Promise<void> {
   try {
     await mapDeployError(triggerApplicationDomainDNSCheck(appId, domainIdOrName));
   } catch (error) {

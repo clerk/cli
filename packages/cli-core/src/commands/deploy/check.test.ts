@@ -22,6 +22,7 @@ const mockFetchInstanceConfig = mock();
 const mockFetchInstanceConfigSchema = mock();
 const mockGetApplicationDomainStatus = mock();
 const mockTriggerApplicationDomainDNSCheck = mock();
+const mockSleep = mock((_ms: number) => Promise.resolve());
 
 mock.module("../../lib/plapi.ts", () => ({
   fetchApplication: (...args: unknown[]) => mockFetchApplication(...args),
@@ -34,7 +35,7 @@ mock.module("../../lib/plapi.ts", () => ({
 }));
 
 mock.module("../../lib/sleep.ts", () => ({
-  sleep: () => Promise.resolve(),
+  sleep: (ms: number) => mockSleep(ms),
 }));
 
 const { _setConfigDir, setProfile } = await import("../../lib/config.ts");
@@ -145,6 +146,7 @@ describe("deploy check", () => {
     mockFetchInstanceConfigSchema.mockReset();
     mockGetApplicationDomainStatus.mockReset();
     mockTriggerApplicationDomainDNSCheck.mockReset();
+    mockSleep.mockClear();
   });
 
   test("agent mode not_started emits JSON with state not_started and exit 1", async () => {
@@ -157,6 +159,8 @@ describe("deploy check", () => {
     expect(payload.state).toBe("not_started");
     expect(payload.complete).toBe(false);
     expect(captured.out).not.toContain("error");
+    expect(mockTriggerApplicationDomainDNSCheck).not.toHaveBeenCalled();
+    expect(mockSleep).not.toHaveBeenCalled();
   });
 
   test("agent mode complete triggers DNS check and emits complete state", async () => {
@@ -170,6 +174,8 @@ describe("deploy check", () => {
     await deployCheck();
 
     expect(mockTriggerApplicationDomainDNSCheck).toHaveBeenCalledWith("app_1", "dmn_1");
+    expect(mockTriggerApplicationDomainDNSCheck).toHaveBeenCalledTimes(1);
+    expect(mockSleep).toHaveBeenCalledWith(2000);
     expect(process.exitCode).toBe(EXIT_CODE.SUCCESS);
     const payload = JSON.parse(captured.out);
     expect(payload).toMatchObject({
@@ -201,6 +207,13 @@ describe("deploy check", () => {
 
     expect(process.exitCode).toBe(EXIT_CODE.GENERAL);
     expect(mockGetApplicationDomainStatus).toHaveBeenCalledTimes(1);
+    expect(mockTriggerApplicationDomainDNSCheck).toHaveBeenCalledTimes(1);
+    expect(mockTriggerApplicationDomainDNSCheck.mock.invocationCallOrder[0]).toBeLessThan(
+      mockSleep.mock.invocationCallOrder[0]!,
+    );
+    expect(mockSleep.mock.invocationCallOrder[0]).toBeLessThan(
+      mockGetApplicationDomainStatus.mock.invocationCallOrder[0]!,
+    );
     const payload = JSON.parse(captured.out);
     expect(payload.state).toBe("domain_pending");
     expect(payload.complete).toBe(false);
@@ -210,6 +223,24 @@ describe("deploy check", () => {
       host: "clerk.example.com",
       value: "frontend-api.clerk.services",
     });
+  });
+
+  test("agent mode wait polls with retry budget before reporting incomplete", async () => {
+    mockFetchApplication.mockResolvedValue(appWith(true));
+    mockDomain();
+    mockOAuthComplete();
+    mockTriggerApplicationDomainDNSCheck.mockResolvedValue(pendingDnsDomainStatus());
+    mockGetApplicationDomainStatus.mockResolvedValue(pendingDnsDomainStatus());
+
+    await deployCheck({ wait: true });
+
+    expect(process.exitCode).toBe(EXIT_CODE.GENERAL);
+    expect(mockTriggerApplicationDomainDNSCheck).toHaveBeenCalledTimes(1);
+    expect(mockGetApplicationDomainStatus).toHaveBeenCalledTimes(7);
+    expect(mockSleep).toHaveBeenCalledWith(2000);
+    const payload = JSON.parse(captured.out);
+    expect(payload.state).toBe("domain_pending");
+    expect(payload.complete).toBe(false);
   });
 
   test("agent mode status snapshot failures surface as errors", async () => {
@@ -223,6 +254,6 @@ describe("deploy check", () => {
     await expect(deployCheck()).rejects.toBeInstanceOf(PlapiError);
 
     expect(captured.out).toBe("");
-    expect(mockTriggerApplicationDomainDNSCheck).not.toHaveBeenCalled();
+    expect(mockTriggerApplicationDomainDNSCheck).toHaveBeenCalledWith("app_1", "dmn_1");
   });
 });
