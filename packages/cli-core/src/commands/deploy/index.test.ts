@@ -1168,6 +1168,52 @@ describe("deploy", () => {
       });
     });
 
+    test("OAuth walkthrough re-prompts without another walkthrough for non-Google providers", async () => {
+      await linkedProject({
+        instances: { development: "ins_dev_123", production: "ins_prod_github" },
+      });
+      mockIsAgent.mockReturnValue(false);
+      mockLiveProduction({
+        instanceId: "ins_prod_github",
+        developmentConfig: {
+          connection_oauth_github: { enabled: true },
+        },
+        productionConfig: {
+          connection_oauth_github: { enabled: true, client_id: "", client_secret: "" },
+        },
+      });
+      mockOpenBrowser.mockResolvedValueOnce({ ok: true, launcher: "test" });
+      mockSelect.mockResolvedValueOnce("walkthrough").mockResolvedValueOnce("have-credentials");
+      mockInput.mockResolvedValueOnce("github-client-id");
+      mockPassword.mockResolvedValueOnce("github-secret");
+
+      await runDeploy({});
+
+      const oauthSelects = mockSelect.mock.calls
+        .map(
+          (call) =>
+            call[0] as { message?: string; choices?: Array<{ name: string; value: string }> },
+        )
+        .filter((call) => String(call.message).includes("GitHub OAuth"));
+
+      expect(oauthSelects).toHaveLength(2);
+      expect(oauthSelects[1]?.choices).not.toContainEqual({
+        name: "Walk me through creating them",
+        value: "walkthrough",
+      });
+      expect(oauthSelects[1]?.choices).not.toContainEqual({
+        name: "Load credentials from a Google Cloud Console JSON file",
+        value: "google-json",
+      });
+      expect(mockPatchInstanceConfig).toHaveBeenCalledWith("app_xyz789", "ins_prod_github", {
+        connection_oauth_github: {
+          enabled: true,
+          client_id: "github-client-id",
+          client_secret: "github-secret",
+        },
+      });
+    });
+
     test("Apple .p8 file prompt validates path and PEM framing before continuing", async () => {
       await linkedProject({
         instances: { development: "ins_dev_123", production: "ins_prod_apple" },

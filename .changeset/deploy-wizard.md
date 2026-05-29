@@ -9,4 +9,4 @@ Add `clerk deploy`, an interactive wizard that promotes a Clerk application from
 - Optionally exports the DNS records as a BIND zone file at `./clerk-<domain>.zone` for import into providers like Cloudflare, Route 53, and Google Cloud DNS.
 - Resumes from the next pending step on subsequent runs, including reshowing the CNAME records when DNS is not yet verified.
 - Uses provider schemas to collect production OAuth credentials for broader built-in provider support.
-- Lets Google OAuth setup load the downloaded credentials JSON after opening the provider docs.
+- Returns users to credential choices after opening provider docs, including Google JSON import when supported.
