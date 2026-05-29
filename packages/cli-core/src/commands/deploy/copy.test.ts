@@ -60,6 +60,25 @@ describe("bindZoneFile", () => {
   });
 });
 
+describe("dnsRecords", () => {
+  test("labels DKIM (_domainkey) records as email records, not bare CNAME", () => {
+    const targets: CnameTarget[] = [
+      { host: "clk._domainkey.example.com", value: "dkim1.clerk.services", required: false },
+      { host: "clk2._domainkey.example.com", value: "dkim2.clerk.services", required: false },
+    ];
+    const output = dnsRecords(targets);
+
+    expect(output).toContain("    Host:  clk._domainkey.example.com");
+    expect(output).toContain("    Host:  clk2._domainkey.example.com");
+    // Both DKIM hosts must carry the email label, not fall through to the
+    // generic "CNAME" default (the host's first label is "clk"/"clk2").
+    expect(
+      output.filter((line) => line.includes("Email (Clerk handles SPF/DKIM automatically)")),
+    ).toHaveLength(2);
+    expect(output.some((line) => line.trimStart().startsWith("CNAME"))).toBe(false);
+  });
+});
+
 describe("deployComponentLabels", () => {
   test("returns email DNS in-progress and done labels", () => {
     expect(deployComponentLabels("mail", "example.com")).toEqual({

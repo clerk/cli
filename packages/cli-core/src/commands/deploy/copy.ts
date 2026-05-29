@@ -101,6 +101,8 @@ function cnameTargetLabel(host: string): string {
       return "Frontend API";
     case "accounts":
       return "Account portal";
+    // `host.split(".", 1)[0]` yields only the first label, so DKIM records
+    // (clk._domainkey, clk2._domainkey) arrive here as "clk"/"clk2".
     case "clkmail":
     case "clk":
     case "clk2":
