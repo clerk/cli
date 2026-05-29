@@ -73,6 +73,10 @@ describe("generateCompletions", () => {
       expect(names).toContain("patch");
       expect(names).toContain("put");
     });
+
+    test("completes deploy subcommands", () => {
+      expect(completionNames("deploy", "")).toContain("status");
+    });
   });
 
   describe("alias completion", () => {

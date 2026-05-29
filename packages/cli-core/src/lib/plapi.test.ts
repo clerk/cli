@@ -10,10 +10,15 @@ mock.module("./credential-store.ts", () => ({
 const {
   fetchApplication,
   fetchInstanceConfig,
+  fetchInstanceConfigSchema,
   putInstanceConfig,
   patchInstanceConfig,
   listApplications,
   createApplication,
+  createProductionInstance,
+  getApplicationDomainStatus,
+  triggerApplicationDomainDNSCheck,
+  listApplicationDomains,
 } = await import("./plapi.ts");
 const { AuthError, PlapiError } = await import("./errors.ts");
 
@@ -120,6 +125,39 @@ describe("plapi", () => {
 
     await fetchInstanceConfig("app_1", "ins_1");
     expect(requestedUrl).toStartWith("https://api.clerk.com/");
+  });
+
+  describe("fetchInstanceConfigSchema", () => {
+    test("constructs schema URL without keys", async () => {
+      let requestedUrl = "";
+      stubFetch(async (input) => {
+        requestedUrl = input.toString();
+        return new Response(JSON.stringify({ properties: {} }), { status: 200 });
+      });
+
+      await fetchInstanceConfigSchema("app_abc", "ins_def");
+
+      expect(requestedUrl).toBe(
+        "https://api.clerk.com/v1/platform/applications/app_abc/instances/ins_def/config/schema",
+      );
+    });
+
+    test("appends repeated keys query params", async () => {
+      let requestedUrl = "";
+      stubFetch(async (input) => {
+        requestedUrl = input.toString();
+        return new Response(JSON.stringify({ properties: {} }), { status: 200 });
+      });
+
+      await fetchInstanceConfigSchema("app_abc", "ins_def", [
+        "connection_oauth_google,connection_oauth_discord",
+        "connection_oauth_apple",
+      ]);
+
+      expect(requestedUrl).toBe(
+        "https://api.clerk.com/v1/platform/applications/app_abc/instances/ins_def/config/schema?keys=connection_oauth_google&keys=connection_oauth_discord&keys=connection_oauth_apple",
+      );
+    });
   });
 
   describe("putInstanceConfig", () => {
@@ -378,6 +416,150 @@ describe("plapi", () => {
         expect(error).toBeInstanceOf(PlapiError);
         expect((error as InstanceType<typeof PlapiError>).status).toBe(403);
       }
+    });
+  });
+
+  describe("createProductionInstance", () => {
+    test("sends POST to instances with clone params", async () => {
+      let capturedMethod = "";
+      let capturedUrl = "";
+      let capturedBody = "";
+      const responseBody = {
+        object: "instance" as const,
+        id: "ins_prod_123",
+        environment_type: "production" as const,
+        active_domain: {
+          object: "domain" as const,
+          id: "dmn_123",
+          name: "example.com",
+          is_satellite: false,
+          is_provider_domain: false,
+          frontend_api_url: "https://clerk.example.com",
+          development_origin: "",
+          cname_targets: [
+            { host: "clerk.example.com", value: "frontend-api.clerk.services", required: true },
+          ],
+          created_at: "2026-05-06T00:00:00Z",
+          updated_at: "2026-05-06T00:00:00Z",
+        },
+        publishable_key: "pk_live_123",
+        secret_key: "sk_live_123",
+        created_at: 1770000000000,
+        updated_at: 1770000000000,
+      };
+      stubFetch(async (input, init) => {
+        capturedMethod = init?.method ?? "GET";
+        capturedUrl = input.toString();
+        capturedBody = init?.body as string;
+        return new Response(JSON.stringify(responseBody), { status: 201 });
+      });
+
+      const result = await createProductionInstance("app_abc", {
+        domain: "example.com",
+        environment_type: "production",
+        clone_instance_id: "ins_dev_123",
+      });
+
+      expect(capturedMethod).toBe("POST");
+      expect(capturedUrl).toBe("https://api.clerk.com/v1/platform/applications/app_abc/instances");
+      expect(JSON.parse(capturedBody)).toEqual({
+        domain: "example.com",
+        environment_type: "production",
+        clone_instance_id: "ins_dev_123",
+      });
+      expect(result).toEqual(responseBody);
+    });
+  });
+
+  describe("getApplicationDomainStatus", () => {
+    test("sends GET to domain status and returns parsed status", async () => {
+      let capturedMethod = "";
+      let capturedUrl = "";
+      const responseBody = {
+        status: "complete",
+        dns: { status: "complete", cnames: {} },
+        ssl: { status: "complete", required: true, failure_hints: [] },
+        mail: { status: "complete", required: true },
+      } as const;
+      stubFetch(async (input, init) => {
+        capturedMethod = init?.method ?? "GET";
+        capturedUrl = input.toString();
+        return new Response(JSON.stringify(responseBody), { status: 200 });
+      });
+
+      const result = await getApplicationDomainStatus("app_abc", "dmn_123");
+
+      expect(capturedMethod).toBe("GET");
+      expect(capturedUrl).toBe(
+        "https://api.clerk.com/v1/platform/applications/app_abc/domains/dmn_123/status",
+      );
+      expect(result).toEqual(responseBody);
+    });
+  });
+
+  describe("triggerApplicationDomainDNSCheck", () => {
+    test("sends POST to domain dns_check and returns parsed status", async () => {
+      let capturedMethod = "";
+      let capturedUrl = "";
+      const responseBody = {
+        status: "incomplete",
+        domain_id: "dmn_123",
+        last_run_at: 1779739200000,
+        dns: { status: "not_started", cnames: {} },
+        ssl: { status: "not_started", required: true, failure_hints: [] },
+        mail: { status: "not_started", required: true },
+      } as const;
+      stubFetch(async (input, init) => {
+        capturedMethod = init?.method ?? "GET";
+        capturedUrl = input.toString();
+        return new Response(JSON.stringify(responseBody), { status: 200 });
+      });
+
+      const result = await triggerApplicationDomainDNSCheck("app_abc", "dmn_123");
+
+      expect(capturedMethod).toBe("POST");
+      expect(capturedUrl).toBe(
+        "https://api.clerk.com/v1/platform/applications/app_abc/domains/dmn_123/dns_check",
+      );
+      expect(result).toEqual(responseBody);
+    });
+  });
+
+  describe("listApplicationDomains", () => {
+    test("sends GET to application domains and returns parsed domains", async () => {
+      let capturedMethod = "";
+      let capturedUrl = "";
+      const responseBody = {
+        data: [
+          {
+            object: "domain" as const,
+            id: "dmn_123",
+            name: "example.com",
+            is_satellite: false,
+            is_provider_domain: false,
+            frontend_api_url: "https://clerk.example.com",
+            accounts_portal_url: "https://accounts.example.com",
+            development_origin: "",
+            cname_targets: [
+              { host: "clerk.example.com", value: "frontend-api.clerk.services", required: true },
+            ],
+            created_at: "2026-05-06T00:00:00Z",
+            updated_at: "2026-05-06T00:00:00Z",
+          },
+        ],
+        total_count: 1,
+      };
+      stubFetch(async (input, init) => {
+        capturedMethod = init?.method ?? "GET";
+        capturedUrl = input.toString();
+        return new Response(JSON.stringify(responseBody), { status: 200 });
+      });
+
+      const result = await listApplicationDomains("app_abc");
+
+      expect(capturedMethod).toBe("GET");
+      expect(capturedUrl).toBe("https://api.clerk.com/v1/platform/applications/app_abc/domains");
+      expect(result).toEqual(responseBody);
     });
   });
 });

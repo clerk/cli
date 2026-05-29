@@ -1,4 +1,5 @@
 import { isAgent } from "../mode.ts";
+import { ExitPromptError } from "@inquirer/core";
 
 /** Standard process exit codes used by the CLI. */
 export const EXIT_CODE = {
@@ -45,6 +46,16 @@ export const ERROR_CODE = {
   DOCTOR_FAILED: "doctor_failed",
   /** Frontend API request failed. */
   FAPI_ERROR: "fapi_error",
+  /** Subscription plan does not cover the dev instance's enabled features. */
+  PLAN_INSUFFICIENT: "plan_insufficient",
+  /** Application already has a production instance; flow should re-derive state. */
+  PRODUCTION_INSTANCE_EXISTS: "production_instance_exists",
+  /** `home_url` is a provider domain (e.g. *.vercel.app) and not allowed. */
+  PROVIDER_DOMAIN_NOT_ALLOWED: "provider_domain_not_allowed",
+  /** `home_url` is already claimed by another instance. */
+  HOME_URL_TAKEN: "home_url_taken",
+  /** PLAPI rejected a request parameter as malformed. */
+  FORM_PARAM_INVALID: "form_param_invalid",
 } as const;
 
 export type ErrorCode = (typeof ERROR_CODE)[keyof typeof ERROR_CODE];
@@ -214,6 +225,15 @@ function parseApiBody(status: number, body: string): ParsedApiBody {
     meta: first.meta ?? null,
     clerkTraceId: envelope.clerk_trace_id ?? null,
   };
+}
+
+export function isPromptExitError(error: unknown): boolean {
+  return (
+    error instanceof ExitPromptError ||
+    (error instanceof Error &&
+      error.name === "ExitPromptError" &&
+      error.message.includes("User force closed the prompt"))
+  );
 }
 
 /**

@@ -1,257 +1,626 @@
-import { input, password } from "@inquirer/prompts";
-import { select } from "../../lib/listage.ts";
-import { confirm } from "../../lib/prompts.ts";
 import { isAgent } from "../../mode.ts";
-import { dim, bold, cyan, green, blue } from "../../lib/color.ts";
-import { printNextSteps, NEXT_STEPS } from "../../lib/next-steps.ts";
-import { openBrowser } from "../../lib/open.ts";
-import { log } from "../../lib/log.ts";
+import { isInsideGutter, log } from "../../lib/log.ts";
+import { bar, intro, outro, withSpinner } from "../../lib/spinner.ts";
+import {
+  CliError,
+  ERROR_CODE,
+  UserAbortError,
+  isPromptExitError,
+  throwUsageError,
+} from "../../lib/errors.ts";
+import { setProfile } from "../../lib/config.ts";
+import {
+  createProductionInstance as apiCreateProductionInstance,
+  patchInstanceConfig,
+  type CnameTarget,
+  type ProductionInstanceResponse,
+} from "../../lib/plapi.ts";
+import {
+  INTRO_PREAMBLE,
+  OAUTH_SECTION_INTRO,
+  type DeployPlanStep,
+  deployComponentLabels,
+  deployComponentStatus,
+  deployStatusPendingFooter,
+  domainAssociationSummary,
+  bindZoneFile,
+  dnsDashboardHandoff,
+  dnsIntro,
+  dnsRecords,
+  nextStepsBlock,
+  pendingDnsRecords,
+  printPlan,
+  productionSummary,
+} from "./copy.ts";
+import { mapDeployError } from "./errors.ts";
+import {
+  providerLabel,
+  providerSetupIntro,
+  showOAuthWalkthrough,
+  type OAuthProvider,
+  type OAuthProviderDescriptor,
+} from "./providers.ts";
+import {
+  chooseDnsVerificationAction,
+  chooseDnsVerificationRetryAction,
+  chooseOAuthCredentialAction,
+  collectCustomDomain,
+  collectOAuthCredentials,
+  confirmCreateProductionInstance,
+  confirmExportBindZone,
+  confirmProceed,
+} from "./prompts.ts";
+import {
+  DeployPausedError,
+  deployPausedError,
+  type DeployContext,
+  type DeployOperationState,
+} from "./state.ts";
+import {
+  buildDeployStatusReport,
+  loadDevelopmentOAuthProviders,
+  resolveDeployContext,
+  resolveDeployState,
+  resolveLiveApplicationContext,
+  resolveLiveDeploySnapshot,
+  waitForDeployStatus,
+  type DeployStatusOutcome,
+  type DiscoveredOAuthProviders,
+  type LiveDeploySnapshot,
+} from "./status.ts";
 
-const DEPLOY_PROMPT = `You are deploying a Clerk application to production. Follow these steps:
+type DeployOptions = Record<string, never>;
 
-## Prerequisites
-
-Ensure the following before starting:
-- The user is authenticated (\`clerk auth login\` has been run)
-- A Clerk application is linked to the project (\`clerk link\` has been run)
-- The project has a development instance with a working configuration
-
-## Step 1: Verify Subscription Compatibility
-
-Check that the development instance's features are covered by the application's subscription plan.
-
-- Fetch the development config: \`GET /v1/platform/applications/{appID}/instances/development/config\`
-- Fetch the subscription: \`GET /v1/platform/applications/{appID}/subscription\`
-- If any development features are not covered by the plan, the user must upgrade before deploying.
-
-## Step 2: Choose a Production Domain
-
-Ask the user which domain setup they prefer:
-
-**Option A: Custom domain**
-- The user provides their own domain (e.g., example.com)
-- DNS must be configured to point to Clerk. Check if the DNS provider supports Domain Connect for automatic setup.
-- If Domain Connect is available, direct the user to the Domain Connect URL to authorize DNS changes.
-- If not, provide the DNS records the user must add manually.
-- Verify DNS propagation: \`POST /v1/platform/applications/{appID}/domains/{domainID}/dns_check\`
-
-**Option B: Clerk-provided subdomain**
-- A subdomain like \`{adjective}-{animal}-{number}.clerk.app\` is automatically assigned.
-- No DNS configuration is needed.
-
-## Step 3: Create the Production Instance
-
-Create or configure the production instance for the application.
-- Add the domain: \`POST /v1/platform/applications/{appID}/domains\` with body \`{ "name": "<domain>", "is_satellite": false }\`
-- Note: There is currently no dedicated endpoint to add a production instance to an existing app. This may require \`POST /v1/platform/applications\` with \`environment_types: ["development", "production"]\`.
-
-## Step 4: Configure Social OAuth Providers
-
-For each social provider enabled in the development instance (e.g., Google, GitHub, Apple), production OAuth credentials are required.
-
-Check the dev config for \`connection_oauth_*\` keys. For each enabled provider:
-
-1. Collect the required credentials from the user:
-   - Most providers: \`client_id\` and \`client_secret\`
-   - Apple: also requires \`key_id\` and \`team_id\`
-
-2. When helping the user create OAuth credentials, provide these values:
-   - Authorized JavaScript origins: \`https://{domain}\` and \`https://www.{domain}\`
-   - Authorized redirect URI: \`https://accounts.{domain}/v1/oauth_callback\`
-
-3. Write credentials to production config:
-   \`PATCH /v1/platform/applications/{appID}/instances/production/config\`
-   Body: \`{ "connection_oauth_{provider}": { "enabled": true, "client_id": "...", "client_secret": "..." } }\`
-
-Provider-specific documentation: https://clerk.com/docs/guides/configure/auth-strategies/social-connections/{provider}
-
-## Step 5: Finalize
-
-After all configuration is complete:
-- Inform the user their production application is ready at \`https://{domain}\`
-- Remind them to redeploy their application with the updated Clerk production secret keys
-- They can pull production keys with: \`clerk env pull --instance prod\`
-
-## API Reference
-
-| Method | Endpoint | Purpose |
-|--------|----------|---------|
-| GET | /v1/platform/applications/{appID} | Fetch application details |
-| GET | .../instances/development/config | Read dev instance config and enabled features |
-| GET | .../instances/production/config | Check if production instance exists (404 if not) |
-| GET | .../subscription | Check subscription plan |
-| POST | /v1/platform/applications | Create application with production instance |
-| POST | .../domains | Add a custom domain |
-| POST | .../domains/{domainID}/dns_check | Trigger DNS verification |
-| PATCH | .../instances/production/config | Write OAuth credentials to production |
-
-Refer to the Clerk Platform API docs for detailed request/response schemas.`;
-
-export async function deploy(options: { debug?: boolean }) {
+export async function deploy(_options: DeployOptions = {}) {
   if (isAgent()) {
-    log.data(DEPLOY_PROMPT);
-    return;
-  }
-  if (options.debug) {
-    const { setLogLevel } = await import("../../lib/log.ts");
-    setLogLevel("debug");
-  }
-
-  log.data("[mock] This command uses mocked data and is not yet wired up to real APIs.\n");
-
-  log.debug("Checking for authenticated user and linked application...");
-
-  // Mock state — will be replaced with real lookups
-  const user = { id: "user_abc123", email: "kyle@clerk.dev" };
-  const application = { id: "app_xyz789", name: "my-saas-app" };
-
-  log.debug(`Found authenticated user: ${user.email} (${user.id})`);
-  log.debug(`Found linked application: ${application.name} (${application.id})`);
-
-  log.debug("Checking for production instance...");
-  log.debug("No production instance found.");
-
-  // Mock state — check subscription vs dev instance features
-  log.debug("Checking development instance features against subscription...");
-  const devFeatures = ["email_auth", "social_oauth"];
-  const subscriptionFeatures = ["email_auth", "social_oauth"];
-  const unsupported = devFeatures.filter((f) => !subscriptionFeatures.includes(f));
-
-  if (unsupported.length > 0) {
-    log.debug(`Found features not covered by subscription: ${unsupported.join(", ")}`);
-    log.debug("User must upgrade their plan before deploying.");
+    await emitAgentDeployHandoff();
     return;
   }
 
-  log.debug("All development features are covered by subscription.");
+  intro("clerk deploy");
+  try {
+    const ctx = await resolveDeployContext();
+    await runDeploy(ctx);
+  } catch (error) {
+    if (error instanceof DeployPausedError && isInsideGutter()) {
+      outro("Paused");
+    }
+    if (isPromptExitError(error) && isInsideGutter()) {
+      outro("Cancelled");
+      throw new UserAbortError();
+    }
+    throw error;
+  } finally {
+    // Successful and paused paths call outro themselves. This balances the
+    // intro gutter if an unexpected error escapes.
+    if (isInsideGutter()) {
+      outro("Failed");
+    }
+  }
+}
 
-  const domainChoice = await select({
-    message: "How would you like to set up your production domain?",
-    choices: [
-      {
-        name: "Use my own domain",
-        value: "custom-domain",
-      },
-      {
-        name: "Use a Clerk-provided subdomain",
-        value: "clerk-subdomain",
-      },
-    ],
-  });
-
-  let domain: string;
-
-  if (domainChoice === "custom-domain") {
-    domain = await input({
-      message: "Enter your domain:",
-    });
-    log.debug(`User provided custom domain: ${domain}`);
-  } else {
-    // Mock generated subdomain
-    const generatedSubdomain = "sincere-chinchilla-87.clerk.app";
-    domain = generatedSubdomain;
-    log.debug(`Using Clerk-provided subdomain: ${domain}`);
+async function emitAgentDeployHandoff(): Promise<void> {
+  const ctx = await resolveDeployContext();
+  if (!ctx.appId || !ctx.developmentInstanceId) {
+    throw new CliError(
+      "No Clerk project linked to this directory. Run `clerk link`, then rerun `clerk deploy`.",
+      { code: ERROR_CODE.NOT_LINKED },
+    );
   }
 
-  log.debug("Creating production instance...");
-  log.debug(`Production instance created with domain: ${domain}`);
+  const state = await resolveDeployState(ctx);
+  const report = buildDeployStatusReport(state, null);
+  log.data(JSON.stringify(report, null, 2));
+}
 
-  // DNS setup for custom domains
-  if (domainChoice === "custom-domain") {
-    log.debug(`Looking up DNS provider for ${domain}...`);
-
-    // Mock state — DNS lookup and Domain Connect check
-    const dnsProvider = { name: "Cloudflare", supportsDomainConnect: true };
-    log.debug(`DNS hosted by: ${dnsProvider.name}`);
-    log.debug(`Checking Domain Connect support for ${dnsProvider.name}...`);
-    log.debug(`${dnsProvider.name} supports Domain Connect.`);
-
-    const domainConnectUrl = `https://domainconnect.${dnsProvider.name.toLowerCase()}.com/v2/domainTemplates/providers/clerk.com/services/clerk-production/apply?domain=${domain}`;
-    log.debug(`Composed Domain Connect URL: ${domainConnectUrl}`);
-
-    await confirm({
-      message: `We can automatically configure DNS for ${domain} via ${dnsProvider.name}. Open browser to continue?`,
-      default: true,
-    });
-
-    log.debug("Opening Domain Connect flow in browser...");
+async function runDeploy(ctx: DeployContext): Promise<void> {
+  if (!ctx.appId || !ctx.developmentInstanceId) {
+    throw new CliError(
+      "No Clerk project linked to this directory. Run `clerk link`, then rerun `clerk deploy`.",
+      { code: ERROR_CODE.NOT_LINKED },
+    );
   }
 
-  // Check dev instance settings that require production credentials
-  log.debug("Checking development instance settings for production requirements...");
+  if (ctx.productionInstanceId) {
+    await reconcileExistingDeploy(ctx);
+    return;
+  }
 
-  // Mock state — dev instance has Google OAuth enabled
-  const devSettings = {
-    socialProviders: ["google"],
+  await startNewDeploy(ctx);
+}
+
+async function startNewDeploy(ctx: DeployContext): Promise<void> {
+  const { descriptors: oauthProviders, unsupported }: DiscoveredOAuthProviders =
+    await loadDevelopmentOAuthProviders(ctx);
+
+  log.blank();
+  log.info(INTRO_PREAMBLE);
+  log.blank();
+  for (const line of printPlan(ctx.appLabel, buildNewDeployPlan(oauthProviders))) {
+    log.info(line);
+  }
+  log.blank();
+
+  warnUnsupportedOAuthProviders(unsupported.length);
+  const proceed = await confirmProceed();
+  if (!proceed) {
+    log.info("No changes were made.");
+    outro("Cancelled");
+    return;
+  }
+
+  bar();
+  const domain = await collectCustomDomain();
+  const shouldCreateProductionInstance = await confirmProductionInstanceCreation(domain);
+  if (!shouldCreateProductionInstance) return;
+
+  const productionOrExists = await createProductionInstance(ctx, domain);
+  if (productionOrExists === "exists") {
+    log.blank();
+    log.info(
+      "A production instance already exists for this application. Resuming the existing deploy.",
+    );
+    log.blank();
+    const refreshed = await withSpinner("Refreshing application state...", () =>
+      resolveLiveApplicationContext(ctx.profile),
+    );
+    ctx.productionInstanceId = refreshed.productionInstanceId;
+    if (refreshed.productionInstanceId) {
+      await persistProductionInstance(ctx, refreshed.productionInstanceId);
+    }
+    await reconcileExistingDeploy(ctx);
+    return;
+  }
+  const production = productionOrExists;
+  await persistProductionInstance(ctx, production.id);
+
+  if (!production.active_domain) {
+    throw new CliError(
+      "Production instance was created but Clerk did not return a domain. " +
+        "Run `clerk deploy` again to retry domain provisioning.",
+    );
+  }
+
+  log.blank();
+
+  const productionDomain = production.active_domain.name;
+  const cnameTargets = production.active_domain.cname_targets ?? [];
+  let completedOAuthProviders: OAuthProvider[] = [];
+  const operationState: DeployOperationState = {
+    appId: ctx.appId,
+    developmentInstanceId: ctx.developmentInstanceId,
+    productionInstanceId: production.id,
+    productionDomainId: production.active_domain.id,
+    domain: productionDomain,
+    pending: { type: "oauth", provider: oauthProviders[0]?.provider ?? "google" },
+    oauthProviders: oauthProviders.map((descriptor) => descriptor.provider),
+    completedOAuthProviders,
+    cnameTargets,
   };
 
-  if (devSettings.socialProviders.length > 0) {
-    log.debug(
-      `Found social providers requiring production credentials: ${devSettings.socialProviders.join(", ")}`,
-    );
+  await runDnsRecordHandoff({ ...operationState, pending: { type: "dns" } }, cnameTargets);
 
-    for (const provider of devSettings.socialProviders) {
-      const displayName = provider.charAt(0).toUpperCase() + provider.slice(1);
-      const docsUrl = `https://clerk.com/docs/guides/configure/auth-strategies/social-connections/${provider}#configure-for-your-production-instance`;
+  bar();
+  completedOAuthProviders = await runOAuthSetup(ctx, operationState, oauthProviders);
 
-      const credentialChoice = await select({
-        message: `Your app uses ${displayName} OAuth. Do you have your production credentials?`,
-        choices: [
-          {
-            name: "Walk me through setting it up",
-            value: "walkthrough",
-          },
-          {
-            name: "I already have my credentials",
-            value: "have-credentials",
-          },
-        ],
-      });
+  bar();
+  const dnsStatus = await runDnsVerificationPrompt(ctx, {
+    ...operationState,
+    pending: { type: "dns" },
+    completedOAuthProviders,
+  });
 
-      if (credentialChoice === "walkthrough") {
-        log.data(
-          `\n${bold(`When configuring your ${displayName} OAuth app, use these values:`)}\n`,
-        );
-        log.data(`  ${dim("Authorized JavaScript origins:")}`);
-        log.data(`    ${cyan(`https://${domain}`)}`);
-        log.data(`    ${cyan(`https://www.${domain}`)}`);
-        log.data(`\n  ${dim("Authorized redirect URI:")}`);
-        log.data(`    ${cyan(`https://accounts.${domain}/v1/oauth_callback`)}`);
-        log.data("");
+  await finishDeploy(ctx, productionDomain, completedOAuthProviders, dnsStatus);
+}
 
-        log.debug(`Opening ${displayName} OAuth setup guide in browser...`);
-        const openResult = await openBrowser(docsUrl);
-        if (!openResult.ok) {
-          log.info(dim(`(Could not open browser automatically, visit ${docsUrl})`));
-        }
-
-        log.data("Once you've created your credentials, enter them below:\n");
-      }
-
-      const clientId = await input({
-        message: `${displayName} OAuth Client ID:`,
-      });
-
-      await password({
-        message: `${displayName} OAuth Client Secret:`,
-      });
-
-      log.debug(`Received ${displayName} credentials (client ID: ${clientId.slice(0, 8)}...)`);
-    }
-
-    log.debug("All social provider credentials collected.");
+async function reconcileExistingDeploy(ctx: DeployContext): Promise<void> {
+  if (ctx.productionInstanceId && ctx.profile.instances.production !== ctx.productionInstanceId) {
+    await persistProductionInstance(ctx, ctx.productionInstanceId);
   }
 
-  log.debug("Deploy complete.");
+  const snapshot = await resolveLiveDeploySnapshot(ctx);
+  if (!snapshot) {
+    log.blank();
+    log.info("A production instance exists, but Clerk did not return a production domain yet.");
+    log.info("Run `clerk deploy` again after the domain is available from the API.");
+    outro("No deploy actions available");
+    return;
+  }
 
-  log.data(
-    `\n${bold(green(`Your production application is set up and ready at ${blue(`https://${domain}`)}`))}`,
+  log.blank();
+  for (const line of printPlan(ctx.appLabel, buildLiveDeployPlan(snapshot))) {
+    log.info(line);
+  }
+  log.blank();
+
+  warnUnsupportedOAuthProviders(snapshot.unsupportedOAuthProviderCount);
+
+  if (!snapshot.pending) {
+    log.info("No deploy actions remain.");
+    await finishDeploy(ctx, snapshot.domain, snapshot.completedOAuthProviders, "verified");
+    return;
+  }
+
+  let dnsStatus: DnsVerificationResult = snapshot.domainComplete ? "verified" : "pending";
+
+  if (
+    snapshot.pending.type === "oauth" ||
+    snapshot.oauthProviders.length > snapshot.completedOAuthProviders.length
+  ) {
+    bar();
+    const completed = await runOAuthSetup(
+      ctx,
+      {
+        ...snapshot,
+        pending: {
+          type: "oauth",
+          provider:
+            snapshot.oauthProviders.find(
+              (provider) => !snapshot.completedOAuthProviders.includes(provider),
+            ) ??
+            snapshot.oauthProviders[0] ??
+            "google",
+        },
+      },
+      snapshot.oauthProviderDescriptors,
+    );
+    snapshot.completedOAuthProviders = completed;
+  }
+
+  if (!snapshot.domainComplete) {
+    dnsStatus = await runExistingDomainDnsVerification(ctx, {
+      ...snapshot,
+      pending: { type: "dns" },
+    });
+  }
+
+  await finishDeploy(ctx, snapshot.domain, snapshot.completedOAuthProviders, dnsStatus);
+}
+
+type DnsVerificationResult = "verified" | "pending";
+
+function warnUnsupportedOAuthProviders(count: number): void {
+  if (count === 0) return;
+
+  const plural = count === 1 ? "" : "s";
+  const verb = count === 1 ? "is" : "are";
+  log.warn(
+    `${count} OAuth provider${plural} ${verb} enabled in development but not yet supported by automated \`clerk deploy\` setup.`,
   );
-  log.data(
-    dim(
-      "If your application is not loading correctly, you may need to redeploy with your updated Clerk secret keys.",
-    ),
+  log.warn(
+    "These providers may not have working production credentials. Configure them from the Clerk Dashboard before going live, or disable them in development first.",
+  );
+  log.blank();
+}
+
+function buildNewDeployPlan(oauthProviders: readonly OAuthProviderDescriptor[]): DeployPlanStep[] {
+  return [
+    { label: "Create production instance", status: "pending" },
+    { label: "Choose a production domain you own", status: "pending" },
+    ...oauthProviders.map((descriptor) => ({
+      label: `Configure ${descriptor.label} OAuth credentials`,
+      status: "pending" as const,
+    })),
+    { label: "Verify DNS records", status: "pending" },
+  ];
+}
+
+function buildLiveDeployPlan(snapshot: LiveDeploySnapshot): DeployPlanStep[] {
+  return [
+    { label: "Create production instance", status: "done" },
+    { label: `Use production domain ${snapshot.domain}`, status: "done" },
+    ...snapshot.oauthProviderDescriptors.map((descriptor): DeployPlanStep => {
+      const status: DeployPlanStep["status"] = snapshot.completedOAuthProviders.includes(
+        descriptor.provider,
+      )
+        ? "done"
+        : "pending";
+      return {
+        label: `Configure ${descriptor.label} OAuth credentials`,
+        status,
+      };
+    }),
+    { label: "Verify DNS records", status: snapshot.domainComplete ? "done" : "pending" },
+  ];
+}
+
+async function createProductionInstance(
+  ctx: DeployContext,
+  domain: string,
+): Promise<ProductionInstanceResponse | "exists"> {
+  return withSpinner("Creating production instance...", async () => {
+    return mapDeployError<ProductionInstanceResponse | "exists">(
+      apiCreateProductionInstance(ctx.appId, {
+        domain,
+        environment_type: "production",
+        clone_instance_id: ctx.developmentInstanceId,
+      }),
+      { onProductionInstanceExists: async () => "exists" },
+    );
+  });
+}
+
+async function confirmProductionInstanceCreation(domain: string): Promise<boolean> {
+  for (const line of domainAssociationSummary(domain)) log.info(line);
+  log.blank();
+  const confirmed = await confirmCreateProductionInstance();
+  if (confirmed) {
+    log.blank();
+    return true;
+  }
+
+  log.blank();
+  log.info("No production instance was created.");
+  outro("Cancelled");
+  return false;
+}
+
+async function runDnsRecordHandoff(
+  state: DeployOperationState,
+  cnameTargets: readonly CnameTarget[],
+): Promise<void> {
+  for (const line of dnsIntro(state.domain)) log.info(line);
+  log.blank();
+  if (cnameTargets.length > 0) {
+    for (const line of dnsRecords(cnameTargets)) log.info(line);
+    log.blank();
+  }
+
+  for (const line of dnsDashboardHandoff(state.domain)) log.info(line);
+  log.blank();
+  try {
+    await offerBindZoneExport(state.domain, cnameTargets);
+    log.blank();
+  } catch (error) {
+    if (isPromptExitError(error)) {
+      throw deployPausedError(state, { interrupted: true });
+    }
+    throw error;
+  }
+}
+
+async function runExistingDomainDnsVerification(
+  ctx: DeployContext,
+  state: DeployOperationState,
+): Promise<DnsVerificationResult> {
+  await runDnsRecordHandoff(state, state.cnameTargets ?? []);
+  return runDnsVerificationPrompt(ctx, state);
+}
+
+async function runDnsVerificationPrompt(
+  ctx: DeployContext,
+  state: DeployOperationState,
+): Promise<DnsVerificationResult> {
+  try {
+    const action = await chooseDnsVerificationAction();
+    if (action === "skip") {
+      log.blank();
+      log.info("Skipping DNS verification for now.");
+      return "pending";
+    }
+    return await runDnsVerification(ctx, state);
+  } catch (error) {
+    if (isPromptExitError(error)) {
+      throw deployPausedError(state, { interrupted: true });
+    }
+    throw error;
+  }
+}
+
+async function runDnsVerification(
+  ctx: DeployContext,
+  state: DeployOperationState,
+): Promise<DnsVerificationResult> {
+  const domainIdOrName = state.productionDomainId ?? state.domain;
+
+  while (true) {
+    const outcome = await pollDeployStatus(ctx.appId, domainIdOrName, state.domain);
+
+    if (outcome.verified) {
+      log.blank();
+      log.info(deployComponentStatus(outcome.status));
+      return "verified";
+    }
+
+    log.blank();
+    log.info(deployComponentStatus(outcome.status));
+    log.blank();
+    for (const line of deployStatusPendingFooter(state.domain, outcome.status)) {
+      log.warn(line);
+    }
+
+    // When all DNS components are verified but the server has not yet marked the
+    // deployment complete, the user cannot influence the remaining wait.
+    if (outcome.status.dns && outcome.status.ssl && outcome.status.mail) {
+      throw deployPausedError(state);
+    }
+
+    const pendingRecords = state.cnameTargets
+      ? pendingDnsRecords(state.cnameTargets, outcome.status)
+      : [];
+    if (pendingRecords.length > 0) {
+      log.blank();
+      for (const line of pendingRecords) log.info(line);
+    }
+    log.blank();
+    let action: Awaited<ReturnType<typeof chooseDnsVerificationRetryAction>>;
+    try {
+      action = await chooseDnsVerificationRetryAction();
+    } catch (error) {
+      if (isPromptExitError(error)) {
+        throw deployPausedError(state, { interrupted: true });
+      }
+      throw error;
+    }
+    if (action === "skip") {
+      log.blank();
+      log.info("Skipping DNS verification for now.");
+      return "pending";
+    }
+  }
+}
+
+async function pollDeployStatus(
+  appId: string,
+  domainIdOrName: string,
+  domain: string,
+): Promise<DeployStatusOutcome> {
+  return waitForDeployStatus(appId, domainIdOrName, domain, {
+    runVerification: (progressLabel, work) => withSpinner(progressLabel, work),
+    onVerified: () => log.success(deployComponentLabels("dns", domain).done),
+  });
+}
+
+async function offerBindZoneExport(
+  domain: string,
+  cnameTargets: readonly CnameTarget[] | undefined,
+): Promise<void> {
+  if (!cnameTargets || cnameTargets.length === 0) return;
+  const accepted = await confirmExportBindZone();
+  if (!accepted) return;
+  const contents = bindZoneFile(domain, cnameTargets, new Date());
+  const filePath = `${process.cwd()}/clerk-${domain}.zone`;
+  await Bun.write(filePath, contents);
+  log.success(`Wrote ${filePath}`);
+}
+
+/**
+ * Configures every provider in `descriptors`, returning the full set of
+ * completed providers. If the user skips a provider or interrupts the prompt,
+ * this pauses by throwing `DeployPausedError` rather than returning a partial
+ * list, so a successful return always means OAuth is fully complete.
+ */
+async function runOAuthSetup(
+  ctx: DeployContext,
+  state: DeployOperationState,
+  descriptors: readonly OAuthProviderDescriptor[],
+): Promise<OAuthProvider[]> {
+  const completed = new Set(state.completedOAuthProviders as OAuthProvider[]);
+
+  if (descriptors.length > 0) {
+    log.info(OAUTH_SECTION_INTRO);
+    log.blank();
+  }
+
+  for (const descriptor of descriptors) {
+    if (completed.has(descriptor.provider)) continue;
+    try {
+      const productionInstanceId =
+        state.productionInstanceId ?? ctx.productionInstanceId ?? ctx.profile.instances.production;
+      if (!productionInstanceId) {
+        throwUsageError(
+          "Cannot save OAuth credentials because the production instance could not be resolved. Run `clerk deploy` after confirming the production instance in the Clerk Dashboard.",
+        );
+      }
+
+      const saved = await collectAndSaveOAuthCredentials(
+        ctx,
+        descriptor,
+        state.domain,
+        productionInstanceId,
+      );
+      if (!saved) {
+        throw deployPausedError({
+          ...state,
+          pending: { type: "oauth", provider: descriptor.provider },
+          completedOAuthProviders: [...completed],
+        });
+      }
+    } catch (error) {
+      if (isPromptExitError(error)) {
+        throw deployPausedError(
+          {
+            ...state,
+            pending: { type: "oauth", provider: descriptor.provider },
+            completedOAuthProviders: [...completed],
+          },
+          { interrupted: true },
+        );
+      }
+      throw error;
+    }
+    completed.add(descriptor.provider);
+    if (descriptors.some((nextDescriptor) => !completed.has(nextDescriptor.provider))) {
+      log.blank();
+    }
+  }
+
+  return [...completed];
+}
+
+async function collectAndSaveOAuthCredentials(
+  ctx: DeployContext,
+  descriptor: OAuthProviderDescriptor,
+  domain: string,
+  productionInstanceId: string,
+): Promise<boolean> {
+  for (const line of providerSetupIntro(descriptor)) log.info(line);
+  log.blank();
+
+  let choice = await chooseOAuthCredentialAction(descriptor);
+
+  if (choice === "skip") {
+    return false;
+  }
+
+  if (choice === "walkthrough") {
+    await showOAuthWalkthrough(descriptor, domain);
+    choice = await chooseOAuthCredentialAction(descriptor, { includeWalkthrough: false });
+    if (choice === "skip") {
+      return false;
+    }
+  }
+
+  const credentials = await collectOAuthCredentials(
+    descriptor,
+    choice === "google-json" ? "google-json" : "manual",
   );
 
-  printNextSteps(NEXT_STEPS.DEPLOY);
+  await withSpinner(`Saving ${descriptor.label} OAuth credentials...`, async () => {
+    await patchInstanceConfig(ctx.appId, productionInstanceId, {
+      [descriptor.configKey]: {
+        enabled: true,
+        ...credentials,
+      },
+    });
+  });
+  log.success(`Saved ${descriptor.label} OAuth credentials`);
+  return true;
+}
+
+async function persistProductionInstance(ctx: DeployContext, productionInstanceId: string) {
+  await setProfile(ctx.profileKey, {
+    ...ctx.profile,
+    instances: {
+      ...ctx.profile.instances,
+      production: productionInstanceId,
+    },
+  });
+  ctx.profile.instances.production = productionInstanceId;
+  ctx.productionInstanceId = productionInstanceId;
+}
+
+async function finishDeploy(
+  ctx: DeployContext,
+  domain: string,
+  completedOAuthProviders: readonly string[],
+  dnsStatus: DnsVerificationResult,
+): Promise<void> {
+  log.blank();
+  for (const line of productionSummary(
+    domain,
+    completedOAuthProviders.map((provider) => providerLabel(provider)),
+    dnsStatus,
+  )) {
+    log.info(line);
+  }
+  log.blank();
+  const productionInstanceId = ctx.productionInstanceId ?? ctx.profile.instances.production;
+  if (!productionInstanceId) {
+    throwUsageError(
+      "Cannot print deploy next steps because the production instance could not be resolved. Run `clerk deploy` after confirming the production instance in the Clerk Dashboard.",
+    );
+  }
+  log.info(nextStepsBlock(ctx.appId, productionInstanceId));
+  outro("Success");
 }

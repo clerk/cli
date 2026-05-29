@@ -23,8 +23,17 @@ export function intro(title?: string) {
   pushPrefix();
 }
 
-/** Print outro bracket: └  message — restores normal log output.
- *  Pass a string[] to render as next steps after the bracket. */
+/**
+ * Print outro bracket:
+ *
+ * ```
+ *  │
+ *  └  $message
+ * ```
+ *
+ * Then restores normal log output. Pass a string[] to render as next steps
+ * after the bracket.
+ **/
 export function outro(messageOrSteps?: string | readonly string[]) {
   if (!isHuman()) return;
   popPrefix();
@@ -52,18 +61,26 @@ function createSpinner() {
   const interactive = isInteractive();
   let timer: ReturnType<typeof setInterval> | undefined;
   let frame = 0;
+  let currentMessage = "";
+
+  const render = () => {
+    const char = cyan(FRAMES[frame++ % FRAMES.length]!);
+    log.ui(`\r\x1b[K${char}  ${currentMessage}`);
+  };
 
   return {
     start(message: string) {
+      currentMessage = message;
       if (!interactive) {
         log.ui(`${S_STEP_DONE}  ${message}\n`);
         return;
       }
       log.ui("\x1b[?25l"); // hide cursor
-      timer = setInterval(() => {
-        const char = cyan(FRAMES[frame++ % FRAMES.length]!);
-        log.ui(`\r\x1b[K${char}  ${message}`);
-      }, INTERVAL);
+      timer = setInterval(render, INTERVAL);
+    },
+    update(message: string) {
+      currentMessage = message;
+      if (interactive) render();
     },
     stop(finalMessage?: string) {
       if (timer) {
@@ -90,17 +107,21 @@ function createSpinner() {
   };
 }
 
+export type SpinnerControls = {
+  update(message: string): void;
+};
+
 export async function withSpinner<T>(
   message: string,
-  fn: () => Promise<T>,
+  fn: (controls: SpinnerControls) => Promise<T>,
   doneMessage?: string,
 ): Promise<T> {
-  if (!isHuman()) return fn();
+  if (!isHuman()) return fn({ update: () => {} });
 
   const s = createSpinner();
   s.start(message);
   try {
-    const result = await fn();
+    const result = await fn({ update: s.update });
     s.stop(doneMessage ?? message.replace(/\.{3}$/, ""));
     return result;
   } catch (error) {

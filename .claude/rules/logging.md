@@ -15,17 +15,17 @@ Adjust the relative path to `lib/log.ts` based on the file's location under `pac
 
 ## Which method to use
 
-| Method          | Stream     | When to use                                     |
-| --------------- | ---------- | ----------------------------------------------- |
-| `log.data()`    | **stdout** | Pipeable output (JSON, lists, machine-readable) |
-| `log.info()`    | stderr     | Status messages                                 |
-| `log.success()` | stderr     | Completion confirmations (green)                |
-| `log.warn()`    | stderr     | Warnings (yellow)                               |
-| `log.error()`   | stderr     | Errors (red, auto-prefixed `error:`)            |
-| `log.debug()`   | stderr     | Diagnostic info, only with `--verbose`          |
-| `log.raw()`     | stderr     | Machine-readable JSON for agent mode            |
+| Method          | Stream     | When to use                                      |
+| --------------- | ---------- | ------------------------------------------------ |
+| `log.data()`    | **stdout** | Pipeable output (JSON, lists, machine-readable)  |
+| `log.info()`    | stderr     | Status messages                                  |
+| `log.success()` | stderr     | Completion confirmations (green)                 |
+| `log.warn()`    | stderr     | Warnings (yellow)                                |
+| `log.error()`   | stderr     | Errors (red, auto-prefixed `error:`)             |
+| `log.debug()`   | stderr     | Diagnostic info, only with `--verbose`           |
+| `log.raw()`     | stderr     | Machine-readable JSON for agent mode             |
 | `log.ui()`      | stderr     | Pre-formatted UI (spinner, intro/outro brackets) |
-| `log.blank()`   | stderr     | Blank line                                      |
+| `log.blank()`   | stderr     | Blank line                                       |
 
 `log.data()` writes to **stdout** — this is what gets piped (e.g., `clerk apps list | jq`). Everything else writes to **stderr** as UI for humans. Never mix these.
 
