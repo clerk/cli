@@ -81,11 +81,14 @@ export async function confirmExportBindZone(): Promise<boolean> {
 
 export async function chooseOAuthCredentialAction(
   descriptor: OAuthProviderDescriptor,
+  options: { includeWalkthrough?: boolean } = {},
 ): Promise<OAuthCredentialAction> {
   const choices: Array<{ name: string; value: OAuthCredentialAction }> = [
     { name: descriptor.credentialLabel, value: "have-credentials" },
-    { name: "Walk me through creating them", value: "walkthrough" },
   ];
+  if (options.includeWalkthrough !== false) {
+    choices.push({ name: "Walk me through creating them", value: "walkthrough" });
+  }
   if (descriptor.credentialSources.includes("google-json")) {
     choices.push({
       name: "Load credentials from a Google Cloud Console JSON file",

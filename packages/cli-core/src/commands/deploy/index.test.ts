@@ -32,6 +32,7 @@ const mockCreateProductionInstance = mock();
 const mockGetApplicationDomainStatus = mock();
 const mockTriggerApplicationDomainDNSCheck = mock();
 const mockSleep = mock();
+const mockOpenBrowser = mock();
 
 mock.module("@inquirer/prompts", () => ({
   ...promptsStubs,
@@ -67,6 +68,10 @@ mock.module("../../lib/sleep.ts", () => ({
     mockSleep(...args);
     return Promise.resolve();
   },
+}));
+
+mock.module("../../lib/open.ts", () => ({
+  openBrowser: (...args: unknown[]) => mockOpenBrowser(...args),
 }));
 
 const { _setConfigDir, readConfig, setProfile } = await import("../../lib/config.ts");
@@ -306,6 +311,7 @@ describe("deploy", () => {
     mockGetApplicationDomainStatus.mockReset();
     mockTriggerApplicationDomainDNSCheck.mockReset();
     mockSleep.mockReset();
+    mockOpenBrowser.mockReset();
     consoleSpy?.mockRestore();
     writeSpy?.mockRestore();
   });
@@ -1110,6 +1116,56 @@ describe("deploy", () => {
       });
       expect(mockPassword).not.toHaveBeenCalled();
       expect(captured.err).toContain("Saved Google OAuth credentials");
+    });
+
+    test("Google OAuth walkthrough re-prompts with JSON import instead of another walkthrough", async () => {
+      await linkedProject();
+      mockIsAgent.mockReturnValue(false);
+      const googleJsonPath = join(tempDir, "client_secret_google.json");
+      await Bun.write(
+        googleJsonPath,
+        JSON.stringify({
+          web: {
+            client_id: "google-json-client.apps.googleusercontent.com",
+            client_secret: "fake-json-secret",
+          },
+        }),
+      );
+      await runDnsHandoff();
+      mockOpenBrowser.mockResolvedValueOnce({ ok: true, launcher: "test" });
+      mockSelect.mockResolvedValueOnce("walkthrough").mockResolvedValueOnce("google-json");
+      mockInput.mockResolvedValueOnce(googleJsonPath);
+      mockPassword.mockResolvedValueOnce("manual-secret");
+
+      await runDeploy({});
+
+      const oauthSelects = mockSelect.mock.calls
+        .map(
+          (call) =>
+            call[0] as { message?: string; choices?: Array<{ name: string; value: string }> },
+        )
+        .filter((call) => String(call.message).includes("Google OAuth"));
+
+      expect(mockOpenBrowser).toHaveBeenCalledWith(
+        "https://clerk.com/docs/authentication/social-connections/google",
+      );
+      expect(oauthSelects).toHaveLength(2);
+      expect(oauthSelects[1]?.choices).not.toContainEqual({
+        name: "Walk me through creating them",
+        value: "walkthrough",
+      });
+      expect(oauthSelects[1]?.choices).toContainEqual({
+        name: "Load credentials from a Google Cloud Console JSON file",
+        value: "google-json",
+      });
+      expect(mockPassword).not.toHaveBeenCalled();
+      expect(mockPatchInstanceConfig).toHaveBeenCalledWith("app_xyz789", "ins_prod_mock", {
+        connection_oauth_google: {
+          enabled: true,
+          client_id: "google-json-client.apps.googleusercontent.com",
+          client_secret: "fake-json-secret",
+        },
+      });
     });
 
     test("Apple .p8 file prompt validates path and PEM framing before continuing", async () => {

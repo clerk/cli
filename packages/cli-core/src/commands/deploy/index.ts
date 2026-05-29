@@ -557,7 +557,7 @@ async function collectAndSaveOAuthCredentials(
   for (const line of providerSetupIntro(descriptor)) log.info(line);
   log.blank();
 
-  const choice = await chooseOAuthCredentialAction(descriptor);
+  let choice = await chooseOAuthCredentialAction(descriptor);
 
   if (choice === "skip") {
     return false;
@@ -565,6 +565,12 @@ async function collectAndSaveOAuthCredentials(
 
   if (choice === "walkthrough") {
     await showOAuthWalkthrough(descriptor, domain);
+    if (descriptor.provider === "google") {
+      choice = await chooseOAuthCredentialAction(descriptor, { includeWalkthrough: false });
+      if (choice === "skip") {
+        return false;
+      }
+    }
   }
 
   const credentials = await collectOAuthCredentials(
