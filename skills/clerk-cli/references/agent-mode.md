@@ -62,7 +62,7 @@ Force human mode with `--mode human` or `CLERK_MODE=human`. Typical AI-agent inv
 | `clerk users open [user-id]`                                     | Picks a user interactively, opens browser | Requires `user-id`; prints `{url, appId, appName, instanceId, instanceLabel, userId, opened: false}` and does not open a browser                                                                                                                                                                                                                                                                                                     |
 | `clerk open [subpath]`                                           | Opens the browser to the URL              | Does not open a browser. Prints a JSON descriptor (`{url, appId, appName, instanceId, instanceLabel, subpath, opened: false}`) on stdout so the agent can surface it                                                                                                                                                                                                                                                                 |
 | `clerk deploy`                                                   | Interactive production deploy wizard      | Read-only handoff. Emits deploy status JSON on stdout and exits `0` for linked projects. Does not prompt, mutate, trigger DNS checks, or poll.                                                                                                                                                                                                                                                                                       |
-| `clerk deploy check`                                             | Verify production deploy state            | Read-only verification gate. Triggers one quick DNS check for active production domains, emits status JSON on stdout, exits `0` when complete and `1` when incomplete. It does not wait or back off in agent mode.                                                                                                                                                                                                                   |
+| `clerk deploy check`                                             | Verify production deploy state            | Read-only verification gate. Triggers one DNS check for active production domains, waits briefly, reads one live status snapshot, emits status JSON on stdout, exits `0` when complete and `1` when incomplete. It does not keep waiting or back off in agent mode unless `--wait` is passed. Use `--wait` when the user asks the agent to keep waiting for DNS, SSL, email DNS, or final Clerk-side readiness.                      |
 | `clerk auth login` when already authenticated                    | Prompt to re-auth                         | Silent no-op                                                                                                                                                                                                                                                                                                                                                                                                                         |
 | `clerk init`                                                     | Full interactive scaffold flow            | Runs non-interactively. Explicit `--app` or a linked profile uses the real-app auth/link/env flow; without it, an authenticated agent on a keyless-capable framework creates a real app and links it. Pass `--keyless` to opt into auto-generated dev keys for new projects on keyless-capable frameworks. Without `--keyless`, an unauthenticated agent (or non-keyless framework with no app target) prints manual setup guidance. |
 | Color / spinners                                                 | Enabled                                   | Disabled                                                                                                                                                                                                                                                                                                                                                                                                                             |
@@ -199,19 +199,24 @@ clerk deploy --mode human
 
 # 3. After the user finishes or DNS has had time to propagate, verify:
 clerk deploy check --mode agent
+
+# 4. If the user asks you to keep waiting, use the retrying wait loop:
+clerk deploy check --mode agent --wait
 ```
 
 `clerk deploy --mode agent` is read-only. It resolves the linked app and current production deploy snapshot, then emits JSON on stdout. It does **not** trigger DNS checks, poll, create production instances, patch OAuth config, or prompt. Linked projects exit `0` because this is an informational handoff. Not-linked and API failures still use the normal agent error envelope on stderr.
 
 Never try to run the human wizard through Claude's `! clerk deploy` shell escape or any non-interactive agent shell. The deploy wizard asks for domain, DNS export, OAuth, and verification inputs over stdin, so it needs a real human terminal. Tell the user to open a new terminal window in the project directory and run `clerk deploy` or `clerk deploy --mode human` there. After they finish, return to agent mode and run `clerk deploy check --mode agent`.
 
-`clerk deploy check --mode agent` is the gate. It is also read-only with respect to deploy configuration, but for an active production domain it triggers one Clerk DNS check, uses that response immediately, then reports DNS, SSL, email DNS, and OAuth completeness. It does not wait or exponentially back off in agent mode. It exits:
+`clerk deploy check --mode agent` is the gate. It is also read-only with respect to deploy configuration, but for an active production domain it triggers one Clerk DNS check, waits briefly, reads a live status/config snapshot, then reports DNS, SSL, email DNS, aggregate domain readiness, and OAuth completeness. By default it does not keep waiting or exponentially back off in agent mode. If the check is incomplete and the user asks the agent to continue waiting, run `clerk deploy check --mode agent --wait` instead of manually sleeping and retrying. `--wait` uses the shared poll loop: one immediate status read, then up to 5 exponential-backoff retries until aggregate domain status is complete. It emits the same status JSON. It exits:
 
 | Exit | Meaning                                                                              |
 | ---- | ------------------------------------------------------------------------------------ |
 | `0`  | Deploy is complete and verified.                                                     |
 | `1`  | The check ran successfully, but deploy is incomplete. Read `state` and `nextAction`. |
 | else | A real CLI error occurred. Read the standard agent error envelope on stderr.         |
+
+Deploy-specific agent errors still use the standard envelope and may include typed codes such as `plan_insufficient`, `provider_domain_not_allowed`, `home_url_taken`, or `form_param_invalid`.
 
 When a production instance exists, `nextAction` includes the full Clerk Dashboard domains URL so agents can send the user directly to the same page the human CLI prints in its next steps. Always show that URL to the user. Ask whether they want you to open it for them instead of omitting or paraphrasing it away.
 
@@ -229,6 +234,8 @@ The deploy report has this shape:
   "nextAction": "SSL still provisioning for example.com. Re-run `clerk deploy check` in a few minutes, DNS propagation can take time. Ask the user to visit the Clerk Dashboard domains page, or offer to open it: https://dashboard.clerk.com/apps/app_.../instances/ins_.../domains"
 }
 ```
+
+`complete` is `true` only when the aggregate domain status is complete and all supported OAuth providers enabled in development have production credentials. The `domainStatus` object is a component summary; DNS, SSL, and email DNS can all read `complete` while `state` remains `domain_pending` if Clerk-side finalization is still pending.
 
 State precedence:
 
