@@ -102,8 +102,8 @@ function cnameTargetLabel(host: string): string {
     case "accounts":
       return "Account portal";
     case "clkmail":
-    case "clk._domainkey":
-    case "clk2._domainkey":
+    case "clk":
+    case "clk2":
       return "Email (Clerk handles SPF/DKIM automatically)";
     default:
       return "CNAME";

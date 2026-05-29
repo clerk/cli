@@ -215,6 +215,10 @@ async function startNewDeploy(ctx: DeployContext): Promise<void> {
 }
 
 async function reconcileExistingDeploy(ctx: DeployContext): Promise<void> {
+  if (ctx.productionInstanceId && ctx.profile.instances.production !== ctx.productionInstanceId) {
+    await persistProductionInstance(ctx, ctx.productionInstanceId);
+  }
+
   const snapshot = await resolveLiveDeploySnapshot(ctx);
   if (!snapshot) {
     log.blank();

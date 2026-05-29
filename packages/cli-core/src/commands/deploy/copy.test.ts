@@ -3,6 +3,7 @@ import {
   bindZoneFile,
   deployComponentLabels,
   deployStatusRetryMessage,
+  dnsRecords,
   nextStepsBlock,
   pendingDnsRecords,
 } from "./copy.ts";
@@ -128,5 +129,17 @@ describe("pendingDnsRecords", () => {
     expect(output).toContain("clerk.example.com");
     expect(output).toContain("accounts.example.com");
     expect(output).not.toContain("clkmail.example.com");
+  });
+});
+
+describe("dnsRecords", () => {
+  test("labels DKIM CNAME records as email DNS records", () => {
+    const output = dnsRecords([
+      { host: "clk._domainkey.example.com", value: "dkim1.clerk.services", required: true },
+      { host: "clk2._domainkey.example.com", value: "dkim2.clerk.services", required: true },
+    ]).join("\n");
+
+    expect(output).toContain("Email (Clerk handles SPF/DKIM automatically)");
+    expect(output).not.toContain("\n  CNAME\n    Type:");
   });
 });

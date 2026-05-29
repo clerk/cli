@@ -1723,6 +1723,21 @@ describe("deploy", () => {
       expect(mockInput).not.toHaveBeenCalled();
     });
 
+    test("plain deploy persists production instance discovered from live API", async () => {
+      await linkedProject();
+      mockIsAgent.mockReturnValue(false);
+      mockLiveProduction({
+        instanceId: "ins_prod_live",
+        developmentConfig: {},
+        productionConfig: {},
+      });
+
+      await runDeploy({});
+
+      const config = await readConfig();
+      expect(config.profiles[process.cwd()]?.instances.production).toBe("ins_prod_live");
+    });
+
     test("custom-domain DNS setup can skip verification and later resume", async () => {
       await linkedProject();
       mockIsAgent.mockReturnValue(false);
