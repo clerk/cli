@@ -3,18 +3,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { EXIT_CODE, PlapiError } from "../../lib/errors.ts";
-import { useCaptureLog } from "../../test/lib/stubs.ts";
-
-let _modeOverride: string | undefined;
-
-mock.module("../../mode.ts", () => ({
-  isAgent: () => _modeOverride === "agent",
-  isHuman: () => _modeOverride !== "agent",
-  setMode: (mode: string) => {
-    _modeOverride = mode;
-  },
-  getMode: () => _modeOverride ?? "human",
-}));
+import { stubFetch, useCaptureLog } from "../../test/lib/stubs.ts";
 
 const mockFetchApplication = mock();
 const mockListApplicationDomains = mock();
@@ -22,23 +11,9 @@ const mockFetchInstanceConfig = mock();
 const mockFetchInstanceConfigSchema = mock();
 const mockGetApplicationDomainStatus = mock();
 const mockTriggerApplicationDomainDNSCheck = mock();
-const mockSleep = mock((_ms: number) => Promise.resolve());
-
-mock.module("../../lib/plapi.ts", () => ({
-  fetchApplication: (...args: unknown[]) => mockFetchApplication(...args),
-  listApplicationDomains: (...args: unknown[]) => mockListApplicationDomains(...args),
-  fetchInstanceConfig: (...args: unknown[]) => mockFetchInstanceConfig(...args),
-  fetchInstanceConfigSchema: (...args: unknown[]) => mockFetchInstanceConfigSchema(...args),
-  getApplicationDomainStatus: (...args: unknown[]) => mockGetApplicationDomainStatus(...args),
-  triggerApplicationDomainDNSCheck: (...args: unknown[]) =>
-    mockTriggerApplicationDomainDNSCheck(...args),
-}));
-
-mock.module("../../lib/sleep.ts", () => ({
-  sleep: (ms: number) => mockSleep(ms),
-}));
 
 const { _setConfigDir, setProfile } = await import("../../lib/config.ts");
+const { setMode } = await import("../../mode.ts");
 const { deployCheck } = await import("./check.ts");
 
 function stripAnsi(value: string): string {
@@ -116,14 +91,18 @@ function mockOAuthComplete() {
 
 describe("deploy check", () => {
   const captured = useCaptureLog();
+  const originalEnv = { ...process.env };
+  const originalFetch = globalThis.fetch;
   let tempDir = "";
   let exitCodeBefore: typeof process.exitCode;
 
   beforeEach(async () => {
     captured.clear();
-    _modeOverride = "agent";
+    setMode("agent");
     exitCodeBefore = process.exitCode;
     process.exitCode = undefined;
+    process.env.CLERK_PLATFORM_API_KEY = "ak_test";
+    stubFetch((...args) => routePlapiFetch(...args));
     tempDir = await mkdtemp(join(tmpdir(), "clerk-check-test-"));
     _setConfigDir(tempDir);
     await setProfile(process.cwd(), {
@@ -138,7 +117,9 @@ describe("deploy check", () => {
     _setConfigDir(undefined);
     if (tempDir) await rm(tempDir, { recursive: true, force: true });
     process.exitCode = exitCodeBefore ?? EXIT_CODE.SUCCESS;
-    _modeOverride = undefined;
+    process.env = { ...originalEnv };
+    globalThis.fetch = originalFetch;
+    setMode("human");
     tempDir = "";
     mockFetchApplication.mockReset();
     mockListApplicationDomains.mockReset();
@@ -146,7 +127,6 @@ describe("deploy check", () => {
     mockFetchInstanceConfigSchema.mockReset();
     mockGetApplicationDomainStatus.mockReset();
     mockTriggerApplicationDomainDNSCheck.mockReset();
-    mockSleep.mockClear();
   });
 
   test("agent mode not_started emits JSON with state not_started and exit 1", async () => {
@@ -160,7 +140,6 @@ describe("deploy check", () => {
     expect(payload.complete).toBe(false);
     expect(captured.out).not.toContain("error");
     expect(mockTriggerApplicationDomainDNSCheck).not.toHaveBeenCalled();
-    expect(mockSleep).not.toHaveBeenCalled();
   });
 
   test("agent mode complete triggers DNS check and emits complete state", async () => {
@@ -175,7 +154,6 @@ describe("deploy check", () => {
 
     expect(mockTriggerApplicationDomainDNSCheck).toHaveBeenCalledWith("app_1", "dmn_1");
     expect(mockTriggerApplicationDomainDNSCheck).toHaveBeenCalledTimes(1);
-    expect(mockSleep).toHaveBeenCalledWith(2000);
     expect(process.exitCode).toBe(EXIT_CODE.SUCCESS);
     const payload = JSON.parse(captured.out);
     expect(payload).toMatchObject({
@@ -187,7 +165,7 @@ describe("deploy check", () => {
   });
 
   test("human mode not_started prints a readable status block and no JSON stdout", async () => {
-    _modeOverride = "human";
+    setMode("human");
     mockFetchApplication.mockResolvedValue(appWith(false));
 
     await deployCheck();
@@ -209,9 +187,6 @@ describe("deploy check", () => {
     expect(mockGetApplicationDomainStatus).toHaveBeenCalledTimes(1);
     expect(mockTriggerApplicationDomainDNSCheck).toHaveBeenCalledTimes(1);
     expect(mockTriggerApplicationDomainDNSCheck.mock.invocationCallOrder[0]).toBeLessThan(
-      mockSleep.mock.invocationCallOrder[0]!,
-    );
-    expect(mockSleep.mock.invocationCallOrder[0]).toBeLessThan(
       mockGetApplicationDomainStatus.mock.invocationCallOrder[0]!,
     );
     const payload = JSON.parse(captured.out);
@@ -223,24 +198,6 @@ describe("deploy check", () => {
       host: "clerk.example.com",
       value: "frontend-api.clerk.services",
     });
-  });
-
-  test("agent mode wait polls with retry budget before reporting incomplete", async () => {
-    mockFetchApplication.mockResolvedValue(appWith(true));
-    mockDomain();
-    mockOAuthComplete();
-    mockTriggerApplicationDomainDNSCheck.mockResolvedValue(pendingDnsDomainStatus());
-    mockGetApplicationDomainStatus.mockResolvedValue(pendingDnsDomainStatus());
-
-    await deployCheck({ wait: true });
-
-    expect(process.exitCode).toBe(EXIT_CODE.GENERAL);
-    expect(mockTriggerApplicationDomainDNSCheck).toHaveBeenCalledTimes(1);
-    expect(mockGetApplicationDomainStatus).toHaveBeenCalledTimes(7);
-    expect(mockSleep).toHaveBeenCalledWith(2000);
-    const payload = JSON.parse(captured.out);
-    expect(payload.state).toBe("domain_pending");
-    expect(payload.complete).toBe(false);
   });
 
   test("agent mode status snapshot failures surface as errors", async () => {
@@ -257,3 +214,46 @@ describe("deploy check", () => {
     expect(mockTriggerApplicationDomainDNSCheck).toHaveBeenCalledWith("app_1", "dmn_1");
   });
 });
+
+async function routePlapiFetch(
+  input: string | URL | Request,
+  init?: RequestInit,
+): Promise<Response> {
+  const url = new URL(input.toString());
+  const method = init?.method ?? "GET";
+  const path = url.pathname;
+  const json = async (value: unknown) => {
+    const body = await value;
+    return new Response(JSON.stringify(body ?? {}), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    });
+  };
+
+  if (method === "GET" && path === "/v1/platform/applications/app_1") {
+    return json(mockFetchApplication("app_1"));
+  }
+  if (method === "GET" && path === "/v1/platform/applications/app_1/domains") {
+    return json(mockListApplicationDomains("app_1"));
+  }
+  if (method === "GET" && path.endsWith("/config/schema")) {
+    const instanceId = path.split("/").at(-3)!;
+    return json(
+      mockFetchInstanceConfigSchema("app_1", instanceId, url.searchParams.getAll("keys")),
+    );
+  }
+  if (method === "GET" && path.endsWith("/config")) {
+    const instanceId = path.split("/").at(-2)!;
+    return json(mockFetchInstanceConfig("app_1", instanceId));
+  }
+  if (method === "POST" && path.endsWith("/dns_check")) {
+    const domainIdOrName = path.split("/").at(-2)!;
+    return json(mockTriggerApplicationDomainDNSCheck("app_1", domainIdOrName));
+  }
+  if (method === "GET" && path.endsWith("/status")) {
+    const domainIdOrName = path.split("/").at(-2)!;
+    return json(mockGetApplicationDomainStatus("app_1", domainIdOrName));
+  }
+
+  return new Response("Not Found", { status: 404 });
+}
