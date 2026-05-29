@@ -33,7 +33,7 @@ export async function deployStatus(options: DeployStatusOptions = {}): Promise<v
   }
 
   const preflightTriggered = await runPreflightDeployStatusCheck(ctx);
-  const state = await resolveDeployState(ctx, { statusFailureMode: "throw" });
+  const state = await resolveDeployState(ctx);
   const shouldWait = options.wait === true || !isAgent();
   const outcome =
     state.kind === "active" && shouldWait

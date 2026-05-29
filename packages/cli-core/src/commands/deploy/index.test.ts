@@ -177,6 +177,7 @@ function schemaForEnabledOAuth(config: Record<string, unknown>) {
 
 describe("deploy", () => {
   let consoleSpy: ReturnType<typeof spyOn>;
+  let writeSpy: ReturnType<typeof spyOn>;
   const captured = useCaptureLog();
   let tempDir: string;
 
@@ -274,6 +275,15 @@ describe("deploy", () => {
     mockTriggerApplicationDomainDNSCheck.mockResolvedValue(
       domainStatus({ status: "complete", dns: true, ssl: true, mail: true }),
     );
+    // Guard the real filesystem. When the BIND export prompt is accepted the
+    // deploy flow writes `clerk-<domain>.zone` to the cwd, which would otherwise
+    // leak an artifact into the repo on every run. Intercept only `.zone` writes
+    // so config writes (setProfile) still hit disk in the temp dir.
+    const realBunWrite = Bun.write.bind(Bun) as (...args: unknown[]) => Promise<number>;
+    writeSpy = spyOn(Bun, "write").mockImplementation(((destination: unknown, ...rest: unknown[]) =>
+      String(destination).endsWith(".zone")
+        ? Promise.resolve(0)
+        : realBunWrite(destination, ...rest)) as typeof Bun.write);
   });
 
   afterEach(async () => {
@@ -297,6 +307,7 @@ describe("deploy", () => {
     mockTriggerApplicationDomainDNSCheck.mockReset();
     mockSleep.mockReset();
     consoleSpy?.mockRestore();
+    writeSpy?.mockRestore();
   });
 
   function runDeploy(options: Parameters<typeof deploy>[0] = {}) {
@@ -1420,24 +1431,21 @@ describe("deploy", () => {
       mockPassword.mockResolvedValueOnce("google-secret");
       mockPatchInstanceConfig.mockResolvedValueOnce({});
 
-      const writeSpy = spyOn(Bun, "write").mockResolvedValue(0);
-      try {
-        await runDeploy({});
-        const err = stripAnsi(captured.err);
+      await runDeploy({});
+      const err = stripAnsi(captured.err);
 
-        const zoneCall = writeSpy.mock.calls.find((call) => String(call[0]).endsWith(".zone"));
-        expect(zoneCall).toBeDefined();
-        const pathArg = zoneCall![0];
-        const contentArg = zoneCall![1];
-        expect(String(pathArg)).toMatch(/clerk-example\.com\.zone$/);
-        expect(String(contentArg)).toContain("$ORIGIN example.com.");
-        expect(String(contentArg)).toContain("$TTL 300");
-        expect(String(contentArg)).toContain("IN\tCNAME");
-        expect(err).toContain("Wrote ");
-        expect(err).toContain("clerk-example.com.zone");
-      } finally {
-        writeSpy.mockRestore();
-      }
+      const zoneCall = writeSpy.mock.calls.find((call: unknown[]) =>
+        String(call[0]).endsWith(".zone"),
+      );
+      expect(zoneCall).toBeDefined();
+      const pathArg = zoneCall![0];
+      const contentArg = zoneCall![1];
+      expect(String(pathArg)).toMatch(/clerk-example\.com\.zone$/);
+      expect(String(contentArg)).toContain("$ORIGIN example.com.");
+      expect(String(contentArg)).toContain("$TTL 300");
+      expect(String(contentArg)).toContain("IN\tCNAME");
+      expect(err).toContain("Wrote ");
+      expect(err).toContain("clerk-example.com.zone");
     });
 
     test("BIND export prompt writes no file when the user declines", async () => {
@@ -1459,17 +1467,14 @@ describe("deploy", () => {
       mockPassword.mockResolvedValueOnce("google-secret");
       mockPatchInstanceConfig.mockResolvedValueOnce({});
 
-      const writeSpy = spyOn(Bun, "write").mockResolvedValue(0);
-      try {
-        await runDeploy({});
-        const err = stripAnsi(captured.err);
+      await runDeploy({});
+      const err = stripAnsi(captured.err);
 
-        const zoneCall = writeSpy.mock.calls.find((call) => String(call[0]).endsWith(".zone"));
-        expect(zoneCall).toBeUndefined();
-        expect(err).not.toContain("Wrote ");
-      } finally {
-        writeSpy.mockRestore();
-      }
+      const zoneCall = writeSpy.mock.calls.find((call: unknown[]) =>
+        String(call[0]).endsWith(".zone"),
+      );
+      expect(zoneCall).toBeUndefined();
+      expect(err).not.toContain("Wrote ");
     });
 
     test("BIND export prompt is skipped when cnameTargets is empty", async () => {
@@ -1491,21 +1496,18 @@ describe("deploy", () => {
       mockPassword.mockResolvedValueOnce("google-secret");
       mockPatchInstanceConfig.mockResolvedValueOnce({});
 
-      const writeSpy = spyOn(Bun, "write").mockResolvedValue(0);
-      try {
-        await runDeploy({});
+      await runDeploy({});
 
-        // confirm() was never called for the BIND prompt in this run.
-        const bindPromptCalls = mockConfirm.mock.calls.filter((call) => {
-          const arg = call[0] as { message?: string } | undefined;
-          return typeof arg?.message === "string" && arg.message.includes("BIND zone file");
-        });
-        expect(bindPromptCalls.length).toBe(0);
-        const zoneCall = writeSpy.mock.calls.find((call) => String(call[0]).endsWith(".zone"));
-        expect(zoneCall).toBeUndefined();
-      } finally {
-        writeSpy.mockRestore();
-      }
+      // confirm() was never called for the BIND prompt in this run.
+      const bindPromptCalls = mockConfirm.mock.calls.filter((call) => {
+        const arg = call[0] as { message?: string } | undefined;
+        return typeof arg?.message === "string" && arg.message.includes("BIND zone file");
+      });
+      expect(bindPromptCalls.length).toBe(0);
+      const zoneCall = writeSpy.mock.calls.find((call: unknown[]) =>
+        String(call[0]).endsWith(".zone"),
+      );
+      expect(zoneCall).toBeUndefined();
     });
 
     test("DNS verification timeout names the specific pending components from domain status", async () => {

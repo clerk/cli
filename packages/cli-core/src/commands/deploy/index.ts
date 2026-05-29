@@ -108,7 +108,7 @@ async function emitAgentDeployHandoff(): Promise<void> {
     );
   }
 
-  const state = await resolveDeployState(ctx, { statusFailureMode: "throw" });
+  const state = await resolveDeployState(ctx);
   const report = buildDeployStatusReport(state, null);
   log.data(JSON.stringify(report, null, 2));
 }
@@ -270,11 +270,10 @@ async function reconcileExistingDeploy(ctx: DeployContext): Promise<void> {
   }
 
   if (!snapshot.domainComplete) {
-    const nextDnsStatus = await runExistingDomainDnsVerification(ctx, {
+    dnsStatus = await runExistingDomainDnsVerification(ctx, {
       ...snapshot,
       pending: { type: "dns" },
     });
-    dnsStatus = nextDnsStatus;
   }
 
   await finishDeploy(ctx, snapshot.domain, snapshot.completedOAuthProviders, dnsStatus);

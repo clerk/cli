@@ -9,7 +9,6 @@ import {
   listApplicationDomains,
   triggerApplicationDomainDNSCheck,
   type ApplicationDomain,
-  type CnameTarget,
   type DomainStatusResponse,
 } from "../../lib/plapi.ts";
 import { sleep } from "../../lib/sleep.ts";
@@ -67,11 +66,10 @@ export type LiveDeploySnapshot = Omit<
   DeployOperationState,
   "pending" | "oauthProviders" | "completedOAuthProviders"
 > & {
-  pending?: DeployOperationState["pending"];
+  pending: DeployOperationState["pending"] | undefined;
   oauthProviders: OAuthProvider[];
   oauthProviderDescriptors: OAuthProviderDescriptor[];
   completedOAuthProviders: OAuthProvider[];
-  cnameTargets?: readonly CnameTarget[];
   domainComplete: boolean;
   componentStatus: DeployComponentStatus;
   unsupportedOAuthProviderCount: number;
@@ -83,10 +81,14 @@ export type DeployState =
   | { kind: "domain_provisioning"; appId: string; productionInstanceId: string }
   | { kind: "active"; snapshot: LiveDeploySnapshot };
 
-export type DeployStatusFailureMode = "pending" | "throw";
-
-type DeployStateResolveOptions = {
-  statusFailureMode?: DeployStatusFailureMode;
+type SnapshotOptions = {
+  /**
+   * When true, a failed domain-status read throws instead of being treated as
+   * pending. The read-only status path enables this so transient API errors are
+   * surfaced rather than reported as legitimate progress. The interactive deploy
+   * flow leaves it off, letting the user retry from the on-screen status.
+   */
+  throwOnStatusError?: boolean;
 };
 
 export type DiscoveredOAuthProviders = {
@@ -138,19 +140,19 @@ export async function resolveLiveApplicationContext(profile: DeployContext["prof
   };
 }
 
-export async function resolveDeployState(
-  ctx: DeployContext,
-  options: DeployStateResolveOptions = {},
-): Promise<DeployState> {
+export async function resolveDeployState(ctx: DeployContext): Promise<DeployState> {
   const live = await resolveLiveApplicationContext(ctx.profile);
   if (!live.productionInstanceId) return { kind: "not_started" };
 
+  // The read-only status path surfaces domain-status read failures instead of
+  // masking them as pending, so a transient API error is not reported as
+  // legitimate progress.
   const snapshot = await resolveLiveDeploySnapshot(
     {
       ...ctx,
       productionInstanceId: live.productionInstanceId,
     },
-    options,
+    { throwOnStatusError: true },
   );
   if (!snapshot) {
     return {
@@ -183,7 +185,7 @@ export async function loadDevelopmentOAuthProviders(
 
 export async function resolveLiveDeploySnapshot(
   ctx: DeployContext,
-  options: DeployStateResolveOptions = {},
+  options: SnapshotOptions = {},
 ): Promise<LiveDeploySnapshot | undefined> {
   const productionInstanceId = ctx.productionInstanceId;
   if (!productionInstanceId) return undefined;
@@ -225,22 +227,33 @@ export async function resolveLiveDeploySnapshot(
   };
 
   const domainComplete = deployStatus.status === "complete";
-  const pending = pendingOAuthDescriptor
-    ? ({ type: "oauth", provider: pendingOAuthDescriptor.provider } as const)
-    : !domainComplete
-      ? ({ type: "dns" } as const)
-      : undefined;
+  return {
+    ...baseState,
+    domainComplete,
+    pending: resolvePendingStep(pendingOAuthDescriptor, domainComplete),
+  };
+}
 
-  return { ...baseState, domainComplete, pending };
+function resolvePendingStep(
+  pendingOAuthDescriptor: OAuthProviderDescriptor | undefined,
+  domainComplete: boolean,
+): DeployOperationState["pending"] | undefined {
+  if (pendingOAuthDescriptor) {
+    return { type: "oauth", provider: pendingOAuthDescriptor.provider };
+  }
+  if (!domainComplete) {
+    return { type: "dns" };
+  }
+  return undefined;
 }
 
 export async function loadInitialDeployStatus(
   appId: string,
   domainIdOrName: string,
-  options: DeployStateResolveOptions = {},
+  options: SnapshotOptions = {},
 ): Promise<DomainStatusResponse> {
   const status = mapDeployError(getApplicationDomainStatus(appId, domainIdOrName));
-  if (options.statusFailureMode === "throw") return status;
+  if (options.throwOnStatusError) return status;
 
   try {
     return await status;
@@ -256,7 +269,7 @@ export async function loadProductionState(
   ctx: DeployContext,
   productionInstanceId: string,
   domainIdOrName: string,
-  options: DeployStateResolveOptions = {},
+  options: SnapshotOptions = {},
 ): Promise<{
   productionConfig: Record<string, unknown>;
   deployStatus: DomainStatusResponse;
@@ -329,12 +342,7 @@ export function buildDeployStatusReport(
   );
   const oauthComplete = oauthPending.length === 0;
   const complete = domainComplete && oauthComplete;
-
-  const reportState: DeployStatusState = complete
-    ? "complete"
-    : !domainComplete
-      ? "domain_pending"
-      : "oauth_pending";
+  const reportState = resolveActiveReportState(domainComplete, complete);
 
   const pendingDnsRecords: DeployStatusReport["pendingDnsRecords"] = !domainComplete
     ? (snapshot.cnameTargets ?? [])
@@ -369,6 +377,12 @@ export function buildDeployStatusReport(
         : null,
     ),
   };
+}
+
+function resolveActiveReportState(domainComplete: boolean, complete: boolean): DeployStatusState {
+  if (complete) return "complete";
+  if (!domainComplete) return "domain_pending";
+  return "oauth_pending";
 }
 
 function deployNextAction(
