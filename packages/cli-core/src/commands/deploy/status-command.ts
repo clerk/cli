@@ -113,6 +113,13 @@ function renderHuman(report: DeployStatusReport): void {
   }
 
   log.blank();
-  log.info(report.nextAction);
+  log.info(formatHumanNextAction(report.nextAction));
   log.blank();
+}
+
+function formatHumanNextAction(nextAction: string): string {
+  return nextAction.replace(
+    /Ask the user to visit the Clerk Dashboard domains page, or offer to open it: (https:\/\/\S+)/,
+    "Visit the Clerk Dashboard domains page to monitor its status there: $1",
+  );
 }

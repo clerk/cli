@@ -52,6 +52,15 @@ function pendingDnsDomainStatus() {
   };
 }
 
+function pendingSslDomainStatus() {
+  return {
+    status: "incomplete",
+    dns: { status: "complete" },
+    ssl: { status: "pending", required: true },
+    mail: { status: "complete", required: true },
+  };
+}
+
 function mockDomain() {
   mockListApplicationDomains.mockResolvedValue({
     data: [
@@ -235,6 +244,24 @@ describe("deploy status", () => {
 
     expect(stripAnsi(captured.err)).toContain("Waiting for Clerk DNS check to process");
     expect(mockSleep).toHaveBeenCalledWith(2000);
+  });
+
+  test("human mode shows dashboard monitoring guidance without agent handoff copy", async () => {
+    setMode("human");
+    mockFetchApplication.mockResolvedValue(appWith(true));
+    mockDomain();
+    mockOAuthComplete();
+    mockTriggerApplicationDomainDNSCheck.mockResolvedValue(pendingSslDomainStatus());
+    mockGetApplicationDomainStatus.mockResolvedValue(pendingSslDomainStatus());
+
+    await deployStatus();
+
+    const output = stripAnsi(captured.err);
+    expect(output).toContain(
+      "SSL still provisioning for example.com. Re-run `clerk deploy status` in a few minutes, DNS propagation can take time. Visit the Clerk Dashboard domains page to monitor its status there: https://dashboard.clerk.com/apps/app_1/instances/ins_prod/domains",
+    );
+    expect(output).not.toContain("Ask the user to visit");
+    expect(output).not.toContain("offer to open it");
   });
 });
 
