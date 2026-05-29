@@ -45,6 +45,23 @@ test("users list exposes common filters and pagination options", () => {
   );
 });
 
+test("deploy relies on global options", () => {
+  const program = createProgram();
+  const deploy = program.commands.find((command) => command.name() === "deploy")!;
+  const optionNames = deploy.options.map((option) => option.long);
+
+  expect(optionNames).toEqual([]);
+});
+
+test("deploy status exposes wait option", () => {
+  const program = createProgram();
+  const deploy = program.commands.find((command) => command.name() === "deploy")!;
+  const status = deploy.commands.find((command) => command.name() === "status")!;
+  const optionNames = status.options.map((option) => option.long);
+
+  expect(optionNames).toContain("--wait");
+});
+
 describe("parseIntegerOption (via users list --limit / --offset)", () => {
   function parseUsersList(args: readonly string[]) {
     return createProgram().parseAsync(["users", "list", ...args], { from: "user" });

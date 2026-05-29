@@ -67,7 +67,7 @@ export async function getAuthToken(): Promise<string> {
 /**
  * Local wrapper that adds the standard Bearer auth + Accept headers and
  * throws PlapiError on non-ok responses. Debug logging is centralized in
- * `loggedFetch` — don't add inline `log.debug` calls here or in callers.
+ * `loggedFetch`; don't add inline `log.debug` calls here or in callers.
  */
 async function plapiFetch(method: string, url: URL, init?: { body?: string }): Promise<Response> {
   const token = await getAuthToken();
@@ -99,18 +99,39 @@ function appendKeys(url: URL, keys?: string[]): void {
   }
 }
 
+export type ConfigSchemaProperty = {
+  type?: string;
+  description?: string;
+  default?: unknown;
+  enum?: string[];
+  readOnly?: boolean;
+  properties?: Record<string, ConfigSchemaProperty>;
+  required?: string[];
+  minLength?: number;
+  maxLength?: number;
+  pattern?: string;
+  "x-clerk-sensitive"?: boolean;
+};
+
+export type InstanceConfigSchema = {
+  $schema?: string;
+  $id?: string;
+  type?: string;
+  properties?: Record<string, ConfigSchemaProperty>;
+};
+
 export async function fetchInstanceConfigSchema(
   applicationId: string,
   instanceId: string,
   keys?: string[],
-): Promise<Record<string, unknown>> {
+): Promise<InstanceConfigSchema> {
   const url = new URL(
     `/v1/platform/applications/${applicationId}/instances/${instanceId}/config/schema`,
     getPlapiBaseUrl(),
   );
   appendKeys(url, keys);
   const response = await plapiFetch("GET", url);
-  return response.json() as Promise<Record<string, unknown>>;
+  return response.json() as Promise<InstanceConfigSchema>;
 }
 
 export async function fetchInstanceConfig(
@@ -140,11 +161,120 @@ export interface Application {
   instances: ApplicationInstance[];
 }
 
+export type DomainSummary = {
+  id: string;
+  name: string;
+};
+
+export type CnameTarget = {
+  host: string;
+  value: string;
+  required: boolean;
+};
+
+export type ApplicationDomain = {
+  object: "domain";
+  id: string;
+  name: string;
+  is_satellite: boolean;
+  is_provider_domain: boolean;
+  frontend_api_url: string;
+  accounts_portal_url?: string;
+  proxy_url?: string;
+  development_origin: string;
+  cname_targets?: CnameTarget[];
+  created_at: string;
+  updated_at: string;
+};
+
+export type ListApplicationDomainsResponse = {
+  data: ApplicationDomain[];
+  total_count: number;
+};
+
+export type ProductionInstanceResponse = {
+  id: string;
+  object: "instance";
+  environment_type: "production";
+  active_domain: ApplicationDomain | null;
+  secret_key?: string;
+  publishable_key: string;
+  created_at: number;
+  updated_at: number;
+};
+
+export type CreateProductionInstanceParams = {
+  domain: string;
+  environment_type: "production";
+  clone_instance_id?: string;
+};
+
+export type DeployStatus = "complete" | "incomplete";
+
+type DomainCheckStatus = {
+  status: string;
+  required?: boolean;
+};
+
+export type DomainStatusResponse = {
+  status: DeployStatus;
+  dns?: DomainCheckStatus;
+  ssl?: DomainCheckStatus;
+  mail?: DomainCheckStatus;
+  proxy?: DomainCheckStatus;
+};
+
+export type TriggerDNSCheckResponse = DomainStatusResponse & {
+  domain_id: string;
+  last_run_at: number | null;
+};
+
 export async function fetchApplication(applicationId: string): Promise<Application> {
   const url = new URL(`/v1/platform/applications/${applicationId}`, getPlapiBaseUrl());
   url.searchParams.set("include_secret_keys", "true");
   const response = await plapiFetch("GET", url);
   return response.json() as Promise<Application>;
+}
+
+export async function listApplicationDomains(
+  applicationId: string,
+): Promise<ListApplicationDomainsResponse> {
+  const url = new URL(`/v1/platform/applications/${applicationId}/domains`, getPlapiBaseUrl());
+  const response = await plapiFetch("GET", url);
+  return response.json() as Promise<ListApplicationDomainsResponse>;
+}
+
+export async function createProductionInstance(
+  applicationId: string,
+  params: CreateProductionInstanceParams,
+): Promise<ProductionInstanceResponse> {
+  const url = new URL(`/v1/platform/applications/${applicationId}/instances`, getPlapiBaseUrl());
+  const response = await plapiFetch("POST", url, { body: JSON.stringify(params) });
+  return response.json() as Promise<ProductionInstanceResponse>;
+}
+
+export async function getApplicationDomainStatus(
+  applicationId: string,
+  domainIdOrName: string,
+): Promise<DomainStatusResponse> {
+  const url = new URL(
+    `/v1/platform/applications/${applicationId}/domains/${domainIdOrName}/status`,
+    getPlapiBaseUrl(),
+  );
+  const response = await plapiFetch("GET", url);
+  return response.json() as Promise<DomainStatusResponse>;
+}
+
+export async function triggerApplicationDomainDNSCheck(
+  applicationId: string,
+  domainIdOrName: string,
+): Promise<TriggerDNSCheckResponse> {
+  const url = new URL(
+    `/v1/platform/applications/${applicationId}/domains/${domainIdOrName}/dns_check`,
+    getPlapiBaseUrl(),
+  );
+  const response = await plapiFetch("POST", url);
+  return response.json() as Promise<TriggerDNSCheckResponse>;
 }
 
 async function sendInstanceConfig(

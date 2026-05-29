@@ -37,6 +37,7 @@ import {
   PlapiError,
   FapiError,
   EXIT_CODE,
+  isPromptExitError,
   throwUsageError,
 } from "./lib/errors.ts";
 import { clerkHelpConfig } from "./lib/help.ts";
@@ -44,6 +45,8 @@ import { isAgent } from "./mode.ts";
 import { log } from "./lib/log.ts";
 import { maybeNotifyUpdate, getCurrentVersion } from "./lib/update-check.ts";
 import { update } from "./commands/update/index.ts";
+import { deploy } from "./commands/deploy/index.ts";
+import { deployStatus } from "./commands/deploy/status-command.ts";
 import { isClerkSkillInstalled } from "./lib/skill-detection.ts";
 import { orgsEnable, orgsDisable } from "./commands/orgs/index.ts";
 import { billingEnable, billingDisable } from "./commands/billing/index.ts";
@@ -118,7 +121,7 @@ Give AI agents better Clerk context: install the Clerk skills
 
   program.hook("preAction", async () => {
     // Reset log level at the start of each command invocation so a previous
-    // --verbose or --debug flag doesn't leak into subsequent runs.
+    // --verbose doesn't leak into subsequent runs.
     setLogLevel("info");
     const opts = program.opts();
     if (opts.verbose) {
@@ -924,6 +927,16 @@ Tutorial — enable completions for your shell:
     ])
     .action(update);
 
+  const deployCmd = program
+    .command("deploy")
+    .description("Deploy a Clerk application to production");
+  deployCmd.command("run", { isDefault: true, hidden: true }).action(deploy);
+  deployCmd
+    .command("status")
+    .description("Show production deploy status (read-only)")
+    .option("--wait", "Wait for DNS, SSL, and email DNS verification with retries")
+    .action(deployStatus);
+
   registerExtras(program);
 
   return program;
@@ -1011,7 +1024,7 @@ export async function runProgram(
   } catch (error) {
     const verbose = program.opts().verbose ?? false;
 
-    if (error instanceof UserAbortError) {
+    if (error instanceof UserAbortError || isPromptExitError(error)) {
       process.exit(EXIT_CODE.SUCCESS);
     }
 

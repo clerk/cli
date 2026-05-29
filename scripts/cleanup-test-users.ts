@@ -13,11 +13,63 @@
 const PLAPI_BASE = process.env.CLERK_PLATFORM_API_URL ?? "https://api.clerk.com";
 const BAPI_BASE = process.env.CLERK_BACKEND_API_URL ?? "https://api.clerk.com";
 const TEST_EMAIL_SUFFIX = "+clerk_test@clerkcookie.com";
+const DEFAULT_RETRY_OPTIONS = {
+  attempts: 3,
+  delayMs: 500,
+};
 
-async function plapiGet(path: string, apiKey: string): Promise<unknown> {
-  const res = await fetch(`${PLAPI_BASE}${path}`, {
-    headers: { Authorization: `Bearer ${apiKey}` },
-  });
+type RetryOptions = {
+  attempts?: number;
+  delayMs?: number;
+};
+
+async function sleep(ms: number): Promise<void> {
+  if (ms <= 0) return;
+  await new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function isRetriableStatus(status: number): boolean {
+  return status === 429 || (status >= 500 && status <= 599);
+}
+
+async function fetchWithRetry(
+  input: string,
+  init: RequestInit,
+  options: RetryOptions = {},
+): Promise<Response> {
+  const attempts = options.attempts ?? DEFAULT_RETRY_OPTIONS.attempts;
+  const delayMs = options.delayMs ?? DEFAULT_RETRY_OPTIONS.delayMs;
+  let lastError: unknown;
+
+  for (let attempt = 1; attempt <= attempts; attempt++) {
+    try {
+      const res = await fetch(input, init);
+      if (!isRetriableStatus(res.status) || attempt === attempts) {
+        return res;
+      }
+    } catch (err) {
+      lastError = err;
+      if (attempt === attempts) throw err;
+    }
+
+    await sleep(delayMs * attempt);
+  }
+
+  throw lastError instanceof Error ? lastError : new Error("Request failed");
+}
+
+export async function plapiGet(
+  path: string,
+  apiKey: string,
+  options?: RetryOptions,
+): Promise<unknown> {
+  const res = await fetchWithRetry(
+    `${PLAPI_BASE}${path}`,
+    {
+      headers: { Authorization: `Bearer ${apiKey}` },
+    },
+    options,
+  );
   if (!res.ok) {
     const body = await res.text();
     throw new Error(`Platform API ${path} failed (${res.status}): ${body}`);
@@ -26,7 +78,7 @@ async function plapiGet(path: string, apiKey: string): Promise<unknown> {
 }
 
 async function bapiGet(path: string, secretKey: string): Promise<unknown> {
-  const res = await fetch(`${BAPI_BASE}${path}`, {
+  const res = await fetchWithRetry(`${BAPI_BASE}${path}`, {
     headers: { Authorization: `Bearer ${secretKey}` },
   });
   if (!res.ok) {
@@ -37,7 +89,7 @@ async function bapiGet(path: string, secretKey: string): Promise<unknown> {
 }
 
 async function bapiDelete(path: string, secretKey: string): Promise<boolean> {
-  const res = await fetch(`${BAPI_BASE}${path}`, {
+  const res = await fetchWithRetry(`${BAPI_BASE}${path}`, {
     method: "DELETE",
     headers: { Authorization: `Bearer ${secretKey}` },
   });
@@ -110,4 +162,6 @@ async function main() {
   console.log(`Deleted ${deleted}/${testUsers.length} test users.`);
 }
 
-main();
+if (import.meta.main) {
+  main();
+}

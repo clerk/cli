@@ -92,6 +92,7 @@ mock.module("../../lib/autoclaim.ts", () => ({
   attemptAutoclaim: async () => ({ status: "not_keyless" }),
 }));
 
+const { setLogLevel } = await import("../../lib/log.ts");
 const { login } = await import("./login.ts");
 
 describe("login", () => {
@@ -117,6 +118,7 @@ describe("login", () => {
     mockEnsureFirstApplication.mockResolvedValue(undefined);
     mockIsHuman.mockReturnValue(false);
     mockOpenBrowser.mockResolvedValue({ ok: true, launcher: "test" });
+    setLogLevel("info");
     consoleSpy?.mockRestore();
     consoleErrorSpy?.mockRestore();
     try {
@@ -593,6 +595,45 @@ describe("login", () => {
     const urlString = mockOpenBrowser.mock.calls[0]?.[0] as string;
     const parsed = new URL(urlString);
     expect(parsed.searchParams.get("clerk_client")).toBe("cli");
+  });
+
+  test("does not emit the OAuth authorize URL through debug logging", async () => {
+    setLogLevel("debug");
+    mockGetValidToken.mockResolvedValue(null);
+    mockBunSpawn();
+
+    const mockServer = {
+      port: 54321,
+      waitForCallback: mock().mockResolvedValue({ code: "fresh-auth-code" }),
+      stop: mock(),
+    };
+    mockStartAuthServer.mockReturnValue(mockServer);
+
+    mockExchangeCodeForToken.mockResolvedValue({
+      access_token: "new-access-token",
+      token_type: "Bearer",
+      expires_in: 3600,
+      refresh_token: "new-refresh-token",
+    });
+    mockCreateOAuthSession.mockReturnValue({
+      accessToken: "new-access-token",
+      refreshToken: "new-refresh-token",
+      expiresAt: 123,
+      tokenType: "Bearer",
+    });
+    mockStoreToken.mockResolvedValue(undefined);
+    mockFetchUserInfo.mockResolvedValue({
+      userId: "user_new",
+      email: "new@example.com",
+    });
+    mockSetAuth.mockResolvedValue(undefined);
+
+    consoleSpy = spyOn(console, "log").mockImplementation(() => {});
+    await runLogin({ showNextSteps: false });
+
+    expect(captured.err).not.toContain("https://test.example.com/oauth/authorize");
+    expect(captured.err).not.toContain("test-state-value");
+    expect(captured.err).not.toContain("test-code-challenge");
   });
 
   test("calls ensureFirstApplication after a successful OAuth flow", async () => {

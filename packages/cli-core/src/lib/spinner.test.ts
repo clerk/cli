@@ -160,6 +160,18 @@ test("withSpinner uses an explicit doneMessage when provided", async () => {
   expect(stopCall?.message).toBe("Fetched");
 });
 
+test("withSpinner lets callbacks update the active spinner message", async () => {
+  await captureStderrAsync(() =>
+    withSpinner("Checking status...", async ({ update }) => {
+      update("Checking status... Retrying in 5");
+    }),
+  );
+
+  const types = spinnerCalls.map((c) => c.type);
+  expect(types).toEqual(["start", "message", "stop"]);
+  expect(spinnerCalls[1]?.message).toBe("Checking status... Retrying in 5");
+});
+
 test("withSpinner calls error() on the spinner and rethrows when fn throws", async () => {
   const boom = new Error("kaboom");
   await expect(

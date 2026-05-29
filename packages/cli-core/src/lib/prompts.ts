@@ -14,6 +14,9 @@ import { editAsync } from "external-editor";
 import { throwUserAbort } from "./errors.ts";
 import { log } from "./log.ts";
 
+type ValidationResult = string | Error | true | undefined;
+type Validate = (value: string | undefined) => ValidationResult | Promise<ValidationResult>;
+
 function unwrap<T>(value: T | symbol): T {
   if (isCancel(value)) throwUserAbort();
   return value as T;
@@ -33,25 +36,22 @@ export async function text(config: {
   message: string;
   default?: string;
   placeholder?: string;
-  validate?: (value: string | undefined) => string | Error | undefined;
+  validate?: Validate;
 }): Promise<string> {
   const result = await clackText({
     message: config.message,
     initialValue: config.default,
     placeholder: config.placeholder,
-    validate: config.validate,
+    validate: config.validate as (value: string | undefined) => string | Error | undefined,
   });
   return unwrap(result);
 }
 
 /** Masked password input. */
-export async function password(config: {
-  message: string;
-  validate?: (value: string | undefined) => string | Error | undefined;
-}): Promise<string> {
+export async function password(config: { message: string; validate?: Validate }): Promise<string> {
   const result = await clackPassword({
     message: config.message,
-    validate: config.validate,
+    validate: config.validate as (value: string | undefined) => string | Error | undefined,
   });
   return unwrap(result);
 }

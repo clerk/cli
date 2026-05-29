@@ -52,6 +52,8 @@ Locally, prefer `bun run test:e2e:op` so secrets are injected from 1Password in-
 
 CI runs `bun run format:check` (fails if unformatted), `bun run lint`, `bun test`, and `bun run test:e2e` on every PR to `main`. E2E tests only run for PRs from the same repository (not external forks) and target the production Clerk API with a dedicated test application.
 
+When running multiple test files directly with `bun test`, always pass `--isolate` or `--parallel`. `--parallel` implies `--isolate`. Without isolation, Bun can share module mocks across files and produce order-dependent failures. Prefer `bun run test` for the full suite because it already isolates test files through `scripts/run-tests.ts`.
+
 ## Versioning
 
 The `CLI_VERSION` global is injected at compile time via `bun build --compile --define "CLI_VERSION=..."`. Local `build:compile` omits it, so the binary reports `0.0.0-dev`. The CI release workflow injects the real version.
