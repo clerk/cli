@@ -456,7 +456,7 @@ describe("deploy", () => {
       const payload = JSON.parse(captured.out);
       expect(payload.state).toBe("not_started");
       expect(payload.nextAction).toContain("clerk deploy");
-      expect(payload.nextAction).toContain("clerk deploy check");
+      expect(payload.nextAction).toContain("clerk deploy status");
     });
 
     test("does not trigger interactive prompts", async () => {

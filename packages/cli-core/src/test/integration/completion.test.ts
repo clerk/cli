@@ -75,7 +75,7 @@ describe("generateCompletions", () => {
     });
 
     test("completes deploy subcommands", () => {
-      expect(completionNames("deploy", "")).toContain("check");
+      expect(completionNames("deploy", "")).toContain("status");
     });
   });
 

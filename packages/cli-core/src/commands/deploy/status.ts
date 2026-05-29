@@ -298,7 +298,7 @@ export function buildDeployStatusReport(
       oauth: { complete: false, configured: [], pending: [], unsupported: [] },
       nextAction:
         "No production instance yet. `clerk deploy` configures production interactively and " +
-        "needs a human terminal, ask the user to run `clerk deploy`, then run `clerk deploy check` to verify.",
+        "needs a human terminal, ask the user to run `clerk deploy`, then run `clerk deploy status` to verify.",
     };
   }
 
@@ -316,7 +316,7 @@ export function buildDeployStatusReport(
       oauth: { complete: false, configured: [], pending: [], unsupported: [] },
       nextAction:
         "A production instance exists but its domain is still provisioning. " +
-        "Run `clerk deploy check` again shortly, or ask the user to finish `clerk deploy`. " +
+        "Run `clerk deploy status` again shortly, or ask the user to finish `clerk deploy`. " +
         domainsAction,
     };
   }
@@ -386,7 +386,7 @@ function deployNextAction(
   if (state === "oauth_pending") {
     return (
       `Domain verified, but these OAuth providers are missing production credentials: ` +
-      `${oauthPending.join(", ")}. Ask the user to finish \`clerk deploy\`, then run \`clerk deploy check\`.` +
+      `${oauthPending.join(", ")}. Ask the user to finish \`clerk deploy\`, then run \`clerk deploy status\`.` +
       domainsAction
     );
   }
@@ -400,13 +400,13 @@ function deployNextAction(
   if (pendingComponents.length === 0) {
     return (
       `Production setup for ${domain} is still finalizing on Clerk's side. ` +
-      `Re-run \`clerk deploy check\` in a few minutes.${domainsAction}`
+      `Re-run \`clerk deploy status\` in a few minutes.${domainsAction}`
     );
   }
 
   return (
     `${pendingComponents.join(", ")} still provisioning for ${domain}. ` +
-    `Re-run \`clerk deploy check\` in a few minutes, DNS propagation can take time.` +
+    `Re-run \`clerk deploy status\` in a few minutes, DNS propagation can take time.` +
     domainsAction
   );
 }

@@ -46,7 +46,7 @@ import { log } from "./lib/log.ts";
 import { maybeNotifyUpdate, getCurrentVersion } from "./lib/update-check.ts";
 import { update } from "./commands/update/index.ts";
 import { deploy } from "./commands/deploy/index.ts";
-import { deployCheck } from "./commands/deploy/check.ts";
+import { deployStatus } from "./commands/deploy/status-command.ts";
 import { isClerkSkillInstalled } from "./lib/skill-detection.ts";
 import { orgsEnable, orgsDisable } from "./commands/orgs/index.ts";
 import { billingEnable, billingDisable } from "./commands/billing/index.ts";
@@ -932,10 +932,10 @@ Tutorial — enable completions for your shell:
     .description("Deploy a Clerk application to production");
   deployCmd.command("run", { isDefault: true, hidden: true }).action(deploy);
   deployCmd
-    .command("check")
-    .description("Verify a production deploy (read-only)")
+    .command("status")
+    .description("Show production deploy status (read-only)")
     .option("--wait", "Wait for DNS, SSL, and email DNS verification with retries")
-    .action(deployCheck);
+    .action(deployStatus);
 
   registerExtras(program);
 

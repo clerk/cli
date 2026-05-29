@@ -53,11 +53,11 @@ test("deploy relies on global options", () => {
   expect(optionNames).toEqual([]);
 });
 
-test("deploy check exposes wait option", () => {
+test("deploy status exposes wait option", () => {
   const program = createProgram();
   const deploy = program.commands.find((command) => command.name() === "deploy")!;
-  const check = deploy.commands.find((command) => command.name() === "check")!;
-  const optionNames = check.options.map((option) => option.long);
+  const status = deploy.commands.find((command) => command.name() === "status")!;
+  const optionNames = status.options.map((option) => option.long);
 
   expect(optionNames).toContain("--wait");
 });

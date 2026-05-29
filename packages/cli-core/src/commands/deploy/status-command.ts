@@ -17,17 +17,17 @@ import {
 } from "./status.ts";
 import type { DeployContext } from "./state.ts";
 
-type DeployCheckOptions = {
+type DeployStatusOptions = {
   wait?: boolean;
 };
 
-const DEPLOY_CHECK_PREFLIGHT_DELAY_MS = 2000;
+const DEPLOY_STATUS_PREFLIGHT_DELAY_MS = 2000;
 
-export async function deployCheck(options: DeployCheckOptions = {}): Promise<void> {
+export async function deployStatus(options: DeployStatusOptions = {}): Promise<void> {
   const ctx = await resolveDeployContext();
   if (!ctx.appId || !ctx.developmentInstanceId) {
     throw new CliError(
-      "No Clerk project linked to this directory. Run `clerk link`, then rerun `clerk deploy check`.",
+      "No Clerk project linked to this directory. Run `clerk link`, then rerun `clerk deploy status`.",
       { code: ERROR_CODE.NOT_LINKED },
     );
   }
@@ -53,7 +53,9 @@ async function runPreflightDeployStatusCheck(ctx: DeployContext): Promise<boolea
 
   const domainIdOrName = domain.id ?? domain.name;
   await triggerDeployStatusCheck(ctx.appId, domainIdOrName);
-  await sleep(DEPLOY_CHECK_PREFLIGHT_DELAY_MS);
+  await withSpinner("Waiting for Clerk DNS check to process...", () =>
+    sleep(DEPLOY_STATUS_PREFLIGHT_DELAY_MS),
+  );
   return true;
 }
 

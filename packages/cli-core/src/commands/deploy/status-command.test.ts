@@ -11,10 +11,18 @@ const mockFetchInstanceConfig = mock();
 const mockFetchInstanceConfigSchema = mock();
 const mockGetApplicationDomainStatus = mock();
 const mockTriggerApplicationDomainDNSCheck = mock();
+const mockSleep = mock();
+
+mock.module("../../lib/sleep.ts", () => ({
+  sleep: (ms: number) => {
+    mockSleep(ms);
+    return Promise.resolve();
+  },
+}));
 
 const { _setConfigDir, setProfile } = await import("../../lib/config.ts");
 const { setMode } = await import("../../mode.ts");
-const { deployCheck } = await import("./check.ts");
+const { deployStatus } = await import("./status-command.ts");
 
 function stripAnsi(value: string): string {
   return value.replace(new RegExp(`${String.fromCharCode(27)}\\[[0-9;]*m`, "g"), "");
@@ -89,7 +97,7 @@ function mockOAuthComplete() {
   });
 }
 
-describe("deploy check", () => {
+describe("deploy status", () => {
   const captured = useCaptureLog();
   const originalEnv = { ...process.env };
   const originalFetch = globalThis.fetch;
@@ -103,7 +111,7 @@ describe("deploy check", () => {
     process.exitCode = undefined;
     process.env.CLERK_PLATFORM_API_KEY = "ak_test";
     stubFetch((...args) => routePlapiFetch(...args));
-    tempDir = await mkdtemp(join(tmpdir(), "clerk-check-test-"));
+    tempDir = await mkdtemp(join(tmpdir(), "clerk-status-test-"));
     _setConfigDir(tempDir);
     await setProfile(process.cwd(), {
       workspaceId: "",
@@ -127,12 +135,13 @@ describe("deploy check", () => {
     mockFetchInstanceConfigSchema.mockReset();
     mockGetApplicationDomainStatus.mockReset();
     mockTriggerApplicationDomainDNSCheck.mockReset();
+    mockSleep.mockReset();
   });
 
   test("agent mode not_started emits JSON with state not_started and exit 1", async () => {
     mockFetchApplication.mockResolvedValue(appWith(false));
 
-    await deployCheck();
+    await deployStatus();
 
     expect(process.exitCode).toBe(EXIT_CODE.GENERAL);
     const payload = JSON.parse(captured.out);
@@ -150,7 +159,7 @@ describe("deploy check", () => {
     mockTriggerApplicationDomainDNSCheck.mockResolvedValue(completeDomainStatus());
     mockGetApplicationDomainStatus.mockResolvedValue(completeDomainStatus());
 
-    await deployCheck();
+    await deployStatus();
 
     expect(mockTriggerApplicationDomainDNSCheck).toHaveBeenCalledWith("app_1", "dmn_1");
     expect(mockTriggerApplicationDomainDNSCheck).toHaveBeenCalledTimes(1);
@@ -168,7 +177,7 @@ describe("deploy check", () => {
     setMode("human");
     mockFetchApplication.mockResolvedValue(appWith(false));
 
-    await deployCheck();
+    await deployStatus();
 
     expect(captured.out).toBe("");
     expect(stripAnsi(captured.err)).toContain("clerk deploy");
@@ -181,7 +190,7 @@ describe("deploy check", () => {
     mockTriggerApplicationDomainDNSCheck.mockResolvedValue(pendingDnsDomainStatus());
     mockGetApplicationDomainStatus.mockResolvedValue(pendingDnsDomainStatus());
 
-    await deployCheck();
+    await deployStatus();
 
     expect(process.exitCode).toBe(EXIT_CODE.GENERAL);
     expect(mockGetApplicationDomainStatus).toHaveBeenCalledTimes(1);
@@ -208,10 +217,24 @@ describe("deploy check", () => {
       new PlapiError(500, JSON.stringify({ errors: [{ code: "server_error" }] }), "https://x"),
     );
 
-    await expect(deployCheck()).rejects.toBeInstanceOf(PlapiError);
+    await expect(deployStatus()).rejects.toBeInstanceOf(PlapiError);
 
     expect(captured.out).toBe("");
     expect(mockTriggerApplicationDomainDNSCheck).toHaveBeenCalledWith("app_1", "dmn_1");
+  });
+
+  test("human mode shows a spinner while waiting for the DNS check to process", async () => {
+    setMode("human");
+    mockFetchApplication.mockResolvedValue(appWith(true));
+    mockDomain();
+    mockOAuthComplete();
+    mockTriggerApplicationDomainDNSCheck.mockResolvedValue(completeDomainStatus());
+    mockGetApplicationDomainStatus.mockResolvedValue(completeDomainStatus());
+
+    await deployStatus();
+
+    expect(stripAnsi(captured.err)).toContain("Waiting for Clerk DNS check to process");
+    expect(mockSleep).toHaveBeenCalledWith(2000);
   });
 });
 
