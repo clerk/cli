@@ -476,26 +476,6 @@ export async function waitForDeployStatus(
   return { verified: true, status };
 }
 
-export async function checkDeployStatusOnce(
-  appId: string,
-  domainIdOrName: string,
-): Promise<DeployStatusOutcome> {
-  let response: DomainStatusResponse;
-  try {
-    response = await mapDeployError(triggerApplicationDomainDNSCheck(appId, domainIdOrName));
-  } catch (error) {
-    if (error instanceof PlapiError && error.status === 409 && error.code === "conflict") {
-      log.debug("DNS check is already in flight; reading current domain status once.");
-      response = await mapDeployError(getApplicationDomainStatus(appId, domainIdOrName));
-    } else {
-      throw error;
-    }
-  }
-
-  const status = deployComponentStatusFromDomainStatus(response);
-  return { verified: response.status === "complete", status };
-}
-
 async function sleepWithRetryCountdown(
   message: string,
   currentRetry: number,

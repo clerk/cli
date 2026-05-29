@@ -147,7 +147,7 @@ All endpoints are on the **Platform API** (`/v1/platform/...`) and are live HTTP
 | Read application            | `GET`   | `/v1/platform/applications/{appID}`                                      | `fetchApplication`. Resolves development and production instance IDs.                                                                           |
 | List production domains     | `GET`   | `/v1/platform/applications/{appID}/domains`                              | `listApplicationDomains`. Recovers production domain name and CNAME targets on each run.                                                        |
 | Create production instance  | `POST`  | `/v1/platform/applications/{appID}/instances`                            | `createProductionInstance`. Returns prod instance, primary domain, keys, and DNS records nested under `active_domain.cname_targets[]`.          |
-| Trigger domain DNS check    | `POST`  | `/v1/platform/applications/{appID}/domains/{domainIDOrName}/dns_check`   | `triggerApplicationDomainDNSCheck`. Called by the wizard and by `clerk deploy check`; agent mode uses the returned status without polling.      |
+| Trigger domain DNS check    | `POST`  | `/v1/platform/applications/{appID}/domains/{domainIDOrName}/dns_check`   | `triggerApplicationDomainDNSCheck`. Called by the wizard and by `clerk deploy check`; agent mode waits briefly, then reads one status snapshot. |
 | Poll domain status          | `GET`   | `/v1/platform/applications/{appID}/domains/{domainIDOrName}/status`      | `getApplicationDomainStatus`. Drives the wizard spinner and the human-mode `clerk deploy check` wait loop over the full domain status response. |
 
 ## OAuth Provider Config Format
