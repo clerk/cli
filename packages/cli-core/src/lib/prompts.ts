@@ -12,23 +12,72 @@ import {
 } from "@clack/prompts";
 import { editAsync } from "external-editor";
 import { throwUserAbort } from "./errors.ts";
+import { ttyContext } from "./listage.ts";
 import { log } from "./log.ts";
 
 type ValidationResult = string | Error | true | undefined;
 type Validate = (value: string | undefined) => ValidationResult | Promise<ValidationResult>;
+type SyncValidate = (value: string | undefined) => string | Error | undefined;
 
 function unwrap<T>(value: T | symbol): T {
   if (isCancel(value)) throwUserAbort();
   return value as T;
 }
 
+function isPromiseLike<T>(value: T | Promise<T>): value is Promise<T> {
+  return typeof (value as Promise<T>)?.then === "function";
+}
+
+function validationError(result: ValidationResult): string | Error | undefined {
+  return result === true ? undefined : result;
+}
+
+function createValidator(validate: Validate | undefined):
+  | {
+      sync: SyncValidate;
+      final: (value: string | undefined) => Promise<string | Error | undefined>;
+    }
+  | undefined {
+  if (!validate) return undefined;
+
+  let last:
+    | {
+        value: string | undefined;
+        result: ValidationResult | Promise<ValidationResult>;
+      }
+    | undefined;
+
+  return {
+    sync(value) {
+      const result = validate(value);
+      last = { value, result };
+      if (isPromiseLike(result)) return undefined;
+      return validationError(result);
+    },
+    async final(value) {
+      const result = last && last.value === value ? last.result : validate(value);
+      return validationError(await result);
+    },
+  };
+}
+
+function logValidationError(error: string | Error) {
+  log.warn(typeof error === "string" ? error : error.message);
+}
+
 /** Yes/no confirmation. */
 export async function confirm(config: { message: string; default?: boolean }): Promise<boolean> {
-  const result = await clackConfirm({
-    message: config.message,
-    initialValue: config.default,
-  });
-  return unwrap(result);
+  const tty = ttyContext();
+  try {
+    const result = await clackConfirm({
+      message: config.message,
+      initialValue: config.default,
+      input: tty?.input,
+    });
+    return unwrap(result);
+  } finally {
+    tty?.close();
+  }
 }
 
 /** Single-line text input. */
@@ -38,22 +87,48 @@ export async function text(config: {
   placeholder?: string;
   validate?: Validate;
 }): Promise<string> {
-  const result = await clackText({
-    message: config.message,
-    initialValue: config.default,
-    placeholder: config.placeholder,
-    validate: config.validate as (value: string | undefined) => string | Error | undefined,
-  });
-  return unwrap(result);
+  const validator = createValidator(config.validate);
+
+  for (;;) {
+    const tty = ttyContext();
+    try {
+      const result = await clackText({
+        message: config.message,
+        initialValue: config.default,
+        placeholder: config.placeholder,
+        validate: validator?.sync,
+        input: tty?.input,
+      });
+      const value = unwrap(result);
+      const error = await validator?.final(value);
+      if (!error) return value;
+      logValidationError(error);
+    } finally {
+      tty?.close();
+    }
+  }
 }
 
 /** Masked password input. */
 export async function password(config: { message: string; validate?: Validate }): Promise<string> {
-  const result = await clackPassword({
-    message: config.message,
-    validate: config.validate as (value: string | undefined) => string | Error | undefined,
-  });
-  return unwrap(result);
+  const validator = createValidator(config.validate);
+
+  for (;;) {
+    const tty = ttyContext();
+    try {
+      const result = await clackPassword({
+        message: config.message,
+        validate: validator?.sync,
+        input: tty?.input,
+      });
+      const value = unwrap(result);
+      const error = await validator?.final(value);
+      if (!error) return value;
+      logValidationError(error);
+    } finally {
+      tty?.close();
+    }
+  }
 }
 
 /** Multi-line editor input. Shells out to $EDITOR via external-editor. */

@@ -4,6 +4,8 @@
  * is translated to UserAbortError at the wrapper boundary.
  */
 
+import { createReadStream } from "node:fs";
+import type { Readable } from "node:stream";
 import {
   select as clackSelect,
   autocomplete as clackAutocomplete,
@@ -11,6 +13,23 @@ import {
   type Option as ClackOption,
 } from "@clack/prompts";
 import { throwUserAbort } from "./errors.ts";
+
+// ---------------------------------------------------------------------------
+// Shared utilities
+// ---------------------------------------------------------------------------
+
+const TTY_PATH = process.platform === "win32" ? "CONIN$" : "/dev/tty";
+
+export function ttyContext(): { input: Readable; close: () => void } | undefined {
+  if (process.stdin.isTTY) return undefined;
+  try {
+    const input = createReadStream(TTY_PATH);
+    input.on("error", () => {});
+    return { input, close: () => input.close() };
+  } catch {
+    return undefined;
+  }
+}
 
 // ---------------------------------------------------------------------------
 // Separator — kept as a tiny local class so call sites compile unchanged.
@@ -112,6 +131,10 @@ function unwrap<T>(value: T | symbol): T {
   return value as T;
 }
 
+function isPromiseLike<T>(value: T | Promise<T>): value is Promise<T> {
+  return typeof (value as Promise<T>)?.then === "function";
+}
+
 // ---------------------------------------------------------------------------
 // Select prompt
 // ---------------------------------------------------------------------------
@@ -125,13 +148,19 @@ export type SelectConfig<Value> = {
 
 export async function select<Value>(config: SelectConfig<Value>): Promise<Value> {
   const items = normalizeChoices(config.choices);
-  const result = await clackSelect<Value>({
-    message: config.message,
-    options: toClackOptions(items),
-    initialValue: config.default,
-    maxItems: config.pageSize,
-  });
-  return unwrap(result);
+  const tty = ttyContext();
+  try {
+    const result = await clackSelect<Value>({
+      message: config.message,
+      options: toClackOptions(items),
+      initialValue: config.default,
+      maxItems: config.pageSize,
+      input: tty?.input,
+    });
+    return unwrap(result);
+  } finally {
+    tty?.close();
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -143,10 +172,8 @@ export type SearchChoice<Value> = SelectChoice<Value>;
 export type SearchConfig<Value> = {
   message: string;
   /**
-   * One-shot source. Called once with `undefined`; the returned list is
-   * filtered client-side by clack via the `filter` callback as the user
-   * types. The async signal is accepted for signature compatibility but
-   * unused — clack drives cancellation itself.
+   * Source called with the current search term. Async sources are cached per
+   * term and refresh the prompt when their results arrive.
    */
   source: (
     term: string | undefined,
@@ -158,21 +185,114 @@ export type SearchConfig<Value> = {
   default?: Value;
 };
 
-export async function search<Value>(config: SearchConfig<Value>): Promise<Value> {
-  const controller = new AbortController();
-  const raw = await config.source(undefined, { signal: controller.signal });
-  const items = normalizeChoices(raw);
-  const options = toClackOptions(items);
+type AutocompleteContext = {
+  userInput?: string;
+  filteredOptions?: Array<{ value: unknown; label?: string; hint?: string; disabled?: boolean }>;
+  selectedValues?: unknown[];
+  focusedValue?: unknown;
+};
 
-  const result = await clackAutocomplete<Value>({
-    message: config.message,
-    options,
-    initialValue: config.default,
-    maxItems: config.pageSize,
-    filter: (term, opt) => {
-      const label = (opt.label ?? String(opt.value)).toLowerCase();
-      return label.includes(term.toLowerCase());
-    },
-  });
-  return unwrap(result);
+export async function search<Value>(config: SearchConfig<Value>): Promise<Value> {
+  const cache = new Map<string, ClackOption<Value>[]>();
+  const pending = new Map<string, Promise<void>>();
+
+  const normalizeTerm = (term: string | undefined) => term ?? "";
+  const toSourceTerm = (term: string) => (term === "" ? undefined : term);
+  const disabledOption = (label: string): ClackOption<Value>[] =>
+    [
+      {
+        value: SEPARATOR_VALUE as unknown as Value,
+        label,
+        disabled: true,
+      },
+    ] as ClackOption<Value>[];
+  const loading = () => disabledOption("Loading results...");
+
+  const setCache = (term: string, raw: ReadonlyArray<Separator | Value | SearchChoice<Value>>) => {
+    cache.set(term, toClackOptions(normalizeChoices(raw)));
+  };
+
+  const setError = (term: string, error: unknown) => {
+    cache.set(term, disabledOption(error instanceof Error ? error.message : String(error)));
+  };
+
+  const refresh = (term: string, prompt: AutocompleteContext | undefined) => {
+    if (!prompt || prompt.userInput !== term) return;
+    const options = cache.get(term);
+    if (!options) return;
+
+    const first = options.find((option) => !option.disabled);
+    prompt.filteredOptions = options as Array<{
+      value: unknown;
+      label?: string;
+      hint?: string;
+      disabled?: boolean;
+    }>;
+    prompt.focusedValue = first?.value;
+    prompt.selectedValues = first ? [first.value] : [];
+    (prompt as AutocompleteContext & { render?: () => void }).render?.();
+  };
+
+  const load = (term: string, prompt?: AutocompleteContext): ClackOption<Value>[] => {
+    const cached = cache.get(term);
+    if (cached) return cached;
+
+    if (!pending.has(term)) {
+      const controller = new AbortController();
+      let result:
+        | ReadonlyArray<Separator | Value | SearchChoice<Value>>
+        | Promise<ReadonlyArray<Separator | Value | SearchChoice<Value>>>;
+      try {
+        result = config.source(toSourceTerm(term), { signal: controller.signal });
+      } catch (error) {
+        setError(term, error);
+        refresh(term, prompt);
+        return cache.get(term)!;
+      }
+
+      if (isPromiseLike(result)) {
+        pending.set(
+          term,
+          result
+            .then((raw) => {
+              setCache(term, raw);
+              refresh(term, prompt);
+            })
+            .catch((error) => {
+              setError(term, error);
+              refresh(term, prompt);
+            })
+            .finally(() => {
+              pending.delete(term);
+            }),
+        );
+      } else {
+        setCache(term, result);
+        return cache.get(term)!;
+      }
+    }
+
+    return loading();
+  };
+
+  const initialController = new AbortController();
+  setCache("", await config.source(undefined, { signal: initialController.signal }));
+
+  const tty = ttyContext();
+  try {
+    const result = await clackAutocomplete<Value>({
+      message: config.message,
+      options: function (this: AutocompleteContext) {
+        return load(normalizeTerm(this.userInput), this);
+      },
+      initialValue: config.default,
+      maxItems: config.pageSize,
+      filter: () => true,
+      validate: (value) => (value === undefined ? "Select an option to continue" : undefined),
+      input: tty?.input,
+    });
+    return unwrap(result);
+  } finally {
+    tty?.close();
+  }
 }

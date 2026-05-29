@@ -1,4 +1,4 @@
-import { test, expect, mock, beforeEach } from "bun:test";
+import { test, expect, mock, beforeEach, spyOn } from "bun:test";
 import { captureLog } from "../test/lib/stubs.ts";
 
 // Sentinel for cancellation. Tests choose this symbol; the mocked
@@ -9,6 +9,7 @@ let lastConfirmConfig: Record<string, unknown> | undefined;
 let confirmResult: boolean | symbol = true;
 let lastTextConfig: Record<string, unknown> | undefined;
 let textResult: string | symbol = "";
+let textResults: Array<string | symbol> = [];
 let lastPasswordConfig: Record<string, unknown> | undefined;
 let passwordResult: string | symbol = "";
 
@@ -26,7 +27,7 @@ mock.module("@clack/prompts", () => ({
   },
   text: async (config: Record<string, unknown>) => {
     lastTextConfig = config;
-    return textResult;
+    return textResults.length > 0 ? textResults.shift()! : textResult;
   },
   password: async (config: Record<string, unknown>) => {
     lastPasswordConfig = config;
@@ -63,10 +64,15 @@ beforeEach(() => {
   confirmResult = true;
   lastTextConfig = undefined;
   textResult = "";
+  textResults = [];
   lastPasswordConfig = undefined;
   passwordResult = "";
   editorCalls = [];
   editorResults = [];
+  Object.defineProperty(process.stdin, "isTTY", {
+    configurable: true,
+    value: true,
+  });
 });
 
 test("confirm passes message to clack and returns true", async () => {
@@ -88,6 +94,23 @@ test("confirm translates default to initialValue", async () => {
   await confirm({ message: "Continue?", default: false });
 
   expect(lastConfirmConfig).toEqual({ message: "Continue?", initialValue: false });
+});
+
+test("confirm opens the controlling terminal when stdin is not a TTY", async () => {
+  Object.defineProperty(process.stdin, "isTTY", { configurable: true, value: false });
+  const mockStream = { close: mock(() => {}), on: mock(() => mockStream) };
+  const createReadStreamSpy = spyOn(await import("node:fs"), "createReadStream").mockReturnValue(
+    mockStream as never,
+  );
+
+  await confirm({ message: "Continue?" });
+
+  const expectedPath = process.platform === "win32" ? "CONIN$" : "/dev/tty";
+  expect(createReadStreamSpy).toHaveBeenCalledWith(expectedPath);
+  expect(lastConfirmConfig?.input).toBe(mockStream);
+  expect(mockStream.close).toHaveBeenCalled();
+
+  createReadStreamSpy.mockRestore();
 });
 
 test("confirm throws UserAbortError when clack returns cancel symbol", async () => {
@@ -116,12 +139,10 @@ test("text forwards default, placeholder, and validate to clack", async () => {
   const validate = (v: string | undefined) => (v?.trim() ? undefined : "required");
   await text({ message: "Name?", default: "anon", placeholder: "type a name", validate });
 
-  expect(lastTextConfig).toEqual({
-    message: "Name?",
-    initialValue: "anon",
-    placeholder: "type a name",
-    validate,
-  });
+  expect(lastTextConfig?.message).toBe("Name?");
+  expect(lastTextConfig?.initialValue).toBe("anon");
+  expect(lastTextConfig?.placeholder).toBe("type a name");
+  expect(typeof lastTextConfig?.validate).toBe("function");
 });
 
 test("text throws UserAbortError when clack returns cancel symbol", async () => {
@@ -130,6 +151,29 @@ test("text throws UserAbortError when clack returns cancel symbol", async () => 
   await expect(text({ message: "Name?" })).rejects.toMatchObject({
     name: "UserAbortError",
   });
+});
+
+test("text maps true validation results to clack success", async () => {
+  textResult = "value";
+  await text({ message: "Name?", validate: () => true });
+
+  const validate = lastTextConfig?.validate as (value: string | undefined) => unknown;
+  expect(validate("value")).toBeUndefined();
+});
+
+test("text re-prompts when async validation rejects a submitted value", async () => {
+  textResults = ["missing.json", "valid.json"];
+  const captured = captureLog();
+
+  const result = await captured.run(() =>
+    text({
+      message: "Path?",
+      validate: async (value) => (value === "valid.json" ? true : "File not found"),
+    }),
+  );
+
+  expect(result).toBe("valid.json");
+  expect(captured.err).toContain("File not found");
 });
 
 test("password passes message to clack and returns the typed value", async () => {
@@ -141,11 +185,20 @@ test("password passes message to clack and returns the typed value", async () =>
 });
 
 test("password forwards validate to clack", async () => {
-  passwordResult = "ok";
+  passwordResult = "long-enough";
   const validate = (v: string | undefined) => ((v?.length ?? 0) >= 8 ? undefined : "too short");
   await password({ message: "Secret?", validate });
 
-  expect(lastPasswordConfig).toEqual({ message: "Secret?", validate });
+  expect(lastPasswordConfig?.message).toBe("Secret?");
+  expect(typeof lastPasswordConfig?.validate).toBe("function");
+});
+
+test("password maps true validation results to clack success", async () => {
+  passwordResult = "s3cret";
+  await password({ message: "Secret?", validate: () => true });
+
+  const validate = lastPasswordConfig?.validate as (value: string | undefined) => unknown;
+  expect(validate("s3cret")).toBeUndefined();
 });
 
 test("password throws UserAbortError when clack returns cancel symbol", async () => {

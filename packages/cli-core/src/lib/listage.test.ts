@@ -1,4 +1,4 @@
-import { test, expect, describe, mock, beforeEach } from "bun:test";
+import { test, expect, describe, mock, beforeEach, spyOn } from "bun:test";
 
 // Sentinel for cancellation. Tests choose this symbol; the mocked
 // @clack/prompts.isCancel below treats it as the clack cancel signal.
@@ -41,6 +41,10 @@ beforeEach(() => {
   selectResult = undefined;
   lastAutocompleteCall = undefined;
   autocompleteResult = undefined;
+  Object.defineProperty(process.stdin, "isTTY", {
+    configurable: true,
+    value: true,
+  });
 });
 
 describe("filterChoices", () => {
@@ -190,6 +194,24 @@ describe("select", () => {
       select<string>({ message: "Pick", choices: [{ value: "a" }] }),
     ).rejects.toMatchObject({ name: "UserAbortError" });
   });
+
+  test("opens the controlling terminal when stdin is not a TTY", async () => {
+    Object.defineProperty(process.stdin, "isTTY", { configurable: true, value: false });
+    selectResult = "a";
+    const mockStream = { close: mock(() => {}), on: mock(() => mockStream) };
+    const createReadStreamSpy = spyOn(await import("node:fs"), "createReadStream").mockReturnValue(
+      mockStream as never,
+    );
+
+    await select<string>({ message: "Pick", choices: [{ value: "a" }] });
+
+    const expectedPath = process.platform === "win32" ? "CONIN$" : "/dev/tty";
+    expect(createReadStreamSpy).toHaveBeenCalledWith(expectedPath);
+    expect(lastSelectCall?.config.input).toBe(mockStream);
+    expect(mockStream.close).toHaveBeenCalled();
+
+    createReadStreamSpy.mockRestore();
+  });
 });
 
 describe("search", () => {
@@ -218,13 +240,135 @@ describe("search", () => {
     expect(lastAutocompleteCall?.config.message).toBe("Search");
     expect(lastAutocompleteCall?.config.maxItems).toBe(4);
     expect(lastAutocompleteCall?.config.initialValue).toBe("a");
-    const options = lastAutocompleteCall?.config.options as Array<Record<string, unknown>>;
+    const optionsFn = lastAutocompleteCall?.config.options as (this: {
+      userInput: string;
+    }) => Array<Record<string, unknown>>;
+    const options = optionsFn.call({ userInput: "" });
     expect(options).toHaveLength(2);
     expect(options[0]).toMatchObject({ value: "a", label: "Apple" });
     expect(options[1]).toMatchObject({ value: "b", label: "Banana" });
   });
 
-  test("filter callback matches labels case-insensitively", async () => {
+  test("invokes source again with the typed term when clack requests filtered options", async () => {
+    autocompleteResult = "remote-user";
+    const terms: Array<string | undefined> = [];
+
+    await search<string>({
+      message: "Search users",
+      source: (term) => {
+        terms.push(term);
+        return [{ value: term ?? "initial", name: term ? `User ${term}` : "Initial user" }];
+      },
+    });
+
+    const options = lastAutocompleteCall?.config.options as (this: {
+      userInput: string;
+    }) => unknown;
+    const refined = options.call({ userInput: "remote" }) as Array<Record<string, unknown>>;
+
+    expect(terms).toEqual([undefined, "remote"]);
+    expect(refined[0]).toMatchObject({ value: "remote", label: "User remote" });
+  });
+
+  test("refreshes clack state when async source results arrive for the typed term", async () => {
+    autocompleteResult = "remote-user";
+
+    await search<string>({
+      message: "Search users",
+      source: async (term) => [
+        { value: term ?? "initial", name: term ? `User ${term}` : "Initial user" },
+      ],
+    });
+
+    const options = lastAutocompleteCall?.config.options as (this: {
+      userInput: string;
+      filteredOptions: Array<Record<string, unknown>>;
+      selectedValues: unknown[];
+      focusedValue: unknown;
+      render: () => void;
+    }) => Array<Record<string, unknown>>;
+    const prompt: {
+      userInput: string;
+      filteredOptions: Array<Record<string, unknown>>;
+      selectedValues: unknown[];
+      focusedValue: unknown;
+      render: ReturnType<typeof mock>;
+    } = {
+      userInput: "remote",
+      filteredOptions: [],
+      selectedValues: [],
+      focusedValue: undefined,
+      render: mock(),
+    };
+    const loading = options.call(prompt);
+    expect(loading[0]).toMatchObject({ label: "Loading results...", disabled: true });
+
+    await new Promise((resolve) => queueMicrotask(resolve));
+
+    expect(prompt.filteredOptions[0]).toMatchObject({ value: "remote", label: "User remote" });
+    expect(prompt.selectedValues).toEqual(["remote"]);
+    expect(prompt.focusedValue).toBe("remote");
+    expect(prompt.render).toHaveBeenCalled();
+  });
+
+  test("rejects submission while autocomplete has no selected value", async () => {
+    autocompleteResult = "initial";
+    const result = await search<string>({
+      message: "Search users",
+      source: () => [{ value: "initial", name: "Initial user" }],
+    });
+
+    const validate = lastAutocompleteCall?.config.validate as (value: unknown) => unknown;
+    expect(result).toBe("initial");
+    expect(validate(undefined)).toBe("Select an option to continue");
+    expect(validate("initial")).toBeUndefined();
+  });
+
+  test("renders async source errors for typed terms without rejecting out of band", async () => {
+    autocompleteResult = "initial";
+
+    await search<string>({
+      message: "Search users",
+      source: async (term) => {
+        if (term === "remote") throw new Error("Network down");
+        return [{ value: "initial", name: "Initial user" }];
+      },
+    });
+
+    const options = lastAutocompleteCall?.config.options as (this: {
+      userInput: string;
+      filteredOptions: Array<Record<string, unknown>>;
+      selectedValues: unknown[];
+      focusedValue: unknown;
+      render: () => void;
+    }) => Array<Record<string, unknown>>;
+    const prompt: {
+      userInput: string;
+      filteredOptions: Array<Record<string, unknown>>;
+      selectedValues: unknown[];
+      focusedValue: unknown;
+      render: ReturnType<typeof mock>;
+    } = {
+      userInput: "remote",
+      filteredOptions: [],
+      selectedValues: [],
+      focusedValue: undefined,
+      render: mock(),
+    };
+
+    options.call(prompt);
+    await new Promise((resolve) => queueMicrotask(resolve));
+
+    expect(prompt.filteredOptions[0]).toMatchObject({
+      label: "Network down",
+      disabled: true,
+    });
+    expect(prompt.selectedValues).toEqual([]);
+    expect(prompt.focusedValue).toBeUndefined();
+    expect(prompt.render).toHaveBeenCalled();
+  });
+
+  test("filter accepts source-provided options", async () => {
     autocompleteResult = "a";
     await search<string>({
       message: "Search",
@@ -240,10 +384,7 @@ describe("search", () => {
     ) => boolean;
     expect(typeof filter).toBe("function");
     expect(filter("APP", { label: "Apple", value: "a" })).toBe(true);
-    expect(filter("ban", { label: "Banana", value: "b" })).toBe(true);
-    expect(filter("xyz", { label: "Apple", value: "a" })).toBe(false);
-    // Falls back to stringifying value when label is absent.
-    expect(filter("a", { value: "a" })).toBe(true);
+    expect(filter("xyz", { label: "Apple", value: "a" })).toBe(true);
   });
 
   test("throws UserAbortError when clack returns the cancel symbol", async () => {
@@ -263,7 +404,10 @@ describe("search", () => {
       source: async () => [{ value: "a", name: "A" }],
     });
     expect(result).toBe("a");
-    const options = lastAutocompleteCall?.config.options as Array<Record<string, unknown>>;
+    const optionsFn = lastAutocompleteCall?.config.options as (this: {
+      userInput: string;
+    }) => Array<Record<string, unknown>>;
+    const options = optionsFn.call({ userInput: "" });
     expect(options[0]).toMatchObject({ value: "a", label: "A" });
   });
 });
