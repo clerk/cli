@@ -1,5 +1,5 @@
-import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { afterAll, afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
+import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { join } from "node:path";
 import * as realOs from "node:os";
 import { useCaptureLog } from "../../../test/lib/stubs.ts";
@@ -10,6 +10,7 @@ import { useCaptureLog } from "../../../test/lib/stubs.ts";
 // module mock instead — registered at file top, before the clients are imported.
 let mockHome = realOs.tmpdir();
 mock.module("node:os", () => ({ ...realOs, homedir: () => mockHome }));
+afterAll(() => mock.restore());
 
 const mockIsAgent = mock();
 mock.module("../../../mode.ts", () => ({
@@ -42,7 +43,7 @@ describe("user-scope MCP clients (homedir redirected to a tmpdir)", () => {
   describe("gemini", () => {
     test("encodes the mcp-remote stdio-bridge shape", async () => {
       await geminiClient.upsert({ name: "clerk", url: URL }, "/ignored", false);
-      const parsed = JSON.parse(await readFile(geminiClient.configPath("/ignored"), "utf8")) as {
+      const parsed = (await Bun.file(geminiClient.configPath("/ignored")).json()) as {
         mcpServers: { clerk: { command: string; args: string[] } };
       };
       expect(parsed.mcpServers.clerk).toEqual({ command: "npx", args: ["-y", "mcp-remote", URL] });
@@ -61,7 +62,7 @@ describe("user-scope MCP clients (homedir redirected to a tmpdir)", () => {
       // unrelated npx tool must not round-trip as a Clerk MCP entry.
       const dir = join(mockHome, ".gemini");
       await mkdir(dir, { recursive: true });
-      await writeFile(
+      await Bun.write(
         join(dir, "settings.json"),
         JSON.stringify({
           mcpServers: {
@@ -78,7 +79,7 @@ describe("user-scope MCP clients (homedir redirected to a tmpdir)", () => {
   describe("windsurf", () => {
     test("encodes the serverUrl shape and round-trips it on list", async () => {
       await windsurfClient.upsert({ name: "clerk", url: URL }, "/ignored", false);
-      const parsed = JSON.parse(await readFile(windsurfClient.configPath("/ignored"), "utf8")) as {
+      const parsed = (await Bun.file(windsurfClient.configPath("/ignored")).json()) as {
         mcpServers: { clerk: { serverUrl: string } };
       };
       expect(parsed.mcpServers.clerk).toEqual({ serverUrl: URL });
