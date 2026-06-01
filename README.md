@@ -48,11 +48,7 @@ Commands:
   api         [options] [endpoint] [filter]  Make authenticated requests to the Clerk API
   doctor      [options]                      Check your project's Clerk integration health
   completion  [shell]                        Generate shell autocompletion script
-  skill                                      Manage the bundled Clerk CLI agent skill
   update      [options]                      Update the Clerk CLI to the latest version
   deploy                                     Deploy a Clerk application to production
   help        [command]                      Display help for command
-
-Give AI agents better Clerk context: install the Clerk skills
-  $ clerk skill install
 ```
