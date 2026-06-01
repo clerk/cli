@@ -27,6 +27,7 @@ mock.module("../../lib/spinner.ts", () => ({
   withSpinner: async (_msg: string, fn: () => Promise<unknown>) => fn(),
   intro: () => {},
   outro: () => {},
+  pausedOutro: () => {},
   bar: () => {},
 }));
 

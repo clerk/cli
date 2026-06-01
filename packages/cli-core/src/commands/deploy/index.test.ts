@@ -2,7 +2,7 @@ import { test, expect, describe, beforeEach, afterEach, mock, spyOn } from "bun:
 import { mkdtemp, rm } from "node:fs/promises";
 import { join, relative } from "node:path";
 import { tmpdir } from "node:os";
-import { useCaptureLog, promptsStubs, listageStubs } from "../../test/lib/stubs.ts";
+import { useCaptureLog, listageStubs } from "../../test/lib/stubs.ts";
 import { CliError, ERROR_CODE, EXIT_CODE, PlapiError, UserAbortError } from "../../lib/errors.ts";
 
 const mockIsAgent = mock();
@@ -926,7 +926,7 @@ describe("deploy", () => {
       await expect(collectCustomDomain()).resolves.toBe("example.com");
     });
 
-    test("Ctrl-C before changes are made reports cancelled instead of done", async () => {
+    test("Ctrl-C before changes are made reports paused instead of done", async () => {
       await linkedProject();
       mockIsAgent.mockReturnValue(false);
       mockConfirm.mockRejectedValueOnce(promptExitError());
@@ -936,11 +936,12 @@ describe("deploy", () => {
       const config = await readConfig();
       expect(config.profiles[process.cwd()]?.instances.production).toBeUndefined();
       const terminalOutput = stripAnsi(captured.err);
-      expect(terminalOutput).toContain("Cancelled");
+      expect(terminalOutput).toContain("Paused");
+      expect(terminalOutput).toContain("Run `clerk deploy` again");
       expect(terminalOutput).not.toContain("Done");
     });
 
-    test("Ctrl-C at domain collection reports cancelled instead of done", async () => {
+    test("Ctrl-C at domain collection reports paused instead of done", async () => {
       await linkedProject();
       mockIsAgent.mockReturnValue(false);
       mockConfirm.mockResolvedValueOnce(true);
@@ -951,7 +952,8 @@ describe("deploy", () => {
       const config = await readConfig();
       expect(config.profiles[process.cwd()]?.instances.production).toBeUndefined();
       const terminalOutput = stripAnsi(captured.err);
-      expect(terminalOutput).toContain("Cancelled");
+      expect(terminalOutput).toContain("Paused");
+      expect(terminalOutput).toContain("Run `clerk deploy` again");
       expect(terminalOutput).not.toContain("Done");
     });
 

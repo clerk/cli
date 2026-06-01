@@ -1,7 +1,7 @@
 import { createApplication, fetchApplication } from "../../lib/plapi.ts";
-import { withApiContext } from "../../lib/errors.ts";
+import { UserAbortError, isPromptExitError, withApiContext } from "../../lib/errors.ts";
 import { dim, cyan } from "../../lib/color.ts";
-import { withSpinner, intro, outro } from "../../lib/spinner.ts";
+import { withSpinner, intro, outro, pausedOutro } from "../../lib/spinner.ts";
 import { stripSecrets, displayName, printJson, type AppsOptions } from "./shared.ts";
 import { isInsideGutter, log } from "../../lib/log.ts";
 import { isAgent } from "../../mode.ts";
@@ -11,6 +11,7 @@ export async function create(name: string, options: AppsOptions = {}): Promise<v
   if (shouldWrap) intro("Creating application");
 
   let nextSteps: string[] | undefined;
+  let closeStatus: "success" | "failed" | "paused" | undefined;
   try {
     const app = await withSpinner("Creating application...", async () => {
       const created = await withApiContext(createApplication(name), "Failed to create application");
@@ -30,7 +31,19 @@ export async function create(name: string, options: AppsOptions = {}): Promise<v
       `Run \`clerk link --app ${app.application_id}\` to connect this directory`,
       "Run `clerk env pull` to fetch your environment variables",
     ];
+    closeStatus = "success";
+  } catch (error) {
+    closeStatus = error instanceof UserAbortError || isPromptExitError(error) ? "paused" : "failed";
+    throw error;
   } finally {
-    if (shouldWrap) outro(nextSteps);
+    if (shouldWrap) {
+      if (closeStatus === "paused") {
+        pausedOutro();
+      } else if (closeStatus === "failed") {
+        outro("Failed");
+      } else if (closeStatus === "success") {
+        outro(nextSteps);
+      }
+    }
   }
 }

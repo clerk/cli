@@ -2,7 +2,7 @@ import { test, expect, describe, beforeEach, afterEach, spyOn, mock } from "bun:
 import { mkdtemp, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { CliError, ERROR_CODE } from "../../lib/errors.ts";
+import { CliError, ERROR_CODE, UserAbortError } from "../../lib/errors.ts";
 import {
   useCaptureLog,
   credentialStoreStubs,
@@ -171,7 +171,11 @@ mock.module("../../lib/config.ts", () => ({
   },
 }));
 
-mock.module("../../lib/prompts.ts", () => libPromptsStubs);
+const mockConfirm = mock(async (_config?: unknown) => true);
+mock.module("../../lib/prompts.ts", () => ({
+  ...libPromptsStubs,
+  confirm: (config: unknown) => mockConfirm(config),
+}));
 
 const { _setConfigDir } = (await import("../../lib/config.ts")) as any;
 const { setMode } = (await import("../../mode.ts")) as any;
@@ -209,6 +213,8 @@ describe("api command", () => {
       throw new Error("process.exit");
     });
     stubFetch(async () => new Response(JSON.stringify(mockUsers), { status: 200 }));
+    mockConfirm.mockReset();
+    mockConfirm.mockResolvedValue(true);
   });
 
   afterEach(async () => {
@@ -479,12 +485,29 @@ describe("api command", () => {
   });
 
   test("prints API error response body to stdout and exits 1", async () => {
+    setMode("human");
     const errorBody = { errors: [{ message: "not found", code: "resource_not_found" }] };
     stubFetch(async () => new Response(JSON.stringify(errorBody), { status: 404 }));
 
     await runApi("/users/bad_id");
     expect(process.exitCode).toBe(1);
     expect(captured.out).toContain(JSON.stringify(errorBody, null, 2));
+    expect(captured.err).toContain("Failed");
+    expect(captured.err).not.toContain("Done");
+  });
+
+  test("shows Paused with instructions when a confirmation prompt is cancelled", async () => {
+    setMode("human");
+    mockConfirm.mockImplementation(async () => {
+      throw new UserAbortError();
+    });
+
+    await expect(
+      runApi("/users", { method: "POST", data: "{}", yes: false }),
+    ).rejects.toBeInstanceOf(UserAbortError);
+    expect(captured.err).toContain("Paused");
+    expect(captured.err).toContain("Run this command again to continue.");
+    expect(captured.err).not.toContain("Done");
   });
 
   test("--include shows headers on error responses too", async () => {

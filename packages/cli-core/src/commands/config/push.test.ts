@@ -18,6 +18,7 @@ mock.module("../../lib/prompts.ts", () => libPromptsStubs);
 mock.module("../../lib/spinner.ts", () => ({
   intro: () => {},
   outro: () => {},
+  pausedOutro: () => {},
   bar: () => {},
   withSpinner: async (_msg: string, fn: () => Promise<unknown>) => fn(),
 }));

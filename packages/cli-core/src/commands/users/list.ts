@@ -1,9 +1,9 @@
 import { resolveBapiSecretKey } from "../../lib/bapi-command.ts";
 import { dim, cyan } from "../../lib/color.ts";
-import { CliError, ERROR_CODE } from "../../lib/errors.ts";
+import { CliError, ERROR_CODE, UserAbortError, isPromptExitError } from "../../lib/errors.ts";
 import { isInsideGutter, log } from "../../lib/log.ts";
 import { isAgent, isHuman } from "../../mode.ts";
-import { withSpinner, intro, outro } from "../../lib/spinner.ts";
+import { withSpinner, intro, outro, pausedOutro } from "../../lib/spinner.ts";
 import { bapiRequest } from "../api/bapi.ts";
 import { resolveUsersInstanceContext } from "./interactive/instance-context.ts";
 import { registerUsersAction } from "./registry.ts";
@@ -165,6 +165,7 @@ export async function list(options: UsersListOptions = {}): Promise<void> {
   const nested = isInsideGutter();
   const shouldWrap = !nested && !options.json && !isAgent();
   if (shouldWrap) intro("Listing users");
+  let closeStatus: "success" | "failed" | "paused" | undefined;
 
   try {
     const secretKey = await resolveListSecretKey(options);
@@ -194,6 +195,7 @@ export async function list(options: UsersListOptions = {}): Promise<void> {
 
     if (users.length === 0) {
       log.warn("No users found.");
+      closeStatus = "success";
       return;
     }
 
@@ -204,8 +206,20 @@ export async function list(options: UsersListOptions = {}): Promise<void> {
     } else {
       log.info(summary);
     }
+    closeStatus = "success";
+  } catch (error) {
+    closeStatus = error instanceof UserAbortError || isPromptExitError(error) ? "paused" : "failed";
+    throw error;
   } finally {
-    if (shouldWrap) outro();
+    if (shouldWrap) {
+      if (closeStatus === "paused") {
+        pausedOutro();
+      } else if (closeStatus === "failed") {
+        outro("Failed");
+      } else if (closeStatus === "success") {
+        outro();
+      }
+    }
   }
 }
 

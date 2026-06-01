@@ -7,6 +7,7 @@ import { getUiOutput } from "./ui.ts";
 
 const S_BAR = "│";
 const S_BAR_END = "└";
+const PAUSED_INSTRUCTION = "Run this command again to continue.";
 
 const logUiOutput = new Writable({
   write(chunk, _encoding, callback) {
@@ -53,6 +54,15 @@ export function outro(messageOrSteps?: string | readonly string[]) {
   clackOutro(typeof messageOrSteps === "string" ? messageOrSteps : "Done", {
     output: getOutput(),
   });
+}
+
+/** Print a paused outro with the instruction needed to resume later. */
+export function pausedOutro(instruction = PAUSED_INSTRUCTION) {
+  if (!isHuman()) return;
+  popPrefix();
+  writeUi(`${dim(S_BAR)}\n`);
+  writeUi(`${dim(S_BAR_END)}  Paused\n`);
+  writeUi(`   ${cyan("→")} ${instruction}\n\n`);
 }
 
 /** Print a bar separator: │ */

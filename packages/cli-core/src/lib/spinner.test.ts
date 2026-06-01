@@ -83,7 +83,7 @@ async function captureStderrAsync<T>(fn: () => Promise<T>): Promise<T> {
   }
 }
 
-const { intro, outro, bar, withSpinner } = await import("./spinner.ts");
+const { intro, outro, pausedOutro, bar, withSpinner } = await import("./spinner.ts");
 
 beforeEach(() => {
   introCalls = 0;
@@ -128,6 +128,18 @@ test("outro with string[] renders custom Next steps block and does not call clac
   expect(output).toContain("Next steps");
   expect(output).toContain("Run `clerk dev`");
   expect(output).toContain("Open the dashboard");
+});
+
+test("pausedOutro renders Paused with resume instructions and pops the gutter prefix", () => {
+  intro("Hello");
+  captureStderr(() => {
+    pausedOutro("Run this command again to continue.");
+  });
+
+  expect(isInsideGutter()).toBe(false);
+  const output = stderrChunks.join("");
+  expect(output).toContain("Paused");
+  expect(output).toContain("Run this command again to continue.");
 });
 
 test("bar() writes a single │ line without throwing", () => {

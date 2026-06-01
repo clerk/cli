@@ -1,10 +1,17 @@
 import { resolveAppContext } from "../../lib/config.ts";
 import { fetchInstanceConfig, putInstanceConfig, patchInstanceConfig } from "../../lib/plapi.ts";
 import { isHuman } from "../../mode.ts";
-import { throwUsageError, throwUserAbort, withApiContext, ERROR_CODE } from "../../lib/errors.ts";
+import {
+  UserAbortError,
+  isPromptExitError,
+  throwUsageError,
+  throwUserAbort,
+  withApiContext,
+  ERROR_CODE,
+} from "../../lib/errors.ts";
 import { confirm } from "../../lib/prompts.ts";
 import { dim, bold, red, green } from "../../lib/color.ts";
-import { withSpinner, intro, outro } from "../../lib/spinner.ts";
+import { withSpinner, intro, outro, pausedOutro } from "../../lib/spinner.ts";
 import { isInsideGutter, log } from "../../lib/log.ts";
 import { NEXT_STEPS, printNextSteps } from "../../lib/next-steps.ts";
 
@@ -78,6 +85,7 @@ async function configPush(options: ConfigPushOptions, op: Operation): Promise<vo
 
   const shouldWrap = !isInsideGutter();
   if (shouldWrap) intro(op.title);
+  let closeStatus: "success" | "failed" | "paused" | undefined;
 
   try {
     const currentConfig = await withSpinner("Fetching current config...", () =>
@@ -92,6 +100,7 @@ async function configPush(options: ConfigPushOptions, op: Operation): Promise<vo
 
     if (!hasConfigChanges(currentConfig, configPayload, isPatch)) {
       log.info(options.dryRun ? "[dry-run] No changes detected" : "No changes detected");
+      closeStatus = "success";
       return;
     }
 
@@ -134,8 +143,20 @@ async function configPush(options: ConfigPushOptions, op: Operation): Promise<vo
     } else {
       printNextSteps(NEXT_STEPS.CONFIG_PUSH);
     }
+    closeStatus = "success";
+  } catch (error) {
+    closeStatus = error instanceof UserAbortError || isPromptExitError(error) ? "paused" : "failed";
+    throw error;
   } finally {
-    if (shouldWrap) outro();
+    if (shouldWrap) {
+      if (closeStatus === "paused") {
+        pausedOutro();
+      } else if (closeStatus === "failed") {
+        outro("Failed");
+      } else if (closeStatus === "success") {
+        outro();
+      }
+    }
   }
 }
 

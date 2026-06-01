@@ -2,10 +2,17 @@ import { getAuthToken } from "../../lib/plapi.ts";
 import { getBapiBaseUrl, getPlapiBaseUrl } from "../../lib/environment.ts";
 import { normalizeBapiPath, resolveBapiSecretKey } from "../../lib/bapi-command.ts";
 import { bapiRequest } from "./bapi.ts";
-import { BapiError, ERROR_CODE, throwUsageError, throwUserAbort } from "../../lib/errors.ts";
+import {
+  BapiError,
+  ERROR_CODE,
+  UserAbortError,
+  isPromptExitError,
+  throwUsageError,
+  throwUserAbort,
+} from "../../lib/errors.ts";
 import { isHuman } from "../../mode.ts";
 import { confirm } from "../../lib/prompts.ts";
-import { withSpinner, intro, outro } from "../../lib/spinner.ts";
+import { withSpinner, intro, outro, pausedOutro } from "../../lib/spinner.ts";
 import { isInsideGutter, log } from "../../lib/log.ts";
 
 export interface ApiOptions {
@@ -30,6 +37,7 @@ export async function api(
 ): Promise<void> {
   const nested = isInsideGutter();
   if (!nested) intro("Calling Clerk API");
+  let closeStatus: "success" | "failed" | "paused" | undefined;
 
   try {
     // Route: no args → interactive builder
@@ -101,6 +109,7 @@ export async function api(
         printHeaders(response.status, response.headers);
       }
       printBody(response.body);
+      closeStatus = "success";
     } catch (error) {
       // Handle BapiError locally to print the raw API response body to stdout
       // (for piping), rather than propagating to the global error handler.
@@ -110,12 +119,24 @@ export async function api(
         }
         prettyPrint(error.body);
         process.exitCode = 1;
+        closeStatus = "failed";
         return;
       }
       throw error;
     }
+  } catch (error) {
+    closeStatus = error instanceof UserAbortError || isPromptExitError(error) ? "paused" : "failed";
+    throw error;
   } finally {
-    if (!nested) outro();
+    if (!nested) {
+      if (closeStatus === "paused") {
+        pausedOutro();
+      } else if (closeStatus === "failed") {
+        outro("Failed");
+      } else {
+        outro();
+      }
+    }
   }
 }
 

@@ -1,6 +1,6 @@
 import { isAgent } from "../../mode.ts";
 import { isInsideGutter, log } from "../../lib/log.ts";
-import { bar, intro, outro, withSpinner } from "../../lib/spinner.ts";
+import { bar, intro, outro, pausedOutro, withSpinner } from "../../lib/spinner.ts";
 import {
   CliError,
   ERROR_CODE,
@@ -29,6 +29,7 @@ import {
   dnsRecords,
   nextStepsBlock,
   pendingDnsRecords,
+  pausedOperationNotice,
   printPlan,
   productionSummary,
 } from "./copy.ts";
@@ -86,7 +87,7 @@ export async function deploy(_options: DeployOptions = {}) {
       outro("Paused");
     }
     if (isPromptExitError(error) && isInsideGutter()) {
-      outro("Cancelled");
+      pausedOutro(pausedOperationNotice());
       throw new UserAbortError();
     }
     throw error;

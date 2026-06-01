@@ -22,6 +22,7 @@ const mockWithSpinner = mock((_msg: string, fn: () => Promise<unknown>) => fn())
 mock.module("../../lib/spinner.ts", () => ({
   intro: () => {},
   outro: () => {},
+  pausedOutro: () => {},
   bar: () => {},
   withSpinner: (...args: Parameters<typeof mockWithSpinner>) => mockWithSpinner(...args),
 }));

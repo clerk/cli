@@ -94,6 +94,7 @@ mock.module("../../lib/listage.ts", () => ({
 mock.module("../../lib/spinner.ts", () => ({
   intro: () => {},
   outro: () => {},
+  pausedOutro: () => {},
   bar: () => {},
   withSpinner: async (_msg: string, fn: () => Promise<unknown>) => fn(),
 }));

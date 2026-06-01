@@ -17,6 +17,7 @@ mock.module("../../lib/listage.ts", () => ({
 mock.module("../../lib/spinner.ts", () => ({
   intro: (...args: unknown[]) => mockIntro(...args),
   outro: (...args: unknown[]) => mockOutro(...args),
+  pausedOutro: () => {},
   bar: () => {},
   withSpinner: async (_msg: string, fn: () => Promise<unknown>) => fn(),
 }));

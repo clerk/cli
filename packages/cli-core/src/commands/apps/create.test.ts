@@ -23,6 +23,7 @@ mock.module("../../lib/spinner.ts", () => ({
   outro: (msgOrSteps?: string | readonly string[]) => {
     if (Array.isArray(msgOrSteps)) mockNextSteps(msgOrSteps);
   },
+  pausedOutro: () => {},
   bar: () => {},
   withSpinner: async (_msg: string, fn: () => Promise<unknown>) => fn(),
 }));

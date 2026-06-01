@@ -55,6 +55,7 @@ mock.module("../../lib/spinner.ts", () => ({
       for (const step of msgOrSteps) log.info(step);
     }
   },
+  pausedOutro: () => {},
   bar: () => {},
   withSpinner: async (_msg: string, fn: () => Promise<unknown>) => fn(),
 }));

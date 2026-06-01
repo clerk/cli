@@ -1,5 +1,5 @@
 import { test, expect, describe, beforeEach, afterEach, mock, spyOn } from "bun:test";
-import { useCaptureLog, promptsStubs } from "../../test/lib/stubs.ts";
+import { useCaptureLog } from "../../test/lib/stubs.ts";
 import { BapiError, CliError, ERROR_CODE, EXIT_CODE } from "../../lib/errors.ts";
 
 const mockResolveBapiSecretKey = mock();
@@ -30,6 +30,7 @@ mock.module("./create-wizard.ts", () => ({
 mock.module("../../lib/spinner.ts", () => ({
   intro: () => {},
   outro: () => {},
+  pausedOutro: () => {},
   bar: () => {},
   withSpinner: async (_msg: string, fn: () => Promise<unknown>) => fn(),
 }));

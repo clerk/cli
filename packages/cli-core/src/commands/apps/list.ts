@@ -1,9 +1,11 @@
 import { listApplications, type Application } from "../../lib/plapi.ts";
 import { withApiContext } from "../../lib/errors.ts";
 import { dim, cyan } from "../../lib/color.ts";
-import { withSpinner, intro, outro } from "../../lib/spinner.ts";
+import { UserAbortError, isPromptExitError } from "../../lib/errors.ts";
+import { withSpinner, intro, outro, pausedOutro } from "../../lib/spinner.ts";
 import { ui } from "../../lib/ui.ts";
 import { stripSecrets, displayName, printJson, type AppsOptions } from "./shared.ts";
+import { isAgent } from "../../mode.ts";
 
 const COLUMN_PADDING = 2;
 
@@ -25,25 +27,43 @@ function formatAppsTable(apps: Application[]): void {
 }
 
 export async function list(options: AppsOptions = {}): Promise<void> {
-  intro("Listing applications");
+  const shouldWrap = !options.json && !isAgent();
+  if (shouldWrap) intro("Listing applications");
+  let closeStatus: "success" | "failed" | "paused" | undefined;
 
-  const result = await withSpinner("Fetching applications...", () =>
-    withApiContext(listApplications(), "Failed to list applications"),
-  );
+  try {
+    const fetchApps = () => withApiContext(listApplications(), "Failed to list applications");
+    const result = shouldWrap
+      ? await withSpinner("Fetching applications...", fetchApps)
+      : await fetchApps();
 
-  if (printJson(result.map(stripSecrets), options)) {
-    return;
+    if (printJson(result.map(stripSecrets), options)) {
+      return;
+    }
+
+    if (result.length === 0) {
+      ui.warn("No applications found. Create one at https://dashboard.clerk.com");
+      closeStatus = "success";
+      return;
+    }
+
+    formatAppsTable(result);
+
+    const count = result.length;
+    ui.message(`${count} application${count === 1 ? "" : "s"}`);
+    closeStatus = "success";
+  } catch (error) {
+    closeStatus = error instanceof UserAbortError || isPromptExitError(error) ? "paused" : "failed";
+    throw error;
+  } finally {
+    if (shouldWrap) {
+      if (closeStatus === "paused") {
+        pausedOutro();
+      } else if (closeStatus === "failed") {
+        outro("Failed");
+      } else if (closeStatus === "success") {
+        outro();
+      }
+    }
   }
-
-  if (result.length === 0) {
-    ui.warn("No applications found. Create one at https://dashboard.clerk.com");
-    outro();
-    return;
-  }
-
-  formatAppsTable(result);
-
-  const count = result.length;
-  ui.message(`${count} application${count === 1 ? "" : "s"}`);
-  outro();
 }

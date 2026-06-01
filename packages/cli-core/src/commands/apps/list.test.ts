@@ -145,6 +145,7 @@ describe("apps list", () => {
       expect(parsed).toHaveLength(2);
       expect(parsed[0].application_id).toBe("app_abc123");
       expect(parsed[0].name).toBe("My SaaS App");
+      expect(stdoutOut()).toBe("");
     });
 
     test("outputs JSON in agent mode", async () => {
@@ -186,6 +187,7 @@ describe("apps list", () => {
 
       const parsed = JSON.parse(captured.out);
       expect(parsed).toEqual([]);
+      expect(stdoutOut()).toBe("");
     });
 
     test("outputs empty JSON array in agent mode", async () => {

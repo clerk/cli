@@ -15,6 +15,7 @@ mock.module("../../lib/git.ts", () => gitStubs);
 mock.module("../../lib/spinner.ts", () => ({
   intro: () => {},
   outro: () => {},
+  pausedOutro: () => {},
   bar: () => {},
   withSpinner: async (msg: string, fn: () => Promise<unknown>) => {
     console.error(msg);
