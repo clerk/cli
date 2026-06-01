@@ -5,8 +5,8 @@ import { log } from "../../lib/log.ts";
 import { confirm } from "../../lib/prompts.ts";
 import { detectPackageManager } from "../../lib/package-manager.ts";
 import { NEXT_STEPS, printNextSteps } from "../../lib/next-steps.ts";
+import { resolveSkillsRunner, runSkillsAdd } from "../../lib/skills.ts";
 import { applyConfigPatch } from "../config/apply-patch.ts";
-import { resolveSkillsRunner, runSkillsAdd } from "../skill/install.ts";
 
 interface BillingOptions {
   app?: string;

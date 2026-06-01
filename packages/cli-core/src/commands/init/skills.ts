@@ -15,8 +15,8 @@
 import { isHuman } from "../../mode.js";
 import { log } from "../../lib/log.js";
 import { confirm } from "../../lib/prompts.js";
+import { resolveSkillsRunner, runSkillsAdd } from "../../lib/skills.js";
 import type { ProjectContext } from "./frameworks/types.js";
-import { resolveSkillsRunner, runSkillsAdd } from "../skill/install.js";
 
 /** Upstream skills from clerk/skills — installed on every project. */
 const DEFAULT_UPSTREAM_SKILLS = [

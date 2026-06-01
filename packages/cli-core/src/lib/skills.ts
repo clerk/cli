@@ -7,18 +7,18 @@
  * `-y -g` so it runs unattended with global scope and auto-detected agents.
  */
 
-import { dim } from "../../lib/color.js";
-import { log } from "../../lib/log.js";
-import { select } from "../../lib/listage.js";
+import { dim } from "./color.js";
+import { log } from "./log.js";
+import { select } from "./listage.js";
 import {
   type Runner,
   detectAvailableRunners,
   preferredRunner,
   runnerCommand,
   runnerForPackageManager,
-} from "../../lib/runners.js";
-import { isNonEmpty } from "../../lib/helpers/arrays.js";
-import type { PackageManager } from "../../lib/package-manager.js";
+} from "./runners.js";
+import { isNonEmpty } from "./helpers/arrays.js";
+import type { PackageManager } from "./package-manager.js";
 
 /**
  * Build the runner-agnostic argv for `skills add <source> ...`. The caller
@@ -53,7 +53,7 @@ export function buildSkillsArgs(
 /**
  * Run a single `skills add ...` invocation. Returns true on success, false
  * on any failure (spawn error, non-zero exit). Failures print a yellow
- * warning but never throw — skills are optional and shouldn't tear down
+ * warning but never throw, skills are optional and shouldn't tear down
  * a successful scaffold.
  */
 export async function runSkillsAdd(

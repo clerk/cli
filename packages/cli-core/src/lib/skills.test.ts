@@ -1,5 +1,5 @@
 import { test, expect, describe } from "bun:test";
-import { buildSkillsArgs } from "./install.ts";
+import { buildSkillsArgs } from "./skills.ts";
 
 describe("buildSkillsArgs", () => {
   const skills = ["clerk", "clerk-setup", "clerk-nextjs-patterns"];
