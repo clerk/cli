@@ -8,7 +8,7 @@ import {
   detectEnvFile,
 } from "../../lib/framework.ts";
 import { CliError, ERROR_CODE, withApiContext } from "../../lib/errors.ts";
-import { withSpinner, intro, outro } from "../../lib/spinner.ts";
+import { withGutter, withSpinner } from "../../lib/spinner.ts";
 import { log } from "../../lib/log.ts";
 
 const DEV_LOCAL_ENV_FILE = ".env.development.local";
@@ -48,46 +48,45 @@ async function resolveTargetFile(
 }
 
 export async function pull(options: EnvPullOptions): Promise<void> {
-  intro("Pulling environment variables");
+  await withGutter("Pulling environment variables", async () => {
+    const cwd = options.cwd ?? process.cwd();
+    const [ctx, preferredEnvFile] = await Promise.all([
+      resolveAppContext({ ...options, cwd }),
+      detectEnvFile(cwd),
+    ]);
+    const targetFile = await resolveTargetFile(cwd, options.file, preferredEnvFile);
+    const displayPath = options.file ?? basename(targetFile);
 
-  const cwd = options.cwd ?? process.cwd();
-  const [ctx, preferredEnvFile] = await Promise.all([
-    resolveAppContext({ ...options, cwd }),
-    detectEnvFile(cwd),
-  ]);
-  const targetFile = await resolveTargetFile(cwd, options.file, preferredEnvFile);
-  const displayPath = options.file ?? basename(targetFile);
+    await withSpinner(`Pulling env vars from ${ctx.instanceLabel} instance...`, async () => {
+      const app = await withApiContext(fetchApplication(ctx.appId), "Failed to fetch API keys");
 
-  await withSpinner(`Pulling env vars from ${ctx.instanceLabel} instance...`, async () => {
-    const app = await withApiContext(fetchApplication(ctx.appId), "Failed to fetch API keys");
+      const matched = app.instances.find((i) => i.instance_id === ctx.instanceId);
+      if (!matched) {
+        throw new CliError(`Instance ${ctx.instanceId} not found in application response.`, {
+          code: ERROR_CODE.INSTANCE_NOT_FOUND,
+          docsUrl: "https://clerk.com/docs/guides/development/managing-environments",
+        });
+      }
 
-    const matched = app.instances.find((i) => i.instance_id === ctx.instanceId);
-    if (!matched) {
-      throw new CliError(`Instance ${ctx.instanceId} not found in application response.`, {
-        code: ERROR_CODE.INSTANCE_NOT_FOUND,
-        docsUrl: "https://clerk.com/docs/guides/development/managing-environments",
-      });
-    }
+      const publishableKeyName = await detectPublishableKeyName(cwd);
+      const secretKeyName = await detectSecretKeyName(cwd);
 
-    const publishableKeyName = await detectPublishableKeyName(cwd);
-    const secretKeyName = await detectSecretKeyName(cwd);
+      const file = Bun.file(targetFile);
+      const existingContent = (await file.exists()) ? await file.text() : "";
 
-    const file = Bun.file(targetFile);
-    const existingContent = (await file.exists()) ? await file.text() : "";
+      const lines = parseEnvFile(existingContent);
+      const vars: Record<string, string> = {
+        [publishableKeyName]: matched.publishable_key,
+      };
+      if (matched.secret_key) {
+        vars[secretKeyName] = matched.secret_key;
+      }
+      const merged = mergeEnvVars(lines, vars);
+      const output = serializeEnvFile(merged);
 
-    const lines = parseEnvFile(existingContent);
-    const vars: Record<string, string> = {
-      [publishableKeyName]: matched.publishable_key,
-    };
-    if (matched.secret_key) {
-      vars[secretKeyName] = matched.secret_key;
-    }
-    const merged = mergeEnvVars(lines, vars);
-    const output = serializeEnvFile(merged);
+      await Bun.write(targetFile, output);
+    });
 
-    await Bun.write(targetFile, output);
+    log.info(`Environment variables written to ${displayPath}`);
   });
-
-  log.info(`Environment variables written to ${displayPath}`);
-  outro();
 }

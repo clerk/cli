@@ -1,7 +1,6 @@
 import { listApplications, type Application } from "../../lib/plapi.ts";
-import { withApiContext } from "../../lib/errors.ts";
+import { UserAbortError, isPromptExitError, withApiContext } from "../../lib/errors.ts";
 import { dim, cyan } from "../../lib/color.ts";
-import { UserAbortError, isPromptExitError } from "../../lib/errors.ts";
 import { withSpinner, intro, outro, pausedOutro } from "../../lib/spinner.ts";
 import { ui } from "../../lib/ui.ts";
 import { stripSecrets, displayName, printJson, type AppsOptions } from "./shared.ts";

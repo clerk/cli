@@ -12,6 +12,10 @@ mock.module("../../lib/spinner.ts", () => ({
   outro: () => {},
   pausedOutro: () => {},
   bar: () => {},
+  withGutter: async (
+    _title: string,
+    fn: (controls: { setNextSteps: (steps: readonly string[]) => void }) => Promise<unknown>,
+  ) => fn({ setNextSteps: () => {} }),
   withSpinner: async (_msg: string, fn: () => Promise<unknown>) => fn(),
 }));
 

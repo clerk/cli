@@ -2,6 +2,7 @@ import { Writable } from "node:stream";
 import { intro as clackIntro, outro as clackOutro, spinner as clackSpinner } from "@clack/prompts";
 import { isHuman } from "../mode.ts";
 import { dim, cyan } from "./color.ts";
+import { UserAbortError, isPromptExitError } from "./errors.ts";
 import { log, pushPrefix, popPrefix } from "./log.ts";
 import { getUiOutput } from "./ui.ts";
 
@@ -74,6 +75,45 @@ export function bar() {
 export type SpinnerControls = {
   update(message: string): void;
 };
+
+/**
+ * Controls for commands wrapped by {@link withGutter}.
+ */
+export type GutterControls = {
+  setNextSteps(steps: readonly string[]): void;
+};
+
+/**
+ * Run a command inside an intro/outro gutter and guarantee the gutter closes.
+ */
+export async function withGutter<T>(
+  title: string,
+  fn: (controls: GutterControls) => Promise<T>,
+  options?: { skip?: boolean },
+): Promise<T> {
+  let nextSteps: readonly string[] | undefined;
+  const controls: GutterControls = {
+    setNextSteps(steps) {
+      nextSteps = steps;
+    },
+  };
+
+  if (options?.skip || !isHuman()) return fn(controls);
+
+  intro(title);
+  try {
+    const result = await fn(controls);
+    outro(nextSteps);
+    return result;
+  } catch (error) {
+    if (error instanceof UserAbortError || isPromptExitError(error)) {
+      pausedOutro();
+    } else {
+      outro("Failed");
+    }
+    throw error;
+  }
+}
 
 export async function withSpinner<T>(
   message: string,

@@ -83,7 +83,8 @@ async function captureStderrAsync<T>(fn: () => Promise<T>): Promise<T> {
   }
 }
 
-const { intro, outro, pausedOutro, bar, withSpinner } = await import("./spinner.ts");
+const { intro, outro, pausedOutro, bar, withSpinner, withGutter } = await import("./spinner.ts");
+const { UserAbortError } = await import("./errors.ts");
 
 beforeEach(() => {
   introCalls = 0;
@@ -140,6 +141,74 @@ test("pausedOutro renders Paused with resume instructions and pops the gutter pr
   const output = stderrChunks.join("");
   expect(output).toContain("Paused");
   expect(output).toContain("Run this command again to continue.");
+});
+
+test("withGutter opens and closes the gutter on success", async () => {
+  const result = await withGutter("Hello", async () => {
+    expect(isInsideGutter()).toBe(true);
+    return 42;
+  });
+
+  expect(result).toBe(42);
+  expect(introCalls).toBe(1);
+  expect(lastIntroTitle).toBe("Hello");
+  expect(outroCalls).toBe(1);
+  expect(lastOutroLabel).toBe("Done");
+  expect(isInsideGutter()).toBe(false);
+});
+
+test("withGutter renders next steps on success", async () => {
+  await captureStderrAsync(() =>
+    withGutter("Hello", async ({ setNextSteps }) => {
+      setNextSteps(["Run `clerk dev`"]);
+    }),
+  );
+
+  expect(outroCalls).toBe(0);
+  expect(isInsideGutter()).toBe(false);
+  expect(stderrChunks.join("")).toContain("Run `clerk dev`");
+});
+
+test("withGutter closes as Failed and rethrows on errors", async () => {
+  const boom = new Error("kaboom");
+  await expect(
+    withGutter("Hello", async () => {
+      throw boom;
+    }),
+  ).rejects.toBe(boom);
+
+  expect(outroCalls).toBe(1);
+  expect(lastOutroLabel).toBe("Failed");
+  expect(isInsideGutter()).toBe(false);
+});
+
+test("withGutter closes as Paused and rethrows on prompt aborts", async () => {
+  await expect(
+    captureStderrAsync(() =>
+      withGutter("Hello", async () => {
+        throw new UserAbortError();
+      }),
+    ),
+  ).rejects.toBeInstanceOf(UserAbortError);
+
+  expect(outroCalls).toBe(0);
+  expect(isInsideGutter()).toBe(false);
+  expect(stderrChunks.join("")).toContain("Paused");
+});
+
+test("withGutter skips wrapping when requested", async () => {
+  const result = await withGutter(
+    "Hello",
+    async () => {
+      expect(isInsideGutter()).toBe(false);
+      return 42;
+    },
+    { skip: true },
+  );
+
+  expect(result).toBe(42);
+  expect(introCalls).toBe(0);
+  expect(outroCalls).toBe(0);
 });
 
 test("bar() writes a single │ line without throwing", () => {
