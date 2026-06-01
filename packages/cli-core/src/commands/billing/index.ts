@@ -6,8 +6,8 @@ import { confirm } from "../../lib/prompts.ts";
 import { detectPackageManager } from "../../lib/package-manager.ts";
 import { NEXT_STEPS } from "../../lib/next-steps.ts";
 import { withGutter } from "../../lib/spinner.ts";
+import { resolveSkillsRunner, runSkillsAdd } from "../../lib/skills.ts";
 import { applyConfigPatch } from "../config/apply-patch.ts";
-import { resolveSkillsRunner, runSkillsAdd } from "../skill/install.ts";
 
 interface BillingOptions {
   app?: string;
@@ -112,7 +112,6 @@ async function offerBillingSkillInstall(options: BillingOptions): Promise<void> 
     "clerk/skills",
     ["clerk-billing"],
     interactive,
-    false,
     "clerk-billing",
   );
   if (installed) {

@@ -1,16 +1,10 @@
 /**
  * Install Clerk agent skills after scaffolding.
  *
- * Two installer calls share one runner detection:
- *
- *  1. The bundled `clerk` skill (embedded in the binary via text
- *     imports). Delegated to the `clerk skill install` core helpers in
- *     `commands/skill/install.ts`.
- *
- *  2. The upstream skills (`clerk-setup`, `clerk-custom-ui`,
- *     `clerk-backend-api`, `clerk-orgs`, `clerk-testing`, `clerk-webhooks`,
- *     plus a framework-specific skill when one matches) ship from the
- *     upstream `clerk/skills` repo and version independently of the CLI.
+ * The upstream skills (`clerk-cli`, `clerk-setup`, `clerk-custom-ui`,
+ * `clerk-backend-api`, `clerk-orgs`, `clerk-testing`, `clerk-webhooks`,
+ * plus a framework-specific skill when one matches) ship from the
+ * upstream `clerk/skills` repo and version independently of the CLI.
  *
  * The skills CLI itself handles agent auto-detection and scope selection:
  * in interactive mode we hand off entirely (no `--agent` / `-y`), so the
@@ -21,11 +15,13 @@
 import { isHuman } from "../../mode.js";
 import { log } from "../../lib/log.js";
 import { confirm } from "../../lib/prompts.js";
+import { resolveSkillsRunner, runSkillsAdd } from "../../lib/skills.js";
 import type { ProjectContext } from "./frameworks/types.js";
-import { installClerkSkillCore, resolveSkillsRunner, runSkillsAdd } from "../skill/install.js";
 
-/** Upstream skills from clerk/skills — installed on every project (excludes the bundled clerk skill). */
+/** Upstream skills from clerk/skills — installed on every project. */
 const DEFAULT_UPSTREAM_SKILLS = [
+  // cli/
+  "clerk-cli",
   // core/
   "clerk-setup",
   "clerk-custom-ui",
@@ -74,7 +70,7 @@ export function getFrameworkSkill(frameworkDep: string | undefined): string | un
 
 function formatSkillsSummary(frameworkSkill: string | undefined): string {
   const framework = frameworkSkill ? ` + ${frameworkSkill.replace(/^clerk-/, "")}` : "";
-  return `clerk core + features${framework}`;
+  return `clerk-cli + core + features${framework}`;
 }
 
 export function formatSkillsPromptMessage(frameworkSkill: string | undefined): string {
@@ -104,11 +100,6 @@ export async function installSkills(
   const runner = await resolveSkillsRunner(packageManager, interactive);
   if (!runner) return;
 
-  // Install the bundled clerk skill from a staged temp dir, then the
-  // upstream framework patterns. Each call soft-fails independently so a
-  // problem with one source doesn't block the other.
-  const cliSkillOk = await installClerkSkillCore(runner, cwd, interactive);
-
   log.debug(`skills: upstream install — ${upstreamSkills.join(", ")}`);
   const upstreamOk = await runSkillsAdd(
     runner,
@@ -116,11 +107,10 @@ export async function installSkills(
     UPSTREAM_SKILLS_SOURCE,
     upstreamSkills,
     interactive,
-    false,
     formatSkillsSummary(frameworkSkill),
   );
 
-  if (cliSkillOk && upstreamOk) {
+  if (upstreamOk) {
     log.blank();
     log.success("Agent skills installed. AI agents now have Clerk context in this project.");
   }

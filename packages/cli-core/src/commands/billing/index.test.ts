@@ -39,7 +39,7 @@ function resetSkillStubs() {
   skillCalls.length = 0;
   resolveSkillsRunnerStub = () => ({ id: "bunx", display: "bunx" });
 }
-mock.module("../skill/install.ts", () => ({
+mock.module("../../lib/skills.ts", () => ({
   resolveSkillsRunner: async () => resolveSkillsRunnerStub(),
   runSkillsAdd: async (
     _runner: unknown,
