@@ -67,7 +67,7 @@ When running in agent mode (`--mode agent` or non-TTY), the command runs the ful
 13. Prints a summary of created, modified, and skipped files with recommendations
 14. **Authenticated mode**: pulls development instance API keys via `clerk env pull`
 15. **Unauthenticated mode**: prints instructions for development without API keys and how to connect a Clerk account later
-16. Optionally installs Clerk agent skills (core + features, plus a framework-specific skill) via the project's package runner (see [Agent skills install](#agent-skills-install))
+16. Optionally installs Clerk agent skills (cli + core + features, plus a framework-specific skill) via the project's package runner (see [Agent skills install](#agent-skills-install))
 
 ## Framework Detection
 
