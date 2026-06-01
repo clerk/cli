@@ -1,0 +1,18 @@
+name: Revalidate install script
+
+on:
+  push:
+    branches: [main]
+    paths: [install.sh]
+
+permissions: {}
+
+jobs:
+  revalidate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Revalidate install script cache
+        run: |
+          curl -X POST https://clerk.com/api/revalidate-install \
+            -H "Authorization: Bearer ${{ secrets.INSTALL_REVALIDATE_SECRET }}" \
+            --fail --silent --show-error
