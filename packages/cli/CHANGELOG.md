@@ -1,5 +1,19 @@
 # clerk
 
+## 1.5.0
+
+### Minor Changes
+
+- Add `clerk deploy status`, a read-only command that verifies a production deploy, including DNS, SSL, email DNS, and OAuth credential completeness. Agent-mode `clerk deploy` now emits a tailored read-only handoff instead of a hard usage error. ([#260](https://github.com/clerk/cli/pull/260)) by [@wyattjoh](https://github.com/wyattjoh)
+
+- Add `clerk deploy`, an interactive wizard that promotes a Clerk application from development to production. ([#260](https://github.com/clerk/cli/pull/260)) by [@wyattjoh](https://github.com/wyattjoh)
+  - Walks through cloning the development instance, creating the production instance, and configuring CNAME records.
+  - Verifies mail, DNS, and SSL one component at a time so each step's status is visible while polling.
+  - Optionally exports the DNS records as a BIND zone file at `./clerk-<domain>.zone` for import into providers like Cloudflare, Route 53, and Google Cloud DNS.
+  - Resumes from the next pending step on subsequent runs, including reshowing the CNAME records when DNS is not yet verified.
+  - Uses provider schemas to collect production OAuth credentials for broader built-in provider support.
+  - Returns users to credential choices after opening provider docs, including Google JSON import when supported.
+
 ## 1.4.0
 
 ### Minor Changes
