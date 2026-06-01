@@ -107,7 +107,6 @@ export async function installSkills(
     UPSTREAM_SKILLS_SOURCE,
     upstreamSkills,
     interactive,
-    false,
     formatSkillsSummary(frameworkSkill),
   );
 

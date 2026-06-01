@@ -28,9 +28,6 @@ import type { PackageManager } from "./package-manager.js";
  * `skillNames` becomes `--skill <name>` pairs; leave empty to install every
  * skill from `source`.
  *
- * `copy` forces the `skills` CLI to copy files into each agent dir instead
- * of symlinking.
- *
  * Interactive mode: hand off to the skills CLI's native UX (auto-detect
  * installed agents, scope picker) by omitting `--agent` and `-y`.
  * Non-interactive: pass `-y -g` so it runs unattended with global scope
@@ -42,7 +39,6 @@ export function buildSkillsArgs(
   source: string,
   skillNames: readonly string[],
   interactive: boolean,
-  copy: boolean,
 ): string[] {
   const skillFlags = skillNames.flatMap((s) => ["--skill", s]);
   const extraFlags = interactive ? [] : ["-y", "-g"];
@@ -61,10 +57,9 @@ export async function runSkillsAdd(
   source: string,
   skillNames: readonly string[],
   interactive: boolean,
-  copy: boolean,
   label: string,
 ): Promise<boolean> {
-  const command = runnerCommand(runner, buildSkillsArgs(source, skillNames, interactive, copy));
+  const command = runnerCommand(runner, buildSkillsArgs(source, skillNames, interactive));
   const displayCommand = `${runner.display} skills add ${source}`;
 
   log.blank();

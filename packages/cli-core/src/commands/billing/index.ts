@@ -109,7 +109,6 @@ async function offerBillingSkillInstall(options: BillingOptions): Promise<void> 
     "clerk/skills",
     ["clerk-billing"],
     interactive,
-    false,
     "clerk-billing",
   );
   if (installed) {
