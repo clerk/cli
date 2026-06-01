@@ -46,8 +46,7 @@ export function buildSkillsArgs(
 ): string[] {
   const skillFlags = skillNames.flatMap((s) => ["--skill", s]);
   const extraFlags = interactive ? [] : ["-y", "-g"];
-  const copyFlag = copy ? ["--copy"] : [];
-  return ["skills", "add", source, ...skillFlags, ...extraFlags, ...copyFlag];
+  return ["skills", "add", source, ...skillFlags, ...extraFlags];
 }
 
 /**
