@@ -29,7 +29,6 @@ import {
 import { completion, SUPPORTED_SHELLS } from "./commands/completion/index.ts";
 import { FRAMEWORK_NAMES } from "./lib/framework.ts";
 import { PACKAGE_MANAGERS } from "./lib/package-manager.ts";
-import { skillInstall } from "./commands/skill/install.ts";
 import {
   CliError,
   UserAbortError,
@@ -47,7 +46,6 @@ import { maybeNotifyUpdate, getCurrentVersion } from "./lib/update-check.ts";
 import { update } from "./commands/update/index.ts";
 import { deploy } from "./commands/deploy/index.ts";
 import { deployStatus } from "./commands/deploy/status-command.ts";
-import { isClerkSkillInstalled } from "./lib/skill-detection.ts";
 import { orgsEnable, orgsDisable } from "./commands/orgs/index.ts";
 import { billingEnable, billingDisable } from "./commands/billing/index.ts";
 import { registerExtras } from "@clerk/cli-extras";
@@ -110,14 +108,7 @@ export function createProgram() {
       "--mode <mode>",
       "Force interaction mode (human or agent). Defaults to auto-detect based on TTY.",
     )
-    .option("--verbose", "Show detailed output (enables debug messages)")
-    .addHelpText("after", () =>
-      isClerkSkillInstalled()
-        ? ""
-        : `
-Give AI agents better Clerk context: install the Clerk skills
-  $ clerk skill install`,
-    );
+    .option("--verbose", "Show detailed output (enables debug messages)");
 
   program.hook("preAction", async () => {
     // Reset log level at the start of each command invocation so a previous
@@ -879,36 +870,6 @@ Tutorial — enable completions for your shell:
     $ clerk completion powershell >> $PROFILE                       # Permanent`,
     )
     .action(completion);
-
-  const skill = program
-    .command("skill")
-    .description("Manage the bundled Clerk CLI agent skill")
-    .setExamples([
-      { command: "clerk skill install", description: "Install the clerk agent skill" },
-      {
-        command: "clerk skill install -y",
-        description: "Install non-interactively (auto-detect agents, global scope)",
-      },
-    ]);
-
-  skill
-    .command("install")
-    .description("Install the bundled clerk agent skill")
-    .option("-y, --yes", "Skip prompts and run the `skills` CLI unattended")
-    .addOption(
-      createOption("--pm <manager>", "Package manager hint for runner detection").choices(
-        PACKAGE_MANAGERS,
-      ),
-    )
-    .setExamples([
-      { command: "clerk skill install", description: "Install with an interactive runner picker" },
-      { command: "clerk skill install -y", description: "Install unattended" },
-      {
-        command: "clerk skill install --pm bun",
-        description: "Force bunx as the runner",
-      },
-    ])
-    .action(skillInstall);
 
   program
     .command("update")

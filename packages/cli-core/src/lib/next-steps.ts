@@ -53,10 +53,6 @@ export const NEXT_STEPS = {
     "Run `clerk link` to connect this directory to a different application",
     "Run `clerk apps list` to browse your applications",
   ],
-  SKILL_INSTALL: [
-    "Start a new Claude Code or Codex session — the skill is now active for this project",
-    "Or run `clerk init` to scaffold Clerk yourself",
-  ],
   CONFIG_PUSH: [
     "Run `clerk config pull` to confirm the live configuration",
     "Run `clerk doctor` to verify your setup",

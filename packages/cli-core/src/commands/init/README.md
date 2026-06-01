@@ -190,20 +190,9 @@ After scaffolding (and after env keys are pulled or keyless instructions are pri
 - **Human mode**: prompts `Install agent skills? (...)` defaulting to yes. Pass `--no-skills` to suppress the prompt entirely, or `-y/--yes` to accept it without confirmation. When more than one runner is available, a second prompt picks which one to use (the project's package manager wins by default).
 - **Agent mode**: skills are installed non-interactively with `-y -g` flags (no prompt shown). Pass `--no-skills` to skip entirely.
 
-Two install commands run, sharing one runner:
+A fixed default set is installed from [`clerk/skills`](https://github.com/clerk/skills), covering the `cli/`, `core/`, and `features/` directories:
 
-### 1. The bundled `clerk-cli` skill
-
-The `clerk-cli` skill ships **inside the CLI binary**. Its markdown files at [`<repo-root>/skills/clerk-cli/`](../../../../../skills/clerk-cli/) are pulled into [`skills.ts`](./skills.ts) as [text imports](https://bun.com/docs/bundler/loaders#text) (`import md from "./SKILL.md" with { type: "text" }`) and embedded by `bun build --compile`, so the skill content always matches the binary running it. No network, no tag, no version fallback.
-
-At install time, [`skills.ts`](./skills.ts) stages the bundled content into a fresh temp directory (`mkdtemp`) and invokes `<runner> skills add <tmpdir> --copy`. The `--copy` flag is required: the default symlink mode would point each agent's skill dir at the temp dir, which we delete immediately after the install completes.
-
-The `skills` CLI writes the installed files into each agent's skill directory (`.claude/skills/clerk-cli/`, `.cursor/skills/clerk-cli/`, etc.) and records the entry in the project's `skills-lock.json` with `sourceType: "local"`, which correctly excludes it from `skills update` (the skill can only change when the CLI itself is upgraded).
-
-### 2. The upstream skills
-
-A fixed default set is always installed from [`clerk/skills`](https://github.com/clerk/skills), covering the `core/` and `features/` directories:
-
+- **CLI**: `clerk-cli`
 - **Core**: `clerk-setup`, `clerk-custom-ui`, `clerk-backend-api`
 - **Features**: `clerk-orgs`, `clerk-testing`, `clerk-webhooks`
 
@@ -226,7 +215,7 @@ These skills version independently of the CLI, so no pin is applied.
 
 ### Failure handling
 
-The two install commands fail independently: a problem with the bundled `clerk-cli` skill install (e.g. the `skills` CLI can't be fetched by the runner) does not block the upstream skills install, and vice versa. Each failure prints its own yellow warning with a manual install command (where applicable — the bundled `clerk-cli` skill has no standalone manual command, since its source lives in the binary). Init continues and exits successfully either way.
+The skills install is optional and non-fatal. If the `skills` CLI can't be fetched by the runner or exits non-zero, init prints a yellow warning with a manual install command and still exits successfully.
 
 Implementation lives in [`skills.ts`](./skills.ts). Note that the E2E fixture setup runs `clerk init --yes --no-skills` because the framework template skills reference auto-generated types (e.g. React Router's `./+types/root`) that don't exist outside a real app directory and would break the fixture's `tsc` step.
 

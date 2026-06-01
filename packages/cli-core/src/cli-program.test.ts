@@ -1,15 +1,17 @@
-import { test, expect, describe, beforeEach, afterEach } from "bun:test";
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { test, expect, describe } from "bun:test";
 import { createProgram, formatApiBody } from "./cli-program.ts";
 import { ApiError } from "./lib/errors.ts";
-import { STANDARD_AGENT_DIRS, EXTRA_REL_PATHS } from "./lib/skill-detection.ts";
 
 test("registers users as a top-level command", () => {
   const program = createProgram();
   const users = program.commands.find((command) => command.name() === "users");
   expect(users).toBeDefined();
+});
+
+test("does not register the removed clerk skill command", () => {
+  const program = createProgram();
+  const skill = program.commands.find((command) => command.name() === "skill");
+  expect(skill).toBeUndefined();
 });
 
 test("registers users create and list as subcommands", () => {
@@ -342,79 +344,5 @@ describe("formatApiBody", () => {
     });
     const result = formatApiBody(new ApiError(400, body), false);
     expect(result).toBe("Plan limitation");
-  });
-});
-
-describe("help: clerk skill install tip", () => {
-  const TIP_SUBSTR = "Give AI agents better Clerk context";
-
-  // Capture help output including `addHelpText("after", ...)`. The custom
-  // formatter in lib/help.ts rebuilds help from scratch, so the "after"
-  // listener only fires during outputHelp (which writes via stdout).
-  function renderHelp(): string {
-    const program = createProgram();
-    let captured = "";
-    const origWrite = process.stdout.write.bind(process.stdout);
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    (process.stdout as unknown as { write: (chunk: any) => boolean }).write = (chunk) => {
-      captured += typeof chunk === "string" ? chunk : chunk.toString();
-      return true;
-    };
-    try {
-      program.outputHelp();
-    } finally {
-      (process.stdout as unknown as { write: typeof origWrite }).write = origWrite;
-    }
-    return captured;
-  }
-
-  let tmpHome: string;
-  let tmpCwd: string;
-  let originalHome: string | undefined;
-  let originalCwd: string;
-
-  beforeEach(() => {
-    originalHome = process.env.HOME;
-    originalCwd = process.cwd();
-    tmpHome = mkdtempSync(join(tmpdir(), "clerk-help-home-"));
-    tmpCwd = mkdtempSync(join(tmpdir(), "clerk-help-cwd-"));
-    process.env.HOME = tmpHome;
-    process.chdir(tmpCwd);
-  });
-
-  afterEach(() => {
-    process.chdir(originalCwd);
-    if (originalHome === undefined) delete process.env.HOME;
-    else process.env.HOME = originalHome;
-    rmSync(tmpHome, { recursive: true, force: true });
-    rmSync(tmpCwd, { recursive: true, force: true });
-  });
-
-  test("shows the tip when no skill is installed anywhere", () => {
-    const help = renderHelp();
-    expect(help).toContain(TIP_SUBSTR);
-    expect(help).toContain("clerk skill install");
-  });
-
-  const AGENT_DIR_CASES = STANDARD_AGENT_DIRS.flatMap((dir) =>
-    (["HOME", "cwd"] as const).map((root) => ({ dir, root })),
-  );
-
-  test.each(AGENT_DIR_CASES)(
-    "hides the tip when $dir/skills/clerk-cli/SKILL.md exists under $root",
-    ({ dir, root }) => {
-      const base = root === "HOME" ? tmpHome : tmpCwd;
-      const target = join(base, dir, "skills/clerk-cli");
-      mkdirSync(target, { recursive: true });
-      writeFileSync(join(target, "SKILL.md"), "ok");
-      expect(renderHelp()).not.toContain(TIP_SUBSTR);
-    },
-  );
-
-  test.each([...EXTRA_REL_PATHS])("hides the tip when %s exists under cwd", (rel) => {
-    const full = join(tmpCwd, rel);
-    mkdirSync(dirname(full), { recursive: true });
-    writeFileSync(full, "ok");
-    expect(renderHelp()).not.toContain(TIP_SUBSTR);
   });
 });
