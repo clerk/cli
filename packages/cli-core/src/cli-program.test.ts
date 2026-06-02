@@ -186,26 +186,31 @@ describe("agent-CLI discoverability surface", () => {
     expect(help).toMatch(/headless/i);
   });
 
-  test("setEnvVars only documents CLERK_* names the binary actually reads", () => {
-    // Names listed in `Environment:` must match what the CLI reads via
-    // process.env.CLERK_* — otherwise the help text drifts and lies.
-    const documentedEnvVars = [
-      ...createProgram()
-        .helpInformation()
-        .matchAll(/\bCLERK_[A-Z0-9_]+\b/g),
-    ].map((m) => m[0]);
-    const knownReadByCli = new Set([
-      "CLERK_SECRET_KEY",
-      "CLERK_MODE",
-      "CLERK_CONFIG_DIR",
-      "CLERK_UPDATE_CHANNEL",
-      "CLERK_NO_UPDATE_CHECK",
-    ]);
-    for (const name of new Set(documentedEnvVars)) {
-      expect(knownReadByCli).toContain(name);
-    }
+  // Names listed in `Environment:` must match what the CLI reads via
+  // process.env.CLERK_* — otherwise the help text drifts and lies.
+  const documentedEnvVars = [
+    ...createProgram()
+      .helpInformation()
+      .matchAll(/\bCLERK_[A-Z0-9_]+\b/g),
+  ].map((m) => m[0]);
+  const knownReadByCli = new Set([
+    "CLERK_SECRET_KEY",
+    "CLERK_MODE",
+    "CLERK_CONFIG_DIR",
+    "CLERK_UPDATE_CHANNEL",
+    "CLERK_NO_UPDATE_CHECK",
+  ]);
+
+  test("setEnvVars documents at least one CLERK_* name", () => {
     expect(documentedEnvVars.length).toBeGreaterThan(0);
   });
+
+  test.each([...new Set(documentedEnvVars)])(
+    "documented env var %s is actually read by the CLI",
+    (name) => {
+      expect(knownReadByCli).toContain(name);
+    },
+  );
 });
 
 describe("formatApiBody", () => {

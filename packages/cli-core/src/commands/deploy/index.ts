@@ -19,7 +19,7 @@ import {
 } from "../../lib/plapi.ts";
 import {
   INTRO_PREAMBLE,
-  OAUTH_SECTION_INTRO,
+  oauthSectionIntro,
   type DeployPlanStep,
   deployComponentLabels,
   deployComponentStatus,
@@ -501,7 +501,7 @@ async function runOAuthSetup(
   const completed = new Set(state.completedOAuthProviders as OAuthProvider[]);
 
   if (descriptors.length > 0) {
-    log.info(OAUTH_SECTION_INTRO);
+    log.info(oauthSectionIntro());
     log.blank();
   }
 
