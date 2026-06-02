@@ -35,6 +35,9 @@ interface CommandLike {
   options: readonly OptionLike[];
   commands: readonly CommandLike[];
   parent?: CommandLike | null;
+  // Commander exposes a command's hidden state only via this private field;
+  // there is no public getter, so the walker reads it structurally.
+  _hidden?: boolean;
 }
 
 interface SchemaOption {
@@ -80,7 +83,7 @@ function describeCommand(cmd: CommandLike): SchemaCommand {
     name: cmd.name(),
     aliases: cmd.aliases(),
     description: cmd.description(),
-    hidden: Boolean((cmd as unknown as { _hidden?: boolean })._hidden),
+    hidden: Boolean(cmd._hidden),
     arguments: cmd.registeredArguments.map((arg) => ({
       name: arg.name(),
       description: arg.description ?? "",
