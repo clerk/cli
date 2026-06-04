@@ -63,11 +63,28 @@ const cases = [
 ];
 
 describe("client config paths + encoded shapes (homedir redirected)", () => {
+  let origXdgConfigHome: string | undefined;
+  let origAppData: string | undefined;
+
   beforeEach(async () => {
     mockHome = await mkdtemp(join(realOs.tmpdir(), "clerk-mcp-clients-"));
+    origXdgConfigHome = process.env.XDG_CONFIG_HOME;
+    origAppData = process.env.APPDATA;
+    process.env.XDG_CONFIG_HOME = "";
+    process.env.APPDATA = "";
   });
 
   afterEach(async () => {
+    if (origXdgConfigHome === undefined) {
+      delete process.env.XDG_CONFIG_HOME;
+    } else {
+      process.env.XDG_CONFIG_HOME = origXdgConfigHome;
+    }
+    if (origAppData === undefined) {
+      delete process.env.APPDATA;
+    } else {
+      process.env.APPDATA = origAppData;
+    }
     await rm(mockHome, { recursive: true, force: true });
   });
 

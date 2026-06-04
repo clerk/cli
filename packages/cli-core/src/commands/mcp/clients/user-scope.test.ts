@@ -99,17 +99,33 @@ describe("user-scope MCP clients (homedir redirected to a tmpdir)", () => {
 describe("install/uninstall across all clients (homedir + cwd redirected)", () => {
   let cwd: string;
   let originalCwd: string;
+  let origXdgConfigHome: string | undefined;
+  let origAppData: string | undefined;
 
   beforeEach(async () => {
     originalCwd = process.cwd();
     cwd = await mkdtemp(join(realOs.tmpdir(), "clerk-mcp-all-cwd-"));
     mockHome = await mkdtemp(join(realOs.tmpdir(), "clerk-mcp-all-home-"));
+    origXdgConfigHome = process.env.XDG_CONFIG_HOME;
+    origAppData = process.env.APPDATA;
+    process.env.XDG_CONFIG_HOME = "";
+    process.env.APPDATA = "";
     process.chdir(cwd);
     mockIsAgent.mockReturnValue(true);
   });
 
   afterEach(async () => {
     process.chdir(originalCwd);
+    if (origXdgConfigHome === undefined) {
+      delete process.env.XDG_CONFIG_HOME;
+    } else {
+      process.env.XDG_CONFIG_HOME = origXdgConfigHome;
+    }
+    if (origAppData === undefined) {
+      delete process.env.APPDATA;
+    } else {
+      process.env.APPDATA = origAppData;
+    }
     await rm(cwd, { recursive: true, force: true });
     await rm(mockHome, { recursive: true, force: true });
     mockIsAgent.mockReset();
@@ -152,6 +168,8 @@ describe("install/uninstall across all clients (homedir + cwd redirected)", () =
 describe("clerk doctor — checkMcp (homedir + cwd redirected)", () => {
   let cwd: string;
   let originalCwd: string;
+  let origXdgConfigHome: string | undefined;
+  let origAppData: string | undefined;
   const originalFetch = globalThis.fetch;
 
   // Assign globalThis.fetch directly (cast to its own type) rather than via the
@@ -167,12 +185,26 @@ describe("clerk doctor — checkMcp (homedir + cwd redirected)", () => {
     originalCwd = process.cwd();
     cwd = await mkdtemp(join(realOs.tmpdir(), "clerk-mcp-check-cwd-"));
     mockHome = await mkdtemp(join(realOs.tmpdir(), "clerk-mcp-check-home-"));
+    origXdgConfigHome = process.env.XDG_CONFIG_HOME;
+    origAppData = process.env.APPDATA;
+    process.env.XDG_CONFIG_HOME = "";
+    process.env.APPDATA = "";
     process.chdir(cwd);
     mockIsAgent.mockReturnValue(true);
   });
 
   afterEach(async () => {
     process.chdir(originalCwd);
+    if (origXdgConfigHome === undefined) {
+      delete process.env.XDG_CONFIG_HOME;
+    } else {
+      process.env.XDG_CONFIG_HOME = origXdgConfigHome;
+    }
+    if (origAppData === undefined) {
+      delete process.env.APPDATA;
+    } else {
+      process.env.APPDATA = origAppData;
+    }
     await rm(cwd, { recursive: true, force: true });
     await rm(mockHome, { recursive: true, force: true });
     globalThis.fetch = originalFetch;
