@@ -22,7 +22,7 @@
     "@inquirer/ansi": "^2.0.5",
     "@inquirer/core": "^11.1.9",
     "@inquirer/figures": "^2.0.5",
-    "@inquirer/prompts": "^8.4.3",
+    "@inquirer/prompts": "^8.5.2",
     "@napi-rs/keyring": "^1.3.0",
     "commander": "^14.0.3",
     "env-paths": "^4.0.0",
