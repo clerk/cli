@@ -1,7 +1,7 @@
 /**
  * `clerk mcp install` — register the Clerk remote MCP server in supported clients.
  *
- * URL resolution: `--url` > active env profile `mcpUrl` > error.
+ * URL resolution: `--url` > `CLERK_MCP_URL` > active env profile `mcpUrl` > Clerk's hosted server.
  * Target clients: `--client <id>` (repeatable) > `--all` > human picker > all detected (agent mode).
  * Conflict policy: same URL → unchanged; different URL → skip unless `--force`.
  */
@@ -96,7 +96,7 @@ export async function mcpInstall(options: McpOptions = {}): Promise<void> {
     return;
   }
 
-  if (isHuman()) settled.forEach(({ client, result }) => printResult(client, result));
+  settled.forEach(({ client, result }) => printResult(client, result));
   printInstallNextSteps(settled);
   outro("Done");
 }

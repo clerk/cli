@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import * as realOs from "node:os";
 import { join } from "node:path";
 import { useCaptureLog } from "../../test/lib/stubs.ts";
 
@@ -11,6 +11,11 @@ mock.module("../../mode.ts", () => ({
   setMode: () => {},
   getMode: () => (mockIsAgent() ? "agent" : "human"),
 }));
+
+// User-scoped clients write under home; redirect homedir to the cwd tmpdir so
+// writes stay isolated and `join(cwd, ...)` reads still resolve.
+let mockHome = realOs.tmpdir();
+mock.module("node:os", () => ({ ...realOs, homedir: () => mockHome }));
 
 const { mcpInstall } = await import("./install.ts");
 const { mcpUninstall } = await import("./uninstall.ts");
@@ -24,7 +29,8 @@ describe("mcp uninstall", () => {
 
   beforeEach(async () => {
     originalCwd = process.cwd();
-    cwd = await mkdtemp(join(tmpdir(), "clerk-mcp-uninstall-"));
+    cwd = await mkdtemp(join(realOs.tmpdir(), "clerk-mcp-uninstall-"));
+    mockHome = cwd;
     process.chdir(cwd);
     mockIsAgent.mockReturnValue(true);
   });

@@ -1,6 +1,4 @@
 /**
- * Windsurf MCP client integration.
- *
  * Writes to `~/.codeium/windsurf/mcp_config.json` (user scope). Server
  * descriptor uses `serverUrl`, not `url`.
  */

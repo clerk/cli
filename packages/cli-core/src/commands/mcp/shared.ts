@@ -23,13 +23,10 @@ export type McpOptions = {
 export const DEFAULT_ENTRY_NAME = "clerk";
 
 export function resolveUrl(options: McpOptions): string {
+  // `getMcpUrl()` always resolves to a usable URL (Clerk's hosted server by
+  // default), so the only failure mode left is an explicit `--url` that is
+  // malformed or uses a non-network scheme.
   const candidate = options.url ?? getMcpUrl();
-  if (!candidate) {
-    throw new CliError(
-      "No MCP URL available. Set one with `--url`, or switch to an environment whose profile defines `mcpUrl`.",
-      { code: ERROR_CODE.MCP_URL_REQUIRED },
-    );
-  }
   // Reject non-network schemes so a stray `file:` or `data:` URL can't be
   // written into an editor's MCP config or probed by `doctor` via fetch.
   let parsed: URL;
@@ -136,15 +133,15 @@ export async function settleClients<T>(
   const settled = await Promise.allSettled(clients.map(op));
   const succeeded: { client: McpClient; result: T }[] = [];
   const failures: unknown[] = [];
-  settled.forEach((outcome, i) => {
+  for (const [i, outcome] of settled.entries()) {
     const client = clients[i]!;
     if (outcome.status === "fulfilled") {
       succeeded.push({ client, result: outcome.value });
-      return;
+      continue;
     }
     failures.push(outcome.reason);
     log.warn(`${client.displayName}: ${errorMessage(outcome.reason)}`);
-  });
+  }
   if (succeeded.length === 0 && failures.length > 0) throw failures[0];
   return succeeded;
 }

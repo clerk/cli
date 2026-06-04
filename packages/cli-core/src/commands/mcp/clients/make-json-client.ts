@@ -126,8 +126,8 @@ export function makeJsonClient(spec: JsonClientSpec): McpClient {
         servers = getServerMap(config, spec.topKey, configPath);
       } catch (error) {
         if (error instanceof CliError && error.code === ERROR_CODE.MCP_CLIENT_CONFIG_INVALID) {
-          // Don't crash `list` across the other clients — but the user must
-          // know their config was skipped, not silently treated as empty.
+          // Warn rather than silently returning [] — the user must know their
+          // config was skipped, not treated as empty.
           log.warn(`${spec.displayName}: ${error.message}`);
           return [];
         }
