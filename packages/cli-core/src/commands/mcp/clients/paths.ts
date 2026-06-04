@@ -25,13 +25,15 @@ export function userPath(...segments: string[]): string {
  */
 export function vscodeUserDir(): string {
   const home = homedir();
+  const appData = process.env.APPDATA?.trim();
+  const xdgConfigHome = process.env.XDG_CONFIG_HOME?.trim();
   switch (platform()) {
     case "win32":
-      return join(process.env.APPDATA ?? join(home, "AppData", "Roaming"), "Code", "User");
+      return join(appData || join(home, "AppData", "Roaming"), "Code", "User");
     case "darwin":
       return join(home, "Library", "Application Support", "Code", "User");
     default:
-      return join(process.env.XDG_CONFIG_HOME ?? join(home, ".config"), "Code", "User");
+      return join(xdgConfigHome || join(home, ".config"), "Code", "User");
   }
 }
 

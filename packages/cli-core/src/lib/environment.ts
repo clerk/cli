@@ -161,5 +161,7 @@ export function getDashboardUrl(): string {
  * profile omits `mcpUrl`, mirroring `getDashboardUrl`.
  */
 export function getMcpUrl(): string {
-  return process.env.CLERK_MCP_URL ?? getCurrentEnv().mcpUrl ?? DEFAULT_MCP_URL;
+  const envUrl = process.env.CLERK_MCP_URL?.trim();
+  const profileUrl = getCurrentEnv().mcpUrl?.trim();
+  return envUrl || profileUrl || DEFAULT_MCP_URL;
 }
