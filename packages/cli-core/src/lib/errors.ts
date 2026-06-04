@@ -61,7 +61,7 @@ export const ERROR_CODE = {
   MCP_CLIENT_NOT_SUPPORTED: "mcp_client_not_supported",
   /** Existing MCP client config is malformed or has a conflicting entry. */
   MCP_CLIENT_CONFIG_INVALID: "mcp_client_config_invalid",
-  /** No MCP URL available — active env profile has no mcpUrl and `--url` not given. */
+  /** The provided `--url` is malformed or uses a non-http(s) scheme. */
   MCP_URL_REQUIRED: "mcp_url_required",
   /** No matching MCP entry to remove. */
   MCP_NOT_INSTALLED: "mcp_not_installed",

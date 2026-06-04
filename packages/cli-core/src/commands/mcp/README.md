@@ -7,9 +7,11 @@ The Clerk MCP server is hosted at `https://mcp.clerk.com/mcp` (source:
 These subcommands register, list, remove, and probe that URL in each client's
 own config file. The URL is resolved in order: `--url` > the `CLERK_MCP_URL`
 environment variable > the active environment profile's `mcpUrl` field
-(`switch-env` carries the profile value automatically). `CLERK_MCP_URL` is the
-convenient override when developing the worker locally (e.g.
-`http://localhost:8787/mcp`).
+(`switch-env` carries the profile value automatically) > Clerk's hosted server
+(`https://mcp.clerk.com/mcp`). Because the hosted server is the final fallback,
+`clerk mcp install` works out of the box with no flags or profile setup.
+`CLERK_MCP_URL` is the convenient override when developing the worker locally
+(e.g. `http://localhost:8787/mcp`).
 
 No Clerk API endpoints are called. To verify the server is reachable, run
 `clerk doctor` — its MCP check performs the `initialize` handshake against the
@@ -17,13 +19,21 @@ configured URL whenever a Clerk MCP entry is installed.
 
 ## Supported clients
 
-| ID            | Client                   | Scope   | Config file                           |
-| ------------- | ------------------------ | ------- | ------------------------------------- |
-| `claude-code` | Claude Code              | project | `<cwd>/.mcp.json`                     |
-| `cursor`      | Cursor                   | project | `<cwd>/.cursor/mcp.json`              |
-| `vscode`      | VS Code (Copilot)        | project | `<cwd>/.vscode/mcp.json`              |
-| `windsurf`    | Windsurf                 | user    | `~/.codeium/windsurf/mcp_config.json` |
-| `gemini`      | Gemini Code Assist / CLI | user    | `~/.gemini/settings.json`             |
+All entries are written to each client's **user-global** config, so the server
+is available in every project (no per-project approval, no dependence on which
+directory you run the CLI from).
+
+| ID            | Client                   | Scope | Config file                             |
+| ------------- | ------------------------ | ----- | --------------------------------------- |
+| `claude-code` | Claude Code              | user  | `~/.claude.json` (`mcpServers`)         |
+| `cursor`      | Cursor                   | user  | `~/.cursor/mcp.json`                    |
+| `vscode`      | VS Code (Copilot)        | user  | VS Code user `mcp.json` (per-OS, below) |
+| `windsurf`    | Windsurf                 | user  | `~/.codeium/windsurf/mcp_config.json`   |
+| `gemini`      | Gemini Code Assist / CLI | user  | `~/.gemini/settings.json`               |
+
+VS Code's user config dir is OS-specific: `~/Library/Application Support/Code/User/mcp.json`
+(macOS), `%APPDATA%\Code\User\mcp.json` (Windows), `$XDG_CONFIG_HOME/Code/User/mcp.json`
+(Linux) — the file behind **MCP: Open User Configuration**.
 
 ## Subcommands
 
@@ -35,7 +45,7 @@ Register the Clerk MCP server in one or more clients.
 | --------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `--client <id>` | Target a specific client. Repeat for multiple. Default in agent mode: all detected. Default in human mode: interactive multiselect over detected clients. |
 | `--all`         | Install into every detected client without prompting.                                                                                                     |
-| `--url <url>`   | Override the MCP URL. Defaults to the active env profile's `mcpUrl`.                                                                                      |
+| `--url <url>`   | Override the MCP URL. Defaults to the active env profile's `mcpUrl`, then Clerk's hosted server.                                                          |
 | `--name <name>` | Entry key in the client config. Default: `clerk`.                                                                                                         |
 | `--force`       | Overwrite an entry already pointing at a different URL. Without it, the conflict is reported and skipped.                                                 |
 | `--json`        | Emit a JSON summary on stdout instead of human-formatted output.                                                                                          |
@@ -73,5 +83,5 @@ session, so (in human mode) it prints a next step to reload each affected editor
 | `mcp_no_client_detected`    | No supported client found on the system.                        |
 | `mcp_client_not_supported`  | `--client <id>` is not in the supported list.                   |
 | `mcp_client_config_invalid` | An existing client config file is malformed.                    |
-| `mcp_url_required`          | No `--url` provided and the active env profile has no `mcpUrl`. |
+| `mcp_url_required`          | The provided `--url` is malformed or uses a non-http(s) scheme. |
 | `mcp_not_installed`         | `uninstall` removed nothing because no entry matched.           |

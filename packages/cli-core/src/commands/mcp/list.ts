@@ -13,11 +13,23 @@ import { printNextSteps, wantsJson, type McpOptions } from "./shared.ts";
 
 const COLUMN_PADDING = 2;
 
+function columnWidth(header: string, values: string[]): number {
+  return Math.max(header.length, ...values.map((v) => v.length)) + COLUMN_PADDING;
+}
+
 function formatTable(entries: ListEntry[]): void {
-  const clientWidth =
-    Math.max("CLIENT".length, ...entries.map((e) => e.client.length)) + COLUMN_PADDING;
-  const nameWidth = Math.max("NAME".length, ...entries.map((e) => e.name.length)) + COLUMN_PADDING;
-  const urlWidth = Math.max("URL".length, ...entries.map((e) => e.url.length)) + COLUMN_PADDING;
+  const clientWidth = columnWidth(
+    "CLIENT",
+    entries.map((e) => e.client),
+  );
+  const nameWidth = columnWidth(
+    "NAME",
+    entries.map((e) => e.name),
+  );
+  const urlWidth = columnWidth(
+    "URL",
+    entries.map((e) => e.url),
+  );
 
   log.data(
     dim(`${"CLIENT".padEnd(clientWidth)}${"NAME".padEnd(nameWidth)}${"URL".padEnd(urlWidth)}PATH`),

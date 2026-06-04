@@ -1,9 +1,16 @@
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { mkdtemp, readFile, rm, writeFile, mkdir } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import * as realOs from "node:os";
 import { join } from "node:path";
-import { cursorClient } from "./cursor.ts";
 import { useCaptureLog } from "../../../test/lib/stubs.ts";
+
+// cursorClient writes under home now; redirect homedir to the cwd tmpdir so the
+// `join(cwd, ".cursor", ...)` reads below stay isolated. Mock before importing
+// the client so paths.ts binds the redirected homedir.
+let mockHome = realOs.tmpdir();
+mock.module("node:os", () => ({ ...realOs, homedir: () => mockHome }));
+
+const { cursorClient } = await import("./cursor.ts");
 
 useCaptureLog();
 
@@ -14,7 +21,8 @@ describe("make-json-client (via cursor)", () => {
   let cwd: string;
 
   beforeEach(async () => {
-    cwd = await mkdtemp(join(tmpdir(), "clerk-mcp-cursor-"));
+    cwd = await mkdtemp(join(realOs.tmpdir(), "clerk-mcp-cursor-"));
+    mockHome = cwd;
   });
 
   afterEach(async () => {

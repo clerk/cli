@@ -1,8 +1,8 @@
 /**
  * Shared JSON read/write helper for MCP client configs.
  *
- * Four of the five supported clients (Claude Code, Cursor, VS Code, Windsurf,
- * Gemini) store their MCP servers in a JSON file under a single top-level key
+ * All five supported clients (Claude Code, Cursor, VS Code, Windsurf, Gemini)
+ * store their MCP servers in a JSON file under a single top-level key
  * (`mcpServers` for most, `servers` for VS Code). The entry shape varies
  * (`url` vs `serverUrl` vs `command`+`args`) — that's per-client. This module
  * only handles the surrounding I/O: read, parse, write back with stable

@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import * as realOs from "node:os";
 import { join } from "node:path";
 import { useCaptureLog } from "../../test/lib/stubs.ts";
 
@@ -11,6 +11,12 @@ mock.module("../../mode.ts", () => ({
   setMode: () => {},
   getMode: () => (mockIsAgent() ? "agent" : "human"),
 }));
+
+// All clients write under the user's home now. Redirect homedir to the same
+// tmpdir we use as cwd (Bun's os.homedir() ignores $HOME) so writes stay
+// isolated and the `join(cwd, ...)` assertions below still resolve.
+let mockHome = realOs.tmpdir();
+mock.module("node:os", () => ({ ...realOs, homedir: () => mockHome }));
 
 const { mcpInstall } = await import("./install.ts");
 
@@ -24,7 +30,8 @@ describe("mcp install", () => {
 
   beforeEach(async () => {
     originalCwd = process.cwd();
-    cwd = await mkdtemp(join(tmpdir(), "clerk-mcp-install-"));
+    cwd = await mkdtemp(join(realOs.tmpdir(), "clerk-mcp-install-"));
+    mockHome = cwd;
     process.chdir(cwd);
     mockIsAgent.mockReturnValue(false);
   });
@@ -118,6 +125,27 @@ describe("mcp install", () => {
 
   test("uses the active env profile URL when --url is not given", async () => {
     // Default production profile has mcpUrl=https://mcp.clerk.com/mcp.
+    mockIsAgent.mockReturnValue(true);
+    await mcpInstall({ client: ["cursor"] });
+    const payload = JSON.parse(captured.out) as { url: string };
+    expect(payload.url).toBe("https://mcp.clerk.com/mcp");
+  });
+
+  test("falls back to Clerk's hosted MCP URL when the active profile has no mcpUrl", async () => {
+    // Reproduces the published snapshot: a build-time env profile that omits
+    // `mcpUrl`. `getMcpUrl()` must still resolve to the hosted server so a bare
+    // `clerk mcp install` works without `--url` or any profile setup.
+    await writeFile(
+      join(cwd, ".env-profiles.json"),
+      JSON.stringify({
+        production: {
+          oauthClientId: "ins_test",
+          oauthBaseUrl: "https://clerk.clerk.com",
+          platformApiUrl: "https://api.clerk.com",
+          backendApiUrl: "https://api.clerk.dev",
+        },
+      }),
+    );
     mockIsAgent.mockReturnValue(true);
     await mcpInstall({ client: ["cursor"] });
     const payload = JSON.parse(captured.out) as { url: string };

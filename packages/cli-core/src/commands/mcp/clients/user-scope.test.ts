@@ -22,6 +22,7 @@ mock.module("../../../mode.ts", () => ({
 
 const { geminiClient } = await import("./gemini.ts");
 const { windsurfClient } = await import("./windsurf.ts");
+const { vscodeUserDir } = await import("./paths.ts");
 const { mcpInstall } = await import("../install.ts");
 const { mcpUninstall } = await import("../uninstall.ts");
 const { checkMcp } = await import("../../doctor/check-mcp.ts");
@@ -115,11 +116,12 @@ describe("install/uninstall across all clients (homedir + cwd redirected)", () =
   });
 
   test("install --all targets every detected client", async () => {
-    // detect() keys off each client's marker directory under home.
+    // detect() keys off each client's marker directory under home (VS Code uses
+    // its per-OS user config dir).
     await Promise.all([
       mkdir(join(mockHome, ".claude"), { recursive: true }),
       mkdir(join(mockHome, ".cursor"), { recursive: true }),
-      mkdir(join(mockHome, ".vscode"), { recursive: true }),
+      mkdir(vscodeUserDir(), { recursive: true }),
       mkdir(join(mockHome, ".codeium", "windsurf"), { recursive: true }),
       mkdir(join(mockHome, ".gemini"), { recursive: true }),
     ]);

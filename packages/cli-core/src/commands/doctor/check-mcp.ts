@@ -1,6 +1,5 @@
 /**
- * `clerk doctor` MCP reachability check (folded in from the former
- * `clerk mcp doctor` subcommand).
+ * `clerk doctor` MCP reachability check.
  *
  * Kept in its own file — rather than `checks.ts` — so the doctor check graph
  * doesn't import `mcp/shared.ts` (env profiles, prompts) and the module cycle

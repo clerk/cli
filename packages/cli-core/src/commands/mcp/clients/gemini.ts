@@ -1,6 +1,4 @@
 /**
- * Gemini Code Assist / Gemini CLI MCP client integration.
- *
  * Writes to `~/.gemini/settings.json`. Gemini doesn't support HTTP transport
  * directly — it requires `mcp-remote` as a stdio bridge, hence the
  * `{ command: "npx", args: ["-y", "mcp-remote", <url>] }` shape.

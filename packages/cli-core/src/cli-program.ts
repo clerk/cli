@@ -473,10 +473,6 @@ export function createProgram() {
     .setExamples([
       { command: "clerk mcp install", description: "Install into all detected MCP clients" },
       { command: "clerk mcp install --client cursor", description: "Install into Cursor only" },
-      {
-        command: "clerk mcp install --url http://localhost:8787/mcp",
-        description: "Use a local worker URL",
-      },
       { command: "clerk mcp list", description: "Show registered Clerk entries" },
       { command: "clerk mcp uninstall", description: "Remove the Clerk entry from all clients" },
     ]);
@@ -504,10 +500,6 @@ export function createProgram() {
       {
         command: "clerk mcp install --client cursor --client vscode",
         description: "Install into specific clients",
-      },
-      {
-        command: "clerk mcp install --url http://localhost:8787/mcp",
-        description: "Target a local worker for development",
       },
     ])
     .action((options) => mcpHandlers.install(options));
