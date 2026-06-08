@@ -17,6 +17,7 @@ mock.module("../../lib/listage.ts", () => ({
 mock.module("../../lib/spinner.ts", () => ({
   intro: (...args: unknown[]) => mockIntro(...args),
   outro: (...args: unknown[]) => mockOutro(...args),
+  pausedOutro: () => {},
   bar: () => {},
   withSpinner: async (_msg: string, fn: () => Promise<unknown>) => fn(),
 }));
@@ -63,7 +64,7 @@ describe("usersMenu", () => {
 
     await usersMenu({ app: "app_123" });
 
-    expect(mockIntro).toHaveBeenCalledWith("clerk users");
+    expect(mockIntro).toHaveBeenCalledWith("Managing users");
     expect(mockSelect).toHaveBeenCalled();
     expect(handlerCalls).toEqual([{ app: "app_123" }]);
   });

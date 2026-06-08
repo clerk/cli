@@ -5,5 +5,4 @@ export const listageStubs = {
   search: async () => undefined,
   filterChoices,
   Separator,
-  ttyContext: () => undefined,
 };

@@ -1,9 +1,9 @@
 import { resolveAppContext } from "../../lib/config.ts";
 import { fetchInstanceConfig } from "../../lib/plapi.ts";
 import { throwUsageError, withApiContext } from "../../lib/errors.ts";
-import { withSpinner } from "../../lib/spinner.ts";
+import { withGutter, withSpinner } from "../../lib/spinner.ts";
 import { isHuman } from "../../mode.ts";
-import { NEXT_STEPS, printNextSteps } from "../../lib/next-steps.ts";
+import { NEXT_STEPS } from "../../lib/next-steps.ts";
 import { applyConfigPatch } from "../config/apply-patch.ts";
 
 interface OrgsOptions {
@@ -45,52 +45,58 @@ export async function orgsEnable(options: OrgsOptions): Promise<void> {
     orgSettings.max_allowed_memberships = parsePositiveInt(options.maxMembers, "--max-members");
   }
 
-  const applied = await applyConfigPatch({
-    ctx,
-    payload: { organization_settings: orgSettings },
-    verb: "Enabling organizations",
-    successMessage: "Organizations enabled",
-    failureContext: "Failed to enable organizations",
-    yes: options.yes,
-    dryRun: options.dryRun,
-  });
+  await withGutter("Enabling organizations", async ({ setNextSteps }) => {
+    const applied = await applyConfigPatch({
+      ctx,
+      payload: { organization_settings: orgSettings },
+      verb: "Enabling organizations",
+      successMessage: "Organizations enabled",
+      failureContext: "Failed to enable organizations",
+      yes: options.yes,
+      dryRun: options.dryRun,
+    });
 
-  if (applied && !options.dryRun) printNextSteps(NEXT_STEPS.ENABLE_ORGS);
+    if (applied && !options.dryRun) {
+      setNextSteps(NEXT_STEPS.ENABLE_ORGS);
+    }
+  });
 }
 
 export async function orgsDisable(options: OrgsOptions): Promise<void> {
   const ctx = await resolveAppContext(options);
 
-  const current = await withSpinner("Fetching current config...", () =>
-    withApiContext(
-      fetchInstanceConfig(ctx.appId, ctx.instanceId, ["billing", "organization_settings"]),
-      "Failed to fetch config",
-    ),
-  );
-
-  const billing = current.billing as Record<string, unknown> | undefined;
-  const orgBillingOn = billing?.organization_enabled === true;
-
-  // Agent mode: refuse rather than warn-then-mutate (warn-then-mutate in CI
-  // logs reads as "the warning was heeded" when it wasn't).
-  if (orgBillingOn && !isHuman() && !options.yes) {
-    throwUsageError(
-      "Organization billing is enabled. Disabling organizations would leave `billing.organization_enabled` stranded. " +
-        "Run `clerk disable billing --for orgs` first, or pass --yes to override.",
+  await withGutter("Disabling organizations", async () => {
+    const current = await withSpinner("Fetching current config...", () =>
+      withApiContext(
+        fetchInstanceConfig(ctx.appId, ctx.instanceId, ["billing", "organization_settings"]),
+        "Failed to fetch config",
+      ),
     );
-  }
 
-  await applyConfigPatch({
-    ctx,
-    payload: { organization_settings: { enabled: false } },
-    verb: "Disabling organizations",
-    successMessage: "Organizations disabled",
-    failureContext: "Failed to disable organizations",
-    yes: options.yes,
-    dryRun: options.dryRun,
-    warning: orgBillingOn
-      ? "Organization billing is currently enabled. Disabling organizations will leave `billing.organization_enabled` stranded — consider running `clerk disable billing --for orgs` separately."
-      : undefined,
-    currentConfig: current,
+    const billing = current.billing as Record<string, unknown> | undefined;
+    const orgBillingOn = billing?.organization_enabled === true;
+
+    // Agent mode: refuse rather than warn-then-mutate (warn-then-mutate in CI
+    // logs reads as "the warning was heeded" when it wasn't).
+    if (orgBillingOn && !isHuman() && !options.yes) {
+      throwUsageError(
+        "Organization billing is enabled. Disabling organizations would leave `billing.organization_enabled` stranded. " +
+          "Run `clerk disable billing --for orgs` first, or pass --yes to override.",
+      );
+    }
+
+    await applyConfigPatch({
+      ctx,
+      payload: { organization_settings: { enabled: false } },
+      verb: "Disabling organizations",
+      successMessage: "Organizations disabled",
+      failureContext: "Failed to disable organizations",
+      yes: options.yes,
+      dryRun: options.dryRun,
+      warning: orgBillingOn
+        ? "Organization billing is currently enabled. Disabling organizations will leave `billing.organization_enabled` stranded — consider running `clerk disable billing --for orgs` separately."
+        : undefined,
+      currentConfig: current,
+    });
   });
 }

@@ -6,7 +6,7 @@
  * test harness setup/teardown functions.
  *
  * WARNING: Do NOT add static imports of modules that transitively import any
- * mocked module (credential-store, git, mode, inquirer, token-exchange,
+ * mocked module (credential-store, git, mode, prompts/listage, token-exchange,
  * auth-server, pkce). Bun's `mock.module()` must be registered before any
  * consumer loads the real module. All consuming imports must use dynamic
  * `await import(...)` AFTER the mock.module() calls below.
@@ -106,7 +106,7 @@ mock.module(
     }) satisfies typeof import("../../../mode.ts"),
 );
 
-// ── Prompt queue (replaces @inquirer/prompts) ────────────────────────────────
+// ── Prompt queue (drives lib/prompts.ts and lib/listage.ts mocks) ────────────
 
 type PromptType = "select" | "search" | "input" | "confirm" | "password" | "editor";
 
@@ -124,7 +124,7 @@ function dequeuePrompt(name: PromptType) {
     const queue = promptQueues[name];
     if (queue.length === 0) {
       throw new Error(
-        `Unexpected call to @inquirer/prompts.${name}() during test. ` +
+        `Unexpected call to prompts.${name}() during test. ` +
           `Use a CLI flag (e.g. --yes) to bypass prompts, or queue a response with mockPrompts.${name}().`,
       );
     }
@@ -133,9 +133,10 @@ function dequeuePrompt(name: PromptType) {
 }
 
 /**
- * Queue responses for `@inquirer/prompts` functions. Responses are consumed
- * in FIFO order — the first queued value is returned by the first call to
- * that prompt type, the second by the second call, and so on.
+ * Queue responses for prompt functions (driven by mocked `lib/prompts.ts` and
+ * `lib/listage.ts`). Responses are consumed in FIFO order — the first queued
+ * value is returned by the first call to that prompt type, the second by the
+ * second call, and so on.
  *
  * If a prompt is called with no queued responses, the test fails immediately
  * with a descriptive error. Unconsumed responses are detected during
@@ -177,15 +178,6 @@ function assertPromptQueuesEmpty() {
   }
 }
 
-mock.module("@inquirer/prompts", () => ({
-  select: dequeuePrompt("select"),
-  search: dequeuePrompt("search"),
-  input: dequeuePrompt("input"),
-  confirm: dequeuePrompt("confirm"),
-  password: dequeuePrompt("password"),
-  editor: dequeuePrompt("editor"),
-}));
-
 mock.module("../../../lib/listage.ts", () => ({
   select: dequeuePrompt("select"),
   search: dequeuePrompt("search"),
@@ -202,11 +194,13 @@ mock.module("../../../lib/listage.ts", () => ({
       return item instanceof Separator;
     }
   },
-  ttyContext: () => undefined,
 }));
 
 mock.module("../../../lib/prompts.ts", () => ({
   confirm: dequeuePrompt("confirm"),
+  text: dequeuePrompt("input"),
+  password: dequeuePrompt("password"),
+  editor: dequeuePrompt("editor"),
 }));
 
 mock.module(

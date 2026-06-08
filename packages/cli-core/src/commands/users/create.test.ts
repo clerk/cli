@@ -1,5 +1,5 @@
 import { test, expect, describe, beforeEach, afterEach, mock, spyOn } from "bun:test";
-import { useCaptureLog, promptsStubs } from "../../test/lib/stubs.ts";
+import { useCaptureLog } from "../../test/lib/stubs.ts";
 import { BapiError, CliError, ERROR_CODE, EXIT_CODE } from "../../lib/errors.ts";
 
 const mockResolveBapiSecretKey = mock();
@@ -27,8 +27,11 @@ mock.module("./create-wizard.ts", () => ({
   runCreateWizard: (...args: unknown[]) => mockRunCreateWizard(...args),
 }));
 
-mock.module("@inquirer/prompts", () => promptsStubs);
 mock.module("../../lib/spinner.ts", () => ({
+  intro: () => {},
+  outro: () => {},
+  pausedOutro: () => {},
+  bar: () => {},
   withSpinner: async (_msg: string, fn: () => Promise<unknown>) => fn(),
 }));
 
@@ -120,7 +123,10 @@ describe("users create", () => {
     });
 
     expect(captured.err).toContain("[dry-run] POST /v1/users");
-    expect(JSON.parse(captured.out)).toEqual({
+    // Dry-run preview now renders to stderr (with gutter); stdout stays clean.
+    const previewMatch = captured.err.match(/\{[\s\S]*\}/);
+    expect(previewMatch).not.toBeNull();
+    expect(JSON.parse(previewMatch![0])).toEqual({
       email_address: ["alice@example.com"],
       password: "[REDACTED]",
     });

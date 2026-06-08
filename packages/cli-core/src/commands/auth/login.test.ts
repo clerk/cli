@@ -75,6 +75,9 @@ mock.module("../../mode.ts", () => ({
 
 mock.module("../../lib/prompts.ts", () => ({
   confirm: (...args: unknown[]) => mockConfirm(...args),
+  text: async () => "",
+  password: async () => "",
+  editor: async () => "",
 }));
 
 mock.module("../../lib/open.ts", () => ({

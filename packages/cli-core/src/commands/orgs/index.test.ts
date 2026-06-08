@@ -3,18 +3,19 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { _setConfigDir, setProfile } from "../../lib/config.ts";
-import {
-  useCaptureLog,
-  credentialStoreStubs,
-  gitStubs,
-  promptsStubs,
-  stubFetch,
-} from "../../test/lib/stubs.ts";
+import { useCaptureLog, credentialStoreStubs, gitStubs, stubFetch } from "../../test/lib/stubs.ts";
 
 mock.module("../../lib/credential-store.ts", () => credentialStoreStubs);
 mock.module("../../lib/git.ts", () => gitStubs);
-mock.module("@inquirer/prompts", () => promptsStubs);
 mock.module("../../lib/spinner.ts", () => ({
+  intro: () => {},
+  outro: () => {},
+  pausedOutro: () => {},
+  bar: () => {},
+  withGutter: async (
+    _title: string,
+    fn: (controls: { setNextSteps: (steps: readonly string[]) => void }) => Promise<unknown>,
+  ) => fn({ setNextSteps: () => {} }),
   withSpinner: async (_msg: string, fn: () => Promise<unknown>) => fn(),
 }));
 

@@ -62,7 +62,7 @@ function printResults(results: CheckResult[], options: DoctorOptions): void {
 
 export async function doctor(options: DoctorOptions = {}): Promise<void> {
   if (!options.json) {
-    intro("clerk doctor");
+    intro("Running diagnostics");
   }
 
   const ctx = createDoctorContext();
@@ -93,7 +93,7 @@ export async function doctor(options: DoctorOptions = {}): Promise<void> {
       log.info(bold("Auto-fix"));
       log.blank();
 
-      const { confirm } = await import("@inquirer/prompts");
+      const { confirm } = await import("../../lib/prompts.ts");
 
       for (const result of uniqueFixable) {
         const fix = result.fix;

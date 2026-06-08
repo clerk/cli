@@ -1,8 +1,7 @@
-import { input, password } from "@inquirer/prompts";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { select } from "../../lib/listage.ts";
-import { confirm } from "../../lib/prompts.ts";
+import { confirm, password, text } from "../../lib/prompts.ts";
 import { type OAuthPromptField, type OAuthProviderDescriptor } from "./providers.ts";
 
 type OAuthCredentialAction = "have-credentials" | "walkthrough" | "google-json" | "skip";
@@ -23,15 +22,15 @@ export async function confirmProceed(): Promise<boolean> {
 }
 
 export async function collectCustomDomain(): Promise<string> {
-  const domain = await input({
+  const domain = await text({
     message: "Production domain (e.g. example.com)",
     validate: (value) => validateDomain(value),
   });
   return domain.trim();
 }
 
-export function validateDomain(value: string): true | string {
-  const domain = value.trim();
+export function validateDomain(value: string | undefined): true | string {
+  const domain = value?.trim() ?? "";
   if (!domain) return "Enter a domain.";
   if (domain.startsWith("http://") || domain.startsWith("https://")) {
     return "Enter a valid domain, such as example.com (without https://).";
@@ -141,7 +140,7 @@ async function collectOAuthField(
   const message = `${descriptor.label} OAuth ${field.label}`;
   let value: string;
   if (field.filePath) {
-    const path = await input({ message, validate: validateSecretFilePath(field.label) });
+    const path = await text({ message, validate: validateSecretFilePath(field.label) });
     value = await readSecretFile(path);
   } else if (field.type === "select") {
     value = await select({
@@ -152,7 +151,7 @@ async function collectOAuthField(
   } else if (field.secret) {
     value = await password({ message, validate: required(field.label) });
   } else {
-    value = await input({
+    value = await text({
       message,
       default: field.defaultValue,
       validate: required(field.label),
@@ -162,8 +161,8 @@ async function collectOAuthField(
 }
 
 function validateSecretFilePath(label: string) {
-  return async (path: string): Promise<true | string> => {
-    if (!path.trim()) return `${label} is required`;
+  return async (path: string | undefined): Promise<true | string> => {
+    if (!path?.trim()) return `${label} is required`;
     try {
       await readSecretFile(path);
       return true;
@@ -174,15 +173,15 @@ function validateSecretFilePath(label: string) {
 }
 
 async function collectGoogleJsonCredentials(): Promise<Record<string, string>> {
-  const path = await input({
+  const path = await text({
     message: "Google OAuth JSON file path",
     validate: validateGoogleJsonFilePath,
   });
   return readGoogleJsonCredentials(path);
 }
 
-async function validateGoogleJsonFilePath(path: string): Promise<true | string> {
-  if (!path.trim()) return "Google OAuth JSON file path is required";
+async function validateGoogleJsonFilePath(path: string | undefined): Promise<true | string> {
+  if (!path?.trim()) return "Google OAuth JSON file path is required";
   try {
     await readGoogleJsonCredentials(path);
     return true;
@@ -222,7 +221,7 @@ async function readGoogleJsonCredentials(path: string): Promise<Record<string, s
 }
 
 function required(label: string) {
-  return (value: string) => value.trim().length > 0 || `${label} is required`;
+  return (value: string | undefined) => (value?.trim().length ?? 0) > 0 || `${label} is required`;
 }
 
 function expandPath(path: string): string {

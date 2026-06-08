@@ -154,10 +154,10 @@ describe("users commands", () => {
     );
 
     expect(stderr).toContain("[dry-run] POST /v1/users");
-    expect(JSON.parse(stdout)).toEqual({
-      email_address: ["alice@example.com"],
-      password: "[REDACTED]",
-    });
+    // Dry-run preview now renders to stderr (with the intro/outro gutter); stdout stays clean.
+    expect(stderr).toContain('"alice@example.com"');
+    expect(stderr).toContain('"[REDACTED]"');
+    expect(stdout).toBe("");
     expect(findBapiCreateRequest()).toBeUndefined();
   });
 
@@ -287,8 +287,8 @@ describe("users commands", () => {
       const { stdout, stderr } = await clerk("--mode", mode, "users", "list");
 
       if (mode === "human") {
-        expect(stdout).toContain("John Doe");
-        expect(stdout).toContain("john@example.com");
+        expect(stderr).toContain("John Doe");
+        expect(stderr).toContain("john@example.com");
         expect(stderr).toContain("1 user returned");
       } else {
         expect(JSON.parse(stdout)).toEqual({ data: MOCK_USERS, hasMore: false });

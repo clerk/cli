@@ -19,11 +19,14 @@ import { CliError } from "../../lib/errors.ts";
 import { log } from "../../lib/log.ts";
 import { isHuman } from "../../mode.ts";
 import { select } from "../../lib/listage.ts";
-import { NEXT_STEPS, printNextSteps } from "../../lib/next-steps.ts";
+import { intro, outro } from "../../lib/spinner.ts";
+import { NEXT_STEPS } from "../../lib/next-steps.ts";
 
 export async function switchEnv(environmentArg: string | undefined): Promise<void> {
   const available = getAvailableEnvs();
   const current = getCurrentEnvName();
+
+  intro("Switching environment");
 
   // No argument: show interactive picker (human) or print info (non-interactive)
   let target = environmentArg;
@@ -44,10 +47,12 @@ export async function switchEnv(environmentArg: string | undefined): Promise<voi
     } else if (available.length <= 1) {
       log.info(`Current environment: ${current}`);
       log.info("Only one environment configured — nothing to switch to.");
+      outro();
       return;
     } else {
       log.info(`Current environment: ${current}`);
       log.info(`Available environments: ${available.join(", ")}`);
+      outro();
       return;
     }
   }
@@ -62,6 +67,7 @@ export async function switchEnv(environmentArg: string | undefined): Promise<voi
 
   if (previousEnv === target) {
     log.data(`Already on ${target} environment.`);
+    outro();
     return;
   }
 
@@ -74,8 +80,8 @@ export async function switchEnv(environmentArg: string | undefined): Promise<voi
   const token = await getToken();
   if (!token) {
     log.data(`No credentials found for ${target}.`);
-    printNextSteps(NEXT_STEPS.SWITCH_ENV_NO_TOKEN);
+    outro(NEXT_STEPS.SWITCH_ENV_NO_TOKEN);
     return;
   }
-  printNextSteps(NEXT_STEPS.SWITCH_ENV);
+  outro(NEXT_STEPS.SWITCH_ENV);
 }

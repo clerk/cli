@@ -8,6 +8,14 @@ import { useCaptureLog, credentialStoreStubs, gitStubs, stubFetch } from "../../
 mock.module("../../lib/credential-store.ts", () => credentialStoreStubs);
 mock.module("../../lib/git.ts", () => gitStubs);
 mock.module("../../lib/spinner.ts", () => ({
+  intro: () => {},
+  outro: () => {},
+  pausedOutro: () => {},
+  bar: () => {},
+  withGutter: async (
+    _title: string,
+    fn: (controls: { setNextSteps: (steps: readonly string[]) => void }) => Promise<unknown>,
+  ) => fn({ setNextSteps: () => {} }),
   withSpinner: async (msg: string, fn: () => Promise<unknown>) => {
     const { log } = await import("../../lib/log.ts");
     log.info(msg);

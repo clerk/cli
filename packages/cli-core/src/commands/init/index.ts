@@ -72,7 +72,7 @@ export async function init(options: InitOptions = {}) {
     nameOverride: options.name,
   };
 
-  intro("clerk init");
+  intro("Setting up Clerk");
 
   const resolved = options.starter
     ? await handleStarter(cwd, frameworkOverride, overrides)

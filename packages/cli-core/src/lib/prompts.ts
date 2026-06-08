@@ -1,27 +1,157 @@
 /**
- * Prompt helpers that handle edge cases like piped stdin.
- *
- * When stdin is piped (e.g. `clerk config pull | clerk config patch`),
- * it gets consumed reading the input data. Interactive prompts then fail
- * because stdin is at EOF. These helpers open the controlling terminal
- * as a fallback input so prompts can still read from the user's terminal.
- *
- * Uses the shared ttyContext from lib/listage.ts for consistent error handling.
+ * Wrappers around @clack/prompts primitives. Every prompt translates
+ * clack's cancel symbol into a UserAbortError via throwUserAbort() so
+ * call sites never deal with the symbol directly.
  */
 
-import { confirm as inquirerConfirm } from "@inquirer/prompts";
+import {
+  confirm as clackConfirm,
+  isCancel,
+  text as clackText,
+  password as clackPassword,
+} from "@clack/prompts";
+import { editAsync } from "external-editor";
+import { throwUserAbort } from "./errors.ts";
 import { ttyContext } from "./listage.ts";
+import { log } from "./log.ts";
 
-/**
- * Like `confirm()` from @inquirer/prompts, but works even when stdin
- * has been consumed by a pipe. Falls back to reading from the
- * controlling terminal.
- */
+type ValidationResult = string | Error | true | undefined;
+type Validate = (value: string | undefined) => ValidationResult | Promise<ValidationResult>;
+type SyncValidate = (value: string | undefined) => string | Error | undefined;
+
+function unwrap<T>(value: T | symbol): T {
+  if (isCancel(value)) throwUserAbort();
+  return value as T;
+}
+
+function isPromiseLike<T>(value: T | Promise<T>): value is Promise<T> {
+  return typeof (value as Promise<T>)?.then === "function";
+}
+
+function validationError(result: ValidationResult): string | Error | undefined {
+  return result === true ? undefined : result;
+}
+
+function createValidator(validate: Validate | undefined):
+  | {
+      sync: SyncValidate;
+      final: (value: string | undefined) => Promise<string | Error | undefined>;
+    }
+  | undefined {
+  if (!validate) return undefined;
+
+  let last:
+    | {
+        value: string | undefined;
+        result: ValidationResult | Promise<ValidationResult>;
+      }
+    | undefined;
+
+  return {
+    sync(value) {
+      const result = validate(value);
+      last = { value, result };
+      if (isPromiseLike(result)) return undefined;
+      return validationError(result);
+    },
+    async final(value) {
+      const result = last && last.value === value ? last.result : validate(value);
+      return validationError(await result);
+    },
+  };
+}
+
+function logValidationError(error: string | Error) {
+  log.warn(typeof error === "string" ? error : error.message);
+}
+
+/** Yes/no confirmation. */
 export async function confirm(config: { message: string; default?: boolean }): Promise<boolean> {
   const tty = ttyContext();
   try {
-    return await inquirerConfirm(config, tty ? { input: tty.input } : undefined);
+    const result = await clackConfirm({
+      message: config.message,
+      initialValue: config.default,
+      input: tty?.input,
+    });
+    return unwrap(result);
   } finally {
     tty?.close();
+  }
+}
+
+/** Single-line text input. */
+export async function text(config: {
+  message: string;
+  default?: string;
+  placeholder?: string;
+  validate?: Validate;
+}): Promise<string> {
+  const validator = createValidator(config.validate);
+
+  for (;;) {
+    const tty = ttyContext();
+    try {
+      const result = await clackText({
+        message: config.message,
+        initialValue: config.default,
+        placeholder: config.placeholder,
+        validate: validator?.sync,
+        input: tty?.input,
+      });
+      const value = unwrap(result);
+      const error = await validator?.final(value);
+      if (!error) return value;
+      logValidationError(error);
+    } finally {
+      tty?.close();
+    }
+  }
+}
+
+/** Masked password input. */
+export async function password(config: { message: string; validate?: Validate }): Promise<string> {
+  const validator = createValidator(config.validate);
+
+  for (;;) {
+    const tty = ttyContext();
+    try {
+      const result = await clackPassword({
+        message: config.message,
+        validate: validator?.sync,
+        input: tty?.input,
+      });
+      const value = unwrap(result);
+      const error = await validator?.final(value);
+      if (!error) return value;
+      logValidationError(error);
+    } finally {
+      tty?.close();
+    }
+  }
+}
+
+/** Multi-line editor input. Shells out to $EDITOR via external-editor. */
+export async function editor(config: {
+  message: string;
+  default?: string;
+  postfix?: string;
+  validate?: (value: string | undefined) => string | Error | undefined;
+}): Promise<string> {
+  log.info(config.message);
+
+  for (;;) {
+    const raw = await new Promise<string>((resolve, reject) => {
+      editAsync(config.default ?? "", (err, value) => (err ? reject(err) : resolve(value)), {
+        postfix: config.postfix,
+      });
+    });
+
+    const trimmed = raw.replace(/\n$/, "");
+    if (!config.validate) return trimmed;
+
+    const verdict = config.validate(trimmed);
+    if (verdict === undefined) return trimmed;
+    log.warn(typeof verdict === "string" ? verdict : verdict.message);
   }
 }

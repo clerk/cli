@@ -1,4 +1,4 @@
-import { input, password } from "@inquirer/prompts";
+import { password, text } from "../../lib/prompts.ts";
 import {
   bootstrapDevBrowser,
   decodePublishableKey,
@@ -101,11 +101,11 @@ async function loadSettings(
 async function promptField(field: FieldDef, required: boolean): Promise<string> {
   const message = required ? `${field.message} *` : `${field.message} (optional)`;
   const validate = required
-    ? (value: string) => value.trim().length > 0 || `${field.message} is required`
+    ? (value: string | undefined) => (value?.trim() ? undefined : `${field.message} is required`)
     : undefined;
   if (field.isPassword) {
     return password({ message, validate });
   }
-  const value = await input({ message, validate });
+  const value = await text({ message, validate });
   return value.trim();
 }

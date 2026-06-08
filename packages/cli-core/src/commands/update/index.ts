@@ -242,7 +242,7 @@ function detectPackageRunner(): "npx" | "bunx" | null {
 // ── Confirmation ─────────────────────────────────────────────────────────────
 
 async function confirmUpdate(currentVersion: string, latestVersion: string): Promise<boolean> {
-  const { confirm } = await import("@inquirer/prompts");
+  const { confirm } = await import("../../lib/prompts.ts");
   return confirm({
     message: `Update clerk ${currentVersion} → ${latestVersion}?`,
     default: true,
@@ -261,7 +261,7 @@ export async function update(options: UpdateOptions): Promise<void> {
 
   const channel = options.channel ?? getUpdateChannel();
 
-  if (isHuman()) intro("clerk update");
+  if (isHuman()) intro("Checking for updates");
 
   const [latest, installDirs] = await Promise.all([
     withSpinner("Checking for updates...", () => fetchLatestVersion(channel)).catch(() => {

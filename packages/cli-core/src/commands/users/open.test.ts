@@ -30,6 +30,7 @@ mock.module("../../lib/open.ts", () => ({
 mock.module("../../lib/spinner.ts", () => ({
   intro: () => {},
   outro: () => {},
+  pausedOutro: () => {},
   withSpinner: (_msg: string, fn: () => Promise<unknown>) => fn(),
 }));
 

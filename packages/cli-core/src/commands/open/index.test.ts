@@ -18,6 +18,7 @@ mock.module("../../lib/open.ts", () => ({
 mock.module("../../lib/spinner.ts", () => ({
   intro: () => {},
   outro: () => {},
+  pausedOutro: () => {},
 }));
 
 const { openDashboard, buildDashboardUrl } = await import("./index.ts");

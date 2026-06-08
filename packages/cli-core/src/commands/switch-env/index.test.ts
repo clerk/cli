@@ -1,4 +1,5 @@
 import { test, expect, describe, beforeEach, afterEach, mock, spyOn } from "bun:test";
+import { log } from "../../lib/log.ts";
 import {
   useCaptureLog,
   configStubs,
@@ -45,6 +46,18 @@ mock.module("../../mode.ts", () => ({
 mock.module("../../lib/listage.ts", () => ({
   ...listageStubs,
   select: (...args: unknown[]) => mockSelect(...args),
+}));
+
+mock.module("../../lib/spinner.ts", () => ({
+  intro: () => {},
+  outro: (msgOrSteps?: string | readonly string[]) => {
+    if (Array.isArray(msgOrSteps)) {
+      for (const step of msgOrSteps) log.info(step);
+    }
+  },
+  pausedOutro: () => {},
+  bar: () => {},
+  withSpinner: async (_msg: string, fn: () => Promise<unknown>) => fn(),
 }));
 
 const { switchEnv } = await import("./index.ts");

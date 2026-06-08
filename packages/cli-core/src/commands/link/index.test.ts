@@ -5,7 +5,6 @@ import {
   credentialStoreStubs,
   autolinkStubs,
   gitStubs,
-  promptsStubs,
   listageStubs,
 } from "../../test/lib/stubs.ts";
 import { PlapiError } from "../../lib/errors.ts";
@@ -80,15 +79,11 @@ mock.module("../../lib/git.ts", () => ({
 const mockSearch = mock();
 const mockConfirm = mock();
 const mockInput = mock();
-mock.module("@inquirer/prompts", () => ({
-  ...promptsStubs,
-  search: (...args: unknown[]) => mockSearch(...args),
-  confirm: (...args: unknown[]) => mockConfirm(...args),
-  input: (...args: unknown[]) => mockInput(...args),
-}));
-
 mock.module("../../lib/prompts.ts", () => ({
   confirm: (...args: unknown[]) => mockConfirm(...args),
+  text: (...args: unknown[]) => mockInput(...args),
+  password: async () => "",
+  editor: async () => "",
 }));
 
 mock.module("../../lib/listage.ts", () => ({
@@ -99,6 +94,7 @@ mock.module("../../lib/listage.ts", () => ({
 mock.module("../../lib/spinner.ts", () => ({
   intro: () => {},
   outro: () => {},
+  pausedOutro: () => {},
   bar: () => {},
   withSpinner: async (_msg: string, fn: () => Promise<unknown>) => fn(),
 }));
@@ -1234,7 +1230,7 @@ describe("link", () => {
       expect(capturedValidate).toBeDefined();
       expect(capturedValidate!("")).toBe("Application name cannot be empty");
       expect(capturedValidate!("   ")).toBe("Application name cannot be empty");
-      expect(capturedValidate!("My App")).toBe(true);
+      expect(capturedValidate!("My App")).toBeUndefined();
     });
 
     test("propagates createApplication failure without linking", async () => {

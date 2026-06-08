@@ -2,11 +2,18 @@ import { getAuthToken } from "../../lib/plapi.ts";
 import { getBapiBaseUrl, getPlapiBaseUrl } from "../../lib/environment.ts";
 import { normalizeBapiPath, resolveBapiSecretKey } from "../../lib/bapi-command.ts";
 import { bapiRequest } from "./bapi.ts";
-import { BapiError, ERROR_CODE, throwUsageError, throwUserAbort } from "../../lib/errors.ts";
+import {
+  BapiError,
+  ERROR_CODE,
+  UserAbortError,
+  isPromptExitError,
+  throwUsageError,
+  throwUserAbort,
+} from "../../lib/errors.ts";
 import { isHuman } from "../../mode.ts";
 import { confirm } from "../../lib/prompts.ts";
-import { withSpinner } from "../../lib/spinner.ts";
-import { log } from "../../lib/log.ts";
+import { withSpinner, intro, outro, pausedOutro } from "../../lib/spinner.ts";
+import { isInsideGutter, log } from "../../lib/log.ts";
 
 export interface ApiOptions {
   method?: string;
@@ -28,85 +35,108 @@ export async function api(
   filter: string | undefined,
   options: ApiOptions,
 ): Promise<void> {
-  // Route: no args → interactive builder
-  if (!endpoint) {
-    const { apiInteractive } = await import("./interactive.ts");
-    return apiInteractive(options);
-  }
+  const nested = isInsideGutter();
+  if (!nested) intro("Calling Clerk API");
+  let closeStatus: "success" | "failed" | "paused" | undefined;
 
-  // Route: "ls" → list endpoints
-  if (endpoint === "ls") {
-    const { apiLs } = await import("./ls.ts");
-    return apiLs(filter, options);
-  }
-
-  // 1. Resolve the request body
-  const body = await resolveBody(options);
-
-  // 2. Determine HTTP method
-  const method = (options.method ?? (body ? "POST" : "GET")).toUpperCase();
-
-  // 3. Resolve authentication
-  let secretKey: string;
-  let baseUrl: string;
-
-  if (options.platform) {
-    secretKey = await getAuthToken();
-    baseUrl = getPlapiBaseUrl();
-  } else {
-    secretKey = await resolveBapiSecretKey(options);
-    baseUrl = getBapiBaseUrl();
-  }
-
-  // 4. Dry run
-  if (options.dryRun) {
-    log.info(`[dry-run] ${method} ${baseUrl}${normalizeBapiPath(endpoint)}`);
-    if (body) {
-      prettyPrint(body);
-    }
-    return;
-  }
-
-  // 5. Confirmation for mutating methods
-  if (MUTATING_METHODS.has(method) && isHuman() && !options.yes) {
-    log.info(`\nAbout to ${method} ${endpoint}`);
-    if (body) {
-      prettyPrintToStderr(body);
-    }
-    const ok = await confirm({ message: "Proceed?" });
-    if (!ok) {
-      throwUserAbort();
-    }
-  }
-
-  // 6. Execute request
   try {
-    const response = await withSpinner("Executing request...", () =>
-      bapiRequest({
-        method,
-        path: endpoint,
-        secretKey,
-        body: body ?? undefined,
-        baseUrl,
-      }),
-    );
-
-    if (options.include) {
-      printHeaders(response.status, response.headers);
-    }
-    printBody(response.body);
-  } catch (error) {
-    // Handle BapiError locally to print the raw API response body to stdout
-    // (for piping), rather than propagating to the global error handler.
-    if (error instanceof BapiError) {
-      if (options.include) {
-        printHeaders(error.status, error.headers);
-      }
-      prettyPrint(error.body);
-      process.exitCode = 1;
+    // Route: no args → interactive builder
+    if (!endpoint) {
+      const { apiInteractive } = await import("./interactive.ts");
+      await apiInteractive(options);
       return;
     }
+
+    // Route: "ls" → list endpoints
+    if (endpoint === "ls") {
+      const { apiLs } = await import("./ls.ts");
+      await apiLs(filter, options);
+      return;
+    }
+
+    // 1. Resolve the request body
+    const body = await resolveBody(options);
+
+    // 2. Determine HTTP method
+    const method = (options.method ?? (body ? "POST" : "GET")).toUpperCase();
+
+    // 3. Resolve authentication
+    let secretKey: string;
+    let baseUrl: string;
+
+    if (options.platform) {
+      secretKey = await getAuthToken();
+      baseUrl = getPlapiBaseUrl();
+    } else {
+      secretKey = await resolveBapiSecretKey(options);
+      baseUrl = getBapiBaseUrl();
+    }
+
+    // 4. Dry run
+    if (options.dryRun) {
+      log.info(`[dry-run] ${method} ${baseUrl}${normalizeBapiPath(endpoint)}`);
+      if (body) {
+        prettyPrint(body);
+      }
+      return;
+    }
+
+    // 5. Confirmation for mutating methods
+    if (MUTATING_METHODS.has(method) && isHuman() && !options.yes) {
+      log.info(`\nAbout to ${method} ${endpoint}`);
+      if (body) {
+        prettyPrintToStderr(body);
+      }
+      const ok = await confirm({ message: "Proceed?" });
+      if (!ok) {
+        throwUserAbort();
+      }
+    }
+
+    // 6. Execute request
+    try {
+      const response = await withSpinner("Executing request...", () =>
+        bapiRequest({
+          method,
+          path: endpoint,
+          secretKey,
+          body: body ?? undefined,
+          baseUrl,
+        }),
+      );
+
+      if (options.include) {
+        printHeaders(response.status, response.headers);
+      }
+      printBody(response.body);
+      closeStatus = "success";
+    } catch (error) {
+      // Handle BapiError locally to print the raw API response body to stdout
+      // (for piping), rather than propagating to the global error handler.
+      if (error instanceof BapiError) {
+        if (options.include) {
+          printHeaders(error.status, error.headers);
+        }
+        prettyPrint(error.body);
+        process.exitCode = 1;
+        closeStatus = "failed";
+        return;
+      }
+      throw error;
+    }
+  } catch (error) {
+    closeStatus = error instanceof UserAbortError || isPromptExitError(error) ? "paused" : "failed";
     throw error;
+  } finally {
+    if (!nested) {
+      if (closeStatus === "paused") {
+        pausedOutro();
+      } else if (closeStatus === "failed") {
+        outro("Failed");
+      } else {
+        outro();
+      }
+    }
   }
 }
 

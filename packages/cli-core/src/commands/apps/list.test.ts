@@ -1,5 +1,5 @@
 import { test, expect, describe, beforeEach, afterEach, mock, spyOn } from "bun:test";
-import { useCaptureLog } from "../../test/lib/stubs.ts";
+import { captureUi, useCaptureLog } from "../../test/lib/stubs.ts";
 
 const mockListApplications = mock();
 mock.module("../../lib/plapi.ts", () => ({
@@ -52,15 +52,19 @@ const mockApps = [
 describe("apps list", () => {
   let logSpy: ReturnType<typeof spyOn>;
   let errorSpy: ReturnType<typeof spyOn>;
+  let uiCapture: ReturnType<typeof captureUi>;
   const captured = useCaptureLog();
 
   beforeEach(() => {
     mockIsAgent.mockReturnValue(false);
     logSpy = spyOn(console, "log").mockImplementation(() => {});
     errorSpy = spyOn(console, "error").mockImplementation(() => {});
+    uiCapture = captureUi();
+    uiCapture.install();
   });
 
   afterEach(() => {
+    uiCapture.teardown();
     mockListApplications.mockReset();
     mockIsAgent.mockReset();
     logSpy.mockRestore();
@@ -71,17 +75,20 @@ describe("apps list", () => {
     return list(options);
   }
 
+  const stdoutOut = () => uiCapture.out;
+
   describe("compact table (default)", () => {
     test("lists apps with name, id, and environments", async () => {
       mockListApplications.mockResolvedValue(mockApps);
 
       await runList();
 
-      expect(captured.out).toContain("My SaaS App");
-      expect(captured.out).toContain("app_abc123");
-      expect(captured.out).toContain("development, production");
-      expect(captured.out).toContain("Side Project");
-      expect(captured.out).toContain("app_xyz789");
+      const out = stdoutOut();
+      expect(out).toContain("My SaaS App");
+      expect(out).toContain("app_abc123");
+      expect(out).toContain("development, production");
+      expect(out).toContain("Side Project");
+      expect(out).toContain("app_xyz789");
     });
 
     test("shows app id as name when name is absent", async () => {
@@ -96,7 +103,7 @@ describe("apps list", () => {
 
       await runList();
 
-      expect(captured.out).toContain("app_noname");
+      expect(stdoutOut()).toContain("app_noname");
     });
 
     test("does not show secret keys", async () => {
@@ -104,16 +111,17 @@ describe("apps list", () => {
 
       await runList();
 
-      expect(captured.out).not.toContain("sk_test_xxx");
-      expect(captured.out).not.toContain("sk_live_xxx");
+      const out = stdoutOut();
+      expect(out).not.toContain("sk_test_xxx");
+      expect(out).not.toContain("sk_live_xxx");
     });
 
-    test("shows count summary on stderr", async () => {
+    test("shows count summary", async () => {
       mockListApplications.mockResolvedValue(mockApps);
 
       await runList();
 
-      expect(captured.err).toContain("2 applications");
+      expect(stdoutOut()).toContain("2 applications");
     });
 
     test("shows singular count for one app", async () => {
@@ -121,8 +129,9 @@ describe("apps list", () => {
 
       await runList();
 
-      expect(captured.err).toContain("1 application");
-      expect(captured.err).not.toContain("1 applications");
+      const out = stdoutOut();
+      expect(out).toContain("1 application");
+      expect(out).not.toContain("1 applications");
     });
   });
 
@@ -136,6 +145,7 @@ describe("apps list", () => {
       expect(parsed).toHaveLength(2);
       expect(parsed[0].application_id).toBe("app_abc123");
       expect(parsed[0].name).toBe("My SaaS App");
+      expect(stdoutOut()).toBe("");
     });
 
     test("outputs JSON in agent mode", async () => {
@@ -165,8 +175,9 @@ describe("apps list", () => {
 
       await runList();
 
-      expect(captured.err).toContain("No applications found");
-      expect(captured.err).toContain("dashboard.clerk.com");
+      const out = stdoutOut();
+      expect(out).toContain("No applications found");
+      expect(out).toContain("dashboard.clerk.com");
     });
 
     test("outputs empty JSON array when --json flag is set", async () => {
@@ -176,6 +187,7 @@ describe("apps list", () => {
 
       const parsed = JSON.parse(captured.out);
       expect(parsed).toEqual([]);
+      expect(stdoutOut()).toBe("");
     });
 
     test("outputs empty JSON array in agent mode", async () => {

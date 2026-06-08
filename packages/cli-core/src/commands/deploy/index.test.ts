@@ -2,7 +2,7 @@ import { test, expect, describe, beforeEach, afterEach, mock, spyOn } from "bun:
 import { mkdtemp, rm } from "node:fs/promises";
 import { join, relative } from "node:path";
 import { tmpdir } from "node:os";
-import { useCaptureLog, promptsStubs, listageStubs } from "../../test/lib/stubs.ts";
+import { useCaptureLog, listageStubs } from "../../test/lib/stubs.ts";
 import { CliError, ERROR_CODE, EXIT_CODE, PlapiError, UserAbortError } from "../../lib/errors.ts";
 
 const mockIsAgent = mock();
@@ -34,16 +34,10 @@ const mockTriggerApplicationDomainDNSCheck = mock();
 const mockSleep = mock();
 const mockOpenBrowser = mock();
 
-mock.module("@inquirer/prompts", () => ({
-  ...promptsStubs,
-  select: (...args: unknown[]) => mockSelect(...args),
-  input: (...args: unknown[]) => mockInput(...args),
-  confirm: (...args: unknown[]) => mockConfirm(...args),
-  password: (...args: unknown[]) => mockPassword(...args),
-}));
-
 mock.module("../../lib/prompts.ts", () => ({
   confirm: (...args: unknown[]) => mockConfirm(...args),
+  text: (...args: unknown[]) => mockInput(...args),
+  password: (...args: unknown[]) => mockPassword(...args),
 }));
 
 mock.module("../../lib/listage.ts", () => ({
@@ -599,8 +593,8 @@ describe("deploy", () => {
       await runDeployUntilPause();
       const err = stripAnsi(captured.err);
 
-      const productionCheckIndex = err.indexOf("Checking for production instance...");
-      const developmentConfigIndex = err.indexOf("Reading development configuration...");
+      const productionCheckIndex = err.indexOf("Checking for production instance");
+      const developmentConfigIndex = err.indexOf("Reading development configuration");
       expect(productionCheckIndex).toBeGreaterThan(-1);
       expect(developmentConfigIndex).toBeGreaterThan(-1);
       expect(productionCheckIndex).toBeLessThan(developmentConfigIndex);
@@ -932,7 +926,7 @@ describe("deploy", () => {
       await expect(collectCustomDomain()).resolves.toBe("example.com");
     });
 
-    test("Ctrl-C before changes are made reports cancelled instead of done", async () => {
+    test("Ctrl-C before changes are made reports paused instead of done", async () => {
       await linkedProject();
       mockIsAgent.mockReturnValue(false);
       mockConfirm.mockRejectedValueOnce(promptExitError());
@@ -942,11 +936,12 @@ describe("deploy", () => {
       const config = await readConfig();
       expect(config.profiles[process.cwd()]?.instances.production).toBeUndefined();
       const terminalOutput = stripAnsi(captured.err);
-      expect(terminalOutput).toContain("Cancelled");
+      expect(terminalOutput).toContain("Paused");
+      expect(terminalOutput).toContain("Run `clerk deploy` again");
       expect(terminalOutput).not.toContain("Done");
     });
 
-    test("Ctrl-C at domain collection reports cancelled instead of done", async () => {
+    test("Ctrl-C at domain collection reports paused instead of done", async () => {
       await linkedProject();
       mockIsAgent.mockReturnValue(false);
       mockConfirm.mockResolvedValueOnce(true);
@@ -957,7 +952,8 @@ describe("deploy", () => {
       const config = await readConfig();
       expect(config.profiles[process.cwd()]?.instances.production).toBeUndefined();
       const terminalOutput = stripAnsi(captured.err);
-      expect(terminalOutput).toContain("Cancelled");
+      expect(terminalOutput).toContain("Paused");
+      expect(terminalOutput).toContain("Run `clerk deploy` again");
       expect(terminalOutput).not.toContain("Done");
     });
 

@@ -1,115 +1,119 @@
+import { Writable } from "node:stream";
+import { intro as clackIntro, outro as clackOutro, spinner as clackSpinner } from "@clack/prompts";
 import { isHuman } from "../mode.ts";
-import { dim, cyan, green, red } from "./color.ts";
+import { dim, cyan } from "./color.ts";
+import { UserAbortError, isPromptExitError } from "./errors.ts";
 import { log, pushPrefix, popPrefix } from "./log.ts";
-
-const FRAMES = ["◒", "◐", "◓", "◑"];
-const INTERVAL = 80;
+import { getUiOutput } from "./ui.ts";
 
 const S_BAR = "│";
-const S_BAR_START = "┌";
 const S_BAR_END = "└";
-const S_STEP_DONE = "◇";
-const S_STEP_ERROR = "■";
+const PAUSED_INSTRUCTION = "Run this command again to continue.";
 
-const isInteractive = () => process.stderr.isTTY && !process.env.CI;
+const logUiOutput = new Writable({
+  write(chunk, _encoding, callback) {
+    log.ui(typeof chunk === "string" ? chunk : chunk.toString("utf8"));
+    callback();
+  },
+});
 
-// --- Public API ---
+function getOutput() {
+  return getUiOutput() ?? logUiOutput;
+}
 
-/** Print intro bracket: ┌  title — prefixes log output with │ until outro(). */
+function writeUi(message: string) {
+  const output = getUiOutput();
+  if (output) {
+    output.write(message);
+    return;
+  }
+  log.ui(message);
+}
+
+/** Print intro bracket and arrange for subsequent `log.*` lines to be gutter-prefixed. */
 export function intro(title?: string) {
   if (!isHuman()) return;
-  const line = title ? `${dim(S_BAR_START)}  ${title}` : dim(S_BAR_START);
-  log.ui(`${line}\n`);
+  clackIntro(title, { output: getOutput() });
   pushPrefix();
 }
 
-/**
- * Print outro bracket:
- *
- * ```
- *  │
- *  └  $message
- * ```
- *
- * Then restores normal log output. Pass a string[] to render as next steps
- * after the bracket.
- **/
+/** Print outro bracket; restores normal `log.*` output. Pass a string[] to render next steps. */
 export function outro(messageOrSteps?: string | readonly string[]) {
   if (!isHuman()) return;
   popPrefix();
-  log.ui(`${dim(S_BAR)}\n`);
 
   if (Array.isArray(messageOrSteps)) {
-    log.ui(`${dim(S_BAR_END)}  ${dim("Next steps")}\n`);
+    writeUi(`${dim(S_BAR)}\n`);
+    writeUi(`${dim(S_BAR_END)}  ${dim("Next steps")}\n`);
     for (const step of messageOrSteps) {
-      log.ui(`   ${cyan("→")} ${step}\n`);
+      writeUi(`   ${cyan("→")} ${step}\n`);
     }
-    log.ui("\n");
-  } else {
-    const label = messageOrSteps ?? "Done";
-    log.ui(`${dim(S_BAR_END)}  ${label}\n\n`);
+    writeUi("\n");
+    return;
   }
+
+  clackOutro(typeof messageOrSteps === "string" ? messageOrSteps : "Done", {
+    output: getOutput(),
+  });
+}
+
+/** Print a paused outro with the instruction needed to resume later. */
+export function pausedOutro(instruction = PAUSED_INSTRUCTION) {
+  if (!isHuman()) return;
+  popPrefix();
+  writeUi(`${dim(S_BAR)}\n`);
+  writeUi(`${dim(S_BAR_END)}  Paused\n`);
+  writeUi(`   ${cyan("→")} ${instruction}\n\n`);
 }
 
 /** Print a bar separator: │ */
 export function bar() {
   if (!isHuman()) return;
-  log.ui(`${dim(S_BAR)}\n`);
-}
-
-function createSpinner() {
-  const interactive = isInteractive();
-  let timer: ReturnType<typeof setInterval> | undefined;
-  let frame = 0;
-  let currentMessage = "";
-
-  const render = () => {
-    const char = cyan(FRAMES[frame++ % FRAMES.length]!);
-    log.ui(`\r\x1b[K${char}  ${currentMessage}`);
-  };
-
-  return {
-    start(message: string) {
-      currentMessage = message;
-      if (!interactive) {
-        log.ui(`${S_STEP_DONE}  ${message}\n`);
-        return;
-      }
-      log.ui("\x1b[?25l"); // hide cursor
-      timer = setInterval(render, INTERVAL);
-    },
-    update(message: string) {
-      currentMessage = message;
-      if (interactive) render();
-    },
-    stop(finalMessage?: string) {
-      if (timer) {
-        clearInterval(timer);
-        timer = undefined;
-      }
-      if (!interactive) return;
-      log.ui("\r\x1b[K");
-      if (finalMessage) {
-        log.ui(`${green(S_STEP_DONE)}  ${finalMessage}\n`);
-      }
-      log.ui("\x1b[?25h"); // show cursor
-    },
-    error(finalMessage?: string) {
-      if (timer) {
-        clearInterval(timer);
-        timer = undefined;
-      }
-      if (!interactive) return;
-      log.ui("\r\x1b[K");
-      log.ui(`${red(S_STEP_ERROR)}  ${finalMessage ?? "Failed"}\n`);
-      log.ui("\x1b[?25h");
-    },
-  };
+  writeUi(`${dim(S_BAR)}\n`);
 }
 
 export type SpinnerControls = {
   update(message: string): void;
 };
+
+/**
+ * Controls for commands wrapped by {@link withGutter}.
+ */
+export type GutterControls = {
+  setNextSteps(steps: readonly string[]): void;
+};
+
+/**
+ * Run a command inside an intro/outro gutter and guarantee the gutter closes.
+ */
+export async function withGutter<T>(
+  title: string,
+  fn: (controls: GutterControls) => Promise<T>,
+  options?: { skip?: boolean },
+): Promise<T> {
+  let nextSteps: readonly string[] | undefined;
+  const controls: GutterControls = {
+    setNextSteps(steps) {
+      nextSteps = steps;
+    },
+  };
+
+  if (options?.skip || !isHuman()) return fn(controls);
+
+  intro(title);
+  try {
+    const result = await fn(controls);
+    outro(nextSteps);
+    return result;
+  } catch (error) {
+    if (error instanceof UserAbortError || isPromptExitError(error)) {
+      pausedOutro();
+    } else {
+      outro("Failed");
+    }
+    throw error;
+  }
+}
 
 export async function withSpinner<T>(
   message: string,
@@ -118,10 +122,10 @@ export async function withSpinner<T>(
 ): Promise<T> {
   if (!isHuman()) return fn({ update: () => {} });
 
-  const s = createSpinner();
+  const s = clackSpinner({ output: getOutput() });
   s.start(message);
   try {
-    const result = await fn({ update: s.update });
+    const result = await fn({ update: (nextMessage) => s.message(nextMessage) });
     s.stop(doneMessage ?? message.replace(/\.{3}$/, ""));
     return result;
   } catch (error) {

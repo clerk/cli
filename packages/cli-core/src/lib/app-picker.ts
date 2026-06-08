@@ -4,8 +4,8 @@
  * project is linked and no --app was provided.
  */
 
-import { input } from "@inquirer/prompts";
-import { cyan, dim } from "./color.ts";
+import { text } from "./prompts.ts";
+import { cyan } from "./color.ts";
 import { CliError, ERROR_CODE, PlapiError, withApiContext } from "./errors.ts";
 import { search } from "./listage.ts";
 import { log } from "./log.ts";
@@ -47,9 +47,8 @@ export async function pickOrCreateApp(opts: {
 }): Promise<Application> {
   const appChoices = opts.apps.map((a) => ({ name: appLabel(a), value: a.application_id }));
   const createChoice = {
-    name: "+ Create a new application",
+    name: cyan("+ Create a new application"),
     value: CREATE_NEW_APP,
-    style: (text: string, isActive: boolean) => (isActive ? cyan(text) : dim(text)),
   };
 
   const selectedId = await search<string>({
@@ -63,9 +62,9 @@ export async function pickOrCreateApp(opts: {
   });
 
   if (selectedId === CREATE_NEW_APP) {
-    const name = await input({
+    const name = await text({
       message: "Application name:",
-      validate: (v) => (v.trim() ? true : "Application name cannot be empty"),
+      validate: (v) => (v?.trim() ? undefined : "Application name cannot be empty"),
     });
     const created = await withApiContext(
       createApplication(name.trim()),

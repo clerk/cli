@@ -17,6 +17,17 @@ mock.module("../../mode.ts", () => ({
   getMode: () => "human",
 }));
 
+const mockNextSteps = mock();
+mock.module("../../lib/spinner.ts", () => ({
+  intro: () => {},
+  outro: (msgOrSteps?: string | readonly string[]) => {
+    if (Array.isArray(msgOrSteps)) mockNextSteps(msgOrSteps);
+  },
+  pausedOutro: () => {},
+  bar: () => {},
+  withSpinner: async (_msg: string, fn: () => Promise<unknown>) => fn(),
+}));
+
 const { create } = await import("./create.ts");
 
 const mockApp = {
@@ -104,10 +115,13 @@ describe("apps create", () => {
     });
 
     test("shows next steps on stderr", async () => {
+      mockNextSteps.mockReset();
       await runCreate("My SaaS App");
 
-      expect(captured.err).toContain("clerk link");
-      expect(captured.err).toContain("clerk env pull");
+      const steps = mockNextSteps.mock.calls[0]?.[0] as string[] | undefined;
+      expect(steps).toBeDefined();
+      expect(steps!.some((s) => s.includes("clerk link"))).toBe(true);
+      expect(steps!.some((s) => s.includes("clerk env pull"))).toBe(true);
     });
   });
 
@@ -132,6 +146,7 @@ describe("apps create", () => {
 
     test("does not show next steps", async () => {
       mockIsAgent.mockReturnValue(true);
+      mockNextSteps.mockReset();
 
       await runCreate("My SaaS App");
 

@@ -1,9 +1,9 @@
 import { resolveBapiSecretKey } from "../../lib/bapi-command.ts";
 import { dim, cyan } from "../../lib/color.ts";
-import { CliError, ERROR_CODE } from "../../lib/errors.ts";
+import { CliError, ERROR_CODE, UserAbortError, isPromptExitError } from "../../lib/errors.ts";
 import { isInsideGutter, log } from "../../lib/log.ts";
 import { isAgent, isHuman } from "../../mode.ts";
-import { withSpinner } from "../../lib/spinner.ts";
+import { withSpinner, intro, outro, pausedOutro } from "../../lib/spinner.ts";
 import { bapiRequest } from "../api/bapi.ts";
 import { resolveUsersInstanceContext } from "./interactive/instance-context.ts";
 import { registerUsersAction } from "./registry.ts";
@@ -118,20 +118,14 @@ function formatUsersTable(users: BapiUser[]): void {
   const idWidth =
     Math.max("USER ID".length, ...users.map((user) => user.id.length)) + COLUMN_PADDING;
 
-  // Inside an intro/outro block, route rows to stderr so the gutter prefix is
-  // applied. Direct invocations still get the table on stdout for piping.
-  const emit = isInsideGutter()
-    ? (line: string) => log.info(line)
-    : (line: string) => log.data(line);
-
-  emit(
+  log.info(
     `${dim("NAME".padEnd(nameWidth))}${dim("USER ID".padEnd(idWidth))}${dim("PRIMARY IDENTIFIER")}`,
   );
 
   for (const user of users) {
     const name = cyan(userDisplayName(user).padEnd(nameWidth));
     const id = dim(user.id.padEnd(idWidth));
-    emit(`${name}${id}${primaryIdentifier(user)}`);
+    log.info(`${name}${id}${primaryIdentifier(user)}`);
   }
 }
 
@@ -168,39 +162,64 @@ async function resolveListSecretKey(options: UsersListOptions): Promise<string> 
 }
 
 export async function list(options: UsersListOptions = {}): Promise<void> {
-  const secretKey = await resolveListSecretKey(options);
-  const pageSize = options.limit ?? DEFAULT_LIMIT;
-  const offset = options.offset ?? 0;
-  // Request one extra row so we can detect whether more pages exist without
-  // a separate /users/count round-trip. The CLI's --limit caps at 250, so
-  // pageSize + 1 always fits under BAPI's MaxLimit of 500.
-  const response = await withSpinner("Fetching users...", () =>
-    bapiRequest({
-      method: "GET",
-      path: buildUsersListPath(options, pageSize + 1),
-      secretKey,
-    }),
-  );
+  const nested = isInsideGutter();
+  const shouldWrap = !nested && !options.json && !isAgent();
+  if (shouldWrap) intro("Listing users");
+  let closeStatus: "success" | "failed" | "paused" | undefined;
 
-  const body = response.body;
-  const allUsers = Array.isArray(body) ? (body as BapiUser[]) : [];
-  const hasMore = allUsers.length > pageSize;
-  const users = hasMore ? allUsers.slice(0, pageSize) : allUsers;
+  try {
+    const secretKey = await resolveListSecretKey(options);
+    const limit = options.limit ?? DEFAULT_LIMIT;
+    const offset = options.offset ?? 0;
+    // Request one extra row so we can detect whether more pages exist without
+    // a separate /users/count round-trip. The CLI's --limit caps at 250, so
+    // pageSize + 1 always fits under BAPI's MaxLimit of 500.
+    const response = await withSpinner("Fetching users...", () =>
+      bapiRequest({
+        method: "GET",
+        path: buildUsersListPath(options, limit + 1),
+        secretKey,
+      }),
+    );
 
-  if (printJson({ data: users, hasMore }, options)) return;
+    const body = response.body;
+    const allUsers = Array.isArray(body) ? (body as BapiUser[]) : [];
+    const hasMore = allUsers.length > limit;
+    const users = hasMore ? allUsers.slice(0, limit) : allUsers;
 
-  if (users.length === 0) {
-    log.warn("No users found.");
-    return;
-  }
+    if (printJson({ data: users, hasMore }, options)) {
+      return;
+    }
 
-  formatUsersTable(users);
-  const summary = `\n${users.length} user${users.length === 1 ? "" : "s"} returned`;
-  if (hasMore) {
-    const nextOffset = offset + pageSize;
-    log.info(`${summary} (more available, re-run with \`--offset ${nextOffset}\`)`);
-  } else {
-    log.info(summary);
+    log.blank();
+
+    if (users.length === 0) {
+      log.warn("No users found.");
+      closeStatus = "success";
+      return;
+    }
+
+    formatUsersTable(users);
+    const summary = `\n${users.length} user${users.length === 1 ? "" : "s"} returned`;
+    if (hasMore) {
+      log.info(`${summary} (more available, re-run with \`--offset ${offset + limit}\`)`);
+    } else {
+      log.info(summary);
+    }
+    closeStatus = "success";
+  } catch (error) {
+    closeStatus = error instanceof UserAbortError || isPromptExitError(error) ? "paused" : "failed";
+    throw error;
+  } finally {
+    if (shouldWrap) {
+      if (closeStatus === "paused") {
+        pausedOutro();
+      } else if (closeStatus === "failed") {
+        outro("Failed");
+      } else if (closeStatus === "success") {
+        outro();
+      }
+    }
   }
 }
 
