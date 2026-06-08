@@ -2,6 +2,7 @@ import { Writable } from "node:stream";
 import { intro as clackIntro, outro as clackOutro, spinner as clackSpinner } from "@clack/prompts";
 import { isHuman } from "../mode.ts";
 import { dim, cyan } from "./color.ts";
+import { animateHeader } from "./gradient.ts";
 import { UserAbortError, isPromptExitError } from "./errors.ts";
 import { log, pushPrefix, popPrefix } from "./log.ts";
 import { getUiOutput } from "./ui.ts";
@@ -37,14 +38,23 @@ export function intro(title?: string) {
   pushPrefix();
 }
 
-/** Print outro bracket; restores normal `log.*` output. Pass a string[] to render next steps. */
-export function outro(messageOrSteps?: string | readonly string[]) {
+/**
+ * Print outro bracket:
+ *
+ * ```
+ *  │
+ *  └  $message
+ * ```
+ *
+ * Then restores normal log output. Pass a string[] to render as next steps
+ * after the bracket.
+ **/
+export async function outro(messageOrSteps?: string | readonly string[]) {
   if (!isHuman()) return;
   popPrefix();
 
   if (Array.isArray(messageOrSteps)) {
-    writeUi(`${dim(S_BAR)}\n`);
-    writeUi(`${dim(S_BAR_END)}  ${dim("Next steps")}\n`);
+    await animateHeader({ prefix: `${dim(S_BAR_END)}  `, label: "Next steps", fallback: dim });
     for (const step of messageOrSteps) {
       writeUi(`   ${cyan("→")} ${step}\n`);
     }

@@ -1,5 +1,7 @@
 import { isAgent } from "../../mode.ts";
 import { isInsideGutter, log } from "../../lib/log.ts";
+import { bold, dim } from "../../lib/color.ts";
+import { animateHeader } from "../../lib/gradient.ts";
 import { bar, intro, outro, pausedOutro, withSpinner } from "../../lib/spinner.ts";
 import {
   CliError,
@@ -27,7 +29,7 @@ import {
   dnsDashboardHandoff,
   dnsIntro,
   dnsRecords,
-  nextStepsBlock,
+  nextStepsBody,
   pendingDnsRecords,
   pausedOperationNotice,
   printPlan,
@@ -622,6 +624,11 @@ async function finishDeploy(
       "Cannot print deploy next steps because the production instance could not be resolved. Run `clerk deploy` after confirming the production instance in the Clerk Dashboard.",
     );
   }
-  log.info(nextStepsBlock(ctx.appId, productionInstanceId));
+  await animateHeader({
+    prefix: isInsideGutter() ? `${dim("│")}  ` : "",
+    label: "Next steps",
+    fallback: bold,
+  });
+  log.info(nextStepsBody(ctx.appId, productionInstanceId));
   outro("Success");
 }

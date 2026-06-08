@@ -99,7 +99,7 @@ export async function login(options: LoginOptions = {}): Promise<UserInfo> {
     log.success(`Logged in as ${existingSession.email}`);
     const claimResult = await handleAutoclaim(process.cwd());
     if (showNextSteps) {
-      outro(await loginNextSteps(claimResult));
+      await outro(await loginNextSteps(claimResult));
     } else {
       outro("Done");
     }
@@ -129,7 +129,7 @@ export async function login(options: LoginOptions = {}): Promise<UserInfo> {
   const claimResult = await handleAutoclaim(process.cwd());
 
   if (showNextSteps) {
-    outro(await loginNextSteps(claimResult));
+    await outro(await loginNextSteps(claimResult));
   } else {
     outro("Done");
   }

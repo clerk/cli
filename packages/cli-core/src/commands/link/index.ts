@@ -104,7 +104,7 @@ export async function link(options: LinkOptions = {}): Promise<void> {
   const label = app.name || app.application_id;
   log.success(`Linked to ${cyan(label)} in ${dim(displayPath)}`);
 
-  outro(NEXT_STEPS.LINK);
+  await outro(NEXT_STEPS.LINK);
 }
 
 async function ensureAuth() {

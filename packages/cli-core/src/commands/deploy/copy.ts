@@ -218,8 +218,11 @@ export function productionSummary(
 }
 
 export function nextStepsBlock(appId: string, productionInstanceId: string): string {
-  return `${bold("Next steps")}
+  return `${bold("Next steps")}\n${nextStepsBody(appId, productionInstanceId)}`;
+}
 
+export function nextStepsBody(appId: string, productionInstanceId: string): string {
+  return `
   1. Pull production keys into your environment
        clerk env pull --instance prod
 
