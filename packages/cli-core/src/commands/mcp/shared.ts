@@ -98,14 +98,6 @@ export function wantsJson(options: McpOptions): boolean {
   return Boolean(options.json) || isAgent();
 }
 
-/** Render a "Next steps:" block to stderr (human mode). No-op for an empty list. */
-export function printNextSteps(lines: string[]): void {
-  if (lines.length === 0) return;
-  log.blank();
-  log.info("Next steps:");
-  for (const line of lines) log.info(`  ${line}`);
-}
-
 /**
  * Run an async op against each client without letting one client's failure
  * abort the rest — `Promise.all` is fail-fast and would discard every other

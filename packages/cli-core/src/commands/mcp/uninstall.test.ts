@@ -101,7 +101,7 @@ describe("mcp uninstall", () => {
     mockIsAgent.mockReturnValue(false);
     captured.clear();
     await mcpUninstall({ client: ["cursor"] });
-    expect(captured.err).toContain("Next steps:");
+    expect(captured.err).toContain("Next steps");
     expect(captured.err).toContain("Reload Cursor");
   });
 });

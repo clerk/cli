@@ -7,9 +7,11 @@
 
 import { cyan, dim } from "../../lib/color.ts";
 import { log } from "../../lib/log.ts";
+import { withGutter } from "../../lib/spinner.ts";
+import { ui } from "../../lib/ui.ts";
 import type { ListEntry } from "./clients/types.ts";
 import { collectEntries } from "./collect.ts";
-import { printNextSteps, wantsJson, type McpOptions } from "./shared.ts";
+import { wantsJson, type McpOptions } from "./shared.ts";
 
 const COLUMN_PADDING = 2;
 
@@ -31,36 +33,35 @@ function formatTable(entries: ListEntry[]): void {
     entries.map((e) => e.url),
   );
 
-  log.data(
-    dim(`${"CLIENT".padEnd(clientWidth)}${"NAME".padEnd(nameWidth)}${"URL".padEnd(urlWidth)}PATH`),
-  );
-  for (const entry of entries) {
-    const client = cyan(entry.client.padEnd(clientWidth));
-    const name = entry.name.padEnd(nameWidth);
-    const url = entry.url.padEnd(urlWidth);
-    log.data(`${client}${name}${url}${dim(entry.configPath)}`);
-  }
+  const header = `${"CLIENT".padEnd(clientWidth)}${"NAME".padEnd(nameWidth)}${"URL".padEnd(urlWidth)}PATH`;
+  const rows = entries.map((e) => {
+    const client = cyan(e.client.padEnd(clientWidth));
+    const name = e.name.padEnd(nameWidth);
+    const url = e.url.padEnd(urlWidth);
+    return `${client}${name}${url}${dim(e.configPath)}`;
+  });
+
+  ui.message([dim(header), ...rows]);
 }
 
 export async function mcpList(options: McpOptions = {}): Promise<void> {
-  const cwd = process.cwd();
-  const all: ListEntry[] = await collectEntries(cwd);
+  const all: ListEntry[] = await collectEntries(process.cwd());
 
   if (wantsJson(options)) {
     log.data(JSON.stringify(all, null, 2));
     return;
   }
 
-  if (all.length === 0) {
-    log.warn("No Clerk MCP entries found. Run `clerk mcp install` to register one.");
-    return;
-  }
-
-  formatTable(all);
-  log.info(`\n${all.length} entr${all.length === 1 ? "y" : "ies"}`);
-
-  printNextSteps([
-    "Verify a server is reachable with `clerk doctor`.",
-    "Remove an entry with `clerk mcp uninstall`.",
-  ]);
+  await withGutter("Listing Clerk MCP entries", async ({ setNextSteps }) => {
+    if (all.length === 0) {
+      ui.warn("No Clerk MCP entries found. Run `clerk mcp install` to register one.");
+      return;
+    }
+    formatTable(all);
+    ui.message(`${all.length} entr${all.length === 1 ? "y" : "ies"}`);
+    setNextSteps([
+      "Verify a server is reachable with `clerk doctor`.",
+      "Remove an entry with `clerk mcp uninstall`.",
+    ]);
+  });
 }

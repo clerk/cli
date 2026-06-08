@@ -5,12 +5,10 @@
 import { cyan, dim, green, yellow } from "../../lib/color.ts";
 import { CliError, ERROR_CODE } from "../../lib/errors.ts";
 import { log } from "../../lib/log.ts";
-import { isHuman } from "../../mode.ts";
-import { intro, outro } from "../../lib/spinner.ts";
+import { withGutter } from "../../lib/spinner.ts";
 import { CLIENTS } from "./clients/registry.ts";
 import type { McpClient, RemoveResult } from "./clients/types.ts";
 import {
-  printNextSteps,
   resolveClients,
   resolveName,
   settleClients,
@@ -32,12 +30,8 @@ export async function mcpUninstall(options: McpOptions = {}): Promise<void> {
       : Array.from(CLIENTS);
   const json = wantsJson(options);
 
-  if (isHuman() && !json) intro(`Removing MCP entry ${cyan(name)}`);
-
   const settled = await settleClients(clients, (c) => c.remove(name, cwd));
   const results = settled.map((s) => s.result);
-  if (isHuman() && !json) settled.forEach(({ client, result }) => printResult(client, result));
-
   const removedCount = results.filter((r) => r.removed).length;
   const notInstalled = new CliError(`No MCP entry named "${name}" found in any client.`, {
     code: ERROR_CODE.MCP_NOT_INSTALLED,
@@ -49,14 +43,15 @@ export async function mcpUninstall(options: McpOptions = {}): Promise<void> {
     return;
   }
 
-  if (removedCount === 0) throw notInstalled;
-
   // Removing the config entry doesn't drop a live editor session — it lingers
-  // until the editor reloads. Tell the user for each client we removed from.
-  printNextSteps(
-    settled
-      .filter(({ result }) => result.removed)
-      .map(({ client }) => `Reload ${client.displayName} to drop the active connection.`),
-  );
-  outro("Done");
+  // until the editor reloads. Surface that as a next step per removed client.
+  await withGutter(`Removing MCP entry ${cyan(name)}`, async ({ setNextSteps }) => {
+    if (removedCount === 0) throw notInstalled;
+    settled.forEach(({ client, result }) => printResult(client, result));
+    setNextSteps(
+      settled
+        .filter(({ result }) => result.removed)
+        .map(({ client }) => `Reload ${client.displayName} to drop the active connection.`),
+    );
+  });
 }
