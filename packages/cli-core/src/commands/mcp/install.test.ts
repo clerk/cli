@@ -171,21 +171,21 @@ describe("mcp install", () => {
 
   test("prints next steps with a sign-in reminder after a human-mode install", async () => {
     await mcpInstall({ client: ["cursor"], url: URL_A });
-    expect(captured.err).toContain("Next steps:");
+    expect(captured.err).toContain("Next steps");
     expect(captured.err).toContain("Reload Cursor");
     expect(captured.err).toContain("sign in");
   });
 
   test("omits next steps from JSON output", async () => {
     await mcpInstall({ client: ["cursor"], url: URL_A, json: true });
-    expect(captured.err).not.toContain("Next steps:");
+    expect(captured.err).not.toContain("Next steps");
   });
 
   test("does not print next steps when the entry was unchanged", async () => {
     await mcpInstall({ client: ["cursor"], url: URL_A });
     captured.clear();
     await mcpInstall({ client: ["cursor"], url: URL_A });
-    expect(captured.err).not.toContain("Next steps:");
+    expect(captured.err).not.toContain("Next steps");
   });
 
   test("rejects an unknown --client id", async () => {

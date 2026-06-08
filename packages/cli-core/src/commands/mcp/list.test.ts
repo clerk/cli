@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import * as realOs from "node:os";
 import { join } from "node:path";
-import { useCaptureLog } from "../../test/lib/stubs.ts";
+import { captureUi, useCaptureLog } from "../../test/lib/stubs.ts";
 
 const mockIsAgent = mock();
 mock.module("../../mode.ts", () => ({
@@ -24,6 +24,7 @@ const URL = "https://mcp.clerk.com/mcp";
 
 describe("mcp list", () => {
   const captured = useCaptureLog();
+  let uiCapture: ReturnType<typeof captureUi>;
   let cwd: string;
   let originalCwd: string;
 
@@ -32,10 +33,13 @@ describe("mcp list", () => {
     cwd = await mkdtemp(join(realOs.tmpdir(), "clerk-mcp-list-"));
     mockHome = cwd;
     process.chdir(cwd);
+    uiCapture = captureUi();
+    uiCapture.install();
     mockIsAgent.mockReturnValue(true);
   });
 
   afterEach(async () => {
+    uiCapture.teardown();
     process.chdir(originalCwd);
     await rm(cwd, { recursive: true, force: true });
     mockIsAgent.mockReset();
@@ -60,25 +64,27 @@ describe("mcp list", () => {
     ]);
   });
 
-  test("human-mode empty state writes the hint to stderr, nothing to stdout", async () => {
+  test("human-mode empty state shows the hint on the prompt rail, nothing to stdout", async () => {
     mockIsAgent.mockReturnValue(false);
     await mcpList({});
     expect(captured.out).toBe("");
-    expect(captured.err).toContain("No Clerk MCP entries");
+    expect(uiCapture.out).toContain("No Clerk MCP entries");
   });
 
-  test("human-mode prints the formatted table to stdout after an install", async () => {
+  test("human-mode renders the table and next steps after an install", async () => {
     mockIsAgent.mockReturnValue(true);
     await mcpInstall({ client: ["cursor"], url: URL });
     mockIsAgent.mockReturnValue(false);
     captured.clear();
     await mcpList({});
 
-    expect(captured.out).toContain("cursor");
-    expect(captured.out).toContain("clerk");
-    expect(captured.out).toContain(URL);
-    expect(captured.err).toContain("1 entry");
-    expect(captured.err).toContain("Next steps:");
-    expect(captured.err).toContain("clerk doctor");
+    // Table, count, and the outro next-steps all render on the clack prompt
+    // rail; with captureUi installed, intro/outro write to that stream too.
+    expect(uiCapture.out).toContain("cursor");
+    expect(uiCapture.out).toContain("clerk");
+    expect(uiCapture.out).toContain(URL);
+    expect(uiCapture.out).toContain("1 entry");
+    expect(uiCapture.out).toContain("Next steps");
+    expect(uiCapture.out).toContain("clerk doctor");
   });
 });

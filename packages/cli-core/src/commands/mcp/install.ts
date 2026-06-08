@@ -8,11 +8,10 @@
 
 import { log } from "../../lib/log.ts";
 import { cyan, dim, green, yellow } from "../../lib/color.ts";
-import { isAgent, isHuman } from "../../mode.ts";
-import { intro, outro } from "../../lib/spinner.ts";
+import { isAgent } from "../../mode.ts";
+import { withGutter } from "../../lib/spinner.ts";
 import {
   pickClients,
-  printNextSteps,
   resolveName,
   resolveUrl,
   settleClients,
@@ -55,18 +54,15 @@ type ClientUpsert = { client: McpClient; result: UpsertResult };
 // Writing the config isn't enough — the editor must reload before it connects
 // (and sign in, if the server requires it). Surface that for every client we
 // just wrote, so "added" doesn't read as "done and working".
-function printInstallNextSteps(settled: ClientUpsert[]): void {
+function installNextSteps(settled: ClientUpsert[]): string[] {
   const activated = settled.filter(
     ({ result }) => result.status === "added" || result.status === "updated",
   );
-  if (activated.length === 0) return;
-
-  printNextSteps(activated.map(({ client }) => `${client.displayName}: ${client.activation}`));
-  log.info(
-    dim(
-      "If the server requires authentication, your editor opens a browser to sign in on first connect.",
-    ),
-  );
+  if (activated.length === 0) return [];
+  return [
+    ...activated.map(({ client }) => `${client.displayName}: ${client.activation}`),
+    "If the server requires authentication, your editor opens a browser to sign in on first connect.",
+  ];
 }
 
 export async function mcpInstall(options: McpOptions = {}): Promise<void> {
@@ -77,26 +73,24 @@ export async function mcpInstall(options: McpOptions = {}): Promise<void> {
   const force = Boolean(options.force);
   const json = wantsJson(options);
 
-  if (clients.length === 0 && json) {
-    log.data(JSON.stringify({ url, name, results: [] }, null, 2));
-    return;
-  }
   if (clients.length === 0) {
-    log.warn("No MCP clients selected.");
+    if (json) log.data(JSON.stringify({ url, name, results: [] }, null, 2));
+    else log.warn("No MCP clients selected.");
     return;
   }
 
-  if (isHuman() && !json) intro(`Installing Clerk MCP (${cyan(url)})`);
-
-  const settled = await settleClients(clients, (c) => c.upsert({ name, url }, cwd, force));
-  const results = settled.map((s) => s.result);
-
-  if (json) {
-    log.data(JSON.stringify({ url, name, results }, null, 2));
-    return;
-  }
-
-  settled.forEach(({ client, result }) => printResult(client, result));
-  printInstallNextSteps(settled);
-  outro("Done");
+  await withGutter(
+    `Installing Clerk MCP (${cyan(url)})`,
+    async ({ setNextSteps }) => {
+      const settled = await settleClients(clients, (c) => c.upsert({ name, url }, cwd, force));
+      if (json) {
+        log.data(JSON.stringify({ url, name, results: settled.map((s) => s.result) }, null, 2));
+        return;
+      }
+      settled.forEach(({ client, result }) => printResult(client, result));
+      const steps = installNextSteps(settled);
+      if (steps.length > 0) setNextSteps(steps);
+    },
+    { skip: json },
+  );
 }
