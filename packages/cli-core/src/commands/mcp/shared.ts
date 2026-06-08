@@ -2,7 +2,6 @@
  * Shared options and helpers for `clerk mcp` subcommands.
  */
 
-import { ttyContext } from "../../lib/listage.ts";
 import { getMcpUrl } from "../../lib/environment.ts";
 import { CliError, ERROR_CODE, errorMessage, throwUsageError } from "../../lib/errors.ts";
 import { log } from "../../lib/log.ts";
@@ -67,28 +66,16 @@ export function resolveClients(ids: readonly string[]): McpClient[] {
 export async function pickClients(detected: McpClient[]): Promise<McpClient[]> {
   if (detected.length === 0) return [];
   if (detected.length === 1) return detected;
-  // Imported lazily (like `doctor`/`update` do): a top-level import of
-  // `@inquirer/prompts` is resolved at module load, which breaks tests that
-  // mock the module with a partial shape that omits `checkbox`.
-  const { checkbox } = await import("@inquirer/prompts");
-  const tty = ttyContext();
-  try {
-    const selected = await checkbox<ClientId>(
-      {
-        message: "Select MCP clients to install into:",
-        choices: detected.map((c) => ({
-          name: `${c.displayName} (${c.scope})`,
-          value: c.id,
-          checked: true,
-        })),
-        required: true,
-      },
-      tty ? { input: tty.input } : undefined,
-    );
-    return resolveClients(selected);
-  } finally {
-    tty?.close();
-  }
+  // Imported lazily (like `doctor` does) so the prompt layer stays off the
+  // module-load path for non-interactive callers and tests.
+  const { multiselect } = await import("../../lib/prompts.ts");
+  const selected = await multiselect<ClientId>({
+    message: "Select MCP clients to install into:",
+    options: detected.map((c) => ({ value: c.id, label: `${c.displayName} (${c.scope})` })),
+    initialValues: detected.map((c) => c.id),
+    required: true,
+  });
+  return resolveClients(selected);
 }
 
 export async function targetClients(options: McpOptions, cwd: string): Promise<McpClient[]> {
