@@ -190,12 +190,7 @@ export async function list(options: UsersListOptions = {}): Promise<void> {
     // cursor so agents can paginate forward without knowing the scheme.
     const nextCursor = hasMore ? String(offset + limit) : null;
 
-    if (
-      printJson(
-        { data: users, hasMore, nextCursor, pagination: { offset, limit } },
-        options,
-      )
-    ) {
+    if (printJson({ data: users, hasMore, nextCursor, pagination: { offset, limit } }, options)) {
       return;
     }
 
