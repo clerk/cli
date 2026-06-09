@@ -47,6 +47,20 @@ function validateReplayMode(options: WebhooksReplayOptions): "resend" | "recover
 
 export async function webhooksReplay(options: WebhooksReplayOptions = {}): Promise<void> {
   const mode = validateReplayMode(options);
+
+  const windowLabel = options.until
+    ? `between ${options.since} and ${options.until}`
+    : `since ${options.since}`;
+
+  // Before resolveAppContext: the confirmation gate is pure flag/prompt logic
+  // and must not cost (or be masked by) a network round-trip.
+  if (mode === "recover") {
+    await confirmDestructive(
+      `Bulk-recover deliveries to ${options.endpoint} ${windowLabel}? Every failed delivery in the window will be resent.`,
+      options,
+    );
+  }
+
   const ctx = await resolveAppContext(options);
 
   if (mode === "resend") {
@@ -58,14 +72,6 @@ export async function webhooksReplay(options: WebhooksReplayOptions = {}): Promi
     log.success(`Queued replay of \`${options.msgId}\` to \`${endpointId}\``);
     return;
   }
-
-  const windowLabel = options.until
-    ? `between ${options.since} and ${options.until}`
-    : `since ${options.since}`;
-  await confirmDestructive(
-    `Bulk-recover deliveries to ${options.endpoint} ${windowLabel}? Every failed delivery in the window will be resent.`,
-    options,
-  );
 
   await rejectEndpointNotFound(
     recoverWebhookMessages(ctx.appId, ctx.instanceId, options.endpoint!, {

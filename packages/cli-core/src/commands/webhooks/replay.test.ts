@@ -157,6 +157,7 @@ describe("webhooks replay", () => {
       webhooksReplay({ since: "2026-05-01T00:00:00Z", endpoint: "ep_1" }),
     ).rejects.toMatchObject({ code: ERROR_CODE.USAGE_ERROR });
     expect(mockRecoverWebhookMessages).not.toHaveBeenCalled();
+    expect(mockResolveAppContext).not.toHaveBeenCalled();
   });
 
   test("--since maps a PLAPI 404 to webhook_endpoint_not_found", async () => {

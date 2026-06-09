@@ -16,13 +16,18 @@ export interface WebhooksSecretOptions extends WebhooksGlobalOptions {
 }
 
 export async function webhooksSecret(options: WebhooksSecretOptions): Promise<void> {
-  const ctx = await resolveAppContext(options);
-
+  // Before resolveAppContext: the confirmation gate is pure flag/prompt logic
+  // and must not cost (or be masked by) a network round-trip.
   if (options.rotate) {
     await confirmDestructive(
       `Rotate the signing secret for ${options.endpointId}? The old key keeps verifying for 24h (dual-signing grace).`,
       options,
     );
+  }
+
+  const ctx = await resolveAppContext(options);
+
+  if (options.rotate) {
     await rejectEndpointNotFound(
       rotateWebhookEndpointSecret(ctx.appId, ctx.instanceId, options.endpointId),
       options.endpointId,

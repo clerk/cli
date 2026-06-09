@@ -13,12 +13,14 @@ export interface WebhooksDeleteOptions extends WebhooksGlobalOptions {
 }
 
 export async function webhooksDelete(options: WebhooksDeleteOptions): Promise<void> {
-  const ctx = await resolveAppContext(options);
-
+  // Before resolveAppContext: the confirmation gate is pure flag/prompt logic
+  // and must not cost (or be masked by) a network round-trip.
   await confirmDestructive(
     `Permanently delete webhook endpoint ${options.endpointId}? This cannot be undone.`,
     options,
   );
+
+  const ctx = await resolveAppContext(options);
 
   await rejectEndpointNotFound(
     deleteWebhookEndpoint(ctx.appId, ctx.instanceId, options.endpointId),
