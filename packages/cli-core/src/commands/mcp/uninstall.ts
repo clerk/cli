@@ -23,7 +23,6 @@ function printResult(client: McpClient, result: RemoveResult): void {
   log.info(`${label}: ${result.removed ? green("removed") : yellow("not present")}`);
 }
 
-/** Supported clients that currently have the `name` entry registered. */
 async function installedClients(name: string, cwd: string): Promise<McpClient[]> {
   const present = await Promise.all(
     CLIENTS.map(async (client) => (await client.list(cwd)).some((entry) => entry.name === name)),
@@ -31,9 +30,6 @@ async function installedClients(name: string, cwd: string): Promise<McpClient[]>
   return CLIENTS.filter((_, i) => present[i]);
 }
 
-// `--client` targets exactly those; `--all` (and agent mode, which can't
-// prompt) targets every client; otherwise the human picks which of the clients
-// that actually have the entry to remove it from.
 async function chooseClients(options: McpOptions, name: string, cwd: string): Promise<McpClient[]> {
   if (options.client && options.client.length > 0) return resolveClients(options.client);
   if (options.all || isAgent()) return Array.from(CLIENTS);

@@ -17,8 +17,6 @@ mock.module("../../mode.ts", () => ({
 let mockHome = realOs.tmpdir();
 mock.module("node:os", () => ({ ...realOs, homedir: () => mockHome }));
 
-// The human picker resolves the Clack multiselect lazily from lib/prompts.ts;
-// stub it so tests drive which clients get selected without a real prompt.
 const mockMultiselect = mock();
 mock.module("../../lib/prompts.ts", () => ({
   multiselect: (...args: unknown[]) => mockMultiselect(...args),
