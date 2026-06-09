@@ -8,8 +8,8 @@
 import { hasStringProp, makeJsonClient } from "./make-json-client.ts";
 import { pathExists, userPath } from "./paths.ts";
 
-export const claudeCodeClient = makeJsonClient({
-  id: "claude-code",
+export const claudeClient = makeJsonClient({
+  id: "claude",
   displayName: "Claude Code",
   scope: "user",
   activation: "Restart Claude Code, then run `/mcp` to connect (sign in if prompted).",

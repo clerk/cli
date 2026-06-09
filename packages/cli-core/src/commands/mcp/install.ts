@@ -24,7 +24,9 @@ import type { McpClient, UpsertResult } from "./clients/types.ts";
 
 async function chooseClients(options: McpOptions, cwd: string): Promise<McpClient[]> {
   if (options.client?.length || options.all || isAgent()) return targetClients(options, cwd);
-  return pickClients(await detectInstalledClients(cwd));
+  return pickClients(await detectInstalledClients(cwd), "Select MCP clients to install into:", {
+    autoSelectSingle: true,
+  });
 }
 
 function statusLabel(status: UpsertResult["status"]): string {

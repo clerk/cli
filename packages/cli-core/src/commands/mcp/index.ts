@@ -22,7 +22,10 @@ export function registerMcp(program: Program): void {
     .description("Manage the Clerk remote MCP server connection for AI editors and CLIs")
     .setExamples([
       { command: "clerk mcp install", description: "Install into all detected MCP clients" },
-      { command: "clerk mcp install --client cursor", description: "Install into Cursor only" },
+      {
+        command: "clerk mcp install --client claude",
+        description: "Install into Claude Code only",
+      },
       { command: "clerk mcp list", description: "Show registered Clerk entries" },
       { command: "clerk mcp uninstall", description: "Remove the Clerk entry from all clients" },
     ]);
@@ -48,7 +51,7 @@ export function registerMcp(program: Program): void {
       },
       { command: "clerk mcp install --all", description: "Install into every detected client" },
       {
-        command: "clerk mcp install --client cursor --client vscode",
+        command: "clerk mcp install --client claude --client vscode",
         description: "Install into specific clients",
       },
     ])
@@ -65,16 +68,27 @@ export function registerMcp(program: Program): void {
     .command("uninstall")
     .description("Remove the Clerk MCP entry from supported clients")
     .addOption(
-      createOption("--client <id>", "MCP client to target (repeatable). Default: all clients.")
+      createOption(
+        "--client <id>",
+        "MCP client to target (repeatable). Default in human mode: pick from installed; in agent mode: all clients.",
+      )
         .choices([...CLIENT_IDS])
         .argParser(collectOptionValues)
         .default([] as string[]),
     )
+    .option("--all", "Remove from every client without prompting")
     .option("--name <name>", 'Entry name to remove (default: "clerk")')
     .option("--json", "Output as JSON")
     .setExamples([
-      { command: "clerk mcp uninstall", description: "Remove from every client" },
-      { command: "clerk mcp uninstall --client cursor", description: "Remove from Cursor only" },
+      {
+        command: "clerk mcp uninstall",
+        description: "Pick which installed clients to remove from",
+      },
+      { command: "clerk mcp uninstall --all", description: "Remove from every client" },
+      {
+        command: "clerk mcp uninstall --client claude",
+        description: "Remove from Claude Code only",
+      },
     ])
     .action((options) => mcp.uninstall(options));
 }

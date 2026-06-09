@@ -17,6 +17,13 @@ mock.module("../../mode.ts", () => ({
 let mockHome = realOs.tmpdir();
 mock.module("node:os", () => ({ ...realOs, homedir: () => mockHome }));
 
+// The human picker resolves the Clack multiselect lazily from lib/prompts.ts;
+// stub it so tests drive which clients get selected without a real prompt.
+const mockMultiselect = mock();
+mock.module("../../lib/prompts.ts", () => ({
+  multiselect: (...args: unknown[]) => mockMultiselect(...args),
+}));
+
 const { mcpInstall } = await import("./install.ts");
 const { mcpUninstall } = await import("./uninstall.ts");
 
@@ -39,6 +46,7 @@ describe("mcp uninstall", () => {
     process.chdir(originalCwd);
     await rm(cwd, { recursive: true, force: true });
     mockIsAgent.mockReset();
+    mockMultiselect.mockReset();
   });
 
   test("removes the entry an install-uninstall round-trip leaves no trace under mcpServers", async () => {
@@ -103,5 +111,38 @@ describe("mcp uninstall", () => {
     await mcpUninstall({ client: ["cursor"] });
     expect(captured.err).toContain("Next steps");
     expect(captured.err).toContain("Reload Cursor");
+  });
+
+  test("human mode: prompts to pick which installed clients to remove from", async () => {
+    await mcpInstall({ client: ["cursor", "claude"], url: URL });
+    mockIsAgent.mockReturnValue(false);
+    mockMultiselect.mockResolvedValueOnce(["cursor"]); // pick only Cursor
+    captured.clear();
+
+    await mcpUninstall({});
+
+    expect(mockMultiselect).toHaveBeenCalledTimes(1);
+    const cursorCfg = JSON.parse(await readFile(join(cwd, ".cursor", "mcp.json"), "utf8")) as {
+      mcpServers: Record<string, unknown>;
+    };
+    expect(cursorCfg.mcpServers.clerk).toBeUndefined(); // removed
+    const claudeCfg = JSON.parse(await readFile(join(cwd, ".claude.json"), "utf8")) as {
+      mcpServers: Record<string, unknown>;
+    };
+    expect(claudeCfg.mcpServers.clerk).toBeDefined(); // untouched
+  });
+
+  test("human mode: --all removes from every client without prompting", async () => {
+    await mcpInstall({ client: ["cursor", "claude"], url: URL });
+    mockIsAgent.mockReturnValue(false);
+    captured.clear();
+
+    await mcpUninstall({ all: true });
+
+    expect(mockMultiselect).not.toHaveBeenCalled();
+    const cursorCfg = JSON.parse(await readFile(join(cwd, ".cursor", "mcp.json"), "utf8")) as {
+      mcpServers: Record<string, unknown>;
+    };
+    expect(cursorCfg.mcpServers.clerk).toBeUndefined();
   });
 });

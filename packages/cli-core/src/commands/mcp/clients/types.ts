@@ -6,7 +6,7 @@
  * the `clerk` server entry in its own config file format.
  */
 
-export type ClientId = "claude-code" | "cursor" | "vscode" | "windsurf" | "gemini";
+export type ClientId = "claude" | "cursor" | "vscode" | "windsurf" | "gemini";
 
 /** Where the client config file lives relative to the user / project. */
 export type Scope = "project" | "user";
