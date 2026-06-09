@@ -47,6 +47,7 @@ import { update } from "./commands/update/index.ts";
 import { deploy } from "./commands/deploy/index.ts";
 import { deployStatus } from "./commands/deploy/status-command.ts";
 import { orgsEnable, orgsDisable } from "./commands/orgs/index.ts";
+import { getAuthToken } from "./lib/plapi.ts";
 import { billingEnable, billingDisable } from "./commands/billing/index.ts";
 import { registerExtras } from "@clerk/cli-extras";
 
@@ -465,6 +466,29 @@ export function createProgram() {
         userId,
       }),
     );
+
+  const webhooks = program
+    .command("webhooks")
+    .description("Manage webhook endpoints and deliveries")
+    .option("--app <id>", "Application ID to target (works from any directory)")
+    .option("--instance <id>", "Instance to target (dev, prod, or a full instance ID)")
+    .option("--json", "Output as JSON")
+    .setExamples([
+      { command: "clerk webhooks list", description: "List webhook endpoints" },
+      {
+        command: "clerk webhooks create --url https://example.com/api/webhooks",
+        description: "Create an endpoint and print its signing secret",
+      },
+      {
+        command: "clerk webhooks listen --forward-to http://localhost:3000/api/webhooks",
+        description: "Forward instance events to a local handler",
+      },
+    ]);
+
+  webhooks.hook("preAction", async (_thisCommand, actionCommand) => {
+    if (actionCommand.name() === "verify") return; // pure offline HMAC, no auth gate
+    await getAuthToken();
+  });
 
   const env = program
     .command("env")
