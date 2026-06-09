@@ -42,6 +42,7 @@ import { isAgent } from "./mode.ts";
 import { log } from "./lib/log.ts";
 import { maybeNotifyUpdate, getCurrentVersion } from "./lib/update-check.ts";
 import { getAuthToken } from "./lib/plapi.ts";
+import { webhooks as webhooksHandlers } from "./commands/webhooks/index.ts";
 import { registerExtras } from "@clerk/cli-extras";
 
 /**
@@ -167,6 +168,24 @@ export function createProgram(): Program {
     await getAuthToken();
   });
 
+  webhooks
+    .command("list")
+    .description("List webhook endpoints for the instance")
+    .option("--limit <number>", "Maximum endpoints to return (1-250, default 100)", (value) =>
+      parseIntegerOption(value, "--limit", { min: 1, max: 250 }),
+    )
+    .option("--iterator <cursor>", "Pagination cursor from the previous response")
+    .setExamples([
+      { command: "clerk webhooks list", description: "List webhook endpoints" },
+      { command: "clerk webhooks list --limit 10", description: "List the first 10 endpoints" },
+      {
+        command: "clerk webhooks list --iterator iter_abc",
+        description: "Fetch the next page using a previous response's cursor",
+      },
+    ])
+    .action((_opts, cmd) =>
+      webhooksHandlers.list(cmd.optsWithGlobals() as Parameters<typeof webhooksHandlers.list>[0]),
+    );
   return program;
 }
 
