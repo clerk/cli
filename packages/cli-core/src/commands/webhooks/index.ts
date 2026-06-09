@@ -6,6 +6,7 @@ import { webhooksList } from "./list.ts";
 import { webhooksMessages } from "./messages.ts";
 import { webhooksReplay } from "./replay.ts";
 import { webhooksSecret } from "./secret.ts";
+import { webhooksTrigger } from "./trigger.ts";
 import { webhooksUpdate } from "./update.ts";
 
 export const webhooks = {
@@ -18,4 +19,5 @@ export const webhooks = {
   create: webhooksCreate,
   messages: webhooksMessages,
   replay: webhooksReplay,
+  trigger: webhooksTrigger,
 };

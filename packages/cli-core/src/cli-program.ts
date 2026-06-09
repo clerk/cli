@@ -740,6 +740,34 @@ export function createProgram() {
       }),
     );
 
+  webhooks
+    .command("trigger")
+    .description("Send an example event to an endpoint (validates the type first)")
+    .argument("<event_type>", "Event type to trigger (e.g. user.created)")
+    .option(
+      "--endpoint <ep_id>",
+      "Target endpoint (defaults to this instance's relay endpoint from `webhooks listen`)",
+    )
+    .setExamples([
+      {
+        command: "clerk webhooks trigger user.created",
+        description: "Send an example user.created event to the relay endpoint",
+      },
+      {
+        command: "clerk webhooks trigger user.created --endpoint ep_2abc123",
+        description: "Send an example event to a specific endpoint",
+      },
+    ])
+    .action((eventType, _opts, cmd) =>
+      webhooksHandlers.trigger({
+        ...(cmd.optsWithGlobals() as Omit<
+          Parameters<typeof webhooksHandlers.trigger>[0],
+          "eventType"
+        >),
+        eventType,
+      }),
+    );
+
   const env = program
     .command("env")
     .description("Manage environment variables")
