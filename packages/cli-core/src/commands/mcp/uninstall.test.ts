@@ -71,10 +71,12 @@ describe("mcp uninstall", () => {
     expect(payload.results).toEqual([expect.objectContaining({ client: "cursor", removed: true })]);
   });
 
-  test("throws MCP_NOT_INSTALLED when nothing is registered", async () => {
-    await expect(mcpUninstall({ client: ["cursor"] })).rejects.toMatchObject({
-      code: "mcp_not_installed",
-    });
+  test("agent mode: reports removed:false when nothing is registered (no error)", async () => {
+    await mcpUninstall({ client: ["cursor"] });
+    const payload = JSON.parse(captured.out) as { results: { client: string; removed: boolean }[] };
+    expect(payload.results).toEqual([
+      expect.objectContaining({ client: "cursor", removed: false }),
+    ]);
   });
 
   test("respects --name", async () => {
@@ -94,12 +96,11 @@ describe("mcp uninstall", () => {
     });
   });
 
-  test("human mode: nothing-to-remove throws without a contradictory success outro", async () => {
+  test("human mode: warns how to install when nothing is registered (no error)", async () => {
     mockIsAgent.mockReturnValue(false);
-    await expect(mcpUninstall({ client: ["cursor"] })).rejects.toMatchObject({
-      code: "mcp_not_installed",
-    });
-    expect(captured.err).not.toContain("Nothing to remove");
+    await mcpUninstall({ client: ["cursor"] });
+    expect(captured.err).toContain("clerk mcp install");
+    expect(captured.err).not.toContain("Removing MCP entry"); // no success gutter for a no-op
   });
 
   test("human mode: prints reload next steps after a successful removal", async () => {
@@ -111,10 +112,10 @@ describe("mcp uninstall", () => {
     expect(captured.err).toContain("Reload Cursor");
   });
 
-  test("human mode: prompts to pick which installed clients to remove from", async () => {
+  test("human mode: removes the selected clients and leaves the rest", async () => {
     await mcpInstall({ client: ["cursor", "claude"], url: URL });
     mockIsAgent.mockReturnValue(false);
-    mockMultiselect.mockResolvedValueOnce(["cursor"]); // pick only Cursor
+    mockMultiselect.mockResolvedValueOnce(["cursor"]); // select Cursor → remove Cursor
     captured.clear();
 
     await mcpUninstall({});
@@ -123,11 +124,38 @@ describe("mcp uninstall", () => {
     const cursorCfg = JSON.parse(await readFile(join(cwd, ".cursor", "mcp.json"), "utf8")) as {
       mcpServers: Record<string, unknown>;
     };
-    expect(cursorCfg.mcpServers.clerk).toBeUndefined(); // removed
+    expect(cursorCfg.mcpServers.clerk).toBeUndefined();
     const claudeCfg = JSON.parse(await readFile(join(cwd, ".claude.json"), "utf8")) as {
       mcpServers: Record<string, unknown>;
     };
-    expect(claudeCfg.mcpServers.clerk).toBeDefined(); // untouched
+    expect(claudeCfg.mcpServers.clerk).toBeDefined();
+  });
+
+  test("human mode: picker only lists clients that actually have the entry", async () => {
+    await mcpInstall({ client: ["cursor"], url: URL });
+    mockIsAgent.mockReturnValue(false);
+    mockMultiselect.mockResolvedValueOnce([]);
+    captured.clear();
+
+    await mcpUninstall({});
+
+    const arg = mockMultiselect.mock.calls[0]![0] as { options: { value: string }[] };
+    expect(arg.options.map((o) => o.value)).toEqual(["cursor"]);
+  });
+
+  test("human mode: selecting nothing removes nothing", async () => {
+    await mcpInstall({ client: ["cursor", "claude"], url: URL });
+    mockIsAgent.mockReturnValue(false);
+    mockMultiselect.mockResolvedValueOnce([]);
+    captured.clear();
+
+    await mcpUninstall({});
+
+    expect(captured.err).toContain("Nothing removed");
+    const cursorCfg = JSON.parse(await readFile(join(cwd, ".cursor", "mcp.json"), "utf8")) as {
+      mcpServers: Record<string, unknown>;
+    };
+    expect(cursorCfg.mcpServers.clerk).toBeDefined();
   });
 
   test("human mode: --all removes from every client without prompting", async () => {

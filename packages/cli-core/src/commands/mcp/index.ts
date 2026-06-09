@@ -3,14 +3,14 @@ import type { Program } from "../../cli-program.ts";
 import { mcpInstall } from "./install.ts";
 import { mcpList } from "./list.ts";
 import { mcpUninstall } from "./uninstall.ts";
-import { CLIENT_IDS } from "./clients/registry.ts";
+import { CLIENT_ID_CHOICES } from "./clients/registry.ts";
 
 export const mcp = {
   install: mcpInstall,
   list: mcpList,
   uninstall: mcpUninstall,
 };
-export { CLIENT_IDS } from "./clients/registry.ts";
+export { CLIENT_ID_CHOICES, CLIENT_IDS } from "./clients/registry.ts";
 
 function collectOptionValues(value: string, previous: string[] = []): string[] {
   return [...previous, value];
@@ -35,7 +35,7 @@ export function registerMcp(program: Program): void {
     .description("Register the Clerk remote MCP server in supported clients")
     .addOption(
       createOption("--client <id>", "MCP client to target (repeatable). Default: all detected.")
-        .choices([...CLIENT_IDS])
+        .choices([...CLIENT_ID_CHOICES])
         .argParser(collectOptionValues)
         .default([] as string[]),
     )
@@ -72,7 +72,7 @@ export function registerMcp(program: Program): void {
         "--client <id>",
         "MCP client to target (repeatable). Default in human mode: pick from installed; in agent mode: all clients.",
       )
-        .choices([...CLIENT_IDS])
+        .choices([...CLIENT_ID_CHOICES])
         .argParser(collectOptionValues)
         .default([] as string[]),
     )

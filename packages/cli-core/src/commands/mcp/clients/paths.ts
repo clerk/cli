@@ -10,10 +10,6 @@ import { stat } from "node:fs/promises";
 import { homedir, platform } from "node:os";
 import { join } from "node:path";
 
-export function projectPath(cwd: string, ...segments: string[]): string {
-  return join(cwd, ...segments);
-}
-
 export function userPath(...segments: string[]): string {
   return join(homedir(), ...segments);
 }

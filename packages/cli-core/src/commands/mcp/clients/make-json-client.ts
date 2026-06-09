@@ -1,17 +1,19 @@
 /**
- * Factory for JSON-backed MCP clients.
+ * Factory for file-backed MCP clients.
  *
- * Five of the supported clients share the same upsert/remove/list shape — a
- * JSON file with a top-level object whose keys are server names and whose
- * values are per-client server descriptors. The only differences are the
- * top-level key name (`mcpServers` vs `servers`) and the descriptor encoding
- * (`{ url }` vs `{ serverUrl }` vs `{ command, args }`). This factory captures
- * those differences as `topKey` + `encode` + `extractUrl` and reuses the rest.
+ * Every supported client shares the same upsert/remove/list shape — a config
+ * file with a top-level map whose keys are server names and whose values are
+ * per-client server descriptors. The differences are the serialization format
+ * (JSON for five clients, TOML for Codex), the top-level key name (`mcpServers`
+ * vs `servers` vs `mcp_servers`) and the descriptor encoding (`{ url }` vs
+ * `{ serverUrl }` vs `{ command, args }`). This factory captures those as a
+ * codec + `topKey` + `encode` + `extractUrl` and reuses the rest.
  */
 
 import { CliError, ERROR_CODE } from "../../../lib/errors.ts";
 import { log } from "../../../lib/log.ts";
 import { getServerMap, readJsonConfig, writeJsonConfig, type JsonConfig } from "./json-config.ts";
+import { readTomlConfig, writeTomlConfig } from "./toml-config.ts";
 import type {
   ClientId,
   ListEntry,
@@ -34,7 +36,7 @@ export function hasStringProp<K extends string>(
   );
 }
 
-interface JsonClientSpec {
+interface FileClientSpec {
   id: ClientId;
   displayName: string;
   scope: Scope;
@@ -48,6 +50,15 @@ interface JsonClientSpec {
   detect: (cwd: string) => Promise<boolean>;
 }
 
+/** Read/write codec abstracting the on-disk format (JSON vs TOML). */
+interface ConfigCodec {
+  read: (path: string) => Promise<JsonConfig>;
+  write: (path: string, config: JsonConfig) => Promise<void>;
+}
+
+const JSON_CODEC: ConfigCodec = { read: readJsonConfig, write: writeJsonConfig };
+const TOML_CODEC: ConfigCodec = { read: readTomlConfig, write: writeTomlConfig };
+
 function isClerkUrl(url: string): boolean {
   try {
     const parsed = new URL(url);
@@ -57,7 +68,7 @@ function isClerkUrl(url: string): boolean {
   }
 }
 
-export function makeJsonClient(spec: JsonClientSpec): McpClient {
+function makeFileClient(spec: FileClientSpec, codec: ConfigCodec): McpClient {
   return {
     id: spec.id,
     displayName: spec.displayName,
@@ -68,7 +79,7 @@ export function makeJsonClient(spec: JsonClientSpec): McpClient {
 
     async upsert(entry: McpServerEntry, cwd: string, force: boolean): Promise<UpsertResult> {
       const configPath = spec.configPath(cwd);
-      const config = await readJsonConfig(configPath);
+      const config = await codec.read(configPath);
       const servers = getServerMap(config, spec.topKey, configPath);
 
       // Own-property only: `servers[name]` / `name in servers` would walk the
@@ -94,7 +105,7 @@ export function makeJsonClient(spec: JsonClientSpec): McpClient {
 
       const desired = spec.encode(entry.url);
       const next: JsonConfig = { ...config, [spec.topKey]: { ...servers, [entry.name]: desired } };
-      await writeJsonConfig(configPath, next);
+      await codec.write(configPath, next);
       const status = hasExisting ? "updated" : "added";
       log.debug(`mcp: ${spec.id} ${status} "${entry.name}"`);
       return { client: spec.id, configPath, status };
@@ -102,14 +113,14 @@ export function makeJsonClient(spec: JsonClientSpec): McpClient {
 
     async remove(name: string, cwd: string): Promise<RemoveResult> {
       const configPath = spec.configPath(cwd);
-      const config = await readJsonConfig(configPath);
+      const config = await codec.read(configPath);
       const servers = getServerMap(config, spec.topKey, configPath);
       if (!Object.prototype.hasOwnProperty.call(servers, name)) {
         return { client: spec.id, configPath, removed: false };
       }
       const { [name]: _removed, ...rest } = servers;
       const next: JsonConfig = { ...config, [spec.topKey]: rest };
-      await writeJsonConfig(configPath, next);
+      await codec.write(configPath, next);
       log.debug(`mcp: ${spec.id} removed "${name}"`);
       return { client: spec.id, configPath, removed: true };
     },
@@ -122,7 +133,7 @@ export function makeJsonClient(spec: JsonClientSpec): McpClient {
       // and getServerMap raise MCP_CLIENT_CONFIG_INVALID, so they share one guard.
       let servers: Record<string, unknown>;
       try {
-        const config = await readJsonConfig(configPath);
+        const config = await codec.read(configPath);
         servers = getServerMap(config, spec.topKey, configPath);
       } catch (error) {
         if (error instanceof CliError && error.code === ERROR_CODE.MCP_CLIENT_CONFIG_INVALID) {
@@ -144,4 +155,14 @@ export function makeJsonClient(spec: JsonClientSpec): McpClient {
       return entries;
     },
   };
+}
+
+/** A client whose config is a JSON file (Claude Code, Cursor, VS Code, Windsurf, Gemini). */
+export function makeJsonClient(spec: FileClientSpec): McpClient {
+  return makeFileClient(spec, JSON_CODEC);
+}
+
+/** A client whose config is a TOML file (Codex). */
+export function makeTomlClient(spec: FileClientSpec): McpClient {
+  return makeFileClient(spec, TOML_CODEC);
 }

@@ -14,8 +14,8 @@ environment variable > the active environment profile's `mcpUrl` field
 (e.g. `http://localhost:8787/mcp`).
 
 No Clerk API endpoints are called. To verify the server is reachable, run
-`clerk doctor` — its MCP check performs the `initialize` handshake against the
-configured URL whenever a Clerk MCP entry is installed.
+`clerk doctor` — its MCP check performs the `initialize` handshake against each
+distinct configured URL whenever a Clerk MCP entry is installed.
 
 ## Supported clients
 
@@ -23,17 +23,24 @@ All entries are written to each client's **user-global** config, so the server
 is available in every project (no per-project approval, no dependence on which
 directory you run the CLI from).
 
-| ID         | Client                   | Scope | Config file                             |
-| ---------- | ------------------------ | ----- | --------------------------------------- |
-| `claude`   | Claude Code              | user  | `~/.claude.json` (`mcpServers`)         |
-| `cursor`   | Cursor                   | user  | `~/.cursor/mcp.json`                    |
-| `vscode`   | VS Code (Copilot)        | user  | VS Code user `mcp.json` (per-OS, below) |
-| `windsurf` | Windsurf                 | user  | `~/.codeium/windsurf/mcp_config.json`   |
-| `gemini`   | Gemini Code Assist / CLI | user  | `~/.gemini/settings.json`               |
+| ID                   | Client                   | Scope | Config file                             |
+| -------------------- | ------------------------ | ----- | --------------------------------------- |
+| `claude`             | Claude Code              | user  | `~/.claude.json` (`mcpServers`)         |
+| `cursor`             | Cursor                   | user  | `~/.cursor/mcp.json`                    |
+| `vscode` (`copilot`) | GitHub Copilot (VS Code) | user  | VS Code user `mcp.json` (per-OS, below) |
+| `windsurf`           | Windsurf                 | user  | `~/.codeium/windsurf/mcp_config.json`   |
+| `gemini`             | Gemini Code Assist / CLI | user  | `~/.gemini/settings.json`               |
+| `codex`              | Codex                    | user  | `~/.codex/config.toml` (`mcp_servers`)  |
 
-VS Code's user config dir is OS-specific: `~/Library/Application Support/Code/User/mcp.json`
-(macOS), `%APPDATA%\Code\User\mcp.json` (Windows), `$XDG_CONFIG_HOME/Code/User/mcp.json`
+GitHub Copilot's MCP server lives in VS Code's config, so `--client copilot` and
+`--client vscode` are aliases for the same client. Its user config dir is
+OS-specific: `~/Library/Application Support/Code/User/mcp.json` (macOS),
+`%APPDATA%\Code\User\mcp.json` (Windows), `$XDG_CONFIG_HOME/Code/User/mcp.json`
 (Linux) — the file behind **MCP: Open User Configuration**.
+
+Codex is the one TOML-backed client; the entry uses Codex's native Streamable
+HTTP transport (`url = "…"` under `[mcp_servers.<name>]`), so it needs no
+`mcp-remote` bridge. Rewriting `config.toml` does not preserve comments.
 
 ## Subcommands
 
@@ -68,17 +75,20 @@ named `clerk` or pointing at any `*.clerk.com` host).
 
 ### `clerk mcp uninstall`
 
-Remove the named entry. In human mode with no `--client`/`--all`, it prompts
-with a multiselect of the clients that **currently have the entry**, so you
-choose exactly which to remove from. `--all` removes from every client without
-prompting; agent mode targets all clients; `--client <id>` (repeatable) targets
-specific clients. Throws `mcp_not_installed` (exit code 1) when nothing matched.
-Removing the entry doesn't drop a live editor session, so (in human mode) it
-prints a next step to reload each affected editor.
+Remove the entry. In human mode with no `--client`/`--all`, it prompts with a
+multiselect of the clients that **currently have the entry**, all unchecked:
+check the clients to remove the entry from and leave the rest unchecked, so the
+default (nothing checked) removes nothing. `--all` removes from every client
+without prompting; agent mode targets all clients; `--client <id>` (repeatable)
+targets specific clients. When nothing matches, it prints a warm hint to run
+`clerk mcp install` (no error, exit 0). Removing the entry doesn't drop a live
+editor session, so (in human mode) it prints a next step to reload each affected
+editor.
 
 > **Reachability:** there is no `mcp doctor` subcommand. Server health is part
-> of `clerk doctor`, which probes the configured MCP URL via the `initialize`
-> handshake when an entry is installed (warns, does not fail, when unreachable).
+> of `clerk doctor`, which probes each distinct configured MCP URL via the
+> `initialize` handshake when an entry is installed (warns, does not fail, when
+> any is unreachable).
 
 ## Error codes
 
@@ -88,4 +98,3 @@ prints a next step to reload each affected editor.
 | `mcp_client_not_supported`  | `--client <id>` is not in the supported list.                   |
 | `mcp_client_config_invalid` | An existing client config file is malformed.                    |
 | `mcp_url_required`          | The provided `--url` is malformed or uses a non-http(s) scheme. |
-| `mcp_not_installed`         | `uninstall` removed nothing because no entry matched.           |

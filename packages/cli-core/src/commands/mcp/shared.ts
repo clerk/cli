@@ -6,7 +6,7 @@ import { getMcpUrl } from "../../lib/environment.ts";
 import { CliError, ERROR_CODE, errorMessage, throwUsageError } from "../../lib/errors.ts";
 import { log } from "../../lib/log.ts";
 import { isAgent } from "../../mode.ts";
-import { CLIENT_IDS, CLIENTS, detectInstalledClients } from "./clients/registry.ts";
+import { CLIENT_ALIASES, CLIENT_IDS, CLIENTS, detectInstalledClients } from "./clients/registry.ts";
 import type { ClientId, McpClient } from "./clients/types.ts";
 
 export type McpOptions = {
@@ -50,8 +50,11 @@ export function resolveName(options: McpOptions): string {
 
 export function resolveClients(ids: readonly string[]): McpClient[] {
   const byId = new Map<string, McpClient>(CLIENTS.map((c) => [c.id, c]));
-  return ids.map((id) => {
-    const client = byId.get(id);
+  const seen = new Set<ClientId>();
+  // Dedupe by canonical id so `--client copilot --client vscode` (aliases of the
+  // same client) or a repeated flag operates on each client once.
+  return ids.flatMap((id) => {
+    const client = byId.get(CLIENT_ALIASES[id] ?? id);
     if (!client) {
       throwUsageError(
         `Unknown MCP client "${id}". Supported: ${CLIENT_IDS.join(", ")}.`,
@@ -59,25 +62,28 @@ export function resolveClients(ids: readonly string[]): McpClient[] {
         ERROR_CODE.MCP_CLIENT_NOT_SUPPORTED,
       );
     }
-    return client;
+    if (seen.has(client.id)) return [];
+    seen.add(client.id);
+    return [client];
   });
 }
 
 export async function pickClients(
   detected: McpClient[],
   message: string,
-  options: { autoSelectSingle?: boolean } = {},
+  options: { autoSelectSingle?: boolean; required?: boolean; preselect?: boolean } = {},
 ): Promise<McpClient[]> {
   if (detected.length === 0) return [];
   if (detected.length === 1 && options.autoSelectSingle) return detected;
   // Imported lazily (like `doctor` does) so the prompt layer stays off the
   // module-load path for non-interactive callers and tests.
   const { multiselect } = await import("../../lib/prompts.ts");
+  const preselect = options.preselect ?? true;
   const selected = await multiselect<ClientId>({
     message,
     options: detected.map((c) => ({ value: c.id, label: `${c.displayName} (${c.scope})` })),
-    initialValues: detected.map((c) => c.id),
-    required: true,
+    initialValues: preselect ? detected.map((c) => c.id) : [],
+    required: options.required ?? true,
   });
   return resolveClients(selected);
 }

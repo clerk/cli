@@ -1,14 +1,13 @@
 /**
  * Shared types for MCP client integrations.
  *
- * Each supported MCP client (Claude Code, Cursor, VS Code, Windsurf, Gemini)
- * exposes an {@link McpClient} that knows how to read, upsert, and remove
- * the `clerk` server entry in its own config file format.
+ * Each supported MCP client (Claude Code, Cursor, GitHub Copilot, Windsurf,
+ * Gemini, Codex) exposes an {@link McpClient} that knows how to read, upsert,
+ * and remove the `clerk` server entry in its own config file format.
  */
 
-export type ClientId = "claude" | "cursor" | "vscode" | "windsurf" | "gemini";
+export type ClientId = "claude" | "cursor" | "vscode" | "windsurf" | "gemini" | "codex";
 
-/** Where the client config file lives relative to the user / project. */
 export type Scope = "project" | "user";
 
 export interface McpServerEntry {
@@ -52,13 +51,10 @@ export interface McpClient {
    * as a next step.
    */
   activation: string;
-  /** Where the entry would be written for the given cwd. */
   configPath(cwd: string): string;
   /** Heuristic: is this client installed for this user? */
   detect(cwd: string): Promise<boolean>;
-  /** Add or update the `name` entry pointing at `url`. */
   upsert(entry: McpServerEntry, cwd: string, force: boolean): Promise<UpsertResult>;
-  /** Remove the `name` entry. */
   remove(name: string, cwd: string): Promise<RemoveResult>;
   /** List `clerk`-flavored entries currently registered (those pointing at clerk.com URLs or named explicitly). */
   list(cwd: string): Promise<ListEntry[]>;
