@@ -9,6 +9,7 @@ import { webhooksReplay } from "./replay.ts";
 import { webhooksSecret } from "./secret.ts";
 import { webhooksTrigger } from "./trigger.ts";
 import { webhooksUpdate } from "./update.ts";
+import { webhooksVerify } from "./verify.ts";
 
 export const webhooks = {
   list: webhooksList,
@@ -22,4 +23,5 @@ export const webhooks = {
   replay: webhooksReplay,
   trigger: webhooksTrigger,
   open: webhooksOpen,
+  verify: webhooksVerify,
 };

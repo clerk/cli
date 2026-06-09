@@ -779,6 +779,35 @@ export function createProgram() {
       webhooksHandlers.open(cmd.optsWithGlobals() as Parameters<typeof webhooksHandlers.open>[0]),
     );
 
+  webhooks
+    .command("verify")
+    .description("Verify a webhook signature locally (offline, no auth required)")
+    .option("--secret <whsec>", "Signing secret (whsec_...), always required")
+    .option(
+      "--delivery <file>",
+      "One `listen` event NDJSON line as @file or - for stdin (alternative to the four explicit flags)",
+    )
+    .option("--payload <file>", "Raw request body as @file or - for stdin")
+    .option("--id <msg_id>", "The svix-id header value")
+    .option("--timestamp <seconds>", "The svix-timestamp header value (Unix epoch seconds)")
+    .option("--signature <sig>", "The raw svix-signature header value (may hold multiple entries)")
+    .setExamples([
+      {
+        command:
+          "clerk webhooks verify --secret whsec_... --payload @body.json --id msg_2xyz --timestamp 1717935000 --signature v1,abc...",
+        description: "Verify from the four header values",
+      },
+      {
+        command: "clerk webhooks verify --secret whsec_... --delivery @event.json",
+        description: "Verify a saved `listen` event line",
+      },
+    ])
+    .action((_opts, cmd) =>
+      webhooksHandlers.verify(
+        cmd.optsWithGlobals() as Parameters<typeof webhooksHandlers.verify>[0],
+      ),
+    );
+
   const env = program
     .command("env")
     .description("Manage environment variables")
