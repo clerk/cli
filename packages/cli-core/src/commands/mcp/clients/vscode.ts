@@ -11,7 +11,7 @@ import { pathExists, vscodeUserDir } from "./paths.ts";
 
 export const vscodeClient = makeJsonClient({
   id: "vscode",
-  displayName: "VS Code",
+  displayName: "GitHub Copilot",
   scope: "user",
   activation:
     "Reload the VS Code window, then start the server from `MCP: List Servers` (sign in if prompted).",

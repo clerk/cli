@@ -3,9 +3,7 @@
  */
 
 import { cyan, dim, green, yellow } from "../../lib/color.ts";
-import { CliError, ERROR_CODE } from "../../lib/errors.ts";
 import { log } from "../../lib/log.ts";
-import { isAgent } from "../../mode.ts";
 import { withGutter } from "../../lib/spinner.ts";
 import { CLIENTS } from "./clients/registry.ts";
 import type { McpClient, RemoveResult } from "./clients/types.ts";
@@ -23,6 +21,10 @@ function printResult(client: McpClient, result: RemoveResult): void {
   log.info(`${label}: ${result.removed ? green("removed") : yellow("not present")}`);
 }
 
+function warnNotInstalled(name: string): void {
+  log.warn(`No \`${name}\` MCP entry is installed. Run \`clerk mcp install\` to add it.`);
+}
+
 async function installedClients(name: string, cwd: string): Promise<McpClient[]> {
   const present = await Promise.all(
     CLIENTS.map(async (client) => (await client.list(cwd)).some((entry) => entry.name === name)),
@@ -30,37 +32,38 @@ async function installedClients(name: string, cwd: string): Promise<McpClient[]>
   return CLIENTS.filter((_, i) => present[i]);
 }
 
-async function chooseClients(options: McpOptions, name: string, cwd: string): Promise<McpClient[]> {
-  if (options.client && options.client.length > 0) return resolveClients(options.client);
-  if (options.all || isAgent()) return Array.from(CLIENTS);
-  return pickClients(await installedClients(name, cwd), `Select clients to remove "${name}" from:`);
+// The checked clients are removed; nothing is pre-checked, so the safe default
+// (submitting with no selection) removes nothing.
+async function pickClientsToRemove(installed: McpClient[], name: string): Promise<McpClient[]> {
+  return pickClients(installed, `Select the clients to remove \`${name}\` from:`, {
+    required: false,
+    preselect: false,
+  });
 }
 
-export async function mcpUninstall(options: McpOptions = {}): Promise<void> {
-  const name = resolveName(options);
-  const cwd = process.cwd();
-  const json = wantsJson(options);
-  const notInstalled = new CliError(`No MCP entry named "${name}" found in any client.`, {
-    code: ERROR_CODE.MCP_NOT_INSTALLED,
-  });
-
-  const clients = await chooseClients(options, name, cwd);
-  if (clients.length === 0) throw notInstalled;
-
+async function removeFrom(
+  clients: McpClient[],
+  name: string,
+  cwd: string,
+  json: boolean,
+): Promise<void> {
   const settled = await settleClients(clients, (c) => c.remove(name, cwd));
   const results = settled.map((s) => s.result);
   const removedCount = results.filter((r) => r.removed).length;
 
   if (json) {
     log.data(JSON.stringify({ name, results }, null, 2));
-    if (removedCount === 0) throw notInstalled;
+    return;
+  }
+
+  if (removedCount === 0) {
+    warnNotInstalled(name);
     return;
   }
 
   // Removing the config entry doesn't drop a live editor session — it lingers
   // until the editor reloads. Surface that as a next step per removed client.
   await withGutter(`Removing MCP entry ${cyan(name)}`, async ({ setNextSteps }) => {
-    if (removedCount === 0) throw notInstalled;
     settled.forEach(({ client, result }) => printResult(client, result));
     setNextSteps(
       settled
@@ -68,4 +71,34 @@ export async function mcpUninstall(options: McpOptions = {}): Promise<void> {
         .map(({ client }) => `Reload ${client.displayName} to drop the active connection.`),
     );
   });
+}
+
+export async function mcpUninstall(options: McpOptions = {}): Promise<void> {
+  const name = resolveName(options);
+  const cwd = process.cwd();
+  const json = wantsJson(options);
+  const explicit =
+    options.client && options.client.length > 0 ? resolveClients(options.client) : undefined;
+
+  // Non-interactive: explicit `--client`, `--all`, agent mode, or `--json`
+  // operate directly on the targeted clients.
+  if (json || explicit || options.all) {
+    await removeFrom(explicit ?? Array.from(CLIENTS), name, cwd, json);
+    return;
+  }
+
+  // Human, interactive: pick which installed clients to keep; remove the rest.
+  const installed = await installedClients(name, cwd);
+  if (installed.length === 0) {
+    warnNotInstalled(name);
+    return;
+  }
+
+  const toRemove = await pickClientsToRemove(installed, name);
+  if (toRemove.length === 0) {
+    log.info("No clients selected. Nothing removed.");
+    return;
+  }
+
+  await removeFrom(toRemove, name, cwd, json);
 }

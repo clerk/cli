@@ -20,7 +20,8 @@ export type McpProbeResult =
 
 // A hostile or wrong URL shouldn't hang the CLI: cap the probe so a slow or
 // never-ending response surfaces as a failure instead of blocking forever.
-const PROBE_TIMEOUT_MS = 10_000;
+// 5s covers a cold-start server while keeping `clerk doctor` snappy on a dead one.
+const PROBE_TIMEOUT_MS = 5_000;
 
 const INITIALIZE_REQUEST = {
   jsonrpc: "2.0",

@@ -66,7 +66,7 @@ describe("createDoctorContext", () => {
       const p1 = ctx.getToken();
       const p2 = ctx.getToken();
 
-      expect(p1).toBe(p2); // Same promise reference
+      expect(p1).toBe(p2);
       expect(await p1).toBe("test_token");
       expect(mockGetToken).toHaveBeenCalledTimes(1);
     });

@@ -63,8 +63,6 @@ export const ERROR_CODE = {
   MCP_CLIENT_CONFIG_INVALID: "mcp_client_config_invalid",
   /** The provided `--url` is malformed or uses a non-http(s) scheme. */
   MCP_URL_REQUIRED: "mcp_url_required",
-  /** No matching MCP entry to remove. */
-  MCP_NOT_INSTALLED: "mcp_not_installed",
 } as const;
 
 export type ErrorCode = (typeof ERROR_CODE)[keyof typeof ERROR_CODE];

@@ -22,7 +22,9 @@ mock.module("../../../mode.ts", () => ({
 
 const { geminiClient } = await import("./gemini.ts");
 const { windsurfClient } = await import("./windsurf.ts");
+const { codexClient } = await import("./codex.ts");
 const { vscodeUserDir } = await import("./paths.ts");
+const { parse: parseToml } = await import("smol-toml");
 const { mcpInstall } = await import("../install.ts");
 const { mcpUninstall } = await import("../uninstall.ts");
 const { checkMcp } = await import("../../doctor/check-mcp.ts");
@@ -30,7 +32,7 @@ const { checkMcp } = await import("../../doctor/check-mcp.ts");
 const captured = useCaptureLog();
 
 const URL = "https://mcp.clerk.com/mcp";
-const ALL_CLIENT_IDS = ["claude", "cursor", "vscode", "windsurf", "gemini"];
+const ALL_CLIENT_IDS = ["claude", "cursor", "vscode", "windsurf", "gemini", "codex"];
 
 describe("user-scope MCP clients (homedir redirected to a tmpdir)", () => {
   beforeEach(async () => {
@@ -91,6 +93,43 @@ describe("user-scope MCP clients (homedir redirected to a tmpdir)", () => {
       ]);
     });
   });
+
+  describe("codex", () => {
+    test("writes the HTTP url under the [mcp_servers.<name>] TOML table", async () => {
+      await codexClient.upsert({ name: "clerk", url: URL }, "/ignored", false);
+      const text = await Bun.file(codexClient.configPath("/ignored")).text();
+      expect(text).toContain("[mcp_servers.clerk]");
+      const parsed = parseToml(text) as { mcp_servers: { clerk: { url: string } } };
+      expect(parsed.mcp_servers.clerk).toEqual({ url: URL });
+    });
+
+    test("round-trips the URL back out on list", async () => {
+      await codexClient.upsert({ name: "clerk", url: URL }, "/ignored", false);
+      const entries = await codexClient.list("/ignored");
+      expect(entries).toEqual([
+        expect.objectContaining({ client: "codex", name: "clerk", url: URL }),
+      ]);
+    });
+
+    test("preserves unrelated tables when removing the entry", async () => {
+      const dir = join(mockHome, ".codex");
+      await mkdir(dir, { recursive: true });
+      await Bun.write(
+        join(dir, "config.toml"),
+        'model = "o3"\n\n[mcp_servers.clerk]\nurl = "https://mcp.clerk.com/mcp"\n\n[mcp_servers.other]\ncommand = "npx"\n',
+      );
+
+      await codexClient.remove("clerk", "/ignored");
+
+      const parsed = parseToml(await Bun.file(join(dir, "config.toml")).text()) as {
+        model: string;
+        mcp_servers: Record<string, unknown>;
+      };
+      expect(parsed.model).toBe("o3"); // top-level key untouched
+      expect(parsed.mcp_servers.clerk).toBeUndefined(); // removed
+      expect(parsed.mcp_servers.other).toEqual({ command: "npx" }); // sibling kept
+    });
+  });
 });
 
 // These exercise the command-level "all clients" defaults, which touch the
@@ -140,6 +179,7 @@ describe("install/uninstall across all clients (homedir + cwd redirected)", () =
       mkdir(vscodeUserDir(), { recursive: true }),
       mkdir(join(mockHome, ".codeium", "windsurf"), { recursive: true }),
       mkdir(join(mockHome, ".gemini"), { recursive: true }),
+      mkdir(join(mockHome, ".codex"), { recursive: true }),
     ]);
 
     await mcpInstall({ all: true, url: URL });
@@ -237,5 +277,24 @@ describe("clerk doctor — checkMcp (homedir + cwd redirected)", () => {
 
     const result = await checkMcp();
     expect(result.status).toBe("warn");
+  });
+
+  test("warns when a second client points at a different, unreachable URL", async () => {
+    const BAD_URL = "https://staging.clerk.com/mcp";
+    await mcpInstall({ client: ["cursor"], url: URL });
+    await mcpInstall({ client: ["claude"], url: BAD_URL });
+    captured.clear();
+    // Healthy for the hosted URL, 503 for the second — proves every distinct URL is probed.
+    globalThis.fetch = (async (input: unknown) =>
+      String(input) === BAD_URL
+        ? new Response("nope", { status: 503 })
+        : new Response(HANDSHAKE_BODY, {
+            status: 200,
+            headers: { "content-type": "text/event-stream" },
+          })) as unknown as typeof globalThis.fetch;
+
+    const result = await checkMcp();
+    expect(result.status).toBe("warn");
+    expect(result.message).toContain(BAD_URL);
   });
 });

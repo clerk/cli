@@ -15,7 +15,10 @@ import { link } from "./commands/link/index.ts";
 import { unlink } from "./commands/unlink/index.ts";
 import { apps as appsHandlers } from "./commands/apps/index.ts";
 import { users as usersHandlers } from "./commands/users/index.ts";
-import { mcp as mcpHandlers, CLIENT_IDS as MCP_CLIENT_IDS } from "./commands/mcp/index.ts";
+import {
+  mcp as mcpHandlers,
+  CLIENT_ID_CHOICES as MCP_CLIENT_CHOICES,
+} from "./commands/mcp/index.ts";
 import { doctor } from "./commands/doctor/index.ts";
 import { switchEnv } from "./commands/switch-env/index.ts";
 import { openDashboard } from "./commands/open/index.ts";
@@ -485,7 +488,7 @@ export function createProgram() {
     .description("Register the Clerk remote MCP server in supported clients")
     .addOption(
       createOption("--client <id>", "MCP client to target (repeatable). Default: all detected.")
-        .choices([...MCP_CLIENT_IDS])
+        .choices([...MCP_CLIENT_CHOICES])
         .argParser(collectOptionValues)
         .default([] as string[]),
     )
@@ -522,7 +525,7 @@ export function createProgram() {
         "--client <id>",
         "MCP client to target (repeatable). Default in human mode: pick from installed; in agent mode: all clients.",
       )
-        .choices([...MCP_CLIENT_IDS])
+        .choices([...MCP_CLIENT_CHOICES])
         .argParser(collectOptionValues)
         .default([] as string[]),
     )

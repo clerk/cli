@@ -111,4 +111,16 @@ describe("client config paths + encoded shapes (homedir redirected)", () => {
     expect(parsed.servers).toBeDefined();
     expect(parsed.mcpServers).toBeUndefined();
   });
+
+  test("`copilot` resolves to the same client as `vscode`", async () => {
+    const { resolveClients } = await import("../shared.ts");
+    expect(resolveClients(["copilot"])).toEqual([vscodeClient]);
+    expect(resolveClients(["copilot"])).toEqual(resolveClients(["vscode"]));
+  });
+
+  test("resolveClients dedupes an alias and its canonical id to one client", async () => {
+    const { resolveClients } = await import("../shared.ts");
+    expect(resolveClients(["copilot", "vscode"])).toEqual([vscodeClient]);
+    expect(resolveClients(["cursor", "cursor"])).toEqual([cursorClient]);
+  });
 });

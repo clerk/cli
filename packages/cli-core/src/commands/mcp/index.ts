@@ -7,4 +7,4 @@ export const mcp = {
   list: mcpList,
   uninstall: mcpUninstall,
 };
-export { CLIENT_IDS } from "./clients/registry.ts";
+export { CLIENT_ID_CHOICES, CLIENT_IDS } from "./clients/registry.ts";
