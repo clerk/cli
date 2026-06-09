@@ -1,4 +1,4 @@
-import { test, expect, describe, beforeEach, afterEach } from "bun:test";
+import { test, expect, describe, beforeEach, afterEach, spyOn } from "bun:test";
 import { createHmac, randomBytes } from "node:crypto";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -239,6 +239,36 @@ describe("webhooks verify command", () => {
     await expect(
       webhooksVerify({ ...explicitFlags(), payload: "@/definitely/not/here.json" }),
     ).rejects.toMatchObject({ code: ERROR_CODE.FILE_NOT_FOUND });
+  });
+
+  test("missing --delivery file maps to file_not_found", async () => {
+    await expect(
+      webhooksVerify({ secret: SECRET, delivery: "@/definitely/not/here.json" }),
+    ).rejects.toMatchObject({ code: ERROR_CODE.FILE_NOT_FOUND });
+  });
+
+  test("reads the --delivery event line from stdin with -", async () => {
+    const line = JSON.stringify({
+      headers: { "svix-id": ID, "svix-timestamp": TIMESTAMP, "svix-signature": VALID_SIGNATURE },
+      body_b64: Buffer.from(PAYLOAD, "utf8").toString("base64"),
+    });
+    const stdinSpy = spyOn(Bun.stdin, "text").mockResolvedValue(`${line}\n`);
+    try {
+      await webhooksVerify({ secret: SECRET, delivery: "-" });
+      expect(captured.err).toContain("Signature verified.");
+    } finally {
+      stdinSpy.mockRestore();
+    }
+  });
+
+  test("reads the --payload body from stdin with -", async () => {
+    const stdinSpy = spyOn(Bun.stdin, "text").mockResolvedValue(PAYLOAD);
+    try {
+      await webhooksVerify({ ...explicitFlags(), payload: "-" });
+      expect(captured.err).toContain("Signature verified.");
+    } finally {
+      stdinSpy.mockRestore();
+    }
   });
 
   test("empty --delivery input is a usage error", async () => {

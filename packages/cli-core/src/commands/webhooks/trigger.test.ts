@@ -101,6 +101,15 @@ describe("webhooks trigger", () => {
     expect(mockSendWebhookExample).not.toHaveBeenCalled();
   });
 
+  test("unknown event type wins over a missing relay endpoint (fail fast)", async () => {
+    mockGetRelayEntry.mockResolvedValue(undefined);
+
+    await expect(webhooksTrigger({ eventType: "user.exploded" })).rejects.toMatchObject({
+      code: ERROR_CODE.UNKNOWN_EVENT_TYPE,
+    });
+    expect(mockSendWebhookExample).not.toHaveBeenCalled();
+  });
+
   test("pages through the catalog before declaring a type unknown", async () => {
     mockListWebhookEventTypes
       .mockResolvedValueOnce(catalogPage(["user.created"], true, "iter_2"))
