@@ -154,3 +154,23 @@ Human mode prints an `ID / EVENT TYPE / STATUS / CREATED` table on stderr (paylo
 | Method | Endpoint                          | Description                                            |
 | ------ | --------------------------------- | ------------------------------------------------------ |
 | `GET`  | `/webhooks/{endpointID}/messages` | List attempted deliveries (one page, optional status). |
+
+## `clerk webhooks replay`
+
+Dual-mode:
+
+- `replay <msg_id>` resends one delivery (same `svix-id`). `--endpoint` defaults to the relay endpoint. No prompt — a single targeted resend is not destructive.
+- `replay --since <ISO> [--until <ISO>]` bulk-recovers failed deliveries in a window. `--endpoint` is **required** (bulk recovery never guesses), and it prompts unless `--yes` (agent mode requires `--yes`).
+
+`<msg_id>` and `--since` are mutually exclusive; passing both or neither is a usage error, as is `--until` without `--since`. Both operations are async on the Svix side — success means queued (`200 {}`), stdout stays empty.
+
+```sh
+clerk webhooks replay [<msg_id>] [--endpoint <ep_id>] [--since <ISO> [--until <ISO>]] [--yes]
+```
+
+### API endpoints
+
+| Method | Endpoint                                             | Description                                                  |
+| ------ | ---------------------------------------------------- | ------------------------------------------------------------ |
+| `POST` | `/webhooks/{endpointID}/messages/{messageID}/resend` | Resend one delivery (`<msg_id>` mode).                       |
+| `POST` | `/webhooks/{endpointID}/recover`                     | Recover a window: body `{ since, until? }` (`--since` mode). |

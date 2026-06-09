@@ -707,6 +707,39 @@ export function createProgram() {
       ),
     );
 
+  webhooks
+    .command("replay")
+    .description("Resend one delivery, or bulk-recover a time window of deliveries")
+    .argument("[msg_id]", "Message ID to resend (mutually exclusive with --since)")
+    .option(
+      "--endpoint <ep_id>",
+      "Target endpoint (defaults to the relay endpoint for <msg_id>; required with --since)",
+    )
+    .option("--since <ISO>", "Bulk-recover deliveries from this RFC 3339 timestamp")
+    .option("--until <ISO>", "Optional end of the recovery window (requires --since)")
+    .option("--yes", "Skip the bulk-recovery confirmation prompt (required in agent mode)")
+    .setExamples([
+      {
+        command: "clerk webhooks replay msg_2xyz",
+        description: "Resend one delivery to the relay endpoint",
+      },
+      {
+        command: "clerk webhooks replay msg_2xyz --endpoint ep_2abc123",
+        description: "Resend one delivery to a specific endpoint",
+      },
+      {
+        command:
+          "clerk webhooks replay --since 2026-05-01T00:00:00Z --until 2026-05-01T01:00:00Z --endpoint ep_2abc123",
+        description: "Recover all deliveries in a bounded window",
+      },
+    ])
+    .action((msgId, _opts, cmd) =>
+      webhooksHandlers.replay({
+        ...(cmd.optsWithGlobals() as Omit<Parameters<typeof webhooksHandlers.replay>[0], "msgId">),
+        msgId,
+      }),
+    );
+
   const env = program
     .command("env")
     .description("Manage environment variables")

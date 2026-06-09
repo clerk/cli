@@ -4,6 +4,7 @@ import { webhooksEventTypes } from "./event-types.ts";
 import { webhooksGet } from "./get.ts";
 import { webhooksList } from "./list.ts";
 import { webhooksMessages } from "./messages.ts";
+import { webhooksReplay } from "./replay.ts";
 import { webhooksSecret } from "./secret.ts";
 import { webhooksUpdate } from "./update.ts";
 
@@ -16,4 +17,5 @@ export const webhooks = {
   update: webhooksUpdate,
   create: webhooksCreate,
   messages: webhooksMessages,
+  replay: webhooksReplay,
 };
