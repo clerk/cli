@@ -226,3 +226,36 @@ Explicit flags override fields parsed from `--delivery`. A `listen` event line s
 ### API endpoints
 
 None — pure offline computation.
+
+## `clerk webhooks listen`
+
+Dials the Svix relay (`wss://api.relay.svix.com/api/v1/listen/`), registers a **persistent** per-instance relay endpoint pointing at `https://play.svix.com/in/<token>/`, and forwards incoming deliveries to a local handler.
+
+```sh
+clerk webhooks listen [--forward-to <url>] [--events <list>] [--skip-verify] [--headers k:v,...]
+```
+
+| Option               | Description                                                                                                                                                                                    |
+| -------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `--forward-to <url>` | Local URL to POST deliveries to. Omitted: events are received, verified, and printed with `forward_status: null`.                                                                              |
+| `--events <list>`    | Sets `filter_types` on the relay endpoint. If the persisted endpoint has different filters it is PATCHed — with a warning, since other `listen` sessions share this instance's relay endpoint. |
+| `--skip-verify`      | Skip per-delivery HMAC verification.                                                                                                                                                           |
+| `--headers <pairs>`  | Comma-separated `k:v` extras on the forwarded POST (split on the FIRST colon). The delivery's `svix-*` headers always win.                                                                     |
+
+Behavior notes:
+
+- **Relay token**: 10 random base62 chars, raw on the wire (no `c_` prefix), persisted per instance in the CLI config (`relay.<instanceId>.token`). Close code 1008 = token collision → new token generated, persisted, redialed, and the endpoint URL re-pointed.
+- **Keepalive**: the relay server pings ~every 21s, but Bun's client WebSocket auto-pongs below the JS API (no ping events). After 30s of silence the client sends an active `ws.ping()` probe — writes to a dead link surface as close/error, which redials with the same token. Reconnects never change the relay URL.
+- **Per-delivery output**: human mode prints `time --> event_type msg_…` then `<-- status method path ms` via `log.ui` (bypasses the stderr throttle). Diagnostics: 401 → `clerkMiddleware` public-route hint; 400 → raw-body/`verifyWebhook()` order hint; 5xx → response body inline plus the exact `clerk webhooks replay <msg_id>` line; unreachable handler → synthetic **502** framed back to the relay.
+- **Verification**: deliveries failing HMAC are warned about and still forwarded (the mismatch means the relay secret diverged, not that the local handler should silently miss events).
+- **Agent/`--json` mode**: NDJSON on stdout — one `ready` line (`relay_url`, `signing_secret`, `endpoint_id`, `events_filter`), then one `event` line per delivery (`svix_id`, `event_type`, `headers`, `body_b64`, `forward_status`, `latency_ms`). An event line saved to a file is directly consumable by `verify --delivery @file`.
+- **SIGINT**: `listen` replaces the global cleanup-free handler before opening the socket: close socket, drain in-flight forwards, exit 130. The relay endpoint is **never** deleted on exit — its URL and `whsec_` stay stable across restarts. `listen` never exits 0.
+
+### API endpoints
+
+| Method  | Endpoint                        | Description                                                |
+| ------- | ------------------------------- | ---------------------------------------------------------- |
+| `GET`   | `/webhooks/{endpointID}`        | Reuse check for the persisted relay endpoint.              |
+| `PATCH` | `/webhooks/{endpointID}`        | Re-point URL after token rotation / update `filter_types`. |
+| `POST`  | `/webhooks`                     | Create the relay endpoint on first run (or after a 404).   |
+| `GET`   | `/webhooks/{endpointID}/secret` | Fetch the relay endpoint's signing secret at startup.      |
