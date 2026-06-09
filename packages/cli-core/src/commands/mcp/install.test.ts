@@ -200,11 +200,11 @@ describe("mcp install", () => {
     await mkdir(join(cwd, ".cursor"), { recursive: true });
     await writeFile(join(cwd, ".cursor", "mcp.json"), "{ not json");
 
-    await mcpInstall({ client: ["cursor", "claude-code"], url: URL_A });
+    await mcpInstall({ client: ["cursor", "claude"], url: URL_A });
 
     const payload = JSON.parse(captured.out) as { results: { client: string; status: string }[] };
     expect(payload.results).toEqual([
-      expect.objectContaining({ client: "claude-code", status: "added" }),
+      expect.objectContaining({ client: "claude", status: "added" }),
     ]);
     expect(captured.err).toContain("Cursor"); // per-client warning for the failure
   });

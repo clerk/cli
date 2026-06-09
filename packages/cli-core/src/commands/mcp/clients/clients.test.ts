@@ -11,7 +11,7 @@ let mockHome = realOs.tmpdir();
 mock.module("node:os", () => ({ ...realOs, homedir: () => mockHome }));
 afterAll(() => mock.restore());
 
-const { claudeCodeClient } = await import("./claude-code.ts");
+const { claudeClient } = await import("./claude.ts");
 const { cursorClient } = await import("./cursor.ts");
 const { vscodeClient } = await import("./vscode.ts");
 const { windsurfClient } = await import("./windsurf.ts");
@@ -26,8 +26,8 @@ const URL = "https://mcp.clerk.com/mcp";
 // specific user-global config file and encodes the server its own way.
 const cases = [
   {
-    name: "claude-code",
-    client: claudeCodeClient,
+    name: "claude",
+    client: claudeClient,
     expectedPath: () => join(mockHome, ".claude.json"),
     topKey: "mcpServers",
     shape: { type: "http", url: URL },

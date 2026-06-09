@@ -3,7 +3,7 @@
  * human-mode multiselect picker.
  */
 
-import { claudeCodeClient } from "./claude-code.ts";
+import { claudeClient } from "./claude.ts";
 import { cursorClient } from "./cursor.ts";
 import { geminiClient } from "./gemini.ts";
 import type { ClientId, McpClient } from "./types.ts";
@@ -11,7 +11,7 @@ import { vscodeClient } from "./vscode.ts";
 import { windsurfClient } from "./windsurf.ts";
 
 export const CLIENTS: readonly McpClient[] = [
-  claudeCodeClient,
+  claudeClient,
   cursorClient,
   vscodeClient,
   windsurfClient,

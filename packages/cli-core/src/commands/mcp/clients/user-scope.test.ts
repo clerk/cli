@@ -30,7 +30,7 @@ const { checkMcp } = await import("../../doctor/check-mcp.ts");
 const captured = useCaptureLog();
 
 const URL = "https://mcp.clerk.com/mcp";
-const ALL_CLIENT_IDS = ["claude-code", "cursor", "vscode", "windsurf", "gemini"];
+const ALL_CLIENT_IDS = ["claude", "cursor", "vscode", "windsurf", "gemini"];
 
 describe("user-scope MCP clients (homedir redirected to a tmpdir)", () => {
   beforeEach(async () => {

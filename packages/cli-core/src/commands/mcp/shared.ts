@@ -63,14 +63,18 @@ export function resolveClients(ids: readonly string[]): McpClient[] {
   });
 }
 
-export async function pickClients(detected: McpClient[]): Promise<McpClient[]> {
+export async function pickClients(
+  detected: McpClient[],
+  message: string,
+  options: { autoSelectSingle?: boolean } = {},
+): Promise<McpClient[]> {
   if (detected.length === 0) return [];
-  if (detected.length === 1) return detected;
+  if (detected.length === 1 && options.autoSelectSingle) return detected;
   // Imported lazily (like `doctor` does) so the prompt layer stays off the
   // module-load path for non-interactive callers and tests.
   const { multiselect } = await import("../../lib/prompts.ts");
   const selected = await multiselect<ClientId>({
-    message: "Select MCP clients to install into:",
+    message,
     options: detected.map((c) => ({ value: c.id, label: `${c.displayName} (${c.scope})` })),
     initialValues: detected.map((c) => c.id),
     required: true,

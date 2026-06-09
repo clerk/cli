@@ -23,13 +23,13 @@ All entries are written to each client's **user-global** config, so the server
 is available in every project (no per-project approval, no dependence on which
 directory you run the CLI from).
 
-| ID            | Client                   | Scope | Config file                             |
-| ------------- | ------------------------ | ----- | --------------------------------------- |
-| `claude-code` | Claude Code              | user  | `~/.claude.json` (`mcpServers`)         |
-| `cursor`      | Cursor                   | user  | `~/.cursor/mcp.json`                    |
-| `vscode`      | VS Code (Copilot)        | user  | VS Code user `mcp.json` (per-OS, below) |
-| `windsurf`    | Windsurf                 | user  | `~/.codeium/windsurf/mcp_config.json`   |
-| `gemini`      | Gemini Code Assist / CLI | user  | `~/.gemini/settings.json`               |
+| ID         | Client                   | Scope | Config file                             |
+| ---------- | ------------------------ | ----- | --------------------------------------- |
+| `claude`   | Claude Code              | user  | `~/.claude.json` (`mcpServers`)         |
+| `cursor`   | Cursor                   | user  | `~/.cursor/mcp.json`                    |
+| `vscode`   | VS Code (Copilot)        | user  | VS Code user `mcp.json` (per-OS, below) |
+| `windsurf` | Windsurf                 | user  | `~/.codeium/windsurf/mcp_config.json`   |
+| `gemini`   | Gemini Code Assist / CLI | user  | `~/.gemini/settings.json`               |
 
 VS Code's user config dir is OS-specific: `~/Library/Application Support/Code/User/mcp.json`
 (macOS), `%APPDATA%\Code\User\mcp.json` (Windows), `$XDG_CONFIG_HOME/Code/User/mcp.json`
@@ -68,9 +68,13 @@ named `clerk` or pointing at any `*.clerk.com` host).
 
 ### `clerk mcp uninstall`
 
-Remove the named entry from each client. Throws `mcp_not_installed` (exit
-code 1) when nothing was removed. Removing the entry doesn't drop a live editor
-session, so (in human mode) it prints a next step to reload each affected editor.
+Remove the named entry. In human mode with no `--client`/`--all`, it prompts
+with a multiselect of the clients that **currently have the entry**, so you
+choose exactly which to remove from. `--all` removes from every client without
+prompting; agent mode targets all clients; `--client <id>` (repeatable) targets
+specific clients. Throws `mcp_not_installed` (exit code 1) when nothing matched.
+Removing the entry doesn't drop a live editor session, so (in human mode) it
+prints a next step to reload each affected editor.
 
 > **Reachability:** there is no `mcp doctor` subcommand. Server health is part
 > of `clerk doctor`, which probes the configured MCP URL via the `initialize`
