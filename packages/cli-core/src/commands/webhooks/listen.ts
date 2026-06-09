@@ -136,6 +136,16 @@ export async function webhooksListen(options: WebhooksListenOptions = {}): Promi
   const inFlight = new Set<Promise<void>>();
   let client: RelayClient | undefined;
   let endpointSecret = "";
+  let shuttingDown = false;
+
+  // Deliveries can arrive as soon as the relay handshake completes (flow step
+  // 2), but the signing secret only lands after the endpoint is resolved (step
+  // 5) — verifying against the empty secret would warn falsely, so processing
+  // waits on this gate until the ready line is out.
+  let releaseSetupGate!: () => void;
+  const setupGate = new Promise<void>((resolve) => {
+    releaseSetupGate = resolve;
+  });
 
   // Own SIGINT handling, registered BEFORE the socket opens. The global
   // handler (cli.ts) is a cleanup-free exit(130) and would fire first, so it
@@ -144,6 +154,8 @@ export async function webhooksListen(options: WebhooksListenOptions = {}): Promi
   process.removeAllListeners("SIGINT");
   process.on("SIGINT", () => {
     void (async () => {
+      shuttingDown = true;
+      releaseSetupGate(); // gated deliveries must settle or the drain hangs
       client?.stop();
       await Promise.allSettled(inFlight);
       process.exit(EXIT_CODE.SIGINT);
@@ -154,6 +166,9 @@ export async function webhooksListen(options: WebhooksListenOptions = {}): Promi
     event: RelayEventFrame,
     reply: (frame: string) => void,
   ): Promise<void> {
+    await setupGate;
+    if (shuttingDown) return;
+
     const body = decodeEventBody(event);
     const svixId = event.headers["svix-id"] ?? event.id;
     const eventType = extractEventType(body);
@@ -265,6 +280,7 @@ export async function webhooksListen(options: WebhooksListenOptions = {}): Promi
   } else {
     renderReadyBanner(readyInfo);
   }
+  releaseSetupGate();
 
   // listen never exits 0: it ends via SIGINT (130) or an unrecoverable error (1).
   await new Promise<never>(() => {});

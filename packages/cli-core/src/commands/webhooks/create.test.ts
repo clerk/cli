@@ -134,7 +134,7 @@ describe("webhooks create", () => {
     const promise = webhooksCreate({ url: "https://example.com/webhooks" });
 
     await expect(promise).rejects.toBeInstanceOf(CliError);
-    await expect(webhooksCreate({ url: "https://example.com/webhooks" })).rejects.toThrow(
+    await expect(promise).rejects.toThrow(
       "Endpoint created (id: ep_new) but the signing secret could not be fetched. " +
         "Run 'clerk webhooks secret ep_new' to retrieve it.",
     );

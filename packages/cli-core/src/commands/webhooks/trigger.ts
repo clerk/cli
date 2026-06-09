@@ -38,11 +38,14 @@ async function assertKnownEventType(
 
 export async function webhooksTrigger(options: WebhooksTriggerOptions): Promise<void> {
   const ctx = await resolveAppContext(options);
-  const endpointId = await resolveEndpointOrRelay(options.endpoint, ctx.instanceId);
 
   // send_example returns 200 {} asynchronously — an invalid event type would
-  // otherwise exit 0 and deliver nothing, the silent failure trigger exists to kill.
+  // otherwise exit 0 and deliver nothing, the silent failure trigger exists to
+  // kill. Validated first so agents get unknown_event_type even when no relay
+  // endpoint is configured.
   await assertKnownEventType(ctx.appId, ctx.instanceId, options.eventType);
+
+  const endpointId = await resolveEndpointOrRelay(options.endpoint, ctx.instanceId);
 
   await rejectEndpointNotFound(
     sendWebhookExample(ctx.appId, ctx.instanceId, endpointId, options.eventType),

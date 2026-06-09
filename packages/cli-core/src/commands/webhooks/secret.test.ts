@@ -104,6 +104,15 @@ describe("webhooks secret", () => {
     expect(mockRotateWebhookEndpointSecret).not.toHaveBeenCalled();
   });
 
+  test("--rotate --yes in agent mode skips the prompt and rotates", async () => {
+    mockIsAgent.mockReturnValue(true);
+
+    await webhooksSecret({ endpointId: "ep_1", rotate: true, yes: true });
+
+    expect(mockConfirm).not.toHaveBeenCalled();
+    expect(mockRotateWebhookEndpointSecret).toHaveBeenCalled();
+  });
+
   test("--rotate in agent mode without --yes is a usage error", async () => {
     mockIsAgent.mockReturnValue(true);
 

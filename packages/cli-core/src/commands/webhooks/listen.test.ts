@@ -233,6 +233,39 @@ describe("webhooks listen", () => {
     expect(lastClient()?.started).toBe(true);
   });
 
+  test("deliveries arriving before the secret fetch wait for setup to finish", async () => {
+    mockIsAgent.mockReturnValue(true);
+    let releaseSecret!: (value: { secret: string }) => void;
+    mockGetWebhookEndpointSecret.mockReturnValue(
+      new Promise((resolve) => {
+        releaseSecret = resolve;
+      }),
+    );
+
+    const run = webhooksListen({});
+    run.catch(() => {});
+    for (let i = 0; i < 50 && !lastClient(); i++) {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    }
+
+    lastClient()!.options.onEvent(signedEvent('{"type":"user.created"}'), () => {});
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(captured.out).not.toContain('"type":"event"');
+    expect(captured.err).not.toContain("signature verification failed");
+
+    releaseSecret({ secret: SECRET });
+    for (let i = 0; i < 50 && !captured.out.includes('"type":"event"'); i++) {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    }
+
+    const readyIndex = captured.out.indexOf('"ready"');
+    const eventIndex = captured.out.indexOf('"type":"event"');
+    expect(readyIndex).toBeGreaterThanOrEqual(0);
+    expect(eventIndex).toBeGreaterThan(readyIndex);
+    expect(captured.err).not.toContain("signature verification failed");
+  });
+
   test("delivery without --forward-to replies a synthetic 200 and emits forward_status null", async () => {
     mockIsAgent.mockReturnValue(true);
 
