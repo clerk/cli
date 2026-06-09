@@ -203,3 +203,26 @@ clerk webhooks open
 | Method | Endpoint        | Description                               |
 | ------ | --------------- | ----------------------------------------- |
 | `POST` | `/webhooks/url` | Fetch the portal URL (request body `{}`). |
+
+## `clerk webhooks verify`
+
+Verifies a Svix webhook signature **locally**: HMAC-SHA256 over `{id}.{timestamp}.{body}` with the base64-decoded `whsec_` suffix, constant-time compare, any-match across space-separated `v1,<sig>` header entries (rotation grace windows produce multiple entries). No network calls, no auth gate (`--app`/`--instance` are ignored). Exit 0 = signature matched; exit 1 = mismatch (with a humanized timestamp-skew hint when the timestamp is >5 minutes off); exit 2 = bad inputs.
+
+```sh
+clerk webhooks verify --secret whsec_... (--delivery @event.json | --payload @body.json --id msg_... --timestamp <unix_seconds> --signature v1,...)
+```
+
+| Option               | Description                                                                                               |
+| -------------------- | --------------------------------------------------------------------------------------------------------- |
+| `--secret <whsec>`   | Always required. A flag, never a positional — secrets must not land in argv positionals.                  |
+| `--delivery <file>`  | One `listen` event NDJSON line (`@file` or `-`); supplies `id`, `timestamp`, `signature`, and the body.   |
+| `--payload <file>`   | Raw body as `@file` or `-` (bare inline JSON rejected; shells mangle it).                                 |
+| `--id <msg_id>`      | The `svix-id` header (first HMAC pre-image segment).                                                      |
+| `--timestamp <secs>` | The `svix-timestamp` header — Unix epoch seconds, integer.                                                |
+| `--signature <sig>`  | The raw `svix-signature` header value; may carry multiple space-separated `v1,<sig>` entries (any-match). |
+
+Explicit flags override fields parsed from `--delivery`. A `listen` event line saved to a file is directly consumable here.
+
+### API endpoints
+
+None — pure offline computation.
