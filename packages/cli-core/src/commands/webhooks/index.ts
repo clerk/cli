@@ -1,9 +1,11 @@
 import { webhooksEventTypes } from "./event-types.ts";
 import { webhooksGet } from "./get.ts";
 import { webhooksList } from "./list.ts";
+import { webhooksSecret } from "./secret.ts";
 
 export const webhooks = {
   list: webhooksList,
   get: webhooksGet,
   eventTypes: webhooksEventTypes,
+  secret: webhooksSecret,
 };

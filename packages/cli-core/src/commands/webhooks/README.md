@@ -72,3 +72,20 @@ clerk webhooks event-types [--limit N] [--iterator C]
 | Method | Endpoint                | Description                             |
 | ------ | ----------------------- | --------------------------------------- |
 | `GET`  | `/webhooks/event_types` | List the event-type catalog (one page). |
+
+## `clerk webhooks secret <id>`
+
+Prints the endpoint's current signing secret. With `--rotate`, rotates first (prompts in human mode; requires `--yes` in agent mode), then prints the new secret. After rotation Svix dual-signs with old+new keys for 24h — the `svix-signature` header carries multiple space-separated entries during the grace window.
+
+```sh
+clerk webhooks secret ep_2abc123 [--rotate [--yes]]
+```
+
+Output: human mode prints the **bare** `whsec_...` on stdout (eval-friendly: `export CLERK_WEBHOOK_SIGNING_SECRET=$(clerk webhooks secret ep_...)`), with all banners on stderr. JSON/agent mode prints `{ "secret": "whsec_..." }`. Plain `secret <id>` never prompts; `--yes` is only meaningful with `--rotate`.
+
+### API endpoints
+
+| Method | Endpoint                               | Description                                  |
+| ------ | -------------------------------------- | -------------------------------------------- |
+| `GET`  | `/webhooks/{endpointID}/secret`        | Fetch the signing secret.                    |
+| `POST` | `/webhooks/{endpointID}/secret/rotate` | Rotate the signing secret (`--rotate` only). |
