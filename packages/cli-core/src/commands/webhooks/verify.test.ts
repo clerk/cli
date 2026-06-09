@@ -1,8 +1,17 @@
-import { test, expect, describe, beforeEach, afterEach, spyOn } from "bun:test";
+import { test, expect, describe, beforeEach, afterEach, mock, spyOn } from "bun:test";
 import { createHmac, randomBytes } from "node:crypto";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
+
+const mockIsAgent = mock();
+mock.module("../../mode.ts", () => ({
+  isAgent: (...args: unknown[]) => mockIsAgent(...args),
+  isHuman: (...args: unknown[]) => !mockIsAgent(...args),
+  setMode: () => {},
+  getMode: () => "human",
+}));
+
 import { CliError, ERROR_CODE } from "../../lib/errors.ts";
 import { useCaptureLog } from "../../test/lib/stubs.ts";
 import {
@@ -127,10 +136,12 @@ describe("webhooks verify command", () => {
   let tempDir: string;
 
   beforeEach(async () => {
+    mockIsAgent.mockReturnValue(false);
     tempDir = await mkdtemp(join(tmpdir(), "clerk-verify-test-"));
   });
 
   afterEach(async () => {
+    mockIsAgent.mockReset();
     await rm(tempDir, { recursive: true, force: true });
   });
 
@@ -191,6 +202,27 @@ describe("webhooks verify command", () => {
     await expect(
       webhooksVerify({ ...explicitFlags(), payload: `@${payloadPath}` }),
     ).rejects.toThrow("Signature verification failed");
+  });
+
+  test("signature mismatch carries invalid_webhook_signature for agent discrimination", async () => {
+    const payloadPath = await writeTempFile("body.json", PAYLOAD + "tampered");
+
+    await expect(
+      webhooksVerify({ ...explicitFlags(), payload: `@${payloadPath}` }),
+    ).rejects.toMatchObject({ code: ERROR_CODE.INVALID_WEBHOOK_SIGNATURE });
+  });
+
+  test.each([
+    { label: "agent mode", json: undefined, agent: true },
+    { label: "--json in a human TTY", json: true, agent: false },
+  ])("success in $label emits {valid: true} on stdout", async ({ json, agent }) => {
+    mockIsAgent.mockReturnValue(agent);
+    const payloadPath = await writeTempFile("body.json", PAYLOAD);
+
+    await webhooksVerify({ ...explicitFlags(), json, payload: `@${payloadPath}` });
+
+    expect(JSON.parse(captured.out)).toEqual({ valid: true });
+    expect(captured.err).toBe("");
   });
 
   test("mismatch on a stale timestamp includes a humanized skew hint", async () => {

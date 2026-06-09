@@ -61,6 +61,8 @@ export const ERROR_CODE = {
   WEBHOOK_MESSAGE_NOT_FOUND: "webhook_message_not_found",
   /** Event type is not in the instance's event-type catalog. */
   UNKNOWN_EVENT_TYPE: "unknown_event_type",
+  /** Offline webhook signature verification found no matching entry. */
+  INVALID_WEBHOOK_SIGNATURE: "invalid_webhook_signature",
 } as const;
 
 export type ErrorCode = (typeof ERROR_CODE)[keyof typeof ERROR_CODE];

@@ -208,6 +208,8 @@ clerk webhooks open
 
 Verifies a Svix webhook signature **locally**: HMAC-SHA256 over `{id}.{timestamp}.{body}` with the base64-decoded `whsec_` suffix, constant-time compare, any-match across space-separated `v1,<sig>` header entries (rotation grace windows produce multiple entries). No network calls, no auth gate (`--app`/`--instance` are ignored). Exit 0 = signature matched; exit 1 = mismatch (with a humanized timestamp-skew hint when the timestamp is >5 minutes off); exit 2 = bad inputs.
 
+Agent/`--json` mode: success prints `{ "valid": true }` on stdout; a mismatch exits 1 with error code `invalid_webhook_signature` in the structured stderr error.
+
 ```sh
 clerk webhooks verify --secret whsec_... (--delivery @event.json | --payload @body.json --id msg_... --timestamp <unix_seconds> --signature v1,...)
 ```
