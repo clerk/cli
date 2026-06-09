@@ -48,6 +48,7 @@ import { deploy } from "./commands/deploy/index.ts";
 import { deployStatus } from "./commands/deploy/status-command.ts";
 import { orgsEnable, orgsDisable } from "./commands/orgs/index.ts";
 import { getAuthToken } from "./lib/plapi.ts";
+import { webhooks as webhooksHandlers } from "./commands/webhooks/index.ts";
 import { billingEnable, billingDisable } from "./commands/billing/index.ts";
 import { registerExtras } from "@clerk/cli-extras";
 
@@ -489,6 +490,25 @@ export function createProgram() {
     if (actionCommand.name() === "verify") return; // pure offline HMAC, no auth gate
     await getAuthToken();
   });
+
+  webhooks
+    .command("list")
+    .description("List webhook endpoints for the instance")
+    .option("--limit <number>", "Maximum endpoints to return (1-250, default 100)", (value) =>
+      parseIntegerOption(value, "--limit", { min: 1, max: 250 }),
+    )
+    .option("--iterator <cursor>", "Pagination cursor from the previous response")
+    .setExamples([
+      { command: "clerk webhooks list", description: "List webhook endpoints" },
+      { command: "clerk webhooks list --limit 10", description: "List the first 10 endpoints" },
+      {
+        command: "clerk webhooks list --iterator iter_abc",
+        description: "Fetch the next page using a previous response's cursor",
+      },
+    ])
+    .action((_opts, cmd) =>
+      webhooksHandlers.list(cmd.optsWithGlobals() as Parameters<typeof webhooksHandlers.list>[0]),
+    );
 
   const env = program
     .command("env")
