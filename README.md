@@ -41,6 +41,7 @@ Commands:
   open                                       Open Clerk resources in your browser
   apps                                       Manage your Clerk applications
   users       [options]                      Manage Clerk users
+  webhooks    [options]                      Manage webhook endpoints and deliveries
   env                                        Manage environment variables
   config                                     Manage instance configuration
   enable                                     Enable Clerk features on the linked instance

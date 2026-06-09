@@ -120,6 +120,14 @@ describe("webhooks update", () => {
     expect(captured.err).toBe("");
   });
 
+  test("outputs the updated endpoint resource in agent mode without --json", async () => {
+    mockIsAgent.mockReturnValue(true);
+
+    await webhooksUpdate({ endpointId: "ep_1", description: "Updated" });
+
+    expect(JSON.parse(captured.out)).toEqual(updatedEndpoint);
+  });
+
   test("maps a PLAPI 404 to webhook_endpoint_not_found", async () => {
     mockUpdateWebhookEndpoint.mockRejectedValue(new PlapiError(404, "{}"));
 

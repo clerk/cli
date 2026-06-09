@@ -108,6 +108,17 @@ describe("webhooks create", () => {
     expect(captured.err).toBe("");
   });
 
+  test("emits the same flat JSON in agent mode without --json", async () => {
+    mockIsAgent.mockReturnValue(true);
+
+    await webhooksCreate({ url: "https://example.com/webhooks" });
+
+    expect(JSON.parse(captured.out)).toEqual({
+      ...createdEndpoint,
+      signing_secret: "whsec_new123",
+    });
+  });
+
   test("prints details and the unmasked secret in human mode", async () => {
     await webhooksCreate({ url: "https://example.com/webhooks" });
 
