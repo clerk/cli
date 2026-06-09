@@ -80,6 +80,7 @@ describe("webhooks delete", () => {
       code: ERROR_CODE.USAGE_ERROR,
     });
     expect(mockDeleteWebhookEndpoint).not.toHaveBeenCalled();
+    expect(mockResolveAppContext).not.toHaveBeenCalled();
   });
 
   test("agent mode with --yes deletes without prompting", async () => {

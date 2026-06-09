@@ -120,6 +120,7 @@ describe("webhooks secret", () => {
       code: ERROR_CODE.USAGE_ERROR,
     });
     expect(mockRotateWebhookEndpointSecret).not.toHaveBeenCalled();
+    expect(mockResolveAppContext).not.toHaveBeenCalled();
   });
 
   test("maps a PLAPI 404 to webhook_endpoint_not_found", async () => {
