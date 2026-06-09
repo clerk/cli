@@ -321,6 +321,39 @@ export function createProgram(): Program {
       }),
     );
 : add 'webhooks update' command)
+
+  webhooks
+    .command("create")
+    .description("Create a webhook endpoint and print its signing secret")
+    .option("--url <url>", "Destination URL (required)")
+    .option(
+      "--events <types>",
+      "Comma-separated event types to filter on (e.g. user.created,user.deleted)",
+    )
+    .option("--description <text>", "Endpoint description")
+    .option("--channels <channels>", "Comma-separated channels")
+    .option("--disabled", "Create the endpoint in a disabled state")
+    .setExamples([
+      {
+        command: "clerk webhooks create --url https://example.com/api/webhooks",
+        description: "Create an endpoint receiving all events",
+      },
+      {
+        command:
+          "clerk webhooks create --url https://example.com/api/webhooks --events user.created,user.deleted",
+        description: "Create an endpoint filtered to specific events",
+      },
+      {
+        command: "clerk webhooks create --url https://example.com/api/webhooks --disabled",
+        description: "Create the endpoint disabled",
+      },
+    ])
+    .action((_opts, cmd) =>
+      webhooksHandlers.create(
+        cmd.optsWithGlobals() as Parameters<typeof webhooksHandlers.create>[0],
+      ),
+    );
+: add 'webhooks create' command)
   return program;
 }
 
