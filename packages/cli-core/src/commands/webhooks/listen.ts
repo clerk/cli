@@ -145,7 +145,7 @@ export async function webhooksListen(options: WebhooksListenOptions = {}): Promi
   process.on("SIGINT", () => {
     void (async () => {
       client?.stop();
-      await Promise.allSettled([...inFlight]);
+      await Promise.allSettled(inFlight);
       process.exit(EXIT_CODE.SIGINT);
     })();
   });
