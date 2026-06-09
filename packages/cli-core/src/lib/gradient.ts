@@ -56,6 +56,10 @@ export function shineText(text: string, options: ShineOptions = {}): string {
   let opened = false;
   chars.forEach((ch, i) => {
     if (ch === " ") {
+      if (opened) {
+        out += "\x1b[39m";
+        opened = false;
+      }
       out += ch;
       return;
     }

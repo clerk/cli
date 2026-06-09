@@ -113,13 +113,13 @@ export async function withGutter<T>(
   intro(title);
   try {
     const result = await fn(controls);
-    outro(nextSteps);
+    await outro(nextSteps);
     return result;
   } catch (error) {
     if (error instanceof UserAbortError || isPromptExitError(error)) {
       pausedOutro();
     } else {
-      outro("Failed");
+      await outro("Failed");
     }
     throw error;
   }
