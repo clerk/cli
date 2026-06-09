@@ -1,6 +1,7 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
 import { CliError, ERROR_CODE, throwUsageError } from "../../lib/errors.ts";
 import { log } from "../../lib/log.ts";
+import { shouldOutputJson } from "./shared.ts";
 
 export interface WebhooksVerifyOptions {
   secret?: string;
@@ -179,8 +180,12 @@ export async function webhooksVerify(options: WebhooksVerifyOptions = {}): Promi
     if (Math.abs(deltaSeconds) > SKEW_HINT_THRESHOLD_SECONDS) {
       message += ` Note: the timestamp is ${humanizeSkew(deltaSeconds)} — make sure it is the raw svix-timestamp header from the same delivery as the signature.`;
     }
-    throw new CliError(message);
+    throw new CliError(message, { code: ERROR_CODE.INVALID_WEBHOOK_SIGNATURE });
   }
 
-  log.success("Signature verified.");
+  if (shouldOutputJson(options)) {
+    log.data(JSON.stringify({ valid: true }));
+  } else {
+    log.success("Signature verified.");
+  }
 }
