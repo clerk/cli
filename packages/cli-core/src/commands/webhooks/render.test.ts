@@ -107,7 +107,7 @@ describe("human rendering", () => {
     renderArrival("user.created", "msg_1");
     renderForwardResult(outcome({ status: 200 }), "POST", "/api/webhooks");
 
-    const plain = captured.err.replace(/\x1b\[[0-9;]*m/g, "");
+    const plain = Bun.stripANSI(captured.err);
     expect(plain).toMatch(/\d{2}:\d{2}:\d{2} --> user\.created msg_1\n/);
     expect(plain).toMatch(/\d{2}:\d{2}:\d{2} <-- 200 POST \/api\/webhooks 12ms\n/);
   });

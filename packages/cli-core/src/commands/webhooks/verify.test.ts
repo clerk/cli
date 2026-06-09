@@ -222,7 +222,10 @@ describe("webhooks verify command", () => {
     {
       label: "inline --payload (not @file or -)",
       options: {
-        ...{ secret: SECRET, id: ID, timestamp: TIMESTAMP, signature: VALID_SIGNATURE },
+        secret: SECRET,
+        id: ID,
+        timestamp: TIMESTAMP,
+        signature: VALID_SIGNATURE,
         payload: "{}",
       },
     },

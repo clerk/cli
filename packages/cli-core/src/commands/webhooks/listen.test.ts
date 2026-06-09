@@ -13,7 +13,8 @@ interface FakeClientOptions {
   onReconnect: () => void;
 }
 
-let lastClient: FakeRelayClient | undefined;
+const relayClients: FakeRelayClient[] = [];
+const lastClient = () => relayClients.at(-1);
 
 class FakeRelayClient {
   token: string;
@@ -22,7 +23,7 @@ class FakeRelayClient {
 
   constructor(readonly options: FakeClientOptions) {
     this.token = options.token;
-    lastClient = this;
+    relayClients.push(this);
   }
 
   start(): Promise<void> {
@@ -121,7 +122,7 @@ describe("webhooks listen", () => {
   beforeEach(() => {
     savedSigintListeners = process.listeners("SIGINT") as NodeJS.SignalsListener[];
     mockIsAgent.mockReturnValue(false);
-    lastClient = undefined;
+    relayClients.length = 0;
     mockResolveAppContext.mockResolvedValue({
       appId: "app_1",
       appLabel: "My App",
@@ -165,8 +166,12 @@ describe("webhooks listen", () => {
 
     await startListen({}, captured);
 
-    const persistedToken = (mockSetRelayEntry.mock.calls[0]?.[1] as { token: string }).token;
-    expect(mockSetRelayEntry.mock.calls[0]?.[0]).toBe("ins_1");
+    const [firstInstanceId, firstEntry] = mockSetRelayEntry.mock.calls[0] as [
+      string,
+      { token: string },
+    ];
+    const persistedToken = firstEntry.token;
+    expect(firstInstanceId).toBe("ins_1");
     expect(persistedToken).toMatch(/^[0-9A-Za-z]{10}$/);
 
     expect(mockCreateWebhookEndpoint).toHaveBeenCalledWith("app_1", "ins_1", {
@@ -225,7 +230,7 @@ describe("webhooks listen", () => {
     await startListen({}, captured);
 
     expect(process.listenerCount("SIGINT")).toBe(1);
-    expect(lastClient?.started).toBe(true);
+    expect(lastClient()?.started).toBe(true);
   });
 
   test("delivery without --forward-to replies a synthetic 200 and emits forward_status null", async () => {
@@ -235,7 +240,7 @@ describe("webhooks listen", () => {
     captured.clear();
 
     const replies: string[] = [];
-    lastClient!.options.onEvent(signedEvent('{"type":"user.created"}'), (frame) =>
+    lastClient()!.options.onEvent(signedEvent('{"type":"user.created"}'), (frame) =>
       replies.push(frame),
     );
     await new Promise((resolve) => setTimeout(resolve, 0));
@@ -273,7 +278,7 @@ describe("webhooks listen", () => {
     captured.clear();
 
     const replies: string[] = [];
-    lastClient!.options.onEvent(signedEvent('{"type":"user.created"}'), (frame) =>
+    lastClient()!.options.onEvent(signedEvent('{"type":"user.created"}'), (frame) =>
       replies.push(frame),
     );
     for (let i = 0; i < 20 && replies.length === 0; i++) {
@@ -301,7 +306,7 @@ describe("webhooks listen", () => {
 
     const event = signedEvent('{"type":"user.created"}');
     event.headers["svix-signature"] = "v1,Zm9yZ2VkIHNpZ25hdHVyZQ==";
-    lastClient!.options.onEvent(event, () => {});
+    lastClient()!.options.onEvent(event, () => {});
     await new Promise((resolve) => setTimeout(resolve, 0));
 
     expect(captured.err).toContain("signature verification failed for msg_1");
@@ -316,7 +321,7 @@ describe("webhooks listen", () => {
 
     const event = signedEvent('{"type":"user.created"}');
     event.headers["svix-signature"] = "v1,Zm9yZ2VkIHNpZ25hdHVyZQ==";
-    lastClient!.options.onEvent(event, () => {});
+    lastClient()!.options.onEvent(event, () => {});
     await new Promise((resolve) => setTimeout(resolve, 0));
 
     expect(captured.err).toBe("");
@@ -325,7 +330,7 @@ describe("webhooks listen", () => {
   test("token rotation persists the new token and re-points the endpoint URL", async () => {
     await startListen({}, captured);
 
-    await lastClient!.options.onTokenRotated("Zz98Yy76Xx");
+    await lastClient()!.options.onTokenRotated("Zz98Yy76Xx");
 
     expect(mockSetRelayEntry).toHaveBeenLastCalledWith("ins_1", {
       token: "Zz98Yy76Xx",
