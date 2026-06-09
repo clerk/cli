@@ -208,6 +208,27 @@ export function createProgram(): Program {
       }),
     );
 : add 'webhooks get' command)
+
+  webhooks
+    .command("event-types")
+    .description("List the instance's webhook event-type catalog")
+    .option("--limit <number>", "Maximum event types to return (1-250, default 100)", (value) =>
+      parseIntegerOption(value, "--limit", { min: 1, max: 250 }),
+    )
+    .option("--iterator <cursor>", "Pagination cursor from the previous response")
+    .setExamples([
+      { command: "clerk webhooks event-types", description: "List available event types" },
+      {
+        command: "clerk webhooks event-types --json",
+        description: "Emit the catalog as JSON",
+      },
+    ])
+    .action((_opts, cmd) =>
+      webhooksHandlers.eventTypes(
+        cmd.optsWithGlobals() as Parameters<typeof webhooksHandlers.eventTypes>[0],
+      ),
+    );
+: add 'webhooks event-types' command)
   return program;
 }
 
