@@ -170,7 +170,6 @@ export async function login(options: LoginOptions = {}): Promise<UserInfo> {
     return userInfo;
   }
 
-
   const existingSession = await withSpinner("Checking session...", () => getExistingSession());
 
   if (existingSession && !isHuman()) {
