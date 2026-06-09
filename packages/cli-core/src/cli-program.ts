@@ -581,6 +581,28 @@ export function createProgram() {
       }),
     );
 
+  webhooks
+    .command("delete")
+    .description("Delete a webhook endpoint")
+    .argument("<id>", "Webhook endpoint ID (ep_...)")
+    .option("--yes", "Skip the confirmation prompt (required in agent mode)")
+    .setExamples([
+      { command: "clerk webhooks delete ep_2abc123", description: "Delete with confirmation" },
+      {
+        command: "clerk webhooks delete ep_2abc123 --yes",
+        description: "Delete without prompting",
+      },
+    ])
+    .action((endpointId, _opts, cmd) =>
+      webhooksHandlers.delete({
+        ...(cmd.optsWithGlobals() as Omit<
+          Parameters<typeof webhooksHandlers.delete>[0],
+          "endpointId"
+        >),
+        endpointId,
+      }),
+    );
+
   const env = program
     .command("env")
     .description("Manage environment variables")

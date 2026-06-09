@@ -1,3 +1,4 @@
+import { webhooksDelete } from "./delete.ts";
 import { webhooksEventTypes } from "./event-types.ts";
 import { webhooksGet } from "./get.ts";
 import { webhooksList } from "./list.ts";
@@ -8,4 +9,5 @@ export const webhooks = {
   get: webhooksGet,
   eventTypes: webhooksEventTypes,
   secret: webhooksSecret,
+  delete: webhooksDelete,
 };

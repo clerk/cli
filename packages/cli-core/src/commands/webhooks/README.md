@@ -89,3 +89,17 @@ Output: human mode prints the **bare** `whsec_...` on stdout (eval-friendly: `ex
 | ------ | -------------------------------------- | -------------------------------------------- |
 | `GET`  | `/webhooks/{endpointID}/secret`        | Fetch the signing secret.                    |
 | `POST` | `/webhooks/{endpointID}/secret/rotate` | Rotate the signing secret (`--rotate` only). |
+
+## `clerk webhooks delete <id>`
+
+Hard-deletes an endpoint (Svix delete is hard; no shadow table). Prompts in human mode; agent mode requires `--yes` or fails with a usage error (exit 2). Declining the prompt exits cleanly. Success prints a stderr confirmation; stdout stays empty (the route returns `200 {}`).
+
+```sh
+clerk webhooks delete ep_2abc123 [--yes]
+```
+
+### API endpoints
+
+| Method   | Endpoint                 | Description                             |
+| -------- | ------------------------ | --------------------------------------- |
+| `DELETE` | `/webhooks/{endpointID}` | Delete the endpoint (returns `200 {}`). |
