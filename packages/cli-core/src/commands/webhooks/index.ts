@@ -3,6 +3,7 @@ import { webhooksEventTypes } from "./event-types.ts";
 import { webhooksGet } from "./get.ts";
 import { webhooksList } from "./list.ts";
 import { webhooksSecret } from "./secret.ts";
+import { webhooksUpdate } from "./update.ts";
 
 export const webhooks = {
   list: webhooksList,
@@ -10,4 +11,5 @@ export const webhooks = {
   eventTypes: webhooksEventTypes,
   secret: webhooksSecret,
   delete: webhooksDelete,
+  update: webhooksUpdate,
 };
