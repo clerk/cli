@@ -138,3 +138,19 @@ Partial failure: if `POST /webhooks` succeeds but the secret fetch fails, the co
 | ------ | ------------------------------- | ------------------------------------------------- |
 | `POST` | `/webhooks`                     | Create the endpoint (lazily provisions Svix app). |
 | `GET`  | `/webhooks/{endpointID}/secret` | Fetch the new endpoint's signing secret.          |
+
+## `clerk webhooks messages`
+
+Lists recent deliveries (msg IDs, event type, status, full payload) for an endpoint — the discovery feed for `replay <msg_id>`. `--endpoint` defaults to the instance's persisted relay endpoint; without either, it's a usage error.
+
+```sh
+clerk webhooks messages [--endpoint <ep_id>] [--status success|pending|fail|sending] [--limit N] [--iterator C]
+```
+
+Human mode prints an `ID / EVENT TYPE / STATUS / CREATED` table on stderr (payloads only in JSON mode). JSON mode prints the full `{ data, cursor }` response, payloads included.
+
+### API endpoints
+
+| Method | Endpoint                          | Description                                            |
+| ------ | --------------------------------- | ------------------------------------------------------ |
+| `GET`  | `/webhooks/{endpointID}/messages` | List attempted deliveries (one page, optional status). |
