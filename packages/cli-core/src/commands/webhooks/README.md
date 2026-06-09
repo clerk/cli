@@ -119,3 +119,22 @@ Human mode prints the updated endpoint's details on stderr. JSON mode prints the
 | Method  | Endpoint                 | Description            |
 | ------- | ------------------------ | ---------------------- |
 | `PATCH` | `/webhooks/{endpointID}` | Patch endpoint fields. |
+
+## `clerk webhooks create`
+
+Creates an endpoint (always `version: 1`), then fetches and prints its signing secret. The backend lazily provisions the Svix app on the first create. Two network calls, client-orchestrated.
+
+```sh
+clerk webhooks create --url <https://...> [--events user.created,...] [--description <text>] [--channels a,b] [--disabled]
+```
+
+JSON mode emits the endpoint resource FLAT with one extra field: `signing_secret`. Human mode prints the details plus the unmasked secret on stderr.
+
+Partial failure: if `POST /webhooks` succeeds but the secret fetch fails, the command exits 1 with `Endpoint created (id: ep_...) but the signing secret could not be fetched. Run 'clerk webhooks secret ep_...' to retrieve it.` — no silent orphan.
+
+### API endpoints
+
+| Method | Endpoint                        | Description                                       |
+| ------ | ------------------------------- | ------------------------------------------------- |
+| `POST` | `/webhooks`                     | Create the endpoint (lazily provisions Svix app). |
+| `GET`  | `/webhooks/{endpointID}/secret` | Fetch the new endpoint's signing secret.          |
