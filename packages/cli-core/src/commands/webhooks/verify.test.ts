@@ -213,13 +213,13 @@ describe("webhooks verify command", () => {
   });
 
   test.each([
-    { label: "agent mode", json: undefined, agent: true },
-    { label: "--json in a human TTY", json: true, agent: false },
-  ])("success in $label emits {valid: true} on stdout", async ({ json, agent }) => {
+    { label: "agent mode without --json", flags: {}, agent: true },
+    { label: "--json in a human TTY", flags: { json: true }, agent: false },
+  ])("success in $label emits {valid: true} on stdout", async ({ flags, agent }) => {
     mockIsAgent.mockReturnValue(agent);
     const payloadPath = await writeTempFile("body.json", PAYLOAD);
 
-    await webhooksVerify({ ...explicitFlags(), json, payload: `@${payloadPath}` });
+    await webhooksVerify({ ...explicitFlags(), ...flags, payload: `@${payloadPath}` });
 
     expect(JSON.parse(captured.out)).toEqual({ valid: true });
     expect(captured.err).toBe("");
