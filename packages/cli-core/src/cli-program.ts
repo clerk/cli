@@ -808,6 +808,39 @@ export function createProgram() {
       ),
     );
 
+  webhooks
+    .command("listen")
+    .description("Stream instance events to your terminal and forward them to a local handler")
+    .option("--forward-to <url>", "Local URL to POST deliveries to (omit to just print events)")
+    .option(
+      "--events <types>",
+      "Comma-separated event types to filter on (PATCHes the shared relay endpoint's filter)",
+    )
+    .option("--skip-verify", "Skip HMAC verification of incoming deliveries")
+    .option(
+      "--headers <pairs>",
+      "Extra headers for the forwarded request, comma-separated k:v pairs (svix-* cannot be overridden)",
+    )
+    .setExamples([
+      {
+        command: "clerk webhooks listen --forward-to http://localhost:3000/api/webhooks",
+        description: "Forward instance events to a local handler",
+      },
+      {
+        command: "clerk webhooks listen --events user.created,user.deleted",
+        description: "Only receive specific event types",
+      },
+      {
+        command: "clerk webhooks listen --json",
+        description: "Emit NDJSON event lines (pipe into a file for `webhooks verify --delivery`)",
+      },
+    ])
+    .action((_opts, cmd) =>
+      webhooksHandlers.listen(
+        cmd.optsWithGlobals() as Parameters<typeof webhooksHandlers.listen>[0],
+      ),
+    );
+
   const env = program
     .command("env")
     .description("Manage environment variables")
