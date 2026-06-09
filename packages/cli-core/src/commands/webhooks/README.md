@@ -103,3 +103,19 @@ clerk webhooks delete ep_2abc123 [--yes]
 | Method   | Endpoint                 | Description                             |
 | -------- | ------------------------ | --------------------------------------- |
 | `DELETE` | `/webhooks/{endpointID}` | Delete the endpoint (returns `200 {}`). |
+
+## `clerk webhooks update <id>`
+
+Patches endpoint fields. Only the flags you pass are sent; everything else is omitted from the PATCH body. `--enable` maps to `{disabled: false}`, `--disable` to `{disabled: true}` (mutually exclusive; `--disabled` exists only on `create`). Passing no update flags is a usage error.
+
+```sh
+clerk webhooks update ep_2abc123 [--url ...] [--events a,b] [--description <text>] [--channels a,b] [--enable | --disable]
+```
+
+Human mode prints the updated endpoint's details on stderr. JSON mode prints the updated endpoint resource on stdout.
+
+### API endpoints
+
+| Method  | Endpoint                 | Description            |
+| ------- | ------------------------ | ---------------------- |
+| `PATCH` | `/webhooks/{endpointID}` | Patch endpoint fields. |

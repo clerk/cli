@@ -1,3 +1,4 @@
+import { cyan, dim } from "../../lib/color.ts";
 import { getRelayEntry } from "../../lib/config.ts";
 import {
   CliError,
@@ -7,7 +8,7 @@ import {
   throwUserAbort,
 } from "../../lib/errors.ts";
 import { log } from "../../lib/log.ts";
-import type { WebhookCursor } from "../../lib/plapi.ts";
+import type { WebhookCursor, WebhookEndpoint } from "../../lib/plapi.ts";
 import { isAgent } from "../../mode.ts";
 
 export interface WebhooksGlobalOptions {
@@ -96,6 +97,24 @@ export async function resolveEndpointOrRelay(
   return throwUsageError(
     "No relay endpoint found for this instance. Run 'clerk webhooks listen' first, or pass --endpoint <ep_id>.",
   );
+}
+
+/** Labeled key/value detail rows for one endpoint, on stderr. */
+export function formatEndpointDetails(endpoint: WebhookEndpoint): void {
+  const rows: Array<[string, string]> = [
+    ["ID", cyan(endpoint.id)],
+    ["URL", endpoint.url],
+    ["Status", endpoint.disabled ? "disabled" : "enabled"],
+    ["Description", endpoint.description || dim("(none)")],
+    ["Events", endpoint.filter_types?.length ? endpoint.filter_types.join(", ") : "all"],
+    ["Channels", endpoint.channels?.length ? endpoint.channels.join(", ") : dim("(none)")],
+    ["Created", endpoint.created_at],
+    ["Updated", endpoint.updated_at],
+  ];
+  const labelWidth = Math.max(...rows.map(([label]) => label.length)) + 2;
+  for (const [label, value] of rows) {
+    log.info(`${dim(`${label}:`.padEnd(labelWidth + 1))}${value}`);
+  }
 }
 
 /** Split a comma-separated flag value into trimmed, non-empty entries. */

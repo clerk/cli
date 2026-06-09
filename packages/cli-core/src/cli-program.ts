@@ -283,6 +283,44 @@ export function createProgram(): Program {
       }),
     );
 : add 'webhooks delete' command)
+
+  webhooks
+    .command("update")
+    .description("Update a webhook endpoint's configuration")
+    .argument("<id>", "Webhook endpoint ID (ep_...)")
+    .option("--url <url>", "New destination URL")
+    .option(
+      "--events <types>",
+      "Comma-separated event types to filter on (e.g. user.created,user.deleted)",
+    )
+    .option("--description <text>", "New description")
+    .option("--channels <channels>", "Comma-separated channels")
+    .option("--enable", "Re-enable a disabled endpoint")
+    .option("--disable", "Disable the endpoint")
+    .setExamples([
+      {
+        command: "clerk webhooks update ep_2abc123 --url https://example.com/api/webhooks",
+        description: "Point the endpoint at a new URL",
+      },
+      {
+        command: "clerk webhooks update ep_2abc123 --events user.created,user.deleted",
+        description: "Replace the event-type filter",
+      },
+      {
+        command: "clerk webhooks update ep_2abc123 --enable",
+        description: "Re-enable an endpoint",
+      },
+    ])
+    .action((endpointId, _opts, cmd) =>
+      webhooksHandlers.update({
+        ...(cmd.optsWithGlobals() as Omit<
+          Parameters<typeof webhooksHandlers.update>[0],
+          "endpointId"
+        >),
+        endpointId,
+      }),
+    );
+: add 'webhooks update' command)
   return program;
 }
 
