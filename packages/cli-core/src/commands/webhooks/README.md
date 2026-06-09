@@ -174,3 +174,18 @@ clerk webhooks replay [<msg_id>] [--endpoint <ep_id>] [--since <ISO> [--until <I
 | ------ | ---------------------------------------------------- | ------------------------------------------------------------ |
 | `POST` | `/webhooks/{endpointID}/messages/{messageID}/resend` | Resend one delivery (`<msg_id>` mode).                       |
 | `POST` | `/webhooks/{endpointID}/recover`                     | Recover a window: body `{ since, until? }` (`--since` mode). |
+
+## `clerk webhooks trigger <event_type>`
+
+Sends an example event of the given type. Because `send_example` returns `200 {}` asynchronously, the CLI first validates the type against the event-type catalog (paging through it) and fails fast with error code `unknown_event_type` — otherwise an invalid type would exit 0 and deliver nothing. `--endpoint` defaults to the relay endpoint.
+
+```sh
+clerk webhooks trigger user.created [--endpoint <ep_id>]
+```
+
+### API endpoints
+
+| Method | Endpoint                              | Description                                      |
+| ------ | ------------------------------------- | ------------------------------------------------ |
+| `GET`  | `/webhooks/event_types`               | Validate the event type against the catalog.     |
+| `POST` | `/webhooks/{endpointID}/send_example` | Send the example event: body `{ "event_type" }`. |
