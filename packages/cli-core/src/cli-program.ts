@@ -354,6 +354,42 @@ export function createProgram(): Program {
       ),
     );
 : add 'webhooks create' command)
+
+  webhooks
+    .command("messages")
+    .description("List recent deliveries for an endpoint (the feed for `webhooks replay`)")
+    .option(
+      "--endpoint <ep_id>",
+      "Endpoint to inspect (defaults to this instance's relay endpoint from `webhooks listen`)",
+    )
+    .addOption(
+      createOption("--status <status>", "Filter by delivery status").choices([
+        "success",
+        "pending",
+        "fail",
+        "sending",
+      ]),
+    )
+    .option("--limit <number>", "Maximum deliveries to return (1-250, default 100)", (value) =>
+      parseIntegerOption(value, "--limit", { min: 1, max: 250 }),
+    )
+    .option("--iterator <cursor>", "Pagination cursor from the previous response")
+    .setExamples([
+      {
+        command: "clerk webhooks messages --endpoint ep_2abc123",
+        description: "List recent deliveries for an endpoint",
+      },
+      {
+        command: "clerk webhooks messages --status fail",
+        description: "List failed deliveries on the relay endpoint",
+      },
+    ])
+    .action((_opts, cmd) =>
+      webhooksHandlers.messages(
+        cmd.optsWithGlobals() as Parameters<typeof webhooksHandlers.messages>[0],
+      ),
+    );
+: add 'webhooks messages' command)
   return program;
 }
 
