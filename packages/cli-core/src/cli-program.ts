@@ -551,6 +551,36 @@ export function createProgram() {
       ),
     );
 
+  webhooks
+    .command("secret")
+    .description("Print a webhook endpoint's signing secret")
+    .argument("<id>", "Webhook endpoint ID (ep_...)")
+    .option(
+      "--rotate",
+      "Rotate the signing secret first. The old key keeps verifying for 24h (Svix dual-signing grace).",
+    )
+    .option("--yes", "Skip the rotation confirmation prompt (required with --rotate in agent mode)")
+    .setExamples([
+      { command: "clerk webhooks secret ep_2abc123", description: "Print the signing secret" },
+      {
+        command: "export CLERK_WEBHOOK_SIGNING_SECRET=$(clerk webhooks secret ep_2abc123)",
+        description: "Export the secret into the environment",
+      },
+      {
+        command: "clerk webhooks secret ep_2abc123 --rotate",
+        description: "Rotate, then print the new secret",
+      },
+    ])
+    .action((endpointId, _opts, cmd) =>
+      webhooksHandlers.secret({
+        ...(cmd.optsWithGlobals() as Omit<
+          Parameters<typeof webhooksHandlers.secret>[0],
+          "endpointId"
+        >),
+        endpointId,
+      }),
+    );
+
   const env = program
     .command("env")
     .description("Manage environment variables")
