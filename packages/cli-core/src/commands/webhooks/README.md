@@ -42,3 +42,19 @@ Human mode prints an `ID / URL / STATUS / EVENTS` table on stderr. JSON mode pri
 | Method | Endpoint    | Description                        |
 | ------ | ----------- | ---------------------------------- |
 | `GET`  | `/webhooks` | List webhook endpoints (one page). |
+
+## `clerk webhooks get <id>`
+
+Prints one endpoint's configuration. A PLAPI 404 maps to error code `webhook_endpoint_not_found`.
+
+```sh
+clerk webhooks get ep_2abc123
+```
+
+Human mode prints labeled detail rows on stderr. JSON mode prints the bare endpoint resource on stdout.
+
+### API endpoints
+
+| Method | Endpoint                 | Description         |
+| ------ | ------------------------ | ------------------- |
+| `GET`  | `/webhooks/{endpointID}` | Fetch one endpoint. |

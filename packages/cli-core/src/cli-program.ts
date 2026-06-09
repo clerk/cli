@@ -186,6 +186,28 @@ export function createProgram(): Program {
     .action((_opts, cmd) =>
       webhooksHandlers.list(cmd.optsWithGlobals() as Parameters<typeof webhooksHandlers.list>[0]),
     );
+
+  webhooks
+    .command("get")
+    .description("Show one webhook endpoint's configuration")
+    .argument("<id>", "Webhook endpoint ID (ep_...)")
+    .setExamples([
+      { command: "clerk webhooks get ep_2abc123", description: "Show an endpoint's config" },
+      {
+        command: "clerk webhooks get ep_2abc123 --json",
+        description: "Emit the endpoint resource as JSON",
+      },
+    ])
+    .action((endpointId, _opts, cmd) =>
+      webhooksHandlers.get({
+        ...(cmd.optsWithGlobals() as Omit<
+          Parameters<typeof webhooksHandlers.get>[0],
+          "endpointId"
+        >),
+        endpointId,
+      }),
+    );
+: add 'webhooks get' command)
   return program;
 }
 
