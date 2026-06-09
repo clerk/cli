@@ -453,6 +453,18 @@ export function createProgram(): Program {
       }),
     );
 : add 'webhooks trigger' command)
+
+  webhooks
+    .command("open")
+    .description("Open the instance's webhook portal in your browser")
+    .setExamples([
+      { command: "clerk webhooks open", description: "Open the webhook portal" },
+      { command: "clerk webhooks open --json", description: "Print the portal URL as JSON" },
+    ])
+    .action((_opts, cmd) =>
+      webhooksHandlers.open(cmd.optsWithGlobals() as Parameters<typeof webhooksHandlers.open>[0]),
+    );
+: add 'webhooks open' command)
   return program;
 }
 

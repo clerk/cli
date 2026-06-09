@@ -189,3 +189,17 @@ clerk webhooks trigger user.created [--endpoint <ep_id>]
 | ------ | ------------------------------------- | ------------------------------------------------ |
 | `GET`  | `/webhooks/event_types`               | Validate the event type against the catalog.     |
 | `POST` | `/webhooks/{endpointID}/send_example` | Send the example event: body `{ "event_type" }`. |
+
+## `clerk webhooks open`
+
+Fetches a single-use Svix portal URL and opens it in the browser via `openBrowser()` (which never throws — on failure the URL is printed as a fallback). JSON/agent mode prints `{ "url": "..." }` and does not launch a browser. Backed by the Svix `DashboardAccess` API in v0.64.1; switch to `AppPortalAccess` on SDK upgrade.
+
+```sh
+clerk webhooks open
+```
+
+### API endpoints
+
+| Method | Endpoint        | Description                               |
+| ------ | --------------- | ----------------------------------------- |
+| `POST` | `/webhooks/url` | Fetch the portal URL (request body `{}`). |
