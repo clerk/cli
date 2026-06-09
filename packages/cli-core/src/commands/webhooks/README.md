@@ -58,3 +58,17 @@ Human mode prints labeled detail rows on stderr. JSON mode prints the bare endpo
 | Method | Endpoint                 | Description         |
 | ------ | ------------------------ | ------------------- |
 | `GET`  | `/webhooks/{endpointID}` | Fetch one endpoint. |
+
+## `clerk webhooks event-types`
+
+Lists the Svix event-type catalog for the instance (`--limit`/`--iterator` as in `list`). Archived types are marked in human output.
+
+```sh
+clerk webhooks event-types [--limit N] [--iterator C]
+```
+
+### API endpoints
+
+| Method | Endpoint                | Description                             |
+| ------ | ----------------------- | --------------------------------------- |
+| `GET`  | `/webhooks/event_types` | List the event-type catalog (one page). |
