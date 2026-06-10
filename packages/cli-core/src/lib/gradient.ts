@@ -116,13 +116,14 @@ interface AnimateHeaderOptions {
   fallback: (s: string) => string;
   frames?: number;
   intervalMs?: number;
+  write?: (s: string) => void;
 }
 
 export async function animateHeader(options: AnimateHeaderOptions): Promise<void> {
-  const { prefix, label, fallback, frames = 18, intervalMs = 25 } = options;
+  const { prefix, label, fallback, frames = 18, intervalMs = 25, write = log.ui } = options;
 
   if (!isInteractive() || colorDisabled()) {
-    log.ui(`${prefix}${fallback(label)}\n`);
+    write(`${prefix}${fallback(label)}\n`);
     return;
   }
 
@@ -132,10 +133,10 @@ export async function animateHeader(options: AnimateHeaderOptions): Promise<void
   try {
     for (let frame = 0; frame < frames; frame++) {
       const center = -0.3 + (frame / span) * 1.6;
-      log.ui(`\r\x1b[K${prefix}${shineText(label, { center, truecolor })}`);
+      write(`\r\x1b[K${prefix}${shineText(label, { center, truecolor })}`);
       await sleep(intervalMs);
     }
-    log.ui(`\r\x1b[K${prefix}${shineText(label, { truecolor })}\n`);
+    write(`\r\x1b[K${prefix}${shineText(label, { truecolor })}\n`);
   } finally {
     showCursor();
   }

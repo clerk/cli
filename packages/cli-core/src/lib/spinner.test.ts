@@ -115,11 +115,9 @@ test("outro forwards the label to clack and pops the gutter prefix", () => {
   expect(isInsideGutter()).toBe(false);
 });
 
-test("outro with string[] renders custom Next steps block and does not call clack outro", () => {
+test("outro with string[] renders custom Next steps block and does not call clack outro", async () => {
   intro("Hello");
-  captureStderr(() => {
-    outro(["Run `clerk dev`", "Open the dashboard"]);
-  });
+  await captureStderrAsync(() => outro(["Run `clerk dev`", "Open the dashboard"]));
 
   // Custom block replaces clack's outro, so clack outro is not invoked.
   expect(outroCalls).toBe(0);

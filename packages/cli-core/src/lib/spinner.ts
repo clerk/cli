@@ -54,7 +54,12 @@ export async function outro(messageOrSteps?: string | readonly string[]) {
   popPrefix();
 
   if (Array.isArray(messageOrSteps)) {
-    await animateHeader({ prefix: `${dim(S_BAR_END)}  `, label: "Next steps", fallback: dim });
+    await animateHeader({
+      prefix: `${dim(S_BAR_END)}  `,
+      label: "Next steps",
+      fallback: dim,
+      write: writeUi,
+    });
     for (const step of messageOrSteps) {
       writeUi(`   ${cyan("→")} ${step}\n`);
     }
