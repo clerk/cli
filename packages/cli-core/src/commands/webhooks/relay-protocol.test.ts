@@ -9,10 +9,9 @@ import {
 } from "./relay-protocol.ts";
 
 describe("generateRelayToken", () => {
-  test("produces 10 base62 chars with no prefix", () => {
+  test("produces c_ + 10 base62 chars (live-relay wire format)", () => {
     const token = generateRelayToken();
-    expect(token).toMatch(/^[0-9A-Za-z]{10}$/);
-    expect(token.startsWith("c_")).toBe(false);
+    expect(token).toMatch(/^c_[0-9A-Za-z]{10}$/);
   });
 
   test("produces distinct tokens across calls", () => {
@@ -22,7 +21,7 @@ describe("generateRelayToken", () => {
 });
 
 describe("relayReceiveUrl", () => {
-  test("builds the play.svix.com URL with the raw token", () => {
+  test("builds the play.svix.com URL with the token verbatim", () => {
     expect(relayReceiveUrl("Ab12Cd34Ef")).toBe("https://play.svix.com/in/Ab12Cd34Ef/");
   });
 });

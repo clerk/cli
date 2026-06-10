@@ -23,8 +23,12 @@ const BASE62 = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
 const TOKEN_LENGTH = 10;
 // Largest multiple of 62 below 256; bytes at or above it would bias the modulo.
 const UNBIASED_BYTE_LIMIT = 248;
+// Live-relay verified (2026-06-10): play.svix.com rejects unprefixed tokens
+// ("Invalid token"), and the relay only registers an inbox when the start
+// frame carries the same c_ token. The prefix is wire format, not cosmetics.
+const TOKEN_PREFIX = "c_";
 
-/** 10 random base62 chars, raw — no `c_` prefix on the wire or in the URL. */
+/** `c_` + 10 random base62 chars — the same token goes in the start frame, the inbox URL, and config. */
 export function generateRelayToken(): string {
   let token = "";
   while (token.length < TOKEN_LENGTH) {
@@ -36,7 +40,7 @@ export function generateRelayToken(): string {
       if (token.length === TOKEN_LENGTH) break;
     }
   }
-  return token;
+  return TOKEN_PREFIX + token;
 }
 
 export function relayReceiveUrl(token: string): string {
