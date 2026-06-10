@@ -246,7 +246,7 @@ clerk webhooks listen [--forward-to <url>] [--events <list>] [--skip-verify] [--
 
 Behavior notes:
 
-- **Relay token**: 10 random base62 chars, raw on the wire (no `c_` prefix), persisted per instance in the CLI config (`relay.<instanceId>.token`). Close code 1008 = token collision → new token generated, persisted, redialed, and the endpoint URL re-pointed.
+- **Relay token**: `c_` + 10 random base62 chars — the same token goes in the start frame, the inbox URL, and the per-instance CLI config (`relay.<instanceId>.token`). Live-relay verified: `play.svix.com` rejects unprefixed tokens, and the relay only registers an inbox when the start frame carries the `c_` token. Close code 1008 = token collision → new token generated, persisted, redialed, and the endpoint URL re-pointed.
 - **Keepalive**: the relay server pings ~every 21s, but Bun's client WebSocket auto-pongs below the JS API (no ping events). After 30s of silence the client sends an active `ws.ping()` probe — writes to a dead link surface as close/error, which redials with the same token. Reconnects never change the relay URL.
 - **Per-delivery output**: human mode prints `time --> event_type msg_…` then `<-- status method path ms` via `log.ui` (bypasses the stderr throttle). Diagnostics: 401 → `clerkMiddleware` public-route hint; 400 → raw-body/`verifyWebhook()` order hint; 5xx → response body inline plus the exact `clerk webhooks replay <msg_id>` line; unreachable handler → synthetic **502** framed back to the relay.
 - **Verification**: deliveries failing HMAC are warned about and still forwarded (the mismatch means the relay secret diverged, not that the local handler should silently miss events).

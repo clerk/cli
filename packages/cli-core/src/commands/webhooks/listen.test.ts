@@ -161,7 +161,7 @@ describe("webhooks listen", () => {
     expect(mockResolveAppContext).not.toHaveBeenCalled();
   });
 
-  test("first run generates and persists a 10-char base62 token, then creates the endpoint", async () => {
+  test("first run generates and persists a c_-prefixed base62 token, then creates the endpoint", async () => {
     mockGetRelayEntry.mockResolvedValue(undefined);
 
     await startListen({}, captured);
@@ -172,7 +172,7 @@ describe("webhooks listen", () => {
     ];
     const persistedToken = firstEntry.token;
     expect(firstInstanceId).toBe("ins_1");
-    expect(persistedToken).toMatch(/^[0-9A-Za-z]{10}$/);
+    expect(persistedToken).toMatch(/^c_[0-9A-Za-z]{10}$/);
 
     expect(mockCreateWebhookEndpoint).toHaveBeenCalledWith("app_1", "ins_1", {
       url: `https://play.svix.com/in/${persistedToken}/`,
