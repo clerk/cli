@@ -195,6 +195,7 @@ async function startNewDeploy(ctx: DeployContext): Promise<void> {
     productionInstanceId: production.id,
     productionDomainId: production.active_domain.id,
     domain: productionDomain,
+    frontendApiUrl: production.active_domain.frontend_api_url,
     pending: { type: "oauth", provider: oauthProviders[0]?.provider ?? "google" },
     oauthProviders: oauthProviders.map((descriptor) => descriptor.provider),
     completedOAuthProviders,
@@ -521,6 +522,7 @@ async function runOAuthSetup(
         descriptor,
         state.domain,
         productionInstanceId,
+        state.frontendApiUrl,
       );
       if (!saved) {
         throw deployPausedError({
@@ -556,6 +558,7 @@ async function collectAndSaveOAuthCredentials(
   descriptor: OAuthProviderDescriptor,
   domain: string,
   productionInstanceId: string,
+  frontendApiUrl?: string,
 ): Promise<boolean> {
   for (const line of providerSetupIntro(descriptor)) log.info(line);
   log.blank();
@@ -567,7 +570,7 @@ async function collectAndSaveOAuthCredentials(
   }
 
   if (choice === "walkthrough") {
-    await showOAuthWalkthrough(descriptor, domain);
+    await showOAuthWalkthrough(descriptor, domain, frontendApiUrl);
     choice = await chooseOAuthCredentialAction(descriptor, { includeWalkthrough: false });
     if (choice === "skip") {
       return false;

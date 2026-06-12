@@ -10,6 +10,7 @@ export type DeployOperationState = {
   productionInstanceId?: string;
   productionDomainId?: string;
   domain: string;
+  frontendApiUrl?: string;
   pending: { type: "dns" } | { type: "oauth"; provider: string };
   oauthProviders: string[];
   completedOAuthProviders: string[];

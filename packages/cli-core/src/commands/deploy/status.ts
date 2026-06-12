@@ -217,6 +217,7 @@ export async function resolveLiveDeploySnapshot(
     productionInstanceId,
     productionDomainId: domain.id,
     domain: domain.name,
+    frontendApiUrl: domain.frontend_api_url,
     oauthProviders,
     oauthProviderDescriptors,
     completedOAuthProviders,
