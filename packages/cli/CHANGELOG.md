@@ -1,5 +1,17 @@
 # clerk
 
+## 2.0.0
+
+### Major Changes
+
+- Remove the bundled `clerk skill install` command and install the `clerk-cli` agent skill from the [`clerk/skills`](https://github.com/clerk/skills) repository during `clerk init`. ([#315](https://github.com/clerk/cli/pull/315)) by [@wyattjoh](https://github.com/wyattjoh)
+
+### Minor Changes
+
+- Refresh the visual style of prompts, lists, spinners, and intro/outro brackets to use `@clack/prompts`, and make interactive command endings reflect success, failure, or paused cancellation status. ([#305](https://github.com/clerk/cli/pull/305)) by [@wyattjoh](https://github.com/wyattjoh)
+
+- Render the "Next steps" header in a dusty mauve and sweep a white reflex highlight across it once after `clerk deploy`, `clerk link`, and `clerk auth login`, then settle on the flat color. The animation only runs on an interactive color terminal and falls back to plain styling when piped, in CI, or when `NO_COLOR` is set. ([#322](https://github.com/clerk/cli/pull/322)) by [@rafa-thayto](https://github.com/rafa-thayto)
+
 ## 1.5.0
 
 ### Minor Changes
