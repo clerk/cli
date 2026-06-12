@@ -229,48 +229,7 @@ describe("deploy", () => {
     mockGetApplicationDomainStatus.mockResolvedValue(
       domainStatus({ status: "complete", dns: true, ssl: true, mail: true }),
     );
-    mockCreateProductionInstance.mockImplementation(
-      (_appId: string, params: { domain: string }) => {
-        const hostname = params.domain;
-        return {
-          object: "instance",
-          id: "ins_prod_mock",
-          environment_type: "production" as const,
-          active_domain: {
-            object: "domain",
-            id: "dmn_prod_mock",
-            name: hostname,
-            is_satellite: false,
-            is_provider_domain: false,
-            frontend_api_url: `https://clerk.${hostname}`,
-            development_origin: "",
-            cname_targets: [
-              {
-                host: `clerk.${hostname}`,
-                value: "frontend-api.clerk.services",
-                required: true,
-              },
-              {
-                host: `accounts.${hostname}`,
-                value: "accounts.clerk.services",
-                required: true,
-              },
-              {
-                host: `clkmail.${hostname}`,
-                value: `mail.${hostname}.nam1.clerk.services`,
-                required: true,
-              },
-            ],
-            created_at: "2026-05-06T00:00:00Z",
-            updated_at: "2026-05-06T00:00:00Z",
-          },
-          publishable_key: "pk_live_test",
-          secret_key: "sk_live_test",
-          created_at: 1770000000000,
-          updated_at: 1770000000000,
-        };
-      },
-    );
+    stubCreateProductionInstance();
     mockTriggerApplicationDomainDNSCheck.mockResolvedValue(
       domainStatus({ status: "complete", dns: true, ssl: true, mail: true }),
     );
@@ -312,6 +271,56 @@ describe("deploy", () => {
 
   function runDeploy(options: Parameters<typeof deploy>[0] = {}) {
     return deploy(options);
+  }
+
+  function stubCreateProductionInstance(
+    overrides: {
+      frontendApiUrl?: string;
+      cnameTargets?: { host: string; value: string; required: boolean }[];
+    } = {},
+  ) {
+    mockCreateProductionInstance.mockImplementation(
+      (_appId: string, params: { domain: string }) => {
+        const hostname = params.domain;
+        return {
+          object: "instance",
+          id: "ins_prod_mock",
+          environment_type: "production" as const,
+          active_domain: {
+            object: "domain",
+            id: "dmn_prod_mock",
+            name: hostname,
+            is_satellite: false,
+            is_provider_domain: false,
+            frontend_api_url: overrides.frontendApiUrl ?? `https://clerk.${hostname}`,
+            development_origin: "",
+            cname_targets: overrides.cnameTargets ?? [
+              {
+                host: `clerk.${hostname}`,
+                value: "frontend-api.clerk.services",
+                required: true,
+              },
+              {
+                host: `accounts.${hostname}`,
+                value: "accounts.clerk.services",
+                required: true,
+              },
+              {
+                host: `clkmail.${hostname}`,
+                value: `mail.${hostname}.nam1.clerk.services`,
+                required: true,
+              },
+            ],
+            created_at: "2026-05-06T00:00:00Z",
+            updated_at: "2026-05-06T00:00:00Z",
+          },
+          publishable_key: "pk_live_test",
+          secret_key: "sk_live_test",
+          created_at: 1770000000000,
+          updated_at: 1770000000000,
+        };
+      },
+    );
   }
 
   async function runDeployUntilPause(options: Parameters<typeof deploy>[0] = {}) {
@@ -1208,6 +1217,38 @@ describe("deploy", () => {
           client_secret: "github-secret",
         },
       });
+      const err = stripAnsi(captured.err);
+      expect(err).toContain("https://clerk.example.com/v1/oauth_callback");
+      expect(err).not.toContain("https://accounts.example.com/v1/oauth_callback");
+    });
+
+    test("OAuth walkthrough prints the Frontend API redirect URI from the created domain", async () => {
+      await linkedProject();
+      mockIsAgent.mockReturnValue(false);
+      // Distinctive URL proves the value is threaded from the API response
+      // rather than string-built from the domain name.
+      stubCreateProductionInstance({
+        frontendApiUrl: "https://clerk-fapi.example.com",
+        cnameTargets: [],
+      });
+      mockConfirm
+        .mockResolvedValueOnce(true) // Proceed?
+        .mockResolvedValueOnce(true); // Create production instance?
+      mockOpenBrowser.mockResolvedValueOnce({ ok: true, launcher: "test" });
+      mockSelect
+        .mockResolvedValueOnce("walkthrough") // Google OAuth credentials
+        .mockResolvedValueOnce("have-credentials")
+        .mockResolvedValueOnce("skip"); // DNS verification
+      mockInput.mockResolvedValueOnce("example.com").mockResolvedValueOnce("fake-client-id-12345");
+      mockPassword.mockResolvedValueOnce("fake-secret");
+
+      await runDeploy({});
+      const err = stripAnsi(captured.err);
+
+      // The callback is a Frontend API endpoint; the walkthrough must print the
+      // API-reported frontend_api_url, never the Account Portal subdomain.
+      expect(err).toContain("https://clerk-fapi.example.com/v1/oauth_callback");
+      expect(err).not.toContain("https://accounts.example.com/v1/oauth_callback");
     });
 
     test("Apple .p8 file prompt validates path and PEM framing before continuing", async () => {

@@ -439,18 +439,23 @@ export function providerSetupIntro(provider: OAuthProvider | OAuthProviderDescri
 export async function showOAuthWalkthrough(
   provider: OAuthProvider | OAuthProviderDescriptor,
   domain: string,
+  frontendApiUrl?: string,
 ): Promise<void> {
   const descriptor = providerDescriptorFromInput(provider);
   const slug = descriptor?.provider ?? (provider as OAuthProvider);
   const label = descriptor?.label ?? providerLabel(slug);
   const docsUrl = descriptor?.docsUrl ?? providerDocsUrl(slug);
+  // The OAuth callback is served by the Frontend API (clerk.<domain>), not the
+  // Account Portal (accounts.<domain>). Prefer the API-reported URL over
+  // reconstructing it from the domain.
+  const callbackBase = frontendApiUrl?.replace(/\/+$/, "") || `https://clerk.${domain}`;
 
   log.info(`\nConfigure your ${bold(label)} OAuth app with these values:\n`);
   log.info(`  ${dim("Authorized JavaScript origins")}`);
   log.info(`    ${cyan(`https://${domain}`)}`);
   log.info(`    ${cyan(`https://www.${domain}`)}`);
   log.info(`  ${dim(descriptor?.redirectLabel ?? providerRedirectLabel(slug))}`);
-  log.info(`    ${cyan(`https://accounts.${domain}/v1/oauth_callback`)}`);
+  log.info(`    ${cyan(`${callbackBase}/v1/oauth_callback`)}`);
   const gotcha = descriptor?.gotcha ?? providerGotcha(slug);
   if (gotcha) {
     log.blank();

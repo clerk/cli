@@ -189,7 +189,11 @@ Production instances return `422` if you try to enable a provider without creden
 
 When the user chooses the guided walkthrough, these values are derived from their domain:
 
-| Field                         | Value                                         |
-| ----------------------------- | --------------------------------------------- |
-| Authorized JavaScript origins | `https://{domain}`, `https://www.{domain}`    |
-| Authorized redirect URI       | `https://accounts.{domain}/v1/oauth_callback` |
+| Field                         | Value                                      |
+| ----------------------------- | ------------------------------------------ |
+| Authorized JavaScript origins | `https://{domain}`, `https://www.{domain}` |
+| Authorized redirect URI       | `{frontend_api_url}/v1/oauth_callback`     |
+
+The redirect URI is served by the Frontend API (`clerk.{domain}`), not the Account
+Portal (`accounts.{domain}`). Use the `frontend_api_url` returned on the domain
+object rather than reconstructing it from the domain name.
