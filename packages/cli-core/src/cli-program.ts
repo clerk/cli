@@ -43,7 +43,13 @@ import { log } from "./lib/log.ts";
 import { maybeNotifyUpdate, getCurrentVersion } from "./lib/update-check.ts";
 import { registerExtras } from "@clerk/cli-extras";
 
-type CommandRegistrant = (program: Command) => void;
+/**
+ * The root `clerk` program with its global options applied, so registrants
+ * can rely on the typed global option contract instead of a generic Command.
+ */
+export type Program = Command<[], { inputJson?: string; mode?: string; verbose?: boolean }>;
+
+type CommandRegistrant = (program: Program) => void;
 
 const registrants: CommandRegistrant[] = [
   registerInit,

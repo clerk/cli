@@ -1,4 +1,4 @@
-import type { Command } from "@commander-js/extra-typings";
+import type { Program } from "../../cli-program.ts";
 import { isAgent, isHuman } from "../../mode.ts";
 import { bold, green, red } from "../../lib/color.ts";
 import { log } from "../../lib/log.ts";
@@ -140,7 +140,7 @@ export async function doctor(options: DoctorOptions = {}): Promise<void> {
   outro("All checks passing");
 }
 
-export function registerDoctor(program: Command): void {
+export function registerDoctor(program: Program): void {
   program
     .command("doctor")
     .description("Check your project's Clerk integration health")

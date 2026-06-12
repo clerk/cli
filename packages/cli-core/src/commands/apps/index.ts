@@ -1,8 +1,8 @@
-import type { Command } from "@commander-js/extra-typings";
+import type { Program } from "../../cli-program.ts";
 import { list } from "./list.ts";
 import { create } from "./create.ts";
 
-export function registerApps(program: Command): void {
+export function registerApps(program: Program): void {
   const apps = program.command("apps").description("Manage your Clerk applications");
 
   apps

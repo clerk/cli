@@ -1,7 +1,7 @@
-import type { Command } from "@commander-js/extra-typings";
+import type { Program } from "../../cli-program.ts";
 import { pull } from "./pull.ts";
 
-export function registerEnv(program: Command): void {
+export function registerEnv(program: Program): void {
   const env = program
     .command("env")
     .description("Manage environment variables")
@@ -14,7 +14,7 @@ export function registerEnv(program: Command): void {
 
   env
     .command("pull")
-    .description("Pull environment variables from Clerk to .env.local")
+    .description("Pull environment variables from Clerk into your local env file")
     .option("--app <id>", "Application ID to target (works from any directory)")
     .option("--instance <id>", "Instance to target (dev, prod, or a full instance ID)")
     .option("--file <path>", "Target env file (default: auto-detect)")

@@ -1,4 +1,5 @@
-import { createArgument, type Command } from "@commander-js/extra-typings";
+import { createArgument } from "@commander-js/extra-typings";
+import type { Program } from "../../cli-program.ts";
 import { generate as generateBash } from "./shells/bash.ts";
 import { generate as generateZsh } from "./shells/zsh.ts";
 import { generate as generateFish } from "./shells/fish.ts";
@@ -65,7 +66,7 @@ Run 'clerk completion --help' for full setup instructions.`,
   printNextSteps(INSTALL_HINTS[shell]);
 }
 
-export function registerCompletion(program: Command): void {
+export function registerCompletion(program: Program): void {
   program
     .command("completion")
     .description("Generate shell autocompletion script")

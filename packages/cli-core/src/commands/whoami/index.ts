@@ -1,4 +1,4 @@
-import type { Command } from "@commander-js/extra-typings";
+import type { Program } from "../../cli-program.ts";
 import { getValidToken } from "../../lib/credential-store.ts";
 import { fetchUserInfo } from "../../lib/token-exchange.ts";
 import { withSpinner } from "../../lib/spinner.ts";
@@ -65,7 +65,7 @@ export async function whoami(options: WhoamiOptions = {}) {
   printNextSteps(resolved ? NEXT_STEPS.WHOAMI_LINKED : NEXT_STEPS.WHOAMI);
 }
 
-export function registerWhoami(program: Command): void {
+export function registerWhoami(program: Program): void {
   program
     .command("whoami")
     .description("Show the current logged-in user and linked application")

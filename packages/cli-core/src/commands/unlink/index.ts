@@ -1,4 +1,4 @@
-import type { Command } from "@commander-js/extra-typings";
+import type { Program } from "../../cli-program.ts";
 import { confirm } from "../../lib/prompts.ts";
 import { isAgent, isHuman } from "../../mode.ts";
 import { resolveProfile, removeProfile } from "../../lib/config.ts";
@@ -48,7 +48,7 @@ export async function unlink(options: UnlinkOptions = {}): Promise<void> {
   outro(NEXT_STEPS.UNLINK);
 }
 
-export function registerUnlink(program: Command): void {
+export function registerUnlink(program: Program): void {
   program
     .command("unlink")
     .description("Unlink this project from its Clerk application")

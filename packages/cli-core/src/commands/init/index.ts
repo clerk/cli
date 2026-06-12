@@ -1,4 +1,5 @@
-import { createOption, type Command } from "@commander-js/extra-typings";
+import { createOption } from "@commander-js/extra-typings";
+import type { Program } from "../../cli-program.ts";
 import { login } from "../auth/login.js";
 import { link } from "../link/index.js";
 import { pull } from "../env/pull.js";
@@ -425,7 +426,7 @@ async function scaffoldAndWrite(
   return { alreadySetUp: false };
 }
 
-export function registerInit(program: Command): void {
+export function registerInit(program: Program): void {
   program
     .command("init")
     .description("Initialize Clerk in your project")

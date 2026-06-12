@@ -1,4 +1,4 @@
-import type { Command } from "@commander-js/extra-typings";
+import type { Program } from "../../cli-program.ts";
 import { getAuthToken } from "../../lib/plapi.ts";
 import { getBapiBaseUrl, getPlapiBaseUrl } from "../../lib/environment.ts";
 import { normalizeBapiPath, resolveBapiSecretKey } from "../../lib/bapi-command.ts";
@@ -199,7 +199,7 @@ function prettyPrintToStderr(text: string): void {
   }
 }
 
-export function registerApi(program: Command): void {
+export function registerApi(program: Program): void {
   program
     .command("api")
     .description("Make authenticated requests to the Clerk API")

@@ -1,4 +1,5 @@
-import { createOption, createArgument, type Command } from "@commander-js/extra-typings";
+import { createOption, createArgument } from "@commander-js/extra-typings";
+import type { Program } from "../../cli-program.ts";
 import { parseIntegerOption, collectOptionValues } from "../../lib/option-parsers.ts";
 import { create } from "./create.ts";
 import { list } from "./list.ts";
@@ -35,7 +36,7 @@ const USER_LIST_ORDER_BY_CHOICES = USER_LIST_ORDER_BY_FIELDS.flatMap((field) => 
   `-${field}`,
 ]);
 
-export function registerUsers(program: Command): void {
+export function registerUsers(program: Program): void {
   const usersCommand = program
     .command("users")
     .description("Manage Clerk users")

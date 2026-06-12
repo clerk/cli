@@ -1,4 +1,5 @@
-import { createArgument, type Command } from "@commander-js/extra-typings";
+import { createArgument } from "@commander-js/extra-typings";
+import type { Program } from "../../cli-program.ts";
 import { resolveProfile } from "../../lib/config.ts";
 import { CliError, ERROR_CODE } from "../../lib/errors.ts";
 import { getDashboardUrl } from "../../lib/environment.ts";
@@ -104,7 +105,7 @@ export async function openDashboard(
   outro();
 }
 
-export function registerOpen(program: Command): void {
+export function registerOpen(program: Program): void {
   const open = program.command("open").description("Open Clerk resources in your browser");
 
   open

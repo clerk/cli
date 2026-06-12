@@ -1,4 +1,4 @@
-import type { Command } from "@commander-js/extra-typings";
+import type { Program } from "../../cli-program.ts";
 import { deployStatus } from "./status-command.ts";
 import { isAgent } from "../../mode.ts";
 import { isInsideGutter, log } from "../../lib/log.ts";
@@ -635,7 +635,7 @@ async function finishDeploy(
   outro("Success");
 }
 
-export function registerDeploy(program: Command): void {
+export function registerDeploy(program: Program): void {
   const deployCmd = program
     .command("deploy")
     .description("Deploy a Clerk application to production");

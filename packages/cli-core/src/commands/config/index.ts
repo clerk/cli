@@ -1,9 +1,9 @@
-import type { Command } from "@commander-js/extra-typings";
+import type { Program } from "../../cli-program.ts";
 import { configPull } from "./pull.ts";
 import { configSchema } from "./schema.ts";
 import { configPatch, configPut } from "./push.ts";
 
-export function registerConfig(program: Command): void {
+export function registerConfig(program: Program): void {
   const config = program
     .command("config")
     .description("Manage instance configuration")

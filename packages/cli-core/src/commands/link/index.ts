@@ -1,4 +1,4 @@
-import type { Command } from "@commander-js/extra-typings";
+import type { Program } from "../../cli-program.ts";
 import { basename } from "node:path";
 import { confirm } from "../../lib/prompts.ts";
 import { isAgent } from "../../mode.ts";
@@ -198,7 +198,7 @@ async function resolveApp(
   });
 }
 
-export function registerLink(program: Command): void {
+export function registerLink(program: Program): void {
   program
     .command("link")
     .description("Link this project to a Clerk application")

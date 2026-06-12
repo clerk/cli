@@ -1,4 +1,4 @@
-import type { Command } from "@commander-js/extra-typings";
+import type { Program } from "../../cli-program.ts";
 import { orgsEnable, orgsDisable } from "../orgs/index.ts";
 import { billingEnable, billingDisable } from "../billing/index.ts";
 
@@ -10,7 +10,7 @@ import { billingEnable, billingDisable } from "../billing/index.ts";
  * wires each feature's enable/disable handlers under them, grouping by parent
  * rather than by feature.
  */
-export function registerToggles(program: Command): void {
+export function registerToggles(program: Program): void {
   const enable = program
     .command("enable")
     .description("Enable Clerk features on the linked instance")

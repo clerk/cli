@@ -1,8 +1,8 @@
-import type { Command } from "@commander-js/extra-typings";
+import type { Program } from "../../cli-program.ts";
 import { login } from "./login.ts";
 import { logout } from "./logout.ts";
 
-export function registerAuth(program: Command): void {
+export function registerAuth(program: Program): void {
   const auth = program
     .command("auth")
     .description("Manage authentication")

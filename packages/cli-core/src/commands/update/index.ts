@@ -1,4 +1,4 @@
-import type { Command } from "@commander-js/extra-typings";
+import type { Program } from "../../cli-program.ts";
 import { isAgent, isHuman } from "../../mode.ts";
 import { green, cyan, yellow, dim } from "../../lib/color.ts";
 import { CliError } from "../../lib/errors.ts";
@@ -431,7 +431,7 @@ export async function update(options: UpdateOptions): Promise<void> {
   }
 }
 
-export function registerUpdate(program: Command): void {
+export function registerUpdate(program: Program): void {
   program
     .command("update")
     .description("Update the Clerk CLI to the latest version")
