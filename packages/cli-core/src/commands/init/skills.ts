@@ -33,7 +33,7 @@ const DEFAULT_UPSTREAM_SKILLS = [
 ];
 
 // Express/Fastify have no entry — their skill is clerk-backend-api, which is a default.
-const FRAMEWORK_SKILL_MAP: Record<string, string[]> = {
+const FRAMEWORK_SKILL_MAP: Record<string, readonly string[]> = {
   next: ["clerk-nextjs-patterns"],
   react: ["clerk-react-patterns"],
   "react-router": ["clerk-react-router-patterns"],
@@ -67,7 +67,7 @@ export function resolveUpstreamSkills(frameworkDep: string | undefined): string[
   return [...skills];
 }
 
-export function getFrameworkSkills(frameworkDep: string | undefined): string[] {
+export function getFrameworkSkills(frameworkDep: string | undefined): readonly string[] {
   return (frameworkDep && FRAMEWORK_SKILL_MAP[frameworkDep]) || [];
 }
 
