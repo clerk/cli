@@ -72,7 +72,7 @@ const registrants: CommandRegistrant[] = [
   registerExtras,
 ];
 
-export function createProgram() {
+export function createProgram(): Program {
   const program = new Command()
     .name("clerk")
     .description("Clerk CLI")
