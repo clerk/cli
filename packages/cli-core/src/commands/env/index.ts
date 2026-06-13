@@ -17,6 +17,7 @@ export function registerEnv(program: Program): void {
     .description("Pull environment variables from Clerk into your local env file")
     .option("--app <id>", "Application ID to target (works from any directory)")
     .option("--instance <id>", "Instance to target (dev, prod, or a full instance ID)")
+    .option("--branch <name>", "Target a branch by name (e.g. agent/pr-42)")
     .option("--file <path>", "Target env file (default: auto-detect)")
     .setExamples([
       { command: "clerk env pull", description: "Pull dev keys to .env.local" },

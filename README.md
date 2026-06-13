@@ -43,6 +43,7 @@ Commands:
   users       [options]                      Manage Clerk users
   env                                        Manage environment variables
   config                                     Manage instance configuration
+  branch                                     Fork, list, diff, and delete instance branches
   enable                                     Enable Clerk features on the linked instance
   disable                                    Disable Clerk features on the linked instance
   api         [options] [endpoint] [filter]  Make authenticated requests to the Clerk API

@@ -20,6 +20,7 @@ import { NEXT_STEPS, printNextSteps } from "../../lib/next-steps.ts";
 interface ConfigPushOptions {
   app?: string;
   instance?: string;
+  branch?: string;
   file?: string;
   json?: string;
   dryRun?: boolean;

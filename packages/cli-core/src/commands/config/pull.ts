@@ -8,6 +8,7 @@ import { stringify as stringifyYaml } from "yaml";
 interface ConfigPullOptions {
   app?: string;
   instance?: string;
+  branch?: string;
   output?: string;
   keys?: string[];
   json?: boolean;
