@@ -1,3 +1,4 @@
+import type { Program } from "../../cli-program.ts";
 import { getAuthToken } from "../../lib/plapi.ts";
 import { getBapiBaseUrl, getPlapiBaseUrl } from "../../lib/environment.ts";
 import { normalizeBapiPath, resolveBapiSecretKey } from "../../lib/bapi-command.ts";
@@ -196,4 +197,35 @@ function prettyPrintToStderr(text: string): void {
   } catch {
     log.raw(text);
   }
+}
+
+export function registerApi(program: Program): void {
+  program
+    .command("api")
+    .description("Make authenticated requests to the Clerk API")
+    .argument(
+      "[endpoint]",
+      "API endpoint path, 'ls' to list endpoints, or omit for interactive mode",
+    )
+    .argument("[filter]", "Filter keyword (used with 'ls')")
+    .option("-X, --method <method>", "HTTP method (default: GET, or POST if body provided)")
+    .option("-d, --data <json>", "JSON request body")
+    .option("--file <path>", "Read request body from a file")
+    .option("--include", "Show response headers")
+    .option("--app <id>", "Application ID to target when resolving keys")
+    .option("--secret-key <key>", "Override the secret key")
+    .option("--instance <id>", "Instance to target (dev, prod, or instance ID)")
+    .option("--platform", "Use Platform API instead of Backend API")
+    .option("--dry-run", "Show the request without executing it")
+    .option("--yes", "Skip confirmation for mutating requests")
+    .setExamples([
+      { command: "clerk api ls", description: "List all available endpoints" },
+      { command: "clerk api ls users", description: 'List endpoints matching "users"' },
+      { command: "clerk api /users", description: "GET /v1/users" },
+      {
+        command: 'clerk api /users -d \'{"first_name":"Alice"}\'',
+        description: "POST with a JSON body",
+      },
+    ])
+    .action(api);
 }

@@ -1,3 +1,4 @@
+import type { Program } from "../../cli-program.ts";
 import { getValidToken } from "../../lib/credential-store.ts";
 import { fetchUserInfo } from "../../lib/token-exchange.ts";
 import { withSpinner } from "../../lib/spinner.ts";
@@ -62,4 +63,16 @@ export async function whoami(options: WhoamiOptions = {}) {
     log.info(`Linked to \`${profileLabel(resolved.profile)}\``);
   }
   printNextSteps(resolved ? NEXT_STEPS.WHOAMI_LINKED : NEXT_STEPS.WHOAMI);
+}
+
+export function registerWhoami(program: Program): void {
+  program
+    .command("whoami")
+    .description("Show the current logged-in user and linked application")
+    .option("--json", "Output JSON")
+    .setExamples([
+      { command: "clerk whoami", description: "Show your email and linked app" },
+      { command: "clerk whoami --json", description: "Emit a structured payload on stdout" },
+    ])
+    .action((options) => whoami({ json: options.json }));
 }
