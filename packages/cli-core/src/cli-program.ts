@@ -92,7 +92,7 @@ export function createProgram(): Program {
       "--mode <mode>",
       "Force interaction mode (human or agent). Defaults to auto-detect based on TTY.",
     )
-    .option("--verbose", "Show detailed output (enables debug messages)");
+    .option("--verbose", "Show detailed output (enables debug messages)") as Program;
 
   program.hook("preAction", async () => {
     // Reset log level at the start of each command invocation so a previous
