@@ -264,6 +264,39 @@ describe("config", () => {
         instanceLabel: "ins_missing_123",
       });
     });
+
+    test("matches a branch by name", () => {
+      const branchApp = {
+        application_id: "app_1",
+        instances: [
+          { instance_id: "ins_prod", environment_type: "production", publishable_key: "pk_live_x" },
+          {
+            instance_id: "ins_branch",
+            environment_type: "development",
+            publishable_key: "pk_test_y",
+            branch_name: "agent/pr-42",
+          },
+        ],
+      };
+
+      const r = resolveFetchedApplicationInstance("app_1", branchApp, undefined, "agent/pr-42");
+      expect(r.found).toBe(true);
+      expect(r.instanceId).toBe("ins_branch");
+      expect(r.instanceLabel).toBe("agent/pr-42");
+    });
+
+    test("throws INSTANCE_NOT_FOUND when branch name does not match any instance", () => {
+      const branchApp = {
+        application_id: "app_1",
+        instances: [
+          { instance_id: "ins_prod", environment_type: "production", publishable_key: "pk_live_x" },
+        ],
+      };
+
+      expect(() =>
+        resolveFetchedApplicationInstance("app_1", branchApp, undefined, "no-such-branch"),
+      ).toThrow("No branch named");
+    });
   });
 
   describe("resolveAppContext (explicit app)", () => {

@@ -253,6 +253,7 @@ export function resolveInstanceId(profile: Profile, flag?: string): { id: string
 interface AppContextOptions {
   app?: string;
   instance?: string;
+  branch?: string;
   cwd?: string;
 }
 
@@ -260,9 +261,25 @@ export function resolveFetchedApplicationInstance(
   appId: string,
   app: Application,
   instance?: string,
+  branch?: string,
 ):
   | { found: true; instance: ApplicationInstance; instanceId: string; instanceLabel: string }
   | { found: false; instanceId: string; instanceLabel: string } {
+  if (branch) {
+    const matched = app.instances.find((entry) => entry.branch_name === branch);
+    if (!matched) {
+      throw new CliError(`No branch named "${branch}" found for application ${appId}.`, {
+        code: ERROR_CODE.INSTANCE_NOT_FOUND,
+      });
+    }
+    return {
+      found: true,
+      instance: matched,
+      instanceId: matched.instance_id,
+      instanceLabel: branch,
+    };
+  }
+
   if (instance) {
     const env = INSTANCE_ALIASES[instance];
     if (env) {
@@ -326,7 +343,12 @@ export async function resolveAppContext(
     const { fetchApplication } = await import("./plapi.ts");
     const app = await fetchApplication(options.app);
     const appLabel = app.name || options.app;
-    const resolved = resolveFetchedApplicationInstance(options.app, app, options.instance);
+    const resolved = resolveFetchedApplicationInstance(
+      options.app,
+      app,
+      options.instance,
+      options.branch,
+    );
     if (!resolved.found) {
       throw new CliError(
         `Instance ${resolved.instanceId} not found in application ${options.app}.`,
@@ -351,6 +373,23 @@ export async function resolveAppContext(
         "  - Pass --app <app_id> to target an app directly",
       { code: ERROR_CODE.NOT_LINKED },
     );
+  }
+
+  if (options.branch) {
+    const { fetchApplication } = await import("./plapi.ts");
+    const app = await fetchApplication(resolved.profile.appId);
+    const r = resolveFetchedApplicationInstance(
+      resolved.profile.appId,
+      app,
+      undefined,
+      options.branch,
+    );
+    return {
+      appId: resolved.profile.appId,
+      appLabel: resolved.profile.appName || resolved.profile.appId,
+      instanceId: r.instanceId,
+      instanceLabel: r.instanceLabel,
+    };
   }
 
   const instance = resolveInstanceId(resolved.profile, options.instance);
