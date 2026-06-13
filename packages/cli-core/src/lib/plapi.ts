@@ -153,6 +153,8 @@ export interface ApplicationInstance {
   environment_type: string;
   secret_key?: string;
   publishable_key: string;
+  branch_name?: string;
+  parent_instance_id?: string;
 }
 
 export interface Application {
@@ -330,4 +332,40 @@ export async function listApplications(): Promise<Application[]> {
   const url = new URL("/v1/platform/applications", getPlapiBaseUrl());
   const response = await plapiFetch("GET", url);
   return response.json() as Promise<Application[]>;
+}
+
+export interface CreatedInstance {
+  object: string;
+  id: string;
+  environment_type: string;
+  branch_name?: string;
+  secret_key: string;
+  publishable_key: string;
+}
+
+export async function createBranch(
+  applicationId: string,
+  params: { cloneInstanceId: string; branchName: string },
+): Promise<CreatedInstance> {
+  const url = new URL(`/v1/platform/applications/${applicationId}/instances`, getPlapiBaseUrl());
+  const response = await plapiFetch("POST", url, {
+    body: JSON.stringify({
+      environment_type: "development",
+      clone_instance_id: params.cloneInstanceId,
+      branch_name: params.branchName,
+    }),
+  });
+  return response.json() as Promise<CreatedInstance>;
+}
+
+export async function deleteInstance(
+  applicationId: string,
+  instanceId: string,
+): Promise<Record<string, unknown>> {
+  const url = new URL(
+    `/v1/platform/applications/${applicationId}/instances/${instanceId}`,
+    getPlapiBaseUrl(),
+  );
+  const response = await plapiFetch("DELETE", url);
+  return response.json() as Promise<Record<string, unknown>>;
 }
