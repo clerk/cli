@@ -41,6 +41,11 @@ export const NEXT_STEPS = {
     "Run `clerk config schema --keys billing` to see all available settings",
     "Run `clerk config pull --keys billing` to see current values",
   ],
+  ENABLE_API_KEYS: [
+    "Run `clerk config schema --keys api_keys_settings` to see all available settings",
+    "Run `clerk config pull --keys api_keys_settings` to see current values",
+    "Run `clerk open api-keys` to manage API Keys in the Dashboard",
+  ],
   SWITCH_ENV: [
     "Run `clerk env pull` to fetch environment variables for this environment",
     "Run `clerk doctor` to verify your setup",
