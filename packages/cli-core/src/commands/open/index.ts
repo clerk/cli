@@ -1,3 +1,5 @@
+import { createArgument } from "@commander-js/extra-typings";
+import type { Program } from "../../cli-program.ts";
 import { resolveProfile } from "../../lib/config.ts";
 import { CliError, ERROR_CODE } from "../../lib/errors.ts";
 import { getDashboardUrl } from "../../lib/environment.ts";
@@ -101,4 +103,23 @@ export async function openDashboard(
   }
 
   outro();
+}
+
+export function registerOpen(program: Program): void {
+  const open = program.command("open").description("Open Clerk resources in your browser");
+
+  open
+    .command("dashboard", { isDefault: true })
+    .description("Open the linked app's dashboard in your browser")
+    .addArgument(
+      createArgument("[subpath]", "Optional dashboard subpath (e.g. users, api-keys, settings)"),
+    )
+    .option("--print", "Print the URL without opening the browser")
+    .setExamples([
+      { command: "clerk open", description: "Open the linked app's dashboard" },
+      { command: "clerk open users", description: "Open the users page" },
+      { command: "clerk open api-keys", description: "Open the API keys page" },
+      { command: "clerk open --print", description: "Print the dashboard URL" },
+    ])
+    .action((subpath, options) => openDashboard(subpath, options));
 }

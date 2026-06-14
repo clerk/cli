@@ -1,10 +1,12 @@
+import { createOption } from "@commander-js/extra-typings";
+import type { Program } from "../../cli-program.ts";
 import { login } from "../auth/login.js";
 import { link } from "../link/index.js";
 import { pull } from "../env/pull.js";
 import { isAgent } from "../../mode.js";
 import { dim, bold } from "../../lib/color.js";
 import { throwUserAbort, throwUsageError, CliError, errorMessage } from "../../lib/errors.js";
-import { lookupFramework, type FrameworkInfo } from "../../lib/framework.js";
+import { lookupFramework, FRAMEWORK_NAMES, type FrameworkInfo } from "../../lib/framework.js";
 import { resolveProfile } from "../../lib/config.js";
 import { deriveProjectName } from "../../lib/project-name.js";
 import { log } from "../../lib/log.js";
@@ -39,7 +41,7 @@ import {
   type BootstrapResult,
 } from "./bootstrap.js";
 import type { ProjectContext } from "./frameworks/types.js";
-import type { PackageManager } from "../../lib/package-manager.ts";
+import { type PackageManager, PACKAGE_MANAGERS } from "../../lib/package-manager.ts";
 
 type InitOptions = {
   /** Framework to set up (skips auto-detection). */
@@ -422,4 +424,53 @@ async function scaffoldAndWrite(
   printOutro(plan, findings);
 
   return { alreadySetUp: false };
+}
+
+export function registerInit(program: Program): void {
+  program
+    .command("init")
+    .description("Initialize Clerk in your project")
+    .addOption(
+      createOption("--framework <name>", "Framework to set up (skips auto-detection)").choices(
+        FRAMEWORK_NAMES,
+      ),
+    )
+    .addOption(
+      createOption(
+        "--pm <manager>",
+        "Package manager to use (skips prompt/auto-detection)",
+      ).choices(PACKAGE_MANAGERS),
+    )
+    .option("--name <project-name>", "Project name for --starter (skips prompt)")
+    .option("--app <id>", "Application ID to link (skips interactive picker)")
+    .option("--starter", "Create a new project from a starter template")
+    .option(
+      "--keyless",
+      "Use keyless development keys instead of logging in (only for keyless-capable frameworks)",
+    )
+    .option("-y, --yes", "Skip confirmation prompts")
+    .option("--no-skills", "Skip the optional agent skills install prompt")
+    .setExamples([
+      { command: "clerk init", description: "Auto-detect framework and set up Clerk" },
+      {
+        command: "clerk init --framework next",
+        description: "Set up for Next.js (skips detection)",
+      },
+      {
+        command: "clerk init --app app_123",
+        description: "Link to a specific Clerk application",
+      },
+      { command: "clerk init --starter", description: "Create a new project with Clerk" },
+      {
+        command: "clerk init --starter --framework next --pm bun",
+        description: "Bootstrap with Bun",
+      },
+      {
+        command: "clerk init --starter --framework next --keyless",
+        description: "Bootstrap without logging in (uses temporary dev keys)",
+      },
+      { command: "clerk init -y", description: "Skip all confirmation prompts" },
+      { command: "clerk init --no-skills", description: "Skip the agent skills install prompt" },
+    ])
+    .action(init);
 }
