@@ -370,5 +370,14 @@ describe("expandInputJson", () => {
       const result = await expandViaStdin(["clerk", "config", "patch"], '{"dryRun":true}');
       expect(result.result).toEqual(["clerk", "config", "patch", "--dry-run"]);
     });
+
+    test("auto-stdin stands down when a flag reads stdin itself (literal -)", async () => {
+      const argv = ["clerk", "webhooks", "verify", "--secret", "whsec_x", "--delivery", "-"];
+      const result = await expandViaStdin(
+        argv,
+        '{"headers":{"svix-id":"msg_1"},"body_b64":"e30="}',
+      );
+      expect(result.result).toEqual(argv);
+    });
   });
 });

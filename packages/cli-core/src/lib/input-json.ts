@@ -151,8 +151,10 @@ export async function expandInputJson(argv: string[]): Promise<string[]> {
     return argv;
   }
 
-  // No explicit --input-json flag — check for piped stdin
-  if (hasStdinPipe()) {
+  // No explicit --input-json flag — check for piped stdin. A literal `-` in
+  // argv means some flag reads stdin itself (e.g. `verify --delivery -`); the
+  // implicit JSON slurp must not consume the stream first.
+  if (hasStdinPipe() && !argv.includes(STDIN_MARKER)) {
     const jsonStr = await readOptionalStdin();
     if (jsonStr === undefined) return argv;
     const parsed = parseJsonString(jsonStr);
