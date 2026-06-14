@@ -1,6 +1,8 @@
 import { Command, createOption, createArgument } from "@commander-js/extra-typings";
+import { CommanderError } from "commander";
 import { expandInputJson } from "./lib/input-json.ts";
 import { setLogLevel } from "./lib/log.ts";
+import { setColorEnabled } from "./lib/color.ts";
 import { setMode, type Mode } from "./mode.ts";
 import { init } from "./commands/init/index.ts";
 import { login } from "./commands/auth/login.ts";
@@ -18,6 +20,7 @@ import { users as usersHandlers } from "./commands/users/index.ts";
 import { doctor } from "./commands/doctor/index.ts";
 import { switchEnv } from "./commands/switch-env/index.ts";
 import { openDashboard } from "./commands/open/index.ts";
+import { schema as schemaCommand } from "./commands/schema/index.ts";
 import { getEnvironment } from "./lib/config.ts";
 import {
   setCurrentEnv,
@@ -66,6 +69,12 @@ const USER_LIST_ORDER_BY_CHOICES = USER_LIST_ORDER_BY_FIELDS.flatMap((field) => 
   `-${field}`,
 ]);
 
+const APPS_JSON_FIELDS =
+  "Output as JSON. Fields: application_id, name, instances[] (instance_id, environment_type, publishable_key)";
+
+const TOKEN_OPTION_DESC =
+  "Headless authentication with a Clerk PLAPI access token (skips OAuth; use `-` to read from stdin). For per-instance API access, CLERK_SECRET_KEY also works directly with `clerk api` / `users` / `config`.";
+
 function collectOptionValues(value: string, previous: string[] = []): string[] {
   return [...previous, value];
 }
@@ -88,8 +97,29 @@ function parseIntegerOption(
   return parsed;
 }
 
+/**
+ * Commander's `commander.*` error codes that represent invocation problems
+ * (unknown flag, unknown subcommand, missing argument). We funnel these to
+ * EX_USAGE so agents can branch on exit code 64 instead of parsing stderr.
+ */
+const COMMANDER_USAGE_CODES = new Set([
+  "commander.unknownOption",
+  "commander.unknownCommand",
+  "commander.missingArgument",
+  "commander.missingMandatoryOptionValue",
+  "commander.optionMissingArgument",
+  "commander.invalidArgument",
+  "commander.invalidOptionArgument",
+  "commander.excessArguments",
+  "commander.conflictingOption",
+  "commander.help",
+  "commander.helpDisplayed",
+  "commander.version",
+]);
+
 export function createProgram() {
   const program = new Command()
+    .exitOverride()
     .name("clerk")
     .description("Clerk CLI")
     .configureHelp(clerkHelpConfig())
@@ -108,15 +138,76 @@ export function createProgram() {
       "--mode <mode>",
       "Force interaction mode (human or agent). Defaults to auto-detect based on TTY.",
     )
-    .option("--verbose", "Show detailed output (enables debug messages)");
+    .option("--verbose", "Show detailed output (enables debug messages)")
+    .option("--quiet", "Suppress non-essential output (info, warnings, spinners)")
+    .option("--no-color", "Disable ANSI color output (also respects the NO_COLOR env var)")
+    .setExamples([
+      { command: "clerk init", description: "Initialize Clerk in this project" },
+      { command: "clerk auth login", description: "Authenticate via browser OAuth" },
+      {
+        command: "clerk apps list --json",
+        description: "List applications as JSON (agent-pipeable)",
+      },
+      {
+        command: "clerk users list --json | jq '.data'",
+        description: "Pipe user list to jq",
+      },
+      {
+        command: "clerk --mode agent api /users",
+        description: "Force agent mode for non-interactive use",
+      },
+    ])
+    .setEnvVars([
+      {
+        name: "CLERK_SECRET_KEY",
+        description: "Backend API secret key for the linked instance (sk_test_… / sk_live_…)",
+      },
+      {
+        name: "CLERK_MODE",
+        description: "Force interaction mode: human or agent (default: TTY auto-detect)",
+      },
+      {
+        name: "CLERK_CONFIG_DIR",
+        description: "Override the directory for stored credentials and config",
+      },
+      {
+        name: "CLERK_UPDATE_CHANNEL",
+        description: "Release channel for `clerk update` (e.g. latest, canary)",
+      },
+      {
+        name: "CLERK_NO_UPDATE_CHECK",
+        description: "Set to any value to disable the post-command update notification",
+      },
+    ])
+    .addHelpText(
+      "after",
+      `
+Next:
+  $ clerk auth login           Authenticate (or set CLERK_SECRET_KEY for headless use)
+  $ clerk init                 Set up Clerk in this project
+  $ clerk doctor               Check that everything is wired up
+
+Documentation:
+  https://clerk.com/docs/cli
+  https://github.com/clerk/cli`,
+    );
 
   program.hook("preAction", async () => {
     // Reset log level at the start of each command invocation so a previous
     // --verbose doesn't leak into subsequent runs.
     setLogLevel("info");
     const opts = program.opts();
+    if (opts.verbose && opts.quiet) {
+      throwUsageError("--verbose and --quiet are mutually exclusive");
+    }
     if (opts.verbose) {
       setLogLevel("debug");
+    } else if (opts.quiet) {
+      setLogLevel("error");
+    }
+    // Commander's negation maps `--no-color` to `opts.color === false`.
+    if (opts.color === false) {
+      setColorEnabled(false);
     }
     if (opts.mode) {
       if (opts.mode !== "human" && opts.mode !== "agent") {
@@ -215,11 +306,20 @@ export function createProgram() {
     .aliases(["signup", "signin", "sign-in"])
     .description("Log in to your Clerk account")
     .option("-y, --yes", "Proceed with OAuth without prompting when already logged in")
+    .option("--token <key>", TOKEN_OPTION_DESC)
     .setExamples([
       { command: "clerk auth login", description: "Log in via browser (OAuth)" },
       {
         command: "clerk auth login -y",
         description: "Re-authenticate via OAuth without confirmation when already signed in",
+      },
+      {
+        command: "clerk auth login --token $CLERK_OAUTH_TOKEN",
+        description: "Headless login with a PLAPI access token (CI / agents)",
+      },
+      {
+        command: "cat token.txt | clerk auth login --token -",
+        description: "Read the token from stdin",
       },
     ])
     .action(async (opts) => {
@@ -237,6 +337,7 @@ export function createProgram() {
     .command("login", { hidden: true })
     .description("Log in to your Clerk account")
     .option("-y, --yes", "Proceed with OAuth without prompting when already logged in")
+    .option("--token <key>", TOKEN_OPTION_DESC)
     .action(async (opts) => {
       await login(opts);
     });
@@ -298,7 +399,7 @@ export function createProgram() {
   apps
     .command("list")
     .description("List your Clerk applications")
-    .option("--json", "Output as JSON")
+    .option("--json", APPS_JSON_FIELDS)
     .setExamples([
       { command: "clerk apps list", description: "List all applications" },
       { command: "clerk apps list --json", description: "Output as JSON" },
@@ -307,12 +408,20 @@ export function createProgram() {
 
   apps
     .command("create")
-    .description("Create a new Clerk application")
+    .description("Create a new Clerk application (not idempotent by default — use --if-not-exists)")
     .argument("<name>", "Application name")
-    .option("--json", "Output as JSON")
+    .option("--json", APPS_JSON_FIELDS)
+    .option(
+      "--if-not-exists",
+      "Make the operation idempotent: if an application with this name already exists, return it instead of creating a duplicate",
+    )
     .setExamples([
       { command: 'clerk apps create "My App"', description: "Create a new application" },
       { command: 'clerk apps create "My App" --json', description: "Output as JSON" },
+      {
+        command: 'clerk apps create "My App" --if-not-exists',
+        description: "Idempotent create — safe to re-run",
+      },
     ])
     .action(appsHandlers.create);
 
@@ -340,12 +449,17 @@ export function createProgram() {
   users
     .command("list")
     .description("List users")
-    .option("--json", "Output as JSON")
+    .option(
+      "--json",
+      "Output as JSON. Shape: {data: User[], hasMore: boolean, nextCursor: string|null, pagination: {offset, limit}}. User fields: id, first_name, last_name, username, email_addresses, phone_numbers, created_at, last_sign_in_at, external_id",
+    )
     .option("--limit <number>", "Maximum users to return (1-250, default 100)", (value) =>
       parseIntegerOption(value, "--limit", { min: 1, max: 250 }),
     )
-    .option("--offset <number>", "Users to skip before returning results (0+)", (value) =>
-      parseIntegerOption(value, "--offset", { min: 0 }),
+    .option(
+      "--offset <number>",
+      "Users to skip before returning results (0+). Pass the nextCursor value from a previous response for forward pagination.",
+      (value) => parseIntegerOption(value, "--offset", { min: 0 }),
     )
     .option("--query <query>", "Search across common user fields")
     .option(
@@ -406,7 +520,10 @@ export function createProgram() {
   users
     .command("create")
     .description("Create a user")
-    .option("--json", "Output as JSON")
+    .option(
+      "--json",
+      "Output as JSON. Fields: id, first_name, last_name, username, email_addresses, phone_numbers, created_at, external_id",
+    )
     .option("--email <email>", "Email address")
     .option("--phone <phone>", "Phone number")
     .option("--username <username>", "Username")
@@ -806,7 +923,10 @@ export function createProgram() {
     .command("doctor")
     .description("Check your project's Clerk integration health")
     .option("--verbose", "Show detailed output for each check")
-    .option("--json", "Output results as JSON")
+    .option(
+      "--json",
+      "Output results as JSON. Each entry has fields: name, status (pass|warn|fail), message, detail, remedy",
+    )
     .option("--spotlight", "Only show warnings and failures")
     .option("--fix", "Attempt to auto-fix issues")
     .setExamples([
@@ -828,6 +948,19 @@ export function createProgram() {
       { command: "clerk switch-env production", description: "Switch back to production" },
     ])
     .action(switchEnv);
+
+  program
+    .command("schema")
+    .description("Print the full CLI command tree as JSON (for agents and tooling)")
+    .option("--json", "No-op for symmetry with other commands — `schema` always emits JSON.")
+    .setExamples([
+      { command: "clerk schema", description: "Dump command tree to stdout" },
+      {
+        command: "clerk schema | jq '.command.subcommands[].name'",
+        description: "List every subcommand",
+      },
+    ])
+    .action((opts, cmd) => schemaCommand(opts, cmd));
 
   program
     .command("completion")
@@ -989,9 +1122,33 @@ export async function runProgram(
       process.exit(EXIT_CODE.SUCCESS);
     }
 
+    if (error instanceof CommanderError) {
+      // --help / --version exit 0 in Commander but reach us via exitOverride.
+      if (error.code === "commander.help" || error.code === "commander.helpDisplayed") {
+        process.exit(EXIT_CODE.SUCCESS);
+      }
+      if (error.code === "commander.version") {
+        process.exit(EXIT_CODE.SUCCESS);
+      }
+      const isUsage = COMMANDER_USAGE_CODES.has(error.code);
+      const exitCode = isUsage ? EXIT_CODE.USAGE : (error.exitCode ?? EXIT_CODE.GENERAL);
+      if (isAgent()) {
+        outputJsonError(isUsage ? "usage_error" : error.code, error.message, {
+          retryable: false,
+          nextStep: "Run `clerk --help` to see available commands and flags.",
+        });
+      }
+      // Commander already wrote its own error message to stderr before throwing.
+      process.exit(exitCode);
+    }
+
     if (error instanceof CliError) {
       if (isAgent() && error.code) {
-        outputJsonError(error.code, error.message, error.docsUrl);
+        outputJsonError(error.code, error.message, {
+          docsUrl: error.docsUrl,
+          // CliError is a known, user-caused failure: not transient.
+          retryable: false,
+        });
       } else {
         if (error.message) {
           log.error(error.message);
@@ -1006,6 +1163,7 @@ export async function runProgram(
     if (error instanceof ApiError) {
       const detail = formatApiBody(error, verbose);
       const prefix = error.context ?? "Request failed";
+      const retryable = isHttpStatusRetryable(error.status);
       if (isAgent()) {
         const apiErrors: ApiErrorEntry[] | undefined =
           error.code || error.meta
@@ -1017,12 +1175,13 @@ export async function runProgram(
                 },
               ]
             : undefined;
-        outputJsonError(
-          error.code ?? "api_error",
-          `${prefix} (${error.status}): ${detail}`,
-          undefined,
-          apiErrors,
-        );
+        outputJsonError(error.code ?? "api_error", `${prefix} (${error.status}): ${detail}`, {
+          errors: apiErrors,
+          retryable,
+          nextStep: retryable
+            ? "Retry with backoff (1s, 2s, 4s). If 429 persists, slow down request rate."
+            : undefined,
+        });
       } else {
         log.error(`${prefix} (${error.status}): ${detail}`);
         if (verbose && (error instanceof PlapiError || error instanceof FapiError) && error.url) {
@@ -1032,24 +1191,35 @@ export async function runProgram(
           log.error(`       Trace: ${error.clerkTraceId}`);
         }
       }
-      process.exit(EXIT_CODE.GENERAL);
+      process.exit(exitCodeForHttpStatus(error.status));
     }
 
     if (error instanceof Error) {
+      // Network errors (ECONNREFUSED, ETIMEDOUT, fetch failed) are retryable.
+      const networkRetryable = /ECONNREFUSED|ECONNRESET|ETIMEDOUT|EAI_AGAIN|fetch failed/i.test(
+        error.message,
+      );
       if (isAgent()) {
-        outputJsonError("unexpected_error", error.message);
+        outputJsonError("unexpected_error", error.message, {
+          retryable: networkRetryable,
+          nextStep: networkRetryable
+            ? "Network failure — retry, then check connectivity with `clerk doctor`."
+            : "Re-run with --verbose for diagnostic output, or run `clerk doctor`.",
+        });
       } else {
         log.error(error.message);
       }
-      process.exit(EXIT_CODE.GENERAL);
+      process.exit(networkRetryable ? EXIT_CODE.TEMPFAIL : EXIT_CODE.SOFTWARE);
     }
 
     if (isAgent()) {
-      outputJsonError("unexpected_error", "An unexpected error occurred");
+      outputJsonError("unexpected_error", "An unexpected error occurred", {
+        retryable: false,
+      });
     } else {
       log.error("An unexpected error occurred");
     }
-    process.exit(EXIT_CODE.GENERAL);
+    process.exit(EXIT_CODE.SOFTWARE);
   }
 }
 
@@ -1059,24 +1229,48 @@ interface ApiErrorEntry {
   meta?: Record<string, unknown>;
 }
 
+interface JsonErrorExtras {
+  docsUrl?: string;
+  errors?: ApiErrorEntry[];
+  retryable?: boolean;
+  nextStep?: string;
+}
+
 /** Output a structured JSON error to stderr for agent/CI consumption. */
-function outputJsonError(
-  code: string,
-  message: string,
-  docsUrl?: string,
-  errors?: ApiErrorEntry[],
-): void {
+function outputJsonError(code: string, message: string, extras: JsonErrorExtras = {}): void {
   const payload: {
     error: {
       code: string;
       message: string;
       docsUrl?: string;
       errors?: ApiErrorEntry[];
+      retryable?: boolean;
+      nextStep?: string;
     };
   } = {
     error: { code, message },
   };
-  if (docsUrl) payload.error.docsUrl = docsUrl;
-  if (errors?.length) payload.error.errors = errors;
+  if (extras.docsUrl) payload.error.docsUrl = extras.docsUrl;
+  if (extras.errors?.length) payload.error.errors = extras.errors;
+  if (typeof extras.retryable === "boolean") payload.error.retryable = extras.retryable;
+  if (extras.nextStep) payload.error.nextStep = extras.nextStep;
   log.raw(JSON.stringify(payload));
+}
+
+/** Classify an HTTP status as retryable or terminal. */
+function isHttpStatusRetryable(status: number): boolean {
+  // 408 Request Timeout, 425 Too Early, 429 Too Many, and all 5xx are retryable.
+  // 4xx other than the above (e.g. 400, 401, 403, 404, 422) are terminal.
+  if (status === 408 || status === 425 || status === 429) return true;
+  return status >= 500 && status < 600;
+}
+
+/** Map an HTTP status to a sysexits-aligned exit code. */
+function exitCodeForHttpStatus(status: number): number {
+  if (status === 401 || status === 403) return EXIT_CODE.NOPERM;
+  if (isHttpStatusRetryable(status)) {
+    // 5xx → upstream unavailable; 408/425/429 → transient client/server condition.
+    return status >= 500 ? EXIT_CODE.UNAVAILABLE : EXIT_CODE.TEMPFAIL;
+  }
+  return EXIT_CODE.GENERAL;
 }

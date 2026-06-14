@@ -196,13 +196,15 @@ export function deployStatusPendingFooter(domain: string, status: DeployComponen
   ];
 }
 
-export const OAUTH_SECTION_INTRO = `${bold("Configure OAuth credentials for production")}
+export function oauthSectionIntro(): string {
+  return `${bold("Configure OAuth credentials for production")}
 
 In development, Clerk provides shared OAuth credentials for most providers.
 In production, those are not secure. You need your own credentials for
 each enabled provider.
 
 ${dim("Reference: https://clerk.com/docs/guides/configure/auth-strategies/social-connections/overview")}`;
+}
 
 export function productionSummary(
   domain: string,

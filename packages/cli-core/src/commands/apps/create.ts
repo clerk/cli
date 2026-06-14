@@ -1,14 +1,36 @@
-import { createApplication, fetchApplication } from "../../lib/plapi.ts";
+import { createApplication, fetchApplication, listApplications } from "../../lib/plapi.ts";
 import { UserAbortError, isPromptExitError, withApiContext } from "../../lib/errors.ts";
 import { dim, cyan } from "../../lib/color.ts";
 import { withSpinner, intro, outro, pausedOutro } from "../../lib/spinner.ts";
 import { stripSecrets, displayName, printJson, type AppsOptions } from "./shared.ts";
 import { isInsideGutter, log } from "../../lib/log.ts";
 import { isAgent } from "../../mode.ts";
+import { NEXT_STEPS } from "../../lib/next-steps.ts";
 
-export async function create(name: string, options: AppsOptions = {}): Promise<void> {
+interface CreateOptions extends AppsOptions {
+  ifNotExists?: boolean;
+}
+
+export async function create(name: string, options: CreateOptions = {}): Promise<void> {
   const shouldWrap = !isInsideGutter() && !options.json && !isAgent();
   if (shouldWrap) intro("Creating application");
+
+  if (options.ifNotExists) {
+    const existing = await withSpinner("Looking up existing application...", () =>
+      withApiContext(listApplications(), "Failed to list applications"),
+    );
+    const match = existing.find((a) => a.name === name);
+    if (match) {
+      const full = await withApiContext(
+        fetchApplication(match.application_id),
+        "Failed to fetch application",
+      );
+      if (printJson({ ...stripSecrets(full), reused: true }, options)) return;
+      log.info(`Reusing ${cyan(displayName(full))} ${dim(full.application_id)}`);
+      if (shouldWrap) outro(NEXT_STEPS.CREATE);
+      return;
+    }
+  }
 
   let nextSteps: string[] | undefined;
   let closeStatus: "success" | "failed" | "paused" | undefined;

@@ -1,15 +1,21 @@
 import { test, expect, describe, beforeEach, afterEach } from "bun:test";
 import { log, setLogLevel, getLogLevel, pushPrefix, popPrefix, type LogLevel } from "./log.ts";
 import { useCaptureLog } from "../test/lib/stubs.ts";
+import { setColorEnabled, isColorEnabled } from "./color.ts";
 
 let savedLevel: LogLevel;
+let savedColor: boolean;
 
 beforeEach(() => {
   savedLevel = getLogLevel();
+  savedColor = isColorEnabled();
+  // Tests assert against ANSI escape sequences; force color on regardless of TTY.
+  setColorEnabled(true);
 });
 
 afterEach(() => {
   setLogLevel(savedLevel);
+  setColorEnabled(savedColor);
 });
 
 describe("log levels", () => {
