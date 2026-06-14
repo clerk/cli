@@ -235,7 +235,8 @@ function ensureRouteImported(source: string): string {
   const importMatch = source.match(
     /import\s*\{([^}]*)\}\s*from\s*["']@react-router\/dev\/routes["']/,
   );
-  if (!importMatch || /\broute\b/.test(importMatch[1]!)) return source;
+  const importedNames = importMatch?.[1];
+  if (!importedNames || /\broute\b/.test(importedNames)) return source;
 
   return source.replace(
     /(\bimport\s*\{[^}]*)(\}\s*from\s*["']@react-router\/dev\/routes["'])/,
@@ -311,7 +312,7 @@ function injectRouteEntries(
   const canonicalPattern = /export default \[([^\]]*)\]\s*satisfies\s*RouteConfig\s*;/s;
   const canonical = source.match(canonicalPattern);
   if (canonical) {
-    const innerContent = canonical[1]!.trimEnd();
+    const innerContent = (canonical[1] ?? "").trimEnd();
     const separator = innerContent.length > 0 && !innerContent.endsWith(",") ? "," : "";
     const newInner = `${innerContent}${separator}\n  ${newEntries},\n`;
     return source.replace(canonicalPattern, `export default [${newInner}] satisfies RouteConfig;`);
@@ -321,7 +322,7 @@ function injectRouteEntries(
   const simplePattern = /(export\s+default\s+\[)([\s\S]*?)(\]\s*;)/;
   const simple = source.match(simplePattern);
   if (simple) {
-    const innerContent = simple[2]!.trimEnd();
+    const innerContent = (simple[2] ?? "").trimEnd();
     const separator = innerContent.length > 0 && !innerContent.endsWith(",") ? "," : "";
     const newInner = `${innerContent}${separator}\n  ${newEntries},\n`;
     return source.replace(simplePattern, `$1${newInner}$3`);

@@ -29,14 +29,14 @@ const FAKE_CTX = {
     name: "React",
     sdk: "@clerk/react",
     envVar: "VITE_CLERK_PUBLISHABLE_KEY",
-    envFile: ".env" as const,
+    envFile: ".env.local" as const,
   },
   typescript: true,
   srcDir: false,
   packageManager: "npm" as const,
   existingClerk: true,
   deps: { react: "^19.0.0" },
-  envFile: ".env",
+  envFile: ".env.local" as const,
 };
 
 const FAKE_BOOTSTRAP = {
@@ -459,7 +459,7 @@ describe("init", () => {
       cwd: KEYLESS_CTX.cwd,
       createIfMissing: expect.any(String),
     });
-    expect(pullMod.pull).toHaveBeenCalledWith({ file: ".env", cwd: KEYLESS_CTX.cwd });
+    expect(pullMod.pull).toHaveBeenCalledWith({ file: ".env.local", cwd: KEYLESS_CTX.cwd });
   });
 
   test("agent mode with keyless framework uses linked profile as a real app target", async () => {
@@ -474,7 +474,7 @@ describe("init", () => {
 
     expect(heuristics.printKeylessInfo).not.toHaveBeenCalled();
     expect(linkMod.link).not.toHaveBeenCalled();
-    expect(pullMod.pull).toHaveBeenCalledWith({ file: ".env", cwd: KEYLESS_CTX.cwd });
+    expect(pullMod.pull).toHaveBeenCalledWith({ file: ".env.local", cwd: KEYLESS_CTX.cwd });
   });
 
   test("agent mode with keyless framework and --app uses real app flow", async () => {
@@ -491,7 +491,7 @@ describe("init", () => {
       cwd: KEYLESS_CTX.cwd,
       createIfMissing: expect.any(String),
     });
-    expect(pullMod.pull).toHaveBeenCalledWith({ file: ".env", cwd: KEYLESS_CTX.cwd });
+    expect(pullMod.pull).toHaveBeenCalledWith({ file: ".env.local", cwd: KEYLESS_CTX.cwd });
   });
 
   test("agent mode with non-keyless framework and no app target prints manual setup", async () => {
@@ -507,7 +507,7 @@ describe("init", () => {
         envVar: "VITE_CLERK_PUBLISHABLE_KEY",
         envFile: ".env.local" as const,
       },
-      envFile: ".env.local",
+      envFile: ".env.local" as const,
     };
     spyOn(context, "gatherContext").mockResolvedValue(noKeylessCtx);
     spyOn(scaffoldMod, "scaffold").mockResolvedValue({
@@ -918,7 +918,7 @@ describe("init", () => {
       packageManager: "npm" as const,
       existingClerk: false,
       deps: { next: "15.0.0" },
-      envFile: ".env.local",
+      envFile: ".env.local" as const,
     };
 
     gatherContextSpy.mockResolvedValue(mockCtx);

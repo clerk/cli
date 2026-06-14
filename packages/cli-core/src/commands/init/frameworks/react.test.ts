@@ -22,7 +22,7 @@ function makeCtx(overrides?: Partial<ProjectContext>): ProjectContext {
     packageManager: "npm",
     existingClerk: false,
     deps: {},
-    envFile: ".env",
+    envFile: ".env.local",
     ...overrides,
   };
 }
