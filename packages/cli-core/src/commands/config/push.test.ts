@@ -1,5 +1,5 @@
 import { test, expect, describe, beforeEach, afterEach, spyOn, mock } from "bun:test";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, mkdir, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { _setConfigDir, setProfile } from "../../lib/config.ts";
@@ -132,14 +132,15 @@ describe("config push", () => {
     await expect(runConfigPatch()).rejects.toThrow("No input");
   });
 
-  test("errors on invalid JSON input", async () => {
+  test("errors on malformed config input", async () => {
     await setProfile(process.cwd(), {
       workspaceId: "org_1",
       appId: "app_1",
       instances: { development: "ins_dev" },
     });
 
-    await expect(runConfigPatch({ json: "not-json" })).rejects.toThrow("Invalid JSON");
+    // "a: b: c" is a YAML parse error (nested mapping in compact form).
+    await expect(runConfigPatch({ json: "a: b: c" })).rejects.toThrow("Invalid config input");
   });
 
   test("errors when JSON is an array", async () => {
@@ -238,6 +239,83 @@ describe("config push", () => {
 
     await runConfigPatch({ file: configFile, yes: true });
     expect(JSON.parse(capturedBody)).toEqual({ session: { lifetime: 7200 } });
+  });
+
+  test("patch reads config from a YAML --file", async () => {
+    let capturedBody = "";
+    stubFetch(async (_input, init) => {
+      if (init?.method && init.method !== "GET") capturedBody = init.body as string;
+      const body = init?.method && init.method !== "GET" ? mockResponse : currentConfig;
+      return new Response(JSON.stringify(body), { status: 200 });
+    });
+
+    const configFile = join(tempDir, "input.yaml");
+    await Bun.write(configFile, "session:\n  lifetime: 7200\n");
+
+    await setProfile(process.cwd(), {
+      workspaceId: "org_1",
+      appId: "app_1",
+      instances: { development: "ins_dev" },
+    });
+
+    await runConfigPatch({ file: configFile, yes: true });
+    expect(JSON.parse(capturedBody)).toEqual({ session: { lifetime: 7200 } });
+  });
+
+  test("patch auto-detects .clerk/config.yaml when no input given", async () => {
+    let capturedBody = "";
+    stubFetch(async (_input, init) => {
+      if (init?.method && init.method !== "GET") capturedBody = init.body as string;
+      const body = init?.method && init.method !== "GET" ? mockResponse : currentConfig;
+      return new Response(JSON.stringify(body), { status: 200 });
+    });
+
+    const prevCwd = process.cwd();
+    process.chdir(tempDir);
+    try {
+      const cwd = process.cwd();
+      await mkdir(join(cwd, ".clerk"), { recursive: true });
+      await Bun.write(join(cwd, ".clerk/config.yaml"), "session:\n  lifetime: 1234\n");
+      await setProfile(cwd, {
+        workspaceId: "org_1",
+        appId: "app_1",
+        instances: { development: "ins_dev" },
+      });
+      await runConfigPatch({ yes: true });
+    } finally {
+      process.chdir(prevCwd);
+    }
+    expect(JSON.parse(capturedBody)).toEqual({ session: { lifetime: 1234 } });
+  });
+
+  test("patch prefers .clerk/config.yaml over .clerk/config.json", async () => {
+    let capturedBody = "";
+    stubFetch(async (_input, init) => {
+      if (init?.method && init.method !== "GET") capturedBody = init.body as string;
+      const body = init?.method && init.method !== "GET" ? mockResponse : currentConfig;
+      return new Response(JSON.stringify(body), { status: 200 });
+    });
+
+    const prevCwd = process.cwd();
+    process.chdir(tempDir);
+    try {
+      const cwd = process.cwd();
+      await mkdir(join(cwd, ".clerk"), { recursive: true });
+      await Bun.write(join(cwd, ".clerk/config.yaml"), "session:\n  lifetime: 11\n");
+      await Bun.write(
+        join(cwd, ".clerk/config.json"),
+        JSON.stringify({ session: { lifetime: 22 } }),
+      );
+      await setProfile(cwd, {
+        workspaceId: "org_1",
+        appId: "app_1",
+        instances: { development: "ins_dev" },
+      });
+      await runConfigPatch({ yes: true });
+    } finally {
+      process.chdir(prevCwd);
+    }
+    expect(JSON.parse(capturedBody)).toEqual({ session: { lifetime: 11 } });
   });
 
   test("patch prints returned config to stdout", async () => {

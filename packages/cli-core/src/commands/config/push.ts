@@ -1,4 +1,6 @@
+import { parse as parseYaml } from "yaml";
 import { resolveAppContext } from "../../lib/config.ts";
+import { CONFIG_FILE_PRECEDENCE, resolveConfigFile } from "../../lib/config-file.ts";
 import { fetchInstanceConfig, putInstanceConfig, patchInstanceConfig } from "../../lib/plapi.ts";
 import { isHuman } from "../../mode.ts";
 import {
@@ -67,10 +69,10 @@ async function configPush(options: ConfigPushOptions, op: Operation): Promise<vo
 
   let configPayload: Record<string, unknown>;
   try {
-    configPayload = JSON.parse(rawInput);
+    configPayload = parseYaml(rawInput) as Record<string, unknown>;
   } catch {
     throwUsageError(
-      "Invalid JSON input. Please provide valid JSON.",
+      "Invalid config input (expected JSON or YAML).",
       undefined,
       ERROR_CODE.INVALID_JSON,
     );
@@ -170,26 +172,39 @@ export async function readInput(options: { file?: string; json?: string }): Prom
     if (!(await file.exists())) {
       throwUsageError(`File not found: ${options.file}`, undefined, ERROR_CODE.FILE_NOT_FOUND);
     }
+    log.debug(`config: reading config from ${options.file}`);
     return file.text();
   }
 
   if (!process.stdin.isTTY) {
-    const chunks: Buffer[] = [];
-    for await (const chunk of process.stdin) {
-      chunks.push(Buffer.from(chunk));
+    let text = "";
+    try {
+      const chunks: Buffer[] = [];
+      for await (const chunk of process.stdin) {
+        chunks.push(Buffer.from(chunk));
+      }
+      text = Buffer.concat(chunks).toString("utf-8").trim();
+    } catch {
+      // No readable stdin (e.g. closed pipe); fall through to default-file lookup.
+      text = "";
     }
-    const text = Buffer.concat(chunks).toString("utf-8").trim();
-    if (!text) {
-      throwUsageError("No input received from stdin");
+    if (text) {
+      log.debug("config: reading config from stdin");
+      return text;
     }
-    return text;
+  }
+
+  const resolved = await resolveConfigFile();
+  if (resolved) {
+    log.debug(`config: reading config from ${resolved}`);
+    return Bun.file(resolved).text();
   }
 
   throwUsageError(
-    "No input provided. Use --file <path>, --json <string>, or pipe JSON to stdin.\n" +
-      "  Example: clerk config patch --file config.json\n" +
-      '  Example: clerk config patch --json \'{"session":{"lifetime":3600}}\'\n' +
-      "  Example: cat config.json | clerk config patch",
+    "No input provided. Use --file <path>, --json <string>, pipe to stdin, or add one of:\n" +
+      CONFIG_FILE_PRECEDENCE.map((p) => `  ${p}`).join("\n") +
+      "\n  Example: clerk config patch --file config.yaml\n" +
+      '  Example: clerk config patch --json \'{"session":{"lifetime":3600}}\'',
   );
 }
 
