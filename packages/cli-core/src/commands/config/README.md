@@ -6,13 +6,14 @@ Manage Clerk instance configuration.
 
 ### `clerk config pull`
 
-Fetches the instance configuration from the Clerk Platform API and outputs it as JSON.
+Fetches the instance configuration from the Clerk Platform API and outputs it as **YAML by default**. Pass `--json` to emit JSON instead. When `--output` is given, the format is inferred from the file extension: a path ending in `.json` writes JSON, anything else (including `.yaml`/`.yml`) writes YAML. `--json` always wins.
 
 ```sh
 clerk config pull
 clerk config pull --app app_123
 clerk config pull --instance prod
-clerk config pull --output clerk-config.json
+clerk config pull --output clerk-config.yaml
+clerk config pull --json
 clerk config pull --keys auth_email session
 ```
 
@@ -22,7 +23,8 @@ clerk config pull --keys auth_email session
 | ------------------ | ------------------------------------------------------------------------------------------ |
 | `--app <id>`       | Application ID to target directly (works from any directory)                               |
 | `--instance <id>`  | Instance to target (`dev`, `prod`, or a full instance ID). Defaults to development.        |
-| `--output <file>`  | Write config to a file instead of stdout                                                   |
+| `--output <file>`  | Write config to a file instead of stdout (YAML, or JSON if the path ends in `.json`)       |
+| `--json`           | Output JSON instead of the default YAML                                                    |
 | `--keys <keys...>` | Top-level config keys to retrieve, separated by spaces or commas (e.g. auth_email session) |
 
 #### Requirements
@@ -82,14 +84,15 @@ clerk config schema --keys auth_email session
 
 Partially updates instance configuration using a PATCH request. Only the fields you include in the payload are modified; everything else remains unchanged.
 
-Input can be provided via `--json` (inline), `--file` (path to a JSON file), or piped to stdin. When running interactively, the command shows the payload and prompts for confirmation before sending.
+Input can be provided via `--json` (inline), `--file` (path to a YAML or JSON file), or piped to stdin. When none of these are given, the command auto-detects a project config file in this order: `.clerk/config.yaml` → `.clerk/config.yml` → `.clerk/config.json` (first found wins). YAML is a superset of JSON, so both formats parse. When running interactively, the command shows the payload and prompts for confirmation before sending.
 
 ```sh
 clerk config patch --json '{"session":{"lifetime":3600}}'
 clerk config patch --app app_123 --json '{"session":{"lifetime":3600}}'
-clerk config patch --file partial-config.json
-cat partial-config.json | clerk config patch
-clerk config patch --file partial-config.json --dry-run
+clerk config patch --file partial-config.yaml
+clerk config patch                       # reads .clerk/config.yaml (or .yml/.json)
+cat partial-config.yaml | clerk config patch
+clerk config patch --file partial-config.yaml --dry-run
 ```
 
 #### Options
@@ -98,7 +101,7 @@ clerk config patch --file partial-config.json --dry-run
 | ----------------- | ----------------------------------------------------------------------------------- |
 | `--app <id>`      | Application ID to target directly (works from any directory)                        |
 | `--instance <id>` | Instance to target (`dev`, `prod`, or a full instance ID). Defaults to development. |
-| `--file <path>`   | Read config JSON from a file                                                        |
+| `--file <path>`   | Read config from a YAML or JSON file                                                |
 | `--json <string>` | Pass config JSON inline (takes priority over `--file`)                              |
 | `--dry-run`       | Validate server-side and preview the projected result without persisting changes    |
 | `--yes`           | Skip confirmation prompts                                                           |
@@ -122,14 +125,14 @@ clerk config patch --file partial-config.json --dry-run
 
 Replaces the entire instance configuration using a PUT request. The payload you send becomes the complete configuration, overwriting all existing values.
 
-Input can be provided via `--json` (inline), `--file` (path to a JSON file), or piped to stdin. When running interactively, the command shows a destructive-action warning and prompts for confirmation before sending.
+Input can be provided via `--json` (inline), `--file` (path to a YAML or JSON file), or piped to stdin. When none of these are given, the command auto-detects a project config file in this order: `.clerk/config.yaml` → `.clerk/config.yml` → `.clerk/config.json` (first found wins). When running interactively, the command shows a destructive-action warning and prompts for confirmation before sending.
 
 ```sh
-clerk config put --file full-config.json
-clerk config put --app app_123 --file full-config.json
+clerk config put --file full-config.yaml
+clerk config put --app app_123 --file full-config.yaml
 clerk config put --json '{"session":{"lifetime":3600},"sign_in":{"enabled":true}}'
-cat full-config.json | clerk config put
-clerk config put --file full-config.json --dry-run
+cat full-config.yaml | clerk config put
+clerk config put --file full-config.yaml --dry-run
 ```
 
 #### Options
@@ -138,7 +141,7 @@ clerk config put --file full-config.json --dry-run
 | ----------------- | ----------------------------------------------------------------------------------- |
 | `--app <id>`      | Application ID to target directly (works from any directory)                        |
 | `--instance <id>` | Instance to target (`dev`, `prod`, or a full instance ID). Defaults to development. |
-| `--file <path>`   | Read config JSON from a file                                                        |
+| `--file <path>`   | Read config from a YAML or JSON file                                                |
 | `--json <string>` | Pass config JSON inline (takes priority over `--file`)                              |
 | `--dry-run`       | Validate server-side and preview the projected result without persisting changes    |
 | `--yes`           | Skip confirmation prompts                                                           |
