@@ -1,4 +1,4 @@
-import { Command } from "@commander-js/extra-typings";
+import { Command, createOption } from "@commander-js/extra-typings";
 import { expandInputJson } from "./lib/input-json.ts";
 import { setLogLevel } from "./lib/log.ts";
 import { setMode, type Mode } from "./mode.ts";
@@ -42,6 +42,7 @@ import { isAgent } from "./mode.ts";
 import { log } from "./lib/log.ts";
 import { maybeNotifyUpdate, getCurrentVersion } from "./lib/update-check.ts";
 import { getAuthToken } from "./lib/plapi.ts";
+import { parseIntegerOption } from "./lib/option-parsers.ts";
 import { webhooks as webhooksHandlers } from "./commands/webhooks/index.ts";
 import { registerExtras } from "@clerk/cli-extras";
 
@@ -207,7 +208,6 @@ export function createProgram(): Program {
         endpointId,
       }),
     );
-: add 'webhooks get' command)
 
   webhooks
     .command("event-types")
@@ -228,7 +228,6 @@ export function createProgram(): Program {
         cmd.optsWithGlobals() as Parameters<typeof webhooksHandlers.eventTypes>[0],
       ),
     );
-: add 'webhooks event-types' command)
 
   webhooks
     .command("secret")
@@ -259,7 +258,6 @@ export function createProgram(): Program {
         endpointId,
       }),
     );
-: add 'webhooks secret' command with --rotate)
 
   webhooks
     .command("delete")
@@ -282,7 +280,6 @@ export function createProgram(): Program {
         endpointId,
       }),
     );
-: add 'webhooks delete' command)
 
   webhooks
     .command("update")
@@ -320,7 +317,6 @@ export function createProgram(): Program {
         endpointId,
       }),
     );
-: add 'webhooks update' command)
 
   webhooks
     .command("create")
@@ -353,7 +349,6 @@ export function createProgram(): Program {
         cmd.optsWithGlobals() as Parameters<typeof webhooksHandlers.create>[0],
       ),
     );
-: add 'webhooks create' command)
 
   webhooks
     .command("messages")
@@ -389,7 +384,6 @@ export function createProgram(): Program {
         cmd.optsWithGlobals() as Parameters<typeof webhooksHandlers.messages>[0],
       ),
     );
-: add 'webhooks messages' command)
 
   webhooks
     .command("replay")
@@ -423,7 +417,6 @@ export function createProgram(): Program {
         msgId,
       }),
     );
-: add 'webhooks replay' command)
 
   webhooks
     .command("trigger")
@@ -452,7 +445,6 @@ export function createProgram(): Program {
         eventType,
       }),
     );
-: add 'webhooks trigger' command)
 
   webhooks
     .command("open")
@@ -464,7 +456,6 @@ export function createProgram(): Program {
     .action((_opts, cmd) =>
       webhooksHandlers.open(cmd.optsWithGlobals() as Parameters<typeof webhooksHandlers.open>[0]),
     );
-: add 'webhooks open' command)
 
   webhooks
     .command("verify")
@@ -494,7 +485,6 @@ export function createProgram(): Program {
         cmd.optsWithGlobals() as Parameters<typeof webhooksHandlers.verify>[0],
       ),
     );
-: add offline 'webhooks verify' command)
 
   webhooks
     .command("listen")
@@ -528,7 +518,6 @@ export function createProgram(): Program {
         cmd.optsWithGlobals() as Parameters<typeof webhooksHandlers.listen>[0],
       ),
     );
-: add 'webhooks listen' command)
   return program;
 }
 
