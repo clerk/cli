@@ -186,7 +186,8 @@ test("config pull with array keys via --input-json", async () => {
     "config",
     "pull",
     "--input-json",
-    '{"keys":["auth_email","session"]}',
+    // json:true so stdout is JSON (default output is now YAML)
+    '{"keys":["auth_email","session"],"json":true}',
   );
   const parsed = JSON.parse(stdout);
   expect(parsed).toBeDefined();

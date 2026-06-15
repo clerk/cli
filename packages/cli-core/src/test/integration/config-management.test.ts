@@ -32,8 +32,8 @@ test.each([{ mode: "human" }, { mode: "agent" }])(
       "/config": MOCK_CONFIG,
     });
 
-    // Pull config
-    const { stdout: pullOutput } = await clerk("--mode", mode, "config", "pull");
+    // Pull config (--json: assert the JSON round-trip; default output is YAML)
+    const { stdout: pullOutput } = await clerk("--mode", mode, "config", "pull", "--json");
     expect(pullOutput).toContain(
       `"lifetime": ${(MOCK_CONFIG.session as { lifetime: number }).lifetime}`,
     );
