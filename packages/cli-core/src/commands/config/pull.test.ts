@@ -2,6 +2,7 @@ import { test, expect, describe, beforeEach, afterEach, spyOn, mock } from "bun:
 import { mkdtemp, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
+import YAML from "yaml";
 import { _setConfigDir, setProfile } from "../../lib/config.ts";
 import { useCaptureLog, credentialStoreStubs, gitStubs, stubFetch } from "../../test/lib/stubs.ts";
 
@@ -63,7 +64,13 @@ describe("config pull", () => {
 
   // Dynamically import to get fresh module state
   async function runConfigPull(
-    options: { app?: string; instance?: string; output?: string; keys?: string[] } = {},
+    options: {
+      app?: string;
+      instance?: string;
+      output?: string;
+      keys?: string[];
+      json?: boolean;
+    } = {},
   ) {
     const { configPull } = await import("./pull.ts");
     return configPull(options);
@@ -84,7 +91,7 @@ describe("config pull", () => {
     await expect(runConfigPull()).rejects.toThrow("Not authenticated");
   });
 
-  test("prints config JSON to stdout by default", async () => {
+  test("prints config as YAML to stdout by default", async () => {
     await setProfile(process.cwd(), {
       workspaceId: "org_1",
       appId: "app_1",
@@ -92,6 +99,17 @@ describe("config pull", () => {
     });
 
     await runConfigPull();
+    expect(captured.out).toContain(YAML.stringify(mockConfig));
+  });
+
+  test("prints config as JSON to stdout with --json", async () => {
+    await setProfile(process.cwd(), {
+      workspaceId: "org_1",
+      appId: "app_1",
+      instances: { development: "ins_dev" },
+    });
+
+    await runConfigPull({ json: true });
     expect(captured.out).toContain(JSON.stringify(mockConfig, null, 2));
   });
 
@@ -112,11 +130,11 @@ describe("config pull", () => {
       throw new Error(`Unexpected fetch: ${url}`);
     });
 
-    await runConfigPull({ app: "app_1" });
+    await runConfigPull({ app: "app_1", json: true });
     expect(captured.out).toContain(JSON.stringify(mockConfig, null, 2));
   });
 
-  test("writes config to file with --output", async () => {
+  test("writes JSON to file when --output ends in .json (extension guard)", async () => {
     await setProfile(process.cwd(), {
       workspaceId: "org_1",
       appId: "app_1",
@@ -126,6 +144,20 @@ describe("config pull", () => {
 
     await runConfigPull({ output: outFile });
     const written = await Bun.file(outFile).json();
+    expect(written).toEqual(mockConfig);
+    expect(captured.err).toContain("Config written to");
+  });
+
+  test("writes YAML to file when --output ends in .yaml", async () => {
+    await setProfile(process.cwd(), {
+      workspaceId: "org_1",
+      appId: "app_1",
+      instances: { development: "ins_dev" },
+    });
+    const outFile = join(tempDir, "output.yaml");
+
+    await runConfigPull({ output: outFile });
+    const written = YAML.parse(await Bun.file(outFile).text());
     expect(written).toEqual(mockConfig);
     expect(captured.err).toContain("Config written to");
   });
@@ -242,7 +274,7 @@ describe("config pull", () => {
 
     await runConfigPull({ keys: ["session"] });
     expect(requestedUrl).toContain("keys=session");
-    expect(captured.out).toContain(JSON.stringify({ session: { lifetime: 604800 } }, null, 2));
+    expect(captured.out).toContain(YAML.stringify({ session: { lifetime: 604800 } }));
   });
 
   test("--keys passes multiple keys as repeated query params", async () => {

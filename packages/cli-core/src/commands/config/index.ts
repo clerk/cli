@@ -44,14 +44,16 @@ export function registerConfig(program: Program): void {
     .option("--app <id>", "Application ID to target (works from any directory)")
     .option("--instance <id>", "Instance to target (dev, prod, or a full instance ID)")
     .option("--output <file>", "Write config to a file instead of stdout")
+    .option("--json", "Output JSON instead of the default YAML")
     .option(
       "--keys <keys...>",
       "Top-level config keys to retrieve, separated by spaces or commas (e.g. auth_email session)",
     )
     .setExamples([
-      { command: "clerk config pull", description: "Print dev config to stdout" },
+      { command: "clerk config pull", description: "Print dev config (YAML) to stdout" },
       { command: "clerk config pull --instance prod", description: "Pull production config" },
-      { command: "clerk config pull --output config.json", description: "Save config to a file" },
+      { command: "clerk config pull --output config.yaml", description: "Save config to a file" },
+      { command: "clerk config pull --json", description: "Print config as JSON" },
     ])
     .action(configPull);
 
