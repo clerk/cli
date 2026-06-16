@@ -433,6 +433,17 @@ export function providerSetupIntro(provider: OAuthProvider | OAuthProviderDescri
   return [bold(`Configure ${label} OAuth for production`), setupCopy, dim(`Reference: ${docsUrl}`)];
 }
 
+function oauthWalkthroughUrls(
+  domain: string,
+  frontendApiUrl?: string,
+): { authorizedOrigins: string[]; redirectUri: string } {
+  const callbackBase = frontendApiUrl?.replace(/\/+$/, "") ?? `https://clerk.${domain}`;
+  return {
+    authorizedOrigins: [`https://${domain}`, `https://www.${domain}`],
+    redirectUri: `${callbackBase}/v1/oauth_callback`,
+  };
+}
+
 /**
  * Show OAuth provider walkthrough values and open provider docs.
  */
@@ -445,17 +456,15 @@ export async function showOAuthWalkthrough(
   const slug = descriptor?.provider ?? (provider as OAuthProvider);
   const label = descriptor?.label ?? providerLabel(slug);
   const docsUrl = descriptor?.docsUrl ?? providerDocsUrl(slug);
-  // The OAuth callback is served by the Frontend API (clerk.<domain>), not the
-  // Account Portal (accounts.<domain>). Prefer the API-reported URL over
-  // reconstructing it from the domain.
-  const callbackBase = frontendApiUrl?.replace(/\/+$/, "") || `https://clerk.${domain}`;
+  const { authorizedOrigins, redirectUri } = oauthWalkthroughUrls(domain, frontendApiUrl);
 
   log.info(`\nConfigure your ${bold(label)} OAuth app with these values:\n`);
   log.info(`  ${dim("Authorized JavaScript origins")}`);
-  log.info(`    ${cyan(`https://${domain}`)}`);
-  log.info(`    ${cyan(`https://www.${domain}`)}`);
+  for (const origin of authorizedOrigins) {
+    log.info(`    ${cyan(origin)}`);
+  }
   log.info(`  ${dim(descriptor?.redirectLabel ?? providerRedirectLabel(slug))}`);
-  log.info(`    ${cyan(`${callbackBase}/v1/oauth_callback`)}`);
+  log.info(`    ${cyan(redirectUri)}`);
   const gotcha = descriptor?.gotcha ?? providerGotcha(slug);
   if (gotcha) {
     log.blank();
