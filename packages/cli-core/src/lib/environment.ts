@@ -11,6 +11,7 @@
 
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { isHuman } from "../mode.ts";
 import { log } from "./log.ts";
 
 export interface EnvProfileConfig {
@@ -134,6 +135,27 @@ export function getOAuthConfig() {
 
 export function getPlapiBaseUrl(): string {
   return process.env.CLERK_PLATFORM_API_URL ?? getCurrentEnv().platformApiUrl;
+}
+
+/**
+ * Warn when CLERK_PLATFORM_API_URL redirects requests to a host that differs
+ * from the active environment's platform URL. Credentials are keyed by
+ * environment name, not by URL, so the active env's token is what gets sent to
+ * the override host — surface that so it isn't a silent surprise.
+ *
+ * Human mode only: a per-command warning line would corrupt the machine-readable
+ * stderr that agent mode emits. Agent/scripted callers get the same information
+ * from the `clerk doctor` environment report instead.
+ */
+export function warnIfPlatformApiUrlOverride(): void {
+  if (!isHuman()) return;
+  const override = process.env.CLERK_PLATFORM_API_URL;
+  if (!override) return;
+  const envName = getCurrentEnvName();
+  if (override === getCurrentEnv().platformApiUrl) return;
+  log.warn(
+    `CLERK_PLATFORM_API_URL is routing requests to ${override}, but credentials stay keyed to the "${envName}" environment — the "${envName}" token will be sent to that host.`,
+  );
 }
 
 export function getBapiBaseUrl(): string {
