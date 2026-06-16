@@ -74,11 +74,6 @@ async function readStdin(): Promise<string> {
   return text;
 }
 
-async function readOptionalStdin(): Promise<string | undefined> {
-  const text = await Bun.stdin.text();
-  return text.trim() ? text : undefined;
-}
-
 /**
  * Resolve the raw --input-json value to a JSON string.
  * - `"-"` reads from stdin.
@@ -122,45 +117,25 @@ function requireValue(argv: string[], idx: number): string {
 }
 
 /**
- * Check whether stdin has piped data available (i.e. is not a TTY).
- */
-function hasStdinPipe(): boolean {
-  return !process.stdin.isTTY;
-}
-
-/**
  * Process an argv array: find `--input-json`, expand JSON to flags, return
  * a new argv with the expanded flags spliced in (so explicit CLI flags that
  * appear later in argv naturally take precedence).
  *
- * If `--input-json` is not present but stdin is piped (not a TTY), reads
- * JSON from stdin and appends the expanded flags to the end of argv.
+ * Stdin is only consumed when the value is the explicit `-` marker
+ * (`--input-json -`). Piped stdin is never read implicitly, so shell loops
+ * (`while read … | clerk …`) and commands that read their own stdin (e.g.
+ * `cat body.json | clerk api …`) are left untouched.
  *
- * If neither `--input-json` nor stdin pipe is present, returns the original
- * array unchanged.
+ * If `--input-json` is not present, returns the original array unchanged.
  */
 export async function expandInputJson(argv: string[]): Promise<string[]> {
   const idx = argv.indexOf(INPUT_JSON_FLAG);
+  if (idx === -1) return argv;
 
-  if (idx !== -1) {
-    const rawValue = requireValue(argv, idx);
-    const jsonStr = await resolveJsonValue(rawValue);
-    const parsed = parseJsonString(jsonStr);
-    assertJsonObject(parsed);
-    argv.splice(idx, 2, ...expandJsonToFlags(parsed));
-    return argv;
-  }
-
-  // No explicit --input-json flag — check for piped stdin
-  if (hasStdinPipe()) {
-    const jsonStr = await readOptionalStdin();
-    if (jsonStr === undefined) return argv;
-    const parsed = parseJsonString(jsonStr);
-    assertJsonObject(parsed);
-    // Append expanded flags at the end; explicit CLI flags already in argv
-    // appear before these, so they naturally take precedence (last-flag-wins).
-    argv.push(...expandJsonToFlags(parsed));
-  }
-
+  const rawValue = requireValue(argv, idx);
+  const jsonStr = await resolveJsonValue(rawValue);
+  const parsed = parseJsonString(jsonStr);
+  assertJsonObject(parsed);
+  argv.splice(idx, 2, ...expandJsonToFlags(parsed));
   return argv;
 }
