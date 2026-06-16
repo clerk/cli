@@ -1,7 +1,7 @@
 import type { Program } from "../../cli-program.ts";
 import { deployStatus } from "./status-command.ts";
 import { isAgent } from "../../mode.ts";
-import { isInsideGutter, log } from "../../lib/log.ts";
+import { applyPrefix, isInsideGutter, log } from "../../lib/log.ts";
 import { bold, dim } from "../../lib/color.ts";
 import { animateHeader } from "../../lib/gradient.ts";
 import { bar, intro, outro, pausedOutro, withSpinner } from "../../lib/spinner.ts";
@@ -633,8 +633,8 @@ async function finishDeploy(
     prefix: isInsideGutter() ? `${dim("│")}  ` : "",
     label: "Next steps",
     fallback: bold,
+    body: `${applyPrefix(nextStepsBody(ctx.appId, productionInstanceId))}\n`,
   });
-  log.info(nextStepsBody(ctx.appId, productionInstanceId));
   outro("Success");
 }
 
