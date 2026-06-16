@@ -30,6 +30,7 @@ import {
   getCurrentEnvName,
   getAvailableEnvs,
   getPlapiBaseUrl,
+  warnIfPlatformApiUrlOverride,
 } from "./lib/environment.ts";
 import {
   CliError,
@@ -145,6 +146,8 @@ export function createProgram(): Program {
     if (activeEnv !== "production") {
       process.stderr.write(`[${activeEnv.toUpperCase()}]\n`);
     }
+
+    warnIfPlatformApiUrlOverride();
   });
 
   // Show update notification after each command, except for commands that
