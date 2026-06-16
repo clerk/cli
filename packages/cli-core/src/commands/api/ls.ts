@@ -35,7 +35,9 @@ function printTable(endpoints: EndpointInfo[]): void {
 
   for (const ep of endpoints) {
     const method = ep.method.padEnd(methodWidth);
-    const path = ep.path.padEnd(pathWidth);
+    // padEnd is a no-op once the path meets/exceeds pathWidth, so guarantee a
+    // separator for over-long paths instead of gluing the summary onto them.
+    const path = ep.path.length >= pathWidth ? `${ep.path}  ` : ep.path.padEnd(pathWidth);
     log.data(`${method}${path}${ep.summary}`);
   }
 }
