@@ -93,10 +93,7 @@ function warnAboutSandbox(detail?: string): void {
   warnedAboutSandbox = true;
 
   log.warn(
-    "Host-only Clerk state or system capabilities may be unavailable in agent mode. This may be a sandboxed run.",
-  );
-  log.warn(
-    "Re-run this command on the host shell before trusting auth, link, env, or API failures.",
+    "Host-only Clerk state or capabilities may be unavailable in agent mode (possible sandboxed run). If this looks wrong, re-run on the host shell before trusting auth, link, env, or API failures.",
   );
 
   if (detail) {
@@ -118,11 +115,11 @@ function isPermissionLikeFailure(error: unknown): boolean {
 }
 
 function isLikelySandboxFailure(capability: HostCapability, error: unknown): boolean {
-  if (
-    capability === "network" ||
-    capability === "browser-launch" ||
-    capability === "localhost-bind"
-  ) {
+  // browser-launch and localhost-bind only ever fail for host-capability
+  // reasons, so any failure is a meaningful sandbox signal. Network failures
+  // are different: a plain unreachable host (VPN, DNS, ECONNREFUSED) is not a
+  // sandbox, so require a permission-like error before hinting at a sandbox.
+  if (capability === "browser-launch" || capability === "localhost-bind") {
     return true;
   }
 
