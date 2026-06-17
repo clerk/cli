@@ -41,3 +41,33 @@ export async function publish(dir: string, opts: { dryRun: boolean; tag?: string
   if (opts.dryRun) flags.push("--dry-run");
   await run(flags, { cwd: dir });
 }
+
+/**
+ * Wait until npm reports that a package version has been published.
+ */
+export async function waitUntilPublished(
+  name: string,
+  version: string,
+  opts: {
+    intervalMs: number;
+    timeoutMs: number;
+    isPublished: (name: string, version: string) => Promise<boolean>;
+  },
+): Promise<void> {
+  const startedAt = Date.now();
+
+  while (true) {
+    if (await opts.isPublished(name, version)) {
+      return;
+    }
+
+    const elapsedMs = Date.now() - startedAt;
+    if (elapsedMs >= opts.timeoutMs) {
+      throw new Error(
+        `Timed out waiting for ${name}@${version} to become available on npm after ${opts.timeoutMs}ms`,
+      );
+    }
+
+    await Bun.sleep(Math.min(opts.intervalMs, opts.timeoutMs - elapsedMs));
+  }
+}
