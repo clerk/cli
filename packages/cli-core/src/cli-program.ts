@@ -146,23 +146,40 @@ export function createProgram(): Program {
   return program;
 }
 
-export function formatApiBody(error: ApiError, verbose: boolean): string {
+export function formatApiBody(body: string, verbose: boolean): string {
   if (verbose) {
     try {
-      return "\n" + JSON.stringify(JSON.parse(error.body), null, 2);
+      return "\n" + JSON.stringify(JSON.parse(body), null, 2);
     } catch {
-      return "\n" + error.body;
+      return "\n" + body;
     }
   }
-  return formatStructuredError(error);
+
+  try {
+    const parsed = JSON.parse(body);
+    if (Array.isArray(parsed.errors) && parsed.errors.length > 0) {
+      return parsed.errors.map(formatSingleError).join("\n");
+    }
+    if (parsed.error) return parsed.error;
+    if (parsed.message) return parsed.message;
+  } catch {
+    // not JSON
+  }
+
+  if (body.length > 200) return body.slice(0, 200) + "...";
+  return body;
 }
 
-function formatStructuredError(error: ApiError): string {
-  let msg = error.message;
-  const { meta, code } = error;
+function formatSingleError(err: {
+  message?: string;
+  code?: string;
+  meta?: Record<string, unknown>;
+}): string {
+  let msg = err.message ?? "Unknown error";
+  const meta = err.meta;
   if (!meta) return msg;
 
-  switch (code) {
+  switch (err.code) {
     case "unsupported_subscription_plan_features": {
       const features = meta.unsupported_features;
       if (Array.isArray(features) && features.length > 0) {
@@ -247,7 +264,7 @@ export async function runProgram(
     }
 
     if (error instanceof ApiError) {
-      const detail = formatApiBody(error, verbose);
+      const detail = formatApiBody(error.body, verbose);
       const prefix = error.context ?? "Request failed";
       if (isAgent()) {
         const apiErrors: ApiErrorEntry[] | undefined =
