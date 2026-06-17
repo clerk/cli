@@ -4,8 +4,11 @@
  * is translated to UserAbortError at the wrapper boundary.
  */
 
-import { createReadStream } from "node:fs";
+import { createReadStream, readdirSync, statSync, type Dirent } from "node:fs";
+import { homedir } from "node:os";
+import { basename, dirname, join } from "node:path";
 import type { Readable } from "node:stream";
+import { styleText } from "node:util";
 import {
   select as clackSelect,
   autocomplete as clackAutocomplete,
@@ -13,6 +16,7 @@ import {
   type Option as ClackOption,
 } from "@clack/prompts";
 import { throwUserAbort } from "./errors.ts";
+import { log } from "./log.ts";
 
 // ---------------------------------------------------------------------------
 // Shared utilities
@@ -294,5 +298,139 @@ export async function search<Value>(config: SearchConfig<Value>): Promise<Value>
     return unwrap(result);
   } finally {
     tty?.close();
+  }
+}
+
+// ---------------------------------------------------------------------------
+// File path prompt (autocomplete over the filesystem)
+// ---------------------------------------------------------------------------
+
+/** Expand a leading `~` to the user's home directory. Other paths pass through. */
+export function expandHome(input: string): string {
+  if (input === "~") return homedir();
+  if (input.startsWith("~/")) return join(homedir(), input.slice(2));
+  return input;
+}
+
+export type PathChoice = { value: string; name: string; isDirectory: boolean };
+
+/**
+ * List filesystem entries that could complete a partially-typed path.
+ *
+ * Splits the term into the directory to read and the basename prefix to match,
+ * reads that directory synchronously (local reads are sub-millisecond, so the
+ * autocomplete options getter can stay synchronous), and returns matching
+ * entries. Directories sort first and carry a trailing `/` so selecting one
+ * drills into it on the next keystroke. The returned text preserves the prefix
+ * the user literally typed (including a leading `~` or relative segment) so the
+ * input line stays in the form they recognise instead of jumping to an absolute
+ * path.
+ *
+ * Returns an empty list for unreadable or non-existent directories — the prompt
+ * renders "No matches found" and the user keeps typing.
+ */
+export function listPathChoices(term: string | undefined): PathChoice[] {
+  const typed = term ?? "";
+  // An empty term or a trailing slash means "list inside this directory";
+  // otherwise the last segment is a prefix to filter the parent directory by.
+  const listInside = typed === "" || typed.endsWith("/");
+  const expanded = expandHome(typed);
+  const dirToRead = listInside ? expanded || "." : dirname(expanded) || ".";
+  const matchPrefix = listInside ? "" : basename(expanded);
+  // The literal text up to (but excluding) the matched basename, reused as the
+  // visible prefix so completions keep the user's `~`/relative form.
+  const typedDir = listInside ? typed : typed.slice(0, typed.length - matchPrefix.length);
+
+  let entries: Dirent<string>[];
+  try {
+    entries = readdirSync(dirToRead, { withFileTypes: true });
+  } catch {
+    return [];
+  }
+
+  return entries
+    .filter((entry) => entry.name.startsWith(matchPrefix))
+    .sort((a, b) => {
+      const directoryFirst = Number(b.isDirectory()) - Number(a.isDirectory());
+      return directoryFirst !== 0 ? directoryFirst : a.name.localeCompare(b.name);
+    })
+    .map((entry) => {
+      const isDirectory = entry.isDirectory();
+      const path = `${typedDir}${entry.name}${isDirectory ? "/" : ""}`;
+      return { value: path, name: path, isDirectory };
+    });
+}
+
+export type FilePathConfig = {
+  message: string;
+  /**
+   * Validate the chosen file. Runs on submit, after directories are drilled
+   * into rather than returned. Return `true` to accept, or a string to show as
+   * an error and keep editing.
+   */
+  validate?: (path: string) => boolean | string | Promise<boolean | string>;
+};
+
+/**
+ * Tint directory rows cyan. Clack dims inactive rows; `styleText` nests, so
+ * directories read as muted cyan and the focused row as bright cyan.
+ */
+function pathOptions(term: string | undefined): ClackOption<string>[] {
+  return listPathChoices(term).map((choice) => ({
+    value: choice.value,
+    label: choice.isDirectory ? styleText("cyan", choice.name) : choice.name,
+  }));
+}
+
+function isDirectoryPath(path: string): boolean {
+  try {
+    return statSync(expandHome(path)).isDirectory();
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Prompt for a filesystem path with autocomplete and directory drill-in.
+ *
+ * Each keystroke re-reads the directory under the cursor and lists matching
+ * entries. Selecting a directory re-opens the prompt seeded inside it (clack
+ * submits on select, so drilling is a re-prompt with `initialUserInput`);
+ * selecting a file runs `validate` and submits. A leading `~` expands to the
+ * home directory. Inherits the piped-stdin TTY fallback used by `select`/
+ * `search`.
+ */
+export async function filePath(config: FilePathConfig): Promise<string> {
+  let seed = "";
+  for (;;) {
+    const tty = ttyContext();
+    let result: string | symbol;
+    try {
+      result = await clackAutocomplete<string>({
+        message: config.message,
+        initialUserInput: seed,
+        options: function (this: { userInput?: string }) {
+          return pathOptions(this.userInput);
+        },
+        filter: () => true,
+        validate: (value) => (value === undefined ? "Type a path, then pick a match." : undefined),
+        input: tty?.input,
+      });
+    } finally {
+      tty?.close();
+    }
+
+    const path = unwrap(result).trim();
+    if (isDirectoryPath(path)) {
+      seed = path.endsWith("/") ? path : `${path}/`;
+      continue;
+    }
+
+    const verdict = config.validate ? await config.validate(path) : true;
+    if (verdict === true) return path;
+
+    // Keep editing: surface the reason and re-open seeded with what they chose.
+    log.warn(typeof verdict === "string" ? verdict : "That file can't be used.");
+    seed = path;
   }
 }

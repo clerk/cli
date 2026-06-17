@@ -43,6 +43,9 @@ mock.module("../../lib/prompts.ts", () => ({
 mock.module("../../lib/listage.ts", () => ({
   ...listageStubs,
   select: (...args: unknown[]) => mockSelect(...args),
+  // filePath() collects a path the same way input() does; reuse the input mock
+  // so existing mockInput.mockResolvedValueOnce(path) chains keep working.
+  filePath: (...args: unknown[]) => mockInput(...args),
 }));
 
 mock.module("../../lib/plapi.ts", () => ({

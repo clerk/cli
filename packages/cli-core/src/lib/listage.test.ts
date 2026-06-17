@@ -1,4 +1,8 @@
-import { test, expect, describe, mock, beforeEach, spyOn } from "bun:test";
+import { test, expect, describe, mock, beforeEach, beforeAll, afterAll, spyOn } from "bun:test";
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
+import { homedir, tmpdir } from "node:os";
+import { join } from "node:path";
+import { log } from "./log.ts";
 
 // Sentinel for cancellation. Tests choose this symbol; the mocked
 // @clack/prompts.isCancel below treats it as the clack cancel signal.
@@ -12,6 +16,9 @@ let lastSelectCall: RecordedCall | undefined;
 let selectResult: unknown = undefined;
 let lastAutocompleteCall: RecordedCall | undefined;
 let autocompleteResult: unknown = undefined;
+// Each entry answers one autocomplete() call, in order; used to drive filePath's
+// drill-in loop across iterations. Falls back to autocompleteResult when empty.
+let autocompleteQueue: unknown[] = [];
 
 mock.module("@clack/prompts", () => ({
   select: async (config: Record<string, unknown>) => {
@@ -20,7 +27,7 @@ mock.module("@clack/prompts", () => ({
   },
   autocomplete: async (config: Record<string, unknown>) => {
     lastAutocompleteCall = { config };
-    return autocompleteResult;
+    return autocompleteQueue.length > 0 ? autocompleteQueue.shift() : autocompleteResult;
   },
   isCancel: (value: unknown): value is symbol => value === cancelSymbol,
   // Stubs for sibling tests that may share this process.
@@ -34,13 +41,23 @@ mock.module("@clack/prompts", () => ({
   spinner: () => ({ start: () => {}, stop: () => {}, message: () => {} }),
 }));
 
-const { select, search, filterChoices, normalizeChoices, Separator } = await import("./listage.ts");
+const {
+  select,
+  search,
+  filePath,
+  expandHome,
+  listPathChoices,
+  filterChoices,
+  normalizeChoices,
+  Separator,
+} = await import("./listage.ts");
 
 beforeEach(() => {
   lastSelectCall = undefined;
   selectResult = undefined;
   lastAutocompleteCall = undefined;
   autocompleteResult = undefined;
+  autocompleteQueue = [];
   Object.defineProperty(process.stdin, "isTTY", {
     configurable: true,
     value: true,
@@ -409,5 +426,153 @@ describe("search", () => {
     }) => Array<Record<string, unknown>>;
     const options = optionsFn.call({ userInput: "" });
     expect(options[0]).toMatchObject({ value: "a", label: "A" });
+  });
+});
+
+describe("expandHome", () => {
+  const HOME_CASES = [
+    ["~", homedir()],
+    ["~/", join(homedir(), "")],
+    ["~/Downloads/key.p8", join(homedir(), "Downloads/key.p8")],
+    ["/absolute/path", "/absolute/path"],
+    ["relative/path", "relative/path"],
+    // Only `~` and `~/` are expanded — `~user` is left untouched.
+    ["~user/file", "~user/file"],
+  ] as const;
+
+  test.each([...HOME_CASES])("expands %s", (input, expected) => {
+    expect(expandHome(input)).toBe(expected);
+  });
+});
+
+describe("listPathChoices", () => {
+  let dir: string;
+
+  beforeAll(() => {
+    dir = mkdtempSync(join(tmpdir(), "listage-path-"));
+    mkdirSync(join(dir, "nested"));
+    writeFileSync(join(dir, "key.p8"), "");
+    writeFileSync(join(dir, "key.pub"), "");
+    writeFileSync(join(dir, "other.txt"), "");
+    writeFileSync(join(dir, "nested", "inner.json"), "");
+  });
+
+  afterAll(() => {
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  test("lists a directory's contents when the term ends with a separator", () => {
+    expect(listPathChoices(`${dir}/`).map((c) => c.value)).toEqual([
+      `${dir}/nested/`,
+      `${dir}/key.p8`,
+      `${dir}/key.pub`,
+      `${dir}/other.txt`,
+    ]);
+  });
+
+  test("sorts directories before files", () => {
+    const choices = listPathChoices(`${dir}/`);
+    expect(choices[0]).toMatchObject({ value: `${dir}/nested/`, isDirectory: true });
+    expect(choices.slice(1).every((c) => !c.isDirectory)).toBe(true);
+  });
+
+  test("appends a trailing slash and flags directories", () => {
+    const nested = listPathChoices(`${dir}/`).find((c) => c.value.endsWith("nested/"));
+    expect(nested).toEqual({ value: `${dir}/nested/`, name: `${dir}/nested/`, isDirectory: true });
+  });
+
+  test("filters by the trailing basename prefix", () => {
+    expect(listPathChoices(`${dir}/key`).map((c) => c.value)).toEqual([
+      `${dir}/key.p8`,
+      `${dir}/key.pub`,
+    ]);
+  });
+
+  test("preserves the typed prefix instead of resolving to an absolute path", () => {
+    expect(listPathChoices(`${dir}/nested/inn`).map((c) => c.value)).toEqual([
+      `${dir}/nested/inner.json`,
+    ]);
+  });
+
+  test("returns an empty list for an unreadable directory", () => {
+    expect(listPathChoices(`${dir}/does-not-exist/`)).toEqual([]);
+  });
+
+  test("returns an empty list when nothing matches the prefix", () => {
+    expect(listPathChoices(`${dir}/zzz`)).toEqual([]);
+  });
+});
+
+describe("filePath", () => {
+  let dir: string;
+
+  beforeAll(() => {
+    dir = mkdtempSync(join(tmpdir(), "listage-filepath-"));
+    mkdirSync(join(dir, "nested"));
+    writeFileSync(join(dir, "key.p8"), "");
+    writeFileSync(join(dir, "nested", "inner.json"), "");
+  });
+
+  afterAll(() => {
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  test("returns the selected file after running validate", async () => {
+    autocompleteResult = `${dir}/key.p8`;
+    let validated: string | undefined;
+
+    const result = await filePath({
+      message: "Pick a file",
+      validate: (path) => {
+        validated = path;
+        return true;
+      },
+    });
+
+    expect(result).toBe(`${dir}/key.p8`);
+    expect(validated).toBe(`${dir}/key.p8`);
+  });
+
+  test("lists filesystem entries through the options getter", async () => {
+    autocompleteResult = `${dir}/key.p8`;
+    await filePath({ message: "Pick a file" });
+
+    const optionsFn = lastAutocompleteCall?.config.options as (this: {
+      userInput: string;
+    }) => Array<{ value: string; label: string }>;
+    const options = optionsFn.call({ userInput: `${dir}/` });
+    expect(options.map((o) => o.value)).toContain(`${dir}/nested/`);
+    const nested = options.find((o) => o.value === `${dir}/nested/`);
+    expect(nested?.label).toContain("nested/");
+  });
+
+  test("drills into a directory, then returns a file inside it", async () => {
+    autocompleteQueue = [`${dir}/nested/`, `${dir}/nested/inner.json`];
+
+    const result = await filePath({ message: "Pick a file" });
+
+    expect(result).toBe(`${dir}/nested/inner.json`);
+    // The second prompt is re-seeded inside the chosen directory.
+    expect(lastAutocompleteCall?.config.initialUserInput).toBe(`${dir}/nested/`);
+  });
+
+  test("re-prompts with the chosen path when validation fails", async () => {
+    const warn = spyOn(log, "warn").mockImplementation(() => {});
+    autocompleteQueue = [`${dir}/key.p8`, `${dir}/key.p8`];
+    let attempts = 0;
+
+    const result = await filePath({
+      message: "Pick a file",
+      validate: () => {
+        attempts += 1;
+        return attempts === 1 ? "That file can't be used." : true;
+      },
+    });
+
+    expect(result).toBe(`${dir}/key.p8`);
+    expect(attempts).toBe(2);
+    expect(warn).toHaveBeenCalledWith("That file can't be used.");
+    expect(lastAutocompleteCall?.config.initialUserInput).toBe(`${dir}/key.p8`);
+    warn.mockRestore();
   });
 });

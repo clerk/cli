@@ -181,6 +181,8 @@ The CLI keeps small local overrides for provider setup details that schema does 
 
 For Google, the wizard can load `client_id` and `client_secret` from the top-level `web` object in a Google Cloud Console OAuth client JSON file, or from `installed` for desktop-style client downloads. The file contents are used in memory and are not written to CLI config.
 
+File-path prompts (the Google JSON import and the Apple `.p8` private key) autocomplete against the filesystem: type part of a path to filter matching entries, then use the arrow keys and Enter to pick one. Selecting a directory (shown in cyan with a trailing `/`) drills into it; selecting a file submits it. A leading `~` expands to the home directory. The list reads the filesystem directly on each keystroke.
+
 Providers not currently supported by automated deploy setup are cloned to production without automated credential setup. Configure those providers from the Clerk Dashboard before going live.
 
 Production instances return `422` if you try to enable a provider without credentials.

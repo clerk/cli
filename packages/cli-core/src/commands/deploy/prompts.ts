@@ -1,6 +1,6 @@
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
-import { select } from "../../lib/listage.ts";
+import { filePath, select } from "../../lib/listage.ts";
 import { confirm, password, text } from "../../lib/prompts.ts";
 import { type OAuthPromptField, type OAuthProviderDescriptor } from "./providers.ts";
 
@@ -140,7 +140,7 @@ async function collectOAuthField(
   const message = `${descriptor.label} OAuth ${field.label}`;
   let value: string;
   if (field.filePath) {
-    const path = await text({ message, validate: validateSecretFilePath(field.label) });
+    const path = await filePath({ message, validate: validateSecretFilePath(field.label) });
     value = await readSecretFile(path);
   } else if (field.type === "select") {
     value = await select({
@@ -173,7 +173,7 @@ function validateSecretFilePath(label: string) {
 }
 
 async function collectGoogleJsonCredentials(): Promise<Record<string, string>> {
-  const path = await text({
+  const path = await filePath({
     message: "Google OAuth JSON file path",
     validate: validateGoogleJsonFilePath,
   });

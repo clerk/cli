@@ -181,6 +181,8 @@ function assertPromptQueuesEmpty() {
 mock.module("../../../lib/listage.ts", () => ({
   select: dequeuePrompt("select"),
   search: dequeuePrompt("search"),
+  // filePath() is a path-input prompt; route its responses through the input queue.
+  filePath: dequeuePrompt("input"),
   filterChoices: <T extends { name: string }>(choices: T[], term: string | undefined): T[] => {
     if (!term) return choices;
     return choices.filter((c: T) => c.name.toLowerCase().includes(term.toLowerCase()));
