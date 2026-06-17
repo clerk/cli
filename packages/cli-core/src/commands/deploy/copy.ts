@@ -44,8 +44,21 @@ export function dnsIntro(domain: string): string[] {
   ];
 }
 
+export function clerkSubdomains(domain: string): {
+  frontendApi: string;
+  accountPortal: string;
+  mail: string;
+} {
+  return {
+    frontendApi: `clerk.${domain}`,
+    accountPortal: `accounts.${domain}`,
+    mail: `clkmail.${domain}`,
+  };
+}
+
 export function domainAssociationSummary(domain: string): string[] {
-  const hosts = [`clerk.${domain}`, `accounts.${domain}`, `clkmail.${domain}`];
+  const { frontendApi, accountPortal, mail } = clerkSubdomains(domain);
+  const hosts = [frontendApi, accountPortal, mail];
   return [
     `Clerk will associate these subdomains with ${cyan(domain)}:`,
     "",

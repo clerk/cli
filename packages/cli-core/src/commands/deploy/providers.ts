@@ -1,5 +1,6 @@
 import { OAUTH_PROVIDERS } from "@clerk/shared/oauth";
 import { bold, cyan, dim, yellow } from "../../lib/color.ts";
+import { clerkSubdomains } from "./copy.ts";
 import { log } from "../../lib/log.ts";
 import { openBrowser } from "../../lib/open.ts";
 import type { ConfigSchemaProperty, InstanceConfigSchema } from "../../lib/plapi.ts";
@@ -437,7 +438,8 @@ function oauthWalkthroughUrls(
   domain: string,
   frontendApiUrl?: string,
 ): { authorizedOrigins: string[]; redirectUri: string } {
-  const callbackBase = frontendApiUrl?.replace(/\/+$/, "") ?? `https://clerk.${domain}`;
+  const callbackBase =
+    frontendApiUrl?.replace(/\/+$/, "") ?? `https://${clerkSubdomains(domain).frontendApi}`;
   return {
     authorizedOrigins: [`https://${domain}`, `https://www.${domain}`],
     redirectUri: `${callbackBase}/v1/oauth_callback`,
