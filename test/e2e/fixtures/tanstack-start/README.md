@@ -1,4 +1,4 @@
-Welcome to your new TanStack Start app!
+Welcome to your new TanStack Start app! 
 
 # Getting Started
 
@@ -125,11 +125,11 @@ const getServerTime = createServerFn({
 // Use in a component
 function MyComponent() {
   const [time, setTime] = useState('')
-
+  
   useEffect(() => {
     getServerTime().then(setTime)
   }, [])
-
+  
   return <div>Server time: {time}</div>
 }
 ```
