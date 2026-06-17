@@ -232,6 +232,10 @@ const INSTANCE_ALIASES: Record<string, "development" | "production"> = {
   production: "production",
 };
 
+function isPrimaryInstance(entry: ApplicationInstance): boolean {
+  return !entry.branch_name;
+}
+
 export function resolveInstanceId(profile: Profile, flag?: string): { id: string; label: string } {
   if (!flag) {
     return { id: profile.instances.development, label: "development" };
@@ -283,7 +287,9 @@ export function resolveFetchedApplicationInstance(
   if (instance) {
     const env = INSTANCE_ALIASES[instance];
     if (env) {
-      const matched = app.instances.find((entry) => entry.environment_type === env);
+      const matched = app.instances.find(
+        (entry) => entry.environment_type === env && isPrimaryInstance(entry),
+      );
       if (!matched) {
         throw new CliError(`No ${env} instance found for application ${appId}.`, {
           code: ERROR_CODE.INSTANCE_NOT_FOUND,
@@ -314,7 +320,9 @@ export function resolveFetchedApplicationInstance(
     };
   }
 
-  const development = app.instances.find((entry) => entry.environment_type === "development");
+  const development = app.instances.find(
+    (entry) => entry.environment_type === "development" && isPrimaryInstance(entry),
+  );
   if (!development) {
     throw new CliError(`No development instance found for application ${appId}.`, {
       code: ERROR_CODE.INSTANCE_NOT_FOUND,

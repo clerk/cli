@@ -255,6 +255,60 @@ describe("config", () => {
       }
     });
 
+    test("selects the canonical development instance by default when branch instances are listed first", () => {
+      const branchFirstApp = {
+        application_id: "app_123",
+        instances: [
+          {
+            instance_id: "ins_branch",
+            environment_type: "development",
+            publishable_key: "pk_test_branch",
+            branch_name: "agent/pr-42",
+          },
+          {
+            instance_id: "ins_dev",
+            environment_type: "development",
+            publishable_key: "pk_test_dev",
+          },
+        ],
+      };
+
+      const result = resolveFetchedApplicationInstance("app_123", branchFirstApp);
+
+      expect(result).toMatchObject({
+        found: true,
+        instanceId: "ins_dev",
+        instanceLabel: "development",
+      });
+    });
+
+    test("selects the canonical development instance for dev aliases when branch instances are listed first", () => {
+      const branchFirstApp = {
+        application_id: "app_123",
+        instances: [
+          {
+            instance_id: "ins_branch",
+            environment_type: "development",
+            publishable_key: "pk_test_branch",
+            branch_name: "agent/pr-42",
+          },
+          {
+            instance_id: "ins_dev",
+            environment_type: "development",
+            publishable_key: "pk_test_dev",
+          },
+        ],
+      };
+
+      const result = resolveFetchedApplicationInstance("app_123", branchFirstApp, "dev");
+
+      expect(result).toMatchObject({
+        found: true,
+        instanceId: "ins_dev",
+        instanceLabel: "development",
+      });
+    });
+
     test("returns explicit missing state for unknown literal instance ids", () => {
       const result = resolveFetchedApplicationInstance("app_123", app, "ins_missing_123");
 
