@@ -22,20 +22,11 @@ import {
   assertPinnedDependencyRanges,
   resolveDependencySpecsToExactVersions,
 } from "./lib/fixture-deps.ts";
-import { fixtures, type FixtureName } from "../test/e2e/fixtures.manifest.ts";
+import { fixtures } from "../test/e2e/fixtures.manifest.ts";
 import type { FixtureConfig } from "../test/e2e/lib/types.ts";
 
-const { values } = parseArgs({
-  args: Bun.argv.slice(2),
-  options: {
-    only: { type: "string" },
-  },
-  strict: true,
-});
-const onlyName = values.only ?? null;
-
 const E2E_DIR = join(import.meta.dir, "../test/e2e");
-const FIXTURES_DIR = join(E2E_DIR, "fixtures");
+const DEFAULT_FIXTURES_DIR = join(E2E_DIR, "fixtures");
 const NPM_ENV = {
   ...process.env,
   npm_config_user_agent: `npm/10 node/${process.version} ${process.platform} ${process.arch}`,
@@ -61,95 +52,184 @@ async function resolveNpmDependencyVersion(name: string, spec: string): Promise<
   return version;
 }
 
-await mkdir(FIXTURES_DIR, { recursive: true });
+type FixtureEntry = [string, FixtureConfig];
 
-const entries = Object.entries(fixtures) as Array<[FixtureName, FixtureConfig]>;
+type CommandResult = {
+  exitCode: number;
+  stderr: string;
+  stdout: string;
+};
 
-if (onlyName && !entries.some(([name]) => name === onlyName)) {
-  console.error(
-    `⚠️  --only "${onlyName}" did not match any fixture. Available: ${entries.map(([name]) => name).join(", ")}`,
-  );
-  process.exit(1);
+type ScaffoldRunner = (
+  command: readonly string[],
+  cwd: string,
+  env: Record<string, string | undefined>,
+) => Promise<CommandResult>;
+
+type RefreshFixturesOptions = {
+  onlyName?: string | null;
+  entries?: FixtureEntry[];
+  fixturesDir?: string;
+  tmpRoot?: string;
+  env?: Record<string, string | undefined>;
+  runScaffold?: ScaffoldRunner;
+  resolveDependencyVersion?: (name: string, spec: string) => Promise<string>;
+};
+
+type RefreshFixturesResult = {
+  failedFixtures: string[];
+};
+
+async function runScaffoldCommand(
+  command: readonly string[],
+  cwd: string,
+  env: Record<string, string | undefined>,
+): Promise<CommandResult> {
+  const result = await Bun.$`${command}`.cwd(cwd).env(env).nothrow();
+  return {
+    exitCode: result.exitCode,
+    stderr: result.stderr.toString(),
+    stdout: result.stdout.toString(),
+  };
 }
 
-for (const [name, config] of entries) {
-  if (onlyName && name !== onlyName) continue;
+/**
+ * Regenerate e2e fixtures from the configured framework scaffolders.
+ *
+ * Scaffold command failures are collected so every requested fixture gets an
+ * attempt before the caller decides whether to exit non-zero.
+ */
+export async function refreshFixtures({
+  onlyName = null,
+  entries = Object.entries(fixtures) as FixtureEntry[],
+  fixturesDir = DEFAULT_FIXTURES_DIR,
+  tmpRoot = tmpdir(),
+  env = NPM_ENV,
+  runScaffold = runScaffoldCommand,
+  resolveDependencyVersion = resolveNpmDependencyVersion,
+}: RefreshFixturesOptions = {}): Promise<RefreshFixturesResult> {
+  await mkdir(fixturesDir, { recursive: true });
 
-  const fixtureDir = join(FIXTURES_DIR, name);
-  console.log(`🔄 Refreshing: ${name}`);
+  if (onlyName && !entries.some(([name]) => name === onlyName)) {
+    throw new Error(
+      `⚠️  --only "${onlyName}" did not match any fixture. Available: ${entries.map(([name]) => name).join(", ")}`,
+    );
+  }
 
-  // Use a lowercase-only suffix so framework scaffolders (e.g. create-next-app)
-  // don't reject the directory name due to uppercase characters.
-  const suffix = Math.random().toString(36).slice(2, 8);
-  const tmpProject = join(tmpdir(), `clerk-fixture-${name}-${suffix}`);
-  await mkdir(tmpProject, { recursive: true });
+  const failedFixtures: string[] = [];
+
+  for (const [name, config] of entries) {
+    if (onlyName && name !== onlyName) continue;
+
+    const fixtureDir = join(fixturesDir, name);
+    console.log(`🔄 Refreshing: ${name}`);
+
+    // Use a lowercase-only suffix so framework scaffolders (e.g. create-next-app)
+    // don't reject the directory name due to uppercase characters.
+    const suffix = Math.random().toString(36).slice(2, 8);
+    const tmpProject = join(tmpRoot, `clerk-fixture-${name}-${suffix}`);
+    await mkdir(tmpProject, { recursive: true });
+
+    try {
+      // Scaffold the framework project
+      const scaffold = await runScaffold(config.scaffoldCmd, tmpProject, env);
+
+      if (scaffold.exitCode !== 0) {
+        failedFixtures.push(name);
+        console.error(`❌ Scaffold failed for ${name}:\n${scaffold.stderr || scaffold.stdout}`);
+        continue;
+      }
+
+      // Add Clerk SDK to dependencies and normalize the package name to a
+      // stable value so re-scaffolds don't produce noisy diffs from the
+      // random temp directory suffix that scaffolders pick up.
+      const pkgPath = join(tmpProject, "package.json");
+      const pkg = JSON.parse(await Bun.file(pkgPath).text()) as {
+        name?: string;
+        dependencies?: Record<string, string>;
+        devDependencies?: Record<string, string>;
+      };
+      pkg.name = `clerk-fixture-${name}`;
+      pkg.dependencies ??= {};
+      pkg.dependencies[config.clerkSdk] = "latest";
+      assertPinnedDependencyRanges(pkg, config.pinnedDependencyRanges, name);
+      applyPackageJsonOverrides(pkg, config.packageJsonOverrides);
+      await resolveDependencySpecsToExactVersions(pkg, resolveDependencyVersion);
+      assertPinnedDependencyRanges(pkg, config.pinnedDependencyRanges, name);
+      await Bun.write(pkgPath, JSON.stringify(pkg, null, 2) + "\n");
+
+      const lockfile =
+        await Bun.$`npm install --package-lock-only --ignore-scripts --legacy-peer-deps`
+          .cwd(tmpProject)
+          .env(env)
+          .quiet()
+          .nothrow();
+      if (lockfile.exitCode !== 0) {
+        throw new Error(
+          `package-lock generation failed for ${name}:\n${lockfile.stderr.toString()}`,
+        );
+      }
+
+      // Strip generated artifacts that shouldn't be committed
+      const toRemove = [
+        "node_modules",
+        ".git",
+        ".next",
+        "dist",
+        "out",
+        ".nuxt",
+        ".output",
+        ".vscode",
+        ".cta.json",
+        "Dockerfile",
+        ".dockerignore",
+        "yarn.lock",
+        "pnpm-lock.yaml",
+        "bun.lock",
+        "bun.lockb",
+      ];
+      for (const entry of toRemove) {
+        await rm(join(tmpProject, entry), { recursive: true, force: true });
+      }
+
+      // Copy generated files into fixture dir
+      await rm(fixtureDir, { recursive: true, force: true });
+      await mkdir(fixtureDir, { recursive: true });
+      await cp(tmpProject, fixtureDir, { recursive: true });
+
+      console.log(`✅ Done: ${name}`);
+    } finally {
+      await rm(tmpProject, { recursive: true, force: true });
+    }
+  }
+
+  if (failedFixtures.length > 0) {
+    console.error(`❌ Fixture refresh failed for: ${failedFixtures.join(", ")}`);
+  }
+
+  return { failedFixtures };
+}
+
+async function main(): Promise<void> {
+  const { values } = parseArgs({
+    args: Bun.argv.slice(2),
+    options: {
+      only: { type: "string" },
+    },
+    strict: true,
+  });
 
   try {
-    // Scaffold the framework project
-    const scaffold = await Bun.$`${config.scaffoldCmd}`.cwd(tmpProject).env(NPM_ENV).nothrow();
-
-    if (scaffold.exitCode !== 0) {
-      console.error(`❌ Scaffold failed for ${name}:\n${scaffold.stderr.toString()}`);
-      continue;
+    const result = await refreshFixtures({ onlyName: values.only ?? null });
+    if (result.failedFixtures.length > 0) {
+      process.exitCode = 1;
     }
-
-    // Add Clerk SDK to dependencies and normalize the package name to a
-    // stable value so re-scaffolds don't produce noisy diffs from the
-    // random temp directory suffix that scaffolders pick up.
-    const pkgPath = join(tmpProject, "package.json");
-    const pkg = JSON.parse(await Bun.file(pkgPath).text()) as {
-      name?: string;
-      dependencies?: Record<string, string>;
-      devDependencies?: Record<string, string>;
-    };
-    pkg.name = `clerk-fixture-${name}`;
-    pkg.dependencies ??= {};
-    pkg.dependencies[config.clerkSdk] = "latest";
-    assertPinnedDependencyRanges(pkg, config.pinnedDependencyRanges, name);
-    applyPackageJsonOverrides(pkg, config.packageJsonOverrides);
-    await resolveDependencySpecsToExactVersions(pkg, resolveNpmDependencyVersion);
-    assertPinnedDependencyRanges(pkg, config.pinnedDependencyRanges, name);
-    await Bun.write(pkgPath, JSON.stringify(pkg, null, 2) + "\n");
-
-    const lockfile =
-      await Bun.$`npm install --package-lock-only --ignore-scripts --legacy-peer-deps`
-        .cwd(tmpProject)
-        .env(NPM_ENV)
-        .quiet()
-        .nothrow();
-    if (lockfile.exitCode !== 0) {
-      throw new Error(`package-lock generation failed for ${name}:\n${lockfile.stderr.toString()}`);
-    }
-
-    // Strip generated artifacts that shouldn't be committed
-    const toRemove = [
-      "node_modules",
-      ".git",
-      ".next",
-      "dist",
-      "out",
-      ".nuxt",
-      ".output",
-      ".vscode",
-      ".cta.json",
-      "Dockerfile",
-      ".dockerignore",
-      "yarn.lock",
-      "pnpm-lock.yaml",
-      "bun.lock",
-      "bun.lockb",
-    ];
-    for (const entry of toRemove) {
-      await rm(join(tmpProject, entry), { recursive: true, force: true });
-    }
-
-    // Copy generated files into fixture dir
-    await rm(fixtureDir, { recursive: true, force: true });
-    await mkdir(fixtureDir, { recursive: true });
-    await cp(tmpProject, fixtureDir, { recursive: true });
-
-    console.log(`✅ Done: ${name}`);
-  } finally {
-    await rm(tmpProject, { recursive: true, force: true });
+  } catch (error) {
+    console.error(error instanceof Error ? error.message : String(error));
+    process.exitCode = 1;
   }
+}
+
+if (import.meta.main) {
+  await main();
 }
