@@ -366,9 +366,20 @@ describe("expandInputJson", () => {
       expect(result.error).toContain("must be a JSON object");
     });
 
-    test("auto-stdin handles camelCase keys", async () => {
-      const result = await expandViaStdin(["clerk", "config", "patch"], '{"dryRun":true}');
+    test("explicit --input-json - handles camelCase keys for config payload commands", async () => {
+      const result = await expandViaStdin(
+        ["clerk", "config", "patch", "--input-json", "-"],
+        '{"dryRun":true}',
+      );
       expect(result.result).toEqual(["clerk", "config", "patch", "--dry-run"]);
+    });
+
+    test("auto-stdin leaves config patch YAML for the command payload reader", async () => {
+      const result = await expandViaStdin(
+        ["clerk", "config", "patch"],
+        "session:\n  lifetime: 3600\n",
+      );
+      expect(result.result).toEqual(["clerk", "config", "patch"]);
     });
   });
 });

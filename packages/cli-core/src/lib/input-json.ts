@@ -3,6 +3,10 @@ import { throwUsageError, ERROR_CODE } from "./errors.ts";
 const INPUT_JSON_FLAG = "--input-json";
 const FILE_PREFIX = "@";
 const STDIN_MARKER = "-";
+const STDIN_PAYLOAD_COMMANDS = [
+  ["config", "patch"],
+  ["config", "put"],
+] as const;
 
 type JsonObject = Record<string, unknown>;
 
@@ -128,6 +132,16 @@ function hasStdinPipe(): boolean {
   return !process.stdin.isTTY;
 }
 
+function commandPathAppears(argv: string[], commandPath: readonly string[]): boolean {
+  return argv.some((_, index) =>
+    commandPath.every((segment, offset) => argv[index + offset] === segment),
+  );
+}
+
+function commandReadsPayloadFromStdin(argv: string[]): boolean {
+  return STDIN_PAYLOAD_COMMANDS.some((commandPath) => commandPathAppears(argv, commandPath));
+}
+
 /**
  * Process an argv array: find `--input-json`, expand JSON to flags, return
  * a new argv with the expanded flags spliced in (so explicit CLI flags that
@@ -148,6 +162,10 @@ export async function expandInputJson(argv: string[]): Promise<string[]> {
     const parsed = parseJsonString(jsonStr);
     assertJsonObject(parsed);
     argv.splice(idx, 2, ...expandJsonToFlags(parsed));
+    return argv;
+  }
+
+  if (commandReadsPayloadFromStdin(argv)) {
     return argv;
   }
 
