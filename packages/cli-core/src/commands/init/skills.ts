@@ -3,7 +3,7 @@
  *
  * The upstream skills (`clerk-cli`, `clerk-setup`, `clerk-custom-ui`,
  * `clerk-backend-api`, `clerk-orgs`, `clerk-testing`, `clerk-webhooks`,
- * plus a framework-specific skill when one matches) ship from the
+ * plus framework-specific skills when any match) ship from the
  * upstream `clerk/skills` repo and version independently of the CLI.
  *
  * The skills CLI itself handles agent auto-detection and scope selection:
@@ -33,23 +33,26 @@ const DEFAULT_UPSTREAM_SKILLS = [
 ];
 
 // Express/Fastify have no entry — their skill is clerk-backend-api, which is a default.
-const FRAMEWORK_SKILL_MAP: Record<string, string> = {
-  next: "clerk-nextjs-patterns",
-  react: "clerk-react-patterns",
-  "react-router": "clerk-react-router-patterns",
-  vue: "clerk-vue-patterns",
-  nuxt: "clerk-nuxt-patterns",
-  astro: "clerk-astro-patterns",
-  "@tanstack/react-start": "clerk-tanstack-patterns",
-  expo: "clerk-expo-patterns",
+const FRAMEWORK_SKILL_MAP: Record<string, readonly string[]> = {
+  next: ["clerk-nextjs-patterns"],
+  react: ["clerk-react-patterns"],
+  "react-router": ["clerk-react-router-patterns"],
+  vue: ["clerk-vue-patterns"],
+  nuxt: ["clerk-nuxt-patterns"],
+  astro: ["clerk-astro-patterns"],
+  "@tanstack/react-start": ["clerk-tanstack-patterns"],
+  // Expo gets the mobile setup skill (mobile/clerk-expo) plus the patterns skill.
+  expo: ["clerk-expo", "clerk-expo-patterns"],
 };
 
 // Guard against accidental overlap: Set.add() silently deduplicates, masking dead entries.
-for (const [dep, skill] of Object.entries(FRAMEWORK_SKILL_MAP)) {
-  if (DEFAULT_UPSTREAM_SKILLS.includes(skill)) {
-    throw new Error(
-      `FRAMEWORK_SKILL_MAP['${dep}'] maps to '${skill}', which is already in DEFAULT_UPSTREAM_SKILLS. Remove it from the map.`,
-    );
+for (const [dep, skills] of Object.entries(FRAMEWORK_SKILL_MAP)) {
+  for (const skill of skills) {
+    if (DEFAULT_UPSTREAM_SKILLS.includes(skill)) {
+      throw new Error(
+        `FRAMEWORK_SKILL_MAP['${dep}'] includes '${skill}', which is already in DEFAULT_UPSTREAM_SKILLS. Remove it from the map.`,
+      );
+    }
   }
 }
 
@@ -58,23 +61,23 @@ const UPSTREAM_SKILLS_SOURCE = "clerk/skills";
 
 export function resolveUpstreamSkills(frameworkDep: string | undefined): string[] {
   const skills = new Set(DEFAULT_UPSTREAM_SKILLS);
-  if (frameworkDep && FRAMEWORK_SKILL_MAP[frameworkDep]) {
-    skills.add(FRAMEWORK_SKILL_MAP[frameworkDep]);
+  for (const skill of getFrameworkSkills(frameworkDep)) {
+    skills.add(skill);
   }
   return [...skills];
 }
 
-export function getFrameworkSkill(frameworkDep: string | undefined): string | undefined {
-  return frameworkDep ? FRAMEWORK_SKILL_MAP[frameworkDep] : undefined;
+export function getFrameworkSkills(frameworkDep: string | undefined): readonly string[] {
+  return (frameworkDep && FRAMEWORK_SKILL_MAP[frameworkDep]) || [];
 }
 
-function formatSkillsSummary(frameworkSkill: string | undefined): string {
-  const framework = frameworkSkill ? ` + ${frameworkSkill.replace(/^clerk-/, "")}` : "";
+function formatSkillsSummary(frameworkSkills: readonly string[]): string {
+  const framework = frameworkSkills.map((skill) => ` + ${skill.replace(/^clerk-/, "")}`).join("");
   return `clerk-cli + core + features${framework}`;
 }
 
-export function formatSkillsPromptMessage(frameworkSkill: string | undefined): string {
-  return `Install agent skills? (${formatSkillsSummary(frameworkSkill)})`;
+export function formatSkillsPromptMessage(frameworkSkills: readonly string[]): string {
+  return `Install agent skills? (${formatSkillsSummary(frameworkSkills)})`;
 }
 
 export async function installSkills(
@@ -84,11 +87,11 @@ export async function installSkills(
   skipPrompt: boolean,
 ): Promise<void> {
   const upstreamSkills = resolveUpstreamSkills(frameworkDep);
-  const frameworkSkill = getFrameworkSkill(frameworkDep);
+  const frameworkSkills = getFrameworkSkills(frameworkDep);
 
   if (isHuman() && !skipPrompt) {
     const install = await confirm({
-      message: formatSkillsPromptMessage(frameworkSkill),
+      message: formatSkillsPromptMessage(frameworkSkills),
       default: true,
     });
     if (!install) return;
@@ -107,7 +110,7 @@ export async function installSkills(
     UPSTREAM_SKILLS_SOURCE,
     upstreamSkills,
     interactive,
-    formatSkillsSummary(frameworkSkill),
+    formatSkillsSummary(frameworkSkills),
   );
 
   if (upstreamOk) {
