@@ -2,7 +2,8 @@ import { mkdir, cp, rm, chmod, copyFile } from "node:fs/promises";
 import { join } from "node:path";
 import { parseArgs } from "node:util";
 import { type Target, targets, SCOPE, PKG_PREFIX } from "./lib/targets.ts";
-import { run, isPublished, publish } from "./lib/npm.ts";
+import { run, isPublished, publish, waitUntilPublished } from "./lib/npm.ts";
+import { publishDependenciesBeforePackage } from "./lib/publish-order.ts";
 import { getStableReleaseCreateArgs } from "./lib/release-notes.ts";
 
 const DIST_DIR = join(import.meta.dir, "../dist/platform-packages");
@@ -86,45 +87,63 @@ console.log(
 
 await rm(DIST_DIR, { recursive: true, force: true });
 
-await Promise.all(
-  targets.map(async (target) => {
+await publishDependenciesBeforePackage(
+  targets.map((target) => {
     const name = packageName(target.name);
-    if (await isPublished(name, version)) {
-      console.log(`Skipping ${name}@${version} (already published)`);
-      return;
-    }
-    console.log(`Publishing ${name}@${version}...`);
-    const dir = await generatePlatformPackage(target, version);
-    await publish(dir, { dryRun, tag });
+    return {
+      publish: async () => {
+        if (await isPublished(name, version)) {
+          console.log(`Skipping ${name}@${version} (already published)`);
+          return;
+        }
+        console.log(`Publishing ${name}@${version}...`);
+        const dir = await generatePlatformPackage(target, version);
+        await publish(dir, { dryRun, tag });
+      },
+      waitUntilAvailable: dryRun
+        ? undefined
+        : async () => {
+            console.log(`Waiting for ${name}@${version} to become available on npm...`);
+            await waitUntilPublished(name, version, {
+              intervalMs: 2_000,
+              timeoutMs: 120_000,
+              isPublished,
+            });
+          },
+    };
   }),
+  {
+    publish: async () => {
+      // Build wrapper package.json for publishing: add optionalDependencies from targets and remove private flag.
+      // This mutation is intentional because the repo omits optionalDependencies while the published package includes them.
+      // We restore the original file after publishing (or on failure) so the working tree stays clean.
+      const wrapperRaw = await Bun.file(WRAPPER_PKG_PATH).text();
+      const rootReadmeRaw = await Bun.file(ROOT_README_PATH).text();
+      try {
+        const wrapperPkg = JSON.parse(wrapperRaw);
+        wrapperPkg.version = version;
+        wrapperPkg.optionalDependencies = Object.fromEntries(
+          targets.map((t) => [packageName(t.name), version]),
+        );
+        delete wrapperPkg.private;
+        await Bun.write(WRAPPER_PKG_PATH, JSON.stringify(wrapperPkg, null, 2) + "\n");
+        await Bun.write(WRAPPER_README_PATH, rootReadmeRaw);
+
+        const wrapperName = "clerk";
+        if (await isPublished(wrapperName, version)) {
+          console.log(`Skipping ${wrapperName}@${version} (already published)`);
+        } else {
+          console.log(`Publishing ${wrapperName}@${version}...`);
+          await publish(join(import.meta.dir, "../packages/cli"), { dryRun, tag });
+        }
+      } finally {
+        await Bun.write(WRAPPER_PKG_PATH, wrapperRaw);
+        await rm(WRAPPER_README_PATH, { force: true });
+      }
+    },
+    waitUntilAvailable: undefined,
+  },
 );
-
-// Build wrapper package.json for publishing: add optionalDependencies from targets and remove private flag.
-// This mutation is intentional — the repo omits optionalDependencies while the published package includes them.
-// We restore the original file after publishing (or on failure) so the working tree stays clean.
-const wrapperRaw = await Bun.file(WRAPPER_PKG_PATH).text();
-const rootReadmeRaw = await Bun.file(ROOT_README_PATH).text();
-try {
-  const wrapperPkg = JSON.parse(wrapperRaw);
-  wrapperPkg.version = version;
-  wrapperPkg.optionalDependencies = Object.fromEntries(
-    targets.map((t) => [packageName(t.name), version]),
-  );
-  delete wrapperPkg.private;
-  await Bun.write(WRAPPER_PKG_PATH, JSON.stringify(wrapperPkg, null, 2) + "\n");
-  await Bun.write(WRAPPER_README_PATH, rootReadmeRaw);
-
-  const wrapperName = "clerk";
-  if (await isPublished(wrapperName, version)) {
-    console.log(`Skipping ${wrapperName}@${version} (already published)`);
-  } else {
-    console.log(`Publishing ${wrapperName}@${version}...`);
-    await publish(join(import.meta.dir, "../packages/cli"), { dryRun, tag });
-  }
-} finally {
-  await Bun.write(WRAPPER_PKG_PATH, wrapperRaw);
-  await rm(WRAPPER_README_PATH, { force: true });
-}
 
 // Create git tag and GitHub Release for stable releases (no --tag flag).
 // Canary (--tag canary) and snapshot (--tag snapshot) skip this.
