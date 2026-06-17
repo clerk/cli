@@ -31,6 +31,10 @@ jobs:
           # unrelated changes from a feature branch into the refresh PR.
           ref: main
 
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+
       - uses: oven-sh/setup-bun@v2
 
       - run: bun install --frozen-lockfile
