@@ -117,7 +117,7 @@ jobs:
           ref: ${{ inputs.ref }}
       - uses: actions/setup-node@v6
         with:
-          node-version: 22
+          node-version: 24
       - name: Mark workspace as safe for git
         run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
       - uses: oven-sh/setup-bun@v2
