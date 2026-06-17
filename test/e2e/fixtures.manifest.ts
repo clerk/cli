@@ -119,6 +119,7 @@ export const fixtures = {
       "--package-manager",
       "npm",
       "--no-install",
+      "--no-git-init",
       "--yes",
     ],
     clerkSdk: "@clerk/react-router",
