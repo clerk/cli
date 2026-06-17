@@ -41,7 +41,17 @@ export function resolveUrl(options: McpOptions): string {
       ERROR_CODE.MCP_URL_REQUIRED,
     );
   }
-  return candidate;
+  // Reject userinfo so a credential can't be written into configs or echoed to
+  // stdout; clients authenticate via OAuth, not the URL.
+  if (parsed.username !== "" || parsed.password !== "") {
+    throwUsageError(
+      "MCP URL must not embed credentials. Remove the user info — the editor signs in via OAuth on first connect.",
+      undefined,
+      ERROR_CODE.MCP_URL_REQUIRED,
+    );
+  }
+  // Normalized form so idempotency doesn't treat `HTTPS://Host` and `https://host` as different.
+  return parsed.href;
 }
 
 export function resolveName(options: McpOptions): string {

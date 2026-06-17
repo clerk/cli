@@ -2,12 +2,14 @@ import { createOption } from "@commander-js/extra-typings";
 import type { Program } from "../../cli-program.ts";
 import { mcpInstall } from "./install.ts";
 import { mcpList } from "./list.ts";
+import { mcpRun } from "./run.ts";
 import { mcpUninstall } from "./uninstall.ts";
 import { CLIENT_ID_CHOICES } from "./clients/registry.ts";
 
 export const mcp = {
   install: mcpInstall,
   list: mcpList,
+  run: mcpRun,
   uninstall: mcpUninstall,
 };
 export { CLIENT_ID_CHOICES, CLIENT_IDS } from "./clients/registry.ts";
@@ -28,6 +30,10 @@ export function registerMcp(program: Program): void {
       },
       { command: "clerk mcp list", description: "Show registered Clerk entries" },
       { command: "clerk mcp uninstall", description: "Remove the Clerk entry from all clients" },
+      {
+        command: "clerk mcp run --url https://mcp.clerk.com/mcp",
+        description: "stdio bridge an editor launches (not run by hand)",
+      },
     ]);
 
   mcpCmd
@@ -63,6 +69,21 @@ export function registerMcp(program: Program): void {
     .option("--json", "Output as JSON")
     .setExamples([{ command: "clerk mcp list", description: "List Clerk entries everywhere" }])
     .action((options) => mcp.list(options));
+
+  mcpCmd
+    .command("run")
+    .description(
+      "stdio bridge to the remote MCP server (clients spawn this; not meant to be run by hand)",
+    )
+    .option("--url <url>", "MCP server URL to bridge to (default: from active env profile)")
+    .option("--name <name>", 'Entry name, for parity with install (default: "clerk")')
+    .setExamples([
+      {
+        command: "clerk mcp run --url https://mcp.clerk.com/mcp",
+        description: "Forward stdio JSON-RPC to the remote server",
+      },
+    ])
+    .action((options) => mcp.run(options));
 
   mcpCmd
     .command("uninstall")

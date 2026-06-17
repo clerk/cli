@@ -23,6 +23,8 @@ const { mcpInstall } = await import("./install.ts");
 const URL_A = "https://mcp.clerk.com/mcp";
 const URL_B = "http://localhost:8787/mcp";
 
+const runShape = (url: string) => ({ command: "clerk", args: ["mcp", "run", "--url", url] });
+
 describe("mcp install", () => {
   const captured = useCaptureLog();
   let cwd: string;
@@ -46,9 +48,9 @@ describe("mcp install", () => {
     await mcpInstall({ client: ["cursor"], url: URL_A });
 
     const parsed = JSON.parse(await readFile(join(cwd, ".cursor", "mcp.json"), "utf8")) as {
-      mcpServers: { clerk: { url: string } };
+      mcpServers: { clerk: unknown };
     };
-    expect(parsed.mcpServers.clerk).toEqual({ url: URL_A });
+    expect(parsed.mcpServers.clerk).toEqual(runShape(URL_A));
   });
 
   test("emits JSON to stdout in agent mode and skips intro/outro", async () => {
@@ -109,17 +111,17 @@ describe("mcp install", () => {
     };
     expect(payload.results[0]?.status).toBe("updated");
     const parsed = JSON.parse(await readFile(join(cwd, ".cursor", "mcp.json"), "utf8")) as {
-      mcpServers: { clerk: { url: string } };
+      mcpServers: { clerk: unknown };
     };
-    expect(parsed.mcpServers.clerk.url).toBe(URL_B);
+    expect(parsed.mcpServers.clerk).toEqual(runShape(URL_B));
   });
 
   test("uses --name to customize the entry key", async () => {
     await mcpInstall({ client: ["cursor"], url: URL_A, name: "clerk-staging" });
     const parsed = JSON.parse(await readFile(join(cwd, ".cursor", "mcp.json"), "utf8")) as {
-      mcpServers: Record<string, { url: string }>;
+      mcpServers: Record<string, unknown>;
     };
-    expect(parsed.mcpServers["clerk-staging"]).toEqual({ url: URL_A });
+    expect(parsed.mcpServers["clerk-staging"]).toEqual(runShape(URL_A));
     expect(parsed.mcpServers.clerk).toBeUndefined();
   });
 
@@ -169,6 +171,12 @@ describe("mcp install", () => {
     });
   });
 
+  test("rejects a URL with embedded credentials", async () => {
+    await expect(
+      mcpInstall({ client: ["cursor"], url: "https://token@mcp.clerk.com/mcp" }),
+    ).rejects.toMatchObject({ code: "mcp_url_required" });
+  });
+
   test("prints next steps with a sign-in reminder after a human-mode install", async () => {
     await mcpInstall({ client: ["cursor"], url: URL_A });
     expect(captured.err).toContain("Next steps");
@@ -216,5 +224,6 @@ describe("mcp install", () => {
     await expect(mcpInstall({ client: ["cursor"], url: URL_A })).rejects.toMatchObject({
       code: "mcp_client_config_invalid",
     });
+    expect(captured.err).toContain("Cursor");
   });
 });

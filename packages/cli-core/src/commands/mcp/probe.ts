@@ -57,6 +57,17 @@ function parseHandshake(contentType: string, body: string): unknown {
   return data === "" ? undefined : safeJsonParse(data);
 }
 
+// Strip control chars so a server-supplied name can't smuggle terminal escape
+// sequences into `doctor` output.
+function stripControl(value: string): string {
+  let out = "";
+  for (const char of value) {
+    const code = char.codePointAt(0)!;
+    if (code >= 0x20 && code !== 0x7f) out += char;
+  }
+  return out;
+}
+
 // A valid `initialize` result carries `serverInfo.name`; its presence is what
 // distinguishes a real MCP server from a URL that merely returns 200.
 function readServerName(payload: unknown): string | undefined {
@@ -66,7 +77,7 @@ function readServerName(payload: unknown): string | undefined {
   const serverInfo = (result as { serverInfo?: unknown }).serverInfo;
   if (typeof serverInfo !== "object" || serverInfo === null) return undefined;
   const name = (serverInfo as { name?: unknown }).name;
-  return typeof name === "string" ? name : undefined;
+  return typeof name === "string" ? stripControl(name) : undefined;
 }
 
 export async function probeMcp(url: string): Promise<McpProbeResult> {

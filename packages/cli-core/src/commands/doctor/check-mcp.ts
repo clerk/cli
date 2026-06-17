@@ -13,11 +13,11 @@ import type { CheckResult } from "./types.ts";
 const NAME = "MCP server";
 
 type UrlProbe = { url: string; result: McpProbeResult };
+type ReachableProbe = { url: string; result: Extract<McpProbeResult, { ok: true }> };
 
-function describeReachable(probes: UrlProbe[]): string {
-  return probes
-    .map(({ url, result }) => (result.ok ? `${result.serverName} (${url})` : url))
-    .join(", ");
+// Narrowed to the reachable variant: only called once every probe succeeded.
+function describeReachable(probes: ReachableProbe[]): string {
+  return probes.map(({ url, result }) => `${result.serverName} (${url})`).join(", ");
 }
 
 function describeFailure(result: McpProbeResult): string {
@@ -40,9 +40,10 @@ export async function checkMcp(): Promise<CheckResult> {
   const urls = [...new Set(entries.map((e) => e.url))];
   const probes = await Promise.all(urls.map(async (url) => ({ url, result: await probeMcp(url) })));
 
-  const unreachable = probes.find(({ result }) => !result.ok);
-  if (!unreachable) {
-    return { name: NAME, status: "pass", message: `Reachable — ${describeReachable(probes)}` };
+  const unreachable = probes.filter((p): p is UrlProbe => !p.result.ok);
+  if (unreachable.length === 0) {
+    const reachable = probes.filter((p): p is ReachableProbe => p.result.ok);
+    return { name: NAME, status: "pass", message: `Reachable — ${describeReachable(reachable)}` };
   }
 
   const subject =
@@ -50,8 +51,8 @@ export async function checkMcp(): Promise<CheckResult> {
   return {
     name: NAME,
     status: "warn",
-    message: `${subject} not reachable (${unreachable.url})`,
-    detail: describeFailure(unreachable.result),
+    message: `${subject} not reachable (${unreachable.map((p) => p.url).join(", ")})`,
+    detail: unreachable.map((p) => `${p.url}: ${describeFailure(p.result)}`).join("; "),
     remedy: "Verify the server is running, or re-run `clerk mcp install` if the URL changed.",
   };
 }

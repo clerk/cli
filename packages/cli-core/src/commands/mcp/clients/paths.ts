@@ -6,6 +6,7 @@
  * config lives under the OS-specific app-support dir (see `vscodeUserDir`).
  */
 
+import { existsSync } from "node:fs";
 import { stat } from "node:fs/promises";
 import { homedir, platform } from "node:os";
 import { join } from "node:path";
@@ -15,22 +16,38 @@ export function userPath(...segments: string[]): string {
 }
 
 /**
- * VS Code's per-user (global) config directory, where its `mcp.json` lives.
- * Unlike the other clients this is OS-specific: Application Support on macOS,
- * %APPDATA% on Windows, XDG config on Linux.
+ * Candidate VS Code user-config dirs in priority order. Linux has three: the
+ * standard XDG location plus Flatpak and Snap sandboxes, which redirect config
+ * under their own per-app trees. The first existing one wins; the standard XDG
+ * path is the fallback for a fresh install.
  */
-export function vscodeUserDir(): string {
+function vscodeUserDirCandidates(): string[] {
   const home = homedir();
   const appData = process.env.APPDATA?.trim();
   const xdgConfigHome = process.env.XDG_CONFIG_HOME?.trim();
   switch (platform()) {
     case "win32":
-      return join(appData || join(home, "AppData", "Roaming"), "Code", "User");
+      return [join(appData || join(home, "AppData", "Roaming"), "Code", "User")];
     case "darwin":
-      return join(home, "Library", "Application Support", "Code", "User");
+      return [join(home, "Library", "Application Support", "Code", "User")];
     default:
-      return join(xdgConfigHome || join(home, ".config"), "Code", "User");
+      return [
+        join(xdgConfigHome || join(home, ".config"), "Code", "User"),
+        join(home, ".var", "app", "com.visualstudio.code", "config", "Code", "User"),
+        join(home, "snap", "code", "current", ".config", "Code", "User"),
+      ];
   }
+}
+
+/**
+ * VS Code's per-user (global) config directory, where its `mcp.json` lives.
+ * Unlike the other clients this is OS-specific: Application Support on macOS,
+ * %APPDATA% on Windows, XDG config (or a Flatpak/Snap sandbox) on Linux. Probed
+ * synchronously so detection and the write path resolve to the same directory.
+ */
+export function vscodeUserDir(): string {
+  const candidates = vscodeUserDirCandidates();
+  return candidates.find((dir) => existsSync(dir)) ?? candidates[0]!;
 }
 
 /**

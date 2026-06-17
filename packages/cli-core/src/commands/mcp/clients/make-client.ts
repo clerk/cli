@@ -12,7 +12,7 @@
 
 import { CliError, ERROR_CODE } from "../../../lib/errors.ts";
 import { log } from "../../../lib/log.ts";
-import { getServerMap, readJsonConfig, writeJsonConfig, type JsonConfig } from "./json-config.ts";
+import { getServerMap, readJsonConfig, writeJsonConfig, type ConfigRecord } from "./json-config.ts";
 import { readTomlConfig, writeTomlConfig } from "./toml-config.ts";
 import type {
   ClientId,
@@ -52,8 +52,8 @@ interface FileClientSpec {
 
 /** Read/write codec abstracting the on-disk format (JSON vs TOML). */
 interface ConfigCodec {
-  read: (path: string) => Promise<JsonConfig>;
-  write: (path: string, config: JsonConfig) => Promise<void>;
+  read: (path: string) => Promise<ConfigRecord>;
+  write: (path: string, config: ConfigRecord) => Promise<void>;
 }
 
 const JSON_CODEC: ConfigCodec = { read: readJsonConfig, write: writeJsonConfig };
@@ -87,13 +87,18 @@ function makeFileClient(spec: FileClientSpec, codec: ConfigCodec): McpClient {
       // back an inherited function and falsely look like an existing entry.
       const hasExisting = Object.prototype.hasOwnProperty.call(servers, entry.name);
       const existing = hasExisting ? servers[entry.name] : undefined;
+      const desired = spec.encode(entry.url);
 
       if (existing !== undefined) {
         const existingUrl = spec.extractUrl(existing);
         if (existingUrl === entry.url) {
-          return { client: spec.id, configPath, status: "unchanged" };
-        }
-        if (!force) {
+          // Same server. Already in the exact desired shape → no-op; an older
+          // descriptor format (e.g. a legacy `{ url }` or `npx mcp-remote`
+          // entry) is upgraded in place — that's not a conflict, so no --force.
+          if (JSON.stringify(existing) === JSON.stringify(desired)) {
+            return { client: spec.id, configPath, status: "unchanged" };
+          }
+        } else if (!force) {
           return {
             client: spec.id,
             configPath,
@@ -103,8 +108,10 @@ function makeFileClient(spec: FileClientSpec, codec: ConfigCodec): McpClient {
         }
       }
 
-      const desired = spec.encode(entry.url);
-      const next: JsonConfig = { ...config, [spec.topKey]: { ...servers, [entry.name]: desired } };
+      const next: ConfigRecord = {
+        ...config,
+        [spec.topKey]: { ...servers, [entry.name]: desired },
+      };
       await codec.write(configPath, next);
       const status = hasExisting ? "updated" : "added";
       log.debug(`mcp: ${spec.id} ${status} "${entry.name}"`);
@@ -119,7 +126,10 @@ function makeFileClient(spec: FileClientSpec, codec: ConfigCodec): McpClient {
         return { client: spec.id, configPath, removed: false };
       }
       const { [name]: _removed, ...rest } = servers;
-      const next: JsonConfig = { ...config, [spec.topKey]: rest };
+      // Drop the now-empty top-level map rather than leaving `{ "mcpServers": {} }`.
+      const { [spec.topKey]: _topKey, ...withoutTopKey } = config;
+      const next: ConfigRecord =
+        Object.keys(rest).length === 0 ? withoutTopKey : { ...config, [spec.topKey]: rest };
       await codec.write(configPath, next);
       log.debug(`mcp: ${spec.id} removed "${name}"`);
       return { client: spec.id, configPath, removed: true };

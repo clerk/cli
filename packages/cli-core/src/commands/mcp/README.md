@@ -38,9 +38,32 @@ OS-specific: `~/Library/Application Support/Code/User/mcp.json` (macOS),
 `%APPDATA%\Code\User\mcp.json` (Windows), `$XDG_CONFIG_HOME/Code/User/mcp.json`
 (Linux) — the file behind **MCP: Open User Configuration**.
 
-Codex is the one TOML-backed client; the entry uses Codex's native Streamable
-HTTP transport (`url = "…"` under `[mcp_servers.<name>]`), so it needs no
-`mcp-remote` bridge. Rewriting `config.toml` does not preserve comments.
+Codex is the one TOML-backed client (`[mcp_servers.<name>]`); rewriting
+`config.toml` does not preserve comments.
+
+## How clients connect (the stdio bridge)
+
+Every client installs the same stdio descriptor — it launches `clerk mcp run
+--url <url>` rather than pointing the editor at the remote URL directly:
+
+```jsonc
+{ "command": "clerk", "args": ["mcp", "run", "--url", "https://mcp.clerk.com/mcp"] }
+```
+
+`clerk mcp run` ([run.ts](./run.ts)) is a stdio↔Streamable-HTTP proxy — the same
+job `npx mcp-remote` does, but built into the CLI so there's no npx dependency
+and the bridge is pinned to the installed CLI version. Because the wiring lives
+in the CLI, future auth support lands against this same command with no
+re-install. `clerk` must be on the editor's `PATH`.
+
+VS Code tags the entry with `"type": "stdio"`; the others omit it. Codex writes
+the equivalent TOML (`command`/`args` under `[mcp_servers.<name>]`).
+
+> **Auth (current limitation):** `clerk mcp run` is transport-only today — it
+> does not perform OAuth. Against an auth-required server (including the hosted
+> `mcp.clerk.com`) it surfaces a clear error rather than signing in. Point
+> `--url` at a server that doesn't require auth (e.g. a local worker at
+> `http://localhost:8787/mcp`) until built-in sign-in ships.
 
 ## Subcommands
 
@@ -64,14 +87,30 @@ unless `--force` is passed.
 
 **After install:** writing the config does not connect the server on its own.
 In human mode, `install` prints per-client next steps — the server only goes
-live once you **reload the editor**. If the server requires authentication, the
-editor opens a browser to **sign in** on first connect. Gemini additionally
-needs `npx` on `PATH`, since its entry launches `mcp-remote` as a stdio bridge.
+live once you **reload the editor**, which then spawns `clerk mcp run` (so
+`clerk` must be on the editor's `PATH`).
 
 ### `clerk mcp list`
 
 Print every Clerk-flavored MCP entry across all supported clients (entries
 named `clerk` or pointing at any `*.clerk.com` host).
+
+### `clerk mcp run`
+
+The stdio bridge that installed clients spawn — **not meant to be run by hand**.
+It reads newline-delimited JSON-RPC from stdin, forwards each message to the
+remote server over the Streamable HTTP transport (POST; JSON or SSE responses),
+threads the `Mcp-Session-Id`, opens the optional server→client SSE stream, and
+writes replies to stdout. stdout carries **only** JSON-RPC frames; all
+diagnostics go to stderr.
+
+| Flag            | Description                                                  |
+| --------------- | ------------------------------------------------------------ |
+| `--url <url>`   | Server URL to bridge to. Same resolution order as `install`. |
+| `--name <name>` | Accepted for parity with `install`. Default: `clerk`.        |
+
+Transport-only: a `401`/`403` from the upstream is surfaced as an error
+(`mcp_client_config_invalid`) rather than triggering a sign-in flow.
 
 ### `clerk mcp uninstall`
 

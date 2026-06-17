@@ -34,6 +34,8 @@ const captured = useCaptureLog();
 const URL = "https://mcp.clerk.com/mcp";
 const ALL_CLIENT_IDS = ["claude", "cursor", "vscode", "windsurf", "gemini", "codex"];
 
+const runShape = (url: string) => ({ command: "clerk", args: ["mcp", "run", "--url", url] });
+
 describe("user-scope MCP clients (homedir redirected to a tmpdir)", () => {
   beforeEach(async () => {
     mockHome = await mkdtemp(join(realOs.tmpdir(), "clerk-mcp-home-"));
@@ -44,12 +46,12 @@ describe("user-scope MCP clients (homedir redirected to a tmpdir)", () => {
   });
 
   describe("gemini", () => {
-    test("encodes the mcp-remote stdio-bridge shape", async () => {
+    test("encodes the clerk-run stdio-bridge shape", async () => {
       await geminiClient.upsert({ name: "clerk", url: URL }, "/ignored", false);
       const parsed = (await Bun.file(geminiClient.configPath("/ignored")).json()) as {
         mcpServers: { clerk: { command: string; args: string[] } };
       };
-      expect(parsed.mcpServers.clerk).toEqual({ command: "npx", args: ["-y", "mcp-remote", URL] });
+      expect(parsed.mcpServers.clerk).toEqual(runShape(URL));
     });
 
     test("round-trips the URL back out of args[2] on list", async () => {
@@ -80,12 +82,12 @@ describe("user-scope MCP clients (homedir redirected to a tmpdir)", () => {
   });
 
   describe("windsurf", () => {
-    test("encodes the serverUrl shape and round-trips it on list", async () => {
+    test("encodes the clerk-run shape and round-trips it on list", async () => {
       await windsurfClient.upsert({ name: "clerk", url: URL }, "/ignored", false);
       const parsed = (await Bun.file(windsurfClient.configPath("/ignored")).json()) as {
-        mcpServers: { clerk: { serverUrl: string } };
+        mcpServers: { clerk: { command: string; args: string[] } };
       };
-      expect(parsed.mcpServers.clerk).toEqual({ serverUrl: URL });
+      expect(parsed.mcpServers.clerk).toEqual(runShape(URL));
 
       const entries = await windsurfClient.list("/ignored");
       expect(entries).toEqual([
@@ -95,12 +97,14 @@ describe("user-scope MCP clients (homedir redirected to a tmpdir)", () => {
   });
 
   describe("codex", () => {
-    test("writes the HTTP url under the [mcp_servers.<name>] TOML table", async () => {
+    test("writes the clerk-run bridge under the [mcp_servers.<name>] TOML table", async () => {
       await codexClient.upsert({ name: "clerk", url: URL }, "/ignored", false);
       const text = await Bun.file(codexClient.configPath("/ignored")).text();
       expect(text).toContain("[mcp_servers.clerk]");
-      const parsed = parseToml(text) as { mcp_servers: { clerk: { url: string } } };
-      expect(parsed.mcp_servers.clerk).toEqual({ url: URL });
+      const parsed = parseToml(text) as {
+        mcp_servers: { clerk: { command: string; args: string[] } };
+      };
+      expect(parsed.mcp_servers.clerk).toEqual(runShape(URL));
     });
 
     test("round-trips the URL back out on list", async () => {
@@ -109,6 +113,27 @@ describe("user-scope MCP clients (homedir redirected to a tmpdir)", () => {
       expect(entries).toEqual([
         expect.objectContaining({ client: "codex", name: "clerk", url: URL }),
       ]);
+    });
+
+    test("preserves unrelated top-level keys on upsert", async () => {
+      const dir = join(mockHome, ".codex");
+      await mkdir(dir, { recursive: true });
+      await Bun.write(join(dir, "config.toml"), 'model = "o3"\n');
+
+      await codexClient.upsert({ name: "clerk", url: URL }, "/ignored", false);
+
+      const parsed = parseToml(await Bun.file(join(dir, "config.toml")).text()) as {
+        model: string;
+        mcp_servers: { clerk: { command: string; args: string[] } };
+      };
+      expect(parsed.model).toBe("o3");
+      expect(parsed.mcp_servers.clerk).toEqual(runShape(URL));
+    });
+
+    test("returns unchanged when re-upserting the same URL", async () => {
+      await codexClient.upsert({ name: "clerk", url: URL }, "/ignored", false);
+      const result = await codexClient.upsert({ name: "clerk", url: URL }, "/ignored", false);
+      expect(result.status).toBe("unchanged");
     });
 
     test("preserves unrelated tables when removing the entry", async () => {
@@ -185,8 +210,26 @@ describe("install/uninstall across all clients (homedir + cwd redirected)", () =
     await mcpInstall({ all: true, url: URL });
 
     const payload = JSON.parse(captured.out) as { results: { client: string; status: string }[] };
-    expect(payload.results.map((r) => r.client).sort()).toEqual([...ALL_CLIENT_IDS].sort());
+    expect(payload.results.map((r) => r.client)).toEqual(ALL_CLIENT_IDS);
     expect(payload.results.every((r) => r.status === "added")).toBe(true);
+  });
+
+  test("--all with no detected client throws mcp_no_client_detected", async () => {
+    await expect(mcpInstall({ all: true, url: URL })).rejects.toMatchObject({
+      code: "mcp_no_client_detected",
+    });
+  });
+
+  test("auto-selects the sole detected client without prompting", async () => {
+    await mkdir(join(mockHome, ".cursor"), { recursive: true });
+    mockIsAgent.mockReturnValue(false);
+
+    await mcpInstall({ url: URL });
+
+    const parsed = JSON.parse(await Bun.file(join(mockHome, ".cursor", "mcp.json")).text()) as {
+      mcpServers: { clerk: unknown };
+    };
+    expect(parsed.mcpServers.clerk).toEqual(runShape(URL));
   });
 
   test("uninstall with no --client removes from every client", async () => {
@@ -296,5 +339,18 @@ describe("clerk doctor — checkMcp (homedir + cwd redirected)", () => {
     const result = await checkMcp();
     expect(result.status).toBe("warn");
     expect(result.message).toContain(BAD_URL);
+  });
+
+  test("names every distinct unreachable URL, not just the first", async () => {
+    const OTHER_URL = "https://staging.clerk.com/mcp";
+    await mcpInstall({ client: ["cursor"], url: URL });
+    await mcpInstall({ client: ["claude"], url: OTHER_URL });
+    captured.clear();
+    stubFetchWith("nope", { status: 503 });
+
+    const result = await checkMcp();
+    expect(result.status).toBe("warn");
+    expect(result.message).toContain(URL);
+    expect(result.message).toContain(OTHER_URL);
   });
 });

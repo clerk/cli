@@ -129,6 +129,38 @@ function hasStdinPipe(): boolean {
 }
 
 /**
+ * `clerk mcp run` is a long-lived stdio bridge: its stdin is a stream of
+ * newline-delimited JSON-RPC frames, not a one-shot options object. It must
+ * own stdin directly, so opt it out of the `--input-json` preprocessing that
+ * would otherwise consume and mis-parse the stream.
+ *
+ * Matched on the command positionals (not a bare `indexOf("mcp")`, which would
+ * also fire for an option value like `--name mcp run` on an unrelated command).
+ */
+// Global flags that consume the next argv token as their value. Must stay in
+// sync with the root options in cli-program.ts: if a value-flag isn't listed,
+// its value (e.g. `--mode mcp`) leaks into the positionals and could misfire
+// the `mcp run` detection below.
+const GLOBAL_FLAGS_WITH_VALUE = new Set(["--mode", "--input-json"]);
+
+function ownsRawStdin(argv: string[]): boolean {
+  // Drop flags (and the values of known global value-flags) so what remains is
+  // the runtime prefix followed by the command path. Subcommand option values
+  // like `--name mcp` stay attached to their own command and never get mistaken
+  // for the `mcp run` command itself.
+  const positionals: string[] = [];
+  for (let i = 0; i < argv.length; i++) {
+    const token = argv[i]!;
+    if (GLOBAL_FLAGS_WITH_VALUE.has(token)) i++;
+    else if (!token.startsWith("-")) positionals.push(token);
+  }
+  // The runtime prefix is `bun`/`node` + script (2 tokens) or the compiled
+  // binary alone (1 token); the command is the positional right after it.
+  const prefix = /(^|[/\\])(bun|node)(\.exe)?$/.test(positionals[0] ?? "") ? 2 : 1;
+  return positionals[prefix] === "mcp" && positionals[prefix + 1] === "run";
+}
+
+/**
  * Process an argv array: find `--input-json`, expand JSON to flags, return
  * a new argv with the expanded flags spliced in (so explicit CLI flags that
  * appear later in argv naturally take precedence).
@@ -140,6 +172,8 @@ function hasStdinPipe(): boolean {
  * array unchanged.
  */
 export async function expandInputJson(argv: string[]): Promise<string[]> {
+  if (ownsRawStdin(argv)) return argv;
+
   const idx = argv.indexOf(INPUT_JSON_FLAG);
 
   if (idx !== -1) {

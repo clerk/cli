@@ -1,20 +1,21 @@
 /**
  * Writes to `~/.codex/config.toml` under the `[mcp_servers.<name>]` table.
- * Codex supports Streamable HTTP MCP servers directly, so the descriptor is
- * just `{ url }` — no `mcp-remote` stdio bridge (unlike Gemini).
+ * Installs the `clerk mcp run` stdio bridge (`command` + `args`); legacy bare
+ * `{ url }` entries still round-trip on list/uninstall.
  */
 
-import { hasStringProp, makeTomlClient } from "./make-json-client.ts";
+import { clerkRunArgs, RUN_COMMAND, withLegacyUrl } from "./clerk-run.ts";
+import { makeTomlClient } from "./make-client.ts";
 import { pathExists, userPath } from "./paths.ts";
 
 export const codexClient = makeTomlClient({
   id: "codex",
   displayName: "Codex",
   scope: "user",
-  activation: "Restart Codex; it opens a browser to sign in if the server requires it.",
+  activation: "Restart Codex (`clerk` must be on your PATH).",
   topKey: "mcp_servers",
-  encode: (url) => ({ url }),
-  extractUrl: (d) => (hasStringProp(d, "url") ? d.url : undefined),
+  encode: (url) => ({ command: RUN_COMMAND, args: clerkRunArgs(url) }),
+  extractUrl: (d) => withLegacyUrl(d),
   configPath: () => userPath(".codex", "config.toml"),
   detect: () => pathExists(userPath(".codex")),
 });

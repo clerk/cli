@@ -17,7 +17,9 @@ useCaptureLog();
 const URL_A = "https://mcp.clerk.com/mcp";
 const URL_B = "http://localhost:8787/mcp";
 
-describe("make-json-client (via cursor)", () => {
+const runShape = (url: string) => ({ command: "clerk", args: ["mcp", "run", "--url", url] });
+
+describe("make-client (via cursor)", () => {
   let cwd: string;
 
   beforeEach(async () => {
@@ -31,7 +33,7 @@ describe("make-json-client (via cursor)", () => {
 
   async function read(): Promise<{
     otherTopLevel?: string;
-    mcpServers?: Record<string, { url: string }>;
+    mcpServers?: Record<string, { command?: string; args?: string[]; url?: string }>;
   }> {
     const text = await readFile(join(cwd, ".cursor", "mcp.json"), "utf8");
     return JSON.parse(text);
@@ -42,7 +44,7 @@ describe("make-json-client (via cursor)", () => {
       const result = await cursorClient.upsert({ name: "clerk", url: URL_A }, cwd, false);
       expect(result.status).toBe("added");
       const written = await read();
-      expect(written.mcpServers?.clerk).toEqual({ url: URL_A });
+      expect(written.mcpServers?.clerk).toEqual(runShape(URL_A));
     });
 
     test("preserves unrelated keys in the file", async () => {
@@ -56,13 +58,25 @@ describe("make-json-client (via cursor)", () => {
       const written = await read();
       expect(written.otherTopLevel).toBe("keep");
       expect(written.mcpServers?.other).toEqual({ url: "http://x" });
-      expect(written.mcpServers?.clerk).toEqual({ url: URL_A });
+      expect(written.mcpServers?.clerk).toEqual(runShape(URL_A));
     });
 
     test("returns unchanged when the URL already matches", async () => {
       await cursorClient.upsert({ name: "clerk", url: URL_A }, cwd, false);
       const result = await cursorClient.upsert({ name: "clerk", url: URL_A }, cwd, false);
       expect(result.status).toBe("unchanged");
+    });
+
+    test("upgrades a legacy same-URL entry to the bridge shape without --force", async () => {
+      await mkdir(join(cwd, ".cursor"), { recursive: true });
+      await writeFile(
+        join(cwd, ".cursor", "mcp.json"),
+        JSON.stringify({ mcpServers: { clerk: { url: URL_A } } }),
+      );
+      const result = await cursorClient.upsert({ name: "clerk", url: URL_A }, cwd, false);
+      expect(result.status).toBe("updated");
+      const written = await read();
+      expect(written.mcpServers?.clerk).toEqual(runShape(URL_A));
     });
 
     test("skips when URL conflicts and force is false", async () => {
@@ -72,7 +86,7 @@ describe("make-json-client (via cursor)", () => {
       // Narrow the discriminated union so `reason` is typed as present.
       if (result.status === "skipped") expect(result.reason).toContain("--force");
       const written = await read();
-      expect(written.mcpServers?.clerk?.url).toBe(URL_A);
+      expect(written.mcpServers?.clerk).toEqual(runShape(URL_A));
     });
 
     test("overwrites when URL conflicts and force is true", async () => {
@@ -80,7 +94,7 @@ describe("make-json-client (via cursor)", () => {
       const result = await cursorClient.upsert({ name: "clerk", url: URL_B }, cwd, true);
       expect(result.status).toBe("updated");
       const written = await read();
-      expect(written.mcpServers?.clerk?.url).toBe(URL_B);
+      expect(written.mcpServers?.clerk).toEqual(runShape(URL_B));
     });
 
     test("rejects a config whose top-level is not an object", async () => {
@@ -97,7 +111,7 @@ describe("make-json-client (via cursor)", () => {
       const result = await cursorClient.upsert({ name: "toString", url: URL_A }, cwd, false);
       expect(result.status).toBe("added");
       const written = await read();
-      expect(written.mcpServers?.["toString"]).toEqual({ url: URL_A });
+      expect(written.mcpServers?.["toString"]).toEqual(runShape(URL_A));
     });
   });
 

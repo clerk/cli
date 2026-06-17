@@ -17,13 +17,11 @@ import { dirname } from "node:path";
 import { parse, stringify } from "smol-toml";
 import { log } from "../../../lib/log.ts";
 import { CliError, ERROR_CODE, errorMessage } from "../../../lib/errors.ts";
-import type { JsonConfig } from "./json-config.ts";
+import { readConfigText, restrictPermissions, type ConfigRecord } from "./json-config.ts";
 
-export async function readTomlConfig(path: string): Promise<JsonConfig> {
-  const file = Bun.file(path);
-  if (!(await file.exists())) return {};
-  const text = await file.text();
-  if (text.trim().length === 0) return {};
+export async function readTomlConfig(path: string): Promise<ConfigRecord> {
+  const text = await readConfigText(path);
+  if (text === undefined || text.trim().length === 0) return {};
   try {
     const parsed: unknown = parse(text);
     // A valid TOML document is always a table, so `parse` can't hand back a
@@ -33,7 +31,7 @@ export async function readTomlConfig(path: string): Promise<JsonConfig> {
         code: ERROR_CODE.MCP_CLIENT_CONFIG_INVALID,
       });
     }
-    return parsed as JsonConfig;
+    return parsed as ConfigRecord;
   } catch (error) {
     if (error instanceof CliError) throw error;
     throw new CliError(`Could not parse ${path} as TOML: ${errorMessage(error)}`, {
@@ -42,8 +40,9 @@ export async function readTomlConfig(path: string): Promise<JsonConfig> {
   }
 }
 
-export async function writeTomlConfig(path: string, config: JsonConfig): Promise<void> {
+export async function writeTomlConfig(path: string, config: ConfigRecord): Promise<void> {
   log.debug(`mcp: write ${path}`);
-  await mkdir(dirname(path), { recursive: true });
+  await mkdir(dirname(path), { recursive: true, mode: 0o700 });
   await Bun.write(path, stringify(config) + "\n");
+  await restrictPermissions(path);
 }

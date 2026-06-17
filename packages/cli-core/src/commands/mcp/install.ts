@@ -8,7 +8,6 @@
 
 import { log } from "../../lib/log.ts";
 import { cyan, dim, green, yellow } from "../../lib/color.ts";
-import { isAgent } from "../../mode.ts";
 import { withGutter } from "../../lib/spinner.ts";
 import {
   pickClients,
@@ -23,7 +22,11 @@ import { detectInstalledClients } from "./clients/registry.ts";
 import type { McpClient, UpsertResult } from "./clients/types.ts";
 
 async function chooseClients(options: McpOptions, cwd: string): Promise<McpClient[]> {
-  if (options.client?.length || options.all || isAgent()) return targetClients(options, cwd);
+  // `wantsJson` covers `--json` and agent mode, so non-interactive callers never
+  // block on the picker.
+  if (options.client?.length || options.all || wantsJson(options)) {
+    return targetClients(options, cwd);
+  }
   return pickClients(await detectInstalledClients(cwd), "Select MCP clients to install into:", {
     autoSelectSingle: true,
   });

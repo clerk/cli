@@ -1,10 +1,12 @@
 /**
- * Writes to `~/.gemini/settings.json`. Gemini doesn't support HTTP transport
- * directly — it requires `mcp-remote` as a stdio bridge, hence the
- * `{ command: "npx", args: ["-y", "mcp-remote", <url>] }` shape.
+ * Writes to `~/.gemini/settings.json`. Gemini has no native HTTP transport, so
+ * it always needs a stdio bridge — now `clerk mcp run` instead of the previous
+ * `npx -y mcp-remote <url>`. Legacy `mcp-remote` entries still round-trip on
+ * list/uninstall so existing installs remain manageable.
  */
 
-import { makeJsonClient } from "./make-json-client.ts";
+import { clerkRunArgs, extractClerkRunUrl, RUN_COMMAND } from "./clerk-run.ts";
+import { makeJsonClient } from "./make-client.ts";
 import { pathExists, userPath } from "./paths.ts";
 
 interface McpRemoteEntry {
@@ -12,9 +14,8 @@ interface McpRemoteEntry {
   args: [string, string, string, ...string[]];
 }
 
-// Match the exact shape we wrote: `{command: "npx", args: ["-y", "mcp-remote", <url>]}`.
-// Permissive matching ("last arg of any args[]") would round-trip unrelated
-// stdio bridges as if they were Clerk MCP entries.
+// Match the exact legacy shape `{command: "npx", args: ["-y", "mcp-remote", <url>]}`.
+// Permissive matching would round-trip unrelated stdio bridges as Clerk entries.
 function isMcpRemoteEntry(value: unknown): value is McpRemoteEntry {
   if (typeof value !== "object" || value === null) return false;
   const candidate = value as { command?: unknown; args?: unknown };
@@ -28,11 +29,10 @@ export const geminiClient = makeJsonClient({
   id: "gemini",
   displayName: "Gemini Code Assist / CLI",
   scope: "user",
-  activation:
-    "Restart Gemini (needs `npx` on PATH); `mcp-remote` opens a browser to sign in if the server requires it.",
+  activation: "Restart Gemini (`clerk` must be on your PATH).",
   topKey: "mcpServers",
-  encode: (url) => ({ command: "npx", args: ["-y", "mcp-remote", url] }),
-  extractUrl: (d) => (isMcpRemoteEntry(d) ? d.args[2] : undefined),
+  encode: (url) => ({ command: RUN_COMMAND, args: clerkRunArgs(url) }),
+  extractUrl: (d) => extractClerkRunUrl(d) ?? (isMcpRemoteEntry(d) ? d.args[2] : undefined),
   configPath: () => userPath(".gemini", "settings.json"),
   detect: () => pathExists(userPath(".gemini")),
 });

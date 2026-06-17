@@ -3,6 +3,7 @@
  */
 
 import { cyan, dim, green, yellow } from "../../lib/color.ts";
+import { errorMessage } from "../../lib/errors.ts";
 import { log } from "../../lib/log.ts";
 import { withGutter } from "../../lib/spinner.ts";
 import { CLIENTS } from "./clients/registry.ts";
@@ -26,10 +27,14 @@ function warnNotInstalled(name: string): void {
 }
 
 async function installedClients(name: string, cwd: string): Promise<McpClient[]> {
-  const present = await Promise.all(
-    CLIENTS.map(async (client) => (await client.list(cwd)).some((entry) => entry.name === name)),
-  );
-  return CLIENTS.filter((_, i) => present[i]);
+  // Settle, not all: one client's unreadable config warns instead of aborting detection.
+  const settled = await Promise.allSettled(CLIENTS.map((c) => c.list(cwd)));
+  return CLIENTS.filter((client, i) => {
+    const outcome = settled[i]!;
+    if (outcome.status === "fulfilled") return outcome.value.some((entry) => entry.name === name);
+    log.warn(`${client.displayName}: could not read MCP config — ${errorMessage(outcome.reason)}`);
+    return false;
+  });
 }
 
 // The checked clients are removed; nothing is pre-checked, so the safe default

@@ -1,20 +1,23 @@
 /**
  * Writes to the user-global `~/.cursor/mcp.json`, so the server is available in
- * every project rather than only the cwd it was installed from. Cursor's MCP
- * descriptor is a bare `{ url }` without a `type` discriminator.
+ * every project rather than only the cwd it was installed from. Installs the
+ * `clerk mcp run` stdio bridge; legacy bare `{ url }` entries still round-trip
+ * on list/uninstall.
  */
 
-import { hasStringProp, makeJsonClient } from "./make-json-client.ts";
+import { clerkRunArgs, RUN_COMMAND, withLegacyUrl } from "./clerk-run.ts";
+import { makeJsonClient } from "./make-client.ts";
 import { pathExists, userPath } from "./paths.ts";
 
 export const cursorClient = makeJsonClient({
   id: "cursor",
   displayName: "Cursor",
   scope: "user",
-  activation: "Reload Cursor, then enable the server under `Settings → MCP` (sign in if prompted).",
+  activation:
+    "Reload Cursor, then enable the server under `Settings → MCP` (`clerk` must be on your PATH).",
   topKey: "mcpServers",
-  encode: (url) => ({ url }),
-  extractUrl: (d) => (hasStringProp(d, "url") ? d.url : undefined),
+  encode: (url) => ({ command: RUN_COMMAND, args: clerkRunArgs(url) }),
+  extractUrl: (d) => withLegacyUrl(d),
   configPath: () => userPath(".cursor", "mcp.json"),
   detect: () => pathExists(userPath(".cursor")),
 });

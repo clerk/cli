@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import * as realOs from "node:os";
 import { join } from "node:path";
 import { useCaptureLog } from "../../test/lib/stubs.ts";
@@ -53,9 +53,24 @@ describe("mcp uninstall", () => {
     await mcpUninstall({ client: ["cursor"] });
 
     const parsed = JSON.parse(await readFile(join(cwd, ".cursor", "mcp.json"), "utf8")) as {
-      mcpServers: Record<string, unknown>;
+      mcpServers?: Record<string, unknown>;
     };
-    expect(parsed.mcpServers.clerk).toBeUndefined();
+    // Removing the only entry drops the now-empty `mcpServers` key entirely
+    // rather than leaving `{ "mcpServers": {} }` behind.
+    expect(parsed.mcpServers).toBeUndefined();
+  });
+
+  test("removes the healthy client and warns when another's config is corrupt", async () => {
+    await mcpInstall({ client: ["claude"], url: URL });
+    await mkdir(join(cwd, ".cursor"), { recursive: true });
+    await writeFile(join(cwd, ".cursor", "mcp.json"), "{ not json");
+    captured.clear();
+
+    await mcpUninstall({ client: ["cursor", "claude"] });
+
+    const payload = JSON.parse(captured.out) as { results: { client: string; removed: boolean }[] };
+    expect(payload.results).toEqual([expect.objectContaining({ client: "claude", removed: true })]);
+    expect(captured.err).toContain("Cursor");
   });
 
   test("emits JSON results on stdout in agent mode", async () => {
@@ -85,9 +100,9 @@ describe("mcp uninstall", () => {
     await mcpUninstall({ client: ["cursor"], name: "clerk-staging" });
 
     const parsed = JSON.parse(await readFile(join(cwd, ".cursor", "mcp.json"), "utf8")) as {
-      mcpServers: Record<string, unknown>;
+      mcpServers?: Record<string, unknown>;
     };
-    expect(parsed.mcpServers["clerk-staging"]).toBeUndefined();
+    expect(parsed.mcpServers?.["clerk-staging"]).toBeUndefined();
   });
 
   test("rejects an unknown --client id", async () => {
@@ -122,9 +137,9 @@ describe("mcp uninstall", () => {
 
     expect(mockMultiselect).toHaveBeenCalledTimes(1);
     const cursorCfg = JSON.parse(await readFile(join(cwd, ".cursor", "mcp.json"), "utf8")) as {
-      mcpServers: Record<string, unknown>;
+      mcpServers?: Record<string, unknown>;
     };
-    expect(cursorCfg.mcpServers.clerk).toBeUndefined();
+    expect(cursorCfg.mcpServers?.clerk).toBeUndefined();
     const claudeCfg = JSON.parse(await readFile(join(cwd, ".claude.json"), "utf8")) as {
       mcpServers: Record<string, unknown>;
     };
@@ -167,8 +182,8 @@ describe("mcp uninstall", () => {
 
     expect(mockMultiselect).not.toHaveBeenCalled();
     const cursorCfg = JSON.parse(await readFile(join(cwd, ".cursor", "mcp.json"), "utf8")) as {
-      mcpServers: Record<string, unknown>;
+      mcpServers?: Record<string, unknown>;
     };
-    expect(cursorCfg.mcpServers.clerk).toBeUndefined();
+    expect(cursorCfg.mcpServers?.clerk).toBeUndefined();
   });
 });

@@ -22,43 +22,47 @@ useCaptureLog();
 
 const URL = "https://mcp.clerk.com/mcp";
 
+// Every client now installs the same `clerk mcp run` stdio bridge; VS Code tags
+// stdio servers with a `type` discriminator.
+const RUN_SHAPE = { command: "clerk", args: ["mcp", "run", "--url", URL] };
+
 // Path + entry shape are part of the public contract: each client targets a
-// specific user-global config file and encodes the server its own way.
+// specific user-global config file and encodes the bridge its own way.
 const cases = [
   {
     name: "claude",
     client: claudeClient,
     expectedPath: () => join(mockHome, ".claude.json"),
     topKey: "mcpServers",
-    shape: { type: "http", url: URL },
+    shape: RUN_SHAPE,
   },
   {
     name: "cursor",
     client: cursorClient,
     expectedPath: () => join(mockHome, ".cursor", "mcp.json"),
     topKey: "mcpServers",
-    shape: { url: URL },
+    shape: RUN_SHAPE,
   },
   {
     name: "vscode",
     client: vscodeClient,
     expectedPath: () => join(vscodeUserDir(), "mcp.json"),
     topKey: "servers",
-    shape: { type: "http", url: URL },
+    shape: { type: "stdio", ...RUN_SHAPE },
   },
   {
     name: "windsurf",
     client: windsurfClient,
     expectedPath: () => join(mockHome, ".codeium", "windsurf", "mcp_config.json"),
     topKey: "mcpServers",
-    shape: { serverUrl: URL },
+    shape: RUN_SHAPE,
   },
   {
     name: "gemini",
     client: geminiClient,
     expectedPath: () => join(mockHome, ".gemini", "settings.json"),
     topKey: "mcpServers",
-    shape: { command: "npx", args: ["-y", "mcp-remote", URL] },
+    shape: RUN_SHAPE,
   },
 ];
 

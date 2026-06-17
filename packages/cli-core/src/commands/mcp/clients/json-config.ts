@@ -9,20 +9,32 @@
  * formatting and a 2-space indent.
  */
 
-import { mkdir } from "node:fs/promises";
+import { chmod, mkdir } from "node:fs/promises";
 import { dirname } from "node:path";
 import { log } from "../../../lib/log.ts";
 import { CliError, ERROR_CODE, errorMessage } from "../../../lib/errors.ts";
 
-export interface JsonConfig {
+export interface ConfigRecord {
   [key: string]: unknown;
 }
 
-export async function readJsonConfig(path: string): Promise<JsonConfig> {
+/** Read a config file's text, or `undefined` if absent. An unreadable file
+ * (e.g. EACCES) surfaces as MCP_CLIENT_CONFIG_INVALID, not a raw OS error. */
+export async function readConfigText(path: string): Promise<string | undefined> {
   const file = Bun.file(path);
-  if (!(await file.exists())) return {};
-  const text = await file.text();
-  if (text.trim().length === 0) return {};
+  if (!(await file.exists())) return undefined;
+  try {
+    return await file.text();
+  } catch (error) {
+    throw new CliError(`Could not read ${path}: ${errorMessage(error)}`, {
+      code: ERROR_CODE.MCP_CLIENT_CONFIG_INVALID,
+    });
+  }
+}
+
+export async function readJsonConfig(path: string): Promise<ConfigRecord> {
+  const text = await readConfigText(path);
+  if (text === undefined || text.trim().length === 0) return {};
   try {
     const parsed: unknown = JSON.parse(text);
     if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
@@ -30,7 +42,7 @@ export async function readJsonConfig(path: string): Promise<JsonConfig> {
         code: ERROR_CODE.MCP_CLIENT_CONFIG_INVALID,
       });
     }
-    return parsed as JsonConfig;
+    return parsed as ConfigRecord;
   } catch (error) {
     if (error instanceof CliError) throw error;
     throw new CliError(`Could not parse ${path} as JSON: ${errorMessage(error)}`, {
@@ -39,10 +51,21 @@ export async function readJsonConfig(path: string): Promise<JsonConfig> {
   }
 }
 
-export async function writeJsonConfig(path: string, config: JsonConfig): Promise<void> {
+export async function writeJsonConfig(path: string, config: ConfigRecord): Promise<void> {
   log.debug(`mcp: write ${path}`);
-  await mkdir(dirname(path), { recursive: true });
+  await mkdir(dirname(path), { recursive: true, mode: 0o700 });
   await Bun.write(path, JSON.stringify(config, null, 2) + "\n");
+  await restrictPermissions(path);
+}
+
+/** Owner-only (0600) perms so editor-written OAuth tokens can't land in a
+ * world-readable file on shared hosts. Best-effort: ignored without POSIX modes. */
+export async function restrictPermissions(path: string): Promise<void> {
+  try {
+    await chmod(path, 0o600);
+  } catch (error) {
+    log.debug(`mcp: chmod ${path} failed — ${errorMessage(error)}`);
+  }
 }
 
 /**
@@ -50,7 +73,7 @@ export async function writeJsonConfig(path: string, config: JsonConfig): Promise
  * Throws MCP_CLIENT_CONFIG_INVALID if the path exists but is not an object.
  */
 export function getServerMap(
-  config: JsonConfig,
+  config: ConfigRecord,
   key: string,
   configPath: string,
 ): Record<string, unknown> {
