@@ -149,6 +149,14 @@ export async function animateHeader(options: AnimateHeaderOptions): Promise<void
   // header's own newline plus every newline inside the body.
   const rowsBelow = 1 + (body.match(/\n/g)?.length ?? 0);
 
+  // The cursor-up escape only lands on the header when the block fits on screen
+  // without scrolling. Fall back to a plain write on short terminals where the
+  // scroll would push the header out of reach.
+  if (process.stderr.rows != null && rowsBelow >= process.stderr.rows) {
+    write(`${prefix}${fallback(label)}\n${body}`);
+    return;
+  }
+
   hideCursor();
   try {
     // Print the whole block first so the body is visible immediately, then step

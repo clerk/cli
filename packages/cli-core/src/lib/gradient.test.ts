@@ -199,4 +199,25 @@ describe("animateHeader (interactive gating)", () => {
     await run();
     expect(captured.err).toContain("\r");
   });
+
+  test("falls back to a plain write when the block is taller than the terminal", async () => {
+    const savedRows = process.stderr.rows;
+    try {
+      Object.defineProperty(process.stderr, "rows", { value: 5, configurable: true });
+      await animateHeader({
+        prefix: "",
+        label: "Hi",
+        fallback: bold,
+        // 5 newlines → rowsBelow = 6, which exceeds rows = 5
+        body: "a\nb\nc\nd\ne\n",
+        frames: 2,
+        intervalMs: 1,
+      });
+      expect(captured.err).not.toContain("\r");
+      expect(captured.err).not.toContain("\x1b[?25l");
+      expect(captured.err).toContain("a");
+    } finally {
+      Object.defineProperty(process.stderr, "rows", { value: savedRows, configurable: true });
+    }
+  });
 });
