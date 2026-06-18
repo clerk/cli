@@ -234,6 +234,19 @@ describe("webhooks verify command", () => {
     ).rejects.toThrow("in the past");
   });
 
+  test("mismatch on a future timestamp includes a humanized skew hint", async () => {
+    const futureTimestamp = String(Number(TIMESTAMP) + 3600);
+    const payloadPath = await writeTempFile("body.json", PAYLOAD);
+
+    await expect(
+      webhooksVerify({
+        ...explicitFlags(),
+        timestamp: futureTimestamp,
+        payload: `@${payloadPath}`,
+      }),
+    ).rejects.toThrow("in the future");
+  });
+
   test.each([
     { label: "missing --secret", options: {} },
     { label: "malformed --secret", options: { secret: "sk_nope" } },

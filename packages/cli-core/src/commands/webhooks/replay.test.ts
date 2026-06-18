@@ -68,6 +68,10 @@ describe("webhooks replay", () => {
       options: { msgId: "msg_1", until: "2026-05-01T00:00:00Z" },
     },
     {
+      label: "--until alone (no <msg_id>, no --since)",
+      options: { until: "2026-05-01T00:00:00Z" },
+    },
+    {
       label: "--since without --endpoint",
       options: { since: "2026-05-01T00:00:00Z" },
     },

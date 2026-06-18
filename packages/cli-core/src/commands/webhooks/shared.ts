@@ -117,12 +117,17 @@ export function formatEndpointDetails(endpoint: WebhookEndpoint): void {
   }
 }
 
-/** Split a comma-separated flag value into trimmed, non-empty entries. */
+/**
+ * Split a comma-separated flag value into trimmed, non-empty entries. Returns
+ * undefined when the flag was absent OR carried no real values (`""`, `","`,
+ * whitespace) — so callers can treat an empty value as "not provided" instead
+ * of sending an empty array.
+ */
 export function splitCommaList(value: string | undefined): string[] | undefined {
   if (value === undefined) return undefined;
   const parts = value
     .split(",")
     .map((part) => part.trim())
     .filter(Boolean);
-  return parts;
+  return parts.length > 0 ? parts : undefined;
 }

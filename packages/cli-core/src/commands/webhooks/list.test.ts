@@ -130,6 +130,15 @@ describe("webhooks list", () => {
     expect(captured.err).toContain("--iterator iter_next");
   });
 
+  test("still hints at the next --iterator on an empty page with has_next_page", async () => {
+    mockListWebhookEndpoints.mockResolvedValue(listResponse({ data: [], has_next_page: true }));
+
+    await webhooksList();
+
+    expect(captured.err).toContain("No webhook endpoints found.");
+    expect(captured.err).toContain("--iterator iter_next");
+  });
+
   test("omits the pagination hint on the last page", async () => {
     await webhooksList();
 

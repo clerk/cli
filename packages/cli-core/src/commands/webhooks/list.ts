@@ -59,6 +59,7 @@ export async function webhooksList(options: WebhooksListOptions = {}): Promise<v
 
   if (response.data.length === 0) {
     log.warn("No webhook endpoints found.");
+    printIteratorHint(response.cursor);
     return;
   }
 
