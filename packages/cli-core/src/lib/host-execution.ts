@@ -101,17 +101,33 @@ function warnAboutSandbox(detail?: string): void {
   }
 }
 
+const PERMISSION_PATTERNS = [
+  /\bEPERM\b/i,
+  /\bEACCES\b/i,
+  /operation not permitted/i,
+  /permission denied/i,
+  /sandbox/i,
+  /interaction is not allowed/i,
+  /access denied/i,
+];
+
+function matchesPermissionPattern(s: string): boolean {
+  return PERMISSION_PATTERNS.some((pattern) => pattern.test(s));
+}
+
 function isPermissionLikeFailure(error: unknown): boolean {
-  const message = errorMessage(error);
-  return [
-    /\bEPERM\b/i,
-    /\bEACCES\b/i,
-    /operation not permitted/i,
-    /permission denied/i,
-    /sandbox/i,
-    /interaction is not allowed/i,
-    /access denied/i,
-  ].some((pattern) => pattern.test(message));
+  if (!(error instanceof Error)) {
+    return matchesPermissionPattern(String(error));
+  }
+
+  if (matchesPermissionPattern(error.message)) return true;
+
+  const code = (error as NodeJS.ErrnoException).code;
+  if (code && matchesPermissionPattern(code)) return true;
+
+  if (error.cause instanceof Error && isPermissionLikeFailure(error.cause)) return true;
+
+  return false;
 }
 
 function isLikelySandboxFailure(capability: HostCapability, error: unknown): boolean {

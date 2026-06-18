@@ -21,9 +21,23 @@ describe("observeHostCapabilityFailure sandbox hinting", () => {
     expect(captured.err).not.toContain("sandboxed run");
   });
 
-  test("a permission-like network failure warns about a possible sandbox", () => {
+  test("a permission-like network failure warns about a possible sandbox (message)", () => {
     observeHostCapabilityFailure("network", new Error("operation not permitted"));
     expect(captured.err).toContain("sandboxed run");
+  });
+
+  test("a Bun fetch error with permission-like code warns about a possible sandbox", () => {
+    const cause = Object.assign(new Error("operation not permitted"), { code: "EPERM" });
+    const bunFetchError = Object.assign(new Error("fetch failed"), { cause });
+    observeHostCapabilityFailure("network", bunFetchError);
+    expect(captured.err).toContain("sandboxed run");
+  });
+
+  test("a Bun fetch error with non-permission code does not warn", () => {
+    const cause = Object.assign(new Error("Connection refused"), { code: "ConnectionRefused" });
+    const bunFetchError = Object.assign(new Error("fetch failed"), { cause });
+    observeHostCapabilityFailure("network", bunFetchError);
+    expect(captured.err).not.toContain("sandboxed run");
   });
 
   test("browser-launch and localhost-bind failures always warn", () => {
