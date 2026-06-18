@@ -6,6 +6,19 @@ import { parseSpec, _setCacheDir } from "./catalog.ts";
 import { useCaptureLog, stubFetch } from "../../test/lib/stubs.ts";
 import { apiLs } from "./ls.ts";
 
+const LONG_PATH_SPEC = `
+openapi: "3.0.0"
+info:
+  title: Test API
+  version: "1.0"
+paths:
+  /organizations/{organization_id}/memberships/{user_id}:
+    get:
+      tags: [Organizations]
+      summary: Get organization membership
+      operationId: GetOrganizationMembership
+`;
+
 const MINIMAL_SPEC = `
 openapi: "3.0.0"
 info:
@@ -111,5 +124,16 @@ describe("apiLs", () => {
 
     await runApiLs(undefined, { platform: true });
     expect(captured.out).not.toBe("");
+  });
+
+  test("long path (>=50 chars) is separated from summary by at least two spaces", async () => {
+    const longPath = "/organizations/{organization_id}/memberships/{user_id}";
+    const cached = parseSpec(LONG_PATH_SPEC);
+    cached.fetchedAt = Date.now();
+    await Bun.write(join(tempDir, "bapi-catalog.json"), JSON.stringify(cached));
+
+    await runApiLs(undefined, {});
+
+    expect(captured.out).toContain(`${longPath}  Get organization membership`);
   });
 });
