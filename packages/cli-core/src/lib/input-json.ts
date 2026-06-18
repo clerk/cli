@@ -141,7 +141,8 @@ function hasStdinPipe(): boolean {
 // sync with the root options in cli-program.ts: if a value-flag isn't listed,
 // its value (e.g. `--mode mcp`) leaks into the positionals and could misfire
 // the `mcp run` detection below.
-const GLOBAL_FLAGS_WITH_VALUE = new Set(["--mode", "--input-json"]);
+// Exported so tests can verify this set covers all root value-options.
+export const GLOBAL_FLAGS_WITH_VALUE = new Set(["--mode", "--input-json"]);
 
 function ownsRawStdin(argv: string[]): boolean {
   // Drop flags (and the values of known global value-flags) so what remains is

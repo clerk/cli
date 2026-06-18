@@ -9,7 +9,7 @@
  * formatting and a 2-space indent.
  */
 
-import { chmod, mkdir } from "node:fs/promises";
+import { chmod, mkdir, rename, unlink, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import { log } from "../../../lib/log.ts";
 import { CliError, ERROR_CODE, errorMessage } from "../../../lib/errors.ts";
@@ -53,8 +53,18 @@ export async function readJsonConfig(path: string): Promise<ConfigRecord> {
 
 export async function writeJsonConfig(path: string, config: ConfigRecord): Promise<void> {
   log.debug(`mcp: write ${path}`);
-  await mkdir(dirname(path), { recursive: true, mode: 0o700 });
-  await Bun.write(path, JSON.stringify(config, null, 2) + "\n");
+  const dir = dirname(path);
+  await mkdir(dir, { recursive: true, mode: 0o700 });
+  // Atomic write: write to a sibling temp file then rename so a concurrent
+  // reader (e.g. Claude Code) never sees a partial file.
+  const tmp = `${path}.clerk-tmp-${process.pid}`;
+  try {
+    await writeFile(tmp, JSON.stringify(config, null, 2) + "\n", { mode: 0o600 });
+    await rename(tmp, path);
+  } catch (error) {
+    await unlink(tmp).catch(() => {});
+    throw error;
+  }
   await restrictPermissions(path);
 }
 

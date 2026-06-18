@@ -1,5 +1,5 @@
 import { test, expect, describe, beforeEach, afterEach } from "bun:test";
-import { expandInputJson, toKebabCase } from "./input-json.ts";
+import { expandInputJson, toKebabCase, GLOBAL_FLAGS_WITH_VALUE } from "./input-json.ts";
 import { join } from "node:path";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -391,5 +391,20 @@ describe("expandInputJson", () => {
       const result = await expandViaStdin(["clerk", "config", "patch"], '{"dryRun":true}');
       expect(result.result).toEqual(["clerk", "config", "patch", "--dry-run"]);
     });
+  });
+});
+
+describe("GLOBAL_FLAGS_WITH_VALUE", () => {
+  test("covers every root value-option in cli-program.ts", async () => {
+    // If a new value-flag is added to the root program but omitted from
+    // GLOBAL_FLAGS_WITH_VALUE, its value can leak into positionals and
+    // incorrectly trigger the `mcp run` stdin bypass.
+    const { createProgram } = await import("../cli-program.ts");
+    const program = createProgram();
+    const missing = program.options
+      .filter((opt) => (opt.required || opt.optional) && opt.long)
+      .map((opt) => opt.long!)
+      .filter((flag) => !GLOBAL_FLAGS_WITH_VALUE.has(flag));
+    expect(missing).toEqual([]);
   });
 });

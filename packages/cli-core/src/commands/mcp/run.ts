@@ -50,7 +50,12 @@ export async function mcpRun(options: McpOptions = {}, streams: RunStreams = {})
   const emit: Emit = (message) => {
     captureProtocolVersion(message, session);
     const line = JSON.stringify(message) + "\n";
-    writeTail = writeTail.then(() => writeRaw(line));
+    // Swallow write errors (e.g. EPIPE) so one failed frame doesn't wedge the chain.
+    writeTail = writeTail
+      .then(() => writeRaw(line))
+      .catch((err: unknown) => {
+        log.debug(`mcp run: write error — ${errorMessage(err)}`);
+      });
     return writeTail;
   };
 
@@ -181,6 +186,9 @@ async function dispatch(message: JsonRpcMessage, ctx: DispatchCtx): Promise<void
     track(pipeEventStream(response, emitPayload, signal));
     return;
   }
+  // The initialize response body is drained concurrently via track(); the
+  // protocol version captured inside emitPayload→emit is set before the next
+  // request fires because the MCP client awaits the initialize reply.
   track(forwardJsonBody(response, message, emit, emitPayload));
 }
 
