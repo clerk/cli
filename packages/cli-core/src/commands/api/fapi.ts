@@ -15,13 +15,10 @@ import {
   throwUsageError,
   withApiContext,
 } from "../../lib/errors.ts";
-import { decodePublishableKey } from "../../lib/fapi.ts";
+import { decodePublishableKey, CLERK_JS_API_VERSION } from "../../lib/fapi.ts";
 import { loggedFetch } from "../../lib/fetch.ts";
 import { fetchApplication, type ApplicationInstance } from "../../lib/plapi.ts";
 import type { BapiResponse } from "./bapi.ts";
-
-/** clerk-js API version FAPI shapes its `/v1/environment` payload for. */
-const CLERK_JS_API_VERSION = "5";
 
 interface ResolveOptions {
   app?: string;

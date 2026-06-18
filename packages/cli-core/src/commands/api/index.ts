@@ -35,18 +35,21 @@ const MUTATING_METHODS = new Set(["POST", "PUT", "PATCH", "DELETE"]);
 
 type RunRequest = (req: { method: string; path: string; body?: string }) => Promise<BapiResponse>;
 
+/** Validate fapi flag combinations and emit warnings for ignored flags. */
+function validateFapiOptions(options: ApiOptions): void {
+  if (options.platform) {
+    throwUsageError("--fapi and --platform cannot be combined.", undefined, ERROR_CODE.USAGE_ERROR);
+  }
+  if (options.secretKey) {
+    log.warn("--secret-key is ignored when --fapi is set.");
+  }
+}
+
 /** Resolve the API surface (base URL + request executor) from the flags. */
 async function resolveApiTarget(
   options: ApiOptions,
 ): Promise<{ baseUrl: string; runRequest: RunRequest }> {
   if (options.fapi) {
-    if (options.platform) {
-      throwUsageError(
-        "--fapi and --platform cannot be combined.",
-        undefined,
-        ERROR_CODE.USAGE_ERROR,
-      );
-    }
     const fapiHost = await resolveFapiHost(options);
     const baseUrl = `https://${fapiHost}`;
     return { baseUrl, runRequest: (req) => fapiRequest({ ...req, fapiHost }) };
@@ -93,17 +96,26 @@ export async function api(
     // 2. Determine HTTP method
     const method = (options.method ?? (body ? "POST" : "GET")).toUpperCase();
 
-    // 3. Resolve the request target (base URL + executor)
-    const { baseUrl, runRequest } = await resolveApiTarget(options);
-
-    // 4. Dry run
+    // 3. Dry run — for --fapi, skip host resolution to avoid a real Platform API round-trip
     if (options.dryRun) {
-      log.info(`[dry-run] ${method} ${baseUrl}${normalizeBapiPath(endpoint)}`);
+      if (options.fapi) {
+        validateFapiOptions(options);
+        log.info(`[dry-run] ${method} <fapi-host>${normalizeBapiPath(endpoint)}`);
+      } else {
+        const { baseUrl } = await resolveApiTarget(options);
+        log.info(`[dry-run] ${method} ${baseUrl}${normalizeBapiPath(endpoint)}`);
+      }
       if (body) {
         prettyPrint(body);
       }
       return;
     }
+
+    // 4. Resolve the request target (base URL + executor)
+    if (options.fapi) {
+      validateFapiOptions(options);
+    }
+    const { runRequest } = await resolveApiTarget(options);
 
     // 5. Confirmation for mutating methods
     if (MUTATING_METHODS.has(method) && isHuman() && !options.yes) {

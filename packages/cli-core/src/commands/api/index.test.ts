@@ -542,6 +542,77 @@ describe("api command", () => {
     expect(captured.out).toContain(JSON.stringify(errorBody, null, 2));
   });
 
+  test("--fapi without --app and no linked project errors with NOT_LINKED guidance", async () => {
+    delete process.env.CLERK_SECRET_KEY;
+
+    await expect(runApi("/environment", { fapi: true })).rejects.toThrow(/clerk link|--app/);
+  });
+
+  test.each([
+    ["/environment", "/v1/environment"],
+    ["/v1/environment", "/v1/environment"],
+  ])("--fapi: %s resolves to the same FAPI path %s", async (input, expectedPath) => {
+    process.env.CLERK_PLATFORM_API_KEY = "ak_test_platform";
+    const pk = `pk_test_${btoa("clerk.example.com$")}`;
+    let capturedPath = "";
+
+    stubFetch(async (input) => {
+      const url = input.toString();
+      if (url.includes("/v1/platform/applications/app_1")) {
+        return new Response(
+          JSON.stringify({
+            application_id: "app_1",
+            instances: [
+              { instance_id: "ins_dev", environment_type: "development", publishable_key: pk },
+            ],
+          }),
+          { status: 200 },
+        );
+      }
+      capturedPath = new URL(url).pathname;
+      return new Response(JSON.stringify({}), { status: 200 });
+    });
+
+    await runApi(input, { fapi: true, app: "app_1" });
+    expect(capturedPath).toBe(expectedPath);
+  });
+
+  test("--fapi + --secret-key emits a warning that --secret-key is ignored", async () => {
+    process.env.CLERK_PLATFORM_API_KEY = "ak_test_platform";
+    const pk = `pk_test_${btoa("clerk.example.com$")}`;
+
+    stubFetch(async (input) => {
+      const url = input.toString();
+      if (url.includes("/v1/platform/applications/app_1")) {
+        return new Response(
+          JSON.stringify({
+            application_id: "app_1",
+            instances: [
+              { instance_id: "ins_dev", environment_type: "development", publishable_key: pk },
+            ],
+          }),
+          { status: 200 },
+        );
+      }
+      return new Response(JSON.stringify({}), { status: 200 });
+    });
+
+    await runApi("/environment", { fapi: true, app: "app_1", secretKey: "sk_test_ignored" });
+    expect(captured.err).toMatch(/--secret-key is ignored/);
+  });
+
+  test("--fapi + --dry-run does not make any network request", async () => {
+    let fetchCalled = false;
+    stubFetch(async () => {
+      fetchCalled = true;
+      return new Response(JSON.stringify({}), { status: 200 });
+    });
+
+    await runApi("/environment", { fapi: true, app: "app_1", dryRun: true });
+    expect(fetchCalled).toBe(false);
+    expect(captured.err).toContain("[dry-run] GET <fapi-host>");
+  });
+
   // --- Error handling ---
 
   test("errors when no secret key available", async () => {
