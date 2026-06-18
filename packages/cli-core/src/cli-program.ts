@@ -50,7 +50,10 @@ import { registerExtras } from "@clerk/cli-extras";
  * The root `clerk` program with its global options applied, so registrants
  * can rely on the typed global option contract instead of a generic Command.
  */
-export type Program = Command<[], { inputJson?: string; mode?: string; verbose?: boolean }>;
+export type Program = Command<
+  [],
+  { inputJson?: string; mode?: string; verbose?: boolean; quiet?: boolean; color?: boolean }
+>;
 
 type CommandRegistrant = (program: Program) => void;
 

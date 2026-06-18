@@ -8,7 +8,10 @@ export function registerApps(program: Program): void {
   apps
     .command("list")
     .description("List your Clerk applications")
-    .option("--json", "Output as JSON")
+    .option(
+      "--json",
+      "Output as JSON. Fields: application_id, name, instances[] (instance_id, environment_type, publishable_key)",
+    )
     .setExamples([
       { command: "clerk apps list", description: "List all applications" },
       { command: "clerk apps list --json", description: "Output as JSON" },
@@ -19,7 +22,10 @@ export function registerApps(program: Program): void {
     .command("create")
     .description("Create a new Clerk application (not idempotent by default — use --if-not-exists)")
     .argument("<name>", "Application name")
-    .option("--json", "Output as JSON")
+    .option(
+      "--json",
+      "Output as JSON. Fields: application_id, name, instances[] (instance_id, environment_type, publishable_key)",
+    )
     .option(
       "--if-not-exists",
       "Make the operation idempotent: if an application with this name already exists, return it instead of creating a duplicate",
