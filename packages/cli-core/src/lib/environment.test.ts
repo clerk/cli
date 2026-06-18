@@ -1,5 +1,5 @@
 import { test, expect, describe, beforeEach, afterEach } from "bun:test";
-import { getPlapiBaseUrl, warnIfPlatformApiUrlOverride } from "./environment.ts";
+import { warnIfPlatformApiUrlOverride } from "./environment.ts";
 import { setMode } from "../mode.ts";
 import { useCaptureLog } from "../test/lib/stubs.ts";
 
@@ -23,6 +23,7 @@ describe("warnIfPlatformApiUrlOverride", () => {
     warnIfPlatformApiUrlOverride();
     expect(captured.err).toContain("CLERK_PLATFORM_API_URL");
     expect(captured.err).toContain("production");
+    expect(captured.err).toContain("api.staging.example.com");
   });
 
   test("does not warn when no override is set", () => {
@@ -31,8 +32,7 @@ describe("warnIfPlatformApiUrlOverride", () => {
   });
 
   test("does not warn when the override equals the active env URL", () => {
-    const profileUrl = getPlapiBaseUrl(); // no override set → active env URL
-    process.env.CLERK_PLATFORM_API_URL = profileUrl;
+    process.env.CLERK_PLATFORM_API_URL = "https://api.clerk.com";
     warnIfPlatformApiUrlOverride();
     expect(captured.err).not.toContain("CLERK_PLATFORM_API_URL");
   });

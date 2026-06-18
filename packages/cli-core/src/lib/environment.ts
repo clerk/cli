@@ -152,7 +152,14 @@ export function warnIfPlatformApiUrlOverride(): void {
   const override = process.env.CLERK_PLATFORM_API_URL;
   if (!override) return;
   const envName = getCurrentEnvName();
-  if (override === getCurrentEnv().platformApiUrl) return;
+  const normalize = (u: string) => {
+    try {
+      return new URL(u).href;
+    } catch {
+      return u;
+    }
+  };
+  if (normalize(override) === normalize(getCurrentEnv().platformApiUrl)) return;
   log.warn(
     `CLERK_PLATFORM_API_URL is routing requests to ${override}, but credentials stay keyed to the "${envName}" environment — the "${envName}" token will be sent to that host.`,
   );
