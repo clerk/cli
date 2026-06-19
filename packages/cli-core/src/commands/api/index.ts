@@ -247,7 +247,7 @@ export function registerApi(program: Program): void {
     .option("--platform", "Use Platform API instead of Backend API")
     .option(
       "--fapi",
-      "Use the instance's public Frontend API (no auth; host resolved from the publishable key)",
+      "Use the instance's public Frontend API (unauthenticated endpoints only; host derived from the publishable key)",
     )
     .option("--dry-run", "Show the request without executing it")
     .option("--yes", "Skip confirmation for mutating requests")

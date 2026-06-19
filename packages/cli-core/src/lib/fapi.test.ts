@@ -102,7 +102,7 @@ describe("fetchUserSettings", () => {
     expect(settings.attributes.email_address?.enabled).toBe(true);
     expect(capturedUrl).toContain("https://foo.example.com/v1/environment");
     expect(capturedUrl).toContain("__clerk_db_jwt=jwt-abc");
-    expect(capturedUrl).toContain("_clerk_js_version=5");
+    expect(capturedUrl).toContain("_clerk_js_version=6");
   });
 
   test("omits __clerk_db_jwt when no jwt is provided", async () => {

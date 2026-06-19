@@ -15,7 +15,7 @@ const PK_LIVE_PREFIX = "pk_live_";
  * The clerk-js client version FAPI's `/v1/environment` payload is shaped for.
  * Bump when consuming response fields introduced in a later major version.
  */
-export const CLERK_JS_API_VERSION = "5";
+export const CLERK_JS_API_VERSION = "6";
 
 export type InstanceType = "development" | "production";
 

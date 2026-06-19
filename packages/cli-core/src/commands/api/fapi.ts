@@ -53,14 +53,14 @@ async function resolveInstance(options: ResolveOptions): Promise<ApplicationInst
   }
 
   const app = await withApiContext(fetchApplication(ctx.appId), "Failed to resolve instance");
-  const instance = app.instances.find((entry) => entry.instance_id === ctx.instanceId);
-  if (!instance) {
+  const resolved = resolveFetchedApplicationInstance(ctx.appId, app, ctx.instanceId);
+  if (!resolved.found) {
     throw new CliError(`Instance ${ctx.instanceId} not found in application.`, {
       code: ERROR_CODE.INSTANCE_NOT_FOUND,
       docsUrl: "https://clerk.com/docs/guides/development/managing-environments",
     });
   }
-  return instance;
+  return resolved.instance;
 }
 
 /** Resolve the instance's FAPI host from its publishable key. */
