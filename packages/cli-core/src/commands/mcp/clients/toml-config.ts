@@ -12,7 +12,7 @@
  * JSON clients rewrite their (sometimes JSONC) configs.
  */
 
-import { mkdir } from "node:fs/promises";
+import { mkdir, rename, unlink, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import { parse, stringify } from "smol-toml";
 import { log } from "../../../lib/log.ts";
@@ -43,6 +43,15 @@ export async function readTomlConfig(path: string): Promise<ConfigRecord> {
 export async function writeTomlConfig(path: string, config: ConfigRecord): Promise<void> {
   log.debug(`mcp: write ${path}`);
   await mkdir(dirname(path), { recursive: true, mode: 0o700 });
-  await Bun.write(path, stringify(config) + "\n");
+  // Atomic write: write to a sibling temp file then rename so a concurrent
+  // reader never sees a partial file if the CLI is interrupted mid-write.
+  const tmp = `${path}.clerk-tmp-${process.pid}`;
+  try {
+    await writeFile(tmp, stringify(config) + "\n", { mode: 0o600 });
+    await rename(tmp, path);
+  } catch (error) {
+    await unlink(tmp).catch(() => {});
+    throw error;
+  }
   await restrictPermissions(path);
 }
