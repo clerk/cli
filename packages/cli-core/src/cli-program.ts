@@ -28,7 +28,7 @@ import {
   getCurrentEnvName,
   getAvailableEnvs,
   getPlapiBaseUrl,
-  warnIfPlatformApiUrlOverride,
+  isPlatformApiUrlOverridden,
 } from "./lib/environment.ts";
 import {
   CliError,
@@ -135,7 +135,16 @@ export function createProgram(): Program {
       process.stderr.write(`[${activeEnv.toUpperCase()}]\n`);
     }
 
-    warnIfPlatformApiUrlOverride();
+    // Warn when CLERK_PLATFORM_API_URL routes requests to a different host than
+    // the active environment's platform URL. Credentials are keyed by environment
+    // name, so the active env's token will be sent to the override host. Emitted
+    // to stderr so it never corrupts stdout data output.
+    const override = isPlatformApiUrlOverridden();
+    if (override.overridden) {
+      log.warn(
+        `CLERK_PLATFORM_API_URL is routing requests to ${override.overrideUrl}, but credentials stay keyed to the "${override.envName}" environment — the "${override.envName}" token will be sent to that host.`,
+      );
+    }
   });
 
   // Show update notification after each command, except for commands that
