@@ -101,20 +101,17 @@ export function createFixtureHarness(name: FixtureName): FixtureHarness {
   let users: Users | null = null;
 
   beforeAll(async () => {
-    log("beforeAll started");
     fixture = await setupFixture(name);
     users = createUsers(fixture);
-    log("beforeAll finished");
   }, 300_000);
 
   afterEach(async () => {
     await users?.cleanup();
-  });
+  }, 30_000); // BAPI deletes can exceed bun's 5s default under load; an explicit
+  // budget avoids silently orphaning test users when cleanup runs long.
 
   afterAll(async () => {
-    log("afterAll started");
     await fixture?.cleanup();
-    log("afterAll finished");
   }, 60_000);
 
   return () => {
@@ -142,14 +139,12 @@ export function runFixtureTests(harness: FixtureHarness): void {
       const { projectDir, config } = fixture;
 
       // Build first so type generation artifacts are available for tsc.
-      log("build started");
       const build = await Bun.$`npx ${config.buildCmd}`.cwd(projectDir).quiet().nothrow();
       if (build.exitCode !== 0) {
         throw new Error(
           `${config.buildCmd.join(" ")} failed:\n${build.stdout.toString()}\n${build.stderr.toString()}`,
         );
       }
-      log("build succeeded");
     },
     { timeout: 300_000 }, // 5 minutes - install + build can be slow)
   );
@@ -164,14 +159,12 @@ export function runFixtureTests(harness: FixtureHarness): void {
       // framework-specific type generation), otherwise plain tsc.
       const useTypecheck = await hasTypecheckScript(projectDir);
       const command = useTypecheck ? "npm run typecheck" : "bunx tsc --noEmit";
-      log(`typecheck started (${command} in ${projectDir})`);
       const shell = useTypecheck
         ? await Bun.$`npm run typecheck 2>&1`.cwd(projectDir).quiet().nothrow()
         : await Bun.$`bunx tsc --noEmit 2>&1`.cwd(projectDir).quiet().nothrow();
       if (shell.exitCode !== 0) {
         throw new Error(`${command} failed in ${projectDir}:\n${shell.text()}`);
       }
-      log("typecheck succeeded");
     },
     { timeout: 300_000 }, // 5 minutes - install + typecheck can be slow
   );
@@ -198,7 +191,6 @@ export function runFileExistsTest(harness: FixtureHarness, expectedFiles: string
     );
     const existing = found.filter(Boolean);
     expect(existing.length).toBeGreaterThanOrEqual(1);
-    log(`found: ${existing.join(", ")}`);
   });
 }
 
@@ -265,11 +257,9 @@ export function runBrowserTests(harness: FixtureHarness): void {
           context,
           options: frontendApiUrl ? { frontendApiUrl } : undefined,
         });
-        log(`navigating to http://${host}:${port}`);
         await page.goto(`http://${host}:${port}`, { waitUntil: "load" });
 
         // 5. Sign in
-        log("signing in");
         await clerk.signIn({
           page,
           signInParams: {
@@ -281,7 +271,6 @@ export function runBrowserTests(harness: FixtureHarness): void {
 
         // 6. Verify Clerk loaded
         await clerk.loaded({ page });
-        log("clerk has been loaded");
 
         // 7. Check to see that the user is now on the window object.
         await page.waitForFunction(
@@ -289,7 +278,6 @@ export function runBrowserTests(harness: FixtureHarness): void {
           null,
           { timeout: 10_000 },
         );
-        log("auth flow passed");
 
         // Log any console errors as warnings (non-fatal)
         if (consoleErrors.length > 0) {

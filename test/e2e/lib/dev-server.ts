@@ -101,8 +101,6 @@ async function tryStart(opts: {
   const stderrLines: string[] = [];
   const stdoutLines: string[] = [];
 
-  log(`starting dev server: npx ${fullCmd.join(" ")} on port ${port}`);
-
   const proc = Bun.spawn(["npx", ...fullCmd], {
     cwd: projectDir,
     stdout: "pipe",
@@ -170,7 +168,6 @@ async function tryStart(opts: {
     }
 
     if (await canConnect(host, port, 1000)) {
-      log(`dev server ready (accepting TCP on ${host}:${port})`);
       return {
         kind: "ready",
         value: { proc, port, host, stdout: stdoutLines, stderr: stderrLines },
@@ -222,7 +219,6 @@ export async function startDevServer(opts: {
 
 /** Kill a dev server process, falling back to SIGKILL after 5 seconds. */
 export async function killDevServer(proc: Subprocess): Promise<void> {
-  log("killing dev server");
   proc.kill("SIGTERM");
 
   const timeout = setTimeout(() => {
@@ -234,6 +230,4 @@ export async function killDevServer(proc: Subprocess): Promise<void> {
   } finally {
     clearTimeout(timeout);
   }
-
-  log("dev server stopped");
 }
