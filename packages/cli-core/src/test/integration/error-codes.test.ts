@@ -9,7 +9,12 @@ import { useIntegrationTestHarness, clerk, mockState } from "./lib/harness.ts";
 useIntegrationTestHarness();
 
 function parseJsonError(stderr: string): { code: string; message: string; docsUrl?: string } {
-  const parsed = JSON.parse(stderr);
+  const jsonLine = stderr
+    .split("\n")
+    .map((l) => l.trim())
+    .find((l) => l.startsWith("{"));
+  if (!jsonLine) throw new SyntaxError(`No JSON line found in stderr:\n${stderr}`);
+  const parsed = JSON.parse(jsonLine);
   return parsed.error;
 }
 

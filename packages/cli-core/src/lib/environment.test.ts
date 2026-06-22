@@ -1,46 +1,42 @@
 import { test, expect, describe, beforeEach, afterEach } from "bun:test";
-import { warnIfPlatformApiUrlOverride } from "./environment.ts";
-import { setMode } from "../mode.ts";
-import { useCaptureLog } from "../test/lib/stubs.ts";
+import { isPlatformApiUrlOverridden } from "./environment.ts";
 
-describe("warnIfPlatformApiUrlOverride", () => {
-  const captured = useCaptureLog();
+describe("isPlatformApiUrlOverridden", () => {
   const original = process.env.CLERK_PLATFORM_API_URL;
 
   beforeEach(() => {
-    setMode("human");
     delete process.env.CLERK_PLATFORM_API_URL;
   });
 
   afterEach(() => {
-    setMode("human");
     if (original === undefined) delete process.env.CLERK_PLATFORM_API_URL;
     else process.env.CLERK_PLATFORM_API_URL = original;
   });
 
-  test("warns in human mode when the override differs from the active env URL", () => {
+  test("returns overridden=true with URLs when the override differs from the active env URL", () => {
     process.env.CLERK_PLATFORM_API_URL = "https://api.staging.example.com";
-    warnIfPlatformApiUrlOverride();
-    expect(captured.err).toContain("CLERK_PLATFORM_API_URL");
-    expect(captured.err).toContain("production");
-    expect(captured.err).toContain("api.staging.example.com");
+    const result = isPlatformApiUrlOverridden();
+    expect(result.overridden).toBe(true);
+    if (!result.overridden) return;
+    expect(result.overrideUrl).toBe("https://api.staging.example.com");
+    expect(result.profileUrl).toBe("https://api.clerk.com");
+    expect(result.envName).toBe("production");
   });
 
-  test("does not warn when no override is set", () => {
-    warnIfPlatformApiUrlOverride();
-    expect(captured.err).not.toContain("CLERK_PLATFORM_API_URL");
+  test("returns overridden=false when no override is set", () => {
+    const result = isPlatformApiUrlOverridden();
+    expect(result.overridden).toBe(false);
   });
 
-  test("does not warn when the override equals the active env URL", () => {
+  test("returns overridden=false when the override equals the active env URL", () => {
     process.env.CLERK_PLATFORM_API_URL = "https://api.clerk.com";
-    warnIfPlatformApiUrlOverride();
-    expect(captured.err).not.toContain("CLERK_PLATFORM_API_URL");
+    const result = isPlatformApiUrlOverridden();
+    expect(result.overridden).toBe(false);
   });
 
-  test("stays silent in agent mode to avoid corrupting machine-readable output", () => {
-    setMode("agent");
-    process.env.CLERK_PLATFORM_API_URL = "https://api.staging.example.com";
-    warnIfPlatformApiUrlOverride();
-    expect(captured.err).not.toContain("CLERK_PLATFORM_API_URL");
+  test("returns overridden=false when URLs differ only by trailing slash", () => {
+    process.env.CLERK_PLATFORM_API_URL = "https://api.clerk.com/";
+    const result = isPlatformApiUrlOverridden();
+    expect(result.overridden).toBe(false);
   });
 });
