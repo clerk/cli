@@ -57,23 +57,6 @@ async function safeRm(path: string): Promise<void> {
 }
 
 /**
- * Run a setup step under a hard timeout so a stall fails fast with a labeled
- * error instead of silently burning the whole 300s `beforeAll` budget. The
- * subprocess is left to settle on timeout — `beforeAll` is never retried.
- */
-async function withStepTimeout<T>(label: string, ms: number, run: () => Promise<T>): Promise<T> {
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  const timeout = new Promise<never>((_, reject) => {
-    timer = setTimeout(() => reject(new Error(`${label} timed out after ${ms}ms`)), ms);
-  });
-  try {
-    return await Promise.race([run(), timeout]);
-  } finally {
-    clearTimeout(timer);
-  }
-}
-
-/**
  * Pre-link the project to the test Clerk application using an isolated
  * CLERK_CONFIG_DIR, so `clerk init` finds an existing link and skips the
  * interactive app picker.
@@ -180,11 +163,14 @@ export async function setupFixture(name: FixtureName): Promise<Fixture> {
   let secretKey = "";
 
   try {
-    // Git-init before linking so the profile key matches for later commands
-    await withStepTimeout("git init", 60_000, () => gitInit(projectDir));
-    // clerk link/init budgets back up the CLI's own per-request fetch timeout.
-    await withStepTimeout("clerk link", 60_000, () => linkProject(projectDir, configDir));
-    await withStepTimeout("clerk init", 90_000, () => runClerkInit(projectDir, configDir));
+    // Git-init before linking so the profile key matches for later commands.
+    // These steps install packages (clerk init / npm ci) whose duration scales
+    // with CI load, so they're not given fixed per-step timeouts; the loggedFetch
+    // request timeout bounds the only thing that can truly hang (the network
+    // calls), and the 300s beforeAll is the outer backstop.
+    await gitInit(projectDir);
+    await linkProject(projectDir, configDir);
+    await runClerkInit(projectDir, configDir);
 
     const envVars = await parseEnvFiles(projectDir);
 
@@ -201,12 +187,10 @@ export async function setupFixture(name: FixtureName): Promise<Fixture> {
     }
 
     // --no-audit/--no-fund drop npm's advisory network round-trips during `ci`.
-    const install = await withStepTimeout("npm ci", 240_000, () =>
-      Bun.$`npm ci --ignore-scripts --legacy-peer-deps --no-audit --no-fund`
-        .cwd(projectDir)
-        .quiet()
-        .nothrow(),
-    );
+    const install = await Bun.$`npm ci --ignore-scripts --legacy-peer-deps --no-audit --no-fund`
+      .cwd(projectDir)
+      .quiet()
+      .nothrow();
     assertSuccess("npm ci failed", install);
   } catch (err) {
     await safeRm(projectDir);
