@@ -64,13 +64,13 @@ describe("expandInputJson", () => {
     // `mcp run` streams JSON-RPC on stdin; reaching the stdin auto-read here
     // would consume the stream. It must return unchanged without reading.
     process.stdin.isTTY = false;
-    const argv = ["clerk", "mcp", "run", "--url", "https://mcp.clerk.com/mcp"];
+    const argv = ["clerk", "mcp", "run"];
     expect(await expandInputJson(argv)).toEqual(argv);
   });
 
   test("bypasses `mcp run` even with global flags before the command", async () => {
     process.stdin.isTTY = false;
-    const argv = ["clerk", "--mode", "agent", "mcp", "run", "--url", "https://mcp.clerk.com/mcp"];
+    const argv = ["clerk", "--mode", "agent", "mcp", "run"];
     expect(await expandInputJson(argv)).toEqual(argv);
   });
 

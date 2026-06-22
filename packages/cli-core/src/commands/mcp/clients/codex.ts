@@ -14,7 +14,7 @@ export const codexClient = makeTomlClient({
   scope: "user",
   activation: "Restart Codex (`clerk` must be on your PATH).",
   topKey: "mcp_servers",
-  encode: (url) => ({ command: RUN_COMMAND, args: clerkRunArgs(url) }),
+  encode: () => ({ command: RUN_COMMAND, args: clerkRunArgs() }),
   extractUrl: (d) => withLegacyUrl(d),
   configPath: () => userPath(".codex", "config.toml"),
   detect: () => pathExists(userPath(".codex")),

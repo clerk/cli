@@ -5,24 +5,36 @@
  * list/uninstall so existing installs remain manageable.
  */
 
-import { clerkRunArgs, extractClerkRunUrl, RUN_COMMAND } from "./clerk-run.ts";
+import { clerkRunArgs, RUN_COMMAND, withLegacyUrl } from "./clerk-run.ts";
 import { makeJsonClient } from "./make-client.ts";
 import { pathExists, userPath } from "./paths.ts";
 
-interface McpRemoteEntry {
-  command: string;
-  args: [string, string, string, ...string[]];
-}
-
-// Match the exact legacy shape `{command: "npx", args: ["-y", "mcp-remote", <url>]}`.
-// Permissive matching would round-trip unrelated stdio bridges as Clerk entries.
-function isMcpRemoteEntry(value: unknown): value is McpRemoteEntry {
-  if (typeof value !== "object" || value === null) return false;
-  const candidate = value as { command?: unknown; args?: unknown };
-  if (candidate.command !== "npx") return false;
-  if (!Array.isArray(candidate.args) || candidate.args.length < 3) return false;
-  if (!candidate.args.every((a) => typeof a === "string")) return false;
-  return candidate.args[0] === "-y" && candidate.args[1] === "mcp-remote";
+// Extract the Clerk MCP URL from a legacy stdio bridge entry of any shape
+// (npx mcp-remote, bunx mcp-remote, etc.) by looking for a Clerk URL in args
+// rather than matching a specific command name. Matching on the URL is more
+// robust than checking the command: the tool that launches the bridge may vary
+// (npx, bunx, pnpx…) but the target URL identifies what it connects to.
+function extractLegacyBridgeUrl(value: unknown): string | undefined {
+  if (typeof value !== "object" || value === null) return undefined;
+  const candidate = value as { args?: unknown };
+  if (!Array.isArray(candidate.args)) return undefined;
+  // Find the last string arg that looks like an https://…clerk.com URL.
+  for (let i = candidate.args.length - 1; i >= 0; i--) {
+    const arg = candidate.args[i];
+    if (typeof arg !== "string") continue;
+    try {
+      const parsed = new URL(arg);
+      if (
+        (parsed.hostname === "mcp.clerk.com" || parsed.hostname.endsWith(".clerk.com")) &&
+        (parsed.protocol === "https:" || parsed.protocol === "http:")
+      ) {
+        return parsed.href;
+      }
+    } catch {
+      // not a URL
+    }
+  }
+  return undefined;
 }
 
 export const geminiClient = makeJsonClient({
@@ -31,8 +43,8 @@ export const geminiClient = makeJsonClient({
   scope: "user",
   activation: "Restart Gemini (`clerk` must be on your PATH).",
   topKey: "mcpServers",
-  encode: (url) => ({ command: RUN_COMMAND, args: clerkRunArgs(url) }),
-  extractUrl: (d) => extractClerkRunUrl(d) ?? (isMcpRemoteEntry(d) ? d.args[2] : undefined),
+  encode: () => ({ command: RUN_COMMAND, args: clerkRunArgs() }),
+  extractUrl: (d) => withLegacyUrl(d) ?? extractLegacyBridgeUrl(d),
   configPath: () => userPath(".gemini", "settings.json"),
   detect: () => pathExists(userPath(".gemini")),
 });

@@ -20,10 +20,13 @@ mock.module("node:os", () => ({ ...realOs, homedir: () => mockHome }));
 
 const { mcpInstall } = await import("./install.ts");
 
-const URL_A = "https://mcp.clerk.com/mcp";
-const URL_B = "http://localhost:8787/mcp";
+// The URL the default env profile resolves to.
+const DEFAULT_URL = "https://mcp.clerk.com/mcp";
+// A foreign URL not in the default profile — used to simulate a conflict.
+const FOREIGN_URL = "http://localhost:8787/mcp";
 
-const runShape = (url: string) => ({ command: "clerk", args: ["mcp", "run", "--url", url] });
+// The entry shape written by the current CLI — no URL in args.
+const CURRENT_SHAPE = { command: "clerk", args: ["mcp", "run"] };
 
 describe("mcp install", () => {
   const captured = useCaptureLog();
@@ -45,24 +48,24 @@ describe("mcp install", () => {
   });
 
   test("writes the Cursor config when --client cursor is passed", async () => {
-    await mcpInstall({ client: ["cursor"], url: URL_A });
+    await mcpInstall({ client: ["cursor"] });
 
     const parsed = JSON.parse(await readFile(join(cwd, ".cursor", "mcp.json"), "utf8")) as {
       mcpServers: { clerk: unknown };
     };
-    expect(parsed.mcpServers.clerk).toEqual(runShape(URL_A));
+    expect(parsed.mcpServers.clerk).toEqual(CURRENT_SHAPE);
   });
 
   test("emits JSON to stdout in agent mode and skips intro/outro", async () => {
     mockIsAgent.mockReturnValue(true);
-    await mcpInstall({ client: ["cursor"], url: URL_A });
+    await mcpInstall({ client: ["cursor"] });
 
     const payload = JSON.parse(captured.out) as {
       url: string;
       name: string;
       results: { client: string; status: string }[];
     };
-    expect(payload.url).toBe(URL_A);
+    expect(payload.url).toBe(DEFAULT_URL);
     expect(payload.name).toBe("clerk");
     expect(payload.results).toEqual([
       expect.objectContaining({ client: "cursor", status: "added" }),
@@ -71,15 +74,15 @@ describe("mcp install", () => {
   });
 
   test("--json forces JSON output even in human mode", async () => {
-    await mcpInstall({ client: ["cursor"], url: URL_A, json: true });
+    await mcpInstall({ client: ["cursor"], json: true });
     expect(() => JSON.parse(captured.out)).not.toThrow();
   });
 
   test("returns `unchanged` on idempotent re-install", async () => {
     mockIsAgent.mockReturnValue(true);
-    await mcpInstall({ client: ["cursor"], url: URL_A });
+    await mcpInstall({ client: ["cursor"] });
     captured.clear();
-    await mcpInstall({ client: ["cursor"], url: URL_A });
+    await mcpInstall({ client: ["cursor"] });
 
     const payload = JSON.parse(captured.out) as {
       results: { status: string }[];
@@ -87,11 +90,16 @@ describe("mcp install", () => {
     expect(payload.results[0]?.status).toBe("unchanged");
   });
 
-  test("skips with reason on URL conflict without --force", async () => {
+  test("skips with reason when existing entry points at a foreign server (no --force)", async () => {
+    // Pre-write a legacy bare-URL entry pointing at a non-Clerk server.
+    await mkdir(join(cwd, ".cursor"), { recursive: true });
+    await writeFile(
+      join(cwd, ".cursor", "mcp.json"),
+      JSON.stringify({ mcpServers: { clerk: { url: FOREIGN_URL } } }),
+    );
+
     mockIsAgent.mockReturnValue(true);
-    await mcpInstall({ client: ["cursor"], url: URL_A });
-    captured.clear();
-    await mcpInstall({ client: ["cursor"], url: URL_B });
+    await mcpInstall({ client: ["cursor"] });
 
     const payload = JSON.parse(captured.out) as {
       results: { status: string; reason?: string }[];
@@ -100,11 +108,15 @@ describe("mcp install", () => {
     expect(payload.results[0]?.reason).toContain("--force");
   });
 
-  test("overwrites on URL conflict with --force", async () => {
+  test("overwrites a foreign-server entry with --force", async () => {
+    await mkdir(join(cwd, ".cursor"), { recursive: true });
+    await writeFile(
+      join(cwd, ".cursor", "mcp.json"),
+      JSON.stringify({ mcpServers: { clerk: { url: FOREIGN_URL } } }),
+    );
+
     mockIsAgent.mockReturnValue(true);
-    await mcpInstall({ client: ["cursor"], url: URL_A });
-    captured.clear();
-    await mcpInstall({ client: ["cursor"], url: URL_B, force: true });
+    await mcpInstall({ client: ["cursor"], force: true });
 
     const payload = JSON.parse(captured.out) as {
       results: { status: string }[];
@@ -113,30 +125,30 @@ describe("mcp install", () => {
     const parsed = JSON.parse(await readFile(join(cwd, ".cursor", "mcp.json"), "utf8")) as {
       mcpServers: { clerk: unknown };
     };
-    expect(parsed.mcpServers.clerk).toEqual(runShape(URL_B));
+    expect(parsed.mcpServers.clerk).toEqual(CURRENT_SHAPE);
   });
 
   test("uses --name to customize the entry key", async () => {
-    await mcpInstall({ client: ["cursor"], url: URL_A, name: "clerk-staging" });
+    await mcpInstall({ client: ["cursor"], name: "clerk-staging" });
     const parsed = JSON.parse(await readFile(join(cwd, ".cursor", "mcp.json"), "utf8")) as {
       mcpServers: Record<string, unknown>;
     };
-    expect(parsed.mcpServers["clerk-staging"]).toEqual(runShape(URL_A));
+    expect(parsed.mcpServers["clerk-staging"]).toEqual(CURRENT_SHAPE);
     expect(parsed.mcpServers.clerk).toBeUndefined();
   });
 
-  test("uses the active env profile URL when --url is not given", async () => {
+  test("reports the resolved URL in JSON output", async () => {
     // Default production profile has mcpUrl=https://mcp.clerk.com/mcp.
     mockIsAgent.mockReturnValue(true);
     await mcpInstall({ client: ["cursor"] });
     const payload = JSON.parse(captured.out) as { url: string };
-    expect(payload.url).toBe("https://mcp.clerk.com/mcp");
+    expect(payload.url).toBe(DEFAULT_URL);
   });
 
   test("falls back to Clerk's hosted MCP URL when the active profile has no mcpUrl", async () => {
     // Reproduces the published snapshot: a build-time env profile that omits
     // `mcpUrl`. `getMcpUrl()` must still resolve to the hosted server so a bare
-    // `clerk mcp install` works without `--url` or any profile setup.
+    // `clerk mcp install` works without any profile setup.
     await writeFile(
       join(cwd, ".env-profiles.json"),
       JSON.stringify({
@@ -151,7 +163,7 @@ describe("mcp install", () => {
     mockIsAgent.mockReturnValue(true);
     await mcpInstall({ client: ["cursor"] });
     const payload = JSON.parse(captured.out) as { url: string };
-    expect(payload.url).toBe("https://mcp.clerk.com/mcp");
+    expect(payload.url).toBe(DEFAULT_URL);
   });
 
   test.each([
@@ -159,7 +171,7 @@ describe("mcp install", () => {
     ["data:text/plain,clerk"],
     ["javascript:alert(1)"],
     ["ftp://example.com/mcp"],
-  ])("rejects non-http(s) URL: %s", async (badUrl) => {
+  ])("rejects non-http(s) CLERK_MCP_URL: %s", async (badUrl) => {
     await expect(mcpInstall({ client: ["cursor"], url: badUrl })).rejects.toMatchObject({
       code: "mcp_url_required",
     });
@@ -177,27 +189,26 @@ describe("mcp install", () => {
     ).rejects.toMatchObject({ code: "mcp_url_required" });
   });
 
-  test("prints next steps with a sign-in reminder after a human-mode install", async () => {
-    await mcpInstall({ client: ["cursor"], url: URL_A });
+  test("prints next steps after a human-mode install", async () => {
+    await mcpInstall({ client: ["cursor"] });
     expect(captured.err).toContain("Next steps");
     expect(captured.err).toContain("Reload Cursor");
-    expect(captured.err).toContain("sign in");
   });
 
   test("omits next steps from JSON output", async () => {
-    await mcpInstall({ client: ["cursor"], url: URL_A, json: true });
+    await mcpInstall({ client: ["cursor"], json: true });
     expect(captured.err).not.toContain("Next steps");
   });
 
   test("does not print next steps when the entry was unchanged", async () => {
-    await mcpInstall({ client: ["cursor"], url: URL_A });
+    await mcpInstall({ client: ["cursor"] });
     captured.clear();
-    await mcpInstall({ client: ["cursor"], url: URL_A });
+    await mcpInstall({ client: ["cursor"] });
     expect(captured.err).not.toContain("Next steps");
   });
 
   test("rejects an unknown --client id", async () => {
-    await expect(mcpInstall({ client: ["bogus"], url: URL_A })).rejects.toMatchObject({
+    await expect(mcpInstall({ client: ["bogus"] })).rejects.toMatchObject({
       code: "mcp_client_not_supported",
     });
   });
@@ -208,7 +219,7 @@ describe("mcp install", () => {
     await mkdir(join(cwd, ".cursor"), { recursive: true });
     await writeFile(join(cwd, ".cursor", "mcp.json"), "{ not json");
 
-    await mcpInstall({ client: ["cursor", "claude"], url: URL_A });
+    await mcpInstall({ client: ["cursor", "claude"] });
 
     const payload = JSON.parse(captured.out) as { results: { client: string; status: string }[] };
     expect(payload.results).toEqual([
@@ -221,7 +232,7 @@ describe("mcp install", () => {
     await mkdir(join(cwd, ".cursor"), { recursive: true });
     await writeFile(join(cwd, ".cursor", "mcp.json"), "{ not json");
 
-    await expect(mcpInstall({ client: ["cursor"], url: URL_A })).rejects.toMatchObject({
+    await expect(mcpInstall({ client: ["cursor"] })).rejects.toMatchObject({
       code: "mcp_client_config_invalid",
     });
     expect(captured.err).toContain("Cursor");

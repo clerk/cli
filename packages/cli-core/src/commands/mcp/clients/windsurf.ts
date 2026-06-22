@@ -15,7 +15,7 @@ export const windsurfClient = makeJsonClient({
   activation:
     "Reload Windsurf, then turn on the server in `Cascade → MCP` (`clerk` must be on your PATH).",
   topKey: "mcpServers",
-  encode: (url) => ({ command: RUN_COMMAND, args: clerkRunArgs(url) }),
+  encode: () => ({ command: RUN_COMMAND, args: clerkRunArgs() }),
   extractUrl: (d) => withLegacyUrl(d, "serverUrl"),
   configPath: () => userPath(".codeium", "windsurf", "mcp_config.json"),
   detect: () => pathExists(userPath(".codeium", "windsurf")),

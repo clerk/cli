@@ -20,11 +20,12 @@ const { vscodeUserDir } = await import("./paths.ts");
 
 useCaptureLog();
 
-const URL = "https://mcp.clerk.com/mcp";
+const DEFAULT_URL = "https://mcp.clerk.com/mcp";
 
-// Every client now installs the same `clerk mcp run` stdio bridge; VS Code tags
-// stdio servers with a `type` discriminator.
-const RUN_SHAPE = { command: "clerk", args: ["mcp", "run", "--url", URL] };
+// Every client now installs the same `clerk mcp run` stdio bridge (no URL in
+// args — the URL is resolved at runtime). VS Code tags stdio servers with a
+// `type` discriminator.
+const RUN_SHAPE = { command: "clerk", args: ["mcp", "run"] };
 
 // Path + entry shape are part of the public contract: each client targets a
 // specific user-global config file and encodes the bridge its own way.
@@ -98,7 +99,7 @@ describe("client config paths + encoded shapes (homedir redirected)", () => {
   });
 
   test.each(cases)("$name writes the documented entry shape", async ({ client, topKey, shape }) => {
-    await client.upsert({ name: "clerk", url: URL }, "/ignored", false);
+    await client.upsert({ name: "clerk", url: DEFAULT_URL }, "/ignored", false);
     const parsed = JSON.parse(await readFile(client.configPath("/ignored"), "utf8")) as Record<
       string,
       Record<string, unknown>
@@ -107,7 +108,7 @@ describe("client config paths + encoded shapes (homedir redirected)", () => {
   });
 
   test("vscode writes under `servers`, not `mcpServers`", async () => {
-    await vscodeClient.upsert({ name: "clerk", url: URL }, "/ignored", false);
+    await vscodeClient.upsert({ name: "clerk", url: DEFAULT_URL }, "/ignored", false);
     const parsed = JSON.parse(await readFile(vscodeClient.configPath("/ignored"), "utf8")) as {
       servers?: unknown;
       mcpServers?: unknown;

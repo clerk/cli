@@ -16,7 +16,7 @@ export const claudeClient = makeJsonClient({
   scope: "user",
   activation: "Restart Claude Code, then run `/mcp` to connect (`clerk` must be on your PATH).",
   topKey: "mcpServers",
-  encode: (url) => ({ command: RUN_COMMAND, args: clerkRunArgs(url) }),
+  encode: () => ({ command: RUN_COMMAND, args: clerkRunArgs() }),
   extractUrl: (d) => withLegacyUrl(d),
   configPath: () => userPath(".claude.json"),
   detect: () => pathExists(userPath(".claude")),

@@ -45,7 +45,6 @@ export function registerMcp(program: Program): void {
         .argParser(collectOptionValues)
         .default([] as string[]),
     )
-    .option("--url <url>", "Override the MCP server URL (default: from active env profile)")
     .option("--name <name>", 'Entry name in the client config (default: "clerk")')
     .option("--all", "Install into every detected client without prompting")
     .option("--force", "Overwrite an existing entry pointing at a different URL")
@@ -75,11 +74,10 @@ export function registerMcp(program: Program): void {
     .description(
       "stdio bridge to the remote MCP server (clients spawn this; not meant to be run by hand)",
     )
-    .option("--url <url>", "MCP server URL to bridge to (default: from active env profile)")
     .option("--name <name>", 'Entry name, for parity with install (default: "clerk")')
     .setExamples([
       {
-        command: "clerk mcp run --url https://mcp.clerk.com/mcp",
+        command: "clerk mcp run",
         description: "Forward stdio JSON-RPC to the remote server",
       },
     ])

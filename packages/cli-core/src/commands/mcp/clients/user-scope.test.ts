@@ -31,10 +31,12 @@ const { checkMcp } = await import("../../doctor/check-mcp.ts");
 
 const captured = useCaptureLog();
 
-const URL = "https://mcp.clerk.com/mcp";
+// The URL the default env profile resolves to (same as getMcpUrl() default).
+const DEFAULT_URL = "https://mcp.clerk.com/mcp";
 const ALL_CLIENT_IDS = ["claude", "cursor", "vscode", "windsurf", "gemini", "codex"];
 
-const runShape = (url: string) => ({ command: "clerk", args: ["mcp", "run", "--url", url] });
+// The entry shape written by the current CLI — no URL in args.
+const CURRENT_SHAPE = { command: "clerk", args: ["mcp", "run"] };
 
 describe("user-scope MCP clients (homedir redirected to a tmpdir)", () => {
   beforeEach(async () => {
@@ -46,32 +48,48 @@ describe("user-scope MCP clients (homedir redirected to a tmpdir)", () => {
   });
 
   describe("gemini", () => {
-    test("encodes the clerk-run stdio-bridge shape", async () => {
-      await geminiClient.upsert({ name: "clerk", url: URL }, "/ignored", false);
+    test("encodes the clerk-run stdio-bridge shape (no URL in args)", async () => {
+      await geminiClient.upsert({ name: "clerk", url: DEFAULT_URL }, "/ignored", false);
       const parsed = (await Bun.file(geminiClient.configPath("/ignored")).json()) as {
         mcpServers: { clerk: { command: string; args: string[] } };
       };
-      expect(parsed.mcpServers.clerk).toEqual(runShape(URL));
+      expect(parsed.mcpServers.clerk).toEqual(CURRENT_SHAPE);
     });
 
-    test("round-trips the URL back out of args[2] on list", async () => {
-      await geminiClient.upsert({ name: "clerk", url: URL }, "/ignored", false);
+    test("round-trips the entry on list, resolving URL from getMcpUrl()", async () => {
+      await geminiClient.upsert({ name: "clerk", url: DEFAULT_URL }, "/ignored", false);
       const entries = await geminiClient.list("/ignored");
       expect(entries).toEqual([
-        expect.objectContaining({ client: "gemini", name: "clerk", url: URL }),
+        expect.objectContaining({ client: "gemini", name: "clerk", url: DEFAULT_URL }),
       ]);
     });
 
-    test("ignores a foreign npx entry that is not an mcp-remote bridge", async () => {
-      // Only `{command:"npx", args:["-y","mcp-remote", <url>]}` is ours; an
-      // unrelated npx tool must not round-trip as a Clerk MCP entry.
+    test("recognises a legacy npx mcp-remote entry by its Clerk URL in args", async () => {
+      // Legacy shape: `npx -y mcp-remote <url>` — identified by the Clerk URL in
+      // args rather than the command name (more robust to npx/bunx/pnpx variants).
       const dir = join(mockHome, ".gemini");
       await mkdir(dir, { recursive: true });
       await Bun.write(
         join(dir, "settings.json"),
         JSON.stringify({
           mcpServers: {
-            clerk: { command: "npx", args: ["-y", "mcp-remote", URL] },
+            clerk: { command: "npx", args: ["-y", "mcp-remote", DEFAULT_URL] },
+          },
+        }),
+      );
+      const entries = await geminiClient.list("/ignored");
+      expect(entries.map((e) => e.name)).toEqual(["clerk"]);
+      expect(entries[0]!.url).toBe(DEFAULT_URL);
+    });
+
+    test("ignores a foreign npx entry without a Clerk URL in args", async () => {
+      const dir = join(mockHome, ".gemini");
+      await mkdir(dir, { recursive: true });
+      await Bun.write(
+        join(dir, "settings.json"),
+        JSON.stringify({
+          mcpServers: {
+            clerk: { command: "npx", args: ["-y", "mcp-remote", DEFAULT_URL] },
             "other-tool": { command: "npx", args: ["serve", "--port", "3000"] },
           },
         }),
@@ -83,35 +101,35 @@ describe("user-scope MCP clients (homedir redirected to a tmpdir)", () => {
 
   describe("windsurf", () => {
     test("encodes the clerk-run shape and round-trips it on list", async () => {
-      await windsurfClient.upsert({ name: "clerk", url: URL }, "/ignored", false);
+      await windsurfClient.upsert({ name: "clerk", url: DEFAULT_URL }, "/ignored", false);
       const parsed = (await Bun.file(windsurfClient.configPath("/ignored")).json()) as {
         mcpServers: { clerk: { command: string; args: string[] } };
       };
-      expect(parsed.mcpServers.clerk).toEqual(runShape(URL));
+      expect(parsed.mcpServers.clerk).toEqual(CURRENT_SHAPE);
 
       const entries = await windsurfClient.list("/ignored");
       expect(entries).toEqual([
-        expect.objectContaining({ client: "windsurf", name: "clerk", url: URL }),
+        expect.objectContaining({ client: "windsurf", name: "clerk", url: DEFAULT_URL }),
       ]);
     });
   });
 
   describe("codex", () => {
     test("writes the clerk-run bridge under the [mcp_servers.<name>] TOML table", async () => {
-      await codexClient.upsert({ name: "clerk", url: URL }, "/ignored", false);
+      await codexClient.upsert({ name: "clerk", url: DEFAULT_URL }, "/ignored", false);
       const text = await Bun.file(codexClient.configPath("/ignored")).text();
       expect(text).toContain("[mcp_servers.clerk]");
       const parsed = parseToml(text) as {
         mcp_servers: { clerk: { command: string; args: string[] } };
       };
-      expect(parsed.mcp_servers.clerk).toEqual(runShape(URL));
+      expect(parsed.mcp_servers.clerk).toEqual(CURRENT_SHAPE);
     });
 
-    test("round-trips the URL back out on list", async () => {
-      await codexClient.upsert({ name: "clerk", url: URL }, "/ignored", false);
+    test("round-trips the entry on list, resolving URL from getMcpUrl()", async () => {
+      await codexClient.upsert({ name: "clerk", url: DEFAULT_URL }, "/ignored", false);
       const entries = await codexClient.list("/ignored");
       expect(entries).toEqual([
-        expect.objectContaining({ client: "codex", name: "clerk", url: URL }),
+        expect.objectContaining({ client: "codex", name: "clerk", url: DEFAULT_URL }),
       ]);
     });
 
@@ -120,19 +138,23 @@ describe("user-scope MCP clients (homedir redirected to a tmpdir)", () => {
       await mkdir(dir, { recursive: true });
       await Bun.write(join(dir, "config.toml"), 'model = "o3"\n');
 
-      await codexClient.upsert({ name: "clerk", url: URL }, "/ignored", false);
+      await codexClient.upsert({ name: "clerk", url: DEFAULT_URL }, "/ignored", false);
 
       const parsed = parseToml(await Bun.file(join(dir, "config.toml")).text()) as {
         model: string;
         mcp_servers: { clerk: { command: string; args: string[] } };
       };
       expect(parsed.model).toBe("o3");
-      expect(parsed.mcp_servers.clerk).toEqual(runShape(URL));
+      expect(parsed.mcp_servers.clerk).toEqual(CURRENT_SHAPE);
     });
 
     test("returns unchanged when re-upserting the same URL", async () => {
-      await codexClient.upsert({ name: "clerk", url: URL }, "/ignored", false);
-      const result = await codexClient.upsert({ name: "clerk", url: URL }, "/ignored", false);
+      await codexClient.upsert({ name: "clerk", url: DEFAULT_URL }, "/ignored", false);
+      const result = await codexClient.upsert(
+        { name: "clerk", url: DEFAULT_URL },
+        "/ignored",
+        false,
+      );
       expect(result.status).toBe("unchanged");
     });
 
@@ -207,7 +229,7 @@ describe("install/uninstall across all clients (homedir + cwd redirected)", () =
       mkdir(join(mockHome, ".codex"), { recursive: true }),
     ]);
 
-    await mcpInstall({ all: true, url: URL });
+    await mcpInstall({ all: true });
 
     const payload = JSON.parse(captured.out) as { results: { client: string; status: string }[] };
     expect(payload.results.map((r) => r.client)).toEqual(ALL_CLIENT_IDS);
@@ -215,7 +237,7 @@ describe("install/uninstall across all clients (homedir + cwd redirected)", () =
   });
 
   test("--all with no detected client throws mcp_no_client_detected", async () => {
-    await expect(mcpInstall({ all: true, url: URL })).rejects.toMatchObject({
+    await expect(mcpInstall({ all: true })).rejects.toMatchObject({
       code: "mcp_no_client_detected",
     });
   });
@@ -224,16 +246,16 @@ describe("install/uninstall across all clients (homedir + cwd redirected)", () =
     await mkdir(join(mockHome, ".cursor"), { recursive: true });
     mockIsAgent.mockReturnValue(false);
 
-    await mcpInstall({ url: URL });
+    await mcpInstall({});
 
     const parsed = JSON.parse(await Bun.file(join(mockHome, ".cursor", "mcp.json")).text()) as {
       mcpServers: { clerk: unknown };
     };
-    expect(parsed.mcpServers.clerk).toEqual(runShape(URL));
+    expect(parsed.mcpServers.clerk).toEqual(CURRENT_SHAPE);
   });
 
   test("uninstall with no --client removes from every client", async () => {
-    await mcpInstall({ client: ["cursor", "gemini"], url: URL });
+    await mcpInstall({ client: ["cursor", "gemini"] });
     captured.clear();
 
     await mcpUninstall({});
@@ -301,7 +323,7 @@ describe("clerk doctor — checkMcp (homedir + cwd redirected)", () => {
   });
 
   test("passes when the installed MCP server answers the handshake", async () => {
-    await mcpInstall({ client: ["cursor"], url: URL });
+    await mcpInstall({ client: ["cursor"] });
     captured.clear();
     stubFetchWith(HANDSHAKE_BODY, {
       status: 200,
@@ -314,7 +336,7 @@ describe("clerk doctor — checkMcp (homedir + cwd redirected)", () => {
   });
 
   test("warns when the installed MCP server is unreachable", async () => {
-    await mcpInstall({ client: ["cursor"], url: URL });
+    await mcpInstall({ client: ["cursor"] });
     captured.clear();
     stubFetchWith("nope", { status: 503 });
 
@@ -322,35 +344,13 @@ describe("clerk doctor — checkMcp (homedir + cwd redirected)", () => {
     expect(result.status).toBe("warn");
   });
 
-  test("warns when a second client points at a different, unreachable URL", async () => {
-    const BAD_URL = "https://staging.clerk.com/mcp";
-    await mcpInstall({ client: ["cursor"], url: URL });
-    await mcpInstall({ client: ["claude"], url: BAD_URL });
-    captured.clear();
-    // Healthy for the hosted URL, 503 for the second — proves every distinct URL is probed.
-    globalThis.fetch = (async (input: unknown) =>
-      String(input) === BAD_URL
-        ? new Response("nope", { status: 503 })
-        : new Response(HANDSHAKE_BODY, {
-            status: 200,
-            headers: { "content-type": "text/event-stream" },
-          })) as unknown as typeof globalThis.fetch;
-
-    const result = await checkMcp();
-    expect(result.status).toBe("warn");
-    expect(result.message).toContain(BAD_URL);
-  });
-
-  test("names every distinct unreachable URL, not just the first", async () => {
-    const OTHER_URL = "https://staging.clerk.com/mcp";
-    await mcpInstall({ client: ["cursor"], url: URL });
-    await mcpInstall({ client: ["claude"], url: OTHER_URL });
+  test("names the unreachable URL in the warning", async () => {
+    await mcpInstall({ client: ["cursor"] });
     captured.clear();
     stubFetchWith("nope", { status: 503 });
 
     const result = await checkMcp();
     expect(result.status).toBe("warn");
-    expect(result.message).toContain(URL);
-    expect(result.message).toContain(OTHER_URL);
+    expect(result.message).toContain(DEFAULT_URL);
   });
 });

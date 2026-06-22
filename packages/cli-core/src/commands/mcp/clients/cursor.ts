@@ -16,7 +16,7 @@ export const cursorClient = makeJsonClient({
   activation:
     "Reload Cursor, then enable the server under `Settings → MCP` (`clerk` must be on your PATH).",
   topKey: "mcpServers",
-  encode: (url) => ({ command: RUN_COMMAND, args: clerkRunArgs(url) }),
+  encode: () => ({ command: RUN_COMMAND, args: clerkRunArgs() }),
   extractUrl: (d) => withLegacyUrl(d),
   configPath: () => userPath(".cursor", "mcp.json"),
   detect: () => pathExists(userPath(".cursor")),

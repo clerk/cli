@@ -19,7 +19,7 @@ export const vscodeClient = makeJsonClient({
   activation:
     "Reload the VS Code window, then start the server from `MCP: List Servers` (`clerk` must be on your PATH).",
   topKey: "servers",
-  encode: (url) => ({ type: "stdio", command: RUN_COMMAND, args: clerkRunArgs(url) }),
+  encode: () => ({ type: "stdio", command: RUN_COMMAND, args: clerkRunArgs() }),
   extractUrl: (d) => withLegacyUrl(d),
   configPath: () => join(vscodeUserDir(), "mcp.json"),
   detect: () => pathExists(vscodeUserDir()),
