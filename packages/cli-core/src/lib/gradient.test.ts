@@ -112,6 +112,17 @@ describe("animateHeader (non-interactive)", () => {
     await animateHeader({ prefix: "│  ", label: "Next steps", fallback: bold });
     expect(captured.stderr[0]).toBe(`│  ${bold("Next steps")}\n`);
   });
+
+  test("prints the header and body together in one write", async () => {
+    await animateHeader({
+      prefix: "",
+      label: "Next steps",
+      fallback: bold,
+      body: "   → a\n   → b\n",
+    });
+    expect(captured.stderr).toHaveLength(1);
+    expect(captured.stderr[0]).toBe(`${bold("Next steps")}\n   → a\n   → b\n`);
+  });
 });
 
 describe("animateHeader (interactive gating)", () => {
@@ -145,6 +156,25 @@ describe("animateHeader (interactive gating)", () => {
     expect(captured.err).toContain("\x1b[?25h");
   });
 
+  test("prints the body before sweeping the header so it never looks hung", async () => {
+    await animateHeader({
+      prefix: "",
+      label: "Hi",
+      fallback: bold,
+      body: "   → a\n   → b\n",
+      frames: 2,
+      intervalMs: 1,
+    });
+    const out = captured.err;
+    expect(out).toContain("→ a");
+    expect(out).toContain("→ b");
+    // The body is written before the first in-place header redraw (\r).
+    expect(out.indexOf("→ a")).toBeLessThan(out.indexOf("\r"));
+    // The cursor steps up to the header (1 + 2 body newlines) and back down.
+    expect(out).toContain("\x1b[3A");
+    expect(out).toContain("\x1b[3B");
+  });
+
   test("NO_COLOR disables the animation (plain fallback, no redraw)", async () => {
     process.env.NO_COLOR = "1";
     await run();
@@ -168,5 +198,26 @@ describe("animateHeader (interactive gating)", () => {
     process.env.FORCE_COLOR = "1";
     await run();
     expect(captured.err).toContain("\r");
+  });
+
+  test("falls back to a plain write when the block is taller than the terminal", async () => {
+    const savedRows = process.stderr.rows;
+    try {
+      Object.defineProperty(process.stderr, "rows", { value: 5, configurable: true });
+      await animateHeader({
+        prefix: "",
+        label: "Hi",
+        fallback: bold,
+        // 5 newlines → rowsBelow = 6, which exceeds rows = 5
+        body: "a\nb\nc\nd\ne\n",
+        frames: 2,
+        intervalMs: 1,
+      });
+      expect(captured.err).not.toContain("\r");
+      expect(captured.err).not.toContain("\x1b[?25l");
+      expect(captured.err).toContain("a");
+    } finally {
+      Object.defineProperty(process.stderr, "rows", { value: savedRows, configurable: true });
+    }
   });
 });

@@ -114,29 +114,63 @@ interface AnimateHeaderOptions {
   prefix: string;
   label: string;
   fallback: (s: string) => string;
+  /**
+   * Text printed beneath the header (e.g. the next-steps list), including its
+   * own trailing newline(s). It is rendered up front so the whole block is on
+   * screen immediately; the highlight then sweeps across the header in place.
+   * Without it, only a lone header animates and looks hung until the caller
+   * prints the rest.
+   */
+  body?: string;
   frames?: number;
   intervalMs?: number;
   write?: (s: string) => void;
 }
 
 export async function animateHeader(options: AnimateHeaderOptions): Promise<void> {
-  const { prefix, label, fallback, frames = 18, intervalMs = 25, write = log.ui } = options;
+  const {
+    prefix,
+    label,
+    fallback,
+    body = "",
+    frames = 18,
+    intervalMs = 25,
+    write = log.ui,
+  } = options;
 
   if (!isInteractive() || colorDisabled()) {
-    write(`${prefix}${fallback(label)}\n`);
+    write(`${prefix}${fallback(label)}\n${body}`);
     return;
   }
 
   const truecolor = supportsTruecolor();
   const span = Math.max(1, frames - 1);
+  // Rows the cursor ends below the header after the block is printed: the
+  // header's own newline plus every newline inside the body.
+  const rowsBelow = 1 + (body.match(/\n/g)?.length ?? 0);
+
+  // The cursor-up escape only lands on the header when the block fits on screen
+  // without scrolling. Fall back to a plain write on short terminals where the
+  // scroll would push the header out of reach.
+  if (process.stderr.rows != null && rowsBelow >= process.stderr.rows) {
+    write(`${prefix}${fallback(label)}\n${body}`);
+    return;
+  }
+
   hideCursor();
   try {
+    // Print the whole block first so the body is visible immediately, then step
+    // back up to the header line and sweep the highlight across it. Only the
+    // header line is rewritten each frame, so the body stays put.
+    write(`${prefix}${shineText(label, { truecolor })}\n${body}`);
+    write(`\x1b[${rowsBelow}A`);
     for (let frame = 0; frame < frames; frame++) {
       const center = -0.3 + (frame / span) * 1.6;
       write(`\r\x1b[K${prefix}${shineText(label, { center, truecolor })}`);
       await sleep(intervalMs);
     }
-    write(`\r\x1b[K${prefix}${shineText(label, { truecolor })}\n`);
+    write(`\r\x1b[K${prefix}${shineText(label, { truecolor })}`);
+    write(`\x1b[${rowsBelow}B\r`);
   } finally {
     showCursor();
   }

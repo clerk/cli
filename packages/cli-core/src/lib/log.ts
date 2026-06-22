@@ -44,7 +44,7 @@ export function isInsideGutter(): boolean {
   return prefixDepth > 0;
 }
 
-function applyPrefix(msg: string): string {
+export function applyPrefix(msg: string): string {
   if (prefixDepth === 0) return msg;
   const bar = dim(S_BAR);
   if (!msg) return bar;
