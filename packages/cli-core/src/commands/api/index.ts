@@ -3,7 +3,7 @@ import { getAuthToken } from "../../lib/plapi.ts";
 import { getBapiBaseUrl, getPlapiBaseUrl } from "../../lib/environment.ts";
 import { normalizeBapiPath, resolveBapiSecretKey } from "../../lib/bapi-command.ts";
 import { type ApiResponse } from "../../lib/fetch.ts";
-import { bapiRequest } from "./bapi.ts";
+import { bapiRequest } from "../../lib/bapi.ts";
 import { fapiRequest } from "../../lib/fapi.ts";
 import { resolveFapiHost } from "./fapi.ts";
 import {

@@ -9,7 +9,7 @@ import {
   redactUsersDisplayPayload,
 } from "../../lib/users.ts";
 import { isAgent, isHuman } from "../../mode.ts";
-import { bapiRequest } from "../api/bapi.ts";
+import { bapiRequest } from "../../lib/bapi.ts";
 import { withSpinner, intro, outro, pausedOutro } from "../../lib/spinner.ts";
 import { handleUsersBapiError, printUsersMutationResult } from "./output.ts";
 import { registerUsersAction } from "./registry.ts";

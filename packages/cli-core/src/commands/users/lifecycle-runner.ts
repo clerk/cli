@@ -9,7 +9,7 @@ import { log } from "../../lib/log.ts";
 import { confirm } from "../../lib/prompts.ts";
 import { withSpinner } from "../../lib/spinner.ts";
 import { isHuman } from "../../mode.ts";
-import { bapiRequest } from "../api/bapi.ts";
+import { bapiRequest } from "../../lib/bapi.ts";
 import { handleUsersBapiError, printUsersMutationSuccess } from "./output.ts";
 
 export type UserLifecycleOptions = {
