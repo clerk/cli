@@ -43,6 +43,20 @@ async function copyFixture(fixtureDir: string, projectDir: string): Promise<void
 }
 
 /**
+ * npm's default fetch-timeout is 300s, so one stalled registry connection in
+ * `clerk init`'s SDK install or `npm ci` can consume the entire 300s beforeAll
+ * budget — the real cause of the flaky setup timeouts. Cap it so a stalled fetch
+ * aborts in 30s and retries on a fresh connection. Both npm runs use projectDir
+ * as cwd, so a project-level `.npmrc` covers them.
+ */
+async function writeNpmrc(projectDir: string): Promise<void> {
+  await Bun.write(
+    join(projectDir, ".npmrc"),
+    "fetch-timeout=30000\nfetch-retries=3\nfetch-retry-mintimeout=1000\nfetch-retry-maxtimeout=10000\n",
+  );
+}
+
+/**
  * Best-effort recursive remove. Cleanup runs after the test has already
  * passed, so a stray filesystem error here must not fail the test. Bun's
  * node:fs/promises is known to surface transient EFAULT from rm under
@@ -158,6 +172,7 @@ export async function setupFixture(name: FixtureName): Promise<Fixture> {
   const projectDir = await mkdtemp(join(tmp, `clerk-e2e-${name}-`));
   const configDir = await mkdtemp(join(tmp, "clerk-e2e-config-"));
   await copyFixture(fixtureDir, projectDir);
+  await writeNpmrc(projectDir);
   log("fixture copied");
 
   let publishableKey = "";
@@ -188,15 +203,12 @@ export async function setupFixture(name: FixtureName): Promise<Fixture> {
       throw new Error(`${secretKeyName} not found in env files written by clerk init.`);
     }
 
-    // npm's default fetch-timeout is 300s — the same as the beforeAll budget —
-    // so a single stalled registry connection hangs setup until the test times
-    // out. Bound each fetch to 60s and retry, mirroring the CLI's own request
-    // timeout. --no-audit/--no-fund drop npm's advisory network round-trips.
-    const install =
-      await Bun.$`npm ci --ignore-scripts --legacy-peer-deps --no-audit --no-fund --fetch-timeout=60000 --fetch-retries=5`
-        .cwd(projectDir)
-        .quiet()
-        .nothrow();
+    // fetch-timeout/retries come from the project .npmrc (writeNpmrc); --no-audit
+    // and --no-fund drop npm's advisory network round-trips during `ci`.
+    const install = await Bun.$`npm ci --ignore-scripts --legacy-peer-deps --no-audit --no-fund`
+      .cwd(projectDir)
+      .quiet()
+      .nothrow();
     assertSuccess("npm ci failed", install);
     log("npm ci done");
   } catch (err) {
