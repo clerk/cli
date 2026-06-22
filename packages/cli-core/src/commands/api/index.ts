@@ -2,9 +2,12 @@ import type { Program } from "../../cli-program.ts";
 import { getAuthToken } from "../../lib/plapi.ts";
 import { getBapiBaseUrl, getPlapiBaseUrl } from "../../lib/environment.ts";
 import { normalizeBapiPath, resolveBapiSecretKey } from "../../lib/bapi-command.ts";
+import { type ApiResponse } from "../../lib/fetch.ts";
 import { bapiRequest } from "./bapi.ts";
+import { fapiRequest } from "../../lib/fapi.ts";
+import { resolveFapiHost } from "./fapi.ts";
 import {
-  BapiError,
+  ApiError,
   ERROR_CODE,
   UserAbortError,
   isPromptExitError,
@@ -25,11 +28,45 @@ export interface ApiOptions {
   secretKey?: string;
   instance?: string;
   platform?: boolean;
+  fapi?: boolean;
   dryRun?: boolean;
   yes?: boolean;
 }
 
 const MUTATING_METHODS = new Set(["POST", "PUT", "PATCH", "DELETE"]);
+
+type RunRequest = (req: { method: string; path: string; body?: string }) => Promise<ApiResponse>;
+
+/** Validate fapi flag combinations and emit warnings for ignored flags. */
+function validateFapiOptions(options: ApiOptions): void {
+  if (options.platform) {
+    throwUsageError("--fapi and --platform cannot be combined.", undefined, ERROR_CODE.USAGE_ERROR);
+  }
+  if (options.secretKey) {
+    log.warn("--secret-key is ignored when --fapi is set.");
+  }
+}
+
+/** Resolve the API surface (base URL + request executor) from the flags. */
+async function resolveApiTarget(
+  options: ApiOptions,
+): Promise<{ baseUrl: string; runRequest: RunRequest }> {
+  if (options.fapi) {
+    const fapiHost = await resolveFapiHost(options);
+    const baseUrl = `https://${fapiHost}`;
+    return { baseUrl, runRequest: (req) => fapiRequest({ ...req, fapiHost }) };
+  }
+
+  if (options.platform) {
+    const secretKey = await getAuthToken();
+    const baseUrl = getPlapiBaseUrl();
+    return { baseUrl, runRequest: (req) => bapiRequest({ ...req, secretKey, baseUrl }) };
+  }
+
+  const secretKey = await resolveBapiSecretKey(options);
+  const baseUrl = getBapiBaseUrl();
+  return { baseUrl, runRequest: (req) => bapiRequest({ ...req, secretKey, baseUrl }) };
+}
 
 export async function api(
   endpoint: string | undefined,
@@ -61,26 +98,26 @@ export async function api(
     // 2. Determine HTTP method
     const method = (options.method ?? (body ? "POST" : "GET")).toUpperCase();
 
-    // 3. Resolve authentication
-    let secretKey: string;
-    let baseUrl: string;
-
-    if (options.platform) {
-      secretKey = await getAuthToken();
-      baseUrl = getPlapiBaseUrl();
-    } else {
-      secretKey = await resolveBapiSecretKey(options);
-      baseUrl = getBapiBaseUrl();
-    }
-
-    // 4. Dry run
+    // 3. Dry run — for --fapi, skip host resolution to avoid a real Platform API round-trip
     if (options.dryRun) {
-      log.info(`[dry-run] ${method} ${baseUrl}${normalizeBapiPath(endpoint)}`);
+      if (options.fapi) {
+        validateFapiOptions(options);
+        log.info(`[dry-run] ${method} <fapi-host>${normalizeBapiPath(endpoint)}`);
+      } else {
+        const { baseUrl } = await resolveApiTarget(options);
+        log.info(`[dry-run] ${method} ${baseUrl}${normalizeBapiPath(endpoint)}`);
+      }
       if (body) {
         prettyPrint(body);
       }
       return;
     }
+
+    // 4. Resolve the request target (base URL + executor)
+    if (options.fapi) {
+      validateFapiOptions(options);
+    }
+    const { runRequest } = await resolveApiTarget(options);
 
     // 5. Confirmation for mutating methods
     if (MUTATING_METHODS.has(method) && isHuman() && !options.yes) {
@@ -97,13 +134,7 @@ export async function api(
     // 6. Execute request
     try {
       const response = await withSpinner("Executing request...", () =>
-        bapiRequest({
-          method,
-          path: endpoint,
-          secretKey,
-          body: body ?? undefined,
-          baseUrl,
-        }),
+        runRequest({ method, path: endpoint, body: body ?? undefined }),
       );
 
       if (options.include) {
@@ -112,10 +143,10 @@ export async function api(
       printBody(response.body);
       closeStatus = "success";
     } catch (error) {
-      // Handle BapiError locally to print the raw API response body to stdout
+      // Handle API errors locally to print the raw response body to stdout
       // (for piping), rather than propagating to the global error handler.
-      if (error instanceof BapiError) {
-        if (options.include) {
+      if (error instanceof ApiError) {
+        if (options.include && error.headers) {
           printHeaders(error.status, error.headers);
         }
         prettyPrint(error.body);
@@ -216,6 +247,10 @@ export function registerApi(program: Program): void {
     .option("--secret-key <key>", "Override the secret key")
     .option("--instance <id>", "Instance to target (dev, prod, or instance ID)")
     .option("--platform", "Use Platform API instead of Backend API")
+    .option(
+      "--fapi",
+      "Use the instance's public Frontend API (unauthenticated endpoints only; host derived from the publishable key)",
+    )
     .option("--dry-run", "Show the request without executing it")
     .option("--yes", "Skip confirmation for mutating requests")
     .setExamples([
@@ -225,6 +260,10 @@ export function registerApi(program: Program): void {
       {
         command: 'clerk api /users -d \'{"first_name":"Alice"}\'',
         description: "POST with a JSON body",
+      },
+      {
+        command: "clerk api --fapi /environment --app <id> --instance dev",
+        description: "GET the public FAPI environment payload",
       },
     ])
     .action(api);

@@ -5,8 +5,9 @@
  */
 
 import type { UserSettingsJSON } from "@clerk/shared/types";
+import { normalizeBapiPath } from "./bapi-command.ts";
 import { CliError, FapiError, ERROR_CODE } from "./errors.ts";
-import { loggedFetch } from "./fetch.ts";
+import { loggedFetch, type ApiResponse } from "./fetch.ts";
 
 const PK_TEST_PREFIX = "pk_test_";
 const PK_LIVE_PREFIX = "pk_live_";
@@ -15,7 +16,7 @@ const PK_LIVE_PREFIX = "pk_live_";
  * The clerk-js client version FAPI's `/v1/environment` payload is shaped for.
  * Bump when consuming response fields introduced in a later major version.
  */
-const CLERK_JS_API_VERSION = "5";
+export const CLERK_JS_API_VERSION = "6";
 
 export type InstanceType = "development" | "production";
 
@@ -119,4 +120,46 @@ export async function fetchUserSettings(
     });
   }
   return body.user_settings;
+}
+
+/**
+ * Passthrough request used by `clerk api --fapi`. Unlike the typed helpers
+ * above, this issues an arbitrary request against the instance's FAPI host and
+ * returns the normalized response untouched. FAPI endpoints exposed here are
+ * public, so no auth header is sent.
+ */
+export async function fapiRequest(options: {
+  method: string;
+  path: string;
+  fapiHost: string;
+  body?: string;
+}): Promise<ApiResponse> {
+  const url = new URL(`https://${options.fapiHost}${normalizeBapiPath(options.path)}`);
+  if (!url.searchParams.has("_clerk_js_version")) {
+    url.searchParams.set("_clerk_js_version", CLERK_JS_API_VERSION);
+  }
+
+  const headers: Record<string, string> = { Accept: "application/json" };
+  if (options.body) headers["Content-Type"] = "application/json";
+
+  const response = await loggedFetch(url, {
+    tag: "fapi",
+    method: options.method,
+    headers,
+    body: options.body,
+  });
+
+  if (!response.ok) {
+    throw await FapiError.fromResponse(response);
+  }
+
+  const rawBody = await response.text();
+  let body: unknown;
+  try {
+    body = JSON.parse(rawBody);
+  } catch {
+    body = rawBody;
+  }
+
+  return { status: response.status, headers: response.headers, body, rawBody };
 }

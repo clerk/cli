@@ -476,6 +476,143 @@ describe("api command", () => {
     );
   });
 
+  // --- --fapi mode ---
+
+  test("--fapi resolves the FAPI host from the publishable key and sends no auth header", async () => {
+    delete process.env.CLERK_SECRET_KEY;
+    process.env.CLERK_PLATFORM_API_KEY = "ak_test_platform";
+    const pk = `pk_test_${btoa("clerk.example.com$")}`;
+    let fapiUrl = "";
+    let fapiAuth: string | null = "unset";
+
+    stubFetch(async (input, init) => {
+      const url = input.toString();
+      if (url.includes("/v1/platform/applications/app_1")) {
+        return new Response(
+          JSON.stringify({
+            application_id: "app_1",
+            instances: [
+              { instance_id: "ins_dev", environment_type: "development", publishable_key: pk },
+            ],
+          }),
+          { status: 200 },
+        );
+      }
+      fapiUrl = url;
+      fapiAuth = new Headers(init?.headers).get("Authorization");
+      return new Response(JSON.stringify({ environment: "ok" }), { status: 200 });
+    });
+
+    await runApi("/environment", { fapi: true, app: "app_1", instance: "dev" });
+    expect(fapiUrl).toContain("https://clerk.example.com/v1/environment");
+    expect(fapiUrl).toContain("_clerk_js_version=");
+    expect(fapiAuth).toBeNull();
+  });
+
+  test("--fapi cannot be combined with --platform", async () => {
+    await expect(runApi("/environment", { fapi: true, platform: true })).rejects.toThrow(
+      "cannot be combined",
+    );
+  });
+
+  test("--fapi prints API error response body to stdout and exits 1", async () => {
+    setMode("human");
+    process.env.CLERK_PLATFORM_API_KEY = "ak_test_platform";
+    const pk = `pk_test_${btoa("clerk.example.com$")}`;
+    const errorBody = { errors: [{ message: "no environment", code: "not_found" }] };
+
+    stubFetch(async (input) => {
+      const url = input.toString();
+      if (url.includes("/v1/platform/applications/app_1")) {
+        return new Response(
+          JSON.stringify({
+            application_id: "app_1",
+            instances: [
+              { instance_id: "ins_dev", environment_type: "development", publishable_key: pk },
+            ],
+          }),
+          { status: 200 },
+        );
+      }
+      return new Response(JSON.stringify(errorBody), { status: 404 });
+    });
+
+    await runApi("/environment", { fapi: true, app: "app_1" });
+    expect(process.exitCode).toBe(1);
+    expect(captured.out).toContain(JSON.stringify(errorBody, null, 2));
+  });
+
+  test("--fapi without --app and no linked project errors with NOT_LINKED guidance", async () => {
+    delete process.env.CLERK_SECRET_KEY;
+
+    await expect(runApi("/environment", { fapi: true })).rejects.toThrow(/clerk link|--app/);
+  });
+
+  test.each([
+    ["/environment", "/v1/environment"],
+    ["/v1/environment", "/v1/environment"],
+  ])("--fapi: %s resolves to the same FAPI path %s", async (input, expectedPath) => {
+    process.env.CLERK_PLATFORM_API_KEY = "ak_test_platform";
+    const pk = `pk_test_${btoa("clerk.example.com$")}`;
+    let capturedPath = "";
+
+    stubFetch(async (input) => {
+      const url = input.toString();
+      if (url.includes("/v1/platform/applications/app_1")) {
+        return new Response(
+          JSON.stringify({
+            application_id: "app_1",
+            instances: [
+              { instance_id: "ins_dev", environment_type: "development", publishable_key: pk },
+            ],
+          }),
+          { status: 200 },
+        );
+      }
+      capturedPath = new URL(url).pathname;
+      return new Response(JSON.stringify({}), { status: 200 });
+    });
+
+    await runApi(input, { fapi: true, app: "app_1" });
+    expect(capturedPath).toBe(expectedPath);
+  });
+
+  test("--fapi + --secret-key emits a warning that --secret-key is ignored", async () => {
+    process.env.CLERK_PLATFORM_API_KEY = "ak_test_platform";
+    const pk = `pk_test_${btoa("clerk.example.com$")}`;
+
+    stubFetch(async (input) => {
+      const url = input.toString();
+      if (url.includes("/v1/platform/applications/app_1")) {
+        return new Response(
+          JSON.stringify({
+            application_id: "app_1",
+            instances: [
+              { instance_id: "ins_dev", environment_type: "development", publishable_key: pk },
+            ],
+          }),
+          { status: 200 },
+        );
+      }
+      return new Response(JSON.stringify({}), { status: 200 });
+    });
+
+    await runApi("/environment", { fapi: true, app: "app_1", secretKey: "sk_test_ignored" });
+    expect(captured.err).toMatch(/--secret-key is ignored/);
+  });
+
+  test("--fapi + --dry-run does not make any network request", async () => {
+    let fetchCalled = false;
+    stubFetch(async () => {
+      fetchCalled = true;
+      return new Response(JSON.stringify({}), { status: 200 });
+    });
+
+    await runApi("/environment", { fapi: true, app: "app_1", dryRun: true });
+    expect(fetchCalled).toBe(false);
+    expect(captured.err).toContain("[dry-run] GET <fapi-host>");
+  });
+
   // --- Error handling ---
 
   test("errors when no secret key available", async () => {

@@ -55,22 +55,26 @@ clerk api /users --instance prod
 
 # Platform API mode
 clerk api /v1/platform/applications --platform
+
+# Frontend API mode — fetch the public environment payload to verify config
+clerk api --fapi /environment --app app_123 --instance dev
 ```
 
 ## Options
 
-| Flag                    | Description                                                       |
-| ----------------------- | ----------------------------------------------------------------- |
-| `-X, --method <method>` | HTTP method. Defaults to GET, or POST if body is provided.        |
-| `-d, --data <json>`     | JSON request body (inline)                                        |
-| `--file <path>`         | Read request body from a file                                     |
-| `--include`             | Show response status and headers                                  |
-| `--app <id>`            | Application ID to target when resolving keys                      |
-| `--secret-key <key>`    | Override the secret key                                           |
-| `--instance <id>`       | Instance to target for key resolution (`dev`, `prod`, or full ID) |
-| `--platform`            | Use Platform API instead of Backend API                           |
-| `--dry-run`             | Show request without executing                                    |
-| `--yes`                 | Skip confirmation for mutating requests                           |
+| Flag                    | Description                                                                     |
+| ----------------------- | ------------------------------------------------------------------------------- |
+| `-X, --method <method>` | HTTP method. Defaults to GET, or POST if body is provided.                      |
+| `-d, --data <json>`     | JSON request body (inline)                                                      |
+| `--file <path>`         | Read request body from a file                                                   |
+| `--include`             | Show response status and headers                                                |
+| `--app <id>`            | Application ID to target when resolving keys                                    |
+| `--secret-key <key>`    | Override the secret key                                                         |
+| `--instance <id>`       | Instance to target for key resolution (`dev`, `prod`, or full ID)               |
+| `--platform`            | Use Platform API instead of Backend API                                         |
+| `--fapi`                | Use the instance's public Frontend API (no auth; host from the publishable key) |
+| `--dry-run`             | Show request without executing                                                  |
+| `--yes`                 | Skip confirmation for mutating requests                                         |
 
 ## Authentication
 
@@ -93,6 +97,17 @@ Platform API auth (used by `--platform` mode, and by steps 3 and 4 above):
 3. Interactive human-mode prompt for a Platform API key
 
 The CLI validates key prefixes and will warn if you pass an `ak_` key where an `sk_` key is expected, or vice versa.
+
+### Frontend API (`--fapi`)
+
+`--fapi` targets the instance's public Frontend API — the same surface clerk-js
+consumes — which is useful for verifying that a config change took effect (e.g.
+`clerk api --fapi /environment`). The FAPI host is resolved from the instance's
+publishable key, looked up via the Platform API from `--app`/`--instance` or the
+linked project, so resolving the host needs Platform API auth, but the request
+itself is unauthenticated (these endpoints are public). `--fapi` and `--platform`
+cannot be combined. Paths are `/v1`-normalized like the other modes, so both
+`/environment` and `/v1/environment` work.
 
 ## API Endpoints
 
