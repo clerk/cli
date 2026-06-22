@@ -11,7 +11,6 @@
 
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { isHuman } from "../mode.ts";
 import { log } from "./log.ts";
 
 export interface EnvProfileConfig {
@@ -138,20 +137,28 @@ export function getPlapiBaseUrl(): string {
 }
 
 /**
- * Warn when CLERK_PLATFORM_API_URL redirects requests to a host that differs
- * from the active environment's platform URL. Credentials are keyed by
- * environment name, not by URL, so the active env's token is what gets sent to
- * the override host — surface that so it isn't a silent surprise.
+ * Returns whether CLERK_PLATFORM_API_URL is set to a URL that differs from the
+ * active environment's configured platform URL, along with both URLs so the
+ * caller can surface a warning.
  *
- * Human mode only: a per-command warning line would corrupt the machine-readable
- * stderr that agent mode emits. Agent/scripted callers get the same information
- * from the `clerk doctor` environment report instead.
+ * Comparison normalises both URLs via `new URL().href` so trailing-slash and
+ * case differences are ignored; falls back to raw string comparison if either
+ * value is not a valid URL.
  */
-export function warnIfPlatformApiUrlOverride(): void {
-  if (!isHuman()) return;
+export function isPlatformApiUrlOverridden():
+  | {
+      overridden: false;
+    }
+  | {
+      overridden: true;
+      overrideUrl: string;
+      profileUrl: string;
+      envName: string;
+    } {
   const override = process.env.CLERK_PLATFORM_API_URL;
-  if (!override) return;
-  const envName = getCurrentEnvName();
+  if (!override) return { overridden: false };
+
+  const profileUrl = getCurrentEnv().platformApiUrl;
   const normalize = (u: string) => {
     try {
       return new URL(u).href;
@@ -159,10 +166,10 @@ export function warnIfPlatformApiUrlOverride(): void {
       return u;
     }
   };
-  if (normalize(override) === normalize(getCurrentEnv().platformApiUrl)) return;
-  log.warn(
-    `CLERK_PLATFORM_API_URL is routing requests to ${override}, but credentials stay keyed to the "${envName}" environment — the "${envName}" token will be sent to that host.`,
-  );
+
+  if (normalize(override) === normalize(profileUrl)) return { overridden: false };
+
+  return { overridden: true, overrideUrl: override, profileUrl, envName: getCurrentEnvName() };
 }
 
 export function getBapiBaseUrl(): string {
