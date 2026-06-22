@@ -107,8 +107,7 @@ export function createFixtureHarness(name: FixtureName): FixtureHarness {
 
   afterEach(async () => {
     await users?.cleanup();
-  }, 30_000); // BAPI deletes can exceed bun's 5s default under load; an explicit
-  // budget avoids silently orphaning test users when cleanup runs long.
+  }, 30_000); // BAPI deletes can exceed bun's 5s default under load
 
   afterAll(async () => {
     await fixture?.cleanup();

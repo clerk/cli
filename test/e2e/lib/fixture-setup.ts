@@ -25,16 +25,6 @@ function requireEnv(name: string): string {
   return val;
 }
 
-/** Throw with a descriptive message if a shell command failed. */
-function assertSuccess(
-  label: string,
-  result: { exitCode: number; stderr: { toString(): string } },
-): void {
-  if (result.exitCode !== 0) {
-    throw new Error(`${label}:\n${result.stderr.toString()}`);
-  }
-}
-
 /**
  * Copy the fixture directory into an existing project dir.
  */
@@ -56,20 +46,33 @@ async function safeRm(path: string): Promise<void> {
   }
 }
 
+interface RunStepOptions {
+  cwd: string;
+  env: Record<string, string | undefined>;
+  timeoutMs: number;
+}
+
 /**
- * Run a setup step under a hard timeout so a single stalled subprocess fails
- * fast with a labeled error instead of silently burning the whole 300s
- * `beforeAll` budget (the flaky-setup signature seen in CI, which stalled in
- * `clerk link` on one run and `git init` on another). `beforeAll` is never
- * retried, so leaving the inner promise to settle on timeout is safe.
+ * Spawn a setup step, killing the child on timeout so a stall fails fast with a
+ * labeled error instead of silently eating the whole 300s `beforeAll` budget.
  */
-async function withStepTimeout<T>(label: string, ms: number, run: () => Promise<T>): Promise<T> {
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  const timeout = new Promise<never>((_, reject) => {
-    timer = setTimeout(() => reject(new Error(`${label} timed out after ${ms}ms`)), ms);
+export async function runStep(label: string, cmd: string[], opts: RunStepOptions): Promise<void> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), opts.timeoutMs);
+  const proc = Bun.spawn(cmd, {
+    cwd: opts.cwd,
+    env: opts.env,
+    stdout: "ignore",
+    stderr: "pipe",
+    signal: controller.signal,
   });
   try {
-    return await Promise.race([run(), timeout]);
+    const [stderr, exitCode] = await Promise.all([
+      new Response(proc.stderr).text().catch(() => ""),
+      proc.exited.catch(() => -1),
+    ]);
+    if (controller.signal.aborted) throw new Error(`${label} timed out after ${opts.timeoutMs}ms`);
+    if (exitCode !== 0) throw new Error(`${label} failed:\n${stderr}`);
   } finally {
     clearTimeout(timer);
   }
@@ -84,33 +87,38 @@ async function linkProject(projectDir: string, configDir: string): Promise<void>
   const appId = requireEnv("CLERK_CLI_TEST_APP_ID");
   const platformAPIKey = requireEnv("CLERK_PLATFORM_API_KEY");
 
-  const result = await Bun.$`bun ${CLI_PATH} --mode human link --app ${appId}`
-    .cwd(projectDir)
-    .env({
+  await runStep("clerk link", ["bun", CLI_PATH, "--mode", "human", "link", "--app", appId], {
+    cwd: projectDir,
+    // PATH lets Bun.spawn resolve `bun`; the rest of the env stays isolated.
+    env: {
+      PATH: process.env.PATH,
       CLERK_CONFIG_DIR: configDir,
       CLERK_PLATFORM_API_KEY: platformAPIKey,
-    })
-    .quiet()
-    .nothrow();
-
-  assertSuccess("clerk link failed", result);
+    },
+    timeoutMs: 60_000,
+  });
 }
 
 async function gitInit(projectDir: string): Promise<void> {
-  const result =
-    await Bun.$`git -c commit.gpgsign=false init && git add -A && git -c commit.gpgsign=false commit -m "init" --allow-empty`
-      .cwd(projectDir)
-      .env({
+  await runStep(
+    "git init",
+    [
+      "bash",
+      "-c",
+      'git -c commit.gpgsign=false init && git add -A && git -c commit.gpgsign=false commit -m "init" --allow-empty',
+    ],
+    {
+      cwd: projectDir,
+      env: {
         ...process.env,
         GIT_AUTHOR_NAME: "test",
         GIT_AUTHOR_EMAIL: "test@test.com",
         GIT_COMMITTER_NAME: "test",
         GIT_COMMITTER_EMAIL: "test@test.com",
-      })
-      .quiet()
-      .nothrow();
-
-  assertSuccess("git init failed", result);
+      },
+      timeoutMs: 60_000,
+    },
+  );
 }
 
 /**
@@ -121,16 +129,19 @@ async function gitInit(projectDir: string): Promise<void> {
 async function runClerkInit(projectDir: string, configDir: string): Promise<void> {
   const platformAPIKey = requireEnv("CLERK_PLATFORM_API_KEY");
 
-  const result = await Bun.$`bun ${CLI_PATH} --mode human init --yes --no-skills`
-    .cwd(projectDir)
-    .env({
-      CLERK_CONFIG_DIR: configDir,
-      CLERK_PLATFORM_API_KEY: platformAPIKey,
-    })
-    .quiet()
-    .nothrow();
-
-  assertSuccess("clerk init failed", result);
+  await runStep(
+    "clerk init",
+    ["bun", CLI_PATH, "--mode", "human", "init", "--yes", "--no-skills"],
+    {
+      cwd: projectDir,
+      env: {
+        PATH: process.env.PATH,
+        CLERK_CONFIG_DIR: configDir,
+        CLERK_PLATFORM_API_KEY: platformAPIKey,
+      },
+      timeoutMs: 90_000,
+    },
+  );
 }
 
 /** Parse env files written by clerk init into a merged Record<string, string>.
@@ -183,11 +194,9 @@ export async function setupFixture(name: FixtureName): Promise<Fixture> {
 
   try {
     // Git-init before linking so the profile key matches for later commands
-    await withStepTimeout("git init", 60_000, () => gitInit(projectDir));
-    // `clerk link`/`clerk init` hit the production Clerk API; these step budgets
-    // back up the CLI's own per-request timeout.
-    await withStepTimeout("clerk link", 60_000, () => linkProject(projectDir, configDir));
-    await withStepTimeout("clerk init", 90_000, () => runClerkInit(projectDir, configDir));
+    await gitInit(projectDir);
+    await linkProject(projectDir, configDir);
+    await runClerkInit(projectDir, configDir);
 
     const envVars = await parseEnvFiles(projectDir);
 
@@ -203,14 +212,11 @@ export async function setupFixture(name: FixtureName): Promise<Fixture> {
       throw new Error(`${secretKeyName} not found in env files written by clerk init.`);
     }
 
-    // --no-audit/--no-fund drop npm's advisory network round-trips during `ci`.
-    const install = await withStepTimeout("npm ci", 240_000, () =>
-      Bun.$`npm ci --ignore-scripts --legacy-peer-deps --no-audit --no-fund`
-        .cwd(projectDir)
-        .quiet()
-        .nothrow(),
+    await runStep(
+      "npm ci",
+      ["npm", "ci", "--ignore-scripts", "--legacy-peer-deps", "--no-audit", "--no-fund"],
+      { cwd: projectDir, env: process.env, timeoutMs: 240_000 },
     );
-    assertSuccess("npm ci failed", install);
   } catch (err) {
     await safeRm(projectDir);
     await safeRm(configDir);
