@@ -1,9 +1,10 @@
 /**
  * `clerk mcp install` — register the Clerk remote MCP server in supported clients.
  *
- * URL resolution: `--url` > `CLERK_MCP_URL` > active env profile `mcpUrl` > Clerk's hosted server.
+ * URL resolution: `CLERK_MCP_URL` > active env profile `mcpUrl` > Clerk's hosted server.
+ * The URL is resolved at bridge runtime, not embedded in the stored config entry.
  * Target clients: `--client <id>` (repeatable) > `--all` > human picker > all detected (agent mode).
- * Conflict policy: same URL → unchanged; different URL → skip unless `--force`.
+ * Conflict policy: same entry shape → unchanged; existing entry pointing at a different server → skip unless `--force`.
  */
 
 import { log } from "../../lib/log.ts";
@@ -64,10 +65,7 @@ function installNextSteps(settled: ClientUpsert[]): string[] {
     ({ result }) => result.status === "added" || result.status === "updated",
   );
   if (activated.length === 0) return [];
-  return [
-    ...activated.map(({ client }) => `${client.displayName}: ${client.activation}`),
-    "If the server requires authentication, your editor opens a browser to sign in on first connect.",
-  ];
+  return activated.map(({ client }) => `${client.displayName}: ${client.activation}`);
 }
 
 export async function mcpInstall(options: McpOptions = {}): Promise<void> {

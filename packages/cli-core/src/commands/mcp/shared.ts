@@ -9,6 +9,7 @@ import { isAgent } from "../../mode.ts";
 import { CLIENT_ALIASES, CLIENT_IDS, CLIENTS, detectInstalledClients } from "./clients/registry.ts";
 import type { ClientId, McpClient } from "./clients/types.ts";
 
+/** Options shared across `clerk mcp` subcommands. */
 export type McpOptions = {
   json?: boolean;
   url?: string;
@@ -19,12 +20,18 @@ export type McpOptions = {
   force?: boolean;
 };
 
+/** Default MCP server entry name written into client configs. */
 export const DEFAULT_ENTRY_NAME = "clerk";
 
+/**
+ * Resolve the MCP server URL from options or environment (`CLERK_MCP_URL` >
+ * active env profile > hosted default), validating scheme and rejecting
+ * embedded credentials.
+ */
 export function resolveUrl(options: McpOptions): string {
   // `getMcpUrl()` always resolves to a usable URL (Clerk's hosted server by
-  // default), so the only failure mode left is an explicit `--url` that is
-  // malformed or uses a non-network scheme.
+  // default), so the only failure mode left is a `CLERK_MCP_URL` value that
+  // is malformed or uses a non-network scheme.
   const candidate = options.url ?? getMcpUrl();
   // Reject non-network schemes so a stray `file:` or `data:` URL can't be
   // written into an editor's MCP config or probed by `doctor` via fetch.
@@ -54,10 +61,15 @@ export function resolveUrl(options: McpOptions): string {
   return parsed.href;
 }
 
+/** Resolve the MCP entry name from options, defaulting to {@link DEFAULT_ENTRY_NAME}. */
 export function resolveName(options: McpOptions): string {
   return options.name ?? DEFAULT_ENTRY_NAME;
 }
 
+/**
+ * Resolve a list of client ID strings (from CLI `--client` flags) to their
+ * canonical {@link McpClient} objects, deduplicating aliases.
+ */
 export function resolveClients(ids: readonly string[]): McpClient[] {
   const byId = new Map<string, McpClient>(CLIENTS.map((c) => [c.id, c]));
   const seen = new Set<ClientId>();
@@ -78,6 +90,10 @@ export function resolveClients(ids: readonly string[]): McpClient[] {
   });
 }
 
+/**
+ * Prompt the user to pick from a set of detected clients. Returns all clients
+ * when `autoSelectSingle` is true and exactly one is detected.
+ */
 export async function pickClients(
   detected: McpClient[],
   message: string,
@@ -98,6 +114,10 @@ export async function pickClients(
   return resolveClients(selected);
 }
 
+/**
+ * Resolve the target clients from `--client` flags or by detecting installed
+ * clients in `cwd`. Throws if no clients are found and none were specified.
+ */
 export async function targetClients(options: McpOptions, cwd: string): Promise<McpClient[]> {
   if (options.client && options.client.length > 0) {
     return resolveClients(options.client);
@@ -114,6 +134,7 @@ export async function targetClients(options: McpOptions, cwd: string): Promise<M
   return detected;
 }
 
+/** True when output should be machine-readable JSON (explicit flag or agent mode). */
 export function wantsJson(options: McpOptions): boolean {
   return Boolean(options.json) || isAgent();
 }
