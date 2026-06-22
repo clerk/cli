@@ -6,14 +6,7 @@
 import { getBapiBaseUrl } from "../../lib/environment.ts";
 import { normalizeBapiPath } from "../../lib/bapi-command.ts";
 import { BapiError } from "../../lib/errors.ts";
-import { loggedFetch } from "../../lib/fetch.ts";
-
-export interface BapiResponse {
-  status: number;
-  headers: Headers;
-  body: unknown;
-  rawBody: string;
-}
+import { loggedFetch, type ApiResponse } from "../../lib/fetch.ts";
 
 export async function bapiRequest(options: {
   method: string;
@@ -21,7 +14,7 @@ export async function bapiRequest(options: {
   secretKey: string;
   body?: string;
   baseUrl?: string;
-}): Promise<BapiResponse> {
+}): Promise<ApiResponse> {
   const base = options.baseUrl ?? getBapiBaseUrl();
   const path = normalizeBapiPath(options.path);
 

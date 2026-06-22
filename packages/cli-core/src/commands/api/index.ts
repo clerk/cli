@@ -2,8 +2,10 @@ import type { Program } from "../../cli-program.ts";
 import { getAuthToken } from "../../lib/plapi.ts";
 import { getBapiBaseUrl, getPlapiBaseUrl } from "../../lib/environment.ts";
 import { normalizeBapiPath, resolveBapiSecretKey } from "../../lib/bapi-command.ts";
-import { bapiRequest, type BapiResponse } from "./bapi.ts";
-import { fapiRequest, resolveFapiHost } from "./fapi.ts";
+import { type ApiResponse } from "../../lib/fetch.ts";
+import { bapiRequest } from "./bapi.ts";
+import { fapiRequest } from "../../lib/fapi.ts";
+import { resolveFapiHost } from "./fapi.ts";
 import {
   ApiError,
   ERROR_CODE,
@@ -33,7 +35,7 @@ export interface ApiOptions {
 
 const MUTATING_METHODS = new Set(["POST", "PUT", "PATCH", "DELETE"]);
 
-type RunRequest = (req: { method: string; path: string; body?: string }) => Promise<BapiResponse>;
+type RunRequest = (req: { method: string; path: string; body?: string }) => Promise<ApiResponse>;
 
 /** Validate fapi flag combinations and emit warnings for ignored flags. */
 function validateFapiOptions(options: ApiOptions): void {

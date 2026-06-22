@@ -16,6 +16,18 @@ const USER_AGENT = buildUserAgent();
 
 export type LoggedFetchInit = RequestInit & { tag: string };
 
+/**
+ * Normalized response shape returned by the higher-level API request wrappers
+ * (`bapiRequest`, `fapiRequest`). `body` is the parsed JSON when the payload is
+ * valid JSON, otherwise the raw string; `rawBody` is always the unparsed text.
+ */
+export interface ApiResponse {
+  status: number;
+  headers: Headers;
+  body: unknown;
+  rawBody: string;
+}
+
 export async function loggedFetch(url: URL | string, options: LoggedFetchInit): Promise<Response> {
   const { tag, ...init } = options;
   const method = init.method ?? "GET";
