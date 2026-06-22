@@ -14,14 +14,7 @@ import { buildUserAgent } from "./user-agent.ts";
 
 const USER_AGENT = buildUserAgent();
 
-/**
- * Default per-request timeout. Native `fetch()` has no timeout, so without this
- * a stalled TCP connection to a Clerk API hangs the command indefinitely (this
- * was the root cause of the flaky e2e setup, where `clerk link`/`clerk init`
- * could hang for the full 300s test budget). 60s is generous for any single
- * REST call while still bounding the worst case. Callers needing a tighter or
- * looser bound pass `timeoutMs`; an explicit `signal` composes with this one.
- */
+/** Native `fetch()` has no timeout, so a stalled connection would hang forever. */
 const DEFAULT_REQUEST_TIMEOUT_MS = 60_000;
 
 export type LoggedFetchInit = RequestInit & { tag: string; timeoutMs?: number };
@@ -46,8 +39,7 @@ export async function loggedFetch(url: URL | string, options: LoggedFetchInit): 
   if (!headers.has("user-agent")) headers.set("User-Agent", USER_AGENT);
   log.debug(`${tag}: ${method} ${urlStr}`);
 
-  // Compose our default timeout with any caller-supplied signal so whichever
-  // fires first wins (e.g. keyless.ts's tighter 15s budget still applies).
+  // A caller signal (e.g. keyless.ts's tighter 15s) composes with our default.
   const timeoutSignal = AbortSignal.timeout(timeoutMs);
   const signal = callerSignal ? AbortSignal.any([callerSignal, timeoutSignal]) : timeoutSignal;
 
@@ -58,8 +50,7 @@ export async function loggedFetch(url: URL | string, options: LoggedFetchInit): 
       async () => fetch(url, { ...init, headers, signal }),
     );
   } catch (err) {
-    // Distinguish our timeout from a caller abort or a plain network error, so
-    // the failure is self-diagnosing instead of a cryptic DOMException/hang.
+    // Only relabel when our timeout fired, not a caller abort or network error.
     if (timeoutSignal.aborted && !callerSignal?.aborted) {
       throw new Error(`${tag}: request timed out after ${timeoutMs}ms — ${method} ${urlStr}`);
     }

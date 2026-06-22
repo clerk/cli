@@ -61,13 +61,18 @@ describe("loggedFetch", () => {
   test("a shorter caller signal wins over the default timeout and is not masked by the timeout message", async () => {
     globalThis.fetch = hangingFetch();
     const caller = AbortSignal.timeout(20);
+    // Must reject (the onFulfilled branch throws if it unexpectedly resolves)...
     const err = await loggedFetch("https://example.test/hang", {
       tag: "plapi",
       timeoutMs: 10_000,
       signal: caller,
-    }).catch((e: unknown) => e);
-    // The caller's signal fired first, so we must surface its abort, not
-    // pretend our 10s default timeout elapsed.
+    }).then(
+      () => {
+        throw new Error("expected loggedFetch to reject, but it resolved");
+      },
+      (e: unknown) => e,
+    );
+    // ...with the caller's 20ms abort, not relabeled as our 10s default timeout.
     expect(String(err)).not.toMatch(/timed out after 10000ms/);
   }, 2000);
 
