@@ -57,6 +57,25 @@ async function safeRm(path: string): Promise<void> {
 }
 
 /**
+ * Run a setup step under a hard timeout so a single stalled subprocess fails
+ * fast with a labeled error instead of silently burning the whole 300s
+ * `beforeAll` budget (the flaky-setup signature seen in CI, which stalled in
+ * `clerk link` on one run and `git init` on another). `beforeAll` is never
+ * retried, so leaving the inner promise to settle on timeout is safe.
+ */
+async function withStepTimeout<T>(label: string, ms: number, run: () => Promise<T>): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Error(`${label} timed out after ${ms}ms`)), ms);
+  });
+  try {
+    return await Promise.race([run(), timeout]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/**
  * Pre-link the project to the test Clerk application using an isolated
  * CLERK_CONFIG_DIR, so `clerk init` finds an existing link and skips the
  * interactive app picker.
@@ -152,31 +171,24 @@ export type Fixture = {
 export async function setupFixture(name: FixtureName): Promise<Fixture> {
   const config = fixtures[name];
   const fixtureDir = join(FIXTURES_DIR, name);
-  log("setup started");
 
   // Resolve symlinks (macOS /var -> /private/var) so profile keys match across commands
   const tmp = await realpath(tmpdir());
   const projectDir = await mkdtemp(join(tmp, `clerk-e2e-${name}-`));
   const configDir = await mkdtemp(join(tmp, "clerk-e2e-config-"));
   await copyFixture(fixtureDir, projectDir);
-  log("fixture copied");
 
   let publishableKey = "";
   let secretKey = "";
 
   try {
     // Git-init before linking so the profile key matches for later commands
-    await gitInit(projectDir);
-    log("git init done");
+    await withStepTimeout("git init", 60_000, () => gitInit(projectDir));
+    // `clerk link`/`clerk init` hit the production Clerk API; these step budgets
+    // back up the CLI's own per-request timeout.
+    await withStepTimeout("clerk link", 60_000, () => linkProject(projectDir, configDir));
+    await withStepTimeout("clerk init", 90_000, () => runClerkInit(projectDir, configDir));
 
-    // The magic happens here, we actually test out `clerk link` and `clerk init`
-    await linkProject(projectDir, configDir);
-    log("clerk link done");
-
-    await runClerkInit(projectDir, configDir);
-    log("clerk init done");
-
-    // Verify clerk init wrote env files and extract keys.
     const envVars = await parseEnvFiles(projectDir);
 
     const publishableKeyName = await detectPublishableKeyName(projectDir);
@@ -191,25 +203,23 @@ export async function setupFixture(name: FixtureName): Promise<Fixture> {
       throw new Error(`${secretKeyName} not found in env files written by clerk init.`);
     }
 
-    const install = await Bun.$`npm ci --ignore-scripts --legacy-peer-deps`
-      .cwd(projectDir)
-      .quiet()
-      .nothrow();
+    // --no-audit/--no-fund drop npm's advisory network round-trips during `ci`.
+    const install = await withStepTimeout("npm ci", 240_000, () =>
+      Bun.$`npm ci --ignore-scripts --legacy-peer-deps --no-audit --no-fund`
+        .cwd(projectDir)
+        .quiet()
+        .nothrow(),
+    );
     assertSuccess("npm ci failed", install);
-    log("npm ci done");
   } catch (err) {
     await safeRm(projectDir);
     await safeRm(configDir);
     throw new Error("setup failed", { cause: err });
   }
 
-  log("setup complete");
-
   const cleanup = async () => {
-    log("cleanup started");
     await safeRm(projectDir);
     await safeRm(configDir);
-    log("cleanup done");
   };
 
   return {
