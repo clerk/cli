@@ -71,6 +71,36 @@ async function safeRm(path: string): Promise<void> {
 }
 
 /**
+ * Run a step with a hard timeout, retrying once on a fresh subprocess. In human
+ * mode `clerk link`/`clerk init` shell out to git and can intermittently stall
+ * in a non-fetch path (a git subprocess, a prompt) that the CLI's own request
+ * timeout doesn't bound — which would otherwise burn the whole 300s beforeAll
+ * budget. Promise.race abandons a hung subprocess (no stream deadlock), and the
+ * retry lands on a clean run; beforeAll is not retried, so a brief orphan can't
+ * cascade.
+ */
+async function withRetry(label: string, timeoutMs: number, fn: () => Promise<void>): Promise<void> {
+  for (let attempt = 1; attempt <= 2; attempt++) {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const timeout = new Promise<never>((_, reject) => {
+      timer = setTimeout(
+        () => reject(new Error(`${label} timed out after ${timeoutMs}ms`)),
+        timeoutMs,
+      );
+    });
+    try {
+      await Promise.race([fn(), timeout]);
+      return;
+    } catch (err) {
+      if (attempt === 2) throw err;
+      log(`${label} attempt ${attempt} failed (${err}); retrying`);
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+}
+
+/**
  * Pre-link the project to the test Clerk application using an isolated
  * CLERK_CONFIG_DIR, so `clerk init` finds an existing link and skips the
  * interactive app picker.
@@ -184,9 +214,11 @@ export async function setupFixture(name: FixtureName): Promise<Fixture> {
     // stalls if setup ever hits the 300s beforeAll budget.
     await gitInit(projectDir);
     log("git init done");
-    await linkProject(projectDir, configDir);
+    // Budgets sit above loggedFetch's 60s request timeout so a genuinely slow
+    // API call is handled there; withRetry only trips on a non-fetch stall.
+    await withRetry("clerk link", 90_000, () => linkProject(projectDir, configDir));
     log("clerk link done");
-    await runClerkInit(projectDir, configDir);
+    await withRetry("clerk init", 120_000, () => runClerkInit(projectDir, configDir));
     log("clerk init done");
 
     const envVars = await parseEnvFiles(projectDir);
