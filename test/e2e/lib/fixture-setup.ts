@@ -158,19 +158,21 @@ export async function setupFixture(name: FixtureName): Promise<Fixture> {
   const projectDir = await mkdtemp(join(tmp, `clerk-e2e-${name}-`));
   const configDir = await mkdtemp(join(tmp, "clerk-e2e-config-"));
   await copyFixture(fixtureDir, projectDir);
+  log("fixture copied");
 
   let publishableKey = "";
   let secretKey = "";
 
   try {
     // Git-init before linking so the profile key matches for later commands.
-    // These steps install packages (clerk init / npm ci) whose duration scales
-    // with CI load, so they're not given fixed per-step timeouts; the loggedFetch
-    // request timeout bounds the only thing that can truly hang (the network
-    // calls), and the 300s beforeAll is the outer backstop.
+    // Step markers are debug-gated (CLERK_E2E_DEBUG) and pinpoint which step
+    // stalls if setup ever hits the 300s beforeAll budget.
     await gitInit(projectDir);
+    log("git init done");
     await linkProject(projectDir, configDir);
+    log("clerk link done");
     await runClerkInit(projectDir, configDir);
+    log("clerk init done");
 
     const envVars = await parseEnvFiles(projectDir);
 
@@ -186,12 +188,17 @@ export async function setupFixture(name: FixtureName): Promise<Fixture> {
       throw new Error(`${secretKeyName} not found in env files written by clerk init.`);
     }
 
-    // --no-audit/--no-fund drop npm's advisory network round-trips during `ci`.
-    const install = await Bun.$`npm ci --ignore-scripts --legacy-peer-deps --no-audit --no-fund`
-      .cwd(projectDir)
-      .quiet()
-      .nothrow();
+    // npm's default fetch-timeout is 300s — the same as the beforeAll budget —
+    // so a single stalled registry connection hangs setup until the test times
+    // out. Bound each fetch to 60s and retry, mirroring the CLI's own request
+    // timeout. --no-audit/--no-fund drop npm's advisory network round-trips.
+    const install =
+      await Bun.$`npm ci --ignore-scripts --legacy-peer-deps --no-audit --no-fund --fetch-timeout=60000 --fetch-retries=5`
+        .cwd(projectDir)
+        .quiet()
+        .nothrow();
     assertSuccess("npm ci failed", install);
+    log("npm ci done");
   } catch (err) {
     await safeRm(projectDir);
     await safeRm(configDir);
