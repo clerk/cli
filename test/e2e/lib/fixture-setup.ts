@@ -109,7 +109,10 @@ async function linkProject(projectDir: string, configDir: string): Promise<void>
   const appId = requireEnv("CLERK_CLI_TEST_APP_ID");
   const platformAPIKey = requireEnv("CLERK_PLATFORM_API_KEY");
 
-  const result = await Bun.$`bun ${CLI_PATH} --mode human link --app ${appId}`
+  // Agent mode keeps link non-interactive: if a retry re-runs it on a project
+  // the first (hung-then-killed) attempt already linked, agent mode prints
+  // "already linked" and exits 0 instead of blocking on a human confirm prompt.
+  const result = await Bun.$`bun ${CLI_PATH} --mode agent link --app ${appId}`
     .cwd(projectDir)
     .env({
       CLERK_CONFIG_DIR: configDir,
