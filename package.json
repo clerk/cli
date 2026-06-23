@@ -8,7 +8,7 @@
     "build": "bun run --filter @clerk/cli-core build",
     "dev": "bun run --cwd packages/cli-core dev",
     "test": "bun test 'packages/cli-core/src/' 'packages/extras/src/' 'scripts/' --parallel --only-failures",
-    "test:e2e": "bun test 'test/e2e/' --retry 1 --parallel=1 --only-failures",
+    "test:e2e": "bun test 'test/e2e/' --retry 1 --parallel=4 --only-failures",
     "test:e2e:op": "bun run scripts/run-e2e-op.ts",
     "e2e:refresh-fixtures": "bun run scripts/refresh-e2e-fixtures.ts",
     "typecheck": "bun run --filter './packages/*' typecheck && tsc --noEmit -p scripts/tsconfig.json && tsc --noEmit -p test/e2e/tsconfig.json",

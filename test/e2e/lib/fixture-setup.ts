@@ -45,14 +45,14 @@ async function copyFixture(fixtureDir: string, projectDir: string): Promise<void
 /**
  * npm's default fetch-timeout is 300s, so one stalled registry connection in
  * `clerk init`'s SDK install or `npm ci` can consume the entire 300s beforeAll
- * budget — the real cause of the flaky setup timeouts. Cap it so a stalled fetch
- * aborts in 30s and retries on a fresh connection. Both npm runs use projectDir
- * as cwd, so a project-level `.npmrc` covers them.
+ * budget. Cap it low so a stalled fetch aborts fast and retries on a fresh
+ * connection — and stays well under the withRetry step budgets. Both npm runs
+ * use projectDir as cwd, so a project-level `.npmrc` covers them.
  */
 async function writeNpmrc(projectDir: string): Promise<void> {
   await Bun.write(
     join(projectDir, ".npmrc"),
-    "fetch-timeout=30000\nfetch-retries=3\nfetch-retry-mintimeout=1000\nfetch-retry-maxtimeout=10000\n",
+    "fetch-timeout=20000\nfetch-retries=2\nfetch-retry-mintimeout=1000\nfetch-retry-maxtimeout=8000\n",
   );
 }
 
@@ -212,7 +212,7 @@ export async function setupFixture(name: FixtureName): Promise<Fixture> {
     // Git-init before linking so the profile key matches for later commands.
     // Step markers are debug-gated (CLERK_E2E_DEBUG) and pinpoint which step
     // stalls if setup ever hits the 300s beforeAll budget.
-    await gitInit(projectDir);
+    await withRetry("git init", 30_000, () => gitInit(projectDir));
     log("git init done");
     // Budgets sit above loggedFetch's 60s request timeout so a genuinely slow
     // API call is handled there; withRetry only trips on a non-fetch stall.
@@ -237,11 +237,13 @@ export async function setupFixture(name: FixtureName): Promise<Fixture> {
 
     // fetch-timeout/retries come from the project .npmrc (writeNpmrc); --no-audit
     // and --no-fund drop npm's advisory network round-trips during `ci`.
-    const install = await Bun.$`npm ci --ignore-scripts --legacy-peer-deps --no-audit --no-fund`
-      .cwd(projectDir)
-      .quiet()
-      .nothrow();
-    assertSuccess("npm ci failed", install);
+    await withRetry("npm ci", 120_000, async () => {
+      const install = await Bun.$`npm ci --ignore-scripts --legacy-peer-deps --no-audit --no-fund`
+        .cwd(projectDir)
+        .quiet()
+        .nothrow();
+      assertSuccess("npm ci failed", install);
+    });
     log("npm ci done");
   } catch (err) {
     await safeRm(projectDir);
