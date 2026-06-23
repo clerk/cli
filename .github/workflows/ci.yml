@@ -99,9 +99,7 @@ jobs:
     runs-on: blacksmith-8vcpu-ubuntu-2404
     container:
       image: mcr.microsoft.com/playwright:v1.60.0-noble
-    # Fixtures run serially (test:e2e --parallel=1) to avoid Bun.$ subprocess
-    # stalls under concurrency, so allow more wall-clock than the parallel run.
-    timeout-minutes: 45
+    timeout-minutes: 30
     steps:
       - name: Install unzip (required by setup-bun)
         run: apt-get update && apt-get install -y unzip
