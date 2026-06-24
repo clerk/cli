@@ -91,6 +91,12 @@ describe("webhooks replay", () => {
     expect(mockRecoverWebhookMessages).not.toHaveBeenCalled();
   });
 
+  test("--until alone points at the missing --since instead of a vaguer hint", async () => {
+    await expect(webhooksReplay({ until: "2026-05-01T00:00:00Z" })).rejects.toThrow(
+      "--until requires --since.",
+    );
+  });
+
   test("resends one message to an explicit --endpoint without prompting", async () => {
     await webhooksReplay({ msgId: "msg_1", endpoint: "ep_1" });
 

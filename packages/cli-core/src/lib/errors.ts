@@ -63,6 +63,8 @@ export const ERROR_CODE = {
   UNKNOWN_EVENT_TYPE: "unknown_event_type",
   /** Offline webhook signature verification found no matching entry. */
   INVALID_WEBHOOK_SIGNATURE: "invalid_webhook_signature",
+  /** Endpoint was created but its signing secret could not be fetched. */
+  WEBHOOK_SECRET_FETCH_FAILED: "webhook_secret_fetch_failed",
 } as const;
 
 export type ErrorCode = (typeof ERROR_CODE)[keyof typeof ERROR_CODE];

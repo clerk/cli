@@ -28,11 +28,13 @@ function validateReplayMode(options: WebhooksReplayOptions): "resend" | "recover
   if (options.msgId && options.since) {
     throwUsageError("Pass either a <msg_id> or --since, not both.");
   }
-  if (!options.msgId && !options.since) {
-    throwUsageError("Pass a <msg_id> to resend one delivery, or --since <ISO> to bulk-recover.");
-  }
+  // Check the orphaned-`--until` case before the generic "neither" message, so
+  // `replay --until <ISO>` points at the real problem instead of a vaguer hint.
   if (options.until && !options.since) {
     throwUsageError("--until requires --since.");
+  }
+  if (!options.msgId && !options.since) {
+    throwUsageError("Pass a <msg_id> to resend one delivery, or --since <ISO> to bulk-recover.");
   }
   if (options.since) {
     assertRfc3339(options.since, "--since");

@@ -179,6 +179,26 @@ describe("webhooks verify command", () => {
     expect(captured.err).toContain("Signature verified.");
   });
 
+  test("a multi-line --delivery file verifies against the first non-empty line", async () => {
+    const firstLine = JSON.stringify({
+      headers: { "svix-id": ID, "svix-timestamp": TIMESTAMP, "svix-signature": VALID_SIGNATURE },
+      body_b64: Buffer.from(PAYLOAD, "utf8").toString("base64"),
+    });
+    const secondLine = JSON.stringify({
+      headers: {
+        "svix-id": "msg_later",
+        "svix-timestamp": TIMESTAMP,
+        "svix-signature": "v1,deadbeef",
+      },
+      body_b64: Buffer.from('{"type":"user.deleted"}', "utf8").toString("base64"),
+    });
+    const deliveryPath = await writeTempFile("events.ndjson", `${firstLine}\n${secondLine}\n`);
+
+    await webhooksVerify({ secret: SECRET, delivery: `@${deliveryPath}` });
+
+    expect(captured.err).toContain("Signature verified.");
+  });
+
   test("explicit flags override --delivery fields", async () => {
     const line = JSON.stringify({
       headers: {
@@ -272,6 +292,18 @@ describe("webhooks verify command", () => {
         timestamp: TIMESTAMP,
         signature: VALID_SIGNATURE,
         payload: "{}",
+      },
+    },
+    {
+      // An explicit empty --payload must surface as a usage error, not fall
+      // through to the --delivery body or hash an `undefined` pre-image.
+      label: "empty --payload",
+      options: {
+        secret: SECRET,
+        id: ID,
+        timestamp: TIMESTAMP,
+        signature: VALID_SIGNATURE,
+        payload: "",
       },
     },
   ])("$label is a usage error", async ({ options }) => {

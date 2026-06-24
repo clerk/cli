@@ -162,9 +162,13 @@ export async function webhooksVerify(options: WebhooksVerifyOptions = {}): Promi
     );
   }
 
-  const payload = options.payload
-    ? await readFileOrStdin(options.payload, "--payload")
-    : fields.payload;
+  // Nullish-coalesce, not truthiness: an explicit empty `--payload` must reach
+  // readFileOrStdin (which rejects it as neither @file nor -) instead of
+  // silently falling through to the --delivery body or an `undefined` HMAC.
+  const payload =
+    options.payload !== undefined
+      ? await readFileOrStdin(options.payload, "--payload")
+      : fields.payload;
 
   const valid = verifyWebhookSignature({
     secret: options.secret,

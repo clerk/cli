@@ -1,5 +1,5 @@
 import { test, expect, describe, beforeEach, afterEach, mock } from "bun:test";
-import { CliError, ERROR_CODE, PlapiError } from "../../lib/errors.ts";
+import { AuthError, CliError, ERROR_CODE, PlapiError } from "../../lib/errors.ts";
 import { useCaptureLog } from "../../test/lib/stubs.ts";
 
 const mockCreateWebhookEndpoint = mock();
@@ -134,9 +134,26 @@ describe("webhooks create", () => {
     const promise = webhooksCreate({ url: "https://example.com/webhooks" });
 
     await expect(promise).rejects.toBeInstanceOf(CliError);
+    await expect(promise).rejects.toMatchObject({
+      code: ERROR_CODE.WEBHOOK_SECRET_FETCH_FAILED,
+    });
     await expect(promise).rejects.toThrow(
       "Endpoint created (id: ep_new) but the signing secret could not be fetched. " +
         "Run 'clerk webhooks secret ep_new' to retrieve it.",
     );
+  });
+
+  test("partial failure: an auth error on the secret fetch is not masked as a secret-fetch failure", async () => {
+    mockGetWebhookEndpointSecret.mockRejectedValue(
+      new AuthError({
+        reason: "session_expired",
+        message: "Session expired. Run `clerk auth login`.",
+      }),
+    );
+
+    const promise = webhooksCreate({ url: "https://example.com/webhooks" });
+
+    await expect(promise).rejects.toBeInstanceOf(AuthError);
+    await expect(promise).rejects.toThrow("Session expired");
   });
 });

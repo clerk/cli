@@ -63,6 +63,12 @@ export class RelayClient {
     this.ws = ws;
 
     ws.onopen = () => {
+      // stop() may have raced in between `new WebSocket` and this open; if so,
+      // don't send the start frame, arm the probe timer, or resolve start().
+      if (this.stopped) {
+        ws.close(1000);
+        return;
+      }
       log.debug(`relay: connected, sending start frame (token=${this.token})`);
       ws.send(encodeStartFrame(this.token));
       this.lastActivityAt = Date.now();
@@ -93,10 +99,15 @@ export class RelayClient {
       if (this.stopped) return;
 
       if (event.code === RELAY_CLOSE_TOKEN_COLLISION) {
-        // Another listener holds this token: rotate, persist, redial.
+        // Another listener holds this token: rotate, persist, redial. Reconnect
+        // through the same backoff as a normal drop so a relay that rejects
+        // every fresh token can't spin a zero-delay reconnect storm.
         this.token = generateRelayToken();
         log.debug("relay: token collision (1008), rotating token");
-        void this.options.onTokenRotated(this.token).then(() => this.connect());
+        void this.options.onTokenRotated(this.token).then(() => {
+          if (this.stopped) return;
+          setTimeout(() => this.connect(), RELAY_RECONNECT_DELAY_MS);
+        });
         return;
       }
 

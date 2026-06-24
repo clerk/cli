@@ -219,7 +219,7 @@ describe("RelayClient", () => {
     expect(harness.rotated).toHaveLength(0);
   });
 
-  test("a 1008 collision rotates to a fresh c_ token, persists it, and redials", async () => {
+  test("a 1008 collision rotates to a fresh c_ token, persists it, and redials after the reconnect delay", async () => {
     const harness = await openClient();
     wsAt(0).fireClose(RELAY_CLOSE_TOKEN_COLLISION);
     await flush();
@@ -228,10 +228,29 @@ describe("RelayClient", () => {
     expect(harness.client.token).toMatch(/^c_[0-9A-Za-z]{10}$/);
     expect(harness.rotated).toEqual([harness.client.token]);
 
-    expect(FakeWebSocket.instances).toHaveLength(2); // immediate redial, no reconnect-delay timer
+    // Redial is deferred through the reconnect backoff so a relay that rejects
+    // every fresh token can't drive a zero-delay reconnect storm.
+    expect(FakeWebSocket.instances).toHaveLength(1);
+    expect(timeoutDelay).toBe(RELAY_RECONNECT_DELAY_MS);
+
+    timeoutCallback?.();
+    expect(FakeWebSocket.instances).toHaveLength(2);
     wsAt(1).open();
     expect(wsAt(1).sent[0]).toBe(encodeStartFrame(harness.client.token));
     expect(harness.reconnects).toBe(0); // collision is not a generic reconnect
+  });
+
+  test("stop() before the socket opens suppresses the start frame and the keepalive probe", async () => {
+    const harness = makeClient();
+    void harness.client.start(); // never resolves; the socket never finishes opening
+    const ws = wsAt(0);
+
+    harness.client.stop();
+    ws.open();
+
+    expect(ws.sent).toHaveLength(0); // no start frame on a stopped client
+    expect(ws.closedWith).toBe(1000);
+    expect(intervalCallback).toBeUndefined(); // probe timer never armed
   });
 
   test("stop() closes with 1000 and suppresses any further reconnect", async () => {
