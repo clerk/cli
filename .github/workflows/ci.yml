@@ -36,7 +36,7 @@ jobs:
       # PR-author-controlled code in the default branch's privileged context;
       # consuming a cached install in that context is a poisoning surface.
       - if: github.event_name != 'issue_comment'
-        uses: actions/cache/restore@v5
+        uses: actions/cache/restore@v6
         with:
           path: ~/.bun/install/cache
           key: bun-${{ runner.os }}-${{ hashFiles('bun.lock') }}
@@ -55,7 +55,7 @@ jobs:
           ref: ${{ inputs.ref }}
       - uses: oven-sh/setup-bun@v2
       - if: github.event_name != 'issue_comment'
-        uses: actions/cache/restore@v5
+        uses: actions/cache/restore@v6
         with:
           path: ~/.bun/install/cache
           key: bun-${{ runner.os }}-${{ hashFiles('bun.lock') }}
@@ -76,7 +76,7 @@ jobs:
           ref: ${{ inputs.ref }}
       - uses: oven-sh/setup-bun@v2
       - if: github.event_name != 'issue_comment'
-        uses: actions/cache/restore@v5
+        uses: actions/cache/restore@v6
         with:
           path: ~/.bun/install/cache
           key: bun-${{ runner.os }}-${{ hashFiles('bun.lock') }}
@@ -122,7 +122,7 @@ jobs:
         run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
       - uses: oven-sh/setup-bun@v2
       - if: github.event_name != 'issue_comment'
-        uses: actions/cache/restore@v5
+        uses: actions/cache/restore@v6
         with:
           path: ~/.bun/install/cache
           key: bun-${{ runner.os }}-${{ hashFiles('bun.lock') }}
