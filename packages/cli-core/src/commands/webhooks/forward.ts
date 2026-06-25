@@ -21,7 +21,9 @@ export function parseHeaderPairs(value: string | undefined): Record<string, stri
     const colonIndex = trimmed.indexOf(":");
     const key = colonIndex === -1 ? "" : trimmed.slice(0, colonIndex).trim();
     if (!key) {
-      throwUsageError(`Invalid --headers pair "${trimmed}". Expected key:value.`);
+      throwUsageError(
+        `Invalid --headers pair "${trimmed}". Expected key:value. Commas separate pairs and can't appear in values — use multiple --headers flags instead.`,
+      );
     }
     headers[key] = trimmed.slice(colonIndex + 1).trim();
   }

@@ -72,11 +72,14 @@ function event(body: string, overrides: Partial<RelayEventFrame> = {}): RelayEve
 }
 
 /** listen never resolves; run it and wait until the ready output lands. */
+const FWD = "http://localhost:3000/api/webhooks";
+
 async function startListen(
   options: Parameters<typeof webhooksListen>[0],
   captured: { out: string; err: string },
 ): Promise<void> {
-  const run = webhooksListen(options);
+  // --forward-to is required; default it so individual tests opt in to overrides.
+  const run = webhooksListen({ forwardTo: FWD, ...options });
   run.catch(() => {});
   for (let i = 0; i < 50; i++) {
     await new Promise((resolve) => setTimeout(resolve, 0));
@@ -168,7 +171,7 @@ describe("webhooks listen (V1, relay-only)", () => {
     expect(captured.err).not.toContain("auto-generated relay token");
   });
 
-  test("emits the NDJSON ready line in agent mode (endpoint_id and events_filter are null)", async () => {
+  test("emits a lean NDJSON ready line in agent mode", async () => {
     mockIsAgent.mockReturnValue(true);
     mockGetRelayEntry.mockResolvedValue({ token: "c_Stable9999" });
 
@@ -178,11 +181,10 @@ describe("webhooks listen (V1, relay-only)", () => {
     expect(ready).toEqual({
       type: "ready",
       relay_url: "https://play.svix.com/in/c_Stable9999/",
-      endpoint_id: null,
-      events_filter: null,
       forward_to: "http://localhost:3000/api/webhooks",
     });
     expect(ready).not.toHaveProperty("signing_secret");
+    expect(ready).not.toHaveProperty("endpoint_id");
   });
 
   test("registers its own SIGINT handler before the socket opens", async () => {
@@ -192,27 +194,23 @@ describe("webhooks listen (V1, relay-only)", () => {
     expect(lastClient()?.started).toBe(true);
   });
 
-  test("delivery without --forward-to replies a synthetic 200 and emits forward_status null", async () => {
-    mockIsAgent.mockReturnValue(true);
+  test("missing --forward-to is a usage error before any persistence", async () => {
+    await expect(webhooksListen({})).rejects.toMatchObject({ code: ERROR_CODE.USAGE_ERROR });
+    expect(mockGetRelayEntry).not.toHaveBeenCalled();
+  });
 
-    await startListen({}, captured);
-    captured.clear();
+  test.each(["not-a-url", "", "ftp://example.com"])(
+    "invalid --forward-to %p is a usage error",
+    async (bad) => {
+      await expect(webhooksListen({ forwardTo: bad })).rejects.toMatchObject({
+        code: ERROR_CODE.USAGE_ERROR,
+      });
+    },
+  );
 
-    const replies: string[] = [];
-    lastClient()!.options.onEvent(event('{"type":"user.created"}'), (frame) => replies.push(frame));
-    await new Promise((resolve) => setTimeout(resolve, 0));
-
-    expect(JSON.parse(replies[0]!)).toEqual({
-      type: "event",
-      version: 1,
-      data: { id: "frame_1", status: 200, headers: {}, body: "" },
-    });
-
-    const line = JSON.parse(captured.out) as Record<string, unknown>;
-    expect(line.type).toBe("event");
-    expect(line.svix_id).toBe("msg_1");
-    expect(line.event_type).toBe("user.created");
-    expect(line.forward_status).toBeNull();
+  test("svix-* in --headers warns at startup that it can't be overridden", async () => {
+    await startListen({ headers: "svix-id:forged" }, captured);
+    expect(captured.err).toContain("can't be overridden");
   });
 
   test("delivery with --forward-to POSTs to the handler and frames the response back", async () => {
@@ -252,15 +250,18 @@ describe("webhooks listen (V1, relay-only)", () => {
     expect(line.forward_status).toBe(201);
   });
 
-  test("forwards without verifying — an unsigned/forged signature produces no warning", async () => {
+  test("forwards without verifying — a forged signature produces no warning", async () => {
     mockIsAgent.mockReturnValue(true);
+    stubFetch(async () => new Response("ok", { status: 200 }));
 
     await startListen({}, captured);
     captured.clear();
 
     // Signature is intentionally bogus; V1 has no signing secret, so no verify.
     lastClient()!.options.onEvent(event('{"type":"user.created"}'), () => {});
-    await new Promise((resolve) => setTimeout(resolve, 0));
+    for (let i = 0; i < 20 && !captured.out.includes('"type":"event"'); i++) {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    }
 
     expect(captured.err).not.toContain("verification");
     expect(captured.out).toContain('"type":"event"');
@@ -288,12 +289,22 @@ describe("webhooks listen (V1, relay-only)", () => {
     }
   });
 
-  test("onReconnect logs a reconnecting message to stderr", async () => {
+  test("onReconnect logs a reconnecting message to stderr (human mode)", async () => {
     await startListen({}, captured);
     captured.clear();
 
     lastClient()!.options.onReconnect();
 
     expect(captured.err).toContain("reconnect");
+  });
+
+  test("onReconnect emits a structured NDJSON line in agent mode", async () => {
+    mockIsAgent.mockReturnValue(true);
+    await startListen({}, captured);
+    captured.clear();
+
+    lastClient()!.options.onReconnect();
+
+    expect(JSON.parse(captured.out.trim())).toEqual({ type: "reconnecting" });
   });
 });

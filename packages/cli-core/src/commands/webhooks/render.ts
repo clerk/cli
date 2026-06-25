@@ -22,8 +22,6 @@ export function buildReadyLine(info: ReadyInfo): string {
   return JSON.stringify({
     type: "ready",
     relay_url: info.relayUrl,
-    endpoint_id: info.endpointId,
-    events_filter: info.eventsFilter,
     forward_to: info.forwardTo,
   });
 }
@@ -57,11 +55,10 @@ export function renderReadyBanner(info: ReadyInfo): void {
     log.ui(
       [
         "",
-        `${bold("Webhook relay ready")} ${dim("(relay-only — no Clerk endpoint registered)")}`,
+        `${bold("Webhook relay ready")}`,
         `  Relay URL:       ${info.relayUrl}`,
         `  Forwarding to:   ${forwarding}`,
-        `  Events:          ${events}`,
-        `  Verification:    ${dim("off (no signing secret in relay-only mode)")}`,
+        `  Verification:    ${dim("off (no signing secret; verify with your Dashboard endpoint secret)")}`,
         "",
         `  ${dim("Add this URL as an endpoint in the Clerk Dashboard to receive real events:")}`,
         `    ${cyan("https://dashboard.clerk.com/last-active?path=webhooks")}`,
@@ -120,14 +117,6 @@ export function renderForwardResult(outcome: ForwardOutcome, method: string, pat
   const color = outcome.status >= 500 ? red : outcome.status >= 400 ? yellow : green;
   log.ui(
     `${dim(timeOfDay())} ${color(`<-- ${outcome.status}`)} ${method} ${path} ${dim(`${outcome.latencyMs}ms`)}\n`,
-  );
-}
-
-export function renderVerificationWarning(svixId: string): void {
-  log.ui(
-    yellow(
-      `  ! signature verification failed for ${svixId} — the relay secret does not match this delivery. Forwarding anyway; pass --skip-verify to silence.\n`,
-    ),
   );
 }
 

@@ -63,8 +63,9 @@ the forwarded request, so your handler can still verify against the signing secr
 of the dashboard endpoint you point at the inbox URL.
 
 **Ready line schema (`--json`):**
-`{ "type": "ready", "relay_url", "endpoint_id": null, "events_filter": null, "forward_to" }`
-— `endpoint_id`/`events_filter` are always `null` in V1 (no registered endpoint).
+`{ "type": "ready", "relay_url", "forward_to" }` — emitted once, then one
+`event` line per delivery (and a `{ "type": "reconnecting" }` line if the relay
+connection drops).
 
 ## `clerk webhooks verify`
 

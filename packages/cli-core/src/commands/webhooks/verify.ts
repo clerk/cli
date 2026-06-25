@@ -26,6 +26,11 @@ export function decodeWebhookSecret(secret: string): Buffer | null {
   if (!encoded) return null;
   const key = Buffer.from(encoded, "base64");
   if (key.length === 0) return null;
+  // Buffer.from silently strips non-base64 chars and truncates unpadded input,
+  // so a garbled secret would decode to wrong key material. Round-trip to reject
+  // anything that isn't clean base64 (ignoring `=` padding differences).
+  const stripPad = (s: string) => s.replace(/=+$/, "");
+  if (stripPad(key.toString("base64")) !== stripPad(encoded)) return null;
   return key;
 }
 
@@ -103,11 +108,13 @@ async function readFileOrStdin(value: string, flag: string): Promise<string> {
   }
   if (value.startsWith("@")) {
     const path = value.slice(1);
-    const file = Bun.file(path);
-    if (!(await file.exists())) {
+    // Read directly rather than pre-checking exists(): Bun's stat-based exists()
+    // reports false for readable character devices like /dev/null.
+    try {
+      return await Bun.file(path).text();
+    } catch {
       throw new CliError(`File not found: ${path}`, { code: ERROR_CODE.FILE_NOT_FOUND });
     }
-    return await file.text();
   }
   return throwUsageError(
     `${flag} takes @file or - for stdin (inline values get mangled by shells).`,
@@ -128,10 +135,29 @@ export async function webhooksVerify(options: WebhooksVerifyOptions = {}): Promi
     throwUsageError("Invalid --secret. Expected a whsec_-prefixed base64 signing secret.");
   }
 
+  // Both read stdin, which can only be consumed once.
+  if (options.delivery === "-" && options.payload === "-") {
+    throwUsageError(
+      "Cannot use --delivery - and --payload - together: both read stdin, which can only be consumed once. Use --delivery - alone (its body_b64 provides the payload).",
+    );
+  }
+
   let fields: DeliveryFields = {};
   if (options.delivery) {
     const raw = await readFileOrStdin(options.delivery, "--delivery");
-    const firstLine = raw.split("\n").find((line) => line.trim());
+    // Accept the full `listen --json` stream: skip the `ready` line (and any
+    // other non-event JSON) and use the first event line. Non-NDJSON input
+    // falls through to the first non-empty line so error paths still fire.
+    const lines = raw.split("\n").filter((line) => line.trim());
+    const firstLine =
+      lines.find((line) => {
+        try {
+          const parsed = JSON.parse(line.trim()) as { type?: unknown };
+          return parsed !== null && typeof parsed === "object" && parsed.type !== "ready";
+        } catch {
+          return true;
+        }
+      }) ?? lines[0];
     if (!firstLine) {
       throwUsageError("--delivery input is empty. Expected one `listen` event NDJSON line.");
     }
@@ -180,9 +206,26 @@ export async function webhooksVerify(options: WebhooksVerifyOptions = {}): Promi
 
   if (!valid) {
     let message = "Signature verification failed: no signature entry matched.";
+    // Only hint at clock skew when at least one entry was a structurally
+    // plausible v1 HMAC-SHA256 (32 bytes) — otherwise the failure is a malformed
+    // signature, not a timestamp problem, and a skew note would mislead.
+    const HMAC_SHA256_BYTES = 32;
+    const hasStructuralCandidate = signature!
+      .split(/\s+/)
+      .filter(Boolean)
+      .some((entry) => {
+        const comma = entry.indexOf(",");
+        if (comma === -1 || entry.slice(0, comma) !== "v1") return false;
+        return Buffer.from(entry.slice(comma + 1), "base64").length === HMAC_SHA256_BYTES;
+      });
     const deltaSeconds = Math.floor(Date.now() / 1000) - Number(timestamp);
-    if (Math.abs(deltaSeconds) > SKEW_HINT_THRESHOLD_SECONDS) {
+    if (hasStructuralCandidate && Math.abs(deltaSeconds) > SKEW_HINT_THRESHOLD_SECONDS) {
       message += ` Note: the timestamp is ${humanizeSkew(deltaSeconds)} — make sure it is the raw svix-timestamp header from the same delivery as the signature.`;
+    }
+    // Trailing-newline footgun: `echo` adds one, but the HMAC is byte-exact.
+    if (options.payload !== undefined && typeof payload === "string" && payload.endsWith("\n")) {
+      message +=
+        " Note: the --payload file ends with a trailing newline; the HMAC is byte-exact. Write the raw body with no trailing newline (use printf, not echo), or use --delivery from a captured listen event.";
     }
     throw new CliError(message, { code: ERROR_CODE.INVALID_WEBHOOK_SIGNATURE });
   }

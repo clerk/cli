@@ -9,7 +9,6 @@ import {
   renderForwardResult,
   renderReadyBanner,
   renderUnpinnedTokenHint,
-  renderVerificationWarning,
 } from "./render.ts";
 
 function outcome(overrides: Partial<ForwardOutcome> = {}): ForwardOutcome {
@@ -39,13 +38,12 @@ describe("buildReadyLine", () => {
     expect(parsed).toEqual({
       type: "ready",
       relay_url: "https://play.svix.com/in/Ab12Cd34Ef/",
-      endpoint_id: "ep_1",
-      events_filter: ["user.created"],
       forward_to: "http://localhost:3000/api/webhooks",
     });
-    // signing_secret must be absent from the machine-readable line — it is
-    // pipeable/loggable and should never be emitted to stdout.
+    // signing_secret/endpoint_id/events_filter are not part of the V1 contract —
+    // the relay tunnel registers no endpoint and has no secret.
     expect(parsed).not.toHaveProperty("signing_secret");
+    expect(parsed).not.toHaveProperty("endpoint_id");
   });
 
   test("includes forward_to as null when not forwarding", () => {
@@ -130,12 +128,6 @@ describe("human rendering", () => {
     const plain = Bun.stripANSI(captured.err);
     expect(plain).toMatch(/\d{2}:\d{2}:\d{2} --> user\.created msg_1\n/);
     expect(plain).toMatch(/\d{2}:\d{2}:\d{2} <-- 200 POST \/api\/webhooks 12ms\n/);
-  });
-
-  test("verification warning names the delivery", () => {
-    renderVerificationWarning("msg_1");
-
-    expect(captured.err).toContain("signature verification failed for msg_1");
   });
 
   test("unpinned-token hint shows the current token and how to pin it", () => {
