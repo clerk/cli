@@ -1,5 +1,6 @@
 import type { Program } from "../../cli-program.ts";
 import { webhooksListen } from "./listen.ts";
+import { webhooksToken } from "./token.ts";
 import { webhooksVerify } from "./verify.ts";
 
 /**
@@ -10,7 +11,37 @@ import { webhooksVerify } from "./verify.ts";
 export function registerWebhooks(program: Program): void {
   const webhooks = program
     .command("webhooks")
-    .description("Stream webhook events to a local handler and verify their signatures");
+    .description("Stream webhook events to a local handler and verify their signatures")
+    .setExamples([
+      {
+        command: "clerk webhooks token",
+        description: "1. Generate a stable relay token",
+      },
+      {
+        command:
+          'clerk webhooks listen --token "$(clerk webhooks token)" --forward-to http://localhost:3000/api/webhooks',
+        description: "2. Stream events to a local handler on a pinned URL",
+      },
+      {
+        command: "clerk webhooks verify --secret whsec_... --delivery @event.json",
+        description: "3. Verify a delivery's signature offline",
+      },
+    ]);
+
+  webhooks
+    .command("token")
+    .description("Generate a relay token (c_ + 10 base62 chars) for `listen --token`")
+    .option("--json", 'Output as JSON ({ "token": "c_..." })')
+    .setExamples([
+      { command: "clerk webhooks token", description: "Print a fresh relay token" },
+      {
+        command: 'clerk webhooks listen --token "$(clerk webhooks token)"',
+        description: "Generate and pin a token in one step",
+      },
+    ])
+    .action((_opts, cmd) =>
+      webhooksToken(cmd.optsWithGlobals() as Parameters<typeof webhooksToken>[0]),
+    );
 
   webhooks
     .command("listen")
