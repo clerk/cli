@@ -1,5 +1,11 @@
 import { resolveAppContext } from "../../lib/config.ts";
-import { AuthError, CliError, ERROR_CODE, throwUsageError } from "../../lib/errors.ts";
+import {
+  AuthError,
+  CliError,
+  ERROR_CODE,
+  throwUsageError,
+  withApiContext,
+} from "../../lib/errors.ts";
 import { log } from "../../lib/log.ts";
 import {
   createWebhookEndpoint,
@@ -41,7 +47,10 @@ export async function webhooksCreate(options: WebhooksCreateOptions = {}): Promi
   const params = buildCreateParams(options);
   const ctx = await resolveAppContext(options);
 
-  const endpoint = await createWebhookEndpoint(ctx.appId, ctx.instanceId, params);
+  const endpoint = await withApiContext(
+    createWebhookEndpoint(ctx.appId, ctx.instanceId, params),
+    "Failed to create webhook endpoint",
+  );
 
   let secret: string;
   try {

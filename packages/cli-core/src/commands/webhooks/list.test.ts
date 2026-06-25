@@ -1,4 +1,5 @@
 import { test, expect, describe, beforeEach, afterEach, mock } from "bun:test";
+import { PlapiError } from "../../lib/errors.ts";
 import { useCaptureLog } from "../../test/lib/stubs.ts";
 
 const mockListWebhookEndpoints = mock();
@@ -159,5 +160,26 @@ describe("webhooks list", () => {
 
     expect(JSON.parse(captured.out)).toEqual(listResponse());
     expect(captured.err).toBe("");
+  });
+
+  test("resolves to an empty list when the instance has no Svix app yet (svix_app_missing)", async () => {
+    mockListWebhookEndpoints.mockRejectedValue(
+      new PlapiError(
+        400,
+        JSON.stringify({
+          errors: [
+            {
+              code: "svix_app_missing",
+              message: "No Svix apps are associated with the current instance.",
+            },
+          ],
+        }),
+      ),
+    );
+
+    await webhooksList();
+
+    expect(captured.out).toBe("");
+    expect(captured.err).toContain("No webhook endpoints found.");
   });
 });

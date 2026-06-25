@@ -1,4 +1,5 @@
 import { resolveAppContext } from "../../lib/config.ts";
+import { withApiContext } from "../../lib/errors.ts";
 import { log } from "../../lib/log.ts";
 import { deleteWebhookEndpoint } from "../../lib/plapi.ts";
 import {
@@ -23,7 +24,10 @@ export async function webhooksDelete(options: WebhooksDeleteOptions): Promise<vo
   const ctx = await resolveAppContext(options);
 
   await rejectEndpointNotFound(
-    deleteWebhookEndpoint(ctx.appId, ctx.instanceId, options.endpointId),
+    withApiContext(
+      deleteWebhookEndpoint(ctx.appId, ctx.instanceId, options.endpointId),
+      "Failed to delete webhook endpoint",
+    ),
     options.endpointId,
   );
 

@@ -338,7 +338,7 @@ export type WebhookEndpoint = {
   id: string;
   url: string;
   version: number;
-  description?: string;
+  description?: string | null;
   disabled: boolean;
   filter_types?: string[] | null;
   channels?: string[] | null;
@@ -359,7 +359,7 @@ export type WebhookEndpointList = {
 
 export type WebhookEventType = {
   name: string;
-  description?: string;
+  description: string;
   archived: boolean;
   created_at: string;
   updated_at: string;
@@ -505,11 +505,13 @@ export async function listWebhookEventTypes(
   return response.json() as Promise<WebhookEventTypeList>;
 }
 
+export type WebhookMessageListParams = WebhookPageParams & { status?: WebhookMessageStatus };
+
 export async function listWebhookMessages(
   applicationId: string,
   instanceId: string,
   endpointId: string,
-  params?: WebhookPageParams & { status?: WebhookMessageStatus },
+  params?: WebhookMessageListParams,
 ): Promise<WebhookMessageList> {
   const url = webhooksUrl(applicationId, instanceId, `/${endpointId}/messages`);
   appendPageParams(url, params);
@@ -534,12 +536,11 @@ export async function recoverWebhookMessages(
   applicationId: string,
   instanceId: string,
   endpointId: string,
-  window: { since: string; until?: string },
+  timeWindow: { since: string; until?: string },
 ): Promise<void> {
   const url = webhooksUrl(applicationId, instanceId, `/${endpointId}/recover`);
-  const body: { since: string; until?: string } = { since: window.since };
-  if (window.until) body.until = window.until;
-  await plapiFetch("POST", url, { body: JSON.stringify(body) });
+  // JSON.stringify already omits an absent `until`, so the window is the wire body as-is.
+  await plapiFetch("POST", url, { body: JSON.stringify(timeWindow) });
 }
 
 export async function sendWebhookExample(
@@ -557,6 +558,7 @@ export async function getWebhookPortalUrl(
   instanceId: string,
 ): Promise<{ url: string }> {
   const url = webhooksUrl(applicationId, instanceId, "/url");
+  // PLAPI /webhooks/url requires Content-Type: application/json; the body is intentionally empty.
   const response = await plapiFetch("POST", url, { body: JSON.stringify({}) });
   return response.json() as Promise<{ url: string }>;
 }

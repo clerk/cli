@@ -744,11 +744,13 @@ describe("plapi webhooks", () => {
     expect(url.searchParams.has("iterator")).toBe(false);
   });
 
-  test("list functions omit pagination params when not provided", async () => {
-    await listWebhookEndpoints("app_1", "ins_1");
-
-    const url = captured[0]!.url;
-    expect(url.search).toBe("");
+  test.each([
+    { name: "listWebhookEndpoints", call: () => listWebhookEndpoints("app_1", "ins_1") },
+    { name: "listWebhookEventTypes", call: () => listWebhookEventTypes("app_1", "ins_1") },
+    { name: "listWebhookMessages", call: () => listWebhookMessages("app_1", "ins_1", "ep_1") },
+  ])("$name omits pagination params when not provided", async ({ call }) => {
+    await call();
+    expect(captured[0]!.url.search).toBe("");
   });
 
   test("listWebhookMessages forwards the status filter", async () => {

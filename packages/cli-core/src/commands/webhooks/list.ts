@@ -1,6 +1,6 @@
 import { cyan, dim } from "../../lib/color.ts";
 import { resolveAppContext } from "../../lib/config.ts";
-import { withApiContext } from "../../lib/errors.ts";
+import { PlapiError, withApiContext } from "../../lib/errors.ts";
 import { log } from "../../lib/log.ts";
 import { listWebhookEndpoints, type WebhookEndpoint } from "../../lib/plapi.ts";
 import {
@@ -50,7 +50,15 @@ export async function webhooksList(options: WebhooksListOptions = {}): Promise<v
       iterator: options.iterator,
     }),
     "Failed to list webhook endpoints",
-  );
+  ).catch((error) => {
+    if (error instanceof PlapiError && error.status === 400 && error.code === "svix_app_missing") {
+      return {
+        data: [] as WebhookEndpoint[],
+        cursor: { starting_after: null, ending_before: null, has_next_page: false },
+      };
+    }
+    throw error;
+  });
 
   if (shouldOutputJson(options)) {
     printJson(response);

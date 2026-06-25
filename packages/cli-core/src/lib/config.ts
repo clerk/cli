@@ -4,7 +4,7 @@
  */
 
 import { dirname, join } from "node:path";
-import { mkdir } from "node:fs/promises";
+import { chmod, mkdir, writeFile } from "node:fs/promises";
 import { CONFIG_FILE } from "./constants.ts";
 import { getCurrentEnvName } from "./environment.ts";
 import { getGitRepoIdentifier, getGitNormalizedRemote } from "./git.ts";
@@ -113,8 +113,9 @@ export async function writeConfig(config: ClerkConfig): Promise<void> {
   await withHomeFsAccess(
     { operation: "write", target: path, label: "CLI config directory" },
     async () => {
-      await mkdir(dirname(path), { recursive: true });
-      await Bun.write(path, JSON.stringify(config, null, 2) + "\n");
+      await mkdir(dirname(path), { recursive: true, mode: 0o700 });
+      await writeFile(path, JSON.stringify(config, null, 2) + "\n", { mode: 0o600 });
+      await chmod(path, 0o600); // reset perms in case the file pre-existed with looser mode
     },
   );
 }

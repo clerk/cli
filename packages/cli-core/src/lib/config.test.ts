@@ -1,6 +1,6 @@
 import { test, expect, describe, beforeEach, afterEach, spyOn } from "bun:test";
 import { join } from "node:path";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 
 const {
@@ -60,6 +60,15 @@ describe("config", () => {
     const result = await readConfig();
     expect(result.auth).toEqual(config.auth);
     expect(result.profiles).toEqual(config.profiles);
+  });
+
+  test("writeConfig creates config file with mode 0600 and directory with mode 0700", async () => {
+    await writeConfig({ profiles: {} });
+    const configPath = join(tempDir, "config.json");
+    const fileStats = await stat(configPath);
+    const dirStats = await stat(tempDir);
+    expect(fileStats.mode & 0o777).toBe(0o600);
+    expect(dirStats.mode & 0o777).toBe(0o700);
   });
 
   test("readConfig migrates legacy auth format", async () => {

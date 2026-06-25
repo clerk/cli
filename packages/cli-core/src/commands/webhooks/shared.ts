@@ -3,6 +3,7 @@ import { getRelayEntry } from "../../lib/config.ts";
 import {
   CliError,
   ERROR_CODE,
+  type ErrorCode,
   PlapiError,
   throwUsageError,
   throwUserAbort,
@@ -35,36 +36,35 @@ export function printIteratorHint(cursor: WebhookCursor): void {
   }
 }
 
-/** Map a PLAPI 404 on an endpoint-addressed route to a typed CLI error. */
-export async function rejectEndpointNotFound<T>(
+/** Map a PLAPI 404 on a resource-addressed route to a typed CLI error. */
+async function rejectNotFound<T>(
   promise: Promise<T>,
-  endpointId: string,
+  id: string,
+  resourceLabel: string,
+  code: ErrorCode,
 ): Promise<T> {
   try {
     return await promise;
   } catch (error) {
     if (error instanceof PlapiError && error.status === 404) {
-      throw new CliError(`No webhook endpoint with ID ${endpointId} was found.`, {
-        code: ERROR_CODE.WEBHOOK_ENDPOINT_NOT_FOUND,
-      });
+      throw new CliError(`No ${resourceLabel} with ID ${id} was found.`, { code });
+    }
+    if (error instanceof PlapiError && error.status === 400 && error.code === "svix_app_missing") {
+      throw new CliError(
+        "No webhooks have been configured for this instance yet. Run `clerk webhooks create` to set up your first endpoint.",
+      );
     }
     throw error;
   }
 }
 
+/** Map a PLAPI 404 on an endpoint-addressed route to a typed CLI error. */
+export const rejectEndpointNotFound = <T>(promise: Promise<T>, endpointId: string): Promise<T> =>
+  rejectNotFound(promise, endpointId, "webhook endpoint", ERROR_CODE.WEBHOOK_ENDPOINT_NOT_FOUND);
+
 /** Map a PLAPI 404 on a message-addressed route to a typed CLI error. */
-export async function rejectMessageNotFound<T>(promise: Promise<T>, messageId: string): Promise<T> {
-  try {
-    return await promise;
-  } catch (error) {
-    if (error instanceof PlapiError && error.status === 404) {
-      throw new CliError(`No webhook message with ID ${messageId} was found.`, {
-        code: ERROR_CODE.WEBHOOK_MESSAGE_NOT_FOUND,
-      });
-    }
-    throw error;
-  }
-}
+export const rejectMessageNotFound = <T>(promise: Promise<T>, messageId: string): Promise<T> =>
+  rejectNotFound(promise, messageId, "webhook message", ERROR_CODE.WEBHOOK_MESSAGE_NOT_FOUND);
 
 /**
  * Destructive-command gate: prompt in human mode, require `--yes` in agent

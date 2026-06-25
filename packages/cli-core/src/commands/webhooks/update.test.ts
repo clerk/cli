@@ -105,14 +105,20 @@ describe("webhooks update", () => {
     expect(mockUpdateWebhookEndpoint).not.toHaveBeenCalled();
   });
 
-  test.each([
-    { label: "--events", options: { events: "" } },
-    { label: "--channels", options: { channels: " , " } },
-  ])("an empty $label value does not bypass the no-flags guard", async ({ options }) => {
-    await expect(webhooksUpdate({ endpointId: "ep_1", ...options })).rejects.toMatchObject({
-      code: ERROR_CODE.USAGE_ERROR,
+  test('--events "" clears filter_types (sends filter_types: [])', async () => {
+    await webhooksUpdate({ endpointId: "ep_1", events: "" });
+
+    expect(mockUpdateWebhookEndpoint).toHaveBeenCalledWith("app_1", "ins_1", "ep_1", {
+      filter_types: [],
     });
-    expect(mockUpdateWebhookEndpoint).not.toHaveBeenCalled();
+  });
+
+  test('--channels "" clears channels (sends channels: [])', async () => {
+    await webhooksUpdate({ endpointId: "ep_1", channels: "" });
+
+    expect(mockUpdateWebhookEndpoint).toHaveBeenCalledWith("app_1", "ins_1", "ep_1", {
+      channels: [],
+    });
   });
 
   test("prints the updated endpoint in human mode", async () => {

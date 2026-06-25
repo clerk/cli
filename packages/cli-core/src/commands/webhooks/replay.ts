@@ -1,5 +1,5 @@
 import { resolveAppContext } from "../../lib/config.ts";
-import { throwUsageError } from "../../lib/errors.ts";
+import { throwUsageError, withApiContext } from "../../lib/errors.ts";
 import { log } from "../../lib/log.ts";
 import { recoverWebhookMessages, resendWebhookMessage } from "../../lib/plapi.ts";
 import {
@@ -19,8 +19,10 @@ export interface WebhooksReplayOptions extends WebhooksGlobalOptions {
 }
 
 function assertRfc3339(value: string, flag: string): void {
-  if (Number.isNaN(Date.parse(value))) {
-    throwUsageError(`Invalid ${flag} value "${value}". Must be an RFC 3339 timestamp.`);
+  if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?(Z|[+-]\d{2}:\d{2})$/.test(value)) {
+    throwUsageError(
+      `Invalid ${flag} value "${value}". Must be an RFC 3339 timestamp (e.g. 2024-01-01T00:00:00Z).`,
+    );
   }
 }
 
@@ -47,7 +49,7 @@ function validateReplayMode(options: WebhooksReplayOptions): "resend" | "recover
   return "resend";
 }
 
-export async function webhooksReplay(options: WebhooksReplayOptions = {}): Promise<void> {
+export async function webhooksReplay(options: WebhooksReplayOptions): Promise<void> {
   const mode = validateReplayMode(options);
 
   const windowLabel = options.until
@@ -68,7 +70,10 @@ export async function webhooksReplay(options: WebhooksReplayOptions = {}): Promi
   if (mode === "resend") {
     const endpointId = await resolveEndpointOrRelay(options.endpoint, ctx.instanceId);
     await rejectMessageNotFound(
-      resendWebhookMessage(ctx.appId, ctx.instanceId, endpointId, options.msgId!),
+      withApiContext(
+        resendWebhookMessage(ctx.appId, ctx.instanceId, endpointId, options.msgId!),
+        "Failed to resend webhook message",
+      ),
       options.msgId!,
     );
     log.success(`Queued replay of \`${options.msgId}\` to \`${endpointId}\``);
@@ -76,10 +81,13 @@ export async function webhooksReplay(options: WebhooksReplayOptions = {}): Promi
   }
 
   await rejectEndpointNotFound(
-    recoverWebhookMessages(ctx.appId, ctx.instanceId, options.endpoint!, {
-      since: options.since!,
-      until: options.until,
-    }),
+    withApiContext(
+      recoverWebhookMessages(ctx.appId, ctx.instanceId, options.endpoint!, {
+        since: options.since!,
+        until: options.until,
+      }),
+      "Failed to recover webhook messages",
+    ),
     options.endpoint!,
   );
   log.success(`Queued recovery of deliveries to \`${options.endpoint}\` ${windowLabel}`);

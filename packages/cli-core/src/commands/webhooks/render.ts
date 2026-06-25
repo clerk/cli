@@ -10,8 +10,9 @@ import type { ForwardOutcome } from "./forward.ts";
 
 export interface ReadyInfo {
   relayUrl: string;
-  signingSecret: string;
-  endpointId: string;
+  // null in relay-only mode: no registered endpoint, no signing secret.
+  signingSecret: string | null;
+  endpointId: string | null;
   eventsFilter: string[] | null;
   forwardTo: string | null;
 }
@@ -21,9 +22,9 @@ export function buildReadyLine(info: ReadyInfo): string {
   return JSON.stringify({
     type: "ready",
     relay_url: info.relayUrl,
-    signing_secret: info.signingSecret,
     endpoint_id: info.endpointId,
     events_filter: info.eventsFilter,
+    forward_to: info.forwardTo,
   });
 }
 
@@ -50,6 +51,29 @@ export function buildEventLine(args: {
 export function renderReadyBanner(info: ReadyInfo): void {
   const forwarding = info.forwardTo ?? dim("(not forwarding — printing events only)");
   const events = info.eventsFilter?.length ? info.eventsFilter.join(", ") : "all";
+
+  // relay-only: standalone Svix Play tunnel, no Clerk endpoint or secret.
+  if (info.endpointId === null) {
+    log.ui(
+      [
+        "",
+        `${bold("Webhook relay ready")} ${dim("(relay-only — no Clerk endpoint registered)")}`,
+        `  Relay URL:       ${info.relayUrl}`,
+        `  Forwarding to:   ${forwarding}`,
+        `  Events:          ${events}`,
+        `  Verification:    ${dim("off (no signing secret in relay-only mode)")}`,
+        "",
+        `  ${dim("POST any JSON to the Relay URL to inject a delivery, or register that URL")}`,
+        `  ${dim("as an endpoint in your Svix app to receive real instance events.")}`,
+        `  ${dim("This URL is stable across restarts (pin it with --token) — register it once.")}`,
+        `  ${dim("Press Ctrl+C to stop.")}`,
+        "",
+        "",
+      ].join("\n"),
+    );
+    return;
+  }
+
   log.ui(
     [
       "",

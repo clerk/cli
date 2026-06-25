@@ -71,6 +71,7 @@ export async function webhooksMessages(options: WebhooksMessagesOptions = {}): P
 
   if (response.data.length === 0) {
     log.warn(`No deliveries found for \`${endpointId}\`.`);
+    printIteratorHint(response.cursor);
     return;
   }
 

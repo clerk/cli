@@ -20,6 +20,8 @@ export interface RelayClientOptions {
   onReconnect: () => void;
   /** Test/env override for the relay WebSocket URL. */
   url?: string;
+  /** Override the first-connect deadline (ms). Default 30 000. Tests pass a small value. */
+  firstConnectTimeoutMs?: number;
 }
 
 /**
@@ -35,6 +37,8 @@ export class RelayClient {
   private probeTimer: ReturnType<typeof setInterval> | undefined;
   private lastActivityAt = Date.now();
   private resolveFirstOpen: (() => void) | undefined;
+  private rejectFirstOpen: ((err: Error) => void) | undefined;
+  private startTimeoutId: ReturnType<typeof setTimeout> | undefined;
 
   constructor(private readonly options: RelayClientOptions) {
     this.token = options.token;
@@ -42,9 +46,23 @@ export class RelayClient {
 
   /** Dial and resolve once the first connection is open and handshaken. */
   start(): Promise<void> {
-    const opened = new Promise<void>((resolve) => {
-      this.resolveFirstOpen = resolve;
+    const FIRST_CONNECT_TIMEOUT_MS = this.options.firstConnectTimeoutMs ?? 30_000;
+    const opened = new Promise<void>((resolve, reject) => {
+      this.rejectFirstOpen = reject;
+      this.resolveFirstOpen = () => {
+        clearTimeout(this.startTimeoutId);
+        this.startTimeoutId = undefined;
+        resolve();
+      };
     });
+    this.startTimeoutId = setTimeout(() => {
+      this.stopped = true;
+      this.clearProbe();
+      this.ws?.close();
+      this.rejectFirstOpen?.(
+        new Error("Cannot reach the Svix relay — check your network and try again."),
+      );
+    }, FIRST_CONNECT_TIMEOUT_MS);
     this.connect();
     return opened;
   }
@@ -69,12 +87,13 @@ export class RelayClient {
         ws.close(1000);
         return;
       }
-      log.debug(`relay: connected, sending start frame (token=${this.token})`);
+      log.debug(`relay: connected, sending start frame (token=${this.token.slice(0, 2)}***)`);
       ws.send(encodeStartFrame(this.token));
       this.lastActivityAt = Date.now();
       this.startProbe(ws);
       this.resolveFirstOpen?.();
       this.resolveFirstOpen = undefined;
+      this.rejectFirstOpen = undefined;
     };
 
     ws.onmessage = (message) => {
@@ -127,6 +146,7 @@ export class RelayClient {
       if (Date.now() - this.lastActivityAt < RELAY_SILENCE_TIMEOUT_MS) return;
       try {
         ws.ping();
+        this.lastActivityAt = Date.now();
       } catch {
         ws.close();
       }

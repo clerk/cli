@@ -1,4 +1,5 @@
 import { test, expect, describe, beforeEach, afterEach, mock } from "bun:test";
+import { CliError, PlapiError } from "../../lib/errors.ts";
 import { useCaptureLog } from "../../test/lib/stubs.ts";
 
 const mockGetWebhookPortalUrl = mock();
@@ -82,6 +83,27 @@ describe("webhooks open", () => {
     await webhooksOpen();
 
     expect(JSON.parse(captured.out)).toEqual({ url: PORTAL_URL });
+    expect(mockOpenBrowser).not.toHaveBeenCalled();
+  });
+
+  test("throws a friendly CliError when no Svix app exists yet (svix_app_missing)", async () => {
+    mockGetWebhookPortalUrl.mockRejectedValue(
+      new PlapiError(
+        400,
+        JSON.stringify({
+          errors: [
+            {
+              code: "svix_app_missing",
+              message: "No Svix apps are associated with the current instance.",
+            },
+          ],
+        }),
+      ),
+    );
+
+    const error = await webhooksOpen().catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(CliError);
+    expect((error as CliError).message).toContain("No webhooks configured yet");
     expect(mockOpenBrowser).not.toHaveBeenCalled();
   });
 });

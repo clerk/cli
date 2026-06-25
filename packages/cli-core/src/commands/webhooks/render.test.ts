@@ -34,13 +34,32 @@ describe("buildReadyLine", () => {
     });
 
     expect(line).not.toContain("\n");
-    expect(JSON.parse(line)).toEqual({
+    const parsed = JSON.parse(line) as Record<string, unknown>;
+    expect(parsed).toEqual({
       type: "ready",
       relay_url: "https://play.svix.com/in/Ab12Cd34Ef/",
-      signing_secret: "whsec_abc",
       endpoint_id: "ep_1",
       events_filter: ["user.created"],
+      forward_to: "http://localhost:3000/api/webhooks",
     });
+    // signing_secret must be absent from the machine-readable line — it is
+    // pipeable/loggable and should never be emitted to stdout.
+    expect(parsed).not.toHaveProperty("signing_secret");
+  });
+
+  test("includes forward_to as null when not forwarding", () => {
+    const parsed = JSON.parse(
+      buildReadyLine({
+        relayUrl: "https://play.svix.com/in/Ab12Cd34Ef/",
+        signingSecret: "whsec_abc",
+        endpointId: "ep_1",
+        eventsFilter: null,
+        forwardTo: null,
+      }),
+    ) as Record<string, unknown>;
+
+    expect(parsed.forward_to).toBeNull();
+    expect(parsed).not.toHaveProperty("signing_secret");
   });
 });
 

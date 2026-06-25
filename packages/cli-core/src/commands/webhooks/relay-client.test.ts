@@ -273,4 +273,18 @@ describe("RelayClient", () => {
     ws.message("not json");
     expect(events).toHaveLength(0);
   });
+
+  test("start() rejects when the socket never opens within the first-connect timeout", async () => {
+    const harness = makeClient();
+    const started = harness.client.start();
+    // The fake setTimeout captures the start-timeout callback; fire it manually
+    // to simulate the deadline expiring before the socket ever opens.
+    expect(timeoutDelay).toBe(30_000); // default first-connect deadline
+    timeoutCallback?.();
+    await expect(started).rejects.toThrow("Cannot reach the Svix relay");
+    // The client must be stopped so no reconnect loop runs.
+    wsAt(0).fireClose(1006);
+    expect(harness.reconnects).toBe(0);
+    expect(FakeWebSocket.instances).toHaveLength(1);
+  });
 });

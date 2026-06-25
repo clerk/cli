@@ -83,6 +83,14 @@ describe("webhooks replay", () => {
       label: "invalid --until timestamp",
       options: { since: "2026-05-01T00:00:00Z", until: "nope", endpoint: "ep_1" },
     },
+    {
+      label: "bare-date --since timestamp (missing T and timezone)",
+      options: { since: "2024-01-01", endpoint: "ep_1" },
+    },
+    {
+      label: "missing-timezone --since timestamp",
+      options: { since: "2024-01-01T10:00:00", endpoint: "ep_1" },
+    },
   ])("$label is a usage error", async ({ options }) => {
     await expect(webhooksReplay(options)).rejects.toMatchObject({
       code: ERROR_CODE.USAGE_ERROR,

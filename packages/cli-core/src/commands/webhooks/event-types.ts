@@ -43,6 +43,7 @@ export async function webhooksEventTypes(options: WebhooksEventTypesOptions = {}
 
   if (response.data.length === 0) {
     log.warn("No event types found.");
+    printIteratorHint(response.cursor);
     return;
   }
 

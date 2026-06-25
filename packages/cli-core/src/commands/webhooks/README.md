@@ -18,7 +18,7 @@ Auth: every subcommand except `verify` is gated by a `preAction` hook calling `g
 
 Output contract: stdout carries bare domain JSON via `log.data()` (pipeable); stderr carries human UI and, in agent mode, structured error JSON `{"error":{code,message,docsUrl?}}`. No `{ok,data,error}` envelope. Exit codes: 0 success, 1 failure, 2 usage error, 130 SIGINT.
 
-Pagination: list-shaped commands fetch ONE page (`--limit` 1-250, default 100). When `cursor.has_next_page` is true, the next `--iterator` value is printed as a stderr hint. The `--iterator` flag value is sent on the wire as the `starting_after` query param.
+Pagination: list-shaped commands fetch ONE page (`--limit` 1-250, default 100). The `--limit` value is validated client-side — passing a value outside 1–250 is a usage error (exit 2). When `cursor.has_next_page` is true, the next `--iterator` value is printed as a stderr hint. The `--iterator` flag value is sent on the wire as the `starting_after` query param.
 
 All routes below are relative to `/v1/platform/applications/{applicationID}/instances/{envOrInsID}`.
 
@@ -37,6 +37,8 @@ clerk webhooks list [--limit N] [--iterator C]
 
 Human mode prints an `ID / URL / STATUS / EVENTS` table on stderr. JSON mode prints the full `{ data, cursor }` response on stdout.
 
+On a fresh instance where no webhooks have been configured yet, the command returns an empty list (`{ data: [], cursor: { ... } }`) rather than erroring. The backend's `svix_app_missing` 400 is caught and treated as an empty page.
+
 ### API endpoints
 
 | Method | Endpoint    | Description                        |
@@ -45,7 +47,7 @@ Human mode prints an `ID / URL / STATUS / EVENTS` table on stderr. JSON mode pri
 
 ## `clerk webhooks get <id>`
 
-Prints one endpoint's configuration. A PLAPI 404 maps to error code `webhook_endpoint_not_found`.
+Prints one endpoint's configuration. A PLAPI 404 maps to error code `webhook_endpoint_not_found`. On a fresh instance where no webhooks have been configured yet, the command exits 1 with the message: `No webhooks have been configured for this instance yet. Run \`clerk webhooks create\` to create one.`
 
 ```sh
 clerk webhooks get ep_2abc123
@@ -61,7 +63,7 @@ Human mode prints labeled detail rows on stderr. JSON mode prints the bare endpo
 
 ## `clerk webhooks event-types`
 
-Lists the Svix event-type catalog for the instance (`--limit`/`--iterator` as in `list`). Archived types are marked in human output.
+Lists the Svix event-type catalog for the instance (`--limit`/`--iterator` as in `list`). Archived types are marked in human output. On a fresh instance, returns an empty list rather than erroring (same `svix_app_missing` handling as `list`).
 
 ```sh
 clerk webhooks event-types [--limit N] [--iterator C]
@@ -75,7 +77,7 @@ clerk webhooks event-types [--limit N] [--iterator C]
 
 ## `clerk webhooks secret <id>`
 
-Prints the endpoint's current signing secret. With `--rotate`, rotates first (prompts in human mode; requires `--yes` in agent mode), then prints the new secret. After rotation Svix dual-signs with old+new keys for 24h — the `svix-signature` header carries multiple space-separated entries during the grace window.
+Prints the endpoint's current signing secret. With `--rotate`, rotates first (prompts in human mode; requires `--yes` in agent mode), then prints the new secret. After rotation Svix dual-signs with old+new keys for 24h — the `svix-signature` header carries multiple space-separated entries during the grace window. On a fresh instance, exits 1 with a friendly `No webhooks have been configured for this instance yet. Run \`clerk webhooks create\`…` error.
 
 ```sh
 clerk webhooks secret ep_2abc123 [--rotate [--yes]]
@@ -92,7 +94,7 @@ Output: human mode prints the **bare** `whsec_...` on stdout (eval-friendly: `ex
 
 ## `clerk webhooks delete <id>`
 
-Hard-deletes an endpoint (Svix delete is hard; no shadow table). Prompts in human mode; agent mode requires `--yes` or fails with a usage error (exit 2). Declining the prompt exits cleanly. Success prints a stderr confirmation; stdout stays empty (the route returns `200 {}`).
+Hard-deletes an endpoint (Svix delete is hard; no shadow table). Prompts in human mode; agent mode requires `--yes` or fails with a usage error (exit 2). Declining the prompt exits cleanly. Success prints a stderr confirmation; stdout stays empty (the route returns `200 {}`). On a fresh instance, exits 1 with a friendly `No webhooks have been configured for this instance yet. Run \`clerk webhooks create\`…` error.
 
 ```sh
 clerk webhooks delete ep_2abc123 [--yes]
@@ -106,10 +108,18 @@ clerk webhooks delete ep_2abc123 [--yes]
 
 ## `clerk webhooks update <id>`
 
-Patches endpoint fields. Only the flags you pass are sent; everything else is omitted from the PATCH body. `--enable` maps to `{disabled: false}`, `--disable` to `{disabled: true}` (mutually exclusive; `--disabled` exists only on `create`). Passing no update flags is a usage error.
+Patches endpoint fields. Only the flags you pass are sent; everything else is omitted from the PATCH body. `--enable` maps to `{disabled: false}`, `--disable` to `{disabled: true}` (mutually exclusive; `--disabled` exists only on `create`). Passing no update flags is a usage error. On a fresh instance, exits 1 with a friendly `No webhooks have been configured for this instance yet. Run \`clerk webhooks create\`…` error.
+
+**Filter clearing**: passing an empty value (`--events ""` or `--channels ""`) sends an empty array to the API, clearing all filters. Omitting the flag leaves the existing value unchanged.
 
 ```sh
 clerk webhooks update ep_2abc123 [--url ...] [--events a,b] [--description <text>] [--channels a,b] [--enable | --disable]
+
+# Clear all event-type filters:
+clerk webhooks update ep_2abc123 --events ""
+
+# Clear channels:
+clerk webhooks update ep_2abc123 --channels ""
 ```
 
 Human mode prints the updated endpoint's details on stderr. JSON mode prints the updated endpoint resource on stdout.
@@ -142,6 +152,8 @@ Partial failure: if `POST /webhooks` succeeds but the secret fetch fails, the co
 ## `clerk webhooks messages`
 
 Lists recent deliveries (msg IDs, event type, status, full payload) for an endpoint — the discovery feed for `replay <msg_id>`. `--endpoint` defaults to the instance's persisted relay endpoint; without either, it's a usage error.
+
+On a fresh instance (no webhooks configured yet): without `--endpoint`, returns an empty list rather than erroring (same `svix_app_missing` handling as `list`). With an explicit `--endpoint`, exits 1 with a friendly `No webhooks have been configured for this instance yet. Run \`clerk webhooks create\`…` error.
 
 ```sh
 clerk webhooks messages [--endpoint <ep_id>] [--status success|pending|fail|sending] [--limit N] [--iterator C]
@@ -234,15 +246,17 @@ None — pure offline computation.
 Dials the Svix relay (`wss://api.relay.svix.com/api/v1/listen/`), registers a **persistent** per-instance relay endpoint pointing at `https://play.svix.com/in/<token>/`, and forwards incoming deliveries to a local handler.
 
 ```sh
-clerk webhooks listen [--forward-to <url>] [--events <list>] [--skip-verify] [--headers k:v,...]
+clerk webhooks listen [--forward-to <url>] [--events <list>] [--skip-verify] [--relay-only] [--token <c_token>] [--headers k:v,...]
 ```
 
-| Option               | Description                                                                                                                                                                                    |
-| -------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `--forward-to <url>` | Local URL to POST deliveries to. Omitted: events are received, verified, and printed with `forward_status: null`.                                                                              |
-| `--events <list>`    | Sets `filter_types` on the relay endpoint. If the persisted endpoint has different filters it is PATCHed — with a warning, since other `listen` sessions share this instance's relay endpoint. |
-| `--skip-verify`      | Skip per-delivery HMAC verification.                                                                                                                                                           |
-| `--headers <pairs>`  | Comma-separated `k:v` extras on the forwarded POST (split on the FIRST colon). The delivery's `svix-*` headers always win.                                                                     |
+| Option               | Description                                                                                                                                                                                                |
+| -------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `--forward-to <url>` | Local URL to POST deliveries to. Omitted: events are received, verified, and printed with `forward_status: null`.                                                                                          |
+| `--events <list>`    | Sets `filter_types` on the relay endpoint. If the persisted endpoint has different filters it is PATCHed — with a warning, since other `listen` sessions share this instance's relay endpoint.             |
+| `--skip-verify`      | Skip per-delivery HMAC verification.                                                                                                                                                                       |
+| `--relay-only`       | Standalone tunnel: open the relay and forward **without** any Clerk backend, auth, or instance context. Skips endpoint registration and the signing-secret fetch (so verification is off). See note below. |
+| `--token <c_token>`  | Pin the relay token (only with `--relay-only`) so the inbox URL is fixed. Format: `c_` + 10 base62 chars. Without it, a token is generated once and persisted, so the URL is already stable across runs.   |
+| `--headers <pairs>`  | Comma-separated `k:v` extras on the forwarded POST (split on the FIRST colon). The delivery's `svix-*` headers always win.                                                                                 |
 
 Behavior notes:
 
@@ -251,10 +265,13 @@ Behavior notes:
 - **Per-delivery output**: human mode prints `time --> event_type msg_…` then `<-- status method path ms` via `log.ui` (bypasses the stderr throttle). Diagnostics: 401 → `clerkMiddleware` public-route hint; 400 → raw-body/`verifyWebhook()` order hint; 5xx → response body inline plus the exact `clerk webhooks replay <msg_id>` line; unreachable handler → synthetic **502** framed back to the relay.
 - **Verification**: deliveries failing HMAC are warned about and still forwarded (the mismatch means the relay secret diverged, not that the local handler should silently miss events).
 - **At-least-once**: forwarding is at-least-once, like any webhook stream. If the relay socket drops while a delivery is mid-forward, its response frame is sent on the closed socket and dropped, so Svix may redeliver it (and the new inbox URL after a 1008 rotation only appears in the next `ready` line on restart). Local handlers must key on `svix-id` and be idempotent.
-- **Agent/`--json` mode**: NDJSON on stdout. Every line carries a `type` discriminator: one `{ "type": "ready", ... }` line (`relay_url`, `signing_secret`, `endpoint_id`, `events_filter`), then one `{ "type": "event", ... }` line per delivery (`svix_id`, `event_type`, `headers`, `body_b64`, `forward_status`, `latency_ms`). An event line saved to a file is directly consumable by `verify --delivery @file`.
+- **Agent/`--json` mode**: NDJSON on stdout. Every line carries a `type` discriminator: one `{ "type": "ready", ... }` line (`relay_url`, `endpoint_id`, `events_filter`, `forward_to`), then one `{ "type": "event", ... }` line per delivery (`svix_id`, `event_type`, `headers`, `body_b64`, `forward_status`, `latency_ms`). An event line saved to a file is directly consumable by `verify --delivery @file`. The signing secret is **not** included in the ready line — agents that need it should fetch it on demand: `clerk webhooks secret <endpoint_id>` (the `endpoint_id` field is still present in the ready line for this purpose).
 - **SIGINT**: `listen` replaces the global cleanup-free handler before opening the socket: close socket, drain in-flight forwards, exit 130. The relay endpoint is **never** deleted on exit — its URL and `whsec_` stay stable across restarts. `listen` never exits 0.
+- **`--relay-only`**: a fully standalone tunnel. It dials the relay and forwards, but makes **zero** calls to the platform API: no `resolveAppContext`, no endpoint registration, no secret fetch. The group-level auth `preAction` is also skipped for this mode, so it needs no login and no linked project. Because there's no signing secret, per-delivery HMAC verification is forced off. The token **is** persisted (under the reserved config key `relay.__relay_only__.token`), so the inbox URL stays stable across runs — register it once in the dashboard and keep reusing it. `--token <c_token>` pins an explicit token (shareable / memorable); a 1008 collision rotates and re-persists. Deliveries arrive only if something points at the printed relay URL — either POST to it directly to inject a test delivery, or register that URL as an endpoint in your Svix app to receive real instance events. `--app`/`--instance` are ignored. The ready banner reads `Webhook relay ready (relay-only — no Clerk endpoint registered)` and the NDJSON `ready` line carries `endpoint_id: null`.
 
 ### API endpoints
+
+In the default mode `listen` calls the routes below. **`--relay-only` calls none of them** — it touches only the Svix relay WebSocket.
 
 | Method  | Endpoint                        | Description                                                |
 | ------- | ------------------------------- | ---------------------------------------------------------- |

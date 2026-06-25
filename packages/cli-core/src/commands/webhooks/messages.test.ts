@@ -136,6 +136,18 @@ describe("webhooks messages", () => {
     expect(captured.err).toContain("No deliveries found");
   });
 
+  test("prints iterator hint on empty-data page when more results exist", async () => {
+    mockListWebhookMessages.mockResolvedValue({
+      data: [],
+      cursor: { starting_after: "iter_next", ending_before: null, has_next_page: true },
+    });
+
+    await webhooksMessages({ endpoint: "ep_1" });
+
+    expect(captured.err).toContain("No deliveries found");
+    expect(captured.err).toContain("--iterator iter_next");
+  });
+
   test("hints at the next --iterator value when more pages exist", async () => {
     mockListWebhookMessages.mockResolvedValue(messagesResponse(true));
 

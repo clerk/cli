@@ -1,5 +1,5 @@
 import { resolveAppContext } from "../../lib/config.ts";
-import { CliError, ERROR_CODE } from "../../lib/errors.ts";
+import { CliError, ERROR_CODE, withApiContext } from "../../lib/errors.ts";
 import { log } from "../../lib/log.ts";
 import { listWebhookEventTypes, sendWebhookExample } from "../../lib/plapi.ts";
 import {
@@ -22,11 +22,19 @@ async function assertKnownEventType(
 ): Promise<void> {
   let iterator: string | undefined;
   do {
-    const page = await listWebhookEventTypes(appId, instanceId, {
-      limit: CATALOG_PAGE_LIMIT,
-      iterator,
-    });
+    const page = await withApiContext(
+      listWebhookEventTypes(appId, instanceId, {
+        limit: CATALOG_PAGE_LIMIT,
+        iterator,
+      }),
+      "Failed to list webhook event types",
+    );
     if (page.data.some((entry) => entry.name === eventType)) return;
+    if (page.cursor.has_next_page && !page.cursor.starting_after) {
+      throw new CliError(
+        "Server returned has_next_page=true with no pagination cursor; cannot verify event type.",
+      );
+    }
     iterator = page.cursor.has_next_page ? (page.cursor.starting_after ?? undefined) : undefined;
   } while (iterator);
 
@@ -48,7 +56,10 @@ export async function webhooksTrigger(options: WebhooksTriggerOptions): Promise<
   const endpointId = await resolveEndpointOrRelay(options.endpoint, ctx.instanceId);
 
   await rejectEndpointNotFound(
-    sendWebhookExample(ctx.appId, ctx.instanceId, endpointId, options.eventType),
+    withApiContext(
+      sendWebhookExample(ctx.appId, ctx.instanceId, endpointId, options.eventType),
+      "Failed to send webhook example",
+    ),
     endpointId,
   );
 

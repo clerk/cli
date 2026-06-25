@@ -125,6 +125,16 @@ describe("webhooks trigger", () => {
     expect(mockSendWebhookExample).toHaveBeenCalled();
   });
 
+  test("has_next_page=true with null cursor throws a CliError", async () => {
+    // Server returns has_next_page but no starting_after — defensive cursor guard.
+    mockListWebhookEventTypes.mockResolvedValue(catalogPage(["other.event"], true, null));
+
+    await expect(webhooksTrigger({ eventType: "user.created" })).rejects.toThrow(
+      "Server returned has_next_page=true with no pagination cursor",
+    );
+    expect(mockSendWebhookExample).not.toHaveBeenCalled();
+  });
+
   test("maps a PLAPI 404 on send to webhook_endpoint_not_found", async () => {
     mockSendWebhookExample.mockRejectedValue(new PlapiError(404, "{}"));
 

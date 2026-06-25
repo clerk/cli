@@ -114,6 +114,18 @@ describe("webhooks event-types", () => {
     expect(captured.err).toContain("No event types found.");
   });
 
+  test("prints iterator hint on empty-data page when more results exist", async () => {
+    mockListWebhookEventTypes.mockResolvedValue({
+      data: [],
+      cursor: { starting_after: "iter_next", ending_before: null, has_next_page: true },
+    });
+
+    await webhooksEventTypes();
+
+    expect(captured.err).toContain("No event types found.");
+    expect(captured.err).toContain("--iterator iter_next");
+  });
+
   test("outputs the full response as JSON with --json", async () => {
     await webhooksEventTypes({ json: true });
 

@@ -1,4 +1,4 @@
-import { test, expect, describe, beforeEach, afterEach, mock } from "bun:test";
+import { test, expect, describe, beforeEach, afterEach, mock, spyOn } from "bun:test";
 import { createHmac, randomBytes } from "node:crypto";
 import { ERROR_CODE, PlapiError } from "../../lib/errors.ts";
 import { stubFetch, useCaptureLog } from "../../test/lib/stubs.ts";
@@ -211,6 +211,60 @@ describe("webhooks listen", () => {
     expect(mockCreateWebhookEndpoint).toHaveBeenCalled();
   });
 
+  test("relay-only skips PLAPI + context, persists a c_ token, renders a standalone banner", async () => {
+    mockGetRelayEntry.mockResolvedValue(undefined);
+
+    await startListen({ relayOnly: true }, captured);
+
+    // No backend, no instance context.
+    expect(mockResolveAppContext).not.toHaveBeenCalled();
+    expect(mockGetWebhookEndpoint).not.toHaveBeenCalled();
+    expect(mockCreateWebhookEndpoint).not.toHaveBeenCalled();
+    expect(mockGetWebhookEndpointSecret).not.toHaveBeenCalled();
+
+    // Token persisted under the reserved relay-only key so the URL is stable.
+    expect(mockGetRelayEntry).toHaveBeenCalledWith("__relay_only__");
+    const [key, entry] = mockSetRelayEntry.mock.calls[0] as [string, { token: string }];
+    expect(key).toBe("__relay_only__");
+    expect(entry.token).toMatch(/^c_[0-9A-Za-z]{10}$/);
+
+    const client = lastClient();
+    expect(client?.started).toBe(true);
+    expect(client?.token).toBe(entry.token);
+    expect(captured.err).toContain("relay-only");
+    expect(captured.err).not.toContain(SECRET);
+  });
+
+  test("relay-only reuses the persisted token across runs (stable URL)", async () => {
+    mockGetRelayEntry.mockResolvedValue({ token: "c_Persisted1" });
+
+    await startListen({ relayOnly: true }, captured);
+
+    expect(lastClient()?.token).toBe("c_Persisted1");
+    expect(mockSetRelayEntry).not.toHaveBeenCalled(); // unchanged → no rewrite
+  });
+
+  test("relay-only --token pins the token", async () => {
+    mockGetRelayEntry.mockResolvedValue(undefined);
+
+    await startListen({ relayOnly: true, token: "c_Pinned1234" }, captured);
+
+    expect(lastClient()?.token).toBe("c_Pinned1234");
+    expect(mockSetRelayEntry).toHaveBeenCalledWith("__relay_only__", { token: "c_Pinned1234" });
+  });
+
+  test("--token without --relay-only is a usage error", async () => {
+    await expect(webhooksListen({ token: "c_Whatever12" })).rejects.toMatchObject({
+      code: ERROR_CODE.USAGE_ERROR,
+    });
+  });
+
+  test("relay-only --token with a malformed token is a usage error", async () => {
+    await expect(webhooksListen({ relayOnly: true, token: "nope" })).rejects.toMatchObject({
+      code: ERROR_CODE.USAGE_ERROR,
+    });
+  });
+
   test("emits the NDJSON ready line in agent mode", async () => {
     mockIsAgent.mockReturnValue(true);
 
@@ -220,10 +274,14 @@ describe("webhooks listen", () => {
     expect(ready).toEqual({
       type: "ready",
       relay_url: "https://play.svix.com/in/Ab12Cd34Ef/",
-      signing_secret: SECRET,
       endpoint_id: "ep_relay",
       events_filter: null,
+      forward_to: "http://localhost:3000/api/webhooks",
     });
+    // The signing secret must never appear on stdout (it's pipeable/loggable);
+    // agents fetch it on demand via `clerk webhooks secret <endpoint_id>`.
+    expect(ready).not.toHaveProperty("signing_secret");
+    expect(captured.out).not.toContain(SECRET);
   });
 
   test("registers its own SIGINT handler before the socket opens", async () => {
@@ -363,14 +421,50 @@ describe("webhooks listen", () => {
   test("token rotation persists the new token and re-points the endpoint URL", async () => {
     await startListen({}, captured);
 
-    await lastClient()!.options.onTokenRotated("Zz98Yy76Xx");
+    await lastClient()!.options.onTokenRotated("c_Zz98Yy76Xx");
 
     expect(mockSetRelayEntry).toHaveBeenLastCalledWith("ins_1", {
-      token: "Zz98Yy76Xx",
+      token: "c_Zz98Yy76Xx",
       endpoint_id: "ep_relay",
     });
     expect(mockUpdateWebhookEndpoint).toHaveBeenCalledWith("app_1", "ins_1", "ep_relay", {
-      url: "https://play.svix.com/in/Zz98Yy76Xx/",
+      url: "https://play.svix.com/in/c_Zz98Yy76Xx/",
     });
+  });
+
+  test("SIGINT stops the relay client and exits 130", async () => {
+    await startListen({}, captured);
+
+    const exitSpy = spyOn(process, "exit").mockImplementation((() => {}) as () => never);
+    try {
+      process.emit("SIGINT");
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(lastClient()!.stopped).toBe(true);
+      expect(exitSpy).toHaveBeenCalledWith(130);
+    } finally {
+      exitSpy.mockRestore();
+    }
+  });
+
+  test("onReconnect logs a reconnecting message to stderr", async () => {
+    await startListen({}, captured);
+    captured.clear();
+
+    lastClient()!.options.onReconnect();
+
+    expect(captured.err).toContain("reconnect");
+  });
+
+  test("recreates the endpoint when the persisted one returns 400 svix_app_missing", async () => {
+    mockGetWebhookEndpoint.mockRejectedValue(
+      new PlapiError(
+        400,
+        JSON.stringify({ errors: [{ code: "svix_app_missing", message: "Svix app missing" }] }),
+      ),
+    );
+
+    await startListen({}, captured);
+
+    expect(mockCreateWebhookEndpoint).toHaveBeenCalled();
   });
 });

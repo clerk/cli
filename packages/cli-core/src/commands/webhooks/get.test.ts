@@ -92,7 +92,7 @@ describe("webhooks get", () => {
     const promise = webhooksGet({ endpointId: "ep_missing" });
 
     await expect(promise).rejects.toBeInstanceOf(CliError);
-    await expect(webhooksGet({ endpointId: "ep_missing" })).rejects.toMatchObject({
+    await expect(promise).rejects.toMatchObject({
       code: ERROR_CODE.WEBHOOK_ENDPOINT_NOT_FOUND,
       message: "No webhook endpoint with ID ep_missing was found.",
     });

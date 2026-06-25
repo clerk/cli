@@ -1,4 +1,5 @@
 import { resolveAppContext } from "../../lib/config.ts";
+import { withApiContext } from "../../lib/errors.ts";
 import { log } from "../../lib/log.ts";
 import { getWebhookEndpointSecret, rotateWebhookEndpointSecret } from "../../lib/plapi.ts";
 import {
@@ -29,13 +30,19 @@ export async function webhooksSecret(options: WebhooksSecretOptions): Promise<vo
 
   if (options.rotate) {
     await rejectEndpointNotFound(
-      rotateWebhookEndpointSecret(ctx.appId, ctx.instanceId, options.endpointId),
+      withApiContext(
+        rotateWebhookEndpointSecret(ctx.appId, ctx.instanceId, options.endpointId),
+        "Failed to rotate webhook signing secret",
+      ),
       options.endpointId,
     );
   }
 
   const { secret } = await rejectEndpointNotFound(
-    getWebhookEndpointSecret(ctx.appId, ctx.instanceId, options.endpointId),
+    withApiContext(
+      getWebhookEndpointSecret(ctx.appId, ctx.instanceId, options.endpointId),
+      "Failed to fetch webhook signing secret",
+    ),
     options.endpointId,
   );
 

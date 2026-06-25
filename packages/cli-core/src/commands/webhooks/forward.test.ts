@@ -143,4 +143,22 @@ describe("forwardDelivery", () => {
     expect(outcome.status).toBe(500);
     expect(outcome.bodyText).toBe("boom");
   });
+
+  test("a fetch timeout/abort yields a synthetic 502", async () => {
+    stubFetch(async () => {
+      // Simulate what AbortSignal.timeout(30_000) throws when the deadline fires.
+      throw new DOMException("The operation was aborted due to timeout", "TimeoutError");
+    });
+
+    const outcome = await forwardDelivery({
+      forwardTo: "http://localhost:3000/api/webhooks",
+      method: "POST",
+      headers: new Headers(),
+      body: "{}",
+    });
+
+    expect(outcome.failed).toBe(true);
+    expect(outcome.status).toBe(502);
+    expect(outcome.bodyText).toContain("timeout");
+  });
 });

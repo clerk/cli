@@ -58,6 +58,7 @@ export async function forwardDelivery(args: {
       method: args.method,
       headers: args.headers,
       body: args.body,
+      signal: AbortSignal.timeout(30_000),
     });
     const bodyText = await response.text();
     const headers: Record<string, string> = {};
