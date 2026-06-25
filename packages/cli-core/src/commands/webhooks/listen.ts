@@ -70,7 +70,33 @@ export async function webhooksListen(options: WebhooksListenOptions = {}): Promi
   const ndjson = Boolean(options.json) || isAgent();
   const extraHeaders = parseHeaderPairs(options.headers);
 
+  // --forward-to is logically required (forwarding is the point of the command),
+  // but it's declared as a plain option so the failure is OUR usage error (JSON
+  // in agent mode) rather than Commander's plain-text required-option message.
+  if (!options.forwardTo) throwUsageError("--forward-to <url> is required.");
+  let forwardUrl: URL;
+  try {
+    forwardUrl = new URL(options.forwardTo);
+  } catch {
+    return throwUsageError(
+      `Invalid --forward-to URL "${options.forwardTo}". Expected http:// or https:// (e.g. http://localhost:3000).`,
+    );
+  }
+  if (forwardUrl.protocol !== "http:" && forwardUrl.protocol !== "https:") {
+    throwUsageError(
+      `--forward-to must use http:// or https://; got "${forwardUrl.protocol.replace(":", "")}://".`,
+    );
+  }
+
   if (options.token) assertRelayToken(options.token);
+
+  // svix-* headers can't be overridden (delivery headers always win) — warn once
+  // at startup instead of silently dropping them.
+  for (const key of Object.keys(extraHeaders)) {
+    if (key.toLowerCase().startsWith("svix-")) {
+      log.warn(`--headers: "${key}" can't be overridden — delivery svix-* headers always win.`);
+    }
+  }
 
   // The relay tunnel needs no Clerk backend (no auth, no instance, no signing
   // secret). Persist the token under a reserved key so the inbox URL stays
@@ -179,7 +205,11 @@ export async function webhooksListen(options: WebhooksListenOptions = {}): Promi
       return tokenRotationTask;
     },
     onReconnect: () => {
-      log.ui(dim("relay connection lost — reconnecting…\n"));
+      if (ndjson) {
+        log.data(JSON.stringify({ type: "reconnecting" }));
+      } else {
+        log.ui(dim("relay connection lost — reconnecting…\n"));
+      }
     },
   });
 

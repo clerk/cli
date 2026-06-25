@@ -47,14 +47,14 @@ export function registerWebhooks(program: Program): void {
   webhooks
     .command("listen")
     .description("Stream webhook events to your terminal and forward them to a local handler")
-    .requiredOption("--forward-to <url>", "Local URL to POST deliveries to (required)")
+    .option("--forward-to <url>", "Local URL to POST deliveries to (required)")
     .option(
       "--token <c_token>",
       "Pin the relay token so the inbox URL stays fixed across machines. Format: c_ + 10 base62 chars (generate with `clerk webhooks token`)",
     )
     .option(
       "--headers <pairs>",
-      "Extra headers for the forwarded request, comma-separated k:v pairs (svix-* cannot be overridden)",
+      "Extra headers for the forwarded request, comma-separated k:v pairs; values can't contain commas (svix-* can't be overridden)",
     )
     .option("--json", "Output as NDJSON (agent/pipe mode)")
     .setExamples([
