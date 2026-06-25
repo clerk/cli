@@ -1,7 +1,9 @@
 #!/usr/bin/env bun
 import { createProgram, runProgram } from "./cli-program.ts";
-import { EXIT_CODE } from "./lib/errors.ts";
-process.on("SIGINT", () => process.exit(EXIT_CODE.SIGINT));
+import { cliSigintHandler } from "./lib/signals.ts";
+// Named handler (not an inline arrow) so `webhooks listen` can removeListener it
+// to install its own graceful-drain SIGINT handling.
+process.on("SIGINT", cliSigintHandler);
 
 // Fast path for shell completion — intercept before Commander parses
 // to avoid validation errors on partial input from Tab presses.

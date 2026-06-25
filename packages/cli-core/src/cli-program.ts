@@ -19,6 +19,7 @@ import { registerSwitchEnv } from "./commands/switch-env/index.ts";
 import { registerCompletion } from "./commands/completion/index.ts";
 import { registerUpdate } from "./commands/update/index.ts";
 import { registerDeploy } from "./commands/deploy/index.ts";
+import { registerWebhooks } from "./commands/webhooks/index.ts";
 import { getEnvironment } from "./lib/config.ts";
 import {
   setCurrentEnv,
@@ -69,6 +70,7 @@ const registrants: CommandRegistrant[] = [
   registerCompletion,
   registerUpdate,
   registerDeploy,
+  registerWebhooks,
   registerExtras,
 ];
 
