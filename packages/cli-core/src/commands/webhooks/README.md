@@ -8,6 +8,29 @@ needs a linked project.
 > (`wss://api.relay.svix.com`); `verify` is pure local HMAC. There is no
 > PLAPI/BAPI dependency in this command group.
 
+## The flow
+
+```sh
+clerk webhooks token                                                   # 1. mint a stable token
+clerk webhooks listen --token "$(clerk webhooks token)" --forward-to … # 2. stream to your app
+clerk webhooks verify --secret whsec_... --delivery @event.json        # 3. verify a delivery
+```
+
+## `clerk webhooks token`
+
+Generate a valid relay token (`c_` + 10 base62 chars) for `listen --token`. The
+bare token prints to **stdout** so it pipes cleanly; human mode adds a usage hint
+on stderr (which never pollutes the pipe).
+
+```sh
+clerk webhooks token                                  # → c_AbCd123456
+clerk webhooks listen --token "$(clerk webhooks token)"   # generate + pin in one step
+clerk webhooks token --json                           # → {"token":"c_AbCd123456"}
+```
+
+Why it exists: the `--token` format is exact (`c_` + **10** base62 chars), so this
+removes the guesswork of hand-writing one.
+
 ## `clerk webhooks listen`
 
 Open a standalone Svix relay tunnel, print a stable inbox URL, and (optionally)
