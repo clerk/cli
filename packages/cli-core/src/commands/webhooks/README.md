@@ -33,8 +33,8 @@ removes the guesswork of hand-writing one.
 
 ## `clerk webhooks listen`
 
-Open a standalone Svix relay tunnel, print a stable inbox URL, and (optionally)
-forward each delivery to a local handler.
+Open a standalone Svix relay tunnel, print a stable inbox URL, and forward each
+delivery to a local handler.
 
 ```sh
 clerk webhooks listen --forward-to http://localhost:3000/api/webhooks
@@ -42,14 +42,20 @@ clerk webhooks listen --forward-to http://localhost:3000/api/webhooks
 
 | Option               | Description                                                                                                           |
 | -------------------- | --------------------------------------------------------------------------------------------------------------------- |
-| `--forward-to <url>` | Local URL to POST deliveries to. Omit to just print events.                                                           |
-| `--token <c_token>`  | Pin the relay token so the inbox URL stays fixed across restarts. Format: `c_` + 10 base62 chars.                     |
+| `--forward-to <url>` | **Required.** Local URL to POST deliveries to.                                                                        |
+| `--token <c_token>`  | Pin the relay token so the inbox URL stays fixed across machines. `c_` + 10 base62 chars (gen with `webhooks token`). |
 | `--headers <pairs>`  | Extra headers for the forwarded request, comma-separated `k:v` pairs. `svix-*` headers can't be overridden.           |
 | `--json`             | Emit NDJSON: one `ready` line then one `event` line per delivery (pipe into a file for `webhooks verify --delivery`). |
 
-**Stable URL.** The relay token is persisted in the CLI config under
-`relay.__relay_only__`, so the inbox URL survives restarts — register it once in
-your Svix/Clerk dashboard and keep reusing it. `--token` pins an explicit one.
+**Pin your URL.** Without `--token`, the relay token is generated for you and
+persisted locally — but it isn't a guaranteed-stable handle (it can differ on a
+new machine, a cleared config, or a rare token collision). When you run `listen`
+**without** `--token`, the banner warns you and prints the exact `--token` to pass
+next time. For a fixed, shareable URL, always pin it:
+
+```sh
+clerk webhooks listen --token "$(clerk webhooks token)" --forward-to http://localhost:3000/api/webhooks
+```
 
 **No verification.** Without the backend there is no per-endpoint signing secret,
 so deliveries are forwarded as-is. The original `svix-*` headers are preserved on

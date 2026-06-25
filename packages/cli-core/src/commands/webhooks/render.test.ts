@@ -8,6 +8,7 @@ import {
   renderForwardDiagnostics,
   renderForwardResult,
   renderReadyBanner,
+  renderUnpinnedTokenHint,
   renderVerificationWarning,
 } from "./render.ts";
 
@@ -135,6 +136,14 @@ describe("human rendering", () => {
     renderVerificationWarning("msg_1");
 
     expect(captured.err).toContain("signature verification failed for msg_1");
+  });
+
+  test("unpinned-token hint shows the current token and how to pin it", () => {
+    renderUnpinnedTokenHint("c_Ab12Cd34Ef");
+
+    expect(captured.err).toContain("auto-generated relay token");
+    expect(captured.err).toContain("--token c_Ab12Cd34Ef");
+    expect(captured.err).toContain("clerk webhooks token");
   });
 
   test.each([

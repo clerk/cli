@@ -25,6 +25,7 @@ import {
   renderForwardDiagnostics,
   renderForwardResult,
   renderReadyBanner,
+  renderUnpinnedTokenHint,
 } from "./render.ts";
 import type { WebhooksGlobalOptions } from "./shared.ts";
 
@@ -195,6 +196,9 @@ export async function webhooksListen(options: WebhooksListenOptions = {}): Promi
     log.data(buildReadyLine(readyInfo));
   } else {
     renderReadyBanner(readyInfo);
+    // No --token: the token was generated/persisted for you, but isn't a
+    // guaranteed-stable handle. Nudge toward pinning a fixed, shareable URL.
+    if (!options.token) renderUnpinnedTokenHint(client.token);
   }
   resolveSetupGate();
 
