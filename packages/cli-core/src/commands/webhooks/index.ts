@@ -35,7 +35,8 @@ export function registerWebhooks(program: Program): void {
     .setExamples([
       { command: "clerk webhooks token", description: "Print a fresh relay token" },
       {
-        command: 'clerk webhooks listen --token "$(clerk webhooks token)"',
+        command:
+          'clerk webhooks listen --token "$(clerk webhooks token)" --forward-to http://localhost:3000/api/webhooks',
         description: "Generate and pin a token in one step",
       },
     ])
@@ -46,10 +47,10 @@ export function registerWebhooks(program: Program): void {
   webhooks
     .command("listen")
     .description("Stream webhook events to your terminal and forward them to a local handler")
-    .option("--forward-to <url>", "Local URL to POST deliveries to (omit to just print events)")
+    .requiredOption("--forward-to <url>", "Local URL to POST deliveries to (required)")
     .option(
       "--token <c_token>",
-      "Pin the relay token so the inbox URL stays fixed across restarts. Format: c_ + 10 base62 chars",
+      "Pin the relay token so the inbox URL stays fixed across machines. Format: c_ + 10 base62 chars (generate with `clerk webhooks token`)",
     )
     .option(
       "--headers <pairs>",
@@ -62,11 +63,12 @@ export function registerWebhooks(program: Program): void {
         description: "Forward webhook events to a local handler",
       },
       {
-        command: "clerk webhooks listen --token c_AbCd123456",
-        description: "Pin a stable relay inbox URL across restarts",
+        command:
+          'clerk webhooks listen --token "$(clerk webhooks token)" --forward-to http://localhost:3000/api/webhooks',
+        description: "Pin a stable, shareable relay URL",
       },
       {
-        command: "clerk webhooks listen --json",
+        command: "clerk webhooks listen --forward-to http://localhost:3000/api/webhooks --json",
         description: "Emit NDJSON event lines (pipe into a file for `webhooks verify --delivery`)",
       },
     ])

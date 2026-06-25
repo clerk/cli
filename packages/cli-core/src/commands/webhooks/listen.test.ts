@@ -149,6 +149,25 @@ describe("webhooks listen (V1, relay-only)", () => {
     });
   });
 
+  test("without --token, the banner warns the token is auto-generated and how to pin it", async () => {
+    mockGetRelayEntry.mockResolvedValue(undefined);
+
+    await startListen({ forwardTo: "http://localhost:3000/api/webhooks" }, captured);
+
+    expect(captured.err).toContain("auto-generated relay token");
+    expect(captured.err).toContain("--token");
+    expect(captured.err).toContain("clerk webhooks token");
+  });
+
+  test("with --token, no auto-generated-token warning is shown", async () => {
+    await startListen(
+      { token: "c_Pinned1234", forwardTo: "http://localhost:3000/api/webhooks" },
+      captured,
+    );
+
+    expect(captured.err).not.toContain("auto-generated relay token");
+  });
+
   test("emits the NDJSON ready line in agent mode (endpoint_id and events_filter are null)", async () => {
     mockIsAgent.mockReturnValue(true);
     mockGetRelayEntry.mockResolvedValue({ token: "c_Stable9999" });

@@ -63,9 +63,8 @@ export function renderReadyBanner(info: ReadyInfo): void {
         `  Events:          ${events}`,
         `  Verification:    ${dim("off (no signing secret in relay-only mode)")}`,
         "",
-        `  ${dim("POST any JSON to the Relay URL to inject a delivery, or register that URL")}`,
-        `  ${dim("as an endpoint in your Svix app to receive real instance events.")}`,
-        `  ${dim("This URL is stable across restarts (pin it with --token) — register it once.")}`,
+        `  ${dim("Register this URL as an endpoint in your Svix/Clerk dashboard to receive")}`,
+        `  ${dim("real instance events, or POST any JSON to it to inject a delivery.")}`,
         `  ${dim("Press Ctrl+C to stop.")}`,
         "",
         "",
@@ -89,6 +88,22 @@ export function renderReadyBanner(info: ReadyInfo): void {
       "",
       "",
     ].join("\n"),
+  );
+}
+
+/**
+ * Shown after the ready banner when `listen` ran WITHOUT `--token`: the relay
+ * token was auto-generated and isn't guaranteed stable (it can differ across
+ * machines, a cleared config, or a rare token collision). Nudge toward pinning
+ * a fixed, shareable URL — ideally the current one, so it never moves.
+ */
+export function renderUnpinnedTokenHint(token: string): void {
+  log.ui(
+    yellow("  ! Using an auto-generated relay token — it can change across machines,\n") +
+      yellow("    a cleared config, or a rare token collision.\n") +
+      dim("    To lock this exact URL, always pass --token:\n") +
+      dim(`      clerk webhooks listen --token ${token} --forward-to <url>\n`) +
+      dim("    Generate a fresh token anytime with: clerk webhooks token\n\n"),
   );
 }
 
