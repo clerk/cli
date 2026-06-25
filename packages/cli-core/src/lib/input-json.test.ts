@@ -346,6 +346,14 @@ describe("expandInputJson", () => {
       expect(result.result).toEqual(["clerk", "init", "--yes"]);
     });
 
+    test("auto-stdin yields to a subcommand that claims stdin with a bare `-`", async () => {
+      // e.g. `webhooks verify --payload -`: stdin is the payload, not input-json.
+      const argv = ["clerk", "webhooks", "verify", "--payload", "-"];
+      const result = await expandViaStdin(argv, '{"type":"user.created"}');
+      // argv is returned unchanged — no `--type` flag spliced in.
+      expect(result.result).toEqual(argv);
+    });
+
     test("--input-json - errors on invalid JSON from stdin", async () => {
       const result = await expandViaStdin(["clerk", "init", "--input-json", "-"], "not-json");
       expect(result.error).toContain("Invalid JSON");
