@@ -22,7 +22,7 @@ function makeCtx(overrides?: Partial<ProjectContext>): ProjectContext {
     packageManager: "npm",
     existingClerk: false,
     deps: { "@tanstack/react-start": "1.0.0" },
-    envFile: ".env",
+    envFile: ".env.local",
     ...overrides,
   };
 }

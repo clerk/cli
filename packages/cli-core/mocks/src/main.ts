@@ -4,9 +4,9 @@ const app = document.getElementById("app")!;
 const params = new URLSearchParams(window.location.search);
 const callbackPort = params.get("callback_port");
 
-type Screen = "sign-in" | "sign-up" | "select-app" | "success-new" | "success-existing";
+type AppScreen = "sign-in" | "sign-up" | "select-app" | "success-new" | "success-existing";
 
-function render(screen: Screen) {
+function render(screen: AppScreen) {
   switch (screen) {
     case "sign-in":
       return renderSignIn();

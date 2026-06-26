@@ -22,7 +22,7 @@ function makeCtx(overrides?: Partial<ProjectContext>): ProjectContext {
     packageManager: "npm",
     existingClerk: false,
     deps: {},
-    envFile: ".env",
+    envFile: ".env.local",
     ...overrides,
   };
 }
@@ -149,7 +149,7 @@ test("creates entry file when none exists", async () => {
   // Auth pages and env should still be scaffolded
   expect(findAction(plan.actions, "src/views/sign-in.vue").type).toBe("create");
   expect(findAction(plan.actions, "src/views/sign-up.vue").type).toBe("create");
-  expect(findAction(plan.actions, ".env").type).toBe("modify");
+  expect(findAction(plan.actions, ".env.local").type).toBe("modify");
 
   // No post-instruction about entry file since it was created
   expect(plan.postInstructions.some((i) => i.includes("@clerk/vue"))).toBe(false);
@@ -205,7 +205,7 @@ test("skips auth pages when they already exist", async () => {
 test("scaffolds env vars with VITE_ prefix", async () => {
   const plan = await vue.scaffold(makeCtx());
 
-  const envAction = findAction(plan.actions, ".env");
+  const envAction = findAction(plan.actions, ".env.local");
   expect(envAction.type).toBe("modify");
   if (envAction.type === "modify") {
     expect(envAction.content).toContain("VITE_CLERK_SIGN_IN_URL");
