@@ -24,7 +24,7 @@ jobs:
     runs-on: blacksmith-2vcpu-ubuntu-2404
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           # Always refresh from main, even on workflow_dispatch runs that
           # select a different ref, so manual triggers cannot smuggle
