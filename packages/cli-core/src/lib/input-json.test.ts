@@ -4,8 +4,6 @@ import { join } from "node:path";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 
-const originalIsTTY = process.stdin.isTTY;
-
 describe("toKebabCase", () => {
   test("converts camelCase", () => {
     expect(toKebabCase("dryRun")).toBe("dry-run");
@@ -45,15 +43,6 @@ describe("toKebabCase", () => {
 });
 
 describe("expandInputJson", () => {
-  beforeEach(() => {
-    // Ensure stdin looks like a TTY so the auto-stdin path is not triggered
-    process.stdin.isTTY = true;
-  });
-
-  afterEach(() => {
-    process.stdin.isTTY = originalIsTTY;
-  });
-
   test("returns argv unchanged when --input-json is absent", async () => {
     const argv = ["clerk", "init", "--yes"];
     const result = await expandInputJson(argv);
