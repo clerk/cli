@@ -53,8 +53,9 @@ export function registerWebhooks(program: Program): void {
       "Pin the relay token so the inbox URL stays fixed across machines. Format: c_ + 10 base62 chars (generate with `clerk webhooks token`)",
     )
     .option(
-      "--headers <pairs>",
-      "Extra headers for the forwarded request, comma-separated k:v pairs; values can't contain commas (svix-* can't be overridden)",
+      "-H, --header <key:value>",
+      "Extra header for the forwarded request (key:value); repeat for multiple headers (svix-* can't be overridden)",
+      (val: string, prev: string[] = []) => [...prev, val],
     )
     .option("--json", "Output as NDJSON (agent/pipe mode)")
     .setExamples([

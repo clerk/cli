@@ -24,12 +24,18 @@ export interface RelayClientOptions {
   firstConnectTimeoutMs?: number;
 }
 
+export interface IRelayClient {
+  token: string;
+  start(): Promise<void>;
+  stop(): void;
+}
+
 /**
  * Long-lived relay WebSocket using Bun's built-in client. Reconnects with the
  * same token (the relay URL — and therefore the registered endpoint — never
  * changes across reconnects); rotates the token only on close code 1008.
  */
-export class RelayClient {
+export class RelayClient implements IRelayClient {
   token: string;
 
   private ws: WebSocket | undefined;
@@ -47,14 +53,13 @@ export class RelayClient {
   /** Dial and resolve once the first connection is open and handshaken. */
   start(): Promise<void> {
     const FIRST_CONNECT_TIMEOUT_MS = this.options.firstConnectTimeoutMs ?? 30_000;
-    const opened = new Promise<void>((resolve, reject) => {
-      this.rejectFirstOpen = reject;
-      this.resolveFirstOpen = () => {
-        clearTimeout(this.startTimeoutId);
-        this.startTimeoutId = undefined;
-        resolve();
-      };
-    });
+    const { promise: opened, resolve, reject } = Promise.withResolvers<void>();
+    this.rejectFirstOpen = reject;
+    this.resolveFirstOpen = () => {
+      clearTimeout(this.startTimeoutId);
+      this.startTimeoutId = undefined;
+      resolve();
+    };
     this.startTimeoutId = setTimeout(() => {
       this.stopped = true;
       this.clearProbe();
@@ -123,10 +128,13 @@ export class RelayClient {
         // every fresh token can't spin a zero-delay reconnect storm.
         this.token = generateRelayToken();
         log.debug("relay: token collision (1008), rotating token");
-        void this.options.onTokenRotated(this.token).finally(() => {
-          if (this.stopped) return;
-          setTimeout(() => this.connect(), RELAY_RECONNECT_DELAY_MS);
-        });
+        void this.options
+          .onTokenRotated(this.token)
+          .catch(() => log.debug("relay: failed to persist rotated token"))
+          .finally(() => {
+            if (this.stopped) return;
+            setTimeout(() => this.connect(), RELAY_RECONNECT_DELAY_MS);
+          });
         return;
       }
 

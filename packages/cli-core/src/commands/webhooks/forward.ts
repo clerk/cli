@@ -11,38 +11,61 @@ export interface ForwardOutcome {
   failed: boolean;
 }
 
-/** Comma-separated `k:v` pairs, split on the FIRST colon, whitespace trimmed. */
-export function parseHeaderPairs(value: string | undefined): Record<string, string> {
-  if (!value) return {};
-  const headers: Record<string, string> = {};
-  for (const pair of value.split(",")) {
-    const trimmed = pair.trim();
-    if (!trimmed) continue;
-    const colonIndex = trimmed.indexOf(":");
-    const key = colonIndex === -1 ? "" : trimmed.slice(0, colonIndex).trim();
-    if (!key) {
-      throwUsageError(
-        `Invalid --headers pair "${trimmed}". Expected key:value. Commas separate pairs and can't appear in values — use multiple --headers flags instead.`,
-      );
-    }
-    headers[key] = trimmed.slice(colonIndex + 1).trim();
+/**
+ * Hop-by-hop headers that must not be forwarded to the target. These are
+ * meaningful only for the single transport hop and would confuse the target
+ * server or cause protocol violations (e.g. chunked encoding mismatch).
+ */
+const HOP_BY_HOP_HEADERS = new Set([
+  "connection",
+  "keep-alive",
+  "proxy-authenticate",
+  "proxy-authorization",
+  "te",
+  "trailers",
+  "transfer-encoding",
+  "upgrade",
+  "host",
+]);
+
+/**
+ * Parse one `--header` value (`key:value`, split on the FIRST colon, whitespace
+ * trimmed) into a [key, value] pair. Throws a usage error on malformed input.
+ */
+export function parseHeaderFlag(value: string): [string, string] {
+  const colonIndex = value.indexOf(":");
+  const key = colonIndex === -1 ? "" : value.slice(0, colonIndex).trim();
+  if (!key) {
+    throwUsageError(`Invalid --header "${value}". Expected key:value (e.g. --header x-env:dev).`);
   }
-  return headers;
+  return [key, value.slice(colonIndex + 1).trim()];
 }
 
 /**
- * Delivery headers plus `--headers` extras. Extras may override non-svix
- * delivery headers, but the delivery's `svix-*` headers always win — they are
- * what `verify` (and the user's handler) authenticate against.
+ * Delivery headers plus `--header` extras, with hop-by-hop headers stripped.
+ * Extras may override non-svix delivery headers, but the delivery's `svix-*`
+ * headers always win — they are what `verify` (and the user's handler)
+ * authenticate against.
  */
 export function buildForwardHeaders(
   eventHeaders: Record<string, string>,
-  extraHeaders: Record<string, string>,
+  extraHeaders: Headers,
 ): Headers {
-  const headers = new Headers(eventHeaders);
-  for (const [key, value] of Object.entries(extraHeaders)) {
-    if (key.toLowerCase().startsWith("svix-")) continue;
+  const headers = new Headers();
+  for (const [key, value] of Object.entries(eventHeaders)) {
+    if (HOP_BY_HOP_HEADERS.has(key.toLowerCase())) continue;
     headers.set(key, value);
+  }
+  const seenExtra = new Set<string>();
+  for (const [key, value] of extraHeaders) {
+    const lower = key.toLowerCase();
+    if (lower.startsWith("svix-")) continue;
+    if (seenExtra.has(lower)) {
+      headers.append(key, value);
+    } else {
+      headers.set(key, value);
+      seenExtra.add(lower);
+    }
   }
   return headers;
 }

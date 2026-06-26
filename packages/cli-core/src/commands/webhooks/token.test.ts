@@ -23,7 +23,7 @@ describe("webhooks token", () => {
     const token = captured.out.trim();
     expect(token).toMatch(TOKEN_RE);
     expect(captured.err).toContain("Next steps");
-    expect(captured.err).toContain("Pin it:");
+    expect(captured.err).toContain("Use this token:");
     expect(captured.err).toContain(`--token ${token}`); // step references the same token
   });
 

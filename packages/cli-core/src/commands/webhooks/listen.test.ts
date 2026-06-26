@@ -1,26 +1,18 @@
 import { test, expect, describe, beforeEach, afterEach, mock, spyOn } from "bun:test";
 import { ERROR_CODE } from "../../lib/errors.ts";
 import { stubFetch, useCaptureLog } from "../../test/lib/stubs.ts";
+import type { IRelayClient, RelayClientOptions } from "./relay-client.ts";
 import type { RelayEventFrame } from "./relay-protocol.ts";
-
-type EventHandler = (event: RelayEventFrame, reply: (frame: string) => void) => void;
-
-interface FakeClientOptions {
-  token: string;
-  onEvent: EventHandler;
-  onTokenRotated: (token: string) => Promise<void>;
-  onReconnect: () => void;
-}
 
 const relayClients: FakeRelayClient[] = [];
 const lastClient = () => relayClients.at(-1);
 
-class FakeRelayClient {
+class FakeRelayClient implements IRelayClient {
   token: string;
   started = false;
   stopped = false;
 
-  constructor(readonly options: FakeClientOptions) {
+  constructor(readonly options: RelayClientOptions) {
     this.token = options.token;
     relayClients.push(this);
   }
@@ -110,8 +102,8 @@ describe("webhooks listen (V1, relay-only)", () => {
     mockIsAgent.mockReset();
   });
 
-  test("invalid --headers is a usage error before any persistence", async () => {
-    await expect(webhooksListen({ headers: "not-a-pair" })).rejects.toMatchObject({
+  test("invalid --header is a usage error before any persistence", async () => {
+    await expect(webhooksListen({ header: ["not-a-pair"] })).rejects.toMatchObject({
       code: ERROR_CODE.USAGE_ERROR,
     });
     expect(mockGetRelayEntry).not.toHaveBeenCalled();
@@ -208,8 +200,8 @@ describe("webhooks listen (V1, relay-only)", () => {
     },
   );
 
-  test("svix-* in --headers warns at startup that it can't be overridden", async () => {
-    await startListen({ headers: "svix-id:forged" }, captured);
+  test("svix-* in --header warns at startup that it can't be overridden", async () => {
+    await startListen({ header: ["svix-id:forged"] }, captured);
     expect(captured.err).toContain("can't be overridden");
   });
 
@@ -226,7 +218,7 @@ describe("webhooks listen (V1, relay-only)", () => {
     });
 
     await startListen(
-      { forwardTo: "http://localhost:3000/api/webhooks", headers: "x-env:dev" },
+      { forwardTo: "http://localhost:3000/api/webhooks", header: ["x-env:dev"] },
       captured,
     );
     captured.clear();

@@ -1,9 +1,9 @@
 #!/usr/bin/env bun
 import { createProgram, runProgram } from "./cli-program.ts";
-import { cliSigintHandler } from "./lib/signals.ts";
+import { CLI_SIGINT_HANDLER } from "./lib/signals.ts";
 // Named handler (not an inline arrow) so `webhooks listen` can removeListener it
 // to install its own graceful-drain SIGINT handling.
-process.on("SIGINT", cliSigintHandler);
+process.on("SIGINT", CLI_SIGINT_HANDLER);
 
 // Fast path for shell completion — intercept before Commander parses
 // to avoid validation errors on partial input from Tab presses.
