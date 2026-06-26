@@ -16,41 +16,42 @@ const TOKEN_RE = /^c_[0-9A-Za-z]{10}$/;
 describe("webhooks token", () => {
   const captured = useCaptureLog();
 
-  test("prints a valid bare relay token on stdout with a usage hint on stderr (human)", () => {
+  test("prints the bare token on stdout and a Next steps block on stderr (human)", async () => {
     mockIsAgent.mockReturnValue(false);
-    webhooksToken({});
+    await webhooksToken({});
 
     const token = captured.out.trim();
     expect(token).toMatch(TOKEN_RE);
-    expect(captured.err).toContain("--token");
-    expect(captured.err).toContain(token); // hint references the same token
+    expect(captured.err).toContain("Next steps");
+    expect(captured.err).toContain("Pin it:");
+    expect(captured.err).toContain(`--token ${token}`); // step references the same token
   });
 
-  test("--json prints a { token } object and no hint", () => {
+  test("--json prints a { token } object and no Next steps", async () => {
     mockIsAgent.mockReturnValue(false);
-    webhooksToken({ json: true });
+    await webhooksToken({ json: true });
 
     const parsed = JSON.parse(captured.out) as { token: string };
     expect(parsed.token).toMatch(TOKEN_RE);
     expect(captured.err).toBe("");
   });
 
-  test("agent mode still prints the BARE token (pipeable) with no hint", () => {
+  test("agent mode still prints the BARE token (pipeable) with no Next steps", async () => {
     // Command substitution `$(clerk webhooks token)` runs non-interactively, so
     // the bare token — not JSON — must be the default stdout output.
     mockIsAgent.mockReturnValue(true);
-    webhooksToken({});
+    await webhooksToken({});
 
     expect(captured.out.trim()).toMatch(TOKEN_RE);
     expect(captured.err).toBe("");
   });
 
-  test("successive calls produce different tokens", () => {
+  test("successive calls produce different tokens", async () => {
     mockIsAgent.mockReturnValue(false);
-    webhooksToken({});
+    await webhooksToken({});
     const first = captured.out.trim().split("\n")[0];
     captured.clear();
-    webhooksToken({});
+    await webhooksToken({});
     const second = captured.out.trim().split("\n")[0];
 
     expect(first).toMatch(TOKEN_RE);

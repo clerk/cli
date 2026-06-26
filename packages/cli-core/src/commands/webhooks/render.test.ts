@@ -27,38 +27,15 @@ describe("buildReadyLine", () => {
   test("matches the agent-mode ready contract", () => {
     const line = buildReadyLine({
       relayUrl: "https://play.svix.com/in/Ab12Cd34Ef/",
-      signingSecret: "whsec_abc",
-      endpointId: "ep_1",
-      eventsFilter: ["user.created"],
       forwardTo: "http://localhost:3000/api/webhooks",
     });
 
     expect(line).not.toContain("\n");
-    const parsed = JSON.parse(line) as Record<string, unknown>;
-    expect(parsed).toEqual({
+    expect(JSON.parse(line)).toEqual({
       type: "ready",
       relay_url: "https://play.svix.com/in/Ab12Cd34Ef/",
       forward_to: "http://localhost:3000/api/webhooks",
     });
-    // signing_secret/endpoint_id/events_filter are not part of the V1 contract —
-    // the relay tunnel registers no endpoint and has no secret.
-    expect(parsed).not.toHaveProperty("signing_secret");
-    expect(parsed).not.toHaveProperty("endpoint_id");
-  });
-
-  test("includes forward_to as null when not forwarding", () => {
-    const parsed = JSON.parse(
-      buildReadyLine({
-        relayUrl: "https://play.svix.com/in/Ab12Cd34Ef/",
-        signingSecret: "whsec_abc",
-        endpointId: "ep_1",
-        eventsFilter: null,
-        forwardTo: null,
-      }),
-    ) as Record<string, unknown>;
-
-    expect(parsed.forward_to).toBeNull();
-    expect(parsed).not.toHaveProperty("signing_secret");
   });
 });
 
@@ -104,20 +81,16 @@ describe("buildEventLine", () => {
 describe("human rendering", () => {
   const captured = useCaptureLog();
 
-  test("ready banner shows the secret, relay URL, and endpoint", () => {
+  test("ready banner shows the relay URL, forwarding target, and dashboard link", () => {
     renderReadyBanner({
       relayUrl: "https://play.svix.com/in/Ab12Cd34Ef/",
-      signingSecret: "whsec_abc",
-      endpointId: "ep_1",
-      eventsFilter: null,
-      forwardTo: null,
+      forwardTo: "http://localhost:3000/api/webhooks",
     });
 
-    expect(captured.err).toContain("whsec_abc");
     expect(captured.err).toContain("https://play.svix.com/in/Ab12Cd34Ef/");
-    expect(captured.err).toContain("ep_1");
-    expect(captured.err).toContain("NOT your Dashboard endpoint secret");
-    expect(captured.err).toContain("not forwarding");
+    expect(captured.err).toContain("http://localhost:3000/api/webhooks");
+    expect(captured.err).toContain("dashboard.clerk.com/last-active?path=webhooks");
+    expect(captured.err).toContain("Verification:");
     expect(captured.out).toBe("");
   });
 
