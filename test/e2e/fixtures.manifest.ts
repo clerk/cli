@@ -96,6 +96,7 @@ export const fixtures = {
       "--template",
       "minimal",
       "--no-install",
+      "--no-gitInit",
       "--packageManager",
       "npm",
       "--force",
