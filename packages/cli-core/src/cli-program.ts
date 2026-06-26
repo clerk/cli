@@ -41,7 +41,7 @@ import {
   throwUsageError,
 } from "./lib/errors.ts";
 import { clerkHelpConfig, formatExamplesBlock, type Example } from "./lib/help.ts";
-import { isAgent } from "./mode.ts";
+import { isAgent, isHuman } from "./mode.ts";
 import { log } from "./lib/log.ts";
 import { maybeNotifyUpdate, getCurrentVersion } from "./lib/update-check.ts";
 import { registerExtras } from "@clerk/cli-extras";
@@ -135,12 +135,13 @@ export function createProgram(): Program {
       process.stderr.write(`[${activeEnv.toUpperCase()}]\n`);
     }
 
-    // Warn when CLERK_PLATFORM_API_URL routes requests to a different host than
-    // the active environment's platform URL. Credentials are keyed by environment
-    // name, so the active env's token will be sent to the override host. Emitted
-    // to stderr so it never corrupts stdout data output.
+    // Warn (human mode only) when CLERK_PLATFORM_API_URL routes requests to a
+    // different host than the active environment's platform URL. Credentials are
+    // keyed by environment name, so the active env's token will be sent to the
+    // override host. Agent/scripted mode stays clean — stray lines on stderr
+    // corrupt machine-readable output; those callers get this info from `doctor`.
     const override = isPlatformApiUrlOverridden();
-    if (override.overridden) {
+    if (override.overridden && isHuman()) {
       log.warn(
         `CLERK_PLATFORM_API_URL is routing requests to ${override.overrideUrl}, but credentials stay keyed to the "${override.envName}" environment — the "${override.envName}" token will be sent to that host.`,
       );
