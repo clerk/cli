@@ -71,8 +71,19 @@ function migrateRawConfig(raw: Record<string, unknown>): ClerkConfig {
     profiles: (raw.profiles as Record<string, Profile>) ?? {},
   };
 
-  if (raw.relay && typeof raw.relay === "object") {
-    config.relay = raw.relay as Record<string, RelayEntry>;
+  if (raw.relay && typeof raw.relay === "object" && !Array.isArray(raw.relay)) {
+    const relay: Record<string, RelayEntry> = {};
+    for (const [key, val] of Object.entries(raw.relay as Record<string, unknown>)) {
+      if (
+        val &&
+        typeof val === "object" &&
+        !Array.isArray(val) &&
+        typeof (val as Record<string, unknown>).token === "string"
+      ) {
+        relay[key] = val as RelayEntry;
+      }
+    }
+    config.relay = relay;
   }
 
   if (raw.auth && typeof raw.auth === "object") {

@@ -123,7 +123,7 @@ export class RelayClient {
         // every fresh token can't spin a zero-delay reconnect storm.
         this.token = generateRelayToken();
         log.debug("relay: token collision (1008), rotating token");
-        void this.options.onTokenRotated(this.token).then(() => {
+        void this.options.onTokenRotated(this.token).finally(() => {
           if (this.stopped) return;
           setTimeout(() => this.connect(), RELAY_RECONNECT_DELAY_MS);
         });

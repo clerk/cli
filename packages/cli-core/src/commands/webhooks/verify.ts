@@ -112,8 +112,9 @@ async function readFileOrStdin(value: string, flag: string): Promise<string> {
     // reports false for readable character devices like /dev/null.
     try {
       return await Bun.file(path).text();
-    } catch {
-      throw new CliError(`File not found: ${path}`, { code: ERROR_CODE.FILE_NOT_FOUND });
+    } catch (err) {
+      const reason = err instanceof Error ? `: ${err.message}` : "";
+      throw new CliError(`Could not read ${path}${reason}`, { code: ERROR_CODE.FILE_NOT_FOUND });
     }
   }
   return throwUsageError(
