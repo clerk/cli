@@ -22,7 +22,7 @@ const HOP_BY_HOP_HEADERS = new Set([
   "proxy-authenticate",
   "proxy-authorization",
   "te",
-  "trailers",
+  "trailer",
   "transfer-encoding",
   "upgrade",
   "host",
@@ -59,6 +59,7 @@ export function buildForwardHeaders(
   const seenExtra = new Set<string>();
   for (const [key, value] of extraHeaders) {
     const lower = key.toLowerCase();
+    if (HOP_BY_HOP_HEADERS.has(lower)) continue;
     if (lower.startsWith("svix-")) continue;
     if (seenExtra.has(lower)) {
       headers.append(key, value);

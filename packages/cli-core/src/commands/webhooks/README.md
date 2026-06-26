@@ -40,12 +40,12 @@ delivery to a local handler.
 clerk webhooks listen --forward-to http://localhost:3000/api/webhooks
 ```
 
-| Option               | Description                                                                                                           |
-| -------------------- | --------------------------------------------------------------------------------------------------------------------- |
-| `--forward-to <url>` | **Required.** Local URL to POST deliveries to.                                                                        |
-| `--token <c_token>`  | Pin the relay token so the inbox URL stays fixed across machines. `c_` + 10 base62 chars (gen with `webhooks token`). |
-| `--headers <pairs>`  | Extra headers for the forwarded request, comma-separated `k:v` pairs. `svix-*` headers can't be overridden.           |
-| `--json`             | Emit NDJSON: one `ready` line then one `event` line per delivery (pipe into a file for `webhooks verify --delivery`). |
+| Option               | Description                                                                                                             |
+| -------------------- | ----------------------------------------------------------------------------------------------------------------------- |
+| `--forward-to <url>` | **Required.** Local URL to POST deliveries to.                                                                          |
+| `--token <c_token>`  | Pin the relay token so the inbox URL stays fixed across machines. `c_` + 10 base62 chars (gen with `webhooks token`).   |
+| `--header <k:v>`     | Extra header for the forwarded request. Repeat the flag to send multiple headers. `svix-*` headers can't be overridden. |
+| `--json`             | Emit NDJSON: one `ready` line then one `event` line per delivery (pipe into a file for `webhooks verify --delivery`).   |
 
 **Pin your URL.** Without `--token`, the relay token is generated for you and
 persisted locally — but it isn't a guaranteed-stable handle (it can differ on a
@@ -63,7 +63,7 @@ the forwarded request, so your handler can still verify against the signing secr
 of the dashboard endpoint you point at the inbox URL.
 
 **Ready line schema (`--json`):**
-`{ "type": "ready", "relay_url", "forward_to" }` — emitted once, then one
+`{ "type": "ready", "relay_url": "https://play.svix.com/in/c_AbCd123456/", "forward_to": "http://localhost:3000/api/webhooks" }` — emitted once, then one
 `event` line per delivery (and a `{ "type": "reconnecting" }` line if the relay
 connection drops).
 
