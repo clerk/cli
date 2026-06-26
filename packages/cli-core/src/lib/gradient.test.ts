@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { bold } from "./color.ts";
-import { animateHeader, hslToRgb, rgbTo256, shineText } from "./gradient.ts";
+import { animateHeader, cursorRowsBelowHeader, hslToRgb, rgbTo256, shineText } from "./gradient.ts";
 import { useCaptureLog } from "../test/lib/stubs.ts";
 
 const count = (haystack: string, needle: string) => haystack.split(needle).length - 1;
@@ -175,6 +175,28 @@ describe("animateHeader (interactive gating)", () => {
     expect(out).toContain("\x1b[3B");
   });
 
+  test("steps up by the WRAPPED row count so a long line never strands the header", async () => {
+    const savedCols = process.stderr.columns;
+    Object.defineProperty(process.stderr, "columns", { value: 20, configurable: true });
+    try {
+      const body = `   → ${"x".repeat(40)}\n   → short\n`; // first line wraps at 20 cols
+      const expected = cursorRowsBelowHeader(body, 20); // 1 + 2 newlines + 2 wrap rows = 5
+      expect(expected).toBeGreaterThan(3); // would have been a too-small 3 before the fix
+      await animateHeader({
+        prefix: "",
+        label: "Hi",
+        fallback: bold,
+        body,
+        frames: 2,
+        intervalMs: 1,
+      });
+      expect(captured.err).toContain(`\x1b[${expected}A`);
+      expect(captured.err).toContain(`\x1b[${expected}B`);
+    } finally {
+      Object.defineProperty(process.stderr, "columns", { value: savedCols, configurable: true });
+    }
+  });
+
   test("NO_COLOR disables the animation (plain fallback, no redraw)", async () => {
     process.env.NO_COLOR = "1";
     await run();
@@ -219,5 +241,27 @@ describe("animateHeader (interactive gating)", () => {
     } finally {
       Object.defineProperty(process.stderr, "rows", { value: savedRows, configurable: true });
     }
+  });
+});
+
+describe("cursorRowsBelowHeader", () => {
+  test("counts one row per newline when nothing wraps", () => {
+    // header newline (1) + two body newlines = 3
+    expect(cursorRowsBelowHeader("step1\nstep2\n", 80)).toBe(3);
+  });
+
+  test("adds a row for each wrapped line", () => {
+    // a 25-wide line at columns=10 spans 3 visual rows → +2 over its newline
+    const line = "x".repeat(25);
+    expect(cursorRowsBelowHeader(`${line}\n`, 10)).toBe(1 + 1 + 2);
+  });
+
+  test("ignores ANSI when measuring width", () => {
+    // 8 visible chars wrapped in color codes must not count as wrapped at cols=20
+    expect(cursorRowsBelowHeader("\x1b[36mabcdefgh\x1b[0m\n", 20)).toBe(2);
+  });
+
+  test("falls back to newline count when columns is unknown", () => {
+    expect(cursorRowsBelowHeader("x".repeat(200) + "\n", undefined)).toBe(2);
   });
 });
