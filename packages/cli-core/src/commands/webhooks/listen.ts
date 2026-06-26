@@ -1,15 +1,11 @@
 import { getRelayEntry, setRelayEntry } from "../../lib/config.ts";
 import { EXIT_CODE, errorMessage, throwUsageError } from "../../lib/errors.ts";
 import { cliSigintHandler } from "../../lib/signals.ts";
+import { withSpinner } from "../../lib/spinner.ts";
 import { dim } from "../../lib/color.ts";
 import { log } from "../../lib/log.ts";
 import { isAgent } from "../../mode.ts";
-import {
-  buildForwardHeaders,
-  forwardDelivery,
-  parseHeaderPairs,
-  type ForwardOutcome,
-} from "./forward.ts";
+import { buildForwardHeaders, forwardDelivery, parseHeaderPairs } from "./forward.ts";
 import { RelayClient } from "./relay-client.ts";
 import {
   decodeEventBody,
@@ -48,6 +44,26 @@ function assertRelayToken(token: string): void {
   }
 }
 
+// Validated manually (not Commander's .requiredOption) so a missing/invalid
+// value is OUR usage error — JSON in agent mode, not Commander's plain text.
+function assertForwardTo(forwardTo: string | undefined): string {
+  if (!forwardTo) throwUsageError("--forward-to <url> is required.");
+  let url: URL;
+  try {
+    url = new URL(forwardTo);
+  } catch {
+    return throwUsageError(
+      `Invalid --forward-to URL "${forwardTo}". Expected http:// or https:// (e.g. http://localhost:3000).`,
+    );
+  }
+  if (url.protocol !== "http:" && url.protocol !== "https:") {
+    throwUsageError(
+      `--forward-to must use http:// or https://; got "${url.protocol.replace(":", "")}://".`,
+    );
+  }
+  return forwardTo;
+}
+
 function extractEventType(body: string): string {
   try {
     const parsed = JSON.parse(body) as { type?: unknown };
@@ -69,24 +85,7 @@ function forwardPath(forwardTo: string): string {
 export async function webhooksListen(options: WebhooksListenOptions = {}): Promise<void> {
   const ndjson = Boolean(options.json) || isAgent();
   const extraHeaders = parseHeaderPairs(options.headers);
-
-  // --forward-to is logically required (forwarding is the point of the command),
-  // but it's declared as a plain option so the failure is OUR usage error (JSON
-  // in agent mode) rather than Commander's plain-text required-option message.
-  if (!options.forwardTo) throwUsageError("--forward-to <url> is required.");
-  let forwardUrl: URL;
-  try {
-    forwardUrl = new URL(options.forwardTo);
-  } catch {
-    return throwUsageError(
-      `Invalid --forward-to URL "${options.forwardTo}". Expected http:// or https:// (e.g. http://localhost:3000).`,
-    );
-  }
-  if (forwardUrl.protocol !== "http:" && forwardUrl.protocol !== "https:") {
-    throwUsageError(
-      `--forward-to must use http:// or https://; got "${forwardUrl.protocol.replace(":", "")}://".`,
-    );
-  }
+  const forwardTo = assertForwardTo(options.forwardTo);
 
   if (options.token) assertRelayToken(options.token);
 
@@ -98,10 +97,8 @@ export async function webhooksListen(options: WebhooksListenOptions = {}): Promi
     }
   }
 
-  // The relay tunnel needs no Clerk backend (no auth, no instance, no signing
-  // secret). Persist the token under a reserved key so the inbox URL stays
-  // stable across runs — register it once in your dashboard and keep using it.
-  // `--token` pins an explicit token (shareable / memorable).
+  // Persist the token so the inbox URL stays stable across runs; --token pins
+  // an explicit one. No Clerk backend is involved.
   const existing = await getRelayEntry(RELAY_KEY);
   const token = options.token ?? existing?.token ?? generateRelayToken();
   if (token !== existing?.token) await setRelayEntry(RELAY_KEY, { token });
@@ -146,27 +143,20 @@ export async function webhooksListen(options: WebhooksListenOptions = {}): Promi
 
     if (!ndjson) renderArrival(eventType, svixId);
 
-    let outcome: ForwardOutcome | null = null;
-    if (options.forwardTo) {
-      outcome = await forwardDelivery({
-        forwardTo: options.forwardTo,
-        method: event.method,
-        headers: buildForwardHeaders(event.headers, extraHeaders),
-        body,
-      });
-      reply(
-        encodeEventResponseFrame({
-          id: event.id,
-          status: outcome.status,
-          headers: outcome.headers,
-          bodyB64: outcome.bodyB64,
-        }),
-      );
-    } else {
-      // No local handler: frame a synthetic 200 so Svix-side delivery telemetry
-      // records a completed attempt instead of a hang.
-      reply(encodeEventResponseFrame({ id: event.id, status: 200, headers: {}, bodyB64: "" }));
-    }
+    const outcome = await forwardDelivery({
+      forwardTo,
+      method: event.method,
+      headers: buildForwardHeaders(event.headers, extraHeaders),
+      body,
+    });
+    reply(
+      encodeEventResponseFrame({
+        id: event.id,
+        status: outcome.status,
+        headers: outcome.headers,
+        bodyB64: outcome.bodyB64,
+      }),
+    );
 
     if (ndjson) {
       log.data(
@@ -175,17 +165,15 @@ export async function webhooksListen(options: WebhooksListenOptions = {}): Promi
           eventType,
           headers: event.headers,
           bodyB64: event.bodyB64,
-          forwardStatus: outcome ? outcome.status : null,
-          latencyMs: outcome?.latencyMs ?? 0,
+          forwardStatus: outcome.status,
+          latencyMs: outcome.latencyMs,
         }),
       );
       return;
     }
 
-    if (outcome && options.forwardTo) {
-      renderForwardResult(outcome, event.method, forwardPath(options.forwardTo));
-      renderForwardDiagnostics(outcome, svixId);
-    }
+    renderForwardResult(outcome, event.method, forwardPath(forwardTo));
+    renderForwardDiagnostics(outcome, svixId);
   }
 
   client = new RelayClient({
@@ -213,21 +201,15 @@ export async function webhooksListen(options: WebhooksListenOptions = {}): Promi
     },
   });
 
-  await client.start();
+  // Spinner is a no-op in agent/--json mode (isHuman() guard in lib/spinner.ts),
+  // so NDJSON stdout stays clean; on a failed handshake it stops with "Failed".
+  await withSpinner("Connecting to the webhook relay…", () => client.start());
 
-  const readyInfo = {
-    relayUrl: relayReceiveUrl(client.token),
-    signingSecret: null,
-    endpointId: null,
-    eventsFilter: null,
-    forwardTo: options.forwardTo ?? null,
-  };
+  const readyInfo = { relayUrl: relayReceiveUrl(client.token), forwardTo };
   if (ndjson) {
     log.data(buildReadyLine(readyInfo));
   } else {
     renderReadyBanner(readyInfo);
-    // No --token: the token was generated/persisted for you, but isn't a
-    // guaranteed-stable handle. Nudge toward pinning a fixed, shareable URL.
     if (!options.token) renderUnpinnedTokenHint(client.token);
   }
   resolveSetupGate();

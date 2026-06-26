@@ -10,11 +10,7 @@ import type { ForwardOutcome } from "./forward.ts";
 
 export interface ReadyInfo {
   relayUrl: string;
-  // null in relay-only mode: no registered endpoint, no signing secret.
-  signingSecret: string | null;
-  endpointId: string | null;
-  eventsFilter: string[] | null;
-  forwardTo: string | null;
+  forwardTo: string;
 }
 
 /** NDJSON ready line (stdout in agent/--json mode). */
@@ -47,42 +43,18 @@ export function buildEventLine(args: {
 }
 
 export function renderReadyBanner(info: ReadyInfo): void {
-  const forwarding = info.forwardTo ?? dim("(not forwarding — printing events only)");
-  const events = info.eventsFilter?.length ? info.eventsFilter.join(", ") : "all";
-
-  // relay-only: standalone Svix Play tunnel, no Clerk endpoint or secret.
-  if (info.endpointId === null) {
-    log.ui(
-      [
-        "",
-        `${bold("Webhook relay ready")}`,
-        `  Relay URL:       ${info.relayUrl}`,
-        `  Forwarding to:   ${forwarding}`,
-        `  Verification:    ${dim("off (no signing secret; verify with your Dashboard endpoint secret)")}`,
-        "",
-        `  ${dim("Add this URL as an endpoint in the Clerk Dashboard to receive real events:")}`,
-        `    ${cyan("https://dashboard.clerk.com/last-active?path=webhooks")}`,
-        `  ${dim("Or POST any JSON to the Relay URL above to inject a test delivery.")}`,
-        `  ${dim("Press Ctrl+C to stop.")}`,
-        "",
-        "",
-      ].join("\n"),
-    );
-    return;
-  }
-
   log.ui(
     [
       "",
       `${bold("Webhook relay ready")}`,
-      `  Endpoint:        ${cyan(info.endpointId)}`,
       `  Relay URL:       ${info.relayUrl}`,
-      `  Signing secret:  ${info.signingSecret}`,
-      `                   ${dim("(local relay endpoint secret, NOT your Dashboard endpoint secret)")}`,
-      `  Forwarding to:   ${forwarding}`,
-      `  Events:          ${events}`,
+      `  Forwarding to:   ${info.forwardTo}`,
+      `  Verification:    ${dim("off (no signing secret; verify with your Dashboard endpoint secret)")}`,
       "",
-      `  ${dim("Press Ctrl+C to stop. The relay endpoint and secret persist across restarts.")}`,
+      `  ${dim("Add this URL as an endpoint in the Clerk Dashboard to receive real events:")}`,
+      `    ${cyan("https://dashboard.clerk.com/last-active?path=webhooks")}`,
+      `  ${dim("Or POST any JSON to the Relay URL above to inject a test delivery.")}`,
+      `  ${dim("Press Ctrl+C to stop.")}`,
       "",
       "",
     ].join("\n"),
