@@ -1,42 +1,29 @@
 import { test, expect, describe, afterEach } from "bun:test";
 import { CliError } from "../../lib/errors.ts";
 import { stubFetch, useCaptureLog } from "../../test/lib/stubs.ts";
-import { buildForwardHeaders, forwardDelivery, parseHeaderPairs } from "./forward.ts";
+import { buildForwardHeaders, forwardDelivery, parseHeaderFlag } from "./forward.ts";
 
 const originalFetch = globalThis.fetch;
 
-describe("parseHeaderPairs", () => {
-  const parseCases: Array<{
-    label: string;
-    value: string | undefined;
-    expected: Record<string, string>;
-  }> = [
-    { label: "undefined", value: undefined, expected: {} },
-    { label: "empty string", value: "", expected: {} },
-    { label: "single pair", value: "x-env:dev", expected: { "x-env": "dev" } },
-    {
-      label: "multiple pairs with whitespace",
-      value: " x-env : dev , x-team:core ",
-      expected: { "x-env": "dev", "x-team": "core" },
-    },
+describe("parseHeaderFlag", () => {
+  test.each<{ label: string; value: string; expected: [string, string] }>([
+    { label: "simple pair", value: "x-env:dev", expected: ["x-env", "dev"] },
     {
       label: "value containing colons (split on FIRST colon)",
       value: "authorization:Bearer abc:def",
-      expected: { authorization: "Bearer abc:def" },
+      expected: ["authorization", "Bearer abc:def"],
     },
-    { label: "trailing comma", value: "x-env:dev,", expected: { "x-env": "dev" } },
-    { label: "empty value", value: "x-empty:", expected: { "x-empty": "" } },
-  ];
-
-  test.each(parseCases)("parses $label", ({ value, expected }) => {
-    expect(parseHeaderPairs(value)).toEqual(expected);
+    { label: "empty value", value: "x-empty:", expected: ["x-empty", ""] },
+    { label: "trims whitespace", value: " x-env : dev ", expected: ["x-env", "dev"] },
+  ])("parses $label", ({ value, expected }) => {
+    expect(parseHeaderFlag(value)).toEqual(expected);
   });
 
   test.each([
     { label: "pair without a colon", value: "not-a-pair" },
     { label: "pair with an empty key", value: ":value" },
   ])("throws a usage error on $label", ({ value }) => {
-    expect(() => parseHeaderPairs(value)).toThrow(CliError);
+    expect(() => parseHeaderFlag(value)).toThrow(CliError);
   });
 });
 
@@ -49,7 +36,8 @@ describe("buildForwardHeaders", () => {
   };
 
   test("preserves delivery headers and adds extras", () => {
-    const headers = buildForwardHeaders(eventHeaders, { "x-env": "dev" });
+    const extra = new Headers({ "x-env": "dev" });
+    const headers = buildForwardHeaders(eventHeaders, extra);
 
     expect(headers.get("svix-id")).toBe("msg_1");
     expect(headers.get("content-type")).toBe("application/json");
@@ -57,7 +45,8 @@ describe("buildForwardHeaders", () => {
   });
 
   test("extras may override non-svix delivery headers", () => {
-    const headers = buildForwardHeaders(eventHeaders, { "Content-Type": "text/plain" });
+    const extra = new Headers({ "Content-Type": "text/plain" });
+    const headers = buildForwardHeaders(eventHeaders, extra);
 
     expect(headers.get("content-type")).toBe("text/plain");
   });
@@ -67,9 +56,34 @@ describe("buildForwardHeaders", () => {
     { label: "uppercase", key: "SVIX-SIGNATURE" },
     { label: "mixed case", key: "Svix-Signature" },
   ])("extras can never override svix-* headers ($label)", ({ key }) => {
-    const headers = buildForwardHeaders(eventHeaders, { [key]: "v1,forged" });
+    const extra = new Headers({ [key]: "v1,forged" });
+    const headers = buildForwardHeaders(eventHeaders, extra);
 
     expect(headers.get("svix-signature")).toBe("v1,abc");
+  });
+
+  test("strips hop-by-hop headers from event headers", () => {
+    const withHopByHop = {
+      ...eventHeaders,
+      host: "svix-relay.example.com",
+      connection: "keep-alive",
+      "transfer-encoding": "chunked",
+    };
+    const headers = buildForwardHeaders(withHopByHop, new Headers());
+
+    expect(headers.has("host")).toBe(false);
+    expect(headers.has("connection")).toBe(false);
+    expect(headers.has("transfer-encoding")).toBe(false);
+    expect(headers.get("svix-id")).toBe("msg_1");
+  });
+
+  test("allows duplicate extra headers via append", () => {
+    const extra = new Headers();
+    extra.append("x-custom", "first");
+    extra.append("x-custom", "second");
+    const headers = buildForwardHeaders({}, extra);
+
+    expect(headers.get("x-custom")).toBe("first, second");
   });
 });
 
@@ -95,7 +109,7 @@ describe("forwardDelivery", () => {
     const outcome = await forwardDelivery({
       forwardTo: "http://localhost:3000/api/webhooks",
       method: "POST",
-      headers: buildForwardHeaders({ "svix-id": "msg_1" }, {}),
+      headers: buildForwardHeaders({ "svix-id": "msg_1" }, new Headers()),
       body: '{"type":"user.created"}',
     });
 

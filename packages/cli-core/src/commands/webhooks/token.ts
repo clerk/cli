@@ -24,7 +24,7 @@ export async function webhooksToken(options: WebhooksTokenOptions = {}): Promise
   log.data(token);
   if (isAgent()) return;
   await outro([
-    `Pin it: clerk webhooks listen --token ${token} --forward-to <url>`,
+    `Use this token: clerk webhooks listen --token ${token} --forward-to <url>`,
     "Register the Relay URL it prints as an endpoint in your Clerk Dashboard",
   ]);
 }

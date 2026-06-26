@@ -1,11 +1,11 @@
 import { getRelayEntry, setRelayEntry } from "../../lib/config.ts";
 import { EXIT_CODE, errorMessage, throwUsageError } from "../../lib/errors.ts";
-import { cliSigintHandler } from "../../lib/signals.ts";
+import { CLI_SIGINT_HANDLER } from "../../lib/signals.ts";
 import { withSpinner } from "../../lib/spinner.ts";
 import { dim } from "../../lib/color.ts";
 import { log } from "../../lib/log.ts";
 import { isAgent } from "../../mode.ts";
-import { buildForwardHeaders, forwardDelivery, parseHeaderPairs } from "./forward.ts";
+import { buildForwardHeaders, forwardDelivery, parseHeaderFlag } from "./forward.ts";
 import { RelayClient } from "./relay-client.ts";
 import {
   decodeEventBody,
@@ -27,7 +27,7 @@ import type { WebhooksGlobalOptions } from "./shared.ts";
 
 export interface WebhooksListenOptions extends WebhooksGlobalOptions {
   forwardTo?: string;
-  headers?: string;
+  header?: string[];
   token?: string;
 }
 
@@ -84,17 +84,18 @@ function forwardPath(forwardTo: string): string {
 
 export async function webhooksListen(options: WebhooksListenOptions = {}): Promise<void> {
   const ndjson = Boolean(options.json) || isAgent();
-  const extraHeaders = parseHeaderPairs(options.headers);
   const forwardTo = assertForwardTo(options.forwardTo);
 
   if (options.token) assertRelayToken(options.token);
 
-  // svix-* headers can't be overridden (delivery headers always win) — warn once
-  // at startup instead of silently dropping them.
-  for (const key of Object.keys(extraHeaders)) {
+  const extraHeaders = new Headers();
+  for (const raw of options.header ?? []) {
+    const [key, value] = parseHeaderFlag(raw);
     if (key.toLowerCase().startsWith("svix-")) {
-      log.warn(`--headers: "${key}" can't be overridden — delivery svix-* headers always win.`);
+      log.warn(`--header: "${key}" can't be overridden — delivery svix-* headers always win.`);
+      continue;
     }
+    extraHeaders.append(key, value);
   }
 
   // Persist the token so the inbox URL stays stable across runs; --token pins
@@ -111,21 +112,26 @@ export async function webhooksListen(options: WebhooksListenOptions = {}): Promi
   // Deliveries can arrive the moment the relay handshake completes, but the
   // ready banner/line must print first. Gate processing until setup is done;
   // the SIGINT path also resolves it so the drain can never hang.
-  let resolveSetupGate!: () => void;
-  const setupGate = new Promise<void>((resolve) => {
-    resolveSetupGate = resolve;
-  });
+  const { promise: setupGate, resolve: resolveSetupGate } = Promise.withResolvers<void>();
 
   // Own SIGINT handling, registered BEFORE the socket opens. The global handler
   // (cli.ts) is a cleanup-free exit(130) and would fire first, so remove it:
   // close the socket, drain in-flight forwards, then exit 130.
-  process.removeListener("SIGINT", cliSigintHandler);
+  process.removeListener("SIGINT", CLI_SIGINT_HANDLER);
   process.on("SIGINT", () => {
+    if (shuttingDown) {
+      // Double Ctrl+C: force-quit immediately.
+      process.exit(EXIT_CODE.SIGINT);
+    }
     void (async () => {
       shuttingDown = true; // MUST precede resolveSetupGate so processDelivery short-circuits
       resolveSetupGate(); // gated deliveries must settle or the drain hangs
       client?.stop();
-      await Promise.allSettled([...inFlight, ...(tokenRotationTask ? [tokenRotationTask] : [])]);
+      const pending = [...inFlight, ...(tokenRotationTask ? [tokenRotationTask] : [])];
+      await Promise.race([
+        Promise.allSettled(pending),
+        new Promise<void>((resolve) => setTimeout(resolve, 2_000)),
+      ]);
       process.exit(EXIT_CODE.SIGINT);
     })();
   });
@@ -180,7 +186,7 @@ export async function webhooksListen(options: WebhooksListenOptions = {}): Promi
     token,
     onEvent: (event, reply) => {
       const task = processDelivery(event, reply).catch((error) => {
-        log.debug(`relay: delivery handling failed: ${errorMessage(error)}`);
+        log.warn(`relay: delivery dropped: ${errorMessage(error)}`);
       });
       inFlight.add(task);
       void task.finally(() => inFlight.delete(task));
