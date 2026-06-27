@@ -1,5 +1,31 @@
 # clerk
 
+## 2.0.0
+
+### Major Changes
+
+- Remove the bundled `clerk skill install` command and install the `clerk-cli` agent skill from the [`clerk/skills`](https://github.com/clerk/skills) repository during `clerk init`. ([#315](https://github.com/clerk/cli/pull/315)) by [@wyattjoh](https://github.com/wyattjoh)
+
+### Minor Changes
+
+- Add `clerk api --fapi` to call an instance's public Frontend API (e.g. `clerk api --fapi /environment --app <id>`). The FAPI host is resolved from the instance's publishable key, and the request is unauthenticated since these endpoints are public, which closes the loop on verifying config changes end to end with the CLI alone. ([#345](https://github.com/clerk/cli/pull/345)) by [@rafa-thayto](https://github.com/rafa-thayto)
+
+- Refresh the visual style of prompts, lists, spinners, and intro/outro brackets to use `@clack/prompts`, and make interactive command endings reflect success, failure, or paused cancellation status. ([#305](https://github.com/clerk/cli/pull/305)) by [@wyattjoh](https://github.com/wyattjoh)
+
+- `clerk init` on Expo projects now installs the `clerk-expo` agent skill (Expo/React Native setup) alongside `clerk-expo-patterns`. The framework skill map supports multiple skills per framework. ([#328](https://github.com/clerk/cli/pull/328)) by [@manovotny](https://github.com/manovotny)
+
+- Render the "Next steps" header in a dusty mauve and sweep a white reflex highlight across it once after `clerk deploy`, `clerk link`, and `clerk auth login`, then settle on the flat color. The animation only runs on an interactive color terminal and falls back to plain styling when piped, in CI, or when `NO_COLOR` is set. ([#322](https://github.com/clerk/cli/pull/322)) by [@rafa-thayto](https://github.com/rafa-thayto)
+
+### Patch Changes
+
+- Keep a separator between the path and description in `clerk api ls` so long endpoint paths no longer run straight into their summaries. ([#340](https://github.com/clerk/cli/pull/340)) by [@rafa-thayto](https://github.com/rafa-thayto)
+
+- Fix the OAuth provider walkthrough in `clerk deploy` printing the redirect URI on the wrong subdomain. Previously, the walkthrough showed `https://accounts.{domain}/v1/oauth_callback`, but the callback is served by the Frontend API, so pasting the value into a provider console caused `redirect_uri_mismatch`. The walkthrough now prints the instance's `frontend_api_url` (e.g. `https://clerk.{domain}/v1/oauth_callback`), matching the value shown in the Clerk Dashboard. ([#335](https://github.com/clerk/cli/pull/335)) by [@Railly](https://github.com/Railly)
+
+- Print the "Next steps" list before sweeping the highlight across its header, so the animation no longer leaves a lone "Next steps" line that looks hung while the steps are hidden. ([#343](https://github.com/clerk/cli/pull/343)) by [@rafa-thayto](https://github.com/rafa-thayto)
+
+- Stop showing the "possible sandboxed run" hint for ordinary network failures (unreachable host, VPN, DNS) in agent mode. The hint now requires a permission-like error before suggesting a sandbox, and is a single line. ([#342](https://github.com/clerk/cli/pull/342)) by [@rafa-thayto](https://github.com/rafa-thayto)
+
 ## 1.5.0
 
 ### Minor Changes
@@ -74,6 +100,7 @@
 - `clerk init` in agent mode now creates and links a real Clerk application when the user is authenticated, instead of falling back to keyless setup. Keyless still runs in agent mode when the user is not authenticated, but authenticated agent runs leave the project properly linked with real development keys in `.env`. ([#254](https://github.com/clerk/cli/pull/254)) by [@wyattjoh](https://github.com/wyattjoh)
 
 - Add `clerk enable` and `clerk disable` top-level commands for toggling features on the linked instance. ([#219](https://github.com/clerk/cli/pull/219)) by [@nicolas-angelo](https://github.com/nicolas-angelo)
+
   - `clerk enable orgs` / `clerk disable orgs` — toggle organizations, with `--force-selection`, `--auto-create`, `--max-members <n>`, and `--domains` on enable.
   - `clerk enable billing [--for org,user]` / `clerk disable billing [--for org,user]` — toggle billing for organizations and/or users. `--for` defaults to both; enabling for `org` cascades to enabling organizations. Enable also offers to install the `clerk-billing` agent skill (suppress with `--no-skills`).
 
@@ -84,6 +111,7 @@
 - Rename the bundled agent skill from `clerk` to `clerk-cli` for more clarity during install. After upgrading, `clerk skill install` (and the install step in `clerk init`) writes the skill to `<agent-dir>/skills/clerk-cli/` instead of `<agent-dir>/skills/clerk/`. Existing `skills/clerk/` directories from prior installs are left in place; remove them manually if you want to avoid duplicate context. ([#245](https://github.com/clerk/cli/pull/245)) by [@kylemac](https://github.com/kylemac)
 
 - Add direct user-management commands to `clerk users`: ([#237](https://github.com/clerk/cli/pull/237)) by [@wyattjoh](https://github.com/wyattjoh)
+
   - `clerk users list` with pagination, query search, repeatable identifier filters (`--email-address`, `--phone-number`, `--username`, `--user-id`, `--external-id`), `--order-by` over Clerk's common user ordering fields, and an application picker when invoked without a linked project, env var, or targeting flag. `--limit` defaults to 100 and accepts 1-250. `--json` (and agent mode) emits `{ data, hasMore }` so callers can paginate without a separate count call; the human-mode table footer surfaces the next `--offset` when more pages are available. The interactive user picker (used by `clerk users open` and other update flows) shows a "More results, refine your search" hint when matches overflow its window.
   - `clerk users open [user-id]` for opening a user's Clerk dashboard page in the browser, with interactive pickers for the application and the user, plus `--print` for emitting the URL.
 
@@ -182,12 +210,14 @@
 - Fix link saving to wrong directory during bootstrap flow. When creating a new project via `clerk init`, the Clerk application link is now correctly saved to the new project directory instead of the parent directory. ([#186](https://github.com/clerk/cli/pull/186)) by [@kylemac](https://github.com/kylemac)
 
 - Store macOS credentials in the system Keychain instead of a plaintext file. ([#198](https://github.com/clerk/cli/pull/198)) by [@wyattjoh](https://github.com/wyattjoh)
+
   - Previously, macOS builds silently stored the OAuth token in `~/Library/Application Support/clerk-cli/credentials` because cross-compiled binaries were missing the native Keychain binding.
   - Run `clerk login` after upgrading so the CLI writes a fresh token into the Keychain and removes the old plaintext file.
 
 - Surface the bundled agent skill in `clerk --help` and bare `clerk` output with a tip pointing to `clerk skill install`, so users discover how to give AI coding agents Clerk context. ([#191](https://github.com/clerk/cli/pull/191)) by [@rafa-thayto](https://github.com/rafa-thayto)
 
 - Tighten the `clerk init` bootstrap flow: ([#184](https://github.com/clerk/cli/pull/184)) by [@rafa-thayto](https://github.com/rafa-thayto)
+
   - Skip the redundant "Proceed?" scaffold confirmation when bootstrapping a new project (via `--starter` or on an empty directory). The scaffold plan is still previewed; only the now-superfluous prompt is removed since the user already opted in by starting bootstrap.
   - Print bootstrap next steps (`cd <project>`, `<pm> dev`, etc.) after the optional "Install agent skills?" prompt so they remain the last thing visible when the command finishes.
 
@@ -196,6 +226,7 @@
 - Fix `install.sh --install-dir <path>` so it creates the directory when it does not already exist, matching the behavior of the `~/.local/bin` fallback. ([#202](https://github.com/clerk/cli/pull/202)) by [@wyattjoh](https://github.com/wyattjoh)
 
 - Fix `clerk init` prompt flow: ([#175](https://github.com/clerk/cli/pull/175)) by [@rafa-thayto](https://github.com/rafa-thayto)
+
   - When you are signed in (OAuth or `CLERK_PLATFORM_API_KEY`), `clerk init` skips straight to the authenticated flow — no more "Skip authentication for now?" prompt.
   - When you are not signed in **during bootstrap** (new projects) on a keyless-capable framework, `clerk init` now goes keyless automatically (previously prompted) and points you to `clerk auth login` for later. Re-runs in an existing project still fall through to the authenticated flow so real keys can be pulled.
   - Keep `clerk init --starter` fully interactive — it no longer fails with "Non-interactive mode requires --framework" when running without `-y`.
@@ -205,6 +236,7 @@
 - Install the full Clerk core and feature skill sets by default during `clerk init`. Agents now get context for `clerk-custom-ui`, `clerk-backend-api`, `clerk-orgs`, `clerk-testing`, and `clerk-webhooks` in addition to the previous defaults, plus a framework-specific skill when one matches. Pass `--no-skills` to opt out. ([#185](https://github.com/clerk/cli/pull/185)) by [@rafa-thayto](https://github.com/rafa-thayto)
 
 - Expand `--verbose` debug output across the CLI and surface silent environment fallbacks. ([#183](https://github.com/clerk/cli/pull/183)) by [@wyattjoh](https://github.com/wyattjoh)
+
   - Every outbound HTTP call (platform API, backend API, OAuth, npm registry) now logs its URL, method, status, and response body on error under `--verbose`.
   - New debug coverage for the credential store, config file I/O, environment resolution, auth callback server, git detection, framework detection, autolink, and package-manager runner probing.
   - Warn without `--verbose` when the saved environment is not available in the current binary, instead of silently falling back to production.
