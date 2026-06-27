@@ -35,7 +35,7 @@ In agent mode all interactive flows are disabled and the same invocations exit w
 
 Two complementary mechanisms for JSON input work across the users command family:
 
-- **`--input-json <json|@file|->`** (program-level). Expands JSON object keys into argv flags before Commander parses them. Drive the curated flags with structured JSON, from an agent or a pipeline: `clerk users create --input-json '{"email":"alice@example.com","first-name":"Alice","yes":true}'`. Accepts inline JSON, `@path/to/file.json`, or `-` for stdin. Piped stdin is auto-detected when `--input-json` is absent.
+- **`--input-json <json|@file|->`** (program-level). Expands JSON object keys into argv flags before Commander parses them. Drive the curated flags with structured JSON, from an agent or a pipeline: `clerk users create --input-json '{"email":"alice@example.com","first-name":"Alice","yes":true}'`. Accepts inline JSON, `@path/to/file.json`, or `-` for stdin. Stdin is only read with an explicit `--input-json -`, so shell loops and commands that read their own stdin are never disturbed.
 - **`-d, --data <json>` plus `--file <path>`** (per-command). Send a raw BAPI request body directly to `/v1/users`. Use this when you need a BAPI field the curated flags don't expose (for example, `primary_email_address_id` or `web3_wallets`). Mirrors `clerk api -d` / `--file`.
 
 ## Commands
