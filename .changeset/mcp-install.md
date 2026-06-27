@@ -1,0 +1,5 @@
+---
+"clerk": minor
+---
+
+Add `clerk mcp install`, `list`, `uninstall`, and `run` to connect the Clerk remote MCP server (`https://mcp.clerk.com/mcp`) to Claude Code, Cursor, GitHub Copilot (VS Code; `--client vscode` or `--client copilot`), Windsurf, Gemini, and Codex. Each client is configured to launch `clerk mcp run` — a built-in stdio bridge that forwards the editor's stdio JSON-RPC to the remote server over HTTP (the job `npx mcp-remote` did, now with no npx dependency), so `clerk` must be on your PATH. Entries are written to each client's user-global config (e.g. `~/.claude.json`, `~/.cursor/mcp.json`, `~/.codex/config.toml`), available across every project regardless of where you run the CLI. `clerk doctor` gains an MCP reachability check that probes each configured server via the MCP `initialize` handshake when an entry is installed. The URL resolves in order: `--url` > the `CLERK_MCP_URL` override (for local worker development) > the active env profile's `mcpUrl` field > the hosted server, so `clerk mcp install` works with no flags. The bridge is transport-only for now; against an auth-required server it surfaces a clear error rather than signing in.

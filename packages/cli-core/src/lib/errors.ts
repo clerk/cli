@@ -55,6 +55,14 @@ export const ERROR_CODE = {
   HOME_URL_TAKEN: "home_url_taken",
   /** PLAPI rejected a request parameter as malformed. */
   FORM_PARAM_INVALID: "form_param_invalid",
+  /** No MCP client detected on the system. */
+  MCP_NO_CLIENT_DETECTED: "mcp_no_client_detected",
+  /** Requested MCP client is not in the supported registry. */
+  MCP_CLIENT_NOT_SUPPORTED: "mcp_client_not_supported",
+  /** Existing MCP client config is malformed or has a conflicting entry. */
+  MCP_CLIENT_CONFIG_INVALID: "mcp_client_config_invalid",
+  /** The provided `--url` is malformed or uses a non-http(s) scheme. */
+  MCP_URL_REQUIRED: "mcp_url_required",
 } as const;
 
 export type ErrorCode = (typeof ERROR_CODE)[keyof typeof ERROR_CODE];
