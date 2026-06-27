@@ -9,6 +9,7 @@ import {
   insertAfterLastImport,
   jsxAuthPageContent,
   jsxExt,
+  parseMajorVersion,
   safeAddImport,
   scaffoldAuthFiles,
   scaffoldConfigFile,
@@ -363,7 +364,14 @@ async function scaffoldRoutes(
   };
 }
 
+function shouldEnableV8MiddlewareFlag(ctx: ProjectContext): boolean {
+  const major = parseMajorVersion(ctx.deps["react-router"] ?? "");
+  return major !== null && major < 8;
+}
+
 function scaffoldConfig(ctx: ProjectContext): Promise<FileAction | null> {
+  if (!shouldEnableV8MiddlewareFlag(ctx)) return Promise.resolve(null);
+
   return scaffoldConfigFile(ctx.cwd, {
     candidates: ["react-router.config.ts", "react-router.config.js"],
     existsCheck: "v8_middleware",

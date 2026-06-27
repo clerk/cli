@@ -126,6 +126,16 @@ export const fixtures = {
     clerkSdk: "@clerk/react-router",
     buildCmd: ["react-router", "build"],
     devCmd: ["react-router", "dev"],
+    packageJsonOverrides: {
+      dependencies: {
+        "@react-router/node": "7.15.0",
+        "@react-router/serve": "7.15.0",
+        "react-router": "7.15.0",
+      },
+      devDependencies: {
+        "@react-router/dev": "7.15.0",
+      },
+    },
   },
   "tanstack-start": {
     scaffoldCmd: [

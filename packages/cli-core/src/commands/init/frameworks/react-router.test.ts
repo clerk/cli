@@ -362,6 +362,45 @@ export default function Root() {
   expect(rootAction.content).not.toContain("<SignInButton");
 });
 
+test("enables v8_middleware for React Router 7", async () => {
+  await mkdir(join(tempDir, "app"), { recursive: true });
+  await Bun.write(
+    join(tempDir, "react-router.config.ts"),
+    `import type { Config } from "@react-router/dev/config";
+
+export default {
+  ssr: true,
+} satisfies Config;
+`,
+  );
+
+  const plan = await reactRouter.scaffold(makeCtx({ deps: { "react-router": "7.9.0" } }));
+  const configAction = plan.actions.find((action) => action.path === "react-router.config.ts");
+
+  expect(configAction?.type).toBe("modify");
+  if (configAction?.type !== "modify") throw new Error("Expected config modify action");
+
+  expect(configAction.content).toContain("v8_middleware: true");
+});
+
+test("does not enable v8_middleware for React Router 8", async () => {
+  await mkdir(join(tempDir, "app"), { recursive: true });
+  await Bun.write(
+    join(tempDir, "react-router.config.ts"),
+    `import type { Config } from "@react-router/dev/config";
+
+export default {
+  ssr: true,
+} satisfies Config;
+`,
+  );
+
+  const plan = await reactRouter.scaffold(makeCtx({ deps: { "react-router": "8.0.0" } }));
+  const configAction = plan.actions.find((action) => action.path === "react-router.config.ts");
+
+  expect(configAction).toBeUndefined();
+});
+
 test("wires locale-prefixed routes into app/routes.ts", async () => {
   await mkdir(join(tempDir, "app/routes"), { recursive: true });
   await Bun.write(join(tempDir, "app/routes/($locale)._index.tsx"), "export default function() {}");

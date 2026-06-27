@@ -10,6 +10,19 @@ describe("react-router fixture scaffold command", () => {
   test("disables git initialization", () => {
     expect(fixtures["react-router"].scaffoldCmd).toContain("--no-git-init");
   });
+
+  test("pins React Router fixture packages to v7", () => {
+    expect(fixtures["react-router"].packageJsonOverrides).toEqual({
+      dependencies: {
+        "@react-router/node": "7.15.0",
+        "@react-router/serve": "7.15.0",
+        "react-router": "7.15.0",
+      },
+      devDependencies: {
+        "@react-router/dev": "7.15.0",
+      },
+    });
+  });
 });
 
 describe("refreshFixtures", () => {
