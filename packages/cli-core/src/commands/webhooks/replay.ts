@@ -1,0 +1,94 @@
+import { resolveAppContext } from "../../lib/config.ts";
+import { throwUsageError, withApiContext } from "../../lib/errors.ts";
+import { log } from "../../lib/log.ts";
+import { recoverWebhookMessages, resendWebhookMessage } from "../../lib/plapi.ts";
+import {
+  confirmDestructive,
+  rejectEndpointNotFound,
+  rejectMessageNotFound,
+  resolveEndpointOrRelay,
+  type WebhooksGlobalOptions,
+} from "./shared.ts";
+
+export interface WebhooksReplayOptions extends WebhooksGlobalOptions {
+  msgId?: string;
+  endpoint?: string;
+  since?: string;
+  until?: string;
+  yes?: boolean;
+}
+
+function assertRfc3339(value: string, flag: string): void {
+  if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?(Z|[+-]\d{2}:\d{2})$/.test(value)) {
+    throwUsageError(
+      `Invalid ${flag} value "${value}". Must be an RFC 3339 timestamp (e.g. 2024-01-01T00:00:00Z).`,
+    );
+  }
+}
+
+function validateReplayMode(options: WebhooksReplayOptions): "resend" | "recover" {
+  if (options.msgId && options.since) {
+    throwUsageError("Pass either a <msg_id> or --since, not both.");
+  }
+  // Check the orphaned-`--until` case before the generic "neither" message, so
+  // `replay --until <ISO>` points at the real problem instead of a vaguer hint.
+  if (options.until && !options.since) {
+    throwUsageError("--until requires --since.");
+  }
+  if (!options.msgId && !options.since) {
+    throwUsageError("Pass a <msg_id> to resend one delivery, or --since <ISO> to bulk-recover.");
+  }
+  if (options.since) {
+    assertRfc3339(options.since, "--since");
+    if (options.until) assertRfc3339(options.until, "--until");
+    if (!options.endpoint) {
+      throwUsageError("--endpoint is required with --since. Bulk recovery never guesses a target.");
+    }
+    return "recover";
+  }
+  return "resend";
+}
+
+export async function webhooksReplay(options: WebhooksReplayOptions): Promise<void> {
+  const mode = validateReplayMode(options);
+
+  const windowLabel = options.until
+    ? `between ${options.since} and ${options.until}`
+    : `since ${options.since}`;
+
+  // Before resolveAppContext: the confirmation gate is pure flag/prompt logic
+  // and must not cost (or be masked by) a network round-trip.
+  if (mode === "recover") {
+    await confirmDestructive(
+      `Bulk-recover deliveries to ${options.endpoint} ${windowLabel}? Every failed delivery in the window will be resent.`,
+      options,
+    );
+  }
+
+  const ctx = await resolveAppContext(options);
+
+  if (mode === "resend") {
+    const endpointId = await resolveEndpointOrRelay(options.endpoint, ctx.instanceId);
+    await rejectMessageNotFound(
+      withApiContext(
+        resendWebhookMessage(ctx.appId, ctx.instanceId, endpointId, options.msgId!),
+        "Failed to resend webhook message",
+      ),
+      options.msgId!,
+    );
+    log.success(`Queued replay of \`${options.msgId}\` to \`${endpointId}\``);
+    return;
+  }
+
+  await rejectEndpointNotFound(
+    withApiContext(
+      recoverWebhookMessages(ctx.appId, ctx.instanceId, options.endpoint!, {
+        since: options.since!,
+        until: options.until,
+      }),
+      "Failed to recover webhook messages",
+    ),
+    options.endpoint!,
+  );
+  log.success(`Queued recovery of deliveries to \`${options.endpoint}\` ${windowLabel}`);
+}

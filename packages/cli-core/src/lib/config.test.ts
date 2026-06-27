@@ -1,6 +1,6 @@
 import { test, expect, describe, beforeEach, afterEach, spyOn } from "bun:test";
 import { join } from "node:path";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 
 const {
@@ -16,6 +16,8 @@ const {
   resolveInstanceId,
   resolveAppContext,
   resolveFetchedApplicationInstance,
+  getRelayEntry,
+  setRelayEntry,
   _setConfigDir,
 } = await import("./config.ts");
 type Profile =
@@ -60,6 +62,15 @@ describe("config", () => {
     expect(result.profiles).toEqual(config.profiles);
   });
 
+  test("writeConfig creates config file with mode 0600 and directory with mode 0700", async () => {
+    await writeConfig({ profiles: {} });
+    const configPath = join(tempDir, "config.json");
+    const fileStats = await stat(configPath);
+    const dirStats = await stat(tempDir);
+    expect(fileStats.mode & 0o777).toBe(0o600);
+    expect(dirStats.mode & 0o777).toBe(0o700);
+  });
+
   test("readConfig migrates legacy auth format", async () => {
     // Write old-format config directly
     const legacyConfig = {
@@ -69,6 +80,37 @@ describe("config", () => {
     await Bun.write(`${tempDir}/config.json`, JSON.stringify(legacyConfig));
     const result = await readConfig();
     expect(result.auth).toEqual({ production: { userId: "user_legacy" } });
+  });
+
+  test("getRelayEntry returns undefined when nothing is persisted", async () => {
+    expect(await getRelayEntry("ins_123")).toBeUndefined();
+  });
+
+  test("setRelayEntry and getRelayEntry roundtrip per instance", async () => {
+    await setRelayEntry("ins_a", { token: "Ab12Cd34Ef" });
+    await setRelayEntry("ins_b", { token: "Zz98Yy76Xx", endpoint_id: "ep_1" });
+
+    expect(await getRelayEntry("ins_a")).toEqual({ token: "Ab12Cd34Ef" });
+    expect(await getRelayEntry("ins_b")).toEqual({ token: "Zz98Yy76Xx", endpoint_id: "ep_1" });
+  });
+
+  test("setRelayEntry overwrites only the targeted instance", async () => {
+    await setRelayEntry("ins_a", { token: "tokenAAAAA" });
+    await setRelayEntry("ins_a", { token: "tokenAAAAA", endpoint_id: "ep_2" });
+
+    expect(await getRelayEntry("ins_a")).toEqual({ token: "tokenAAAAA", endpoint_id: "ep_2" });
+  });
+
+  test("readConfig preserves relay through the legacy-auth migration", async () => {
+    const legacyConfig = {
+      auth: { userId: "user_legacy" },
+      profiles: {},
+      relay: { ins_123: { token: "Ab12Cd34Ef", endpoint_id: "ep_9" } },
+    };
+    await Bun.write(`${tempDir}/config.json`, JSON.stringify(legacyConfig));
+
+    const result = await readConfig();
+    expect(result.relay).toEqual({ ins_123: { token: "Ab12Cd34Ef", endpoint_id: "ep_9" } });
   });
 
   test("setAuth and getAuth", async () => {

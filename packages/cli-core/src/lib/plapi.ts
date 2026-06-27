@@ -331,3 +331,234 @@ export async function listApplications(): Promise<Application[]> {
   const response = await plapiFetch("GET", url);
   return response.json() as Promise<Application[]>;
 }
+
+// ── Webhooks (instance-scoped /webhooks routes) ──────────────────────────
+
+export type WebhookEndpoint = {
+  id: string;
+  url: string;
+  version: number;
+  description?: string | null;
+  disabled: boolean;
+  filter_types?: string[] | null;
+  channels?: string[] | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type WebhookCursor = {
+  starting_after: string | null;
+  ending_before: string | null;
+  has_next_page: boolean;
+};
+
+export type WebhookEndpointList = {
+  data: WebhookEndpoint[];
+  cursor: WebhookCursor;
+};
+
+export type WebhookEventType = {
+  name: string;
+  description: string;
+  archived: boolean;
+  created_at: string;
+  updated_at: string;
+};
+
+export type WebhookEventTypeList = {
+  data: WebhookEventType[];
+  cursor: WebhookCursor;
+};
+
+export const WEBHOOK_MESSAGE_STATUSES = ["success", "pending", "fail", "sending"] as const;
+export type WebhookMessageStatus = (typeof WEBHOOK_MESSAGE_STATUSES)[number];
+
+export type WebhookMessage = {
+  id: string;
+  event_type: string;
+  status: WebhookMessageStatus;
+  next_attempt: string | null;
+  payload: unknown;
+  created_at: string;
+};
+
+export type WebhookMessageList = {
+  data: WebhookMessage[];
+  cursor: WebhookCursor;
+};
+
+export type CreateWebhookEndpointParams = {
+  url: string;
+  version: 1;
+  description?: string;
+  disabled?: boolean;
+  filter_types?: string[];
+  channels?: string[];
+};
+
+export type UpdateWebhookEndpointParams = Partial<CreateWebhookEndpointParams>;
+
+export type WebhookPageParams = {
+  limit?: number;
+  iterator?: string;
+};
+
+function webhooksUrl(applicationId: string, instanceId: string, path = ""): URL {
+  return new URL(
+    `/v1/platform/applications/${applicationId}/instances/${instanceId}/webhooks${path}`,
+    getPlapiBaseUrl(),
+  );
+}
+
+/**
+ * The CLI flag is `--iterator` (the Svix pagination concept); the wire query
+ * param is Clerk's cursor convention `starting_after`. The translation lives
+ * here so commands never see the wire name.
+ */
+function appendPageParams(url: URL, params?: WebhookPageParams): void {
+  if (typeof params?.limit === "number") {
+    url.searchParams.set("limit", String(params.limit));
+  }
+  if (params?.iterator) {
+    url.searchParams.set("starting_after", params.iterator);
+  }
+}
+
+export async function listWebhookEndpoints(
+  applicationId: string,
+  instanceId: string,
+  params?: WebhookPageParams,
+): Promise<WebhookEndpointList> {
+  const url = webhooksUrl(applicationId, instanceId);
+  appendPageParams(url, params);
+  const response = await plapiFetch("GET", url);
+  return response.json() as Promise<WebhookEndpointList>;
+}
+
+export async function getWebhookEndpoint(
+  applicationId: string,
+  instanceId: string,
+  endpointId: string,
+): Promise<WebhookEndpoint> {
+  const url = webhooksUrl(applicationId, instanceId, `/${endpointId}`);
+  const response = await plapiFetch("GET", url);
+  return response.json() as Promise<WebhookEndpoint>;
+}
+
+export async function createWebhookEndpoint(
+  applicationId: string,
+  instanceId: string,
+  params: CreateWebhookEndpointParams,
+): Promise<WebhookEndpoint> {
+  const url = webhooksUrl(applicationId, instanceId);
+  const response = await plapiFetch("POST", url, { body: JSON.stringify(params) });
+  return response.json() as Promise<WebhookEndpoint>;
+}
+
+export async function updateWebhookEndpoint(
+  applicationId: string,
+  instanceId: string,
+  endpointId: string,
+  params: UpdateWebhookEndpointParams,
+): Promise<WebhookEndpoint> {
+  const url = webhooksUrl(applicationId, instanceId, `/${endpointId}`);
+  const response = await plapiFetch("PATCH", url, { body: JSON.stringify(params) });
+  return response.json() as Promise<WebhookEndpoint>;
+}
+
+export async function deleteWebhookEndpoint(
+  applicationId: string,
+  instanceId: string,
+  endpointId: string,
+): Promise<void> {
+  const url = webhooksUrl(applicationId, instanceId, `/${endpointId}`);
+  await plapiFetch("DELETE", url);
+}
+
+export async function getWebhookEndpointSecret(
+  applicationId: string,
+  instanceId: string,
+  endpointId: string,
+): Promise<{ secret: string }> {
+  const url = webhooksUrl(applicationId, instanceId, `/${endpointId}/secret`);
+  const response = await plapiFetch("GET", url);
+  return response.json() as Promise<{ secret: string }>;
+}
+
+export async function rotateWebhookEndpointSecret(
+  applicationId: string,
+  instanceId: string,
+  endpointId: string,
+): Promise<void> {
+  const url = webhooksUrl(applicationId, instanceId, `/${endpointId}/secret/rotate`);
+  await plapiFetch("POST", url);
+}
+
+export async function listWebhookEventTypes(
+  applicationId: string,
+  instanceId: string,
+  params?: WebhookPageParams,
+): Promise<WebhookEventTypeList> {
+  const url = webhooksUrl(applicationId, instanceId, "/event_types");
+  appendPageParams(url, params);
+  const response = await plapiFetch("GET", url);
+  return response.json() as Promise<WebhookEventTypeList>;
+}
+
+export type WebhookMessageListParams = WebhookPageParams & { status?: WebhookMessageStatus };
+
+export async function listWebhookMessages(
+  applicationId: string,
+  instanceId: string,
+  endpointId: string,
+  params?: WebhookMessageListParams,
+): Promise<WebhookMessageList> {
+  const url = webhooksUrl(applicationId, instanceId, `/${endpointId}/messages`);
+  appendPageParams(url, params);
+  if (params?.status) {
+    url.searchParams.set("status", params.status);
+  }
+  const response = await plapiFetch("GET", url);
+  return response.json() as Promise<WebhookMessageList>;
+}
+
+export async function resendWebhookMessage(
+  applicationId: string,
+  instanceId: string,
+  endpointId: string,
+  messageId: string,
+): Promise<void> {
+  const url = webhooksUrl(applicationId, instanceId, `/${endpointId}/messages/${messageId}/resend`);
+  await plapiFetch("POST", url);
+}
+
+export async function recoverWebhookMessages(
+  applicationId: string,
+  instanceId: string,
+  endpointId: string,
+  timeWindow: { since: string; until?: string },
+): Promise<void> {
+  const url = webhooksUrl(applicationId, instanceId, `/${endpointId}/recover`);
+  // JSON.stringify already omits an absent `until`, so the window is the wire body as-is.
+  await plapiFetch("POST", url, { body: JSON.stringify(timeWindow) });
+}
+
+export async function sendWebhookExample(
+  applicationId: string,
+  instanceId: string,
+  endpointId: string,
+  eventType: string,
+): Promise<void> {
+  const url = webhooksUrl(applicationId, instanceId, `/${endpointId}/send_example`);
+  await plapiFetch("POST", url, { body: JSON.stringify({ event_type: eventType }) });
+}
+
+export async function getWebhookPortalUrl(
+  applicationId: string,
+  instanceId: string,
+): Promise<{ url: string }> {
+  const url = webhooksUrl(applicationId, instanceId, "/url");
+  // PLAPI /webhooks/url requires Content-Type: application/json; the body is intentionally empty.
+  const response = await plapiFetch("POST", url, { body: JSON.stringify({}) });
+  return response.json() as Promise<{ url: string }>;
+}

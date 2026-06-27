@@ -19,6 +19,19 @@ const {
   getApplicationDomainStatus,
   triggerApplicationDomainDNSCheck,
   listApplicationDomains,
+  listWebhookEndpoints,
+  getWebhookEndpoint,
+  createWebhookEndpoint,
+  updateWebhookEndpoint,
+  deleteWebhookEndpoint,
+  getWebhookEndpointSecret,
+  rotateWebhookEndpointSecret,
+  listWebhookEventTypes,
+  listWebhookMessages,
+  resendWebhookMessage,
+  recoverWebhookMessages,
+  sendWebhookExample,
+  getWebhookPortalUrl,
 } = await import("./plapi.ts");
 const { AuthError, PlapiError } = await import("./errors.ts");
 
@@ -561,5 +574,229 @@ describe("plapi", () => {
       expect(capturedUrl).toBe("https://api.clerk.com/v1/platform/applications/app_abc/domains");
       expect(result).toEqual(responseBody);
     });
+  });
+});
+
+describe("plapi webhooks", () => {
+  const originalEnv = { ...process.env };
+  const originalFetch = globalThis.fetch;
+
+  type CapturedRequest = {
+    url: URL;
+    method: string;
+    body: string | undefined;
+    contentType: string | null;
+  };
+
+  let captured: CapturedRequest[];
+
+  beforeEach(() => {
+    mockGetValidToken.mockResolvedValue(null);
+    process.env.CLERK_PLATFORM_API_KEY = "test_key_123";
+    captured = [];
+    stubFetch(async (input, init) => {
+      captured.push({
+        url: new URL(input.toString()),
+        method: init?.method ?? "GET",
+        body: typeof init?.body === "string" ? init.body : undefined,
+        contentType: new Headers(init?.headers).get("Content-Type"),
+      });
+      return new Response(JSON.stringify({}), { status: 200 });
+    });
+  });
+
+  afterEach(() => {
+    process.env = { ...originalEnv };
+    globalThis.fetch = originalFetch;
+    mockGetValidToken.mockReset();
+  });
+
+  const PREFIX = "/v1/platform/applications/app_1/instances/ins_1/webhooks";
+
+  test.each([
+    {
+      name: "listWebhookEndpoints",
+      call: () => listWebhookEndpoints("app_1", "ins_1"),
+      method: "GET",
+      path: PREFIX,
+      body: undefined as string | undefined,
+    },
+    {
+      name: "getWebhookEndpoint",
+      call: () => getWebhookEndpoint("app_1", "ins_1", "ep_1"),
+      method: "GET",
+      path: `${PREFIX}/ep_1`,
+      body: undefined,
+    },
+    {
+      name: "createWebhookEndpoint",
+      call: () =>
+        createWebhookEndpoint("app_1", "ins_1", {
+          url: "https://example.com/webhooks",
+          version: 1,
+        }),
+      method: "POST",
+      path: PREFIX,
+      body: '{"url":"https://example.com/webhooks","version":1}',
+    },
+    {
+      name: "updateWebhookEndpoint",
+      call: () => updateWebhookEndpoint("app_1", "ins_1", "ep_1", { description: "d" }),
+      method: "PATCH",
+      path: `${PREFIX}/ep_1`,
+      body: '{"description":"d"}',
+    },
+    {
+      name: "deleteWebhookEndpoint",
+      call: () => deleteWebhookEndpoint("app_1", "ins_1", "ep_1"),
+      method: "DELETE",
+      path: `${PREFIX}/ep_1`,
+      body: undefined,
+    },
+    {
+      name: "getWebhookEndpointSecret",
+      call: () => getWebhookEndpointSecret("app_1", "ins_1", "ep_1"),
+      method: "GET",
+      path: `${PREFIX}/ep_1/secret`,
+      body: undefined,
+    },
+    {
+      name: "rotateWebhookEndpointSecret",
+      call: () => rotateWebhookEndpointSecret("app_1", "ins_1", "ep_1"),
+      method: "POST",
+      path: `${PREFIX}/ep_1/secret/rotate`,
+      body: undefined,
+    },
+    {
+      name: "listWebhookEventTypes",
+      call: () => listWebhookEventTypes("app_1", "ins_1"),
+      method: "GET",
+      path: `${PREFIX}/event_types`,
+      body: undefined,
+    },
+    {
+      name: "listWebhookMessages",
+      call: () => listWebhookMessages("app_1", "ins_1", "ep_1"),
+      method: "GET",
+      path: `${PREFIX}/ep_1/messages`,
+      body: undefined,
+    },
+    {
+      name: "resendWebhookMessage",
+      call: () => resendWebhookMessage("app_1", "ins_1", "ep_1", "msg_1"),
+      method: "POST",
+      path: `${PREFIX}/ep_1/messages/msg_1/resend`,
+      body: undefined,
+    },
+    {
+      name: "recoverWebhookMessages",
+      call: () =>
+        recoverWebhookMessages("app_1", "ins_1", "ep_1", { since: "2026-05-01T00:00:00Z" }),
+      method: "POST",
+      path: `${PREFIX}/ep_1/recover`,
+      body: '{"since":"2026-05-01T00:00:00Z"}',
+    },
+    {
+      name: "sendWebhookExample",
+      call: () => sendWebhookExample("app_1", "ins_1", "ep_1", "user.created"),
+      method: "POST",
+      path: `${PREFIX}/ep_1/send_example`,
+      body: '{"event_type":"user.created"}',
+    },
+    {
+      name: "getWebhookPortalUrl",
+      call: () => getWebhookPortalUrl("app_1", "ins_1"),
+      method: "POST",
+      path: `${PREFIX}/url`,
+      body: "{}",
+    },
+  ])("$name sends $method $path", async ({ call, method, path, body }) => {
+    await call();
+
+    expect(captured).toHaveLength(1);
+    const request = captured[0]!;
+    expect(request.method).toBe(method);
+    expect(request.url.pathname).toBe(path);
+    expect(request.body).toBe(body);
+    expect(request.contentType).toBe(body === undefined ? null : "application/json");
+  });
+
+  test.each([
+    {
+      name: "listWebhookEndpoints",
+      call: () => listWebhookEndpoints("app_1", "ins_1", { limit: 50, iterator: "iter_abc" }),
+    },
+    {
+      name: "listWebhookEventTypes",
+      call: () => listWebhookEventTypes("app_1", "ins_1", { limit: 50, iterator: "iter_abc" }),
+    },
+    {
+      name: "listWebhookMessages",
+      call: () =>
+        listWebhookMessages("app_1", "ins_1", "ep_1", { limit: 50, iterator: "iter_abc" }),
+    },
+  ])("$name translates --iterator to the starting_after query param", async ({ call }) => {
+    await call();
+
+    const url = captured[0]!.url;
+    expect(url.searchParams.get("limit")).toBe("50");
+    expect(url.searchParams.get("starting_after")).toBe("iter_abc");
+    expect(url.searchParams.has("iterator")).toBe(false);
+  });
+
+  test.each([
+    { name: "listWebhookEndpoints", call: () => listWebhookEndpoints("app_1", "ins_1") },
+    { name: "listWebhookEventTypes", call: () => listWebhookEventTypes("app_1", "ins_1") },
+    { name: "listWebhookMessages", call: () => listWebhookMessages("app_1", "ins_1", "ep_1") },
+  ])("$name omits pagination params when not provided", async ({ call }) => {
+    await call();
+    expect(captured[0]!.url.search).toBe("");
+  });
+
+  test("listWebhookMessages forwards the status filter", async () => {
+    await listWebhookMessages("app_1", "ins_1", "ep_1", { status: "fail" });
+
+    expect(captured[0]!.url.searchParams.get("status")).toBe("fail");
+  });
+
+  test("recoverWebhookMessages includes until only when provided", async () => {
+    await recoverWebhookMessages("app_1", "ins_1", "ep_1", {
+      since: "2026-05-01T00:00:00Z",
+      until: "2026-05-01T01:00:00Z",
+    });
+
+    expect(captured[0]!.body).toBe(
+      '{"since":"2026-05-01T00:00:00Z","until":"2026-05-01T01:00:00Z"}',
+    );
+  });
+
+  test("createWebhookEndpoint serializes optional fields", async () => {
+    await createWebhookEndpoint("app_1", "ins_1", {
+      url: "https://example.com/webhooks",
+      version: 1,
+      description: "My endpoint",
+      disabled: true,
+      filter_types: ["user.created"],
+      channels: ["project-123"],
+    });
+
+    expect(JSON.parse(captured[0]!.body!)).toEqual({
+      url: "https://example.com/webhooks",
+      version: 1,
+      description: "My endpoint",
+      disabled: true,
+      filter_types: ["user.created"],
+      channels: ["project-123"],
+    });
+  });
+
+  test("throws PlapiError on non-ok responses", async () => {
+    stubFetch(
+      async () => new Response(JSON.stringify({ errors: [{ message: "nope" }] }), { status: 404 }),
+    );
+
+    await expect(getWebhookEndpoint("app_1", "ins_1", "ep_missing")).rejects.toBeInstanceOf(
+      PlapiError,
+    );
   });
 });

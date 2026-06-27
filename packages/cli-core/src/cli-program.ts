@@ -41,6 +41,7 @@ import { clerkHelpConfig } from "./lib/help.ts";
 import { isAgent } from "./mode.ts";
 import { log } from "./lib/log.ts";
 import { maybeNotifyUpdate, getCurrentVersion } from "./lib/update-check.ts";
+import { registerWebhooks } from "./commands/webhooks/index.ts";
 import { registerExtras } from "@clerk/cli-extras";
 
 /**
@@ -69,6 +70,7 @@ const registrants: CommandRegistrant[] = [
   registerCompletion,
   registerUpdate,
   registerDeploy,
+  registerWebhooks,
   registerExtras,
 ];
 

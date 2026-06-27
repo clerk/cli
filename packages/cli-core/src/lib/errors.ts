@@ -55,6 +55,16 @@ export const ERROR_CODE = {
   HOME_URL_TAKEN: "home_url_taken",
   /** PLAPI rejected a request parameter as malformed. */
   FORM_PARAM_INVALID: "form_param_invalid",
+  /** Referenced webhook endpoint not found. */
+  WEBHOOK_ENDPOINT_NOT_FOUND: "webhook_endpoint_not_found",
+  /** Referenced webhook message (delivery) not found. */
+  WEBHOOK_MESSAGE_NOT_FOUND: "webhook_message_not_found",
+  /** Event type is not in the instance's event-type catalog. */
+  UNKNOWN_EVENT_TYPE: "unknown_event_type",
+  /** Offline webhook signature verification found no matching entry. */
+  INVALID_WEBHOOK_SIGNATURE: "invalid_webhook_signature",
+  /** Endpoint was created but its signing secret could not be fetched. */
+  WEBHOOK_SECRET_FETCH_FAILED: "webhook_secret_fetch_failed",
 } as const;
 
 export type ErrorCode = (typeof ERROR_CODE)[keyof typeof ERROR_CODE];

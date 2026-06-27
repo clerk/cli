@@ -10,6 +10,7 @@
       "files": [
         "packages/cli-core/src/cli.ts",
         "packages/cli-core/src/cli-program.ts",
+        "packages/cli-core/src/lib/signals.ts",
         "scripts/*"
       ],
       "rules": {
