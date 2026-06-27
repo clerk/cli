@@ -29,8 +29,28 @@ mock.module("./token-exchange.ts", () => ({
   refreshAccessToken: (...args: unknown[]) => mockRefreshAccessToken(...args),
 }));
 
-const { createOAuthSession, deleteToken, getStoredSession, getToken, getValidToken, storeToken } =
-  await import("./credential-store.ts");
+const {
+  assertValidAccessToken,
+  createOAuthSession,
+  deleteToken,
+  getJwtAuthorizedParty,
+  getStoredSession,
+  getToken,
+  getValidToken,
+  storeAccessToken,
+  storeToken,
+} = await import("./credential-store.ts");
+
+/** Build a JWT-shaped token whose payload has the given fields. */
+function buildJwt(payload: Record<string, unknown>): string {
+  const header = Buffer.from(JSON.stringify({ alg: "none" })).toString("base64url");
+  const body = Buffer.from(JSON.stringify(payload)).toString("base64url");
+  return `${header}.${body}.sig`;
+}
+
+function jwtWithExp(expSeconds: number): string {
+  return buildJwt({ exp: expSeconds });
+}
 
 async function writeLegacyToken(value: string): Promise<void> {
   await writeFile(join(tempDir, "credentials"), value, { mode: 0o600 });
@@ -162,5 +182,67 @@ describe("credential-store", () => {
         expires_in: 3600,
       } as never),
     ).toThrow("Authentication response did not include a refresh token");
+  });
+
+  test("storeAccessToken persists a JWT and exposes it through getValidToken without refresh", async () => {
+    const jwt = jwtWithExp(Math.floor(Date.now() / 1000) + 3600);
+    await storeAccessToken(jwt);
+
+    expect(await getToken()).toBe(jwt);
+    expect(await getValidToken()).toBe(jwt);
+
+    const session = await getStoredSession();
+    expect(session?.refreshToken).toBe("");
+    expect(mockRefreshAccessToken).not.toHaveBeenCalled();
+  });
+
+  test("storeAccessToken rejects non-JWT tokens with a clear secret-key hint", async () => {
+    await expect(storeAccessToken("sk_test_not_a_jwt")).rejects.toThrow(/JWT|secret key/);
+  });
+
+  test("storeAccessToken rejects an already-expired token", async () => {
+    const expiredJwt = jwtWithExp(Math.floor(Date.now() / 1000) - 60);
+    await expect(storeAccessToken(expiredJwt)).rejects.toThrow(/already expired/);
+  });
+
+  test("storeAccessToken rejects a token that will expire within the refresh leeway window", async () => {
+    // A token with ~5 s left would pass a naive `exp > now` check but
+    // isExpiredSession treats anything inside the 30 s leeway as expired,
+    // so accepting it would store a token that's instantly unusable.
+    const aboutToExpire = jwtWithExp(Math.floor(Date.now() / 1000) + 5);
+    await expect(storeAccessToken(aboutToExpire)).rejects.toThrow(/already expired/);
+  });
+
+  test("assertValidAccessToken rejects tokens larger than 8 KB", () => {
+    const oversized = `a.${"x".repeat(9_000)}.sig`;
+    expect(() => assertValidAccessToken(oversized)).toThrow(/maximum/);
+  });
+
+  test("assertValidAccessToken rejects strings that don't have three JWT segments", () => {
+    expect(() => assertValidAccessToken("a.b")).toThrow(/JWT/);
+    expect(() => assertValidAccessToken("a.b.c.d")).toThrow(/JWT/);
+  });
+
+  test("getJwtAuthorizedParty returns azp when present and null otherwise", () => {
+    const exp = Math.floor(Date.now() / 1000) + 3600;
+    expect(getJwtAuthorizedParty(buildJwt({ exp, azp: "clerk-cli" }))).toBe("clerk-cli");
+    expect(getJwtAuthorizedParty(jwtWithExp(exp))).toBeNull();
+    expect(getJwtAuthorizedParty("not.a.jwt-payload")).toBeNull();
+  });
+
+  test("getValidToken on an expired token-only session throws AUTH_REQUIRED instead of trying to refresh", async () => {
+    // Manually store an expired session with no refresh token, mirroring the
+    // state we'd be in after a CI token-login that has since aged out.
+    await writeLegacyToken(
+      JSON.stringify({
+        accessToken: jwtWithExp(Math.floor(Date.now() / 1000) - 60),
+        refreshToken: "",
+        expiresAt: Date.now() - 60_000,
+        tokenType: "Bearer",
+      }),
+    );
+
+    await expect(getValidToken()).rejects.toThrow(/cannot be auto-refreshed/);
+    expect(mockRefreshAccessToken).not.toHaveBeenCalled();
   });
 });

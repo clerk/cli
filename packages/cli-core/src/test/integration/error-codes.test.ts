@@ -42,7 +42,7 @@ test("invalid_key_format error includes code in agent mode", async () => {
 
 test("usage_error code for invalid mode flag", async () => {
   const result = await clerk.raw("--mode", "agent", "--mode", "banana", "env", "pull");
-  expect(result.exitCode).toBe(2);
+  expect(result.exitCode).toBe(64);
   const error = parseJsonError(result.stderr);
   expect(error.code).toBe("usage_error");
 });
