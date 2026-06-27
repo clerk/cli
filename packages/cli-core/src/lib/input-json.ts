@@ -134,7 +134,10 @@ function hasStdinPipe(): boolean {
  * appear later in argv naturally take precedence).
  *
  * If `--input-json` is not present but stdin is piped (not a TTY), reads
- * JSON from stdin and appends the expanded flags to the end of argv.
+ * JSON from stdin and appends the expanded flags to the end of argv — UNLESS
+ * argv contains a bare `-`, which means a subcommand is itself claiming stdin
+ * (e.g. `webhooks verify --payload -`). In that case stdin belongs to the
+ * command, so auto-expansion must not consume it.
  *
  * If neither `--input-json` nor stdin pipe is present, returns the original
  * array unchanged.
@@ -151,8 +154,9 @@ export async function expandInputJson(argv: string[]): Promise<string[]> {
     return argv;
   }
 
-  // No explicit --input-json flag — check for piped stdin
-  if (hasStdinPipe()) {
+  // No explicit --input-json flag — auto-detect piped stdin, but yield stdin to
+  // a subcommand that explicitly claims it with a bare `-` argument.
+  if (hasStdinPipe() && !argv.includes(STDIN_MARKER)) {
     const jsonStr = await readOptionalStdin();
     if (jsonStr === undefined) return argv;
     const parsed = parseJsonString(jsonStr);

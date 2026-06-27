@@ -37,6 +37,8 @@ export const ERROR_CODE = {
   NO_SECRET_KEY: "no_secret_key",
   /** File not found on disk. */
   FILE_NOT_FOUND: "file_not_found",
+  /** A webhook signature failed local HMAC verification. */
+  INVALID_WEBHOOK_SIGNATURE: "invalid_webhook_signature",
   /** Input is not valid JSON or not an object. */
   INVALID_JSON: "invalid_json",
   /** Failed to fetch or parse the OpenAPI catalog. */

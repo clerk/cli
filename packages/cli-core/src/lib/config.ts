@@ -45,10 +45,16 @@ export function profileLabel(profile: Profile): string {
   return profile.appName ? `${profile.appName} (${profile.appId})` : profile.appId;
 }
 
+/** Persisted Svix relay state for `clerk webhooks listen`. */
+interface RelayEntry {
+  token: string;
+}
+
 interface ClerkConfig {
   environment?: string;
   auth?: Record<string, Auth>;
   profiles: Record<string, Profile>;
+  relay?: Record<string, RelayEntry>;
 }
 
 function defaultConfig(): ClerkConfig {
@@ -64,6 +70,21 @@ function migrateRawConfig(raw: Record<string, unknown>): ClerkConfig {
     environment: raw.environment as string | undefined,
     profiles: (raw.profiles as Record<string, Profile>) ?? {},
   };
+
+  if (raw.relay && typeof raw.relay === "object" && !Array.isArray(raw.relay)) {
+    const relay: Record<string, RelayEntry> = {};
+    for (const [key, val] of Object.entries(raw.relay as Record<string, unknown>)) {
+      if (
+        val &&
+        typeof val === "object" &&
+        !Array.isArray(val) &&
+        typeof (val as Record<string, unknown>).token === "string"
+      ) {
+        relay[key] = val as RelayEntry;
+      }
+    }
+    config.relay = relay;
+  }
 
   if (raw.auth && typeof raw.auth === "object") {
     const auth = raw.auth as Record<string, unknown>;
@@ -172,6 +193,18 @@ export async function moveProfile(oldKey: string, newKey: string): Promise<void>
 export async function listProfiles(): Promise<Record<string, Profile>> {
   const config = await readConfig();
   return config.profiles;
+}
+
+export async function getRelayEntry(key: string): Promise<RelayEntry | undefined> {
+  const config = await readConfig();
+  return config.relay?.[key];
+}
+
+export async function setRelayEntry(key: string, entry: RelayEntry): Promise<void> {
+  const config = await readConfig();
+  if (!config.relay) config.relay = {};
+  config.relay[key] = entry;
+  await writeConfig(config);
 }
 
 type ResolvedVia = "remote" | "git-common-dir" | "directory";
