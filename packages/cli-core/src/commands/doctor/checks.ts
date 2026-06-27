@@ -16,6 +16,7 @@ import {
   formatChannelLabel,
 } from "../../lib/update-check.ts";
 import { formatHostStateProbeFailures, getAgentHostStateProbe } from "../../lib/host-execution.ts";
+import { getCurrentEnvName, getPlapiBaseUrl } from "../../lib/environment.ts";
 import { isAgent } from "../../mode.ts";
 import type { CheckResult, DoctorContext, FixAction } from "./types.ts";
 
@@ -74,7 +75,7 @@ export async function checkLoggedIn(ctx: DoctorContext): Promise<CheckResult> {
       remedy: "Run `clerk auth login` to authenticate.",
     });
   }
-  return check.pass("Logged in (token found in credential store)");
+  return check.pass(`Logged in — environment "${getCurrentEnvName()}", API ${getPlapiBaseUrl()}`);
 }
 
 export async function checkHostExecution(): Promise<CheckResult> {
