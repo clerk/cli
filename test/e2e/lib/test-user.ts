@@ -53,8 +53,6 @@ export async function createTestUser(configDir: string, target: TestUserTarget):
     skip_password_checks: true,
   });
 
-  log(`creating test user: ${email}`);
-
   const result =
     await Bun.$`bun ${CLI_PATH} users create -d ${body} --json --yes ${targetArgs(target)}`
       .env(clerkEnv(configDir, target))
@@ -69,7 +67,6 @@ export async function createTestUser(configDir: string, target: TestUserTarget):
   }
 
   const user: { id: string } = JSON.parse(result.stdout.toString());
-  log(`test user created: ${user.id}`);
 
   return { id: user.id, email, password };
 }
@@ -80,8 +77,6 @@ export async function deleteTestUser(
   configDir: string,
   target: TestUserTarget,
 ): Promise<void> {
-  log(`deleting test user: ${userId}`);
-
   const result =
     await Bun.$`bun ${CLI_PATH} api /users/${userId} -X DELETE --yes ${targetArgs(target)}`
       .env(clerkEnv(configDir, target))
@@ -93,7 +88,5 @@ export async function deleteTestUser(
     const stderr = result.stderr.toString().trim();
     const detail = stderr || stdout || "(no output)";
     log(`warning: failed to delete test user ${userId}: ${detail}`);
-  } else {
-    log(`test user deleted: ${userId}`);
   }
 }

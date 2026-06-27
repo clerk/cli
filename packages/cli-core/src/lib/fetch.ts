@@ -14,7 +14,10 @@ import { buildUserAgent } from "./user-agent.ts";
 
 const USER_AGENT = buildUserAgent();
 
-export type LoggedFetchInit = RequestInit & { tag: string };
+/** Native `fetch()` has no timeout, so a stalled connection would hang forever. */
+const DEFAULT_REQUEST_TIMEOUT_MS = 60_000;
+
+export type LoggedFetchInit = RequestInit & { tag: string; timeoutMs?: number };
 
 /**
  * Normalized response shape returned by the higher-level API request wrappers
@@ -29,16 +32,30 @@ export interface ApiResponse {
 }
 
 export async function loggedFetch(url: URL | string, options: LoggedFetchInit): Promise<Response> {
-  const { tag, ...init } = options;
+  const { tag, timeoutMs = DEFAULT_REQUEST_TIMEOUT_MS, signal: callerSignal, ...init } = options;
   const method = init.method ?? "GET";
   const urlStr = url.toString();
   const headers = new Headers(init.headers);
   if (!headers.has("user-agent")) headers.set("User-Agent", USER_AGENT);
   log.debug(`${tag}: ${method} ${urlStr}`);
-  const response = await withNetworkAccess(
-    { operation: "connect", target: urlStr, label: tag },
-    async () => fetch(url, { ...init, headers }),
-  );
+
+  // A caller signal (e.g. keyless.ts's tighter 15s) composes with our default.
+  const timeoutSignal = AbortSignal.timeout(timeoutMs);
+  const signal = callerSignal ? AbortSignal.any([callerSignal, timeoutSignal]) : timeoutSignal;
+
+  let response: Response;
+  try {
+    response = await withNetworkAccess(
+      { operation: "connect", target: urlStr, label: tag },
+      async () => fetch(url, { ...init, headers, signal }),
+    );
+  } catch (err) {
+    // Only relabel when our timeout fired, not a caller abort or network error.
+    if (timeoutSignal.aborted && !callerSignal?.aborted) {
+      throw new Error(`${tag}: request timed out after ${timeoutMs}ms — ${method} ${urlStr}`);
+    }
+    throw err;
+  }
   if (!response.ok) {
     // Clone so the caller can still consume the body for error construction.
     const body = await response.clone().text();
