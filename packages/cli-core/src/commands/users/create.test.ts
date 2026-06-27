@@ -10,7 +10,7 @@ mock.module("../../lib/bapi-command.ts", () => ({
 }));
 
 const mockBapiRequest = mock();
-mock.module("../../commands/api/bapi.ts", () => ({
+mock.module("../../lib/bapi.ts", () => ({
   bapiRequest: (...args: unknown[]) => mockBapiRequest(...args),
 }));
 

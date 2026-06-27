@@ -1,12 +1,12 @@
 /**
  * Backend API (BAPI) client.
- * Thin HTTP wrapper for Clerk's Backend API endpoints.
+ * Thin HTTP wrapper for Clerk's Backend API endpoints. Sibling to lib/fapi.ts.
  */
 
-import { getBapiBaseUrl } from "../../lib/environment.ts";
-import { normalizeBapiPath } from "../../lib/bapi-command.ts";
-import { BapiError } from "../../lib/errors.ts";
-import { loggedFetch, type ApiResponse } from "../../lib/fetch.ts";
+import { getBapiBaseUrl } from "./environment.ts";
+import { normalizeBapiPath } from "./bapi-command.ts";
+import { BapiError } from "./errors.ts";
+import { loggedFetch, type ApiResponse } from "./fetch.ts";
 
 export async function bapiRequest(options: {
   method: string;
