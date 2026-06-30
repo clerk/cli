@@ -1,5 +1,5 @@
 import { search, Separator } from "../../../lib/listage.ts";
-import { bapiRequest } from "../../api/bapi.ts";
+import { bapiRequest } from "../../../lib/bapi.ts";
 
 export type PickUserOptions = {
   secretKey: string;

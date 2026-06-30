@@ -4,7 +4,7 @@ import { popPrefix, pushPrefix } from "../../lib/log.ts";
 import { useCaptureLog } from "../../test/lib/stubs.ts";
 
 const mockBapiRequest = mock();
-mock.module("../../commands/api/bapi.ts", () => ({
+mock.module("../../lib/bapi.ts", () => ({
   bapiRequest: (...args: unknown[]) => mockBapiRequest(...args),
 }));
 

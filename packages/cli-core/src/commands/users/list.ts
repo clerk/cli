@@ -4,7 +4,7 @@ import { CliError, ERROR_CODE, UserAbortError, isPromptExitError } from "../../l
 import { isInsideGutter, log } from "../../lib/log.ts";
 import { isAgent, isHuman } from "../../mode.ts";
 import { withSpinner, intro, outro, pausedOutro } from "../../lib/spinner.ts";
-import { bapiRequest } from "../api/bapi.ts";
+import { bapiRequest } from "../../lib/bapi.ts";
 import { resolveUsersInstanceContext } from "./interactive/instance-context.ts";
 import { registerUsersAction } from "./registry.ts";
 

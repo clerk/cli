@@ -3,7 +3,7 @@ import { test, expect, describe, beforeEach, mock } from "bun:test";
 const mockBapiRequest = mock();
 const mockSearch = mock();
 
-mock.module("../../api/bapi.ts", () => ({
+mock.module("../../../lib/bapi.ts", () => ({
   bapiRequest: (...args: unknown[]) => mockBapiRequest(...args),
 }));
 mock.module("../../../lib/listage.ts", () => ({

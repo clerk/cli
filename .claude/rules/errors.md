@@ -61,4 +61,4 @@ const config = await withApiContext(
 
 ## API error classes
 
-`BapiError` and `PlapiError` (both extend `ApiError`) are thrown by the API helpers in `src/commands/api/bapi.ts` and `src/lib/plapi.ts` respectively. Don't construct these in commands — they're thrown automatically by the fetch wrappers. Use `withApiContext` to add context when calling those helpers.
+`BapiError` and `PlapiError` (both extend `ApiError`) are thrown by the API helpers in `src/lib/bapi.ts` and `src/lib/plapi.ts` respectively. Don't construct these in commands — they're thrown automatically by the fetch wrappers. Use `withApiContext` to add context when calling those helpers.

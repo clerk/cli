@@ -333,7 +333,7 @@ export class FapiError extends ApiError {
 /**
  * Error from the Clerk Backend API (BAPI).
  *
- * Thrown by `src/commands/api/bapi.ts` when a Backend API request fails.
+ * Thrown by `src/lib/bapi.ts` when a Backend API request fails.
  * Displayed as "Backend API request failed" in the global error handler.
  * Unlike {@link PlapiError}, `headers` is always present (required).
  *
