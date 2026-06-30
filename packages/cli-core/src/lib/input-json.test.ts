@@ -4,8 +4,6 @@ import { join } from "node:path";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 
-const originalIsTTY = process.stdin.isTTY;
-
 describe("toKebabCase", () => {
   test("converts camelCase", () => {
     expect(toKebabCase("dryRun")).toBe("dry-run");
@@ -45,15 +43,6 @@ describe("toKebabCase", () => {
 });
 
 describe("expandInputJson", () => {
-  beforeEach(() => {
-    // Ensure stdin looks like a TTY so the auto-stdin path is not triggered
-    process.stdin.isTTY = true;
-  });
-
-  afterEach(() => {
-    process.stdin.isTTY = originalIsTTY;
-  });
-
   test("returns argv unchanged when --input-json is absent", async () => {
     const argv = ["clerk", "init", "--yes"];
     const result = await expandInputJson(argv);
@@ -325,25 +314,16 @@ describe("expandInputJson", () => {
       expect(result.result).toContain("--yes");
     });
 
-    test("auto-detects piped stdin when --input-json is absent", async () => {
+    test("ignores piped stdin when --input-json is absent", async () => {
       const result = await expandViaStdin(["clerk", "init"], '{"framework":"next","yes":true}');
-      expect(result.result).toContain("--framework");
-      expect(result.result).toContain("next");
-      expect(result.result).toContain("--yes");
-      // Original argv args are preserved before expanded flags
-      expect(result.result![0]).toBe("clerk");
-      expect(result.result![1]).toBe("init");
+      // Without an explicit --input-json -, stdin is left untouched.
+      expect(result.result).toEqual(["clerk", "init"]);
     });
 
-    test("auto-stdin appends flags after existing argv", async () => {
-      const result = await expandViaStdin(["clerk", "init", "--yes"], '{"framework":"next"}');
-      // Explicit --yes comes first, then expanded --framework next
-      expect(result.result).toEqual(["clerk", "init", "--yes", "--framework", "next"]);
-    });
-
-    test("auto-stdin ignores empty stdin", async () => {
-      const result = await expandViaStdin(["clerk", "init", "--yes"], "");
-      expect(result.result).toEqual(["clerk", "init", "--yes"]);
+    test("ignores piped non-JSON stdin (shell loops, command bodies)", async () => {
+      const result = await expandViaStdin(["clerk", "whoami"], "not json\nmore lines\n");
+      expect(result.error).toBeUndefined();
+      expect(result.result).toEqual(["clerk", "whoami"]);
     });
 
     test("--input-json - errors on invalid JSON from stdin", async () => {
@@ -356,18 +336,17 @@ describe("expandInputJson", () => {
       expect(result.error).toContain("No JSON received on stdin");
     });
 
-    test("auto-stdin errors on invalid JSON", async () => {
-      const result = await expandViaStdin(["clerk", "init"], "{bad}");
-      expect(result.error).toContain("Invalid JSON");
-    });
-
-    test("auto-stdin errors on JSON array", async () => {
+    test("ignores piped JSON array when --input-json is absent", async () => {
       const result = await expandViaStdin(["clerk", "init"], "[1,2,3]");
-      expect(result.error).toContain("must be a JSON object");
+      expect(result.error).toBeUndefined();
+      expect(result.result).toEqual(["clerk", "init"]);
     });
 
-    test("auto-stdin handles camelCase keys", async () => {
-      const result = await expandViaStdin(["clerk", "config", "patch"], '{"dryRun":true}');
+    test("--input-json - handles camelCase keys", async () => {
+      const result = await expandViaStdin(
+        ["clerk", "config", "patch", "--input-json", "-"],
+        '{"dryRun":true}',
+      );
       expect(result.result).toEqual(["clerk", "config", "patch", "--dry-run"]);
     });
   });
