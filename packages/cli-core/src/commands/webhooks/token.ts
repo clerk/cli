@@ -1,3 +1,4 @@
+import { cyan } from "../../lib/color.ts";
 import { log } from "../../lib/log.ts";
 import { outro } from "../../lib/spinner.ts";
 import { isAgent } from "../../mode.ts";
@@ -24,7 +25,7 @@ export async function webhooksToken(options: WebhooksTokenOptions = {}): Promise
   log.data(token);
   if (isAgent()) return;
   await outro([
-    `Use this token: clerk webhooks listen --token ${token} --forward-to <url>`,
-    "Register the Relay URL it prints as an endpoint in your Clerk Dashboard",
+    `That's your relay token (above). Use it:\n     ${cyan(`clerk webhooks listen --token ${token} --forward-to <url>`)}`,
+    `Register the Relay URL it prints as an endpoint in your Clerk Dashboard:\n     ${cyan("https://dashboard.clerk.com/last-active?path=webhooks")}`,
   ]);
 }

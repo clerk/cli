@@ -1,5 +1,5 @@
 import type { Program } from "../../cli-program.ts";
-import { webhooksListen } from "./listen.ts";
+import { LISTEN_FORWARD_EXAMPLE, webhooksListen } from "./listen.ts";
 import { webhooksToken } from "./token.ts";
 import { webhooksVerify } from "./verify.ts";
 
@@ -59,10 +59,7 @@ export function registerWebhooks(program: Program): void {
     )
     .option("--json", "Output as NDJSON (agent/pipe mode)")
     .setExamples([
-      {
-        command: "clerk webhooks listen --forward-to http://localhost:3000/api/webhooks",
-        description: "Forward webhook events to a local handler",
-      },
+      LISTEN_FORWARD_EXAMPLE,
       {
         command:
           'clerk webhooks listen --token "$(clerk webhooks token)" --forward-to http://localhost:3000/api/webhooks',

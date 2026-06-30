@@ -191,6 +191,17 @@ describe("webhooks listen (V1, relay-only)", () => {
     expect(mockGetRelayEntry).not.toHaveBeenCalled();
   });
 
+  test("missing --forward-to carries a <url>-placeholder example for the handler to show", async () => {
+    await expect(webhooksListen({})).rejects.toMatchObject({
+      examples: [
+        {
+          command: "clerk webhooks listen --forward-to <url>",
+          description: expect.any(String),
+        },
+      ],
+    });
+  });
+
   test.each(["not-a-url", "", "ftp://example.com"])(
     "invalid --forward-to %p is a usage error",
     async (bad) => {

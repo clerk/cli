@@ -3,6 +3,7 @@ import { EXIT_CODE, errorMessage, throwUsageError } from "../../lib/errors.ts";
 import { CLI_SIGINT_HANDLER } from "../../lib/signals.ts";
 import { withSpinner } from "../../lib/spinner.ts";
 import { dim } from "../../lib/color.ts";
+import type { Example } from "../../lib/help.ts";
 import { log } from "../../lib/log.ts";
 import { isAgent } from "../../mode.ts";
 import { buildForwardHeaders, forwardDelivery, parseHeaderFlag } from "./forward.ts";
@@ -35,6 +36,21 @@ export interface WebhooksListenOptions extends WebhooksGlobalOptions {
 // so there is no per-instance keying — one persisted token keeps the URL stable.
 const RELAY_KEY = "__relay_only__";
 
+// The canonical "right way" to run `listen`, used in the command's help
+// (index.ts) where a concrete, runnable URL is the most useful.
+export const LISTEN_FORWARD_EXAMPLE: Example = {
+  command: "clerk webhooks listen --forward-to http://localhost:3000/api/webhooks",
+  description: "Forward webhook events to a local handler",
+};
+
+// Shown beneath the missing-`--forward-to` usage error. Mirrors the error's own
+// `<url>` placeholder rather than a concrete URL, so the shape — not a specific
+// value — is what stands out.
+const MISSING_FORWARD_EXAMPLE: Example = {
+  command: "clerk webhooks listen --forward-to <url>",
+  description: "Forward webhook events to a local handler",
+};
+
 /** Relay tokens are `c_` + 10 base62 chars; the relay rejects other shapes. */
 function assertRelayToken(token: string): void {
   if (!/^c_[0-9A-Za-z]{10}$/.test(token)) {
@@ -47,7 +63,10 @@ function assertRelayToken(token: string): void {
 // Validated manually (not Commander's .requiredOption) so a missing/invalid
 // value is OUR usage error — JSON in agent mode, not Commander's plain text.
 function assertForwardTo(forwardTo: string | undefined): string {
-  if (!forwardTo) throwUsageError("--forward-to <url> is required.");
+  if (!forwardTo)
+    throwUsageError("--forward-to <url> is required.", undefined, undefined, [
+      MISSING_FORWARD_EXAMPLE,
+    ]);
   let url: URL;
   try {
     url = new URL(forwardTo);

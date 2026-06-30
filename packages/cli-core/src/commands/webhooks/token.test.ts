@@ -23,8 +23,9 @@ describe("webhooks token", () => {
     const token = captured.out.trim();
     expect(token).toMatch(TOKEN_RE);
     expect(captured.err).toContain("Next steps");
-    expect(captured.err).toContain("Use this token:");
+    expect(captured.err).toContain("That's your relay token (above)"); // labels the bare stdout token
     expect(captured.err).toContain(`--token ${token}`); // step references the same token
+    expect(captured.err).toContain("dashboard.clerk.com/last-active?path=webhooks"); // links to register the endpoint
   });
 
   test("--json prints a { token } object and no Next steps", async () => {
