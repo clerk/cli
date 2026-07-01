@@ -55,6 +55,10 @@ export const ERROR_CODE = {
   HOME_URL_TAKEN: "home_url_taken",
   /** PLAPI rejected a request parameter as malformed. */
   FORM_PARAM_INVALID: "form_param_invalid",
+  /** Impersonation isn't enabled on the app's subscription plan. */
+  IMPERSONATION_NOT_ENABLED: "impersonation_not_enabled",
+  /** Actor token creation rejected because the impersonation quota is exhausted. */
+  IMPERSONATION_LIMIT_EXCEEDED: "impersonation_limit_exceeded",
 } as const;
 
 export type ErrorCode = (typeof ERROR_CODE)[keyof typeof ERROR_CODE];
