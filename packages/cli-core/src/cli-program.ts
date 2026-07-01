@@ -10,6 +10,7 @@ import { registerWhoami } from "./commands/whoami/index.ts";
 import { registerOpen } from "./commands/open/index.ts";
 import { registerApps } from "./commands/apps/index.ts";
 import { registerUsers } from "./commands/users/index.ts";
+import { registerImpersonate } from "./commands/impersonate/index.ts";
 import { registerEnv } from "./commands/env/index.ts";
 import { registerConfig } from "./commands/config/index.ts";
 import { registerToggles } from "./commands/toggles/index.ts";
@@ -60,6 +61,7 @@ const registrants: CommandRegistrant[] = [
   registerOpen,
   registerApps,
   registerUsers,
+  registerImpersonate,
   registerEnv,
   registerConfig,
   registerToggles,
