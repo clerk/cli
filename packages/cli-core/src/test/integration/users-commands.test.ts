@@ -291,7 +291,12 @@ describe("users commands", () => {
         expect(stderr).toContain("john@example.com");
         expect(stderr).toContain("1 user returned");
       } else {
-        expect(JSON.parse(stdout)).toEqual({ data: MOCK_USERS, hasMore: false });
+        expect(JSON.parse(stdout)).toEqual({
+          data: MOCK_USERS,
+          hasMore: false,
+          nextCursor: null,
+          pagination: { offset: 0, limit: 100 },
+        });
       }
 
       expect(
@@ -332,7 +337,12 @@ describe("users commands", () => {
     );
 
     expect(exitCode).toBe(0);
-    expect(JSON.parse(stdout)).toEqual({ data: MOCK_USERS, hasMore: false });
+    expect(JSON.parse(stdout)).toEqual({
+      data: MOCK_USERS,
+      hasMore: false,
+      nextCursor: null,
+      pagination: { offset: 0, limit: 100 },
+    });
 
     const fetchAppCall = http.requests.find(
       (request) =>

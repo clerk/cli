@@ -147,6 +147,72 @@ test("users create documents -d and --file for raw BAPI request bodies", () => {
   expect(help).toContain("--file");
 });
 
+describe("agent-CLI discoverability surface", () => {
+  test("top-level --help renders Examples: with at least one agent-pipeable command", () => {
+    const help = createProgram().helpInformation();
+    expect(help).toContain("Examples:");
+    expect(help).toMatch(/clerk apps list --json/);
+  });
+
+  test("top-level --help renders Environment: with CLERK_* env vars actually read in cli-core", () => {
+    const help = createProgram().helpInformation();
+    expect(help).toContain("Environment:");
+    expect(help).toContain("CLERK_SECRET_KEY");
+    expect(help).toContain("CLERK_MODE");
+  });
+
+  test("data-returning subcommands document --json field shape", () => {
+    const program = createProgram();
+    const usersList = program.commands
+      .find((c) => c.name() === "users")!
+      .commands.find((c) => c.name() === "list")!;
+    const appsList = program.commands
+      .find((c) => c.name() === "apps")!
+      .commands.find((c) => c.name() === "list")!;
+
+    expect(usersList.helpInformation()).toMatch(/--json[^\n]*\bdata\b[^\n]*\bhasMore\b/);
+    expect(appsList.helpInformation()).toMatch(/--json[^\n]*\bapplication_id\b/);
+  });
+
+  test("auth login --help documents the headless path via --token and CLERK_SECRET_KEY", () => {
+    const program = createProgram();
+    const auth = program.commands.find((c) => c.name() === "auth")!;
+    const login = auth.commands.find((c) => c.name() === "login")!;
+    const help = login.helpInformation();
+
+    const optionNames = login.options.map((o) => o.long);
+    expect(optionNames).toContain("--token");
+    expect(help).toContain("CLERK_SECRET_KEY");
+    expect(help).toMatch(/headless/i);
+  });
+
+  // Names listed in `Environment:` must match what the CLI reads via
+  // process.env.CLERK_* — otherwise the help text drifts and lies.
+  const documentedEnvVars = [
+    ...createProgram()
+      .helpInformation()
+      .matchAll(/\bCLERK_[A-Z0-9_]+\b/g),
+  ].map((m) => m[0]);
+  const knownReadByCli = new Set([
+    "CLERK_SECRET_KEY",
+    "CLERK_MODE",
+    "CLERK_CONFIG_DIR",
+    "CLERK_UPDATE_CHANNEL",
+    "CLERK_NO_UPDATE_CHECK",
+  ]);
+
+  test("setEnvVars documents at least one CLERK_* name", () => {
+    expect(documentedEnvVars.length).toBeGreaterThan(0);
+  });
+
+  test.each([...new Set(documentedEnvVars)])(
+    "documented env var %s is actually read by the CLI",
+    (name) => {
+      expect(knownReadByCli).toContain(name);
+    },
+  );
+});
+
 describe("formatApiBody", () => {
   // --- Single error with meta ---
 

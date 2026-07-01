@@ -52,7 +52,7 @@ describe("Recover from errors gracefully", () => {
     });
 
     const { stderr: apiErr, exitCode: apiExit } = await clerk.raw("--mode", "human", "env", "pull");
-    expect(apiExit).toBe(1);
+    expect(apiExit).toBe(69);
     expect(apiErr).toContain("Failed to fetch API keys");
 
     // Retry with working API

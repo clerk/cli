@@ -1,13 +1,34 @@
 import { isAgent } from "../mode.ts";
 
-/** Standard process exit codes used by the CLI. */
+/**
+ * Standard process exit codes used by the CLI.
+ *
+ * Aligned with BSD sysexits.h so agents can distinguish error classes by
+ * exit code without parsing stderr:
+ * - 64 EX_USAGE       — bad invocation (unknown flag/subcommand, missing arg)
+ * - 65 EX_DATAERR     — input data malformed (invalid JSON, schema mismatch)
+ * - 69 EX_UNAVAILABLE — required service or resource unavailable
+ * - 70 EX_SOFTWARE    — internal CLI error (unexpected runtime failure)
+ * - 75 EX_TEMPFAIL    — transient failure, safe to retry (network, 5xx, rate limit)
+ * - 77 EX_NOPERM      — auth required or permission denied
+ */
 export const EXIT_CODE = {
   /** Clean exit, no error. */
   SUCCESS: 0,
   /** General runtime error. */
   GENERAL: 1,
-  /** Invalid arguments or options. */
-  USAGE: 2,
+  /** Invalid arguments or options (sysexits EX_USAGE). */
+  USAGE: 64,
+  /** Input data malformed (sysexits EX_DATAERR). */
+  DATAERR: 65,
+  /** Required service or resource unavailable (sysexits EX_UNAVAILABLE). */
+  UNAVAILABLE: 69,
+  /** Internal CLI error (sysexits EX_SOFTWARE). */
+  SOFTWARE: 70,
+  /** Transient failure, retryable (sysexits EX_TEMPFAIL). */
+  TEMPFAIL: 75,
+  /** Auth required or permission denied (sysexits EX_NOPERM). */
+  NOPERM: 77,
   /** Interrupted by Ctrl+C (128 + SIGINT signal 2). */
   SIGINT: 130,
 } as const;

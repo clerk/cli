@@ -178,7 +178,12 @@ describe("users list", () => {
   test("outputs JSON when requested", async () => {
     await runList({ json: true });
 
-    expect(JSON.parse(captured.out)).toEqual({ data: mockUsers, hasMore: false });
+    expect(JSON.parse(captured.out)).toEqual({
+      data: mockUsers,
+      hasMore: false,
+      nextCursor: null,
+      pagination: { offset: 0, limit: 100 },
+    });
     expect(captured.err).toBe("");
   });
 
@@ -187,7 +192,28 @@ describe("users list", () => {
 
     await runList();
 
-    expect(JSON.parse(captured.out)).toEqual({ data: mockUsers, hasMore: false });
+    expect(JSON.parse(captured.out)).toEqual({
+      data: mockUsers,
+      hasMore: false,
+      nextCursor: null,
+      pagination: { offset: 0, limit: 100 },
+    });
+  });
+
+  test("emits nextCursor when more results are available", async () => {
+    const overflowUsers = Array.from({ length: 4 }, (_, i) => ({ id: `user_${i}` }));
+    mockBapiRequest.mockResolvedValue({
+      status: 200,
+      headers: new Headers(),
+      body: overflowUsers,
+      rawBody: JSON.stringify(overflowUsers),
+    });
+
+    await runList({ json: true, limit: 3, offset: 6 });
+
+    const parsed = JSON.parse(captured.out) as { hasMore: boolean; nextCursor: string | null };
+    expect(parsed.hasMore).toBe(true);
+    expect(parsed.nextCursor).toBe("9");
   });
 
   test("flags hasMore=true when BAPI returns one more row than the page size", async () => {

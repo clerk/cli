@@ -4,6 +4,7 @@ import { join, relative } from "node:path";
 import { tmpdir } from "node:os";
 import { useCaptureLog, listageStubs } from "../../test/lib/stubs.ts";
 import { CliError, ERROR_CODE, EXIT_CODE, PlapiError, UserAbortError } from "../../lib/errors.ts";
+import { setColorEnabled, isColorEnabled } from "../../lib/color.ts";
 
 const mockIsAgent = mock();
 let _modeOverride: string | undefined;
@@ -179,9 +180,14 @@ describe("deploy", () => {
   let writeSpy: ReturnType<typeof spyOn>;
   const captured = useCaptureLog();
   let tempDir: string;
+  let savedColor: boolean;
 
   beforeEach(() => {
     tempDir = "";
+    savedColor = isColorEnabled();
+    // Force color on so assertions against ANSI escape sequences work
+    // regardless of TTY state in CI.
+    setColorEnabled(true);
     // Sensible defaults so most tests need only override what they exercise.
     mockFetchInstanceConfig.mockResolvedValue({
       connection_oauth_google: { enabled: true },
@@ -267,6 +273,7 @@ describe("deploy", () => {
     mockOpenBrowser.mockReset();
     consoleSpy?.mockRestore();
     writeSpy?.mockRestore();
+    setColorEnabled(savedColor);
   });
 
   function runDeploy(options: Parameters<typeof deploy>[0] = {}) {

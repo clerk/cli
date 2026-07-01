@@ -186,8 +186,11 @@ export async function list(options: UsersListOptions = {}): Promise<void> {
     const allUsers = Array.isArray(body) ? (body as BapiUser[]) : [];
     const hasMore = allUsers.length > limit;
     const users = hasMore ? allUsers.slice(0, limit) : allUsers;
+    // BAPI doesn't return opaque cursors yet; encode the next offset as the
+    // cursor so agents can paginate forward without knowing the scheme.
+    const nextCursor = hasMore ? String(offset + limit) : null;
 
-    if (printJson({ data: users, hasMore }, options)) {
+    if (printJson({ data: users, hasMore, nextCursor, pagination: { offset, limit } }, options)) {
       return;
     }
 

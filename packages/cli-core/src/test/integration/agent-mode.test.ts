@@ -88,7 +88,7 @@ test("link with --app writes the profile in agent mode", async () => {
 
 test("unlink requires --yes in agent mode", async () => {
   const result = await clerk.raw("--mode", "agent", "unlink");
-  expect(result.exitCode).toBe(2);
+  expect(result.exitCode).toBe(64);
   expect(result.stderr).toContain("Pass --yes to unlink in agent mode.");
 });
 
