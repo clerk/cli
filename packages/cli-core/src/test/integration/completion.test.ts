@@ -79,6 +79,33 @@ describe("generateCompletions", () => {
     });
   });
 
+  describe("impersonate completion", () => {
+    test("completes root subcommands including impersonate", () => {
+      const names = completionNames("");
+      expect(names).toContain("impersonate");
+    });
+
+    test("completes the imp alias as its own command with its subcommand and flags", () => {
+      const names = completionNames("imp", "");
+      expect(names).toContain("revoke");
+      expect(names).toContain("--secret-key");
+      expect(names).toContain("--actor");
+      expect(names).toContain("--expires-in");
+    });
+
+    test("completes --instance hints under `clerk impersonate`", () => {
+      const names = completionNames("impersonate", "--instance", "");
+      expect(names).toContain("dev");
+      expect(names).toContain("prod");
+    });
+
+    test("completes revoke subcommand options", () => {
+      const names = completionNames("impersonate", "revoke", "");
+      expect(names).toContain("--app");
+      expect(names).toContain("--instance");
+    });
+  });
+
   describe("alias completion", () => {
     test("completes command aliases", () => {
       const names = completionNames("auth", "");
