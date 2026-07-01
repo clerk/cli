@@ -52,4 +52,5 @@ Commands:
   update           [options]                      Update the Clerk CLI to the latest version
   deploy                                          Deploy a Clerk application to production
   help             [command]                      Display help for command
+  bird                                            Play Clerk Bird, a Flappy Bird game in your terminal
 ```
