@@ -140,7 +140,6 @@ export async function resolveUsersInstanceContext(
 
   let appId: string | undefined = options.app;
   let instanceHint: string | undefined = options.instance;
-  let appPickedInteractively = false;
 
   if (!appId) {
     try {
@@ -158,7 +157,6 @@ export async function resolveUsersInstanceContext(
           message: "Select a Clerk application to use:",
         });
         appId = picked.application_id;
-        appPickedInteractively = true;
       } else {
         throw error;
       }
@@ -171,11 +169,7 @@ export async function resolveUsersInstanceContext(
   // more than one instance prompts unless --instance pinned it. Users usually
   // exist on only one instance, so a silent development default makes lookups
   // fail confusingly. Agent mode never prompts and keeps the dev default.
-  const shouldPromptForInstance = appPickedInteractively
-    ? !instanceHint
-    : !options.instance && isHuman();
-
-  if (shouldPromptForInstance && app.instances.length > 1) {
+  if (!options.instance && isHuman() && app.instances.length > 1) {
     instanceHint = await select<string>({
       message: "Select an instance to use:",
       choices: app.instances.map((entry) => ({
