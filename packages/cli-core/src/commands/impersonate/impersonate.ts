@@ -81,7 +81,7 @@ export async function impersonate(options: ImpersonateOptions = {}): Promise<voi
     instance: options.instance,
   });
 
-  const userId = await resolveImpersonationTarget(options.user, ctx.secretKey);
+  const userId = await resolveImpersonationTarget(options.user, ctx);
   const expiresIn = options.expiresIn ?? DEFAULT_EXPIRES_IN_SECONDS;
   const actor = buildActorStamp(loginEmail, options.actor);
 

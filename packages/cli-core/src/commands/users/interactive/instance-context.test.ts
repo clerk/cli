@@ -7,7 +7,12 @@ const mockResolveProfile = mock();
 const mockFetchApplication = mock();
 const mockFetchAppsTolerantly = mock();
 const mockPickOrCreateApp = mock();
+const mockSelect = mock();
 const mockIsHuman = mock(() => true);
+
+mock.module("../../../lib/listage.ts", () => ({
+  select: (...args: unknown[]) => mockSelect(...args),
+}));
 
 mock.module("../../../lib/config.ts", () => ({
   resolveAppContext: (...args: unknown[]) => mockResolveAppContext(...args),
@@ -22,15 +27,21 @@ mock.module("../../../lib/config.ts", () => ({
         publishable_key: string;
       }[];
     },
-    _instance?: string,
+    instance?: string,
   ) => {
-    const development = app.instances.find((i) => i.environment_type === "development");
-    if (!development) return { found: false, instanceId: "unknown", instanceLabel: "unknown" };
+    // Mirrors the real resolver: an env-type or instance-id hint wins,
+    // otherwise fall back to the development instance. Labels use the
+    // matched instance's environment type.
+    const hint = instance ?? "development";
+    const matched = app.instances.find(
+      (i) => i.environment_type === hint || i.instance_id === hint,
+    );
+    if (!matched) return { found: false, instanceId: hint, instanceLabel: hint };
     return {
       found: true,
-      instance: development,
-      instanceId: development.instance_id,
-      instanceLabel: "development",
+      instance: matched,
+      instanceId: matched.instance_id,
+      instanceLabel: matched.environment_type,
     };
   },
 }));
@@ -61,6 +72,7 @@ describe("resolveUsersInstanceContext", () => {
     mockFetchApplication.mockReset();
     mockFetchAppsTolerantly.mockReset();
     mockPickOrCreateApp.mockReset();
+    mockSelect.mockReset();
     mockIsHuman.mockReturnValue(true);
     mockResolveProfile.mockResolvedValue(undefined);
   });
@@ -121,12 +133,153 @@ describe("resolveUsersInstanceContext", () => {
 
     const ctx = await resolveUsersInstanceContext({});
     expect(mockPickOrCreateApp).toHaveBeenCalled();
+    expect(mockSelect).not.toHaveBeenCalled();
     expect(ctx.secretKey).toBe("sk_test_picked");
     expect(ctx.appId).toBe("app_picked");
     expect(ctx.appLabel).toBe("Picked");
     expect(ctx.instanceId).toBe("ins_dev");
     expect(ctx.instanceLabel).toBe("development");
     expect(ctx.fapiHost).toBe("ideal-louse-61.clerk.accounts.dev");
+  });
+
+  test("prompts for an instance when the picked app has multiple instances", async () => {
+    mockResolveAppContext.mockRejectedValue(
+      new CliError("No Clerk project linked", { code: ERROR_CODE.NOT_LINKED }),
+    );
+    mockFetchAppsTolerantly.mockResolvedValue([{ application_id: "app_picked", name: "Picked" }]);
+    mockPickOrCreateApp.mockResolvedValue({ application_id: "app_picked", name: "Picked" });
+    mockFetchApplication.mockResolvedValue({
+      application_id: "app_picked",
+      name: "Picked",
+      instances: [
+        {
+          instance_id: "ins_dev",
+          environment_type: "development",
+          publishable_key: "pk_test_aWRlYWwtbG91c2UtNjEuY2xlcmsuYWNjb3VudHMuZGV2JA",
+          secret_key: "sk_test_picked",
+        },
+        {
+          instance_id: "ins_prod",
+          environment_type: "production",
+          publishable_key: "pk_live_aWRlYWwtbG91c2UtNjEuY2xlcmsuYWNjb3VudHMuZGV2JA",
+          secret_key: "sk_live_picked",
+        },
+      ],
+    });
+    mockSelect.mockResolvedValue("ins_prod");
+
+    const ctx = await resolveUsersInstanceContext({});
+
+    expect(mockSelect).toHaveBeenCalledTimes(1);
+    expect(mockSelect.mock.calls[0]?.[0]).toMatchObject({
+      choices: [
+        { name: "ins_dev (development)", value: "ins_dev" },
+        { name: "ins_prod (production)", value: "ins_prod" },
+      ],
+    });
+    expect(ctx.secretKey).toBe("sk_live_picked");
+    expect(ctx.instanceId).toBe("ins_prod");
+    expect(ctx.instanceLabel).toBe("production");
+  });
+
+  test("does not prompt for an instance when --instance is passed alongside the app picker", async () => {
+    mockResolveAppContext.mockRejectedValue(
+      new CliError("No Clerk project linked", { code: ERROR_CODE.NOT_LINKED }),
+    );
+    mockFetchAppsTolerantly.mockResolvedValue([{ application_id: "app_picked", name: "Picked" }]);
+    mockPickOrCreateApp.mockResolvedValue({ application_id: "app_picked", name: "Picked" });
+    mockFetchApplication.mockResolvedValue({
+      application_id: "app_picked",
+      name: "Picked",
+      instances: [
+        {
+          instance_id: "ins_dev",
+          environment_type: "development",
+          publishable_key: "pk_test_aWRlYWwtbG91c2UtNjEuY2xlcmsuYWNjb3VudHMuZGV2JA",
+          secret_key: "sk_test_picked",
+        },
+        {
+          instance_id: "ins_prod",
+          environment_type: "production",
+          publishable_key: "pk_live_aWRlYWwtbG91c2UtNjEuY2xlcmsuYWNjb3VudHMuZGV2JA",
+          secret_key: "sk_live_picked",
+        },
+      ],
+    });
+
+    const ctx = await resolveUsersInstanceContext({ instance: "production" });
+
+    expect(mockSelect).not.toHaveBeenCalled();
+    expect(ctx.instanceId).toBe("ins_prod");
+    expect(ctx.instanceLabel).toBe("production");
+  });
+
+  test("prompts even when the app comes from a linked profile", async () => {
+    mockResolveAppContext.mockResolvedValue({
+      appId: "app_linked",
+      appLabel: "Linked",
+      instanceId: "ins_dev",
+      instanceLabel: "development",
+    });
+    mockFetchApplication.mockResolvedValue({
+      application_id: "app_linked",
+      name: "Linked",
+      instances: [
+        {
+          instance_id: "ins_dev",
+          environment_type: "development",
+          publishable_key: "pk_test_aWRlYWwtbG91c2UtNjEuY2xlcmsuYWNjb3VudHMuZGV2JA",
+          secret_key: "sk_test_linked",
+        },
+        {
+          instance_id: "ins_prod",
+          environment_type: "production",
+          publishable_key: "pk_live_aWRlYWwtbG91c2UtNjEuY2xlcmsuYWNjb3VudHMuZGV2JA",
+          secret_key: "sk_live_linked",
+        },
+      ],
+    });
+    mockSelect.mockResolvedValue("ins_prod");
+
+    const ctx = await resolveUsersInstanceContext({});
+
+    expect(mockSelect).toHaveBeenCalledTimes(1);
+    expect(ctx.instanceId).toBe("ins_prod");
+    expect(ctx.instanceLabel).toBe("production");
+    expect(ctx.secretKey).toBe("sk_live_linked");
+  });
+
+  test("does not prompt in agent mode", async () => {
+    mockIsHuman.mockReturnValue(false);
+    mockResolveAppContext.mockResolvedValue({
+      appId: "app_linked",
+      appLabel: "Linked",
+      instanceId: "ins_dev",
+      instanceLabel: "development",
+    });
+    mockFetchApplication.mockResolvedValue({
+      application_id: "app_linked",
+      name: "Linked",
+      instances: [
+        {
+          instance_id: "ins_dev",
+          environment_type: "development",
+          publishable_key: "pk_test_aWRlYWwtbG91c2UtNjEuY2xlcmsuYWNjb3VudHMuZGV2JA",
+          secret_key: "sk_test_linked",
+        },
+        {
+          instance_id: "ins_prod",
+          environment_type: "production",
+          publishable_key: "pk_live_aWRlYWwtbG91c2UtNjEuY2xlcmsuYWNjb3VudHMuZGV2JA",
+          secret_key: "sk_live_linked",
+        },
+      ],
+    });
+
+    const ctx = await resolveUsersInstanceContext({});
+
+    expect(mockSelect).not.toHaveBeenCalled();
+    expect(ctx.instanceId).toBe("ins_dev");
   });
 
   test("re-throws NOT_LINKED in agent mode without invoking picker", async () => {

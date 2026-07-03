@@ -10,6 +10,18 @@ type ImpersonationUserCandidate = {
   id: string;
 };
 
+export type ImpersonationSearchContext = {
+  secretKey: string;
+  appLabel?: string;
+  instanceLabel?: string;
+};
+
+function searchScope(ctx: ImpersonationSearchContext): string {
+  if (ctx.appLabel && ctx.instanceLabel) return ` on ${ctx.appLabel} (${ctx.instanceLabel})`;
+  if (ctx.instanceLabel) return ` on the ${ctx.instanceLabel} instance`;
+  return "";
+}
+
 /**
  * Resolve the `[user]` positional argument (or its absence) to a single
  * `user_...` ID:
@@ -17,7 +29,8 @@ type ImpersonationUserCandidate = {
  * - `user_...` → used directly, no lookup.
  * - contains `@` → exact match via `email_address` filter.
  * - otherwise → fuzzy match via `query`.
- * - 0 matches → usage error. 1 match → used directly.
+ * - 0 matches → usage error naming the searched app/instance. 1 match → used
+ *   directly.
  * - 2+ matches: human mode opens the picker (no prefilled query support —
  *   see pick-user.ts); agent mode errors with candidate IDs.
  * - no argument: human mode opens the picker; agent mode errors (agent mode
@@ -25,8 +38,9 @@ type ImpersonationUserCandidate = {
  */
 export async function resolveImpersonationTarget(
   user: string | undefined,
-  secretKey: string,
+  ctx: ImpersonationSearchContext,
 ): Promise<string> {
+  const secretKey = ctx.secretKey;
   if (user === undefined) {
     if (isAgent()) {
       throwUsageError("A user is required in agent mode. Pass it as a positional argument.");
@@ -55,7 +69,7 @@ export async function resolveImpersonationTarget(
   const users = Array.isArray(response.body) ? (response.body as ImpersonationUserCandidate[]) : [];
 
   if (users.length === 0) {
-    throwUsageError(`No user found matching "${user}".`);
+    throwUsageError(`No user found matching "${user}"${searchScope(ctx)}.`);
   }
 
   if (users.length === 1) {

@@ -23,7 +23,7 @@ describe("resolveImpersonationTarget", () => {
   });
 
   test("uses a user_xxx argument directly without calling BAPI", async () => {
-    const result = await resolveImpersonationTarget("user_2x9k", "sk_test_123");
+    const result = await resolveImpersonationTarget("user_2x9k", { secretKey: "sk_test_123" });
     expect(result).toBe("user_2x9k");
     expect(mockBapiRequest).not.toHaveBeenCalled();
     expect(mockPickUser).not.toHaveBeenCalled();
@@ -37,7 +37,9 @@ describe("resolveImpersonationTarget", () => {
       rawBody: "",
     });
 
-    const result = await resolveImpersonationTarget("alice@example.com", "sk_test_123");
+    const result = await resolveImpersonationTarget("alice@example.com", {
+      secretKey: "sk_test_123",
+    });
 
     expect(result).toBe("user_alice");
     expect(mockBapiRequest.mock.calls[0]?.[0]).toMatchObject({
@@ -55,7 +57,7 @@ describe("resolveImpersonationTarget", () => {
       rawBody: "",
     });
 
-    await resolveImpersonationTarget("bob", "sk_test_123");
+    await resolveImpersonationTarget("bob", { secretKey: "sk_test_123" });
 
     expect(mockBapiRequest.mock.calls[0]?.[0]).toMatchObject({
       path: "/users?query=bob&limit=6",
@@ -70,8 +72,27 @@ describe("resolveImpersonationTarget", () => {
       rawBody: "",
     });
 
-    await expect(resolveImpersonationTarget("nobody@example.com", "sk_test_123")).rejects.toThrow(
-      /no user found matching "nobody@example.com"/i,
+    await expect(
+      resolveImpersonationTarget("nobody@example.com", { secretKey: "sk_test_123" }),
+    ).rejects.toThrow(/no user found matching "nobody@example.com"/i);
+  });
+
+  test("names the searched app and instance in the zero-match error when known", async () => {
+    mockBapiRequest.mockResolvedValue({
+      status: 200,
+      headers: new Headers(),
+      body: [],
+      rawBody: "",
+    });
+
+    await expect(
+      resolveImpersonationTarget("nobody@example.com", {
+        secretKey: "sk_test_123",
+        appLabel: "My Application",
+        instanceLabel: "development",
+      }),
+    ).rejects.toThrow(
+      /no user found matching "nobody@example.com" on My Application \(development\)/i,
     );
   });
 
@@ -84,7 +105,7 @@ describe("resolveImpersonationTarget", () => {
     });
     mockPickUser.mockResolvedValue("user_a");
 
-    const result = await resolveImpersonationTarget("smith", "sk_test_123");
+    const result = await resolveImpersonationTarget("smith", { secretKey: "sk_test_123" });
 
     expect(result).toBe("user_a");
     expect(mockPickUser).toHaveBeenCalledWith(
@@ -101,7 +122,7 @@ describe("resolveImpersonationTarget", () => {
       rawBody: "",
     });
 
-    await expect(resolveImpersonationTarget("smith", "sk_test_123")).rejects.toThrow(
+    await expect(resolveImpersonationTarget("smith", { secretKey: "sk_test_123" })).rejects.toThrow(
       /user_a, user_b/,
     );
     expect(mockPickUser).not.toHaveBeenCalled();
@@ -110,7 +131,7 @@ describe("resolveImpersonationTarget", () => {
   test("human mode: no argument opens the picker", async () => {
     mockPickUser.mockResolvedValue("user_picked");
 
-    const result = await resolveImpersonationTarget(undefined, "sk_test_123");
+    const result = await resolveImpersonationTarget(undefined, { secretKey: "sk_test_123" });
 
     expect(result).toBe("user_picked");
     expect(mockBapiRequest).not.toHaveBeenCalled();
@@ -119,7 +140,9 @@ describe("resolveImpersonationTarget", () => {
   test("agent mode: no argument throws a usage error instead of prompting", async () => {
     setMode("agent");
 
-    await expect(resolveImpersonationTarget(undefined, "sk_test_123")).rejects.toThrow(CliError);
+    await expect(
+      resolveImpersonationTarget(undefined, { secretKey: "sk_test_123" }),
+    ).rejects.toThrow(CliError);
     expect(mockPickUser).not.toHaveBeenCalled();
   });
 });

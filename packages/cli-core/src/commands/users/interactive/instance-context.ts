@@ -14,6 +14,7 @@ import {
 import { getBapiBaseUrl } from "../../../lib/environment.ts";
 import { decodePublishableKey } from "../../../lib/fapi.ts";
 import { loggedFetch } from "../../../lib/fetch.ts";
+import { select } from "../../../lib/listage.ts";
 import { fetchApplication, validateKeyPrefix } from "../../../lib/plapi.ts";
 import { isHuman } from "../../../mode.ts";
 
@@ -139,6 +140,7 @@ export async function resolveUsersInstanceContext(
 
   let appId: string | undefined = options.app;
   let instanceHint: string | undefined = options.instance;
+  let appPickedInteractively = false;
 
   if (!appId) {
     try {
@@ -156,6 +158,7 @@ export async function resolveUsersInstanceContext(
           message: "Select a Clerk application to use:",
         });
         appId = picked.application_id;
+        appPickedInteractively = true;
       } else {
         throw error;
       }
@@ -163,6 +166,25 @@ export async function resolveUsersInstanceContext(
   }
 
   const app = await withApiContext(fetchApplication(appId), "Failed to resolve instance context");
+
+  // Never guess silently between dev and prod: in human mode, any app with
+  // more than one instance prompts unless --instance pinned it. Users usually
+  // exist on only one instance, so a silent development default makes lookups
+  // fail confusingly. Agent mode never prompts and keeps the dev default.
+  const shouldPromptForInstance = appPickedInteractively
+    ? !instanceHint
+    : !options.instance && isHuman();
+
+  if (shouldPromptForInstance && app.instances.length > 1) {
+    instanceHint = await select<string>({
+      message: "Select an instance to use:",
+      choices: app.instances.map((entry) => ({
+        name: `${entry.instance_id} (${entry.environment_type})`,
+        value: entry.instance_id,
+      })),
+    });
+  }
+
   const resolved = resolveFetchedApplicationInstance(appId, app, instanceHint);
   if (!resolved.found) {
     throw new CliError(`Instance ${resolved.instanceId} not found in application.`, {

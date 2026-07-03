@@ -52,7 +52,8 @@ Given `[user]`:
 
 Then:
 
-- 0 matches → usage error.
+- 0 matches → usage error naming the searched app and instance, e.g.
+  `No user found matching "alice@example.com" on My Application (development).`
 - 1 match → used directly.
 - 2+ matches, human mode → an interactive picker (the picker's search box
   always starts empty — there's no way to prefill it with your original
@@ -61,6 +62,18 @@ Then:
   re-run with a specific `user_...` ID.
 - No `[user]` argument, human mode → the interactive picker.
 - No `[user]` argument, agent mode → usage error (agent mode never prompts).
+
+## Instance resolution
+
+The app comes from `--app`, the linked profile, or — in human mode with no
+linked project — an interactive app picker. In human mode, whenever the
+resolved app has more than one instance and no `--instance` flag was passed,
+`clerk impersonate` and `clerk impersonate revoke` prompt
+"Select an instance to use:" instead of silently defaulting to development —
+even in a linked project. Users usually exist on only one instance (and actor
+tokens are instance-scoped), so a silent development default makes lookups and
+revokes fail confusingly. Agent mode never prompts and keeps the development
+default; `--instance` or `--secret-key` always pins the instance.
 
 ## Confirmation and the production guardrail
 

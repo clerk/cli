@@ -286,7 +286,9 @@ export function resolveFetchedApplicationInstance(
         found: true,
         instance: matched,
         instanceId: matched.instance_id,
-        instanceLabel: instance,
+        // Label by environment type, not the raw id — downstream guardrails
+        // (e.g. the production impersonation warning) key off this label.
+        instanceLabel: matched.environment_type || instance,
       };
     }
 

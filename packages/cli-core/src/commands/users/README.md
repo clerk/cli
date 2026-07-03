@@ -6,13 +6,13 @@ Manage direct Clerk user resources with first-class commands. Use `clerk api` fo
 
 Most `clerk users` commands accept the same targeting flags:
 
-| Flag               | Description                                                                       |
-| ------------------ | --------------------------------------------------------------------------------- |
-| `--secret-key <k>` | Use a specific Backend API secret key directly                                    |
-| `--app <id>`       | Target an application directly, even outside a linked project                     |
-| `--instance <id>`  | Target `dev`, `prod`, or a full instance ID. Defaults to the development instance |
-| `--dry-run`        | Preview the request without executing it, where supported                         |
-| `--yes`            | Skip confirmation prompts for mutating commands                                   |
+| Flag               | Description                                                                                                                                                                 |
+| ------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `--secret-key <k>` | Use a specific Backend API secret key directly                                                                                                                              |
+| `--app <id>`       | Target an application directly, even outside a linked project                                                                                                               |
+| `--instance <id>`  | Target `dev`, `prod`, or a full instance ID. Without it, single-instance apps use development; interactive flows that hit a multi-instance app prompt for one in human mode |
+| `--dry-run`        | Preview the request without executing it, where supported                                                                                                                   |
+| `--yes`            | Skip confirmation prompts for mutating commands                                                                                                                             |
 
 Authentication is resolved in this order:
 
@@ -42,7 +42,7 @@ Two complementary mechanisms for JSON input work across the users command family
 
 ### `clerk users list`
 
-List users from the target instance. In human mode without a linked project, an env var, or a targeting flag, the command opens the same application picker as `clerk users create` so you can choose an instance interactively.
+List users from the target instance. In human mode without a linked project, an env var, or a targeting flag, the command opens the same application picker as `clerk users create`; if the picked application has more than one instance, an instance picker follows (no silent development default).
 
 ```sh
 clerk users list
