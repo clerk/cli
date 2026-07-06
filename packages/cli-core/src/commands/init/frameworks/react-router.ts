@@ -382,6 +382,81 @@ function scaffoldConfig(ctx: ProjectContext): Promise<FileAction | null> {
   });
 }
 
+type ViteScaffoldResult = {
+  action: FileAction | null;
+  /** True when the noExternal entry is needed but couldn't be applied — user must wire manually. */
+  needsManualViteWire: boolean;
+};
+
+/**
+ * Add `ssr.noExternal: ["@clerk/react-router"]` to the vite config.
+ * React Router v8 ships development/production conditional exports; `react-router dev`
+ * externalizes @clerk/react-router for SSR, so it resolves react-router's production
+ * build while app code gets the development build — two Router contexts, and every
+ * SSR render throws "useNavigate() may be used only in the context of a <Router>".
+ * https://github.com/remix-run/react-router/issues/15232
+ */
+function addClerkNoExternal(content: string): string {
+  try {
+    const mod = parseModule(content);
+    const defaultExport = mod.exports.default;
+    if (!defaultExport || typeof defaultExport !== "object") return content;
+
+    if (!defaultExport.ssr) defaultExport.ssr = {};
+    if (!defaultExport.ssr.noExternal) defaultExport.ssr.noExternal = [];
+    if (!Array.isArray(defaultExport.ssr.noExternal)) return content;
+
+    defaultExport.ssr.noExternal.push("@clerk/react-router");
+    return mod.generate().code;
+  } catch {
+    if (content.includes("defineConfig")) {
+      return content.replace(
+        /(defineConfig\s*\(\s*\{)/,
+        '$1\n  ssr: {\n    noExternal: ["@clerk/react-router"],\n  },',
+      );
+    }
+    return content;
+  }
+}
+
+async function scaffoldViteConfig(ctx: ProjectContext): Promise<ViteScaffoldResult> {
+  // The dual-instance issue only exists in v8's conditional exports; v7 doesn't need this.
+  if (shouldEnableV8MiddlewareFlag(ctx)) return { action: null, needsManualViteWire: false };
+
+  const configPath = await findFirstFile(ctx.cwd, [
+    "vite.config.ts",
+    "vite.config.js",
+    "vite.config.mts",
+    "vite.config.mjs",
+  ]);
+  if (!configPath) return { action: null, needsManualViteWire: true };
+
+  const content = await Bun.file(join(ctx.cwd, configPath)).text();
+  if (content.includes("@clerk/react-router")) {
+    return {
+      action: {
+        type: "skip",
+        path: configPath,
+        skipReason: "Already references @clerk/react-router in vite config",
+      },
+      needsManualViteWire: false,
+    };
+  }
+
+  const updated = addClerkNoExternal(content);
+  if (updated === content) return { action: null, needsManualViteWire: true };
+
+  return {
+    action: {
+      path: configPath,
+      type: "modify",
+      content: updated,
+      description: "Add @clerk/react-router to ssr.noExternal (React Router v8 dev SSR fix)",
+    },
+    needsManualViteWire: false,
+  };
+}
+
 export const reactRouter: FrameworkScaffold = {
   name: "React Router",
   dep: "react-router",
@@ -390,8 +465,9 @@ export const reactRouter: FrameworkScaffold = {
   matches: (ctx) => ctx.framework.dep === "react-router",
 
   async scaffold(ctx: ProjectContext): Promise<ScaffoldPlan> {
-    const [configAction, rootResult, localePrefix, envAction] = await Promise.all([
+    const [configAction, viteResult, rootResult, localePrefix, envAction] = await Promise.all([
       scaffoldConfig(ctx),
+      scaffoldViteConfig(ctx),
       scaffoldRoot(ctx),
       detectLocalePrefix(ctx.cwd),
       scaffoldEnvVars(ctx, SIGN_ROUTE_ENV_VARS.vite),
@@ -404,6 +480,7 @@ export const reactRouter: FrameworkScaffold = {
     const rootAction = rootResult.action;
     const actions = [
       configAction,
+      viteResult.action,
       rootAction,
       ...authActions,
       routesResult.action,
@@ -421,6 +498,12 @@ export const reactRouter: FrameworkScaffold = {
       const ext = jsxExt(ctx);
       postInstructions.push(
         `Add sign-in and sign-up routes to app/routes.ts: route('sign-in/*', 'routes/sign-in.${ext}') and route('sign-up/*', 'routes/sign-up.${ext}')`,
+      );
+    }
+
+    if (viteResult.needsManualViteWire) {
+      postInstructions.push(
+        "React Router v8 needs `ssr: { noExternal: ['@clerk/react-router'] }` in your vite config — without it, dev SSR fails with \"useNavigate() may be used only in the context of a <Router>\". See: https://github.com/remix-run/react-router/issues/15232",
       );
     }
 
