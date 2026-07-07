@@ -149,6 +149,15 @@ describe("impersonate", () => {
     expect(captured.err).toContain("production — signs you in as this user and bypasses their MFA");
   });
 
+  test("sk_live_ secret key without an instance label still prints the guardrail warning", async () => {
+    const { instanceLabel: _drop, ...rest } = CTX;
+    mockResolveUsersInstanceContext.mockResolvedValue({ ...rest, secretKey: "sk_live_123" });
+
+    await impersonate({ user: "user_2x9k", print: true });
+
+    expect(captured.err).toContain("production — signs you in as this user and bypasses their MFA");
+  });
+
   test("--expires-in overrides the default 3600s lifetime", async () => {
     await impersonate({ user: "user_2x9k", expiresIn: 900, print: true, yes: true });
 
