@@ -434,3 +434,118 @@ export default [index("routes/home.tsx")] satisfies RouteConfig;
     'route("($locale)/sign-up/*", "routes/($locale).sign-up.tsx")',
   );
 });
+
+test("adds ssr.noExternal to vite.config.ts for React Router 8", async () => {
+  await mkdir(join(tempDir, "app"), { recursive: true });
+  await Bun.write(
+    join(tempDir, "vite.config.ts"),
+    `import { reactRouter } from "@react-router/dev/vite";
+import { defineConfig } from "vite";
+
+export default defineConfig({
+  plugins: [reactRouter()],
+});
+`,
+  );
+
+  const plan = await reactRouter.scaffold(makeCtx({ deps: { "react-router": "8.0.0" } }));
+  const viteAction = plan.actions.find((action) => action.path === "vite.config.ts");
+
+  expect(viteAction?.type).toBe("modify");
+  if (viteAction?.type !== "modify") throw new Error("Expected vite config modify action");
+
+  expect(viteAction.content).toContain("noExternal");
+  expect(viteAction.content).toContain("@clerk/react-router");
+  expect(viteAction.content.match(/ssr\s*:/g)?.length).toBe(1);
+});
+
+test("appends to an existing ssr.noExternal array for React Router 8", async () => {
+  await mkdir(join(tempDir, "app"), { recursive: true });
+  await Bun.write(
+    join(tempDir, "vite.config.ts"),
+    `import { defineConfig } from "vite";
+
+export default defineConfig({
+  ssr: {
+    noExternal: ["some-other-pkg"],
+  },
+});
+`,
+  );
+
+  const plan = await reactRouter.scaffold(makeCtx({ deps: { "react-router": "8.0.0" } }));
+  const viteAction = plan.actions.find((action) => action.path === "vite.config.ts");
+
+  expect(viteAction?.type).toBe("modify");
+  if (viteAction?.type !== "modify") throw new Error("Expected vite config modify action");
+
+  expect(viteAction.content).toContain("some-other-pkg");
+  expect(viteAction.content).toContain("@clerk/react-router");
+  expect(viteAction.content.match(/ssr\s*:/g)?.length).toBe(1);
+});
+
+test("skips vite config when @clerk/react-router is already in ssr.noExternal", async () => {
+  await mkdir(join(tempDir, "app"), { recursive: true });
+  await Bun.write(
+    join(tempDir, "vite.config.ts"),
+    `import { defineConfig } from "vite";
+
+export default defineConfig({
+  ssr: {
+    noExternal: ["@clerk/react-router"],
+  },
+});
+`,
+  );
+
+  const plan = await reactRouter.scaffold(makeCtx({ deps: { "react-router": "8.0.0" } }));
+  const viteAction = plan.actions.find((action) => action.path === "vite.config.ts");
+
+  expect(viteAction?.type).toBe("skip");
+});
+
+test("does not touch vite config for React Router 7", async () => {
+  await mkdir(join(tempDir, "app"), { recursive: true });
+  await Bun.write(
+    join(tempDir, "vite.config.ts"),
+    `import { defineConfig } from "vite";
+
+export default defineConfig({
+  plugins: [],
+});
+`,
+  );
+
+  const plan = await reactRouter.scaffold(makeCtx({ deps: { "react-router": "7.9.0" } }));
+  const viteAction = plan.actions.find((action) => action.path === "vite.config.ts");
+
+  expect(viteAction).toBeUndefined();
+  expect(plan.postInstructions.join(" ")).not.toContain("noExternal");
+});
+
+test("emits manual noExternal instruction when vite config is missing on React Router 8", async () => {
+  await mkdir(join(tempDir, "app"), { recursive: true });
+
+  const plan = await reactRouter.scaffold(makeCtx({ deps: { "react-router": "8.0.0" } }));
+
+  expect(plan.postInstructions.join(" ")).toContain("noExternal");
+});
+
+test("emits manual noExternal instruction when vite config is a function form", async () => {
+  await mkdir(join(tempDir, "app"), { recursive: true });
+  await Bun.write(
+    join(tempDir, "vite.config.ts"),
+    `import { defineConfig } from "vite";
+
+export default defineConfig(({ command }) => ({
+  plugins: [],
+}));
+`,
+  );
+
+  const plan = await reactRouter.scaffold(makeCtx({ deps: { "react-router": "8.0.0" } }));
+  const viteAction = plan.actions.find((action) => action.path === "vite.config.ts");
+
+  expect(viteAction).toBeUndefined();
+  expect(plan.postInstructions.join(" ")).toContain("noExternal");
+});
