@@ -6,7 +6,6 @@ const REDACTED = "[REDACTED]";
 const DIRECT_REDACT_KEYS = new Set(["password", "code"]);
 const OBJECT_REDACT_KEYS = new Set(["private_metadata", "unsafe_metadata"]);
 
-/** A user record as returned by the BAPI `GET /users` search endpoint. */
 export type BapiUserSummary = {
   id: string;
   first_name?: string | null;
@@ -23,8 +22,6 @@ export type BapiUserSummary = {
 export type UserSearchFilter = { email: string } | { query: string };
 
 /**
- * Search users via BAPI `GET /users`, returning at most `limit` records.
- *
  * Centralizes the `/users` request so commands don't each hand-roll the query
  * string, limit handling, and `Array.isArray` body guard.
  */

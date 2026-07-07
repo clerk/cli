@@ -165,18 +165,26 @@ export async function resolveUsersInstanceContext(
 
   const app = await withApiContext(fetchApplication(appId), "Failed to resolve instance context");
 
-  // Never guess silently between dev and prod: in human mode, any app with
-  // more than one instance prompts unless --instance pinned it. Users usually
-  // exist on only one instance, so a silent development default makes lookups
-  // fail confusingly. Agent mode never prompts and keeps the dev default.
-  if (!options.instance && isHuman() && app.instances.length > 1) {
-    instanceHint = await select<string>({
-      message: "Select an instance to use:",
-      choices: app.instances.map((entry) => ({
-        name: `${entry.instance_id} (${entry.environment_type})`,
-        value: entry.instance_id,
-      })),
-    });
+  // Never guess silently between instances. Defaulting to development would
+  // make the same command resolve differently depending on which instances an
+  // app happens to have (e.g. once a production instance is added), breaking
+  // the guarantee that a command produces a repeatable result. So when the app
+  // has more than one instance and --instance didn't pin one, resolve the
+  // ambiguity explicitly: human mode prompts, agent mode errors.
+  if (!options.instance && app.instances.length > 1) {
+    if (isHuman()) {
+      instanceHint = await select<string>({
+        message: "Select an instance to use:",
+        choices: app.instances.map((entry) => ({
+          name: `${entry.instance_id} (${entry.environment_type})`,
+          value: entry.instance_id,
+        })),
+      });
+    } else {
+      throwUsageError(
+        "This application has multiple instances. Pass --instance <ins_id|development|production> to choose one explicitly.",
+      );
+    }
   }
 
   const resolved = resolveFetchedApplicationInstance(appId, app, instanceHint);

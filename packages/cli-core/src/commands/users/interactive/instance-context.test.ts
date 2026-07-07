@@ -249,7 +249,7 @@ describe("resolveUsersInstanceContext", () => {
     expect(ctx.secretKey).toBe("sk_live_linked");
   });
 
-  test("does not prompt in agent mode", async () => {
+  test("errors in agent mode when the app has multiple instances and no --instance", async () => {
     mockIsHuman.mockReturnValue(false);
     mockResolveAppContext.mockResolvedValue({
       appId: "app_linked",
@@ -272,6 +272,31 @@ describe("resolveUsersInstanceContext", () => {
           environment_type: "production",
           publishable_key: "pk_live_aWRlYWwtbG91c2UtNjEuY2xlcmsuYWNjb3VudHMuZGV2JA",
           secret_key: "sk_live_linked",
+        },
+      ],
+    });
+
+    await expect(resolveUsersInstanceContext({})).rejects.toThrow(/multiple instances/);
+    expect(mockSelect).not.toHaveBeenCalled();
+  });
+
+  test("agent mode resolves without prompting when the app has a single instance", async () => {
+    mockIsHuman.mockReturnValue(false);
+    mockResolveAppContext.mockResolvedValue({
+      appId: "app_linked",
+      appLabel: "Linked",
+      instanceId: "ins_dev",
+      instanceLabel: "development",
+    });
+    mockFetchApplication.mockResolvedValue({
+      application_id: "app_linked",
+      name: "Linked",
+      instances: [
+        {
+          instance_id: "ins_dev",
+          environment_type: "development",
+          publishable_key: "pk_test_aWRlYWwtbG91c2UtNjEuY2xlcmsuYWNjb3VudHMuZGV2JA",
+          secret_key: "sk_test_linked",
         },
       ],
     });

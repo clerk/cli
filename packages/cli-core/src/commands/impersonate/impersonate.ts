@@ -148,8 +148,13 @@ export async function impersonate(options: ImpersonateOptions = {}): Promise<voi
   // if --print/--open are both passed, --print wins (never opens).
   log.data(token.url);
   // BAPI has no list endpoint for actor tokens, so this is the only moment a
-  // human can learn the ID needed to revoke.
-  log.info(dim(`Revoke with: clerk imp revoke ${token.id}`));
+  // human can learn the ID needed to revoke. Pin the same app/instance the
+  // token was created on so the hint can't resolve a different target.
+  const revokeTarget = [
+    ctx.appId ? ` --app ${ctx.appId}` : "",
+    ctx.instanceId ? ` --instance ${ctx.instanceId}` : "",
+  ].join("");
+  log.info(dim(`Revoke with: clerk imp revoke ${token.id}${revokeTarget}`));
 
   if (options.print) {
     return;

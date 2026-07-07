@@ -72,8 +72,11 @@ resolved app has more than one instance and no `--instance` flag was passed,
 "Select an instance to use:" instead of silently defaulting to development —
 even in a linked project. Users usually exist on only one instance (and actor
 tokens are instance-scoped), so a silent development default makes lookups and
-revokes fail confusingly. Agent mode never prompts and keeps the development
-default; `--instance` or `--secret-key` always pins the instance.
+revokes fail confusingly. Agent mode never prompts: when the app has more than
+one instance it errors and asks for an explicit `--instance` rather than
+defaulting, so the same command can't resolve a different instance depending on
+which instances the app happens to have. `--instance` or `--secret-key` always
+pins the instance.
 
 ## Confirmation and the production guardrail
 
