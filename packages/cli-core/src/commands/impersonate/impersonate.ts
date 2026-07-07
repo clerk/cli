@@ -150,6 +150,9 @@ export async function impersonate(options: ImpersonateOptions = {}): Promise<voi
   // Always print the URL verbatim first, regardless of what happens next —
   // if --print/--open are both passed, --print wins (never opens).
   log.data(body.url);
+  // BAPI has no list endpoint for actor tokens, so this is the only moment a
+  // human can learn the ID needed to revoke.
+  log.info(dim(`Revoke with: clerk imp revoke ${body.id}`));
 
   if (options.print) {
     return;

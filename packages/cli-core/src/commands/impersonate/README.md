@@ -92,7 +92,9 @@ never prompts and proceeds directly.
 ## Output modes
 
 The sign-in URL from BAPI's response is always printed **verbatim** via
-`log.data()` — never reconstructed client-side.
+`log.data()` — never reconstructed client-side. Human mode also prints a
+`Revoke with: clerk imp revoke <id>` hint to stderr — BAPI has no list
+endpoint for actor tokens, so creation is the only moment the ID is visible.
 
 | Condition                                  | Behavior                                                                                                                                                               |
 | ------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
