@@ -1,14 +1,10 @@
-import { bapiRequest } from "../../lib/bapi.ts";
 import { throwUsageError } from "../../lib/errors.ts";
+import { searchUsers } from "../../lib/users.ts";
 import { isAgent } from "../../mode.ts";
 import { pickUser } from "../users/interactive/pick-user.ts";
 
 const USER_ID_PATTERN = /^user_[A-Za-z0-9]+$/;
 const CANDIDATE_LIMIT = 5;
-
-type ImpersonationUserCandidate = {
-  id: string;
-};
 
 export type ImpersonationSearchContext = {
   secretKey: string;
@@ -52,21 +48,8 @@ export async function resolveImpersonationTarget(
     return user;
   }
 
-  const searchParams = new URLSearchParams();
-  if (user.includes("@")) {
-    searchParams.set("email_address", user);
-  } else {
-    searchParams.set("query", user);
-  }
-  searchParams.set("limit", String(CANDIDATE_LIMIT + 1));
-
-  const response = await bapiRequest({
-    method: "GET",
-    path: `/users?${searchParams}`,
-    secretKey,
-  });
-
-  const users = Array.isArray(response.body) ? (response.body as ImpersonationUserCandidate[]) : [];
+  const filter = user.includes("@") ? { email: user } : { query: user };
+  const users = await searchUsers(secretKey, filter, CANDIDATE_LIMIT + 1);
 
   if (users.length === 0) {
     throwUsageError(`No user found matching "${user}"${searchScope(ctx)}.`);

@@ -1,7 +1,9 @@
 import { bold, cyan, dim } from "../../lib/color.ts";
-import { bapiRequest } from "../../lib/bapi.ts";
+import { createActorToken } from "../../lib/actor-tokens.ts";
 import {
   BapiError,
+  BILLING_ERROR_REASON,
+  BillingError,
   CliError,
   ERROR_CODE,
   throwUserAbort,
@@ -51,7 +53,8 @@ function actorTokenErrorToCliError(error: unknown): CliError | undefined {
   if (!(error instanceof BapiError)) return undefined;
 
   if (error.status === 402) {
-    return new CliError("Impersonation isn't enabled on this app's plan.", {
+    return new BillingError("Impersonation isn't enabled on this app's plan.", {
+      reason: BILLING_ERROR_REASON.PLAN_NOT_ENABLED,
       code: ERROR_CODE.IMPERSONATION_NOT_ENABLED,
     });
   }
@@ -64,8 +67,11 @@ function actorTokenErrorToCliError(error: unknown): CliError | undefined {
       limit !== undefined && used !== undefined
         ? ` (used ${used}/${limit} this billing period)`
         : "";
-    return new CliError(`Impersonation limit exceeded${quota}.`, {
+    return new BillingError(`Impersonation limit exceeded${quota}.`, {
+      reason: BILLING_ERROR_REASON.QUOTA_EXCEEDED,
       code: ERROR_CODE.IMPERSONATION_LIMIT_EXCEEDED,
+      limit,
+      used,
     });
   }
 
@@ -103,21 +109,14 @@ export async function impersonate(options: ImpersonateOptions = {}): Promise<voi
     }
   }
 
-  const payload = {
-    user_id: userId,
-    actor: { sub: actor.sub, iss: actor.iss },
-    expires_in_seconds: expiresIn,
-  };
-
-  let response;
+  let token;
   try {
-    response = await withApiContext(
+    token = await withApiContext(
       withSpinner("Creating impersonation session...", () =>
-        bapiRequest({
-          method: "POST",
-          path: "/actor_tokens",
-          secretKey: ctx.secretKey,
-          body: JSON.stringify(payload),
+        createActorToken(ctx.secretKey, {
+          userId,
+          actor: { sub: actor.sub, iss: actor.iss },
+          expiresInSeconds: expiresIn,
         }),
       ),
       "Failed to create impersonation session",
@@ -128,13 +127,11 @@ export async function impersonate(options: ImpersonateOptions = {}): Promise<voi
     throw error;
   }
 
-  const body = response.body as { id: string; url: string };
-
   if (isAgent()) {
     log.data(
       JSON.stringify({
-        url: body.url,
-        id: body.id,
+        url: token.url,
+        id: token.id,
         userId,
         actor: { sub: actor.sub, iss: actor.iss },
         appId: ctx.appId,
@@ -149,17 +146,17 @@ export async function impersonate(options: ImpersonateOptions = {}): Promise<voi
 
   // Always print the URL verbatim first, regardless of what happens next —
   // if --print/--open are both passed, --print wins (never opens).
-  log.data(body.url);
+  log.data(token.url);
   // BAPI has no list endpoint for actor tokens, so this is the only moment a
   // human can learn the ID needed to revoke.
-  log.info(dim(`Revoke with: clerk imp revoke ${body.id}`));
+  log.info(dim(`Revoke with: clerk imp revoke ${token.id}`));
 
   if (options.print) {
     return;
   }
 
   if (options.open) {
-    await openOrWarn(body.url);
+    await openOrWarn(token.url);
     return;
   }
 
@@ -172,6 +169,6 @@ export async function impersonate(options: ImpersonateOptions = {}): Promise<voi
     default: true,
   });
   if (shouldOpen) {
-    await openOrWarn(body.url);
+    await openOrWarn(token.url);
   }
 }

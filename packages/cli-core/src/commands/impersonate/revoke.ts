@@ -1,4 +1,4 @@
-import { bapiRequest } from "../../lib/bapi.ts";
+import { revokeActorToken } from "../../lib/actor-tokens.ts";
 import { withApiContext } from "../../lib/errors.ts";
 import { log } from "../../lib/log.ts";
 import { withSpinner } from "../../lib/spinner.ts";
@@ -25,18 +25,12 @@ export async function revoke(options: RevokeOptions): Promise<void> {
     instance: options.instance,
   });
 
-  const response = await withApiContext(
+  const body = await withApiContext(
     withSpinner(`Revoking actor token ${options.actorTokenId}...`, () =>
-      bapiRequest({
-        method: "POST",
-        path: `/actor_tokens/${options.actorTokenId}/revoke`,
-        secretKey: ctx.secretKey,
-      }),
+      revokeActorToken(ctx.secretKey, options.actorTokenId),
     ),
     `Failed to revoke actor token ${options.actorTokenId}`,
   );
-
-  const body = response.body as { id?: string; status?: string };
 
   if (isAgent()) {
     log.data(
