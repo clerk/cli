@@ -402,19 +402,21 @@ function addClerkNoExternal(content: string): string {
     const defaultExport = mod.exports.default;
     if (!defaultExport || typeof defaultExport !== "object") return content;
 
-    if (!defaultExport.ssr) defaultExport.ssr = {};
-    if (!defaultExport.ssr.noExternal) defaultExport.ssr.noExternal = [];
-    if (!Array.isArray(defaultExport.ssr.noExternal)) return content;
+    // `export default defineConfig({...})` proxies the call expression; property writes on it
+    // throw, so operate on the call's first argument (the config object) instead.
+    const config = defaultExport.$type === "function-call" ? defaultExport.$args[0] : defaultExport;
+    if (!config || typeof config !== "object") return content;
 
-    defaultExport.ssr.noExternal.push("@clerk/react-router");
+    if (!config.ssr) config.ssr = {};
+    if (config.ssr.noExternal === undefined) config.ssr.noExternal = [];
+    // boolean/string/regex noExternal: leave it and let the caller emit the manual instruction
+    if (!Array.isArray(config.ssr.noExternal)) return content;
+
+    if (!config.ssr.noExternal.includes("@clerk/react-router")) {
+      config.ssr.noExternal.push("@clerk/react-router");
+    }
     return mod.generate().code;
   } catch {
-    if (content.includes("defineConfig")) {
-      return content.replace(
-        /(defineConfig\s*\(\s*\{)/,
-        '$1\n  ssr: {\n    noExternal: ["@clerk/react-router"],\n  },',
-      );
-    }
     return content;
   }
 }

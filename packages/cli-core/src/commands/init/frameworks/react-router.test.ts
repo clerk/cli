@@ -456,6 +456,7 @@ export default defineConfig({
 
   expect(viteAction.content).toContain("noExternal");
   expect(viteAction.content).toContain("@clerk/react-router");
+  expect(viteAction.content.match(/ssr\s*:/g)?.length).toBe(1);
 });
 
 test("appends to an existing ssr.noExternal array for React Router 8", async () => {
@@ -480,6 +481,7 @@ export default defineConfig({
 
   expect(viteAction.content).toContain("some-other-pkg");
   expect(viteAction.content).toContain("@clerk/react-router");
+  expect(viteAction.content.match(/ssr\s*:/g)?.length).toBe(1);
 });
 
 test("skips vite config when @clerk/react-router is already in ssr.noExternal", async () => {
