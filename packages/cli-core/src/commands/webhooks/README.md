@@ -63,7 +63,7 @@ the forwarded request, so your handler can still verify against the signing secr
 of the dashboard endpoint you point at the inbox URL.
 
 **Ready line schema (`--json`):**
-`{ "type": "ready", "relay_url": "https://play.svix.com/in/c_AbCd123456/", "forward_to": "http://localhost:3000/api/webhooks" }` — emitted once, then one
+`{ "type": "ready", "relay_url": "https://webhooks.clerk.com/in/c_AbCd123456/", "forward_to": "http://localhost:3000/api/webhooks" }` — emitted once, then one
 `event` line per delivery (and a `{ "type": "reconnecting" }` line if the relay
 connection drops).
 

@@ -28,6 +28,16 @@ const HOP_BY_HOP_HEADERS = new Set([
   "host",
 ]);
 
+// The body is decoded and re-framed before echoing, so content-length and
+// content-encoding no longer match. Echoing a chunked local response (e.g.
+// Next.js dev) made the relay return 502 to the sender despite a successful
+// delivery.
+const RESPONSE_HEADER_DENYLIST = new Set([
+  ...HOP_BY_HOP_HEADERS,
+  "content-length",
+  "content-encoding",
+]);
+
 /**
  * Parse one `--header` value (`key:value`, split on the FIRST colon, whitespace
  * trimmed) into a [key, value] pair. Throws a usage error on malformed input.
@@ -89,6 +99,7 @@ export async function forwardDelivery(args: {
     const bodyText = await response.text();
     const headers: Record<string, string> = {};
     response.headers.forEach((value, key) => {
+      if (RESPONSE_HEADER_DENYLIST.has(key.toLowerCase())) return;
       headers[key] = value;
     });
     return {

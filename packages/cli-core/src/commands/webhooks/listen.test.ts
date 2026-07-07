@@ -172,7 +172,7 @@ describe("webhooks listen (V1, relay-only)", () => {
     const ready = JSON.parse(captured.out) as Record<string, unknown>;
     expect(ready).toEqual({
       type: "ready",
-      relay_url: "https://play.svix.com/in/c_Stable9999/",
+      relay_url: "https://webhooks.clerk.com/in/c_Stable9999/",
       forward_to: "http://localhost:3000/api/webhooks",
     });
     expect(ready).not.toHaveProperty("signing_secret");

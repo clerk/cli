@@ -44,7 +44,7 @@ export function generateRelayToken(): string {
 }
 
 export function relayReceiveUrl(token: string): string {
-  return `https://play.svix.com/in/${token}/`;
+  return `https://webhooks.clerk.com/in/${token}/`;
 }
 
 export function encodeStartFrame(token: string): string {

@@ -26,14 +26,14 @@ function outcome(overrides: Partial<ForwardOutcome> = {}): ForwardOutcome {
 describe("buildReadyLine", () => {
   test("matches the agent-mode ready contract", () => {
     const line = buildReadyLine({
-      relayUrl: "https://play.svix.com/in/Ab12Cd34Ef/",
+      relayUrl: "https://webhooks.clerk.com/in/Ab12Cd34Ef/",
       forwardTo: "http://localhost:3000/api/webhooks",
     });
 
     expect(line).not.toContain("\n");
     expect(JSON.parse(line)).toEqual({
       type: "ready",
-      relay_url: "https://play.svix.com/in/Ab12Cd34Ef/",
+      relay_url: "https://webhooks.clerk.com/in/Ab12Cd34Ef/",
       forward_to: "http://localhost:3000/api/webhooks",
     });
   });
@@ -83,11 +83,11 @@ describe("human rendering", () => {
 
   test("ready banner shows the relay URL, forwarding target, and dashboard link", () => {
     renderReadyBanner({
-      relayUrl: "https://play.svix.com/in/Ab12Cd34Ef/",
+      relayUrl: "https://webhooks.clerk.com/in/Ab12Cd34Ef/",
       forwardTo: "http://localhost:3000/api/webhooks",
     });
 
-    expect(captured.err).toContain("https://play.svix.com/in/Ab12Cd34Ef/");
+    expect(captured.err).toContain("https://webhooks.clerk.com/in/Ab12Cd34Ef/");
     expect(captured.err).toContain("http://localhost:3000/api/webhooks");
     expect(captured.err).toContain("dashboard.clerk.com/last-active?path=webhooks");
     expect(captured.err).toContain("Verification:");

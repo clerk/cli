@@ -21,8 +21,8 @@ describe("generateRelayToken", () => {
 });
 
 describe("relayReceiveUrl", () => {
-  test("builds the play.svix.com URL with the token verbatim", () => {
-    expect(relayReceiveUrl("Ab12Cd34Ef")).toBe("https://play.svix.com/in/Ab12Cd34Ef/");
+  test("builds the webhooks.clerk.com URL with the token verbatim", () => {
+    expect(relayReceiveUrl("Ab12Cd34Ef")).toBe("https://webhooks.clerk.com/in/Ab12Cd34Ef/");
   });
 });
 
