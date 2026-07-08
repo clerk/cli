@@ -1,9 +1,51 @@
+import { bapiRequest } from "./bapi.ts";
 import { ERROR_CODE, throwUsageError } from "./errors.ts";
 
 const USERS_INVALID_JSON_MESSAGE = "User payload must be a JSON object.";
 const REDACTED = "[REDACTED]";
 const DIRECT_REDACT_KEYS = new Set(["password", "code"]);
 const OBJECT_REDACT_KEYS = new Set(["private_metadata", "unsafe_metadata"]);
+
+export type BapiUserSummary = {
+  id: string;
+  first_name?: string | null;
+  last_name?: string | null;
+  username?: string | null;
+  email_addresses?: Array<{ email_address?: string }> | null;
+};
+
+/**
+ * How to filter the user search: an exact email match or a fuzzy query. An
+ * empty `query` returns the unfiltered first page (used by the interactive
+ * picker before the user types).
+ */
+export type UserSearchFilter = { email: string } | { query: string };
+
+/**
+ * Centralizes the `/users` request so commands don't each hand-roll the query
+ * string, limit handling, and `Array.isArray` body guard.
+ */
+export async function searchUsers(
+  secretKey: string,
+  filter: UserSearchFilter,
+  limit: number,
+): Promise<BapiUserSummary[]> {
+  const params = new URLSearchParams();
+  if ("email" in filter) {
+    params.set("email_address", filter.email);
+  } else if (filter.query) {
+    params.set("query", filter.query);
+  }
+  params.set("limit", String(limit));
+
+  const response = await bapiRequest({
+    method: "GET",
+    path: `/users?${params}`,
+    secretKey,
+  });
+
+  return Array.isArray(response.body) ? (response.body as BapiUserSummary[]) : [];
+}
 
 export function buildCreateUserPayload(options: {
   email?: string;

@@ -248,11 +248,32 @@ describe("config", () => {
       expect(result).toMatchObject({
         found: true,
         instanceId: "ins_custom_123",
-        instanceLabel: "ins_custom_123",
+        instanceLabel: "staging",
       });
       if (result.found) {
         expect(result.instance.instance_id).toBe("ins_custom_123");
       }
+    });
+
+    test("labels a production instance targeted by literal id as production", () => {
+      const prodApp = {
+        application_id: "app_123",
+        instances: [
+          {
+            instance_id: "ins_prod_123",
+            environment_type: "production",
+            publishable_key: "pk_live_123",
+          },
+        ],
+      };
+
+      const result = resolveFetchedApplicationInstance("app_123", prodApp, "ins_prod_123");
+
+      expect(result).toMatchObject({
+        found: true,
+        instanceId: "ins_prod_123",
+        instanceLabel: "production",
+      });
     });
 
     test("returns explicit missing state for unknown literal instance ids", () => {
@@ -286,7 +307,7 @@ describe("config", () => {
         appId: "app_123",
         appLabel: "My App",
         instanceId: "ins_custom_123",
-        instanceLabel: "ins_custom_123",
+        instanceLabel: "staging",
       });
     });
 

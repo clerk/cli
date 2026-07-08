@@ -1,5 +1,13 @@
 import { test, expect, describe } from "bun:test";
-import { PlapiError, FapiError, BapiError } from "./errors.ts";
+import {
+  PlapiError,
+  FapiError,
+  BapiError,
+  BillingError,
+  BILLING_ERROR_REASON,
+  CliError,
+  ERROR_CODE,
+} from "./errors.ts";
 
 describe("ApiError envelope parsing (via PlapiError.fromBody)", () => {
   test("parses a standard single-error envelope", () => {
@@ -149,5 +157,35 @@ describe("BapiError factories", () => {
     const err = BapiError.fromBody(400, "boom", headers);
     expect(err).toBeInstanceOf(BapiError);
     expect(err.headers.get("x-y")).toBe("z");
+  });
+});
+
+describe("BillingError", () => {
+  test("is a CliError carrying the plan-not-enabled reason and caller-supplied code", () => {
+    const err = new BillingError("Impersonation isn't enabled on this app's plan.", {
+      reason: BILLING_ERROR_REASON.PLAN_NOT_ENABLED,
+      code: ERROR_CODE.IMPERSONATION_NOT_ENABLED,
+    });
+    expect(err).toBeInstanceOf(CliError);
+    expect(err.name).toBe("BillingError");
+    expect(err.reason).toBe(BILLING_ERROR_REASON.PLAN_NOT_ENABLED);
+    expect(err.code).toBe(ERROR_CODE.IMPERSONATION_NOT_ENABLED);
+    expect(err.limit).toBeUndefined();
+    expect(err.used).toBeUndefined();
+  });
+
+  test("carries quota figures for the quota-exceeded reason", () => {
+    const err = new BillingError(
+      "Impersonation limit exceeded (used 100/100 this billing period).",
+      {
+        reason: BILLING_ERROR_REASON.QUOTA_EXCEEDED,
+        code: ERROR_CODE.IMPERSONATION_LIMIT_EXCEEDED,
+        limit: 100,
+        used: 100,
+      },
+    );
+    expect(err.reason).toBe(BILLING_ERROR_REASON.QUOTA_EXCEEDED);
+    expect(err.limit).toBe(100);
+    expect(err.used).toBe(100);
   });
 });

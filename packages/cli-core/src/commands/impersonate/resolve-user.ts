@@ -1,0 +1,76 @@
+import { throwUsageError } from "../../lib/errors.ts";
+import { searchUsers } from "../../lib/users.ts";
+import { isAgent } from "../../mode.ts";
+import { pickUser } from "../users/interactive/pick-user.ts";
+
+const USER_ID_PATTERN = /^user_[A-Za-z0-9]+$/;
+const CANDIDATE_LIMIT = 5;
+
+export type ImpersonationSearchContext = {
+  secretKey: string;
+  appLabel?: string;
+  instanceLabel?: string;
+};
+
+function searchScope(ctx: ImpersonationSearchContext): string {
+  if (ctx.appLabel && ctx.instanceLabel) return ` on ${ctx.appLabel} (${ctx.instanceLabel})`;
+  if (ctx.instanceLabel) return ` on the ${ctx.instanceLabel} instance`;
+  return "";
+}
+
+/**
+ * Resolve the `[user]` positional argument (or its absence) to a single
+ * `user_...` ID:
+ *
+ * - `user_...` → used directly, no lookup.
+ * - contains `@` → exact match via `email_address` filter.
+ * - otherwise → fuzzy match via `query`.
+ * - 0 matches → usage error naming the searched app/instance. 1 match → used
+ *   directly.
+ * - 2+ matches: human mode opens the picker (no prefilled query support —
+ *   see pick-user.ts); agent mode errors with candidate IDs.
+ * - no argument: human mode opens the picker; agent mode errors (agent mode
+ *   never prompts).
+ */
+export async function resolveImpersonationTarget(
+  user: string | undefined,
+  ctx: ImpersonationSearchContext,
+): Promise<string> {
+  const secretKey = ctx.secretKey;
+  if (user === undefined) {
+    if (isAgent()) {
+      throwUsageError("A user is required in agent mode. Pass it as a positional argument.");
+    }
+    return pickUser({ secretKey, message: "Pick a user to impersonate:" });
+  }
+
+  if (USER_ID_PATTERN.test(user)) {
+    return user;
+  }
+
+  const filter = user.includes("@") ? { email: user } : { query: user };
+  const users = await searchUsers(secretKey, filter, CANDIDATE_LIMIT + 1);
+
+  if (users.length === 0) {
+    throwUsageError(`No user found matching "${user}"${searchScope(ctx)}.`);
+  }
+
+  if (users.length === 1) {
+    return users[0]!.id;
+  }
+
+  if (isAgent()) {
+    const candidates = users
+      .slice(0, CANDIDATE_LIMIT)
+      .map((candidate) => candidate.id)
+      .join(", ");
+    throwUsageError(
+      `Multiple users match "${user}": ${candidates}. Pass a specific user_id instead.`,
+    );
+  }
+
+  // pickUser has no prefilled/initial-query support (see pick-user.ts), so
+  // the picker re-opens with an empty search box rather than the original
+  // term.
+  return pickUser({ secretKey, message: `Multiple users match "${user}" — pick one:` });
+}
