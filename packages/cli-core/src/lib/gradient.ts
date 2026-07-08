@@ -127,6 +127,25 @@ interface AnimateHeaderOptions {
   write?: (s: string) => void;
 }
 
+/**
+ * Rows the cursor lands below the header after writing `header\n${body}`: one
+ * for the header's newline, one per newline in the body, PLUS the extra rows any
+ * line spans when it wraps past the terminal width. Counting only newlines (the
+ * old behaviour) under-counts wrapped lines, so the cursor-up step overshoots
+ * the header and strands a duplicate "Next steps" on screen. Assumes the header
+ * line itself does not wrap (labels are short).
+ */
+export function cursorRowsBelowHeader(body: string, columns: number | undefined): number {
+  let rows = 1 + (body.match(/\n/g)?.length ?? 0);
+  if (columns && columns > 0) {
+    for (const line of body.split("\n")) {
+      const width = Bun.stringWidth(line);
+      if (width > columns) rows += Math.ceil(width / columns) - 1;
+    }
+  }
+  return rows;
+}
+
 export async function animateHeader(options: AnimateHeaderOptions): Promise<void> {
   const {
     prefix,
@@ -145,9 +164,7 @@ export async function animateHeader(options: AnimateHeaderOptions): Promise<void
 
   const truecolor = supportsTruecolor();
   const span = Math.max(1, frames - 1);
-  // Rows the cursor ends below the header after the block is printed: the
-  // header's own newline plus every newline inside the body.
-  const rowsBelow = 1 + (body.match(/\n/g)?.length ?? 0);
+  const rowsBelow = cursorRowsBelowHeader(body, process.stderr.columns);
 
   // The cursor-up escape only lands on the header when the block fits on screen
   // without scrolling. Fall back to a plain write on short terminals where the

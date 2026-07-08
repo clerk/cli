@@ -20,6 +20,7 @@ import { registerSwitchEnv } from "./commands/switch-env/index.ts";
 import { registerCompletion } from "./commands/completion/index.ts";
 import { registerUpdate } from "./commands/update/index.ts";
 import { registerDeploy } from "./commands/deploy/index.ts";
+import { registerWebhooks } from "./commands/webhooks/index.ts";
 import { getEnvironment } from "./lib/config.ts";
 import {
   setCurrentEnv,
@@ -38,7 +39,7 @@ import {
   isPromptExitError,
   throwUsageError,
 } from "./lib/errors.ts";
-import { clerkHelpConfig } from "./lib/help.ts";
+import { clerkHelpConfig, formatExamplesBlock, type Example } from "./lib/help.ts";
 import { isAgent } from "./mode.ts";
 import { log } from "./lib/log.ts";
 import { maybeNotifyUpdate, getCurrentVersion } from "./lib/update-check.ts";
@@ -71,6 +72,7 @@ const registrants: CommandRegistrant[] = [
   registerCompletion,
   registerUpdate,
   registerDeploy,
+  registerWebhooks,
   registerExtras,
 ];
 
@@ -236,10 +238,13 @@ export async function runProgram(
 
     if (error instanceof CliError) {
       if (isAgent() && error.code) {
-        outputJsonError(error.code, error.message, error.docsUrl);
+        outputJsonError(error.code, error.message, error.docsUrl, undefined, error.examples);
       } else {
         if (error.message) {
           log.error(error.message);
+        }
+        if (error.examples?.length) {
+          log.info(`\n${formatExamplesBlock(error.examples)}`);
         }
         if (error.docsUrl) {
           log.info(`\nFor more information, see: ${error.docsUrl}`);
@@ -305,11 +310,12 @@ interface ApiErrorEntry {
 }
 
 /** Output a structured JSON error to stderr for agent/CI consumption. */
-function outputJsonError(
+export function outputJsonError(
   code: string,
   message: string,
   docsUrl?: string,
   errors?: ApiErrorEntry[],
+  examples?: Example[],
 ): void {
   const payload: {
     error: {
@@ -317,11 +323,15 @@ function outputJsonError(
       message: string;
       docsUrl?: string;
       errors?: ApiErrorEntry[];
+      // Raw {command, description} pairs (not the ANSI-formatted human block) so
+      // an agent can read the runnable fix and retry.
+      examples?: Example[];
     };
   } = {
     error: { code, message },
   };
   if (docsUrl) payload.error.docsUrl = docsUrl;
   if (errors?.length) payload.error.errors = errors;
+  if (examples?.length) payload.error.examples = examples;
   log.raw(JSON.stringify(payload));
 }

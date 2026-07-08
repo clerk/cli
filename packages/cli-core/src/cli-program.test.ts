@@ -1,6 +1,7 @@
 import { test, expect, describe } from "bun:test";
-import { createProgram, formatApiBody } from "./cli-program.ts";
+import { createProgram, formatApiBody, outputJsonError } from "./cli-program.ts";
 import { ApiError } from "./lib/errors.ts";
+import { useCaptureLog } from "./test/lib/stubs.ts";
 
 test("registers users as a top-level command", () => {
   const program = createProgram();
@@ -344,5 +345,25 @@ describe("formatApiBody", () => {
     });
     const result = formatApiBody(new ApiError(400, body), false);
     expect(result).toBe("Plan limitation");
+  });
+});
+
+describe("outputJsonError", () => {
+  const captured = useCaptureLog();
+
+  const parse = () => JSON.parse(captured.err.trim()) as { error: Record<string, unknown> };
+
+  test("includes raw {command, description} examples in the payload", () => {
+    outputJsonError("usage_error", "--forward-to <url> is required.", undefined, undefined, [
+      { command: "clerk webhooks listen --forward-to <url>", description: "Forward events" },
+    ]);
+    expect(parse().error.examples).toEqual([
+      { command: "clerk webhooks listen --forward-to <url>", description: "Forward events" },
+    ]);
+  });
+
+  test("omits the examples key when there are none", () => {
+    outputJsonError("usage_error", "boom");
+    expect(parse().error).not.toHaveProperty("examples");
   });
 });

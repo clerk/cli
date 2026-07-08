@@ -1,8 +1,26 @@
 import { Command, type Help } from "@commander-js/extra-typings";
+import { bold, dim } from "./color.ts";
 
 export interface Example {
   command: string;
   description: string;
+}
+
+/**
+ * Render an Examples block as a standalone string, for use OUTSIDE the help
+ * screen — e.g. beneath a usage error to show "the right way" to run a command.
+ *
+ * Mirrors the help formatter's Examples section (title, `$ `-prefixed commands,
+ * descriptions aligned in a column) but takes no Commander `Help` instance, so
+ * error paths without a command context can render it. Returns `""` for an
+ * empty list so callers can concatenate unconditionally.
+ */
+export function formatExamplesBlock(examples: Example[]): string {
+  if (examples.length === 0) return "";
+  const terms = examples.map((e) => `$ ${e.command}`);
+  const termWidth = Math.max(...terms.map((t) => t.length));
+  const lines = examples.map((e, i) => `  ${terms[i]!.padEnd(termWidth)}  ${dim(e.description)}`);
+  return [bold("Examples:"), ...lines].join("\n");
 }
 
 const examplesMap = new WeakMap<object, Example[]>();

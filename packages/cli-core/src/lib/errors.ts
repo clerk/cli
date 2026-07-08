@@ -1,3 +1,4 @@
+import type { Example } from "./help.ts";
 import { isAgent } from "../mode.ts";
 
 /** Standard process exit codes used by the CLI. */
@@ -37,6 +38,8 @@ export const ERROR_CODE = {
   NO_SECRET_KEY: "no_secret_key",
   /** File not found on disk. */
   FILE_NOT_FOUND: "file_not_found",
+  /** A webhook signature failed local HMAC verification. */
+  INVALID_WEBHOOK_SIGNATURE: "invalid_webhook_signature",
   /** Input is not valid JSON or not an object. */
   INVALID_JSON: "invalid_json",
   /** Failed to fetch or parse the OpenAPI catalog. */
@@ -91,6 +94,11 @@ interface CliErrorOptions {
   exitCode?: ExitCode;
   /** URL to relevant documentation, printed after the error message. */
   docsUrl?: string;
+  /**
+   * Usage examples to print beneath the error, showing "the right way" to run
+   * the command. Rendered only in human mode (suppressed for agent/JSON output).
+   */
+  examples?: Example[];
 }
 
 interface AuthErrorOptions extends Omit<CliErrorOptions, "code"> {
@@ -129,12 +137,14 @@ export class CliError extends Error {
   public code?: ErrorCode;
   public exitCode: ExitCode;
   public docsUrl?: string;
+  public examples?: Example[];
 
   constructor(message: string, options?: CliErrorOptions) {
     super(message);
     this.name = "CliError";
     this.code = options?.code;
     this.exitCode = options?.exitCode ?? EXIT_CODE.GENERAL;
+    this.examples = options?.examples;
 
     if (options?.docsUrl) {
       this.docsUrl = options.docsUrl;
@@ -436,6 +446,8 @@ export function isAuthError(error: unknown): error is AuthError | ApiError {
  *
  * @param message - Error message describing the usage problem
  * @param docsUrl - Optional URL to relevant documentation
+ * @param code - Optional machine-readable code (defaults to `USAGE_ERROR`)
+ * @param examples - Optional usage examples printed beneath the error in human mode
  *
  * @example
  * ```ts
@@ -444,11 +456,17 @@ export function isAuthError(error: unknown): error is AuthError | ApiError {
  * }
  * ```
  */
-export function throwUsageError(message: string, docsUrl?: string, code?: ErrorCode): never {
+export function throwUsageError(
+  message: string,
+  docsUrl?: string,
+  code?: ErrorCode,
+  examples?: Example[],
+): never {
   throw new CliError(message, {
     code: code ?? ERROR_CODE.USAGE_ERROR,
     exitCode: EXIT_CODE.USAGE,
     docsUrl,
+    examples,
   });
 }
 
