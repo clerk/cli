@@ -50,10 +50,8 @@ async function openOrWarn(url: string): Promise<void> {
   }
 }
 
-// Account-level billing page where the impersonation add-on is purchased. Same
-// URL for the plan-gate (402) and quota (422) cases — deliberately NOT the
-// per-app/instance dashboard path, since the add-on is bought at the account
-// level.
+// The impersonation add-on is bought per account, not per app/instance, so this
+// is deliberately the account-level billing page, not the per-instance dashboard path.
 function impersonationBillingUrl(): string {
   return `${getDashboardUrl().replace(/\/$/, "")}/settings/billing`;
 }
@@ -80,14 +78,10 @@ function actorTokenErrorToCliError(error: unknown): CliError | undefined {
   return undefined;
 }
 
-// A billing guardrail blocked the session (it was never created), so every
-// branch here still rethrows to exit non-zero. Before rethrowing, nudge the user
-// toward the billing page per the output mode:
-//   agent      → nothing (global handler emits docsUrl as structured JSON)
-//   --print    → nothing (global handler prints the URL beneath the error)
-//   --yes      → open the browser, no prompt (degrades to a printed URL if headless)
-//   TTY human  → prompt to upgrade, open on yes
-//   non-TTY    → nothing (can't prompt, can't assume consent to open)
+// The session was never created, so the caller still rethrows to exit non-zero
+// after this — nudging only decides whether to actively open the billing page.
+// Agent, --print, and non-TTY stay passive: the global handler already surfaces
+// the URL, and we can't assume consent to open without a prompt or --yes.
 async function nudgeToBilling(error: BillingError, options: ImpersonateOptions): Promise<void> {
   const url = error.docsUrl;
   if (!url || isAgent() || options.print) return;
