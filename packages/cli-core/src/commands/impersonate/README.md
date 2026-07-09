@@ -117,9 +117,27 @@ endpoint for actor tokens, so creation is the only moment the ID is visible.
 | `POST` | `/v1/actor_tokens`                | Creating the actor token (`clerk impersonate`)       |
 | `POST` | `/v1/actor_tokens/{id}/revoke`    | Revoking an actor token (`clerk impersonate revoke`) |
 
+## Billing block → upgrade nudge
+
 `POST /v1/actor_tokens` returns `402` when impersonation isn't enabled on the
-app's subscription plan, and `422` when the impersonation quota is exhausted
-(the CLI surfaces `used`/`limit` from the error's `meta` when BAPI includes
-them).
+app's subscription plan, and `422` when the impersonation quota for the billing
+period is exhausted. Both mean no session was created, so the command exits
+non-zero. The messages are value-framed and numberless (BAPI has no quota-read
+endpoint, so the CLI never shows an `X/5`-style counter):
+
+- `402` → `Impersonation is available as an add-on.`
+- `422` → `You've reached your impersonation limit this billing period.`
+
+Both attach the account-level billing page — `<dashboard>/settings/billing`
+(from `getDashboardUrl()`, honoring `CLERK_DASHBOARD_URL`) — as `docsUrl` so the
+add-on is one click away. How the URL is surfaced depends on the output mode:
+
+| Condition                 | Behavior                                                                |
+| ------------------------- | ----------------------------------------------------------------------- |
+| Agent mode                | JSON error with the billing URL as `docsUrl`. Never opens a browser.    |
+| `--print`                 | Prints the URL beneath the error. No prompt, no browser.                |
+| `--yes`                   | Opens the billing page immediately (prints it if headless). No prompt.  |
+| TTY human, no `--yes`     | Prompts "Add more impersonations now?" (default **Yes**); opens on yes. |
+| Non-TTY human, no `--yes` | Prints the URL beneath the error. No prompt, no browser.                |
 
 No part of this command is mocked or stubbed.

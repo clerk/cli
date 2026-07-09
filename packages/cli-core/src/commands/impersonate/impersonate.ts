@@ -9,6 +9,7 @@ import {
   throwUserAbort,
   withApiContext,
 } from "../../lib/errors.ts";
+import { getDashboardUrl } from "../../lib/environment.ts";
 import { log } from "../../lib/log.ts";
 import { openBrowser } from "../../lib/open.ts";
 import { confirm } from "../../lib/prompts.ts";
@@ -49,33 +50,59 @@ async function openOrWarn(url: string): Promise<void> {
   }
 }
 
+// Account-level billing page where the impersonation add-on is purchased. Same
+// URL for the plan-gate (402) and quota (422) cases — deliberately NOT the
+// per-app/instance dashboard path, since the add-on is bought at the account
+// level.
+function impersonationBillingUrl(): string {
+  return `${getDashboardUrl().replace(/\/$/, "")}/settings/billing`;
+}
+
 function actorTokenErrorToCliError(error: unknown): CliError | undefined {
   if (!(error instanceof BapiError)) return undefined;
 
   if (error.status === 402) {
-    return new BillingError("Impersonation isn't enabled on this app's plan.", {
+    return new BillingError("Impersonation is available as an add-on.", {
       reason: BILLING_ERROR_REASON.PLAN_NOT_ENABLED,
       code: ERROR_CODE.IMPERSONATION_NOT_ENABLED,
+      docsUrl: impersonationBillingUrl(),
     });
   }
 
   if (error.status === 422) {
-    const meta = error.meta ?? {};
-    const limit = typeof meta.limit === "number" ? meta.limit : undefined;
-    const used = typeof meta.used === "number" ? meta.used : undefined;
-    const quota =
-      limit !== undefined && used !== undefined
-        ? ` (used ${used}/${limit} this billing period)`
-        : "";
-    return new BillingError(`Impersonation limit exceeded${quota}.`, {
+    return new BillingError("You've reached your impersonation limit this billing period.", {
       reason: BILLING_ERROR_REASON.QUOTA_EXCEEDED,
       code: ERROR_CODE.IMPERSONATION_LIMIT_EXCEEDED,
-      limit,
-      used,
+      docsUrl: impersonationBillingUrl(),
     });
   }
 
   return undefined;
+}
+
+// A billing guardrail blocked the session (it was never created), so every
+// branch here still rethrows to exit non-zero. Before rethrowing, nudge the user
+// toward the billing page per the output mode:
+//   agent      → nothing (global handler emits docsUrl as structured JSON)
+//   --print    → nothing (global handler prints the URL beneath the error)
+//   --yes      → open the browser, no prompt (degrades to a printed URL if headless)
+//   TTY human  → prompt to upgrade, open on yes
+//   non-TTY    → nothing (can't prompt, can't assume consent to open)
+async function nudgeToBilling(error: BillingError, options: ImpersonateOptions): Promise<void> {
+  const url = error.docsUrl;
+  if (!url || isAgent() || options.print) return;
+
+  if (options.yes) {
+    await openOrWarn(url);
+    return;
+  }
+
+  if (!process.stdin.isTTY) return;
+
+  const upgrade = await confirm({ message: "Add more impersonations now?", default: true });
+  if (upgrade) {
+    await openOrWarn(url);
+  }
 }
 
 export async function impersonate(options: ImpersonateOptions = {}): Promise<void> {
@@ -123,6 +150,10 @@ export async function impersonate(options: ImpersonateOptions = {}): Promise<voi
     );
   } catch (error) {
     const cliError = actorTokenErrorToCliError(error);
+    if (cliError instanceof BillingError) {
+      await nudgeToBilling(cliError, options);
+      throw cliError;
+    }
     if (cliError) throw cliError;
     throw error;
   }

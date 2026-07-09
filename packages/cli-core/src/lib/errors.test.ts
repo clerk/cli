@@ -162,7 +162,7 @@ describe("BapiError factories", () => {
 
 describe("BillingError", () => {
   test("is a CliError carrying the plan-not-enabled reason and caller-supplied code", () => {
-    const err = new BillingError("Impersonation isn't enabled on this app's plan.", {
+    const err = new BillingError("Impersonation is available as an add-on.", {
       reason: BILLING_ERROR_REASON.PLAN_NOT_ENABLED,
       code: ERROR_CODE.IMPERSONATION_NOT_ENABLED,
     });
@@ -170,22 +170,15 @@ describe("BillingError", () => {
     expect(err.name).toBe("BillingError");
     expect(err.reason).toBe(BILLING_ERROR_REASON.PLAN_NOT_ENABLED);
     expect(err.code).toBe(ERROR_CODE.IMPERSONATION_NOT_ENABLED);
-    expect(err.limit).toBeUndefined();
-    expect(err.used).toBeUndefined();
   });
 
-  test("carries quota figures for the quota-exceeded reason", () => {
-    const err = new BillingError(
-      "Impersonation limit exceeded (used 100/100 this billing period).",
-      {
-        reason: BILLING_ERROR_REASON.QUOTA_EXCEEDED,
-        code: ERROR_CODE.IMPERSONATION_LIMIT_EXCEEDED,
-        limit: 100,
-        used: 100,
-      },
-    );
+  test("carries a docsUrl to the billing page for the quota-exceeded reason", () => {
+    const err = new BillingError("You've reached your impersonation limit this billing period.", {
+      reason: BILLING_ERROR_REASON.QUOTA_EXCEEDED,
+      code: ERROR_CODE.IMPERSONATION_LIMIT_EXCEEDED,
+      docsUrl: "https://dashboard.clerk.com/settings/billing",
+    });
     expect(err.reason).toBe(BILLING_ERROR_REASON.QUOTA_EXCEEDED);
-    expect(err.limit).toBe(100);
-    expect(err.used).toBe(100);
+    expect(err.docsUrl).toBe("https://dashboard.clerk.com/settings/billing");
   });
 });
