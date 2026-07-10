@@ -4,18 +4,18 @@ import type { ProjectContext } from "./frameworks/types.js";
 
 type FormatterConfig = {
   pkg: string;
-  /** Args after the runner: binary + flags + files. The runner is prepended at spawn time. */
-  binArgs: (files: string[]) => string[];
+  /** Bin invocation: bin name + flags + files. Prefixed with the runner at spawn time. */
+  command: (files: string[]) => string[];
 };
 
 const FORMATTERS: FormatterConfig[] = [
   {
     pkg: "prettier",
-    binArgs: (files) => ["prettier", "--ignore-unknown", "--write", ...files],
+    command: (files) => ["prettier", "--ignore-unknown", "--write", ...files],
   },
   {
     pkg: "@biomejs/biome",
-    binArgs: (files) => ["@biomejs/biome", "format", "--write", ...files],
+    command: (files) => ["biome", "format", "--write", ...files],
   },
 ];
 
@@ -24,6 +24,9 @@ const FORMATTERS: FormatterConfig[] = [
  *
  * Best-effort: failures are silent (stdio ignored, spawn errors swallowed)
  * because formatting is purely cosmetic and shouldn't break init.
+ *
+ * The runner is pinned so it fetches the formatter from the registry rather
+ * than a project-local `node_modules/.bin` shadow — see {@link runnerCommand}.
  */
 export async function runFormatters(ctx: ProjectContext, files: string[]): Promise<void> {
   if (files.length === 0) return;
@@ -37,7 +40,7 @@ export async function runFormatters(ctx: ProjectContext, files: string[]): Promi
   const runner = preferredRunner(ctx.packageManager, available);
 
   for (const formatter of matchingFormatters) {
-    const command = runnerCommand(runner, formatter.binArgs(files));
+    const command = runnerCommand(runner, formatter.pkg, formatter.command(files));
     try {
       const proc = Bun.spawn(command, {
         cwd: ctx.cwd,
