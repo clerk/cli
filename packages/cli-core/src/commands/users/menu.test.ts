@@ -15,6 +15,7 @@ mock.module("../../lib/listage.ts", () => ({
   Separator: class {},
 }));
 mock.module("../../lib/spinner.ts", () => ({
+  formatTargetSuffix: (label?: string) => (label ? ` · on ${label}` : ""),
   intro: (...args: unknown[]) => mockIntro(...args),
   outro: (...args: unknown[]) => mockOutro(...args),
   pausedOutro: () => {},

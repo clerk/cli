@@ -1,4 +1,4 @@
-import { resolveAppContext } from "../../lib/config.ts";
+import { resolveAppContext, type AppContextOptions } from "../../lib/config.ts";
 import { fetchInstanceConfig, putInstanceConfig, patchInstanceConfig } from "../../lib/plapi.ts";
 import { isHuman } from "../../mode.ts";
 import {
@@ -11,13 +11,11 @@ import {
 } from "../../lib/errors.ts";
 import { confirm } from "../../lib/prompts.ts";
 import { dim, bold, red, green } from "../../lib/color.ts";
-import { withSpinner, intro, outro, pausedOutro } from "../../lib/spinner.ts";
+import { withSpinner, intro, outro, pausedOutro, formatTargetSuffix } from "../../lib/spinner.ts";
 import { isInsideGutter, log } from "../../lib/log.ts";
 import { NEXT_STEPS, printNextSteps } from "../../lib/next-steps.ts";
 
-interface ConfigPushOptions {
-  app?: string;
-  instance?: string;
+interface ConfigPushOptions extends AppContextOptions {
   file?: string;
   json?: string;
   dryRun?: boolean;
@@ -63,14 +61,18 @@ export async function configPatch(options: ConfigPushOptions): Promise<void> {
 
 async function configPush(options: ConfigPushOptions, op: Operation): Promise<void> {
   const ctx = await resolveAppContext(options);
-  const rawInput = await readInput(options);
+  const { text: rawInput, sourcePath } = await readInput(options);
 
   let configPayload: Record<string, unknown>;
   try {
     configPayload = JSON.parse(rawInput);
   } catch {
+    // Name the file when the input came from an auto-detected config file so the
+    // user knows which file to fix (stdin/--json have no path to report).
     throwUsageError(
-      "Invalid JSON input. Please provide valid JSON.",
+      sourcePath
+        ? `Invalid JSON in ${sourcePath}. Please provide valid JSON.`
+        : "Invalid JSON input. Please provide valid JSON.",
       undefined,
       ERROR_CODE.INVALID_JSON,
     );
@@ -84,7 +86,7 @@ async function configPush(options: ConfigPushOptions, op: Operation): Promise<vo
   delete configPayload.config_version;
 
   const shouldWrap = !isInsideGutter();
-  if (shouldWrap) intro(op.title);
+  if (shouldWrap) intro(`${op.title}${formatTargetSuffix(ctx.instanceLabel)}`);
   let closeStatus: "success" | "failed" | "paused" | undefined;
 
   try {
@@ -160,9 +162,17 @@ async function configPush(options: ConfigPushOptions, op: Operation): Promise<vo
   }
 }
 
-export async function readInput(options: { file?: string; json?: string }): Promise<string> {
+/**
+ * Resolve the config payload text and, when it came from a file on disk, the
+ * path it was read from. `sourcePath` is undefined for inline `--json` and
+ * stdin input so callers can report the file name in errors when one exists.
+ */
+export async function readInput(options: {
+  file?: string;
+  json?: string;
+}): Promise<{ text: string; sourcePath?: string }> {
   if (options.json) {
-    return options.json;
+    return { text: options.json };
   }
 
   if (options.file) {
@@ -170,26 +180,31 @@ export async function readInput(options: { file?: string; json?: string }): Prom
     if (!(await file.exists())) {
       throwUsageError(`File not found: ${options.file}`, undefined, ERROR_CODE.FILE_NOT_FOUND);
     }
-    return file.text();
+    log.debug(`config: reading config from ${options.file}`);
+    return { text: await file.text(), sourcePath: options.file };
   }
 
   if (!process.stdin.isTTY) {
-    const chunks: Buffer[] = [];
-    for await (const chunk of process.stdin) {
-      chunks.push(Buffer.from(chunk));
+    let text = "";
+    try {
+      const chunks: Buffer[] = [];
+      for await (const chunk of process.stdin) {
+        chunks.push(Buffer.from(chunk));
+      }
+      text = Buffer.concat(chunks).toString("utf-8").trim();
+    } catch {
+      // No readable stdin, for example a closed pipe.
     }
-    const text = Buffer.concat(chunks).toString("utf-8").trim();
-    if (!text) {
-      throwUsageError("No input received from stdin");
+    if (text) {
+      log.debug("config: reading config from stdin");
+      return { text };
     }
-    return text;
   }
 
   throwUsageError(
-    "No input provided. Use --file <path>, --json <string>, or pipe JSON to stdin.\n" +
-      "  Example: clerk config patch --file config.json\n" +
-      '  Example: clerk config patch --json \'{"session":{"lifetime":3600}}\'\n' +
-      "  Example: cat config.json | clerk config patch",
+    "No input provided. Use --file <path>, --json <string>, or pipe JSON to stdin." +
+      "\n  Example: clerk config patch --file config.json\n" +
+      '  Example: clerk config patch --json \'{"session":{"lifetime":3600}}\'',
   );
 }
 

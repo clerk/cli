@@ -278,6 +278,20 @@ describe("generateCompletions", () => {
       expect(names).toContain("user-authentication");
       expect(names).not.toContain("api-keys");
     });
+
+    test("switch: suggests dev, prod, and - for the target argument", () => {
+      const names = completionNames("switch", "");
+      expect(names).toContain("dev");
+      expect(names).toContain("prod");
+      expect(names).toContain("-");
+    });
+
+    test("branch switch: suggests dev, prod, and - for the target argument", () => {
+      const names = completionNames("branch", "switch", "");
+      expect(names).toContain("dev");
+      expect(names).toContain("prod");
+      expect(names).toContain("-");
+    });
   });
 
   describe("directives", () => {

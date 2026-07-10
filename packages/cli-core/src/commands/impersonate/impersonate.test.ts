@@ -39,6 +39,7 @@ mock.module("../../lib/prompts.ts", () => ({
 }));
 
 mock.module("../../lib/spinner.ts", () => ({
+  formatTargetSuffix: (label?: string) => (label ? ` · on ${label}` : ""),
   intro: () => {},
   outro: () => {},
   pausedOutro: () => {},

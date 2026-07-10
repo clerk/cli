@@ -4,6 +4,8 @@ Manage direct Clerk user resources with first-class commands. Use `clerk api` fo
 
 ## Shared Targeting And Auth
 
+In human mode, the command frame title echoes the resolved target instance as a dim `· on <instance>` suffix (for example `· on feature-auth` when the active pointer targets a branch), so it is always visible which instance the command acts on.
+
 Most `clerk users` commands accept the same targeting flags:
 
 | Flag               | Description                                                                                                                                                                 |
@@ -11,6 +13,7 @@ Most `clerk users` commands accept the same targeting flags:
 | `--secret-key <k>` | Use a specific Backend API secret key directly                                                                                                                              |
 | `--app <id>`       | Target an application directly, even outside a linked project                                                                                                               |
 | `--instance <id>`  | Target `dev`, `prod`, or a full instance ID. Without it, single-instance apps use development; interactive flows that hit a multi-instance app prompt for one in human mode |
+| `--branch <name>`  | Target a branch by name (e.g. `agent/pr-42`). Mutually exclusive with `--instance`.                                                                                         |
 | `--dry-run`        | Preview the request without executing it, where supported                                                                                                                   |
 | `--yes`            | Skip confirmation prompts for mutating commands                                                                                                                             |
 
@@ -26,6 +29,8 @@ The users commands talk to the instance's Backend API. Identifier and required-f
 ## Interactive mode
 
 In human mode (TTY), `clerk users` invoked with no subcommand opens an interactive menu that lists every registered action and dispatches to its handler.
+
+When a multi-instance app prompts for an instance, the picker groups branch instances under the instance they were forked from (tree-indented) instead of listing every instance flat, and shows a relative created-at column (e.g. `3d ago`) alongside each entry.
 
 `clerk users create` invoked without curated flags or `--input-json` / `-d` / `--file` enters a guided wizard. The wizard fetches the instance's Frontend API configuration to prompt only for fields the instance accepts (and marks required fields). When run with `--secret-key` only (no app context), the wizard falls back to prompting the full curated-flag set as optional and lets the Backend API validate.
 

@@ -15,6 +15,7 @@ import { getBapiBaseUrl } from "../../../lib/environment.ts";
 import { decodePublishableKey } from "../../../lib/fapi.ts";
 import { loggedFetch } from "../../../lib/fetch.ts";
 import { select } from "../../../lib/listage.ts";
+import { buildInstancePickerChoices } from "./instance-choices.ts";
 import { fetchApplication, validateKeyPrefix } from "../../../lib/plapi.ts";
 import { isHuman } from "../../../mode.ts";
 
@@ -31,6 +32,7 @@ export type UsersInstanceContext = {
 export type ResolveUsersInstanceContextOptions = {
   app?: string;
   instance?: string;
+  branch?: string;
   secretKey?: string;
 };
 
@@ -117,6 +119,15 @@ function validateSecretKeyInstanceTarget(
 export async function resolveUsersInstanceContext(
   options: ResolveUsersInstanceContextOptions,
 ): Promise<UsersInstanceContext> {
+  if (options.branch && options.instance) {
+    throwUsageError("Cannot combine --branch and --instance. Pass only one to select an instance.");
+  }
+  if (options.branch && options.secretKey) {
+    throwUsageError(
+      "Cannot combine --branch and --secret-key. A secret key already targets a specific instance.",
+    );
+  }
+
   if (options.secretKey) {
     validateKeyPrefix(options.secretKey, "sk_");
     if (!options.app && !options.instance) {
@@ -143,7 +154,7 @@ export async function resolveUsersInstanceContext(
 
   if (!appId) {
     try {
-      const ctx = await resolveAppContext({ instance: options.instance });
+      const ctx = await resolveAppContext({ instance: options.instance, branch: options.branch });
       appId = ctx.appId;
       instanceHint = ctx.instanceId;
     } catch (error) {
@@ -171,14 +182,11 @@ export async function resolveUsersInstanceContext(
   // the guarantee that a command produces a repeatable result. So when the app
   // has more than one instance and --instance didn't pin one, resolve the
   // ambiguity explicitly: human mode prompts, agent mode errors.
-  if (!options.instance && app.instances.length > 1) {
+  if (!options.instance && !options.branch && app.instances.length > 1) {
     if (isHuman()) {
       instanceHint = await select<string>({
         message: "Select an instance to use:",
-        choices: app.instances.map((entry) => ({
-          name: `${entry.instance_id} (${entry.environment_type})`,
-          value: entry.instance_id,
-        })),
+        choices: buildInstancePickerChoices(app.instances, Date.now()),
       });
     } else {
       throwUsageError(
@@ -187,7 +195,7 @@ export async function resolveUsersInstanceContext(
     }
   }
 
-  const resolved = resolveFetchedApplicationInstance(appId, app, instanceHint);
+  const resolved = resolveFetchedApplicationInstance(appId, app, instanceHint, options.branch);
   if (!resolved.found) {
     throw new CliError(`Instance ${resolved.instanceId} not found in application.`, {
       code: ERROR_CODE.INSTANCE_NOT_FOUND,

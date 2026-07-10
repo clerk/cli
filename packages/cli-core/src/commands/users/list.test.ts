@@ -8,9 +8,9 @@ mock.module("../../lib/bapi.ts", () => ({
   bapiRequest: (...args: unknown[]) => mockBapiRequest(...args),
 }));
 
-const mockResolveBapiSecretKey = mock();
+const mockResolveBapiTarget = mock();
 mock.module("../../lib/bapi-command.ts", () => ({
-  resolveBapiSecretKey: (...args: unknown[]) => mockResolveBapiSecretKey(...args),
+  resolveBapiTarget: (...args: unknown[]) => mockResolveBapiTarget(...args),
 }));
 
 const mockResolveUsersInstanceContext = mock();
@@ -19,8 +19,10 @@ mock.module("./interactive/instance-context.ts", () => ({
 }));
 
 const mockWithSpinner = mock((_msg: string, fn: () => Promise<unknown>) => fn());
+const mockIntro = mock();
 mock.module("../../lib/spinner.ts", () => ({
-  intro: () => {},
+  intro: (...args: unknown[]) => mockIntro(...args),
+  formatTargetSuffix: (label?: string) => (label ? ` · on ${label}` : ""),
   outro: () => {},
   pausedOutro: () => {},
   bar: () => {},
@@ -70,7 +72,11 @@ describe("users list", () => {
 
   beforeEach(() => {
     mockIsAgent.mockReturnValue(false);
-    mockResolveBapiSecretKey.mockResolvedValue("sk_test_123");
+    mockResolveBapiTarget.mockResolvedValue({
+      secretKey: "sk_test_123",
+      instanceLabel: "development",
+      source: "default",
+    });
     mockBapiRequest.mockResolvedValue({
       status: 200,
       headers: new Headers(),
@@ -83,10 +89,11 @@ describe("users list", () => {
 
   afterEach(() => {
     mockBapiRequest.mockReset();
-    mockResolveBapiSecretKey.mockReset();
+    mockResolveBapiTarget.mockReset();
     mockResolveUsersInstanceContext.mockReset();
     mockWithSpinner.mockReset();
     mockWithSpinner.mockImplementation((_msg: string, fn: () => Promise<unknown>) => fn());
+    mockIntro.mockReset();
     mockIsAgent.mockReset();
     logSpy.mockRestore();
     errorSpy.mockRestore();
@@ -96,10 +103,22 @@ describe("users list", () => {
     return list(options);
   }
 
+  test("intro echoes the resolved target instance", async () => {
+    mockResolveBapiTarget.mockResolvedValue({
+      secretKey: "sk_test_123",
+      instanceLabel: "feature/checkout",
+      source: "active-pointer",
+    });
+
+    await runList();
+
+    expect(mockIntro).toHaveBeenCalledWith("Listing users · on feature/checkout");
+  });
+
   test("forwards targeting options when resolving the secret key", async () => {
     await runList({ json: true, secretKey: "sk_test_override", app: "app_123", instance: "prod" });
 
-    expect(mockResolveBapiSecretKey).toHaveBeenCalledWith({
+    expect(mockResolveBapiTarget).toHaveBeenCalledWith({
       secretKey: "sk_test_override",
       app: "app_123",
       instance: "prod",
@@ -260,7 +279,7 @@ describe("users list", () => {
   });
 
   test("falls back to the shared picker-aware resolver in human mode when no credentials resolve", async () => {
-    mockResolveBapiSecretKey.mockRejectedValue(
+    mockResolveBapiTarget.mockRejectedValue(
       new CliError("No secret key found.", { code: ERROR_CODE.NO_SECRET_KEY }),
     );
     mockResolveUsersInstanceContext.mockResolvedValue({ secretKey: "sk_test_picked" });
@@ -292,7 +311,7 @@ describe("users list", () => {
   test("re-throws the original NO_SECRET_KEY error in agent mode without invoking the picker", async () => {
     mockIsAgent.mockReturnValue(true);
     const original = new CliError("No secret key found.", { code: ERROR_CODE.NO_SECRET_KEY });
-    mockResolveBapiSecretKey.mockRejectedValue(original);
+    mockResolveBapiTarget.mockRejectedValue(original);
 
     await expect(runList()).rejects.toBe(original);
     expect(mockResolveUsersInstanceContext).not.toHaveBeenCalled();
@@ -306,7 +325,7 @@ describe("users list", () => {
     "re-throws NO_SECRET_KEY without invoking the picker when $label is set",
     async ({ options }) => {
       const original = new CliError("No secret key found.", { code: ERROR_CODE.NO_SECRET_KEY });
-      mockResolveBapiSecretKey.mockRejectedValue(original);
+      mockResolveBapiTarget.mockRejectedValue(original);
 
       await expect(runList(options)).rejects.toBe(original);
       expect(mockResolveUsersInstanceContext).not.toHaveBeenCalled();

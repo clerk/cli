@@ -11,6 +11,7 @@ export type RevokeOptions = {
   secretKey?: string;
   app?: string;
   instance?: string;
+  branch?: string;
 };
 
 export async function revoke(options: RevokeOptions): Promise<void> {
@@ -23,6 +24,7 @@ export async function revoke(options: RevokeOptions): Promise<void> {
     secretKey: options.secretKey,
     app: options.app,
     instance: options.instance,
+    branch: options.branch,
   });
 
   const body = await withApiContext(

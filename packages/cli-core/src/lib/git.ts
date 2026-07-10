@@ -67,6 +67,26 @@ export async function getGitRepoRoot(cwd?: string): Promise<string | undefined> 
   return info?.toplevel;
 }
 
+/**
+ * Current git branch name for cwd, or undefined if detached HEAD / not a repo.
+ * Not cached: the branch changes within a session (that's the whole point).
+ */
+export async function getGitCurrentBranch(cwd?: string): Promise<string | undefined> {
+  const key = cwd ?? process.cwd();
+  try {
+    const result = await $`git symbolic-ref --quiet --short HEAD`.cwd(key).quiet().nothrow();
+    if (result.exitCode !== 0) {
+      log.debug("git: symbolic-ref failed (detached HEAD or not a repo)");
+      return undefined;
+    }
+    const branch = result.text().trim();
+    return branch || undefined;
+  } catch {
+    log.debug(`git: symbolic-ref threw (cwd=${key})`);
+    return undefined;
+  }
+}
+
 export async function getGitRepoIdentifier(cwd?: string): Promise<string | undefined> {
   const info = await getGitRepoInfo(cwd);
   return info?.commonDir;

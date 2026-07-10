@@ -3,7 +3,7 @@ import { resolveAppContext, resolveInstanceId, resolveProfile } from "../../lib/
 import { CliError, ERROR_CODE, throwUsageError } from "../../lib/errors.ts";
 import { log } from "../../lib/log.ts";
 import { openBrowser } from "../../lib/open.ts";
-import { intro, outro } from "../../lib/spinner.ts";
+import { intro, outro, formatTargetSuffix } from "../../lib/spinner.ts";
 import { isAgent } from "../../mode.ts";
 import { buildDashboardUrl } from "../open/index.ts";
 import { resolveUsersInstanceContext } from "./interactive/instance-context.ts";
@@ -16,6 +16,7 @@ export type UsersOpenOptions = {
   secretKey?: string;
   app?: string;
   instance?: string;
+  branch?: string;
 };
 
 async function resolveKnownUserDashboardTarget(options: UsersOpenOptions): Promise<{
@@ -26,7 +27,10 @@ async function resolveKnownUserDashboardTarget(options: UsersOpenOptions): Promi
 }> {
   if (options.app) {
     const resolved = await resolveProfile(process.cwd());
-    if (resolved?.profile.appId === options.app) {
+    // resolveInstanceId has no concept of a branch, so a --branch instance
+    // must fall through to resolveUsersInstanceContext below instead of
+    // taking this linked-profile shortcut.
+    if (resolved?.profile.appId === options.app && !options.branch) {
       const instance = resolveInstanceId(resolved.profile, options.instance);
       return {
         appId: options.app,
@@ -37,7 +41,7 @@ async function resolveKnownUserDashboardTarget(options: UsersOpenOptions): Promi
     }
   } else {
     try {
-      return await resolveAppContext({ instance: options.instance });
+      return await resolveAppContext({ instance: options.instance, branch: options.branch });
     } catch (error) {
       if (!(error instanceof CliError) || error.code !== ERROR_CODE.NOT_LINKED) {
         throw error;
@@ -48,6 +52,7 @@ async function resolveKnownUserDashboardTarget(options: UsersOpenOptions): Promi
   const target = await resolveUsersInstanceContext({
     app: options.app,
     instance: options.instance,
+    branch: options.branch,
   });
 
   if (!target.appId || !target.instanceId) {
@@ -91,6 +96,7 @@ export async function open(options: UsersOpenOptions = {}): Promise<void> {
         secretKey: options.secretKey,
         app: options.app,
         instance: options.instance,
+        branch: options.branch,
       });
       if (!secretKeyTarget.appId || !secretKeyTarget.instanceId) {
         throwUsageError(
@@ -128,7 +134,7 @@ export async function open(options: UsersOpenOptions = {}): Promise<void> {
       return;
     }
 
-    intro("Opening user");
+    intro(`Opening user${formatTargetSuffix(target.instanceLabel)}`);
     log.info(`↗ Opening ${bold(target.appLabel)} (${target.instanceLabel}) → ${cyan(subpath)}`);
     log.info(`  ${dim(url)}`);
 
@@ -151,6 +157,7 @@ export async function open(options: UsersOpenOptions = {}): Promise<void> {
     secretKey: options.secretKey,
     app: options.app,
     instance: options.instance,
+    branch: options.branch,
   });
 
   if (!target.secretKey) {
@@ -187,7 +194,7 @@ export async function open(options: UsersOpenOptions = {}): Promise<void> {
   const appLabel = target.appLabel ?? target.appId;
   const instanceLabel = target.instanceLabel ?? target.instanceId;
 
-  intro("Opening user");
+  intro(`Opening user${formatTargetSuffix(instanceLabel)}`);
   log.info(`↗ Opening ${bold(appLabel)} (${instanceLabel}) → ${cyan(subpath)}`);
   log.info(`  ${dim(url)}`);
 

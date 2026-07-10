@@ -65,6 +65,62 @@ test("deploy status exposes wait option", () => {
   expect(optionNames).toContain("--wait");
 });
 
+test("branch command exposes create, list, delete, and switch", () => {
+  const program = createProgram();
+  const branch = program.commands.find((command) => command.name() === "branch")!;
+  const names = branch.commands.map((command) => command.name());
+
+  expect(names).toEqual(["create", "list", "delete", "switch"]);
+});
+
+test("registers switch as a top-level command aliasing branch switch", () => {
+  const program = createProgram();
+  const switchCommand = program.commands.find((command) => command.name() === "switch")!;
+  expect(switchCommand).toBeDefined();
+
+  const optionNames = switchCommand.options.map((option) => option.long);
+  // Pinned exactly: branches always fork the development root, so the surface
+  // carries no parent-selection flag.
+  expect(optionNames).toEqual(["--create", "--app", "--no-pull", "--detach", "--yes", "--json"]);
+});
+
+test("branch create forks the development root with no parent-selection flag", () => {
+  const program = createProgram();
+  const branch = program.commands.find((command) => command.name() === "branch")!;
+  const create = branch.commands.find((command) => command.name() === "create")!;
+  const optionNames = create.options.map((option) => option.long);
+
+  // Pinned exactly: only --name/--app/--json, no parent-selection flag.
+  expect(optionNames).toEqual(["--name", "--app", "--json"]);
+});
+
+test("env pull exposes branch targeting", () => {
+  const program = createProgram();
+  const env = program.commands.find((command) => command.name() === "env")!;
+  const pull = env.commands.find((command) => command.name() === "pull")!;
+  const optionNames = pull.options.map((option) => option.long);
+
+  expect(optionNames).toContain("--branch");
+});
+
+test.each([
+  { label: "config pull", path: ["config", "pull"] },
+  { label: "enable orgs", path: ["enable", "orgs"] },
+  { label: "users", path: ["users"] },
+  { label: "api", path: ["api"] },
+  { label: "impersonate", path: ["impersonate"] },
+])("$label accepts both --instance and --branch", ({ path }) => {
+  const program = createProgram();
+  const parent = program.commands.find((candidate) => candidate.name() === path[0])!;
+  const command = path[1]
+    ? parent.commands.find((candidate) => candidate.name() === path[1])!
+    : parent;
+
+  const optionNames = command.options.map((option) => option.long);
+  expect(optionNames).toContain("--instance");
+  expect(optionNames).toContain("--branch");
+});
+
 describe("parseIntegerOption (via users list --limit / --offset)", () => {
   function parseUsersList(args: readonly string[]) {
     return createProgram().parseAsync(["users", "list", ...args], { from: "user" });

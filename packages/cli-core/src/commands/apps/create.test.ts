@@ -19,6 +19,7 @@ mock.module("../../mode.ts", () => ({
 
 const mockNextSteps = mock();
 mock.module("../../lib/spinner.ts", () => ({
+  formatTargetSuffix: (label?: string) => (label ? ` · on ${label}` : ""),
   intro: () => {},
   outro: (msgOrSteps?: string | readonly string[]) => {
     if (Array.isArray(msgOrSteps)) mockNextSteps(msgOrSteps);

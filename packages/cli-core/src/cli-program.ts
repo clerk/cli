@@ -13,6 +13,9 @@ import { registerUsers } from "./commands/users/index.ts";
 import { registerImpersonate } from "./commands/impersonate/index.ts";
 import { registerEnv } from "./commands/env/index.ts";
 import { registerConfig } from "./commands/config/index.ts";
+import { registerBranch } from "./commands/branch/index.ts";
+import { registerSwitch } from "./commands/switch/index.ts";
+import { registerStatus } from "./commands/status/index.ts";
 import { registerToggles } from "./commands/toggles/index.ts";
 import { registerApi } from "./commands/api/index.ts";
 import { registerDoctor } from "./commands/doctor/index.ts";
@@ -33,12 +36,14 @@ import {
   CliError,
   UserAbortError,
   ApiError,
+  BapiError,
   PlapiError,
   FapiError,
   EXIT_CODE,
   isPromptExitError,
   throwUsageError,
 } from "./lib/errors.ts";
+import { getLastBapiKeySource } from "./lib/bapi-command.ts";
 import { clerkHelpConfig, formatExamplesBlock, type Example } from "./lib/help.ts";
 import { isAgent } from "./mode.ts";
 import { log } from "./lib/log.ts";
@@ -65,6 +70,9 @@ const registrants: CommandRegistrant[] = [
   registerImpersonate,
   registerEnv,
   registerConfig,
+  registerBranch,
+  registerSwitch,
+  registerStatus,
   registerToggles,
   registerApi,
   registerDoctor,
@@ -256,6 +264,24 @@ export async function runProgram(
     if (error instanceof ApiError) {
       const detail = formatApiBody(error, verbose);
       const prefix = error.context ?? "Request failed";
+      // A 401 on a key resolved via the active pointer (directly, or through
+      // the env file `clerk switch` keeps in sync) usually means the
+      // pointed-at instance was deleted, not that the key itself is bad; say
+      // so instead of sending the user off to rotate keys.
+      const keySource = getLastBapiKeySource();
+      const staleLabel = keySource?.instanceLabel ?? "unknown";
+      let staleHint: string | undefined;
+      if (error instanceof BapiError && error.status === 401) {
+        if (keySource?.source === "active-pointer") {
+          staleHint =
+            `The key came from the active instance \`${staleLabel}\`, which may have been ` +
+            "deleted. Run `clerk switch` to re-point this worktree, then retry.";
+        } else if (keySource?.source === "env-file") {
+          staleHint =
+            `The key came from your env file, synced from the active instance \`${staleLabel}\`, ` +
+            "which may have been deleted. Run `clerk switch` to re-point and re-sync, then retry.";
+        }
+      }
       if (isAgent()) {
         const apiErrors: ApiErrorEntry[] | undefined =
           error.code || error.meta
@@ -269,12 +295,15 @@ export async function runProgram(
             : undefined;
         outputJsonError(
           error.code ?? "api_error",
-          `${prefix} (${error.status}): ${detail}`,
+          `${prefix} (${error.status}): ${detail}${staleHint ? `\n${staleHint}` : ""}`,
           undefined,
           apiErrors,
         );
       } else {
         log.error(`${prefix} (${error.status}): ${detail}`);
+        if (staleHint) {
+          log.warn(staleHint);
+        }
         if (verbose && (error instanceof PlapiError || error instanceof FapiError) && error.url) {
           log.error(`       URL: ${error.url}`);
         }

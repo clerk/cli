@@ -28,6 +28,7 @@ mock.module("../../lib/open.ts", () => ({
 }));
 
 mock.module("../../lib/spinner.ts", () => ({
+  formatTargetSuffix: (label?: string) => (label ? ` · on ${label}` : ""),
   intro: () => {},
   outro: () => {},
   pausedOutro: () => {},
@@ -166,6 +167,38 @@ describe("users open", () => {
     expect(mockOpenBrowser).not.toHaveBeenCalled();
   });
 
+  test("forwards --branch to the resolver on the --secret-key catch fallback", async () => {
+    setMode("agent");
+    const { CliError, ERROR_CODE } = await import("../../lib/errors.ts");
+    mockResolveAppContext.mockRejectedValueOnce(
+      new CliError("Not linked.", {
+        code: ERROR_CODE.NOT_LINKED,
+      }),
+    );
+    mockResolveUsersInstanceContext
+      .mockRejectedValueOnce(
+        new CliError("Not linked.", {
+          code: ERROR_CODE.NOT_LINKED,
+        }),
+      )
+      .mockResolvedValueOnce(CTX);
+
+    await open({
+      secretKey: "sk_test_loose",
+      userId: "user_2x9k",
+      branch: "agent/pr-42",
+      print: true,
+    });
+
+    expect(mockResolveUsersInstanceContext).toHaveBeenCalledTimes(2);
+    expect(mockResolveUsersInstanceContext).toHaveBeenNthCalledWith(2, {
+      secretKey: "sk_test_loose",
+      app: undefined,
+      instance: undefined,
+      branch: "agent/pr-42",
+    });
+  });
+
   test("no user-id + human mode: invokes pickUser and uses returned id", async () => {
     mockPickUser.mockResolvedValue("user_picked");
 
@@ -188,6 +221,26 @@ describe("users open", () => {
     expect(mockOpenBrowser).not.toHaveBeenCalled();
   });
 
+  test("--branch + --app matching the linked profile: bypasses the branch-blind resolveInstanceId early return", async () => {
+    mockResolveProfile.mockResolvedValue({
+      profile: { appId: "app_abc123", appName: "My App" },
+    });
+
+    await open({
+      userId: "user_2x9k",
+      app: "app_abc123",
+      branch: "agent/pr-42",
+      print: true,
+    });
+
+    expect(mockResolveInstanceId).not.toHaveBeenCalled();
+    expect(mockResolveUsersInstanceContext).toHaveBeenCalledWith({
+      app: "app_abc123",
+      instance: undefined,
+      branch: "agent/pr-42",
+    });
+  });
+
   test("forwards --app and --instance to the resolver", async () => {
     mockResolveProfile.mockResolvedValue(undefined);
 
@@ -196,6 +249,48 @@ describe("users open", () => {
     expect(mockResolveUsersInstanceContext).toHaveBeenCalledWith({
       app: "app_other",
       instance: "prod",
+    });
+  });
+
+  test("forwards --branch to resolveAppContext on the known-user path", async () => {
+    mockResolveProfile.mockResolvedValue(undefined);
+
+    await open({ userId: "user_2x9k", branch: "agent/pr-42", print: true });
+
+    expect(mockResolveAppContext).toHaveBeenCalledWith({
+      instance: undefined,
+      branch: "agent/pr-42",
+    });
+  });
+
+  test("forwards --branch to the resolver alongside --app and --instance", async () => {
+    mockResolveProfile.mockResolvedValue(undefined);
+
+    await open({
+      userId: "user_2x9k",
+      app: "app_other",
+      instance: "prod",
+      branch: "agent/pr-42",
+      print: true,
+    });
+
+    expect(mockResolveUsersInstanceContext).toHaveBeenCalledWith({
+      app: "app_other",
+      instance: "prod",
+      branch: "agent/pr-42",
+    });
+  });
+
+  test("forwards --branch to the resolver on the pick-user path (no --user-id)", async () => {
+    mockPickUser.mockResolvedValue("user_picked");
+
+    await open({ branch: "agent/pr-42", print: true });
+
+    expect(mockResolveUsersInstanceContext).toHaveBeenCalledWith({
+      secretKey: undefined,
+      app: undefined,
+      instance: undefined,
+      branch: "agent/pr-42",
     });
   });
 

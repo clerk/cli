@@ -31,6 +31,15 @@ function writeUi(message: string) {
   log.ui(message);
 }
 
+/**
+ * Dim ` · on <label>` suffix appended to intro/gutter titles so instance-scoped
+ * commands echo which instance the active pointer (or an explicit flag)
+ * resolved to. Returns an empty string when no label is known.
+ */
+export function formatTargetSuffix(label?: string): string {
+  return label ? ` ${dim(`· on ${label}`)}` : "";
+}
+
 /** Print intro bracket and arrange for subsequent `log.*` lines to be gutter-prefixed. */
 export function intro(title?: string) {
   if (!isHuman()) return;

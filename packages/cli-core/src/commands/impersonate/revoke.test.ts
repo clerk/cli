@@ -20,6 +20,7 @@ mock.module("../../lib/bapi.ts", () => ({
 }));
 
 mock.module("../../lib/spinner.ts", () => ({
+  formatTargetSuffix: (label?: string) => (label ? ` · on ${label}` : ""),
   intro: () => {},
   outro: () => {},
   pausedOutro: () => {},

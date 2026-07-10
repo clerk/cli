@@ -5,6 +5,8 @@ Make authenticated HTTP requests to Clerk APIs directly from the command line.
 By default, targets the Clerk Backend API (`https://api.clerk.dev/v1/`) using
 the instance secret key. Use `--platform` to target the Platform API instead.
 
+In human mode, the command frame title echoes the resolved target instance as a dim `· on <instance>` suffix (for example `· on feature-auth` when the active pointer targets a branch), so it is always visible which instance the command acts on.
+
 ## Usage
 
 ```sh
@@ -62,19 +64,20 @@ clerk api --fapi /environment --app app_123 --instance dev
 
 ## Options
 
-| Flag                    | Description                                                                     |
-| ----------------------- | ------------------------------------------------------------------------------- |
-| `-X, --method <method>` | HTTP method. Defaults to GET, or POST if body is provided.                      |
-| `-d, --data <json>`     | JSON request body (inline)                                                      |
-| `--file <path>`         | Read request body from a file                                                   |
-| `--include`             | Show response status and headers                                                |
-| `--app <id>`            | Application ID to target when resolving keys                                    |
-| `--secret-key <key>`    | Override the secret key                                                         |
-| `--instance <id>`       | Instance to target for key resolution (`dev`, `prod`, or full ID)               |
-| `--platform`            | Use Platform API instead of Backend API                                         |
-| `--fapi`                | Use the instance's public Frontend API (no auth; host from the publishable key) |
-| `--dry-run`             | Show request without executing                                                  |
-| `--yes`                 | Skip confirmation for mutating requests                                         |
+| Flag                    | Description                                                                         |
+| ----------------------- | ----------------------------------------------------------------------------------- |
+| `-X, --method <method>` | HTTP method. Defaults to GET, or POST if body is provided.                          |
+| `-d, --data <json>`     | JSON request body (inline)                                                          |
+| `--file <path>`         | Read request body from a file                                                       |
+| `--include`             | Show response status and headers                                                    |
+| `--app <id>`            | Application ID to target when resolving keys                                        |
+| `--secret-key <key>`    | Override the secret key                                                             |
+| `--instance <id>`       | Instance to target for key resolution (`dev`, `prod`, or full ID)                   |
+| `--branch <name>`       | Target a branch by name (e.g. `agent/pr-42`). Mutually exclusive with `--instance`. |
+| `--platform`            | Use Platform API instead of Backend API                                             |
+| `--fapi`                | Use the instance's public Frontend API (no auth; host from the publishable key)     |
+| `--dry-run`             | Show request without executing                                                      |
+| `--yes`                 | Skip confirmation for mutating requests                                             |
 
 ## Authentication
 

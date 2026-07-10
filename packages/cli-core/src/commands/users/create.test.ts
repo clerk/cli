@@ -2,10 +2,10 @@ import { test, expect, describe, beforeEach, afterEach, mock, spyOn } from "bun:
 import { useCaptureLog } from "../../test/lib/stubs.ts";
 import { BapiError, CliError, ERROR_CODE, EXIT_CODE } from "../../lib/errors.ts";
 
-const mockResolveBapiSecretKey = mock();
+const mockResolveBapiTarget = mock();
 const mockHandleBapiError = mock((_error: unknown) => false);
 mock.module("../../lib/bapi-command.ts", () => ({
-  resolveBapiSecretKey: (...args: unknown[]) => mockResolveBapiSecretKey(...args),
+  resolveBapiTarget: (...args: unknown[]) => mockResolveBapiTarget(...args),
   handleBapiError: (error: unknown) => mockHandleBapiError(error),
 }));
 
@@ -28,6 +28,7 @@ mock.module("./create-wizard.ts", () => ({
 }));
 
 mock.module("../../lib/spinner.ts", () => ({
+  formatTargetSuffix: (label?: string) => (label ? ` · on ${label}` : ""),
   intro: () => {},
   outro: () => {},
   pausedOutro: () => {},
@@ -44,7 +45,11 @@ describe("users create", () => {
 
   beforeEach(() => {
     mockIsAgent.mockReturnValue(false);
-    mockResolveBapiSecretKey.mockResolvedValue("sk_test_123");
+    mockResolveBapiTarget.mockResolvedValue({
+      secretKey: "sk_test_123",
+      instanceLabel: "development",
+      source: "default",
+    });
     mockRunCreateWizard.mockResolvedValue({ fields: {}, targeting: {} });
     mockBapiRequest.mockResolvedValue({
       status: 200,
@@ -58,7 +63,7 @@ describe("users create", () => {
 
   afterEach(() => {
     process.exitCode = 0;
-    mockResolveBapiSecretKey.mockReset();
+    mockResolveBapiTarget.mockReset();
     mockHandleBapiError.mockReset();
     mockHandleBapiError.mockImplementation(() => false);
     mockBapiRequest.mockReset();
@@ -82,7 +87,7 @@ describe("users create", () => {
       yes: true,
     });
 
-    expect(mockResolveBapiSecretKey).toHaveBeenCalledWith({
+    expect(mockResolveBapiTarget).toHaveBeenCalledWith({
       secretKey: "sk_test_override",
       app: "app_123",
       instance: undefined,
@@ -110,7 +115,7 @@ describe("users create", () => {
     expect(error.code).toBe(ERROR_CODE.USAGE_ERROR);
     expect(error.exitCode).toBe(EXIT_CODE.USAGE);
     expect(error.message).toContain("No input provided");
-    expect(mockResolveBapiSecretKey).not.toHaveBeenCalled();
+    expect(mockResolveBapiTarget).not.toHaveBeenCalled();
     expect(mockBapiRequest).not.toHaveBeenCalled();
   });
 
@@ -130,7 +135,7 @@ describe("users create", () => {
       email_address: ["alice@example.com"],
       password: "[REDACTED]",
     });
-    expect(mockResolveBapiSecretKey).not.toHaveBeenCalled();
+    expect(mockResolveBapiTarget).not.toHaveBeenCalled();
     expect(mockBapiRequest).not.toHaveBeenCalled();
   });
 
@@ -236,7 +241,7 @@ describe("users create", () => {
 
     await runCreate({ yes: true });
 
-    expect(mockResolveBapiSecretKey).toHaveBeenCalledWith({
+    expect(mockResolveBapiTarget).toHaveBeenCalledWith({
       secretKey: "sk_test_picked",
       app: "app_picked",
       instance: "ins_dev",
@@ -257,7 +262,7 @@ describe("users create", () => {
     expect(error.message).toContain("-d '{");
     expect(error.message).toContain("--file user.json");
     expect(mockRunCreateWizard).not.toHaveBeenCalled();
-    expect(mockResolveBapiSecretKey).not.toHaveBeenCalled();
+    expect(mockResolveBapiTarget).not.toHaveBeenCalled();
     expect(mockBapiRequest).not.toHaveBeenCalled();
   });
 });

@@ -1,6 +1,7 @@
 import { test, expect, describe, beforeEach, afterEach, mock } from "bun:test";
 import { CliError, ERROR_CODE } from "../../../lib/errors.ts";
 import { stubFetch } from "../../../test/lib/stubs.ts";
+import { buildInstancePickerChoices } from "./instance-choices.ts";
 
 const mockResolveAppContext = mock();
 const mockResolveProfile = mock();
@@ -17,6 +18,7 @@ mock.module("../../../lib/listage.ts", () => ({
 mock.module("../../../lib/config.ts", () => ({
   resolveAppContext: (...args: unknown[]) => mockResolveAppContext(...args),
   resolveProfile: (...args: unknown[]) => mockResolveProfile(...args),
+  getActiveInstanceForApp: async () => undefined,
   resolveFetchedApplicationInstance: (
     _appId: string,
     app: {
@@ -25,13 +27,27 @@ mock.module("../../../lib/config.ts", () => ({
         instance_id: string;
         secret_key?: string;
         publishable_key: string;
+        branch_name?: string;
       }[];
     },
     instance?: string,
+    branch?: string,
   ) => {
-    // Mirrors the real resolver: an env-type or instance-id hint wins,
-    // otherwise fall back to the development instance. Labels use the
-    // matched instance's environment type.
+    // Mirrors the real resolver: a branch hint wins outright, otherwise an
+    // env-type or instance-id hint wins, otherwise fall back to the
+    // development instance. Labels use the matched instance's environment
+    // type (or the branch name itself for a branch match).
+    if (branch) {
+      const matched = app.instances.find((i) => i.branch_name === branch);
+      if (!matched) return { found: false, instanceId: branch, instanceLabel: branch };
+      return {
+        found: true,
+        instance: matched,
+        instanceId: matched.instance_id,
+        instanceLabel: branch,
+      };
+    }
+
     const hint = instance ?? "development";
     const matched = app.instances.find(
       (i) => i.environment_type === hint || i.instance_id === hint,
@@ -148,34 +164,35 @@ describe("resolveUsersInstanceContext", () => {
     );
     mockFetchAppsTolerantly.mockResolvedValue([{ application_id: "app_picked", name: "Picked" }]);
     mockPickOrCreateApp.mockResolvedValue({ application_id: "app_picked", name: "Picked" });
+    const instances = [
+      {
+        instance_id: "ins_dev",
+        environment_type: "development",
+        publishable_key: "pk_test_aWRlYWwtbG91c2UtNjEuY2xlcmsuYWNjb3VudHMuZGV2JA",
+        secret_key: "sk_test_picked",
+      },
+      {
+        instance_id: "ins_prod",
+        environment_type: "production",
+        publishable_key: "pk_live_aWRlYWwtbG91c2UtNjEuY2xlcmsuYWNjb3VudHMuZGV2JA",
+        secret_key: "sk_live_picked",
+      },
+    ];
     mockFetchApplication.mockResolvedValue({
       application_id: "app_picked",
       name: "Picked",
-      instances: [
-        {
-          instance_id: "ins_dev",
-          environment_type: "development",
-          publishable_key: "pk_test_aWRlYWwtbG91c2UtNjEuY2xlcmsuYWNjb3VudHMuZGV2JA",
-          secret_key: "sk_test_picked",
-        },
-        {
-          instance_id: "ins_prod",
-          environment_type: "production",
-          publishable_key: "pk_live_aWRlYWwtbG91c2UtNjEuY2xlcmsuYWNjb3VudHMuZGV2JA",
-          secret_key: "sk_live_picked",
-        },
-      ],
+      instances,
     });
     mockSelect.mockResolvedValue("ins_prod");
 
     const ctx = await resolveUsersInstanceContext({});
 
     expect(mockSelect).toHaveBeenCalledTimes(1);
+    // The picker renders a nested tree via buildInstancePickerChoices; recompute
+    // the expected choices the same way instead of hardcoding a time-dependent label.
     expect(mockSelect.mock.calls[0]?.[0]).toMatchObject({
-      choices: [
-        { name: "ins_dev (development)", value: "ins_dev" },
-        { name: "ins_prod (production)", value: "ins_prod" },
-      ],
+      message: "Select an instance to use:",
+      choices: buildInstancePickerChoices(instances, Date.now()),
     });
     expect(ctx.secretKey).toBe("sk_live_picked");
     expect(ctx.instanceId).toBe("ins_prod");
@@ -357,5 +374,46 @@ describe("resolveUsersInstanceContext", () => {
     await expect(
       resolveUsersInstanceContext({ secretKey: "sk_test_raw", instance: "prod" }),
     ).rejects.toThrow(/does not match the supplied --secret-key/);
+  });
+
+  test("resolves the branch without prompting", async () => {
+    mockFetchApplication.mockResolvedValue({
+      application_id: "app_1",
+      name: "App",
+      instances: [
+        {
+          instance_id: "ins_dev",
+          environment_type: "development",
+          publishable_key: "pk_test_aWRlYWwtbG91c2UtNjEuY2xlcmsuYWNjb3VudHMuZGV2JA",
+          secret_key: "sk_dev",
+        },
+        {
+          instance_id: "ins_b",
+          environment_type: "development",
+          publishable_key: "pk_test_aWRlYWwtbG91c2UtNjEuY2xlcmsuYWNjb3VudHMuZGV2JA",
+          secret_key: "sk_branch",
+          branch_name: "pr-9",
+          parent_instance_id: "ins_dev",
+        },
+      ],
+    });
+
+    const ctx = await resolveUsersInstanceContext({ app: "app_1", branch: "pr-9" });
+
+    expect(mockSelect).not.toHaveBeenCalled();
+    expect(ctx.secretKey).toBe("sk_branch");
+    expect(ctx.instanceLabel).toBe("pr-9");
+  });
+
+  test("--branch + --secret-key errors", async () => {
+    await expect(
+      resolveUsersInstanceContext({ branch: "pr-9", secretKey: "sk_test_x" }),
+    ).rejects.toThrow(/Cannot combine --branch and --secret-key/);
+  });
+
+  test("--branch + --instance errors", async () => {
+    await expect(
+      resolveUsersInstanceContext({ app: "app_1", branch: "pr-9", instance: "dev" }),
+    ).rejects.toThrow(/Cannot combine --branch and --instance/);
   });
 });

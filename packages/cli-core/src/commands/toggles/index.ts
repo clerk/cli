@@ -36,6 +36,7 @@ export function registerToggles(program: Program): void {
     .description("Enable organizations on the linked instance")
     .option("--app <id>", "Application ID to target")
     .option("--instance <id>", "Instance to target (dev, prod, or instance ID)")
+    .option("--branch <name>", "Target a branch by name (e.g. agent/pr-42)")
     .option("--force-selection", "Force organization selection on login")
     .option("--auto-create", "Auto-create an organization for new users")
     .option("--max-members <n>", "Maximum members per organization")
@@ -68,6 +69,7 @@ export function registerToggles(program: Program): void {
     )
     .option("--app <id>", "Application ID to target")
     .option("--instance <id>", "Instance to target (dev, prod, or instance ID)")
+    .option("--branch <name>", "Target a branch by name (e.g. agent/pr-42)")
     .option("--yes", "Skip confirmation prompts")
     .option("--dry-run", "Show the patch that would be sent without applying it")
     .option("--no-skills", "Skip the optional `clerk-billing` agent skill install")
@@ -116,6 +118,7 @@ export function registerToggles(program: Program): void {
     .description("Disable organizations on the linked instance")
     .option("--app <id>", "Application ID to target")
     .option("--instance <id>", "Instance to target (dev, prod, or instance ID)")
+    .option("--branch <name>", "Target a branch by name (e.g. agent/pr-42)")
     .option("--yes", "Skip confirmation prompts")
     .option("--dry-run", "Show the patch that would be sent without applying it")
     .setExamples([
@@ -138,6 +141,7 @@ export function registerToggles(program: Program): void {
     )
     .option("--app <id>", "Application ID to target")
     .option("--instance <id>", "Instance to target (dev, prod, or instance ID)")
+    .option("--branch <name>", "Target a branch by name (e.g. agent/pr-42)")
     .option("--yes", "Skip confirmation prompts")
     .option("--dry-run", "Show the patch that would be sent without applying it")
     .setExamples([

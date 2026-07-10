@@ -2,6 +2,8 @@
 
 Manage Clerk instance configuration.
 
+In human mode, the command frame title echoes the resolved target instance as a dim `· on <instance>` suffix (for example `· on feature-auth` when the active pointer targets a branch), so it is always visible which instance the command acts on.
+
 ## Commands
 
 ### `clerk config pull`
@@ -22,6 +24,7 @@ clerk config pull --keys auth_email session
 | ------------------ | ------------------------------------------------------------------------------------------ |
 | `--app <id>`       | Application ID to target directly (works from any directory)                               |
 | `--instance <id>`  | Instance to target (`dev`, `prod`, or a full instance ID). Defaults to development.        |
+| `--branch <name>`  | Target a branch by name (e.g. `agent/pr-42`). Mutually exclusive with `--instance`.        |
 | `--output <file>`  | Write config to a file instead of stdout                                                   |
 | `--keys <keys...>` | Top-level config keys to retrieve, separated by spaces or commas (e.g. auth_email session) |
 
@@ -60,6 +63,7 @@ clerk config schema --keys auth_email session
 | ------------------ | ---------------------------------------------------------------------------------------------- |
 | `--app <id>`       | Application ID to target directly (works from any directory)                                   |
 | `--instance <id>`  | Instance to target (`dev`, `prod`, or a full instance ID). Defaults to development.            |
+| `--branch <name>`  | Target a branch by name (e.g. `agent/pr-42`). Mutually exclusive with `--instance`.            |
 | `--output <file>`  | Write schema to a file instead of stdout                                                       |
 | `--keys <keys...>` | Top-level schema sections to retrieve, separated by spaces or commas (e.g. auth_email session) |
 
@@ -98,6 +102,7 @@ clerk config patch --file partial-config.json --dry-run
 | ----------------- | ----------------------------------------------------------------------------------- |
 | `--app <id>`      | Application ID to target directly (works from any directory)                        |
 | `--instance <id>` | Instance to target (`dev`, `prod`, or a full instance ID). Defaults to development. |
+| `--branch <name>` | Target a branch by name (e.g. `agent/pr-42`). Mutually exclusive with `--instance`. |
 | `--file <path>`   | Read config JSON from a file                                                        |
 | `--json <string>` | Pass config JSON inline (takes priority over `--file`)                              |
 | `--dry-run`       | Validate server-side and preview the projected result without persisting changes    |
@@ -138,6 +143,7 @@ clerk config put --file full-config.json --dry-run
 | ----------------- | ----------------------------------------------------------------------------------- |
 | `--app <id>`      | Application ID to target directly (works from any directory)                        |
 | `--instance <id>` | Instance to target (`dev`, `prod`, or a full instance ID). Defaults to development. |
+| `--branch <name>` | Target a branch by name (e.g. `agent/pr-42`). Mutually exclusive with `--instance`. |
 | `--file <path>`   | Read config JSON from a file                                                        |
 | `--json <string>` | Pass config JSON inline (takes priority over `--file`)                              |
 | `--dry-run`       | Validate server-side and preview the projected result without persisting changes    |

@@ -44,6 +44,9 @@ Commands:
   impersonate|imp  [options] [user]               Impersonate a Clerk user
   env                                             Manage environment variables
   config                                          Manage instance configuration
+  branch                                          Fork, list, and delete instance branches
+  switch           [options] [target]             Set the active Clerk instance for this worktree (alias of `clerk branch switch`)
+  status           [options]                      Show the active instance, git binding, and app for this worktree
   enable                                          Enable Clerk features on the linked instance
   disable                                         Disable Clerk features on the linked instance
   api              [options] [endpoint] [filter]  Make authenticated requests to the Clerk API

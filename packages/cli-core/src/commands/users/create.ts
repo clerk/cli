@@ -1,4 +1,4 @@
-import { handleBapiError, resolveBapiSecretKey } from "../../lib/bapi-command.ts";
+import { handleBapiError, resolveBapiTarget } from "../../lib/bapi-command.ts";
 import { UserAbortError, isPromptExitError, throwUsageError } from "../../lib/errors.ts";
 import { isInsideGutter, log } from "../../lib/log.ts";
 import {
@@ -10,7 +10,7 @@ import {
 } from "../../lib/users.ts";
 import { isAgent, isHuman } from "../../mode.ts";
 import { bapiRequest } from "../../lib/bapi.ts";
-import { withSpinner, intro, outro, pausedOutro } from "../../lib/spinner.ts";
+import { withSpinner, intro, outro, pausedOutro, formatTargetSuffix } from "../../lib/spinner.ts";
 import { handleUsersBapiError, printUsersMutationResult } from "./output.ts";
 import { registerUsersAction } from "./registry.ts";
 import { runCreateWizard } from "./create-wizard.ts";
@@ -28,6 +28,7 @@ type CreateUserOptions = {
   file?: string;
   app?: string;
   instance?: string;
+  branch?: string;
   secretKey?: string;
   dryRun?: boolean;
   yes?: boolean;
@@ -53,13 +54,14 @@ export async function create(options: CreateUserOptions): Promise<void> {
     return;
   }
 
-  const secretKey = await resolveBapiSecretKey({
+  const { secretKey, instanceLabel } = await resolveBapiTarget({
     secretKey: resolved.secretKey,
     app: resolved.app,
     instance: resolved.instance,
+    branch: resolved.branch,
   });
 
-  if (shouldWrap) intro("Creating user");
+  if (shouldWrap) intro(`Creating user${formatTargetSuffix(instanceLabel)}`);
 
   try {
     const response = await withSpinner("Creating user...", () =>
@@ -133,6 +135,7 @@ async function resolveBasePayload(options: CreateUserOptions): Promise<{
     const { fields, targeting } = await runCreateWizard({
       app: options.app,
       instance: options.instance,
+      branch: options.branch,
       secretKey: options.secretKey,
     });
     if (Object.keys(fields).length === 0) {

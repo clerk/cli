@@ -23,6 +23,7 @@ export type CreateWizardFields = {
 export type CreateWizardTargeting = {
   app?: string;
   instance?: string;
+  branch?: string;
   secretKey?: string;
 };
 
@@ -34,6 +35,7 @@ export type CreateWizardResult = {
 type WizardOptions = {
   app?: string;
   instance?: string;
+  branch?: string;
   secretKey?: string;
 };
 

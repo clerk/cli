@@ -1,6 +1,7 @@
 export type UsersActionTargeting = {
   app?: string;
   instance?: string;
+  branch?: string;
   secretKey?: string;
 };
 

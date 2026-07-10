@@ -8,13 +8,21 @@ import {
   detectEnvFile,
 } from "../../lib/framework.ts";
 import { CliError, ERROR_CODE, withApiContext } from "../../lib/errors.ts";
-import { withGutter, withSpinner } from "../../lib/spinner.ts";
+import { withGutter, withSpinner, formatTargetSuffix } from "../../lib/spinner.ts";
 import { log } from "../../lib/log.ts";
 
 const DEV_LOCAL_ENV_FILE = ".env.development.local";
 
 interface EnvPullOptions extends AppContextOptions {
   file?: string;
+  /**
+   * Render as a single step inside the caller's frame instead of opening a gutter.
+   */
+  embed?: boolean;
+  /**
+   * Display label for the source instance, overriding the resolved context label.
+   */
+  label?: string;
 }
 
 /** Check whether a file contains Clerk keys (for backwards compat detection). */
@@ -48,45 +56,57 @@ async function resolveTargetFile(
 }
 
 export async function pull(options: EnvPullOptions): Promise<void> {
-  await withGutter("Pulling environment variables", async () => {
-    const cwd = options.cwd ?? process.cwd();
-    const [ctx, preferredEnvFile] = await Promise.all([
-      resolveAppContext({ ...options, cwd }),
-      detectEnvFile(cwd),
-    ]);
-    const targetFile = await resolveTargetFile(cwd, options.file, preferredEnvFile);
-    const displayPath = options.file ?? basename(targetFile);
+  const cwd = options.cwd ?? process.cwd();
+  const [ctx, preferredEnvFile] = await Promise.all([
+    resolveAppContext({ ...options, cwd }),
+    detectEnvFile(cwd),
+  ]);
+  const displayLabel = options.label ?? ctx.instanceLabel;
+  const targetFile = await resolveTargetFile(cwd, options.file, preferredEnvFile);
+  const displayPath = options.file ?? basename(targetFile);
 
-    await withSpinner(`Pulling env vars from ${ctx.instanceLabel} instance...`, async () => {
-      const app = await withApiContext(fetchApplication(ctx.appId), "Failed to fetch API keys");
+  const writeEnvFile = async () => {
+    const app = await withApiContext(fetchApplication(ctx.appId), "Failed to fetch API keys");
 
-      const matched = app.instances.find((i) => i.instance_id === ctx.instanceId);
-      if (!matched) {
-        throw new CliError(`Instance ${ctx.instanceId} not found in application response.`, {
-          code: ERROR_CODE.INSTANCE_NOT_FOUND,
-          docsUrl: "https://clerk.com/docs/guides/development/managing-environments",
-        });
-      }
+    const matched = app.instances.find((i) => i.instance_id === ctx.instanceId);
+    if (!matched) {
+      throw new CliError(`Instance ${ctx.instanceId} not found in application response.`, {
+        code: ERROR_CODE.INSTANCE_NOT_FOUND,
+        docsUrl: "https://clerk.com/docs/guides/development/managing-environments",
+      });
+    }
 
-      const publishableKeyName = await detectPublishableKeyName(cwd);
-      const secretKeyName = await detectSecretKeyName(cwd);
+    const publishableKeyName = await detectPublishableKeyName(cwd);
+    const secretKeyName = await detectSecretKeyName(cwd);
 
-      const file = Bun.file(targetFile);
-      const existingContent = (await file.exists()) ? await file.text() : "";
+    const file = Bun.file(targetFile);
+    const existingContent = (await file.exists()) ? await file.text() : "";
 
-      const lines = parseEnvFile(existingContent);
-      const vars: Record<string, string> = {
-        [publishableKeyName]: matched.publishable_key,
-      };
-      if (matched.secret_key) {
-        vars[secretKeyName] = matched.secret_key;
-      }
-      const merged = mergeEnvVars(lines, vars);
-      const output = serializeEnvFile(merged);
+    const lines = parseEnvFile(existingContent);
+    const vars: Record<string, string> = {
+      [publishableKeyName]: matched.publishable_key,
+    };
+    if (matched.secret_key) {
+      vars[secretKeyName] = matched.secret_key;
+    }
+    const merged = mergeEnvVars(lines, vars);
+    const output = serializeEnvFile(merged);
 
-      await Bun.write(targetFile, output);
-    });
+    await Bun.write(targetFile, output);
+  };
 
+  if (options.embed) {
+    // Inside a caller's frame (e.g. `clerk switch`): one resolved step line.
+    await withSpinner(
+      `Syncing ${displayPath} from ${displayLabel}...`,
+      writeEnvFile,
+      `Synced ${displayPath} from ${displayLabel}`,
+    );
+    return;
+  }
+
+  await withGutter(`Pulling environment variables${formatTargetSuffix(displayLabel)}`, async () => {
+    await withSpinner(`Pulling env vars from ${displayLabel} instance...`, writeEnvFile);
     log.info(`Environment variables written to ${displayPath}`);
   });
 }

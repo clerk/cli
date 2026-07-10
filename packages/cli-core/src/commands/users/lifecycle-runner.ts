@@ -2,12 +2,12 @@ import {
   describeBapiTarget,
   handleBapiError,
   normalizeBapiPath,
-  resolveBapiSecretKey,
+  resolveBapiTarget,
 } from "../../lib/bapi-command.ts";
 import { throwUserAbort } from "../../lib/errors.ts";
 import { log } from "../../lib/log.ts";
 import { confirm } from "../../lib/prompts.ts";
-import { withSpinner } from "../../lib/spinner.ts";
+import { withSpinner, formatTargetSuffix } from "../../lib/spinner.ts";
 import { isHuman } from "../../mode.ts";
 import { bapiRequest } from "../../lib/bapi.ts";
 import { handleUsersBapiError, printUsersMutationSuccess } from "./output.ts";
@@ -17,6 +17,7 @@ export type UserLifecycleOptions = {
   secretKey?: string;
   app?: string;
   instance?: string;
+  branch?: string;
   dryRun?: boolean;
   yes?: boolean;
 };
@@ -41,14 +42,16 @@ export async function runUserLifecycleCommand(
     return;
   }
 
-  const secretKey = await resolveBapiSecretKey({
+  const { secretKey, instanceLabel } = await resolveBapiTarget({
     secretKey: options.secretKey,
     app: options.app,
     instance: options.instance,
+    branch: options.branch,
   });
+  const targetSuffix = formatTargetSuffix(instanceLabel);
 
   if (isHuman() && !options.yes) {
-    log.info(`\nAbout to ${command.method} ${command.path}`);
+    log.info(`\nAbout to ${command.method} ${command.path}${targetSuffix}`);
     if (command.destructiveWarning) {
       log.info(command.destructiveWarning);
     }
@@ -59,7 +62,7 @@ export async function runUserLifecycleCommand(
   }
 
   try {
-    const response = await withSpinner(command.spinnerMessage, () =>
+    const response = await withSpinner(`${command.spinnerMessage}${targetSuffix}`, () =>
       bapiRequest({
         method: command.method,
         path: command.path,

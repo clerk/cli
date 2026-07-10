@@ -18,6 +18,7 @@ export function registerImpersonate(program: Program): void {
     .option("--secret-key <key>", "Backend API secret key to use")
     .option("--app <id>", "Application ID to target (works from any directory)")
     .option("--instance <id>", "Instance to target (dev, prod, or a full instance ID)")
+    .option("--branch <name>", "Target a branch by name (e.g. agent/pr-42)")
     .option("--actor <context>", "Extra context appended to the actor stamp: cli:<email>+<context>")
     .option("--expires-in <seconds>", "Actor token lifetime in seconds (default 3600)", (value) =>
       parseIntegerOption(value, "--expires-in", { min: 1 }),
@@ -48,6 +49,7 @@ export function registerImpersonate(program: Program): void {
     .option("--secret-key <key>", "Backend API secret key to use")
     .option("--app <id>", "Application ID to target (works from any directory)")
     .option("--instance <id>", "Instance to target (dev, prod, or a full instance ID)")
+    .option("--branch <name>", "Target a branch by name (e.g. agent/pr-42)")
     .setExamples([
       { command: "clerk imp revoke act_29w9...", description: "Revoke a pending actor token" },
     ])

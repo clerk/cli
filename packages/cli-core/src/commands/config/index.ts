@@ -43,6 +43,7 @@ export function registerConfig(program: Program): void {
     .description("Pull instance configuration from Clerk")
     .option("--app <id>", "Application ID to target (works from any directory)")
     .option("--instance <id>", "Instance to target (dev, prod, or a full instance ID)")
+    .option("--branch <name>", "Target a branch by name (e.g. agent/pr-42)")
     .option("--output <file>", "Write config to a file instead of stdout")
     .option(
       "--keys <keys...>",
@@ -52,6 +53,7 @@ export function registerConfig(program: Program): void {
       { command: "clerk config pull", description: "Print dev config to stdout" },
       { command: "clerk config pull --instance prod", description: "Pull production config" },
       { command: "clerk config pull --output config.json", description: "Save config to a file" },
+      { command: "clerk config pull --keys auth_email session", description: "Pull specific keys" },
     ])
     .action(configPull);
 
@@ -60,6 +62,7 @@ export function registerConfig(program: Program): void {
     .description("Pull instance config schema from Clerk")
     .option("--app <id>", "Application ID to target (works from any directory)")
     .option("--instance <id>", "Instance to target (dev, prod, or a full instance ID)")
+    .option("--branch <name>", "Target a branch by name (e.g. agent/pr-42)")
     .option("--output <file>", "Write schema to a file instead of stdout")
     .option(
       "--keys <keys...>",
@@ -80,6 +83,7 @@ export function registerConfig(program: Program): void {
     .description("Partially update instance configuration (PATCH)")
     .option("--app <id>", "Application ID to target (works from any directory)")
     .option("--instance <id>", "Instance to target (dev, prod, or a full instance ID)")
+    .option("--branch <name>", "Target a branch by name (e.g. agent/pr-42)")
     .option("--file <path>", "Read config JSON from a file")
     .option("--json <string>", "Pass config JSON inline")
     .option("--dry-run", "Show what would be sent without making the API call")
@@ -113,6 +117,7 @@ export function registerConfig(program: Program): void {
     .description("Replace entire instance configuration (PUT)")
     .option("--app <id>", "Application ID to target (works from any directory)")
     .option("--instance <id>", "Instance to target (dev, prod, or a full instance ID)")
+    .option("--branch <name>", "Target a branch by name (e.g. agent/pr-42)")
     .option("--file <path>", "Read config JSON from a file")
     .option("--json <string>", "Pass config JSON inline")
     .option("--dry-run", "Show what would be sent without making the API call")

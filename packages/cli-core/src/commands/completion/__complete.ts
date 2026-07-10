@@ -65,11 +65,19 @@ const KNOWN_OPTION_VALUES: Record<string, Completion[]> = {
  * known candidates on tab. Keys are the space-joined command path relative
  * to root, e.g. "open dashboard".
  */
+const SWITCH_TARGET_COMPLETIONS: Completion[] = [
+  { name: "dev", description: "Development instance" },
+  { name: "prod", description: "Production instance" },
+  { name: "-", description: "Toggle to the previous instance" },
+];
+
 const KNOWN_POSITIONAL_COMPLETIONS: Record<string, Completion[]> = {
   "open dashboard": KNOWN_DASHBOARD_PATHS.map((path) => ({
     name: path,
     description: "Dashboard subpath",
   })),
+  switch: SWITCH_TARGET_COMPLETIONS,
+  "branch switch": SWITCH_TARGET_COMPLETIONS,
 };
 
 /**

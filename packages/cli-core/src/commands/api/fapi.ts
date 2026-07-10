@@ -14,12 +14,22 @@ import { fetchApplication, type ApplicationInstance } from "../../lib/plapi.ts";
 interface ResolveOptions {
   app?: string;
   instance?: string;
+  branch?: string;
 }
 
 async function resolveInstance(options: ResolveOptions): Promise<ApplicationInstance> {
+  if (options.branch && options.instance) {
+    throwUsageError("Cannot combine --branch and --instance. Pass only one to select an instance.");
+  }
+
   if (options.app) {
     const app = await withApiContext(fetchApplication(options.app), "Failed to resolve instance");
-    const resolved = resolveFetchedApplicationInstance(options.app, app, options.instance);
+    const resolved = resolveFetchedApplicationInstance(
+      options.app,
+      app,
+      options.instance,
+      options.branch,
+    );
     if (!resolved.found) {
       throw new CliError(`Instance ${resolved.instanceId} not found in application.`, {
         code: ERROR_CODE.INSTANCE_NOT_FOUND,
@@ -31,7 +41,11 @@ async function resolveInstance(options: ResolveOptions): Promise<ApplicationInst
 
   let ctx: Awaited<ReturnType<typeof resolveAppContext>>;
   try {
-    ctx = await resolveAppContext({ app: options.app, instance: options.instance });
+    ctx = await resolveAppContext({
+      app: options.app,
+      instance: options.instance,
+      branch: options.branch,
+    });
   } catch (error) {
     if (error instanceof CliError && error.code === ERROR_CODE.NOT_LINKED) {
       throwUsageError(

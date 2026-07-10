@@ -5,7 +5,7 @@ Pulls Clerk API keys for the linked instance and merges them into the project's 
 ## Usage
 
 ```sh
-clerk env pull [--app <app_id>] [--instance dev|prod|<instance_id>] [--file <path>]
+clerk env pull [--app <app_id>] [--instance dev|prod|<instance_id>] [--branch <name>] [--file <path>]
 ```
 
 ### Options
@@ -14,6 +14,7 @@ clerk env pull [--app <app_id>] [--instance dev|prod|<instance_id>] [--file <pat
 | ----------------- | ------------------------------------------------------------------- |
 | `--app <id>`      | Application ID to target directly (works from any directory)        |
 | `--instance <id>` | Instance to target (`dev`, `prod`, or a full instance ID)           |
+| `--branch <name>` | Branch name to target for branch instance keys                      |
 | `--file <path>`   | Target env file, relative to cwd or absolute (default: auto-detect) |
 
 ## Sequence Diagram
@@ -25,7 +26,7 @@ sequenceDiagram
     participant API as Clerk Platform API
     participant FS as File System
 
-    Note over CLI: clerk env pull [--app app_123] [--instance dev|prod] [--file .env]
+    Note over CLI: clerk env pull [--app app_123] [--instance dev|prod] [--branch name] [--file .env]
 
     alt --app flag provided
         CLI->>API: GET /v1/platform/applications/{appId}

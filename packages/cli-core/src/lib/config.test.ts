@@ -16,11 +16,16 @@ const {
   resolveInstanceId,
   resolveAppContext,
   resolveFetchedApplicationInstance,
+  getActiveInstance,
+  setActiveInstance,
+  clearActiveInstance,
+  resolveActiveKey,
   _setConfigDir,
 } = await import("./config.ts");
 type Profile =
   Awaited<ReturnType<typeof getProfile>> extends infer T ? Exclude<T, undefined> : never;
 const plapiModule = await import("./plapi.ts");
+const gitModule = await import("./git.ts");
 
 describe("config", () => {
   let tempDir: string;
@@ -276,6 +281,87 @@ describe("config", () => {
       });
     });
 
+    test("selects the canonical development instance by default when branch instances are listed first", () => {
+      const branchFirstApp = {
+        application_id: "app_123",
+        instances: [
+          {
+            instance_id: "ins_branch",
+            environment_type: "development",
+            publishable_key: "pk_test_branch",
+            branch_name: "agent/pr-42",
+          },
+          {
+            instance_id: "ins_dev",
+            environment_type: "development",
+            publishable_key: "pk_test_dev",
+          },
+        ],
+      };
+
+      const result = resolveFetchedApplicationInstance("app_123", branchFirstApp);
+
+      expect(result).toMatchObject({
+        found: true,
+        instanceId: "ins_dev",
+        instanceLabel: "development",
+      });
+    });
+
+    test("excludes branch-linked instances even if branch_name is missing", () => {
+      const branchLinkedApp = {
+        application_id: "app_123",
+        instances: [
+          {
+            instance_id: "ins_branch",
+            environment_type: "development",
+            publishable_key: "pk_test_branch",
+            parent_instance_id: "ins_dev",
+          },
+          {
+            instance_id: "ins_dev",
+            environment_type: "development",
+            publishable_key: "pk_test_dev",
+          },
+        ],
+      };
+
+      const result = resolveFetchedApplicationInstance("app_123", branchLinkedApp);
+
+      expect(result).toMatchObject({
+        found: true,
+        instanceId: "ins_dev",
+        instanceLabel: "development",
+      });
+    });
+
+    test("selects the canonical development instance for dev aliases when branch instances are listed first", () => {
+      const branchFirstApp = {
+        application_id: "app_123",
+        instances: [
+          {
+            instance_id: "ins_branch",
+            environment_type: "development",
+            publishable_key: "pk_test_branch",
+            branch_name: "agent/pr-42",
+          },
+          {
+            instance_id: "ins_dev",
+            environment_type: "development",
+            publishable_key: "pk_test_dev",
+          },
+        ],
+      };
+
+      const result = resolveFetchedApplicationInstance("app_123", branchFirstApp, "dev");
+
+      expect(result).toMatchObject({
+        found: true,
+        instanceId: "ins_dev",
+        instanceLabel: "development",
+      });
+    });
+
     test("returns explicit missing state for unknown literal instance ids", () => {
       const result = resolveFetchedApplicationInstance("app_123", app, "ins_missing_123");
 
@@ -284,6 +370,80 @@ describe("config", () => {
         instanceId: "ins_missing_123",
         instanceLabel: "ins_missing_123",
       });
+    });
+
+    test("matches a branch by name", () => {
+      const branchApp = {
+        application_id: "app_1",
+        instances: [
+          { instance_id: "ins_prod", environment_type: "production", publishable_key: "pk_live_x" },
+          {
+            instance_id: "ins_branch",
+            environment_type: "development",
+            publishable_key: "pk_test_y",
+            branch_name: "agent/pr-42",
+          },
+        ],
+      };
+
+      const r = resolveFetchedApplicationInstance("app_1", branchApp, undefined, "agent/pr-42");
+      expect(r.found).toBe(true);
+      expect(r.instanceId).toBe("ins_branch");
+      expect(r.instanceLabel).toBe("agent/pr-42");
+    });
+
+    test("throws INSTANCE_NOT_FOUND when branch name does not match any instance", () => {
+      const branchApp = {
+        application_id: "app_1",
+        instances: [
+          { instance_id: "ins_prod", environment_type: "production", publishable_key: "pk_live_x" },
+        ],
+      };
+
+      expect(() =>
+        resolveFetchedApplicationInstance("app_1", branchApp, undefined, "no-such-branch"),
+      ).toThrow("No branch named");
+    });
+
+    test("raw branch instance id is labeled by branch name", () => {
+      const branchApp = {
+        application_id: "app_1",
+        instances: [
+          { instance_id: "ins_dev", environment_type: "development", publishable_key: "pk" },
+          {
+            instance_id: "ins_b",
+            environment_type: "development",
+            publishable_key: "pk",
+            branch_name: "pr-9",
+            parent_instance_id: "ins_dev",
+          },
+        ],
+      };
+
+      const result = resolveFetchedApplicationInstance("app_1", branchApp, "ins_b");
+
+      expect(result.found).toBe(true);
+      expect(result.instanceLabel).toBe("pr-9");
+    });
+
+    test("raw non-branch instance id is labeled by env", () => {
+      const branchApp = {
+        application_id: "app_1",
+        instances: [
+          { instance_id: "ins_dev", environment_type: "development", publishable_key: "pk" },
+          {
+            instance_id: "ins_b",
+            environment_type: "development",
+            publishable_key: "pk",
+            branch_name: "pr-9",
+            parent_instance_id: "ins_dev",
+          },
+        ],
+      };
+
+      const result = resolveFetchedApplicationInstance("app_1", branchApp, "ins_dev");
+
+      expect(result.instanceLabel).toBe("development");
     });
   });
 
@@ -308,6 +468,7 @@ describe("config", () => {
         appLabel: "My App",
         instanceId: "ins_custom_123",
         instanceLabel: "staging",
+        instanceSource: "flag",
       });
     });
 
@@ -329,6 +490,180 @@ describe("config", () => {
       ).rejects.toMatchObject({
         code: "instance_not_found",
       });
+    });
+  });
+
+  describe("resolveAppContext (--branch and --instance mutual exclusivity)", () => {
+    test("throws a usage error on the --app path when both are passed", async () => {
+      await expect(
+        resolveAppContext({ app: "app_123", branch: "agent/pr-42", instance: "dev" }),
+      ).rejects.toMatchObject({
+        code: "usage_error",
+        message: "Cannot combine --branch and --instance. Pass only one to select an instance.",
+      });
+      // The guard runs before any application fetch.
+      expect(fetchApplicationSpy).not.toHaveBeenCalled();
+    });
+
+    test("throws a usage error on the linked-profile path when both are passed", async () => {
+      const cwd = process.cwd();
+      await setProfile(cwd, {
+        workspaceId: "org_1",
+        appId: "app_1",
+        instances: { development: "ins_dev" },
+      });
+
+      await expect(
+        resolveAppContext({ branch: "agent/pr-42", instance: "dev" }),
+      ).rejects.toMatchObject({
+        code: "usage_error",
+        message: "Cannot combine --branch and --instance. Pass only one to select an instance.",
+      });
+      expect(fetchApplicationSpy).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("active instance store", () => {
+    test("set then get round-trips by explicit key", async () => {
+      await setActiveInstance("/wt/app-pr-42", {
+        appId: "app_1",
+        instanceId: "ins_branch",
+        label: "agent/pr-42",
+        environmentType: "development",
+      });
+      const active = await getActiveInstance("/wt/app-pr-42");
+      expect(active).toMatchObject({
+        appId: "app_1",
+        instanceId: "ins_branch",
+        label: "agent/pr-42",
+        environmentType: "development",
+      });
+    });
+
+    test("keys are independent per worktree", async () => {
+      await setActiveInstance("/wt/a", {
+        appId: "app_1",
+        instanceId: "ins_a",
+        label: "dev",
+        environmentType: "development",
+      });
+      await setActiveInstance("/wt/b", {
+        appId: "app_1",
+        instanceId: "ins_b",
+        label: "agent/x",
+        environmentType: "development",
+      });
+      expect((await getActiveInstance("/wt/a"))?.instanceId).toBe("ins_a");
+      expect((await getActiveInstance("/wt/b"))?.instanceId).toBe("ins_b");
+    });
+
+    test("clear removes the entry", async () => {
+      await setActiveInstance("/wt/a", {
+        appId: "app_1",
+        instanceId: "ins_a",
+        label: "dev",
+        environmentType: "development",
+      });
+      await clearActiveInstance("/wt/a");
+      expect(await getActiveInstance("/wt/a")).toBeUndefined();
+    });
+
+    test("migration drops malformed active entries and keeps well-formed ones", async () => {
+      const rawConfig = {
+        profiles: {},
+        active: {
+          "/wt/good": {
+            appId: "app_1",
+            instanceId: "ins_good",
+            label: "dev",
+            environmentType: "development",
+          },
+          "/wt/missing-fields": { appId: "app_1" },
+          "/wt/bad-env": {
+            appId: "app_1",
+            instanceId: "ins_bad",
+            label: "dev",
+            environmentType: "staging",
+          },
+        },
+      };
+      await Bun.write(`${tempDir}/config.json`, JSON.stringify(rawConfig));
+      expect(await getActiveInstance("/wt/good")).toMatchObject({ instanceId: "ins_good" });
+      expect(await getActiveInstance("/wt/missing-fields")).toBeUndefined();
+      expect(await getActiveInstance("/wt/bad-env")).toBeUndefined();
+    });
+
+    test("resolveActiveKey uses the git worktree root when in a repo", async () => {
+      const spy = spyOn(gitModule, "getGitRepoRoot").mockResolvedValue("/repo/root");
+      try {
+        expect(await resolveActiveKey("/repo/root/sub")).toBe("/repo/root");
+      } finally {
+        spy.mockRestore();
+      }
+    });
+
+    test("resolveActiveKey falls back to cwd outside a git repo", async () => {
+      const spy = spyOn(gitModule, "getGitRepoRoot").mockResolvedValue(undefined);
+      try {
+        expect(await resolveActiveKey("/some/cwd")).toBe("/some/cwd");
+      } finally {
+        spy.mockRestore();
+      }
+    });
+  });
+
+  describe("resolveAppContext honors persisted active instance", () => {
+    test("no flag falls back to persisted active over development default", async () => {
+      await setProfile("/repo", {
+        workspaceId: "wsp_1",
+        appId: "app_1",
+        instances: { development: "ins_dev", production: "ins_prod" },
+      });
+      await setActiveInstance("/repo", {
+        appId: "app_1",
+        instanceId: "ins_branch",
+        label: "agent/pr-42",
+        environmentType: "development",
+      });
+
+      const ctx = await resolveAppContext({ cwd: "/repo" });
+      expect(ctx.instanceId).toBe("ins_branch");
+      expect(ctx.instanceLabel).toBe("agent/pr-42");
+    });
+
+    test("explicit --instance overrides persisted active", async () => {
+      await setProfile("/repo", {
+        workspaceId: "wsp_1",
+        appId: "app_1",
+        instances: { development: "ins_dev", production: "ins_prod" },
+      });
+      await setActiveInstance("/repo", {
+        appId: "app_1",
+        instanceId: "ins_branch",
+        label: "agent/pr-42",
+        environmentType: "development",
+      });
+
+      const ctx = await resolveAppContext({ cwd: "/repo", instance: "dev" });
+      expect(ctx.instanceId).toBe("ins_dev");
+      expect(ctx.instanceLabel).toBe("development");
+    });
+
+    test("stale cross-app active pointer is ignored", async () => {
+      await setProfile("/repo", {
+        workspaceId: "wsp_1",
+        appId: "app_1",
+        instances: { development: "ins_dev" },
+      });
+      await setActiveInstance("/repo", {
+        appId: "app_OTHER",
+        instanceId: "ins_x",
+        label: "agent/x",
+        environmentType: "development",
+      });
+
+      const ctx = await resolveAppContext({ cwd: "/repo" });
+      expect(ctx.instanceId).toBe("ins_dev");
     });
   });
 });

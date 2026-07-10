@@ -4,6 +4,8 @@ Toggle Clerk billing for organizations and/or users on the linked instance.
 The handlers are wired to top-level `clerk enable billing` and `clerk disable
 billing` commands.
 
+In human mode, the command frame title echoes the resolved target instance as a dim `· on <instance>` suffix (for example `· on feature-auth` when the active pointer targets a branch), so it is always visible which instance the command acts on.
+
 For arbitrary billing config edits (plans, trials, payment-method requirements)
 use `clerk config patch --json '{"billing":{...}}'` until a dedicated
 `clerk billing settings` command lands.
@@ -29,14 +31,15 @@ clerk enable billing                     # defaults to both
 
 ## Options
 
-| Flag              | Description                                                                       |
-| ----------------- | --------------------------------------------------------------------------------- |
-| `--for <targets>` | Targets (`orgs` and/or `users`), separated by spaces or commas. Defaults to both. |
-| `--app <id>`      | Target a specific application                                                     |
-| `--instance <id>` | Target a specific instance (dev, prod)                                            |
-| `--yes`           | Skip the confirmation prompt                                                      |
-| `--dry-run`       | Preview the patch without applying it                                             |
-| `--no-skills`     | Skip the post-enable `clerk-billing` agent skill install (enable only)            |
+| Flag              | Description                                                                         |
+| ----------------- | ----------------------------------------------------------------------------------- |
+| `--for <targets>` | Targets (`orgs` and/or `users`), separated by spaces or commas. Defaults to both.   |
+| `--app <id>`      | Target a specific application                                                       |
+| `--instance <id>` | Target a specific instance (dev, prod)                                              |
+| `--branch <name>` | Target a branch by name (e.g. `agent/pr-42`). Mutually exclusive with `--instance`. |
+| `--yes`           | Skip the confirmation prompt                                                        |
+| `--dry-run`       | Preview the patch without applying it                                               |
+| `--no-skills`     | Skip the post-enable `clerk-billing` agent skill install (enable only)              |
 
 ## Agent skill
 

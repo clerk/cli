@@ -1,20 +1,17 @@
-import { resolveAppContext } from "../../lib/config.ts";
+import { resolveAppContext, type AppContextOptions } from "../../lib/config.ts";
 import { fetchInstanceConfig } from "../../lib/plapi.ts";
 import { withApiContext } from "../../lib/errors.ts";
-import { withGutter, withSpinner } from "../../lib/spinner.ts";
+import { withGutter, withSpinner, formatTargetSuffix } from "../../lib/spinner.ts";
 import { log } from "../../lib/log.ts";
 
-interface ConfigPullOptions {
-  app?: string;
-  instance?: string;
+interface ConfigPullOptions extends AppContextOptions {
   output?: string;
   keys?: string[];
 }
 
 export async function configPull(options: ConfigPullOptions): Promise<void> {
-  await withGutter("Pulling configuration", async () => {
-    const ctx = await resolveAppContext(options);
-
+  const ctx = await resolveAppContext(options);
+  await withGutter(`Pulling configuration${formatTargetSuffix(ctx.instanceLabel)}`, async () => {
     const config = await withSpinner(
       `Pulling config from ${ctx.appLabel} (${ctx.instanceLabel})...`,
       () =>

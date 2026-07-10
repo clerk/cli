@@ -16,6 +16,7 @@ mock.module("../../lib/open.ts", () => ({
 }));
 
 mock.module("../../lib/spinner.ts", () => ({
+  formatTargetSuffix: (label?: string) => (label ? ` · on ${label}` : ""),
   intro: () => {},
   outro: () => {},
   pausedOutro: () => {},

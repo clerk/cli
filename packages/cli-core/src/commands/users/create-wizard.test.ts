@@ -24,6 +24,7 @@ mock.module("../../lib/prompts.ts", () => ({
   editor: async () => "",
 }));
 mock.module("../../lib/spinner.ts", () => ({
+  formatTargetSuffix: (label?: string) => (label ? ` · on ${label}` : ""),
   withSpinner: async (_msg: string, fn: () => Promise<unknown>) => fn(),
   intro: () => {},
   outro: () => {},

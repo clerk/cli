@@ -5,13 +5,14 @@ import { log } from "../../lib/log.ts";
 import { confirm } from "../../lib/prompts.ts";
 import { detectPackageManager } from "../../lib/package-manager.ts";
 import { NEXT_STEPS } from "../../lib/next-steps.ts";
-import { withGutter } from "../../lib/spinner.ts";
+import { withGutter, formatTargetSuffix } from "../../lib/spinner.ts";
 import { resolveSkillsRunner, runSkillsAdd } from "../../lib/skills.ts";
 import { applyConfigPatch } from "../config/apply-patch.ts";
 
 interface BillingOptions {
   app?: string;
   instance?: string;
+  branch?: string;
   for?: string[];
   yes?: boolean;
   dryRun?: boolean;
@@ -71,23 +72,26 @@ export async function billingEnable(options: BillingOptions): Promise<void> {
     billing.user_enabled = true;
   }
 
-  await withGutter("Enabling billing", async ({ setNextSteps }) => {
-    const applied = await applyConfigPatch({
-      ctx,
-      payload,
-      verb: `Enabling billing for ${describeTargets(targets)}`,
-      successMessage: `Billing enabled for ${describeTargets(targets)}`,
-      failureContext: "Failed to enable billing",
-      yes: options.yes,
-      dryRun: options.dryRun,
-    });
+  await withGutter(
+    `Enabling billing${formatTargetSuffix(ctx.instanceLabel)}`,
+    async ({ setNextSteps }) => {
+      const applied = await applyConfigPatch({
+        ctx,
+        payload,
+        verb: `Enabling billing for ${describeTargets(targets)}`,
+        successMessage: `Billing enabled for ${describeTargets(targets)}`,
+        failureContext: "Failed to enable billing",
+        yes: options.yes,
+        dryRun: options.dryRun,
+      });
 
-    if (!applied || options.dryRun) return;
+      if (!applied || options.dryRun) return;
 
-    // `clerk init` doesn't bundle clerk-billing — it's opt-in. Surface it here.
-    if (options.skills !== false) await offerBillingSkillInstall(options);
-    setNextSteps(NEXT_STEPS.ENABLE_BILLING);
-  });
+      // `clerk init` does not bundle clerk-billing because it is opt-in.
+      if (options.skills !== false) await offerBillingSkillInstall(options);
+      setNextSteps(NEXT_STEPS.ENABLE_BILLING);
+    },
+  );
 }
 
 async function offerBillingSkillInstall(options: BillingOptions): Promise<void> {
@@ -129,7 +133,7 @@ export async function billingDisable(options: BillingOptions): Promise<void> {
   if (targets.includes("orgs")) billing.organization_enabled = false;
   if (targets.includes("users")) billing.user_enabled = false;
 
-  await withGutter("Disabling billing", async () => {
+  await withGutter(`Disabling billing${formatTargetSuffix(ctx.instanceLabel)}`, async () => {
     await applyConfigPatch({
       ctx,
       payload: { billing },

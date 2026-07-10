@@ -36,6 +36,7 @@ export const mockState = {
   gitNormalizedRemote: "github.com/test/project" as string | undefined,
   gitRepoRoot: "/repo" as string | undefined,
   gitRepoIdentifier: "/repo/.git" as string | undefined,
+  gitCurrentBranch: undefined as string | undefined,
 };
 
 // ── Module mocks (executed at import time) ───────────────────────────────────
@@ -88,6 +89,7 @@ mock.module(
       getGitRepoRoot: async () => mockState.gitRepoRoot,
       getGitRepoIdentifier: async () => mockState.gitRepoIdentifier,
       getGitNormalizedRemote: async () => mockState.gitNormalizedRemote,
+      getGitCurrentBranch: async () => mockState.gitCurrentBranch,
       normalizeGitRemoteUrl: (url: string) => url,
     }) satisfies typeof import("../../../lib/git.ts"),
 );
@@ -545,6 +547,7 @@ export async function setupTest(): Promise<TestHarness> {
   mockState.gitNormalizedRemote = "github.com/test/project";
   mockState.gitRepoRoot = "/repo";
   mockState.gitRepoIdentifier = "/repo/.git";
+  mockState.gitCurrentBranch = undefined;
   resetPromptQueues();
   http.reset();
   process.stdin.isTTY = true;

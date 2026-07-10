@@ -17,13 +17,19 @@ mock.module("../../lib/spinner.ts", () => ({
   outro: () => {},
   pausedOutro: () => {},
   bar: () => {},
+  formatTargetSuffix: (label?: string) => (label ? ` · on ${label}` : ""),
   withGutter: async (
-    _title: string,
+    title: string,
     fn: (controls: { setNextSteps: (steps: readonly string[]) => void }) => Promise<unknown>,
-  ) => fn({ setNextSteps: () => {} }),
-  withSpinner: async (msg: string, fn: () => Promise<unknown>) => {
+  ) => {
+    console.error(title);
+    return fn({ setNextSteps: () => {} });
+  },
+  withSpinner: async (msg: string, fn: () => Promise<unknown>, doneMessage?: string) => {
     console.error(msg);
-    return fn();
+    const result = await fn();
+    if (doneMessage) console.error(doneMessage);
+    return result;
   },
 }));
 
@@ -188,7 +194,14 @@ describe("env pull", () => {
   });
 
   async function runEnvPull(
-    options: { app?: string; instance?: string; file?: string; cwd?: string } = {},
+    options: {
+      app?: string;
+      instance?: string;
+      file?: string;
+      cwd?: string;
+      embed?: boolean;
+      label?: string;
+    } = {},
   ) {
     const { pull } = await import("./pull.ts");
     return pull(options);
@@ -471,6 +484,51 @@ describe("env pull", () => {
 
     await runEnvPull();
     expect(captured.err).toContain("Environment variables written to");
+  });
+
+  test("suffixes the gutter title with the resolved instance label", async () => {
+    await setProfile(tempDir, {
+      workspaceId: "org_1",
+      appId: "app_1",
+      instances: { development: "ins_dev" },
+    });
+
+    await runEnvPull();
+    expect(errorSpy).toHaveBeenCalledWith(
+      expect.stringContaining("Pulling environment variables · on development"),
+    );
+  });
+
+  test("embed mode renders a single synced step without its own frame", async () => {
+    await setProfile(tempDir, {
+      workspaceId: "org_1",
+      appId: "app_1",
+      instances: { development: "ins_dev" },
+    });
+
+    await runEnvPull({ embed: true });
+
+    expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining("Syncing .env.local from"));
+    expect(errorSpy).toHaveBeenCalledWith("Synced .env.local from development");
+    expect(errorSpy).not.toHaveBeenCalledWith(
+      expect.stringContaining("Pulling environment variables"),
+    );
+    expect(captured.err).not.toContain("Environment variables written to");
+
+    const content = await Bun.file(join(tempDir, ".env.local")).text();
+    expect(content).toContain("CLERK_SECRET_KEY=sk_test_xyz789");
+  });
+
+  test("embed mode label option overrides the resolved context label", async () => {
+    await setProfile(tempDir, {
+      workspaceId: "org_1",
+      appId: "app_1",
+      instances: { development: "ins_dev" },
+    });
+
+    await runEnvPull({ embed: true, label: "feature/checkout" });
+
+    expect(errorSpy).toHaveBeenCalledWith("Synced .env.local from feature/checkout");
   });
 
   test("errors when instance not found in API response", async () => {

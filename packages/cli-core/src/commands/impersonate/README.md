@@ -33,6 +33,7 @@ clerk imp revoke act_29w9...                 # revoke a pending actor token
 | `--secret-key <key>`     | both       | Backend API secret key to use                                                                                    |
 | `--app <id>`             | both       | Application ID to target (works from any directory)                                                              |
 | `--instance <id>`        | both       | Instance to target (`dev`, `prod`, or a full instance ID)                                                        |
+| `--branch <name>`        | both       | Target a branch by name (e.g. `agent/pr-42`). Mutually exclusive with `--instance`.                              |
 | `--actor <context>`      | create     | Extra context appended to the actor stamp: `cli:<email>+<context>`                                               |
 | `--expires-in <seconds>` | create     | Actor token lifetime in seconds, integer >= 1. Defaults to 3600 (1 hour), matching the dashboard's short expiry. |
 | `--open`                 | create     | Open the sign-in URL in your browser immediately, skipping the prompt                                            |
@@ -77,6 +78,10 @@ one instance it errors and asks for an explicit `--instance` rather than
 defaulting, so the same command can't resolve a different instance depending on
 which instances the app happens to have. `--instance` or `--secret-key` always
 pins the instance.
+
+The prompt groups branch instances under the instance they were forked from
+(tree-indented) instead of listing every instance flat, and shows a relative
+created-at column (e.g. `3d ago`) alongside each entry.
 
 ## Confirmation and the production guardrail
 

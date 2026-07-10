@@ -26,6 +26,7 @@ export type ImpersonateOptions = {
   secretKey?: string;
   app?: string;
   instance?: string;
+  branch?: string;
   actor?: string;
   expiresIn?: number;
   open?: boolean;
@@ -85,6 +86,7 @@ export async function impersonate(options: ImpersonateOptions = {}): Promise<voi
     secretKey: options.secretKey,
     app: options.app,
     instance: options.instance,
+    branch: options.branch,
   });
 
   const userId = await resolveImpersonationTarget(options.user, ctx);

@@ -1,7 +1,7 @@
 import { resolveAppContext } from "../../lib/config.ts";
 import { fetchInstanceConfig } from "../../lib/plapi.ts";
 import { throwUsageError, withApiContext } from "../../lib/errors.ts";
-import { withGutter, withSpinner } from "../../lib/spinner.ts";
+import { withGutter, withSpinner, formatTargetSuffix } from "../../lib/spinner.ts";
 import { isHuman } from "../../mode.ts";
 import { NEXT_STEPS } from "../../lib/next-steps.ts";
 import { applyConfigPatch } from "../config/apply-patch.ts";
@@ -9,6 +9,7 @@ import { applyConfigPatch } from "../config/apply-patch.ts";
 interface OrgsOptions {
   app?: string;
   instance?: string;
+  branch?: string;
   forceSelection?: boolean;
   autoCreate?: boolean;
   maxMembers?: string;
@@ -45,27 +46,30 @@ export async function orgsEnable(options: OrgsOptions): Promise<void> {
     orgSettings.max_allowed_memberships = parsePositiveInt(options.maxMembers, "--max-members");
   }
 
-  await withGutter("Enabling organizations", async ({ setNextSteps }) => {
-    const applied = await applyConfigPatch({
-      ctx,
-      payload: { organization_settings: orgSettings },
-      verb: "Enabling organizations",
-      successMessage: "Organizations enabled",
-      failureContext: "Failed to enable organizations",
-      yes: options.yes,
-      dryRun: options.dryRun,
-    });
+  await withGutter(
+    `Enabling organizations${formatTargetSuffix(ctx.instanceLabel)}`,
+    async ({ setNextSteps }) => {
+      const applied = await applyConfigPatch({
+        ctx,
+        payload: { organization_settings: orgSettings },
+        verb: "Enabling organizations",
+        successMessage: "Organizations enabled",
+        failureContext: "Failed to enable organizations",
+        yes: options.yes,
+        dryRun: options.dryRun,
+      });
 
-    if (applied && !options.dryRun) {
-      setNextSteps(NEXT_STEPS.ENABLE_ORGS);
-    }
-  });
+      if (applied && !options.dryRun) {
+        setNextSteps(NEXT_STEPS.ENABLE_ORGS);
+      }
+    },
+  );
 }
 
 export async function orgsDisable(options: OrgsOptions): Promise<void> {
   const ctx = await resolveAppContext(options);
 
-  await withGutter("Disabling organizations", async () => {
+  await withGutter(`Disabling organizations${formatTargetSuffix(ctx.instanceLabel)}`, async () => {
     const current = await withSpinner("Fetching current config...", () =>
       withApiContext(
         fetchInstanceConfig(ctx.appId, ctx.instanceId, ["billing", "organization_settings"]),

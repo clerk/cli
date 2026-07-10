@@ -62,6 +62,14 @@ export const ERROR_CODE = {
   IMPERSONATION_NOT_ENABLED: "impersonation_not_enabled",
   /** Actor token creation rejected because the impersonation quota is exhausted. */
   IMPERSONATION_LIMIT_EXCEEDED: "impersonation_limit_exceeded",
+  /**
+   * Refusing to act on the worktree's active instance.
+   */
+  ACTIVE_INSTANCE: "active_instance",
+  /**
+   * Agent mode requires explicit confirmation for this action.
+   */
+  CONFIRMATION_REQUIRED: "confirmation_required",
 } as const;
 
 export type ErrorCode = (typeof ERROR_CODE)[keyof typeof ERROR_CODE];

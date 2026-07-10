@@ -1,7 +1,7 @@
 import type { Program } from "../../cli-program.ts";
 import { getAuthToken } from "../../lib/plapi.ts";
 import { getBapiBaseUrl, getPlapiBaseUrl } from "../../lib/environment.ts";
-import { normalizeBapiPath, resolveBapiSecretKey } from "../../lib/bapi-command.ts";
+import { normalizeBapiPath, resolveBapiTarget, type BapiTarget } from "../../lib/bapi-command.ts";
 import { type ApiResponse } from "../../lib/fetch.ts";
 import { bapiRequest } from "../../lib/bapi.ts";
 import { fapiRequest } from "../../lib/fapi.ts";
@@ -16,7 +16,7 @@ import {
 } from "../../lib/errors.ts";
 import { isHuman } from "../../mode.ts";
 import { confirm } from "../../lib/prompts.ts";
-import { withSpinner, intro, outro, pausedOutro } from "../../lib/spinner.ts";
+import { withSpinner, intro, outro, pausedOutro, formatTargetSuffix } from "../../lib/spinner.ts";
 import { isInsideGutter, log } from "../../lib/log.ts";
 
 export interface ApiOptions {
@@ -27,6 +27,7 @@ export interface ApiOptions {
   app?: string;
   secretKey?: string;
   instance?: string;
+  branch?: string;
   platform?: boolean;
   fapi?: boolean;
   dryRun?: boolean;
@@ -50,6 +51,7 @@ function validateFapiOptions(options: ApiOptions): void {
 /** Resolve the API surface (base URL + request executor) from the flags. */
 async function resolveApiTarget(
   options: ApiOptions,
+  preResolved?: BapiTarget,
 ): Promise<{ baseUrl: string; runRequest: RunRequest }> {
   if (options.fapi) {
     const fapiHost = await resolveFapiHost(options);
@@ -63,7 +65,7 @@ async function resolveApiTarget(
     return { baseUrl, runRequest: (req) => bapiRequest({ ...req, secretKey, baseUrl }) };
   }
 
-  const secretKey = await resolveBapiSecretKey(options);
+  const secretKey = preResolved?.secretKey ?? (await resolveBapiTarget(options)).secretKey;
   const baseUrl = getBapiBaseUrl();
   return { baseUrl, runRequest: (req) => bapiRequest({ ...req, secretKey, baseUrl }) };
 }
@@ -74,7 +76,13 @@ export async function api(
   options: ApiOptions,
 ): Promise<void> {
   const nested = isInsideGutter();
-  if (!nested) intro("Calling Clerk API");
+  // Resolve the default-BAPI target up front so the intro names the instance
+  // the request will hit. Other surfaces (fapi/platform) and the no-network
+  // routes (interactive, ls, dry-run) keep the generic intro.
+  const isDirectBapiRequest =
+    Boolean(endpoint) && endpoint !== "ls" && !options.fapi && !options.platform && !options.dryRun;
+  const preResolved = isDirectBapiRequest ? await resolveBapiTarget(options) : undefined;
+  if (!nested) intro(`Calling Clerk API${formatTargetSuffix(preResolved?.instanceLabel)}`);
   let closeStatus: "success" | "failed" | "paused" | undefined;
 
   try {
@@ -117,7 +125,7 @@ export async function api(
     if (options.fapi) {
       validateFapiOptions(options);
     }
-    const { runRequest } = await resolveApiTarget(options);
+    const { runRequest } = await resolveApiTarget(options, preResolved);
 
     // 5. Confirmation for mutating methods
     if (MUTATING_METHODS.has(method) && isHuman() && !options.yes) {
@@ -246,6 +254,7 @@ export function registerApi(program: Program): void {
     .option("--app <id>", "Application ID to target when resolving keys")
     .option("--secret-key <key>", "Override the secret key")
     .option("--instance <id>", "Instance to target (dev, prod, or instance ID)")
+    .option("--branch <name>", "Target a branch by name (e.g. agent/pr-42)")
     .option("--platform", "Use Platform API instead of Backend API")
     .option(
       "--fapi",

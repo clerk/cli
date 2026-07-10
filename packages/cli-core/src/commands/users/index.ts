@@ -43,6 +43,7 @@ export function registerUsers(program: Program): void {
     .option("--secret-key <key>", "Backend API secret key to use")
     .option("--app <id>", "Application ID to target (works from any directory)")
     .option("--instance <id>", "Instance to target (dev, prod, or a full instance ID)")
+    .option("--branch <name>", "Target a branch by name (e.g. agent/pr-42)")
     .setExamples([
       { command: "clerk users list", description: "List users" },
       {
@@ -106,6 +107,7 @@ export function registerUsers(program: Program): void {
     .option("--secret-key <key>", "Backend API secret key to use")
     .option("--app <id>", "Application ID to target (works from any directory)")
     .option("--instance <id>", "Instance to target (dev, prod, or a full instance ID)")
+    .option("--branch <name>", "Target a branch by name (e.g. agent/pr-42)")
     .setExamples([
       { command: "clerk users list", description: "List users with the default ordering" },
       {
@@ -161,6 +163,7 @@ export function registerUsers(program: Program): void {
     .option("--secret-key <key>", "Backend API secret key to use")
     .option("--app <id>", "Application ID to target (works from any directory)")
     .option("--instance <id>", "Instance to target (dev, prod, or a full instance ID)")
+    .option("--branch <name>", "Target a branch by name (e.g. agent/pr-42)")
     .setExamples([
       { command: "clerk users open", description: "Pick app (if not linked) and user, then open" },
       {

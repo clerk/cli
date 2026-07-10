@@ -1,9 +1,9 @@
-import { resolveBapiSecretKey } from "../../lib/bapi-command.ts";
+import { resolveBapiTarget } from "../../lib/bapi-command.ts";
 import { dim, cyan } from "../../lib/color.ts";
 import { CliError, ERROR_CODE, UserAbortError, isPromptExitError } from "../../lib/errors.ts";
 import { isInsideGutter, log } from "../../lib/log.ts";
 import { isAgent, isHuman } from "../../mode.ts";
-import { withSpinner, intro, outro, pausedOutro } from "../../lib/spinner.ts";
+import { withSpinner, intro, outro, pausedOutro, formatTargetSuffix } from "../../lib/spinner.ts";
 import { bapiRequest } from "../../lib/bapi.ts";
 import { resolveUsersInstanceContext } from "./interactive/instance-context.ts";
 import { registerUsersAction } from "./registry.ts";
@@ -13,6 +13,7 @@ type UsersListOptions = {
   secretKey?: string;
   app?: string;
   instance?: string;
+  branch?: string;
   limit?: number;
   offset?: number;
   query?: string;
@@ -129,13 +130,17 @@ function formatUsersTable(users: BapiUser[]): void {
   }
 }
 
-async function resolveListSecretKey(options: UsersListOptions): Promise<string> {
+async function resolveListTarget(
+  options: UsersListOptions,
+): Promise<{ secretKey: string; instanceLabel?: string }> {
   try {
-    return await resolveBapiSecretKey({
+    const target = await resolveBapiTarget({
       secretKey: options.secretKey,
       app: options.app,
       instance: options.instance,
+      branch: options.branch,
     });
+    return { secretKey: target.secretKey, instanceLabel: target.instanceLabel };
   } catch (error) {
     // Mirror `users create`: when there is no link, no env var, and no
     // targeting flags, fall back to the shared picker-aware resolver in human
@@ -155,7 +160,7 @@ async function resolveListSecretKey(options: UsersListOptions): Promise<string> 
       error.code === ERROR_CODE.NO_SECRET_KEY
     ) {
       const ctx = await resolveUsersInstanceContext({});
-      return ctx.secretKey;
+      return { secretKey: ctx.secretKey, instanceLabel: ctx.instanceLabel };
     }
     throw error;
   }
@@ -164,11 +169,14 @@ async function resolveListSecretKey(options: UsersListOptions): Promise<string> 
 export async function list(options: UsersListOptions = {}): Promise<void> {
   const nested = isInsideGutter();
   const shouldWrap = !nested && !options.json && !isAgent();
-  if (shouldWrap) intro("Listing users");
+  // Resolve the target before opening the frame so the intro can echo which
+  // instance this command is about to act on.
+  const target = await resolveListTarget(options);
+  if (shouldWrap) intro(`Listing users${formatTargetSuffix(target.instanceLabel)}`);
   let closeStatus: "success" | "failed" | "paused" | undefined;
 
   try {
-    const secretKey = await resolveListSecretKey(options);
+    const { secretKey } = target;
     const limit = options.limit ?? DEFAULT_LIMIT;
     const offset = options.offset ?? 0;
     // Request one extra row so we can detect whether more pages exist without
