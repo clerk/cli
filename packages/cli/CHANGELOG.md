@@ -1,5 +1,11 @@
 # clerk
 
+## 2.0.1
+
+### Patch Changes
+
+- Prevent `clerk init` from executing an attacker-planted `node_modules/.bin/{prettier,biome,skills}` binary from the project being set up. The formatter and skills steps now pin the package runner to the registry (`bunx --package <pkg>@latest -- …`, and the pnpm/yarn `dlx` equivalents) so it runs the real tool instead of a project-local bin shadow. ([#377](https://github.com/clerk/cli/pull/377)) by [@rafa-thayto](https://github.com/rafa-thayto)
+
 ## 2.0.0
 
 ### Major Changes
