@@ -108,10 +108,6 @@ interface AuthErrorOptions extends Omit<CliErrorOptions, "code"> {
 
 interface BillingErrorOptions extends CliErrorOptions {
   reason: BillingErrorReason;
-  /** Quota ceiling for the current billing period, when the API reports it. */
-  limit?: number;
-  /** Amount of the quota already consumed, when the API reports it. */
-  used?: number;
 }
 
 /**
@@ -188,14 +184,14 @@ export class AuthError extends CliError {
  *
  * Throw this for plan-gating (feature not on the plan) and quota-exhaustion
  * failures so every command surfaces them the same way. The `reason`
- * discriminates the two cases for programmatic consumers, and `limit`/`used`
- * carry quota figures when the API reports them. Callers still supply a
- * feature-specific `code` (e.g. {@link ERROR_CODE.IMPERSONATION_LIMIT_EXCEEDED})
- * and a human-readable message.
+ * discriminates the two cases for programmatic consumers. Callers still supply
+ * a feature-specific `code` (e.g. {@link ERROR_CODE.IMPERSONATION_LIMIT_EXCEEDED})
+ * and a human-readable message, and typically a `docsUrl` pointing to the
+ * relevant billing page.
  *
  * @example
  * ```ts
- * throw new BillingError("Impersonation isn't enabled on this app's plan.", {
+ * throw new BillingError("Impersonation is available as an add-on.", {
  *   reason: BILLING_ERROR_REASON.PLAN_NOT_ENABLED,
  *   code: ERROR_CODE.IMPERSONATION_NOT_ENABLED,
  * });
@@ -203,16 +199,12 @@ export class AuthError extends CliError {
  */
 export class BillingError extends CliError {
   public reason: BillingErrorReason;
-  public limit?: number;
-  public used?: number;
 
   constructor(message: string, options: BillingErrorOptions) {
-    const { reason, limit, used, ...rest } = options;
+    const { reason, ...rest } = options;
     super(message, rest);
     this.name = "BillingError";
     this.reason = reason;
-    this.limit = limit;
-    this.used = used;
   }
 }
 

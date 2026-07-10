@@ -1,7 +1,8 @@
 import { test, expect, describe, beforeEach, afterEach, mock } from "bun:test";
 import { setMode } from "../../mode.ts";
 import { useCaptureLog } from "../../test/lib/stubs.ts";
-import { BapiError, CliError, ERROR_CODE } from "../../lib/errors.ts";
+import { BapiError, BillingError, CliError, ERROR_CODE } from "../../lib/errors.ts";
+import { getDashboardUrl } from "../../lib/environment.ts";
 
 const mockRequireLoginEmail = mock();
 const mockBuildActorStamp = mock();
@@ -49,6 +50,17 @@ mock.module("../../lib/spinner.ts", () => ({
 const { impersonate } = await import("./impersonate.ts");
 
 const SIGN_IN_URL = "https://example.clerk.accounts.dev/v1/tickets/accept?ticket=tkt_abc";
+const BILLING_URL = `${getDashboardUrl().replace(/\/$/, "")}/settings/billing`;
+
+function reject422(): void {
+  mockBapiRequest.mockRejectedValue(
+    new BapiError(
+      422,
+      JSON.stringify({ errors: [{ message: "limit exceeded", meta: { limit: 100, used: 100 } }] }),
+      new Headers(),
+    ),
+  );
+}
 
 const CTX = {
   secretKey: "sk_test_123",
@@ -223,7 +235,7 @@ describe("impersonate", () => {
     });
   });
 
-  test("402 from BAPI surfaces the plan-gate error, distinct from the quota error", async () => {
+  test("402 surfaces a value-framed add-on message with the billing page as docsUrl", async () => {
     mockBapiRequest.mockRejectedValue(
       new BapiError(402, JSON.stringify({ errors: [{ message: "not enabled" }] }), new Headers()),
     );
@@ -235,21 +247,14 @@ describe("impersonate", () => {
       error = caught;
     }
 
-    expect(error).toBeInstanceOf(CliError);
-    expect((error as CliError).message).toBe("Impersonation isn't enabled on this app's plan.");
-    expect((error as CliError).code).toBe(ERROR_CODE.IMPERSONATION_NOT_ENABLED);
+    expect(error).toBeInstanceOf(BillingError);
+    expect((error as BillingError).message).toBe("Impersonation is available as an add-on.");
+    expect((error as BillingError).code).toBe(ERROR_CODE.IMPERSONATION_NOT_ENABLED);
+    expect((error as BillingError).docsUrl).toBe(BILLING_URL);
   });
 
-  test("422 from BAPI with limit/used meta surfaces a quota message including the counts", async () => {
-    mockBapiRequest.mockRejectedValue(
-      new BapiError(
-        422,
-        JSON.stringify({
-          errors: [{ message: "limit exceeded", meta: { limit: 100, used: 100 } }],
-        }),
-        new Headers(),
-      ),
-    );
+  test("422 surfaces a numberless limit message with the billing page as docsUrl", async () => {
+    reject422();
 
     let error: unknown;
     try {
@@ -258,21 +263,16 @@ describe("impersonate", () => {
       error = caught;
     }
 
-    expect(error).toBeInstanceOf(CliError);
-    expect((error as CliError).message).toBe(
-      "Impersonation limit exceeded (used 100/100 this billing period).",
+    expect(error).toBeInstanceOf(BillingError);
+    expect((error as BillingError).message).toBe(
+      "You've reached your impersonation limit this billing period.",
     );
-    expect((error as CliError).code).toBe(ERROR_CODE.IMPERSONATION_LIMIT_EXCEEDED);
+    expect((error as BillingError).code).toBe(ERROR_CODE.IMPERSONATION_LIMIT_EXCEEDED);
+    expect((error as BillingError).docsUrl).toBe(BILLING_URL);
   });
 
-  test("422 from BAPI without limit/used meta still surfaces a generic quota message", async () => {
-    mockBapiRequest.mockRejectedValue(
-      new BapiError(
-        422,
-        JSON.stringify({ errors: [{ message: "limit exceeded" }] }),
-        new Headers(),
-      ),
-    );
+  test("422 drops the used/limit counts even when BAPI reports them in meta", async () => {
+    reject422();
 
     let error: unknown;
     try {
@@ -281,8 +281,67 @@ describe("impersonate", () => {
       error = caught;
     }
 
-    expect(error).toBeInstanceOf(CliError);
-    expect((error as CliError).message).toBe("Impersonation limit exceeded.");
-    expect((error as CliError).code).toBe(ERROR_CODE.IMPERSONATION_LIMIT_EXCEEDED);
+    expect((error as BillingError).message).not.toMatch(/100/);
+  });
+
+  test("billing block in agent mode throws with docsUrl and never prompts or opens a browser", async () => {
+    setMode("agent");
+    reject422();
+
+    await expect(impersonate({ user: "user_2x9k" })).rejects.toBeInstanceOf(BillingError);
+    expect(mockConfirm).not.toHaveBeenCalled();
+    expect(mockOpenBrowser).not.toHaveBeenCalled();
+  });
+
+  test("billing block with --print prints the URL via the error, no prompt, no browser", async () => {
+    reject422();
+
+    await expect(impersonate({ user: "user_2x9k", print: true, yes: true })).rejects.toBeInstanceOf(
+      BillingError,
+    );
+    expect(mockConfirm).not.toHaveBeenCalled();
+    expect(mockOpenBrowser).not.toHaveBeenCalled();
+  });
+
+  test("billing block with --yes opens the billing page without prompting, then exits non-zero", async () => {
+    reject422();
+
+    await expect(impersonate({ user: "user_2x9k", yes: true })).rejects.toBeInstanceOf(
+      BillingError,
+    );
+    expect(mockConfirm).not.toHaveBeenCalled();
+    expect(mockOpenBrowser).toHaveBeenCalledWith(BILLING_URL);
+  });
+
+  test("billing block in a TTY prompts to upgrade and opens the billing page on yes", async () => {
+    reject422();
+    mockConfirm.mockResolvedValueOnce(true); // "Impersonate ...?"
+    mockConfirm.mockResolvedValueOnce(true); // "Add more impersonations now?"
+
+    await expect(impersonate({ user: "user_2x9k" })).rejects.toBeInstanceOf(BillingError);
+    expect(mockConfirm).toHaveBeenLastCalledWith(
+      expect.objectContaining({ message: "Add more impersonations now?", default: true }),
+    );
+    expect(mockOpenBrowser).toHaveBeenCalledWith(BILLING_URL);
+  });
+
+  test("billing block in a TTY leaves the browser closed when the upgrade prompt is declined", async () => {
+    reject422();
+    mockConfirm.mockResolvedValueOnce(true); // "Impersonate ...?"
+    mockConfirm.mockResolvedValueOnce(false); // "Add more impersonations now?"
+
+    await expect(impersonate({ user: "user_2x9k" })).rejects.toBeInstanceOf(BillingError);
+    expect(mockOpenBrowser).not.toHaveBeenCalled();
+  });
+
+  test("billing block in non-TTY human mode never opens a browser (no --yes)", async () => {
+    setStdinTTY(false);
+    reject422();
+
+    // Pre-flight "Impersonate ...?" confirm still resolves (mocked); the upgrade
+    // nudge must NOT open a browser because stdin is not a TTY and --yes is absent.
+    await expect(impersonate({ user: "user_2x9k" })).rejects.toBeInstanceOf(BillingError);
+    expect(mockConfirm).toHaveBeenCalledTimes(1); // only the pre-flight confirm, no upgrade prompt
+    expect(mockOpenBrowser).not.toHaveBeenCalled();
   });
 });
