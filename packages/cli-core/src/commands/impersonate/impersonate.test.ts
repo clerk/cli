@@ -341,6 +341,7 @@ describe("impersonate", () => {
     // Pre-flight "Impersonate ...?" confirm still resolves (mocked); the upgrade
     // nudge must NOT open a browser because stdin is not a TTY and --yes is absent.
     await expect(impersonate({ user: "user_2x9k" })).rejects.toBeInstanceOf(BillingError);
+    expect(mockConfirm).toHaveBeenCalledTimes(1); // only the pre-flight confirm, no upgrade prompt
     expect(mockOpenBrowser).not.toHaveBeenCalled();
   });
 });
