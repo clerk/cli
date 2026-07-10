@@ -1,5 +1,11 @@
 # clerk
 
+## 2.1.0
+
+### Minor Changes
+
+- Guide you to the billing page to add the impersonation add-on when `clerk impersonate` is blocked by your plan (402) or your billing-period limit (422). In an interactive terminal it offers to open the page for you; `--yes` opens it directly, `--print` and agent mode surface the URL without opening a browser. ([#376](https://github.com/clerk/cli/pull/376)) by [@rafa-thayto](https://github.com/rafa-thayto)
+
 ## 2.0.1
 
 ### Patch Changes
