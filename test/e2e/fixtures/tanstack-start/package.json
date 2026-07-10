@@ -13,7 +13,7 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@tailwindcss/vite": "4.3.1",
+    "@tailwindcss/vite": "4.3.2",
     "@tanstack/react-devtools": "0.10.8",
     "@tanstack/react-router": "1.170.16",
     "@tanstack/react-router-devtools": "1.167.0",
@@ -23,7 +23,7 @@
     "lucide-react": "0.545.0",
     "react": "19.2.7",
     "react-dom": "19.2.7",
-    "tailwindcss": "4.3.1",
+    "tailwindcss": "4.3.2",
     "@clerk/tanstack-react-start": "latest"
   },
   "devDependencies": {
@@ -38,9 +38,9 @@
     "@vitejs/plugin-react": "6.0.3",
     "jsdom": "28.1.0",
     "typescript": "6.0.3",
-    "vite": "8.1.0",
+    "vite": "8.1.2",
     "vitest": "4.1.9",
-    "@rsbuild/core": "2.1.0"
+    "@rsbuild/core": "2.1.2"
   },
   "pnpm": {
     "onlyBuiltDependencies": [
