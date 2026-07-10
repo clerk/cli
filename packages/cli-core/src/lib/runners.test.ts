@@ -83,35 +83,57 @@ describe("runnerCommand", () => {
   const pnpm = KNOWN_RUNNERS.find((r) => r.id === "pnpm")!;
   const yarn = KNOWN_RUNNERS.find((r) => r.id === "yarn")!;
 
-  test("prepends the runner binary for prefix-less runners", () => {
-    expect(runnerCommand(bunx, ["skills", "add", "clerk/skills"])).toEqual([
+  // bunx/npx resolve a project-local node_modules/.bin/<bin> before the
+  // registry. Only an explicit version spec (`@latest`) forces a registry
+  // fetch; a bare `--package <pkg>` still runs the local bin.
+  test("pins <pkg>@latest for prefix-less runners (bunx/npx)", () => {
+    expect(runnerCommand(bunx, "skills", ["skills", "add", "clerk/skills"])).toEqual([
       "bunx",
+      "--package",
+      "skills@latest",
+      "--",
       "skills",
       "add",
       "clerk/skills",
     ]);
-    expect(runnerCommand(npx, ["prettier", "--write", "x.ts"])).toEqual([
+    expect(runnerCommand(npx, "prettier", ["prettier", "--write", "x.ts"])).toEqual([
       "npx",
+      "--package",
+      "prettier@latest",
+      "--",
       "prettier",
       "--write",
       "x.ts",
     ]);
   });
 
-  test("inserts dlx between binary and args for pnpm/yarn", () => {
-    expect(runnerCommand(pnpm, ["prettier", "--write", "x.ts"])).toEqual([
+  test("pins by package name even when the bin name differs (biome)", () => {
+    expect(runnerCommand(bunx, "@biomejs/biome", ["biome", "format", "x.ts"])).toEqual([
+      "bunx",
+      "--package",
+      "@biomejs/biome@latest",
+      "--",
+      "biome",
+      "format",
+      "x.ts",
+    ]);
+  });
+
+  test("uses dlx <pkg>@latest for pnpm/yarn, dropping the redundant bin name", () => {
+    expect(runnerCommand(pnpm, "prettier", ["prettier", "--write", "x.ts"])).toEqual([
       "pnpm",
       "dlx",
-      "prettier",
+      "prettier@latest",
       "--write",
       "x.ts",
     ]);
-    expect(runnerCommand(yarn, ["skills", "add"])).toEqual(["yarn", "dlx", "skills", "add"]);
-  });
-
-  test("handles empty args", () => {
-    expect(runnerCommand(bunx, [])).toEqual(["bunx"]);
-    expect(runnerCommand(pnpm, [])).toEqual(["pnpm", "dlx"]);
+    expect(runnerCommand(yarn, "@biomejs/biome", ["biome", "format", "x.ts"])).toEqual([
+      "yarn",
+      "dlx",
+      "@biomejs/biome@latest",
+      "format",
+      "x.ts",
+    ]);
   });
 });
 
@@ -229,7 +251,7 @@ describe("detectAvailableRunners", () => {
     const runner = preferredRunner("pnpm", available);
     expect(runner.id).toBe("pnpm");
 
-    const command = runnerCommand(runner, ["prettier", "--write", "src/x.ts"]);
-    expect(command).toEqual(["pnpm", "dlx", "prettier", "--write", "src/x.ts"]);
+    const command = runnerCommand(runner, "prettier", ["prettier", "--write", "src/x.ts"]);
+    expect(command).toEqual(["pnpm", "dlx", "prettier@latest", "--write", "src/x.ts"]);
   });
 });

@@ -118,7 +118,17 @@ describe("runFormatters", () => {
     });
     await runFormatters(ctx, ["src/a.ts", "src/b.ts"]);
     expect(spawnCalls).toEqual([
-      ["bunx", "prettier", "--ignore-unknown", "--write", "src/a.ts", "src/b.ts"],
+      [
+        "bunx",
+        "--package",
+        "prettier@latest",
+        "--",
+        "prettier",
+        "--ignore-unknown",
+        "--write",
+        "src/a.ts",
+        "src/b.ts",
+      ],
     ]);
   });
 
@@ -129,8 +139,10 @@ describe("runFormatters", () => {
       deps: { "@biomejs/biome": "1.9.0" },
     });
     await runFormatters(ctx, ["src/a.ts"]);
+    // pnpm dlx fetches the package into an isolated store (no pin needed) and
+    // runs its `biome` bin.
     expect(spawnCalls).toEqual([
-      ["pnpm", "dlx", "@biomejs/biome", "format", "--write", "src/a.ts"],
+      ["pnpm", "dlx", "@biomejs/biome@latest", "format", "--write", "src/a.ts"],
     ]);
   });
 
@@ -142,8 +154,17 @@ describe("runFormatters", () => {
     });
     await runFormatters(ctx, ["x.ts"]);
     expect(spawnCalls).toEqual([
-      ["npx", "prettier", "--ignore-unknown", "--write", "x.ts"],
-      ["npx", "@biomejs/biome", "format", "--write", "x.ts"],
+      [
+        "npx",
+        "--package",
+        "prettier@latest",
+        "--",
+        "prettier",
+        "--ignore-unknown",
+        "--write",
+        "x.ts",
+      ],
+      ["npx", "--package", "@biomejs/biome@latest", "--", "biome", "format", "--write", "x.ts"],
     ]);
   });
 
@@ -156,7 +177,18 @@ describe("runFormatters", () => {
       deps: { prettier: "3.0.0" },
     });
     await runFormatters(ctx, ["x.ts"]);
-    expect(spawnCalls).toEqual([["npx", "prettier", "--ignore-unknown", "--write", "x.ts"]]);
+    expect(spawnCalls).toEqual([
+      [
+        "npx",
+        "--package",
+        "prettier@latest",
+        "--",
+        "prettier",
+        "--ignore-unknown",
+        "--write",
+        "x.ts",
+      ],
+    ]);
   });
 
   test("skips silently when no runners are on PATH", async () => {
@@ -186,7 +218,7 @@ describe("runFormatters", () => {
     const attempted: SpawnArgs[] = [];
     setSpawn((cmd) => {
       attempted.push(cmd);
-      if (cmd[1] === "prettier") {
+      if (cmd.includes("prettier")) {
         throw new Error("spawn failed");
       }
       return { exited: Promise.resolve(0) };
@@ -199,8 +231,17 @@ describe("runFormatters", () => {
     // Should not throw even though prettier spawn blows up.
     await runFormatters(ctx, ["x.ts"]);
     expect(attempted).toEqual([
-      ["npx", "prettier", "--ignore-unknown", "--write", "x.ts"],
-      ["npx", "@biomejs/biome", "format", "--write", "x.ts"],
+      [
+        "npx",
+        "--package",
+        "prettier@latest",
+        "--",
+        "prettier",
+        "--ignore-unknown",
+        "--write",
+        "x.ts",
+      ],
+      ["npx", "--package", "@biomejs/biome@latest", "--", "biome", "format", "--write", "x.ts"],
     ]);
   });
 
@@ -217,8 +258,17 @@ describe("runFormatters", () => {
     await runFormatters(ctx, ["x.ts"]);
     // Both formatters attempted despite prettier exiting non-zero.
     expect(spawnCalls).toEqual([
-      ["npx", "prettier", "--ignore-unknown", "--write", "x.ts"],
-      ["npx", "@biomejs/biome", "format", "--write", "x.ts"],
+      [
+        "npx",
+        "--package",
+        "prettier@latest",
+        "--",
+        "prettier",
+        "--ignore-unknown",
+        "--write",
+        "x.ts",
+      ],
+      ["npx", "--package", "@biomejs/biome@latest", "--", "biome", "format", "--write", "x.ts"],
     ]);
   });
 
@@ -232,7 +282,7 @@ describe("runFormatters", () => {
     expect(spawnCalls).toHaveLength(0);
   });
 
-  test("spawns in the project cwd", async () => {
+  test("pins the package so the runner can't resolve a project-local bin", async () => {
     let seenCwd: string | undefined;
     setSpawn((cmd, opts?: { cwd?: string }) => {
       seenCwd = opts?.cwd;
@@ -245,6 +295,11 @@ describe("runFormatters", () => {
       deps: { prettier: "3.0.0" },
     });
     await runFormatters(ctx, ["x.ts"]);
+
+    const cmd = spawnCalls[0]!;
+    // The bin only appears after the `--`, never as a bare argv the runner
+    // could resolve from node_modules/.bin.
+    expect(cmd.slice(0, 4)).toEqual(["bunx", "--package", "prettier@latest", "--"]);
     expect(seenCwd).toBe(tempDir);
   });
 });

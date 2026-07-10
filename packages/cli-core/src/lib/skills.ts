@@ -59,7 +59,7 @@ export async function runSkillsAdd(
   interactive: boolean,
   label: string,
 ): Promise<boolean> {
-  const command = runnerCommand(runner, buildSkillsArgs(source, skillNames, interactive));
+  const command = runnerCommand(runner, "skills", buildSkillsArgs(source, skillNames, interactive));
   const displayCommand = `${runner.display} skills add ${source}`;
 
   log.blank();

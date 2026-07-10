@@ -134,17 +134,37 @@ export function preferredRunner(
 }
 
 /**
- * Build the full spawn argv for invoking a command via a runner.
+ * Build the full spawn argv for running `pkg`'s binary via a runner.
+ *
+ * `pkg` is the npm package to fetch (`prettier`, `@biomejs/biome`, `skills`).
+ * `command` is the bin invocation: the bin name followed by its args
+ * (`["prettier", "--write", "file.ts"]`, `["biome", "format", …]`,
+ * `["skills", "add", "clerk/skills"]`).
+ *
+ * `bunx`/`npx` resolve a project-local `node_modules/.bin/<bin>` before the
+ * registry, so a plain `bunx prettier` inside an untrusted project would run a
+ * planted bin. Pinning with an explicit version spec (`--package <pkg>@latest`)
+ * forces the runner to fetch `pkg` from the registry and run its bin, never the
+ * project-local shadow — a bare `--package <pkg>` (no version) still resolves
+ * the local install. `pnpm dlx` / `yarn dlx` already fetch into an isolated
+ * store, but take the same `<pkg>@latest` spec for consistency.
  *
  * @example
  * ```ts
- * runnerCommand(bunx, ["skills", "add", "clerk/skills"])
- * // => ["bunx", "skills", "add", "clerk/skills"]
+ * runnerCommand(bunx, "prettier", ["prettier", "--write", "file.ts"])
+ * // => ["bunx", "--package", "prettier@latest", "--", "prettier", "--write", "file.ts"]
  *
- * runnerCommand(pnpm, ["prettier", "--write", "file.ts"])
- * // => ["pnpm", "dlx", "prettier", "--write", "file.ts"]
+ * runnerCommand(pnpm, "@biomejs/biome", ["biome", "format", "file.ts"])
+ * // => ["pnpm", "dlx", "@biomejs/biome@latest", "format", "file.ts"]
  * ```
  */
-export function runnerCommand(runner: Runner, args: readonly string[]): string[] {
-  return [runner.binary, ...runner.prefixArgs, ...args];
+export function runnerCommand(runner: Runner, pkg: string, command: readonly string[]): string[] {
+  // The project's declared version is attacker-controlled (e.g. `file:./evil`),
+  // so pin to the registry's `@latest` rather than anything from package.json.
+  const spec = `${pkg}@latest`;
+  if (runner.prefixArgs.length === 0) {
+    return [runner.binary, "--package", spec, "--", ...command];
+  }
+  // dlx picks the bin from the package, so drop the redundant bin name at command[0].
+  return [runner.binary, ...runner.prefixArgs, spec, ...command.slice(1)];
 }
