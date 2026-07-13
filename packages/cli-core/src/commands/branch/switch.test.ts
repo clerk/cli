@@ -62,6 +62,10 @@ const { branchSwitch } = await import("./switch.ts");
 const APP = {
   application_id: "app_1",
   name: "my-app",
+  // Branching is enabled, so the passive gate (ADR-0015) lets `switch --create`
+  // fork.
+  branches_available: true,
+  branches_enabled: true,
   instances: [
     { instance_id: "ins_dev", environment_type: "development", publishable_key: "pk_dev" },
     { instance_id: "ins_prod", environment_type: "production", publishable_key: "pk_prod" },
@@ -221,6 +225,25 @@ describe("branch switch", () => {
     );
     expect(mockPull).toHaveBeenCalled();
     expect(mockOutro).toHaveBeenCalledWith(expect.stringContaining("(branch of development)"));
+  });
+
+  test("-c refuses with the enable hint when branching is not enabled", async () => {
+    mockFetchApplication.mockResolvedValue({ ...APP, branches_enabled: false });
+    await expect(branchSwitch(undefined, { create: "agent/pr-99" })).rejects.toThrow(
+      /aren't enabled.*clerk enable branches/s,
+    );
+    expect(mockCreateBranch).not.toHaveBeenCalled();
+    expect(mockSetActiveInstance).not.toHaveBeenCalled();
+  });
+
+  test("switching to an existing instance is not gated by enablement", async () => {
+    // Only forking is gated; navigating to an existing branch always works.
+    mockFetchApplication.mockResolvedValue({ ...APP, branches_enabled: false });
+    await branchSwitch("agent/pr-42", { pull: false });
+    expect(mockSetActiveInstance).toHaveBeenCalledWith(
+      "/repo",
+      expect.objectContaining({ instanceId: "ins_branch" }),
+    );
   });
 
   test("--detach outro notes the pointer was not saved", async () => {

@@ -1,6 +1,7 @@
 import type { Program } from "../../cli-program.ts";
 import { orgsEnable, orgsDisable } from "../orgs/index.ts";
 import { billingEnable, billingDisable } from "../billing/index.ts";
+import { branchesEnable, branchesDisable } from "../branch/enable.ts";
 
 /**
  * Registers the `enable` and `disable` feature-toggle commands.
@@ -28,7 +29,24 @@ export function registerToggles(program: Program): void {
         command: "clerk enable billing",
         description: "Enable billing for organizations and users",
       },
+      {
+        command: "clerk enable branches",
+        description: "Enable development branches",
+      },
     ]);
+
+  enable
+    .command("branches")
+    .description("Enable development branches for the application")
+    .option("--app <id>", "Application ID to target (works from any directory)")
+    .setExamples([
+      { command: "clerk enable branches", description: "Enable development branches" },
+      {
+        command: "clerk enable branches --app app_123",
+        description: "Enable for a specific application",
+      },
+    ])
+    .action(branchesEnable);
 
   enable
     .command("orgs")
@@ -110,7 +128,20 @@ export function registerToggles(program: Program): void {
         command: "clerk disable billing",
         description: "Disable billing for organizations and users",
       },
+      {
+        command: "clerk disable branches",
+        description: "Disable development branches (refused while branches exist)",
+      },
     ]);
+
+  disable
+    .command("branches")
+    .description("Disable development branches for the application")
+    .option("--app <id>", "Application ID to target (works from any directory)")
+    .setExamples([
+      { command: "clerk disable branches", description: "Disable development branches" },
+    ])
+    .action(branchesDisable);
 
   disable
     .command("orgs")

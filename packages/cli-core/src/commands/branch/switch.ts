@@ -8,7 +8,12 @@ import {
 import { fetchApplication, createBranch, type ApplicationInstance } from "../../lib/plapi.ts";
 import { getGitCurrentBranch } from "../../lib/git.ts";
 import { pull } from "../env/pull.ts";
-import { instanceLabel, resolveSwitchTarget, pickInstance } from "./shared.ts";
+import {
+  assertBranchingEnabled,
+  instanceLabel,
+  resolveSwitchTarget,
+  pickInstance,
+} from "./shared.ts";
 import { printJson, type AppsOptions } from "../apps/shared.ts";
 import { confirm } from "../../lib/prompts.ts";
 import { isAgent } from "../../mode.ts";
@@ -77,6 +82,9 @@ export async function branchSwitch(
     let parentLabel: string | undefined;
 
     if (options.create) {
+      // Passive gate (ADR-0015): only the fork path is gated; switching to an
+      // existing instance below is always allowed.
+      assertBranchingEnabled(app);
       const parent = resolveSwitchTarget(app, "development");
       // Fork messages read with the bare branch name (`Forking main → …`), not
       // the env-qualified glyph (ADR-0007).

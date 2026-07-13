@@ -2,6 +2,20 @@
 
 Manage Clerk instance branches. Branches are development instances forked from the application's development instance.
 
+## Enabling branching
+
+Development branching is a gated, opt-in feature (ADR-0013). An app enables it with the verb-first toggle **`clerk enable branches`** (and turns it off with **`clerk disable branches`**), which live in the shared `enable`/`disable` family alongside `clerk enable orgs`. There is deliberately **no `clerk branch enable`** subcommand.
+
+- `clerk enable branches [--app <app_id>]` calls the Platform `PATCH /v1/platform/applications/{appId}/branch_settings` route with `{ "enabled": true }`. Enabling names the development root `main` as a system operation; that is its only side effect.
+- `clerk disable branches [--app <app_id>]` sends `{ "enabled": false }`. The server refuses while live forks exist ("delete your branches first") and leaves `main` in place.
+
+The `branch` and `switch` commands are **passive**: they never enable anything. When branching isn't ready, `clerk branch create` and `clerk switch --create` refuse to fork with a hint, reading the serialized app-level `branches_available` / `branches_enabled` state (identical in interactive and non-interactive shells):
+
+- available but not enabled → `Development branches aren't enabled. Run `clerk enable branches` or enable it in the dashboard.`
+- not available → `Development branches aren't available for this instance.`
+
+Switching to an existing instance (`clerk switch main`, `clerk switch <branch>`) is never gated; only forking is.
+
 ## Subcommands
 
 ### `clerk branch create --name <name> [--app <app_id>]`

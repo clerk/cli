@@ -1,6 +1,6 @@
 import type { Application, ApplicationInstance } from "../../lib/plapi.ts";
 import { AutocompletePrompt, isCancel } from "@clack/core";
-import { CliError, ERROR_CODE, throwUserAbort } from "../../lib/errors.ts";
+import { CliError, ERROR_CODE, throwUsageError, throwUserAbort } from "../../lib/errors.ts";
 import { INSTANCE_ALIASES, instanceLabel, isPrimaryInstance } from "../../lib/config.ts";
 import { select, ttyContext } from "../../lib/listage.ts";
 import { formatRelativeTime } from "../../lib/time.ts";
@@ -42,6 +42,24 @@ export function resolveSwitchTarget(app: Application, target: string): Applicati
  */
 export function titleCaseEnvironment(environmentType: string): string {
   return environmentType.charAt(0).toUpperCase() + environmentType.slice(1);
+}
+
+/**
+ * Passive branching gate (ADR-0015): the branch/switch commands never enable
+ * anything, they only refuse to fork with a hint when branching isn't ready.
+ * Reads the serialized application-level state; an available-but-not-enabled app
+ * points at `clerk enable branches`, an unavailable app just reports so. Unset
+ * (older payloads) is treated as not-available (fail-closed, ADR-0013).
+ */
+export function assertBranchingEnabled(app: Application): void {
+  if (app.branches_enabled) return;
+  if (app.branches_available) {
+    throwUsageError(
+      "Development branches aren't enabled. " +
+        "Run `clerk enable branches` or enable it in the dashboard.",
+    );
+  }
+  throwUsageError("Development branches aren't available for this instance.");
 }
 
 // ---------------------------------------------------------------------------

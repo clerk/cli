@@ -163,6 +163,13 @@ export interface Application {
   application_id: string;
   name?: string;
   instances: ApplicationInstance[];
+  /**
+   * Application-level branching gate, computed from the development root and
+   * serialized so the CLI renders the right hint without attempting a fork
+   * (ADR-0013). Both default to unset (fail-closed) on older payloads.
+   */
+  branches_available?: boolean;
+  branches_enabled?: boolean;
 }
 
 export type DomainSummary = {
@@ -379,4 +386,31 @@ export async function deleteInstance(
   );
   const response = await plapiFetch("DELETE", url);
   return response.json() as Promise<Record<string, unknown>>;
+}
+
+/**
+ * Application-level branching gate returned after an enable/disable mutation.
+ */
+export interface BranchSettingsResponse {
+  object: string;
+  branches_available: boolean;
+  branches_enabled: boolean;
+}
+
+/**
+ * Enable or disable development branching for an application via the shared
+ * enable/disable service (ADR-0015). Enabling names the dev root `main` as a
+ * system operation; disabling is refused server-side while forks exist. The
+ * route is gated on the existing PermissionInstancesCreate.
+ */
+export async function updateBranchSettings(
+  applicationId: string,
+  enabled: boolean,
+): Promise<BranchSettingsResponse> {
+  const url = new URL(
+    `/v1/platform/applications/${applicationId}/branch_settings`,
+    getPlapiBaseUrl(),
+  );
+  const response = await plapiFetch("PATCH", url, { body: JSON.stringify({ enabled }) });
+  return response.json() as Promise<BranchSettingsResponse>;
 }
