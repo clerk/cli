@@ -18,7 +18,10 @@ function formatAppsTable(apps: Application[]): void {
   const rows = apps.map((app) => {
     const name = displayName(app).padEnd(nameWidth);
     const id = dim(app.application_id.padEnd(idWidth));
-    const envs = app.instances.map((i) => i.environment_type).join(", ");
+    // Dedupe to unique environment types so branch instances (all `development`)
+    // don't spam the column; this stays an environment view, never branch names
+    // (ADR-0007).
+    const envs = [...new Set(app.instances.map((i) => i.environment_type))].join(", ");
     return `${cyan(name)}${id}${envs}`;
   });
 

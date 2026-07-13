@@ -5,6 +5,7 @@
  */
 
 import type { ApplicationInstance } from "../../../lib/plapi.ts";
+import { instanceLabel } from "../../../lib/config.ts";
 import { formatRelativeTime } from "../../../lib/time.ts";
 
 type PickerChoice = { value: string; name: string };
@@ -47,7 +48,9 @@ export function buildInstancePickerChoices(
   const rows: Row[] = [];
   const visit = (i: ApplicationInstance, root: boolean, indent: string, last: boolean) => {
     const connector = root ? "" : `${indent}${last ? "└─ " : "├─ "}`;
-    const label = i.branch_name ?? i.environment_type;
+    // Adopt the shared env-qualified glyph label so the root reads consistently
+    // with the rest of the CLI (ADR-0007).
+    const label = instanceLabel(i);
     rows.push({ value: i.instance_id, name: `${connector}${label}`, created: i.created_at ?? 0 });
     const kids = (childrenOf.get(i.instance_id) ?? []).sort(
       (a, b) => (a.created_at ?? 0) - (b.created_at ?? 0),

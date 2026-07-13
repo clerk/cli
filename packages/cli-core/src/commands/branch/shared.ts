@@ -1,17 +1,14 @@
 import type { Application, ApplicationInstance } from "../../lib/plapi.ts";
 import { AutocompletePrompt, isCancel } from "@clack/core";
 import { CliError, ERROR_CODE, throwUserAbort } from "../../lib/errors.ts";
-import { INSTANCE_ALIASES, isPrimaryInstance } from "../../lib/config.ts";
+import { INSTANCE_ALIASES, instanceLabel, isPrimaryInstance } from "../../lib/config.ts";
 import { select, ttyContext } from "../../lib/listage.ts";
 import { formatRelativeTime } from "../../lib/time.ts";
 import { bold, cyan, dim, green } from "../../lib/color.ts";
 
-/**
- * Display label for an instance using its branch name or environment type.
- */
-export function instanceLabel(i: ApplicationInstance): string {
-  return i.branch_name || i.environment_type;
-}
+// The env-qualified glyph label lives in lib/config.ts so lib-layer resolvers can
+// share it; re-export it here for the branch command surface (ADR-0007).
+export { instanceLabel };
 
 /**
  * Resolve a switch target string (dev|prod|<branch-name>|<instance-id>) to an
@@ -165,7 +162,9 @@ export function buildInstancePickerOptions(app: Application, now: number): Insta
   const { rows } = buildBranchTable(app);
   return rows.map((row) => ({
     value: row.instance.instance_id,
-    label: instanceLabel(row.instance),
+    // The branch stage runs after the environment is chosen, so rows read as bare
+    // branch names (main, feature-auth) rather than the env-qualified glyph.
+    label: row.instance.branch_name ?? row.instance.environment_type,
     created: createdLabel(row.instance.created_at, now) || undefined,
     instance: row.instance,
     tree: row.kind === "fork" ? branchTreePrefix(row.isLast) : "",

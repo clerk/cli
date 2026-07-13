@@ -143,6 +143,8 @@ export const configStubs = {
   resolveInstanceId: () => ({ id: "", label: "" }),
   resolveAppContext: async () => ({ appId: "", appLabel: "", instanceId: "", instanceLabel: "" }),
   isPrimaryInstance: (i: { parent_instance_id?: string }) => !i.parent_instance_id,
+  instanceLabel: (i: { environment_type: string; branch_name?: string }) =>
+    i.branch_name ? `${i.environment_type} ⎇ ${i.branch_name}` : i.environment_type,
   getActiveInstanceForApp: noop,
   profileLabel: (profile: { appName?: string; appId: string }) =>
     profile.appName ? `${profile.appName} (${profile.appId})` : profile.appId,

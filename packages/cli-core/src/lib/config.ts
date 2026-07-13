@@ -381,6 +381,16 @@ export function isPrimaryInstance(entry: ApplicationInstance): boolean {
 }
 
 /**
+ * Env-qualified glyph label for an instance (ADR-0007): `<environment> ⎇ <branch>`
+ * when it carries a branch name, else just `<environment>`. So the dev root reads
+ * `development ⎇ main`, a fork reads `development ⎇ feature-auth`, production reads
+ * `production`, and a non-enabled app's nameless dev root reads `development`.
+ */
+export function instanceLabel(i: { environment_type: string; branch_name?: string }): string {
+  return i.branch_name ? `${i.environment_type} ⎇ ${i.branch_name}` : i.environment_type;
+}
+
+/**
  * The environment lens `--instance` accepts only the `dev` / `prod` aliases or a
  * literal instance ID. A branch name (including `main`) belongs to the branch
  * lens, so reject it with a hint pointing at `--branch` (ADR-0002).
@@ -440,7 +450,7 @@ export function resolveFetchedApplicationInstance(
       found: true,
       instance: matched,
       instanceId: matched.instance_id,
-      instanceLabel: branch,
+      instanceLabel: instanceLabel(matched),
     };
   }
 
@@ -459,7 +469,7 @@ export function resolveFetchedApplicationInstance(
         found: true,
         instance: matched,
         instanceId: matched.instance_id,
-        instanceLabel: env,
+        instanceLabel: instanceLabel(matched),
       };
     }
 
@@ -470,10 +480,9 @@ export function resolveFetchedApplicationInstance(
         found: true,
         instance: matched,
         instanceId: matched.instance_id,
-        // A branch keeps its branch name as the label so picker/raw-ID selection
-        // matches the --branch path. Branches are always development, so this can
-        // never become "production" and cannot trip the production guardrails.
-        instanceLabel: matched.branch_name || matched.environment_type || instance,
+        // The env-qualified glyph label; a branch renders `development ⎇ <name>`,
+        // never `production`, so it cannot trip the production guardrails.
+        instanceLabel: instanceLabel(matched),
       };
     }
 
@@ -497,7 +506,7 @@ export function resolveFetchedApplicationInstance(
     found: true,
     instance: development,
     instanceId: development.instance_id,
-    instanceLabel: "development",
+    instanceLabel: instanceLabel(development),
   };
 }
 

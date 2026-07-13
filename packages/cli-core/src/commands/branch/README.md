@@ -38,27 +38,20 @@ Options:
 
 Platform API: `GET /v1/platform/applications/{appId}`
 
-Human output: written to stderr under one shared column header (`BRANCH`, `INSTANCE ID`, `CREATED`), grouped so parentage shows through grouping rather than a `PARENT` column. Every trunk (the `Development` / `Production` root instances) is always listed as a header row: its title-cased name in plain white, the root's instance id in the `INSTANCE ID` column, and a `-` in place of a created date: even when it has no branches, so the trunks are always referenced. Branches always fork the development root, so they all follow the `Development` header as one flat box-drawing tree (`├` / `└`, the last fork closing with `└`) reading as forks of it, matching the `clerk switch` picker. An empty `Development` row gets a dim `No branches` placeholder so its header never stands bare; `Production` is always a selectable root but can never carry forks, so it stands alone with no placeholder. `CREATED` is the branch instance's age rendered relative to now (e.g. `3d ago`). The active instance (per `clerk switch` / `clerk branch switch`), when it belongs to this app, is marked with a leading `●` in git style: a trunk header row is marked too when that environment is active. When no branches exist, the trunk rows are still shown with a `No branches yet.` note. For scripting, use `--json`: it prints two flat arrays to stdout: `trunks` (the dev/prod root instances, development-first) and `branches` (each linked to its trunk via `parent_instance_id`, always the development root): plus the active instance in the `active_instance_id` field.
+Human output: this is a pure branch view. Production has no branch identity and never appears. Rows are written to stderr under one shared column header (`BRANCH`, `INSTANCE ID`, `CREATED`). `main` (the null-parent branch) is pinned at the top as the default branch with no tree prefix; its forks follow as one flat box-drawing tree (`├` / `└`, the last fork closing with `└`) reading as forks of it, matching the `clerk switch` branch stage. `CREATED` is the branch instance's age rendered relative to now (e.g. `3d ago`). The active instance (per `clerk switch` / `clerk branch switch`), when it belongs to this app, is marked with a leading `●` in git style. On an app where branching is not enabled the dev root is nameless, so no branch rows exist and the output is just a `No branches yet.` note. For scripting, use `--json`: it prints a single `branches` list to stdout (`main` first, then its forks) plus the active instance in the `active_instance_id` field.
 
 JSON output (`--json` or agent mode):
 
 ```json
 {
-  "trunks": [
+  "branches": [
     {
-      "environment_type": "development",
+      "branch_name": "main",
       "instance_id": "ins_dev456",
+      "parent_instance_id": null,
       "publishable_key": "pk_test_...",
       "created_at": 1769000000000
     },
-    {
-      "environment_type": "production",
-      "instance_id": "ins_prod789",
-      "publishable_key": "pk_live_...",
-      "created_at": 1769000000000
-    }
-  ],
-  "branches": [
     {
       "branch_name": "feature-auth",
       "instance_id": "ins_abc123",
@@ -72,7 +65,7 @@ JSON output (`--json` or agent mode):
 }
 ```
 
-Both trunks and branches carry their `publishable_key` so bootstrap flows (fork a branch, hand the frontend its key) need no second API call; `secret_key` is always stripped. `active_instance_missing` is `true` when the persisted active pointer references an instance that is no longer in the application (deleted from another checkout); the human output prints a warning naming the stale pointer and suggesting `clerk switch` in that case.
+`main` is the branch whose `parent_instance_id` is null; its forks point at `main`'s instance. Each branch carries its `publishable_key` so bootstrap flows (fork a branch, hand the frontend its key) need no second API call; `secret_key` is always stripped. `active_instance_missing` is `true` when the persisted active pointer references an instance that is no longer in the application (deleted from another checkout); the human output prints a warning naming the stale pointer and suggesting `clerk switch` in that case.
 
 ### `clerk branch delete <name> [--app <app_id>] [--yes]`
 
@@ -110,7 +103,7 @@ Sets the _active instance_ for the current git worktree, persisted in the CLI co
 
 Arguments:
 
-- `[target]`: `dev` | `prod` | a branch name | a raw instance ID | `-` (toggle to the previously active instance). Omit to open an interactive picker (human mode) or print the current pointer (agent mode). The picker renders the same table as [`clerk branch list`](#clerk-branch-list-options): a dim `BRANCH` / `INSTANCE ID` / `CREATED` column header (carried in the prompt message, so no selector dot fronts it), each `Development` / `Production` trunk as a selectable header row, and, since branches always fork the development root, every branch beneath the `Development` row as a flat box-drawing tree (`├` / `└`). Unlike the list, an empty `Development` trunk shows no `No branches` row in the picker; it simply has nothing indented beneath it. The prompt supplies the highlight/selection state (the cursor row is drawn in full color; the rest dim); the active instance is tagged `(current)` and preselected so the cursor opens on it. Every row is selectable except the message-borne header.
+- `[target]`: `dev` | `main` | `prod` | a branch name | a raw instance ID | `-` (toggle to the previously active instance). `dev` and `main` both resolve to the development root (two lenses, one instance). Omit the target to open the two-stage interactive selector (human mode) or print the current pointer (agent mode). Stage 1 picks the environment (`Development` / `Production`); stage 2 picks the branch (`main` + its forks as a box-drawing tree). Any single-option stage is skipped: with no production instance stage 1 is skipped and the flow goes straight to the branch stage; when `main` is the only branch, choosing `Development` resolves to it immediately; production never reaches the branch stage. In the branch stage the active instance is tagged `(current)` and preselected so the cursor opens on it. CLI arguments (`dev` | `prod` | a branch name | an instance ID) bypass the stages entirely.
 
 Options:
 
@@ -121,7 +114,7 @@ Options:
 - `--yes`: Skip the production confirmation (required in agent mode; in human mode the prompt is shown unless this flag is passed)
 - `--json`: Output as JSON (also emitted automatically in agent mode)
 
-Human output renders as a single `Switching · <app>` frame: the fork (with `--create`) and the `.env` sync each appear as one resolved step (`Forked development → feature-auth`, `Synced .env.local from feature-auth`), and the closing line states the result, including what you switched away from: `● feature-auth is now active (was development)`. Trunk targets are always referred to by their label (`development` / `production`), never by raw instance ID. Switching to production replaces the sync step with a note that `.env.local` was left untouched.
+Human output renders as a single `Switching · <app>` frame: the fork (with `--create`) and the `.env` sync each appear as one resolved step. Fork messages use the bare parent branch name (`Forked main → feature-auth`), while the active-instance label uses the env-qualified glyph form, so the closing line reads `● development ⎇ feature-auth is now active (was development ⎇ main)`. Switching to production replaces the sync step with a note that `.env.local` was left untouched.
 
 Platform API:
 

@@ -391,7 +391,8 @@ describe("config", () => {
       const r = resolveFetchedApplicationInstance("app_1", branchApp, undefined, "agent/pr-42");
       expect(r.found).toBe(true);
       expect(r.instanceId).toBe("ins_branch");
-      expect(r.instanceLabel).toBe("agent/pr-42");
+      // Env-qualified glyph label (ADR-0007).
+      expect(r.instanceLabel).toBe("development ⎇ agent/pr-42");
     });
 
     test("throws INSTANCE_NOT_FOUND when branch name does not match any instance", () => {
@@ -425,7 +426,8 @@ describe("config", () => {
       const result = resolveFetchedApplicationInstance("app_1", branchApp, "ins_b");
 
       expect(result.found).toBe(true);
-      expect(result.instanceLabel).toBe("pr-9");
+      // Env-qualified glyph label (ADR-0007).
+      expect(result.instanceLabel).toBe("development ⎇ pr-9");
     });
 
     test("raw non-branch instance id is labeled by env", () => {

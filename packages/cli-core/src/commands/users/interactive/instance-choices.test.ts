@@ -41,9 +41,10 @@ describe("buildInstancePickerChoices", () => {
     expect(choices[0]!.name).toContain("development");
     expect(choices[0]!.name).toContain("ins_dev");
     expect(choices[0]!.name).toContain("3d ago");
-    // First child uses ├─, last child uses └─.
-    expect(choices[1]!.name).toContain("├─ feature-checkout");
-    expect(choices[2]!.name).toContain("└─ agent/pr-42");
+    // Branches carry the env-qualified glyph label (ADR-0007): first child uses
+    // ├─, last child uses └─.
+    expect(choices[1]!.name).toContain("├─ development ⎇ feature-checkout");
+    expect(choices[2]!.name).toContain("└─ development ⎇ agent/pr-42");
     expect(choices[3]!.name).toContain("production");
   });
 
@@ -83,6 +84,6 @@ describe("buildInstancePickerChoices", () => {
     const choices = buildInstancePickerChoices(instances, NOW);
     expect(choices.map((c) => c.value)).toEqual(["ins_dev", "ins_b1", "ins_b2"]);
     // Deeper nesting carries the continuation indent before the connector.
-    expect(choices[2]!.name).toContain("   └─ pr-1-a");
+    expect(choices[2]!.name).toContain("   └─ development ⎇ pr-1-a");
   });
 });

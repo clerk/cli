@@ -92,8 +92,8 @@ const mainOnlyApp: Application = {
 };
 
 describe("instanceLabel", () => {
-  test("uses the branch name when present", () => {
-    expect(instanceLabel(app.instances[2]!)).toBe("agent/pr-42");
+  test("renders the env-qualified glyph form for a branch", () => {
+    expect(instanceLabel(app.instances[2]!)).toBe("development ⎇ agent/pr-42");
   });
 });
 

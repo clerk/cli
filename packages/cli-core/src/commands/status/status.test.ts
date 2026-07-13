@@ -9,6 +9,9 @@ const mockFetchApplication = mock();
 mock.module("../../lib/config.ts", () => ({
   resolveProfile: (...a: unknown[]) => mockResolveProfile(...a),
   getActiveInstanceForApp: (...a: unknown[]) => mockGetActiveInstanceForApp(...a),
+  isPrimaryInstance: (i: { parent_instance_id?: string }) => !i.parent_instance_id,
+  instanceLabel: (i: { environment_type: string; branch_name?: string }) =>
+    i.branch_name ? `${i.environment_type} ⎇ ${i.branch_name}` : i.environment_type,
 }));
 mock.module("../../lib/git.ts", () => ({
   getGitCurrentBranch: (...a: unknown[]) => mockGetGitCurrentBranch(...a),
@@ -80,18 +83,42 @@ describe("clerk status", () => {
       m.mockReset();
   });
 
-  test("reports the active instance annotated with its fork parent", async () => {
+  test("reports the active fork with the glyph label and no annotation", async () => {
     await status({});
     expect(captured.err).toContain("my-app");
-    expect(captured.err).toContain("agent/pr-42");
-    expect(captured.err).toContain("(branch of development)");
+    // The glyph label conveys branch-ness, so a fork carries no annotation.
+    expect(captured.err).toContain("development ⎇ agent/pr-42");
+    expect(captured.err).not.toContain("(branch of");
+    expect(captured.err).not.toContain("(default branch)");
   });
 
-  test("falls back to development and marks it as a trunk when no pointer is set", async () => {
+  test("annotates the active main branch as the default branch", async () => {
+    mockGetActiveInstanceForApp.mockResolvedValue({
+      appId: "app_1",
+      instanceId: "ins_dev",
+      label: "development ⎇ main",
+      branch_name: "main",
+      environmentType: "development",
+    });
+    mockFetchApplication.mockResolvedValue({
+      ...APP,
+      instances: [
+        { instance_id: "ins_dev", environment_type: "development", branch_name: "main" },
+        ...APP.instances.slice(1),
+      ],
+    });
+    await status({});
+    expect(captured.err).toContain("development ⎇ main");
+    expect(captured.err).toContain("(default branch)");
+  });
+
+  test("falls back to the development root with no annotation when no pointer is set", async () => {
     mockGetActiveInstanceForApp.mockResolvedValue(undefined);
     await status({});
+    // A nameless dev root labels as `development` and gets no annotation.
     expect(captured.err).toContain("development");
-    expect(captured.err).toContain("(trunk)");
+    expect(captured.err).not.toContain("(trunk)");
+    expect(captured.err).not.toContain("(default branch)");
   });
 
   test("warns on git-branch drift without prescribing a target", async () => {
@@ -104,11 +131,17 @@ describe("clerk status", () => {
     expect(captured.err).not.toContain("clerk switch dev");
   });
 
-  test("emits JSON when requested", async () => {
+  test("emits JSON when requested with an additive branch_name", async () => {
     await status({ json: true });
     expect(JSON.parse(captured.out)).toMatchObject({
       app_id: "app_1",
-      active: { instance_id: "ins_branch", label: "agent/pr-42", exists: true },
+      active: {
+        instance_id: "ins_branch",
+        label: "development ⎇ agent/pr-42",
+        branch_name: "agent/pr-42",
+        environment_type: "development",
+        exists: true,
+      },
     });
   });
 

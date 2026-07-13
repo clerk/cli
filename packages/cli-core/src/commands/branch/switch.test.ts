@@ -30,6 +30,8 @@ mock.module("../../lib/config.ts", () => ({
     production: "production",
   },
   isPrimaryInstance: (i: { parent_instance_id?: string }) => !i.parent_instance_id,
+  instanceLabel: (i: { environment_type: string; branch_name?: string }) =>
+    i.branch_name ? `${i.environment_type} ⎇ ${i.branch_name}` : i.environment_type,
 }));
 mock.module("../../lib/plapi.ts", () => ({
   fetchApplication: (...a: unknown[]) => mockFetchApplication(...a),
@@ -128,12 +130,16 @@ describe("branch switch", () => {
       expect.objectContaining({
         appId: "app_1",
         instanceId: "ins_branch",
-        label: "agent/pr-42",
+        label: "development ⎇ agent/pr-42",
         environmentType: "development",
       }),
     );
     expect(mockPull).toHaveBeenCalledWith(
-      expect.objectContaining({ instance: "ins_branch", label: "agent/pr-42", embed: true }),
+      expect.objectContaining({
+        instance: "ins_branch",
+        label: "development ⎇ agent/pr-42",
+        embed: true,
+      }),
     );
     expect(mockIntro).toHaveBeenCalledWith("Switching · my-app");
     expect(mockOutro).toHaveBeenCalledWith(expect.stringContaining("agent/pr-42 is now active"));
@@ -211,7 +217,7 @@ describe("branch switch", () => {
     });
     expect(mockSetActiveInstance).toHaveBeenCalledWith(
       "/repo",
-      expect.objectContaining({ instanceId: "ins_new", label: "agent/pr-99" }),
+      expect.objectContaining({ instanceId: "ins_new", label: "development ⎇ agent/pr-99" }),
     );
     expect(mockPull).toHaveBeenCalled();
     expect(mockOutro).toHaveBeenCalledWith(expect.stringContaining("(branch of development)"));
@@ -226,7 +232,7 @@ describe("branch switch", () => {
     mockGetActiveInstanceForApp.mockResolvedValue({
       appId: "app_1",
       instanceId: "ins_branch",
-      label: "agent/pr-42",
+      label: "development ⎇ agent/pr-42",
       environmentType: "development",
       previousInstanceId: "ins_dev",
       previousLabel: "development",
@@ -257,7 +263,7 @@ describe("branch switch", () => {
     mockGetActiveInstanceForApp.mockResolvedValue({
       appId: "app_1",
       instanceId: "ins_branch",
-      label: "agent/pr-42",
+      label: "development ⎇ agent/pr-42",
       environmentType: "development",
     });
     await branchSwitch(undefined, {});
@@ -310,7 +316,7 @@ describe("branch switch", () => {
       "/repo",
       expect.objectContaining({
         instanceId: "ins_new",
-        label: "agent/pr-99",
+        label: "development ⎇ agent/pr-99",
         environmentType: "development",
       }),
     );
@@ -328,7 +334,7 @@ describe("branch switch", () => {
     await branchSwitch(undefined, { create: "agent/pr-99" });
     expect(mockSetActiveInstance).toHaveBeenCalledWith(
       "/repo",
-      expect.objectContaining({ instanceId: "ins_new", label: "agent/pr-99" }),
+      expect.objectContaining({ instanceId: "ins_new", label: "development ⎇ agent/pr-99" }),
     );
   });
 
@@ -336,7 +342,7 @@ describe("branch switch", () => {
     mockGetActiveInstanceForApp.mockResolvedValue({
       appId: "app_1",
       instanceId: "ins_branch",
-      label: "agent/pr-42",
+      label: "development ⎇ agent/pr-42",
       environmentType: "development",
       previousInstanceId: "ins_gone",
       previousLabel: "old",

@@ -35,6 +35,8 @@ mock.module("../../lib/config.ts", () => ({
     production: "production",
   },
   isPrimaryInstance: (i: { parent_instance_id?: string }) => !i.parent_instance_id,
+  instanceLabel: (i: { environment_type: string; branch_name?: string }) =>
+    i.branch_name ? `${i.environment_type} ⎇ ${i.branch_name}` : i.environment_type,
 }));
 
 const { branchList } = await import("./list.ts");

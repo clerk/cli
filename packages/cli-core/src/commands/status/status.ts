@@ -1,4 +1,9 @@
-import { resolveProfile, getActiveInstanceForApp } from "../../lib/config.ts";
+import {
+  resolveProfile,
+  getActiveInstanceForApp,
+  instanceLabel,
+  isPrimaryInstance,
+} from "../../lib/config.ts";
 import { getGitCurrentBranch } from "../../lib/git.ts";
 import { fetchApplication, type Application } from "../../lib/plapi.ts";
 import { printJson, type AppsOptions } from "../apps/shared.ts";
@@ -33,7 +38,6 @@ export async function status(options: StatusOptions): Promise<void> {
   const active = await getActiveInstanceForApp(cwd, profile.appId);
   const gitBranch = await getGitCurrentBranch(cwd);
 
-  const activeLabel = active?.label ?? "development";
   const activeInstanceId = active?.instanceId ?? profile.instances.development;
   const drift =
     active?.gitBranch && gitBranch && active.gitBranch !== gitBranch ? active.gitBranch : undefined;
@@ -55,6 +59,11 @@ export async function status(options: StatusOptions): Promise<void> {
   const matched = app?.instances.find((i) => i.instance_id === activeInstanceId);
   const exists = app ? Boolean(matched) : null;
 
+  // Prefer the live instance's env-qualified glyph label; fall back to the stored
+  // pointer label when offline (ADR-0007). branch_name is additive (ADR-0008).
+  const activeLabel = matched ? instanceLabel(matched) : (active?.label ?? "development");
+  const branchName = matched?.branch_name ?? active?.branch_name ?? null;
+
   if (
     printJson(
       {
@@ -63,6 +72,7 @@ export async function status(options: StatusOptions): Promise<void> {
         active: {
           instance_id: activeInstanceId,
           label: activeLabel,
+          branch_name: branchName,
           environment_type: active?.environmentType ?? "development",
           exists,
         },
@@ -75,18 +85,13 @@ export async function status(options: StatusOptions): Promise<void> {
     return;
   }
 
-  // Annotate the active instance with what the label alone doesn't carry:
-  // trunks are marked (trunk), branches name their fork parent.
-  let annotation = "";
-  if (matched) {
-    if (matched.branch_name) {
-      const parent = app?.instances.find((i) => i.instance_id === matched.parent_instance_id);
-      const parentLabel = parent ? (parent.branch_name ?? parent.environment_type) : "development";
-      annotation = ` ${dim(`(branch of ${parentLabel})`)}`;
-    } else {
-      annotation = ` ${dim("(trunk)")}`;
-    }
-  }
+  // The glyph label already conveys branch-ness, so only `main` (the null-parent
+  // named branch) is annotated as the default branch; forks and production get
+  // none (ADR-0007).
+  const annotation =
+    matched && isPrimaryInstance(matched) && matched.branch_name
+      ? ` ${dim("(default branch)")}`
+      : "";
 
   log.info(`App:      ${profile.appName ?? profile.appId} (${profile.appId})`);
   if (exists === false) {

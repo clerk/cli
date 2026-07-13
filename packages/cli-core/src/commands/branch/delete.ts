@@ -52,7 +52,7 @@ export async function branchDelete(options: BranchDeleteOptions): Promise<void> 
     if (active && active.instanceId === match.instance_id) {
       throwUsageError(
         `\`${options.name}\` is the active instance for this worktree. ` +
-          "Switch away first: `clerk switch dev`, then delete.",
+          "Switch away first: `clerk switch main`, then delete.",
         undefined,
         ERROR_CODE.ACTIVE_INSTANCE,
       );

@@ -78,7 +78,9 @@ export async function branchSwitch(
 
     if (options.create) {
       const parent = resolveSwitchTarget(app, "development");
-      parentLabel = instanceLabel(parent);
+      // Fork messages read with the bare branch name (`Forking main → …`), not
+      // the env-qualified glyph (ADR-0007).
+      parentLabel = parent.branch_name ?? parent.environment_type;
       const created = await withSpinner(
         `Forking ${parentLabel} → ${options.create}...`,
         () =>
