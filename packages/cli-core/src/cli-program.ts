@@ -169,9 +169,22 @@ export function formatApiBody(error: ApiError, verbose: boolean): string {
   return formatStructuredError(error);
 }
 
+// Branch gate codes carry their actionable detail in long_message rather than
+// meta: the live-fork count on disable, and the enable hint / not-available
+// reason on the fork routes (ADR-0015). Surface it beneath the headline.
+const BRANCH_GATE_CODES = new Set([
+  "development_branches_not_available",
+  "development_branches_not_enabled",
+  "cannot_disable_branches_with_live_forks",
+]);
+
 function formatStructuredError(error: ApiError): string {
   let msg = error.message;
   const { meta, code } = error;
+
+  if (code && BRANCH_GATE_CODES.has(code)) {
+    return error.longMessage ? `${msg}\n  ${error.longMessage}` : msg;
+  }
   if (!meta) return msg;
 
   switch (code) {

@@ -222,6 +222,38 @@ describe("formatApiBody", () => {
     expect(result).toContain("Unsupported features: saml, custom_roles");
   });
 
+  test("names the live-fork count from cannot_disable_branches_with_live_forks long_message", () => {
+    const body = JSON.stringify({
+      errors: [
+        {
+          code: "cannot_disable_branches_with_live_forks",
+          message: "Delete your branches before disabling.",
+          long_message:
+            "Development branching can't be disabled while 3 branch(es) exist. Delete your branches first.",
+        },
+      ],
+    });
+    const result = formatApiBody(new ApiError(400, body), false);
+    expect(result).toContain("Delete your branches before disabling.");
+    expect(result).toContain("3 branch(es) exist");
+  });
+
+  test("surfaces the enable hint from development_branches_not_enabled long_message", () => {
+    const body = JSON.stringify({
+      errors: [
+        {
+          code: "development_branches_not_enabled",
+          message: "Development branches aren't enabled.",
+          long_message:
+            "Run `clerk enable branches` or enable development branches in the dashboard.",
+        },
+      ],
+    });
+    const result = formatApiBody(new ApiError(403, body), false);
+    expect(result).toContain("Development branches aren't enabled.");
+    expect(result).toContain("clerk enable branches");
+  });
+
   test("surfaces suggestions from unknown_config_key meta", () => {
     const body = JSON.stringify({
       errors: [
