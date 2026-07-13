@@ -165,6 +165,7 @@ export async function branchSwitch(
         instanceId: target.instance_id,
         label,
         environmentType: isProd ? "production" : "development",
+        ...(target.branch_name ? { branch_name: target.branch_name } : {}),
         previousInstanceId: current?.instanceId,
         previousLabel: current?.label,
         ...(gitBranch ? { gitBranch } : {}),

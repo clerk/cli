@@ -1,4 +1,4 @@
-import { resolveProfile } from "../../lib/config.ts";
+import { isPrimaryInstance, resolveProfile } from "../../lib/config.ts";
 import { PlapiError } from "../../lib/errors.ts";
 import { log } from "../../lib/log.ts";
 import {
@@ -130,7 +130,11 @@ export async function resolveLiveApplicationContext(profile: DeployContext["prof
   productionInstanceId?: string;
 }> {
   const app = await fetchApplication(profile.appId);
-  const development = app.instances.find((entry) => entry.environment_type === "development");
+  // Scope to the null-parent root: forks are also `development`, so an unscoped
+  // find could return a branch instance (ADR-0010).
+  const development = app.instances.find(
+    (entry) => entry.environment_type === "development" && isPrimaryInstance(entry),
+  );
   const production = app.instances.find((entry) => entry.environment_type === "production");
   return {
     appId: app.application_id,

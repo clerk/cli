@@ -58,6 +58,12 @@ export interface ActiveEntry {
    * Display label containing the branch name or primary environment.
    */
   label: string;
+  /**
+   * Branch name of the active instance, when it is a branch. Additive so
+   * `status` can report the branch without a second fetch and the pointer
+   * survives label-format changes (ADR-0008).
+   */
+  branch_name?: string;
   environmentType: "development" | "production";
   /**
    * Previous instance ID used by `clerk switch -`.
@@ -366,10 +372,25 @@ export const INSTANCE_ALIASES: Record<string, "development" | "production"> = {
 };
 
 /**
- * Return whether an instance is a primary root rather than a branch.
+ * Return whether an instance is the development or production root rather than a
+ * branch. The root is the one instance with no parent; a named `main` root still
+ * carries `branch_name` but is a root by the null-parent test (ADR-0003/0010).
  */
 export function isPrimaryInstance(entry: ApplicationInstance): boolean {
-  return !entry.branch_name && !entry.parent_instance_id;
+  return !entry.parent_instance_id;
+}
+
+/**
+ * The environment lens `--instance` accepts only the `dev` / `prod` aliases or a
+ * literal instance ID. A branch name (including `main`) belongs to the branch
+ * lens, so reject it with a hint pointing at `--branch` (ADR-0002).
+ */
+function assertInstanceLensValue(flag: string): void {
+  if (INSTANCE_ALIASES[flag] || flag.startsWith("ins_")) return;
+  throwUsageError(
+    `\`${flag}\` is a branch; use \`--branch ${flag}\` to target it. ` +
+      "--instance accepts dev, prod, or an instance ID.",
+  );
 }
 
 export function resolveInstanceId(profile: Profile, flag?: string): { id: string; label: string } {
@@ -378,7 +399,10 @@ export function resolveInstanceId(profile: Profile, flag?: string): { id: string
   }
 
   const env = INSTANCE_ALIASES[flag];
-  if (!env) return { id: flag, label: flag }; // literal instance ID
+  if (!env) {
+    assertInstanceLensValue(flag); // rejects branch names like `main`
+    return { id: flag, label: flag }; // literal instance ID
+  }
 
   const id = profile.instances[env];
   if (!id) {
@@ -439,6 +463,7 @@ export function resolveFetchedApplicationInstance(
       };
     }
 
+    assertInstanceLensValue(instance); // rejects branch names like `main`
     const matched = app.instances.find((entry) => entry.instance_id === instance);
     if (matched) {
       return {

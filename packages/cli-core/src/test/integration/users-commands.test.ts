@@ -227,12 +227,12 @@ describe("users commands", () => {
       "/v1/users": CREATED_USER,
     });
 
-    // Picker returns app_1; MOCK_APP has two instances so an instance picker
-    // follows; the wizard then prompts for the optional curated set because
-    // MOCK_APP's publishable key does not decode to a valid fapiHost (the
-    // wizard skips the FAPI fetch and falls back to optional curated fields).
+    // Picker returns app_1; with the forced multi-instance prompt removed
+    // (ADR-0011) resolution falls straight to the development root, so no
+    // instance picker follows. The wizard then prompts for the optional curated
+    // set because MOCK_APP's publishable key does not decode to a valid fapiHost
+    // (the wizard skips the FAPI fetch and falls back to optional curated fields).
     mockPrompts.search("app_1");
-    mockPrompts.select("development");
     mockPrompts.input("alice@example.com"); // email
     mockPrompts.input(""); // phone
     mockPrompts.input(""); // username

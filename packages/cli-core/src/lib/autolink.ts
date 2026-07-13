@@ -1,5 +1,5 @@
 import { join } from "node:path";
-import { setProfile, type Profile } from "./config.ts";
+import { isPrimaryInstance, setProfile, type Profile } from "./config.ts";
 import { listApplications, type Application, type ApplicationInstance } from "./plapi.ts";
 import { getGitRepoIdentifier, getGitNormalizedRemote } from "./git.ts";
 import { parseEnvFile } from "./dotenv.ts";
@@ -81,7 +81,11 @@ export async function linkApp(
   app: Application,
   cwd: string,
 ): Promise<{ path: string; profile: Profile } | undefined> {
-  const devInstance = app.instances.find((i) => i.environment_type === "development");
+  // The development root is the null-parent instance; forks are also
+  // `development`, so scope by parent to avoid linking to a branch (ADR-0010).
+  const devInstance = app.instances.find(
+    (i) => i.environment_type === "development" && isPrimaryInstance(i),
+  );
   if (!devInstance) return undefined;
 
   const prodInstance = app.instances.find((i) => i.environment_type === "production");

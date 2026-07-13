@@ -1,6 +1,6 @@
 import { createArgument } from "@commander-js/extra-typings";
 import type { Program } from "../../cli-program.ts";
-import { resolveProfile } from "../../lib/config.ts";
+import { resolveAppContext, resolveProfile } from "../../lib/config.ts";
 import { CliError, ERROR_CODE } from "../../lib/errors.ts";
 import { getDashboardUrl } from "../../lib/environment.ts";
 import { openBrowser } from "../../lib/open.ts";
@@ -12,6 +12,8 @@ import { isKnownDashboardPath } from "./dashboard-paths.ts";
 
 interface OpenOptions {
   print?: boolean;
+  instance?: string;
+  branch?: string;
 }
 
 /**
@@ -40,9 +42,14 @@ export async function openDashboard(
   }
 
   const { appId, appName } = resolved.profile;
-  const instanceId = resolved.profile.instances.development;
-  const instanceLabel = "development";
   const appLabel = appName || appId;
+
+  // Join the one resolution chain (ADR-0011): explicit --instance/--branch, else
+  // the worktree's active pointer, else the development root. `open` no longer
+  // hardcodes the dev root, so it opens wherever you are actually working.
+  const ctx = await resolveAppContext({ instance: options.instance, branch: options.branch, cwd });
+  const instanceId = ctx.instanceId;
+  const instanceLabel = ctx.instanceLabel;
 
   if (!instanceId) {
     throw new CliError(
@@ -115,10 +122,13 @@ export function registerOpen(program: Program): void {
       createArgument("[subpath]", "Optional dashboard subpath (e.g. users, api-keys, settings)"),
     )
     .option("--print", "Print the URL without opening the browser")
+    .option("--instance <id>", "Instance to open (dev, prod, or a full instance ID)")
+    .option("--branch <name>", "Open a branch by name (e.g. agent/pr-42)")
     .setExamples([
-      { command: "clerk open", description: "Open the linked app's dashboard" },
+      { command: "clerk open", description: "Open the active instance's dashboard" },
       { command: "clerk open users", description: "Open the users page" },
       { command: "clerk open api-keys", description: "Open the API keys page" },
+      { command: "clerk open --branch main", description: "Open the main branch's dashboard" },
       { command: "clerk open --print", description: "Print the dashboard URL" },
     ])
     .action((subpath, options) => openDashboard(subpath, options));

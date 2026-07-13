@@ -290,6 +290,7 @@ describe("config", () => {
             environment_type: "development",
             publishable_key: "pk_test_branch",
             branch_name: "agent/pr-42",
+            parent_instance_id: "ins_dev",
           },
           {
             instance_id: "ins_dev",
@@ -344,6 +345,7 @@ describe("config", () => {
             environment_type: "development",
             publishable_key: "pk_test_branch",
             branch_name: "agent/pr-42",
+            parent_instance_id: "ins_dev",
           },
           {
             instance_id: "ins_dev",

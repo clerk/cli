@@ -1,7 +1,6 @@
 import { test, expect, describe, beforeEach, afterEach, mock } from "bun:test";
 import { CliError, ERROR_CODE } from "../../../lib/errors.ts";
 import { stubFetch } from "../../../test/lib/stubs.ts";
-import { buildInstancePickerChoices } from "./instance-choices.ts";
 
 const mockResolveAppContext = mock();
 const mockResolveProfile = mock();
@@ -158,7 +157,9 @@ describe("resolveUsersInstanceContext", () => {
     expect(ctx.fapiHost).toBe("ideal-louse-61.clerk.accounts.dev");
   });
 
-  test("prompts for an instance when the picked app has multiple instances", async () => {
+  test("defaults to the development root without prompting when the picked app has multiple instances", async () => {
+    // ADR-0011: the forced multi-instance disambiguation prompt is gone. With no
+    // --instance and no pointer, resolution falls to the development root.
     mockResolveAppContext.mockRejectedValue(
       new CliError("No Clerk project linked", { code: ERROR_CODE.NOT_LINKED }),
     );
@@ -183,20 +184,13 @@ describe("resolveUsersInstanceContext", () => {
       name: "Picked",
       instances,
     });
-    mockSelect.mockResolvedValue("ins_prod");
 
     const ctx = await resolveUsersInstanceContext({});
 
-    expect(mockSelect).toHaveBeenCalledTimes(1);
-    // The picker renders a nested tree via buildInstancePickerChoices; recompute
-    // the expected choices the same way instead of hardcoding a time-dependent label.
-    expect(mockSelect.mock.calls[0]?.[0]).toMatchObject({
-      message: "Select an instance to use:",
-      choices: buildInstancePickerChoices(instances, Date.now()),
-    });
-    expect(ctx.secretKey).toBe("sk_live_picked");
-    expect(ctx.instanceId).toBe("ins_prod");
-    expect(ctx.instanceLabel).toBe("production");
+    expect(mockSelect).not.toHaveBeenCalled();
+    expect(ctx.secretKey).toBe("sk_test_picked");
+    expect(ctx.instanceId).toBe("ins_dev");
+    expect(ctx.instanceLabel).toBe("development");
   });
 
   test("does not prompt for an instance when --instance is passed alongside the app picker", async () => {
@@ -231,7 +225,9 @@ describe("resolveUsersInstanceContext", () => {
     expect(ctx.instanceLabel).toBe("production");
   });
 
-  test("prompts even when the app comes from a linked profile", async () => {
+  test("honors the pointer/default without prompting when the app comes from a linked profile", async () => {
+    // ADR-0011: resolveAppContext already folds the active pointer (or the
+    // development default) into instanceId, so no second prompt fires here.
     mockResolveAppContext.mockResolvedValue({
       appId: "app_linked",
       appLabel: "Linked",
@@ -256,17 +252,18 @@ describe("resolveUsersInstanceContext", () => {
         },
       ],
     });
-    mockSelect.mockResolvedValue("ins_prod");
 
     const ctx = await resolveUsersInstanceContext({});
 
-    expect(mockSelect).toHaveBeenCalledTimes(1);
-    expect(ctx.instanceId).toBe("ins_prod");
-    expect(ctx.instanceLabel).toBe("production");
-    expect(ctx.secretKey).toBe("sk_live_linked");
+    expect(mockSelect).not.toHaveBeenCalled();
+    expect(ctx.instanceId).toBe("ins_dev");
+    expect(ctx.instanceLabel).toBe("development");
+    expect(ctx.secretKey).toBe("sk_test_linked");
   });
 
-  test("errors in agent mode when the app has multiple instances and no --instance", async () => {
+  test("agent mode resolves to the default without erroring on a multi-instance app", async () => {
+    // ADR-0011: no forced disambiguation, so agent mode no longer errors; it
+    // resolves to the pointer/development default like human mode.
     mockIsHuman.mockReturnValue(false);
     mockResolveAppContext.mockResolvedValue({
       appId: "app_linked",
@@ -293,8 +290,11 @@ describe("resolveUsersInstanceContext", () => {
       ],
     });
 
-    await expect(resolveUsersInstanceContext({})).rejects.toThrow(/multiple instances/);
+    const ctx = await resolveUsersInstanceContext({});
+
     expect(mockSelect).not.toHaveBeenCalled();
+    expect(ctx.instanceId).toBe("ins_dev");
+    expect(ctx.secretKey).toBe("sk_test_linked");
   });
 
   test("agent mode resolves without prompting when the app has a single instance", async () => {

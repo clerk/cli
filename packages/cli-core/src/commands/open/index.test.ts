@@ -5,10 +5,12 @@ import { useCaptureLog } from "../../test/lib/stubs.ts";
 import { isKnownDashboardPath } from "./dashboard-paths.ts";
 
 const mockResolveProfile = mock();
+const mockResolveAppContext = mock();
 const mockOpenBrowser = mock();
 
 mock.module("../../lib/config.ts", () => ({
   resolveProfile: (...args: unknown[]) => mockResolveProfile(...args),
+  resolveAppContext: (...args: unknown[]) => mockResolveAppContext(...args),
 }));
 
 mock.module("../../lib/open.ts", () => ({
@@ -86,10 +88,19 @@ describe("openDashboard", () => {
     setMode("human");
     setCurrentEnv("production");
     mockOpenBrowser.mockResolvedValue({ ok: true, launcher: "open" });
+    // `open` resolves the target through the one chain (ADR-0011); default it to
+    // the development root so existing assertions on ins_dev789 hold.
+    mockResolveAppContext.mockResolvedValue({
+      appId: "app_abc123",
+      appLabel: "Test App",
+      instanceId: "ins_dev789",
+      instanceLabel: "development",
+    });
   });
 
   afterEach(() => {
     mockResolveProfile.mockReset();
+    mockResolveAppContext.mockReset();
     mockOpenBrowser.mockReset();
   });
 
@@ -201,6 +212,14 @@ describe("openDashboard", () => {
         appId: "app_abc123",
         instances: {},
       },
+    });
+    // The chain resolves to an empty development instance id when none is
+    // configured, so `open` refuses rather than building a broken URL.
+    mockResolveAppContext.mockResolvedValue({
+      appId: "app_abc123",
+      appLabel: "app_abc123",
+      instanceId: "",
+      instanceLabel: "development",
     });
 
     await expect(openDashboard(undefined)).rejects.toThrow(/development instance/);

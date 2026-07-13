@@ -46,6 +46,10 @@ const KNOWN_OPTION_VALUES: Record<string, Completion[]> = {
     { name: "dev", description: "Development instance" },
     { name: "prod", description: "Production instance" },
   ],
+  // `--branch` takes a free-form branch name that cannot be enumerated offline,
+  // but it is registered here so its value completion returns NO_FILE (empty)
+  // rather than spilling into filename completion (ADR-0002).
+  "--branch": [],
   "--method": HTTP_METHOD_COMPLETIONS,
   "-X": HTTP_METHOD_COMPLETIONS,
   "--channel": [

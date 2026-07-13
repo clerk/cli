@@ -14,8 +14,6 @@ import {
 import { getBapiBaseUrl } from "../../../lib/environment.ts";
 import { decodePublishableKey } from "../../../lib/fapi.ts";
 import { loggedFetch } from "../../../lib/fetch.ts";
-import { select } from "../../../lib/listage.ts";
-import { buildInstancePickerChoices } from "./instance-choices.ts";
 import { fetchApplication, validateKeyPrefix } from "../../../lib/plapi.ts";
 import { isHuman } from "../../../mode.ts";
 
@@ -176,25 +174,11 @@ export async function resolveUsersInstanceContext(
 
   const app = await withApiContext(fetchApplication(appId), "Failed to resolve instance context");
 
-  // Never guess silently between instances. Defaulting to development would
-  // make the same command resolve differently depending on which instances an
-  // app happens to have (e.g. once a production instance is added), breaking
-  // the guarantee that a command produces a repeatable result. So when the app
-  // has more than one instance and --instance didn't pin one, resolve the
-  // ambiguity explicitly: human mode prompts, agent mode errors.
-  if (!options.instance && !options.branch && app.instances.length > 1) {
-    if (isHuman()) {
-      instanceHint = await select<string>({
-        message: "Select an instance to use:",
-        choices: buildInstancePickerChoices(app.instances, Date.now()),
-      });
-    } else {
-      throwUsageError(
-        "This application has multiple instances. Pass --instance <ins_id|development|production> to choose one explicitly.",
-      );
-    }
-  }
-
+  // One resolution chain (ADR-0011): an explicit --instance/--branch, else the
+  // worktree's active pointer (folded into `instanceHint` by resolveAppContext
+  // above), else the development root (`main`). No forced multi-instance prompt:
+  // once any branch exists the app always has more than one instance, and the
+  // active pointer already is the disambiguation.
   const resolved = resolveFetchedApplicationInstance(appId, app, instanceHint, options.branch);
   if (!resolved.found) {
     throw new CliError(`Instance ${resolved.instanceId} not found in application.`, {

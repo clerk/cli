@@ -6,7 +6,7 @@ import { getToken } from "../../lib/credential-store.ts";
 import { login } from "../auth/login.ts";
 import { createApplication, fetchApplication, type Application } from "../../lib/plapi.ts";
 import { appLabel, fetchAppsTolerantly, pickOrCreateApp } from "../../lib/app-picker.ts";
-import { setProfile, resolveProfile, moveProfile } from "../../lib/config.ts";
+import { isPrimaryInstance, setProfile, resolveProfile, moveProfile } from "../../lib/config.ts";
 import { autolink, findClerkKeys, matchKeyToApp } from "../../lib/autolink.ts";
 import { getGitRepoIdentifier, getGitRepoRoot, getGitNormalizedRemote } from "../../lib/git.ts";
 import { dim, cyan } from "../../lib/color.ts";
@@ -83,7 +83,10 @@ export async function link(options: LinkOptions = {}): Promise<void> {
         )
       : await resolveApp(cwd, displayPath, !existing);
 
-  const devInstance = app.instances.find((i) => i.environment_type === "development");
+  // Scope to the null-parent root; forks share the `development` type (ADR-0010).
+  const devInstance = app.instances.find(
+    (i) => i.environment_type === "development" && isPrimaryInstance(i),
+  );
   const prodInstance = app.instances.find((i) => i.environment_type === "production");
 
   if (!devInstance) {
