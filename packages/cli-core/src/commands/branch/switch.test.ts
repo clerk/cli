@@ -29,8 +29,7 @@ mock.module("../../lib/config.ts", () => ({
     prod: "production",
     production: "production",
   },
-  isPrimaryInstance: (i: { branch_name?: string; parent_instance_id?: string }) =>
-    !i.branch_name && !i.parent_instance_id,
+  isPrimaryInstance: (i: { parent_instance_id?: string }) => !i.parent_instance_id,
 }));
 mock.module("../../lib/plapi.ts", () => ({
   fetchApplication: (...a: unknown[]) => mockFetchApplication(...a),

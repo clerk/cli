@@ -2,7 +2,7 @@ import type { Application, ApplicationInstance } from "../../lib/plapi.ts";
 import { AutocompletePrompt, isCancel } from "@clack/core";
 import { CliError, ERROR_CODE, throwUserAbort } from "../../lib/errors.ts";
 import { INSTANCE_ALIASES, isPrimaryInstance } from "../../lib/config.ts";
-import { ttyContext } from "../../lib/listage.ts";
+import { select, ttyContext } from "../../lib/listage.ts";
 import { formatRelativeTime } from "../../lib/time.ts";
 import { bold, cyan, dim, green } from "../../lib/color.ts";
 
@@ -15,7 +15,8 @@ export function instanceLabel(i: ApplicationInstance): string {
 
 /**
  * Resolve a switch target string (dev|prod|<branch-name>|<instance-id>) to an
- * instance on the application. Throws a CliError if nothing matches.
+ * instance on the application. Throws a CliError if nothing matches. `dev` and
+ * `main` both land on the development root (two lenses, one instance).
  */
 export function resolveSwitchTarget(app: Application, target: string): ApplicationInstance {
   const alias = INSTANCE_ALIASES[target];
@@ -47,8 +48,10 @@ export function titleCaseEnvironment(environmentType: string): string {
 }
 
 // ---------------------------------------------------------------------------
-// Shared branch-table model: the single grouping + column layout that both
-// `clerk branch list` and the `clerk switch` picker render.
+// Shared branch-tree model: `main` (the null-parent branch) pinned at the top
+// with its forks nested beneath as a box-drawing tree. Production has no branch
+// identity and never appears (ADR-0005). Both `clerk branch list` and the
+// `clerk switch` branch stage render this same tree.
 // ---------------------------------------------------------------------------
 
 const COLUMN_PADDING = 2;
@@ -56,18 +59,13 @@ const COLUMN_PADDING = 2;
  * Width of a branch's box-drawing tree prefix.
  */
 export const BRANCH_TREE_PREFIX_WIDTH = 3;
-/**
- * Preferred top-to-bottom order for primary environments.
- */
-export const ENVIRONMENT_ORDER = ["development", "production"];
 
 /**
- * A projected row in the shared branch table.
+ * A projected row in the shared branch tree.
  */
 export type BranchTableRow =
-  | { kind: "trunk"; env: string; instance: ApplicationInstance | undefined }
-  | { kind: "branch"; instance: ApplicationInstance; isLast: boolean }
-  | { kind: "placeholder"; env: string };
+  | { kind: "main"; instance: ApplicationInstance }
+  | { kind: "fork"; instance: ApplicationInstance; isLast: boolean };
 
 /**
  * Shared row projection and column widths for branch list and switch rendering.
@@ -79,6 +77,23 @@ export interface BranchTable {
 }
 
 /**
+ * Split an application's branch instances into the pinned `main` root (the
+ * branch whose `parent_instance_id` is null) and its forks. Instances without a
+ * branch name (production, and a non-enabled app's nameless dev root) are
+ * excluded, so this is a pure branch view.
+ */
+export function developmentBranches(app: Application): {
+  main: ApplicationInstance | undefined;
+  forks: ApplicationInstance[];
+} {
+  const branches = app.instances.filter((i) => i.branch_name);
+  return {
+    main: branches.find((i) => isPrimaryInstance(i)),
+    forks: branches.filter((i) => !isPrimaryInstance(i)),
+  };
+}
+
+/**
  * Return a relative age label for a creation timestamp, or an empty string.
  */
 export function createdLabel(createdAt: number | undefined, now: number): string {
@@ -86,7 +101,7 @@ export function createdLabel(createdAt: number | undefined, now: number): string
 }
 
 /**
- * Return the box-drawing prefix for a branch row.
+ * Return the box-drawing prefix for a fork row.
  */
 export function branchTreePrefix(isLast: boolean): string {
   return ` ${isLast ? "└ " : "├ "}`;
@@ -100,140 +115,103 @@ export function branchHeaderCells(nameWidth: number, idWidth: number): string {
 }
 
 /**
- * Group an application's instances into the shared branch table. Every dev/prod
- * trunk is a header row (listed even with no branches). Branches always fork the
- * development root, so they all group as one flat box-drawing tree under the
- * Development row; only that row gets a `placeholder` when it has no forks.
- * Production is always listed as a selectable root but never carries branches.
- * Column widths are computed once over every row so both renderers align
- * identically.
+ * Project an application's branches into the shared tree: `main` first (no tree
+ * prefix), then its forks as a flat box-drawing tree. Column widths are computed
+ * once over every row so both renderers align identically.
  */
 export function buildBranchTable(app: Application): BranchTable {
-  const branches = app.instances.filter((i) => i.branch_name);
+  const { main, forks } = developmentBranches(app);
 
-  // Branches always fork the development root, so every branch groups under the
-  // Development section regardless of the parent id on the record.
-  const sections = new Map<string, ApplicationInstance[]>();
-  if (branches.length > 0) sections.set("development", branches);
-
-  const trunkByEnvironment = new Map(
-    app.instances.filter(isPrimaryInstance).map((t) => [t.environment_type, t]),
+  const rows: BranchTableRow[] = [];
+  if (main) rows.push({ kind: "main", instance: main });
+  forks.forEach((instance, index) =>
+    rows.push({ kind: "fork", instance, isLast: index === forks.length - 1 }),
   );
-  const environments = new Set([...trunkByEnvironment.keys(), ...sections.keys()]);
-  const orderedEnvironments = [
-    ...ENVIRONMENT_ORDER.filter((e) => environments.has(e)),
-    ...[...environments].filter((e) => !ENVIRONMENT_ORDER.includes(e)).sort(),
-  ];
 
   const nameWidth =
     Math.max(
       "BRANCH".length,
-      ...branches.map((b) => BRANCH_TREE_PREFIX_WIDTH + b.branch_name!.length),
-      ...orderedEnvironments.map((e) => e.length),
+      ...(main ? [main.branch_name!.length] : []),
+      ...forks.map((f) => BRANCH_TREE_PREFIX_WIDTH + f.branch_name!.length),
     ) + COLUMN_PADDING;
   const idWidth =
-    Math.max(
-      "INSTANCE ID".length,
-      ...branches.map((b) => b.instance_id.length),
-      ...orderedEnvironments.map((e) => trunkByEnvironment.get(e)?.instance_id.length ?? 0),
-    ) + COLUMN_PADDING;
-
-  const rows: BranchTableRow[] = [];
-  for (const env of orderedEnvironments) {
-    rows.push({ kind: "trunk", env, instance: trunkByEnvironment.get(env) });
-    const sectionBranches = sections.get(env) ?? [];
-    if (sectionBranches.length === 0) {
-      // Only the Development root can hold forks, so it is the only row that
-      // shows a placeholder when empty; Production stands alone.
-      if (env === "development") rows.push({ kind: "placeholder", env });
-      continue;
-    }
-    sectionBranches.forEach((b, index) =>
-      rows.push({ kind: "branch", instance: b, isLast: index === sectionBranches.length - 1 }),
-    );
-  }
+    Math.max("INSTANCE ID".length, ...rows.map((r) => r.instance.instance_id.length)) +
+    COLUMN_PADDING;
 
   return { rows, nameWidth, idWidth };
 }
 
 // ---------------------------------------------------------------------------
-// Interactive picker: the same table as `clerk branch list`, with clack's
-// highlight/selection state layered on top.
+// Interactive two-stage switch selector (ADR-0006): stage 1 picks the
+// environment, stage 2 picks the branch. Any single-option stage is skipped.
 // ---------------------------------------------------------------------------
 
 /**
- * A live instance row rendered by the custom interactive picker.
+ * A branch row rendered by the interactive branch-stage picker.
  */
 export interface InstancePickerOption {
   value: string;
   label: string;
   created: string | undefined;
-  environment: string;
-  kind: "primary" | "branch";
-  instance: ApplicationInstance | undefined;
+  instance: ApplicationInstance;
   tree: string;
-  disabled: boolean;
 }
 
-// Sentinel value for the rare non-selectable trunk row (an orphan branch's
-// synthetic env header with no primary instance). clack skips disabled
-// options and never returns their value, so it never resolves to a real
-// instance.
-const NON_SELECTABLE_PREFIX = "nonselectable:";
-
 /**
- * Build searchable picker rows from the shared branch-table projection.
+ * Build branch-stage picker rows from the shared tree: `main` first (no tree
+ * prefix), then its forks with box-drawing connectors.
  */
 export function buildInstancePickerOptions(app: Application, now: number): InstancePickerOption[] {
-  const table = buildBranchTable(app);
-  let environment = "";
-  return table.rows.flatMap<InstancePickerOption>((row) => {
-    if (row.kind === "placeholder") return [];
-    if (row.kind === "trunk") {
-      environment = row.env;
-      return [
-        {
-          value: row.instance?.instance_id ?? `${NON_SELECTABLE_PREFIX}${row.env}`,
-          label: titleCaseEnvironment(row.env),
-          created: undefined,
-          environment: row.env,
-          kind: "primary" as const,
-          instance: row.instance,
-          tree: "",
-          disabled: !row.instance,
-        },
-      ];
-    }
-    return [
-      {
-        value: row.instance.instance_id,
-        label: `${titleCaseEnvironment(environment)} ⎇ ${row.instance.branch_name!}`,
-        created: createdLabel(row.instance.created_at, now) || undefined,
-        environment,
-        kind: "branch" as const,
-        instance: row.instance,
-        tree: branchTreePrefix(row.isLast),
-        disabled: false,
-      },
-    ];
+  const { rows } = buildBranchTable(app);
+  return rows.map((row) => ({
+    value: row.instance.instance_id,
+    label: instanceLabel(row.instance),
+    created: createdLabel(row.instance.created_at, now) || undefined,
+    instance: row.instance,
+    tree: row.kind === "fork" ? branchTreePrefix(row.isLast) : "",
+  }));
+}
+
+/**
+ * Stage 1: pick the environment. Development is offered when a development root
+ * or any branch exists; Production when a production root exists. A single
+ * option resolves without prompting (ADR-0006).
+ */
+async function pickEnvironment(
+  hasDevelopment: boolean,
+  prodRoot: ApplicationInstance | undefined,
+  currentInstanceId: string | undefined,
+): Promise<"development" | "production"> {
+  const options: Array<{ value: "development" | "production"; name: string }> = [];
+  if (hasDevelopment) options.push({ value: "development", name: "Development" });
+  if (prodRoot) options.push({ value: "production", name: "Production" });
+
+  if (options.length === 0) {
+    throw new CliError("No instances found for this application.", {
+      code: ERROR_CODE.INSTANCE_NOT_FOUND,
+    });
+  }
+  if (options.length === 1) return options[0]!.value;
+
+  const current =
+    prodRoot && currentInstanceId === prodRoot.instance_id ? "production" : "development";
+  return select<"development" | "production">({
+    message: "Select an environment:",
+    choices: options,
+    default: current,
   });
 }
 
 /**
- * Interactive picker over all instances, rendered as the same table as
- * `clerk branch list`: a pinned dim column header (carried in the prompt
- * message so clack draws no radio in front of it), trunk rows, and a flat
- * box-drawing branch tree (an empty trunk simply has nothing beneath it).
- * clack supplies the highlight/selection state; the active
- * instance is tagged `(current)` and preselected so the cursor opens on it.
- * Human-only; callers gate on isHuman(). `now` is injectable for deterministic
- * tests and defaults to the current time.
+ * Stage 2: pick a branch from the shared tree (`main` + forks) with clack's
+ * highlight/selection state layered on top. The active instance is tagged
+ * `(current)` and preselected so the cursor opens on it.
  */
-export async function pickInstance(
+async function pickBranch(
   app: Application,
   message: string,
-  currentInstanceId?: string,
-  now: number = Date.now(),
+  currentInstanceId: string | undefined,
+  now: number,
 ): Promise<ApplicationInstance> {
   const options = buildInstancePickerOptions(app, now);
   const initialValue = options.some((option) => option.value === currentInstanceId)
@@ -246,9 +224,7 @@ export async function pickInstance(
     input: tty?.input,
     filter: (term, option) => {
       const needle = term.toLowerCase();
-      return [option.label, option.value, option.environment].some((value) =>
-        value.toLowerCase().includes(needle),
-      );
+      return [option.label, option.value].some((value) => value.toLowerCase().includes(needle));
     },
     render() {
       if (this.state === "submit") return `${cyan("◆")}  ${message}\n${dim("└")}  Selected`;
@@ -267,10 +243,7 @@ export async function pickInstance(
               ? "current"
               : "normal";
         const marker = state === "cursor" ? bold(green("●")) : dim(state === "current" ? "◉" : "○");
-        const label =
-          option.kind === "branch" && !searching
-            ? `${option.tree}${option.instance?.branch_name ?? option.label}`
-            : option.label;
+        const label = searching ? option.label : `${option.tree}${option.label}`;
         const body = state === "cursor" ? label : dim(label);
         const age = option.created
           ? state === "cursor"
@@ -299,4 +272,45 @@ export async function pickInstance(
   } finally {
     tty?.close();
   }
+}
+
+/**
+ * Two-stage interactive selector following the two lenses (ADR-0006): stage 1
+ * picks the environment (Development / Production), stage 2 picks the branch
+ * (`main` + forks). Every single-option stage is skipped: no production skips
+ * stage 1, and a lone `main` skips stage 2. Production never reaches stage 2.
+ * Human-only; callers gate on isHuman(). `now` is injectable for deterministic
+ * tests and defaults to the current time.
+ */
+export async function pickInstance(
+  app: Application,
+  message: string,
+  currentInstanceId?: string,
+  now: number = Date.now(),
+): Promise<ApplicationInstance> {
+  const devRoot = app.instances.find(
+    (i) => i.environment_type === "development" && isPrimaryInstance(i),
+  );
+  const prodRoot = app.instances.find(
+    (i) => i.environment_type === "production" && isPrimaryInstance(i),
+  );
+  const { main, forks } = developmentBranches(app);
+
+  const environment = await pickEnvironment(
+    Boolean(devRoot || main || forks.length > 0),
+    prodRoot,
+    currentInstanceId,
+  );
+  if (environment === "production") return prodRoot!;
+
+  // Development chosen. The branch root is `main` when named, else the nameless
+  // dev root. A lone root (no forks) resolves immediately, skipping stage 2.
+  const branchRoot = main ?? devRoot;
+  if (!branchRoot) {
+    throw new CliError("No development instance found for this application.", {
+      code: ERROR_CODE.INSTANCE_NOT_FOUND,
+    });
+  }
+  if (forks.length === 0) return branchRoot;
+  return pickBranch(app, message, currentInstanceId, now);
 }

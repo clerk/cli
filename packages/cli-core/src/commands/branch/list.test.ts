@@ -24,16 +24,17 @@ mock.module("../../lib/config.ts", () => ({
     instanceLabel: "development",
   }),
   getActiveInstanceForApp: (...a: unknown[]) => mockGetActiveInstanceForApp(...a),
-  // shared.ts (imported by list.ts for instanceLabel) pulls these from config.ts,
-  // so the mock must provide them or the real module's named exports go missing.
+  // shared.ts (imported by list.ts) pulls these from config.ts, so the mock must
+  // provide them or the real module's named exports go missing. A root is the
+  // null-parent instance (ADR-0003), so `main` (branch_name set, no parent) is a
+  // root.
   INSTANCE_ALIASES: {
     dev: "development",
     development: "development",
     prod: "production",
     production: "production",
   },
-  isPrimaryInstance: (i: { branch_name?: string; parent_instance_id?: string }) =>
-    !i.branch_name && !i.parent_instance_id,
+  isPrimaryInstance: (i: { parent_instance_id?: string }) => !i.parent_instance_id,
 }));
 
 const { branchList } = await import("./list.ts");
@@ -41,6 +42,8 @@ const { branchList } = await import("./list.ts");
 const HOUR = 60 * 60 * 1000;
 const DAY = 24 * HOUR;
 
+// An enabled app: the dev root carries the real `main` branch name, forks hang
+// off it, and production has no branch identity.
 const mockAppWithBranches = {
   application_id: "app_test123",
   name: "Test App",
@@ -49,6 +52,7 @@ const mockAppWithBranches = {
       instance_id: "ins_dev",
       environment_type: "development",
       publishable_key: "pk_test_aaa",
+      branch_name: "main",
     },
     {
       instance_id: "ins_prod",
@@ -74,13 +78,15 @@ const mockAppWithBranches = {
   ],
 };
 
-const devOnlyApp = {
+// A branching-enabled app with only the `main` branch (no forks yet).
+const mainOnlyApp = {
   ...mockAppWithBranches,
   instances: [
     {
       instance_id: "ins_dev",
       environment_type: "development",
       publishable_key: "pk_test_aaa",
+      branch_name: "main",
     },
   ],
 };
@@ -113,26 +119,44 @@ describe("branch list", () => {
   const tableOut = () => uiCapture.out;
 
   describe("JSON output", () => {
-    test("outputs flat branches and trunks arrays, with active_instance_id", async () => {
+    test("outputs a single branches list with main first and active_instance_id", async () => {
       mockIsAgent.mockReturnValue(true);
       mockFetchApplication.mockResolvedValue(mockAppWithBranches);
 
       await branchList({});
 
       const parsed = JSON.parse(captured.out);
-      expect(parsed.branches).toHaveLength(2);
-      expect(parsed.branches[0].branch_name).toBe("feature-auth");
-      expect(parsed.branches[0].instance_id).toBe("ins_branch1");
-      // Branches are flat and link to their trunk via parent_instance_id.
-      expect(parsed.branches[0].parent_instance_id).toBe("ins_dev");
-      expect(parsed.branches[1].branch_name).toBe("fix-email");
-      expect(parsed.branches[0].created_at).toBe(mockAppWithBranches.instances[2]!.created_at);
+      // A single branches list: main (null-parent) first, then its forks.
+      expect(parsed.trunks).toBeUndefined();
+      expect(parsed.branches).toHaveLength(3);
+      expect(parsed.branches[0].branch_name).toBe("main");
+      expect(parsed.branches[0].instance_id).toBe("ins_dev");
+      expect(parsed.branches[0].parent_instance_id).toBeNull();
+      expect(parsed.branches[1].branch_name).toBe("feature-auth");
+      expect(parsed.branches[1].instance_id).toBe("ins_branch1");
+      // Forks link to main via parent_instance_id.
+      expect(parsed.branches[1].parent_instance_id).toBe("ins_dev");
+      expect(parsed.branches[2].branch_name).toBe("fix-email");
+      expect(parsed.branches[1].created_at).toBe(mockAppWithBranches.instances[2]!.created_at);
       // Bootstrap flows hand the frontend its pk without a second API call.
-      expect(parsed.branches[0].publishable_key).toBe("pk_test_ccc");
+      expect(parsed.branches[1].publishable_key).toBe("pk_test_ccc");
       expect(parsed.active_instance_id).toBeNull();
       expect(parsed.active_instance_missing).toBe(false);
       // No human table on stdout in JSON/agent mode.
       expect(tableOut()).toBe("");
+    });
+
+    test("excludes production from the branches list", async () => {
+      mockIsAgent.mockReturnValue(true);
+      mockFetchApplication.mockResolvedValue(mockAppWithBranches);
+
+      await branchList({});
+
+      const parsed = JSON.parse(captured.out);
+      for (const b of parsed.branches) {
+        expect(b.branch_name).toBeDefined();
+        expect(b.instance_id).not.toBe("ins_prod");
+      }
     });
 
     test("flags a dangling active pointer in JSON", async () => {
@@ -166,57 +190,21 @@ describe("branch list", () => {
       expect(parsed.active_instance_id).toBe("ins_branch1");
     });
 
-    test("excludes instances without a branch_name", async () => {
+    test("returns just main when no forks exist", async () => {
       mockIsAgent.mockReturnValue(true);
-      mockFetchApplication.mockResolvedValue(mockAppWithBranches);
+      mockFetchApplication.mockResolvedValue(mainOnlyApp);
 
       await branchList({});
 
       const parsed = JSON.parse(captured.out);
-      for (const b of parsed.branches) {
-        expect(b.branch_name).toBeDefined();
-        expect(b.instance_id).not.toBe("ins_dev");
-        expect(b.instance_id).not.toBe("ins_prod");
-      }
-    });
-
-    test("outputs the trunk instances with an empty branches array when none exist", async () => {
-      mockIsAgent.mockReturnValue(true);
-      mockFetchApplication.mockResolvedValue(devOnlyApp);
-
-      await branchList({});
-
-      const parsed = JSON.parse(captured.out);
-      expect(parsed.branches).toEqual([]);
-      expect(parsed.trunks.map((t: { instance_id: string }) => t.instance_id)).toEqual(["ins_dev"]);
-    });
-
-    test("lists the trunk instances development-first with their ids", async () => {
-      mockIsAgent.mockReturnValue(true);
-      mockFetchApplication.mockResolvedValue(mockAppWithBranches);
-
-      await branchList({});
-
-      const parsed = JSON.parse(captured.out);
-      expect(parsed.trunks).toEqual([
-        {
-          environment_type: "development",
-          instance_id: "ins_dev",
-          publishable_key: "pk_test_aaa",
-          created_at: null,
-        },
-        {
-          environment_type: "production",
-          instance_id: "ins_prod",
-          publishable_key: "pk_live_bbb",
-          created_at: null,
-        },
-      ]);
+      expect(parsed.branches).toHaveLength(1);
+      expect(parsed.branches[0].branch_name).toBe("main");
+      expect(parsed.branches[0].parent_instance_id).toBeNull();
     });
   });
 
   describe("human table output", () => {
-    test("renders a headered table with branch name, instance id, and count", async () => {
+    test("renders a headered tree with main pinned above its forks and no production", async () => {
       mockFetchApplication.mockResolvedValue(mockAppWithBranches);
 
       await branchList({});
@@ -224,12 +212,16 @@ describe("branch list", () => {
       const out = tableOut();
       expect(out).toContain("BRANCH");
       expect(out).toContain("INSTANCE ID");
-      // Parentage is shown via tree nesting now, not a PARENT column.
+      // Parentage is shown via tree nesting, not a PARENT column.
       expect(out).not.toContain("PARENT");
+      // Production has no branch identity and never appears.
+      expect(out).not.toContain("Production");
+      expect(out).not.toContain("ins_prod");
+      expect(out).toContain("main");
       expect(out).toContain("feature-auth");
       expect(out).toContain("ins_branch1");
       expect(out).toContain("fix-email");
-      expect(out).toContain("2 branches");
+      expect(out).toContain("3 branches");
       // Human table goes to stderr (ui), never to the pipeable stdout stream.
       expect(captured.out).toBe("");
     });
@@ -246,40 +238,31 @@ describe("branch list", () => {
       expect(lines.find((l) => l.includes("fix-email"))).toContain("2h ago");
     });
 
-    test("groups every branch under the Development root row", async () => {
+    test("pins main at the top with forks nested beneath it", async () => {
       mockFetchApplication.mockResolvedValue(mockAppWithBranches);
 
       await branchList({});
 
       const lines = tableOut().split("\n");
-      const devIdx = lines.findIndex((l) => l.includes("Development"));
+      const mainIdx = lines.findIndex((l) => l.includes("main"));
       const featIdx = lines.findIndex((l) => l.includes("feature-auth"));
-      const prodIdx = lines.findIndex((l) => l.includes("Production"));
       const fixIdx = lines.findIndex((l) => l.includes("fix-email"));
 
-      // Trunk header rows are title-cased and carry the environment root's id,
-      // not a horizontal rule.
-      expect(devIdx).toBeGreaterThanOrEqual(0);
-      expect(prodIdx).toBeGreaterThanOrEqual(0);
-      expect(lines[devIdx]).toContain("ins_dev");
-      expect(lines[prodIdx]).toContain("ins_prod");
-      // Branches always fork the development root, so both sit under Development
-      // and above the Production root; Production never carries a fork.
-      expect(featIdx).toBeGreaterThan(devIdx);
-      expect(fixIdx).toBeGreaterThan(devIdx);
-      expect(featIdx).toBeLessThan(prodIdx);
-      expect(fixIdx).toBeLessThan(prodIdx);
-      // Branches are drawn as forks of the root with box-drawing glyphs; the
-      // last fork closes with └.
+      // main is pinned first (carrying its own instance id) and forks follow.
+      expect(mainIdx).toBeGreaterThanOrEqual(0);
+      expect(lines[mainIdx]).toContain("ins_dev");
+      expect(featIdx).toBeGreaterThan(mainIdx);
+      expect(fixIdx).toBeGreaterThan(mainIdx);
+      // Forks are drawn as a box-drawing tree; the last fork closes with └.
       expect(lines[fixIdx]).toContain("└");
     });
 
-    test("draws ├ for all but the last fork in a section", async () => {
+    test("draws ├ for all but the last fork", async () => {
       mockFetchApplication.mockResolvedValue({
         ...mockAppWithBranches,
         instances: [
-          mockAppWithBranches.instances[0], // dev root
-          mockAppWithBranches.instances[2], // feature-auth under dev
+          mockAppWithBranches.instances[0], // main (dev root)
+          mockAppWithBranches.instances[2], // feature-auth
           {
             instance_id: "ins_branch3",
             environment_type: "development",
@@ -294,50 +277,41 @@ describe("branch list", () => {
       await branchList({});
 
       const lines = tableOut().split("\n");
-      // First of two branches uses ├; the last uses └.
+      // First of two forks uses ├; the last uses └.
       expect(lines.find((l) => l.includes("feature-auth"))).toContain("├");
       expect(lines.find((l) => l.includes("agent-pr-99"))).toContain("└");
     });
 
-    test("always lists both trunk rows, and Production never gets a placeholder", async () => {
+    test("shows main with a note when no forks exist", async () => {
+      mockFetchApplication.mockResolvedValue(mainOnlyApp);
+
+      await branchList({});
+
+      const lines = tableOut().split("\n");
+      const out = lines.join("\n");
+      expect(out).toContain("main");
+      expect(out).toContain("ins_dev");
+      // main alone is a single branch.
+      expect(out).toContain("1 branch");
+    });
+
+    test("shows a bare note when branching is not enabled (nameless dev root)", async () => {
       mockFetchApplication.mockResolvedValue({
         ...mockAppWithBranches,
         instances: [
-          mockAppWithBranches.instances[0], // dev root
-          mockAppWithBranches.instances[1], // prod root
-          mockAppWithBranches.instances[2], // feature-auth under dev
+          {
+            instance_id: "ins_dev",
+            environment_type: "development",
+            publishable_key: "pk_test_aaa",
+          },
         ],
       });
 
       await branchList({});
 
-      const lines = tableOut().split("\n");
-      // Production has no branches, but its trunk row is still shown for reference.
-      const out = lines.join("\n");
-      expect(out).toContain("Development");
-      expect(out).toContain("Production");
-      expect(out).toContain("feature-auth");
-      // Production can never hold forks, so it stands alone with no placeholder;
-      // Development already has feature-auth, so it has none either.
-      expect(out).not.toContain("No branches");
-      const prodIdx = lines.findIndex((l) => l.includes("Production"));
-      expect(lines[prodIdx + 1] ?? "").not.toContain("No branches");
-    });
-
-    test("lists the trunk rows and a note when no branches exist", async () => {
-      mockFetchApplication.mockResolvedValue(devOnlyApp);
-
-      await branchList({});
-
-      const lines = tableOut().split("\n");
-      const out = lines.join("\n");
-      // The dev trunk is still referenced; a note replaces a branch count.
-      expect(out).toContain("Development");
-      expect(out).toContain("ins_dev");
+      const out = tableOut();
       expect(out).toContain("No branches yet.");
-      // The bare dev trunk also gets an inline "No branches" placeholder row.
-      const devIdx = lines.findIndex((l) => l.includes("Development"));
-      expect(lines[devIdx + 1]).toContain("No branches");
+      expect(out).not.toContain("BRANCH");
     });
 
     test("marks the active branch with ● and leaves others unmarked", async () => {
@@ -357,6 +331,23 @@ describe("branch list", () => {
       const inactiveLine = lines.find((l) => l.includes("fix-email"));
       expect(activeLine).toContain("●");
       expect(inactiveLine).not.toContain("●");
+    });
+
+    test("marks main active when it is the active instance", async () => {
+      mockFetchApplication.mockResolvedValue(mockAppWithBranches);
+      mockGetActiveInstanceForApp.mockResolvedValue({
+        appId: "app_test123",
+        instanceId: "ins_dev",
+        label: "main",
+        branch_name: "main",
+        environmentType: "development",
+      });
+
+      await branchList({});
+
+      const lines = tableOut().split("\n");
+      const mainLine = lines.find((l) => l.includes("main"));
+      expect(mainLine).toContain("●");
     });
 
     test("marks no branch when the active pointer is out of app", async () => {
