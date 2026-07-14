@@ -62,6 +62,10 @@ export const ERROR_CODE = {
   IMPERSONATION_NOT_ENABLED: "impersonation_not_enabled",
   /** Actor token creation rejected because the impersonation quota is exhausted. */
   IMPERSONATION_LIMIT_EXCEEDED: "impersonation_limit_exceeded",
+  /** Actor token already accepted — revoking now requires `--user` to end the session. */
+  ACTOR_TOKEN_ALREADY_ACCEPTED: "actor_token_already_accepted",
+  /** No active impersonation session matched the operator's actor stamp. */
+  IMPERSONATION_SESSION_NOT_FOUND: "impersonation_session_not_found",
 } as const;
 
 export type ErrorCode = (typeof ERROR_CODE)[keyof typeof ERROR_CODE];

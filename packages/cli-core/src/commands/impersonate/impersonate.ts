@@ -174,8 +174,11 @@ export async function impersonate(options: ImpersonateOptions = {}): Promise<voi
   log.data(token.url);
   // BAPI has no list endpoint for actor tokens, so this is the only moment a
   // human can learn the ID needed to revoke. Pin the same app/instance the
-  // token was created on so the hint can't resolve a different target.
+  // token was created on so the hint can't resolve a different target, and
+  // include --user so the command still works after the token is accepted
+  // (revoking then falls back to ending the impersonation session).
   const revokeTarget = [
+    ` --user ${userId}`,
     ctx.appId ? ` --app ${ctx.appId}` : "",
     ctx.instanceId ? ` --instance ${ctx.instanceId}` : "",
   ].join("");
