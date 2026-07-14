@@ -210,17 +210,6 @@ describe("revoke", () => {
       );
     });
 
-    test("supports the paginated { data: [...] } list shape", async () => {
-      mockAcceptedTokenFlow({ data: [SESSION_MINE] });
-      await revoke({ actorTokenId: "act_1", user: "user_target" });
-
-      expect(mockBapiRequest).toHaveBeenCalledWith({
-        method: "POST",
-        path: "/sessions/sess_mine/revoke",
-        secretKey: CTX.secretKey,
-      });
-    });
-
     test("non-400 revoke failures propagate without touching the sessions API", async () => {
       mockBapiRequest.mockRejectedValue(bapiError(404, "not found"));
       await expect(revoke({ actorTokenId: "act_1", user: "user_target" })).rejects.toThrow(

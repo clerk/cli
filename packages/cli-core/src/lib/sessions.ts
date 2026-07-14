@@ -43,14 +43,10 @@ export async function listUserSessions(
     secretKey,
   });
 
-  // BAPI list endpoints exist in two shapes: a plain array and a paginated
-  // `{ data: [...] }` envelope. Accept both.
+  // Unpaginated BAPI list endpoints (like this one) return a plain array —
+  // same convention as `/users` (see lib/users.ts).
   const body = response.body;
-  if (Array.isArray(body)) {
-    return body as Session[];
-  }
-  const data = (body as { data?: Session[] } | null)?.data;
-  return Array.isArray(data) ? data : [];
+  return Array.isArray(body) ? (body as Session[]) : [];
 }
 
 export async function revokeSession(secretKey: string, sessionId: string): Promise<RevokedSession> {
