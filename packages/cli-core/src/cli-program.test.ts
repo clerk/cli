@@ -90,8 +90,9 @@ test("branch create forks the development root with no parent-selection flag", (
   const create = branch.commands.find((command) => command.name() === "create")!;
   const optionNames = create.options.map((option) => option.long);
 
-  // Pinned exactly: only --name/--app/--json, no parent-selection flag.
-  expect(optionNames).toEqual(["--name", "--app", "--json"]);
+  // Pinned exactly: --name/--app/--switch/--json, no parent-selection flag.
+  // --name is optional (prompted when omitted) but still part of the surface.
+  expect(optionNames).toEqual(["--name", "--app", "--switch", "--json"]);
 });
 
 test("env pull exposes branch targeting", () => {

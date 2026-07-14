@@ -13,6 +13,10 @@ export function registerBranch(program: Program): void {
     .description("Fork, list, and delete instance branches")
     .setExamples([
       {
+        command: "clerk branch create",
+        description: "Fork interactively, prompting for the branch name",
+      },
+      {
         command: "clerk branch create --name agent/pr-42",
         description: "Fork the development instance into a branch",
       },
@@ -30,7 +34,7 @@ export function registerBranch(program: Program): void {
   branch
     .command("create")
     .description("Fork an instance into a new branch (a development instance)")
-    .requiredOption("--name <name>", "Branch name (e.g. agent/pr-42)")
+    .option("--name <name>", "Branch name (e.g. agent/pr-42); prompted when omitted")
     .option("--app <id>", "Application ID to target (works from any directory)")
     .option("-s, --switch", "Switch this worktree to the new branch after creating it")
     .option("--json", "Output as JSON")

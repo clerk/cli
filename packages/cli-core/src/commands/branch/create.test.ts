@@ -5,6 +5,9 @@ const mockResolveAppContext = mock();
 const mockCreateBranch = mock();
 const mockFetchApplication = mock();
 const mockIsAgent = mock();
+const mockText = mock();
+const mockConfirm = mock();
+const mockBranchSwitch = mock();
 
 mock.module("../../lib/config.ts", () => ({
   resolveAppContext: (...args: unknown[]) => mockResolveAppContext(...args),
@@ -39,6 +42,15 @@ mock.module("../../lib/spinner.ts", () => ({
   withSpinner: async (_msg: string, fn: () => Promise<unknown>) => fn(),
 }));
 
+mock.module("../../lib/prompts.ts", () => ({
+  text: (...args: unknown[]) => mockText(...args),
+  confirm: (...args: unknown[]) => mockConfirm(...args),
+}));
+
+mock.module("./switch.ts", () => ({
+  branchSwitch: (...args: unknown[]) => mockBranchSwitch(...args),
+}));
+
 const { branchCreate } = await import("./create.ts");
 
 // A branching-enabled app: the dev root is named `main` and the app-level gate is
@@ -64,6 +76,9 @@ describe("branch create", () => {
 
   beforeEach(() => {
     mockIsAgent.mockReturnValue(false);
+    mockText.mockResolvedValue("agent/pr-42");
+    mockConfirm.mockResolvedValue(false);
+    mockBranchSwitch.mockResolvedValue(undefined);
     mockResolveAppContext.mockResolvedValue({
       appId: "app_test123",
       appLabel: "Test App",
@@ -86,6 +101,9 @@ describe("branch create", () => {
     mockFetchApplication.mockReset();
     mockCreateBranch.mockReset();
     mockIsAgent.mockReset();
+    mockText.mockReset();
+    mockConfirm.mockReset();
+    mockBranchSwitch.mockReset();
   });
 
   test("forks the named main root with no parent-selection flag", async () => {
@@ -142,5 +160,60 @@ describe("branch create", () => {
 
     await expect(branchCreate({ name: "agent/pr-42" })).rejects.toThrow(/aren't available/);
     expect(mockCreateBranch).not.toHaveBeenCalled();
+  });
+
+  test("prompts for the branch name when --name is omitted in human mode", async () => {
+    mockText.mockResolvedValue("agent/pr-9");
+
+    await branchCreate({});
+
+    expect(mockText).toHaveBeenCalledTimes(1);
+    expect(mockCreateBranch).toHaveBeenCalledWith("app_test123", {
+      cloneInstanceId: "ins_dev",
+      branchName: "agent/pr-9",
+    });
+    expect(mockBranchSwitch).not.toHaveBeenCalled();
+    expect(captured.err).toContain("Forked `main`");
+    expect(captured.err).toContain("agent/pr-9");
+  });
+
+  test("offers to switch after an interactive create and delegates when accepted", async () => {
+    mockText.mockResolvedValue("agent/pr-9");
+    mockConfirm.mockResolvedValue(true);
+
+    await branchCreate({});
+
+    expect(mockConfirm).toHaveBeenCalledTimes(1);
+    expect(mockBranchSwitch).toHaveBeenCalledWith("agent/pr-9", {
+      app: undefined,
+      json: undefined,
+    });
+  });
+
+  test("requires --name in agent mode instead of prompting", async () => {
+    mockIsAgent.mockReturnValue(true);
+
+    await expect(branchCreate({})).rejects.toThrow(/Pass --name/);
+    expect(mockText).not.toHaveBeenCalled();
+    expect(mockFetchApplication).not.toHaveBeenCalled();
+    expect(mockCreateBranch).not.toHaveBeenCalled();
+  });
+
+  test("does not prompt to switch when --name is given without --switch", async () => {
+    await branchCreate({ name: "agent/pr-42" });
+
+    expect(mockText).not.toHaveBeenCalled();
+    expect(mockConfirm).not.toHaveBeenCalled();
+    expect(mockBranchSwitch).not.toHaveBeenCalled();
+  });
+
+  test("delegates to switch without prompting when --switch is passed", async () => {
+    await branchCreate({ name: "agent/pr-42", switch: true });
+
+    expect(mockConfirm).not.toHaveBeenCalled();
+    expect(mockBranchSwitch).toHaveBeenCalledWith("agent/pr-42", {
+      app: undefined,
+      json: undefined,
+    });
   });
 });
