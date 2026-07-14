@@ -25,6 +25,8 @@ mock.module("../../lib/listage.ts", () => ({
 }));
 
 const {
+  assertValidBranchName,
+  branchNameError,
   buildInstancePickerOptions,
   developmentBranches,
   instanceLabel,
@@ -188,5 +190,48 @@ describe("pickInstance (two-stage selector)", () => {
     // Stage 1 ran (production exists) but stage 2 was skipped (no forks).
     expect(mockSelect).toHaveBeenCalledTimes(1);
     expect(promptOptions).toBeUndefined();
+  });
+});
+
+describe("branchNameError", () => {
+  test("accepts valid git branch names", () => {
+    for (const name of [
+      "feature",
+      "agent/pr-42",
+      "team/sub/topic",
+      "release-1.2.3",
+      "with_underscore",
+      "a",
+    ]) {
+      expect(branchNameError(name)).toBeNull();
+    }
+  });
+
+  test("rejects malformed names with a specific message", () => {
+    expect(branchNameError("")).toBe("Branch name is required.");
+    expect(branchNameError(" feature")).toBe("Branch name cannot start or end with a space.");
+    expect(branchNameError("feature ")).toBe("Branch name cannot start or end with a space.");
+    expect(branchNameError("a".repeat(256))).toMatch(/255 characters or fewer/);
+    expect(branchNameError("feature..fix")).toBe("Branch name cannot contain '..'.");
+    expect(branchNameError("/leading")).toMatch(/leading, trailing, or empty path segment/);
+    expect(branchNameError("double//slash")).toMatch(/leading, trailing, or empty path segment/);
+    expect(branchNameError("has space")).toMatch(/letters, numbers, and the characters/);
+    expect(branchNameError("tilde~")).toMatch(/letters, numbers, and the characters/);
+    expect(branchNameError(".hidden")).toMatch(/cannot start or end with '\.'/);
+    expect(branchNameError("branch.lock")).toMatch(/cannot end with '\.lock'/);
+  });
+
+  test("rejects reserved names case-insensitively", () => {
+    for (const name of ["main", "DEV", "Prod", "development", "PRODUCTION"]) {
+      expect(branchNameError(name)).toMatch(/reserved/);
+    }
+  });
+});
+
+describe("assertValidBranchName", () => {
+  test("returns for a valid name and throws a usage error for an invalid one", () => {
+    expect(() => assertValidBranchName("agent/pr-42")).not.toThrow();
+    expect(() => assertValidBranchName("bad name")).toThrow(/letters, numbers, and the characters/);
+    expect(() => assertValidBranchName("main")).toThrow(/reserved/);
   });
 });

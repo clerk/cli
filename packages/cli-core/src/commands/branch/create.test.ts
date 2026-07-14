@@ -190,6 +190,20 @@ describe("branch create", () => {
     });
   });
 
+  test("rejects a malformed --name before any network call", async () => {
+    await expect(branchCreate({ name: "bad name" })).rejects.toThrow(
+      /letters, numbers, and the characters/,
+    );
+    expect(mockResolveAppContext).not.toHaveBeenCalled();
+    expect(mockFetchApplication).not.toHaveBeenCalled();
+    expect(mockCreateBranch).not.toHaveBeenCalled();
+  });
+
+  test("rejects a reserved --name before any network call", async () => {
+    await expect(branchCreate({ name: "main" })).rejects.toThrow(/reserved/);
+    expect(mockCreateBranch).not.toHaveBeenCalled();
+  });
+
   test("requires --name in agent mode instead of prompting", async () => {
     mockIsAgent.mockReturnValue(true);
 

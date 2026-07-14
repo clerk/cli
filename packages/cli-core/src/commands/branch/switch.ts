@@ -10,6 +10,7 @@ import { getGitCurrentBranch } from "../../lib/git.ts";
 import { pull } from "../env/pull.ts";
 import {
   assertBranchingEnabled,
+  assertValidBranchName,
   instanceLabel,
   resolveSwitchTarget,
   pickInstance,
@@ -66,6 +67,11 @@ export async function branchSwitch(
   options: BranchSwitchOptions,
 ): Promise<void> {
   const cwd = options.cwd ?? process.cwd();
+  // Reject a malformed --create name up front (all modes), before any link
+  // resolution or network call, mirroring `clerk branch create` and the backend.
+  if (options.create) {
+    assertValidBranchName(options.create);
+  }
   const { appId, appName } = await resolveAppId(options);
   const activeKey = await resolveActiveKey(cwd);
   const current = await getActiveInstanceForApp(cwd, appId);

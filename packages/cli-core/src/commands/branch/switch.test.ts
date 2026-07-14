@@ -236,6 +236,14 @@ describe("branch switch", () => {
     expect(mockSetActiveInstance).not.toHaveBeenCalled();
   });
 
+  test("-c rejects a malformed branch name before the fork round-trip", async () => {
+    await expect(branchSwitch(undefined, { create: "bad name" })).rejects.toThrow(
+      /letters, numbers, and the characters/,
+    );
+    expect(mockCreateBranch).not.toHaveBeenCalled();
+    expect(mockSetActiveInstance).not.toHaveBeenCalled();
+  });
+
   test("switching to an existing instance is not gated by enablement", async () => {
     // Only forking is gated; navigating to an existing branch always works.
     mockFetchApplication.mockResolvedValue({ ...APP, branches_enabled: false });

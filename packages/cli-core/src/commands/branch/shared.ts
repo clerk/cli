@@ -63,6 +63,76 @@ export function assertBranchingEnabled(app: Application): void {
 }
 
 // ---------------------------------------------------------------------------
+// Branch-name validation. Mirrors clerk_go's ValidateBranchName +
+// IsReservedBranchName (the authoritative backend gate) and the dashboard's
+// getBranchNameError. Enforced client-side so both `clerk branch create` and
+// `clerk switch --create` reject invalid names before the API round-trip.
+// ---------------------------------------------------------------------------
+
+// Longest branch name accepted by the branch service. Git-ref rules do the real
+// work; this only blocks absurd input.
+const MAX_BRANCH_NAME_LENGTH = 255;
+
+// A single git ref path segment: ASCII letters, digits, and the ref-safe
+// punctuation '.', '_', '-'. The allowlist already excludes every byte git
+// forbids anywhere in a refname (control chars, space, and ~ ^ : ? * [ \).
+const VALID_BRANCH_SEGMENT = /^[A-Za-z0-9._-]+$/;
+
+// Names rejected by the backend because they collide with the two-lens
+// vocabulary. Mirrors clerk_go's reservedBranchNames (matched
+// case-insensitively). Kept in sync with the dashboard's reserved list.
+const RESERVED_BRANCH_NAMES = new Set(["main", "dev", "prod", "development", "production"]);
+
+/**
+ * Validate a branch name against git check-ref-format (allowlist form) and the
+ * reserved-name policy. Returns a user-facing message, or null when valid.
+ */
+export function branchNameError(name: string): string | null {
+  if (!name) {
+    return "Branch name is required.";
+  }
+  if (name.trim() !== name) {
+    return "Branch name cannot start or end with a space.";
+  }
+  if (name.length > MAX_BRANCH_NAME_LENGTH) {
+    return `Branch name must be ${MAX_BRANCH_NAME_LENGTH} characters or fewer.`;
+  }
+  if (name.includes("..")) {
+    return "Branch name cannot contain '..'.";
+  }
+  if (name.startsWith("/") || name.endsWith("/") || name.includes("//")) {
+    return "Branch name cannot have a leading, trailing, or empty path segment.";
+  }
+  for (const segment of name.split("/")) {
+    if (!VALID_BRANCH_SEGMENT.test(segment)) {
+      return "Branch name can only contain letters, numbers, and the characters . _ - / (no spaces).";
+    }
+    if (segment.startsWith(".") || segment.endsWith(".")) {
+      return "Branch name segments cannot start or end with '.'.";
+    }
+    if (segment.endsWith(".lock")) {
+      return "Branch name segments cannot end with '.lock'.";
+    }
+  }
+  if (RESERVED_BRANCH_NAMES.has(name.toLowerCase())) {
+    return "Branch name is reserved. Choose a name other than main, dev, prod, development, or production.";
+  }
+  return null;
+}
+
+/**
+ * Throw a usage error when name is not a valid, non-reserved branch name. Used
+ * for flag values (`--name`, `switch --create`) in every mode; the interactive
+ * prompt calls branchNameError directly so it can re-ask instead of throwing.
+ */
+export function assertValidBranchName(name: string): void {
+  const error = branchNameError(name);
+  if (error) {
+    throwUsageError(error, undefined, ERROR_CODE.USAGE_ERROR);
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Shared branch-tree model: `main` (the null-parent branch) pinned at the top
 // with its forks nested beneath as a box-drawing tree. Production has no branch
 // identity and never appears (ADR-0005). Both `clerk branch list` and the

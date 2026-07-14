@@ -1,6 +1,6 @@
 import { resolveAppContext, isPrimaryInstance } from "../../lib/config.ts";
 import { createBranch, fetchApplication } from "../../lib/plapi.ts";
-import { assertBranchingEnabled } from "./shared.ts";
+import { assertBranchingEnabled, assertValidBranchName, branchNameError } from "./shared.ts";
 import { branchSwitch } from "./switch.ts";
 import { printJson, type AppsOptions } from "../apps/shared.ts";
 import { ERROR_CODE, throwUsageError, withApiContext } from "../../lib/errors.ts";
@@ -34,6 +34,12 @@ export async function branchCreate(options: BranchCreateOptions): Promise<void> 
       undefined,
       ERROR_CODE.USAGE_ERROR,
     );
+  }
+
+  // Validate a supplied --name up front (all modes) so a malformed flag fails
+  // before any network call. The interactive prompt validates its own input.
+  if (options.name) {
+    assertValidBranchName(options.name);
   }
 
   const ctx = await resolveAppContext({ app: options.app, instance: "development" });
@@ -88,12 +94,12 @@ export async function branchCreate(options: BranchCreateOptions): Promise<void> 
   log.success(`Forked \`${parentLabel}\` → \`${name}\` (${branch.id})`);
 }
 
-/** Prompt for the branch name, rejecting an empty value. */
+/** Prompt for the branch name, enforcing the git-ref and reserved-name rules. */
 function promptBranchName(): Promise<string> {
   return text({
     message: "Branch name",
     placeholder: "agent/pr-42",
-    validate: (value) => (value && value.trim().length > 0 ? undefined : "Enter a branch name."),
+    validate: (value) => branchNameError(value ?? "") ?? undefined,
   });
 }
 
