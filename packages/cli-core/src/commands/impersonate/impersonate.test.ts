@@ -138,7 +138,7 @@ describe("impersonate", () => {
       }),
     });
     expect(captured.out).toBe(SIGN_IN_URL);
-    expect(captured.err).toContain("Revoke with: clerk imp revoke act_1");
+    expect(captured.err).toContain("Revoke with: clerk imp revoke act_1 --user user_2x9k");
     expect(mockOpenBrowser).toHaveBeenCalledWith(SIGN_IN_URL);
   });
 

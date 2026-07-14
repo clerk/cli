@@ -22,6 +22,7 @@ clerk imp user_2x9k --print                  # print the URL only, no prompt, no
 clerk imp user_2x9k --yes --expires-in 900   # skip confirmation, 15-minute token
 clerk imp user_2x9k --actor oncall           # stamp the actor as cli:<you>+oncall
 clerk imp revoke act_29w9...                 # revoke a pending actor token
+clerk imp revoke act_29w9... --user user_2x9k # also end the session if the token was accepted
 ```
 
 ## Options
@@ -30,6 +31,7 @@ clerk imp revoke act_29w9...                 # revoke a pending actor token
 | ------------------------ | ---------- | ---------------------------------------------------------------------------------------------------------------- |
 | `[user]`                 | create     | `user_...` ID, exact email, or fuzzy search term. Omit to pick interactively.                                    |
 | `<actorTokenId>`         | revoke     | Actor token ID to revoke (required)                                                                              |
+| `--user <id>`            | revoke     | Impersonated user's ID (`user_...`) — required to end the session once the token was accepted                    |
 | `--secret-key <key>`     | both       | Backend API secret key to use                                                                                    |
 | `--app <id>`             | both       | Application ID to target (works from any directory)                                                              |
 | `--instance <id>`        | both       | Instance to target (`dev`, `prod`, or a full instance ID)                                                        |
@@ -39,8 +41,41 @@ clerk imp revoke act_29w9...                 # revoke a pending actor token
 | `--print`                | create     | Print the sign-in URL only — no prompt, no browser                                                               |
 | `--yes`                  | create     | Skip the confirmation prompt                                                                                     |
 
-`clerk impersonate revoke` never prompts for confirmation — it's a low-risk
-operation on an already-pending token.
+`clerk impersonate revoke` never prompts for confirmation — it only ends
+access that impersonation created.
+
+## Revoking after the token was accepted
+
+`POST /v1/actor_tokens/{id}/revoke` only revokes **pending** tokens. Opening
+the sign-in URL consumes the ticket and flips the token to `accepted` — BAPI
+then answers `400` and the token itself can never be revoked again. The live
+impersonation persists as a **session** whose `actor.sub` carries the CLI's
+audit stamp (`cli:<email>`, or `cli:<email>+<context>`).
+
+On that `400`, `clerk imp revoke` falls back to session revocation:
+
+1. Requires `--user <user_id>` (BAPI has no `GET /v1/actor_tokens/{id}`, so
+   the CLI can't recover the target user from the token ID). Without it, the
+   command errors with `actor_token_already_accepted` and shows how to re-run.
+2. `GET /v1/sessions?user_id=<user>&status=active`, keeping only sessions
+   whose `actor.sub` is your stamp (`cli:<email>`) or a `+<context>` variant
+   of it — sessions started by other operators are never touched.
+3. `POST /v1/sessions/{id}/revoke` for each match, reporting each one:
+
+```
+$ clerk imp revoke act_29w9... --user user_2x9k
+▲ Token already accepted — an active impersonation session exists.
+◇ Found session sess_9k2j... (actor: cli:you@example.com)
+✔ Revoked session sess_9k2j... — impersonation ended.
+```
+
+If no active session matches your stamp, the command errors with
+`impersonation_session_not_found` — the impersonation already ended (signed
+out or expired) or was started by someone else.
+
+In agent mode the fallback emits one JSON line:
+`{ "id": "<act_id>", "status": "accepted", "revokedSessionIds": ["sess_..."] }`.
+Agent mode never prompts.
 
 ## User resolution
 
@@ -96,8 +131,10 @@ never prompts and proceeds directly.
 
 The sign-in URL from BAPI's response is always printed **verbatim** via
 `log.data()` — never reconstructed client-side. Human mode also prints a
-`Revoke with: clerk imp revoke <id>` hint to stderr — BAPI has no list
-endpoint for actor tokens, so creation is the only moment the ID is visible.
+`Revoke with: clerk imp revoke <id> --user <user_id> ...` hint to stderr —
+BAPI has no list endpoint for actor tokens, so creation is the only moment the
+ID is visible. The hint includes `--user` so the printed command keeps working
+after the token is accepted (see "Revoking after the token was accepted").
 
 | Condition                                  | Behavior                                                                                                                                                               |
 | ------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -109,13 +146,15 @@ endpoint for actor tokens, so creation is the only moment the ID is visible.
 
 ## Clerk API endpoints
 
-| Method | Path                              | Used by                                              |
-| ------ | --------------------------------- | ---------------------------------------------------- |
-| `GET`  | `/v1/users?email_address=<email>` | Resolving `[user]` when it contains `@`              |
-| `GET`  | `/v1/users?query=<term>`          | Resolving `[user]` fuzzy search                      |
-| `GET`  | `/v1/users?query=<term>&limit=21` | The interactive user picker (`pickUser`)             |
-| `POST` | `/v1/actor_tokens`                | Creating the actor token (`clerk impersonate`)       |
-| `POST` | `/v1/actor_tokens/{id}/revoke`    | Revoking an actor token (`clerk impersonate revoke`) |
+| Method | Path                                        | Used by                                                       |
+| ------ | ------------------------------------------- | ------------------------------------------------------------- |
+| `GET`  | `/v1/users?email_address=<email>`           | Resolving `[user]` when it contains `@`                       |
+| `GET`  | `/v1/users?query=<term>`                    | Resolving `[user]` fuzzy search                               |
+| `GET`  | `/v1/users?query=<term>&limit=21`           | The interactive user picker (`pickUser`)                      |
+| `POST` | `/v1/actor_tokens`                          | Creating the actor token (`clerk impersonate`)                |
+| `POST` | `/v1/actor_tokens/{id}/revoke`              | Revoking an actor token (`clerk impersonate revoke`)          |
+| `GET`  | `/v1/sessions?user_id=<user>&status=active` | Finding the impersonation session once the token was accepted |
+| `POST` | `/v1/sessions/{id}/revoke`                  | Ending the impersonation session (accepted-token fallback)    |
 
 ## Billing block → upgrade nudge
 

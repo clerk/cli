@@ -9,6 +9,7 @@
  */
 
 import { bapiRequest } from "./bapi.ts";
+import { BapiError } from "./errors.ts";
 
 /** The initiator stamped onto an actor token, echoed into the session's JWT. */
 export type ActorTokenActor = {
@@ -50,6 +51,16 @@ export async function createActorToken(
   });
 
   return response.body as ActorToken;
+}
+
+/**
+ * BAPI's `POST /actor_tokens/{id}/revoke` only revokes **pending** tokens and
+ * answers 400 once the sign-in ticket was consumed (token `accepted`). At that
+ * point the impersonation lives on as a session — only a sessions-API revoke
+ * can end it.
+ */
+export function isActorTokenNotRevocableError(error: unknown): boolean {
+  return error instanceof BapiError && error.status === 400;
 }
 
 export async function revokeActorToken(

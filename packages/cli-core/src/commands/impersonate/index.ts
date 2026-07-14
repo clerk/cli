@@ -43,13 +43,21 @@ export function registerImpersonate(program: Program): void {
 
   impersonateCommand
     .command("revoke")
-    .description("Revoke a pending actor token")
+    .description("Revoke an actor token, or its impersonation session if already accepted")
     .addArgument(createArgument("<actorTokenId>", "Actor token ID to revoke"))
+    .option(
+      "--user <id>",
+      "Impersonated user's ID (user_...) — required to end the session once the token was accepted",
+    )
     .option("--secret-key <key>", "Backend API secret key to use")
     .option("--app <id>", "Application ID to target (works from any directory)")
     .option("--instance <id>", "Instance to target (dev, prod, or a full instance ID)")
     .setExamples([
       { command: "clerk imp revoke act_29w9...", description: "Revoke a pending actor token" },
+      {
+        command: "clerk imp revoke act_29w9... --user user_2x9k",
+        description: "Also end the live impersonation session if the token was already accepted",
+      },
     ])
     .action((actorTokenId, _opts, cmd) =>
       revoke({
