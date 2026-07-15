@@ -136,6 +136,42 @@ export function getPlapiBaseUrl(): string {
   return process.env.CLERK_PLATFORM_API_URL ?? getCurrentEnv().platformApiUrl;
 }
 
+/**
+ * Returns whether CLERK_PLATFORM_API_URL is set to a URL that differs from the
+ * active environment's configured platform URL, along with both URLs so the
+ * caller can surface a warning.
+ *
+ * Comparison normalises both URLs via `new URL().href` so trailing-slash and
+ * case differences are ignored; falls back to raw string comparison if either
+ * value is not a valid URL.
+ */
+export function isPlatformApiUrlOverridden():
+  | {
+      overridden: false;
+    }
+  | {
+      overridden: true;
+      overrideUrl: string;
+      profileUrl: string;
+      envName: string;
+    } {
+  const override = process.env.CLERK_PLATFORM_API_URL;
+  if (!override) return { overridden: false };
+
+  const profileUrl = getCurrentEnv().platformApiUrl;
+  const normalize = (u: string) => {
+    try {
+      return new URL(u).href;
+    } catch {
+      return u;
+    }
+  };
+
+  if (normalize(override) === normalize(profileUrl)) return { overridden: false };
+
+  return { overridden: true, overrideUrl: override, profileUrl, envName: getCurrentEnvName() };
+}
+
 export function getBapiBaseUrl(): string {
   return process.env.CLERK_BACKEND_API_URL ?? getCurrentEnv().backendApiUrl;
 }
