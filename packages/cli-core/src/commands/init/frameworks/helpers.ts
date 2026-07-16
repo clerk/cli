@@ -201,19 +201,14 @@ function detectI18nMiddlewareImport(content: string): I18nMiddlewareLib | null {
 
 // ─── Middleware Content Generation ────────────────────────────────
 
-/** Next.js clerkMiddleware — permissive (unauthenticated) or protective (default). */
-export function nextjsMiddlewareContent(keyless = false): string {
-  if (keyless) {
-    return `import { clerkMiddleware } from "@clerk/nextjs/server";
-
-export default clerkMiddleware();
-
-${nextjsMiddlewareConfig()}
-`;
-  }
-  return `import { clerkMiddleware, createRouteMatcher } from "@clerk/nextjs/server";
-
-${nextjsPublicRouteMatcher()}
+/**
+ * Next.js clerkMiddleware — bare, without middleware-level route protection.
+ * Clerk deprecated createRouteMatcher-based protection in middleware; each
+ * server-side resource should call `await auth.protect()` individually.
+ * https://clerk.com/docs/guides/development/upgrading/upgrade-guides/migrate-from-create-route-matcher
+ */
+export function nextjsMiddlewareContent(): string {
+  return `import { clerkMiddleware } from "@clerk/nextjs/server";
 
 ${nextjsMiddlewareHandler()}
 
@@ -235,12 +230,10 @@ function nextjsI18nMiddlewareContent(lib: I18nMiddlewareLib, routingImport: stri
     ? `const ${lib.varName} = createMiddleware(routing);`
     : `const ${lib.varName} = createMiddleware({\n  locales: ["en"],\n  defaultLocale: "en",\n});`;
 
-  return `import { clerkMiddleware, createRouteMatcher } from "@clerk/nextjs/server";
+  return `import { clerkMiddleware } from "@clerk/nextjs/server";
 ${i18nImport}
 
 ${setup}
-
-${nextjsPublicRouteMatcher(true)}
 
 ${nextjsMiddlewareHandler(`${lib.varName}(request)`)}
 
@@ -248,25 +241,13 @@ ${nextjsMiddlewareConfig()}
 `;
 }
 
-function nextjsPublicRouteMatcher(i18n = false): string {
-  if (i18n) {
-    return `const isPublicRoute = createRouteMatcher([
-  "/sign-in(.*)",
-  "/sign-up(.*)",
-  "/:locale/sign-in(.*)",
-  "/:locale/sign-up(.*)",
-]);`;
-  }
-  return `const isPublicRoute = createRouteMatcher(["/sign-in(.*)", "/sign-up(.*)"]);`;
-}
-
 function nextjsMiddlewareHandler(returnStatement = ""): string {
-  const returnLine = returnStatement ? `\n  return ${returnStatement};` : "";
+  if (!returnStatement) {
+    return `export default clerkMiddleware();`;
+  }
 
   return `export default clerkMiddleware(async (auth, request) => {
-  if (!isPublicRoute(request)) {
-    await auth.protect();
-  }${returnLine}
+  return ${returnStatement};
 });`;
 }
 
@@ -337,10 +318,9 @@ function hasMiddlewareConfigExport(existing: string): boolean {
   return /export\s+const\s+config\s*=/.test(existing);
 }
 
-export function composeWithExistingMiddleware(existing: string, i18n = false): string | null {
-  const clerkImport = `import { clerkMiddleware, createRouteMatcher } from "@clerk/nextjs/server";\n`;
-  const routeMatcher = `\n${nextjsPublicRouteMatcher(i18n)}\n`;
-  const preamble = clerkImport + routeMatcher + "\n";
+export function composeWithExistingMiddleware(existing: string): string | null {
+  const clerkImport = `import { clerkMiddleware } from "@clerk/nextjs/server";\n`;
+  const preamble = clerkImport + "\n";
 
   if (hasMiddlewareConfigExport(existing)) {
     return null;
@@ -383,7 +363,7 @@ export function composeWithI18nMiddleware(existing: string): string | null {
   // Bail if the varName is already used (would create a duplicate declaration)
   if (existing.includes(`const ${lib.varName}`)) return null;
 
-  const clerkImport = `import { clerkMiddleware, createRouteMatcher } from "@clerk/nextjs/server";\n`;
+  const clerkImport = `import { clerkMiddleware } from "@clerk/nextjs/server";\n`;
 
   // Strip existing config export (Clerk's matcher replaces it)
   let content = existing.replace(/\n*export\s+const\s+config\s*=[\s\S]*$/, "");
@@ -397,7 +377,7 @@ export function composeWithI18nMiddleware(existing: string): string | null {
   return (
     clerkImport +
     content +
-    `\n\n${nextjsPublicRouteMatcher(true)}\n\n${nextjsMiddlewareHandler(`${lib.varName}(request)`)}\n\n${nextjsMiddlewareConfig()}\n`
+    `\n\n${nextjsMiddlewareHandler(`${lib.varName}(request)`)}\n\n${nextjsMiddlewareConfig()}\n`
   );
 }
 
@@ -437,7 +417,6 @@ export async function scaffoldNextjsMiddleware(ctx: {
   typescript: boolean;
   deps?: Record<string, string>;
   middlewareBasename?: "proxy" | "middleware";
-  keyless?: boolean;
 }): Promise<FileAction> {
   const base = srcPrefix(ctx);
   const ext = scriptExt(ctx);
@@ -461,10 +440,8 @@ export async function scaffoldNextjsMiddleware(ctx: {
     return {
       path,
       type: "create",
-      content: nextjsMiddlewareContent(ctx.keyless),
-      description: ctx.keyless
-        ? "Create Clerk middleware (permissive — connect your account later)"
-        : "Create Clerk middleware with route protection",
+      content: nextjsMiddlewareContent(),
+      description: "Create Clerk middleware",
     };
   }
 
@@ -494,7 +471,7 @@ export async function scaffoldNextjsMiddleware(ctx: {
       : content;
 
   // Fall through to general-purpose composition
-  const composedContent = composeWithExistingMiddleware(contentForComposition, isI18nMiddleware);
+  const composedContent = composeWithExistingMiddleware(contentForComposition);
   if (!composedContent) {
     return {
       type: "skip",

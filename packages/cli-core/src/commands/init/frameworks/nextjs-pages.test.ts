@@ -56,8 +56,8 @@ test("scaffolds all actions for a fresh Next.js Pages Router project", async () 
   const mw = findAction(plan.actions, "middleware.ts");
   expect(mw.type).toBe("create");
   if (mw.type === "create") {
-    expect(mw.content).toContain("clerkMiddleware");
-    expect(mw.content).toContain("createRouteMatcher");
+    expect(mw.content).toContain("export default clerkMiddleware()");
+    expect(mw.content).not.toContain("createRouteMatcher");
   }
 
   // _app (created from template when no existing file)
@@ -172,7 +172,8 @@ test("adds i18n post-instruction when next-i18next detected", async () => {
 test("no i18n instruction without i18n deps", async () => {
   const plan = await nextjsPages.scaffold(makeCtx({ deps: {} }));
 
-  expect(plan.postInstructions).toHaveLength(0);
+  expect(plan.postInstructions).toHaveLength(1);
+  expect(plan.postInstructions[0]).toContain("getAuth()");
 });
 
 test("uses .jsx extension when typescript is false", async () => {

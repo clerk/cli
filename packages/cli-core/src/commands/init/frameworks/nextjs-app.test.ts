@@ -70,8 +70,11 @@ test("scaffolds all 5 actions for a fresh Next.js App Router project", async () 
   const mw = findAction(plan.actions, "middleware.ts");
   expect(mw.type).toBe("create");
   if (mw.type === "create") {
-    // Non-i18n: should NOT have locale-prefixed patterns
-    expect(mw.content).not.toContain("/:locale/");
+    // Bare middleware — route protection moved to individual resources
+    // (createRouteMatcher in middleware is deprecated)
+    expect(mw.content).toContain("export default clerkMiddleware()");
+    expect(mw.content).not.toContain("createRouteMatcher");
+    expect(mw.content).not.toContain("auth.protect");
   }
 
   // Layout
@@ -178,7 +181,8 @@ test("writes sign-in/sign-up route env vars to env file", async () => {
     expect(envAction.content).toContain("NEXT_PUBLIC_CLERK_SIGN_IN_FALLBACK_REDIRECT_URL=/");
     expect(envAction.content).toContain("NEXT_PUBLIC_CLERK_SIGN_UP_FALLBACK_REDIRECT_URL=/");
   }
-  expect(plan.postInstructions).toHaveLength(0);
+  expect(plan.postInstructions).toHaveLength(1);
+  expect(plan.postInstructions[0]).toContain("auth.protect()");
 });
 
 test("returns skip action when no layout found", async () => {
@@ -315,7 +319,7 @@ test("adds Clerk middleware once when existing middleware has no default export"
   }
 
   expect(mw.content.match(/@clerk\/nextjs\/server/g)?.length).toBe(1);
-  expect(mw.content.match(/const isPublicRoute/g)?.length).toBe(1);
+  expect(mw.content.match(/export default clerkMiddleware/g)?.length).toBe(1);
   expect(mw.content.match(/export const config/g)?.length).toBe(1);
 });
 
@@ -403,9 +407,8 @@ test("creates composed Clerk + next-intl middleware when next-intl is a dep", as
   expect(mw.content).toContain("next-intl/middleware");
   expect(mw.content).toContain("clerkMiddleware");
   expect(mw.content).toContain("intlMiddleware(request)");
-  // i18n middleware should include locale-prefixed public routes
-  expect(mw.content).toContain("/:locale/sign-in(.*)");
-  expect(mw.content).toContain("/:locale/sign-up(.*)");
+  // No middleware-level route protection (createRouteMatcher is deprecated)
+  expect(mw.content).not.toContain("createRouteMatcher");
 });
 
 test("imports routing config in composed middleware when next-intl routing file exists", async () => {
@@ -488,9 +491,8 @@ export const config = {
   expect(mw.content).toContain("middleware(request)");
   // Should NOT have duplicate variable names
   expect(mw.content.match(/const intlMiddleware/g)?.length).toBe(1);
-  // Should include locale-prefixed public routes for i18n
-  expect(mw.content).toContain("/:locale/sign-in(.*)");
-  expect(mw.content).toContain("/:locale/sign-up(.*)");
+  // No middleware-level route protection (createRouteMatcher is deprecated)
+  expect(mw.content).not.toContain("createRouteMatcher");
   // Should strip the old config and use Clerk's
   expect(mw.content).not.toContain("socket\\.io");
 });

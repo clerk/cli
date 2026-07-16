@@ -101,7 +101,7 @@ All scaffolding is idempotent — files are skipped if they already contain Cler
 
 | Action | File                                  | Description                                           |
 | ------ | ------------------------------------- | ----------------------------------------------------- |
-| CREATE | `proxy.ts` or `middleware.ts`         | `clerkMiddleware` with route protection               |
+| CREATE | `proxy.ts` or `middleware.ts`         | Bare `clerkMiddleware` (no route protection)          |
 | MODIFY | `app/layout.tsx`                      | Add `ClerkProvider` import and wrap `<body>` children |
 | CREATE | `app/sign-in/[[...sign-in]]/page.tsx` | Sign-in page with `<SignIn />` component              |
 | CREATE | `app/sign-up/[[...sign-up]]/page.tsx` | Sign-up page with `<SignUp />` component              |
@@ -112,7 +112,7 @@ The middleware filename is version-aware: `proxy.ts` for Next.js 16+, `middlewar
 
 | Action        | File                               | Description                              |
 | ------------- | ---------------------------------- | ---------------------------------------- |
-| CREATE        | `proxy.ts` or `middleware.ts`      | `clerkMiddleware` with route protection  |
+| CREATE        | `proxy.ts` or `middleware.ts`      | Bare `clerkMiddleware` (no protection)   |
 | CREATE/MODIFY | `pages/_app.tsx`                   | `ClerkProvider` wrapping `<Component>`   |
 | CREATE        | `pages/sign-in/[[...sign-in]].tsx` | Sign-in page with `<SignIn />` component |
 | CREATE        | `pages/sign-up/[[...sign-up]].tsx` | Sign-up page with `<SignUp />` component |

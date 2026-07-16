@@ -105,7 +105,6 @@ export async function init(options: InitOptions = {}) {
     hasRealAppTarget,
     framework: ctx.framework,
   });
-  ctx.keyless = strategy === "keyless";
 
   if (strategy === "authenticate") {
     bar();

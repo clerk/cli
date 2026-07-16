@@ -113,7 +113,9 @@ export const nextjsPages: FrameworkScaffold = {
       scaffoldEnvVars(ctx, SIGN_ROUTE_ENV_VARS.nextjs),
     ]);
 
-    const postInstructions: string[] = [];
+    const postInstructions: string[] = [
+      "Routes are public by default — protect pages and API routes individually with `getAuth()`. See: https://clerk.com/docs/reference/nextjs/pages-router/get-auth",
+    ];
 
     const hasI18n = Boolean(ctx.deps["next-intl"] || ctx.deps["next-i18next"]);
     if (hasI18n) {
