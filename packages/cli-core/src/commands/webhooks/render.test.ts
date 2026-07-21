@@ -113,9 +113,9 @@ describe("human rendering", () => {
 
   test.each([
     {
-      label: "401 → middleware hint",
+      label: "401 → protected-route hint",
       forward: outcome({ status: 401 }),
-      expected: "createRouteMatcher(['/api/webhooks(.*)'])",
+      expected: "auth.protect() for /api/webhooks(.*)",
     },
     {
       label: "400 → raw-body hint",

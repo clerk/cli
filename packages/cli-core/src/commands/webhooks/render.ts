@@ -107,9 +107,9 @@ export function renderForwardDiagnostics(outcome: ForwardOutcome, svixId: string
 
   if (outcome.status === 401) {
     log.ui(
-      yellow("  ! 401 from your handler — middleware is likely protecting the webhook route.\n") +
+      yellow("  ! 401 from your handler — the webhook route is likely protected.\n") +
         dim(
-          "    In clerkMiddleware(), allow it with createRouteMatcher(['/api/webhooks(.*)']) as a public route.\n",
+          "    Make sure neither your middleware nor the route handler calls auth.protect() for /api/webhooks(.*).\n",
         ),
     );
     return;

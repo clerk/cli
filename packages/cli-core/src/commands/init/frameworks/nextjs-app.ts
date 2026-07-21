@@ -104,7 +104,9 @@ export const nextjsApp: FrameworkScaffold = {
 
     return {
       actions: [middlewareAction, layoutAction, ...authActions, envAction],
-      postInstructions: [],
+      postInstructions: [
+        "Routes are public by default — protect pages, Route Handlers, and Server Actions individually with `await auth.protect()`. See: https://clerk.com/docs/reference/nextjs/auth",
+      ],
     };
   },
 };

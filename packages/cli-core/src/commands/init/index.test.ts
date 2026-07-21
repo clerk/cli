@@ -627,7 +627,7 @@ describe("init", () => {
     // Keyless auto-selection is scoped to bootstrap (new-project) flows. On an
     // existing repo, an unauthenticated re-run should fall through to the
     // authenticated flow (which prompts login) rather than silently skip
-    // `env pull` and scaffold permissive middleware.
+    // `env pull`.
     setup();
 
     const keylessCtx = {
