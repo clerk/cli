@@ -66,6 +66,18 @@ export const ERROR_CODE = {
   ACTOR_TOKEN_ALREADY_ACCEPTED: "actor_token_already_accepted",
   /** No active impersonation session matched the operator's actor stamp. */
   IMPERSONATION_SESSION_NOT_FOUND: "impersonation_session_not_found",
+  /** No MCP client detected on the system. */
+  MCP_NO_CLIENT_DETECTED: "mcp_no_client_detected",
+  /** Requested MCP client is not in the supported registry. */
+  MCP_CLIENT_NOT_SUPPORTED: "mcp_client_not_supported",
+  /** Existing MCP client config is malformed or has a conflicting entry. */
+  MCP_CLIENT_CONFIG_INVALID: "mcp_client_config_invalid",
+  /** The resolved MCP URL (`CLERK_MCP_URL` / env profile / hosted default) is malformed or uses a non-http(s) scheme. */
+  MCP_URL_REQUIRED: "mcp_url_required",
+  /** The target client's own CLI (e.g. `claude`, `code`) is not on PATH, so registration can't be delegated to it. */
+  MCP_CLIENT_CLI_NOT_FOUND: "mcp_client_cli_not_found",
+  /** The target client's own CLI exited non-zero or timed out while registering/removing the entry. */
+  MCP_CLIENT_CLI_FAILED: "mcp_client_cli_failed",
 } as const;
 
 export type ErrorCode = (typeof ERROR_CODE)[keyof typeof ERROR_CODE];

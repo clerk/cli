@@ -9,6 +9,8 @@ import {
   isCancel,
   text as clackText,
   password as clackPassword,
+  multiselect as clackMultiselect,
+  type Option as ClackOption,
 } from "@clack/prompts";
 import { editAsync } from "external-editor";
 import { throwUserAbort } from "./errors.ts";
@@ -72,6 +74,30 @@ export async function confirm(config: { message: string; default?: boolean }): P
     const result = await clackConfirm({
       message: config.message,
       initialValue: config.default,
+      input: tty?.input,
+    });
+    return unwrap(result);
+  } finally {
+    tty?.close();
+  }
+}
+
+/** Multi-select checklist. Returns the chosen values (at least one when required). */
+export async function multiselect<T>(config: {
+  message: string;
+  options: { value: T; label: string; hint?: string }[];
+  initialValues?: T[];
+  required?: boolean;
+}): Promise<T[]> {
+  const tty = ttyContext();
+  try {
+    const result = await clackMultiselect<T>({
+      message: config.message,
+      // `Option<T>` is a conditional type a naked generic can't satisfy
+      // structurally; our shape provides `value` + `label`, valid in both branches.
+      options: config.options as ClackOption<T>[],
+      initialValues: config.initialValues,
+      required: config.required ?? true,
       input: tty?.input,
     });
     return unwrap(result);

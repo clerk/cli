@@ -19,7 +19,11 @@ export interface EnvProfileConfig {
   platformApiUrl: string;
   backendApiUrl: string;
   dashboardUrl?: string;
+  mcpUrl?: string;
 }
+
+/** Clerk's hosted remote MCP server — the default for every environment. */
+const DEFAULT_MCP_URL = "https://mcp.clerk.com/mcp";
 
 const DEFAULT_PROFILES: Record<string, EnvProfileConfig> = {
   production: {
@@ -28,6 +32,7 @@ const DEFAULT_PROFILES: Record<string, EnvProfileConfig> = {
     platformApiUrl: "https://api.clerk.com",
     backendApiUrl: "https://api.clerk.dev",
     dashboardUrl: "https://dashboard.clerk.com",
+    mcpUrl: DEFAULT_MCP_URL,
   },
 };
 
@@ -144,4 +149,19 @@ export function getDashboardUrl(): string {
   return (
     process.env.CLERK_DASHBOARD_URL ?? getCurrentEnv().dashboardUrl ?? "https://dashboard.clerk.com"
   );
+}
+
+/**
+ * Remote MCP server URL for the active environment.
+ *
+ * Resolution: `CLERK_MCP_URL` (local worker dev, e.g.
+ * `http://localhost:8787/mcp`) > the active env profile's `mcpUrl`
+ * (carried automatically by `switch-env`) > Clerk's hosted server. Always
+ * returns a usable URL — the hosted default applies even when a build-time
+ * profile omits `mcpUrl`, mirroring `getDashboardUrl`.
+ */
+export function getMcpUrl(): string {
+  const envUrl = process.env.CLERK_MCP_URL?.trim();
+  const profileUrl = getCurrentEnv().mcpUrl?.trim();
+  return envUrl || profileUrl || DEFAULT_MCP_URL;
 }

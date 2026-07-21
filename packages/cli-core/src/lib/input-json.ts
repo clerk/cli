@@ -124,7 +124,8 @@ function requireValue(argv: string[], idx: number): string {
  * Stdin is only consumed when the value is the explicit `-` marker
  * (`--input-json -`). Piped stdin is never read implicitly, so shell loops
  * (`while read … | clerk …`) and commands that read their own stdin (e.g.
- * `cat body.json | clerk api …`) are left untouched.
+ * `cat body.json | clerk api …`, or the `clerk mcp run` stdio bridge) are left
+ * untouched.
  *
  * If `--input-json` is not present, returns the original array unchanged.
  */
