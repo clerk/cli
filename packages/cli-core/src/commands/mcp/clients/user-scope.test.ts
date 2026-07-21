@@ -259,6 +259,14 @@ describe("install/uninstall across all clients (homedir + cwd redirected)", () =
       join(mockHome, ".gemini", "settings.json"),
       JSON.stringify({ mcpServers: { clerk: CURRENT_SHAPE } }),
     );
+    // Simulate the gemini CLI mutating its own config — the factory re-reads
+    // it after a successful remove and refuses to report a phantom removal.
+    mockRun.mockImplementation(async (argv: string[]) => {
+      if (argv.includes("remove")) {
+        await rm(join(mockHome, ".gemini", "settings.json"), { force: true });
+      }
+      return { exitCode: 0, stdout: "", stderr: "" };
+    });
     captured.clear();
 
     await mcpUninstall({});

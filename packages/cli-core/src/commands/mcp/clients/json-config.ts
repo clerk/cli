@@ -8,6 +8,13 @@
  * (`url` vs `serverUrl` vs `command`+`args`) — that's per-client. This module
  * only handles the surrounding I/O: read, parse, write back with stable
  * formatting and a 2-space indent.
+ *
+ * Known limitation: reads use strict `JSON.parse`, so a hand-edited config
+ * with comments (JSONC) fails to read, and writes re-serialize the whole
+ * document, so any custom formatting is normalized away. Accepted because the
+ * client owns its file: the clients we write for document plain JSON, and the
+ * JSONC-tolerant ones (VS Code) delegate writes to their own CLI wherever
+ * possible.
  */
 
 import { isRecord } from "../../../lib/objects.ts";
@@ -34,23 +41,40 @@ export async function readConfigText(path: string): Promise<string | undefined> 
   }
 }
 
-export async function readJsonConfig(path: string): Promise<ConfigRecord> {
+/**
+ * The read half shared by every codec: read the file, parse it with the
+ * format's parser, and guard that the top level is a map. An absent or empty
+ * file reads as `{}`; parse and shape failures surface as
+ * MCP_CLIENT_CONFIG_INVALID.
+ */
+export async function readParsedConfig(
+  path: string,
+  format: { name: string; shape: string; parse: (text: string) => unknown },
+): Promise<ConfigRecord> {
   const text = await readConfigText(path);
   if (text === undefined || text.trim().length === 0) return {};
+  let parsed: unknown;
   try {
-    const parsed: unknown = JSON.parse(text);
-    if (!isRecord(parsed)) {
-      throw new CliError(`Config at ${path} is not a JSON object`, {
-        code: ERROR_CODE.MCP_CLIENT_CONFIG_INVALID,
-      });
-    }
-    return parsed as ConfigRecord;
+    parsed = format.parse(text);
   } catch (error) {
-    if (error instanceof CliError) throw error;
-    throw new CliError(`Could not parse ${path} as JSON: ${errorMessage(error)}`, {
+    throw new CliError(`Could not parse ${path} as ${format.name}: ${errorMessage(error)}`, {
       code: ERROR_CODE.MCP_CLIENT_CONFIG_INVALID,
     });
   }
+  if (!isRecord(parsed)) {
+    throw new CliError(`Config at ${path} is not a ${format.shape}`, {
+      code: ERROR_CODE.MCP_CLIENT_CONFIG_INVALID,
+    });
+  }
+  return parsed as ConfigRecord;
+}
+
+export async function readJsonConfig(path: string): Promise<ConfigRecord> {
+  return readParsedConfig(path, {
+    name: "JSON",
+    shape: "JSON object",
+    parse: (text) => JSON.parse(text) as unknown,
+  });
 }
 
 export async function writeJsonConfig(path: string, config: ConfigRecord): Promise<void> {

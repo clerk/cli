@@ -20,6 +20,7 @@ import { loggedFetch } from "../../lib/fetch.ts";
 import { log } from "../../lib/log.ts";
 import { isRecord } from "../../lib/objects.ts";
 import { resolveUrl, type McpOptions } from "./shared.ts";
+import { sseEventData } from "./sse.ts";
 
 /** Injectable streams so the bridge can be driven in-process by tests. */
 interface RunStreams {
@@ -440,11 +441,7 @@ export async function pipeEventStream(
 }
 
 async function emitEvent(rawEvent: string, emitPayload: Emit): Promise<void> {
-  const data = rawEvent
-    .split("\n")
-    .filter((line) => line.startsWith("data:"))
-    .map((line) => line.slice("data:".length).trim())
-    .join("\n");
+  const data = sseEventData(rawEvent);
   if (data.length === 0) return;
   try {
     await emitPayload(JSON.parse(data));

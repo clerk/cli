@@ -5,10 +5,12 @@
 import { cyan, dim, green, yellow } from "../../lib/color.ts";
 import { log } from "../../lib/log.ts";
 import { withGutter } from "../../lib/spinner.ts";
+import { isAgent } from "../../mode.ts";
 import { CLIENTS } from "./clients/registry.ts";
 import { collectEntries } from "./collect.ts";
 import type { McpClient, RemoveResult } from "./clients/types.ts";
 import {
+  failWhenAllFailed,
   pickClients,
   resolveClients,
   resolveName,
@@ -52,14 +54,17 @@ async function removeFrom(
   cwd: string,
   json: boolean,
 ): Promise<void> {
-  const { succeeded, failed } = await settleClients(clients, (c) => c.remove(name, cwd));
+  const outcome = await settleClients(clients, (c) => c.remove(name, cwd));
+  const { succeeded, failed } = outcome;
   const results = succeeded.map((s) => s.result);
   const removedCount = results.filter((r) => r.removed).length;
 
   if (json) {
     log.data(JSON.stringify({ name, results, failures: failed }, null, 2));
+    failWhenAllFailed(outcome, json);
     return;
   }
+  failWhenAllFailed(outcome, json);
 
   if (removedCount === 0) {
     warnNotInstalled(name);
@@ -85,9 +90,11 @@ export async function mcpUninstall(options: McpOptions = {}): Promise<void> {
   const explicit =
     options.client && options.client.length > 0 ? resolveClients(options.client) : undefined;
 
-  // Non-interactive: explicit `--client`, `--all`, agent mode, or `--json`
-  // operate directly on the targeted clients.
-  if (json || explicit || options.all) {
+  // Non-interactive: explicit `--client`, `--all`, or agent mode operate
+  // directly on the targeted clients. `--json` alone does NOT skip the picker —
+  // it's an output format, and treating it as targeting would let a human
+  // inspecting machine output wipe the entry from every client unprompted.
+  if (explicit || options.all || isAgent()) {
     await removeFrom(explicit ?? Array.from(CLIENTS), name, cwd, json);
     return;
   }

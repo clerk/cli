@@ -12,12 +12,19 @@ import { isRecord } from "../../lib/objects.ts";
 import { errorMessage } from "../../lib/errors.ts";
 import { loggedFetch } from "../../lib/fetch.ts";
 import { DEV_CLI_VERSION, resolveCliVersion } from "../../lib/version.ts";
+import { sseEventData } from "./sse.ts";
+// Type-only: erased at compile, so the SDK stays a devDependency and is never
+// bundled — it exists purely as a TS gate keeping this request spec-valid.
+import type { InitializeRequest, JSONRPCRequest } from "@modelcontextprotocol/sdk/types.js";
 
 // Discriminated on `ok`: a healthy probe always carries a server name; a failed
-// one never does. "ok but no serverName" is unrepresentable.
+// one never does. "ok but no serverName" is unrepresentable. `authRequired`
+// marks a 401/403 answer: the server is demonstrably there, it just gates the
+// handshake behind auth we don't send — callers should report "reachable,
+// requires authentication" rather than "not reachable".
 export type McpProbeResult =
   | { ok: true; status: number; serverName: string }
-  | { ok: false; status?: number; error?: string };
+  | { ok: false; status?: number; error?: string; authRequired?: boolean };
 
 // A hostile or wrong URL shouldn't hang the CLI: cap the probe so a slow or
 // never-ending response surfaces as a failure instead of blocking forever.
@@ -33,7 +40,7 @@ const INITIALIZE_REQUEST = {
     capabilities: {},
     clientInfo: { name: "clerk-cli", version: resolveCliVersion() ?? DEV_CLI_VERSION },
   },
-};
+} satisfies JSONRPCRequest & InitializeRequest;
 
 function safeJsonParse(text: string): unknown {
   try {
@@ -50,11 +57,7 @@ function safeJsonParse(text: string): unknown {
 function parseHandshake(contentType: string, body: string): unknown {
   if (!contentType.includes("text/event-stream")) return safeJsonParse(body);
   const firstEvent = body.split(/\r?\n\r?\n/)[0] ?? "";
-  const data = firstEvent
-    .split(/\r?\n/)
-    .filter((line) => line.startsWith("data:"))
-    .map((line) => line.slice("data:".length).trim())
-    .join("\n");
+  const data = sseEventData(firstEvent);
   return data === "" ? undefined : safeJsonParse(data);
 }
 
@@ -93,6 +96,13 @@ export async function probeMcp(url: string): Promise<McpProbeResult> {
       body: JSON.stringify(INITIALIZE_REQUEST),
       signal: AbortSignal.timeout(PROBE_TIMEOUT_MS),
     });
+    // The hosted server currently answers an unauthenticated `initialize` with
+    // 200 (verified live), but a server-side tightening to 401 must not make
+    // `doctor` flag a just-installed entry as unreachable — editors run their
+    // own OAuth flow that this probe deliberately doesn't perform.
+    if (response.status === 401 || response.status === 403) {
+      return { ok: false, status: response.status, authRequired: true };
+    }
     if (!response.ok) return { ok: false, status: response.status };
 
     const contentType = response.headers.get("content-type") ?? "";

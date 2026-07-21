@@ -1,4 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { JSONRPCMessageSchema, type JSONRPCMessage } from "@modelcontextprotocol/sdk/types.js";
+import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
 import { stubFetch, useCaptureLog } from "../../test/lib/stubs.ts";
 import { mcpRun, pipeEventStream, readTextCapped } from "./run.ts";
 
@@ -56,12 +59,74 @@ async function* lines(...messages: unknown[]): AsyncGenerator<string> {
 }
 
 function framesFrom(chunks: string[]): Array<Record<string, unknown>> {
-  return chunks
-    .join("")
-    .trim()
-    .split("\n")
-    .filter((line) => line.length > 0)
-    .map((line) => JSON.parse(line) as Record<string, unknown>);
+  return (
+    chunks
+      .join("")
+      .trim()
+      .split("\n")
+      .filter((line) => line.length > 0)
+      // `.parse` throws if the bridge wrote anything that isn't a spec-valid
+      // JSON-RPC frame, so every assertion below doubles as a conformance check —
+      // a frame missing `jsonrpc: "2.0"` fails here, not just in a real client.
+      .map((line) => JSONRPCMessageSchema.parse(JSON.parse(line)) as Record<string, unknown>)
+  );
+}
+
+/**
+ * Binds a real MCP SDK `Client` to the real bridge in-process: the client's
+ * sends feed `mcpRun`'s injected `input` stream, and the bridge's stdout
+ * writes come back through `onmessage` — no child process, upstream stubbed.
+ */
+class BridgeTransport implements Transport {
+  onclose?: () => void;
+  onerror?: (error: Error) => void;
+  onmessage?: (message: JSONRPCMessage) => void;
+  /** The bridge's run promise, so tests can assert a clean shutdown. */
+  done: Promise<void> = Promise.resolve();
+
+  private queue: string[] = [];
+  private wake: (() => void) | undefined;
+  private closed = false;
+
+  private async *input(): AsyncGenerator<string> {
+    while (!this.closed || this.queue.length > 0) {
+      const next = this.queue.shift();
+      if (next !== undefined) {
+        yield next;
+        continue;
+      }
+      if (this.closed) return;
+      await new Promise<void>((resolve) => (this.wake = resolve));
+    }
+  }
+
+  async start(): Promise<void> {
+    this.done = mcpRun(
+      { url: URL },
+      {
+        input: this.input(),
+        write: (chunk) => {
+          for (const line of chunk.split("\n").filter((l) => l.length > 0)) {
+            this.onmessage?.(JSONRPCMessageSchema.parse(JSON.parse(line)));
+          }
+        },
+      },
+    );
+  }
+
+  async send(message: JSONRPCMessage): Promise<void> {
+    this.queue.push(JSON.stringify(message) + "\n");
+    this.wake?.();
+    this.wake = undefined;
+  }
+
+  async close(): Promise<void> {
+    this.closed = true;
+    this.wake?.();
+    this.wake = undefined;
+    await this.done;
+    this.onclose?.();
+  }
 }
 
 describe("mcp run (stdio bridge)", () => {
@@ -449,6 +514,52 @@ describe("mcp run (stdio bridge)", () => {
 
     expect(added).toHaveLength(1);
     expect(removed).toEqual(added);
+  });
+
+  test("a real MCP SDK client completes initialize and tools/list through the bridge", async () => {
+    // Conformance: if a genuine `Client` gets through `initialize` (with the
+    // SDK validating the result shape) and `tools/list`, then session-id
+    // threading and protocol-version echo work end to end — stronger than
+    // asserting on hand-rolled frames.
+    stub((req) => {
+      const blocked = noServerStream(req);
+      if (blocked) return blocked;
+      const msg = JSON.parse(req.body!) as { id?: number; method?: string };
+      if (msg.method === "initialize") {
+        return json(
+          {
+            jsonrpc: "2.0",
+            id: msg.id,
+            result: {
+              protocolVersion: "2025-06-18",
+              capabilities: { tools: {} },
+              serverInfo: { name: "Clerk MCP Server", version: "0.0.0" },
+            },
+          },
+          { "mcp-session-id": "sess-1" },
+        );
+      }
+      if (msg.method === "tools/list") {
+        return json({
+          jsonrpc: "2.0",
+          id: msg.id,
+          result: { tools: [{ name: "create_user", inputSchema: { type: "object" } }] },
+        });
+      }
+      // Notifications (e.g. notifications/initialized) are accepted bodyless.
+      return new Response(null, { status: 202 });
+    });
+
+    const transport = new BridgeTransport();
+    const client = new Client({ name: "conformance-test", version: "0.0.0" });
+    await client.connect(transport);
+    const tools = await client.listTools();
+    await client.close();
+    await transport.done;
+
+    expect(tools.tools.map((t) => t.name)).toEqual(["create_user"]);
+    const posts = requests.filter((r) => r.method === "POST");
+    expect(posts.at(-1)?.headers.get("mcp-session-id")).toBe("sess-1");
   });
 
   test("targets the --url value", async () => {

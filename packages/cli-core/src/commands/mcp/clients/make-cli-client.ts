@@ -48,48 +48,52 @@ interface CliClientSpec {
   verifyAdd?: boolean;
 }
 
+// No display-name prefix in thrown messages: settleClients prefixes the
+// client name when warning, so embedding it here would print it twice.
+function requireBinary(binary: string, installHint: string): string {
+  const bin = findClientBinary(binary);
+  if (bin) return bin;
+  throw new CliError(
+    `\`${binary}\` CLI not found on PATH — registration is delegated to it. ${installHint}`,
+    { code: ERROR_CODE.MCP_CLIENT_CLI_NOT_FOUND, docsUrl: MCP_DOCS_URL },
+  );
+}
+
+/**
+ * Presence via our own read-only parse of the client's config — reads stay
+ * ours; only writes are delegated. "unknown" = config unreadable, in which
+ * case the CLI (which owns the format) gets the final say.
+ */
+async function presenceOf(
+  base: McpClient,
+  name: string,
+  cwd: string,
+): Promise<"present" | "absent" | "unknown"> {
+  try {
+    const entries = await base.list(cwd);
+    return entries.some((entry) => entry.name === name) ? "present" : "absent";
+  } catch {
+    return "unknown";
+  }
+}
+
+async function runOrThrow(
+  argv: [string, ...string[]],
+  action: string,
+  stdin?: string,
+): Promise<void> {
+  const result =
+    stdin === undefined ? await runClientCli(argv) : await runClientCli(argv, { stdin });
+  if (result.exitCode === 0) return;
+  const detail = result.stderr.trim() || result.stdout.trim() || `exit code ${result.exitCode}`;
+  throw new CliError(`failed to ${action} — ${detail}`, {
+    code: ERROR_CODE.MCP_CLIENT_CLI_FAILED,
+    docsUrl: MCP_DOCS_URL,
+  });
+}
+
 export function makeCliClient(spec: CliClientSpec): McpClient {
   const { base, binary } = spec;
-
-  // No display-name prefix in thrown messages: settleClients prefixes the
-  // client name when warning, so embedding it here would print it twice.
-  function requireBinary(): string {
-    const bin = findClientBinary(binary);
-    if (bin) return bin;
-    throw new CliError(
-      `\`${binary}\` CLI not found on PATH — registration is delegated to it. ${spec.installHint}`,
-      { code: ERROR_CODE.MCP_CLIENT_CLI_NOT_FOUND, docsUrl: MCP_DOCS_URL },
-    );
-  }
-
-  /**
-   * Presence via our own read-only parse of the client's config — reads stay
-   * ours; only writes are delegated. "unknown" = config unreadable, in which
-   * case the CLI (which owns the format) gets the final say.
-   */
-  async function presenceOf(name: string, cwd: string): Promise<"present" | "absent" | "unknown"> {
-    try {
-      const entries = await base.list(cwd);
-      return entries.some((entry) => entry.name === name) ? "present" : "absent";
-    } catch {
-      return "unknown";
-    }
-  }
-
-  async function runOrThrow(
-    argv: [string, ...string[]],
-    action: string,
-    stdin?: string,
-  ): Promise<void> {
-    const result =
-      stdin === undefined ? await runClientCli(argv) : await runClientCli(argv, { stdin });
-    if (result.exitCode === 0) return;
-    const detail = result.stderr.trim() || result.stdout.trim() || `exit code ${result.exitCode}`;
-    throw new CliError(`failed to ${action} — ${detail}`, {
-      code: ERROR_CODE.MCP_CLIENT_CLI_FAILED,
-      docsUrl: MCP_DOCS_URL,
-    });
-  }
 
   return {
     id: base.id,
@@ -101,8 +105,8 @@ export function makeCliClient(spec: CliClientSpec): McpClient {
     list: (cwd) => base.list(cwd),
 
     async upsert(entry: McpServerEntry, cwd: string): Promise<UpsertResult> {
-      const bin = requireBinary();
-      const presence = await presenceOf(entry.name, cwd);
+      const bin = requireBinary(binary, spec.installHint);
+      const presence = await presenceOf(base, entry.name, cwd);
       if (presence !== "absent" && spec.removeArgs) {
         // Best-effort pre-clean: duplicate-name behavior varies per CLI, so a
         // failed remove (e.g. "no such server") just means add decides. A
@@ -119,7 +123,7 @@ export function makeCliClient(spec: CliClientSpec): McpClient {
         "register the MCP server",
         spec.addStdin,
       );
-      if (spec.verifyAdd && (await presenceOf(entry.name, cwd)) === "absent") {
+      if (spec.verifyAdd && (await presenceOf(base, entry.name, cwd)) === "absent") {
         throw new CliError(
           `the \`${binary}\` CLI reported success but did not save the entry — it may have prompted for input it didn't get. Register manually instead.`,
           { code: ERROR_CODE.MCP_CLIENT_CLI_FAILED, docsUrl: MCP_DOCS_URL },
@@ -131,11 +135,21 @@ export function makeCliClient(spec: CliClientSpec): McpClient {
     async remove(name: string, cwd: string): Promise<RemoveResult> {
       if (!spec.removeArgs) return base.remove(name, cwd);
       const configPath = base.configPath(cwd);
-      if ((await presenceOf(name, cwd)) === "absent") {
+      if ((await presenceOf(base, name, cwd)) === "absent") {
         return { client: base.id, configPath, removed: false };
       }
-      const bin = requireBinary();
+      const bin = requireBinary(binary, spec.installHint);
       await runOrThrow([bin, ...spec.removeArgs(name)], "remove the MCP entry");
+      // Mirror `verifyAdd`: an exit code 0 alone doesn't prove the entry is
+      // gone (a CLI can no-op successfully). Re-read the config and refuse to
+      // report a removal that didn't happen; "unknown" (unreadable config)
+      // keeps the CLI's final say, same as the add side.
+      if ((await presenceOf(base, name, cwd)) === "present") {
+        throw new CliError(
+          `the \`${binary}\` CLI reported success but the entry is still present. Remove it manually instead.`,
+          { code: ERROR_CODE.MCP_CLIENT_CLI_FAILED, docsUrl: MCP_DOCS_URL },
+        );
+      }
       return { client: base.id, configPath, removed: true };
     },
   };

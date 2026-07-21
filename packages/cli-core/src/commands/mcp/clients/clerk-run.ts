@@ -9,9 +9,8 @@
  * they should change it.
  */
 
-import { isRecord } from "../../../lib/objects.ts";
+import { hasStringProp, isRecord } from "../../../lib/objects.ts";
 import { getMcpUrl } from "../../../lib/environment.ts";
-import { hasStringProp } from "./make-client.ts";
 
 /** The binary clients spawn. Must be on the user's PATH. */
 export const RUN_COMMAND = "clerk";
@@ -31,22 +30,6 @@ export function clerkRunDescriptor(): Record<string, unknown> {
 }
 
 /**
- * Return the URL embedded in a legacy `clerk mcp run --url <url>` descriptor,
- * or undefined. Only used to migrate entries written by an older CLI version.
- */
-export function extractClerkRunUrl(descriptor: unknown): string | undefined {
-  if (!isRecord(descriptor)) return undefined;
-  const { command, args } = descriptor as { command?: unknown; args?: unknown };
-  if (command !== RUN_COMMAND) return undefined;
-  if (!Array.isArray(args) || !args.every((arg) => typeof arg === "string")) return undefined;
-  const flagIndex = args.indexOf("--url");
-  if (flagIndex !== -1 && args[flagIndex + 1]) return args[flagIndex + 1];
-  const inline = args.find((arg: string) => arg.startsWith("--url="));
-  // `|| undefined` so an empty `--url=` reports "absent", matching the contract.
-  return inline ? inline.slice("--url=".length) || undefined : undefined;
-}
-
-/**
  * True when the descriptor matches the current `clerk mcp run` shape (no URL
  * in args). Used to detect already-current entries during upsert.
  */
@@ -59,24 +42,20 @@ export function isClerkRunEntry(descriptor: unknown): boolean {
 }
 
 /**
- * `extractUrl` for the clients that share the new bridge shape and fall back to
- * legacy descriptor shapes so existing installs still round-trip on
- * list/uninstall.
+ * `extractUrl` for the clients that share the standard bridge shape.
  *
  * Priority:
  * 1. Current format: `{ command: "clerk", args: ["mcp", "run"] }` — no URL in
  *    args; resolves to `getMcpUrl()` so list/upsert see a comparable URL.
- * 2. Legacy v1 format: `{ command: "clerk", args: ["mcp", "run", "--url", …] }` —
- *    URL extracted from the `--url` arg.
- * 3. Legacy v0 format: `{ url }` or `{ serverUrl }` — plain key lookup.
+ * 2. Direct-URL format: `{ url }` or `{ serverUrl }` — plain key lookup. Not a
+ *    shape this CLI ever wrote: it round-trips entries users added by hand
+ *    following the Clerk MCP docs (e.g. `{ type: "http", url }`), so those
+ *    still show up in list/doctor and can be uninstalled.
  */
 export function withLegacyUrl(
   descriptor: unknown,
   legacyKey: "url" | "serverUrl" = "url",
 ): string | undefined {
   if (isClerkRunEntry(descriptor)) return getMcpUrl();
-  return (
-    extractClerkRunUrl(descriptor) ??
-    (hasStringProp(descriptor, legacyKey) ? descriptor[legacyKey] : undefined)
-  );
+  return hasStringProp(descriptor, legacyKey) ? descriptor[legacyKey] : undefined;
 }

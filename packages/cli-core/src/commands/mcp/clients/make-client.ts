@@ -12,6 +12,7 @@
 
 import { log } from "../../../lib/log.ts";
 import { isRecord } from "../../../lib/objects.ts";
+import { isClerkRunEntry } from "./clerk-run.ts";
 import {
   getServerMap,
   readJsonConfig,
@@ -31,18 +32,6 @@ import type {
   UpsertResult,
 } from "./types.ts";
 
-export function hasStringProp<K extends string>(
-  value: unknown,
-  key: K,
-): value is Record<K, string> {
-  return (
-    typeof value === "object" &&
-    value !== null &&
-    Object.prototype.hasOwnProperty.call(value, key) &&
-    typeof (value as Record<string, unknown>)[key] === "string"
-  );
-}
-
 interface FileClientSpec {
   id: ClientId;
   displayName: string;
@@ -54,6 +43,13 @@ interface FileClientSpec {
   encode: (url: string) => Record<string, unknown>;
   /** Extract a URL back out of a server descriptor (for `list`). Returns undefined when the shape doesn't match. */
   extractUrl: (descriptor: unknown) => string | undefined;
+  /**
+   * Recognize a `clerk mcp run` bridge descriptor in this client's dialect.
+   * Only needed by clients whose encoding diverges from the standard
+   * `{ command, args }` shape (opencode's single argv array); the default is
+   * {@link isClerkRunEntry}.
+   */
+  isOurs?: (descriptor: unknown) => boolean;
   configPath: (cwd: string) => string;
   /**
    * Omit for bases wrapped by `makeCliClient`, which replaces detection with
@@ -119,10 +115,14 @@ function makeFileClient(spec: FileClientSpec, codec: ConfigCodec): McpClient {
   const topKeyPath: readonly [string, ...string[]] =
     typeof spec.topKey === "string" ? [spec.topKey] : spec.topKey;
 
+  const isOurs = spec.isOurs ?? isClerkRunEntry;
+
   /** Walk the key path, validating each level is an object (or absent → `{}`). */
   function serversIn(config: ConfigRecord, configPath: string): Record<string, unknown> {
     let node: Record<string, unknown> = config;
-    for (const key of topKeyPath) node = getServerMap(node, key, configPath);
+    for (const key of topKeyPath) {
+      node = getServerMap(node, key, configPath);
+    }
     return node;
   }
 
@@ -181,7 +181,11 @@ function makeFileClient(spec: FileClientSpec, codec: ConfigCodec): McpClient {
       for (const [name, descriptor] of Object.entries(servers)) {
         const url = spec.extractUrl(descriptor);
         if (!url) continue;
-        if (name === "clerk" || isClerkUrl(url)) {
+        // Descriptor shape first: a `clerk mcp run` bridge is ours no matter
+        // what the entry is named or what URL it currently resolves to (e.g.
+        // `--name foo` with `CLERK_MCP_URL` pointing at localhost) — otherwise
+        // such an entry would fall out of list/doctor and couldn't be removed.
+        if (isOurs(descriptor) || name === "clerk" || isClerkUrl(url)) {
           entries.push({ client: spec.id, configPath, name, url });
         }
       }

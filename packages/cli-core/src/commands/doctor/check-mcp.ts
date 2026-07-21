@@ -14,11 +14,19 @@ import type { CheckResult } from "./types.ts";
 const NAME = "MCP server";
 
 type UrlProbe = { url: string; result: McpProbeResult };
-type ReachableProbe = { url: string; result: Extract<McpProbeResult, { ok: true }> };
 
-// Narrowed to the reachable variant: only called once every probe succeeded.
-function describeReachable(probes: ReachableProbe[]): string {
-  return probes.map(({ url, result }) => `${result.serverName} (${url})`).join(", ");
+// A 401/403 answer proves the server is there — it gates the handshake behind
+// auth the editor performs itself — so it reads as reachable, not broken.
+function isReachable(result: McpProbeResult): boolean {
+  return result.ok || result.authRequired === true;
+}
+
+function describeReachable(probes: UrlProbe[]): string {
+  return probes
+    .map(({ url, result }) =>
+      result.ok ? `${result.serverName} (${url})` : `authentication required (${url})`,
+    )
+    .join(", ");
 }
 
 function describeFailure(result: McpProbeResult): string {
@@ -46,7 +54,7 @@ export async function checkMcp(): Promise<CheckResult> {
   // otherwise skip silently rather than probing a server they don't use.
   const { entries, failures } = await collectEntries(process.cwd());
   const probes = await probeEntries(entries);
-  const unreachable = probes.filter((p): p is UrlProbe => !p.result.ok);
+  const unreachable = probes.filter((p) => !isReachable(p.result));
 
   // An unreadable client config is not "nothing installed" — a previously
   // registered entry may be hiding inside it. The stderr warning alone gets
@@ -70,8 +78,7 @@ export async function checkMcp(): Promise<CheckResult> {
   }
 
   if (unreachable.length === 0) {
-    const reachable = probes.filter((p): p is ReachableProbe => p.result.ok);
-    return { name: NAME, status: "pass", message: `Reachable — ${describeReachable(reachable)}` };
+    return { name: NAME, status: "pass", message: `Reachable — ${describeReachable(probes)}` };
   }
 
   return {

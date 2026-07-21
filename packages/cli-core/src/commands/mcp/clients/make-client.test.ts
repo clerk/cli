@@ -169,6 +169,29 @@ describe("make-client (via cursor)", () => {
       expect(entries[0]!.url).toBe(CLERK_URL);
     });
 
+    test("lists a custom-named bridge entry even when the resolved URL is not a clerk.com host", async () => {
+      // `--name foo` with `CLERK_MCP_URL` pointing at a local worker: the
+      // descriptor shape identifies the entry as ours, so it must not fall out
+      // of list/doctor (or become unremovable) just because both the name and
+      // the resolved URL miss the clerk heuristics.
+      const originalMcpUrl = process.env.CLERK_MCP_URL;
+      process.env.CLERK_MCP_URL = "http://localhost:8787/mcp";
+      try {
+        await mkdir(join(cwd, ".cursor"), { recursive: true });
+        await writeFile(
+          join(cwd, ".cursor", "mcp.json"),
+          JSON.stringify({ mcpServers: { foo: CURRENT_SHAPE } }),
+        );
+        const entries = await cursorClient.list(cwd);
+        expect(entries).toHaveLength(1);
+        expect(entries[0]!.name).toBe("foo");
+        expect(entries[0]!.url).toBe("http://localhost:8787/mcp");
+      } finally {
+        if (originalMcpUrl === undefined) delete process.env.CLERK_MCP_URL;
+        else process.env.CLERK_MCP_URL = originalMcpUrl;
+      }
+    });
+
     test("returns empty when no config file exists", async () => {
       const entries = await cursorClient.list(cwd);
       expect(entries).toEqual([]);

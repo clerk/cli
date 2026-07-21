@@ -10,29 +10,16 @@
  * hand-maintained `config.toml`.
  */
 
-import { isRecord } from "../../../lib/objects.ts";
-import { CliError, ERROR_CODE, errorMessage } from "../../../lib/errors.ts";
-import { readConfigText, refuseConfigWrite, type ConfigRecord } from "./json-config.ts";
+import { readParsedConfig, refuseConfigWrite, type ConfigRecord } from "./json-config.ts";
 
 export async function readTomlConfig(path: string): Promise<ConfigRecord> {
-  const text = await readConfigText(path);
-  if (text === undefined || text.trim().length === 0) return {};
-  try {
-    const parsed: unknown = Bun.TOML.parse(text);
-    // A valid TOML document is always a table, so `parse` can't hand back a
-    // non-object — but guard anyway so a future parser swap can't surprise us.
-    if (!isRecord(parsed)) {
-      throw new CliError(`Config at ${path} is not a TOML table`, {
-        code: ERROR_CODE.MCP_CLIENT_CONFIG_INVALID,
-      });
-    }
-    return parsed as ConfigRecord;
-  } catch (error) {
-    if (error instanceof CliError) throw error;
-    throw new CliError(`Could not parse ${path} as TOML: ${errorMessage(error)}`, {
-      code: ERROR_CODE.MCP_CLIENT_CONFIG_INVALID,
-    });
-  }
+  // A valid TOML document is always a table, so the shape guard can only fire
+  // on a future parser swap — kept anyway for the shared contract.
+  return readParsedConfig(path, {
+    name: "TOML",
+    shape: "TOML table",
+    parse: (text) => Bun.TOML.parse(text),
+  });
 }
 
 export async function writeTomlConfig(path: string, _config: ConfigRecord): Promise<void> {

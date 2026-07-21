@@ -16,22 +16,26 @@ import { clerkRunArgs, RUN_COMMAND } from "./clerk-run.ts";
 import { makeJsonClient } from "./make-client.ts";
 import { pathExists, xdgConfigPath } from "./paths.ts";
 
-function extractOpencodeUrl(descriptor: unknown): string | undefined {
-  if (!isRecord(descriptor)) return undefined;
-  const { command, url } = descriptor as { command?: unknown; url?: unknown };
-  // Remote entries (`{ type: "remote", url }`) carry their URL directly.
-  if (typeof url === "string") return url;
-  // Our local bridge entry: the URL is resolved at runtime, so report the
-  // currently-resolved target (same as the other clients' bridge entries).
-  if (
+// opencode's bridge dialect: a single argv array instead of `{ command, args }`.
+function isOpencodeBridge(descriptor: unknown): boolean {
+  if (!isRecord(descriptor)) return false;
+  const command = (descriptor as { command?: unknown }).command;
+  return (
     Array.isArray(command) &&
     command[0] === RUN_COMMAND &&
     command[1] === "mcp" &&
     command[2] === "run"
-  ) {
-    return getMcpUrl();
-  }
-  return undefined;
+  );
+}
+
+function extractOpencodeUrl(descriptor: unknown): string | undefined {
+  if (!isRecord(descriptor)) return undefined;
+  const url = (descriptor as { url?: unknown }).url;
+  // Remote entries (`{ type: "remote", url }`) carry their URL directly.
+  if (typeof url === "string") return url;
+  // Our local bridge entry: the URL is resolved at runtime, so report the
+  // currently-resolved target (same as the other clients' bridge entries).
+  return isOpencodeBridge(descriptor) ? getMcpUrl() : undefined;
 }
 
 export const opencodeClient = makeJsonClient({
@@ -42,6 +46,7 @@ export const opencodeClient = makeJsonClient({
   topKey: "mcp",
   encode: () => ({ type: "local", command: [RUN_COMMAND, ...clerkRunArgs()] }),
   extractUrl: extractOpencodeUrl,
+  isOurs: isOpencodeBridge,
   configPath: () => xdgConfigPath("opencode", "opencode.json"),
   detect: () => pathExists(xdgConfigPath("opencode")),
 });

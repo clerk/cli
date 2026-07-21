@@ -274,11 +274,26 @@ describe("makeCliClient", () => {
     });
 
     test("runs the CLI remove when the entry is present", async () => {
-      await writeBaseConfig();
+      const path = await writeBaseConfig();
+      mockRun.mockImplementation(async (argv: string[]) => {
+        // Simulate the client CLI dropping the entry from its own config.
+        if (argv.includes("remove")) await writeFile(path, JSON.stringify({ mcpServers: {} }));
+        return ok();
+      });
       const client = makeClient();
       const result = await client.remove("clerk", "/ignored");
       expect(result.removed).toBe(true);
       expect(mockRun).toHaveBeenCalledWith([BIN_PATH, "mcp", "remove", "clerk"]);
+    });
+
+    test("rejects with mcp_client_cli_failed when the CLI exits 0 but the entry is still present", async () => {
+      // The remove-side mirror of verifyAdd: a CLI that no-ops with exit 0
+      // must not be reported as a removal that happened.
+      await writeBaseConfig();
+      const client = makeClient();
+      await expect(client.remove("clerk", "/ignored")).rejects.toMatchObject({
+        code: "mcp_client_cli_failed",
+      });
     });
 
     test("rejects with mcp_client_cli_not_found when the binary is missing and the entry is present", async () => {

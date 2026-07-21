@@ -157,32 +157,53 @@ export function wantsJson(options: McpOptions): boolean {
 /** A per-client failure, structurally reportable in `--json` output. */
 type ClientFailure = { client: ClientId; error: string };
 
+/** The settled outcome of running an op against every targeted client. */
+export interface SettledClients<T> {
+  succeeded: { client: McpClient; result: T }[];
+  failed: ClientFailure[];
+  /** The first client's original error, kept for {@link failWhenAllFailed}. */
+  firstError?: unknown;
+}
+
 /**
  * Run an async op against each client without letting one client's failure
  * abort the rest — `Promise.all` is fail-fast and would discard every other
  * client's result on the first rejection. Failures are warned per-client and
  * returned (so JSON consumers see which client failed, not just stderr text).
- * If *every* client failed, the first error is rethrown so the command still
- * exits non-zero with a real message.
+ * Never throws: callers emit their output first, then call
+ * {@link failWhenAllFailed} so the exit code still reflects a total failure.
  */
 export async function settleClients<T>(
   clients: readonly McpClient[],
   op: (client: McpClient) => Promise<T>,
-): Promise<{ succeeded: { client: McpClient; result: T }[]; failed: ClientFailure[] }> {
+): Promise<SettledClients<T>> {
   const settled = await Promise.allSettled(clients.map(op));
   const succeeded: { client: McpClient; result: T }[] = [];
   const failed: ClientFailure[] = [];
-  const errors: unknown[] = [];
+  let firstError: unknown;
   for (const [i, outcome] of settled.entries()) {
     const client = clients[i]!;
     if (outcome.status === "fulfilled") {
       succeeded.push({ client, result: outcome.value });
       continue;
     }
-    errors.push(outcome.reason);
+    firstError ??= outcome.reason;
     failed.push({ client: client.id, error: errorMessage(outcome.reason) });
     log.warn(`${client.displayName}: ${errorMessage(outcome.reason)}`);
   }
-  if (succeeded.length === 0 && errors.length > 0) throw errors[0];
-  return { succeeded, failed };
+  return { succeeded, failed, firstError };
+}
+
+/**
+ * Exit non-zero when every targeted client failed. In `--json` mode the
+ * `{ results, failures }` envelope is already on stdout — exactly the case
+ * where `failures` is most useful — so rethrowing would append a second
+ * (error) document and corrupt the stream; set the exit code instead. Human
+ * mode rethrows the first client's original error so the global handler
+ * formats it with its code and docs URL.
+ */
+export function failWhenAllFailed(outcome: SettledClients<unknown>, json: boolean): void {
+  if (outcome.succeeded.length > 0 || outcome.firstError === undefined) return;
+  if (!json) throw outcome.firstError;
+  process.exitCode = 1;
 }

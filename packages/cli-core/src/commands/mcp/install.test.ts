@@ -19,6 +19,11 @@ mock.module("../../mode.ts", () => ({
 let mockHome = realOs.tmpdir();
 mock.module("node:os", () => ({ ...realOs, homedir: () => mockHome }));
 
+const mockMultiselect = mock();
+mock.module("../../lib/prompts.ts", () => ({
+  multiselect: (...args: unknown[]) => mockMultiselect(...args),
+}));
+
 // CLI-backed clients (claude, gemini, codex, vscode, openclaw, hermes) delegate registration to
 // their own CLI — stub the subprocess layer so no real binaries are needed.
 const mockRun = mock<typeof runClientCli>();
@@ -58,6 +63,7 @@ describe("mcp install", () => {
     process.chdir(originalCwd);
     await rm(cwd, { recursive: true, force: true });
     mockIsAgent.mockReset();
+    mockMultiselect.mockReset();
     mockWhich.mockReset();
     mockRun.mockReset();
   });
@@ -137,6 +143,41 @@ describe("mcp install", () => {
   test("--json forces JSON output even in human mode", async () => {
     await mcpInstall({ client: ["cursor"], json: true });
     expect(() => JSON.parse(captured.out)).not.toThrow();
+  });
+
+  test("human mode: --json alone still prompts the picker instead of installing everywhere", async () => {
+    // `--json` is an output format, not a targeting choice — only agent mode
+    // (or --client/--all) skips the picker.
+    mockMultiselect.mockResolvedValueOnce(["cursor"]);
+
+    await mcpInstall({ json: true });
+
+    expect(mockMultiselect).toHaveBeenCalledTimes(1);
+    const payload = JSON.parse(captured.out) as { results: { client: string }[] };
+    expect(payload.results).toEqual([
+      expect.objectContaining({ client: "cursor", status: "installed" }),
+    ]);
+  });
+
+  test("json mode: emits the failure envelope and sets a non-zero exit code when every client fails", async () => {
+    await mkdir(join(cwd, ".cursor"), { recursive: true });
+    await writeFile(join(cwd, ".cursor", "mcp.json"), "{ not json");
+    const originalExitCode = process.exitCode;
+    try {
+      await mcpInstall({ client: ["cursor"], json: true });
+
+      // The envelope (with `failures`) still lands on stdout — exactly the
+      // case a machine consumer needs it — and the exit code carries the failure.
+      const payload = JSON.parse(captured.out) as {
+        results: unknown[];
+        failures: { client: string }[];
+      };
+      expect(payload.results).toEqual([]);
+      expect(payload.failures).toEqual([expect.objectContaining({ client: "cursor" })]);
+      expect(process.exitCode).toBe(1);
+    } finally {
+      process.exitCode = originalExitCode;
+    }
   });
 
   test("re-install is idempotent and reports installed again", async () => {

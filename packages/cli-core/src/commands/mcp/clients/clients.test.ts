@@ -267,7 +267,14 @@ describe("client contracts (homedir redirected)", () => {
     "$name removes through its own CLI",
     async ({ client, binary, removeArgv }) => {
       // Pre-write the entry (as the client's CLI would have) so presence checks pass.
-      await writeClientEntry(client.configPath("/ignored"));
+      const configPath = client.configPath("/ignored");
+      await writeClientEntry(configPath);
+      // Simulate the CLI mutating its own config — the factory re-reads it
+      // after a successful remove and refuses to report a phantom removal.
+      mockRun.mockImplementation(async () => {
+        await rm(configPath, { force: true });
+        return { exitCode: 0, stdout: "", stderr: "" };
+      });
       const result = await client.remove("clerk", "/ignored");
       expect(result.removed).toBe(true);
       expect(mockRun).toHaveBeenCalledWith([`/fake/bin/${binary}`, ...removeArgv]);

@@ -13,7 +13,9 @@
 import { log } from "../../lib/log.ts";
 import { cyan, dim, green } from "../../lib/color.ts";
 import { withGutter } from "../../lib/spinner.ts";
+import { isAgent } from "../../mode.ts";
 import {
+  failWhenAllFailed,
   pickClients,
   resolveName,
   resolveUrl,
@@ -26,9 +28,10 @@ import { detectInstalledClients } from "./clients/registry.ts";
 import type { McpClient, UpsertResult } from "./clients/types.ts";
 
 async function chooseClients(options: McpOptions, cwd: string): Promise<McpClient[]> {
-  // `wantsJson` covers `--json` and agent mode, so non-interactive callers never
-  // block on the picker.
-  if (options.client?.length || options.all || wantsJson(options)) {
+  // Only agent mode implies "no picker" — `--json` is an output format, not a
+  // targeting choice, so a human passing it still gets the interactive picker
+  // rather than a surprise install into every detected client.
+  if (options.client?.length || options.all || isAgent()) {
     return targetClients(options, cwd);
   }
   const detected = await detectInstalledClients(cwd);
@@ -74,9 +77,8 @@ export async function mcpInstall(options: McpOptions = {}): Promise<void> {
   await withGutter(
     `Installing Clerk MCP (${cyan(url)})`,
     async ({ setNextSteps }) => {
-      const { succeeded, failed } = await settleClients(clients, (c) =>
-        c.upsert({ name, url }, cwd),
-      );
+      const outcome = await settleClients(clients, (c) => c.upsert({ name, url }, cwd));
+      const { succeeded, failed } = outcome;
       if (json) {
         log.data(
           JSON.stringify(
@@ -85,8 +87,10 @@ export async function mcpInstall(options: McpOptions = {}): Promise<void> {
             2,
           ),
         );
+        failWhenAllFailed(outcome, json);
         return;
       }
+      failWhenAllFailed(outcome, json);
       succeeded.forEach(({ client, result }) => printResult(client, result));
       const steps = installNextSteps(succeeded);
       if (steps.length > 0) setNextSteps(steps);

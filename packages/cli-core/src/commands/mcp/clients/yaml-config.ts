@@ -7,27 +7,14 @@
  * comments and formatting in a user's hand-maintained `config.yaml`.
  */
 
-import { isRecord } from "../../../lib/objects.ts";
-import { CliError, ERROR_CODE, errorMessage } from "../../../lib/errors.ts";
-import { readConfigText, refuseConfigWrite, type ConfigRecord } from "./json-config.ts";
+import { readParsedConfig, refuseConfigWrite, type ConfigRecord } from "./json-config.ts";
 
 export async function readYamlConfig(path: string): Promise<ConfigRecord> {
-  const text = await readConfigText(path);
-  if (text === undefined || text.trim().length === 0) return {};
-  let parsed: unknown;
-  try {
-    parsed = Bun.YAML.parse(text);
-  } catch (error) {
-    throw new CliError(`Could not parse ${path} as YAML: ${errorMessage(error)}`, {
-      code: ERROR_CODE.MCP_CLIENT_CONFIG_INVALID,
-    });
-  }
-  if (!isRecord(parsed)) {
-    throw new CliError(`Config at ${path} is not a YAML mapping`, {
-      code: ERROR_CODE.MCP_CLIENT_CONFIG_INVALID,
-    });
-  }
-  return parsed as ConfigRecord;
+  return readParsedConfig(path, {
+    name: "YAML",
+    shape: "YAML mapping",
+    parse: (text) => Bun.YAML.parse(text),
+  });
 }
 
 export async function writeYamlConfig(path: string, _config: ConfigRecord): Promise<void> {

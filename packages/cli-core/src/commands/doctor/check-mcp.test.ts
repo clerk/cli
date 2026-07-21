@@ -93,6 +93,19 @@ describe("checkMcp", () => {
     expect(probedUrls).toEqual([HOSTED]);
   });
 
+  test("passes as reachable (authentication required) when the probe answers 401", async () => {
+    // The hosted server currently accepts an unauthenticated initialize, but a
+    // server-side tightening to 401 must not flag a just-installed entry.
+    collected = { entries: [entry("claude", HOSTED)], failures: [] };
+    probes = { [HOSTED]: { ok: false, status: 401, authRequired: true } };
+
+    const result = await checkMcp();
+
+    expect(result.status).toBe("pass");
+    expect(result.message).toContain("authentication required");
+    expect(result.message).toContain(HOSTED);
+  });
+
   test("warns with singular wording when the only configured server is unreachable", async () => {
     collected = { entries: [entry("claude", LOCAL)], failures: [] };
     probes = { [LOCAL]: { ok: false, error: "fetch failed" } };

@@ -95,6 +95,16 @@ describe("probeMcp", () => {
     expect(await probeMcp(URL)).toEqual({ ok: false, status: 404 });
   });
 
+  test.each([[401], [403]])(
+    "marks a %i answer as auth-required, not unreachable",
+    async (status) => {
+      // An auth-gated server answered — it's demonstrably there. The editor runs
+      // its own OAuth flow, so doctor must not flag the entry as unreachable.
+      stubFetch(async () => new Response("unauthorized", { status }));
+      expect(await probeMcp(URL)).toEqual({ ok: false, status, authRequired: true });
+    },
+  );
+
   test("fails on a network error, carrying the message", async () => {
     stubFetch(async () => {
       throw new Error("ECONNREFUSED");

@@ -82,6 +82,14 @@ describe("mcp uninstall", () => {
       join(cwd, ".claude.json"),
       JSON.stringify({ mcpServers: { clerk: RUN_SHAPE } }),
     );
+    // Simulate the CLI mutating its own config — the factory re-reads it after
+    // a successful remove and refuses to report a removal that didn't happen.
+    mockRun.mockImplementation(async (argv: string[]) => {
+      if (argv.includes("remove")) {
+        await writeFile(join(cwd, ".claude.json"), JSON.stringify({ mcpServers: {} }));
+      }
+      return { exitCode: 0, stdout: "", stderr: "" };
+    });
     await mcpUninstall({ client: ["claude"] });
 
     const payload = JSON.parse(captured.out) as { results: { client: string; removed: boolean }[] };
@@ -213,6 +221,25 @@ describe("mcp uninstall", () => {
       mcpServers: Record<string, unknown>;
     };
     expect(cursorCfg.mcpServers.clerk).toBeDefined();
+  });
+
+  test("human mode: --json alone still prompts the picker instead of removing everywhere", async () => {
+    // `--json` only changes the output format; treating it as targeting would
+    // let a human inspecting machine output wipe every client unprompted.
+    await mcpInstall({ client: ["cursor", "windsurf"], url: URL });
+    mockIsAgent.mockReturnValue(false);
+    mockMultiselect.mockResolvedValueOnce(["cursor"]);
+    captured.clear();
+
+    await mcpUninstall({ json: true });
+
+    expect(mockMultiselect).toHaveBeenCalledTimes(1);
+    const payload = JSON.parse(captured.out) as { results: { client: string }[] };
+    expect(payload.results).toEqual([expect.objectContaining({ client: "cursor", removed: true })]);
+    const windsurfCfg = JSON.parse(await readFile(join(cwd, ...WINDSURF_CONFIG), "utf8")) as {
+      mcpServers: Record<string, unknown>;
+    };
+    expect(windsurfCfg.mcpServers.clerk).toBeDefined();
   });
 
   test("human mode: --all removes from every client without prompting", async () => {

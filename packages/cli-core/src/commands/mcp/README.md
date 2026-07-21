@@ -2,23 +2,16 @@
 
 Manage the Clerk remote MCP server connection in supported AI clients.
 
-The Clerk MCP server is hosted at `https://mcp.clerk.com/mcp` (source:
-[clerk/cloudflare-workers/workers/remote-mcp-server](https://github.com/clerk/cloudflare-workers/tree/main/workers/remote-mcp-server)).
 These subcommands register, list, and remove the Clerk entry per client, and
 probe the server via `clerk doctor`. Clients that ship a **non-interactive** MCP
 registration CLI (Claude Code, Gemini, Codex, VS Code, OpenClaw, Hermes) are
 registered by shelling out to it — the client owns its config format and write
 safety; for the rest (Cursor, Windsurf, Warp, opencode) we write the config
-file directly. opencode does ship an `mcp add` command, but it is an
-interactive wizard with no flag-driven stdio path (and no remove command), so
-it counts as file-backed. Reads (`list`, `doctor`, the uninstall picker)
-always parse the config files directly. The URL is resolved in order: the `CLERK_MCP_URL` environment
-variable > the active environment profile's `mcpUrl` field (`switch-env`
-carries the profile value automatically) > Clerk's hosted server
-(`https://mcp.clerk.com/mcp`). Because the hosted server is the final fallback,
-`clerk mcp install` works out of the box with no flags or profile setup.
-`CLERK_MCP_URL` is the convenient override when developing the worker locally
-(e.g. `http://localhost:8787/mcp`).
+file directly. Reads (`list`, `doctor`, the uninstall picker) always parse the
+config files directly. The server URL defaults to Clerk's hosted server
+(`https://mcp.clerk.com/mcp`), so `clerk mcp install` works out of the box with
+no flags or profile setup (see [Development](#development) for the override
+order).
 
 No Clerk API endpoints are called. To verify the server is reachable, run
 `clerk doctor` — its MCP check performs the `initialize` handshake against each
@@ -72,7 +65,9 @@ is passed last to its CLI because it swallows the rest of the argv).
 
 Per-client dialect notes:
 
-- **opencode** nests entries under top-level `mcp` and uses a single argv
+- **opencode** does ship an `mcp add` command, but it is an interactive wizard
+  with no flag-driven stdio path (and no remove command), so it counts as
+  file-backed. It nests entries under top-level `mcp` and uses a single argv
   array: `{ "type": "local", "command": ["clerk", "mcp", "run"] }`. Its config
   root follows XDG on every platform: `$XDG_CONFIG_HOME/opencode/opencode.json`
   (default `~/.config/opencode/opencode.json`) on macOS/Linux,
@@ -141,7 +136,10 @@ file-backed clients the entry is overwritten in place. Success reports
 `status: installed` per client. Failures are warned per client on stderr and
 listed in the `--json` output's `failures` array (`{ client, error }`);
 `uninstall --json` reports the same shape. The command exits non-zero only
-when every targeted client fails.
+when every targeted client fails — and in `--json` mode the
+`{ results, failures }` envelope is still emitted on stdout in that case (the
+exit code carries the failure), so machine consumers always get the structured
+output.
 
 **After install:** registering the entry does not connect the server on its
 own. In human mode, `install` prints per-client next steps — the server only
@@ -157,8 +155,9 @@ goes live once you **reload the editor**, which then spawns `clerk mcp run`
 
 ### `clerk mcp list`
 
-Print every Clerk-flavored MCP entry across all supported clients (entries
-named `clerk` or pointing at any `*.clerk.com` host). The `--json` (and
+Print every Clerk-flavored MCP entry across all supported clients: any
+`clerk mcp run` bridge entry (regardless of its name or currently-resolved
+URL), plus entries named `clerk` or pointing at any `*.clerk.com` host. The `--json` (and
 agent-mode) output is `{ entries, failures }`: a client whose config exists but
 can't be read or parsed appears in `failures` (`{ client, error }`) rather than
 being silently folded into "no entries" — the same structural-failure contract
@@ -187,7 +186,10 @@ Remove the entry. For CLI-registered clients (claude, gemini, codex, openclaw,
 hermes), removal runs the client's own remove command; when our read of the
 config shows no entry, `removed: false` is reported without invoking any CLI,
 and when the entry is present but the client's binary is missing, that client
-fails with `mcp_client_cli_not_found`. Cursor, Windsurf, Warp, opencode, and
+fails with `mcp_client_cli_not_found`. After the remove command reports
+success, the config is re-read — if the entry is somehow still present, the
+client fails with `mcp_client_cli_failed` rather than reporting a removal that
+didn't happen (the mirror of the add-side `verifyAdd` check). Cursor, Windsurf, Warp, opencode, and
 VS Code (add-only CLI) are removed by editing the config file directly.
 
 In human mode with no `--client`/`--all`, it prompts with a
@@ -203,7 +205,20 @@ editor.
 > **Reachability:** there is no `mcp doctor` subcommand. Server health is part
 > of `clerk doctor`, which probes each distinct configured MCP URL via the
 > `initialize` handshake when an entry is installed (warns, does not fail, when
-> any is unreachable).
+> any is unreachable). A `401`/`403` answer counts as reachable — the server is
+> there, it just gates the handshake behind the OAuth flow the editor runs
+> itself — and is reported as "authentication required".
+
+## Development
+
+The hosted server's source lives at
+[clerk/cloudflare-workers/workers/remote-mcp-server](https://github.com/clerk/cloudflare-workers/tree/main/workers/remote-mcp-server).
+The URL every subcommand (and the bridge at spawn time) targets is resolved in
+order: the `CLERK_MCP_URL` environment variable > the active environment
+profile's `mcpUrl` field (`switch-env` carries the profile value
+automatically) > Clerk's hosted server (`https://mcp.clerk.com/mcp`).
+`CLERK_MCP_URL` is the convenient override when developing the worker locally
+(e.g. `http://localhost:8787/mcp`).
 
 ## Error codes
 
