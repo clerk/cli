@@ -1,5 +1,15 @@
 # clerk
 
+## 2.3.0
+
+### Minor Changes
+
+- Add `clerk mcp install`, `list`, `uninstall`, and `run` to connect the Clerk remote MCP server (`https://mcp.clerk.com/mcp`) to Claude Code, Cursor, GitHub Copilot (VS Code; `--client vscode` or `--client copilot`), Windsurf, Gemini, Codex, opencode, OpenClaw, Warp, and Hermes Agent. Clients that ship a non-interactive MCP registration CLI are registered by shelling out to it — `claude mcp add`, `gemini mcp add`, `codex mcp add`, `code --add-mcp`, `openclaw mcp add --no-probe`, `hermes mcp add` — so each client owns its config format and write safety; for those, the client's binary must be on PATH (detection is PATH-based, no file-write fallback). Cursor, Windsurf, Warp (no CLI), and opencode (interactive-only CLI) get their user-global config file written directly, and VS Code removal (add-only CLI) edits its `mcp.json` in place. `clerk mcp list --json` reports `{ entries, failures }` so an unreadable client config surfaces structurally instead of reading as "nothing installed". Install always converges: an existing entry under the same name is replaced. Each client is configured to launch `clerk mcp run` — a built-in stdio bridge that forwards the editor's stdio JSON-RPC to the remote server over HTTP (the job `npx mcp-remote` did, now with no npx dependency), so `clerk` must be on your PATH. `clerk doctor` gains an MCP reachability check that probes each configured server via the MCP `initialize` handshake when an entry is installed. The URL resolves in order: the `CLERK_MCP_URL` override (for local worker development) > the active env profile's `mcpUrl` field > the hosted server, so `clerk mcp install` works with no flags. The bridge is transport-only for now; against an auth-required server it surfaces a clear error rather than signing in. ([#307](https://github.com/clerk/cli/pull/307)) by [@rafa-thayto](https://github.com/rafa-thayto)
+
+### Patch Changes
+
+- Stop scaffolding deprecated `createRouteMatcher` route protection in Next.js middleware during `clerk init` — generate bare `clerkMiddleware()` and point to resource-level protection with `auth.protect()` instead. ([#387](https://github.com/clerk/cli/pull/387)) by [@rafa-thayto](https://github.com/rafa-thayto)
+
 ## 2.2.0
 
 ### Minor Changes
