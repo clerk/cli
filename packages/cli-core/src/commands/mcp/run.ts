@@ -21,6 +21,7 @@ import { log } from "../../lib/log.ts";
 import { isRecord } from "../../lib/objects.ts";
 import { resolveUrl, type McpOptions } from "./shared.ts";
 import { sseEventData } from "./sse.ts";
+import type { JSONRPCMessage, RequestId } from "@modelcontextprotocol/sdk/types.js";
 
 /** Injectable streams so the bridge can be driven in-process by tests. */
 interface RunStreams {
@@ -28,7 +29,6 @@ interface RunStreams {
   write?: (chunk: string) => void;
 }
 
-type JsonRpcMessage = { id?: string | number; method?: string; result?: unknown };
 type Session = { id?: string; protocolVersion?: string };
 type Emit = (message: unknown) => Promise<void>;
 
@@ -127,7 +127,7 @@ interface DispatchCtx {
   signal: AbortSignal;
 }
 
-async function dispatch(message: JsonRpcMessage, ctx: DispatchCtx): Promise<void> {
+async function dispatch(message: JSONRPCMessage, ctx: DispatchCtx): Promise<void> {
   const { url, session, emit, emitPayload, track, ensureServerStream, resetServerStream, signal } =
     ctx;
   let response: Response;
@@ -202,9 +202,10 @@ async function dispatch(message: JsonRpcMessage, ctx: DispatchCtx): Promise<void
     // `replied` guards the case where the response was already delivered and a
     // later event errors — a second reply for the same id would be a protocol
     // violation. Notifications (no id) never need a reply.
-    let replied = message.id === undefined;
+    const requestId = "id" in message ? message.id : undefined;
+    let replied = requestId === undefined;
     const markReplied: Emit = async (parsed) => {
-      if (!replied && hasReplyFor(parsed, message.id)) replied = true;
+      if (!replied && requestId !== undefined && hasReplyFor(parsed, requestId)) replied = true;
       await emitPayload(parsed);
     };
     track(
@@ -225,9 +226,9 @@ async function dispatch(message: JsonRpcMessage, ctx: DispatchCtx): Promise<void
 }
 
 /** True when any frame in the payload answers the request with this id. */
-function hasReplyFor(parsed: unknown, id: JsonRpcMessage["id"]): boolean {
+function hasReplyFor(parsed: unknown, id: RequestId): boolean {
   return (Array.isArray(parsed) ? parsed : [parsed]).some(
-    (item) => isRecord(item) && (item as JsonRpcMessage).id === id,
+    (item) => isRecord(item) && "id" in item && item.id === id,
   );
 }
 
@@ -258,7 +259,7 @@ export async function readTextCapped(
 
 async function forwardJsonBody(
   response: Response,
-  message: JsonRpcMessage,
+  message: JSONRPCMessage,
   emit: Emit,
   emitPayload: Emit,
 ): Promise<void> {
@@ -279,13 +280,13 @@ async function forwardJsonBody(
 }
 
 async function emitError(
-  message: JsonRpcMessage,
+  message: JSONRPCMessage,
   emit: Emit,
   code: number,
   text: string,
 ): Promise<void> {
   // Only requests (with an id) expect a reply; notifications don't.
-  if (message.id === undefined) return;
+  if (!("id" in message)) return;
   await emit({ jsonrpc: "2.0", id: message.id, error: { code, message: text } });
 }
 
@@ -341,7 +342,7 @@ async function listenForServerMessages(
 async function* readJsonRpcLines(
   input: AsyncIterable<Uint8Array | string>,
   maxLineBytes = MAX_LINE_BYTES,
-): AsyncGenerator<JsonRpcMessage, void, undefined> {
+): AsyncGenerator<JSONRPCMessage, void, undefined> {
   const decoder = new TextDecoder();
   let buffer = "";
   for await (const chunk of input) {
@@ -365,7 +366,7 @@ async function* readJsonRpcLines(
   if (parsed) yield parsed;
 }
 
-function parseLine(line: string): JsonRpcMessage | undefined {
+function parseLine(line: string): JSONRPCMessage | undefined {
   if (line.length === 0) return undefined;
   let parsed: unknown;
   try {
@@ -380,7 +381,7 @@ function parseLine(line: string): JsonRpcMessage | undefined {
     log.warn(`mcp run: ignoring non-object frame on stdin`);
     return undefined;
   }
-  return parsed as JsonRpcMessage;
+  return parsed as JSONRPCMessage;
 }
 
 interface PipeEventStreamOptions {
