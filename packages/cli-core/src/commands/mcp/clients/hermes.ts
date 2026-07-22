@@ -7,7 +7,7 @@
  * mutations, and rewriting the user's YAML would destroy comments).
  */
 
-import { clerkRunArgs, clerkRunDescriptor, RUN_COMMAND, withLegacyUrl } from "./clerk-run.ts";
+import { clerkRunArgs, clerkRunDescriptor, clerkRunUrl, RUN_COMMAND } from "./clerk-run.ts";
 import { makeCliClient } from "./make-cli-client.ts";
 import { makeYamlClient } from "./make-client.ts";
 import { userPath } from "./paths.ts";
@@ -19,7 +19,7 @@ const hermesFileClient = makeYamlClient({
   activation: "Restart Hermes — or run `/reload-mcp` in a session (`clerk` must be on your PATH).",
   topKey: "mcp_servers",
   encode: clerkRunDescriptor,
-  extractUrl: withLegacyUrl,
+  extractUrl: clerkRunUrl,
   configPath: () => userPath(".hermes", "config.yaml"),
 });
 

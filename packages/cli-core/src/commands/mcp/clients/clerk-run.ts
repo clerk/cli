@@ -9,7 +9,7 @@
  * they should change it.
  */
 
-import { hasStringProp, isRecord } from "../../../lib/objects.ts";
+import { isRecord } from "../../../lib/objects.ts";
 import { getMcpUrl } from "../../../lib/environment.ts";
 
 /** The binary clients spawn. Must be on the user's PATH. */
@@ -42,20 +42,11 @@ export function isClerkRunEntry(descriptor: unknown): boolean {
 }
 
 /**
- * `extractUrl` for the clients that share the standard bridge shape.
- *
- * Priority:
- * 1. Current format: `{ command: "clerk", args: ["mcp", "run"] }` — no URL in
- *    args; resolves to `getMcpUrl()` so list/upsert see a comparable URL.
- * 2. Direct-URL format: `{ url }` or `{ serverUrl }` — plain key lookup. Not a
- *    shape this CLI ever wrote: it round-trips entries users added by hand
- *    following the Clerk MCP docs (e.g. `{ type: "http", url }`), so those
- *    still show up in list/doctor and can be uninstalled.
+ * `extractUrl` for the clients that store the standard bridge shape: a
+ * `clerk mcp run` descriptor carries no URL in args, so it resolves to
+ * `getMcpUrl()` — list/upsert then see a comparable URL. Anything else
+ * (including hand-added direct-URL entries) is not ours and yields undefined.
  */
-export function withLegacyUrl(
-  descriptor: unknown,
-  legacyKey: "url" | "serverUrl" = "url",
-): string | undefined {
-  if (isClerkRunEntry(descriptor)) return getMcpUrl();
-  return hasStringProp(descriptor, legacyKey) ? descriptor[legacyKey] : undefined;
+export function clerkRunUrl(descriptor: unknown): string | undefined {
+  return isClerkRunEntry(descriptor) ? getMcpUrl() : undefined;
 }

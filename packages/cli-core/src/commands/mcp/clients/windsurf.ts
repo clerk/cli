@@ -1,10 +1,9 @@
 /**
  * Writes to `~/.codeium/windsurf/mcp_config.json` (user scope). Installs the
- * `clerk mcp run` stdio bridge; legacy `{ serverUrl }` entries still round-trip
- * on list/uninstall.
+ * `clerk mcp run` stdio bridge.
  */
 
-import { clerkRunDescriptor, withLegacyUrl } from "./clerk-run.ts";
+import { clerkRunDescriptor, clerkRunUrl } from "./clerk-run.ts";
 import { makeJsonClient } from "./make-client.ts";
 import { pathExists, userPath } from "./paths.ts";
 
@@ -16,7 +15,7 @@ export const windsurfClient = makeJsonClient({
     "Reload Windsurf, then turn on the server in `Cascade → MCP` (`clerk` must be on your PATH).",
   topKey: "mcpServers",
   encode: clerkRunDescriptor,
-  extractUrl: (d) => withLegacyUrl(d, "serverUrl"),
+  extractUrl: clerkRunUrl,
   configPath: () => userPath(".codeium", "windsurf", "mcp_config.json"),
   detect: () => pathExists(userPath(".codeium", "windsurf")),
 });

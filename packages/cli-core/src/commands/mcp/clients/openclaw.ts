@@ -9,7 +9,7 @@
  * `mcp.servers.<name>` — for `list`/`doctor`.
  */
 
-import { clerkRunArgs, clerkRunDescriptor, RUN_COMMAND, withLegacyUrl } from "./clerk-run.ts";
+import { clerkRunArgs, clerkRunDescriptor, clerkRunUrl, RUN_COMMAND } from "./clerk-run.ts";
 import { makeCliClient } from "./make-cli-client.ts";
 import { makeReadOnlyJsonClient } from "./make-client.ts";
 import { userPath } from "./paths.ts";
@@ -21,7 +21,7 @@ const openclawFileClient = makeReadOnlyJsonClient({
   activation: "Restart OpenClaw (`clerk` must be on your PATH).",
   topKey: ["mcp", "servers"],
   encode: clerkRunDescriptor,
-  extractUrl: withLegacyUrl,
+  extractUrl: clerkRunUrl,
   configPath: () => userPath(".openclaw", "openclaw.json"),
 });
 

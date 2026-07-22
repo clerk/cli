@@ -5,12 +5,11 @@
  * back to the file-backed base editing the user-global `mcp.json` under VS
  * Code's per-OS user config dir (the file behind `MCP: Open User
  * Configuration`). VS Code uses the top-level key `servers` (not `mcpServers`)
- * and tags stdio servers with `type: "stdio"`; legacy `{ type: "http", url }`
- * entries still round-trip on list/uninstall.
+ * and tags stdio servers with `type: "stdio"`.
  */
 
 import { join } from "node:path";
-import { clerkRunArgs, RUN_COMMAND, withLegacyUrl } from "./clerk-run.ts";
+import { clerkRunArgs, clerkRunUrl, RUN_COMMAND } from "./clerk-run.ts";
 import { makeCliClient } from "./make-cli-client.ts";
 import { makeJsonClient } from "./make-client.ts";
 import { vscodeUserDir } from "./paths.ts";
@@ -23,7 +22,7 @@ const vscodeFileClient = makeJsonClient({
     "Reload the VS Code window, then start the server from `MCP: List Servers` (`clerk` must be on your PATH).",
   topKey: "servers",
   encode: () => ({ type: "stdio", command: RUN_COMMAND, args: clerkRunArgs() }),
-  extractUrl: withLegacyUrl,
+  extractUrl: clerkRunUrl,
   configPath: () => join(vscodeUserDir(), "mcp.json"),
 });
 

@@ -141,7 +141,10 @@ describe("make-client (via cursor)", () => {
   });
 
   describe("list", () => {
-    test("returns clerk-named and clerk-hosted entries, ignores others", async () => {
+    test("returns only bridge-shaped entries, ignoring direct-URL descriptors", async () => {
+      // Direct-URL entries (hand-added or another tool's) are not ours: the
+      // CLI never wrote that shape, so list/uninstall leave them alone — even
+      // under the `clerk` name.
       const configPath = join(cwd, ".cursor", "mcp.json");
       await mkdir(join(cwd, ".cursor"), { recursive: true });
       await writeFile(
@@ -149,14 +152,13 @@ describe("make-client (via cursor)", () => {
         JSON.stringify({
           mcpServers: {
             clerk: { url: CLERK_URL },
-            "other-clerk": { url: "https://mcp.clerk.com/mcp" },
+            bridge: CURRENT_SHAPE,
             unrelated: { url: "https://example.com/mcp" },
           },
         }),
       );
       const entries = await cursorClient.list(cwd);
-      const names = entries.map((e) => e.name).sort();
-      expect(names).toEqual(["clerk", "other-clerk"]);
+      expect(entries.map((e) => e.name)).toEqual(["bridge"]);
     });
 
     test("lists a current-shape entry by name, resolving URL from getMcpUrl()", async () => {

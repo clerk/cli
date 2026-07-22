@@ -6,7 +6,7 @@
  * `mcpServers` + `{ command, args }` dialect.
  */
 
-import { clerkRunDescriptor, withLegacyUrl } from "./clerk-run.ts";
+import { clerkRunDescriptor, clerkRunUrl } from "./clerk-run.ts";
 import { makeJsonClient } from "./make-client.ts";
 import { pathExists, userPath } from "./paths.ts";
 
@@ -18,7 +18,7 @@ export const warpClient = makeJsonClient({
     "Restart Warp, then enable the server under `Settings → Agents → MCP servers` (`clerk` must be on your PATH).",
   topKey: "mcpServers",
   encode: clerkRunDescriptor,
-  extractUrl: withLegacyUrl,
+  extractUrl: clerkRunUrl,
   configPath: () => userPath(".warp", ".mcp.json"),
   detect: () => pathExists(userPath(".warp")),
 });

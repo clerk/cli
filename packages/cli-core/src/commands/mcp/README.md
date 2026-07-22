@@ -155,9 +155,11 @@ goes live once you **reload the editor**, which then spawns `clerk mcp run`
 
 ### `clerk mcp list`
 
-Print every Clerk-flavored MCP entry across all supported clients: any
-`clerk mcp run` bridge entry (regardless of its name or currently-resolved
-URL), plus entries named `clerk` or pointing at any `*.clerk.com` host. The `--json` (and
+Print every Clerk MCP entry across all supported clients: any `clerk mcp run`
+bridge entry, matched by its descriptor shape regardless of its name or
+currently-resolved URL (plus, for opencode's remote dialect, entries named
+`clerk` or pointing at a `*.clerk.com` host). Entries this CLI never wrote —
+e.g. a hand-added direct-URL entry — are left alone. The `--json` (and
 agent-mode) output is `{ entries, failures }`: a client whose config exists but
 can't be read or parsed appears in `failures` (`{ client, error }`) rather than
 being silently folded into "no entries" — the same structural-failure contract

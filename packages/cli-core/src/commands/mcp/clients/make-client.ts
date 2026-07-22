@@ -5,8 +5,9 @@
  * file with a top-level map whose keys are server names and whose values are
  * per-client server descriptors. The differences are the serialization format
  * (JSON for most clients, TOML for Codex, YAML for Hermes), the top-level key name (`mcpServers`
- * vs `servers` vs `mcp_servers`) and the descriptor encoding (`{ url }` vs
- * `{ serverUrl }` vs `{ command, args }`). This factory captures those as a
+ * vs `servers` vs `mcp_servers`) and the descriptor encoding (the standard
+ * `{ command, args }` vs VS Code's `type: "stdio"`-tagged variant vs
+ * opencode's single argv array). This factory captures those as a
  * codec + `topKey` + `encode` + `extractUrl` and reuses the rest.
  */
 
@@ -99,7 +100,7 @@ function withServerMap(
 }
 
 /** Single source of truth for "is this host under clerk.com". */
-export function isClerkHost(hostname: string): boolean {
+function isClerkHost(hostname: string): boolean {
   return hostname === "mcp.clerk.com" || hostname.endsWith(".clerk.com");
 }
 

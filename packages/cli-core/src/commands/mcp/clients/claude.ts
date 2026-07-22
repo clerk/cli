@@ -3,11 +3,10 @@
  * `claude mcp add --scope user … -- clerk mcp run`, so Claude Code owns its
  * config format and write safety. The file-backed base still reads the
  * user-global `~/.claude.json` (`mcpServers`) — the store `--scope user`
- * writes to — for `list`/`doctor`; legacy `{ type: "http", url }` entries
- * still round-trip there.
+ * writes to — for `list`/`doctor`.
  */
 
-import { clerkRunArgs, clerkRunDescriptor, RUN_COMMAND, withLegacyUrl } from "./clerk-run.ts";
+import { clerkRunArgs, clerkRunDescriptor, clerkRunUrl, RUN_COMMAND } from "./clerk-run.ts";
 import { makeCliClient } from "./make-cli-client.ts";
 import { makeReadOnlyJsonClient } from "./make-client.ts";
 import { userPath } from "./paths.ts";
@@ -19,7 +18,7 @@ const claudeFileClient = makeReadOnlyJsonClient({
   activation: "Restart Claude Code, then run `/mcp` to connect (`clerk` must be on your PATH).",
   topKey: "mcpServers",
   encode: clerkRunDescriptor,
-  extractUrl: withLegacyUrl,
+  extractUrl: clerkRunUrl,
   configPath: () => userPath(".claude.json"),
 });
 

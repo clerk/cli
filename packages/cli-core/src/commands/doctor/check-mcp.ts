@@ -11,8 +11,6 @@ import { probeMcp, type McpProbeResult } from "../mcp/probe.ts";
 import type { ListEntry } from "../mcp/clients/types.ts";
 import type { CheckResult } from "./types.ts";
 
-const NAME = "MCP server";
-
 type UrlProbe = { url: string; result: McpProbeResult };
 
 // A 401/403 answer proves the server is there — it gates the handshake behind
@@ -62,7 +60,7 @@ export async function checkMcp(): Promise<CheckResult> {
   if (failures.length > 0) {
     const clients = failures.map((f) => f.displayName).join(", ");
     return {
-      name: NAME,
+      name: "MCP server",
       status: "warn",
       message: `Could not read the MCP config for ${clients}`,
       detail: [
@@ -74,15 +72,23 @@ export async function checkMcp(): Promise<CheckResult> {
   }
 
   if (entries.length === 0) {
-    return { name: NAME, status: "pass", message: "Skipped (no Clerk MCP entry installed)" };
+    return {
+      name: "MCP server",
+      status: "pass",
+      message: "Skipped (no Clerk MCP entry installed)",
+    };
   }
 
   if (unreachable.length === 0) {
-    return { name: NAME, status: "pass", message: `Reachable — ${describeReachable(probes)}` };
+    return {
+      name: "MCP server",
+      status: "pass",
+      message: `Reachable — ${describeReachable(probes)}`,
+    };
   }
 
   return {
-    name: NAME,
+    name: "MCP server",
     status: "warn",
     message: describeUnreachable(unreachable, probes.length),
     detail: unreachable.map((p) => `${p.url}: ${describeFailure(p.result)}`).join("; "),

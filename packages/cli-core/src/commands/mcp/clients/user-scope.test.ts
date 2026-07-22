@@ -84,32 +84,14 @@ describe("user-scope MCP clients (homedir redirected)", () => {
       ]);
     });
 
-    test("recognises a legacy npx mcp-remote entry by its Clerk URL in args", async () => {
-      // Legacy shape: `npx -y mcp-remote <url>` — identified by the Clerk URL in
-      // args rather than the command name (more robust to npx/bunx/pnpx variants).
+    test("ignores foreign stdio entries that are not the clerk bridge", async () => {
       const dir = join(mockHome, ".gemini");
       await mkdir(dir, { recursive: true });
       await Bun.write(
         join(dir, "settings.json"),
         JSON.stringify({
           mcpServers: {
-            clerk: { command: "npx", args: ["-y", "mcp-remote", DEFAULT_URL] },
-          },
-        }),
-      );
-      const entries = await geminiClient.list("/ignored");
-      expect(entries.map((e) => e.name)).toEqual(["clerk"]);
-      expect(entries[0]!.url).toBe(DEFAULT_URL);
-    });
-
-    test("ignores a foreign npx entry without a Clerk URL in args", async () => {
-      const dir = join(mockHome, ".gemini");
-      await mkdir(dir, { recursive: true });
-      await Bun.write(
-        join(dir, "settings.json"),
-        JSON.stringify({
-          mcpServers: {
-            clerk: { command: "npx", args: ["-y", "mcp-remote", DEFAULT_URL] },
+            clerk: CURRENT_SHAPE,
             "other-tool": { command: "npx", args: ["serve", "--port", "3000"] },
           },
         }),
@@ -148,7 +130,7 @@ describe("user-scope MCP clients (homedir redirected)", () => {
       ]);
     });
 
-    test("round-trips a legacy bare-url entry on list", async () => {
+    test("ignores a direct-URL entry the CLI never wrote, even under the clerk name", async () => {
       const dir = join(mockHome, ".codex");
       await mkdir(dir, { recursive: true });
       await Bun.write(
@@ -156,8 +138,7 @@ describe("user-scope MCP clients (homedir redirected)", () => {
         'model = "o3"\n\n[mcp_servers.clerk]\nurl = "https://mcp.clerk.com/mcp"\n',
       );
       const entries = await codexClient.list("/ignored");
-      expect(entries.map((e) => e.name)).toEqual(["clerk"]);
-      expect(entries[0]!.url).toBe(DEFAULT_URL);
+      expect(entries).toEqual([]);
     });
   });
 });
