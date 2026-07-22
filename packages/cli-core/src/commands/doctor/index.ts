@@ -17,6 +17,7 @@ import {
   checkShellCompletion,
   checkCliVersion,
 } from "./checks.ts";
+import { checkMcp } from "./check-mcp.ts";
 import { formatCheckResult, formatJson } from "./format.ts";
 import type { CheckFn, CheckResult, DoctorContext, DoctorOptions } from "./types.ts";
 
@@ -30,6 +31,7 @@ const BASE_CHECKS: CheckFn[] = [
   checkEnvVars,
   checkConfigFile,
   checkShellCompletion,
+  checkMcp,
 ];
 
 function getChecks(): CheckFn[] {

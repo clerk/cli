@@ -30,6 +30,7 @@
   },
   "devDependencies": {
     "@clerk/shared": "^4.13.1",
+    "@modelcontextprotocol/sdk": "^1.29.0",
     "@types/semver": "^7.7.1"
   }
 }

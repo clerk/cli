@@ -1,11 +1,6 @@
-import { test, expect, describe, mock, beforeEach, afterEach } from "bun:test";
-import {
-  useCaptureLog,
-  credentialStoreStubs,
-  configStubs,
-  gitStubs,
-  stubFetch,
-} from "../../test/lib/stubs.ts";
+import { test, expect, describe, mock, spyOn, beforeEach, afterEach, afterAll } from "bun:test";
+import { useCaptureLog, credentialStoreStubs, gitStubs, stubFetch } from "../../test/lib/stubs.ts";
+import * as config from "../../lib/config.ts";
 import type { Application } from "../../lib/plapi.ts";
 
 const mockGetToken = mock();
@@ -15,12 +10,13 @@ mock.module("../../lib/credential-store.ts", () => ({
   getToken: (...args: unknown[]) => mockGetToken(...args),
 }));
 
+// spyOn (not mock.module) for config: a spy is restorable, so afterAll hands the
+// real module back to doctor.test.ts when both run in one `bun test` process.
 const mockResolveProfile = mock();
-
-mock.module("../../lib/config.ts", () => ({
-  ...configStubs,
-  resolveProfile: (...args: unknown[]) => mockResolveProfile(...args),
-}));
+const resolveProfileSpy = spyOn(config, "resolveProfile").mockImplementation((...args: unknown[]) =>
+  mockResolveProfile(...(args as [string])),
+);
+afterAll(() => resolveProfileSpy.mockRestore());
 
 mock.module("../../lib/git.ts", () => gitStubs);
 
@@ -70,7 +66,7 @@ describe("createDoctorContext", () => {
       const p1 = ctx.getToken();
       const p2 = ctx.getToken();
 
-      expect(p1).toBe(p2); // Same promise reference
+      expect(p1).toBe(p2);
       expect(await p1).toBe("test_token");
       expect(mockGetToken).toHaveBeenCalledTimes(1);
     });

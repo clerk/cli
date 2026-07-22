@@ -48,9 +48,11 @@ Commands:
   disable                                         Disable Clerk features on the linked instance
   api              [options] [endpoint] [filter]  Make authenticated requests to the Clerk API
   doctor           [options]                      Check your project's Clerk integration health
+  mcp                                             Manage the Clerk remote MCP server connection for AI editors and CLIs
   completion       [shell]                        Generate shell autocompletion script
   update           [options]                      Update the Clerk CLI to the latest version
   deploy                                          Deploy a Clerk application to production
+  webhooks                                        Stream webhook events to a local handler and verify their signatures
   help             [command]                      Display help for command
   bird                                            Play Clerk Bird, a Flappy Bird game in your terminal
 ```
