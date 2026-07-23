@@ -56,9 +56,8 @@ bun run test:e2e                             # Same flags as above
 Fixture maintenance:
 
 ```sh
-bun run e2e:refresh-fixtures                 # Re-scaffold all non-pinned fixtures
-bun run e2e:refresh-fixtures -- --force      # Include pinned fixtures
-bun run e2e:refresh-fixtures -- --only nextjs-app-router  # Refresh one fixture
+bun run e2e:refresh-fixtures                             # Re-scaffold every fixture (pinned included)
+bun run e2e:refresh-fixtures -- --only nextjs-app-router # Refresh one fixture
 ```
 
 ## Test runner (`scripts/run-tests.ts`)
@@ -79,28 +78,33 @@ A single test runner used by both `bun run test` and `bun run test:e2e`. Each te
 Each fixture directory contains:
 
 - Framework source files (scaffolded by `config.scaffoldCmd`)
-- A `.test.ts` file that exports a `config: FixtureConfig` and calls `runFixtureTests()` and `runBrowserTests()`
+- A checked-in `package-lock.json` (fixtures use npm; the refresh script generates the lockfile so setup can run `npm ci`)
+- A `.test.ts` file that calls `createFixtureHarness("<name>")` and passes the returned harness to `runFixtureTests()` and `runBrowserTests()`
+
+Fixture config is no longer exported from each test file. It lives in a single manifest keyed by fixture name (`test/e2e/fixtures.manifest.ts`), which is the source of truth shared by both the test files and `scripts/refresh-e2e-fixtures.ts`. The manifest keys double as the fixture directory names (`test/e2e/fixtures/<name>/`) and as the typed argument to `createFixtureHarness()`. `createFixtureHarness(name)` looks up the entry and threads the resolved `config` and `fixtureDir` through to the setup and test helpers.
 
 ### FixtureConfig
 
-Defined in `test/e2e/lib/types.ts`:
+The manifest entries satisfy `FixtureConfig`, defined in `test/e2e/lib/types.ts`:
 
-- `description` - human-readable name
 - `scaffoldCmd` - command the refresh script uses to scaffold the project
 - `clerkSdk` - Clerk SDK package name (e.g. `@clerk/nextjs`)
 - `buildCmd` - build command (e.g. `["next", "build"]`)
 - `devCmd` - dev server command; port flag appended automatically (`-p` for Next.js, `--port` for others)
-- `pinned` - when true, refresh script skips unless `--force` is passed
-- `notes` - required when pinned, explains why this variant exists
+- `notes` - explains why a pinned variant exists (required when `pinnedDependencyRanges` is set)
+- `pinnedDependencyRanges` - allowed generated dependency ranges enforced when the refresh script regenerates a pinned fixture
+- `packageJsonOverrides` - `package.json` `dependencies` / `devDependencies` merged in after scaffolding and before the fixture is copied
 
 ### Setup flow (`fixture-setup.ts`)
+
+`setupFixture(name)` looks up the manifest entry, then:
 
 1. Copy fixture to a temp directory
 2. Git init and commit (so the CLI profile key is stable)
 3. `clerk link --app $CLERK_CLI_TEST_APP_ID` with an isolated `CLERK_CONFIG_DIR`
-4. `clerk init --yes`
+4. `clerk init --yes --no-skills` (skills install is skipped so skill template files don't break framework typecheck)
 5. Parse `.env` / `.env.local` for publishable and secret keys (uses `detectPublishableKeyName` / `detectSecretKeyName` from CLI source)
-6. `bun install`
+6. `npm ci --ignore-scripts --legacy-peer-deps` (installs from the fixture's checked-in `package-lock.json`)
 
 ### Build + typecheck test (`runFixtureTests`)
 
@@ -135,9 +139,9 @@ Within each test file, `createFixtureHarness()` runs `setupFixture()` once in `b
 
 ## Adding a new fixture
 
-1. Create `test/e2e/fixtures/<name>/`
-2. Scaffold the framework manually or via `bun run e2e:refresh-fixtures`
-3. Add a `<name>.test.ts` exporting `config: FixtureConfig` and calling `runFixtureTests()` and `runBrowserTests()`
+1. Add an entry to `test/e2e/fixtures.manifest.ts` keyed by `<name>` (this drives both scaffolding and the tests)
+2. Scaffold the framework via `bun run e2e:refresh-fixtures -- --only <name>` (generates `test/e2e/fixtures/<name>/`, including its `package-lock.json`)
+3. Add a `<name>.test.ts` that calls `createFixtureHarness("<name>")` and passes the harness to `runFixtureTests()` and `runBrowserTests()`
 4. Add a `README.md` in the fixture directory describing the project
 
 Helper functions are in `test/e2e/lib/`:
