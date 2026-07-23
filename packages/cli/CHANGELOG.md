@@ -1,5 +1,11 @@
 # clerk
 
+## 2.3.1
+
+### Patch Changes
+
+- Fix `clerk enable orgs --auto-create` so organizations are actually auto-created for new users. The flag now also enables organization creation defaults, which the API requires before honoring the automatic creation setting. ([#390](https://github.com/clerk/cli/pull/390)) by [@manovotny](https://github.com/manovotny)
+
 ## 2.3.0
 
 ### Minor Changes
