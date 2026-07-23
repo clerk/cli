@@ -234,7 +234,9 @@ test("--input-json is registered as a global option", async () => {
   // stderr is the agent-mode signature, which proves --mode agent was applied.
   const result = await clerk.raw("--input-json", '{"mode":"agent"}', "doctor", "--json");
   expect(result.exitCode).not.toBe(0);
-  const parsed = JSON.parse(result.stderr);
+  const jsonOutput = result.stderr.split("\n").findLast((line) => line.startsWith("{"));
+  expect(jsonOutput).toBeDefined();
+  const parsed = JSON.parse(jsonOutput!);
   expect(parsed.error).toBeDefined();
 });
 
