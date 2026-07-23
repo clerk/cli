@@ -44,10 +44,10 @@ CLERK_E2E_DEBUG=1 bun run test:e2e:op          # Verbose helper logging
 E2E_HAR_DIR=test/e2e/.har bun run test:e2e:op  # Capture HAR files for network debugging
 ```
 
-Extra args after `--` are forwarded to the underlying `bun test` invocation (see `bun test --help`). Note that additional positional patterns are OR'd with the existing `test/e2e/` pattern, so they broaden the run rather than narrow it — to run a single fixture, invoke `bun test` directly with the required env vars exported:
+Extra args after `--` are forwarded to the underlying `bun test` invocation (see `bun test --help`). Note that additional positional patterns are OR'd with the existing `test/e2e/` pattern, so they broaden the run rather than narrow it — to run a single fixture, invoke `bun test` directly against its test file (the file is `test/e2e/<name>.test.ts`, not the `test/e2e/fixtures/<name>/` project dir) with the required env vars exported:
 
 ```sh
-bun test 'test/e2e/fixtures/react/' --parallel --retry 1
+bun test ./test/e2e/react.test.ts --parallel --retry 1
 ```
 
 Direct (CI / contributors without 1Password — env vars must already be set):
@@ -113,7 +113,7 @@ On failure: takes a screenshot to `/tmp/clerk-e2e-<name>-failure.png` and logs d
 
 ### Playwright patch
 
-`playwright-core` is patched via `patchedDependencies` in `package.json` to work around a `route.fetch()` incompatibility under Bun. The patch file lives at `patches/playwright-core@1.58.2.patch`.
+`playwright-core` is patched via `patchedDependencies` in `package.json` to work around a `route.fetch()` incompatibility under Bun. The patch file lives at `patches/playwright-core@1.60.0.patch`.
 
 ### Additional dependency
 

@@ -6,8 +6,12 @@
  * disk.
  *
  * Usage:
- *   bun run scripts/run-e2e-op.ts                  # run the full suite
- *   bun run scripts/run-e2e-op.ts -- --filter react  # forward args to test:e2e
+ *   bun run scripts/run-e2e-op.ts                 # run the full suite
+ *   bun run scripts/run-e2e-op.ts -- -t "sign in"  # forward flags to `bun test`
+ *
+ * Args after `--` are forwarded to `bun test`, not a custom runner. The suite's
+ * `test/e2e/` pattern is fixed, so a forwarded positional path is OR'd with it
+ * (broadening the run); use flags like `-t <name>` to narrow instead.
  */
 
 import { ensureOpInstalled, runWithOpSecrets } from "./lib/op.ts";
