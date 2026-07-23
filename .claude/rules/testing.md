@@ -22,9 +22,9 @@ Run the unit and integration test suite with:
 bun run test
 ```
 
-This runs each unit and integration test file as a separate `bun test` subprocess via `scripts/run-tests.ts`, isolating module state between files. E2E fixtures are excluded and require separate setup (see `rules/e2e.md`).
+This runs `bun test` with `--parallel`, which executes each test file in its own worker process, isolating module state between files. E2E fixtures are excluded and require separate setup (see `rules/e2e.md`).
 
-When running multiple test files directly with `bun test`, always pass `--isolate` or `--parallel`. `--parallel` implies `--isolate`. Without isolation, Bun can share module mocks across files and produce order-dependent failures.
+When running multiple test files directly with `bun test`, always pass `--isolate` or `--parallel`. `--parallel` implies `--isolate`. Without isolation, Bun can share module mocks across files and produce order-dependent failures. These flags require Bun >= 1.3.13 — older versions silently ignore them — so `bun run test` and `bun run test:e2e` first run `scripts/check-bun-version.ts`, which fails fast when the installed Bun is older than the `engines.bun` floor in package.json.
 
 Prefer `spyOn()` for mocking, and always restore spies in `afterAll` with `mockRestore()`.
 

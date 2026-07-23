@@ -50,9 +50,11 @@ bun run test:e2e     # Run E2E tests with env vars already set (used by CI)
 
 Locally, prefer `bun run test:e2e:op` so secrets are injected from 1Password in-memory and never written to disk. `bun run test:e2e` is for CI or for cases where the required env vars are already exported.
 
-CI runs `bun run format:check` (fails if unformatted), `bun run lint`, `bun test`, and `bun run test:e2e` on every PR to `main`. E2E tests only run for PRs from the same repository (not external forks) and target the production Clerk API with a dedicated test application.
+CI runs `bun run format:check` (fails if unformatted), `bun run lint`, `bun run test`, and `bun run test:e2e` on every PR to `main`. E2E tests only run for PRs from the same repository (not external forks) and target the production Clerk API with a dedicated test application.
 
-When running multiple test files directly with `bun test`, always pass `--isolate` or `--parallel`. `--parallel` implies `--isolate`. Without isolation, Bun can share module mocks across files and produce order-dependent failures. Prefer `bun run test` for the full suite because it already isolates test files through `scripts/run-tests.ts`.
+When running multiple test files directly with `bun test`, always pass `--isolate` or `--parallel`. `--parallel` implies `--isolate`. Without isolation, Bun can share module mocks across files and produce order-dependent failures. Prefer `bun run test` for the full suite because it already passes `--parallel`.
+
+These flags require Bun >= 1.3.13 — older versions silently ignore them and lose isolation. `bun run test` and `bun run test:e2e` run `scripts/check-bun-version.ts` first, which fails fast when the installed Bun is older than the `engines.bun` floor in package.json.
 
 ## Versioning
 

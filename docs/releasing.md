@@ -257,7 +257,7 @@ bun run scripts/build.ts --target=bun-darwin-arm64
 
 The `dev` and `start` commands do not inject a version (falls back to `0.0.0-dev`). The release workflow handles version injection.
 
-> **Bun version for local rehearsal:** CI pins Bun `1.3.11` in [`build-binaries.yml`](../.github/workflows/build-binaries.yml) because `1.3.12` produces darwin-arm64 binaries that macOS codesign rejects. If you are rehearsing a release locally and plan to execute the compiled darwin-arm64 binary, match the CI pin. This will stop being relevant once the pin is lifted.
+> **Bun version for local rehearsal:** CI pins Bun `1.3.11` in [`build-binaries.yml`](../.github/workflows/build-binaries.yml) because `1.3.12` produces darwin-arm64 binaries that macOS codesign rejects. If you are rehearsing a release locally and plan to execute the compiled darwin-arm64 binary, match the CI pin. This will stop being relevant once the pin is lifted. Note the pin only covers compiling binaries — it sits below the workspace's `engines.bun` floor (`>=1.3.13`), which is what running the test suite requires (`bun test --parallel` support).
 
 ### Releaser dry-run
 

@@ -68,37 +68,35 @@ bun run test:e2e     # Run E2E tests with env vars already set (CI / non-1Passwo
 
 ### Writing tests
 
-When changing functionality or adding new code, add or update tests to verify the new behavior. Tests use Bun's built-in test runner:
+When changing functionality or adding new code, add or update tests to verify the new behavior. Tests use Bun's built-in test runner. Run the unit suite with:
 
 ```sh
-bun test
+bun run test
 ```
 
-Check for existing `*.test.ts` files near the code you're modifying.
+Prefer `bun run test` over a bare `bun test`: the script passes `--parallel` (per-file isolation), scopes the run to the unit suite, and preflights the required Bun version first. Check for existing `*.test.ts` files near the code you're modifying.
 
 ### E2E tests
 
 E2E tests verify that `clerk init` produces a buildable, type-safe project with working browser auth for each supported framework (Next.js, React, Vue, Nuxt, Astro, React Router, TanStack Start). They require a Clerk staging application and credentials.
 
-**Locally, prefer `bun run test:e2e:op`.** It wraps `test:e2e` in `op run`, which resolves the required secrets from 1Password in-memory so nothing ever lands on disk. Any flags you pass are forwarded to the underlying runner:
+**Locally, prefer `bun run test:e2e:op`.** It wraps `test:e2e` in `op run`, which resolves the required secrets from 1Password in-memory so nothing ever lands on disk:
 
 ```sh
 # Install browser (only required once)
 bunx playwright install chromium
 
-bun run test:e2e:op                          # Run all E2E tests (secrets from 1Password)
-bun run test:e2e:op -- --filter react        # Run only tests matching "react"
-bun run test:e2e:op -- --debug               # Force serial execution for parsing logs (sets CLERK_E2E_DEBUG=1)
-bun run test:e2e:op -- --har                 # Capture HAR files to test/e2e/.har for network debugging
-bun run test:e2e:op -- --har-dir ./out       # Capture HAR files to a custom directory
-bun run e2e:refresh-fixtures                 # Re-scaffold fixture projects from upstream CLIs
+bun run test:e2e:op                            # Run all E2E tests (secrets from 1Password)
+CLERK_E2E_DEBUG=1 bun run test:e2e:op          # Verbose helper logging
+E2E_HAR_DIR=test/e2e/.har bun run test:e2e:op  # Capture HAR files for network debugging
+bun run e2e:refresh-fixtures                   # Re-scaffold fixture projects from upstream CLIs
 ```
 
-If you already have the required env vars exported (e.g. in CI, or you don't have access to the 1Password vault), use `bun run test:e2e` directly instead. The flags are identical:
+Args after `--` are forwarded to `bun test`, not to a custom runner — see `bun test --help`. Note that an extra positional pattern is OR'd with the existing `test/e2e/` pattern, so it broadens the run rather than narrowing it; to run a single fixture, invoke `bun test` directly against its test file with the env vars exported:
 
 ```sh
 # Required env vars: CLERK_PLATFORM_API_KEY and CLERK_CLI_TEST_APP_ID
-bun run test:e2e -- --filter react
+bun test ./test/e2e/react.test.ts --parallel --retry 1
 ```
 
 E2E test files live in `test/e2e/`, with fixture projects in `test/e2e/fixtures/`. Each test file exports a `FixtureConfig` and calls `runFixtureTest()` and `runBrowserTest()` from `test/e2e/lib/`. See `.claude/rules/e2e.md` for full details on adding fixtures and required env vars.
