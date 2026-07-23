@@ -37,7 +37,13 @@ export async function orgsEnable(options: OrgsOptions): Promise<void> {
   if (options.forceSelection) orgSettings.force_organization_selection = true;
   if (options.domains) orgSettings.domains_enabled = true;
   if (options.autoCreate) {
+    // The API only auto-creates organizations when BOTH the umbrella
+    // organization_creation_defaults.enabled and the nested flag are true.
+    // Sending both in one patch is safe: the backend's enable transition seeds
+    // defaults only for sub-settings not explicitly provided, and re-sending
+    // enabled=true on an already-enabled instance is a no-op.
     orgSettings.organization_creation_defaults = {
+      enabled: true,
       automatic_organization_creation: { enabled: true },
     };
   }

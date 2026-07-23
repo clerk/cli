@@ -150,7 +150,7 @@ describe("clerk enable/disable orgs", () => {
     expect(parsed.organization_settings.domains_enabled).toBe(true);
   });
 
-  test("enable passes --auto-create flag", async () => {
+  test("enable --auto-create enables both organization_creation_defaults.enabled and the nested auto-creation flag", async () => {
     let capturedBody = "";
     stubFetch(async (_input, init) => {
       if (init?.method === "PATCH") capturedBody = init.body as string;
@@ -162,10 +162,13 @@ describe("clerk enable/disable orgs", () => {
     await orgsEnable({ autoCreate: true });
 
     const parsed = JSON.parse(capturedBody);
-    expect(
-      parsed.organization_settings.organization_creation_defaults.automatic_organization_creation
-        .enabled,
-    ).toBe(true);
+    const defaults = parsed.organization_settings.organization_creation_defaults;
+    // FAPI only auto-creates organizations when BOTH the umbrella
+    // organization_creation_defaults.enabled and the nested flag are true —
+    // patching only the nested flag silently does nothing on instances where
+    // the umbrella was never enabled.
+    expect(defaults.enabled).toBe(true);
+    expect(defaults.automatic_organization_creation.enabled).toBe(true);
   });
 
   test("enable --dry-run plumbs dry_run=true to the API and prints dry-run output", async () => {
