@@ -25,7 +25,7 @@ Every top-level script follows this order:
 4. **Core logic** -- `Bun.spawn` for async subprocesses, `Bun.spawnSync` for synchronous. Check exit codes explicitly. Use `try/finally` when temporary state (config files, temp dirs) needs cleanup.
 5. **Exit handling** -- call `process.exit(1)` for expected failures (e.g., "no test files found"). Do not throw unhandled errors for anticipated failure paths.
 
-See `scripts/run-tests.ts` as a reference implementation.
+See `scripts/refresh-e2e-fixtures.ts` as a reference implementation.
 
 ## `lib/` utility conventions
 
