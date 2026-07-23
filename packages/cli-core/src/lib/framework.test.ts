@@ -1,8 +1,14 @@
 import { test, expect, describe, beforeEach, afterEach } from "bun:test";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, mkdir, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { detectPublishableKeyName, detectFramework } from "./framework.ts";
+import {
+  detectPublishableKeyName,
+  detectFramework,
+  lookupFramework,
+  isNpmFramework,
+  FRAMEWORK_NAMES,
+} from "./framework.ts";
 
 function writePkg(dir: string, deps: Record<string, string>, devDeps?: Record<string, string>) {
   return Bun.write(
@@ -153,6 +159,74 @@ describe("detectFramework", () => {
   test("detects from devDependencies", async () => {
     await writePkg(tempDir, {}, { next: "15.0.0" });
     expect((await detectFramework(tempDir))!.name).toBe("Next.js");
+  });
+
+  // --- Native platforms (no package.json) ---
+
+  test("detects iOS via .xcodeproj bundle", async () => {
+    await mkdir(join(tempDir, "MyApp.xcodeproj"));
+    const fw = await detectFramework(tempDir);
+    expect(fw!.name).toBe("iOS (Swift)");
+    expect(fw!.dep).toBe("ios");
+    expect(fw!.ecosystem).toBe("swift");
+    expect(fw!.envVar).toBe("CLERK_PUBLISHABLE_KEY");
+  });
+
+  test("detects iOS via .xcworkspace bundle", async () => {
+    await mkdir(join(tempDir, "MyApp.xcworkspace"));
+    expect((await detectFramework(tempDir))!.dep).toBe("ios");
+  });
+
+  test("does not detect iOS from a bare Package.swift", async () => {
+    await Bun.write(join(tempDir, "Package.swift"), "// swift-tools-version:6.0");
+    expect(await detectFramework(tempDir)).toBeNull();
+  });
+
+  test("detects Android via app/src/main/AndroidManifest.xml", async () => {
+    await Bun.write(join(tempDir, "app/src/main/AndroidManifest.xml"), "<manifest />");
+    const fw = await detectFramework(tempDir);
+    expect(fw!.name).toBe("Android (Kotlin)");
+    expect(fw!.dep).toBe("android");
+    expect(fw!.ecosystem).toBe("gradle");
+  });
+
+  test("detects Android via src/main/AndroidManifest.xml", async () => {
+    await Bun.write(join(tempDir, "src/main/AndroidManifest.xml"), "<manifest />");
+    expect((await detectFramework(tempDir))!.dep).toBe("android");
+  });
+
+  test("does not detect Android from a bare build.gradle", async () => {
+    await Bun.write(join(tempDir, "build.gradle.kts"), "plugins {}");
+    expect(await detectFramework(tempDir)).toBeNull();
+  });
+
+  test("prefers npm framework over native markers (prebuilt Expo app)", async () => {
+    await writePkg(tempDir, { expo: "52.0.0", react: "18.0.0" });
+    await Bun.write(join(tempDir, "app/src/main/AndroidManifest.xml"), "<manifest />");
+    await mkdir(join(tempDir, "MyApp.xcodeproj"));
+    expect((await detectFramework(tempDir))!.name).toBe("Expo");
+  });
+
+  test("falls back to native detection when package.json has no framework dep", async () => {
+    await writePkg(tempDir, { lodash: "4.0.0" });
+    await mkdir(join(tempDir, "MyApp.xcodeproj"));
+    expect((await detectFramework(tempDir))!.dep).toBe("ios");
+  });
+});
+
+describe("native framework lookup", () => {
+  test.each(["ios", "android"])("lookupFramework resolves %s", (name) => {
+    expect(lookupFramework(name)!.dep).toBe(name);
+  });
+
+  test.each(["ios", "android"])("FRAMEWORK_NAMES includes %s", (name) => {
+    expect(FRAMEWORK_NAMES).toContain(name);
+  });
+
+  test("isNpmFramework distinguishes ecosystems", () => {
+    expect(isNpmFramework(lookupFramework("next")!)).toBe(true);
+    expect(isNpmFramework(lookupFramework("ios")!)).toBe(false);
+    expect(isNpmFramework(lookupFramework("android")!)).toBe(false);
   });
 });
 

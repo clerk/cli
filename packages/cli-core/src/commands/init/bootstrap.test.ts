@@ -18,8 +18,8 @@ function entryFor(dep: string) {
 describe("BOOTSTRAP_REGISTRY", () => {
   const packageManagers = ["npm", "yarn", "pnpm", "bun"] as const;
 
-  test("contains all 8 supported frameworks", () => {
-    expect(BOOTSTRAP_REGISTRY).toHaveLength(8);
+  test("contains all 9 supported frameworks", () => {
+    expect(BOOTSTRAP_REGISTRY).toHaveLength(9);
     const deps = BOOTSTRAP_REGISTRY.map((e) => e.dep);
     expect(deps).toContain("next");
     expect(deps).toContain("react");
@@ -29,6 +29,7 @@ describe("BOOTSTRAP_REGISTRY", () => {
     expect(deps).toContain("nuxt");
     expect(deps).toContain("@tanstack/react-start");
     expect(deps).toContain("vite");
+    expect(deps).toContain("expo");
   });
 
   const REGISTRY_PM_PAIRS = BOOTSTRAP_REGISTRY.flatMap((entry) =>
@@ -112,6 +113,17 @@ describe("BOOTSTRAP_REGISTRY", () => {
     expect(cmd).toContain("--skip-houston");
     expect(cmd).toContain("--no-install");
     expect(cmd).toContain("--no-git");
+  });
+
+  test("Expo uses create-expo-app with default template", () => {
+    const cmd = entryFor("expo").buildCommand("bun", "my-expo");
+    expect(cmd[0]).toBe("bunx");
+    expect(cmd).toContain("create-expo-app@latest");
+    expect(cmd).toContain("my-expo");
+    expect(cmd).toContain("--template");
+    expect(cmd).toContain("default");
+    expect(cmd).toContain("--no-install");
+    expect(cmd).toContain("--yes");
   });
 
   test("JavaScript uses create-vite with vanilla template", () => {
