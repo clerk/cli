@@ -6,8 +6,8 @@
  * disk.
  *
  * Usage:
- *   bun run scripts/run-e2e-op.ts                 # run the full suite
- *   bun run scripts/run-e2e-op.ts -- -t "sign in"  # forward flags to `bun test`
+ *   bun run scripts/run-e2e-op.ts                          # run the full suite
+ *   bun run scripts/run-e2e-op.ts -- -t "project builds"  # forward flags to `bun test`
  *
  * Args after `--` are forwarded to `bun test`, not a custom runner. The suite's
  * `test/e2e/` pattern is fixed, so a forwarded positional path is OR'd with it
