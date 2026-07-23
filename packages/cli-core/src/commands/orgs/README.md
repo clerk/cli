@@ -29,6 +29,13 @@ clerk disable orgs [options]
 The boolean flags above are one-way: they set the field to `true` only. To
 clear a field, use `clerk config patch --json '{"organization_settings":{...}}'`.
 
+`--auto-create` patches both `organization_creation_defaults.enabled` and
+`organization_creation_defaults.automatic_organization_creation.enabled` — the
+API only auto-creates organizations when both are true. When this enables
+creation defaults for the first time, the API seeds the remaining sub-settings
+(name template, fallback name, email-domain detection) with its standard
+defaults.
+
 ### `disable`
 
 | Flag              | Description                            |
