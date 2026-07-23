@@ -4,9 +4,17 @@
  */
 
 import { join } from "node:path";
+import { readdir } from "node:fs/promises";
 import { log } from "./log.ts";
 
+/** Where the framework's Clerk SDK is published. Drives how `clerk init`
+ *  installs the SDK: npm frameworks run the package manager, native
+ *  ecosystems (Swift Package Manager, Gradle) print manual install steps. */
+export type FrameworkEcosystem = "npm" | "swift" | "gradle";
+
 export interface FrameworkInfo {
+  /** npm dependency that identifies the framework, or a stable id for
+   *  non-npm platforms (e.g. "ios", "android"). Also the `--framework` value. */
   dep: string;
   name: string;
   sdk: string;
@@ -23,6 +31,12 @@ export interface FrameworkInfo {
    *  temporary dev keys). Frameworks without keyless support require API keys
    *  and must authenticate during `clerk init`. */
   supportsKeyless?: boolean;
+  /** SDK distribution ecosystem. Defaults to "npm" when omitted. */
+  ecosystem?: FrameworkEcosystem;
+}
+
+export function isNpmFramework(fw: Pick<FrameworkInfo, "ecosystem">): boolean {
+  return (fw.ecosystem ?? "npm") === "npm";
 }
 
 // Order matters: more specific frameworks first (e.g. next before react, nuxt before vue)
@@ -112,6 +126,43 @@ export const FRAMEWORK_MAP: FrameworkInfo[] = [
   },
 ];
 
+type NativeFrameworkEntry = FrameworkInfo & {
+  /** Marker paths (relative to cwd) that identify the platform. A leading
+   *  "*" matches any directory-entry name with that suffix (e.g. "*.xcodeproj"). */
+  markers: string[];
+};
+
+// Native mobile platforms have no package.json, so they are detected via
+// project marker files instead of npm dependencies. Only consulted when no
+// npm framework matches (an Expo project with prebuilt ios/ + android/ dirs
+// must still detect as Expo).
+export const NATIVE_FRAMEWORK_MAP: NativeFrameworkEntry[] = [
+  {
+    dep: "ios",
+    name: "iOS (Swift)",
+    sdk: "ClerkKit",
+    envVar: "CLERK_PUBLISHABLE_KEY",
+    envFile: ".env",
+    ecosystem: "swift",
+    // Xcode project/workspace bundles only — a bare Package.swift could be a
+    // server-side Swift or library package, which the Clerk iOS SDK doesn't target.
+    markers: ["*.xcodeproj", "*.xcworkspace"],
+  },
+  {
+    dep: "android",
+    name: "Android (Kotlin)",
+    sdk: "com.clerk:clerk-android-ui",
+    envVar: "CLERK_PUBLISHABLE_KEY",
+    envFile: ".env",
+    ecosystem: "gradle",
+    // AndroidManifest.xml is the unambiguous signal — build.gradle alone would
+    // also match non-Android JVM projects (e.g. Spring, Kotlin backends).
+    markers: ["app/src/main/AndroidManifest.xml", "src/main/AndroidManifest.xml"],
+  },
+];
+
+const ALL_FRAMEWORKS: FrameworkInfo[] = [...FRAMEWORK_MAP, ...NATIVE_FRAMEWORK_MAP];
+
 const FRAMEWORK_ALIASES: Record<string, string> = {
   "tanstack-start": "@tanstack/react-start",
   javascript: "vite",
@@ -120,10 +171,10 @@ const FRAMEWORK_ALIASES: Record<string, string> = {
 
 export function lookupFramework(name: string): FrameworkInfo | null {
   const dep = FRAMEWORK_ALIASES[name] ?? name;
-  return FRAMEWORK_MAP.find((fw) => fw.dep === dep) ?? null;
+  return ALL_FRAMEWORKS.find((fw) => fw.dep === dep) ?? null;
 }
 
-export const FRAMEWORK_NAMES = FRAMEWORK_MAP.map((fw) => {
+export const FRAMEWORK_NAMES = ALL_FRAMEWORKS.map((fw) => {
   const alias = Object.entries(FRAMEWORK_ALIASES).find(([, v]) => v === fw.dep);
   return alias ? alias[0] : fw.dep;
 });
@@ -143,21 +194,52 @@ export async function readDeps(cwd: string): Promise<Record<string, string> | nu
   }
 }
 
-export async function detectFramework(cwd: string): Promise<FrameworkInfo | null> {
-  const allDeps = await readDeps(cwd);
-  if (!allDeps) {
-    log.debug(`framework: no package.json at ${cwd} or unable to parse`);
-    return null;
+async function matchesMarker(cwd: string, marker: string): Promise<boolean> {
+  if (!marker.startsWith("*")) {
+    return Bun.file(join(cwd, marker)).exists();
   }
 
-  for (const fw of FRAMEWORK_MAP) {
-    if (fw.dep in allDeps) {
-      log.debug(`framework: detected "${fw.name}" via dependency "${fw.dep}"`);
+  const suffix = marker.slice(1);
+  try {
+    const entries = await readdir(cwd);
+    return entries.some((entry) => entry.endsWith(suffix));
+  } catch {
+    return false;
+  }
+}
+
+async function detectNativeFramework(cwd: string): Promise<FrameworkInfo | null> {
+  for (const fw of NATIVE_FRAMEWORK_MAP) {
+    const results = await Promise.all(fw.markers.map((marker) => matchesMarker(cwd, marker)));
+    const matched = fw.markers.find((_, i) => results[i]);
+    if (matched !== undefined) {
+      log.debug(`framework: detected "${fw.name}" via marker "${matched}"`);
       return fw;
     }
   }
+  return null;
+}
 
-  log.debug(`framework: no match in ${cwd}/package.json dependencies`);
+export async function detectFramework(cwd: string): Promise<FrameworkInfo | null> {
+  const allDeps = await readDeps(cwd);
+
+  if (allDeps) {
+    for (const fw of FRAMEWORK_MAP) {
+      if (fw.dep in allDeps) {
+        log.debug(`framework: detected "${fw.name}" via dependency "${fw.dep}"`);
+        return fw;
+      }
+    }
+  } else {
+    log.debug(`framework: no package.json at ${cwd} or unable to parse`);
+  }
+
+  const native = await detectNativeFramework(cwd);
+  if (native) return native;
+
+  if (allDeps) {
+    log.debug(`framework: no match in ${cwd}/package.json dependencies`);
+  }
   return null;
 }
 
