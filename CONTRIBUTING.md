@@ -101,7 +101,7 @@ If you already have the required env vars exported (e.g. in CI, or you don't hav
 bun run test:e2e -- --filter react
 ```
 
-E2E test files live in `test/e2e/`, with fixture projects in `test/e2e/fixtures/`. Each test file exports a `FixtureConfig` and calls `runFixtureTest()` and `runBrowserTest()` from `test/e2e/lib/`. See `.claude/rules/e2e.md` for full details on adding fixtures and required env vars.
+E2E test files live in `test/e2e/`, with fixture projects in `test/e2e/fixtures/`. Fixture config lives in `test/e2e/fixtures.manifest.ts`, keyed by fixture name; each test file calls `createFixtureHarness("<name>")` and passes the returned harness to `runFixtureTests()` and `runBrowserTests()` from `test/e2e/lib/`. See `.claude/rules/e2e.md` for full details on adding fixtures and required env vars.
 
 ## Opening a pull request
 
