@@ -44,6 +44,56 @@ afterEach(async () => {
   await rm(tempDir, { recursive: true, force: true });
 });
 
+test("ignores a block-commented creation and registers on the real instance", async () => {
+  await Bun.write(
+    join(tempDir, "index.ts"),
+    `import Fastify from "fastify";
+
+/* const app = Fastify(); */
+const server = Fastify();
+
+server.listen({ port: 3000 });
+`,
+  );
+
+  const plan = await fastify.scaffold(makeCtx());
+
+  const entry = findAction(plan.actions, "index.ts");
+  expect(entry.type).toBe("modify");
+  if (entry.type === "modify") {
+    expect(entry.content).toContain("server.register(clerkPlugin);");
+    expect(entry.content).not.toContain("app.register(clerkPlugin);");
+  }
+});
+
+test("matches a type-annotated creation statement", async () => {
+  await Bun.write(
+    join(tempDir, "index.ts"),
+    `import Fastify, { type FastifyInstance } from "fastify";
+
+const server: FastifyInstance = Fastify();
+
+server.listen({ port: 3000 });
+`,
+  );
+
+  const plan = await fastify.scaffold(makeCtx());
+
+  const entry = findAction(plan.actions, "index.ts");
+  expect(entry.type).toBe("modify");
+  if (entry.type === "modify") {
+    expect(entry.content).toContain("server.register(clerkPlugin);");
+  }
+});
+
+test("prints the wiring post-instruction when no creation call is found", async () => {
+  await Bun.write(join(tempDir, "index.ts"), `console.log("not a server");\n`);
+
+  const plan = await fastify.scaffold(makeCtx());
+
+  expect(plan.postInstructions.some((i) => i.includes("Register `clerkPlugin`"))).toBe(true);
+});
+
 test("registers clerkPlugin after a multi-line Fastify() creation", async () => {
   await Bun.write(
     join(tempDir, "index.ts"),

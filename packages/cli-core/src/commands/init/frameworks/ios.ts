@@ -26,6 +26,7 @@ export const ios: FrameworkScaffold = {
         "Enable the Native API and register your iOS app (App ID Prefix + Bundle ID) on the Native Applications page: https://dashboard.clerk.com/~/native-applications",
         "In Xcode, add the Associated Domains capability with `webcredentials:<your-frontend-api-url>`",
         `Configure Clerk in your @main App struct: \`Clerk.configure(publishableKey: "<publishable key>")\` — copy CLERK_PUBLISHABLE_KEY from ${ctx.envFile} after \`clerk env pull\``,
+        "Inject Clerk into the SwiftUI environment so views can read it via `@Environment(Clerk.self)`: `ContentView().environment(Clerk.shared)`",
         "Full setup guide: https://clerk.com/docs/ios/getting-started/quickstart",
       ],
     };

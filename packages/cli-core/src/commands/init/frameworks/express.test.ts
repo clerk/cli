@@ -147,6 +147,121 @@ app.listen(3000);
   }
 });
 
+test("ignores a commented-out app creation and attaches to the real one", async () => {
+  await Bun.write(
+    join(tempDir, "index.ts"),
+    `import express from "express";
+
+// Previously: const app = express();
+const server = express();
+
+server.get("/", (req, res) => res.send("hi"));
+server.listen(3000);
+`,
+  );
+
+  const plan = await express.scaffold(makeCtx());
+
+  const entry = findAction(plan.actions, "index.ts");
+  expect(entry.type).toBe("modify");
+  if (entry.type === "modify") {
+    expect(entry.content).toContain("server.use(clerkMiddleware());");
+    expect(entry.content).not.toContain("app.use(clerkMiddleware());");
+    // Attaches after the real creation statement, not after the comment
+    const attachIdx = entry.content.indexOf("server.use(clerkMiddleware())");
+    const creationIdx = entry.content.indexOf("const server = express();");
+    expect(attachIdx).toBeGreaterThan(creationIdx);
+  }
+});
+
+test("ignores an app creation that only appears inside a string literal", async () => {
+  await Bun.write(
+    join(tempDir, "index.ts"),
+    `const example = "const app = express();";
+console.log(example);
+`,
+  );
+
+  const plan = await express.scaffold(makeCtx());
+
+  expect(findAction(plan.actions, "index.ts").type).toBe("skip");
+});
+
+test("scaffolds when the entry imports an unrelated @clerk package", async () => {
+  await Bun.write(
+    join(tempDir, "index.ts"),
+    `import { verifyToken } from "@clerk/backend";
+import express from "express";
+
+const app = express();
+
+app.listen(3000);
+`,
+  );
+
+  const plan = await express.scaffold(makeCtx());
+
+  const entry = findAction(plan.actions, "index.ts");
+  expect(entry.type).toBe("modify");
+  if (entry.type === "modify") {
+    expect(entry.content).toContain("app.use(clerkMiddleware());");
+  }
+});
+
+test("matches a type-annotated creation statement", async () => {
+  await Bun.write(
+    join(tempDir, "index.ts"),
+    `import express, { type Express } from "express";
+
+const app: Express = express();
+
+app.listen(3000);
+`,
+  );
+
+  const plan = await express.scaffold(makeCtx());
+
+  const entry = findAction(plan.actions, "index.ts");
+  expect(entry.type).toBe("modify");
+  if (entry.type === "modify") {
+    expect(entry.content).toContain("app.use(clerkMiddleware());");
+  }
+});
+
+test("adds the ESM import with the codebase's brace spacing", async () => {
+  await Bun.write(join(tempDir, "index.ts"), ESM_SERVER);
+
+  const plan = await express.scaffold(makeCtx());
+
+  const entry = findAction(plan.actions, "index.ts");
+  if (entry.type === "modify") {
+    expect(entry.content).toContain('import { clerkMiddleware } from "@clerk/express"');
+  }
+});
+
+test("prints the wiring post-instruction when no creation call is found", async () => {
+  await Bun.write(join(tempDir, "index.ts"), `console.log("not a server");\n`);
+
+  const plan = await express.scaffold(makeCtx());
+
+  expect(plan.postInstructions.some((i) => i.includes("app.use(clerkMiddleware())"))).toBe(true);
+});
+
+test("omits the wiring post-instruction when the entry is already scaffolded", async () => {
+  await Bun.write(
+    join(tempDir, "index.ts"),
+    `import { clerkMiddleware } from "@clerk/express";
+import express from "express";
+const app = express();
+app.use(clerkMiddleware());
+`,
+  );
+
+  const plan = await express.scaffold(makeCtx());
+
+  expect(plan.postInstructions.some((i) => i.includes("server entry file"))).toBe(false);
+});
+
 test("skips when the entry already uses @clerk/express", async () => {
   await Bun.write(
     join(tempDir, "index.ts"),

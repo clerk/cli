@@ -40,6 +40,9 @@ test("writes no files and prints the quickstart steps", async () => {
     plan.postInstructions.some((i) => i.includes("dashboard.clerk.com/~/native-applications")),
   ).toBe(true);
   expect(plan.postInstructions.some((i) => i.includes("Clerk.configure"))).toBe(true);
+  // The official quickstart requires injecting Clerk into the SwiftUI
+  // environment — views read it back via @Environment(Clerk.self).
+  expect(plan.postInstructions.some((i) => i.includes(".environment(Clerk.shared)"))).toBe(true);
   expect(plan.postInstructions.some((i) => i.includes("docs/ios/getting-started/quickstart"))).toBe(
     true,
   );

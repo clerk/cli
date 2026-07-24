@@ -129,6 +129,24 @@ test("wraps the main return of an existing layout, not the guard return", async 
   }
 });
 
+test("adds spaced, ordered imports when modifying an existing layout", async () => {
+  await mkdir(join(tempDir, "app"), { recursive: true });
+  await Bun.write(join(tempDir, "app/_layout.tsx"), ROUTER_LAYOUT);
+
+  const plan = await expo.scaffold(makeCtx());
+
+  const layout = findAction(plan.actions, "app/_layout.tsx");
+  expect(layout.type).toBe("modify");
+  if (layout.type === "modify") {
+    expect(layout.content).toContain('import { ClerkProvider } from "@clerk/expo"');
+    expect(layout.content).toContain('import { tokenCache } from "@clerk/expo/token-cache"');
+    // Provider import reads first, matching the create-path template
+    expect(layout.content.indexOf('from "@clerk/expo"')).toBeLessThan(
+      layout.content.indexOf('from "@clerk/expo/token-cache"'),
+    );
+  }
+});
+
 test("wraps a single-line return without parentheses", async () => {
   await mkdir(join(tempDir, "app"), { recursive: true });
   await Bun.write(
@@ -215,4 +233,83 @@ test("includes env var and Native API post-instructions", async () => {
 
 test("wrapLastReturnWithProvider returns null for non-JSX content", () => {
   expect(wrapLastReturnWithProvider("const x = 1;")).toBeNull();
+});
+
+test("wraps the default export's return, not a later ErrorBoundary export", () => {
+  const content = `import { Slot } from "expo-router";
+import { View, Text } from "react-native";
+
+export default function RootLayout() {
+  return (
+    <Slot />
+  );
+}
+
+export function ErrorBoundary({ error }: { error: Error }) {
+  return (
+    <View>
+      <Text>{error.message}</Text>
+    </View>
+  );
+}
+`;
+
+  const wrapped = wrapLastReturnWithProvider(content)!;
+  expect(wrapped).not.toBeNull();
+  // Exactly one wrap, and it lands on the root layout's Slot
+  expect(wrapped.match(/<ClerkProvider/g)).toHaveLength(1);
+  const providerIdx = wrapped.indexOf("<ClerkProvider");
+  expect(providerIdx).toBeLessThan(wrapped.indexOf("<Slot />"));
+  expect(providerIdx).toBeLessThan(wrapped.indexOf("ErrorBoundary"));
+  // The error boundary's JSX is untouched
+  expect(wrapped).toContain("return (\n    <View>");
+});
+
+test("wraps the last single-line return, not a single-line guard", () => {
+  const content = `import { Slot } from "expo-router";
+
+export default function RootLayout() {
+  const isLoaded = false;
+  if (!isLoaded) return <Loading />;
+  return <Slot />;
+}
+`;
+
+  const wrapped = wrapLastReturnWithProvider(content)!;
+  expect(wrapped).not.toBeNull();
+  // The guard stays untouched; the main render gets wrapped
+  expect(wrapped).toContain("if (!isLoaded) return <Loading />;");
+  const providerIdx = wrapped.indexOf("<ClerkProvider");
+  expect(providerIdx).toBeGreaterThan(wrapped.indexOf("<Loading />"));
+  expect(wrapped.indexOf("<Slot />")).toBeGreaterThan(providerIdx);
+});
+
+test("inserts the key block after a multi-line import, not inside it", async () => {
+  await mkdir(join(tempDir, "app"), { recursive: true });
+  await Bun.write(
+    join(tempDir, "app/_layout.tsx"),
+    `import { Slot } from "expo-router";
+import {
+  useFonts,
+} from "expo-font";
+
+export default function RootLayout() {
+  return (
+    <Slot />
+  );
+}
+`,
+  );
+
+  const plan = await expo.scaffold(makeCtx());
+
+  const layout = findAction(plan.actions, "app/_layout.tsx");
+  expect(layout.type).toBe("modify");
+  if (layout.type === "modify") {
+    // The multi-line import survives intact…
+    expect(layout.content).toContain('} from "expo-font";');
+    // …and the key block lands after it, not spliced between its braces
+    const keyIdx = layout.content.indexOf("const publishableKey");
+    expect(keyIdx).toBeGreaterThan(layout.content.indexOf('} from "expo-font";'));
+  }
 });
