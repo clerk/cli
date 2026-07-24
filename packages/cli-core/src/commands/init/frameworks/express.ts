@@ -1,13 +1,18 @@
 import { join } from "node:path";
-import { scaffoldServerEntry, type ServerFrameworkConfig } from "./node-server.js";
+import {
+  needsManualWiring,
+  scaffoldServerEntry,
+  type ServerFrameworkConfig,
+} from "./node-server.js";
 import type { FileAction, FrameworkScaffold, ProjectContext, ScaffoldPlan } from "./types.js";
 
 const EXPRESS_CONFIG: ServerFrameworkConfig = {
   clerkPackage: "@clerk/express",
   clerkImport: "clerkMiddleware",
-  // Matches `express()` and the inline-require form `require("express")()`.
+  // Matches `express()` and the inline-require form `require("express")()`,
+  // with an optional type annotation (`const app: Express = express()`).
   creationPattern:
-    /(?:const|let|var)\s+(\w+)\s*=\s*(?:express|require\(\s*["']express["']\s*\))\s*\(\s*\)/,
+    /(?:const|let|var)\s+(\w+)(?:\s*:\s*[\w$.]+(?:<[^>]*>)?)?\s*=\s*(?:express|require\(\s*["']express["']\s*\))\s*\(\s*\)/,
   frameworkPackage: "express",
   attachStatement: (appVar) => `${appVar}.use(clerkMiddleware());`,
   description: "Add clerkMiddleware() to Express app",
@@ -51,9 +56,8 @@ export const express: FrameworkScaffold = {
     const actions: FileAction[] = [];
     const postInstructions: string[] = [];
 
-    if (entryAction) {
-      actions.push(entryAction);
-    } else {
+    if (entryAction) actions.push(entryAction);
+    if (needsManualWiring(entryAction)) {
       postInstructions.push(
         "Add `app.use(clerkMiddleware())` from @clerk/express to your server entry file. See: https://clerk.com/docs/expressjs/getting-started/quickstart",
       );

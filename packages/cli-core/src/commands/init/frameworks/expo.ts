@@ -1,5 +1,6 @@
 import { join } from "node:path";
 import { findFirstFile, indentBlock, insertAfterLastImport, safeAddImport } from "./helpers.js";
+import { maskCommentsAndStrings } from "./transformations.js";
 import type { FileAction, FrameworkScaffold, ProjectContext, ScaffoldPlan } from "./types.js";
 
 const EXPO_QUICKSTART_URL = "https://clerk.com/docs/expo/getting-started/quickstart";
@@ -34,11 +35,16 @@ export default function RootLayout() {
 }
 
 /**
- * Find the index just past the parenthesis matching the one at `openIdx`.
- * Tracks string/template literals so brackets inside them don't count.
- * Returns null when the parenthesis never closes (malformed source).
+ * Find the index just past the delimiter matching the one at `openIdx`.
+ * Tracks string/template literals so delimiters inside them don't count.
+ * Returns null when the delimiter never closes (malformed source).
  */
-function findMatchingParen(content: string, openIdx: number): number | null {
+function findMatchingDelimiter(
+  content: string,
+  openIdx: number,
+  open: string,
+  close: string,
+): number | null {
   let depth = 0;
   let quote: string | null = null;
 
@@ -52,14 +58,47 @@ function findMatchingParen(content: string, openIdx: number): number | null {
     }
 
     if (char === '"' || char === "'" || char === "`") quote = char;
-    else if (char === "(") depth++;
-    else if (char === ")") {
+    else if (char === open) depth++;
+    else if (char === close) {
       depth--;
       if (depth === 0) return i + 1;
     }
   }
 
   return null;
+}
+
+/**
+ * Locate the body of the default-exported function so return-wrapping never
+ * targets a sibling export — expo-router layouts commonly export additional
+ * components (e.g. the documented `ErrorBoundary`) from the same file.
+ * Returns null when the default export isn't a resolvable function.
+ */
+function findDefaultExportBody(
+  content: string,
+  masked: string,
+): { start: number; end: number } | null {
+  let fnIdx = masked.search(/export\s+default\s+(?:async\s+)?function\b/);
+
+  if (fnIdx === -1) {
+    // `export default RootLayout;` referencing a function declared elsewhere.
+    const ref = /export\s+default\s+(\w+)/.exec(masked);
+    if (!ref) return null;
+    fnIdx = masked.search(new RegExp(`\\bfunction\\s+${ref[1]}\\s*\\(`));
+    if (fnIdx === -1) return null;
+  }
+
+  const paramsOpen = masked.indexOf("(", fnIdx);
+  if (paramsOpen === -1) return null;
+  const paramsEnd = findMatchingDelimiter(content, paramsOpen, "(", ")");
+  if (paramsEnd === null) return null;
+
+  const bodyOpen = masked.indexOf("{", paramsEnd);
+  if (bodyOpen === -1) return null;
+  const bodyEnd = findMatchingDelimiter(content, bodyOpen, "{", "}");
+  if (bodyEnd === null) return null;
+
+  return { start: bodyOpen, end: bodyEnd };
 }
 
 /** Strip surrounding blank lines and the common leading indentation so the
@@ -86,16 +125,26 @@ ${indentBlock(dedent(inner), "      ")}
 
 /**
  * Wrap the JSX of the last `return ( ... )` or single-line `return <... />`
- * in the file with <ClerkProvider>. The last return is the layout's main
- * render — earlier returns are guards like `if (!loaded) return null`.
- * Returns null when no JSX return exists (unsupported shape — the caller
- * falls back to a post-instruction).
+ * in the default export's body with <ClerkProvider>. The last return is the
+ * layout's main render — earlier returns are guards like `if (!loaded)
+ * return null`. Returns null when no JSX return exists (unsupported shape —
+ * the caller falls back to a post-instruction).
  */
 export function wrapLastReturnWithProvider(content: string): string | null {
-  const returnIdx = content.lastIndexOf("return (");
-  if (returnIdx !== -1) {
-    const openIdx = content.indexOf("(", returnIdx);
-    const closeIdx = findMatchingParen(content, openIdx);
+  const masked = maskCommentsAndStrings(content);
+
+  // Scope the search to the default export so a sibling component's return
+  // (e.g. an ErrorBoundary export) is never wrapped by mistake. When the
+  // default export isn't a plain function, fall back to the whole file.
+  const body = findDefaultExportBody(content, masked);
+  const from = body?.start ?? 0;
+  const to = body?.end ?? content.length;
+
+  // Searching the masked region keeps commented-out returns from matching.
+  const relIdx = masked.slice(from, to).lastIndexOf("return (");
+  if (relIdx !== -1) {
+    const openIdx = from + relIdx + "return ".length;
+    const closeIdx = findMatchingDelimiter(content, openIdx, "(", ")");
     if (closeIdx === null) return null;
 
     const inner = content.slice(openIdx + 1, closeIdx - 1);
@@ -104,14 +153,18 @@ export function wrapLastReturnWithProvider(content: string): string | null {
 
   // Single-line form: `return <Slot />;` — multi-line JSX without parens is
   // invalid JS (ASI), so the statement always ends on the same line.
-  const singleLine = /return\s+(<.*>)\s*;?\s*$/m;
-  const match = singleLine.exec(content);
+  const singleLine = /return\s+(<.*>)\s*;?\s*$/gm;
+  let match: RegExpExecArray | null = null;
+  for (const m of content.slice(from, to).matchAll(singleLine)) {
+    if (masked[from + m.index] === "r") match = m;
+  }
   if (!match) return null;
 
+  const absIdx = from + match.index;
   return (
-    content.slice(0, match.index) +
+    content.slice(0, absIdx) +
     `return ${wrapJsx(match[1]!)};` +
-    content.slice(match.index + match[0].length)
+    content.slice(absIdx + match[0].length)
   );
 }
 
@@ -153,8 +206,10 @@ async function scaffoldLayout(ctx: ProjectContext): Promise<FileAction | null> {
     };
   }
 
-  let newContent = safeAddImport(wrapped, "@clerk/expo", "ClerkProvider");
-  newContent = safeAddImport(newContent, "@clerk/expo/token-cache", "tokenCache");
+  // magicast prepends each new import, so add in reverse of the desired
+  // order: ClerkProvider ends up above tokenCache, matching the create path.
+  let newContent = safeAddImport(wrapped, "@clerk/expo/token-cache", "tokenCache");
+  newContent = safeAddImport(newContent, "@clerk/expo", "ClerkProvider");
   newContent = insertAfterLastImport(newContent, publishableKeyBlock(ctx.envFile));
 
   return {

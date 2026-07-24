@@ -201,8 +201,10 @@ async function matchesMarker(cwd: string, marker: string): Promise<boolean> {
 
   const suffix = marker.slice(1);
   try {
-    const entries = await readdir(cwd);
-    return entries.some((entry) => entry.endsWith(suffix));
+    // Wildcard markers identify bundle directories (*.xcodeproj/*.xcworkspace)
+    // — a stray plain file with that suffix is not a real project marker.
+    const entries = await readdir(cwd, { withFileTypes: true });
+    return entries.some((entry) => entry.isDirectory() && entry.name.endsWith(suffix));
   } catch {
     return false;
   }

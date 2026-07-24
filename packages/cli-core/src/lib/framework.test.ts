@@ -200,6 +200,17 @@ describe("detectFramework", () => {
     expect(await detectFramework(tempDir)).toBeNull();
   });
 
+  test("does not detect iOS from a plain file named like an Xcode bundle", async () => {
+    // Real .xcodeproj/.xcworkspace entries are always directory bundles.
+    await Bun.write(join(tempDir, "notes.xcodeproj"), "not a bundle");
+    expect(await detectFramework(tempDir)).toBeNull();
+  });
+
+  test("does not detect Android when the manifest path is a directory", async () => {
+    await mkdir(join(tempDir, "app/src/main/AndroidManifest.xml"), { recursive: true });
+    expect(await detectFramework(tempDir)).toBeNull();
+  });
+
   test("prefers npm framework over native markers (prebuilt Expo app)", async () => {
     await writePkg(tempDir, { expo: "52.0.0", react: "18.0.0" });
     await Bun.write(join(tempDir, "app/src/main/AndroidManifest.xml"), "<manifest />");

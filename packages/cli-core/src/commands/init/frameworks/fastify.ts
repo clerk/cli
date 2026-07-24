@@ -1,13 +1,18 @@
-import { scaffoldServerEntry, type ServerFrameworkConfig } from "./node-server.js";
+import {
+  needsManualWiring,
+  scaffoldServerEntry,
+  type ServerFrameworkConfig,
+} from "./node-server.js";
 import type { FileAction, FrameworkScaffold, ProjectContext, ScaffoldPlan } from "./types.js";
 
 const FASTIFY_CONFIG: ServerFrameworkConfig = {
   clerkPackage: "@clerk/fastify",
   clerkImport: "clerkPlugin",
   // Matches `Fastify(...)`/`fastify(...)` and the inline-require form
-  // `require("fastify")(...)`.
+  // `require("fastify")(...)`, with an optional type annotation
+  // (`const server: FastifyInstance = Fastify()`).
   creationPattern:
-    /(?:const|let|var)\s+(\w+)\s*=\s*(?:[Ff]astify|require\(\s*["']fastify["']\s*\))\s*\(/,
+    /(?:const|let|var)\s+(\w+)(?:\s*:\s*[\w$.]+(?:<[^>]*>)?)?\s*=\s*(?:[Ff]astify|require\(\s*["']fastify["']\s*\))\s*\(/,
   frameworkPackage: "fastify",
   attachStatement: (appVar) => `${appVar}.register(clerkPlugin);`,
   description: "Register clerkPlugin on Fastify app",
@@ -25,9 +30,8 @@ export const fastify: FrameworkScaffold = {
     const actions: FileAction[] = [];
     const postInstructions: string[] = [];
 
-    if (entryAction) {
-      actions.push(entryAction);
-    } else {
+    if (entryAction) actions.push(entryAction);
+    if (needsManualWiring(entryAction)) {
       postInstructions.push(
         "Register `clerkPlugin` from @clerk/fastify on your Fastify instance. See: https://clerk.com/docs/fastify/getting-started/quickstart",
       );

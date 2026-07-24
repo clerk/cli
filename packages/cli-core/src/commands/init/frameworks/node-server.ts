@@ -7,7 +7,7 @@
  * statement differ, so both scaffolders delegate here.
  */
 import { join } from "node:path";
-import { hasClerkImport, safeAddImport } from "./transformations.js";
+import { maskCommentsAndStrings, safeAddImport } from "./transformations.js";
 import { findFirstFile } from "./helpers.js";
 import type { FileAction, ProjectContext } from "./types.js";
 
@@ -102,6 +102,17 @@ function isCommonJs(content: string): boolean {
 }
 
 /**
+ * True when the user must wire Clerk in manually — no entry file was found,
+ * or the entry exists but the app-creation statement couldn't be located.
+ */
+export function needsManualWiring(action: FileAction | null): boolean {
+  return (
+    action === null ||
+    (action.type === "skip" && (action.skipReason?.startsWith("Could not find") ?? false))
+  );
+}
+
+/**
  * Scaffold the Clerk middleware/plugin into a Node server entry file.
  * Returns null when no entry file was found (caller prints a post-instruction).
  */
@@ -114,11 +125,21 @@ export async function scaffoldServerEntry(
 
   const content = await Bun.file(join(ctx.cwd, entryPath)).text();
 
-  if (hasClerkImport(content) || content.includes(config.clerkPackage)) {
+  // Only the framework's own SDK counts as already-configured — an unrelated
+  // Clerk package (e.g. @clerk/backend for manual token checks) must not
+  // suppress the middleware wiring.
+  if (content.includes(config.clerkPackage)) {
     return { type: "skip", path: entryPath, skipReason: `Already has ${config.clerkPackage}` };
   }
 
-  const match = config.creationPattern.exec(content);
+  // A creation statement inside a comment or string (e.g. a commented-out
+  // `const app = express();`) must not hijack the insertion point. Matching
+  // runs on the real content — the pattern may legitimately span a string
+  // like `require("express")` — but a match *starting* in masked territory
+  // is commented-out/quoted code and is rejected.
+  const masked = maskCommentsAndStrings(content);
+  const creation = new RegExp(config.creationPattern.source, "g");
+  const match = [...content.matchAll(creation)].find((m) => masked[m.index] === content[m.index]);
   if (!match) {
     return {
       type: "skip",
