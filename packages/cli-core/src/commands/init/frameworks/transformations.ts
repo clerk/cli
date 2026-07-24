@@ -37,6 +37,12 @@ export function safeAddImport(content: string, source: string, imported: string)
  * Replace the contents of comments and string/template literals with spaces,
  * preserving length and newlines (delimiters are kept). Searches over the
  * result only match real code, and every index maps 1:1 back to the source.
+ *
+ * Template literals get recursive handling: a `${...}` substitution is real
+ * code (not masked), and it can itself contain strings, comments, nested
+ * template literals, and braces (e.g. an object literal) — so it's scanned
+ * with the same code-scanning logic, stopping at the substitution's own
+ * closing `}` rather than the first `}` encountered.
  */
 export function maskCommentsAndStrings(source: string): string {
   const out = source.split("");
@@ -47,33 +53,71 @@ export function maskCommentsAndStrings(source: string): string {
     i++;
   };
 
-  while (i < source.length) {
-    const char = source[i]!;
-    const next = source[i + 1];
+  function scanString(quote: string): void {
+    i++; // keep the opening delimiter
+    while (i < source.length && source[i] !== quote) {
+      const escaped = source[i] === "\\";
+      blank();
+      if (escaped && i < source.length) blank();
+    }
+    if (i < source.length) i++; // keep the closing delimiter
+  }
 
-    if (char === "/" && next === "/") {
-      while (i < source.length && source[i] !== "\n") blank();
-    } else if (char === "/" && next === "*") {
-      blank();
-      blank();
-      while (i < source.length && !(source[i] === "*" && source[i + 1] === "/")) blank();
-      if (i < source.length) {
-        blank();
-        blank();
+  function scanTemplate(): void {
+    i++; // keep the opening backtick
+    while (i < source.length && source[i] !== "`") {
+      if (source[i] === "$" && source[i + 1] === "{") {
+        i += 2; // keep `${` — real code, not masked
+        scanCode(true);
+        if (i < source.length && source[i] === "}") i++; // keep the closing `}`
+        continue;
       }
-    } else if (char === '"' || char === "'" || char === "`") {
-      i++; // keep the opening delimiter
-      while (i < source.length && source[i] !== char) {
-        const escaped = source[i] === "\\";
+      const escaped = source[i] === "\\";
+      blank();
+      if (escaped && i < source.length) blank();
+    }
+    if (i < source.length) i++; // keep the closing backtick
+  }
+
+  // Scans real code. When `stopAtOwnBrace` is set (inside a `${...}`
+  // substitution), returns as soon as it sees the `}` that closes this
+  // substitution — braces opened within it (e.g. `{ a: 1 }`) are tracked so
+  // they don't end the substitution early.
+  function scanCode(stopAtOwnBrace: boolean): void {
+    let braceDepth = 0;
+    while (i < source.length) {
+      const char = source[i]!;
+      const next = source[i + 1];
+
+      if (stopAtOwnBrace && char === "}" && braceDepth === 0) return;
+
+      if (char === "/" && next === "/") {
+        while (i < source.length && source[i] !== "\n") blank();
+      } else if (char === "/" && next === "*") {
         blank();
-        if (escaped && i < source.length) blank();
+        blank();
+        while (i < source.length && !(source[i] === "*" && source[i + 1] === "/")) blank();
+        if (i < source.length) {
+          blank();
+          blank();
+        }
+      } else if (char === '"' || char === "'") {
+        scanString(char);
+      } else if (char === "`") {
+        scanTemplate();
+      } else if (char === "{") {
+        braceDepth++;
+        i++;
+      } else if (char === "}") {
+        braceDepth--;
+        i++;
+      } else {
+        i++;
       }
-      i++; // keep the closing delimiter
-    } else {
-      i++;
     }
   }
 
+  scanCode(false);
   return out.join("");
 }
 

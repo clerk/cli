@@ -97,8 +97,8 @@ export function findStatementEnd(content: string, startIdx: number): number {
   return content.length;
 }
 
-function isCommonJs(content: string): boolean {
-  return content.includes("require(") && !/^\s*import\s/m.test(content);
+function isCommonJs(masked: string): boolean {
+  return masked.includes("require(") && !/^\s*import\s/m.test(masked);
 }
 
 /**
@@ -127,7 +127,10 @@ export async function scaffoldServerEntry(
 
   // Only the framework's own SDK counts as already-configured — an unrelated
   // Clerk package (e.g. @clerk/backend for manual token checks) must not
-  // suppress the middleware wiring.
+  // suppress the middleware wiring. This intentionally checks raw content:
+  // the package name normally lives inside an import specifier or `require(...)`
+  // string, which masking would blank out, breaking detection of legitimately
+  // already-wired projects.
   if (content.includes(config.clerkPackage)) {
     return { type: "skip", path: entryPath, skipReason: `Already has ${config.clerkPackage}` };
   }
@@ -154,7 +157,7 @@ export async function scaffoldServerEntry(
   // CJS files get the require right next to the attach statement — inserting
   // relative to the framework's own require line could land inside a
   // multi-line creation statement like `require("fastify")({\n ... })`.
-  const cjs = isCommonJs(content);
+  const cjs = isCommonJs(masked);
   const attach = cjs
     ? `\nconst { ${config.clerkImport} } = require("${config.clerkPackage}");\n${config.attachStatement(appVar)}`
     : `\n${config.attachStatement(appVar)}`;

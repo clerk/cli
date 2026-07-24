@@ -87,7 +87,7 @@ Detects the project's framework from `package.json` dependencies (checked top-to
 | `express`               | Express        | `@clerk/express`              | `CLERK_PUBLISHABLE_KEY`             | No      |
 | `fastify`               | Fastify        | `@clerk/fastify`              | `CLERK_PUBLISHABLE_KEY`             | No      |
 
-Native mobile platforms have no `package.json`, so they are detected from project marker files instead (only when no npm framework matches):
+Native mobile platforms may not have a `package.json`, so they are detected from project marker files when no npm framework matches:
 
 | Marker files                                                        | Framework        | Clerk SDK                             | Publishable Key Env Var |
 | ------------------------------------------------------------------- | ---------------- | ------------------------------------- | ----------------------- |

@@ -1,5 +1,5 @@
 import { test, expect, describe } from "bun:test";
-import { insertAfterLastImport } from "./transformations.ts";
+import { insertAfterLastImport, maskCommentsAndStrings } from "./transformations.ts";
 
 describe("insertAfterLastImport", () => {
   test("inserts after a single-line import", () => {
@@ -45,5 +45,40 @@ const x = 1;
     const result = insertAfterLastImport(source, "SNIPPET\n");
 
     expect(result.indexOf("SNIPPET")).toBeLessThan(result.indexOf("// import"));
+  });
+});
+
+describe("maskCommentsAndStrings", () => {
+  test.each([
+    {
+      name: "blanks the literal text inside a nested template substitution",
+      source: "const a = `outer ${`inner`} end`;\nconst REAL_CODE = 1;\n",
+      mustNotContain: "inner",
+      mustContain: "REAL_CODE",
+    },
+    {
+      name: "keeps an object literal's braces from ending the substitution early",
+      source: "const a = `x ${({ b: 1 }).b} y`;\nconst REAL_CODE = 1;\n",
+      mustNotContain: "x ${",
+      mustContain: "({ b: 1 }).b",
+    },
+    {
+      name: "handles a string literal inside a substitution",
+      source: 'const a = `x ${"}"} y`;\nconst REAL_CODE = 1;\n',
+      mustNotContain: '"}"',
+      mustContain: "REAL_CODE",
+    },
+    {
+      name: "handles a comment inside a substitution",
+      source: "const a = `x ${/* } */ 1} y`;\nconst REAL_CODE = 1;\n",
+      mustNotContain: "} */",
+      mustContain: "REAL_CODE",
+    },
+  ])("$name", ({ source, mustNotContain, mustContain }) => {
+    const masked = maskCommentsAndStrings(source);
+
+    expect(masked).not.toContain(mustNotContain);
+    expect(masked).toContain(mustContain);
+    expect(masked.length).toBe(source.length);
   });
 });
