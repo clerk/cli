@@ -25,17 +25,72 @@ export function safeAddImport(content: string, source: string, imported: string)
   try {
     const mod = parseModule(content);
     mod.imports.$add({ from: source, imported, local: imported });
-    return mod.generate().code;
+    // magicast prints new imports without brace spacing — align the added
+    // line with this codebase's (and Prettier's) `import { x }` style.
+    return mod.generate().code.replace(`import {${imported}}`, `import { ${imported} }`);
   } catch {
     return `import { ${imported} } from "${source}";\n${content}`;
   }
 }
 
+/**
+ * Replace the contents of comments and string/template literals with spaces,
+ * preserving length and newlines (delimiters are kept). Searches over the
+ * result only match real code, and every index maps 1:1 back to the source.
+ */
+export function maskCommentsAndStrings(source: string): string {
+  const out = source.split("");
+  let i = 0;
+
+  const blank = () => {
+    if (source[i] !== "\n") out[i] = " ";
+    i++;
+  };
+
+  while (i < source.length) {
+    const char = source[i]!;
+    const next = source[i + 1];
+
+    if (char === "/" && next === "/") {
+      while (i < source.length && source[i] !== "\n") blank();
+    } else if (char === "/" && next === "*") {
+      blank();
+      blank();
+      while (i < source.length && !(source[i] === "*" && source[i + 1] === "/")) blank();
+      if (i < source.length) {
+        blank();
+        blank();
+      }
+    } else if (char === '"' || char === "'" || char === "`") {
+      i++; // keep the opening delimiter
+      while (i < source.length && source[i] !== char) {
+        const escaped = source[i] === "\\";
+        blank();
+        if (escaped && i < source.length) blank();
+      }
+      i++; // keep the closing delimiter
+    } else {
+      i++;
+    }
+  }
+
+  return out.join("");
+}
+
+// Spans a complete import statement, including multi-line named-import blocks
+// and side-effect imports (`import "./x"`), through its module specifier.
+const IMPORT_STATEMENT = /^[ \t]*import\b(?:[\s\S]*?from)?\s*["'][^"'\n]*["'][ \t]*;?/gm;
+
 /** Insert a snippet after the last import statement in a source file. */
 export function insertAfterLastImport(source: string, snippet: string): string {
-  const lastImportIdx = source.lastIndexOf("import ");
-  const lineEnd = source.indexOf("\n", lastImportIdx);
-  if (lineEnd === -1) return source;
+  // Match against masked source so `import` inside comments/strings can't
+  // hijack the insertion point, and multi-line imports are spanned fully.
+  let last: RegExpExecArray | null = null;
+  for (const match of maskCommentsAndStrings(source).matchAll(IMPORT_STATEMENT)) last = match;
+  if (!last) return snippet + source;
+
+  const lineEnd = source.indexOf("\n", last.index + last[0].length);
+  if (lineEnd === -1) return `${source}\n${snippet}`;
   return source.slice(0, lineEnd + 1) + snippet + source.slice(lineEnd + 1);
 }
 

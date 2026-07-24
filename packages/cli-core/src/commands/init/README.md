@@ -19,16 +19,16 @@ clerk init --no-skills
 
 ## Options
 
-| Option                  | Description                                                                                                                                                                           |
-| ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `--framework <name>`    | Framework to set up (skips auto-detection). Valid values: `next`, `astro`, `nuxt`, `tanstack-start`, `react-router`, `vue`, `expo`, `react`, `javascript`, `js`, `express`, `fastify` |
-| `--pm <manager>`        | Package manager to use. Valid values: `bun`, `pnpm`, `yarn`, `npm`. Skips the PM prompt (bootstrap) or overrides lockfile detection (existing project)                                |
-| `--name <project-name>` | Project name for `--starter` (skips prompt). Must be lowercase, no spaces, no path separators                                                                                         |
-| `--app <id>`            | Application ID to link (skips the interactive app picker during authenticated linking)                                                                                                |
-| `--starter`             | Bootstrap a new project from a starter template (runs the framework generator, installs deps, and scaffolds Clerk)                                                                    |
-| `--keyless`             | Use auto-generated temporary development keys instead of logging in. Only valid when bootstrapping a new project on a keyless-capable framework                                       |
-| `-y, --yes`             | Skip y/n confirmation prompts. Authentication is still required — unauthenticated users are prompted to log in via the browser unless `--keyless` is also passed                      |
-| `--no-skills`           | Skip the optional agent skills install prompt at the end of init                                                                                                                      |
+| Option                  | Description                                                                                                                                                                                             |
+| ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `--framework <name>`    | Framework to set up (skips auto-detection). Valid values: `next`, `astro`, `nuxt`, `tanstack-start`, `react-router`, `vue`, `expo`, `react`, `javascript`, `js`, `express`, `fastify`, `ios`, `android` |
+| `--pm <manager>`        | Package manager to use. Valid values: `bun`, `pnpm`, `yarn`, `npm`. Skips the PM prompt (bootstrap) or overrides lockfile detection (existing project)                                                  |
+| `--name <project-name>` | Project name for `--starter` (skips prompt). Must be lowercase, no spaces, no path separators                                                                                                           |
+| `--app <id>`            | Application ID to link (skips the interactive app picker during authenticated linking)                                                                                                                  |
+| `--starter`             | Bootstrap a new project from a starter template (runs the framework generator, installs deps, and scaffolds Clerk)                                                                                      |
+| `--keyless`             | Use auto-generated temporary development keys instead of logging in. Only valid when bootstrapping a new project on a keyless-capable framework                                                         |
+| `-y, --yes`             | Skip y/n confirmation prompts. Authentication is still required — unauthenticated users are prompted to log in via the browser unless `--keyless` is also passed                                        |
+| `--no-skills`           | Skip the optional agent skills install prompt at the end of init                                                                                                                                        |
 
 ## Agent Mode
 
@@ -87,13 +87,22 @@ Detects the project's framework from `package.json` dependencies (checked top-to
 | `express`               | Express        | `@clerk/express`              | `CLERK_PUBLISHABLE_KEY`             | No      |
 | `fastify`               | Fastify        | `@clerk/fastify`              | `CLERK_PUBLISHABLE_KEY`             | No      |
 
+Native mobile platforms have no `package.json`, so they are detected from project marker files instead (only when no npm framework matches):
+
+| Marker files                                                        | Framework        | Clerk SDK                             | Publishable Key Env Var |
+| ------------------------------------------------------------------- | ---------------- | ------------------------------------- | ----------------------- |
+| `*.xcodeproj` / `*.xcworkspace`                                     | iOS (Swift)      | `ClerkKit` (Swift Package Manager)    | `CLERK_PUBLISHABLE_KEY` |
+| `app/src/main/AndroidManifest.xml` / `src/main/AndroidManifest.xml` | Android (Kotlin) | `com.clerk:clerk-android-ui` (Gradle) | `CLERK_PUBLISHABLE_KEY` |
+
+A bare `Package.swift` or `build.gradle` is intentionally **not** enough — those also match server-side Swift packages and non-Android JVM projects. For native platforms the Clerk SDK cannot be installed by a JS package manager, so init skips the SDK install step and the scaffold plan prints Swift Package Manager / Gradle install steps instead. The publishable key is configured in source code (`Clerk.configure(...)` / `Clerk.initialize(...)`), so init still pulls keys into the env file and instructs the user to copy the key over.
+
 The **Keyless** column indicates whether the framework's Clerk SDK supports keyless mode (auto-generated temporary dev keys). Keyless mode is opt-in via `--keyless` and is only valid when bootstrapping a new project on a Yes-row framework — passing `--keyless` for a No-row framework or for an existing project exits with a usage error. By default, init authenticates the user (interactively when needed) and links a real app. In agent mode, an authenticated run on a keyless-capable framework creates a real app named after the project and links it; an unauthenticated agent run without `--keyless` prints manual setup guidance instead of selecting or creating an app.
 
 Package manager is detected from lock files: `bun.lockb`/`bun.lock` → bun, `yarn.lock` → yarn, `pnpm-lock.yaml` → pnpm, else npm.
 
 ## Scaffolding
 
-Scaffolding is supported for the first 9 frameworks above (through JavaScript/Vite). Expo, Express, and Fastify are detected (SDK is installed, env vars are pulled) but scaffolding is not yet supported — users are directed to the Clerk docs.
+Scaffolding is supported for every detected framework. iOS and Android write no files (their SDKs are not npm packages and their build files are not safe to modify automatically) — instead they print the exact quickstart steps as post-instructions.
 
 All scaffolding is idempotent — files are skipped if they already contain Clerk setup.
 
@@ -182,6 +191,35 @@ Nuxt's module system auto-configures middleware and auto-imports components.
 | MODIFY | `src/main.ts/js` | Replace entry file with Clerk JS initialization |
 
 If no entry file is found, a post-instruction is printed pointing to the Clerk JS quickstart.
+
+### Expo
+
+| Action        | File                    | Description                                                          |
+| ------------- | ----------------------- | -------------------------------------------------------------------- |
+| CREATE/MODIFY | `[src/]app/_layout.tsx` | Wrap the expo-router root layout with `ClerkProvider` + `tokenCache` |
+
+The root layout is created (with a `<Slot />`) when missing and `expo-router` is a dependency; existing layouts have their main JSX return wrapped (guard returns like `if (!loaded) return null` are left alone). Post-instructions cover `npx expo install expo-secure-store` (required by `@clerk/expo/token-cache`, installed via `expo install` so the version matches the project's Expo SDK), enabling the Native API in the Dashboard, and adding sign-in/sign-up screens.
+
+**Bootstrap (new project)**: `clerk init --starter --framework expo` scaffolds a new app via `create-expo-app`.
+
+### Express
+
+| Action | File                     | Description                                              |
+| ------ | ------------------------ | -------------------------------------------------------- |
+| MODIFY | server entry (see below) | Add `clerkMiddleware()` right after `express()` creation |
+| CREATE | `types/globals.d.ts`     | `@clerk/express/env` type reference (TypeScript only)    |
+
+### Fastify
+
+| Action | File                     | Description                                                    |
+| ------ | ------------------------ | -------------------------------------------------------------- |
+| MODIFY | server entry (see below) | Register `clerkPlugin` right after the `Fastify(...)` creation |
+
+Express and Fastify share the server-entry scaffolding in [`node-server.ts`](./frameworks/node-server.ts). The entry file is resolved from `package.json#main` (ignored when it points at build output like `dist/`) and common candidates (`[src/]index|server|app|main` with `.ts/.mts/.js/.mjs/.cjs`). Both ESM (`import`) and CommonJS (`require`, including the inline `require("fastify")(...)` form) are supported; injection lands after the full creation statement, so multi-line options objects and chained calls (e.g. `.withTypeProvider()`) are safe. When no entry or creation call is found, a post-instruction with the quickstart link is printed instead.
+
+### iOS (Swift) / Android (Kotlin)
+
+No files are written. The scaffold plan prints the quickstart steps: SDK install (Swift Package Manager for `ClerkKit`/`ClerkKitUI`, Gradle for `com.clerk:clerk-android-*`), enabling the Native API and registering the app on the Dashboard's Native Applications page, and configuring the publishable key in source (`Clerk.configure(...)` / `Clerk.initialize(...)`) by copying it from the pulled env file.
 
 ## Agent skills install
 

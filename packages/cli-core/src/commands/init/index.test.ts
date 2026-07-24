@@ -932,6 +932,67 @@ describe("init", () => {
     expect(pullMod.pull).toHaveBeenCalledWith({ file: ".env.local", cwd: mockCtx.cwd });
   });
 
+  test("native framework skips npm SDK install but still pulls env keys", async () => {
+    setup({ email: "test@test.com" });
+
+    const iosCtx = {
+      ...FAKE_CTX,
+      existingClerk: false,
+      deps: {},
+      envFile: ".env",
+      framework: {
+        dep: "ios",
+        name: "iOS (Swift)",
+        sdk: "ClerkKit",
+        envVar: "CLERK_PUBLISHABLE_KEY",
+        envFile: ".env" as const,
+        ecosystem: "swift" as const,
+      },
+    };
+    spyOn(context, "gatherContext").mockResolvedValue(iosCtx);
+    spyOn(scaffoldMod, "scaffold").mockResolvedValue({
+      actions: [],
+      postInstructions: ["Add the Clerk iOS SDK via Swift Package Manager"],
+    });
+
+    await init({ yes: true });
+
+    expect(heuristics.installSdk).not.toHaveBeenCalled();
+    expect(pullMod.pull).toHaveBeenCalledWith({ file: ".env", cwd: iosCtx.cwd });
+  });
+
+  test("--framework ios without package.json does not trigger bootstrap", async () => {
+    setup({ email: "test@test.com" });
+
+    const iosFramework = {
+      dep: "ios",
+      name: "iOS (Swift)",
+      sdk: "ClerkKit",
+      envVar: "CLERK_PUBLISHABLE_KEY",
+      envFile: ".env" as const,
+      ecosystem: "swift" as const,
+    };
+    const iosCtx = {
+      ...FAKE_CTX,
+      existingClerk: false,
+      deps: {},
+      envFile: ".env",
+      framework: iosFramework,
+    };
+    spyOn(frameworkMod, "lookupFramework").mockReturnValue(iosFramework);
+    spyOn(context, "gatherContext").mockResolvedValue(iosCtx);
+    spyOn(context, "hasPackageJson").mockResolvedValue(false);
+    spyOn(scaffoldMod, "scaffold").mockResolvedValue({
+      actions: [],
+      postInstructions: ["Add the Clerk iOS SDK via Swift Package Manager"],
+    });
+
+    await init({ yes: true, framework: "ios" });
+
+    expect(bootstrapMod.promptAndBootstrap).not.toHaveBeenCalled();
+    expect(pullMod.pull).toHaveBeenCalled();
+  });
+
   test("bootstrap passes project dir to link, not parent cwd", async () => {
     setup({ email: "test@test.com" });
 
