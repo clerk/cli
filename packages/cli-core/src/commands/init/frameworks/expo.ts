@@ -36,29 +36,21 @@ export default function RootLayout() {
 
 /**
  * Find the index just past the delimiter matching the one at `openIdx`.
- * Tracks string/template literals so delimiters inside them don't count.
- * Returns null when the delimiter never closes (malformed source).
+ * Scans masked source, so delimiters inside strings, comments, or JSX text
+ * don't count. Returns null when the delimiter never closes (malformed source).
  */
 function findMatchingDelimiter(
-  content: string,
+  masked: string,
   openIdx: number,
   open: string,
   close: string,
 ): number | null {
   let depth = 0;
-  let quote: string | null = null;
 
-  for (let i = openIdx; i < content.length; i++) {
-    const char = content[i]!;
+  for (let i = openIdx; i < masked.length; i++) {
+    const char = masked[i]!;
 
-    if (quote) {
-      if (char === "\\") i++;
-      else if (char === quote) quote = null;
-      continue;
-    }
-
-    if (char === '"' || char === "'" || char === "`") quote = char;
-    else if (char === open) depth++;
+    if (char === open) depth++;
     else if (char === close) {
       depth--;
       if (depth === 0) return i + 1;
@@ -90,12 +82,12 @@ function findDefaultExportBody(
 
   const paramsOpen = masked.indexOf("(", fnIdx);
   if (paramsOpen === -1) return null;
-  const paramsEnd = findMatchingDelimiter(content, paramsOpen, "(", ")");
+  const paramsEnd = findMatchingDelimiter(masked, paramsOpen, "(", ")");
   if (paramsEnd === null) return null;
 
   const bodyOpen = masked.indexOf("{", paramsEnd);
   if (bodyOpen === -1) return null;
-  const bodyEnd = findMatchingDelimiter(content, bodyOpen, "{", "}");
+  const bodyEnd = findMatchingDelimiter(masked, bodyOpen, "{", "}");
   if (bodyEnd === null) return null;
 
   return { start: bodyOpen, end: bodyEnd };
@@ -144,7 +136,7 @@ export function wrapLastReturnWithProvider(content: string): string | null {
   const relIdx = masked.slice(from, to).lastIndexOf("return (");
   if (relIdx !== -1) {
     const openIdx = from + relIdx + "return ".length;
-    const closeIdx = findMatchingDelimiter(content, openIdx, "(", ")");
+    const closeIdx = findMatchingDelimiter(masked, openIdx, "(", ")");
     if (closeIdx === null) return null;
 
     const inner = content.slice(openIdx + 1, closeIdx - 1);

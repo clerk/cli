@@ -1,6 +1,46 @@
 import { test, expect, describe } from "bun:test";
 import { insertAfterLastImport, maskCommentsAndStrings } from "./transformations.ts";
 
+describe("maskCommentsAndStrings", () => {
+  test("masks string contents but keeps delimiters and length", () => {
+    const source = `const a = "hidden";\n`;
+
+    const masked = maskCommentsAndStrings(source);
+
+    expect(masked).toBe(`const a = "      ";\n`);
+    expect(masked).toHaveLength(source.length);
+  });
+
+  test("masks line and block comments", () => {
+    const source = `// secret\nconst a = 1;\n/* more */\n`;
+
+    const masked = maskCommentsAndStrings(source);
+
+    expect(masked).toContain("const a = 1;");
+    expect(masked).not.toContain("secret");
+    expect(masked).not.toContain("more");
+  });
+
+  // An unpaired quote must not swallow the rest of the file: real JS strings
+  // never span lines, so a lone quote is punctuation (JSX text, a regex).
+  test.each([
+    ["apostrophe in JSX text", `<Text>Don't panic</Text>\nconst app = express();\n`],
+    ["quote inside a regex literal", `const s = t.replace(/"/g, "");\nconst app = express();\n`],
+    ["apostrophe inside a regex literal", `const re = /don't/;\nconst app = express();\n`],
+  ])("keeps code visible after %s", (_name, source) => {
+    expect(maskCommentsAndStrings(source)).toContain("const app = express();");
+  });
+
+  test("still masks multi-line template literals", () => {
+    const source = "const t = `line one\nline two`;\nconst app = x();\n";
+
+    const masked = maskCommentsAndStrings(source);
+
+    expect(masked).not.toContain("line one");
+    expect(masked).toContain("const app = x();");
+  });
+});
+
 describe("insertAfterLastImport", () => {
   test("inserts after a single-line import", () => {
     const source = `import { a } from "a";\nconst x = 1;\n`;

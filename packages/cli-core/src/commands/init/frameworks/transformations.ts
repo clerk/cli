@@ -34,6 +34,22 @@ export function safeAddImport(content: string, source: string, imported: string)
 }
 
 /**
+ * Index of the quote closing the one at `openIdx`, or null when it is unpaired
+ * on that line. A JS string literal never contains a raw newline, so a lone
+ * quote is punctuation — JSX text (`Don't`) or a quote inside a regex literal
+ * (`/"/g`) — and must not be treated as the start of a string.
+ */
+function findClosingQuoteOnLine(source: string, openIdx: number, quote: string): number | null {
+  for (let i = openIdx + 1; i < source.length; i++) {
+    const char = source[i]!;
+    if (char === "\n") return null;
+    if (char === "\\") i++;
+    else if (char === quote) return i;
+  }
+  return null;
+}
+
+/**
  * Replace the contents of comments and string/template literals with spaces,
  * preserving length and newlines (delimiters are kept). Searches over the
  * result only match real code, and every index maps 1:1 back to the source.
@@ -54,13 +70,14 @@ export function maskCommentsAndStrings(source: string): string {
   };
 
   function scanString(quote: string): void {
-    i++; // keep the opening delimiter
-    while (i < source.length && source[i] !== quote) {
-      const escaped = source[i] === "\\";
-      blank();
-      if (escaped && i < source.length) blank();
+    const closeIdx = findClosingQuoteOnLine(source, i, quote);
+    if (closeIdx === null) {
+      i++; // unpaired — punctuation (JSX text, a regex literal), not a string
+      return;
     }
-    if (i < source.length) i++; // keep the closing delimiter
+    i++; // keep the opening delimiter
+    while (i < closeIdx) blank();
+    i++; // keep the closing delimiter
   }
 
   function scanTemplate(): void {

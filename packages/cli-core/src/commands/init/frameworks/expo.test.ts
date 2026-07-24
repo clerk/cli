@@ -265,6 +265,57 @@ export function ErrorBoundary({ error }: { error: Error }) {
   expect(wrapped).toContain("return (\n    <View>");
 });
 
+test("wraps a layout whose own JSX text contains an apostrophe", () => {
+  const content = `import { Slot } from "expo-router";
+import { Text, View } from "react-native";
+
+export default function RootLayout() {
+  return (
+    <View>
+      <Text>Don't panic</Text>
+      <Slot />
+    </View>
+  );
+}
+`;
+
+  const wrapped = wrapLastReturnWithProvider(content)!;
+  expect(wrapped).not.toBeNull();
+  expect(wrapped).toContain("<ClerkProvider");
+  expect(wrapped).toContain("<Text>Don't panic</Text>");
+  expect(wrapped.indexOf("<ClerkProvider")).toBeLessThan(wrapped.indexOf("<View>"));
+});
+
+test("wraps the root layout even when earlier JSX text contains an apostrophe", () => {
+  const content = `import { Slot } from "expo-router";
+import { View, Text } from "react-native";
+
+function Banner() {
+  return (
+    <Text>Don't panic</Text>
+  );
+}
+
+export default function RootLayout() {
+  return (
+    <View>
+      <Banner />
+      <Slot />
+    </View>
+  );
+}
+`;
+
+  const wrapped = wrapLastReturnWithProvider(content)!;
+  expect(wrapped).not.toBeNull();
+  expect(wrapped.match(/<ClerkProvider/g)).toHaveLength(1);
+  // The provider wraps the root layout's tree, not the Banner above it
+  const providerIdx = wrapped.indexOf("<ClerkProvider");
+  expect(providerIdx).toBeGreaterThan(wrapped.indexOf("function Banner"));
+  expect(providerIdx).toBeLessThan(wrapped.indexOf("<Slot />"));
+  expect(wrapped).toContain("<Text>Don't panic</Text>");
+});
+
 test("wraps the last single-line return, not a single-line guard", () => {
   const content = `import { Slot } from "expo-router";
 

@@ -174,6 +174,28 @@ server.listen(3000);
   }
 });
 
+test("wires the app when an earlier line has an unpaired quote", async () => {
+  await Bun.write(
+    join(tempDir, "index.ts"),
+    `import express from "express";
+
+const strip = (s: string) => s.replace(/"/g, "");
+
+const app = express();
+
+app.listen(3000);
+`,
+  );
+
+  const plan = await express.scaffold(makeCtx());
+
+  const entry = findAction(plan.actions, "index.ts");
+  expect(entry.type).toBe("modify");
+  if (entry.type === "modify") {
+    expect(entry.content).toContain("app.use(clerkMiddleware());");
+  }
+});
+
 test("ignores an app creation that only appears inside a string literal", async () => {
   await Bun.write(
     join(tempDir, "index.ts"),

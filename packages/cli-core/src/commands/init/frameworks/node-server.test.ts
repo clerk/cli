@@ -38,6 +38,18 @@ describe("findStatementEnd", () => {
     expect(src.slice(0, end)).toBe("const x = f(`open ( paren`);");
   });
 
+  test("ends at the newline when a trailing comment has an apostrophe", () => {
+    const src = `const app = express() // don't touch\napp.listen(3000)`;
+    const end = findStatementEnd(src, 0);
+    expect(src.slice(0, end)).toBe("const app = express() // don't touch");
+  });
+
+  test("ignores brackets inside comments", () => {
+    const src = `const app = express() // see foo({\napp.listen(3000)`;
+    const end = findStatementEnd(src, 0);
+    expect(src.slice(0, end)).toBe("const app = express() // see foo({");
+  });
+
   test("returns content length for an unterminated statement", () => {
     const src = `const app = express(`;
     expect(findStatementEnd(src, 0)).toBe(src.length);

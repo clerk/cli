@@ -63,30 +63,23 @@ async function findEntryFile(ctx: ProjectContext): Promise<string | null> {
 /**
  * Find the end of the statement starting at `startIdx` — the first `;` or
  * newline at bracket depth 0 that is not followed by a chained `.` call.
- * Tracks strings and template literals so brackets inside them don't count.
- * Returns the index just past the statement's last character.
+ * Scans masked source so brackets and terminators inside comments or string
+ * literals don't count. Returns the index just past the statement's last
+ * character (indices map 1:1 to `content`).
  */
 export function findStatementEnd(content: string, startIdx: number): number {
+  const masked = maskCommentsAndStrings(content);
   let depth = 0;
-  let quote: string | null = null;
 
-  for (let i = startIdx; i < content.length; i++) {
-    const char = content[i]!;
+  for (let i = startIdx; i < masked.length; i++) {
+    const char = masked[i]!;
 
-    if (quote) {
-      if (char === "\\") i++;
-      else if (char === quote) quote = null;
-      continue;
-    }
-
-    if (char === '"' || char === "'" || char === "`") {
-      quote = char;
-    } else if (char === "(" || char === "[" || char === "{") {
+    if (char === "(" || char === "[" || char === "{") {
       depth++;
     } else if (char === ")" || char === "]" || char === "}") {
       depth--;
     } else if (depth === 0 && (char === ";" || char === "\n")) {
-      const rest = content.slice(i + 1);
+      const rest = masked.slice(i + 1);
       const nextChar = rest.trimStart()[0];
       // A leading `.` or `;` continues the statement (chained call / same line).
       if (nextChar === "." || (char === "\n" && rest.trimStart().startsWith(";"))) continue;
