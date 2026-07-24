@@ -1,12 +1,10 @@
-import { resolveAppContext } from "../../lib/config.ts";
-import { fetchInstanceConfig, putInstanceConfig, patchInstanceConfig } from "../../lib/plapi.ts";
 import { isHuman } from "../../mode.ts";
 import {
+  CliError,
   UserAbortError,
   isPromptExitError,
   throwUsageError,
   throwUserAbort,
-  withApiContext,
   ERROR_CODE,
 } from "../../lib/errors.ts";
 import { confirm } from "../../lib/prompts.ts";
@@ -14,6 +12,15 @@ import { dim, bold, red, green } from "../../lib/color.ts";
 import { withSpinner, intro, outro, pausedOutro } from "../../lib/spinner.ts";
 import { isInsideGutter, log } from "../../lib/log.ts";
 import { NEXT_STEPS, printNextSteps } from "../../lib/next-steps.ts";
+import { resolveInstanceTarget } from "../../lib/keyless-target.ts";
+import {
+  assertPayloadWritable,
+  LOCAL_DRY_RUN_MESSAGE,
+  readInstanceConfig,
+  supportsServerDryRun,
+  writeInstanceConfig,
+  type ConfigMethod,
+} from "./io.ts";
 
 interface ConfigPushOptions {
   app?: string;
@@ -26,15 +33,9 @@ interface ConfigPushOptions {
 }
 
 type Operation = {
-  method: "PUT" | "PATCH";
+  method: ConfigMethod;
   verb: string;
   warning?: string;
-  apiFn: (
-    appId: string,
-    instId: string,
-    config: Record<string, unknown>,
-    options?: { destructive?: boolean; dryRun?: boolean },
-  ) => Promise<Record<string, unknown>>;
   title: string;
 };
 
@@ -42,14 +43,12 @@ const PUT_OP: Operation = {
   method: "PUT",
   verb: "Replacing",
   warning: "This will overwrite the entire instance configuration.",
-  apiFn: putInstanceConfig,
   title: "Replacing configuration",
 };
 
 const PATCH_OP: Operation = {
   method: "PATCH",
   verb: "Updating",
-  apiFn: patchInstanceConfig,
   title: "Patching configuration",
 };
 
@@ -62,26 +61,18 @@ export async function configPatch(options: ConfigPushOptions): Promise<void> {
 }
 
 async function configPush(options: ConfigPushOptions, op: Operation): Promise<void> {
-  const ctx = await resolveAppContext(options);
-  const rawInput = await readInput(options);
+  const target = await resolveInstanceTarget(options);
 
-  let configPayload: Record<string, unknown>;
-  try {
-    configPayload = JSON.parse(rawInput);
-  } catch {
-    throwUsageError(
-      "Invalid JSON input. Please provide valid JSON.",
-      undefined,
-      ERROR_CODE.INVALID_JSON,
+  if (target.kind === "keyless" && op.method === "PUT") {
+    throw new CliError(
+      "Replacing the entire configuration is only available for a claimed application — an unclaimed keyless application has no full config document to replace.\n" +
+        "Use `clerk config patch` to update individual settings, or run `clerk auth login` to claim the application first.",
+      { code: ERROR_CODE.AUTH_REQUIRED },
     );
   }
 
-  if (typeof configPayload !== "object" || configPayload === null || Array.isArray(configPayload)) {
-    throwUsageError("Config must be a JSON object.", undefined, ERROR_CODE.INVALID_JSON);
-  }
-
-  // Strip config_version — it's returned by pull but not accepted by the backend
-  delete configPayload.config_version;
+  const configPayload = parsePayload(await readInput(options));
+  assertPayloadWritable(target, configPayload);
 
   const shouldWrap = !isInsideGutter();
   if (shouldWrap) intro(op.title);
@@ -89,10 +80,7 @@ async function configPush(options: ConfigPushOptions, op: Operation): Promise<vo
 
   try {
     const currentConfig = await withSpinner("Fetching current config...", () =>
-      withApiContext(
-        fetchInstanceConfig(ctx.appId, ctx.instanceId),
-        "Failed to fetch current config",
-      ),
+      readInstanceConfig(target, configPayload),
     );
     delete currentConfig.config_version;
 
@@ -105,8 +93,15 @@ async function configPush(options: ConfigPushOptions, op: Operation): Promise<vo
     }
 
     const prefix = options.dryRun ? `[dry-run] Proposing ${op.method}` : op.verb;
-    log.info(`\n${prefix} config on ${ctx.appLabel} (${ctx.instanceLabel}):\n`);
+    log.info(`\n${prefix} config on ${target.label}:\n`);
     printDiff(currentConfig, configPayload, isPatch);
+
+    if (options.dryRun && !supportsServerDryRun(target)) {
+      log.success(LOCAL_DRY_RUN_MESSAGE);
+      printNextSteps(NEXT_STEPS.CONFIG_DRY_RUN_PATCH);
+      closeStatus = "success";
+      return;
+    }
 
     if (!options.dryRun && isHuman() && !options.yes) {
       if (op.warning) {
@@ -119,16 +114,15 @@ async function configPush(options: ConfigPushOptions, op: Operation): Promise<vo
     }
 
     const spinnerMsg = options.dryRun
-      ? `[dry-run] Validating config on ${ctx.appLabel} (${ctx.instanceLabel})...`
-      : `${op.verb} config on ${ctx.appLabel} (${ctx.instanceLabel})...`;
+      ? `[dry-run] Validating config on ${target.label}...`
+      : `${op.verb} config on ${target.label}...`;
     const result = await withSpinner(spinnerMsg, () =>
-      withApiContext(
-        op.apiFn(ctx.appId, ctx.instanceId, configPayload, {
-          destructive: options.destructive,
-          dryRun: options.dryRun,
-        }),
-        options.dryRun ? "Dry-run failed" : "Failed to push config",
-      ),
+      writeInstanceConfig(target, configPayload, {
+        method: op.method,
+        destructive: options.destructive,
+        dryRun: options.dryRun,
+        failureContext: "Failed to push config",
+      }),
     );
     log.data(JSON.stringify(result, null, 2));
     log.success(
@@ -158,6 +152,28 @@ async function configPush(options: ConfigPushOptions, op: Operation): Promise<vo
       }
     }
   }
+}
+
+/** Parses the raw input into a config object, rejecting anything else. */
+function parsePayload(rawInput: string): Record<string, unknown> {
+  let payload: Record<string, unknown>;
+  try {
+    payload = JSON.parse(rawInput);
+  } catch {
+    throwUsageError(
+      "Invalid JSON input. Please provide valid JSON.",
+      undefined,
+      ERROR_CODE.INVALID_JSON,
+    );
+  }
+
+  if (typeof payload !== "object" || payload === null || Array.isArray(payload)) {
+    throwUsageError("Config must be a JSON object.", undefined, ERROR_CODE.INVALID_JSON);
+  }
+
+  // Strip config_version — it's returned by pull but not accepted by the backend
+  delete payload.config_version;
+  return payload;
 }
 
 export async function readInput(options: { file?: string; json?: string }): Promise<string> {

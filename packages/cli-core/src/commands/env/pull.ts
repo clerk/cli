@@ -10,6 +10,11 @@ import {
   isNpmFramework,
 } from "../../lib/framework.ts";
 import { CliError, ERROR_CODE, withApiContext } from "../../lib/errors.ts";
+import {
+  findLocalPublishableKey,
+  resolveKeylessTarget,
+  type KeylessTarget,
+} from "../../lib/keyless-target.ts";
 import { withGutter, withSpinner } from "../../lib/spinner.ts";
 import { log } from "../../lib/log.ts";
 
@@ -52,6 +57,16 @@ async function resolveTargetFile(
 export async function pull(options: EnvPullOptions): Promise<void> {
   await withGutter("Pulling environment variables", async () => {
     const cwd = options.cwd ?? process.cwd();
+
+    // A keyless application's keys are already on this machine — that's the only
+    // place they exist. "Pulling" them means copying what an SDK minted into the
+    // env file the framework reads, not fetching from an account.
+    const keyless = await resolveKeylessTarget({ ...options, cwd });
+    if (keyless) {
+      await pullKeylessKeys(cwd, keyless, options.file);
+      return;
+    }
+
     const [ctx, preferredEnvFile] = await Promise.all([
       resolveAppContext({ ...options, cwd }),
       detectEnvFile(cwd),
@@ -79,22 +94,56 @@ export async function pull(options: EnvPullOptions): Promise<void> {
       const framework = await detectFramework(cwd);
       const includeSecretKey = isNpmFramework(framework ?? {});
 
-      const file = Bun.file(targetFile);
-      const existingContent = (await file.exists()) ? await file.text() : "";
-
-      const lines = parseEnvFile(existingContent);
-      const vars: Record<string, string> = {
+      await mergeKeysIntoEnvFile(targetFile, {
         [publishableKeyName]: matched.publishable_key,
-      };
-      if (matched.secret_key && includeSecretKey) {
-        vars[secretKeyName] = matched.secret_key;
-      }
-      const merged = mergeEnvVars(lines, vars);
-      const output = serializeEnvFile(merged);
-
-      await Bun.write(targetFile, output);
+        ...(matched.secret_key && includeSecretKey && { [secretKeyName]: matched.secret_key }),
+      });
     });
 
     log.info(`Environment variables written to ${displayPath}`);
   });
+}
+
+/** Merges keys into an env file, preserving everything already in it. */
+async function mergeKeysIntoEnvFile(
+  targetFile: string,
+  vars: Record<string, string>,
+): Promise<void> {
+  const file = Bun.file(targetFile);
+  const existingContent = (await file.exists()) ? await file.text() : "";
+
+  await Bun.write(targetFile, serializeEnvFile(mergeEnvVars(parseEnvFile(existingContent), vars)));
+}
+
+/**
+ * Writes a keyless application's local keys into the project's env file. The
+ * publishable key can be missing when an SDK holds only part of the pair; the
+ * secret key is always present because it's what identified the target.
+ */
+async function pullKeylessKeys(
+  cwd: string,
+  keyless: KeylessTarget,
+  fileFlag?: string,
+): Promise<void> {
+  const [preferredEnvFile, publishableKeyName, secretKeyName, publishableKey] = await Promise.all([
+    detectEnvFile(cwd),
+    detectPublishableKeyName(cwd),
+    detectSecretKeyName(cwd),
+    findLocalPublishableKey(cwd),
+  ]);
+
+  const targetFile = await resolveTargetFile(cwd, fileFlag, preferredEnvFile);
+  const displayPath = fileFlag ?? basename(targetFile);
+
+  await mergeKeysIntoEnvFile(targetFile, {
+    [secretKeyName]: keyless.secretKey,
+    ...(publishableKey && { [publishableKeyName]: publishableKey }),
+  });
+
+  log.info(`Keyless application keys from \`${keyless.source}\` written to ${displayPath}`);
+  if (!publishableKey) {
+    log.warn(
+      `No publishable key found locally — set ${publishableKeyName} manually, or run \`clerk auth login\` to claim the application.`,
+    );
+  }
 }

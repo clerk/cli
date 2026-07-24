@@ -2,6 +2,8 @@
 
 Pulls Clerk API keys for the linked instance and merges them into the project's `.env` file.
 
+For an unclaimed **keyless** application there is no account to pull from — its keys only exist on this machine. When the directory isn't linked and no `--app` is passed, `env pull` instead copies the keys it finds locally (env var, `.env`/`.env.local`, or the `.clerk/.tmp/keyless.json` an SDK wrote for itself) into the env file the framework reads, and makes no API call. This is what materializes an SDK-created keyless app into `.env.local`. If only the secret key can be found, it's written and a warning names the missing publishable key. Resolution order lives in [`lib/keyless-target.ts`](../../lib/keyless-target.ts).
+
 ## Usage
 
 ```sh

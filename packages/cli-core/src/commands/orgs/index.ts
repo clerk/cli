@@ -1,10 +1,10 @@
-import { resolveAppContext } from "../../lib/config.ts";
 import { fetchInstanceConfig } from "../../lib/plapi.ts";
 import { throwUsageError, withApiContext } from "../../lib/errors.ts";
 import { withGutter, withSpinner } from "../../lib/spinner.ts";
 import { isHuman } from "../../mode.ts";
 import { NEXT_STEPS } from "../../lib/next-steps.ts";
 import { applyConfigPatch } from "../config/apply-patch.ts";
+import { resolveInstanceTarget } from "../../lib/keyless-target.ts";
 
 interface OrgsOptions {
   app?: string;
@@ -31,7 +31,7 @@ function parsePositiveInt(value: string, flag: string): number {
 }
 
 export async function orgsEnable(options: OrgsOptions): Promise<void> {
-  const ctx = await resolveAppContext(options);
+  const target = await resolveInstanceTarget(options);
 
   const orgSettings: Record<string, unknown> = { enabled: true };
   if (options.forceSelection) orgSettings.force_organization_selection = true;
@@ -53,7 +53,7 @@ export async function orgsEnable(options: OrgsOptions): Promise<void> {
 
   await withGutter("Enabling organizations", async ({ setNextSteps }) => {
     const applied = await applyConfigPatch({
-      ctx,
+      target,
       payload: { organization_settings: orgSettings },
       verb: "Enabling organizations",
       successMessage: "Organizations enabled",
@@ -69,17 +69,26 @@ export async function orgsEnable(options: OrgsOptions): Promise<void> {
 }
 
 export async function orgsDisable(options: OrgsOptions): Promise<void> {
-  const ctx = await resolveAppContext(options);
+  const target = await resolveInstanceTarget(options);
 
   await withGutter("Disabling organizations", async () => {
-    const current = await withSpinner("Fetching current config...", () =>
-      withApiContext(
-        fetchInstanceConfig(ctx.appId, ctx.instanceId, ["billing", "organization_settings"]),
-        "Failed to fetch config",
-      ),
-    );
+    // Billing lives only in the account-level config document, so a keyless run
+    // can't read it. Skip the pre-flight fetch entirely rather than half-run it:
+    // applyConfigPatch reads the group it needs on its own.
+    const current =
+      target.kind === "account"
+        ? await withSpinner("Fetching current config...", () =>
+            withApiContext(
+              fetchInstanceConfig(target.ctx.appId, target.ctx.instanceId, [
+                "billing",
+                "organization_settings",
+              ]),
+              "Failed to fetch config",
+            ),
+          )
+        : undefined;
 
-    const billing = current.billing as Record<string, unknown> | undefined;
+    const billing = current?.billing as Record<string, unknown> | undefined;
     const orgBillingOn = billing?.organization_enabled === true;
 
     // Agent mode: refuse rather than warn-then-mutate (warn-then-mutate in CI
@@ -92,7 +101,7 @@ export async function orgsDisable(options: OrgsOptions): Promise<void> {
     }
 
     await applyConfigPatch({
-      ctx,
+      target,
       payload: { organization_settings: { enabled: false } },
       verb: "Disabling organizations",
       successMessage: "Organizations disabled",

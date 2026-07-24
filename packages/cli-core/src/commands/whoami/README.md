@@ -22,7 +22,31 @@ clerk whoami --json
 - Calls `resolveProfile(cwd)` (best-effort — failures are swallowed) to determine whether the working directory is linked to a Clerk application.
 - When linked, prints a `Linked to ...` line on **stderr** above the next-steps, where `...` is the app label rendered by `profileLabel()` from `lib/config.ts` — for example, `Linked to MyApp (app_xxx)`.
 - When not linked, only the existing `WHOAMI` next-steps are printed.
-- If no token exists, throws an `AuthError` ("Not logged in").
+- If no token exists, falls back to the keyless path below; when that finds nothing either, throws an `AuthError` ("Not logged in").
+
+### Keyless applications
+
+An unclaimed keyless application has no account to name, so the instance itself is the identity. When there's no stored token but the directory holds an instance secret key (env var, `.env`/`.env.local`, or `.clerk/.tmp/keyless.json` — see [`lib/keyless-target.ts`](../../lib/keyless-target.ts)), `whoami` reads `GET /v1/instance` with that key and reports the instance instead of erroring.
+
+```json
+{
+  "email": null,
+  "keyless": {
+    "instanceId": "ins_...",
+    "environmentType": "development",
+    "publishableKey": "pk_test_...",
+    "keySource": ".clerk/.tmp/keyless.json"
+  },
+  "linked": null
+}
+```
+
+In human mode the instance ID goes to **stdout** and the explanation (including where the key came from) to **stderr**.
+
+| Method | Endpoint       | Description                                                               |
+| ------ | -------------- | ------------------------------------------------------------------------- |
+| `GET`  | `/v1/instance` | Reads the keyless instance's identity. Authenticated with the secret key. |
+
 - If the token is expired or invalid, throws an `AuthError` ("Session expired").
 
 ### `--json` (and agent mode)

@@ -56,6 +56,8 @@ mock.module(
             }
           : null,
       hasStoredCredentials: async () => mockState.storedToken !== null,
+      hasAccountCredentials: async () =>
+        Boolean(process.env.CLERK_PLATFORM_API_KEY) || mockState.storedToken !== null,
       storeToken: async (value: { accessToken: string }) => {
         mockState.storedToken = value.accessToken;
       },

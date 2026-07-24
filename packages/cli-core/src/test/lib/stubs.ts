@@ -126,21 +126,35 @@ export function captureUi() {
 
 const noop = async () => {};
 
+// Mocking a module replaces it wholesale, so this must cover every export of
+// lib/config.ts — a missing name is an import error in any consumer, not just
+// the one under test.
 export const configStubs = {
   _setConfigDir: () => {},
+  getConfigFile: () => "",
   readConfig: noop,
   writeConfig: noop,
   getAuth: noop,
   setAuth: noop,
   clearAuth: noop,
+  getEnvironment: noop,
+  setEnvironment: noop,
   getProfile: noop,
   setProfile: noop,
   removeProfile: noop,
   moveProfile: noop,
   listProfiles: noop,
+  getRelayEntry: noop,
+  setRelayEntry: noop,
   resolveProfile: noop,
   resolveProfileOrAutolink: noop,
   resolveInstanceId: () => ({ id: "", label: "" }),
+  resolveFetchedApplicationInstance: () => ({
+    found: false,
+    instanceId: "",
+    instanceLabel: "",
+    instance: undefined,
+  }),
   resolveAppContext: async () => ({ appId: "", appLabel: "", instanceId: "", instanceLabel: "" }),
   profileLabel: (profile: { appName?: string; appId: string }) =>
     profile.appName ? `${profile.appName} (${profile.appId})` : profile.appId,
@@ -158,6 +172,7 @@ export const credentialStoreStubs = {
   getValidToken: async () => null,
   getStoredSession: async () => null,
   hasStoredCredentials: async () => false,
+  hasAccountCredentials: async () => Boolean(process.env.CLERK_PLATFORM_API_KEY),
   storeToken: async () => {},
   deleteToken: async () => {},
   createOAuthSession: (tokenResponse: {

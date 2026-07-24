@@ -2,6 +2,11 @@
 
 Manage Clerk instance configuration.
 
+Two modes exist, picked automatically:
+
+- **Account mode** (default) — full instance config document via the Platform API. Used whenever the project is linked or `--app` is passed; requires an account (`clerk auth login` or `CLERK_PLATFORM_API_KEY`).
+- **Keyless mode** — a reduced set of settings via the Backend API, using only the instance secret key the project already has on disk. No account, no login, and no platform API key required. See [Keyless mode](#keyless-mode).
+
 ## Commands
 
 ### `clerk config pull`
@@ -31,6 +36,7 @@ clerk config pull --keys auth_email session
   - a linked Clerk project in the current directory, or
   - `--app <id>` to target an application directly
 - Authenticated via `CLERK_PLATFORM_API_KEY`, `clerk auth login`, or the interactive human-mode prompt
+- **Or neither**: an unlinked project holding an instance secret key falls back to [keyless mode](#keyless-mode), which needs no account
 
 #### API Endpoints
 
@@ -69,6 +75,7 @@ clerk config schema --keys auth_email session
   - a linked Clerk project in the current directory, or
   - `--app <id>` to target an application directly
 - Authenticated via `CLERK_PLATFORM_API_KEY`, `clerk auth login`, or the interactive human-mode prompt
+- Account-only: in an unlinked project holding an instance secret key this exits with an error explaining that the schema describes the account-level config document (see [keyless mode](#keyless-mode))
 
 #### API Endpoints
 
@@ -109,6 +116,7 @@ clerk config patch --file partial-config.json --dry-run
   - a linked Clerk project in the current directory, or
   - `--app <id>` to target an application directly
 - Authenticated via `CLERK_PLATFORM_API_KEY`, `clerk auth login`, or the interactive human-mode prompt
+- **Or neither**: an unlinked project holding an instance secret key falls back to [keyless mode](#keyless-mode), which needs no account
 
 #### API Endpoints
 
@@ -149,9 +157,88 @@ clerk config put --file full-config.json --dry-run
   - a linked Clerk project in the current directory, or
   - `--app <id>` to target an application directly
 - Authenticated via `CLERK_PLATFORM_API_KEY`, `clerk auth login`, or the interactive human-mode prompt
+- Account-only: in an unlinked project holding an instance secret key this exits with an error pointing at `clerk config patch` (see [keyless mode](#keyless-mode))
 
 #### API Endpoints
 
 | Method | Endpoint                                                          | Description                                                                                                                                                                                   |
 | ------ | ----------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `PUT`  | `/v1/platform/applications/{appID}/instances/{instanceID}/config` | Replaces the full instance configuration. Sends `?dry_run=true` under `--dry-run` to validate and preview without persisting. Authenticated via `Bearer` token from `CLERK_PLATFORM_API_KEY`. |
+
+---
+
+## Keyless mode
+
+A keyless application created by `clerk init` has no Clerk account behind it until someone claims it, so the Platform API — which authenticates an _account_ — cannot reach it. `clerk config pull` and `clerk config patch` fall back to Clerk's Backend API, authenticated with the instance secret key the project already keeps locally, so an unclaimed app can be configured without logging in.
+
+### When it engages
+
+Both must hold, otherwise the account-authenticated path runs unchanged:
+
+1. No `--app` was passed.
+2. No linked project in the current directory.
+
+**Account credentials are not part of this decision.** Keyless mode works with or without `CLERK_PLATFORM_API_KEY` and with or without a `clerk auth login` session — the instance secret key is sufficient on its own. What rules it out is an explicit destination (`--app` or a linked profile), because that names an application the local secret key may not belong to.
+
+When credentials _are_ present and the directory simply isn't linked, the command prints a warning that it's using the reduced key-based view and points at `clerk link`, so the narrower output is never a silent surprise.
+
+The secret key is resolved the way the app itself would resolve one, and this order is shared by every keyless-capable command (`lib/keyless-target.ts`):
+
+1. `CLERK_SECRET_KEY`, or the framework's secret key variable (e.g. `NUXT_CLERK_SECRET_KEY`), in the environment
+2. `.env`, then `.env.local` — the later file wins
+3. `.clerk/.tmp/keyless.json` — the keys a Clerk SDK minted for itself when the app ran with no keys configured
+
+A key that doesn't start with `sk_` is rejected. The SDK file comes last because SDKs only create their own application when nothing else supplies keys.
+
+### Payload shape
+
+The Backend API has no single config document — it exposes independent resources — so keyless payloads name them directly instead of translating between the two shapes. Each top-level key maps 1:1 to one endpoint:
+
+```sh
+clerk config patch --json '{
+  "instance": { "support_email": "dev@acme.com" },
+  "organization_settings": { "enabled": true }
+}'
+```
+
+| Top-level key                | Endpoint                                  | Readable | Covers                                                                              |
+| ---------------------------- | ----------------------------------------- | -------- | ----------------------------------------------------------------------------------- |
+| `instance`                   | `/v1/instance`                            | Yes      | Support email, home URL, allowed origins                                            |
+| `communication`              | `/v1/instance/communication`              | Yes      | Blocked country codes and communication settings                                    |
+| `restrictions`               | `/v1/instance/restrictions`               | No       | Allowlist / blocklist sign-up restrictions                                          |
+| `organization_settings`      | `/v1/instance/organization_settings`      | Yes      | Organizations: enabled, membership limits, domains, creation defaults               |
+| `protect`                    | `/v1/instance/protect`                    | Yes      | Bot protection                                                                      |
+| `oauth_application_settings` | `/v1/instance/oauth_application_settings` | Yes      | Dynamic OAuth client registration                                                   |
+| `instance_settings`          | `/v1/beta_features/instance_settings`     | No       | `test_mode`, `progressive_sign_up`, `from_email_address`, `restricted_to_allowlist` |
+
+Any other top-level key exits with a usage error naming the supported ones — the account-mode keys (`session`, `sign_up`, `auth_email`, …) are not silently translated.
+
+`instance_settings` is backed by a beta route, and is the only way to reach those four auth-config fields without an account — which is why it's included.
+
+`clerk config pull` returns the same envelope. `restrictions` is omitted because the Backend API has no read route for it; asking for it by name prints a warning rather than failing.
+
+`GET /v1/instance` returns a subset of what `PATCH /v1/instance` accepts — `support_email`, for example, is writable but not readable. Fields the read omits have no "before" value to compare against, so they always appear as additions in the diff and never trigger "No changes detected". The write itself is unaffected: patching a field to the value it already holds is a no-op server-side.
+
+### Differences from account mode
+
+| Behavior        | Account mode                             | Keyless mode                                                      |
+| --------------- | ---------------------------------------- | ----------------------------------------------------------------- |
+| Coverage        | Full config document                     | Three Backend API resources                                       |
+| `--instance`    | Selects dev/prod                         | Usage error — the secret key already targets exactly one instance |
+| `--dry-run`     | Server-side validation of the projection | Local diff only; nothing is sent                                  |
+| `config put`    | Replaces the whole document              | Errors — no full document exists to replace                       |
+| `config schema` | Returns the JSON Schema                  | Errors — the schema describes the account-level document          |
+
+Run `clerk auth login` to claim the application; auto-claim links it, and every config command then uses account mode with full coverage.
+
+### API Endpoints (keyless mode)
+
+All requests go to the Clerk Backend API (default `https://api.clerk.dev`, overridable via `CLERK_BACKEND_API_URL`), authenticated with a `Bearer sk_…` instance secret key.
+
+| Method  | Endpoint                             | Description                                                                                |
+| ------- | ------------------------------------ | ------------------------------------------------------------------------------------------ |
+| `GET`   | `/v1/instance`                       | Reads instance settings for `config pull` and for the pre-write diff.                      |
+| `PATCH` | `/v1/instance`                       | Updates instance settings. Answers `204` with no body, so the group is re-read afterwards. |
+| `PATCH` | `/v1/instance/restrictions`          | Updates sign-up restrictions (allowlist, blocklist). Write-only — no read route exists.    |
+| `GET`   | `/v1/instance/organization_settings` | Reads organization settings for `config pull` and for the pre-write diff.                  |
+| `PATCH` | `/v1/instance/organization_settings` | Updates organization settings.                                                             |

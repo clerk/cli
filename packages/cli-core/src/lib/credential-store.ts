@@ -436,6 +436,17 @@ export async function hasStoredCredentials(): Promise<boolean> {
   return (await readStoredValue()) !== null;
 }
 
+/**
+ * True when the CLI has credentials for a Clerk *account* — either a stored
+ * OAuth session or a platform API key. This is a presence check only: it does
+ * not hit the network, so an expired token or an API outage won't demote a
+ * logged-in user into an unauthenticated code path.
+ */
+export async function hasAccountCredentials(): Promise<boolean> {
+  if (process.env.CLERK_PLATFORM_API_KEY) return true;
+  return hasStoredCredentials();
+}
+
 export async function getValidToken(): Promise<string | null> {
   const session = await getStoredSession();
   if (!session) {

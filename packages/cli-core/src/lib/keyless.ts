@@ -31,8 +31,20 @@ function isKeylessBreadcrumb(value: unknown): value is KeylessBreadcrumb {
   );
 }
 
+/**
+ * Application shapes the accountless endpoint can pre-configure at creation
+ * time — auth strategies, organizations, and billing are set server-side before
+ * the first key is ever used.
+ */
+export const KEYLESS_TEMPLATES = ["b2b-saas", "b2c-saas", "native", "waitlist"] as const;
+
+export type KeylessTemplate = (typeof KEYLESS_TEMPLATES)[number];
+
 /** Creates an accountless Clerk application via the public BAPI endpoint. */
-export async function createAccountlessApp(framework?: string): Promise<AccountlessAppResponse> {
+export async function createAccountlessApp(
+  framework?: string,
+  template?: KeylessTemplate,
+): Promise<AccountlessAppResponse> {
   const url = new URL("/v1/accountless_applications", getBapiBaseUrl());
 
   const headers: Record<string, string> = {
@@ -41,7 +53,7 @@ export async function createAccountlessApp(framework?: string): Promise<Accountl
     ...(framework && { "Clerk-Framework": framework }),
   };
 
-  const body = new URLSearchParams({ source: "cli" });
+  const body = new URLSearchParams({ source: "cli", ...(template && { template }) });
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), CREATE_TIMEOUT_MS);
 

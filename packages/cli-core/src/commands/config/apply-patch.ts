@@ -1,13 +1,20 @@
-import { fetchInstanceConfig, patchInstanceConfig } from "../../lib/plapi.ts";
-import { throwUserAbort, withApiContext } from "../../lib/errors.ts";
+import { throwUserAbort } from "../../lib/errors.ts";
 import { withSpinner } from "../../lib/spinner.ts";
 import { confirm } from "../../lib/prompts.ts";
 import { isHuman } from "../../mode.ts";
 import { log } from "../../lib/log.ts";
 import { hasConfigChanges, printDiff } from "./push.ts";
+import type { InstanceTarget } from "../../lib/keyless-target.ts";
+import {
+  assertPayloadWritable,
+  LOCAL_DRY_RUN_MESSAGE,
+  readInstanceConfig,
+  supportsServerDryRun,
+  writeInstanceConfig,
+} from "./io.ts";
 
 export interface ApplyPatchOptions {
-  ctx: { appId: string; instanceId: string; appLabel: string; instanceLabel: string };
+  target: InstanceTarget;
   payload: Record<string, unknown>;
   verb: string;
   successMessage: string;
@@ -21,13 +28,13 @@ export interface ApplyPatchOptions {
 
 /** Fetch + diff + confirm + PATCH, matching `clerk config patch` semantics. */
 export async function applyConfigPatch(opts: ApplyPatchOptions): Promise<boolean> {
-  const { ctx, payload, verb, successMessage, failureContext, yes, dryRun, warning } = opts;
+  const { target, payload, verb, successMessage, failureContext, yes, dryRun, warning } = opts;
+
+  assertPayloadWritable(target, payload);
 
   const current =
     opts.currentConfig ??
-    (await withSpinner("Fetching current config...", () =>
-      withApiContext(fetchInstanceConfig(ctx.appId, ctx.instanceId), "Failed to fetch config"),
-    ));
+    (await withSpinner("Fetching current config...", () => readInstanceConfig(target, payload)));
 
   if (!hasConfigChanges(current, payload, true)) {
     log.info(dryRun ? "[dry-run] No changes detected" : "No changes detected");
@@ -35,8 +42,8 @@ export async function applyConfigPatch(opts: ApplyPatchOptions): Promise<boolean
   }
 
   const headline = dryRun
-    ? `[dry-run] Proposing PATCH on ${ctx.appLabel} (${ctx.instanceLabel}):`
-    : `${verb} on ${ctx.appLabel} (${ctx.instanceLabel}):`;
+    ? `[dry-run] Proposing PATCH on ${target.label}:`
+    : `${verb} on ${target.label}:`;
   log.info(`\n${headline}\n`);
   printDiff(current, payload, true);
 
@@ -44,22 +51,24 @@ export async function applyConfigPatch(opts: ApplyPatchOptions): Promise<boolean
   // prompt — the warning is an audit signal, not a confirmation cue.
   if (warning) log.warn(warning);
 
+  if (dryRun && !supportsServerDryRun(target)) {
+    log.success(LOCAL_DRY_RUN_MESSAGE);
+    return true;
+  }
+
   if (!dryRun && isHuman() && !yes) {
     const ok = await confirm({ message: "Proceed?" });
     if (!ok) throwUserAbort();
   }
 
   const spinnerMsg = dryRun
-    ? `[dry-run] Validating config on ${ctx.appLabel} (${ctx.instanceLabel})...`
-    : `${verb} on ${ctx.appLabel} (${ctx.instanceLabel})...`;
+    ? `[dry-run] Validating config on ${target.label}...`
+    : `${verb} on ${target.label}...`;
   const result = await withSpinner(spinnerMsg, () =>
-    withApiContext(
-      patchInstanceConfig(ctx.appId, ctx.instanceId, payload, { dryRun }),
-      dryRun ? "Dry-run failed" : failureContext,
-    ),
+    writeInstanceConfig(target, payload, { method: "PATCH", dryRun, failureContext }),
   );
 
-  log.debug(`plapi: ${JSON.stringify(result)}`);
+  log.debug(`config: ${JSON.stringify(result)}`);
   log.success(dryRun ? "[dry-run] Validation passed — no changes applied" : successMessage);
   return true;
 }
