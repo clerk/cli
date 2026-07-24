@@ -1,6 +1,6 @@
 import { join } from "node:path";
 import { findFirstFile, indentBlock, insertAfterLastImport, safeAddImport } from "./helpers.js";
-import { maskCommentsAndStrings } from "./transformations.js";
+import { findMatchingDelimiter, maskCommentsAndStrings } from "./source-scan.js";
 import type { FileAction, FrameworkScaffold, ProjectContext, ScaffoldPlan } from "./types.js";
 
 const EXPO_QUICKSTART_URL = "https://clerk.com/docs/expo/getting-started/quickstart";
@@ -32,32 +32,6 @@ export default function RootLayout() {
   );
 }
 `;
-}
-
-/**
- * Find the index just past the delimiter matching the one at `openIdx`.
- * Scans masked source, so delimiters inside strings, comments, or JSX text
- * don't count. Returns null when the delimiter never closes (malformed source).
- */
-function findMatchingDelimiter(
-  masked: string,
-  openIdx: number,
-  open: string,
-  close: string,
-): number | null {
-  let depth = 0;
-
-  for (let i = openIdx; i < masked.length; i++) {
-    const char = masked[i]!;
-
-    if (char === open) depth++;
-    else if (char === close) {
-      depth--;
-      if (depth === 0) return i + 1;
-    }
-  }
-
-  return null;
 }
 
 /**

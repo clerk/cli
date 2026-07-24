@@ -1,9 +1,5 @@
 import { join } from "node:path";
-import {
-  needsManualWiring,
-  scaffoldServerEntry,
-  type ServerFrameworkConfig,
-} from "./node-server.js";
+import { scaffoldServerFramework, type ServerFrameworkConfig } from "./node-server.js";
 import type { FileAction, FrameworkScaffold, ProjectContext, ScaffoldPlan } from "./types.js";
 
 const EXPRESS_CONFIG: ServerFrameworkConfig = {
@@ -16,6 +12,8 @@ const EXPRESS_CONFIG: ServerFrameworkConfig = {
   frameworkPackage: "express",
   attachStatement: (appVar) => `${appVar}.use(clerkMiddleware());`,
   description: "Add clerkMiddleware() to Express app",
+  docsUrl: "https://clerk.com/docs/expressjs/getting-started/quickstart",
+  manualWiring: "Add `app.use(clerkMiddleware())` from @clerk/express to your server entry file.",
 };
 
 const TYPES_REFERENCE_PATH = "types/globals.d.ts";
@@ -48,27 +46,13 @@ export const express: FrameworkScaffold = {
   matches: (ctx) => ctx.framework.dep === "express",
 
   async scaffold(ctx: ProjectContext): Promise<ScaffoldPlan> {
-    const [entryAction, typesAction] = await Promise.all([
-      scaffoldServerEntry(ctx, EXPRESS_CONFIG),
+    const [plan, typesAction] = await Promise.all([
+      scaffoldServerFramework(ctx, EXPRESS_CONFIG),
       scaffoldTypesReference(ctx),
     ]);
 
-    const actions: FileAction[] = [];
-    const postInstructions: string[] = [];
+    if (typesAction) plan.actions.push(typesAction);
 
-    if (entryAction) actions.push(entryAction);
-    if (needsManualWiring(entryAction)) {
-      postInstructions.push(
-        "Add `app.use(clerkMiddleware())` from @clerk/express to your server entry file. See: https://clerk.com/docs/expressjs/getting-started/quickstart",
-      );
-    }
-    if (typesAction) actions.push(typesAction);
-
-    postInstructions.push(
-      `Ensure ${ctx.framework.envVar} and CLERK_SECRET_KEY are set in your ${ctx.envFile} (pulled via \`clerk env pull\`), and load them before Clerk imports — e.g. \`node --env-file=${ctx.envFile} index.js\``,
-      "Protect routes with `getAuth()` and `clerkClient`: https://clerk.com/docs/expressjs/getting-started/quickstart",
-    );
-
-    return { actions, postInstructions };
+    return plan;
   },
 };

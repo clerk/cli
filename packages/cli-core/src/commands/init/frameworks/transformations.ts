@@ -4,6 +4,7 @@
  * Used by framework scaffolders for import injection, provider wrapping, and indentation.
  */
 import { parseModule } from "magicast";
+import { maskCommentsAndStrings } from "./source-scan.js";
 
 /** Check if file content already imports from a @clerk/ package. */
 export function hasClerkImport(content: string): boolean {
@@ -25,117 +26,14 @@ export function safeAddImport(content: string, source: string, imported: string)
   try {
     const mod = parseModule(content);
     mod.imports.$add({ from: source, imported, local: imported });
-    // magicast prints new imports without brace spacing — align the added
-    // line with this codebase's (and Prettier's) `import { x }` style.
-    return mod.generate().code.replace(`import {${imported}}`, `import { ${imported} }`);
+    // magicast builds the import node itself and prints it without brace
+    // spacing, and no printer option overrides that. Projects without a
+    // formatter would keep `import {x}`, so re-space the one statement we
+    // added — anchored on `from` so only an import statement can match.
+    return mod.generate().code.replace(`import {${imported}} from`, `import { ${imported} } from`);
   } catch {
     return `import { ${imported} } from "${source}";\n${content}`;
   }
-}
-
-/**
- * Index of the quote closing the one at `openIdx`, or null when it is unpaired
- * on that line. A JS string literal never contains a raw newline, so a lone
- * quote is punctuation — JSX text (`Don't`) or a quote inside a regex literal
- * (`/"/g`) — and must not be treated as the start of a string.
- */
-function findClosingQuoteOnLine(source: string, openIdx: number, quote: string): number | null {
-  for (let i = openIdx + 1; i < source.length; i++) {
-    const char = source[i]!;
-    if (char === "\n") return null;
-    if (char === "\\") i++;
-    else if (char === quote) return i;
-  }
-  return null;
-}
-
-/**
- * Replace the contents of comments and string/template literals with spaces,
- * preserving length and newlines (delimiters are kept). Searches over the
- * result only match real code, and every index maps 1:1 back to the source.
- *
- * Template literals get recursive handling: a `${...}` substitution is real
- * code (not masked), and it can itself contain strings, comments, nested
- * template literals, and braces (e.g. an object literal) — so it's scanned
- * with the same code-scanning logic, stopping at the substitution's own
- * closing `}` rather than the first `}` encountered.
- */
-export function maskCommentsAndStrings(source: string): string {
-  const out = source.split("");
-  let i = 0;
-
-  const blank = () => {
-    if (source[i] !== "\n") out[i] = " ";
-    i++;
-  };
-
-  function scanString(quote: string): void {
-    const closeIdx = findClosingQuoteOnLine(source, i, quote);
-    if (closeIdx === null) {
-      i++; // unpaired — punctuation (JSX text, a regex literal), not a string
-      return;
-    }
-    i++; // keep the opening delimiter
-    while (i < closeIdx) blank();
-    i++; // keep the closing delimiter
-  }
-
-  function scanTemplate(): void {
-    i++; // keep the opening backtick
-    while (i < source.length && source[i] !== "`") {
-      if (source[i] === "$" && source[i + 1] === "{") {
-        i += 2; // keep `${` — real code, not masked
-        scanCode(true);
-        if (i < source.length && source[i] === "}") i++; // keep the closing `}`
-        continue;
-      }
-      const escaped = source[i] === "\\";
-      blank();
-      if (escaped && i < source.length) blank();
-    }
-    if (i < source.length) i++; // keep the closing backtick
-  }
-
-  // Scans real code. When `stopAtOwnBrace` is set (inside a `${...}`
-  // substitution), returns as soon as it sees the `}` that closes this
-  // substitution — braces opened within it (e.g. `{ a: 1 }`) are tracked so
-  // they don't end the substitution early.
-  function scanCode(stopAtOwnBrace: boolean): void {
-    let braceDepth = 0;
-    while (i < source.length) {
-      const char = source[i]!;
-      const next = source[i + 1];
-
-      if (stopAtOwnBrace && char === "}" && braceDepth === 0) return;
-
-      if (char === "/" && next === "/") {
-        while (i < source.length && source[i] !== "\n") blank();
-      } else if (char === "/" && next === "*") {
-        blank();
-        blank();
-        while (i < source.length && !(source[i] === "*" && source[i + 1] === "/")) blank();
-        if (i < source.length) {
-          blank();
-          blank();
-        }
-      } else if (char === '"' || char === "'") {
-        scanString(char);
-      } else if (char === "`") {
-        scanTemplate();
-      } else if (char === "{") {
-        braceDepth++;
-        i++;
-      } else if (char === "}") {
-        braceDepth--;
-        i++;
-      } else {
-        i++;
-      }
-    }
-  }
-
-  scanCode(false);
-  return out.join("");
 }
 
 // Spans a complete import statement, including multi-line named-import blocks

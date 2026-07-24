@@ -1,9 +1,5 @@
-import {
-  needsManualWiring,
-  scaffoldServerEntry,
-  type ServerFrameworkConfig,
-} from "./node-server.js";
-import type { FileAction, FrameworkScaffold, ProjectContext, ScaffoldPlan } from "./types.js";
+import { scaffoldServerFramework, type ServerFrameworkConfig } from "./node-server.js";
+import type { FrameworkScaffold } from "./types.js";
 
 const FASTIFY_CONFIG: ServerFrameworkConfig = {
   clerkPackage: "@clerk/fastify",
@@ -16,6 +12,8 @@ const FASTIFY_CONFIG: ServerFrameworkConfig = {
   frameworkPackage: "fastify",
   attachStatement: (appVar) => `${appVar}.register(clerkPlugin);`,
   description: "Register clerkPlugin on Fastify app",
+  docsUrl: "https://clerk.com/docs/fastify/getting-started/quickstart",
+  manualWiring: "Register `clerkPlugin` from @clerk/fastify on your Fastify instance.",
 };
 
 export const fastify: FrameworkScaffold = {
@@ -24,24 +22,5 @@ export const fastify: FrameworkScaffold = {
 
   matches: (ctx) => ctx.framework.dep === "fastify",
 
-  async scaffold(ctx: ProjectContext): Promise<ScaffoldPlan> {
-    const entryAction = await scaffoldServerEntry(ctx, FASTIFY_CONFIG);
-
-    const actions: FileAction[] = [];
-    const postInstructions: string[] = [];
-
-    if (entryAction) actions.push(entryAction);
-    if (needsManualWiring(entryAction)) {
-      postInstructions.push(
-        "Register `clerkPlugin` from @clerk/fastify on your Fastify instance. See: https://clerk.com/docs/fastify/getting-started/quickstart",
-      );
-    }
-
-    postInstructions.push(
-      `Ensure ${ctx.framework.envVar} and CLERK_SECRET_KEY are set in your ${ctx.envFile} (pulled via \`clerk env pull\`), and load them before Clerk imports — e.g. \`node --env-file=${ctx.envFile} index.js\``,
-      "Protect routes with `getAuth()` and `clerkClient`: https://clerk.com/docs/fastify/getting-started/quickstart",
-    );
-
-    return { actions, postInstructions };
-  },
+  scaffold: (ctx) => scaffoldServerFramework(ctx, FASTIFY_CONFIG),
 };

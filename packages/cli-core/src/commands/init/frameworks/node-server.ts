@@ -7,9 +7,10 @@
  * statement differ, so both scaffolders delegate here.
  */
 import { join } from "node:path";
-import { maskCommentsAndStrings, safeAddImport } from "./transformations.js";
+import { safeAddImport } from "./transformations.js";
+import { maskCommentsAndStrings } from "./source-scan.js";
 import { findFirstFile } from "./helpers.js";
-import type { FileAction, ProjectContext } from "./types.js";
+import type { FileAction, ProjectContext, ScaffoldPlan } from "./types.js";
 
 export type ServerFrameworkConfig = {
   /** Clerk SDK package, e.g. "@clerk/express". */
@@ -24,7 +25,17 @@ export type ServerFrameworkConfig = {
   attachStatement(appVar: string): string;
   /** Human-readable description for the file action. */
   description: string;
+  /** Quickstart URL for this framework. */
+  docsUrl: string;
+  /** How to wire Clerk by hand, printed when the entry couldn't be wired. */
+  manualWiring: string;
 };
+
+/**
+ * The entry file's outcome. `wired` says whether Clerk was actually attached,
+ * so callers never have to infer it from a human-readable skip reason.
+ */
+type ServerEntry = { action: FileAction | null; wired: boolean };
 
 /** Entry file candidates for Node server projects, most specific first. */
 const ENTRY_BASENAMES = ["index", "server", "app", "main"];
@@ -63,12 +74,10 @@ async function findEntryFile(ctx: ProjectContext): Promise<string | null> {
 /**
  * Find the end of the statement starting at `startIdx` — the first `;` or
  * newline at bracket depth 0 that is not followed by a chained `.` call.
- * Scans masked source so brackets and terminators inside comments or string
- * literals don't count. Returns the index just past the statement's last
- * character (indices map 1:1 to `content`).
+ * Takes masked source so brackets and terminators inside comments or string
+ * literals don't count; the returned index applies to the original text.
  */
-export function findStatementEnd(content: string, startIdx: number): number {
-  const masked = maskCommentsAndStrings(content);
+export function findStatementEnd(masked: string, startIdx: number): number {
   let depth = 0;
 
   for (let i = startIdx; i < masked.length; i++) {
@@ -87,34 +96,20 @@ export function findStatementEnd(content: string, startIdx: number): number {
     }
   }
 
-  return content.length;
+  return masked.length;
 }
 
 function isCommonJs(masked: string): boolean {
   return masked.includes("require(") && !/^\s*import\s/m.test(masked);
 }
 
-/**
- * True when the user must wire Clerk in manually — no entry file was found,
- * or the entry exists but the app-creation statement couldn't be located.
- */
-export function needsManualWiring(action: FileAction | null): boolean {
-  return (
-    action === null ||
-    (action.type === "skip" && (action.skipReason?.startsWith("Could not find") ?? false))
-  );
-}
-
-/**
- * Scaffold the Clerk middleware/plugin into a Node server entry file.
- * Returns null when no entry file was found (caller prints a post-instruction).
- */
-export async function scaffoldServerEntry(
+/** Scaffold the Clerk middleware/plugin into a Node server entry file. */
+async function scaffoldServerEntry(
   ctx: ProjectContext,
   config: ServerFrameworkConfig,
-): Promise<FileAction | null> {
+): Promise<ServerEntry> {
   const entryPath = await findEntryFile(ctx);
-  if (!entryPath) return null;
+  if (!entryPath) return { action: null, wired: false };
 
   const content = await Bun.file(join(ctx.cwd, entryPath)).text();
 
@@ -125,7 +120,12 @@ export async function scaffoldServerEntry(
   // string, which masking would blank out, breaking detection of legitimately
   // already-wired projects.
   if (content.includes(config.clerkPackage)) {
-    return { type: "skip", path: entryPath, skipReason: `Already has ${config.clerkPackage}` };
+    const action: FileAction = {
+      type: "skip",
+      path: entryPath,
+      skipReason: `Already has ${config.clerkPackage}`,
+    };
+    return { action, wired: true };
   }
 
   // A creation statement inside a comment or string (e.g. a commented-out
@@ -137,15 +137,16 @@ export async function scaffoldServerEntry(
   const creation = new RegExp(config.creationPattern.source, "g");
   const match = [...content.matchAll(creation)].find((m) => masked[m.index] === content[m.index]);
   if (!match) {
-    return {
+    const action: FileAction = {
       type: "skip",
       path: entryPath,
       skipReason: `Could not find where the ${config.frameworkPackage} app is created`,
     };
+    return { action, wired: false };
   }
 
   const appVar = match[1]!;
-  const statementEnd = findStatementEnd(content, match.index);
+  const statementEnd = findStatementEnd(masked, match.index);
 
   // CJS files get the require right next to the attach statement — inserting
   // relative to the framework's own require line could land inside a
@@ -156,10 +157,31 @@ export async function scaffoldServerEntry(
     : `\n${config.attachStatement(appVar)}`;
   const injected = content.slice(0, statementEnd) + attach + content.slice(statementEnd);
 
-  return {
+  const action: FileAction = {
     path: entryPath,
     type: "modify",
     content: cjs ? injected : safeAddImport(injected, config.clerkPackage, config.clerkImport),
     description: config.description,
+  };
+  return { action, wired: true };
+}
+
+/**
+ * Build the full scaffold plan for a Node server framework: wire the entry
+ * file and print the setup instructions that wiring can't cover.
+ */
+export async function scaffoldServerFramework(
+  ctx: ProjectContext,
+  config: ServerFrameworkConfig,
+): Promise<ScaffoldPlan> {
+  const { action, wired } = await scaffoldServerEntry(ctx, config);
+
+  return {
+    actions: action ? [action] : [],
+    postInstructions: [
+      ...(wired ? [] : [`${config.manualWiring} See: ${config.docsUrl}`]),
+      `Ensure ${ctx.framework.envVar} and CLERK_SECRET_KEY are set in your ${ctx.envFile} (pulled via \`clerk env pull\`), and load them before Clerk imports — e.g. \`node --env-file=${ctx.envFile} index.js\``,
+      `Protect routes with \`getAuth()\` and \`clerkClient\`: ${config.docsUrl}`,
+    ],
   };
 }
