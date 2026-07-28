@@ -364,3 +364,144 @@ export default function RootLayout() {
     expect(keyIdx).toBeGreaterThan(layout.content.indexOf('} from "expo-font";'));
   }
 });
+
+// Arrow-function layouts are the common React Native shape. When the default
+// export can't be resolved the search used to fall back to the whole file,
+// which put <ClerkProvider> inside a sibling ErrorBoundary and left the real
+// layout unwrapped — scaffolded-looking output where every Clerk hook throws.
+test.each([
+  {
+    name: "an arrow function reached through `export default Name`",
+    body: `const RootLayout = () => {
+  return (
+    <Slot />
+  );
+};
+
+export default RootLayout;`,
+  },
+  {
+    name: "an inline arrow default export",
+    body: `export default () => {
+  return (
+    <Slot />
+  );
+};`,
+  },
+  {
+    name: "an async arrow with props",
+    body: `export default async (props) => {
+  return (
+    <Slot />
+  );
+};`,
+  },
+  {
+    name: "a typed arrow reached through `export default Name`",
+    body: `const RootLayout: React.FC = () => {
+  return (
+    <Slot />
+  );
+};
+
+export default RootLayout;`,
+  },
+  {
+    name: "a function expression reached through `export default Name`",
+    body: `const RootLayout = function () {
+  return (
+    <Slot />
+  );
+};
+
+export default RootLayout;`,
+  },
+])("wraps the root layout, not ErrorBoundary, for $name", ({ body }) => {
+  const content = `import { Slot } from "expo-router";
+
+${body}
+
+export function ErrorBoundary({ error }: { error: Error }) {
+  return (
+    <Text>{error.message}</Text>
+  );
+}
+`;
+
+  const wrapped = wrapLastReturnWithProvider(content)!;
+  expect(wrapped).not.toBeNull();
+  expect(wrapped.match(/<ClerkProvider/g)).toHaveLength(1);
+  expect(wrapped.indexOf("<ClerkProvider")).toBeLessThan(wrapped.indexOf("ErrorBoundary"));
+  // The error boundary's own render is untouched.
+  expect(wrapped).toContain("return (\n    <Text>{error.message}</Text>\n  );");
+});
+
+// Failing closed produces an honest "unsupported shape" skip plus a
+// post-instruction, which beats wrapping whatever return happens to be last.
+test.each([
+  {
+    name: "a HOC-wrapped default export",
+    content: `function RootLayout() {
+  return (
+    <Slot />
+  );
+}
+
+export default withFoo(RootLayout);
+`,
+  },
+  {
+    name: "a concise arrow body with no return to wrap",
+    content: `export default () => (
+  <Slot />
+);
+`,
+  },
+  {
+    name: "a default export referencing an unresolvable binding",
+    content: `export default Layouts.Root;
+`,
+  },
+])("returns null rather than guessing for $name", ({ content }) => {
+  expect(wrapLastReturnWithProvider(content)).toBeNull();
+});
+
+test("wraps a single-line return that has a trailing comment, keeping the comment", () => {
+  const content = `export default function RootLayout() {
+  return <Slot name="main" />; // TODO: see docs -> here
+}
+`;
+
+  const wrapped = wrapLastReturnWithProvider(content)!;
+  expect(wrapped).not.toBeNull();
+  expect(wrapped).toContain("<ClerkProvider");
+  // The JSX is read back out of the real source, so its string attribute
+  // survives the mask…
+  expect(wrapped).toContain('<Slot name="main" />');
+  // …and the trailing comment is not swallowed by the match.
+  expect(wrapped).toContain("// TODO: see docs -> here");
+});
+
+test("does not skip a layout whose only ClerkProvider is in a comment", async () => {
+  await mkdir(join(tempDir, "app"), { recursive: true });
+  await Bun.write(
+    join(tempDir, "app/_layout.tsx"),
+    `import { Slot } from "expo-router";
+
+// TODO: wrap in <ClerkProvider>
+export default function RootLayout() {
+  return (
+    <Slot />
+  );
+}
+`,
+  );
+
+  const plan = await expo.scaffold(makeCtx());
+
+  const layout = findAction(plan.actions, "app/_layout.tsx");
+  expect(layout.type).toBe("modify");
+  if (layout.type === "modify") {
+    expect(layout.content).toContain("<ClerkProvider publishableKey=");
+  }
+});

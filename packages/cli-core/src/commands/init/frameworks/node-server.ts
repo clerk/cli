@@ -34,16 +34,20 @@ export type ServerFrameworkConfig = {
 /**
  * The entry file's outcome. `wired` says whether Clerk was actually attached,
  * so callers never have to infer it from a human-readable skip reason.
+ * `entryPath` is carried out so the setup instructions can name the real file.
  */
-type ServerEntry = { action: FileAction | null; wired: boolean };
+type ServerEntry = { action: FileAction | null; wired: boolean; entryPath: string | null };
 
 /** Entry file candidates for Node server projects, most specific first. */
 const ENTRY_BASENAMES = ["index", "server", "app", "main"];
 const ENTRY_EXTS = ["ts", "mts", "js", "mjs", "cjs"];
 
+// Interleaved by basename, not grouped by directory: putting every `src/` name
+// first lets an unrelated `src/app.ts` outrank a root `index.js` real entry.
 function entryCandidates(): string[] {
-  const names = ENTRY_BASENAMES.flatMap((base) => ENTRY_EXTS.map((ext) => `${base}.${ext}`));
-  return [...names.map((name) => `src/${name}`), ...names];
+  return ENTRY_BASENAMES.flatMap((base) =>
+    ENTRY_EXTS.flatMap((ext) => [`src/${base}.${ext}`, `${base}.${ext}`]),
+  );
 }
 
 /** Directories that contain build output, never source to scaffold into. */
@@ -109,7 +113,7 @@ async function scaffoldServerEntry(
   config: ServerFrameworkConfig,
 ): Promise<ServerEntry> {
   const entryPath = await findEntryFile(ctx);
-  if (!entryPath) return { action: null, wired: false };
+  if (!entryPath) return { action: null, wired: false, entryPath: null };
 
   const content = await Bun.file(join(ctx.cwd, entryPath)).text();
 
@@ -125,7 +129,7 @@ async function scaffoldServerEntry(
       path: entryPath,
       skipReason: `Already has ${config.clerkPackage}`,
     };
-    return { action, wired: true };
+    return { action, wired: true, entryPath };
   }
 
   // A creation statement inside a comment or string (e.g. a commented-out
@@ -142,7 +146,7 @@ async function scaffoldServerEntry(
       path: entryPath,
       skipReason: `Could not find where the ${config.frameworkPackage} app is created`,
     };
-    return { action, wired: false };
+    return { action, wired: false, entryPath };
   }
 
   const appVar = match[1]!;
@@ -163,7 +167,7 @@ async function scaffoldServerEntry(
     content: cjs ? injected : safeAddImport(injected, config.clerkPackage, config.clerkImport),
     description: config.description,
   };
-  return { action, wired: true };
+  return { action, wired: true, entryPath };
 }
 
 /**
@@ -174,13 +178,13 @@ export async function scaffoldServerFramework(
   ctx: ProjectContext,
   config: ServerFrameworkConfig,
 ): Promise<ScaffoldPlan> {
-  const { action, wired } = await scaffoldServerEntry(ctx, config);
+  const { action, wired, entryPath } = await scaffoldServerEntry(ctx, config);
 
   return {
     actions: action ? [action] : [],
     postInstructions: [
       ...(wired ? [] : [`${config.manualWiring} See: ${config.docsUrl}`]),
-      `Ensure ${ctx.framework.envVar} and CLERK_SECRET_KEY are set in your ${ctx.envFile} (pulled via \`clerk env pull\`), and load them before Clerk imports — e.g. \`node --env-file=${ctx.envFile} index.js\``,
+      `Ensure ${ctx.framework.envVar} and CLERK_SECRET_KEY are set in your ${ctx.envFile} (pulled via \`clerk env pull\`), and load them before Clerk imports — e.g. \`node --env-file=${ctx.envFile} ${entryPath ?? "index.js"}\``,
       `Protect routes with \`getAuth()\` and \`clerkClient\`: ${config.docsUrl}`,
     ],
   };

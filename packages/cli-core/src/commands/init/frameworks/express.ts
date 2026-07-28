@@ -51,7 +51,15 @@ export const express: FrameworkScaffold = {
       scaffoldTypesReference(ctx),
     ]);
 
-    if (typesAction) plan.actions.push(typesAction);
+    if (typesAction) {
+      plan.actions.push(typesAction);
+      // A tsconfig scoped to `include: ["src"]` never loads the file, and the
+      // failure is silent — `req.auth` stops type-checking with a file on disk
+      // that looks like it should have fixed it.
+      plan.postInstructions.push(
+        `Make sure \`${TYPES_REFERENCE_PATH}\` is covered by your tsconfig \`include\` — otherwise the \`req.auth\` type augmentation won't apply`,
+      );
+    }
 
     return plan;
   },

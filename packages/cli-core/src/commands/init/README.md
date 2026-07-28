@@ -198,7 +198,7 @@ If no entry file is found, a post-instruction is printed pointing to the Clerk J
 | ------------- | ----------------------- | -------------------------------------------------------------------- |
 | CREATE/MODIFY | `[src/]app/_layout.tsx` | Wrap the expo-router root layout with `ClerkProvider` + `tokenCache` |
 
-The root layout is created (with a `<Slot />`) when missing and `expo-router` is a dependency; existing layouts have their main JSX return wrapped (guard returns like `if (!loaded) return null` are left alone). Post-instructions cover `npx expo install expo-secure-store` (required by `@clerk/expo/token-cache`, installed via `expo install` so the version matches the project's Expo SDK), enabling the Native API in the Dashboard, and adding sign-in/sign-up screens.
+The root layout is created (with a `<Slot />`) when missing and `expo-router` is a dependency; existing layouts have their main JSX return wrapped (guard returns like `if (!loaded) return null` are left alone). Wrapping is scoped to the default export — a function declaration, an arrow function, or either reached through `export default Name` — so sibling exports like the documented `ErrorBoundary` are never wrapped by mistake. Shapes that can't be resolved (a HOC-wrapped export, a concise arrow body) are skipped with a post-instruction rather than guessed at. Post-instructions cover `npx expo install expo-secure-store` (required by `@clerk/expo/token-cache`, installed via `expo install` so the version matches the project's Expo SDK), enabling the Native API in the Dashboard, and adding sign-in/sign-up screens.
 
 **Bootstrap (new project)**: `clerk init --starter --framework expo` scaffolds a new app via `create-expo-app`.
 
@@ -209,13 +209,15 @@ The root layout is created (with a `<Slot />`) when missing and `expo-router` is
 | MODIFY | server entry (see below) | Add `clerkMiddleware()` right after `express()` creation |
 | CREATE | `types/globals.d.ts`     | `@clerk/express/env` type reference (TypeScript only)    |
 
+A post-instruction reminds the user that `types/globals.d.ts` must be covered by the tsconfig `include` — a config scoped to `["src"]` never loads it and the `req.auth` augmentation silently doesn't apply.
+
 ### Fastify
 
 | Action | File                     | Description                                                    |
 | ------ | ------------------------ | -------------------------------------------------------------- |
 | MODIFY | server entry (see below) | Register `clerkPlugin` right after the `Fastify(...)` creation |
 
-Express and Fastify share the server-entry scaffolding in [`node-server.ts`](./frameworks/node-server.ts). The entry file is resolved from `package.json#main` (ignored when it points at build output like `dist/`) and common candidates (`[src/]index|server|app|main` with `.ts/.mts/.js/.mjs/.cjs`). Both ESM (`import`) and CommonJS (`require`, including the inline `require("fastify")(...)` form) are supported; injection lands after the full creation statement, so multi-line options objects and chained calls (e.g. `.withTypeProvider()`) are safe. When no entry or creation call is found, a post-instruction with the quickstart link is printed instead.
+Express and Fastify share the server-entry scaffolding in [`node-server.ts`](./frameworks/node-server.ts). The entry file is resolved from `package.json#main` (ignored when it points at build output like `dist/`) and common candidates (`[src/]index|server|app|main` with `.ts/.mts/.js/.mjs/.cjs`, ordered by basename so an unrelated `src/app.ts` can't outrank a root `index.js`). The resolved path is the one named in the `--env-file` post-instruction. Both ESM (`import`) and CommonJS (`require`, including the inline `require("fastify")(...)` form) are supported; injection lands after the full creation statement, so multi-line options objects and chained calls (e.g. `.withTypeProvider()`) are safe. When no entry or creation call is found, a post-instruction with the quickstart link is printed instead.
 
 ### iOS (Swift) / Android (Kotlin)
 

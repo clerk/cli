@@ -355,3 +355,46 @@ test("includes env and route-protection post-instructions", async () => {
   expect(plan.postInstructions.some((i) => i.includes("--env-file"))).toBe(true);
   expect(plan.postInstructions.some((i) => i.includes("getAuth"))).toBe(true);
 });
+
+// Grouping every `src/` candidate ahead of every root candidate let an
+// unrelated module outrank the project's real entry, so the middleware landed
+// in a file that never runs.
+test("prefers a root index.js over an unrelated src/app.ts", async () => {
+  await mkdir(join(tempDir, "src"), { recursive: true });
+  await Bun.write(join(tempDir, "src/app.ts"), "export const helper = 1;\n");
+  await Bun.write(join(tempDir, "index.js"), ESM_SERVER);
+
+  const plan = await express.scaffold(makeCtx({ typescript: false }));
+
+  expect(findAction(plan.actions, "index.js").type).toBe("modify");
+  expect(plan.actions.some((a) => a.path === "src/app.ts")).toBe(false);
+});
+
+test("names the resolved entry file in the --env-file example", async () => {
+  await mkdir(join(tempDir, "src"), { recursive: true });
+  await Bun.write(join(tempDir, "src/server.ts"), ESM_SERVER);
+
+  const plan = await express.scaffold(makeCtx());
+
+  const envInstruction = plan.postInstructions.find((i) => i.includes("--env-file"))!;
+  expect(envInstruction).toContain("src/server.ts");
+  expect(envInstruction).not.toContain("index.js");
+});
+
+// The reference file is inert unless tsconfig actually loads it, and the
+// failure is silent — `req.auth` just stops type-checking.
+test("warns that the types file must be covered by tsconfig include", async () => {
+  await Bun.write(join(tempDir, "index.ts"), ESM_SERVER);
+
+  const plan = await express.scaffold(makeCtx());
+
+  expect(plan.postInstructions.some((i) => i.includes("tsconfig `include`"))).toBe(true);
+});
+
+test("does not warn about tsconfig include for JavaScript projects", async () => {
+  await Bun.write(join(tempDir, "index.js"), ESM_SERVER);
+
+  const plan = await express.scaffold(makeCtx({ typescript: false }));
+
+  expect(plan.postInstructions.some((i) => i.includes("tsconfig `include`"))).toBe(false);
+});

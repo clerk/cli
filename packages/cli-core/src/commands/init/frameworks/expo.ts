@@ -34,37 +34,75 @@ export default function RootLayout() {
 `;
 }
 
-/**
- * Locate the body of the default-exported function so return-wrapping never
- * targets a sibling export — expo-router layouts commonly export additional
- * components (e.g. the documented `ErrorBoundary`) from the same file.
- * Returns null when the default export isn't a resolvable function.
- */
-function findDefaultExportBody(
-  content: string,
-  masked: string,
-): { start: number; end: number } | null {
-  let fnIdx = masked.search(/export\s+default\s+(?:async\s+)?function\b/);
+/** A half-open `[start, end)` range over the source. */
+type Span = { start: number; end: number };
 
-  if (fnIdx === -1) {
-    // `export default RootLayout;` referencing a function declared elsewhere.
-    const ref = /export\s+default\s+(\w+)/.exec(masked);
-    if (!ref) return null;
-    fnIdx = masked.search(new RegExp(`\\bfunction\\s+${ref[1]}\\s*\\(`));
-    if (fnIdx === -1) return null;
-  }
+/** An arrow function's head, up to and including the `=>`. Anchoring the arrow
+ *  to the declaration keeps the body search from skipping ahead to an
+ *  unrelated arrow further down the file. */
+const ARROW_HEAD = String.raw`(?:async\s+)?(?:\([^()]*\)|[A-Za-z_$][\w$]*)\s*=>`;
 
+function braceBody(masked: string, bodyOpen: number): Span | null {
+  const bodyEnd = findMatchingDelimiter(masked, bodyOpen, "{", "}");
+  return bodyEnd === null ? null : { start: bodyOpen, end: bodyEnd };
+}
+
+/** Params are matched first so a default value containing a brace can't be
+ *  mistaken for the start of the body. */
+function findBodyAfterParams(masked: string, fnIdx: number): Span | null {
   const paramsOpen = masked.indexOf("(", fnIdx);
   if (paramsOpen === -1) return null;
   const paramsEnd = findMatchingDelimiter(masked, paramsOpen, "(", ")");
   if (paramsEnd === null) return null;
 
   const bodyOpen = masked.indexOf("{", paramsEnd);
-  if (bodyOpen === -1) return null;
-  const bodyEnd = findMatchingDelimiter(masked, bodyOpen, "{", "}");
-  if (bodyEnd === null) return null;
+  return bodyOpen === -1 ? null : braceBody(masked, bodyOpen);
+}
 
-  return { start: bodyOpen, end: bodyEnd };
+/** Only block bodies resolve — a concise body (`=> <Slot />`) has no `return`
+ *  to wrap, so the caller reports an unsupported shape rather than guessing. */
+function findArrowBody(masked: string, headIdx: number): Span | null {
+  const arrow = masked.indexOf("=>", headIdx);
+  if (arrow === -1) return null;
+
+  const bodyOpen = arrow + 2 + /^\s*/.exec(masked.slice(arrow + 2))![0].length;
+  return masked[bodyOpen] === "{" ? braceBody(masked, bodyOpen) : null;
+}
+
+/**
+ * Locate the body of the default-exported component so return-wrapping never
+ * targets a sibling export — expo-router layouts commonly export additional
+ * components (e.g. the documented `ErrorBoundary`) from the same file.
+ *
+ * Returns null for shapes it can't resolve (a HOC-wrapped export, a concise
+ * arrow body). The caller treats that as "unsupported" rather than falling
+ * back to the whole file.
+ */
+function findDefaultExportBody(masked: string): Span | null {
+  const fnDecl = /export\s+default\s+(?:async\s+)?function\b/.exec(masked);
+  if (fnDecl) return findBodyAfterParams(masked, fnDecl.index);
+
+  const inlineArrow = new RegExp(String.raw`export\s+default\s+${ARROW_HEAD}`).exec(masked);
+  if (inlineArrow) return findArrowBody(masked, inlineArrow.index);
+
+  // `export default RootLayout;` referencing a declaration elsewhere.
+  const ref = /export\s+default\s+(\w+)/.exec(masked);
+  if (!ref) return null;
+  const name = ref[1]!; // \w+ only — safe to interpolate into a RegExp
+
+  const namedFn = masked.search(new RegExp(String.raw`\bfunction\s+${name}\s*\(`));
+  if (namedFn !== -1) return findBodyAfterParams(masked, namedFn);
+
+  // `const RootLayout = () => {}`, with an optional type annotation.
+  const binding = String.raw`\b(?:const|let|var)\s+${name}\s*(?::[^=]*)?=\s*`;
+
+  const namedArrow = new RegExp(binding + ARROW_HEAD).exec(masked);
+  if (namedArrow) return findArrowBody(masked, namedArrow.index);
+
+  const namedFnExpr = new RegExp(binding + String.raw`(?:async\s+)?function\b`).exec(masked);
+  if (namedFnExpr) return findBodyAfterParams(masked, namedFnExpr.index);
+
+  return null;
 }
 
 /** Strip surrounding blank lines and the common leading indentation so the
@@ -99,12 +137,12 @@ ${indentBlock(dedent(inner), "      ")}
 export function wrapLastReturnWithProvider(content: string): string | null {
   const masked = maskCommentsAndStrings(content);
 
-  // Scope the search to the default export so a sibling component's return
-  // (e.g. an ErrorBoundary export) is never wrapped by mistake. When the
-  // default export isn't a plain function, fall back to the whole file.
-  const body = findDefaultExportBody(content, masked);
-  const from = body?.start ?? 0;
-  const to = body?.end ?? content.length;
+  // Fail closed rather than falling back to the whole file: that fallback is
+  // how an unresolvable default export ends up with the provider installed in
+  // a sibling ErrorBoundary while the real layout stays unwrapped.
+  const body = findDefaultExportBody(masked);
+  if (!body) return null;
+  const { start: from, end: to } = body;
 
   // Searching the masked region keeps commented-out returns from matching.
   const relIdx = masked.slice(from, to).lastIndexOf("return (");
@@ -118,20 +156,27 @@ export function wrapLastReturnWithProvider(content: string): string | null {
   }
 
   // Single-line form: `return <Slot />;` — multi-line JSX without parens is
-  // invalid JS (ASI), so the statement always ends on the same line.
-  const singleLine = /return\s+(<.*>)\s*;?\s*$/gm;
+  // invalid JS (ASI), so the statement always ends on the same line. Matching
+  // the masked slice keeps a trailing comment from defeating the greedy
+  // `<.*>`; the JSX itself is then read back out of the real content, since
+  // any string in it (`<Slot name="x" />`) is blanked in the mask.
+  const singleLine = /return\s+(<.*>)\s*;?\s*$/dgm;
   let match: RegExpExecArray | null = null;
-  for (const m of content.slice(from, to).matchAll(singleLine)) {
-    if (masked[from + m.index] === "r") match = m;
-  }
+  for (const m of masked.slice(from, to).matchAll(singleLine)) match = m;
   if (!match) return null;
 
   const absIdx = from + match.index;
-  return (
-    content.slice(0, absIdx) +
-    `return ${wrapJsx(match[1]!)};` +
-    content.slice(absIdx + match[0].length)
-  );
+  const [jsxStart, jsxEnd] = match.indices![1]!;
+  const jsx = content.slice(from + jsxStart, from + jsxEnd);
+
+  // Splice only up to the statement's `;`, not to the end of the match: the
+  // trailing `\s*$` covers a blanked comment, and consuming it here would
+  // delete that comment from the real file.
+  const trailing = masked.slice(from + jsxEnd, absIdx + match[0].length);
+  const semi = trailing.indexOf(";");
+  const spliceEnd = from + jsxEnd + (semi === -1 ? 0 : semi + 1);
+
+  return content.slice(0, absIdx) + `return ${wrapJsx(jsx)};` + content.slice(spliceEnd);
 }
 
 async function findLayoutFile(ctx: ProjectContext): Promise<string | null> {
@@ -159,7 +204,9 @@ async function scaffoldLayout(ctx: ProjectContext): Promise<FileAction | null> {
 
   const content = await Bun.file(join(ctx.cwd, layoutPath)).text();
 
-  if (content.includes("ClerkProvider")) {
+  // Masked: a `// TODO: wrap in <ClerkProvider>` left over from a manual
+  // attempt would otherwise skip the file with no wiring and no warning.
+  if (maskCommentsAndStrings(content).includes("ClerkProvider")) {
     return { type: "skip", path: layoutPath, skipReason: "Already has ClerkProvider" };
   }
 
