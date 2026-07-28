@@ -1,13 +1,19 @@
 import { getToken, getValidToken } from "../../lib/credential-store.ts";
 import { resolveProfile } from "../../lib/config.ts";
 import { fetchApplication, type Application } from "../../lib/plapi.ts";
-import type { DoctorContext, ResolvedProfile } from "./types.ts";
+import { resolveKeylessTarget, type KeylessTarget } from "../../lib/keyless-target.ts";
+import { bapiRequest } from "../../lib/bapi.ts";
+import { log } from "../../lib/log.ts";
+import { errorMessage } from "../../lib/errors.ts";
+import type { DoctorContext, KeylessInstanceInfo, ResolvedProfile } from "./types.ts";
 
 export function createDoctorContext(): DoctorContext {
   let tokenPromise: Promise<string | null> | undefined;
   let validTokenPromise: Promise<string | null> | undefined;
   let profilePromise: Promise<ResolvedProfile | undefined> | undefined;
   let appPromise: Promise<Application | null> | undefined;
+  let keylessPromise: Promise<KeylessTarget | undefined> | undefined;
+  let keylessInstancePromise: Promise<KeylessInstanceInfo | null> | undefined;
 
   const ctx: DoctorContext = {
     getToken() {
@@ -42,6 +48,40 @@ export function createDoctorContext(): DoctorContext {
         })();
       }
       return appPromise;
+    },
+
+    getKeylessTarget() {
+      if (!keylessPromise) {
+        // Same resolution every other command uses: an explicit --app/link rules
+        // keyless out, but account credentials alone don't (see keyless-target.ts).
+        keylessPromise = resolveKeylessTarget({ cwd: process.cwd() });
+      }
+      return keylessPromise;
+    },
+
+    getKeylessInstance() {
+      if (!keylessInstancePromise) {
+        keylessInstancePromise = (async () => {
+          const keyless = await ctx.getKeylessTarget();
+          if (!keyless) return null;
+
+          try {
+            const response = await bapiRequest({
+              method: "GET",
+              path: "/v1/instance",
+              secretKey: keyless.secretKey,
+            });
+            const body = response.body as { id?: string; environment_type?: string };
+            return { id: body.id ?? null, environmentType: body.environment_type ?? null };
+          } catch (error) {
+            // Naming the instance is a nice-to-have here — the checks that
+            // actually need the target already have it via getKeylessTarget().
+            log.debug(`doctor: could not fetch keyless instance info (${errorMessage(error)})`);
+            return null;
+          }
+        })();
+      }
+      return keylessInstancePromise;
     },
 
     fixes: {

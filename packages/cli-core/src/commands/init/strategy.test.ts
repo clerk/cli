@@ -21,10 +21,13 @@ import {
   bootstrapMod,
   keylessMod,
 } from "../../test/lib/init-harness.ts";
+import * as promptsMod from "../../lib/prompts.ts";
 import { init } from "./index.ts";
 
+const EXISTING_BREADCRUMB = { claimToken: "tok_existing", createdAt: "2024-01-01T00:00:00.000Z" };
+
 describe("init strategy", () => {
-  const { setup, setupBootstrapSuccess } = useInitHarness();
+  const { setup, setupBootstrapSuccess, track } = useInitHarness();
   test("blank dir with keyless framework defaults to keyless when unauthenticated", async () => {
     setup();
     mockBootstrapTo(KEYLESS_CTX);
@@ -451,5 +454,244 @@ describe("init strategy", () => {
     expect(loginMod.login).toHaveBeenCalledWith({ showNextSteps: false });
     expect(linkMod.link).toHaveBeenCalled();
     expect(pullMod.pull).toHaveBeenCalled();
+  });
+
+  describe("keeping an existing unclaimed keyless app (defect: re-run minted a second app)", () => {
+    test("agent mode keeps an existing unclaimed keyless app without prompting or minting a new one", async () => {
+      setup({ isAgent: true, email: null });
+      mockExistingProject(KEYLESS_CTX);
+      mockMiddlewareScaffold();
+      const breadcrumbSpy = spyOn(keylessMod, "readKeylessBreadcrumb").mockResolvedValue(
+        EXISTING_BREADCRUMB,
+      );
+      const confirmSpy = spyOn(promptsMod, "confirm");
+      const printExistingSpy = spyOn(heuristics, "printExistingKeylessInfo").mockReturnValue(
+        undefined,
+      );
+      track(breadcrumbSpy);
+      track(confirmSpy);
+      track(printExistingSpy);
+
+      await init({});
+
+      expect(confirmSpy).not.toHaveBeenCalled();
+      expect(keylessMod.createAccountlessApp).not.toHaveBeenCalled();
+      expect(keylessMod.writeKeylessBreadcrumb).not.toHaveBeenCalled();
+      expect(printExistingSpy).toHaveBeenCalledWith(KEYLESS_CTX.envFile);
+    });
+
+    test("-y keeps an existing unclaimed keyless app without prompting (does not force a fresh one)", async () => {
+      setup({ email: null });
+      mockExistingProject(KEYLESS_CTX);
+      mockMiddlewareScaffold();
+      const breadcrumbSpy = spyOn(keylessMod, "readKeylessBreadcrumb").mockResolvedValue(
+        EXISTING_BREADCRUMB,
+      );
+      const confirmSpy = spyOn(promptsMod, "confirm");
+      const printExistingSpy = spyOn(heuristics, "printExistingKeylessInfo").mockReturnValue(
+        undefined,
+      );
+      track(breadcrumbSpy);
+      track(confirmSpy);
+      track(printExistingSpy);
+
+      await init({ keyless: true, yes: true });
+
+      expect(confirmSpy).not.toHaveBeenCalled();
+      expect(keylessMod.createAccountlessApp).not.toHaveBeenCalled();
+    });
+
+    test("human mode prompts before replacing, defaulting to keep when declined", async () => {
+      setup({ email: null });
+      mockExistingProject(KEYLESS_CTX);
+      mockMiddlewareScaffold();
+      const breadcrumbSpy = spyOn(keylessMod, "readKeylessBreadcrumb").mockResolvedValue(
+        EXISTING_BREADCRUMB,
+      );
+      const confirmSpy = spyOn(promptsMod, "confirm").mockResolvedValue(false);
+      const printExistingSpy = spyOn(heuristics, "printExistingKeylessInfo").mockReturnValue(
+        undefined,
+      );
+      track(breadcrumbSpy);
+      track(confirmSpy);
+      track(printExistingSpy);
+
+      await init({ keyless: true });
+
+      expect(confirmSpy).toHaveBeenCalledWith(
+        expect.objectContaining({
+          message: expect.stringContaining("already has an unclaimed keyless application"),
+          default: false,
+        }),
+      );
+      expect(keylessMod.createAccountlessApp).not.toHaveBeenCalled();
+      expect(printExistingSpy).toHaveBeenCalledWith(KEYLESS_CTX.envFile);
+    });
+
+    test("human mode mints a fresh app when the user confirms replacement", async () => {
+      setup({ email: null });
+      mockExistingProject(KEYLESS_CTX);
+      mockMiddlewareScaffold();
+      const breadcrumbSpy = spyOn(keylessMod, "readKeylessBreadcrumb").mockResolvedValue(
+        EXISTING_BREADCRUMB,
+      );
+      const confirmSpy = spyOn(promptsMod, "confirm").mockResolvedValue(true);
+      track(breadcrumbSpy);
+      track(confirmSpy);
+
+      await init({ keyless: true });
+
+      expect(keylessMod.createAccountlessApp).toHaveBeenCalled();
+      expect(keylessMod.writeKeylessBreadcrumb).toHaveBeenCalled();
+    });
+
+    test("--fresh mints a new app without prompting or checking for an existing one, even in agent mode", async () => {
+      setup({ isAgent: true, email: null });
+      mockExistingProject(KEYLESS_CTX);
+      mockMiddlewareScaffold();
+      const breadcrumbSpy = spyOn(keylessMod, "readKeylessBreadcrumb");
+      const confirmSpy = spyOn(promptsMod, "confirm");
+      track(breadcrumbSpy);
+      track(confirmSpy);
+
+      await init({ fresh: true });
+
+      expect(breadcrumbSpy).not.toHaveBeenCalled();
+      expect(confirmSpy).not.toHaveBeenCalled();
+      expect(keylessMod.createAccountlessApp).toHaveBeenCalled();
+    });
+
+    test("--fresh with --login throws a usage error before bootstrapping", async () => {
+      setup();
+
+      await expect(init({ fresh: true, login: true })).rejects.toThrow(
+        /--fresh applies to keyless applications/,
+      );
+      expect(bootstrapMod.promptAndBootstrap).not.toHaveBeenCalled();
+    });
+
+    test("no existing breadcrumb mints an app normally without prompting", async () => {
+      setup({ isAgent: true, email: null });
+      mockExistingProject(KEYLESS_CTX);
+      mockMiddlewareScaffold();
+      const breadcrumbSpy = spyOn(keylessMod, "readKeylessBreadcrumb").mockResolvedValue(undefined);
+      const confirmSpy = spyOn(promptsMod, "confirm");
+      track(breadcrumbSpy);
+      track(confirmSpy);
+
+      await init({});
+
+      expect(confirmSpy).not.toHaveBeenCalled();
+      expect(keylessMod.createAccountlessApp).toHaveBeenCalled();
+    });
+  });
+
+  describe("--template / --fresh silently dropped when the strategy isn't keyless (defect)", () => {
+    test("--template with CLERK_PLATFORM_API_KEY set errors instead of silently dropping the template", async () => {
+      setup({ apiKey: true });
+      mockExistingProject(KEYLESS_CTX);
+
+      await expect(init({ template: "b2b-saas", yes: true })).rejects.toThrow(
+        /--template only applies to keyless applications/,
+      );
+      expect(keylessMod.createAccountlessApp).not.toHaveBeenCalled();
+    });
+
+    test("--fresh with CLERK_PLATFORM_API_KEY set errors instead of silently doing nothing", async () => {
+      setup({ apiKey: true });
+      mockExistingProject(KEYLESS_CTX);
+
+      await expect(init({ fresh: true, yes: true })).rejects.toThrow(
+        /--fresh only applies to keyless applications/,
+      );
+    });
+
+    test("--template with --app errors (a real app target always forces the authenticated flow)", async () => {
+      setup({ email: "user@example.com" });
+      spyOn(context, "gatherContext").mockResolvedValue(KEYLESS_CTX);
+
+      await expect(init({ template: "b2b-saas", app: "app_abc", yes: true })).rejects.toThrow(
+        /--template only applies to keyless applications/,
+      );
+    });
+
+    test("--template on a non-keyless framework in agent mode names the missing keyless support", async () => {
+      setup({ isAgent: true, email: "user@example.com" });
+      const nonKeylessCtx: FakeCtx = {
+        ...FAKE_CTX,
+        existingClerk: false,
+        framework: {
+          dep: "vue",
+          name: "Vue",
+          sdk: "@clerk/vue",
+          envVar: "VITE_CLERK_PUBLISHABLE_KEY",
+          envFile: ".env.local",
+        },
+        envFile: ".env.local",
+      };
+      spyOn(context, "gatherContext").mockResolvedValue(nonKeylessCtx);
+
+      await expect(init({ template: "b2b-saas" })).rejects.toThrow(/does not support keyless mode/);
+    });
+
+    test("--template on a keyless-resolved run is still forwarded normally", async () => {
+      setup();
+      mockBootstrapTo(KEYLESS_CTX);
+      mockMiddlewareScaffold();
+
+      await init({ template: "b2b-saas" });
+
+      expect(keylessMod.createAccountlessApp).toHaveBeenCalledWith(
+        KEYLESS_CTX.framework.dep,
+        "b2b-saas",
+      );
+    });
+  });
+
+  describe("agent mode never trusts stored-credential presence over an interactive login hang (defect)", () => {
+    test("falls back to keyless when the stored credential's presence check would say yes but validation fails", async () => {
+      // Regression test for the hang: a broken/expired stored session still
+      // makes hasAccountCredentials() (presence) report true, but agent mode
+      // has no interactive fallback if that lies — it must validate before
+      // trusting it, not just check whether *something* is stored.
+      setup({ isAgent: true, email: null });
+      spyOn(heuristics, "isAuthenticated").mockResolvedValue(true);
+      mockExistingProject(KEYLESS_CTX);
+      mockMiddlewareScaffold();
+
+      await init({});
+
+      expect(heuristics.isAuthenticated).not.toHaveBeenCalled();
+      expect(keylessMod.createAccountlessApp).toHaveBeenCalled();
+      expect(loginMod.login).not.toHaveBeenCalled();
+    });
+
+    test("--login validates the credential instead of trusting presence, still erroring on a stale session", async () => {
+      setup({ isAgent: true, email: null });
+      spyOn(heuristics, "isAuthenticated").mockResolvedValue(true);
+
+      await expect(init({ login: true })).rejects.toThrow(
+        /--login requires an interactive terminal/,
+      );
+      expect(loginMod.login).not.toHaveBeenCalled();
+      expect(bootstrapMod.promptAndBootstrap).not.toHaveBeenCalled();
+    });
+
+    test("a real CLERK_PLATFORM_API_KEY is trusted outright, without needing to validate a stored session", async () => {
+      process.env.CLERK_PLATFORM_API_KEY = "test_key";
+      try {
+        setup({ isAgent: true, email: null });
+        mockExistingProject(KEYLESS_CTX);
+        spyOn(config, "resolveProfile").mockResolvedValue(undefined);
+        mockMiddlewareScaffold();
+
+        await init({});
+
+        expect(linkMod.link).toHaveBeenCalled();
+        expect(keylessMod.createAccountlessApp).not.toHaveBeenCalled();
+      } finally {
+        delete process.env.CLERK_PLATFORM_API_KEY;
+      }
+    });
   });
 });

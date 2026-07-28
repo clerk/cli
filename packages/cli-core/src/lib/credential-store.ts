@@ -302,6 +302,22 @@ function isInvalidGrant(error: unknown): boolean {
   );
 }
 
+/**
+ * A 4xx from the token endpoint means this stored session will never refresh —
+ * `invalid_client` when the OAuth client no longer recognises us, `invalid_grant`
+ * when the refresh token itself is spent. Either way the user's next step is to
+ * log in again, so it should read as an expired session rather than as a raw
+ * `Token refresh failed (401): {"error":"invalid_client",…}` leaking out of the
+ * credential layer.
+ *
+ * 5xx and network failures are deliberately excluded: those are transient, and
+ * telling someone their session expired because Clerk had a bad minute would
+ * send them to re-authenticate for nothing.
+ */
+function isUnrecoverableRefreshFailure(error: unknown): boolean {
+  return error instanceof ApiError && error.status >= 400 && error.status < 500;
+}
+
 async function readStoredValue(): Promise<string | null> {
   if (tokenOverride !== undefined) return tokenOverride;
 
@@ -371,6 +387,15 @@ async function refreshStoredSession(session: OAuthSession): Promise<string> {
         log.debug("credentials: recovery from invalid_grant failed, cleaning up");
       }
       await deleteToken();
+      throw sessionExpiredError();
+    }
+    // Other 4xx refusals are just as terminal, but the stored session isn't
+    // provably spent the way a rotated refresh token is — so report it and
+    // leave the credentials alone rather than logging the user out for them.
+    if (isUnrecoverableRefreshFailure(error)) {
+      log.debug(
+        `credentials: refresh refused, treating session as expired (${errorMessage(error)})`,
+      );
       throw sessionExpiredError();
     }
     throw error;

@@ -13,6 +13,7 @@ import { withSpinner, intro, outro, pausedOutro } from "../../lib/spinner.ts";
 import { isInsideGutter, log } from "../../lib/log.ts";
 import { NEXT_STEPS, printNextSteps } from "../../lib/next-steps.ts";
 import { resolveInstanceTarget } from "../../lib/keyless-target.ts";
+import type { KeylessWriteVerification } from "./keyless.ts";
 import {
   assertPayloadWritable,
   LOCAL_DRY_RUN_MESSAGE,
@@ -124,17 +125,14 @@ async function configPush(options: ConfigPushOptions, op: Operation): Promise<vo
         failureContext: "Failed to push config",
       }),
     );
-    log.data(JSON.stringify(result, null, 2));
-    log.success(
-      options.dryRun
-        ? "[dry-run] Validation passed — no changes applied"
-        : "Config pushed successfully",
-    );
+    log.data(JSON.stringify(result.body, null, 2));
     if (options.dryRun) {
+      log.success("[dry-run] Validation passed — no changes applied");
       printNextSteps(
         op.method === "PATCH" ? NEXT_STEPS.CONFIG_DRY_RUN_PATCH : NEXT_STEPS.CONFIG_DRY_RUN_PUT,
       );
     } else {
+      reportWriteOutcome(result.verification, "Config pushed successfully");
       printNextSteps(NEXT_STEPS.CONFIG_PUSH);
     }
     closeStatus = "success";
@@ -324,4 +322,42 @@ export function printDiff(
       }
     }
   }
+}
+
+/**
+ * Prints what actually took after a write, instead of an unconditional
+ * success line. Account-mode writes have no `verification` — the Platform
+ * API's response body is the config document, trusted outright. A keyless
+ * write only gets a 200/204 for "the request was accepted": Clerk's Backend
+ * API silently drops fields it doesn't recognize inside a group rather than
+ * rejecting them, so dropped fields are named instead of folded into a
+ * "successfully" that isn't true for them.
+ */
+export function reportWriteOutcome(
+  verification: KeylessWriteVerification | undefined,
+  successMessage: string,
+): void {
+  if (!verification) {
+    log.success(successMessage);
+    return;
+  }
+
+  const { droppedFields, unverifiableGroups } = verification;
+
+  if (droppedFields.length > 0) {
+    const [one, them] =
+      droppedFields.length === 1 ? ["This field", "it"] : ["These fields", "them"];
+    log.warn(
+      `${one} didn't come back in Clerk's Backend API response: ${droppedFields.join(", ")}. ` +
+        `The API ignores field names it doesn't recognise rather than rejecting them, so check ${them} for a typo against the diff above.`,
+    );
+  }
+
+  // Always close with a success line: the write was accepted, and a run that
+  // ends on a warning alone reads as a failure that never happened.
+  log.success(
+    unverifiableGroups.length > 0
+      ? `${successMessage} — ${unverifiableGroups.join(", ")} answered with no body, so ${unverifiableGroups.length === 1 ? "that group" : "those groups"} couldn't be confirmed`
+      : successMessage,
+  );
 }

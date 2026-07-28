@@ -1,5 +1,6 @@
 import type { resolveProfile } from "../../lib/config.ts";
 import type { Application } from "../../lib/plapi.ts";
+import type { KeylessTarget } from "../../lib/keyless-target.ts";
 
 export type CheckStatus = "pass" | "warn" | "fail";
 
@@ -19,11 +20,25 @@ export interface CheckResult {
   fix?: FixAction;
 }
 
+/** The identity of an unclaimed keyless application, fetched via its own secret key. */
+export interface KeylessInstanceInfo {
+  id: string | null;
+  environmentType: string | null;
+}
+
 export interface DoctorContext {
   getToken(): Promise<string | null>;
   getValidToken(): Promise<string | null>;
   getProfile(): Promise<ResolvedProfile | undefined>;
   getApplication(): Promise<Application | null>;
+  /**
+   * Resolves the same keyless fallback the rest of the CLI uses (see
+   * `lib/keyless-target.ts`), so doctor treats an unclaimed keyless project as
+   * the legitimate state it is instead of failing the auth/link checks.
+   */
+  getKeylessTarget(): Promise<KeylessTarget | undefined>;
+  /** Best-effort identity of the keyless instance, for naming it in check output. */
+  getKeylessInstance(): Promise<KeylessInstanceInfo | null>;
   fixes: {
     login: () => FixAction;
     link: () => FixAction;

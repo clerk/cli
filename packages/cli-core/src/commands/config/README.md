@@ -211,7 +211,7 @@ clerk config patch --json '{
 | `oauth_application_settings` | `/v1/instance/oauth_application_settings` | Yes      | Dynamic OAuth client registration                                                   |
 | `instance_settings`          | `/v1/beta_features/instance_settings`     | No       | `test_mode`, `progressive_sign_up`, `from_email_address`, `restricted_to_allowlist` |
 
-Any other top-level key exits with a usage error naming the supported ones — the account-mode keys (`session`, `sign_up`, `auth_email`, …) are not silently translated.
+Any other top-level key exits with a usage error naming the supported ones. Most of them (`session`, `sign_up`, `auth_email`, …) are genuinely account-only and the error points at `clerk auth login`. A handful — `enterprise_connections`, `saml_connections`, `oauth_applications`, `domains` — are BAPI resource _collections_ reachable on an unclaimed application today; they're just not part of this config document, so the error points at `clerk api /<resource>` instead of a login that wouldn't add them anyway.
 
 `instance_settings` is backed by a beta route, and is the only way to reach those four auth-config fields without an account — which is why it's included.
 
@@ -219,15 +219,28 @@ Any other top-level key exits with a usage error naming the supported ones — t
 
 `GET /v1/instance` returns a subset of what `PATCH /v1/instance` accepts — `support_email`, for example, is writable but not readable. Fields the read omits have no "before" value to compare against, so they always appear as additions in the diff and never trigger "No changes detected". The write itself is unaffected: patching a field to the value it already holds is a no-op server-side.
 
+### Round-trip verification
+
+A 200 or 204 from a keyless write only means Clerk's Backend API accepted the request — it silently drops fields it doesn't recognize inside a group instead of rejecting them, and at least one route (`PATCH /v1/instance` with `allowed_origins: null` or `[]`) accepts a value it then ignores. Printing "Config pushed successfully" off the HTTP status alone would paper over both.
+
+After a write, the CLI checks every field it sent against the PATCH response body, and against nothing else. Fields whose value round-trips are reported as applied; fields the response doesn't reflect are named explicitly instead of folded into an unconditional success line.
+
+A follow-up GET looks like stronger evidence and is in fact weaker. BAPI omits writable-but-not-readable fields from its reads — `instance.support_email` is accepted and never echoed — and reads are eventually consistent, so a GET issued straight after a write routinely returns the pre-write value. Verifying against one reports perfectly good writes as dropped. This applies equally to the six groups that do have a GET route: the response body is the only read that is guaranteed to be about _this_ write.
+
+That leaves `PATCH /v1/instance`, which answers `204` with no body at all. Nothing can confirm it after the fact, so the check moves to before the request instead: the fields that route accepts are a closed set in BAPI's own schema (`additionalProperties: false`), and `assertKeylessPayload` rejects anything outside it. This matters because that route is also the one people reach for when trying to enable password auth or a social provider — none of which it accepts, and all of which it used to swallow with a `204` and a success message. The group is still reported as unconfirmed, and contributes no state to the printed envelope rather than a possibly-stale re-read.
+
+`restrictions` and `instance_settings` have no GET route, but both echo their new state in the PATCH response, so their writes verify normally.
+
 ### Differences from account mode
 
-| Behavior        | Account mode                             | Keyless mode                                                      |
-| --------------- | ---------------------------------------- | ----------------------------------------------------------------- |
-| Coverage        | Full config document                     | Three Backend API resources                                       |
-| `--instance`    | Selects dev/prod                         | Usage error — the secret key already targets exactly one instance |
-| `--dry-run`     | Server-side validation of the projection | Local diff only; nothing is sent                                  |
-| `config put`    | Replaces the whole document              | Errors — no full document exists to replace                       |
-| `config schema` | Returns the JSON Schema                  | Errors — the schema describes the account-level document          |
+| Behavior           | Account mode                             | Keyless mode                                                                                                                          |
+| ------------------ | ---------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
+| Coverage           | Full config document                     | Seven Backend API resources                                                                                                           |
+| `--instance`       | Selects dev/prod                         | Usage error — the secret key already targets exactly one instance                                                                     |
+| `--dry-run`        | Server-side validation of the projection | Local diff only; nothing is sent                                                                                                      |
+| `config put`       | Replaces the whole document              | Errors — no full document exists to replace                                                                                           |
+| `config schema`    | Returns the JSON Schema                  | Errors — the schema describes the account-level document                                                                              |
+| Write confirmation | Trusts the response body outright        | Verifies each sent field round-tripped and names what couldn't be confirmed (see [Round-trip verification](#round-trip-verification)) |
 
 Run `clerk auth login` to claim the application; auto-claim links it, and every config command then uses account mode with full coverage.
 
@@ -235,10 +248,17 @@ Run `clerk auth login` to claim the application; auto-claim links it, and every 
 
 All requests go to the Clerk Backend API (default `https://api.clerk.dev`, overridable via `CLERK_BACKEND_API_URL`), authenticated with a `Bearer sk_…` instance secret key.
 
-| Method  | Endpoint                             | Description                                                                                |
-| ------- | ------------------------------------ | ------------------------------------------------------------------------------------------ |
-| `GET`   | `/v1/instance`                       | Reads instance settings for `config pull` and for the pre-write diff.                      |
-| `PATCH` | `/v1/instance`                       | Updates instance settings. Answers `204` with no body, so the group is re-read afterwards. |
-| `PATCH` | `/v1/instance/restrictions`          | Updates sign-up restrictions (allowlist, blocklist). Write-only — no read route exists.    |
-| `GET`   | `/v1/instance/organization_settings` | Reads organization settings for `config pull` and for the pre-write diff.                  |
-| `PATCH` | `/v1/instance/organization_settings` | Updates organization settings.                                                             |
+| Method  | Endpoint                                  | Description                                                                                                                                                             |
+| ------- | ----------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `GET`   | `/v1/instance`                            | Reads instance settings for `config pull` and for the pre-write diff.                                                                                                   |
+| `PATCH` | `/v1/instance`                            | Updates instance settings. Answers `204` with no body, so the write can't be confirmed afterwards — field names are validated against BAPI's schema beforehand instead. |
+| `GET`   | `/v1/instance/communication`              | Reads communication settings (e.g. blocked country codes) for `config pull` and for the pre-write diff.                                                                 |
+| `PATCH` | `/v1/instance/communication`              | Updates communication settings.                                                                                                                                         |
+| `PATCH` | `/v1/instance/restrictions`               | Updates sign-up restrictions (allowlist, blocklist). No read route, but the response echoes the new state, so the write verifies normally.                              |
+| `GET`   | `/v1/instance/organization_settings`      | Reads organization settings for `config pull` and for the pre-write diff.                                                                                               |
+| `PATCH` | `/v1/instance/organization_settings`      | Updates organization settings.                                                                                                                                          |
+| `GET`   | `/v1/instance/protect`                    | Reads bot-protection settings for `config pull` and for the pre-write diff.                                                                                             |
+| `PATCH` | `/v1/instance/protect`                    | Updates bot-protection settings.                                                                                                                                        |
+| `GET`   | `/v1/instance/oauth_application_settings` | Reads dynamic OAuth client registration settings for `config pull` and for the pre-write diff.                                                                          |
+| `PATCH` | `/v1/instance/oauth_application_settings` | Updates dynamic OAuth client registration settings.                                                                                                                     |
+| `PATCH` | `/v1/beta_features/instance_settings`     | Updates `test_mode`, `progressive_sign_up`, `from_email_address`, `restricted_to_allowlist`. No read route, but the response echoes the new state.                      |

@@ -3,7 +3,7 @@ import { withSpinner } from "../../lib/spinner.ts";
 import { confirm } from "../../lib/prompts.ts";
 import { isHuman } from "../../mode.ts";
 import { log } from "../../lib/log.ts";
-import { hasConfigChanges, printDiff } from "./push.ts";
+import { hasConfigChanges, printDiff, reportWriteOutcome } from "./push.ts";
 import type { InstanceTarget } from "../../lib/keyless-target.ts";
 import {
   assertPayloadWritable,
@@ -68,7 +68,11 @@ export async function applyConfigPatch(opts: ApplyPatchOptions): Promise<boolean
     writeInstanceConfig(target, payload, { method: "PATCH", dryRun, failureContext }),
   );
 
-  log.debug(`config: ${JSON.stringify(result)}`);
-  log.success(dryRun ? "[dry-run] Validation passed — no changes applied" : successMessage);
+  log.debug(`config: ${JSON.stringify(result.body)}`);
+  if (dryRun) {
+    log.success("[dry-run] Validation passed — no changes applied");
+  } else {
+    reportWriteOutcome(result.verification, successMessage);
+  }
   return true;
 }

@@ -54,6 +54,9 @@ describe("keyless config", () => {
   let exitSpy: ReturnType<typeof spyOn>;
   const captured = useCaptureLog();
 
+  /** Mutable per-test state so a PATCH's effect actually shows up on the next GET/re-read. */
+  let bapiState: Record<string, unknown>;
+
   beforeEach(async () => {
     tempDir = await mkdtemp(join(tmpdir(), "clerk-keyless-config-"));
     projectDir = await mkdtemp(join(tmpdir(), "clerk-keyless-project-"));
@@ -66,12 +69,22 @@ describe("keyless config", () => {
       throw new Error("process.exit");
     });
 
+    bapiState = structuredClone(READABLE_BODIES);
+
     stubFetch(async (input, init) => {
       const path = input.toString().replace(BAPI_URL, "");
       const method = (init?.method ?? "GET").toUpperCase();
 
-      // PATCH /v1/instance answers 204 with no body; every other group echoes.
+      if (method === "GET") {
+        const body = bapiState[path];
+        if (body) return new Response(JSON.stringify(body), { status: 200 });
+        throw new Error(`Unexpected fetch: ${method} ${path}`);
+      }
+
+      // PATCH /v1/instance answers 204 with no body but does persist the
+      // fields it accepts, so a re-read after it reflects the write.
       if (path === "/v1/instance" && method === "PATCH") {
+        bapiState[path] = { ...(bapiState[path] as object), ...JSON.parse(init?.body as string) };
         return new Response(null, { status: 204 });
       }
       if (path === "/v1/instance/restrictions" && method === "PATCH") {
@@ -84,8 +97,10 @@ describe("keyless config", () => {
           status: 200,
         });
       }
-      const body = READABLE_BODIES[path];
-      if (body) return new Response(JSON.stringify(body), { status: 200 });
+      if (method === "PATCH" && bapiState[path]) {
+        bapiState[path] = { ...(bapiState[path] as object), ...JSON.parse(init?.body as string) };
+        return new Response(JSON.stringify(bapiState[path]), { status: 200 });
+      }
 
       throw new Error(`Unexpected fetch: ${method} ${path}`);
     });
@@ -203,7 +218,7 @@ describe("keyless config", () => {
       expect(await resolveKeylessTarget({ app: "app_1", cwd: projectDir })).toBeUndefined();
     });
 
-    test("resolves even when a platform API key is set, and says why", async () => {
+    test("resolves even when a platform API key is set", async () => {
       await writeEnv(".env", `CLERK_SECRET_KEY=${SECRET_KEY}\n`);
       process.env.CLERK_PLATFORM_API_KEY = "ak_test_platform";
       const { resolveKeylessTarget } = await import("../../lib/keyless-target.ts");
@@ -212,14 +227,38 @@ describe("keyless config", () => {
         secretKey: SECRET_KEY,
         source: ".env",
       });
-      expect(captured.err).toContain("isn't linked to an application");
     });
 
-    test("stays quiet about the reduced coverage when there is no account", async () => {
+    // The reduced-coverage warning belongs to the config surface, not to
+    // resolution — `whoami`, `open` and `doctor` want the same keyless answer
+    // whether or not an account exists, and a resolver that warns is one a
+    // diagnostic tool can't call without polluting its own report.
+    test("stays quiet about reduced coverage — that warning is the config surface's", async () => {
       await writeEnv(".env", `CLERK_SECRET_KEY=${SECRET_KEY}\n`);
+      process.env.CLERK_PLATFORM_API_KEY = "ak_test_platform";
       const { resolveKeylessTarget } = await import("../../lib/keyless-target.ts");
 
       await resolveKeylessTarget({ cwd: projectDir });
+
+      expect(captured.err).not.toContain("isn't linked to an application");
+    });
+
+    test("resolveInstanceTarget is the one that says the keyless view covers less", async () => {
+      await writeEnv(".env", `CLERK_SECRET_KEY=${SECRET_KEY}\n`);
+      process.env.CLERK_PLATFORM_API_KEY = "ak_test_platform";
+      const { resolveInstanceTarget } = await import("../../lib/keyless-target.ts");
+
+      const target = await resolveInstanceTarget({ cwd: projectDir });
+
+      expect(target.kind).toBe("keyless");
+      expect(captured.err).toContain("isn't linked to an application");
+    });
+
+    test("says nothing about linking when there is no account at all", async () => {
+      await writeEnv(".env", `CLERK_SECRET_KEY=${SECRET_KEY}\n`);
+      const { resolveInstanceTarget } = await import("../../lib/keyless-target.ts");
+
+      await resolveInstanceTarget({ cwd: projectDir });
 
       expect(captured.err).not.toContain("isn't linked to an application");
     });
@@ -275,9 +314,74 @@ describe("keyless config", () => {
       );
     });
 
+    test("points account-only keys at `clerk auth login`", async () => {
+      const { assertKeylessPayload } = await import("./keyless.ts");
+      expect(() => assertKeylessPayload({ session: { lifetime: 10 } })).toThrow(
+        /Run `clerk auth login` to claim the application/,
+      );
+    });
+
+    // enterprise_connections/saml_connections/oauth_applications/domains are
+    // BAPI resource collections reachable on an unclaimed application today —
+    // verified live via `clerk api /enterprise_connections`. Telling the user
+    // to claim the app for these would be a detour to nowhere: claiming
+    // doesn't add them to the config document either.
+    test("points BAPI resource collections at `clerk api` instead of login", async () => {
+      const { assertKeylessPayload } = await import("./keyless.ts");
+      expect(() => assertKeylessPayload({ enterprise_connections: {} })).toThrow(
+        /use `clerk api \/enterprise_connections` directly instead of this config document/,
+      );
+    });
+
+    test("does not suggest `clerk auth login` for a BAPI resource collection", async () => {
+      const { assertKeylessPayload } = await import("./keyless.ts");
+      expect(() => assertKeylessPayload({ domains: {} })).not.toThrow(/clerk auth login/);
+    });
+
     test("rejects a group whose value is not an object", async () => {
       const { assertKeylessPayload } = await import("./keyless.ts");
       expect(() => assertKeylessPayload({ instance: "nope" })).toThrow(/must be a JSON object/);
+    });
+
+    // `PATCH /v1/instance` answers 204 and drops field names it doesn't know,
+    // so an unrecognised field there is invisible in the response — the only
+    // place it can be caught is before the request goes out.
+    test("rejects an `instance` field the Backend API would silently drop", async () => {
+      const { assertKeylessPayload } = await import("./keyless.ts");
+      expect(() => assertKeylessPayload({ instance: { suport_email: "a@b.com" } })).toThrow(
+        /Unsupported field on `instance`.*suport_email/s,
+      );
+    });
+
+    test.each([
+      ["password", "which authentication strategies are enabled"],
+      ["social", "social sign-in providers"],
+      ["second_factors", "multi-factor authentication policy"],
+    ])("explains that `instance.%s` has no Backend API route at all", async (field, reason) => {
+      const { assertKeylessPayload } = await import("./keyless.ts");
+      expect(() => assertKeylessPayload({ instance: { [field]: true } })).toThrow(
+        new RegExp(`no route for ${reason}`),
+      );
+    });
+
+    test.each([
+      "test_mode",
+      "hibp",
+      "support_email",
+      "clerk_js_version",
+      "development_origin",
+      "allowed_origins",
+      "cookieless_dev",
+      "url_based_session_syncing",
+      "preferred_sign_in_strategy_when_password_required",
+    ])("accepts the documented `instance` field %s", async (field) => {
+      const { assertKeylessPayload } = await import("./keyless.ts");
+      expect(() => assertKeylessPayload({ instance: { [field]: "x" } })).not.toThrow();
+    });
+
+    test("leaves fields on other groups alone — their writes echo back", async () => {
+      const { assertKeylessPayload } = await import("./keyless.ts");
+      expect(() => assertKeylessPayload({ protect: { nonsense_field: true } })).not.toThrow();
     });
   });
 
@@ -319,19 +423,20 @@ describe("keyless config", () => {
   });
 
   describe("patchKeylessConfig", () => {
-    test("sends each group to its own endpoint", async () => {
+    test("sends each group to its own endpoint and confirms the fields landed", async () => {
       const requests: string[] = [];
       stubFetch(async (input, init) => {
-        const url = input.toString();
+        const path = input.toString().replace(BAPI_URL, "");
         const method = (init?.method ?? "GET").toUpperCase();
-        requests.push(`${method} ${url.replace(BAPI_URL, "")}`);
-        if (url.endsWith("/v1/instance") && method === "PATCH") {
+        requests.push(`${method} ${path}`);
+        if (path === "/v1/instance" && method === "PATCH") {
+          bapiState[path] = { ...(bapiState[path] as object), ...JSON.parse(init?.body as string) };
           return new Response(null, { status: 204 });
         }
-        if (url.endsWith("/v1/instance")) {
-          return new Response(JSON.stringify(INSTANCE), { status: 200 });
-        }
-        return new Response(JSON.stringify(ORG_SETTINGS), { status: 200 });
+        if (method === "GET") return new Response(JSON.stringify(bapiState[path]), { status: 200 });
+        const updated = { ...(bapiState[path] as object), ...JSON.parse(init?.body as string) };
+        bapiState[path] = updated;
+        return new Response(JSON.stringify(updated), { status: 200 });
       });
       const { patchKeylessConfig } = await import("./keyless.ts");
 
@@ -343,13 +448,115 @@ describe("keyless config", () => {
         },
       );
 
-      expect(requests).toEqual([
-        "PATCH /v1/instance",
-        // 204 carries no body, so the group is re-read for the caller.
-        "GET /v1/instance",
-        "PATCH /v1/instance/organization_settings",
-      ]);
-      expect(result).toEqual({ instance: INSTANCE, organization_settings: ORG_SETTINGS });
+      expect(requests).toEqual(["PATCH /v1/instance", "PATCH /v1/instance/organization_settings"]);
+      // `instance` answered 204, so it contributes no state — deliberately
+      // absent rather than re-read, because that read is eventually consistent
+      // and would show the pre-write value under a success message.
+      expect(result.applied).toEqual({
+        organization_settings: { ...ORG_SETTINGS, enabled: true },
+      });
+      expect(result.verification).toEqual({
+        verifiedFields: ["organization_settings.enabled"],
+        droppedFields: [],
+        unverifiableGroups: ["instance"],
+      });
+    });
+
+    test("never re-reads a group whose write answered with no body", async () => {
+      // Regression: the re-read this asserts against returned the pre-write
+      // value often enough that `Config pushed successfully` was printed
+      // directly above stale state, reading as though nothing had been applied.
+      const requests: string[] = [];
+      stubFetch(async (input, init) => {
+        const method = (init?.method ?? "GET").toUpperCase();
+        requests.push(`${method} ${input.toString().replace(BAPI_URL, "")}`);
+        return new Response(null, { status: 204 });
+      });
+      const { patchKeylessConfig } = await import("./keyless.ts");
+
+      const result = await patchKeylessConfig(
+        { secretKey: SECRET_KEY, source: ".env" },
+        { instance: { support_email: "new@example.com" } },
+      );
+
+      expect(requests).toEqual(["PATCH /v1/instance"]);
+      expect(result.applied).toEqual({});
+      expect(result.verification.unverifiableGroups).toEqual(["instance"]);
+      expect(result.verification.droppedFields).toEqual([]);
+    });
+
+    test("names an unconfirmed group as already applied when a later group fails", async () => {
+      // `instance` leaves no trace in the envelope, but it did land — a failure
+      // downstream still has to say so or the user can't tell how far it got.
+      stubFetch(async (input) => {
+        const path = input.toString().replace(BAPI_URL, "");
+        if (path === "/v1/instance") return new Response(null, { status: 204 });
+        return new Response(JSON.stringify({ errors: [{ message: "nope" }] }), { status: 500 });
+      });
+      const { patchKeylessConfig } = await import("./keyless.ts");
+
+      // `withApiContext` attaches the context to the error rather than to its
+      // message; the global handler prints the two together.
+      const error = await patchKeylessConfig(
+        { secretKey: SECRET_KEY, source: ".env" },
+        { instance: { support_email: "new@example.com" }, protect: { rules_enabled: true } },
+      ).catch((thrown: unknown) => thrown);
+
+      expect((error as { context?: string }).context).toBe(
+        "Failed to update protect (already applied: instance)",
+      );
+    });
+
+    test("reports a field the API silently dropped instead of claiming it landed", async () => {
+      // A typo'd field: BAPI's PATCH routes ignore unknown fields inside a
+      // group rather than rejecting them, so the request answers 200 with the
+      // resource as it actually stands — without the typo'd key.
+      stubFetch(async () => new Response(JSON.stringify(PROTECT), { status: 200 }));
+      const { patchKeylessConfig } = await import("./keyless.ts");
+
+      const result = await patchKeylessConfig(
+        { secretKey: SECRET_KEY, source: ".env" },
+        { protect: { rules_enabledx: true } as Record<string, unknown> },
+      );
+
+      expect(result.verification).toEqual({
+        verifiedFields: [],
+        droppedFields: ["protect.rules_enabledx"],
+        unverifiableGroups: [],
+      });
+    });
+
+    // The whole point of checking the PATCH response and not a follow-up read.
+    // `instance.support_email` is writable but never echoed by `GET /v1/instance`,
+    // and BAPI's reads are eventually consistent — verifying against a re-read
+    // reported both as dropped when the write had in fact landed.
+    test("never calls a successful instance write dropped just because the read can't show it", async () => {
+      stubFetch(async (input, init) => {
+        const path = input.toString().replace(BAPI_URL, "");
+        const method = (init?.method ?? "GET").toUpperCase();
+        if (path === "/v1/instance" && method === "PATCH")
+          return new Response(null, { status: 204 });
+        // The read never carries support_email, and still shows the pre-write
+        // allowed_origins — exactly what the real API does.
+        return new Response(
+          JSON.stringify({ ...INSTANCE, allowed_origins: ["https://stale.example.com"] }),
+          { status: 200 },
+        );
+      });
+      const { patchKeylessConfig } = await import("./keyless.ts");
+
+      const result = await patchKeylessConfig(
+        { secretKey: SECRET_KEY, source: ".env" },
+        {
+          instance: {
+            support_email: "new@example.com",
+            allowed_origins: ["https://fresh.example.com"],
+          },
+        },
+      );
+
+      expect(result.verification.droppedFields).toEqual([]);
+      expect(result.verification.unverifiableGroups).toEqual(["instance"]);
     });
 
     test("applies groups in table order, not payload order", async () => {
@@ -396,7 +603,10 @@ describe("keyless config", () => {
       ).rejects.toMatchObject({ context: "Failed to update protect (already applied: instance)" });
     });
 
-    test("returns the response body for groups that answer with one", async () => {
+    // A group having no GET route doesn't make its write unverifiable: what
+    // the PATCH itself answers with is the resource as it now stands, which is
+    // the only evidence the check ever uses.
+    test("verifies a write-only group from the body its own PATCH returns", async () => {
       const { patchKeylessConfig } = await import("./keyless.ts");
 
       const result = await patchKeylessConfig(
@@ -404,8 +614,13 @@ describe("keyless config", () => {
         { restrictions: { allowlist: true } },
       );
 
-      expect(result).toEqual({
+      expect(result.applied).toEqual({
         restrictions: { object: "instance_restrictions", allowlist: true },
+      });
+      expect(result.verification).toEqual({
+        verifiedFields: ["restrictions.allowlist"],
+        droppedFields: [],
+        unverifiableGroups: [],
       });
     });
   });
@@ -483,7 +698,11 @@ describe("keyless config", () => {
         const path = input.toString().replace(BAPI_URL, "");
         const method = (init?.method ?? "GET").toUpperCase();
         requests.push(`${method} ${path}`);
-        return new Response(JSON.stringify(READABLE_BODIES[path] ?? ORG_SETTINGS), { status: 200 });
+        if (method === "PATCH") {
+          // Reflect the write on the next read so the round-trip check confirms it.
+          bapiState[path] = { ...(bapiState[path] as object), ...JSON.parse(init?.body as string) };
+        }
+        return new Response(JSON.stringify(bapiState[path] ?? ORG_SETTINGS), { status: 200 });
       });
       const { orgsEnable } = await import("../orgs/index.ts");
 

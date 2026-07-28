@@ -5,6 +5,9 @@ import { fetchUserInfo } from "../../lib/token-exchange.ts";
 import { errorMessage, isAuthError, PlapiError } from "../../lib/errors.ts";
 import { detectPublishableKeyName, detectSecretKeyName } from "../../lib/framework.ts";
 import { parseEnvFile } from "../../lib/dotenv.ts";
+import { hasAccountCredentials } from "../../lib/credential-store.ts";
+import type { KeylessTarget } from "../../lib/keyless-target.ts";
+import { readKeylessBreadcrumb } from "../../lib/keyless.ts";
 import {
   getCurrentVersion,
   getUpdateChannel,
@@ -17,7 +20,7 @@ import {
 } from "../../lib/update-check.ts";
 import { formatHostStateProbeFailures, getAgentHostStateProbe } from "../../lib/host-execution.ts";
 import { isAgent } from "../../mode.ts";
-import type { CheckResult, DoctorContext, FixAction } from "./types.ts";
+import type { CheckResult, DoctorContext, FixAction, KeylessInstanceInfo } from "./types.ts";
 
 interface CheckOptions {
   remedy?: string;
@@ -66,15 +69,48 @@ function defineCheck(name: string, fixFactory?: () => FixAction): CheckBuilder {
   };
 }
 
+/** How to refer to an unclaimed keyless application in check output. */
+function keylessLabel(keyless: KeylessTarget, instance: KeylessInstanceInfo | null): string {
+  const name = instance?.id ? `\`${instance.id}\`` : "this application";
+  const env = instance?.environmentType ? ` (${instance.environmentType})` : "";
+  return `${name}${env} — secret key from \`${keyless.source}\``;
+}
+
+/**
+ * How this particular application can be claimed, which is not one answer.
+ * `clerk auth login` only claims silently when `clerk init` left a claim token
+ * behind; a key that arrived any other way (an SDK's own keyless.json, a
+ * hand-copied secret) has no token to redeem and has to be claimed from the
+ * dashboard instead.
+ *
+ * This rides in the check's message rather than its detail: `detail` only
+ * renders under `--verbose`, and guidance nobody sees by default isn't
+ * guidance.
+ */
+async function claimHint(): Promise<string> {
+  return (await readKeylessBreadcrumb(process.cwd()))
+    ? "Run `clerk auth login` to claim it."
+    : "Claim it from the Clerk Dashboard — `clerk auth login` only claims applications `clerk init` created.";
+}
+
 export async function checkLoggedIn(ctx: DoctorContext): Promise<CheckResult> {
   const check = defineCheck("Logged in", ctx.fixes.login);
   const token = await ctx.getToken();
-  if (!token) {
-    return check.fail("Not logged in", {
-      remedy: "Run `clerk auth login` to authenticate.",
-    });
+  if (token) return check.pass("Logged in (token found in credential store)");
+
+  // No account session doesn't mean the project is broken: an unclaimed
+  // keyless application is a legitimate, healthy way to run the CLI.
+  const keyless = await ctx.getKeylessTarget();
+  if (keyless) {
+    const instance = await ctx.getKeylessInstance();
+    return check.pass(
+      `Not logged in — running on the unclaimed keyless application ${keylessLabel(keyless, instance)}. ${await claimHint()}`,
+    );
   }
-  return check.pass("Logged in (token found in credential store)");
+
+  return check.fail("Not logged in", {
+    remedy: "Run `clerk auth login` to authenticate.",
+  });
 }
 
 export async function checkHostExecution(): Promise<CheckResult> {
@@ -99,7 +135,12 @@ export async function checkHostExecution(): Promise<CheckResult> {
 export async function checkTokenValid(ctx: DoctorContext): Promise<CheckResult> {
   const check = defineCheck("Authentication valid", ctx.fixes.login);
   const storedToken = await ctx.getToken();
-  if (!storedToken) return check.skip("no token");
+  if (!storedToken) {
+    const keyless = await ctx.getKeylessTarget();
+    return keyless
+      ? check.pass("No account session — not required for this keyless application")
+      : check.skip("no token");
+  }
 
   try {
     const token = await ctx.getValidToken();
@@ -108,6 +149,21 @@ export async function checkTokenValid(ctx: DoctorContext): Promise<CheckResult> 
     return check.pass(`Authenticated as ${userInfo.email}`);
   } catch (error) {
     if (isAuthError(error)) {
+      // Same fallback whoami uses: an expired session doesn't strand a keyless
+      // project, so don't tell the user their setup is broken.
+      const keyless = await ctx.getKeylessTarget();
+      if (keyless) {
+        const instance = await ctx.getKeylessInstance();
+        return check.warn(
+          `Stored session is expired — falling back to the keyless application ${keylessLabel(keyless, instance)}`,
+          {
+            remedy:
+              "Run `clerk auth login` to re-authenticate your account (optional for keyless work).",
+            fixable: false,
+          },
+        );
+      }
+
       return check.fail("Token is expired or invalid", {
         remedy: "Run `clerk auth login` to re-authenticate.",
       });
@@ -126,29 +182,61 @@ export async function checkTokenValid(ctx: DoctorContext): Promise<CheckResult> 
 export async function checkProjectLinked(ctx: DoctorContext): Promise<CheckResult> {
   const check = defineCheck("Project linked", ctx.fixes.link);
   const resolved = await ctx.getProfile();
-  if (!resolved) {
-    return check.fail("Not linked to a Clerk application", {
-      remedy: "Run `clerk link` to associate this project with a Clerk app.",
-    });
+  if (resolved) {
+    const RESOLUTION_LABELS: Record<string, string> = {
+      remote: "git remote",
+      "git-common-dir": "git repo",
+      directory: "directory",
+    };
+    const via = `via ${RESOLUTION_LABELS[resolved.resolvedVia] ?? resolved.resolvedVia} (${resolved.path})`;
+
+    return check.pass(
+      `Linked ${via}`,
+      `Workspace: ${resolved.profile.workspaceId || "(none)"}\nDev instance: ${resolved.profile.instances.development}\nProd instance: ${resolved.profile.instances.production ?? "(not set)"}`,
+    );
   }
 
-  const RESOLUTION_LABELS: Record<string, string> = {
-    remote: "git remote",
-    "git-common-dir": "git repo",
-    directory: "directory",
-  };
-  const via = `via ${RESOLUTION_LABELS[resolved.resolvedVia] ?? resolved.resolvedVia} (${resolved.path})`;
+  // Unlinked isn't automatically broken: a project running on an unclaimed
+  // keyless application has nothing to link yet.
+  const keyless = await ctx.getKeylessTarget();
+  if (keyless) {
+    const instance = await ctx.getKeylessInstance();
+    const label = keylessLabel(keyless, instance);
 
-  return check.pass(
-    `Linked ${via}`,
-    `Workspace: ${resolved.profile.workspaceId || "(none)"}\nDev instance: ${resolved.profile.instances.development}\nProd instance: ${resolved.profile.instances.production ?? "(not set)"}`,
-  );
+    // Someone with an account who hasn't linked this directory *could* reach
+    // the full account configuration — say so, unlike the fully unclaimed case.
+    if (await hasAccountCredentials()) {
+      return check.warn(
+        `Not linked — using the keyless application ${label}, which covers fewer settings`,
+        {
+          remedy: "Run `clerk link` to use the full account configuration.",
+          fixable: true,
+        },
+      );
+    }
+
+    return check.pass(
+      `Not linked — running on the unclaimed keyless application ${label}. ${await claimHint()}`,
+    );
+  }
+
+  return check.fail("Not linked to a Clerk application", {
+    remedy: "Run `clerk link` to associate this project with a Clerk app.",
+  });
 }
 
 export async function checkLinkedAppExists(ctx: DoctorContext): Promise<CheckResult> {
   const check = defineCheck("Application reachable", ctx.fixes.link);
   const token = await ctx.getToken();
-  if (!token) return check.skip("not authenticated");
+  if (!token) {
+    // This check is account-only — the Platform API application record has no
+    // keyless equivalent — so an unclaimed keyless project has nothing to skip
+    // *over*, just nothing to verify.
+    const keyless = await ctx.getKeylessTarget();
+    return check.skip(
+      keyless ? "keyless application, no linked app to verify" : "not authenticated",
+    );
+  }
 
   const resolved = await ctx.getProfile();
   if (!resolved) return check.skip("no project linked");
@@ -175,7 +263,14 @@ export async function checkLinkedAppExists(ctx: DoctorContext): Promise<CheckRes
 export async function checkInstances(ctx: DoctorContext): Promise<CheckResult> {
   const check = defineCheck("Instance IDs", ctx.fixes.link);
   const token = await ctx.getToken();
-  if (!token) return check.skip("not authenticated");
+  if (!token) {
+    // A linked profile's dev/prod instance IDs are an account-only concept —
+    // the secret key on disk already addresses its one instance directly.
+    const keyless = await ctx.getKeylessTarget();
+    return check.skip(
+      keyless ? "keyless application, no linked instances to verify" : "not authenticated",
+    );
+  }
 
   const resolved = await ctx.getProfile();
   if (!resolved) return check.skip("no project linked");

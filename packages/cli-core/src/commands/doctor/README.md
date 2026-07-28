@@ -37,6 +37,30 @@ clerk doctor --fix       # Offer to auto-fix issues
 | Shell completion      | Configuration  | Shell autocompletion is installed for the detected shell                                                                                                                                             |
 | MCP server            | Integration    | If a Clerk MCP entry is installed, every distinct configured server answers the `initialize` handshake; warns on an unreadable client config (skipped when nothing is installed; warns, never fails) |
 
+### Keyless applications
+
+The Authentication token, Token validity, and Project linkage checks resolve
+the same keyless fallback the rest of the CLI uses (`lib/keyless-target.ts`):
+a project with no account session and no linked profile, but a `sk_...` key
+on disk (or in `CLERK_SECRET_KEY`/framework env var), is running on an
+**unclaimed keyless application** — a legitimate, healthy state, not a broken
+one.
+
+- No token, keyless key present → **pass**, naming the instance and noting
+  `clerk auth login` claims it.
+- Stored session expired, keyless key present → **warn** (not fail): the
+  keyless key still works, logging in again is optional.
+- Signed in (has account credentials) but this directory isn't linked, keyless
+  key present → **warn**: the account could reach the fuller configuration by
+  running `clerk link`, so that's called out unlike the fully unclaimed case.
+- No token **and** no keyless key found anywhere → still **fail**. Keyless
+  only changes the outcome when there's actually a secret key to fall back to.
+
+The Linked application and Instances checks are account-only (the Platform
+API application/instance-list concepts have no keyless equivalent), so they
+continue to skip for a keyless project — the skip reason names the keyless
+application instead of reading like a problem.
+
 ## Auto-Fix (`--fix`)
 
 When `--fix` is passed in human mode, the command prompts to fix each
@@ -89,7 +113,8 @@ Exit code 1 signals one or more checks failed.
 
 ## API Endpoints
 
-| Method | Endpoint                            | Description                                     |
-| ------ | ----------------------------------- | ----------------------------------------------- |
-| `GET`  | `/oauth/userinfo`                   | Validates the stored auth token                 |
-| `GET`  | `/v1/platform/applications/{appId}` | Verifies the linked app and its instances exist |
+| Method | Endpoint                            | Description                                                     |
+| ------ | ----------------------------------- | --------------------------------------------------------------- |
+| `GET`  | `/oauth/userinfo`                   | Validates the stored auth token                                 |
+| `GET`  | `/v1/platform/applications/{appId}` | Verifies the linked app and its instances exist                 |
+| `GET`  | `/v1/instance`                      | Names the keyless application (best-effort, via its secret key) |

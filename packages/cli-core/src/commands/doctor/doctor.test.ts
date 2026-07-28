@@ -4,9 +4,21 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { ApiError, AuthError } from "../../lib/errors.ts";
 import { _setConfigDir } from "../../lib/config.ts";
-import { gitStubs, tokenExchangeStubs, stubFetch } from "../../test/lib/stubs.ts";
-import type { CheckResult, CheckStatus, DoctorContext, ResolvedProfile } from "./types.ts";
+import {
+  credentialStoreStubs,
+  gitStubs,
+  tokenExchangeStubs,
+  stubFetch,
+} from "../../test/lib/stubs.ts";
+import type {
+  CheckResult,
+  CheckStatus,
+  DoctorContext,
+  KeylessInstanceInfo,
+  ResolvedProfile,
+} from "./types.ts";
 import type { Application } from "../../lib/plapi.ts";
+import type { KeylessTarget } from "../../lib/keyless-target.ts";
 
 let mockUserInfo: { userId: string; email: string } | null = null;
 let mockUserInfoError: Error | null = null;
@@ -23,6 +35,7 @@ mock.module("../../lib/token-exchange.ts", () => ({
   },
 }));
 
+mock.module("../../lib/credential-store.ts", () => credentialStoreStubs);
 mock.module("../../lib/git.ts", () => gitStubs);
 mock.module("../../lib/host-execution.ts", () => ({
   getAgentHostStateProbe: async () => mockHostStateProbe,
@@ -92,6 +105,8 @@ function createMockContext(
     };
     application?: Application | null;
     applicationError?: Error;
+    keylessTarget?: KeylessTarget;
+    keylessInstance?: KeylessInstanceInfo | null;
   } = {},
 ): DoctorContext {
   return {
@@ -105,6 +120,8 @@ function createMockContext(
       if (overrides.applicationError) throw overrides.applicationError;
       return overrides.application ?? null;
     },
+    getKeylessTarget: async () => overrides.keylessTarget,
+    getKeylessInstance: async () => overrides.keylessInstance ?? null,
     fixes: {
       login: noopFix,
       link: noopFix,
@@ -112,6 +129,16 @@ function createMockContext(
     },
   };
 }
+
+const mockKeylessTarget: KeylessTarget = {
+  secretKey: "sk_test_keyless",
+  source: ".env.local",
+};
+
+const mockKeylessInstance: KeylessInstanceInfo = {
+  id: "ins_keyless_1",
+  environmentType: "development",
+};
 
 interface ExpectedCheck {
   name: string;
@@ -189,6 +216,22 @@ describe("checkLoggedIn", () => {
       status: "fail",
       remedy: "clerk auth login",
       fix: true,
+    });
+  });
+
+  test("pass (not fail) when no token but an unclaimed keyless application is present", async () => {
+    const ctx = createMockContext({
+      token: null,
+      keylessTarget: mockKeylessTarget,
+      keylessInstance: mockKeylessInstance,
+    });
+    const result = await checkLoggedIn(ctx);
+    expectCheck(result, {
+      name: "Logged in",
+      status: "pass",
+      // The claim hint has to ride in the message: `detail` only renders
+      // under --verbose, and guidance nobody sees by default isn't guidance.
+      message: ["unclaimed keyless application", "ins_keyless_1", "Claim it"],
     });
   });
 });
@@ -299,6 +342,29 @@ describe("checkTokenValid", () => {
     const result = await checkTokenValid(ctx);
     expectCheck(result, { name: "Authentication valid", status: "warn", message: "Skipped" });
   });
+
+  test("pass (not skip) when no token but an unclaimed keyless application is present", async () => {
+    const ctx = createMockContext({ token: null, keylessTarget: mockKeylessTarget });
+    const result = await checkTokenValid(ctx);
+    expectCheck(result, {
+      name: "Authentication valid",
+      status: "pass",
+      message: "No account session",
+    });
+  });
+
+  test("warn (not fail) when token is expired but a keyless application is present", async () => {
+    mockUserInfoError = new ApiError(401, "Unauthorized");
+    const ctx = createMockContext({ token: "expired_token", keylessTarget: mockKeylessTarget });
+    const result = await checkTokenValid(ctx);
+    expectCheck(result, {
+      name: "Authentication valid",
+      status: "warn",
+      message: ["Stored session is expired", "keyless application"],
+      remedy: "clerk auth login",
+      fix: false,
+    });
+  });
 });
 
 describe("checkProjectLinked", () => {
@@ -320,6 +386,39 @@ describe("checkProjectLinked", () => {
     expectCheck(result, {
       name: "Project linked",
       status: "fail",
+      remedy: "clerk link",
+      fix: true,
+    });
+  });
+
+  test("pass (not fail) when unlinked but running an unclaimed keyless application", async () => {
+    delete process.env.CLERK_PLATFORM_API_KEY; // no account credentials at all
+    const ctx = createMockContext({
+      keylessTarget: mockKeylessTarget,
+      keylessInstance: mockKeylessInstance,
+    });
+    const result = await checkProjectLinked(ctx);
+    expectCheck(result, {
+      name: "Project linked",
+      status: "pass",
+      // The claim hint has to ride in the message: `detail` only renders
+      // under --verbose, and guidance nobody sees by default isn't guidance.
+      message: ["unclaimed keyless application", "ins_keyless_1", "Claim it"],
+    });
+  });
+
+  test("warn (not fail) when signed in but unlinked, falling back to a keyless application", async () => {
+    // beforeEach sets CLERK_PLATFORM_API_KEY, so hasAccountCredentials() is true here —
+    // the directory *could* reach the full account configuration by linking.
+    const ctx = createMockContext({
+      keylessTarget: mockKeylessTarget,
+      keylessInstance: mockKeylessInstance,
+    });
+    const result = await checkProjectLinked(ctx);
+    expectCheck(result, {
+      name: "Project linked",
+      status: "warn",
+      message: ["keyless application", "fewer settings"],
       remedy: "clerk link",
       fix: true,
     });
@@ -383,6 +482,16 @@ describe("checkLinkedAppExists", () => {
     const ctx = createMockContext({ token: "test_token" });
     const result = await checkLinkedAppExists(ctx);
     expectCheck(result, { name: "Application reachable", status: "warn", message: "Skipped" });
+  });
+
+  test("skip reason names the keyless application instead of implying a problem", async () => {
+    const ctx = createMockContext({ token: null, keylessTarget: mockKeylessTarget });
+    const result = await checkLinkedAppExists(ctx);
+    expectCheck(result, {
+      name: "Application reachable",
+      status: "warn",
+      message: ["Skipped", "keyless application"],
+    });
   });
 });
 
@@ -452,6 +561,16 @@ describe("checkInstances", () => {
     const ctx = createMockContext({ token: "test_token" });
     const result = await checkInstances(ctx);
     expectCheck(result, { name: "Instance IDs", status: "warn", message: "Skipped" });
+  });
+
+  test("skip reason names the keyless application instead of implying a problem", async () => {
+    const ctx = createMockContext({ token: null, keylessTarget: mockKeylessTarget });
+    const result = await checkInstances(ctx);
+    expectCheck(result, {
+      name: "Instance IDs",
+      status: "warn",
+      message: ["Skipped", "keyless application"],
+    });
   });
 });
 

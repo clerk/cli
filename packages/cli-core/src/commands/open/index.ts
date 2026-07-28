@@ -8,7 +8,9 @@ import { log } from "../../lib/log.ts";
 import { bold, cyan, dim } from "../../lib/color.ts";
 import { intro, outro } from "../../lib/spinner.ts";
 import { isAgent } from "../../mode.ts";
+import { resolveKeylessTarget } from "../../lib/keyless-target.ts";
 import { isKnownDashboardPath } from "./dashboard-paths.ts";
+import { describeKeylessInstance, findKeylessClaimUrl } from "./keyless-claim.ts";
 
 interface OpenOptions {
   print?: boolean;
@@ -34,9 +36,7 @@ export async function openDashboard(
   const resolved = await resolveProfile(cwd);
 
   if (!resolved) {
-    throw new CliError("No Clerk project linked to this directory. Run `clerk link` first.", {
-      code: ERROR_CODE.NOT_LINKED,
-    });
+    return openKeylessDashboard(cwd, subpath, options);
   }
 
   const { appId, appName } = resolved.profile;
@@ -93,6 +93,100 @@ export async function openDashboard(
   }
 
   log.info(`↗ Opening ${bold(appLabel)} (${instanceLabel})${target}`);
+  log.info(`  ${dim(url)}`);
+
+  const result = await openBrowser(url);
+  if (!result.ok) {
+    log.warn(
+      `Could not open your browser automatically. Open this URL to continue:\n  ${cyan(url)}\n${dim(`(Reason: ${result.reason})`)}`,
+    );
+  }
+
+  outro();
+}
+
+/**
+ * The keyless counterpart to `openDashboard` above. An unclaimed keyless
+ * application belongs to no account, so `/apps/{appId}/instances/{instanceId}`
+ * doesn't exist for it yet — the one page that does is the one-time claim
+ * link. `clerk link` cannot help here (there is nothing in any account to
+ * link to), so this path exists precisely so the CLI has *some* answer
+ * instead of dead-ending on that advice.
+ */
+async function openKeylessDashboard(
+  cwd: string,
+  subpath: string | undefined,
+  options: OpenOptions,
+): Promise<void> {
+  const destination = await findKeylessClaimUrl(cwd);
+
+  if (!destination) {
+    // A secret key on disk with no claim link is ambiguous: it may be a
+    // perfectly claimed app's key set by hand (in which case `clerk link`
+    // really is the fix), or a keyless app whose breadcrumb got lost. Name
+    // both possibilities rather than guessing.
+    const keyless = await resolveKeylessTarget({ cwd });
+    if (keyless) {
+      throw new CliError(
+        `Found a secret key (from ${keyless.source}) but no claim link on disk, so there's no dashboard page to open yet. ` +
+          "If this key belongs to an application you've already claimed, run `clerk link` (or pass `--app <app_id>`) to target it directly. " +
+          "Otherwise, run `clerk init --keyless` to regenerate a claim link.",
+        { code: ERROR_CODE.NOT_LINKED },
+      );
+    }
+
+    throw new CliError(
+      "No Clerk project linked to this directory, and no keyless application was found either. " +
+        "Run `clerk link` if you already have an application, or `clerk init` to create one.",
+      { code: ERROR_CODE.NOT_LINKED },
+    );
+  }
+
+  if (subpath) {
+    throw new CliError(
+      `"${subpath}" isn't reachable yet — this application hasn't been claimed, so it has no dashboard pages beyond the claim link. ` +
+        "Run `clerk open` (no subpath) to claim it, then retry the subpath once it's linked.",
+      { code: ERROR_CODE.NOT_LINKED },
+    );
+  }
+
+  const { url, source } = destination;
+
+  // Best-effort only: the claim link is already fully formed, so a bad or
+  // missing secret key shouldn't block opening it — it just means the
+  // output won't include instance details.
+  const instance = await resolveKeylessTarget({ cwd })
+    .then((keyless) => (keyless ? describeKeylessInstance(keyless.secretKey) : null))
+    .catch(() => null);
+
+  // Output strategy mirrors the linked-app flow above:
+  //   --print → plain URL on stdout (scriptable)
+  //   agent mode → JSON object with full context (parseable)
+  //   human mode → intro/outro logging flow with browser open
+  if (options.print) {
+    log.data(url);
+    return;
+  }
+
+  if (isAgent()) {
+    log.data(
+      JSON.stringify({
+        url,
+        keyless: true,
+        claimSource: source,
+        instanceId: instance?.instanceId ?? null,
+        environmentType: instance?.environmentType ?? null,
+        subpath: null,
+        opened: false,
+      }),
+    );
+    return;
+  }
+
+  intro("Opening dashboard");
+
+  const suffix = instance?.instanceId ? ` (${instance.instanceId})` : "";
+  log.info(`↗ This application hasn't been claimed yet — opening its claim link${suffix}`);
   log.info(`  ${dim(url)}`);
 
   const result = await openBrowser(url);

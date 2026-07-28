@@ -1,5 +1,6 @@
 import { resolveAppContext, resolveFetchedApplicationInstance } from "./config.ts";
 import { BapiError, CliError, ERROR_CODE, throwUsageError, withApiContext } from "./errors.ts";
+import { resolveKeylessTarget } from "./keyless-target.ts";
 import { log } from "./log.ts";
 import { fetchApplication, validateKeyPrefix } from "./plapi.ts";
 
@@ -14,13 +15,29 @@ interface ResolveBapiSecretKeyOptions {
   app?: string;
   instance?: string;
   secretKey?: string;
+  cwd?: string;
 }
 
 export async function describeBapiTarget(
   options: ResolveBapiSecretKeyOptions,
 ): Promise<string | undefined> {
+  // Mirrors resolveBapiSecretKey's precedence: an unclaimed keyless project has
+  // no app/instance to describe, only the key's own source.
+  const keyless = await resolveKeylessTarget({
+    app: options.app,
+    instance: options.instance,
+    cwd: options.cwd,
+  });
+  if (keyless) {
+    return `this keyless application (secret key from ${keyless.source})`;
+  }
+
   try {
-    const ctx = await resolveAppContext({ app: options.app, instance: options.instance });
+    const ctx = await resolveAppContext({
+      app: options.app,
+      instance: options.instance,
+      cwd: options.cwd,
+    });
     return `${ctx.appLabel} (${ctx.instanceLabel})`;
   } catch (error) {
     if (
@@ -58,14 +75,24 @@ export async function resolveBapiSecretKey(options: ResolveBapiSecretKeyOptions)
     return resolved.instance.secret_key;
   }
 
-  if (process.env.CLERK_SECRET_KEY) {
-    validateKeyPrefix(process.env.CLERK_SECRET_KEY, "sk_");
-    return process.env.CLERK_SECRET_KEY;
+  // An unclaimed keyless application keeps its only secret key on disk (env var,
+  // .env.local, or the SDK's own keyless.json) — the same resolution `whoami`,
+  // `config`, and `env pull` already share. The shipped binary is compiled with
+  // --no-compile-autoload-dotenv, so without this every `users`/`api` command
+  // would report "no secret key" on a perfectly live keyless project the moment
+  // it wasn't run via `bun run` (which autoloads .env.local for us in dev).
+  const keyless = await resolveKeylessTarget({ instance: options.instance, cwd: options.cwd });
+  if (keyless) {
+    return keyless.secretKey;
   }
 
   let ctx: Awaited<ReturnType<typeof resolveAppContext>>;
   try {
-    ctx = await resolveAppContext({ app: options.app, instance: options.instance });
+    ctx = await resolveAppContext({
+      app: options.app,
+      instance: options.instance,
+      cwd: options.cwd,
+    });
   } catch (error) {
     if (error instanceof CliError && error.code === ERROR_CODE.NOT_LINKED) {
       throwUsageError(

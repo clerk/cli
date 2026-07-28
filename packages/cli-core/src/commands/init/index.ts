@@ -15,11 +15,13 @@ import {
 import { resolveProfile } from "../../lib/config.js";
 import { deriveProjectName } from "../../lib/project-name.js";
 import { log } from "../../lib/log.js";
+import { confirm } from "../../lib/prompts.ts";
 import {
   createAccountlessApp,
   writeKeysToEnvFile,
   parseClaimToken,
   writeKeylessBreadcrumb,
+  readKeylessBreadcrumb,
   KEYLESS_TEMPLATES,
   type KeylessTemplate,
 } from "../../lib/keyless.js";
@@ -36,6 +38,7 @@ import {
   checkGitDirty,
   printOutro,
   printKeylessInfo,
+  printExistingKeylessInfo,
   getAuthenticatedEmail,
   isAuthenticated,
 } from "./heuristics.js";
@@ -68,6 +71,8 @@ type InitOptions = {
   login?: boolean;
   /** Pre-configure the keyless application from a Clerk application template. */
   template?: KeylessTemplate;
+  /** Replace an existing unclaimed keyless application instead of keeping it. */
+  fresh?: boolean;
 };
 
 export async function init(options: InitOptions = {}) {
@@ -106,7 +111,17 @@ export async function init(options: InitOptions = {}) {
   const optsKeyless = options.keyless === true;
   // Skip auth-related I/O entirely when the user opted into keyless — those
   // values are not consumed once the strategy resolves to "keyless".
-  const authed = optsKeyless ? false : await isAuthenticated();
+  //
+  // Agent mode has no way to recover if this lies: a human who turns out to be
+  // unauthenticated just gets prompted to log in, but an agent that trusts a
+  // stale/broken credential ends up blocked on an interactive browser OAuth
+  // round-trip it can never complete. So agent mode validates the credential
+  // (it can fall back to keyless) instead of trusting mere presence.
+  const authed = optsKeyless
+    ? false
+    : agent
+      ? await isAuthenticatedForAgent()
+      : await isAuthenticated();
   const linkedProfile =
     !optsKeyless && agent && !options.app ? await resolveProfile(ctx.cwd) : undefined;
   const hasRealAppTarget = Boolean(options.app || linkedProfile);
@@ -120,6 +135,8 @@ export async function init(options: InitOptions = {}) {
     hasRealAppTarget,
     framework: ctx.framework,
   });
+
+  assertKeylessOnlyFlags(options, strategy);
 
   if (strategy === "authenticate") {
     bar();
@@ -146,7 +163,11 @@ export async function init(options: InitOptions = {}) {
   }
 
   bar();
-  await runStrategy(strategy, ctx, options.template);
+  await runStrategy(strategy, ctx, {
+    template: options.template,
+    fresh: options.fresh === true,
+    skipConfirm: overrides.skipConfirm,
+  });
 
   // Native platforms (iOS/Android) have no npx/Node toolchain to run `skills add` with.
   if (options.skills !== false && isNpmFramework(ctx.framework)) {
@@ -165,8 +186,9 @@ export async function init(options: InitOptions = {}) {
 
 /**
  * Rejects flag combinations that can't both be honoured, before anything is
- * bootstrapped on disk. `--keyless` and `--template` describe an application the
- * CLI creates; `--login` and `--app` describe one that already exists.
+ * bootstrapped on disk. `--keyless`, `--template`, and `--fresh` describe an
+ * application the CLI creates; `--login` and `--app` describe one that
+ * already exists.
  */
 async function assertUsableFlags(options: InitOptions, agent: boolean): Promise<void> {
   if (options.keyless && options.login) {
@@ -182,9 +204,59 @@ async function assertUsableFlags(options: InitOptions, agent: boolean): Promise<
       "--template applies to keyless applications and cannot be combined with --login.",
     );
   }
-  if (options.login && agent && !(await isAuthenticated())) {
+  if (options.fresh && options.login) {
+    throwUsageError("--fresh applies to keyless applications and cannot be combined with --login.");
+  }
+  // Presence-only here would repeat the hang below: an agent can't complete an
+  // interactive login, so a stored-but-broken credential must read as
+  // unauthenticated rather than let this guard wave the request through.
+  if (options.login && agent && !(await isAuthenticatedForAgent())) {
     throwUsageError(
       "--login requires an interactive terminal to complete the browser login. Ask the user to run `clerk auth login`, then re-run `clerk init`.",
+    );
+  }
+}
+
+/**
+ * Agent-mode variant of `isAuthenticated()`. The human-mode presence check
+ * (see `heuristics.isAuthenticated`) deliberately doesn't validate the
+ * credential, because a human who turns out to be unauthenticated just gets
+ * an interactive login prompt. An agent has no such fallback — if it trusts a
+ * stale/broken credential, it ends up blocked on a browser OAuth round-trip
+ * that can never complete. So this validates before trusting: a real API key
+ * is accepted outright (no OAuth involved), everything else must actually
+ * resolve to a user.
+ */
+async function isAuthenticatedForAgent(): Promise<boolean> {
+  if (process.env.CLERK_PLATFORM_API_KEY) return true;
+  return (await getAuthenticatedEmail()) !== null;
+}
+
+/**
+ * `--template` and `--fresh` only take effect when init creates a keyless
+ * application. Silently dropping them when the strategy resolves elsewhere
+ * (the pre-fix behaviour for `--template`) leaves the user believing they got
+ * a shaped or replaced app when they didn't — so fail loudly instead, the
+ * same way `--keyless`+`--app` does above. This runs after strategy
+ * resolution because that's the earliest point the real strategy — not just
+ * the flags that might influence it — is known.
+ */
+function assertKeylessOnlyFlags(options: InitOptions, strategy: InitStrategy): void {
+  if (strategy === "keyless") return;
+
+  const reason =
+    strategy === "manual"
+      ? "this framework does not support keyless mode"
+      : "this run resolved to the authenticated flow instead (already signed in, --app was set, or a project is already linked)";
+
+  if (options.template) {
+    throwUsageError(
+      `--template only applies to keyless applications, but ${reason}. Add --keyless to force a keyless app, or drop --template.`,
+    );
+  }
+  if (options.fresh) {
+    throwUsageError(
+      `--fresh only applies to keyless applications, but ${reason}. Add --keyless to force a keyless app, or drop --fresh.`,
     );
   }
 }
@@ -328,10 +400,18 @@ function pickStrategy({
   return "authenticate";
 }
 
+type KeylessRunOptions = {
+  template?: KeylessTemplate;
+  /** Escape hatch for "give me a fresh one": mint a new app even if an unclaimed one already exists. */
+  fresh: boolean;
+  /** Agent mode and `-y` both skip y/n prompts, so both must default to *not* replacing. */
+  skipConfirm: boolean;
+};
+
 async function runStrategy(
   strategy: InitStrategy,
   ctx: ProjectContext,
-  template?: KeylessTemplate,
+  keylessOptions: KeylessRunOptions,
 ): Promise<void> {
   switch (strategy) {
     case "manual":
@@ -341,7 +421,7 @@ async function runStrategy(
       await pull({ file: ctx.envFile, cwd: ctx.cwd });
       return;
     case "keyless":
-      await setupKeylessApp(ctx.cwd, ctx.framework.dep, ctx.envFile, template);
+      await setupKeylessApp(ctx.cwd, ctx.framework.dep, ctx.envFile, keylessOptions);
       return;
   }
 }
@@ -383,12 +463,46 @@ async function authenticateAndLink(
 
 // --- Keyless app setup ---
 
+/**
+ * A `.clerk/keyless.json` breadcrumb means an earlier run already minted an
+ * unclaimed keyless application for this project — its claim token, and
+ * anything configured on it or created in it, only exist as long as that
+ * breadcrumb (and the env keys pointing at it) survive. Re-running init must
+ * not silently mint a replacement and orphan that app, so this asks before
+ * ever touching it: human mode confirms (default: keep); agent mode and `-y`
+ * both keep it too, since neither can consent to a destructive default.
+ * `--fresh` is the explicit "I know, replace it anyway" escape hatch.
+ */
+async function shouldKeepExistingKeyless(
+  cwd: string,
+  skipConfirm: boolean,
+  fresh: boolean,
+): Promise<boolean> {
+  if (fresh) return false;
+
+  const existing = await readKeylessBreadcrumb(cwd);
+  if (!existing) return false;
+
+  if (skipConfirm) return true;
+
+  const replace = await confirm({
+    message: `This project already has an unclaimed keyless application (created ${existing.createdAt}). Replace it with a new one?`,
+    default: false,
+  });
+  return !replace;
+}
+
 async function setupKeylessApp(
   cwd: string,
   frameworkDep: string,
   envFile: string,
-  template?: KeylessTemplate,
+  { template, fresh, skipConfirm }: KeylessRunOptions,
 ): Promise<void> {
+  if (await shouldKeepExistingKeyless(cwd, skipConfirm, fresh)) {
+    printExistingKeylessInfo(envFile);
+    return;
+  }
+
   try {
     const app = await withSpinner(
       template
@@ -517,8 +631,12 @@ export function registerInit(program: Program): void {
     .addOption(
       createOption(
         "--template <name>",
-        "Pre-configure the keyless application from a Clerk application template",
+        "Pre-configure the keyless application from a Clerk application template. Only applies when the strategy resolves to keyless — errors otherwise",
       ).choices(KEYLESS_TEMPLATES),
+    )
+    .option(
+      "--fresh",
+      "Replace an existing unclaimed keyless application with a new one, instead of keeping it. Only applies when the strategy resolves to keyless — errors otherwise",
     )
     .option("-y, --yes", "Skip confirmation prompts")
     .option("--no-skills", "Skip the optional agent skills install prompt")
@@ -548,6 +666,10 @@ export function registerInit(program: Program): void {
       {
         command: "clerk init --template b2b-saas",
         description: "Bootstrap a keyless app pre-configured for B2B SaaS",
+      },
+      {
+        command: "clerk init --keyless --fresh",
+        description: "Replace an existing unclaimed keyless app with a new one",
       },
       { command: "clerk init -y", description: "Skip all confirmation prompts" },
       { command: "clerk init --no-skills", description: "Skip the agent skills install prompt" },

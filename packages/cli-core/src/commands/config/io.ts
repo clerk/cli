@@ -10,9 +10,25 @@
 import { withApiContext } from "../../lib/errors.ts";
 import type { InstanceTarget } from "../../lib/keyless-target.ts";
 import { fetchInstanceConfig, patchInstanceConfig, putInstanceConfig } from "../../lib/plapi.ts";
-import { assertKeylessPayload, patchKeylessConfig, readCurrentGroups } from "./keyless.ts";
+import {
+  assertKeylessPayload,
+  patchKeylessConfig,
+  readCurrentGroups,
+  type KeylessWriteVerification,
+} from "./keyless.ts";
 
 export type ConfigMethod = "PUT" | "PATCH";
+
+export interface WriteResult {
+  /** What the API reported back — printed to the user as-is. */
+  body: Record<string, unknown>;
+  /**
+   * Only present for a keyless write. An account write's response body IS the
+   * config document, trusted outright; a keyless write only gets a 200/204
+   * meaning "request accepted", so what actually landed is checked separately.
+   */
+  verification?: KeylessWriteVerification;
+}
 
 /**
  * Rejects a payload the target can't accept, before any diff is printed or any
@@ -55,7 +71,7 @@ export function supportsServerDryRun(target: InstanceTarget): boolean {
 
 export const LOCAL_DRY_RUN_MESSAGE = "[dry-run] Nothing sent — no changes applied";
 
-export function writeInstanceConfig(
+export async function writeInstanceConfig(
   target: InstanceTarget,
   payload: Record<string, unknown>,
   options: {
@@ -64,20 +80,25 @@ export function writeInstanceConfig(
     dryRun?: boolean;
     failureContext: string;
   },
-): Promise<Record<string, unknown>> {
+): Promise<WriteResult> {
   if (target.kind === "keyless") {
     // PUT is rejected before reaching here: there is no full document to
     // replace when the instance is addressed by its own key. The payload was
     // validated by `assertPayloadWritable` before the diff was shown.
-    return patchKeylessConfig(target.keyless, payload as Record<string, Record<string, unknown>>);
+    const { applied, verification } = await patchKeylessConfig(
+      target.keyless,
+      payload as Record<string, Record<string, unknown>>,
+    );
+    return { body: applied, verification };
   }
 
   const apiFn = options.method === "PUT" ? putInstanceConfig : patchInstanceConfig;
-  return withApiContext(
+  const body = await withApiContext(
     apiFn(target.ctx.appId, target.ctx.instanceId, payload, {
       destructive: options.destructive,
       dryRun: options.dryRun,
     }),
     options.dryRun ? "Dry-run failed" : options.failureContext,
   );
+  return { body };
 }

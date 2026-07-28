@@ -51,6 +51,93 @@ function isReadable(name: KeylessGroup): boolean {
 }
 
 /**
+ * Top-level keys that aren't a config group but ARE reachable on an unclaimed
+ * keyless application — BAPI resource collections with their own routes,
+ * verified live (`clerk api /enterprise_connections` lists and creates them
+ * with just an instance secret key). Naming these in the "claim the app"
+ * advice would send someone on a detour they don't need: `clerk api` already
+ * works, and claiming wouldn't add them to the config document either.
+ */
+const API_REACHABLE_KEYLESS_KEYS = new Set([
+  "enterprise_connections",
+  "saml_connections",
+  "oauth_applications",
+  "domains",
+  "allowlist_identifiers",
+  "blocklist_identifiers",
+]);
+
+/**
+ * Every field `PATCH /v1/instance` accepts, from the Backend API's own schema
+ * (`additionalProperties: false`).
+ *
+ * This is the one group whose write can't be checked against anything: it
+ * answers 204 with no body, so an unrecognised field name is indistinguishable
+ * from an applied one — BAPI drops what it doesn't know rather than rejecting
+ * it. Naming the fields here moves that failure forward to a usage error, and
+ * is worth the maintenance precisely because the alternative is silent. Sending
+ * `{"instance": {"password": "on"}}` used to report success and change nothing.
+ *
+ * Every other group echoes its new state back, so a typo there already surfaces
+ * as a dropped field and needs no list.
+ */
+const INSTANCE_FIELDS = new Set([
+  "test_mode",
+  "hibp",
+  "support_email",
+  "clerk_js_version",
+  "development_origin",
+  "allowed_origins",
+  "cookieless_dev",
+  "url_based_session_syncing",
+  "preferred_sign_in_strategy_when_password_required",
+]);
+
+/**
+ * Auth settings people reach for on the `instance` group that BAPI has no route
+ * for at all, mapped to the reason. Worth naming individually: "unsupported
+ * field" reads like a typo, and someone who just tried to turn on GitHub sign-in
+ * deserves to know no amount of retyping will do it.
+ */
+const ACCOUNT_ONLY_INSTANCE_FIELDS: Record<string, string> = {
+  password: "which authentication strategies are enabled",
+  phone_number: "which authentication strategies are enabled",
+  username: "which authentication strategies are enabled",
+  email_address: "which authentication strategies are enabled",
+  passkey: "which authentication strategies are enabled",
+  social: "social sign-in providers",
+  oauth: "social sign-in providers",
+  second_factors: "multi-factor authentication policy",
+  application_name: "the application's name and branding",
+};
+
+/**
+ * Rejects `instance` fields BAPI would silently discard, before the request is
+ * sent. Runs only for that group — see `INSTANCE_FIELDS`.
+ */
+function assertInstanceFields(fields: Record<string, unknown>): void {
+  const unknown = Object.keys(fields).filter((field) => !INSTANCE_FIELDS.has(field));
+  if (unknown.length === 0) return;
+
+  const lines = [
+    `Unsupported ${unknown.length === 1 ? "field" : "fields"} on \`instance\` for an unclaimed keyless application: ${unknown.join(", ")}.`,
+    `Supported fields: ${[...INSTANCE_FIELDS].join(", ")}.`,
+  ];
+
+  // Say why, once per distinct reason, for the fields people actually try.
+  const reasons = [
+    ...new Set(unknown.map((field) => ACCOUNT_ONLY_INSTANCE_FIELDS[field]).filter(Boolean)),
+  ];
+  for (const reason of reasons) {
+    lines.push(
+      `Clerk's Backend API has no route for ${reason}, so this can't be changed from an unclaimed application at all — claim it first with \`clerk auth login\`.`,
+    );
+  }
+
+  throwUsageError(lines.join("\n"));
+}
+
+/**
  * Validates caller-supplied names once, at the boundary, so everything
  * downstream works with a known group instead of re-checking strings.
  */
@@ -71,11 +158,30 @@ export function assertKeylessPayload(
 ): asserts payload is Record<KeylessGroup, Record<string, unknown>> {
   const unknown = Object.keys(payload).filter((key) => !(key in KEYLESS_GROUPS));
   if (unknown.length > 0) {
-    throwUsageError(
-      `Unsupported config ${unknown.length === 1 ? "key" : "keys"} for an unclaimed keyless application: ${unknown.join(", ")}.\n` +
-        `Supported top-level keys: ${KEYLESS_GROUP_NAMES.join(", ")}.\n` +
+    const apiReachable = unknown.filter((key) => API_REACHABLE_KEYLESS_KEYS.has(key));
+    const accountOnly = unknown.filter((key) => !API_REACHABLE_KEYLESS_KEYS.has(key));
+
+    const lines = [
+      `Unsupported config ${unknown.length === 1 ? "key" : "keys"} for an unclaimed keyless application: ${unknown.join(", ")}.`,
+      `Supported top-level keys: ${KEYLESS_GROUP_NAMES.join(", ")}.`,
+    ];
+
+    // Point these at `clerk api` — they're reachable today, and claiming the
+    // application wouldn't move them into the config document anyway.
+    if (apiReachable.length > 0) {
+      lines.push(
+        `${apiReachable.join(", ")} ${apiReachable.length === 1 ? "is" : "are"} already reachable on an unclaimed application — use \`clerk api /${apiReachable[0]}\` directly instead of this config document.`,
+      );
+    }
+
+    // Everything left really is part of the account-mode config document.
+    if (accountOnly.length > 0) {
+      lines.push(
         "Run `clerk auth login` to claim the application and use the full config document.",
-    );
+      );
+    }
+
+    throwUsageError(lines.join("\n"));
   }
 
   for (const [key, value] of Object.entries(payload)) {
@@ -86,6 +192,10 @@ export function assertKeylessPayload(
         ERROR_CODE.INVALID_JSON,
       );
     }
+  }
+
+  if (payload.instance) {
+    assertInstanceFields(payload.instance as Record<string, unknown>);
   }
 }
 
@@ -121,26 +231,97 @@ export async function pullKeylessConfig(
   return config;
 }
 
+export interface KeylessWriteVerification {
+  /** Dotted `group.field` paths confirmed to hold the value that was sent. */
+  verifiedFields: string[];
+  /**
+   * Dotted `group.field` paths the API's own response to the write doesn't
+   * reflect — a 200 there means "request accepted", not "field applied", and
+   * BAPI silently drops fields it doesn't recognize instead of rejecting them.
+   */
+  droppedFields: string[];
+  /** Groups whose write answered with no body, so it can't be confirmed either way. */
+  unverifiableGroups: KeylessGroup[];
+}
+
+export interface KeylessPatchResult {
+  /** Per-group state as reported back by the API — same envelope shape a pull returns. */
+  applied: Record<string, unknown>;
+  verification: KeylessWriteVerification;
+}
+
+/**
+ * Walks every leaf the caller sent and records whether the observed value
+ * (the API's own read-back) matches it. `sent` is always an object — payload
+ * groups are validated by `assertKeylessPayload` before this runs — so only
+ * `observed` needs a runtime check; a group BAPI dropped won't have it.
+ */
+function collectVerifiedLeaves(
+  sent: Record<string, unknown>,
+  observed: unknown,
+  path: string,
+  out: { path: string; matched: boolean }[],
+): void {
+  const observedObj =
+    observed !== null && typeof observed === "object" && !Array.isArray(observed)
+      ? (observed as Record<string, unknown>)
+      : undefined;
+
+  for (const [key, value] of Object.entries(sent)) {
+    const fieldPath = path ? `${path}.${key}` : key;
+    const observedValue = observedObj?.[key];
+
+    if (value !== null && typeof value === "object" && !Array.isArray(value)) {
+      collectVerifiedLeaves(value as Record<string, unknown>, observedValue, fieldPath, out);
+      continue;
+    }
+
+    out.push({ path: fieldPath, matched: JSON.stringify(value) === JSON.stringify(observedValue) });
+  }
+}
+
 /**
  * Applies each group in the payload to its own BAPI resource and returns what
- * the API reported back. `PATCH /v1/instance` answers 204 with no body, so that
- * group is re-read to give the caller something to see.
+ * the API reported back, plus which of the sent fields that report actually
+ * confirms landed.
+ *
+ * Verification uses the PATCH response body and nothing else. A follow-up GET
+ * looks like better evidence and isn't: BAPI omits writable-but-not-readable
+ * fields from its reads (`instance.support_email` is never echoed), and reads
+ * are eventually consistent, so a GET issued straight after a write can still
+ * be showing the old value. Either would report a perfectly good write as
+ * dropped.
+ *
+ * `PATCH /v1/instance` answers 204 with no body at all, and that group is
+ * reported with no state rather than re-read. An earlier version did re-read it
+ * "so the caller sees something", which turned out to be the worst of both: the
+ * eventually-consistent GET routinely returned the pre-write value, and printing
+ * it directly under `Config pushed successfully` read as though the write had
+ * been ignored. Nothing is more honest than a stale something here — the fields
+ * that group accepts are validated before the request goes out, so a 204 is
+ * already good evidence the write landed.
  */
 export async function patchKeylessConfig(
   target: KeylessTarget,
   payload: Record<string, Record<string, unknown>>,
-): Promise<Record<string, unknown>> {
+): Promise<KeylessPatchResult> {
   const results: Record<string, unknown> = {};
+  const verifiedFields: string[] = [];
+  const droppedFields: string[] = [];
+  const unverifiableGroups: KeylessGroup[] = [];
+  // Tracked separately from `results`, which only carries groups that returned
+  // state to show. A group can be applied and still contribute nothing to the
+  // envelope, and a later failure has to name it regardless.
+  const appliedGroups: KeylessGroup[] = [];
 
   // Each group is its own request and the Backend API has no transaction, so a
   // failure part-way through leaves earlier groups applied. Name them in the
   // error rather than letting the user guess how far it got.
   for (const name of KEYLESS_GROUP_NAMES.filter((group) => group in payload)) {
     const group = KEYLESS_GROUPS[name];
-    const applied = Object.keys(results);
     const context =
-      applied.length > 0
-        ? `Failed to update ${name} (already applied: ${applied.join(", ")})`
+      appliedGroups.length > 0
+        ? `Failed to update ${name} (already applied: ${appliedGroups.join(", ")})`
         : `Failed to update ${name}`;
 
     const response = await withApiContext(
@@ -153,23 +334,28 @@ export async function patchKeylessConfig(
       context,
     );
 
-    if (response.body) {
-      results[name] = response.body;
+    const written = response.body ?? null;
+    appliedGroups.push(name);
+
+    if (!written) {
+      // Nothing came back to check against, and nothing worth inventing: see
+      // the note above on why the re-read that used to live here was removed.
+      // The group is left out of the envelope entirely rather than shown as
+      // null, and the success line names it as unconfirmed.
+      unverifiableGroups.push(name);
       continue;
     }
 
-    // A 204 carries nothing to show; re-read so the caller still sees the group.
-    results[name] = group.readable
-      ? (
-          await withApiContext(
-            bapiRequest({ method: "GET", path: group.path, secretKey: target.secretKey }),
-            `Failed to fetch ${name}`,
-          )
-        ).body
-      : null;
+    results[name] = written;
+
+    const leaves: { path: string; matched: boolean }[] = [];
+    collectVerifiedLeaves(payload[name] ?? {}, written, "", leaves);
+    for (const leaf of leaves) {
+      (leaf.matched ? verifiedFields : droppedFields).push(`${name}.${leaf.path}`);
+    }
   }
 
-  return results;
+  return { applied: results, verification: { verifiedFields, droppedFields, unverifiableGroups } };
 }
 
 /** Current state of the groups a payload touches, for diffing before a write. */

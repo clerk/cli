@@ -20,6 +20,16 @@ afterAll(() => resolveProfileSpy.mockRestore());
 
 mock.module("../../lib/git.ts", () => gitStubs);
 
+const mockResolveKeylessTarget = mock();
+mock.module("../../lib/keyless-target.ts", () => ({
+  resolveKeylessTarget: (...args: unknown[]) => mockResolveKeylessTarget(...args),
+}));
+
+const mockBapiRequest = mock();
+mock.module("../../lib/bapi.ts", () => ({
+  bapiRequest: (...args: unknown[]) => mockBapiRequest(...args),
+}));
+
 // stubFetch instead of mock.module for plapi — mock.module leaks globally in Bun
 let mockAppResponse: Application | null = null;
 let mockAppError: Error | null = null;
@@ -48,6 +58,10 @@ describe("createDoctorContext", () => {
     stubFetch((...args: unknown[]) => mockFetch(...args));
 
     process.env.CLERK_PLATFORM_API_KEY = "test_key";
+
+    mockResolveKeylessTarget.mockReset();
+    mockResolveKeylessTarget.mockResolvedValue(undefined);
+    mockBapiRequest.mockReset();
   });
 
   afterEach(() => {
@@ -56,6 +70,8 @@ describe("createDoctorContext", () => {
     mockGetToken.mockReset();
     mockResolveProfile.mockReset();
     mockFetch.mockReset();
+    mockResolveKeylessTarget.mockReset();
+    mockBapiRequest.mockReset();
   });
 
   describe("getToken", () => {
@@ -146,6 +162,77 @@ describe("createDoctorContext", () => {
       await expect(ctx.getApplication()).rejects.toThrow("API failure");
       await expect(ctx.getApplication()).rejects.toThrow("API failure");
       expect(mockFetch).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe("getKeylessTarget", () => {
+    test("returns the same promise on repeated calls", async () => {
+      const target = { secretKey: "sk_test_keyless", source: ".env.local" };
+      mockResolveKeylessTarget.mockResolvedValue(target);
+
+      const ctx = createDoctorContext();
+      const p1 = ctx.getKeylessTarget();
+      const p2 = ctx.getKeylessTarget();
+
+      expect(p1).toBe(p2);
+      expect(await p1).toEqual(target);
+      expect(mockResolveKeylessTarget).toHaveBeenCalledTimes(1);
+    });
+
+    test("returns undefined when no keyless target resolves", async () => {
+      mockResolveKeylessTarget.mockResolvedValue(undefined);
+
+      const ctx = createDoctorContext();
+      expect(await ctx.getKeylessTarget()).toBeUndefined();
+    });
+  });
+
+  describe("getKeylessInstance", () => {
+    test("returns null without hitting BAPI when there is no keyless target", async () => {
+      mockResolveKeylessTarget.mockResolvedValue(undefined);
+
+      const ctx = createDoctorContext();
+      const result = await ctx.getKeylessInstance();
+
+      expect(result).toBeNull();
+      expect(mockBapiRequest).not.toHaveBeenCalled();
+    });
+
+    test("fetches instance info via the keyless secret key, only once", async () => {
+      mockResolveKeylessTarget.mockResolvedValue({
+        secretKey: "sk_test_keyless",
+        source: ".env.local",
+      });
+      mockBapiRequest.mockResolvedValue({
+        status: 200,
+        body: { id: "ins_keyless_1", environment_type: "development" },
+      });
+
+      const ctx = createDoctorContext();
+      const p1 = ctx.getKeylessInstance();
+      const p2 = ctx.getKeylessInstance();
+
+      expect(p1).toBe(p2);
+      expect(await p1).toEqual({ id: "ins_keyless_1", environmentType: "development" });
+      expect(mockBapiRequest).toHaveBeenCalledTimes(1);
+      expect(mockBapiRequest).toHaveBeenCalledWith(
+        expect.objectContaining({
+          method: "GET",
+          path: "/v1/instance",
+          secretKey: "sk_test_keyless",
+        }),
+      );
+    });
+
+    test("returns null (not a throw) when the instance fetch fails", async () => {
+      mockResolveKeylessTarget.mockResolvedValue({
+        secretKey: "sk_test_keyless",
+        source: ".env.local",
+      });
+      mockBapiRequest.mockRejectedValue(new Error("network down"));
+
+      const ctx = createDoctorContext();
+      expect(await ctx.getKeylessInstance()).toBeNull();
     });
   });
 

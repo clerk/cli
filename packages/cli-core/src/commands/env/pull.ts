@@ -12,6 +12,7 @@ import {
 import { CliError, ERROR_CODE, withApiContext } from "../../lib/errors.ts";
 import {
   findLocalPublishableKey,
+  hasKeyPairMismatch,
   resolveKeylessTarget,
   type KeylessTarget,
 } from "../../lib/keyless-target.ts";
@@ -131,6 +132,24 @@ async function pullKeylessKeys(
     detectSecretKeyName(cwd),
     findLocalPublishableKey(cwd),
   ]);
+
+  // The secret and publishable key were found independently and may not name
+  // the same application. Writing a mismatched pair is worse than writing
+  // nothing: it produces an app that fails at runtime in a way that's very
+  // hard to trace back to its cause, so this is the stricter of the two
+  // checks — whoami only warns, this refuses to write.
+  if (publishableKey) {
+    const mismatch = await withApiContext(
+      hasKeyPairMismatch(keyless, publishableKey),
+      `Failed to verify the keyless secret key from \`${keyless.source}\``,
+    );
+    if (mismatch) {
+      throw new CliError(
+        `The publishable key found locally doesn't belong to the application the secret key from \`${keyless.source}\` addresses. Writing this pair would leave the server trusting one app while the browser talks to another.\n` +
+          `Remove the mismatched ${publishableKeyName} from your env files, or run \`clerk auth login\` to claim the intended application, then pull again.`,
+      );
+    }
+  }
 
   const targetFile = await resolveTargetFile(cwd, fileFlag, preferredEnvFile);
   const displayPath = fileFlag ?? basename(targetFile);

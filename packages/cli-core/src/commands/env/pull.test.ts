@@ -676,5 +676,65 @@ describe("env pull", () => {
     const content = await Bun.file(join(tempDir, ".env")).text();
     expect(content).toContain("CLERK_PUBLISHABLE_KEY=pk_test_abc123");
     expect(content).not.toContain("CLERK_SECRET_KEY");
+  describe("keyless", () => {
+    // Encodes `<host>.clerk.accounts.dev$` the way a real publishable key
+    // would, so `decodePublishableKey` (used by the pairing check) sees the
+    // same shape it would in production instead of a fixture-only format.
+    const encodeFapiHost = (host: string) =>
+      `pk_test_${Buffer.from(`${host}.clerk.accounts.dev$`).toString("base64").replace(/=+$/, "")}`;
+    const MATCHING_PK = encodeFapiHost("match");
+    const MISMATCHED_PK = encodeFapiHost("other");
+
+    function stubDomains(frontendApiUrl: string): void {
+      stubFetch(async (input) => {
+        const url = input.toString();
+        if (url.includes("/v1/domains")) {
+          return new Response(JSON.stringify({ data: [{ frontend_api_url: frontendApiUrl }] }), {
+            status: 200,
+          });
+        }
+        throw new Error(`unexpected fetch in keyless test: ${url}`);
+      });
+    }
+
+    beforeEach(() => {
+      // No linked profile and no --app is what routes env pull to the keyless
+      // path (see lib/keyless-target.ts); CLERK_PLATFORM_API_KEY would only
+      // matter for the account path.
+      delete process.env.CLERK_PLATFORM_API_KEY;
+      process.env.CLERK_BACKEND_API_URL = "https://test-bapi.clerk.com";
+      process.env.CLERK_SECRET_KEY = "sk_test_keyless";
+    });
+
+    test("writes a matching pair", async () => {
+      process.env.CLERK_PUBLISHABLE_KEY = MATCHING_PK;
+      stubDomains("https://match.clerk.accounts.dev");
+
+      await runEnvPull();
+
+      const content = await Bun.file(join(tempDir, ".env.local")).text();
+      expect(content).toContain("CLERK_SECRET_KEY=sk_test_keyless");
+      expect(content).toContain(`CLERK_PUBLISHABLE_KEY=${MATCHING_PK}`);
+    });
+
+    test("refuses to write a publishable key that addresses a different application", async () => {
+      process.env.CLERK_PUBLISHABLE_KEY = MISMATCHED_PK;
+      stubDomains("https://match.clerk.accounts.dev");
+
+      await expect(runEnvPull()).rejects.toThrow(/doesn't belong to the application/);
+
+      // Nothing should have been written — a partial or wrong pair on disk is
+      // worse than the command simply refusing.
+      expect(await Bun.file(join(tempDir, ".env.local")).exists()).toBe(false);
+    });
+
+    test("writes the secret key alone, with a warning, when no publishable key is found locally", async () => {
+      await runEnvPull();
+
+      const content = await Bun.file(join(tempDir, ".env.local")).text();
+      expect(content).toContain("CLERK_SECRET_KEY=sk_test_keyless");
+      expect(content).not.toContain("CLERK_PUBLISHABLE_KEY");
+      expect(captured.err).toContain("No publishable key found locally");
+    });
   });
 });

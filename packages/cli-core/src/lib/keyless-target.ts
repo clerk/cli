@@ -8,10 +8,12 @@
  */
 
 import { join } from "node:path";
+import { bapiRequest } from "./bapi.ts";
 import { resolveAppContext, resolveProfile } from "./config.ts";
-import { hasAccountCredentials } from "./credential-store.ts";
+import { getStoredSession, hasAccountCredentials, type OAuthSession } from "./credential-store.ts";
 import { parseEnvFile } from "./dotenv.ts";
 import { CliError, ERROR_CODE, throwUsageError } from "./errors.ts";
+import { decodePublishableKey } from "./fapi.ts";
 import { detectPublishableKeyName, detectSecretKeyName } from "./framework.ts";
 import { log } from "./log.ts";
 
@@ -126,6 +128,60 @@ export async function findLocalPublishableKey(cwd: string): Promise<string | und
 }
 
 /**
+ * Whether a publishable key found locally does NOT belong to the same
+ * application as a secret key found locally. `findLocalSecretKey` and
+ * `findLocalPublishableKey` search independently — nothing stops one from
+ * returning app A's key and the other app B's, e.g. two keyless apps whose
+ * keys both happen to sit in the same `.env.local`. Presenting or writing
+ * that pair as one identity produces an app that fails at runtime in a way
+ * that's very hard to trace: the server trusts one app, the browser talks to
+ * another.
+ *
+ * `GET /v1/instance` doesn't echo a publishable key back for an unclaimed
+ * keyless app, so the only BAPI route that names the Frontend API host a
+ * secret key addresses is `/v1/domains` — every instance has at least one.
+ * Comparing that host against the one the publishable key decodes to
+ * (`decodePublishableKey` in `lib/fapi.ts`) is sound: unlike comparing
+ * `_test_`/`_live_` prefixes, a same-environment key from a different
+ * application can never pass it, and a legitimately matched pair always will.
+ *
+ * A malformed publishable key isn't this check's problem to report — callers
+ * that need `sk_`/`pk_` validation already do it elsewhere — so it resolves
+ * to "no mismatch" rather than throwing.
+ */
+export async function hasKeyPairMismatch(
+  keyless: KeylessTarget,
+  publishableKey: string,
+): Promise<boolean> {
+  let fapiHost: string;
+  try {
+    fapiHost = decodePublishableKey(publishableKey).fapiHost;
+  } catch {
+    return false;
+  }
+
+  const response = await bapiRequest({
+    method: "GET",
+    path: "/v1/domains",
+    secretKey: keyless.secretKey,
+  });
+  const domains = (response.body as { data?: unknown }).data;
+  if (!Array.isArray(domains)) return false;
+
+  const matchesADomain = domains.some((domain) => {
+    const frontendApiUrl = (domain as { frontend_api_url?: unknown }).frontend_api_url;
+    if (typeof frontendApiUrl !== "string") return false;
+    try {
+      return new URL(frontendApiUrl).host === fapiHost;
+    } catch {
+      return false;
+    }
+  });
+
+  return !matchesADomain;
+}
+
+/**
  * Resolves the keyless target for a command, or `undefined` when the
  * account-authenticated path applies.
  *
@@ -164,17 +220,61 @@ export async function resolveKeylessTarget(options: {
     );
   }
 
-  // Signed in but unlinked is the one case where this fallback is surprising:
-  // the account could reach the full configuration if the project were linked.
-  // Say so rather than quietly answering with the smaller view.
-  if (await hasAccountCredentials()) {
+  return target;
+}
+
+/**
+ * Says so when a signed-in user is getting the smaller, keyless view of an
+ * instance they could be reaching in full.
+ *
+ * This lives with `resolveInstanceTarget` rather than with the resolution
+ * itself because it is only true of the configuration surface: `clerk link`
+ * would widen what `config pull` and the feature toggles can see, but it does
+ * nothing for `whoami`, `env pull`, `open` or `doctor`, which want the same
+ * keyless answer either way. A resolver that warns is also a resolver no
+ * diagnostic tool can call without polluting its own report.
+ *
+ * `hasAccountCredentials` only tests presence, so a stored session past its own
+ * recorded expiry would otherwise be pointed at `clerk link`, which can't
+ * succeed until the user logs in again. Checking the token's real validity
+ * would mean a refresh round trip on every keyless command just to word a
+ * warning, so this reads the expiry already cached alongside the session — no
+ * network call, and right in the common case of a session stale by its own
+ * clock rather than one the server revoked.
+ */
+async function warnKeylessCoversLess(source: string): Promise<void> {
+  if (!(await hasAccountCredentials())) return;
+
+  // A platform API key never expires this way and is on its own enough to link,
+  // so it always gets the plain wording.
+  if (process.env.CLERK_PLATFORM_API_KEY) {
     log.warn(
-      `This directory isn't linked to an application — using the secret key from ${target.source}, which covers fewer settings.\n` +
+      `This directory isn't linked to an application — using the secret key from ${source}, which covers fewer settings.\n` +
         "Run `clerk link` (or pass --app <app_id>) to use the full configuration.",
     );
+    return;
   }
 
-  return target;
+  const session = await getStoredSession();
+  log.warn(
+    session && isLocallyExpired(session)
+      ? `This directory isn't linked to an application, and the stored session has expired — using the secret key from ${source}, which covers fewer settings.\n` +
+          "Run `clerk auth login` to re-authenticate, then `clerk link` (or pass --app <app_id>) to use the full configuration."
+      : `This directory isn't linked to an application — using the secret key from ${source}, which covers fewer settings.\n` +
+          "Run `clerk link` (or pass --app <app_id>) to use the full configuration.",
+  );
+}
+
+/**
+ * A cheap, local-only proxy for "the account path is currently broken":
+ * whether a stored session's own recorded expiry has already passed. This
+ * can't see a session the *server* has revoked (that needs the refresh round
+ * trip `getValidToken` performs), only one that's stale by its own clock —
+ * but that's the common case, and it's the distinction the not-linked warning
+ * needs without paying for a network call on every keyless command.
+ */
+function isLocallyExpired(session: OAuthSession): boolean {
+  return Number.isFinite(session.expiresAt) && session.expiresAt <= Date.now();
 }
 
 export async function resolveInstanceTarget(options: {
@@ -184,6 +284,7 @@ export async function resolveInstanceTarget(options: {
 }): Promise<InstanceTarget> {
   const keyless = await resolveKeylessTarget(options);
   if (keyless) {
+    await warnKeylessCoversLess(keyless.source);
     return {
       kind: "keyless",
       keyless,

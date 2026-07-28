@@ -1,12 +1,15 @@
 import { test, expect, describe, afterEach, beforeEach, mock } from "bun:test";
 import { setMode } from "../../mode.ts";
 import { setCurrentEnv } from "../../lib/environment.ts";
-import { useCaptureLog } from "../../test/lib/stubs.ts";
+import { configStubs, useCaptureLog } from "../../test/lib/stubs.ts";
 
 const mockResolveAppContext = mock();
 const mockResolveProfile = mock();
 const mockResolveInstanceId = mock();
+// Spread the full stub set: a partial module mock only stays valid while
+// nothing else in the import graph reaches for the exports it left out.
 mock.module("../../lib/config.ts", () => ({
+  ...configStubs,
   resolveAppContext: (...args: unknown[]) => mockResolveAppContext(...args),
   resolveProfile: (...args: unknown[]) => mockResolveProfile(...args),
   resolveInstanceId: (...args: unknown[]) => mockResolveInstanceId(...args),
@@ -25,6 +28,11 @@ mock.module("./interactive/pick-user.ts", () => ({
 const mockOpenBrowser = mock();
 mock.module("../../lib/open.ts", () => ({
   openBrowser: (...args: unknown[]) => mockOpenBrowser(...args),
+}));
+
+const mockResolveKeylessTarget = mock();
+mock.module("../../lib/keyless-target.ts", () => ({
+  resolveKeylessTarget: (...args: unknown[]) => mockResolveKeylessTarget(...args),
 }));
 
 mock.module("../../lib/spinner.ts", () => ({
@@ -63,6 +71,7 @@ describe("users open", () => {
     });
     mockResolveUsersInstanceContext.mockResolvedValue(CTX);
     mockOpenBrowser.mockResolvedValue({ ok: true, launcher: "open" });
+    mockResolveKeylessTarget.mockResolvedValue(undefined);
   });
 
   afterEach(() => {
@@ -72,6 +81,43 @@ describe("users open", () => {
     mockResolveUsersInstanceContext.mockReset();
     mockPickUser.mockReset();
     mockOpenBrowser.mockReset();
+    mockResolveKeylessTarget.mockReset();
+  });
+
+  describe("on an unclaimed keyless application", () => {
+    beforeEach(() => {
+      // Nothing linked and no account context — the state `clerk init` leaves
+      // behind before anyone claims the app.
+      mockResolveAppContext.mockRejectedValue(
+        new Error("No Clerk project linked to this directory."),
+      );
+      mockResolveKeylessTarget.mockResolvedValue({
+        secretKey: "sk_test_keyless",
+        source: ".env.local",
+      });
+    });
+
+    test("says the application is unclaimed rather than that nothing is linked", async () => {
+      await expect(open({ userId: "user_abc" })).rejects.toThrow(
+        /unclaimed keyless application \(secret key from \.env\.local\).*no Dashboard page/s,
+      );
+    });
+
+    test("suggests claiming, and a command that works right now", async () => {
+      const error = await open({ userId: "user_abc" }).catch((thrown: unknown) => thrown);
+      // `clerk users get` does not exist; `clerk api` is the reader that does.
+      expect((error as Error).message).toContain("clerk auth login");
+      expect((error as Error).message).toContain("clerk api /users/user_abc");
+    });
+
+    test("does not hijack an explicit --app target", async () => {
+      // Naming an application says the user isn't asking about the keyless one
+      // sitting in this directory, so that resolution must run untouched.
+      await open({ userId: "user_abc", app: "app_other", print: true });
+
+      expect(mockResolveKeylessTarget).not.toHaveBeenCalled();
+      expect(captured.out).toContain(`/apps/${CTX.appId}`);
+    });
   });
 
   test("explicit user-id + linked profile: opens dashboard URL for that user", async () => {
