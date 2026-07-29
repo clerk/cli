@@ -9,9 +9,13 @@ function missingKeyError(envFile: string): string {
   return `Missing EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY. Add your key to ${envFile}.\\nRun: 1) clerk auth login  2) clerk link  3) clerk env pull — then restart the dev server.`;
 }
 
+/** The `?? ""` types the const as plain string: the layout is a hoistable
+ *  function declaration, so TS won't narrow `string | undefined` through the
+ *  throw guard into it, and ClerkProvider's publishableKey prop requires
+ *  string. The guard still throws on the empty fallback. */
 function publishableKeyBlock(envFile: string): string {
   return `
-const publishableKey = process.env.EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY;
+const publishableKey = process.env.EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY ?? "";
 
 if (!publishableKey) {
   throw new Error("${missingKeyError(envFile)}");
