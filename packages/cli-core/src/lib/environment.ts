@@ -142,7 +142,7 @@ export function getPlapiBaseUrl(): string {
 }
 
 /**
- * Returns whether CLERK_PLATFORM_API_URL is set to a URL that differs from the
+ * Checks whether CLERK_PLATFORM_API_URL is set to a URL that differs from the
  * active environment's configured platform URL, along with both URLs so the
  * caller can surface a warning.
  *
@@ -150,7 +150,7 @@ export function getPlapiBaseUrl(): string {
  * case differences are ignored; falls back to raw string comparison if either
  * value is not a valid URL.
  */
-export function isPlatformApiUrlOverridden():
+export function getPlatformApiUrlOverride():
   | {
       overridden: false;
     }

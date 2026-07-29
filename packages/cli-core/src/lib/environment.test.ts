@@ -1,7 +1,7 @@
 import { test, expect, describe, beforeEach, afterEach } from "bun:test";
-import { isPlatformApiUrlOverridden } from "./environment.ts";
+import { getPlatformApiUrlOverride } from "./environment.ts";
 
-describe("isPlatformApiUrlOverridden", () => {
+describe("getPlatformApiUrlOverride", () => {
   const original = process.env.CLERK_PLATFORM_API_URL;
 
   beforeEach(() => {
@@ -15,7 +15,7 @@ describe("isPlatformApiUrlOverridden", () => {
 
   test("returns overridden=true with URLs when the override differs from the active env URL", () => {
     process.env.CLERK_PLATFORM_API_URL = "https://api.staging.example.com";
-    const result = isPlatformApiUrlOverridden();
+    const result = getPlatformApiUrlOverride();
     expect(result.overridden).toBe(true);
     if (!result.overridden) return;
     expect(result.overrideUrl).toBe("https://api.staging.example.com");
@@ -24,19 +24,28 @@ describe("isPlatformApiUrlOverridden", () => {
   });
 
   test("returns overridden=false when no override is set", () => {
-    const result = isPlatformApiUrlOverridden();
+    const result = getPlatformApiUrlOverride();
     expect(result.overridden).toBe(false);
   });
 
   test("returns overridden=false when the override equals the active env URL", () => {
     process.env.CLERK_PLATFORM_API_URL = "https://api.clerk.com";
-    const result = isPlatformApiUrlOverridden();
+    const result = getPlatformApiUrlOverride();
     expect(result.overridden).toBe(false);
   });
 
   test("returns overridden=false when URLs differ only by trailing slash", () => {
     process.env.CLERK_PLATFORM_API_URL = "https://api.clerk.com/";
-    const result = isPlatformApiUrlOverridden();
+    const result = getPlatformApiUrlOverride();
     expect(result.overridden).toBe(false);
+  });
+
+  test("falls back to raw string comparison when the override is not a valid URL", () => {
+    process.env.CLERK_PLATFORM_API_URL = "not a url";
+    const result = getPlatformApiUrlOverride();
+    expect(result.overridden).toBe(true);
+    if (!result.overridden) return;
+    expect(result.overrideUrl).toBe("not a url");
+    expect(result.profileUrl).toBe("https://api.clerk.com");
   });
 });

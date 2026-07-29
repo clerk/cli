@@ -505,6 +505,21 @@ clerkStrict.raw = execCLI;
  */
 export const clerk = clerkStrict;
 
+/**
+ * Extract and parse the last `{`-prefixed line from a command's stderr —
+ * the structured JSON error/output that agent mode emits. Uses `findLast`
+ * (not `find`) because stderr can carry other JSON-shaped lines (e.g. debug
+ * output) before the actual payload; the payload is always the last one.
+ */
+export function parseJsonFromStderr(stderr: string): unknown {
+  const jsonLine = stderr
+    .split("\n")
+    .map((l) => l.trim())
+    .findLast((l) => l.startsWith("{"));
+  if (!jsonLine) throw new SyntaxError(`No JSON line found in stderr:\n${stderr}`);
+  return JSON.parse(jsonLine);
+}
+
 // ── Test harness ─────────────────────────────────────────────────────────────
 
 export interface TestHarness {

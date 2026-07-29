@@ -4,17 +4,14 @@
  */
 
 import { test, expect } from "bun:test";
-import { useIntegrationTestHarness, clerk, mockState } from "./lib/harness.ts";
+import { useIntegrationTestHarness, clerk, mockState, parseJsonFromStderr } from "./lib/harness.ts";
 
 useIntegrationTestHarness();
 
 function parseJsonError(stderr: string): { code: string; message: string; docsUrl?: string } {
-  const jsonLine = stderr
-    .split("\n")
-    .map((l) => l.trim())
-    .find((l) => l.startsWith("{"));
-  if (!jsonLine) throw new SyntaxError(`No JSON line found in stderr:\n${stderr}`);
-  const parsed = JSON.parse(jsonLine);
+  const parsed = parseJsonFromStderr(stderr) as {
+    error: { code: string; message: string; docsUrl?: string };
+  };
   return parsed.error;
 }
 

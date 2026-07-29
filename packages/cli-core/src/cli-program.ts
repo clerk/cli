@@ -30,7 +30,7 @@ import {
   getCurrentEnvName,
   getAvailableEnvs,
   getPlapiBaseUrl,
-  isPlatformApiUrlOverridden,
+  getPlatformApiUrlOverride,
 } from "./lib/environment.ts";
 import {
   CliError,
@@ -150,13 +150,14 @@ export function createProgram(): Program {
     // Warn (human mode only) when CLERK_PLATFORM_API_URL routes requests to a
     // different host than the active environment's platform URL. Credentials are
     // keyed by environment name, so the active env's token will be sent to the
-    // override host. Agent/scripted mode stays clean — stray lines on stderr
-    // corrupt machine-readable output; those callers get this info from `doctor`.
-    const override = isPlatformApiUrlOverridden();
-    if (override.overridden && isHuman()) {
-      log.warn(
-        `CLERK_PLATFORM_API_URL is routing requests to ${override.overrideUrl}, but credentials stay keyed to the "${override.envName}" environment — the "${override.envName}" token will be sent to that host.`,
-      );
+    // override host. Agent/scripted mode stays off stderr — stray lines there
+    // corrupt machine-readable output — but still gets the info via `log.debug`
+    // so a `--verbose` re-run of a failing script surfaces it.
+    const override = getPlatformApiUrlOverride();
+    if (override.overridden) {
+      const msg = `CLERK_PLATFORM_API_URL is routing requests to ${override.overrideUrl} instead of the "${override.envName}" environment's ${override.profileUrl} — the "${override.envName}" token will be sent to that host.`;
+      if (isHuman()) log.warn(msg);
+      else log.debug(`env: ${msg}`);
     }
   });
 

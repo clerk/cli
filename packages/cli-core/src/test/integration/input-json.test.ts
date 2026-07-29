@@ -11,6 +11,7 @@ import {
   clerk,
   getInstance,
   MOCK_APP,
+  parseJsonFromStderr,
 } from "./lib/harness.ts";
 import { join } from "node:path";
 
@@ -18,13 +19,8 @@ useIntegrationTestHarness();
 
 const devInstance = getInstance(MOCK_APP, "development");
 
-function parseJsonFromStderr(stderr: string): { error: { code?: string } } {
-  const jsonLine = stderr
-    .split("\n")
-    .map((l) => l.trim())
-    .find((l) => l.startsWith("{"));
-  if (!jsonLine) throw new SyntaxError(`No JSON line found in stderr:\n${stderr}`);
-  return JSON.parse(jsonLine) as { error: { code?: string } };
+function parseStructuredError(stderr: string): { error: { code?: string } } {
+  return parseJsonFromStderr(stderr) as { error: { code?: string } };
 }
 
 beforeEach(async () => {
@@ -49,7 +45,7 @@ test("explicit CLI flags override --input-json values", async () => {
   const result = await clerk.raw("init", "--input-json", '{"mode":"human"}', "--mode", "agent");
   expect(result.exitCode).not.toBe(0);
   // Agent mode emits structured JSON to stderr; human mode emits plain text.
-  const parsed = parseJsonFromStderr(result.stderr);
+  const parsed = parseStructuredError(result.stderr);
   expect(parsed.error).toBeDefined();
 });
 
@@ -243,14 +239,14 @@ test("--input-json is registered as a global option", async () => {
   // stderr is the agent-mode signature, which proves --mode agent was applied.
   const result = await clerk.raw("--input-json", '{"mode":"agent"}', "doctor", "--json");
   expect(result.exitCode).not.toBe(0);
-  const parsed = parseJsonFromStderr(result.stderr);
+  const parsed = parseStructuredError(result.stderr);
   expect(parsed.error).toBeDefined();
 });
 
 test("structured JSON error in agent mode for invalid JSON", async () => {
   const result = await clerk.raw("--mode", "agent", "init", "--input-json", "{bad}");
   expect(result.exitCode).not.toBe(0);
-  const parsed = parseJsonFromStderr(result.stderr);
+  const parsed = parseStructuredError(result.stderr);
   expect(parsed.error.code).toBe("invalid_json");
 });
 
@@ -263,7 +259,7 @@ test("structured JSON error in agent mode for file not found", async () => {
     "@/tmp/does-not-exist-clerk.json",
   );
   expect(result.exitCode).not.toBe(0);
-  const parsed = parseJsonFromStderr(result.stderr);
+  const parsed = parseStructuredError(result.stderr);
   expect(parsed.error.code).toBe("file_not_found");
 });
 
@@ -276,6 +272,6 @@ test("structured JSON error in agent mode for nested objects", async () => {
     '{"nested":{"key":"value"}}',
   );
   expect(result.exitCode).not.toBe(0);
-  const parsed = parseJsonFromStderr(result.stderr);
+  const parsed = parseStructuredError(result.stderr);
   expect(parsed.error.code).toBe("invalid_json");
 });
