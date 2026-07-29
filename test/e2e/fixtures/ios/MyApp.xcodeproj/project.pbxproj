@@ -1,0 +1,3 @@
+// !$*UTF8*$!
+// Stub Xcode project file. Detection only requires that a *.xcodeproj
+// directory bundle exists — the contents are never parsed.

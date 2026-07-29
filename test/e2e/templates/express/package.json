@@ -1,0 +1,14 @@
+{
+  "name": "clerk-fixture-express",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "express": "latest"
+  },
+  "devDependencies": {
+    "@types/express": "latest",
+    "@types/node": "latest",
+    "typescript": "latest"
+  }
+}

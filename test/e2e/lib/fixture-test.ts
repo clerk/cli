@@ -203,6 +203,50 @@ export function runFileExistsTest(harness: FixtureHarness, expectedFiles: string
 }
 
 /**
+ * Register a bun test for backend server frameworks (Express, Fastify):
+ * start the dev server and verify the Clerk middleware/plugin actually ran on
+ * a real request. `x-clerk-auth-status` is stamped by the middleware from the
+ * pulled keys, so its presence proves init wired auth into the entry file —
+ * no browser needed.
+ */
+export function runServerTests(harness: FixtureHarness): void {
+  test(
+    "server responds with Clerk middleware active",
+    async () => {
+      const { fixture } = harness();
+      const { projectDir, config } = fixture;
+
+      let proc: import("bun").Subprocess | undefined;
+      let stdoutLines: string[] = [];
+      let stderrLines: string[] = [];
+
+      try {
+        const server = await startDevServer({ devCmd: config.devCmd, projectDir });
+        proc = server.proc;
+        stdoutLines = server.stdout;
+        stderrLines = server.stderr;
+
+        const response = await fetch(`http://${server.host}:${server.port}/`);
+
+        expect(response.status).toBe(200);
+        const authStatus = response.headers.get("x-clerk-auth-status");
+        log(`x-clerk-auth-status: ${authStatus}`);
+        expect(authStatus).not.toBeNull();
+      } catch (err) {
+        if (stdoutLines.length > 0) log(`server stdout:\n${stdoutLines.join("")}`);
+        if (stderrLines.length > 0) log(`server stderr:\n${stderrLines.join("")}`);
+        throw err;
+      } finally {
+        if (proc) {
+          await killDevServer(proc).catch((e) => log(`server kill failed: ${e}`));
+        }
+      }
+    },
+    { timeout: 120_000 },
+  );
+}
+
+/**
  * Register a bun test that starts a dev server, creates a test user,
  * and verifies sign-in works via @clerk/testing in a real browser.
  */
