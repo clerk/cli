@@ -22,7 +22,7 @@ export const android: FrameworkScaffold = {
     return {
       actions: [],
       postInstructions: [
-        'Add the Clerk Android SDK to app/build.gradle.kts: `implementation("com.clerk:clerk-android-ui:<latest-version>")` and `implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.9.2")` (requires minSdk 24+ and Java 17+; latest version: https://github.com/clerk/clerk-android/releases)',
+        'Add the Clerk Android SDK to app/build.gradle.kts: `implementation("com.clerk:clerk-android-ui:<latest-version>")` and `implementation("androidx.lifecycle:lifecycle-viewmodel-compose:<latest-version>")` (requires minSdk 24+ and Java 17+; latest version: https://github.com/clerk/clerk-android/releases)',
         "Enable the Native API and register your Android app on the Native Applications page: https://dashboard.clerk.com/~/native-applications",
         'Add `<uses-permission android:name="android.permission.INTERNET"/>` to AndroidManifest.xml and register an Application subclass via `android:name`',
         `Initialize Clerk in your Application subclass: \`Clerk.initialize(this, publishableKey = "<publishable key>")\` — copy CLERK_PUBLISHABLE_KEY from ${ctx.envFile} after \`clerk env pull\``,

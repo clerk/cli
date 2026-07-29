@@ -138,7 +138,8 @@ export async function init(options: InitOptions = {}) {
   bar();
   await runStrategy(strategy, ctx);
 
-  if (options.skills !== false) {
+  // Native platforms (iOS/Android) have no npx/Node toolchain to run `skills add` with.
+  if (options.skills !== false && isNpmFramework(ctx.framework)) {
     bar();
     await installSkills(ctx.cwd, ctx.framework.dep, ctx.packageManager, overrides.skipConfirm);
   }

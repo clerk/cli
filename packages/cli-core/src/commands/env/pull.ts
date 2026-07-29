@@ -6,6 +6,8 @@ import {
   detectPublishableKeyName,
   detectSecretKeyName,
   detectEnvFile,
+  detectFramework,
+  isNpmFramework,
 } from "../../lib/framework.ts";
 import { CliError, ERROR_CODE, withApiContext } from "../../lib/errors.ts";
 import { withGutter, withSpinner } from "../../lib/spinner.ts";
@@ -70,6 +72,12 @@ export async function pull(options: EnvPullOptions): Promise<void> {
 
       const publishableKeyName = await detectPublishableKeyName(cwd);
       const secretKeyName = await detectSecretKeyName(cwd);
+      // Native platforms (iOS/Android) configure Clerk with only the publishable
+      // key in client source; a secret key has no use there and their default
+      // .gitignore templates don't cover .env, so skip writing it entirely
+      // rather than leaving a live credential in a tracked file.
+      const framework = await detectFramework(cwd);
+      const includeSecretKey = isNpmFramework(framework ?? {});
 
       const file = Bun.file(targetFile);
       const existingContent = (await file.exists()) ? await file.text() : "";
@@ -78,7 +86,7 @@ export async function pull(options: EnvPullOptions): Promise<void> {
       const vars: Record<string, string> = {
         [publishableKeyName]: matched.publishable_key,
       };
-      if (matched.secret_key) {
+      if (matched.secret_key && includeSecretKey) {
         vars[secretKeyName] = matched.secret_key;
       }
       const merged = mergeEnvVars(lines, vars);

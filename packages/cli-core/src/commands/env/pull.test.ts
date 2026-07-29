@@ -1,5 +1,5 @@
 import { test, expect, describe, beforeEach, afterEach, spyOn, mock } from "bun:test";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, mkdir, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import {
@@ -659,5 +659,22 @@ describe("env pull", () => {
     expect(content).toContain("NUXT_PUBLIC_CLERK_PUBLISHABLE_KEY=pk_test_abc123");
     expect(content).toContain("NUXT_CLERK_SECRET_KEY=sk_test_xyz789");
     expect(content).not.toMatch(/^CLERK_SECRET_KEY=/m);
+  });
+
+  test("native framework (iOS) omits the secret key entirely", async () => {
+    await setProfile(tempDir, {
+      workspaceId: "org_1",
+      appId: "app_1",
+      instances: { development: "ins_dev" },
+    });
+    // Replace beforeEach's Express package.json with a native Xcode project marker.
+    await rm(join(tempDir, "package.json"), { force: true });
+    await mkdir(join(tempDir, "MyApp.xcodeproj"), { recursive: true });
+
+    await runEnvPull();
+
+    const content = await Bun.file(join(tempDir, ".env")).text();
+    expect(content).toContain("CLERK_PUBLISHABLE_KEY=pk_test_abc123");
+    expect(content).not.toContain("CLERK_SECRET_KEY");
   });
 });

@@ -961,6 +961,34 @@ describe("init", () => {
     expect(pullMod.pull).toHaveBeenCalledWith({ file: ".env", cwd: iosCtx.cwd });
   });
 
+  test("native framework skips the agent skills install prompt", async () => {
+    setup({ email: "test@test.com" });
+
+    const iosCtx = {
+      ...FAKE_CTX,
+      existingClerk: false,
+      deps: {},
+      envFile: ".env",
+      framework: {
+        dep: "ios",
+        name: "iOS (Swift)",
+        sdk: "ClerkKit",
+        envVar: "CLERK_PUBLISHABLE_KEY",
+        envFile: ".env" as const,
+        ecosystem: "swift" as const,
+      },
+    };
+    spyOn(context, "gatherContext").mockResolvedValue(iosCtx);
+    spyOn(scaffoldMod, "scaffold").mockResolvedValue({
+      actions: [],
+      postInstructions: ["Add the Clerk iOS SDK via Swift Package Manager"],
+    });
+
+    await init({ yes: true });
+
+    expect(skillsMod.installSkills).not.toHaveBeenCalled();
+  });
+
   test("--framework ios without package.json does not trigger bootstrap", async () => {
     setup({ email: "test@test.com" });
 
