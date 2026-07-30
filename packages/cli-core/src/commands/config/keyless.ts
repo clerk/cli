@@ -15,6 +15,7 @@
 import { bapiRequest } from "../../lib/bapi.ts";
 import { ERROR_CODE, throwUsageError, withApiContext } from "../../lib/errors.ts";
 import type { KeylessTarget } from "../../lib/keyless-target.ts";
+import { keylessCopy } from "../../lib/copy.ts";
 import { log } from "../../lib/log.ts";
 
 /**
@@ -120,18 +121,20 @@ function assertInstanceFields(fields: Record<string, unknown>): void {
   if (unknown.length === 0) return;
 
   const lines = [
-    `Unsupported ${unknown.length === 1 ? "field" : "fields"} on \`instance\` for an unclaimed keyless application: ${unknown.join(", ")}.`,
-    `Supported fields: ${[...INSTANCE_FIELDS].join(", ")}.`,
+    keylessCopy.unsupportedInstanceFieldsLine(unknown),
+    keylessCopy.supportedInstanceFieldsLine([...INSTANCE_FIELDS]),
   ];
 
   // Say why, once per distinct reason, for the fields people actually try.
   const reasons = [
-    ...new Set(unknown.map((field) => ACCOUNT_ONLY_INSTANCE_FIELDS[field]).filter(Boolean)),
+    ...new Set(
+      unknown
+        .map((field) => ACCOUNT_ONLY_INSTANCE_FIELDS[field])
+        .filter((reason): reason is string => reason !== undefined),
+    ),
   ];
   for (const reason of reasons) {
-    lines.push(
-      `Clerk's Backend API has no route for ${reason}, so this can't be changed from an unclaimed application at all — claim it first with \`clerk auth login\`.`,
-    );
+    lines.push(keylessCopy.noRouteForInstanceFieldLine(reason));
   }
 
   throwUsageError(lines.join("\n"));
@@ -144,10 +147,7 @@ function assertInstanceFields(fields: Record<string, unknown>): void {
 function asGroupNames(names: string[]): KeylessGroup[] {
   const unknown = names.filter((name) => !isGroupName(name));
   if (unknown.length > 0) {
-    throwUsageError(
-      `Unsupported config ${unknown.length === 1 ? "key" : "keys"} for an unclaimed keyless application: ${unknown.join(", ")}.\n` +
-        `Supported keys: ${KEYLESS_GROUP_NAMES.join(", ")}.`,
-    );
+    throwUsageError(keylessCopy.unsupportedConfigKeys(unknown, KEYLESS_GROUP_NAMES));
   }
   return names.filter(isGroupName);
 }
@@ -162,23 +162,19 @@ export function assertKeylessPayload(
     const accountOnly = unknown.filter((key) => !API_REACHABLE_KEYLESS_KEYS.has(key));
 
     const lines = [
-      `Unsupported config ${unknown.length === 1 ? "key" : "keys"} for an unclaimed keyless application: ${unknown.join(", ")}.`,
-      `Supported top-level keys: ${KEYLESS_GROUP_NAMES.join(", ")}.`,
+      keylessCopy.unsupportedPayloadKeysLine(unknown),
+      keylessCopy.supportedPayloadKeysLine(KEYLESS_GROUP_NAMES),
     ];
 
     // Point these at `clerk api` — they're reachable today, and claiming the
     // application wouldn't move them into the config document anyway.
     if (apiReachable.length > 0) {
-      lines.push(
-        `${apiReachable.join(", ")} ${apiReachable.length === 1 ? "is" : "are"} already reachable on an unclaimed application — use \`clerk api /${apiReachable[0]}\` directly instead of this config document.`,
-      );
+      lines.push(keylessCopy.apiReachableKeysLine(apiReachable));
     }
 
     // Everything left really is part of the account-mode config document.
     if (accountOnly.length > 0) {
-      lines.push(
-        "Run `clerk auth login` to claim the application and use the full config document.",
-      );
+      lines.push(keylessCopy.claimForFullConfigLine());
     }
 
     throwUsageError(lines.join("\n"));
@@ -186,11 +182,7 @@ export function assertKeylessPayload(
 
   for (const [key, value] of Object.entries(payload)) {
     if (typeof value !== "object" || value === null || Array.isArray(value)) {
-      throwUsageError(
-        `Config key \`${key}\` must be a JSON object.`,
-        undefined,
-        ERROR_CODE.INVALID_JSON,
-      );
+      throwUsageError(keylessCopy.configKeyMustBeObject(key), undefined, ERROR_CODE.INVALID_JSON);
     }
   }
 

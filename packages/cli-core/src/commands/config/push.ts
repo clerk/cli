@@ -11,6 +11,7 @@ import { confirm } from "../../lib/prompts.ts";
 import { dim, bold, red, green } from "../../lib/color.ts";
 import { withSpinner, intro, outro, pausedOutro } from "../../lib/spinner.ts";
 import { isInsideGutter, log } from "../../lib/log.ts";
+import { keylessCopy } from "../../lib/copy.ts";
 import { NEXT_STEPS, printNextSteps } from "../../lib/next-steps.ts";
 import { resolveInstanceTarget } from "../../lib/keyless-target.ts";
 import type { KeylessWriteVerification } from "./keyless.ts";
@@ -65,11 +66,9 @@ async function configPush(options: ConfigPushOptions, op: Operation): Promise<vo
   const target = await resolveInstanceTarget(options);
 
   if (target.kind === "keyless" && op.method === "PUT") {
-    throw new CliError(
-      "Replacing the entire configuration is only available for a claimed application — an unclaimed keyless application has no full config document to replace.\n" +
-        "Use `clerk config patch` to update individual settings, or run `clerk auth login` to claim the application first.",
-      { code: ERROR_CODE.AUTH_REQUIRED },
-    );
+    throw new CliError(keylessCopy.putNeedsClaimedApplication(), {
+      code: ERROR_CODE.AUTH_REQUIRED,
+    });
   }
 
   const configPayload = parsePayload(await readInput(options));

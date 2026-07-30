@@ -2,6 +2,7 @@ import { bold, cyan, dim } from "../../lib/color.ts";
 import { resolveAppContext, resolveInstanceId, resolveProfile } from "../../lib/config.ts";
 import { CliError, ERROR_CODE, throwUsageError } from "../../lib/errors.ts";
 import { resolveKeylessTarget } from "../../lib/keyless-target.ts";
+import { keylessCopy } from "../../lib/copy.ts";
 import { log } from "../../lib/log.ts";
 import { openBrowser } from "../../lib/open.ts";
 import { intro, outro } from "../../lib/spinner.ts";
@@ -81,12 +82,9 @@ async function assertNotUnclaimedKeyless(options: UsersOpenOptions, userId: stri
 
   const keyless = await resolveKeylessTarget({ cwd: process.cwd() });
   if (keyless) {
-    throw new CliError(
-      `This directory holds an unclaimed keyless application (secret key from ${keyless.source}), which has no Dashboard page — a dashboard link needs an application ID, and one is only assigned when the application is claimed.\n` +
-        `Run \`clerk auth login\` to claim it, then \`clerk users open ${userId}\` will work.\n` +
-        `To inspect the user right now, \`clerk api /users/${userId}\` reads it straight from the instance.`,
-      { code: ERROR_CODE.INSTANCE_NOT_FOUND },
-    );
+    throw new CliError(keylessCopy.userDashboardNeedsClaim(keyless.source, userId), {
+      code: ERROR_CODE.INSTANCE_NOT_FOUND,
+    });
   }
 }
 

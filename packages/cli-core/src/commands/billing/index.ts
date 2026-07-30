@@ -1,6 +1,7 @@
 import { CliError, ERROR_CODE, throwUsageError } from "../../lib/errors.ts";
 import { isAgent, isHuman } from "../../mode.ts";
 import { log } from "../../lib/log.ts";
+import { keylessCopy } from "../../lib/copy.ts";
 import { confirm } from "../../lib/prompts.ts";
 import { detectPackageManager } from "../../lib/package-manager.ts";
 import { NEXT_STEPS } from "../../lib/next-steps.ts";
@@ -64,11 +65,9 @@ function describeTargets(targets: Target[]): string {
  */
 function assertBillingTarget(target: InstanceTarget): void {
   if (target.kind === "keyless") {
-    throw new CliError(
-      "Billing can only be configured on a claimed application — Clerk's Backend API has no billing settings, so an unclaimed keyless application can't reach them.\n" +
-        "Run `clerk auth login` to claim this application, then re-run the command.",
-      { code: ERROR_CODE.AUTH_REQUIRED },
-    );
+    throw new CliError(keylessCopy.billingNeedsClaimedApplication(), {
+      code: ERROR_CODE.AUTH_REQUIRED,
+    });
   }
 }
 
