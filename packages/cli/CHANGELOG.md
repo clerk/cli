@@ -1,5 +1,13 @@
 # clerk
 
+## 2.3.1
+
+### Patch Changes
+
+- Show the "+ Create a new application" option first in the interactive application picker used by `clerk link` and `clerk users`. ([#401](https://github.com/clerk/cli/pull/401)) by [@rafa-thayto](https://github.com/rafa-thayto)
+
+- Fix `clerk enable orgs --auto-create` so organizations are actually auto-created for new users. The flag now also enables organization creation defaults, which the API requires before honoring the automatic creation setting. ([#390](https://github.com/clerk/cli/pull/390)) by [@manovotny](https://github.com/manovotny)
+
 ## 2.3.0
 
 ### Minor Changes
