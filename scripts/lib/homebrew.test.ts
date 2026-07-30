@@ -16,7 +16,10 @@ describe("renderFormula", () => {
       },
     });
 
-    expect(result).toContain('version "1.2.3"');
+    // Homebrew scans the version from the /releases/download/vX.Y.Z/ URL
+    // (Homebrew/brew#23338); an explicit `version` line fails `brew audit`
+    // as redundant in the homebrew-stable tap's CI.
+    expect(result).not.toContain('version "');
     expect(result).toContain(
       "https://github.com/clerk/cli/releases/download/v1.2.3/homebrew-clerk-darwin-arm64.tar.gz",
     );
