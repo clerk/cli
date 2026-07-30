@@ -2,6 +2,7 @@ import { test, expect, describe, beforeEach, afterEach, mock, spyOn } from "bun:
 import {
   configStubs,
   credentialStoreStubs,
+  keylessTargetStubs,
   tokenExchangeStubs,
   useCaptureLog,
 } from "../../test/lib/stubs.ts";
@@ -24,6 +25,7 @@ mock.module("../../lib/credential-store.ts", () => ({
 }));
 
 mock.module("../../lib/keyless-target.ts", () => ({
+  ...keylessTargetStubs,
   resolveKeylessTarget: (...args: unknown[]) => mockResolveKeylessTarget(...args),
   findLocalPublishableKey: (...args: unknown[]) => mockFindLocalPublishableKey(...args),
   hasKeyPairMismatch: (...args: unknown[]) => mockHasKeyPairMismatch(...args),
@@ -183,6 +185,7 @@ describe("whoami", () => {
     const payload = JSON.parse(captured.out);
     expect(payload).toEqual({
       email: "alice@example.com",
+      localSecretKeySource: null,
       linked: {
         appId: "app_xxx",
         appName: "MyApp",
@@ -204,6 +207,7 @@ describe("whoami", () => {
 
     expect(JSON.parse(captured.out)).toEqual({
       email: "alice@example.com",
+      localSecretKeySource: null,
       linked: null,
     });
   });

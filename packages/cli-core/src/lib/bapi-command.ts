@@ -79,8 +79,20 @@ export async function resolveBapiSecretKey(options: ResolveBapiSecretKeyOptions)
     return resolved.instance.secret_key;
   }
 
-  // An unclaimed keyless application keeps its only secret key on disk (env var,
-  // .env.local, or the SDK's own keyless.json) — the same resolution `whoami`,
+  // An explicitly exported CLERK_SECRET_KEY wins over everything below,
+  // including a linked profile — same precedence this command family has
+  // always had. Routing it through resolveKeylessTarget instead would lose
+  // both halves of that contract: the keyless resolver stands down entirely
+  // when the directory is linked, and refuses --instance, which has always
+  // been a no-op next to an env key that addresses exactly one instance.
+  const envSecretKey = process.env.CLERK_SECRET_KEY;
+  if (envSecretKey) {
+    validateKeyPrefix(envSecretKey, "sk_");
+    return envSecretKey;
+  }
+
+  // An unclaimed keyless application keeps its only secret key on disk
+  // (.env.local, or the SDK's own keyless.json) — the same resolution `whoami`,
   // `config`, and `env pull` already share. The shipped binary is compiled with
   // --no-compile-autoload-dotenv, so without this every `users`/`api` command
   // would report "no secret key" on a perfectly live keyless project the moment

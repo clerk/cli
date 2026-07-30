@@ -5,7 +5,7 @@ import { resolveKeylessTarget, type KeylessTarget } from "../../lib/keyless-targ
 import { peekKeylessBreadcrumb } from "../../lib/keyless.ts";
 import { bapiRequest } from "../../lib/bapi.ts";
 import { log } from "../../lib/log.ts";
-import { errorMessage } from "../../lib/errors.ts";
+import { CliError, ERROR_CODE, errorMessage } from "../../lib/errors.ts";
 import type { DoctorContext, KeylessInstanceInfo, ResolvedProfile } from "./types.ts";
 
 export function createDoctorContext(): DoctorContext {
@@ -16,6 +16,7 @@ export function createDoctorContext(): DoctorContext {
   let keylessPromise: Promise<KeylessTarget | undefined> | undefined;
   let keylessInstancePromise: Promise<KeylessInstanceInfo | null> | undefined;
   let claimBreadcrumbPromise: Promise<boolean> | undefined;
+  let keylessKeyError: CliError | undefined;
 
   const ctx: DoctorContext = {
     getToken() {
@@ -56,9 +57,26 @@ export function createDoctorContext(): DoctorContext {
       if (!keylessPromise) {
         // Same resolution every other command uses: an explicit --app/link rules
         // keyless out, but account credentials alone don't (see keyless-target.ts).
-        keylessPromise = resolveKeylessTarget({ cwd: process.cwd() });
+        //
+        // A malformed local key (not `sk_`-prefixed) is caught here rather than
+        // propagated: every keyless-aware check calls this getter, so letting it
+        // throw turns one misconfiguration into a "Check crashed" line per check,
+        // each stripped of its check name. It's cached as a diagnosable state
+        // instead, and checkLoggedIn reports it once, by name, with a remedy.
+        keylessPromise = resolveKeylessTarget({ cwd: process.cwd() }).catch((error) => {
+          if (error instanceof CliError && error.code === ERROR_CODE.INVALID_KEY_FORMAT) {
+            keylessKeyError = error;
+            return undefined;
+          }
+          throw error;
+        });
       }
       return keylessPromise;
+    },
+
+    async getKeylessKeyError() {
+      await ctx.getKeylessTarget();
+      return keylessKeyError;
     },
 
     getKeylessInstance() {

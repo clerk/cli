@@ -107,6 +107,17 @@ export async function checkLoggedIn(ctx: DoctorContext): Promise<CheckResult> {
     );
   }
 
+  // A local key that isn't a secret key at all is the one keyless state that
+  // is genuinely broken — report it here as the named diagnosis, once, rather
+  // than letting it crash every keyless-aware check (see getKeylessKeyError).
+  const keyError = await ctx.getKeylessKeyError();
+  if (keyError) {
+    return check.fail(`Not logged in, and the local secret key is unusable: ${keyError.message}`, {
+      remedy: "Fix or remove the malformed key, or run `clerk auth login` to authenticate.",
+      fixable: false,
+    });
+  }
+
   return check.fail("Not logged in", {
     remedy: "Run `clerk auth login` to authenticate.",
   });

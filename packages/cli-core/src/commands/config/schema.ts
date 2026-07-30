@@ -1,9 +1,8 @@
-import { resolveAppContext } from "../../lib/config.ts";
 import { fetchInstanceConfigSchema } from "../../lib/plapi.ts";
 import { CliError, ERROR_CODE, withApiContext } from "../../lib/errors.ts";
 import { withGutter } from "../../lib/spinner.ts";
 import { log } from "../../lib/log.ts";
-import { resolveKeylessTarget } from "../../lib/keyless-target.ts";
+import { resolveInstanceTarget } from "../../lib/keyless-target.ts";
 
 interface ConfigSchemaOptions {
   app?: string;
@@ -14,7 +13,9 @@ interface ConfigSchemaOptions {
 
 export async function configSchema(options: ConfigSchemaOptions): Promise<void> {
   await withGutter("Fetching configuration schema", async () => {
-    if (await resolveKeylessTarget(options)) {
+    // Same shape as config push/put: resolve the target once, branch on kind.
+    const target = await resolveInstanceTarget(options);
+    if (target.kind === "keyless") {
       throw new CliError(
         "Config schema is only available for a claimed application — the schema describes the account-level config document, which an unclaimed keyless application has no access to.\n" +
           "Run `clerk auth login` to claim this application, then re-run `clerk config schema`.",
@@ -22,7 +23,7 @@ export async function configSchema(options: ConfigSchemaOptions): Promise<void> 
       );
     }
 
-    const ctx = await resolveAppContext(options);
+    const ctx = target.ctx;
 
     log.info(`Pulling config schema from ${ctx.appLabel} (${ctx.instanceLabel})...`);
 

@@ -712,6 +712,33 @@ describe("keyless config", () => {
       expect(captured.err).toContain("Organizations enabled");
     });
 
+    test("disable orgs works without an account and without the billing pre-flight", async () => {
+      // Start from orgs enabled, or the disable is a no-op and nothing is sent.
+      bapiState["/v1/instance/organization_settings"] = { ...ORG_SETTINGS, enabled: true };
+      const requests: string[] = [];
+      stubFetch(async (input, init) => {
+        const path = input.toString().replace(BAPI_URL, "");
+        const method = (init?.method ?? "GET").toUpperCase();
+        requests.push(`${method} ${path}`);
+        if (method === "PATCH") {
+          bapiState[path] = { ...(bapiState[path] as object), ...JSON.parse(init?.body as string) };
+        }
+        return new Response(JSON.stringify(bapiState[path] ?? ORG_SETTINGS), { status: 200 });
+      });
+      const { orgsDisable } = await import("../orgs/index.ts");
+
+      // Keyless has no account config document, so `current` is undefined and
+      // the org-billing pre-flight is skipped — this pins that the disable
+      // path tolerates that instead of reaching for `current.billing`.
+      await orgsDisable({ yes: true });
+
+      expect(requests).toContain("PATCH /v1/instance/organization_settings");
+      // Every request is a bare BAPI path (the BAPI base URL was stripped) —
+      // a Platform API config fetch would show up here as a full foreign URL.
+      expect(requests.every((line) => / \/v1\//.test(line))).toBe(true);
+      expect(captured.err).toContain("Organizations disabled");
+    });
+
     test("whoami reports the keyless instance instead of demanding a login", async () => {
       const { whoami } = await import("../whoami/index.ts");
 

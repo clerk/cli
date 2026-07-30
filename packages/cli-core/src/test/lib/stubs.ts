@@ -160,6 +160,20 @@ export const configStubs = {
     profile.appName ? `${profile.appName} (${profile.appId})` : profile.appId,
 };
 
+// Same wholesale-replacement rule as configStubs: this must cover every
+// export of lib/keyless-target.ts, or importing it anywhere in the process
+// after the mock registers becomes an import error. Spread it into each
+// `mock.module("../../lib/keyless-target.ts", ...)` and override the exports
+// the file under test actually exercises.
+export const keylessTargetStubs = {
+  resolveKeylessTarget: noop,
+  resolveInstanceTarget: noop,
+  findLocalSecretKey: noop,
+  findLocalPublishableKey: noop,
+  hasKeyPairMismatch: async () => false,
+  readSdkKeylessApp: noop,
+};
+
 export const autolinkStubs = {
   findClerkKeys: async () => [],
   matchKeyToApp: () => undefined,

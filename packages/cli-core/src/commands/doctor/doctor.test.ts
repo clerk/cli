@@ -2,7 +2,7 @@ import { test, expect, describe, beforeEach, afterEach, mock } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { ApiError, AuthError } from "../../lib/errors.ts";
+import { ApiError, AuthError, type CliError } from "../../lib/errors.ts";
 import { _setConfigDir } from "../../lib/config.ts";
 import {
   credentialStoreStubs,
@@ -108,6 +108,7 @@ function createMockContext(
     keylessTarget?: KeylessTarget;
     keylessInstance?: KeylessInstanceInfo | null;
     claimBreadcrumb?: boolean;
+    keylessKeyError?: CliError;
   } = {},
 ): DoctorContext {
   return {
@@ -124,6 +125,7 @@ function createMockContext(
     getKeylessTarget: async () => overrides.keylessTarget,
     getKeylessInstance: async () => overrides.keylessInstance ?? null,
     hasClaimBreadcrumb: async () => overrides.claimBreadcrumb ?? false,
+    getKeylessKeyError: async () => overrides.keylessKeyError,
     fixes: {
       login: noopFix,
       link: noopFix,

@@ -1,5 +1,11 @@
 import { test, expect, describe, mock, spyOn, beforeEach, afterEach, afterAll } from "bun:test";
-import { useCaptureLog, credentialStoreStubs, gitStubs, stubFetch } from "../../test/lib/stubs.ts";
+import {
+  useCaptureLog,
+  credentialStoreStubs,
+  gitStubs,
+  keylessTargetStubs,
+  stubFetch,
+} from "../../test/lib/stubs.ts";
 import * as config from "../../lib/config.ts";
 import type { Application } from "../../lib/plapi.ts";
 
@@ -22,6 +28,7 @@ mock.module("../../lib/git.ts", () => gitStubs);
 
 const mockResolveKeylessTarget = mock();
 mock.module("../../lib/keyless-target.ts", () => ({
+  ...keylessTargetStubs,
   resolveKeylessTarget: (...args: unknown[]) => mockResolveKeylessTarget(...args),
 }));
 

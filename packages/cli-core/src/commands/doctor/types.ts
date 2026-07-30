@@ -1,4 +1,5 @@
 import type { resolveProfile } from "../../lib/config.ts";
+import type { CliError } from "../../lib/errors.ts";
 import type { Application } from "../../lib/plapi.ts";
 import type { KeylessTarget } from "../../lib/keyless-target.ts";
 
@@ -39,6 +40,13 @@ export interface DoctorContext {
   getKeylessTarget(): Promise<KeylessTarget | undefined>;
   /** Best-effort identity of the keyless instance, for naming it in check output. */
   getKeylessInstance(): Promise<KeylessInstanceInfo | null>;
+  /**
+   * The malformed-local-key error `getKeylessTarget()` swallowed, if any. A
+   * key that doesn't start with `sk_` is precisely the misconfiguration doctor
+   * exists to diagnose, so it surfaces as one named failing check instead of
+   * crashing every keyless-aware check anonymously.
+   */
+  getKeylessKeyError(): Promise<CliError | undefined>;
   /**
    * Whether a `clerk init` claim breadcrumb is present, read once and without
    * side effects — `readKeylessBreadcrumb` clears a malformed file as it goes,

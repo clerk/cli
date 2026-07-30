@@ -46,8 +46,12 @@ on disk (or in `CLERK_SECRET_KEY`/framework env var), is running on an
 **unclaimed keyless application** — a legitimate, healthy state, not a broken
 one.
 
-- No token, keyless key present → **pass**, naming the instance and noting
-  `clerk auth login` claims it.
+- No token, keyless key present → **pass**, naming the instance. The claim
+  hint depends on where the app came from: with a `.clerk/keyless.json`
+  breadcrumb (left by `clerk init`) it says `clerk auth login` claims it;
+  without one — an SDK-minted `.clerk/.tmp/keyless.json`, or a hand-copied
+  `CLERK_SECRET_KEY` — it says to claim from the Clerk Dashboard instead,
+  because `clerk auth login` only auto-claims apps `clerk init` created.
 - Stored session expired, keyless key present → **warn** (not fail): the
   keyless key still works, logging in again is optional.
 - Signed in (has account credentials) but this directory isn't linked, keyless

@@ -41,9 +41,7 @@ export async function applyConfigPatch(opts: ApplyPatchOptions): Promise<boolean
     return false;
   }
 
-  const headline = dryRun
-    ? `[dry-run] Proposing PATCH on ${target.label}:`
-    : `${verb} on ${target.label}:`;
+  const headline = `${dryRun ? "[dry-run] " : ""}${verb} on ${target.label}:`;
   log.info(`\n${headline}\n`);
   printDiff(current, payload, true);
 
@@ -61,9 +59,7 @@ export async function applyConfigPatch(opts: ApplyPatchOptions): Promise<boolean
     if (!ok) throwUserAbort();
   }
 
-  const spinnerMsg = dryRun
-    ? `[dry-run] Validating config on ${target.label}...`
-    : `${verb} on ${target.label}...`;
+  const spinnerMsg = `${dryRun ? "[dry-run] " : ""}${verb} on ${target.label}...`;
   const result = await withSpinner(spinnerMsg, () =>
     writeInstanceConfig(target, payload, { method: "PATCH", dryRun, failureContext }),
   );

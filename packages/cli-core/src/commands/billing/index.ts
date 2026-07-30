@@ -59,10 +59,10 @@ function describeTargets(targets: Target[]): string {
 /**
  * Billing settings live only in the account-level config document — Clerk's
  * Backend API exposes no billing resource — so these commands can't run against
- * an unclaimed keyless application the way the org toggles can.
+ * an unclaimed keyless application the way the org toggles can. Pure assertion:
+ * resolving the target is `resolveInstanceTarget`'s job, not billing's.
  */
-async function resolveBillingTarget(options: BillingOptions): Promise<InstanceTarget> {
-  const target = await resolveInstanceTarget(options);
+function assertBillingTarget(target: InstanceTarget): void {
   if (target.kind === "keyless") {
     throw new CliError(
       "Billing can only be configured on a claimed application — Clerk's Backend API has no billing settings, so an unclaimed keyless application can't reach them.\n" +
@@ -70,12 +70,12 @@ async function resolveBillingTarget(options: BillingOptions): Promise<InstanceTa
       { code: ERROR_CODE.AUTH_REQUIRED },
     );
   }
-  return target;
 }
 
 export async function billingEnable(options: BillingOptions): Promise<void> {
   const targets = parseForTargets(options.for);
-  const target = await resolveBillingTarget(options);
+  const target = await resolveInstanceTarget(options);
+  assertBillingTarget(target);
 
   const billing: Record<string, unknown> = {};
   const payload: Record<string, unknown> = { billing };
@@ -139,7 +139,8 @@ async function offerBillingSkillInstall(options: BillingOptions): Promise<void> 
 
 export async function billingDisable(options: BillingOptions): Promise<void> {
   const targets = parseForTargets(options.for);
-  const target = await resolveBillingTarget(options);
+  const target = await resolveInstanceTarget(options);
+  assertBillingTarget(target);
 
   // No cascade: leave organization_settings untouched.
   const billing: Record<string, unknown> = {};

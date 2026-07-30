@@ -80,14 +80,14 @@ async function assertNotUnclaimedKeyless(options: UsersOpenOptions, userId: stri
   if (options.app || options.instance) return;
 
   const keyless = await resolveKeylessTarget({ cwd: process.cwd() });
-  if (!keyless) return;
-
-  throw new CliError(
-    `This directory holds an unclaimed keyless application (secret key from ${keyless.source}), which has no Dashboard page — a dashboard link needs an application ID, and one is only assigned when the application is claimed.\n` +
-      `Run \`clerk auth login\` to claim it, then \`clerk users open ${userId}\` will work.\n` +
-      `To inspect the user right now, \`clerk api /users/${userId}\` reads it straight from the instance.`,
-    { code: ERROR_CODE.INSTANCE_NOT_FOUND },
-  );
+  if (keyless) {
+    throw new CliError(
+      `This directory holds an unclaimed keyless application (secret key from ${keyless.source}), which has no Dashboard page — a dashboard link needs an application ID, and one is only assigned when the application is claimed.\n` +
+        `Run \`clerk auth login\` to claim it, then \`clerk users open ${userId}\` will work.\n` +
+        `To inspect the user right now, \`clerk api /users/${userId}\` reads it straight from the instance.`,
+      { code: ERROR_CODE.INSTANCE_NOT_FOUND },
+    );
+  }
 }
 
 export async function open(options: UsersOpenOptions = {}): Promise<void> {

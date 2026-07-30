@@ -47,8 +47,13 @@ const ENV_FILES = [".env", ".env.local"];
  */
 const SDK_KEYLESS_FILE = [".clerk", ".tmp", "keyless.json"];
 
-/** Reads the SDK's own keyless file, ignoring a partially-written one. */
-async function readSdkKeylessApp(
+/**
+ * Reads the SDK's own keyless file, ignoring a partially-written one.
+ * Exported for `init`, whose keep-the-existing-app guard must recognise an
+ * application the SDK minted for itself just as readily as one `clerk init`
+ * minted — the two files describe the same kind of unclaimed app.
+ */
+export async function readSdkKeylessApp(
   cwd: string,
 ): Promise<{ secretKey?: string; publishableKey?: string } | undefined> {
   const file = Bun.file(join(cwd, ...SDK_KEYLESS_FILE));

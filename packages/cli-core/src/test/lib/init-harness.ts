@@ -28,6 +28,7 @@ export * as skillsMod from "../../commands/init/skills.ts";
 export * as bootstrapMod from "../../commands/init/bootstrap.ts";
 export * as nextStepsMod from "../../lib/next-steps.ts";
 export * as keylessMod from "../../lib/keyless.ts";
+export * as keylessTargetMod from "../../lib/keyless-target.ts";
 
 import * as loginModule from "../../commands/auth/login.ts";
 import * as linkModule from "../../commands/link/index.ts";

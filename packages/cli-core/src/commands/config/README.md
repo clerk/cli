@@ -215,7 +215,7 @@ Any other top-level key exits with a usage error naming the supported ones. Most
 
 `instance_settings` is backed by a beta route, and is the only way to reach those four auth-config fields without an account — which is why it's included.
 
-`clerk config pull` returns the same envelope. `restrictions` is omitted because the Backend API has no read route for it; asking for it by name prints a warning rather than failing.
+`clerk config pull` returns the same envelope. `restrictions` and `instance_settings` are omitted because the Backend API has no read route for either (see the Readable column above) — a `pull` run to confirm a write to them will not show the field, which does not mean the write failed. Asking for either by name prints a warning rather than failing.
 
 `GET /v1/instance` returns a subset of what `PATCH /v1/instance` accepts — `support_email`, for example, is writable but not readable. Fields the read omits have no "before" value to compare against, so they always appear as additions in the diff and never trigger "No changes detected". The write itself is unaffected: patching a field to the value it already holds is a no-op server-side.
 

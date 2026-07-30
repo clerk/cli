@@ -20,6 +20,7 @@ import {
   heuristics,
   bootstrapMod,
   keylessMod,
+  keylessTargetMod,
 } from "../../test/lib/init-harness.ts";
 import * as promptsMod from "../../lib/prompts.ts";
 import { init } from "./index.ts";
@@ -526,6 +527,61 @@ describe("init strategy", () => {
       );
       expect(keylessMod.createAccountlessApp).not.toHaveBeenCalled();
       expect(printExistingSpy).toHaveBeenCalledWith(KEYLESS_CTX.envFile);
+    });
+
+    test("an app the SDK minted for itself counts as existing too — no silent replacement", async () => {
+      setup({ isAgent: true, email: null });
+      mockExistingProject(KEYLESS_CTX);
+      mockMiddlewareScaffold();
+      // No CLI breadcrumb — the app came from running the dev server, so the
+      // only trace is the SDK's own .clerk/.tmp/keyless.json.
+      const breadcrumbSpy = spyOn(keylessMod, "readKeylessBreadcrumb").mockResolvedValue(undefined);
+      const sdkAppSpy = spyOn(keylessTargetMod, "readSdkKeylessApp").mockResolvedValue({
+        secretKey: "sk_test_sdkapp",
+        publishableKey: "pk_test_sdkapp",
+      });
+      const confirmSpy = spyOn(promptsMod, "confirm");
+      const printExistingSpy = spyOn(heuristics, "printExistingKeylessInfo").mockReturnValue(
+        undefined,
+      );
+      track(breadcrumbSpy);
+      track(sdkAppSpy);
+      track(confirmSpy);
+      track(printExistingSpy);
+
+      await init({});
+
+      expect(confirmSpy).not.toHaveBeenCalled();
+      expect(keylessMod.createAccountlessApp).not.toHaveBeenCalled();
+      expect(printExistingSpy).toHaveBeenCalledWith(KEYLESS_CTX.envFile);
+    });
+
+    test("human mode names the SDK file when prompting to replace an SDK-minted app", async () => {
+      setup({ email: null });
+      mockExistingProject(KEYLESS_CTX);
+      mockMiddlewareScaffold();
+      const breadcrumbSpy = spyOn(keylessMod, "readKeylessBreadcrumb").mockResolvedValue(undefined);
+      const sdkAppSpy = spyOn(keylessTargetMod, "readSdkKeylessApp").mockResolvedValue({
+        secretKey: "sk_test_sdkapp",
+      });
+      const confirmSpy = spyOn(promptsMod, "confirm").mockResolvedValue(false);
+      const printExistingSpy = spyOn(heuristics, "printExistingKeylessInfo").mockReturnValue(
+        undefined,
+      );
+      track(breadcrumbSpy);
+      track(sdkAppSpy);
+      track(confirmSpy);
+      track(printExistingSpy);
+
+      await init({ keyless: true });
+
+      expect(confirmSpy).toHaveBeenCalledWith(
+        expect.objectContaining({
+          message: expect.stringContaining(".clerk/.tmp/keyless.json"),
+          default: false,
+        }),
+      );
+      expect(keylessMod.createAccountlessApp).not.toHaveBeenCalled();
     });
 
     test("human mode mints a fresh app when the user confirms replacement", async () => {

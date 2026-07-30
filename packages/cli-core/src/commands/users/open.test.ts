@@ -1,7 +1,7 @@
 import { test, expect, describe, afterEach, beforeEach, mock } from "bun:test";
 import { setMode } from "../../mode.ts";
 import { setCurrentEnv } from "../../lib/environment.ts";
-import { configStubs, useCaptureLog } from "../../test/lib/stubs.ts";
+import { configStubs, keylessTargetStubs, useCaptureLog } from "../../test/lib/stubs.ts";
 
 const mockResolveAppContext = mock();
 const mockResolveProfile = mock();
@@ -32,6 +32,7 @@ mock.module("../../lib/open.ts", () => ({
 
 const mockResolveKeylessTarget = mock();
 mock.module("../../lib/keyless-target.ts", () => ({
+  ...keylessTargetStubs,
   resolveKeylessTarget: (...args: unknown[]) => mockResolveKeylessTarget(...args),
 }));
 

@@ -61,6 +61,12 @@ export const NEXT_STEPS = {
   CONFIG_DRY_RUN_PUT: ["Run `clerk config put` without `--dry-run` to apply these changes"],
   LOGOUT: ["Run `clerk auth login` to sign in again"],
   WHOAMI: ["Run `clerk link` to connect this directory to an application"],
+  // An unclaimed keyless app can't be `clerk link`ed — nothing in any account
+  // to link to. `clerk open` finds the claim link whichever file minted the app.
+  WHOAMI_KEYLESS: [
+    "Run `clerk open` to open this application's claim link",
+    "Run `clerk auth login` to connect your Clerk account",
+  ],
   WHOAMI_LINKED: [
     "Run `clerk apps list` to see your other applications",
     "Run `clerk config pull` to inspect the live configuration of this instance",

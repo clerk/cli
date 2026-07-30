@@ -25,6 +25,7 @@ import {
   KEYLESS_TEMPLATES,
   type KeylessTemplate,
 } from "../../lib/keyless.js";
+import { readSdkKeylessApp } from "../../lib/keyless-target.ts";
 import { printNextSteps } from "../../lib/next-steps.js";
 import { gatherContext, hasPackageJson } from "./context.js";
 import { scaffold, enrichProjectContext } from "./scaffold.js";
@@ -465,13 +466,16 @@ async function authenticateAndLink(
 
 /**
  * A `.clerk/keyless.json` breadcrumb means an earlier run already minted an
- * unclaimed keyless application for this project — its claim token, and
- * anything configured on it or created in it, only exist as long as that
- * breadcrumb (and the env keys pointing at it) survive. Re-running init must
- * not silently mint a replacement and orphan that app, so this asks before
- * ever touching it: human mode confirms (default: keep); agent mode and `-y`
- * both keep it too, since neither can consent to a destructive default.
- * `--fresh` is the explicit "I know, replace it anyway" escape hatch.
+ * unclaimed keyless application for this project — its claim token, and the
+ * local means of claiming or reaching it, only exist as long as that
+ * breadcrumb (and the env keys pointing at it) survive. The same is true of
+ * an application a Clerk SDK minted for itself in `.clerk/.tmp/keyless.json`
+ * (running `next dev` with no keys configured), so both files count as "an
+ * app already exists here". Re-running init must not silently mint a
+ * replacement and orphan either one, so this asks before ever touching it:
+ * human mode confirms (default: keep); agent mode and `-y` both keep it too,
+ * since neither can consent to a destructive default. `--fresh` is the
+ * explicit "I know, replace it anyway" escape hatch.
  */
 async function shouldKeepExistingKeyless(
   cwd: string,
@@ -481,12 +485,15 @@ async function shouldKeepExistingKeyless(
   if (fresh) return false;
 
   const existing = await readKeylessBreadcrumb(cwd);
-  if (!existing) return false;
+  const sdkApp = existing ? undefined : await readSdkKeylessApp(cwd);
+  if (!existing && !sdkApp?.secretKey) return false;
 
   if (skipConfirm) return true;
 
   const replace = await confirm({
-    message: `This project already has an unclaimed keyless application (created ${existing.createdAt}). Replace it with a new one?`,
+    message: existing
+      ? `This project already has an unclaimed keyless application (created ${existing.createdAt}). Replace it with a new one?`
+      : "This project already has an unclaimed keyless application (minted by its Clerk SDK in `.clerk/.tmp/keyless.json`). Replace it with a new one?",
     default: false,
   });
   return !replace;

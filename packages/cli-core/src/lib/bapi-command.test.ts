@@ -198,13 +198,45 @@ describe("bapi-command", () => {
     expect(fetchApplicationSpy).toHaveBeenCalledWith("app_123");
   });
 
-  test("falls back to the shared keyless resolution when no explicit app or secret key is provided", async () => {
-    resolveKeylessTargetSpy.mockResolvedValue({
-      secretKey: "sk_env_123",
-      source: "CLERK_SECRET_KEY env var",
+  test("an exported CLERK_SECRET_KEY wins over a linked profile", async () => {
+    process.env.CLERK_SECRET_KEY = "sk_env_123";
+
+    await expect(resolveBapiSecretKey({})).resolves.toBe("sk_env_123");
+
+    // The env var is explicit user intent: neither the keyless resolver (which
+    // stands down for linked directories) nor the profile lookup runs at all.
+    expect(resolveKeylessTargetSpy).not.toHaveBeenCalled();
+    expect(resolveAppContextSpy).not.toHaveBeenCalled();
+    expect(fetchApplicationSpy).not.toHaveBeenCalled();
+  });
+
+  test("--instance stays a no-op next to an exported CLERK_SECRET_KEY", async () => {
+    process.env.CLERK_SECRET_KEY = "sk_env_123";
+
+    // The key addresses exactly one instance, so --instance has always been
+    // ignored here — never a usage error.
+    await expect(resolveBapiSecretKey({ instance: "prod" })).resolves.toBe("sk_env_123");
+
+    expect(resolveKeylessTargetSpy).not.toHaveBeenCalled();
+  });
+
+  test("rejects an exported CLERK_SECRET_KEY that is not a secret key", async () => {
+    process.env.CLERK_SECRET_KEY = "pk_test_not_secret";
+    validateKeyPrefixSpy.mockImplementation(() => {
+      throw new Error("bad prefix");
     });
 
-    await expect(resolveBapiSecretKey({ instance: "dev" })).resolves.toBe("sk_env_123");
+    await expect(resolveBapiSecretKey({})).rejects.toThrow("bad prefix");
+    expect(validateKeyPrefixSpy).toHaveBeenCalledWith("pk_test_not_secret", "sk_");
+  });
+
+  test("falls back to the shared keyless resolution when no explicit app or secret key is provided", async () => {
+    resolveKeylessTargetSpy.mockResolvedValue({
+      secretKey: "sk_keyless_123",
+      source: ".env.local",
+    });
+
+    await expect(resolveBapiSecretKey({ instance: "dev" })).resolves.toBe("sk_keyless_123");
 
     expect(resolveKeylessTargetSpy).toHaveBeenCalledWith({ instance: "dev", cwd: undefined });
     expect(resolveAppContextSpy).not.toHaveBeenCalled();
