@@ -312,10 +312,13 @@ function isInvalidGrant(error: unknown): boolean {
  *
  * 5xx and network failures are deliberately excluded: those are transient, and
  * telling someone their session expired because Clerk had a bad minute would
- * send them to re-authenticate for nothing.
+ * send them to re-authenticate for nothing. 429 is excluded for the same
+ * reason — it's a rate limit, not a rejection of the refresh token.
  */
 function isUnrecoverableRefreshFailure(error: unknown): boolean {
-  return error instanceof ApiError && error.status >= 400 && error.status < 500;
+  return (
+    error instanceof ApiError && error.status >= 400 && error.status < 500 && error.status !== 429
+  );
 }
 
 async function readStoredValue(): Promise<string | null> {

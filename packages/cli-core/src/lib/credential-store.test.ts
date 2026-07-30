@@ -154,6 +154,21 @@ describe("credential-store", () => {
     expect(await getStoredSession()).toBeNull();
   });
 
+  test("getValidToken treats a 429 refresh failure as transient, not an expired session", async () => {
+    const session = {
+      accessToken: "expired-access-token",
+      refreshToken: "refresh-token",
+      expiresAt: Date.now() - 60_000,
+      tokenType: "Bearer",
+    };
+    await storeToken(session);
+
+    mockRefreshAccessToken.mockRejectedValue(new ApiError(429, "rate_limited"));
+
+    await expect(getValidToken()).rejects.toBeInstanceOf(ApiError);
+    expect(await getStoredSession()).toEqual(session);
+  });
+
   test("createOAuthSession requires a refresh token in the auth response", () => {
     expect(() =>
       createOAuthSession({

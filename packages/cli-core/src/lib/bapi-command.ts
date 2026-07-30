@@ -21,6 +21,10 @@ interface ResolveBapiSecretKeyOptions {
 export async function describeBapiTarget(
   options: ResolveBapiSecretKeyOptions,
 ): Promise<string | undefined> {
+  // An explicit --secret-key wins in resolveBapiSecretKey, so it has no
+  // app/instance context to describe.
+  if (options.secretKey) return undefined;
+
   // Mirrors resolveBapiSecretKey's precedence: an unclaimed keyless project has
   // no app/instance to describe, only the key's own source.
   const keyless = await resolveKeylessTarget({

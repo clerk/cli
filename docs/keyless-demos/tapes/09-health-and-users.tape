@@ -28,7 +28,7 @@ Sleep 500ms
 Enter
 Sleep 8s
 
-Type "clerk open --print"
+Type `clerk open --print | sed -E 's/(token=)[^&]+/\1REDACTED/'`
 Sleep 500ms
 Enter
 Sleep 8s

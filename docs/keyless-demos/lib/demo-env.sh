@@ -83,7 +83,7 @@ keyless_keys() {
 
   local response publishable secret attempt
   for attempt in 1 2 3 4 5; do
-    response="$(curl -sS -X POST https://api.clerk.com/v1/accountless_applications \
+    response="$(curl -sS --connect-timeout 10 --max-time 30 -X POST https://api.clerk.com/v1/accountless_applications \
       -H 'Content-Type: application/x-www-form-urlencoded' \
       -d "$body")"
 
@@ -98,7 +98,7 @@ EOF
       return 0
     fi
 
-    echo "keyless_keys: attempt $attempt failed ($response)" >&2
+    echo "keyless_keys: attempt $attempt failed to return both key values" >&2
     sleep $((attempt * 5))
   done
 

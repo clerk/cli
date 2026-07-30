@@ -38,7 +38,7 @@ If a claim link is found, `open` opens/prints/emits **that** URL instead of a da
 
 A `subpath` cannot be honored for an unclaimed application (there is no dashboard page beyond the claim link yet), so `open users` on an unclaimed app throws instead of silently opening the claim link at the wrong URL:
 
-```
+```text
 "users" isn't reachable yet — this application hasn't been claimed, so it has
 no dashboard pages beyond the claim link. Run `clerk open` (no subpath) to
 claim it, then retry the subpath once it's linked.

@@ -303,6 +303,14 @@ describe("bapi-command", () => {
     expect(resolveAppContextSpy).not.toHaveBeenCalled();
   });
 
+  test("an explicit --secret-key wins over a keyless target on disk, matching resolveBapiSecretKey", async () => {
+    resolveKeylessTargetSpy.mockResolvedValue({ secretKey: "sk_test_disk", source: ".env.local" });
+
+    await expect(describeBapiTarget({ secretKey: "sk_test_explicit" })).resolves.toBeUndefined();
+
+    expect(resolveKeylessTargetSpy).not.toHaveBeenCalled();
+  });
+
   test("throws instance-not-found when the resolved instance is missing from the application", async () => {
     resolveAppContextSpy.mockResolvedValue({
       appId: "app_123",
