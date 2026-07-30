@@ -82,18 +82,27 @@ async function findKeyInProject(cwd: string, names: string[]): Promise<LocatedKe
     if (value) return { value, source: `${name} env var` };
   }
 
-  let found: LocatedKey | undefined;
+  // Priority is by name, not by position: the framework-specific name beats
+  // the generic fallback even when the generic one appears later in the same
+  // file. Within one name, a later file still overrides an earlier one.
+  const foundByName = new Map<string, LocatedKey>();
   for (const envFile of ENV_FILES) {
     const file = Bun.file(join(cwd, envFile));
     if (!(await file.exists())) continue;
 
     for (const line of parseEnvFile(await file.text())) {
       if (line.type !== "entry" || !line.value) continue;
-      if (names.includes(line.key)) found = { value: line.value, source: envFile };
+      if (names.includes(line.key)) {
+        foundByName.set(line.key, { value: line.value, source: envFile });
+      }
     }
   }
 
-  return found;
+  for (const name of names) {
+    const located = foundByName.get(name);
+    if (located) return located;
+  }
+  return undefined;
 }
 
 /**

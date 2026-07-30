@@ -2,6 +2,7 @@ import { getToken, getValidToken } from "../../lib/credential-store.ts";
 import { resolveProfile } from "../../lib/config.ts";
 import { fetchApplication, type Application } from "../../lib/plapi.ts";
 import { resolveKeylessTarget, type KeylessTarget } from "../../lib/keyless-target.ts";
+import { peekKeylessBreadcrumb } from "../../lib/keyless.ts";
 import { bapiRequest } from "../../lib/bapi.ts";
 import { log } from "../../lib/log.ts";
 import { errorMessage } from "../../lib/errors.ts";
@@ -14,6 +15,7 @@ export function createDoctorContext(): DoctorContext {
   let appPromise: Promise<Application | null> | undefined;
   let keylessPromise: Promise<KeylessTarget | undefined> | undefined;
   let keylessInstancePromise: Promise<KeylessInstanceInfo | null> | undefined;
+  let claimBreadcrumbPromise: Promise<boolean> | undefined;
 
   const ctx: DoctorContext = {
     getToken() {
@@ -82,6 +84,15 @@ export function createDoctorContext(): DoctorContext {
         })();
       }
       return keylessInstancePromise;
+    },
+
+    hasClaimBreadcrumb() {
+      if (!claimBreadcrumbPromise) {
+        // peek, not read: readKeylessBreadcrumb clears a malformed file as a
+        // side effect, and doctor must leave the project exactly as found.
+        claimBreadcrumbPromise = peekKeylessBreadcrumb(process.cwd()).then(Boolean);
+      }
+      return claimBreadcrumbPromise;
     },
 
     fixes: {

@@ -150,6 +150,21 @@ export async function readKeylessBreadcrumb(cwd: string): Promise<KeylessBreadcr
   }
 }
 
+/**
+ * Reads the breadcrumb with no side effects: no warning, and a malformed file
+ * is left in place rather than cleared. For paths that only report state
+ * (`doctor`) — repairing on read is `readKeylessBreadcrumb`'s job, and a
+ * diagnostic command has no business changing the project it's diagnosing.
+ */
+export async function peekKeylessBreadcrumb(cwd: string): Promise<KeylessBreadcrumb | undefined> {
+  try {
+    const data: unknown = await Bun.file(breadcrumbPath(cwd)).json();
+    return isKeylessBreadcrumb(data) ? data : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 export async function clearKeylessBreadcrumb(cwd: string): Promise<void> {
   try {
     await unlink(breadcrumbPath(cwd));

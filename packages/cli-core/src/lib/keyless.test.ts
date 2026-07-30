@@ -8,6 +8,7 @@ const {
   parseClaimToken,
   writeKeylessBreadcrumb,
   readKeylessBreadcrumb,
+  peekKeylessBreadcrumb,
   clearKeylessBreadcrumb,
   writeKeysToEnvFile,
   createAccountlessApp,
@@ -72,6 +73,20 @@ describe("breadcrumb", () => {
     const result = await readKeylessBreadcrumb(tempDir);
     expect(result).toBeUndefined();
     expect(await Bun.file(breadcrumbFile).exists()).toBe(false);
+  });
+
+  test("peek returns the breadcrumb like read does", async () => {
+    await writeKeylessBreadcrumb(tempDir, "token_abc");
+    const result = await peekKeylessBreadcrumb(tempDir);
+    expect(result?.claimToken).toBe("token_abc");
+  });
+
+  test("peek leaves a wrong-shape file in place instead of clearing it", async () => {
+    const breadcrumbFile = join(tempDir, ".clerk", "keyless.json");
+    await Bun.write(breadcrumbFile, JSON.stringify({ claimToken: 12345, createdAt: "2024-01-01" }));
+    const result = await peekKeylessBreadcrumb(tempDir);
+    expect(result).toBeUndefined();
+    expect(await Bun.file(breadcrumbFile).exists()).toBe(true);
   });
 
   test("clear removes the breadcrumb file", async () => {

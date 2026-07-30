@@ -40,10 +40,29 @@ async function readSdkClaimUrl(cwd: string): Promise<string | undefined> {
 
   try {
     const parsed = (await file.json()) as { claimUrl?: unknown };
-    return typeof parsed.claimUrl === "string" ? parsed.claimUrl : undefined;
+    const claimUrl = typeof parsed.claimUrl === "string" ? parsed.claimUrl : undefined;
+    if (claimUrl && !isHttpsUrl(claimUrl)) {
+      log.debug(`open: ignoring non-https claimUrl in ${SDK_KEYLESS_FILE.join("/")}`);
+      return undefined;
+    }
+    return claimUrl;
   } catch {
     // A half-written file during an SDK refresh isn't worth failing over.
     return undefined;
+  }
+}
+
+/**
+ * The SDK's file is written by another process, so its URL is untrusted input.
+ * Anything but well-formed https is dropped rather than handed to the browser
+ * launcher — which on Windows goes through `cmd /c start "" "<url>"`, where a
+ * `file:`/`javascript:` scheme or an embedded quote stops being just a URL.
+ */
+function isHttpsUrl(value: string): boolean {
+  try {
+    return new URL(value).protocol === "https:";
+  } catch {
+    return false;
   }
 }
 
@@ -72,7 +91,7 @@ export async function findKeylessClaimUrl(
   if (breadcrumb) {
     const host = getDashboardUrl().replace(/\/$/, "");
     return {
-      url: `${host}/apps/claim?token=${breadcrumb.claimToken}`,
+      url: `${host}/apps/claim?token=${encodeURIComponent(breadcrumb.claimToken)}`,
       source: ".clerk/keyless.json",
     };
   }

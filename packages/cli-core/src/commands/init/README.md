@@ -77,7 +77,7 @@ When running in agent mode (`--mode agent` or non-TTY), the command runs the ful
 12. Scans for issues: hardcoded keys, leftover auth-library imports, stale API calls
 13. Prints a summary of created, modified, and skipped files with recommendations
 14. **Authenticated mode**: pulls development instance API keys via `clerk env pull`
-15. **Unauthenticated mode**: mints a keyless application and prints instructions for development without API keys and how to connect a Clerk account later — unless an unclaimed keyless app already exists for this project (see [Re-running init on an already-keyless project](#re-running-init-on-an-already-keyless-project)), in which case the existing keys are kept and reported instead
+15. **Keyless mode** (unauthenticated runs whose resolved strategy in step 2 is keyless — an unauthenticated human-mode rerun on an existing project resolves to the authenticated flow instead): mints a keyless application and prints instructions for development without API keys and how to connect a Clerk account later — unless an unclaimed keyless app already exists for this project (see [Re-running init on an already-keyless project](#re-running-init-on-an-already-keyless-project)), in which case the existing keys are kept and reported instead
 16. Optionally installs Clerk agent skills (cli + core + features, plus a framework-specific skill) via the project's package runner (see [Agent skills install](#agent-skills-install))
 
 ## Framework Detection
@@ -306,7 +306,7 @@ In keyless mode, after calling `POST /v1/accountless_applications`, `clerk init`
 
 ### Re-running init on an already-keyless project
 
-The breadcrumb is also what protects an unclaimed keyless app from being orphaned by a later `clerk init` run. As long as `.clerk/keyless.json` is present, the application it points at hasn't been claimed yet — its claim token, and anything configured on or created in that app, only exist as long as the breadcrumb and the env keys pointing at it survive. So whenever init resolves to keyless mode and finds an existing breadcrumb, it does **not** silently mint a replacement application and overwrite the env keys and breadcrumb with the new one's:
+The breadcrumb is also what protects an unclaimed keyless app from being orphaned by a later `clerk init` run. As long as `.clerk/keyless.json` is present, the application it points at hasn't been claimed yet. The application and everything configured on it keep existing server-side either way — what the breadcrumb and env keys hold is the only local way to claim or reach it, so overwriting them can strand an application that still has configuration or users on it. So whenever init resolves to keyless mode and finds an existing breadcrumb, it does **not** silently mint a replacement application and overwrite the env keys and breadcrumb with the new one's:
 
 - **Human mode** (no `-y`): prompts `This project already has an unclaimed keyless application (created <date>). Replace it with a new one?`, defaulting to **no**. Declining keeps the existing keys and breadcrumb untouched.
 - **Human mode with `-y`, and all agent-mode runs**: never prompt, and default to the same safe answer — **keep the existing application**. `-y` and agent mode both mean "skip confirmations", not "consent to destroying an app that might already have configuration or users on it".

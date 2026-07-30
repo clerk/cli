@@ -81,6 +81,44 @@ describe("findKeylessClaimUrl", () => {
     expect(destination?.source).toBe(".clerk/keyless.json");
   });
 
+  test("ignores a non-https claimUrl and falls back to the breadcrumb", async () => {
+    await mkdir(join(projectDir, ".clerk", ".tmp"), { recursive: true });
+    await writeFile(
+      join(projectDir, ".clerk", ".tmp", "keyless.json"),
+      JSON.stringify({ claimUrl: "file:///etc/passwd" }),
+    );
+    await writeFile(
+      join(projectDir, ".clerk", "keyless.json"),
+      JSON.stringify({ claimToken: "cli-token", createdAt: new Date().toISOString() }),
+    );
+
+    const destination = await findKeylessClaimUrl(projectDir);
+    expect(destination?.source).toBe(".clerk/keyless.json");
+  });
+
+  test("ignores a claimUrl that doesn't parse as a URL at all", async () => {
+    await mkdir(join(projectDir, ".clerk", ".tmp"), { recursive: true });
+    await writeFile(
+      join(projectDir, ".clerk", ".tmp", "keyless.json"),
+      JSON.stringify({ claimUrl: 'not-a-url" --evil' }),
+    );
+
+    expect(await findKeylessClaimUrl(projectDir)).toBeUndefined();
+  });
+
+  test("URL-encodes the breadcrumb claim token", async () => {
+    await mkdir(join(projectDir, ".clerk"), { recursive: true });
+    await writeFile(
+      join(projectDir, ".clerk", "keyless.json"),
+      JSON.stringify({ claimToken: "cli token&extra=1", createdAt: new Date().toISOString() }),
+    );
+
+    const destination = await findKeylessClaimUrl(projectDir);
+    expect(destination?.url).toBe(
+      "https://dashboard.clerk.com/apps/claim?token=cli%20token%26extra%3D1",
+    );
+  });
+
   test("ignores a malformed SDK keyless file and falls back to the breadcrumb", async () => {
     await mkdir(join(projectDir, ".clerk", ".tmp"), { recursive: true });
     await writeFile(join(projectDir, ".clerk", ".tmp", "keyless.json"), "{ not json");

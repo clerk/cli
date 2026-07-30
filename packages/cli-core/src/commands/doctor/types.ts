@@ -39,6 +39,13 @@ export interface DoctorContext {
   getKeylessTarget(): Promise<KeylessTarget | undefined>;
   /** Best-effort identity of the keyless instance, for naming it in check output. */
   getKeylessInstance(): Promise<KeylessInstanceInfo | null>;
+  /**
+   * Whether a `clerk init` claim breadcrumb is present, read once and without
+   * side effects — `readKeylessBreadcrumb` clears a malformed file as it goes,
+   * which a diagnostic command must not do, and two checks reading the disk
+   * independently could otherwise print contradictory claim hints.
+   */
+  hasClaimBreadcrumb(): Promise<boolean>;
   fixes: {
     login: () => FixAction;
     link: () => FixAction;

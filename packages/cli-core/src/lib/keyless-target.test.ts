@@ -1,5 +1,5 @@
 import { test, expect, describe, beforeEach, afterEach, spyOn } from "bun:test";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { useCaptureLog } from "../test/lib/stubs.ts";
@@ -8,7 +8,7 @@ const configModule = await import("./config.ts");
 const credentialStoreModule = await import("./credential-store.ts");
 const bapiModule = await import("./bapi.ts");
 
-const { resolveKeylessTarget, resolveInstanceTarget, hasKeyPairMismatch } =
+const { resolveKeylessTarget, resolveInstanceTarget, hasKeyPairMismatch, findLocalPublishableKey } =
   await import("./keyless-target.ts");
 
 /** Encodes `<host>.clerk.accounts.dev$` the way a real publishable key would. */
@@ -101,6 +101,51 @@ describe("keyless-target", () => {
   // The warning that the keyless view covers less belongs to the config
   // surface, so it hangs off `resolveInstanceTarget` — the resolver itself
   // stays silent for `whoami`, `open`, `env pull` and `doctor`.
+  describe("findLocalPublishableKey — name priority in env files", () => {
+    beforeEach(async () => {
+      delete process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY;
+      delete process.env.CLERK_PUBLISHABLE_KEY;
+      await writeFile(
+        join(tempDir, "package.json"),
+        JSON.stringify({ dependencies: { next: "14.0.0" } }),
+      );
+    });
+
+    test("the framework-specific name wins even when the generic fallback appears later in the file", async () => {
+      await writeFile(
+        join(tempDir, ".env.local"),
+        "NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=pk_test_framework\nCLERK_PUBLISHABLE_KEY=pk_test_generic\n",
+      );
+
+      expect(await findLocalPublishableKey(tempDir)).toBe("pk_test_framework");
+    });
+
+    test("the framework-specific name wins regardless of line order", async () => {
+      await writeFile(
+        join(tempDir, ".env.local"),
+        "CLERK_PUBLISHABLE_KEY=pk_test_generic\nNEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=pk_test_framework\n",
+      );
+
+      expect(await findLocalPublishableKey(tempDir)).toBe("pk_test_framework");
+    });
+
+    test("within one name a later file still overrides an earlier one", async () => {
+      await writeFile(join(tempDir, ".env"), "NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=pk_test_env\n");
+      await writeFile(
+        join(tempDir, ".env.local"),
+        "NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=pk_test_env_local\n",
+      );
+
+      expect(await findLocalPublishableKey(tempDir)).toBe("pk_test_env_local");
+    });
+
+    test("the generic fallback is still found when the framework name is absent", async () => {
+      await writeFile(join(tempDir, ".env.local"), "CLERK_PUBLISHABLE_KEY=pk_test_generic\n");
+
+      expect(await findLocalPublishableKey(tempDir)).toBe("pk_test_generic");
+    });
+  });
+
   describe("resolveInstanceTarget — not-linked warning", () => {
     const session = (expiresAt: number) => ({
       accessToken: "at",

@@ -107,6 +107,7 @@ function createMockContext(
     applicationError?: Error;
     keylessTarget?: KeylessTarget;
     keylessInstance?: KeylessInstanceInfo | null;
+    claimBreadcrumb?: boolean;
   } = {},
 ): DoctorContext {
   return {
@@ -122,6 +123,7 @@ function createMockContext(
     },
     getKeylessTarget: async () => overrides.keylessTarget,
     getKeylessInstance: async () => overrides.keylessInstance ?? null,
+    hasClaimBreadcrumb: async () => overrides.claimBreadcrumb ?? false,
     fixes: {
       login: noopFix,
       link: noopFix,

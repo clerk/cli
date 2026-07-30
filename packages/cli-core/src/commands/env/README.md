@@ -31,18 +31,29 @@ sequenceDiagram
 
     Note over CLI: clerk env pull [--app app_123] [--instance dev|prod] [--file .env]
 
-    alt --app flag provided
-        CLI->>API: GET /v1/platform/applications/{appId}
-        API-->>CLI: { instances }
-    else Resolve project profile
-        CLI->>FS: Read CLI config file
-        FS-->>CLI: { appId, instances }
-    end
+    alt --app flag provided or project linked
+        alt --app flag provided
+            CLI->>API: GET /v1/platform/applications/{appId}
+            API-->>CLI: { instances }
+        else Resolve project profile
+            CLI->>FS: Read CLI config file
+            FS-->>CLI: { appId, instances }
+        end
 
-    %% Fetch application with keys
-    CLI->>API: GET /v1/platform/applications/{appId}
-    API-->>CLI: { instances: [{ instance_id, publishable_key, secret_key }] }
-    CLI->>CLI: Find matching instance by instance_id
+        %% Fetch application with keys
+        CLI->>API: GET /v1/platform/applications/{appId}
+        API-->>CLI: { instances: [{ instance_id, publishable_key, secret_key }] }
+        CLI->>CLI: Find matching instance by instance_id
+    else Unclaimed keyless application (no --app, not linked)
+        CLI->>FS: Find local keys (env vars, .env/.env.local, .clerk/.tmp/keyless.json)
+        FS-->>CLI: { secret_key, publishable_key? }
+        opt Publishable key found locally
+            CLI->>API: GET /v1/domains (Backend API, secret key auth)
+            API-->>CLI: { frontend_api_url }
+            CLI->>CLI: Compare against host decoded from publishable key
+            Note over CLI: Mismatch → error, nothing written
+        end
+    end
 
     %% Detect framework
     CLI->>FS: Read package.json

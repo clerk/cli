@@ -7,7 +7,6 @@ import { detectPublishableKeyName, detectSecretKeyName } from "../../lib/framewo
 import { parseEnvFile } from "../../lib/dotenv.ts";
 import { hasAccountCredentials } from "../../lib/credential-store.ts";
 import type { KeylessTarget } from "../../lib/keyless-target.ts";
-import { readKeylessBreadcrumb } from "../../lib/keyless.ts";
 import {
   getCurrentVersion,
   getUpdateChannel,
@@ -87,8 +86,8 @@ function keylessLabel(keyless: KeylessTarget, instance: KeylessInstanceInfo | nu
  * renders under `--verbose`, and guidance nobody sees by default isn't
  * guidance.
  */
-async function claimHint(): Promise<string> {
-  return (await readKeylessBreadcrumb(process.cwd()))
+async function claimHint(ctx: DoctorContext): Promise<string> {
+  return (await ctx.hasClaimBreadcrumb())
     ? "Run `clerk auth login` to claim it."
     : "Claim it from the Clerk Dashboard — `clerk auth login` only claims applications `clerk init` created.";
 }
@@ -104,7 +103,7 @@ export async function checkLoggedIn(ctx: DoctorContext): Promise<CheckResult> {
   if (keyless) {
     const instance = await ctx.getKeylessInstance();
     return check.pass(
-      `Not logged in — running on the unclaimed keyless application ${keylessLabel(keyless, instance)}. ${await claimHint()}`,
+      `Not logged in — running on the unclaimed keyless application ${keylessLabel(keyless, instance)}. ${await claimHint(ctx)}`,
     );
   }
 
@@ -216,7 +215,7 @@ export async function checkProjectLinked(ctx: DoctorContext): Promise<CheckResul
     }
 
     return check.pass(
-      `Not linked — running on the unclaimed keyless application ${label}. ${await claimHint()}`,
+      `Not linked — running on the unclaimed keyless application ${label}. ${await claimHint(ctx)}`,
     );
   }
 
