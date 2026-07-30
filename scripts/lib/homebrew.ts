@@ -33,7 +33,6 @@ export function renderFormula(input: FormulaInput): string {
   return `class ${className} < Formula
   desc "Command-line interface for Clerk"
   homepage "https://clerk.com"
-  version "${version}"
   license "MIT"${kegOnly}
 
   on_macos do
