@@ -57,7 +57,7 @@ export async function pickOrCreateApp(opts: {
       const filtered = term
         ? appChoices.filter((c) => c.name.toLowerCase().includes(term.toLowerCase()))
         : appChoices;
-      return [...filtered, createChoice];
+      return [createChoice, ...filtered];
     },
   });
 
