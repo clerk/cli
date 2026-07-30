@@ -1,5 +1,5 @@
 ---
-"clerk": minor
+"clerk": major
 ---
 
 Make keyless mode the default for unauthenticated `clerk init` runs on keyless-capable frameworks, and let an unclaimed keyless application be configured end to end without an account.
