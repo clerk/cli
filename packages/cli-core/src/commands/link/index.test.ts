@@ -434,7 +434,7 @@ describe("link", () => {
       expect(mockFetchApplication).not.toHaveBeenCalled();
     });
 
-    test("source returns all choices plus create option when term is empty", async () => {
+    test("source returns create option first, then all choices, when term is empty", async () => {
       mockIsAgent.mockReturnValue(false);
       mockGetToken.mockResolvedValue("token");
       mockListApplications.mockResolvedValue([
@@ -454,9 +454,14 @@ describe("link", () => {
         },
       ]);
       mockSearch.mockImplementation(
-        async (config: { source: (term: string | undefined) => unknown[] }) => {
+        async (config: {
+          source: (term: string | undefined) => { name: string; value: string }[];
+        }) => {
           const results = config.source(undefined);
-          expect(results).toHaveLength(3); // 2 apps + create option
+          expect(results).toHaveLength(3); // create option + 2 apps
+          expect(results[0]!.value).toBe("__create_new__");
+          expect(results[1]!.value).toBe("app_a");
+          expect(results[2]!.value).toBe("app_b");
           return "app_a";
         },
       );
@@ -489,9 +494,9 @@ describe("link", () => {
           source: (term: string | undefined) => { name: string; value: string }[];
         }) => {
           const results = config.source("my");
-          expect(results).toHaveLength(2); // 1 match + create option
-          expect(results[0]!.value).toBe("app_a");
-          expect(results[1]!.value).toBe("__create_new__");
+          expect(results).toHaveLength(2); // create option + 1 match
+          expect(results[0]!.value).toBe("__create_new__");
+          expect(results[1]!.value).toBe("app_a");
 
           const noMatch = config.source("zzz");
           expect(noMatch).toHaveLength(1); // only create option
@@ -528,9 +533,9 @@ describe("link", () => {
           source: (term: string | undefined) => { name: string; value: string }[];
         }) => {
           const results = config.source("abc");
-          expect(results).toHaveLength(2); // 1 match + create option
-          expect(results[0]!.value).toBe("app_abc");
-          expect(results[1]!.value).toBe("__create_new__");
+          expect(results).toHaveLength(2); // create option + 1 match
+          expect(results[0]!.value).toBe("__create_new__");
+          expect(results[1]!.value).toBe("app_abc");
           return "app_abc";
         },
       );
