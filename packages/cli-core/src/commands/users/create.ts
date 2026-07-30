@@ -1,5 +1,10 @@
 import { handleBapiError, resolveBapiSecretKey } from "../../lib/bapi-command.ts";
-import { UserAbortError, isPromptExitError, throwUsageError } from "../../lib/errors.ts";
+import {
+  UserAbortError,
+  isPromptExitError,
+  throwUsageError,
+  throwUserAbort,
+} from "../../lib/errors.ts";
 import { isInsideGutter, log } from "../../lib/log.ts";
 import {
   buildCreateUserPayload,
@@ -9,6 +14,7 @@ import {
   redactUsersDisplayPayload,
 } from "../../lib/users.ts";
 import { isAgent, isHuman } from "../../mode.ts";
+import { confirm } from "../../lib/prompts.ts";
 import { bapiRequest } from "../../lib/bapi.ts";
 import { withSpinner, intro, outro, pausedOutro } from "../../lib/spinner.ts";
 import { handleUsersBapiError, printUsersMutationResult } from "./output.ts";
@@ -62,6 +68,16 @@ export async function create(options: CreateUserOptions): Promise<void> {
   if (shouldWrap) intro("Creating user");
 
   try {
+    if (isHuman() && !resolved.yes) {
+      log.info("\nAbout to POST /v1/users");
+      log.blank();
+      log.info(JSON.stringify(redactUsersDisplayPayload(payload), null, 2));
+      const ok = await confirm({ message: "Proceed?" });
+      if (!ok) {
+        throwUserAbort();
+      }
+    }
+
     const response = await withSpinner("Creating user...", () =>
       bapiRequest({
         method: "POST",

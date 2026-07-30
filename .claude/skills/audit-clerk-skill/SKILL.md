@@ -1,6 +1,6 @@
 ---
 name: audit-clerk-skill
-description: Audits the Clerk CLI source tree and proposes updates to the bundled `clerk-cli` skill so it stays in sync with the binary. Use when the user says "audit the clerk-cli skill", "update the clerk-cli skill", "check the skill against the code", "resync clerk-cli skill", or after adding/renaming/removing CLI commands, flags, or agent-mode behavior.
+description: Audits the Clerk CLI source tree and proposes updates to the `clerk-cli` skill in clerk/skills so it stays in sync with the binary. Use when the user says "audit the clerk-cli skill", "update the clerk-cli skill", "check the skill against the code", "resync clerk-cli skill", or after adding/renaming/removing CLI commands, flags, or agent-mode behavior.
 effort: high
 user-invocable: true
 disable-model-invocation: true
@@ -11,15 +11,23 @@ metadata:
 
 # Audit the clerk-cli Skill
 
-Cross-check `skills/clerk-cli/` against the actual CLI source in `packages/cli-core/` and propose precise edits wherever they have drifted. The binary is the source of truth; the skill is documentation that must track it.
+Cross-check the `clerk-cli` skill against the actual CLI source in `packages/cli-core/` and propose precise edits wherever they have drifted. The binary is the source of truth; the skill is documentation that must track it.
+
+**The skill lives in another repo.** #315 removed the bundled copy, so it is now `skills/core/clerk-cli/` in [clerk/skills](https://github.com/clerk/skills), versioned independently of the CLI. This audit reads the CLI here and proposes edits there; they land as a PR against clerk/skills. Set `$SKILL_ROOT` to a local clone before starting, and stop if there is not one:
+
+```sh
+SKILL_ROOT=../skills/skills/core/clerk-cli   # adjust to the checkout
+ls "$SKILL_ROOT/SKILL.md" || echo "clone clerk/skills first"
+```
+
+Every skill path below is relative to `$SKILL_ROOT`.
 
 **ultrathink** on this task. It requires building a full command tree, comparing two representations of it, and making judgment calls about what belongs in the skill vs. in `references/*.md` vs. in `--help`. Shallow passes miss drift.
 
 ## Inputs
 
 - **Source of truth**: `packages/cli-core/src/commands/**` (one directory per top-level command), plus `packages/cli-core/src/cli.ts`, `cli-program.ts`, `mode.ts`, and anything in `packages/cli-core/src/lib/` referenced by commands (runner preference, agent mode, doctor checks, key resolution).
-- **Target**: `skills/clerk-cli/SKILL.md` and `skills/clerk-cli/references/*.md`.
-- **Template markers**: the skill uses `{{CLI_VERSION}}` placeholders substituted at install time by `clerk skill install`. Preserve them; do not expand.
+- **Target**: `$SKILL_ROOT/SKILL.md` and `$SKILL_ROOT/references/*.md`.
 
 ## Workflow
 
@@ -39,7 +47,7 @@ Read the per-command `README.md` (`packages/cli-core/src/commands/<name>/README.
 - Flag commands or sub-paths marked mocked/stubbed (blockquote at top of the README). The skill should not document these as production-ready.
 - Cross-check Clerk API endpoint claims in `references/recipes.md`.
 
-Do **not** propose bundling the READMEs into `skills/clerk-cli/references/` (symlinks or text imports). They ship internal detail agents do not need, and inflate the compiled binary. They are a reference for the audit, not for the skill.
+Do **not** propose bundling the READMEs into `$SKILL_ROOT/references/` (symlinks or text imports). They ship internal detail agents do not need, and inflate the compiled binary. They are a reference for the audit, not for the skill.
 
 Also capture cross-cutting behavior:
 
@@ -52,7 +60,7 @@ Don't memorize output. Prefer reading the source directly over running the binar
 
 ### 2. Extract the skill's current claims
 
-Read `skills/clerk-cli/SKILL.md` and each file under `skills/clerk-cli/references/`. Extract every concrete claim:
+Read `$SKILL_ROOT/SKILL.md` and each file under `$SKILL_ROOT/references/`. Extract every concrete claim:
 
 - Every command mentioned in the "Core commands at a glance" table and the Invoking-the-CLI table.
 - Every flag called out by name.
@@ -94,25 +102,25 @@ If a new reference file is warranted (e.g. a `references/commands.md` table), pr
 
 Emit a review-ready proposal. For each change:
 
-- Path (`skills/clerk-cli/SKILL.md` or `skills/clerk-cli/references/<file>.md`).
+- Path (`$SKILL_ROOT/SKILL.md` or `$SKILL_ROOT/references/<file>.md`).
 - Why (source citation: `packages/cli-core/src/commands/<cmd>/<file>.ts:<line>`).
 - Either a unified diff (preferred) or a before/after block for prose sections.
 - Severity: `drift` (factually wrong today), `gap` (missing coverage), `polish` (clearer wording, better placement, or cuts that route the agent to `--help` instead of duplicating it).
 
-Group the proposal by file. Do **not** touch `{{CLI_VERSION}}` markers. Do **not** rewrite sections that are still accurate just because they are near a change.
+Group the proposal by file. Do **not** rewrite sections that are still accurate just because they are near a change.
 
 ### 6. Apply or hand back
 
 Default: present the proposal and stop. The user reviews, then says apply.
 
-If invoked as `/audit-clerk-skill --apply`, apply `drift` and `gap` edits directly but still list `polish` suggestions for review. Run `bun run format` after applying so markdown tables and frontmatter match repo style.
+If invoked as `/audit-clerk-skill --apply`, apply `drift` and `gap` edits directly to `$SKILL_ROOT` but still list `polish` suggestions for review. Edits land in the clerk/skills clone, not this repo, so commit them on a branch there and open a PR against clerk/skills. Nothing in this repo changes.
 
 ## Guardrails
 
 - **Never invent flags.** If a flag appears in a test but not in the command's argument parser, treat it as test-only and flag it for human review.
 - **Preserve voice.** The existing skill is terse and third-person; match it. No first- or second-person drift.
 - **No em-dashes** anywhere in proposals (repo style rule).
-- **Respect the template.** `{{CLI_VERSION}}` stays verbatim. The Invoking-the-CLI runner table is generated from `preferredRunner` logic; if that logic changes, update the table, otherwise leave it alone.
+- **Respect the template.** The Invoking-the-CLI runner table is generated from `preferredRunner` logic; if that logic changes, update the table, otherwise leave it alone.
 - **Stay within the 500-line guidance** for `SKILL.md`. When the budget is tight, move content to `references/` rather than deleting it outright.
 
 ## Output shape
@@ -125,13 +133,13 @@ Return the proposal as:
 ## Summary
 <counts per bucket, one-line headline of the biggest drift>
 
-## skills/clerk-cli/SKILL.md
+## $SKILL_ROOT/SKILL.md
 ### <section name>
 - [drift|gap|polish] <one-line description>
   - source: packages/cli-core/src/commands/<...>:<line>
   - <diff or before/after>
 
-## skills/clerk-cli/references/<file>.md
+## $SKILL_ROOT/references/<file>.md
 ...
 
 ## New files (if any)

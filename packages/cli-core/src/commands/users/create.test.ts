@@ -1,6 +1,6 @@
 import { test, expect, describe, beforeEach, afterEach, mock, spyOn } from "bun:test";
 import { useCaptureLog } from "../../test/lib/stubs.ts";
-import { BapiError, CliError, ERROR_CODE, EXIT_CODE } from "../../lib/errors.ts";
+import { BapiError, CliError, ERROR_CODE, EXIT_CODE, UserAbortError } from "../../lib/errors.ts";
 
 const mockResolveBapiSecretKey = mock();
 const mockHandleBapiError = mock((_error: unknown) => false);
@@ -27,6 +27,11 @@ mock.module("./create-wizard.ts", () => ({
   runCreateWizard: (...args: unknown[]) => mockRunCreateWizard(...args),
 }));
 
+const mockConfirm = mock();
+mock.module("../../lib/prompts.ts", () => ({
+  confirm: (...args: unknown[]) => mockConfirm(...args),
+}));
+
 mock.module("../../lib/spinner.ts", () => ({
   intro: () => {},
   outro: () => {},
@@ -46,6 +51,7 @@ describe("users create", () => {
     mockIsAgent.mockReturnValue(false);
     mockResolveBapiSecretKey.mockResolvedValue("sk_test_123");
     mockRunCreateWizard.mockResolvedValue({ fields: {}, targeting: {} });
+    mockConfirm.mockResolvedValue(true);
     mockBapiRequest.mockResolvedValue({
       status: 200,
       headers: new Headers(),
@@ -64,6 +70,7 @@ describe("users create", () => {
     mockBapiRequest.mockReset();
     mockIsAgent.mockReset();
     mockRunCreateWizard.mockReset();
+    mockConfirm.mockReset();
     logSpy.mockRestore();
     errorSpy.mockRestore();
   });
@@ -258,6 +265,66 @@ describe("users create", () => {
     expect(error.message).toContain("--file user.json");
     expect(mockRunCreateWizard).not.toHaveBeenCalled();
     expect(mockResolveBapiSecretKey).not.toHaveBeenCalled();
+    expect(mockBapiRequest).not.toHaveBeenCalled();
+  });
+
+  test("confirms before creating in human mode and redacts sensitive preview fields", async () => {
+    await runCreate({
+      app: "app_123",
+      email: "alice@example.com",
+      password: "Password123!",
+    });
+
+    expect(mockConfirm).toHaveBeenCalledWith({ message: "Proceed?" });
+    expect(captured.err).toContain("About to POST /v1/users");
+    expect(captured.err).toContain("[REDACTED]");
+    expect(captured.err).not.toContain("Password123!");
+    expect(mockBapiRequest).toHaveBeenCalled();
+  });
+
+  test("aborts without calling BAPI when the confirmation is declined", async () => {
+    mockConfirm.mockResolvedValue(false);
+
+    const error = await runCreate({
+      app: "app_123",
+      email: "alice@example.com",
+    }).catch((caught) => caught);
+
+    expect(error).toBeInstanceOf(UserAbortError);
+    expect(mockBapiRequest).not.toHaveBeenCalled();
+  });
+
+  test("skips the confirmation when --yes is passed", async () => {
+    await runCreate({
+      app: "app_123",
+      email: "alice@example.com",
+      yes: true,
+    });
+
+    expect(mockConfirm).not.toHaveBeenCalled();
+    expect(mockBapiRequest).toHaveBeenCalled();
+  });
+
+  test("never confirms in agent mode, with or without --yes", async () => {
+    mockIsAgent.mockReturnValue(true);
+
+    await runCreate({
+      app: "app_123",
+      email: "alice@example.com",
+    });
+
+    expect(mockConfirm).not.toHaveBeenCalled();
+    expect(mockBapiRequest).toHaveBeenCalled();
+  });
+
+  test("does not confirm on --dry-run", async () => {
+    await runCreate({
+      app: "app_123",
+      email: "alice@example.com",
+      dryRun: true,
+    });
+
+    expect(mockConfirm).not.toHaveBeenCalled();
     expect(mockBapiRequest).not.toHaveBeenCalled();
   });
 });
