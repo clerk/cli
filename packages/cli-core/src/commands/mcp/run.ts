@@ -19,6 +19,14 @@ import { CliError, ERROR_CODE, errorMessage } from "../../lib/errors.ts";
 import { loggedFetch } from "../../lib/fetch.ts";
 import { log } from "../../lib/log.ts";
 import { isRecord } from "../../lib/objects.ts";
+import {
+  META_PROTOCOL_VERSION,
+  encodeHeaderValue,
+  extractToolHeaderAnnotations,
+  headerValueForParam,
+  isHeaderSafe,
+  type HeaderAnnotation,
+} from "./headers.ts";
 import { resolveUrl, type McpOptions } from "./shared.ts";
 import { sseEventData } from "./sse.ts";
 import type { JSONRPCMessage, RequestId } from "@modelcontextprotocol/sdk/types.js";
@@ -29,8 +37,14 @@ interface RunStreams {
   write?: (chunk: string) => void;
 }
 
-type Session = { id?: string; protocolVersion?: string };
+// `established` flips once any request has succeeded: 2026-07-28 servers are
+// stateless and never mint a session id, so "no session yet" can't be the
+// signal for "the connection never worked".
+type Session = { id?: string; protocolVersion?: string; established?: boolean };
 type Emit = (message: unknown) => Promise<void>;
+
+/** Per-tool `x-mcp-header` annotations, learned from `tools/list` results. */
+type ToolHeaderRegistry = Map<string, HeaderAnnotation[]>;
 
 const SESSION_HEADER = "mcp-session-id";
 // Cap an unterminated stdin line so a misbehaving client can't grow the buffer
@@ -61,11 +75,17 @@ export async function mcpRun(options: McpOptions = {}, streams: RunStreams = {})
     return writeTail;
   };
 
+  // Header mirroring state: which in-flight request ids are `tools/list` (so
+  // their results can be scanned for `x-mcp-header` annotations), and the
+  // annotations learned per tool for later `tools/call` requests.
+  const pendingToolsLists = new Set<RequestId>();
+  const toolHeaders: ToolHeaderRegistry = new Map();
+
   // MCP allows batch responses as a top-level JSON array; fan each item out as
   // its own frame, dropping anything that isn't a routable JSON-RPC object.
   const emitPayload = async (parsed: unknown): Promise<void> => {
     for (const item of Array.isArray(parsed) ? parsed : [parsed]) {
-      if (isRecord(item)) await emit(item);
+      if (isRecord(item)) await emit(captureToolHeaders(item, pendingToolsLists, toolHeaders));
       else log.warn("mcp run: dropping non-object frame from upstream");
     }
   };
@@ -107,6 +127,8 @@ export async function mcpRun(options: McpOptions = {}, streams: RunStreams = {})
         ensureServerStream,
         resetServerStream,
         signal: abort.signal,
+        pendingToolsLists,
+        toolHeaders,
       });
     }
   } finally {
@@ -125,17 +147,24 @@ interface DispatchCtx {
   ensureServerStream: () => void;
   resetServerStream: () => void;
   signal: AbortSignal;
+  pendingToolsLists: Set<RequestId>;
+  toolHeaders: ToolHeaderRegistry;
 }
 
 async function dispatch(message: JSONRPCMessage, ctx: DispatchCtx): Promise<void> {
   const { url, session, emit, emitPayload, track, ensureServerStream, resetServerStream, signal } =
     ctx;
+  // Flag before the fetch so the response drain (which may start concurrently)
+  // can recognize the reply as a tools/list result.
+  if ("method" in message && message.method === "tools/list" && "id" in message) {
+    ctx.pendingToolsLists.add(message.id);
+  }
   let response: Response;
   try {
     response = await loggedFetch(url, {
       tag: "mcp",
       method: "POST",
-      headers: requestHeaders(session),
+      headers: requestHeaders(session, message, ctx.toolHeaders),
       body: JSON.stringify(message),
       signal,
     });
@@ -152,11 +181,15 @@ async function dispatch(message: JSONRPCMessage, ctx: DispatchCtx): Promise<void
     ensureServerStream();
   }
 
-  // Before a session exists the server needs up-front auth we can't provide —
-  // fail clearly. After `initialize`, a scoped 401 is a per-request error, not
-  // a reason to kill the bridge and every other in-flight request with it.
+  if (response.ok) session.established = true;
+
+  // Before any request has succeeded the server needs up-front auth we can't
+  // provide — fail clearly. Once the connection has demonstrably worked (a
+  // legacy `initialize`, or any request against a stateless 2026-07-28 server
+  // that never mints a session id), a scoped 401 is a per-request error, not a
+  // reason to kill the bridge and every other in-flight request with it.
   const needsAuth = response.status === 401 || response.status === 403;
-  if (needsAuth && session.id === undefined) {
+  if (needsAuth && !session.established) {
     throw new CliError(
       `The MCP server at ${url} requires authentication, which \`clerk mcp run\` does not yet provide. ` +
         "Set CLERK_MCP_URL to a server that doesn't require auth, or wait for a release with built-in sign-in.",
@@ -290,12 +323,93 @@ async function emitError(
   await emit({ jsonrpc: "2.0", id: message.id, error: { code, message: text } });
 }
 
-function requestHeaders(session: Session): Record<string, string> {
-  return {
+// Methods whose `params.name`/`params.uri` must be mirrored into `Mcp-Name`.
+const NAMED_METHODS = new Set(["tools/call", "resources/read", "prompts/get"]);
+
+/**
+ * Build the 2026-07-28 request-metadata headers for a relayed message. Every
+ * value is derived from the body it accompanies — strict servers reject any
+ * header/body mismatch with `HeaderMismatch` (-32020).
+ */
+function requestHeaders(
+  session: Session,
+  message: JSONRPCMessage,
+  toolHeaders: ToolHeaderRegistry,
+): Record<string, string> {
+  const headers: Record<string, string> = {
     "Content-Type": "application/json",
     Accept: "application/json, text/event-stream",
     ...sessionHeaders(session),
   };
+  // A modern client declares its version per-request in `_meta`; the header
+  // must match it exactly. Legacy clients don't, so the version negotiated at
+  // `initialize` (via sessionHeaders) stays in effect for them.
+  const bodyVersion = bodyProtocolVersion(message);
+  if (bodyVersion !== undefined) headers["MCP-Protocol-Version"] = bodyVersion;
+
+  const method = "method" in message ? message.method : undefined;
+  if (typeof method !== "string") return headers;
+  // Method names are protocol-defined ASCII; skip (rather than encode) a
+  // malformed one — the spec defines no encoded form for `Mcp-Method`, and an
+  // unsafe value would corrupt the request at the fetch layer.
+  if (isHeaderSafe(method)) headers["Mcp-Method"] = method;
+
+  const params = "params" in message && isRecord(message.params) ? message.params : undefined;
+  if (params === undefined) return headers;
+  if (NAMED_METHODS.has(method)) {
+    const name = params.name ?? params.uri;
+    if (typeof name === "string") headers["Mcp-Name"] = encodeHeaderValue(name);
+  }
+  if (method === "tools/call" && typeof params.name === "string") {
+    for (const annotation of toolHeaders.get(params.name) ?? []) {
+      const value = headerValueForParam(params.arguments, annotation.path);
+      if (value !== undefined) {
+        headers[`Mcp-Param-${annotation.header}`] = encodeHeaderValue(value);
+      }
+    }
+  }
+  return headers;
+}
+
+// The protocol version a modern request self-declares. Untrusted stdio input:
+// reject non-header-safe values so they can't inject headers.
+function bodyProtocolVersion(message: JSONRPCMessage): string | undefined {
+  if (!("params" in message) || !isRecord(message.params)) return undefined;
+  const meta = message.params._meta;
+  if (!isRecord(meta)) return undefined;
+  const version = meta[META_PROTOCOL_VERSION];
+  return typeof version === "string" && isHeaderSafe(version) ? version : undefined;
+}
+
+/**
+ * Learn (and enforce) `x-mcp-header` annotations from a `tools/list` result
+ * frame. Valid tools register their annotations for later `tools/call`
+ * mirroring; a tool with an invalid annotation is excluded from the forwarded
+ * result, as the spec requires, so it can't be called with silently missing
+ * headers. Frames that aren't a pending `tools/list` reply pass through
+ * untouched.
+ */
+function captureToolHeaders(
+  frame: Record<string, unknown>,
+  pending: Set<RequestId>,
+  registry: ToolHeaderRegistry,
+): Record<string, unknown> {
+  if (!("id" in frame) || !pending.has(frame.id as RequestId)) return frame;
+  pending.delete(frame.id as RequestId);
+  const result = frame.result;
+  if (!isRecord(result) || !Array.isArray(result.tools)) return frame;
+  const kept = result.tools.filter((tool) => {
+    const name = isRecord(tool) && typeof tool.name === "string" ? tool.name : undefined;
+    const extracted = extractToolHeaderAnnotations(tool);
+    if (!extracted.ok) {
+      log.warn(`mcp run: excluding tool "${name ?? "(unnamed)"}" — ${extracted.reason}`);
+      return false;
+    }
+    if (name !== undefined) registry.set(name, extracted.annotations);
+    return true;
+  });
+  if (kept.length === result.tools.length) return frame;
+  return { ...frame, result: { ...result, tools: kept } };
 }
 
 function sessionHeaders(session: Session): Record<string, string> {

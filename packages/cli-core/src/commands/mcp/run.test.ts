@@ -58,6 +58,37 @@ async function* lines(...messages: unknown[]): AsyncGenerator<string> {
   for (const message of messages) yield JSON.stringify(message) + "\n";
 }
 
+/**
+ * Input/write pair where each message is yielded only after the reply to the
+ * previous one has been written back — how a real MCP client sequences
+ * dependent requests (e.g. tools/list before tools/call).
+ */
+function replyGated(...messages: Array<Record<string, unknown>>): {
+  input: AsyncGenerator<string>;
+  write: (chunk: string) => void;
+} {
+  const waiters = new Map<unknown, () => void>();
+  const arrived = new Set<unknown>();
+  const write = (chunk: string): void => {
+    for (const line of chunk.split("\n").filter((l) => l.length > 0)) {
+      const frame = JSON.parse(line) as { id?: unknown };
+      if (frame.id === undefined) continue;
+      arrived.add(frame.id);
+      waiters.get(frame.id)?.();
+    }
+  };
+  async function* input(): AsyncGenerator<string> {
+    for (const [i, message] of messages.entries()) {
+      const prevId = i > 0 ? (messages[i - 1] as { id?: unknown }).id : undefined;
+      if (prevId !== undefined && !arrived.has(prevId)) {
+        await new Promise<void>((resolve) => waiters.set(prevId, resolve));
+      }
+      yield JSON.stringify(message) + "\n";
+    }
+  }
+  return { input: input(), write };
+}
+
 function framesFrom(chunks: string[]): Array<Record<string, unknown>> {
   return (
     chunks
@@ -560,6 +591,246 @@ describe("mcp run (stdio bridge)", () => {
     expect(tools.tools.map((t) => t.name)).toEqual(["create_user"]);
     const posts = requests.filter((r) => r.method === "POST");
     expect(posts.at(-1)?.headers.get("mcp-session-id")).toBe("sess-1");
+  });
+
+  test("mirrors the body method into Mcp-Method on every relayed request", async () => {
+    stub((req) => noServerStream(req) ?? json({ jsonrpc: "2.0", id: 1, result: {} }));
+
+    await mcpRun(
+      { url: URL },
+      {
+        input: lines({ jsonrpc: "2.0", id: 1, method: "tools/list", params: {} }),
+        write: () => {},
+      },
+    );
+
+    const posts = requests.filter((r) => r.method === "POST");
+    expect(posts[0]!.headers.get("mcp-method")).toBe("tools/list");
+  });
+
+  test.each([
+    ["tools/call", { name: "get_weather" }, "get_weather"],
+    ["resources/read", { uri: "file:///a/b.json" }, "file:///a/b.json"],
+    ["prompts/get", { name: "greet" }, "greet"],
+  ])("mirrors the %s name into Mcp-Name", async (method, params, expected) => {
+    stub((req) => noServerStream(req) ?? json({ jsonrpc: "2.0", id: 1, result: {} }));
+
+    await mcpRun(
+      { url: URL },
+      { input: lines({ jsonrpc: "2.0", id: 1, method, params }), write: () => {} },
+    );
+
+    const posts = requests.filter((r) => r.method === "POST");
+    expect(posts[0]!.headers.get("mcp-name")).toBe(expected);
+  });
+
+  test("Base64-sentinel-encodes a non-ASCII tool name in Mcp-Name", async () => {
+    stub((req) => noServerStream(req) ?? json({ jsonrpc: "2.0", id: 1, result: {} }));
+
+    await mcpRun(
+      { url: URL },
+      {
+        input: lines({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "天気" } }),
+        write: () => {},
+      },
+    );
+
+    const posts = requests.filter((r) => r.method === "POST");
+    expect(posts[0]!.headers.get("mcp-name")).toBe(
+      `=?base64?${Buffer.from("天気", "utf8").toString("base64")}?=`,
+    );
+  });
+
+  test("omits Mcp-Name on methods that don't define it", async () => {
+    stub((req) => noServerStream(req) ?? json({ jsonrpc: "2.0", id: 1, result: {} }));
+
+    await mcpRun(
+      { url: URL },
+      {
+        input: lines({ jsonrpc: "2.0", id: 1, method: "tools/list", params: {} }),
+        write: () => {},
+      },
+    );
+
+    const posts = requests.filter((r) => r.method === "POST");
+    expect(posts[0]!.headers.get("mcp-name")).toBeNull();
+  });
+
+  test("derives MCP-Protocol-Version from the body _meta of a modern request", async () => {
+    // A modern stdio client never sends initialize; the header must match the
+    // per-request metadata or a strict server rejects with HeaderMismatch.
+    stub((req) => noServerStream(req) ?? json({ jsonrpc: "2.0", id: 1, result: {} }));
+
+    await mcpRun(
+      { url: URL },
+      {
+        input: lines({
+          jsonrpc: "2.0",
+          id: 1,
+          method: "tools/list",
+          params: { _meta: { "io.modelcontextprotocol/protocolVersion": "2026-07-28" } },
+        }),
+        write: () => {},
+      },
+    );
+
+    const posts = requests.filter((r) => r.method === "POST");
+    expect(posts[0]!.headers.get("mcp-protocol-version")).toBe("2026-07-28");
+  });
+
+  test("body _meta wins over the legacy-negotiated protocol version", async () => {
+    stub((req) => noServerStream(req) ?? json(INIT_RESULT));
+
+    await mcpRun(
+      { url: URL },
+      {
+        input: lines(
+          { jsonrpc: "2.0", id: 1, method: "initialize", params: {} },
+          {
+            jsonrpc: "2.0",
+            id: 2,
+            method: "tools/list",
+            params: { _meta: { "io.modelcontextprotocol/protocolVersion": "2026-07-28" } },
+          },
+        ),
+        write: () => {},
+      },
+    );
+
+    const posts = requests.filter((r) => r.method === "POST");
+    expect(posts[1]!.headers.get("mcp-protocol-version")).toBe("2026-07-28");
+  });
+
+  test("mirrors x-mcp-header tool parameters into Mcp-Param headers on tools/call", async () => {
+    const tools = {
+      jsonrpc: "2.0",
+      id: 1,
+      result: {
+        tools: [
+          {
+            name: "execute_sql",
+            inputSchema: {
+              type: "object",
+              properties: {
+                region: { type: "string", "x-mcp-header": "Region" },
+                query: { type: "string" },
+              },
+            },
+          },
+        ],
+      },
+    };
+    stub((req, postIndex) => {
+      const blocked = noServerStream(req);
+      if (blocked) return blocked;
+      return postIndex === 0 ? json(tools) : json({ jsonrpc: "2.0", id: 2, result: {} });
+    });
+
+    // Like a real MCP client, wait for the tools/list reply (which carries
+    // the schema annotations) before issuing the tools/call.
+    const gate = replyGated(
+      { jsonrpc: "2.0", id: 1, method: "tools/list" },
+      {
+        jsonrpc: "2.0",
+        id: 2,
+        method: "tools/call",
+        params: { name: "execute_sql", arguments: { region: "us-west1", query: "SELECT 1" } },
+      },
+    );
+    await mcpRun({ url: URL }, gate);
+
+    const posts = requests.filter((r) => r.method === "POST");
+    expect(posts[1]!.headers.get("mcp-param-region")).toBe("us-west1");
+    expect(posts[1]!.headers.get("mcp-param-query")).toBeNull();
+  });
+
+  test("omits the Mcp-Param header when the annotated argument is absent", async () => {
+    const tools = {
+      jsonrpc: "2.0",
+      id: 1,
+      result: {
+        tools: [
+          {
+            name: "t",
+            inputSchema: {
+              type: "object",
+              properties: { region: { type: "string", "x-mcp-header": "Region" } },
+            },
+          },
+        ],
+      },
+    };
+    stub((req, postIndex) => {
+      const blocked = noServerStream(req);
+      if (blocked) return blocked;
+      return postIndex === 0 ? json(tools) : json({ jsonrpc: "2.0", id: 2, result: {} });
+    });
+
+    const gate = replyGated(
+      { jsonrpc: "2.0", id: 1, method: "tools/list" },
+      { jsonrpc: "2.0", id: 2, method: "tools/call", params: { name: "t", arguments: {} } },
+    );
+    await mcpRun({ url: URL }, gate);
+
+    const posts = requests.filter((r) => r.method === "POST");
+    expect(posts[1]!.headers.get("mcp-param-region")).toBeNull();
+  });
+
+  test("excludes a tool with an invalid x-mcp-header annotation from the forwarded tools/list", async () => {
+    const tools = {
+      jsonrpc: "2.0",
+      id: 1,
+      result: {
+        tools: [
+          { name: "good", inputSchema: { type: "object", properties: {} } },
+          {
+            name: "bad",
+            inputSchema: {
+              type: "object",
+              properties: { n: { type: "number", "x-mcp-header": "N" } },
+            },
+          },
+        ],
+      },
+    };
+    stub((req) => noServerStream(req) ?? json(tools));
+    const out: string[] = [];
+
+    await mcpRun(
+      { url: URL },
+      { input: lines({ jsonrpc: "2.0", id: 1, method: "tools/list" }), write: (c) => out.push(c) },
+    );
+
+    const frame = framesFrom(out).find((f) => f.id === 1);
+    const result = frame?.result as { tools: Array<{ name: string }> };
+    expect(result.tools.map((t) => t.name)).toEqual(["good"]);
+  });
+
+  test("a 401 after a successful request against a stateless server does not kill the bridge", async () => {
+    // 2026-07-28 servers never mint Mcp-Session-Id; "no session yet" must not
+    // be the signal for "connection never worked".
+    stub((req, postIndex) => {
+      const blocked = noServerStream(req);
+      if (blocked) return blocked;
+      return postIndex === 0
+        ? json({ jsonrpc: "2.0", id: 1, result: { tools: [] } })
+        : new Response("unauthorized", { status: 401 });
+    });
+    const out: string[] = [];
+
+    await mcpRun(
+      { url: URL },
+      {
+        input: lines(
+          { jsonrpc: "2.0", id: 1, method: "tools/list" },
+          { jsonrpc: "2.0", id: 2, method: "tools/call", params: { name: "t" } },
+        ),
+        write: (c) => out.push(c),
+      },
+    );
+
+    const err = framesFrom(out).find((f) => f.id === 2);
+    expect((err?.error as { code?: number } | undefined)?.code).toBe(-32001);
   });
 
   test("targets the --url value", async () => {

@@ -14,8 +14,9 @@ no flags or profile setup (see [Development](#development) for the override
 order).
 
 No Clerk API endpoints are called. To verify the server is reachable, run
-`clerk doctor` — its MCP check performs the `initialize` handshake against each
-distinct configured URL whenever a Clerk MCP entry is installed.
+`clerk doctor` — its MCP check performs a dual-era handshake probe against each
+distinct configured URL whenever a Clerk MCP entry is installed (see the
+Reachability note under [`clerk mcp uninstall`](#clerk-mcp-uninstall)).
 
 ## Supported clients
 
@@ -176,11 +177,32 @@ writes replies to stdout. stdout carries **only** JSON-RPC frames; all
 diagnostics go to stderr. It takes no flags — the server URL is resolved from
 `CLERK_MCP_URL` / the active env profile / the hosted default at spawn time.
 
-Transport-only: a `401`/`403` from the upstream before a session exists (the
-initial handshake) throws `mcp_client_config_invalid` and kills the bridge;
-once a session id exists, the same status is instead answered per-request as a
-JSON-RPC error (`-32001`, "requires authentication") and the bridge keeps
-running.
+Every relayed POST carries the MCP 2026-07-28 request-metadata headers,
+derived from the body so strict servers never reject with `HeaderMismatch`
+(`-32020`):
+
+- `Mcp-Method` — the body's `method`, on every request.
+- `Mcp-Name` — `params.name` / `params.uri` on `tools/call`, `resources/read`,
+  and `prompts/get`; values that aren't header-safe ASCII are carried in the
+  spec's Base64 sentinel form (`=?base64?…?=`).
+- `MCP-Protocol-Version` — the request's own
+  `_meta["io.modelcontextprotocol/protocolVersion"]` when the client declares
+  one (modern clients), otherwise the version negotiated at the legacy
+  `initialize`.
+- `Mcp-Param-*` — tool parameters designated by `x-mcp-header` annotations in
+  the tool's `inputSchema`, learned from `tools/list` responses as they pass
+  through the bridge. A tool whose annotations violate the spec's constraints
+  is excluded from the forwarded `tools/list` result (with a stderr warning),
+  as the spec requires of Streamable HTTP clients.
+
+Session tracking is tolerant of stateless servers: 2026-07-28 servers never
+mint `Mcp-Session-Id`, so the bridge treats "any request has succeeded" — not
+"a session id exists" — as the sign of a working connection.
+
+Transport-only: a `401`/`403` from the upstream before any request has
+succeeded throws `mcp_client_config_invalid` and kills the bridge; after that,
+the same status is instead answered per-request as a JSON-RPC error (`-32001`,
+"requires authentication") and the bridge keeps running.
 
 ### `clerk mcp uninstall`
 
@@ -205,11 +227,22 @@ editor session, so (in human mode) it prints a next step to reload each affected
 editor.
 
 > **Reachability:** there is no `mcp doctor` subcommand. Server health is part
-> of `clerk doctor`, which probes each distinct configured MCP URL via the
-> `initialize` handshake when an entry is installed (warns, does not fail, when
-> any is unreachable). A `401`/`403` answer counts as reachable — the server is
-> there, it just gates the handshake behind the OAuth flow the editor runs
-> itself — and is reported as "authentication required".
+> of `clerk doctor`, which probes each distinct configured MCP URL when an
+> entry is installed (warns, does not fail, when any is unreachable). The probe
+> implements the MCP 2026-07-28 backward-compatibility algorithm: a modern
+> `server/discover` request first (with per-request `_meta` and the
+> `MCP-Protocol-Version`/`Mcp-Method` headers); on a `400`, the response body
+> is inspected — a recognized modern JSON-RPC error (`-32020`
+> `HeaderMismatch`, `-32021` `MissingRequiredClientCapability`, `-32022`
+> `UnsupportedProtocolVersion`) proves a modern server, so the probe never
+> falls back: a capability rejection counts as reachable (the server is
+> demonstrably there, just gated), and an unsupported-version rejection is
+> retried once with an advertised supported version. Anything else (including
+> reserved MCP codes on non-400 statuses, e.g. proxy error pages) falls back
+> to the legacy `initialize` handshake so pre-2026 servers still probe
+> correctly. A `401`/`403` answer at either stage counts as reachable —
+> the server is there, it just gates the handshake behind the OAuth flow the
+> editor runs itself — and is reported as "authentication required".
 
 ## Development
 
