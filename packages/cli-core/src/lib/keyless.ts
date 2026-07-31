@@ -31,8 +31,20 @@ function isKeylessBreadcrumb(value: unknown): value is KeylessBreadcrumb {
   );
 }
 
+/**
+ * Application shapes the accountless endpoint can pre-configure at creation
+ * time — auth strategies, organizations, and billing are set server-side before
+ * the first key is ever used.
+ */
+export const KEYLESS_TEMPLATES = ["b2b-saas", "b2c-saas", "native", "waitlist"] as const;
+
+export type KeylessTemplate = (typeof KEYLESS_TEMPLATES)[number];
+
 /** Creates an accountless Clerk application via the public BAPI endpoint. */
-export async function createAccountlessApp(framework?: string): Promise<AccountlessAppResponse> {
+export async function createAccountlessApp(
+  framework?: string,
+  template?: KeylessTemplate,
+): Promise<AccountlessAppResponse> {
   const url = new URL("/v1/accountless_applications", getBapiBaseUrl());
 
   const headers: Record<string, string> = {
@@ -41,7 +53,7 @@ export async function createAccountlessApp(framework?: string): Promise<Accountl
     ...(framework && { "Clerk-Framework": framework }),
   };
 
-  const body = new URLSearchParams({ source: "cli" });
+  const body = new URLSearchParams({ source: "cli", ...(template && { template }) });
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), CREATE_TIMEOUT_MS);
 
@@ -133,6 +145,21 @@ export async function readKeylessBreadcrumb(cwd: string): Promise<KeylessBreadcr
     log.warn("Keyless breadcrumb file has wrong shape; clearing it to allow fresh setup.");
     await clearKeylessBreadcrumb(cwd);
     return undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Reads the breadcrumb with no side effects: no warning, and a malformed file
+ * is left in place rather than cleared. For paths that only report state
+ * (`doctor`) — repairing on read is `readKeylessBreadcrumb`'s job, and a
+ * diagnostic command has no business changing the project it's diagnosing.
+ */
+export async function peekKeylessBreadcrumb(cwd: string): Promise<KeylessBreadcrumb | undefined> {
+  try {
+    const data: unknown = await Bun.file(breadcrumbPath(cwd)).json();
+    return isKeylessBreadcrumb(data) ? data : undefined;
   } catch {
     return undefined;
   }

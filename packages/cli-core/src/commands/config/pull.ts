@@ -1,8 +1,9 @@
-import { resolveAppContext } from "../../lib/config.ts";
 import { fetchInstanceConfig } from "../../lib/plapi.ts";
 import { withApiContext } from "../../lib/errors.ts";
 import { withGutter, withSpinner } from "../../lib/spinner.ts";
 import { log } from "../../lib/log.ts";
+import { resolveInstanceTarget } from "../../lib/keyless-target.ts";
+import { pullKeylessConfig } from "./keyless.ts";
 
 interface ConfigPullOptions {
   app?: string;
@@ -13,15 +14,15 @@ interface ConfigPullOptions {
 
 export async function configPull(options: ConfigPullOptions): Promise<void> {
   await withGutter("Pulling configuration", async () => {
-    const ctx = await resolveAppContext(options);
+    const target = await resolveInstanceTarget(options);
 
-    const config = await withSpinner(
-      `Pulling config from ${ctx.appLabel} (${ctx.instanceLabel})...`,
-      () =>
-        withApiContext(
-          fetchInstanceConfig(ctx.appId, ctx.instanceId, options.keys),
-          "Failed to fetch config",
-        ),
+    const config = await withSpinner(`Pulling config from ${target.label}...`, () =>
+      target.kind === "keyless"
+        ? pullKeylessConfig(target.keyless, options.keys)
+        : withApiContext(
+            fetchInstanceConfig(target.ctx.appId, target.ctx.instanceId, options.keys),
+            "Failed to fetch config",
+          ),
     );
 
     const json = JSON.stringify(config, null, 2);

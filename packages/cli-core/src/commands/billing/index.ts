@@ -1,13 +1,14 @@
-import { resolveAppContext } from "../../lib/config.ts";
-import { throwUsageError } from "../../lib/errors.ts";
+import { CliError, ERROR_CODE, throwUsageError } from "../../lib/errors.ts";
 import { isAgent, isHuman } from "../../mode.ts";
 import { log } from "../../lib/log.ts";
+import { keylessCopy } from "../../lib/copy.ts";
 import { confirm } from "../../lib/prompts.ts";
 import { detectPackageManager } from "../../lib/package-manager.ts";
 import { NEXT_STEPS } from "../../lib/next-steps.ts";
 import { withGutter } from "../../lib/spinner.ts";
 import { resolveSkillsRunner, runSkillsAdd } from "../../lib/skills.ts";
 import { applyConfigPatch } from "../config/apply-patch.ts";
+import { resolveInstanceTarget, type InstanceTarget } from "../../lib/keyless-target.ts";
 
 interface BillingOptions {
   app?: string;
@@ -56,9 +57,24 @@ function describeTargets(targets: Target[]): string {
   return parts.length === 2 ? `${parts[0]} and ${parts[1]}` : parts[0]!;
 }
 
+/**
+ * Billing settings live only in the account-level config document — Clerk's
+ * Backend API exposes no billing resource — so these commands can't run against
+ * an unclaimed keyless application the way the org toggles can. Pure assertion:
+ * resolving the target is `resolveInstanceTarget`'s job, not billing's.
+ */
+function assertBillingTarget(target: InstanceTarget): void {
+  if (target.kind === "keyless") {
+    throw new CliError(keylessCopy.billingNeedsClaimedApplication(), {
+      code: ERROR_CODE.AUTH_REQUIRED,
+    });
+  }
+}
+
 export async function billingEnable(options: BillingOptions): Promise<void> {
   const targets = parseForTargets(options.for);
-  const ctx = await resolveAppContext(options);
+  const target = await resolveInstanceTarget(options);
+  assertBillingTarget(target);
 
   const billing: Record<string, unknown> = {};
   const payload: Record<string, unknown> = { billing };
@@ -73,7 +89,7 @@ export async function billingEnable(options: BillingOptions): Promise<void> {
 
   await withGutter("Enabling billing", async ({ setNextSteps }) => {
     const applied = await applyConfigPatch({
-      ctx,
+      target,
       payload,
       verb: `Enabling billing for ${describeTargets(targets)}`,
       successMessage: `Billing enabled for ${describeTargets(targets)}`,
@@ -122,7 +138,8 @@ async function offerBillingSkillInstall(options: BillingOptions): Promise<void> 
 
 export async function billingDisable(options: BillingOptions): Promise<void> {
   const targets = parseForTargets(options.for);
-  const ctx = await resolveAppContext(options);
+  const target = await resolveInstanceTarget(options);
+  assertBillingTarget(target);
 
   // No cascade: leave organization_settings untouched.
   const billing: Record<string, unknown> = {};
@@ -131,7 +148,7 @@ export async function billingDisable(options: BillingOptions): Promise<void> {
 
   await withGutter("Disabling billing", async () => {
     await applyConfigPatch({
-      ctx,
+      target,
       payload: { billing },
       verb: `Disabling billing for ${describeTargets(targets)}`,
       successMessage: `Billing disabled for ${describeTargets(targets)}`,

@@ -154,6 +154,39 @@ describe("credential-store", () => {
     expect(await getStoredSession()).toBeNull();
   });
 
+  test("getValidToken treats a 429 refresh failure as transient, not an expired session", async () => {
+    const session = {
+      accessToken: "expired-access-token",
+      refreshToken: "refresh-token",
+      expiresAt: Date.now() - 60_000,
+      tokenType: "Bearer",
+    };
+    await storeToken(session);
+
+    mockRefreshAccessToken.mockRejectedValue(new ApiError(429, "rate_limited"));
+
+    await expect(getValidToken()).rejects.toBeInstanceOf(ApiError);
+    expect(await getStoredSession()).toEqual(session);
+  });
+
+  test("getValidToken reads a non-429 4xx refusal as an expired session but keeps the credentials", async () => {
+    const session = {
+      accessToken: "expired-access-token",
+      refreshToken: "refresh-token",
+      expiresAt: Date.now() - 60_000,
+      tokenType: "Bearer",
+    };
+    await storeToken(session);
+
+    mockRefreshAccessToken.mockRejectedValue(new ApiError(401, '{"error":"invalid_client"}'));
+
+    // Unlike the invalid_grant branch above, the credentials stay in place:
+    // the refusal names this client/request, not the refresh token itself, so
+    // deleting the session would destroy state a config fix could still save.
+    await expect(getValidToken()).rejects.toBeInstanceOf(AuthError);
+    expect(await getStoredSession()).toEqual(session);
+  });
+
   test("createOAuthSession requires a refresh token in the auth response", () => {
     expect(() =>
       createOAuthSession({

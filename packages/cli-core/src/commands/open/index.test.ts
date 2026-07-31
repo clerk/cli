@@ -1,13 +1,17 @@
 import { test, expect, describe, afterEach, beforeEach, mock } from "bun:test";
 import { setMode } from "../../mode.ts";
 import { setCurrentEnv } from "../../lib/environment.ts";
-import { useCaptureLog } from "../../test/lib/stubs.ts";
+import { configStubs, keylessTargetStubs, useCaptureLog } from "../../test/lib/stubs.ts";
 import { isKnownDashboardPath } from "./dashboard-paths.ts";
 
 const mockResolveProfile = mock();
 const mockOpenBrowser = mock();
+const mockResolveKeylessTarget = mock();
+const mockFindKeylessClaimUrl = mock();
+const mockDescribeKeylessInstance = mock();
 
 mock.module("../../lib/config.ts", () => ({
+  ...configStubs,
   resolveProfile: (...args: unknown[]) => mockResolveProfile(...args),
 }));
 
@@ -19,6 +23,16 @@ mock.module("../../lib/spinner.ts", () => ({
   intro: () => {},
   outro: () => {},
   pausedOutro: () => {},
+}));
+
+mock.module("../../lib/keyless-target.ts", () => ({
+  ...keylessTargetStubs,
+  resolveKeylessTarget: (...args: unknown[]) => mockResolveKeylessTarget(...args),
+}));
+
+mock.module("./keyless-claim.ts", () => ({
+  findKeylessClaimUrl: (...args: unknown[]) => mockFindKeylessClaimUrl(...args),
+  describeKeylessInstance: (...args: unknown[]) => mockDescribeKeylessInstance(...args),
 }));
 
 const { openDashboard, buildDashboardUrl } = await import("./index.ts");
@@ -85,11 +99,18 @@ describe("openDashboard", () => {
     setMode("human");
     setCurrentEnv("production");
     mockOpenBrowser.mockResolvedValue({ ok: true, launcher: "open" });
+    // Default to "no keyless application on disk either" so the pre-existing
+    // not-linked tests exercise the fully-empty case, not the keyless branch.
+    mockFindKeylessClaimUrl.mockResolvedValue(undefined);
+    mockResolveKeylessTarget.mockResolvedValue(undefined);
   });
 
   afterEach(() => {
     mockResolveProfile.mockReset();
     mockOpenBrowser.mockReset();
+    mockResolveKeylessTarget.mockReset();
+    mockFindKeylessClaimUrl.mockReset();
+    mockDescribeKeylessInstance.mockReset();
   });
 
   test("human mode: prints arrow + app + dim URL, opens browser", async () => {
@@ -186,10 +207,10 @@ describe("openDashboard", () => {
     );
   });
 
-  test("throws NOT_LINKED when no profile", async () => {
+  test("throws NOT_LINKED when no profile and no keyless application either", async () => {
     mockResolveProfile.mockResolvedValue(null);
 
-    await expect(openDashboard(undefined)).rejects.toThrow(/clerk link/);
+    await expect(openDashboard(undefined)).rejects.toThrow(/clerk link.*clerk init/is);
     expect(mockOpenBrowser).not.toHaveBeenCalled();
   });
 
@@ -203,6 +224,120 @@ describe("openDashboard", () => {
     });
 
     await expect(openDashboard(undefined)).rejects.toThrow(/development instance/);
+    expect(mockOpenBrowser).not.toHaveBeenCalled();
+  });
+});
+
+describe("openDashboard: unclaimed keyless application", () => {
+  const captured = useCaptureLog();
+
+  const CLAIM_DESTINATION = {
+    url: "https://dashboard.clerk.com/apps/claim?token=abc123",
+    source: ".clerk/keyless.json",
+  };
+
+  beforeEach(() => {
+    setMode("human");
+    setCurrentEnv("production");
+    mockOpenBrowser.mockResolvedValue({ ok: true, launcher: "open" });
+    mockResolveProfile.mockResolvedValue(null);
+    mockDescribeKeylessInstance.mockResolvedValue({
+      instanceId: "ins_keyless123",
+      environmentType: "development",
+    });
+  });
+
+  afterEach(() => {
+    mockResolveProfile.mockReset();
+    mockOpenBrowser.mockReset();
+    mockResolveKeylessTarget.mockReset();
+    mockFindKeylessClaimUrl.mockReset();
+    mockDescribeKeylessInstance.mockReset();
+  });
+
+  test("human mode: opens the claim link, not a dashboard deep-link", async () => {
+    mockFindKeylessClaimUrl.mockResolvedValue(CLAIM_DESTINATION);
+    mockResolveKeylessTarget.mockResolvedValue({ secretKey: "sk_test_x", source: ".env" });
+
+    await openDashboard(undefined);
+
+    expect(captured.err).toContain("hasn't been claimed");
+    expect(captured.err).toContain("ins_keyless123");
+    expect(captured.err).toContain(CLAIM_DESTINATION.url);
+    expect(mockOpenBrowser).toHaveBeenCalledWith(CLAIM_DESTINATION.url);
+  });
+
+  test("--print: prints only the claim URL, no browser", async () => {
+    mockFindKeylessClaimUrl.mockResolvedValue(CLAIM_DESTINATION);
+    mockResolveKeylessTarget.mockResolvedValue({ secretKey: "sk_test_x", source: ".env" });
+
+    await openDashboard(undefined, { print: true });
+
+    expect(captured.out).toBe(CLAIM_DESTINATION.url);
+    expect(mockOpenBrowser).not.toHaveBeenCalled();
+  });
+
+  test("agent mode: emits structured JSON with keyless: true, no browser", async () => {
+    setMode("agent");
+    mockFindKeylessClaimUrl.mockResolvedValue(CLAIM_DESTINATION);
+    mockResolveKeylessTarget.mockResolvedValue({ secretKey: "sk_test_x", source: ".env" });
+
+    await openDashboard(undefined);
+
+    const payload = JSON.parse(captured.out);
+    expect(payload).toEqual({
+      url: CLAIM_DESTINATION.url,
+      keyless: true,
+      claimSource: CLAIM_DESTINATION.source,
+      instanceId: "ins_keyless123",
+      environmentType: "development",
+      subpath: null,
+      opened: false,
+    });
+    expect(mockOpenBrowser).not.toHaveBeenCalled();
+  });
+
+  test("a bad secret key on disk doesn't block the claim link — instance details just come back null", async () => {
+    mockFindKeylessClaimUrl.mockResolvedValue(CLAIM_DESTINATION);
+    mockResolveKeylessTarget.mockRejectedValue(new Error("malformed key"));
+
+    await openDashboard(undefined, { print: true });
+
+    expect(captured.out).toBe(CLAIM_DESTINATION.url);
+  });
+
+  test("subpath is refused instead of opening a dashboard page that doesn't exist yet", async () => {
+    mockFindKeylessClaimUrl.mockResolvedValue(CLAIM_DESTINATION);
+
+    await expect(openDashboard("users")).rejects.toThrow(/users.*hasn't been claimed/is);
+    expect(mockOpenBrowser).not.toHaveBeenCalled();
+  });
+
+  test("subpath refusal does not point at `clerk link`", async () => {
+    mockFindKeylessClaimUrl.mockResolvedValue(CLAIM_DESTINATION);
+
+    let message = "";
+    try {
+      await openDashboard("users");
+    } catch (error) {
+      message = (error as Error).message;
+    }
+    expect(message).not.toMatch(/clerk link/);
+  });
+
+  test("no claim link found, but a secret key is on disk: doesn't blindly say `clerk link`", async () => {
+    mockFindKeylessClaimUrl.mockResolvedValue(undefined);
+    mockResolveKeylessTarget.mockResolvedValue({ secretKey: "sk_test_x", source: ".env.local" });
+
+    await expect(openDashboard(undefined)).rejects.toThrow(/clerk init --keyless/);
+    expect(mockOpenBrowser).not.toHaveBeenCalled();
+  });
+
+  test("no claim link and no secret key: falls back to the plain not-linked message", async () => {
+    mockFindKeylessClaimUrl.mockResolvedValue(undefined);
+    mockResolveKeylessTarget.mockResolvedValue(undefined);
+
+    await expect(openDashboard(undefined)).rejects.toThrow(/clerk link.*clerk init/is);
     expect(mockOpenBrowser).not.toHaveBeenCalled();
   });
 });

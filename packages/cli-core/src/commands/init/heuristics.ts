@@ -3,7 +3,7 @@ import { mkdir } from "node:fs/promises";
 import { dim, cyan, green, yellow, bold } from "../../lib/color.js";
 import { printNextSteps } from "../../lib/next-steps.js";
 import { log } from "../../lib/log.js";
-import { getValidToken, hasStoredCredentials } from "../../lib/credential-store.js";
+import { getValidToken, hasAccountCredentials } from "../../lib/credential-store.js";
 import { fetchUserInfo } from "../../lib/token-exchange.js";
 import { printFindings } from "./scan.js";
 import { pmInstallCommand } from "../../lib/package-manager.js";
@@ -147,14 +147,25 @@ export async function getAuthenticatedEmail(): Promise<string | null> {
  * calls, which surface real errors instead of swallowing them.
  */
 export async function isAuthenticated(): Promise<boolean> {
-  if (process.env.CLERK_PLATFORM_API_KEY) return true;
-  return hasStoredCredentials();
+  return hasAccountCredentials();
 }
 
 export function printKeylessInfo(envFile: string): void {
   const lines = [
     `\n  Your app is ready with development keys in ${envFile}.`,
     `  When you're ready, run ${bold("clerk auth login")} and your app will be claimed automatically.\n`,
+  ];
+  log.info(lines.map(dim).join("\n"));
+}
+
+/**
+ * Printed instead of `printKeylessInfo` when init keeps an existing unclaimed
+ * keyless app rather than minting a replacement (see `shouldKeepExistingKeyless`).
+ */
+export function printExistingKeylessInfo(envFile: string): void {
+  const lines = [
+    `\n  This project already has an unclaimed keyless application (keys in ${envFile}).`,
+    `  Run ${bold("clerk auth login")} to claim it, or ${bold("clerk init --keyless --fresh")} to replace it with a new one.\n`,
   ];
   log.info(lines.map(dim).join("\n"));
 }

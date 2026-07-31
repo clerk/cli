@@ -302,6 +302,25 @@ function isInvalidGrant(error: unknown): boolean {
   );
 }
 
+/**
+ * A 4xx from the token endpoint means this stored session will never refresh —
+ * `invalid_client` when the OAuth client no longer recognises us, `invalid_grant`
+ * when the refresh token itself is spent. Either way the user's next step is to
+ * log in again, so it should read as an expired session rather than as a raw
+ * `Token refresh failed (401): {"error":"invalid_client",…}` leaking out of the
+ * credential layer.
+ *
+ * 5xx and network failures are deliberately excluded: those are transient, and
+ * telling someone their session expired because Clerk had a bad minute would
+ * send them to re-authenticate for nothing. 429 is excluded for the same
+ * reason — it's a rate limit, not a rejection of the refresh token.
+ */
+function isUnrecoverableRefreshFailure(error: unknown): boolean {
+  return (
+    error instanceof ApiError && error.status >= 400 && error.status < 500 && error.status !== 429
+  );
+}
+
 async function readStoredValue(): Promise<string | null> {
   if (tokenOverride !== undefined) return tokenOverride;
 
@@ -373,6 +392,15 @@ async function refreshStoredSession(session: OAuthSession): Promise<string> {
       await deleteToken();
       throw sessionExpiredError();
     }
+    // Other 4xx refusals are just as terminal, but the stored session isn't
+    // provably spent the way a rotated refresh token is — so report it and
+    // leave the credentials alone rather than logging the user out for them.
+    if (isUnrecoverableRefreshFailure(error)) {
+      log.debug(
+        `credentials: refresh refused, treating session as expired (${errorMessage(error)})`,
+      );
+      throw sessionExpiredError();
+    }
     throw error;
   }
 
@@ -434,6 +462,17 @@ export async function getStoredSession(): Promise<OAuthSession | null> {
 
 export async function hasStoredCredentials(): Promise<boolean> {
   return (await readStoredValue()) !== null;
+}
+
+/**
+ * True when the CLI has credentials for a Clerk *account* — either a stored
+ * OAuth session or a platform API key. This is a presence check only: it does
+ * not hit the network, so an expired token or an API outage won't demote a
+ * logged-in user into an unauthenticated code path.
+ */
+export async function hasAccountCredentials(): Promise<boolean> {
+  if (process.env.CLERK_PLATFORM_API_KEY) return true;
+  return hasStoredCredentials();
 }
 
 export async function getValidToken(): Promise<string | null> {

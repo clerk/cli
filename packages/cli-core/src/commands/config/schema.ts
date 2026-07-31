@@ -1,8 +1,9 @@
-import { resolveAppContext } from "../../lib/config.ts";
 import { fetchInstanceConfigSchema } from "../../lib/plapi.ts";
-import { withApiContext } from "../../lib/errors.ts";
+import { CliError, ERROR_CODE, withApiContext } from "../../lib/errors.ts";
 import { withGutter } from "../../lib/spinner.ts";
 import { log } from "../../lib/log.ts";
+import { keylessCopy } from "../../lib/copy.ts";
+import { resolveInstanceTarget } from "../../lib/keyless-target.ts";
 
 interface ConfigSchemaOptions {
   app?: string;
@@ -13,7 +14,15 @@ interface ConfigSchemaOptions {
 
 export async function configSchema(options: ConfigSchemaOptions): Promise<void> {
   await withGutter("Fetching configuration schema", async () => {
-    const ctx = await resolveAppContext(options);
+    // Same shape as config push/put: resolve the target once, branch on kind.
+    const target = await resolveInstanceTarget(options);
+    if (target.kind === "keyless") {
+      throw new CliError(keylessCopy.schemaNeedsClaimedApplication(), {
+        code: ERROR_CODE.AUTH_REQUIRED,
+      });
+    }
+
+    const ctx = target.ctx;
 
     log.info(`Pulling config schema from ${ctx.appLabel} (${ctx.instanceLabel})...`);
 

@@ -1,6 +1,8 @@
 import { bold, cyan, dim } from "../../lib/color.ts";
 import { resolveAppContext, resolveInstanceId, resolveProfile } from "../../lib/config.ts";
 import { CliError, ERROR_CODE, throwUsageError } from "../../lib/errors.ts";
+import { resolveKeylessTarget } from "../../lib/keyless-target.ts";
+import { keylessCopy } from "../../lib/copy.ts";
 import { log } from "../../lib/log.ts";
 import { openBrowser } from "../../lib/open.ts";
 import { intro, outro } from "../../lib/spinner.ts";
@@ -64,6 +66,28 @@ async function resolveKnownUserDashboardTarget(options: UsersOpenOptions): Promi
   };
 }
 
+/**
+ * Fails with the real reason when the directory holds an unclaimed keyless
+ * application, rather than letting the caller land on `not_linked`.
+ *
+ * Both are true — nothing is linked, and there is nothing to link to — but only
+ * one of them tells you what to do next. `clerk link` and `--app` both expect an
+ * application ID that an unclaimed application does not have yet, so the generic
+ * message sends people to try two things that cannot work.
+ */
+async function assertNotUnclaimedKeyless(options: UsersOpenOptions, userId: string): Promise<void> {
+  // An explicit destination means the user is not asking about keyless at all,
+  // and the original error is the accurate one.
+  if (options.app || options.instance) return;
+
+  const keyless = await resolveKeylessTarget({ cwd: process.cwd() });
+  if (keyless) {
+    throw new CliError(keylessCopy.userDashboardNeedsClaim(keyless.source, userId), {
+      code: ERROR_CODE.INSTANCE_NOT_FOUND,
+    });
+  }
+}
+
 export async function open(options: UsersOpenOptions = {}): Promise<void> {
   let userId = options.userId;
   if (userId !== undefined && !/^user_[A-Za-z0-9]+$/.test(userId)) {
@@ -83,6 +107,13 @@ export async function open(options: UsersOpenOptions = {}): Promise<void> {
     try {
       target = await resolveKnownUserDashboardTarget(options);
     } catch (error) {
+      // An unclaimed application has no Dashboard page to open — the deep-link
+      // is `/apps/{appId}/…` and there is no appId until somebody claims it.
+      // Checked before the `--secret-key` branch below because the advice that
+      // branch would eventually give ("use --app", "run `clerk link`") is
+      // unreachable here: no app exists to name.
+      await assertNotUnclaimedKeyless(options, userId);
+
       if (!options.secretKey) {
         throw error;
       }
