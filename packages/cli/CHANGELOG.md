@@ -1,5 +1,28 @@
 # clerk
 
+## 3.0.0
+
+### Major Changes
+
+- Make keyless mode the default for unauthenticated `clerk init` runs on keyless-capable frameworks, and let an unclaimed keyless application be configured end to end without an account. ([#395](https://github.com/clerk/cli/pull/395)) by [@rafa-thayto](https://github.com/rafa-thayto)
+
+  - `clerk init` while signed out now bootstraps with auto-generated development keys instead of forcing a browser login; running `clerk auth login` later claims the application. `--keyless` forces keyless mode even when signed in, `--login` forces the authenticated flow, and `--template <b2b-saas|b2c-saas|native|waitlist>` shapes the application at creation. Re-running init keeps an existing unclaimed application — whether `clerk init` or a Clerk SDK minted it — unless `--fresh` explicitly asks for a replacement.
+  - `clerk config pull` and `clerk config patch` work on an unclaimed application through the Backend API, addressing its resources directly: `instance`, `communication`, `restrictions`, `organization_settings`, `protect`, `oauth_application_settings`, and `instance_settings`. Unsupported groups and unrecognized `instance` fields exit with a usage error naming what the API accepts, instead of printing success while the write was silently dropped; applied writes are verified against the API's own response.
+  - `clerk enable orgs`/`disable orgs`, `clerk whoami`, `clerk env pull`, `clerk doctor`, `clerk open`, `clerk users`, and `clerk api` all operate on an unclaimed keyless application, resolving the project's own secret key from its env files or the SDK's `.clerk/.tmp/keyless.json`. An exported `CLERK_SECRET_KEY` keeps its existing precedence, including over a linked profile. Commands that genuinely need a claimed application (billing, `config put`, `config schema`, `users open`) say so and name the reason instead of failing with "not linked".
+  - `clerk whoami` and `clerk env pull` detect a publishable/secret key pair belonging to two different applications — `whoami` warns, `env pull` refuses to write the pair. `whoami` in an unlinked directory also points out a local secret key when one is present, since `clerk api` and `clerk users` will use that key's instance rather than the signed-in account.
+
+### Minor Changes
+
+- Close the `clerk init` framework scaffolding gaps. ([#394](https://github.com/clerk/cli/pull/394)) by [@rafa-thayto](https://github.com/rafa-thayto)
+
+  - Expo projects get their expo-router root layout wrapped with `<ClerkProvider>` and the secure token cache, and `clerk init --starter --framework expo` bootstraps a new Expo app.
+  - Express and Fastify projects get `clerkMiddleware()` / `clerkPlugin` wired into the server entry file (ESM and CommonJS), plus the request type augmentation for TypeScript Express apps.
+  - iOS (Swift) and Android (Kotlin) projects are now detected (via Xcode project bundles and AndroidManifest.xml) and `clerk init --framework ios|android` is accepted; init links the app, pulls API keys, and prints the exact SDK setup steps.
+
+### Patch Changes
+
+- Make `clerk users create` confirm before writing. The command registers `--yes` as "Skip confirmation prompt" and its examples recommend passing it, but no prompt existed, so the flag did nothing and the user was created immediately. Human mode now previews the redacted request body and asks before the POST. Agent mode is unchanged: it never prompts, so `--dry-run` remains the safety net there. ([#400](https://github.com/clerk/cli/pull/400)) by [@manovotny](https://github.com/manovotny)
+
 ## 2.3.1
 
 ### Patch Changes
