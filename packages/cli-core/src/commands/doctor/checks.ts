@@ -95,11 +95,27 @@ async function claimHint(ctx: DoctorContext): Promise<string> {
 export async function checkLoggedIn(ctx: DoctorContext): Promise<CheckResult> {
   const check = defineCheck("Logged in", ctx.fixes.login);
   const token = await ctx.getToken();
-  if (token) return check.pass("Logged in (token found in credential store)");
+
+  // Malformed-key detection is a side effect of resolving the keyless target
+  // (see getKeylessKeyError), so resolve it before any early return — a
+  // stored account token must not hide a broken local CLERK_SECRET_KEY that
+  // other commands still prefer over the account session.
+  const keyless = await ctx.getKeylessTarget();
+  const keyError = await ctx.getKeylessKeyError();
+
+  if (token) {
+    if (keyError) {
+      return check.warn(`Logged in, but the local secret key is unusable: ${keyError.message}`, {
+        remedy:
+          "Fix or remove the malformed key — some commands prefer it over your account session.",
+        fixable: false,
+      });
+    }
+    return check.pass("Logged in (token found in credential store)");
+  }
 
   // No account session doesn't mean the project is broken: an unclaimed
   // keyless application is a legitimate, healthy way to run the CLI.
-  const keyless = await ctx.getKeylessTarget();
   if (keyless) {
     const instance = await ctx.getKeylessInstance();
     return check.pass(
@@ -110,7 +126,6 @@ export async function checkLoggedIn(ctx: DoctorContext): Promise<CheckResult> {
   // A local key that isn't a secret key at all is the one keyless state that
   // is genuinely broken — report it here as the named diagnosis, once, rather
   // than letting it crash every keyless-aware check (see getKeylessKeyError).
-  const keyError = await ctx.getKeylessKeyError();
   if (keyError) {
     return check.fail(`Not logged in, and the local secret key is unusable: ${keyError.message}`, {
       remedy: "Fix or remove the malformed key, or run `clerk auth login` to authenticate.",

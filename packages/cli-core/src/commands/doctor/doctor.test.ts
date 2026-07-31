@@ -2,7 +2,7 @@ import { test, expect, describe, beforeEach, afterEach, mock } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { ApiError, AuthError, type CliError } from "../../lib/errors.ts";
+import { ApiError, AuthError, CliError, ERROR_CODE } from "../../lib/errors.ts";
 import { _setConfigDir } from "../../lib/config.ts";
 import {
   credentialStoreStubs,
@@ -236,6 +236,34 @@ describe("checkLoggedIn", () => {
       // The claim hint has to ride in the message: `detail` only renders
       // under --verbose, and guidance nobody sees by default isn't guidance.
       message: ["unclaimed keyless application", "ins_keyless_1", "Claim it"],
+    });
+  });
+
+  test("fail when no token and the local secret key is malformed", async () => {
+    const ctx = createMockContext({
+      token: null,
+      keylessKeyError: new CliError("not a secret key", { code: ERROR_CODE.INVALID_KEY_FORMAT }),
+    });
+    const result = await checkLoggedIn(ctx);
+    expectCheck(result, {
+      name: "Logged in",
+      status: "fail",
+      message: ["local secret key is unusable", "not a secret key"],
+      remedy: "Fix or remove the malformed key",
+    });
+  });
+
+  test("warn when a stored token exists but the local secret key is malformed", async () => {
+    const ctx = createMockContext({
+      token: "test_token",
+      keylessKeyError: new CliError("not a secret key", { code: ERROR_CODE.INVALID_KEY_FORMAT }),
+    });
+    const result = await checkLoggedIn(ctx);
+    expectCheck(result, {
+      name: "Logged in",
+      status: "warn",
+      message: ["Logged in", "local secret key is unusable", "not a secret key"],
+      remedy: "Fix or remove the malformed key",
     });
   });
 });

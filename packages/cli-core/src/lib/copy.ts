@@ -27,7 +27,7 @@ export const keylessCopy = {
     `Supported top-level keys: ${supported.join(", ")}.`,
 
   apiReachableKeysLine: (keys: string[]): string =>
-    `${keys.join(", ")} ${keys.length === 1 ? "is" : "are"} already reachable on an unclaimed application — use \`clerk api /${keys[0]}\` directly instead of this config document.`,
+    `${keys.join(", ")} ${keys.length === 1 ? "is" : "are"} already reachable on an unclaimed application — use ${keys.map((key) => `\`clerk api /${key}\``).join(" or ")} directly instead of this config document.`,
 
   claimForFullConfigLine: (): string =>
     "Run `clerk auth login` to claim the application and use the full config document.",

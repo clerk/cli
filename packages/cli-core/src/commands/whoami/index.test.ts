@@ -14,6 +14,7 @@ const mockFetchUserInfo = mock();
 const mockResolveProfile = mock();
 const mockIsAgent = mock();
 const mockResolveKeylessTarget = mock();
+const mockFindLocalSecretKey = mock();
 const mockFindLocalPublishableKey = mock();
 const mockHasKeyPairMismatch = mock();
 const mockBapiRequest = mock();
@@ -27,6 +28,7 @@ mock.module("../../lib/credential-store.ts", () => ({
 mock.module("../../lib/keyless-target.ts", () => ({
   ...keylessTargetStubs,
   resolveKeylessTarget: (...args: unknown[]) => mockResolveKeylessTarget(...args),
+  findLocalSecretKey: (...args: unknown[]) => mockFindLocalSecretKey(...args),
   findLocalPublishableKey: (...args: unknown[]) => mockFindLocalPublishableKey(...args),
   hasKeyPairMismatch: (...args: unknown[]) => mockHasKeyPairMismatch(...args),
 }));
@@ -74,8 +76,10 @@ describe("whoami", () => {
     mockResolveProfile.mockResolvedValue(undefined);
     mockHasStoredCredentials.mockResolvedValue(false);
     mockResolveKeylessTarget.mockResolvedValue(undefined);
+    mockFindLocalSecretKey.mockResolvedValue(undefined);
     mockFindLocalPublishableKey.mockResolvedValue(undefined);
     mockHasKeyPairMismatch.mockResolvedValue(false);
+    delete process.env.CLERK_SECRET_KEY;
   });
 
   afterEach(() => {
@@ -85,9 +89,11 @@ describe("whoami", () => {
     mockResolveProfile.mockReset();
     mockIsAgent.mockReset();
     mockResolveKeylessTarget.mockReset();
+    mockFindLocalSecretKey.mockReset();
     mockFindLocalPublishableKey.mockReset();
     mockHasKeyPairMismatch.mockReset();
     mockBapiRequest.mockReset();
+    delete process.env.CLERK_SECRET_KEY;
     consoleSpy?.mockRestore();
   });
 
@@ -173,6 +179,55 @@ describe("whoami", () => {
 
     expect(captured.out.trim()).toBe("alice@example.com");
     expect(captured.err).not.toContain("Linked to");
+  });
+
+  test("warns when unlinked and a local secret key is found", async () => {
+    mockGetValidToken.mockResolvedValue("valid-token");
+    mockFetchUserInfo.mockResolvedValue({ userId: "user_123", email: "alice@example.com" });
+    mockResolveProfile.mockResolvedValue(undefined);
+    mockFindLocalSecretKey.mockResolvedValue({ secretKey: "sk_test_xxx", source: ".env.local" });
+
+    await runWhoami();
+
+    expect(captured.err).toContain("isn't linked");
+    expect(captured.err).toContain(".env.local");
+    expect(captured.err).not.toContain("Linked to");
+  });
+
+  test("warns when linked but an exported CLERK_SECRET_KEY overrides the profile", async () => {
+    mockGetValidToken.mockResolvedValue("valid-token");
+    mockFetchUserInfo.mockResolvedValue({ userId: "user_123", email: "alice@example.com" });
+    mockResolveProfile.mockResolvedValue(linkedProfile);
+    process.env.CLERK_SECRET_KEY = "sk_test_xxx";
+
+    await runWhoami();
+
+    expect(captured.err).toContain("Linked to");
+    expect(captured.err).toContain("overrides the linked application");
+    expect(captured.err).toContain("CLERK_SECRET_KEY env var");
+    expect(mockFindLocalSecretKey).not.toHaveBeenCalled();
+  });
+
+  test("no override warning when linked and no CLERK_SECRET_KEY is exported", async () => {
+    mockGetValidToken.mockResolvedValue("valid-token");
+    mockFetchUserInfo.mockResolvedValue({ userId: "user_123", email: "alice@example.com" });
+    mockResolveProfile.mockResolvedValue(linkedProfile);
+
+    await runWhoami();
+
+    expect(captured.err).toContain("Linked to");
+    expect(captured.err).not.toContain("overrides the linked application");
+  });
+
+  test("--json reports the override source when linked but overridden", async () => {
+    mockGetValidToken.mockResolvedValue("valid-token");
+    mockFetchUserInfo.mockResolvedValue({ userId: "user_123", email: "alice@example.com" });
+    mockResolveProfile.mockResolvedValue(linkedProfile);
+    process.env.CLERK_SECRET_KEY = "sk_test_xxx";
+
+    await runWhoami({ json: true });
+
+    expect(JSON.parse(captured.out).localSecretKeySource).toBe("CLERK_SECRET_KEY env var");
   });
 
   test("--json emits structured payload with linked details and suppresses next-steps", async () => {

@@ -31,11 +31,11 @@ type Identity =
       email: string;
       profile: Awaited<ReturnType<typeof resolveProfile>>;
       /**
-       * Where a local secret key was found when the directory is unlinked, or
-       * null. It has to be surfaced here because the answer to "who am I?" is
-       * genuinely split in that state: this command reports the account, but
-       * `clerk api` and `clerk users` resolve the local key first and operate
-       * on whatever instance it addresses (see `resolveBapiSecretKey`).
+       * Where a local secret key was found that `clerk api` and `clerk users`
+       * would actually use instead of this account, or null. Populated when
+       * the directory is unlinked, and also when it's linked but an exported
+       * `CLERK_SECRET_KEY` overrides the profile — the one local-key source
+       * `resolveBapiSecretKey` still honors even then.
        */
       localSecretKeySource: string | null;
     }
@@ -102,8 +102,15 @@ async function resolveIdentity(): Promise<Identity> {
 
   // Unlinked but holding a local secret key: the Backend API commands will use
   // that key, not this account, so whoami must say so or its answer is wrong
-  // for half the command surface.
-  const localKey = profile ? undefined : await findLocalSecretKey(process.cwd());
+  // for half the command surface. A linked directory isn't automatically safe
+  // from this either — resolveBapiSecretKey lets an exported CLERK_SECRET_KEY
+  // win over even a linked profile, so check for that specific override
+  // instead of skipping discovery outright.
+  const localKey = profile
+    ? process.env.CLERK_SECRET_KEY
+      ? { source: "CLERK_SECRET_KEY env var" }
+      : undefined
+    : await findLocalSecretKey(process.cwd());
 
   return {
     kind: "account",
@@ -203,10 +210,14 @@ function render(identity: Identity): void {
   log.data(identity.email);
   if (identity.profile) {
     log.info(`Linked to \`${profileLabel(identity.profile.profile)}\``);
-  } else if (identity.localSecretKeySource) {
+  }
+  if (identity.localSecretKeySource) {
     log.warn(
-      `This directory isn't linked, but holds a secret key (from \`${identity.localSecretKeySource}\`) — \`clerk api\` and \`clerk users\` will use that key's instance, not your account.\n` +
-        "Run `clerk link` to point them at an application of yours, or remove the key.",
+      identity.profile
+        ? `An exported secret key (from \`${identity.localSecretKeySource}\`) overrides the linked application — \`clerk api\` and \`clerk users\` will use that key's instance instead.\n` +
+            "Unset `CLERK_SECRET_KEY` to use the linked application instead."
+        : `This directory isn't linked, but holds a secret key (from \`${identity.localSecretKeySource}\`) — \`clerk api\` and \`clerk users\` will use that key's instance, not your account.\n` +
+            "Run `clerk link` to point them at an application of yours, or remove the key.",
     );
   }
   printNextSteps(identity.profile ? NEXT_STEPS.WHOAMI_LINKED : NEXT_STEPS.WHOAMI);
