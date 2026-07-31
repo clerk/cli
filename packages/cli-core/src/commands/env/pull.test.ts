@@ -676,6 +676,8 @@ describe("env pull", () => {
     const content = await Bun.file(join(tempDir, ".env")).text();
     expect(content).toContain("CLERK_PUBLISHABLE_KEY=pk_test_abc123");
     expect(content).not.toContain("CLERK_SECRET_KEY");
+  });
+
   describe("keyless", () => {
     // Encodes `<host>.clerk.accounts.dev$` the way a real publishable key
     // would, so `decodePublishableKey` (used by the pairing check) sees the
