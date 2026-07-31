@@ -61,7 +61,7 @@ async function safeRm(path: string): Promise<void> {
  * CLERK_CONFIG_DIR, so `clerk init` finds an existing link and skips the
  * interactive app picker.
  */
-async function linkProject(projectDir: string, configDir: string): Promise<void> {
+export async function linkProject(projectDir: string, configDir: string): Promise<void> {
   const appId = requireEnv("CLERK_CLI_TEST_APP_ID");
   const platformAPIKey = requireEnv("CLERK_PLATFORM_API_KEY");
 
@@ -77,7 +77,7 @@ async function linkProject(projectDir: string, configDir: string): Promise<void>
   assertSuccess("clerk link failed", result);
 }
 
-async function gitInit(projectDir: string): Promise<void> {
+export async function gitInit(projectDir: string): Promise<void> {
   const result =
     await Bun.$`git -c commit.gpgsign=false init && git add -A && git -c commit.gpgsign=false commit -m "init" --allow-empty`
       .cwd(projectDir)

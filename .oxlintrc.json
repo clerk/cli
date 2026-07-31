@@ -4,7 +4,7 @@
     "unicorn/no-process-exit": "error",
     "no-console": "error"
   },
-  "ignorePatterns": ["test/e2e/fixtures/**"],
+  "ignorePatterns": ["test/e2e/fixtures/**", "test/e2e/templates/**"],
   "overrides": [
     {
       "files": [

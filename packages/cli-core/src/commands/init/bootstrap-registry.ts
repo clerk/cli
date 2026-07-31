@@ -139,6 +139,23 @@ export const BOOTSTRAP_AUTHENTICATED_REGISTRY: BootstrapEntry[] = [
       "vanilla",
     ],
   },
+  {
+    label: "Expo",
+    dep: "expo",
+    defaultProjectName: "my-clerk-expo-app",
+    // create-expo-app has no git flag; it skips `git init` on its own inside
+    // an existing repo or CI. --no-install keeps parity with the other entries
+    // (our own installDependencies() step runs with the selected PM).
+    buildCommand: (pm, name) => [
+      ...runner(pm),
+      "create-expo-app@latest",
+      name,
+      "--template",
+      "default",
+      "--no-install",
+      "--yes",
+    ],
+  },
 ];
 
 /** All bootstrap-capable frameworks (keyless + authenticated). */

@@ -4,5 +4,5 @@
     "lib": ["ESNext", "DOM"]
   },
   "include": ["**/*.ts"],
-  "exclude": ["fixtures"]
+  "exclude": ["fixtures", "templates"]
 }

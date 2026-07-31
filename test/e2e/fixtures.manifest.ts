@@ -1,4 +1,18 @@
+import { join } from "node:path";
 import type { FixtureConfig } from "./lib/types.ts";
+
+/**
+ * Express and Fastify have no official scaffolder, so their fixtures come from
+ * hand-authored templates checked in under `test/e2e/templates/<name>/`. The
+ * scaffoldCmd copies the template; the refresh script then resolves the
+ * template's `latest` dependency specs to exact pins and generates the
+ * lockfile, exactly as it does for scaffolder-generated fixtures.
+ */
+const TEMPLATES_DIR = join(import.meta.dir, "templates");
+
+function copyTemplateCmd(name: string): string[] {
+  return ["cp", "-R", `${join(TEMPLATES_DIR, name)}/.`, "."];
+}
 
 /**
  * Single source of truth for every E2E fixture. Both the test files and
@@ -26,6 +40,44 @@ export const fixtures = {
     clerkSdk: "@clerk/astro",
     buildCmd: ["astro", "build"],
     devCmd: ["astro", "dev"],
+  },
+  expo: {
+    scaffoldCmd: ["npx", "--yes", "create-expo-app@latest", ".", "--no-install"],
+    clerkSdk: "@clerk/expo",
+    // Web export is the only build that runs headless in CI — native builds
+    // need Xcode/Gradle toolchains. It still bundles the ClerkProvider-wrapped
+    // layout through Metro, so a broken scaffold fails the build.
+    buildCmd: ["expo", "export", "--platform", "web"],
+    // Unused: no browser test for Expo (see expo.test.ts), but the manifest
+    // shape requires a dev command.
+    devCmd: ["expo", "start", "--web"],
+    packageJsonOverrides: {
+      dependencies: {
+        // Required at bundle time by @clerk/expo/token-cache, which the
+        // scaffolded layout imports. `clerk init` tells users to run
+        // `npx expo install expo-secure-store`; the fixture pre-installs it
+        // (which also keeps that post-instruction out of the init output).
+        "expo-secure-store": "latest",
+      },
+    },
+  },
+  express: {
+    scaffoldCmd: copyTemplateCmd("express"),
+    clerkSdk: "@clerk/express",
+    // No build step for a plain Node server — tsc doubles as the "build".
+    buildCmd: ["tsc", "--noEmit"],
+    // Node >= 23 strips types natively; the template parses --port/--host.
+    // --experimental-strip-types: default-on since Node 23.6, but the explicit
+    // flag keeps the fixture running on Node >= 22.6 too.
+    devCmd: ["node", "--experimental-strip-types", "--env-file=.env.local", "index.ts"],
+  },
+  fastify: {
+    scaffoldCmd: copyTemplateCmd("fastify"),
+    clerkSdk: "@clerk/fastify",
+    buildCmd: ["tsc", "--noEmit"],
+    // --experimental-strip-types: default-on since Node 23.6, but the explicit
+    // flag keeps the fixture running on Node >= 22.6 too.
+    devCmd: ["node", "--experimental-strip-types", "--env-file=.env.local", "index.ts"],
   },
   "nextjs-app-router": {
     scaffoldCmd: [

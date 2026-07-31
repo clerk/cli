@@ -6,7 +6,12 @@ import { pull } from "../env/pull.js";
 import { isAgent } from "../../mode.js";
 import { dim, bold } from "../../lib/color.js";
 import { throwUserAbort, throwUsageError, CliError, errorMessage } from "../../lib/errors.js";
-import { lookupFramework, FRAMEWORK_NAMES, type FrameworkInfo } from "../../lib/framework.js";
+import {
+  lookupFramework,
+  isNpmFramework,
+  FRAMEWORK_NAMES,
+  type FrameworkInfo,
+} from "../../lib/framework.js";
 import { resolveProfile } from "../../lib/config.js";
 import { deriveProjectName } from "../../lib/project-name.js";
 import { log } from "../../lib/log.js";
@@ -133,7 +138,8 @@ export async function init(options: InitOptions = {}) {
   bar();
   await runStrategy(strategy, ctx);
 
-  if (options.skills !== false) {
+  // Native platforms (iOS/Android) have no npx/Node toolchain to run `skills add` with.
+  if (options.skills !== false && isNpmFramework(ctx.framework)) {
     bar();
     await installSkills(ctx.cwd, ctx.framework.dep, ctx.packageManager, overrides.skipConfirm);
   }
@@ -191,7 +197,9 @@ async function resolveProjectContext(
   // When --framework is provided, gatherContext will always return a truthy
   // context because the override skips detectFramework. Guard against this in
   // blank directories so the bootstrap path (e.g. create-next-app) still runs.
-  if (frameworkOverride && !(await hasPackageJson(cwd))) {
+  // Native platforms (iOS/Android) never have a package.json — a missing one
+  // does not mean a blank directory, so they skip the bootstrap shortcut.
+  if (frameworkOverride && isNpmFramework(frameworkOverride) && !(await hasPackageJson(cwd))) {
     return bootstrapAndDetect(cwd, frameworkOverride, overrides);
   }
 
@@ -370,9 +378,11 @@ async function detectAndInstall(
 
   if (ctx.existingClerk) {
     log.info(dim(`${ctx.framework.sdk} is already installed`));
-  } else {
+  } else if (isNpmFramework(ctx.framework)) {
     await installSdk(ctx);
   }
+  // Non-npm ecosystems (Swift Package Manager, Gradle) can't be installed by a
+  // package manager here — the framework's scaffold plan prints install steps.
 
   return await scaffoldAndWrite(cwd, ctx, skipConfirm);
 }

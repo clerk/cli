@@ -35,6 +35,44 @@ afterEach(async () => {
   await rm(tempDir, { recursive: true, force: true });
 });
 
+test("keeps a trailing multi-line import intact when adding the middleware export", async () => {
+  // The stock React Router template ends with this multi-line import; splicing
+  // the middleware export into its brace block produced invalid syntax.
+  await mkdir(join(tempDir, "app"), { recursive: true });
+  await Bun.write(
+    join(tempDir, "app/root.tsx"),
+    `import {
+  Links,
+  Meta,
+  Outlet,
+  Scripts,
+  ScrollRestoration,
+} from "react-router";
+
+export default function Root() {
+  return <Outlet />;
+}
+`,
+  );
+
+  const plan = await reactRouter.scaffold(makeCtx({ isBootstrap: true }));
+  const rootAction = plan.actions.find((action) => action.path === "app/root.tsx");
+
+  if (rootAction?.type !== "modify") {
+    throw new Error("Expected root action to modify app/root.tsx");
+  }
+
+  expect(rootAction.content).toContain(`} from "react-router";`);
+  expect(rootAction.content).toContain("export const middleware = [clerkMiddleware()];");
+  // The export lands after the import block, never inside its braces
+  expect(rootAction.content.indexOf("export const middleware")).toBeGreaterThan(
+    rootAction.content.indexOf(`} from "react-router";`),
+  );
+  expect(() =>
+    new Bun.Transpiler({ loader: "tsx" }).transformSync(rootAction.content),
+  ).not.toThrow();
+});
+
 test("adds middleware, loader, and provider to app/root.tsx", async () => {
   await mkdir(join(tempDir, "app"), { recursive: true });
   await Bun.write(

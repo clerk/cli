@@ -1,0 +1,4 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Minimal manifest: detection only requires this file to exist at the
+     conventional Gradle path; the contents are never parsed. -->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android" />

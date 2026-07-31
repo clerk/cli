@@ -7,6 +7,11 @@ import { tanstackStart } from "./frameworks/tanstack-start.js";
 import { astro } from "./frameworks/astro.js";
 import { vue } from "./frameworks/vue.js";
 import { javascriptVite } from "./frameworks/javascript.js";
+import { expo } from "./frameworks/expo.js";
+import { express } from "./frameworks/express.js";
+import { fastify } from "./frameworks/fastify.js";
+import { ios } from "./frameworks/ios.js";
+import { android } from "./frameworks/android.js";
 import { parseMajorVersion } from "./frameworks/helpers.js";
 import type { FrameworkScaffold, ProjectContext, ScaffoldPlan } from "./frameworks/types.js";
 
@@ -20,6 +25,11 @@ const SCAFFOLDERS = [
   astro,
   vue,
   javascriptVite,
+  expo,
+  express,
+  fastify,
+  ios,
+  android,
 ] satisfies FrameworkScaffold[];
 
 /**

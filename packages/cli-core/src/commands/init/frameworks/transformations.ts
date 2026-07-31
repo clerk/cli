@@ -4,6 +4,7 @@
  * Used by framework scaffolders for import injection, provider wrapping, and indentation.
  */
 import { parseModule } from "magicast";
+import { maskCommentsAndStrings } from "./source-scan.js";
 
 /** Check if file content already imports from a @clerk/ package. */
 export function hasClerkImport(content: string): boolean {
@@ -25,17 +26,30 @@ export function safeAddImport(content: string, source: string, imported: string)
   try {
     const mod = parseModule(content);
     mod.imports.$add({ from: source, imported, local: imported });
-    return mod.generate().code;
+    // magicast builds the import node itself and prints it without brace
+    // spacing, and no printer option overrides that. Projects without a
+    // formatter would keep `import {x}`, so re-space the one statement we
+    // added — anchored on `from` so only an import statement can match.
+    return mod.generate().code.replace(`import {${imported}} from`, `import { ${imported} } from`);
   } catch {
     return `import { ${imported} } from "${source}";\n${content}`;
   }
 }
 
+// Spans a complete import statement, including multi-line named-import blocks
+// and side-effect imports (`import "./x"`), through its module specifier.
+const IMPORT_STATEMENT = /^[ \t]*import\b(?:[\s\S]*?from)?\s*["'][^"'\n]*["'][ \t]*;?/gm;
+
 /** Insert a snippet after the last import statement in a source file. */
 export function insertAfterLastImport(source: string, snippet: string): string {
-  const lastImportIdx = source.lastIndexOf("import ");
-  const lineEnd = source.indexOf("\n", lastImportIdx);
-  if (lineEnd === -1) return source;
+  // Match against masked source so `import` inside comments/strings can't
+  // hijack the insertion point, and multi-line imports are spanned fully.
+  let last: RegExpExecArray | null = null;
+  for (const match of maskCommentsAndStrings(source).matchAll(IMPORT_STATEMENT)) last = match;
+  if (!last) return snippet + source;
+
+  const lineEnd = source.indexOf("\n", last.index + last[0].length);
+  if (lineEnd === -1) return `${source}\n${snippet}`;
   return source.slice(0, lineEnd + 1) + snippet + source.slice(lineEnd + 1);
 }
 

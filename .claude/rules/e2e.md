@@ -11,7 +11,14 @@ E2E tests verify that `clerk init` produces a buildable, type-safe project with 
 
 ## Supported frameworks
 
-Astro, Next.js App Router, Next.js App Router (Next 14, pinned), Next.js Pages Router, Nuxt, React (Vite), React Router, TanStack Start, Vue (Vite).
+Astro, Expo, Express, Fastify, Next.js App Router, Next.js App Router (Next 14, pinned), Next.js Pages Router, Nuxt, React (Vite), React Router, TanStack Start, Vue (Vite) — plus init-behavior tests for iOS and Android.
+
+Not every fixture runs the full build + browser pipeline; coverage depth varies by what the framework can do headless:
+
+- **Browser-tested** (build + typecheck + Playwright sign-in): Astro, Next.js (all variants), Nuxt, React, React Router, TanStack Start, Vue.
+- **Server-tested** (typecheck + live HTTP request via `runServerTests`): Express, Fastify. No UI to drive a browser through; instead the dev server is started and a request must come back with the `x-clerk-auth-status` header, proving the scaffolded middleware/plugin runs with the pulled keys. These fixtures come from hand-authored templates in `test/e2e/templates/` (no official scaffolder exists); the refresh script copies the template and pins its `latest` dependency specs.
+- **Build-tested** (typecheck + `expo export --platform web`): Expo. Metro bundles the ClerkProvider-wrapped layout, so a broken scaffold fails the export; native binaries would need Xcode/Gradle.
+- **Init-behavior-tested** (`test/e2e/native-init.test.ts`): iOS, Android. No package.json, so these skip the manifest/harness entirely: hand-authored marker fixtures (`test/e2e/fixtures/ios/`, `test/e2e/fixtures/android/`, never touched by the refresh script) verify detection, keys pulled into `.env`, zero project writes, and the printed SDK quickstart.
 
 ## Required env vars
 

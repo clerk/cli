@@ -1,0 +1,14 @@
+{
+  "name": "clerk-fixture-fastify",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "fastify": "5.10.0",
+    "@clerk/fastify": "latest"
+  },
+  "devDependencies": {
+    "@types/node": "26.1.2",
+    "typescript": "7.0.2"
+  }
+}
