@@ -239,8 +239,26 @@ async function resolveArgv(
 ): Promise<{ argv: string[]; from: ParseFrom }> {
   const raw = args ?? process.argv;
   const effectiveFrom = from ?? (args === undefined ? "node" : "user");
+  // Honor an explicit `--mode` flag before `expandInputJson`, so a failure it
+  // throws (invalid JSON, missing file) is formatted in the right mode. The
+  // preAction hook re-applies and validates `--mode`, but it runs during
+  // parseAsync — too late for errors raised while resolving argv.
+  applyForcedModeFromArgv(raw);
   const argv = await expandInputJson([...raw]);
   return { argv, from: effectiveFrom };
+}
+
+/**
+ * Scan raw argv for an explicit `--mode human|agent` and force it early.
+ * Ignores an invalid value — the preAction hook reports that as a usage error.
+ */
+function applyForcedModeFromArgv(argv: string[]): void {
+  const idx = argv.indexOf("--mode");
+  if (idx === -1) return;
+  const value = argv[idx + 1];
+  if (value === "human" || value === "agent") {
+    setMode(value);
+  }
 }
 
 /**

@@ -4,14 +4,12 @@
  */
 
 import { test, expect } from "bun:test";
-import { useIntegrationTestHarness, clerk, mockState, parseJsonFromStderr } from "./lib/harness.ts";
+import { useIntegrationTestHarness, clerk, mockState } from "./lib/harness.ts";
 
 useIntegrationTestHarness();
 
 function parseJsonError(stderr: string): { code: string; message: string; docsUrl?: string } {
-  const parsed = parseJsonFromStderr(stderr) as {
-    error: { code: string; message: string; docsUrl?: string };
-  };
+  const parsed = JSON.parse(stderr);
   return parsed.error;
 }
 
