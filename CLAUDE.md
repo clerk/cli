@@ -58,4 +58,6 @@ These flags require Bun >= 1.3.13 — older versions silently ignore them and lo
 
 ## Versioning
 
-The `CLI_VERSION` global is injected at compile time via `bun build --compile --define "CLI_VERSION=..."`. Local `build:compile` omits it, so the binary reports `0.0.0-dev`. The CI release workflow injects the real version.
+The `CLI_VERSION` global is injected at compile time via `bun build --compile --define "CLI_VERSION=..."`. The CI release workflow injects the real version.
+
+Builds without that define — `bun run dev`, a `bun link`ed checkout, `packages/cli-core`'s own `build:compile` — fall back to a version derived from the checkout by `src/lib/version.ts`: `<version in packages/cli/package.json>-dev.<YYYYMMDD>.<short sha>`, plus `.dirty` when the working tree has uncommitted changes (e.g. `3.0.0-dev.20260803.f51f1e4.dirty`). The commit segment moves on every pull, so `clerk --version` tells you whether the linked binary is the code you just fetched. It degrades to `<version>-dev` when git isn't available. Code that needs to know whether a build is versioned at all should use `resolveCliVersion()` / `isDevVersion()`, never an equality check against a literal.

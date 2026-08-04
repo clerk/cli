@@ -1,7 +1,7 @@
 import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import { parseArgs } from "node:util";
-import { DEV_CLI_VERSION } from "../packages/cli-core/src/lib/version.ts";
+import { resolveDevVersion } from "../packages/cli-core/src/lib/version.ts";
 import { type Target, targets } from "./lib/targets.ts";
 
 function keyringBindingPath(target: Target): string {
@@ -15,7 +15,9 @@ const { values } = parseArgs({
   args: Bun.argv.slice(2),
   options: {
     target: { type: "string" },
-    version: { type: "string", default: DEV_CLI_VERSION },
+    // CI always passes --version. Without it (local rehearsal), stamp the
+    // binary with the checkout it was built from rather than a fixed literal.
+    version: { type: "string", default: resolveDevVersion() },
     "env-profiles-path": { type: "string" },
   },
 });

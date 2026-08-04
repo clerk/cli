@@ -205,29 +205,30 @@ Install: `brew install clerk/stable/clerk`
 
 ## Key Files
 
-| File                                   | Purpose                                                                        |
-| -------------------------------------- | ------------------------------------------------------------------------------ |
-| `packages/cli/bin/clerk`               | CJS shim that resolves and spawns the platform binary                          |
-| `packages/cli/package.json`            | Wrapper package (has `prepublishOnly` guard against accidental direct publish) |
-| `packages/cli-core/src/cli.ts`         | CLI entrypoint (reads `CLI_VERSION` global at runtime)                         |
-| `packages/cli-core/src/globals.d.ts`   | TypeScript declaration for the `CLI_VERSION` compile-time define               |
-| `install.sh`                           | Shell install script, downloads binary from GitHub Releases                    |
-| `scripts/releaser.ts`                  | Generates platform packages and publishes everything to npm                    |
-| `.github/release-notes/vX.Y.Z.md`      | Optional version-specific intro prepended to stable GitHub Release notes       |
-| `scripts/lib/targets.ts`               | Target definitions (used by both releaser and build.ts)                        |
-| `scripts/build.ts`                     | Cross-compiles CLI binaries for all 8 platform targets                         |
-| `scripts/sign-macos.ts`                | Signs and notarizes macOS binaries (keychain, codesign, notarytool)            |
-| `scripts/entitlements.plist`           | macOS entitlements for Bun's JIT engine (used by codesign)                     |
-| `scripts/canary.ts`                    | Versions packages for canary channel using Changesets snapshots                |
-| `scripts/snapshot.ts`                  | Versions packages for snapshot channel using Changesets snapshots              |
-| `scripts/check-release.ts`             | Detects if a stable release is needed (compares version to npm registry)       |
-| `scripts/homebrew.ts`                  | Creates Homebrew archives, uploads to release, renders and pushes formula      |
-| `scripts/lib/homebrew.ts`              | Homebrew formula renderer, target list, and helper utilities                   |
-| `.changeset/config.json`               | Changesets configuration                                                       |
-| `.github/workflows/build-binaries.yml` | Reusable workflow for cross-compiling binaries (called by release + snapshot)  |
-| `.github/workflows/sign-macos.yml`     | Reusable workflow for macOS code signing and notarization                      |
-| `.github/workflows/smoke-test.yml`     | Reusable workflow for smoke-testing binaries (called by release + snapshot)    |
-| `.github/workflows/release.yml`        | GitHub Actions release, canary, and snapshot workflow                          |
+| File                                   | Purpose                                                                            |
+| -------------------------------------- | ---------------------------------------------------------------------------------- |
+| `packages/cli/bin/clerk`               | CJS shim that resolves and spawns the platform binary                              |
+| `packages/cli/package.json`            | Wrapper package (has `prepublishOnly` guard against accidental direct publish)     |
+| `packages/cli-core/src/cli.ts`         | CLI entrypoint (reads `CLI_VERSION` global at runtime)                             |
+| `packages/cli-core/src/globals.d.ts`   | TypeScript declaration for the `CLI_VERSION` compile-time define                   |
+| `packages/cli-core/src/lib/version.ts` | Resolves `CLI_VERSION`, or derives a `-dev.<date>.<sha>` version from the checkout |
+| `install.sh`                           | Shell install script, downloads binary from GitHub Releases                        |
+| `scripts/releaser.ts`                  | Generates platform packages and publishes everything to npm                        |
+| `.github/release-notes/vX.Y.Z.md`      | Optional version-specific intro prepended to stable GitHub Release notes           |
+| `scripts/lib/targets.ts`               | Target definitions (used by both releaser and build.ts)                            |
+| `scripts/build.ts`                     | Cross-compiles CLI binaries for all 8 platform targets                             |
+| `scripts/sign-macos.ts`                | Signs and notarizes macOS binaries (keychain, codesign, notarytool)                |
+| `scripts/entitlements.plist`           | macOS entitlements for Bun's JIT engine (used by codesign)                         |
+| `scripts/canary.ts`                    | Versions packages for canary channel using Changesets snapshots                    |
+| `scripts/snapshot.ts`                  | Versions packages for snapshot channel using Changesets snapshots                  |
+| `scripts/check-release.ts`             | Detects if a stable release is needed (compares version to npm registry)           |
+| `scripts/homebrew.ts`                  | Creates Homebrew archives, uploads to release, renders and pushes formula          |
+| `scripts/lib/homebrew.ts`              | Homebrew formula renderer, target list, and helper utilities                       |
+| `.changeset/config.json`               | Changesets configuration                                                           |
+| `.github/workflows/build-binaries.yml` | Reusable workflow for cross-compiling binaries (called by release + snapshot)      |
+| `.github/workflows/sign-macos.yml`     | Reusable workflow for macOS code signing and notarization                          |
+| `.github/workflows/smoke-test.yml`     | Reusable workflow for smoke-testing binaries (called by release + snapshot)        |
+| `.github/workflows/release.yml`        | GitHub Actions release, canary, and snapshot workflow                              |
 
 ## Keeping Targets in Sync
 
@@ -255,7 +256,7 @@ bun run build:compile:all
 bun run scripts/build.ts --target=bun-darwin-arm64
 ```
 
-The `dev` and `start` commands do not inject a version (falls back to `0.0.0-dev`). The release workflow handles version injection.
+The `dev` and `start` commands do not inject a version, so the CLI falls back to a checkout-derived dev version — `<version in packages/cli/package.json>-dev.<YYYYMMDD>.<short sha>`, suffixed `.dirty` for an unclean tree. `scripts/build.ts` uses the same string as its `--version` default, so a local `build:compile:all` rehearsal stamps binaries with the commit they were built from. The release workflow always passes an explicit `--version`.
 
 > **Bun version for local rehearsal:** CI pins Bun `1.3.11` in [`build-binaries.yml`](../.github/workflows/build-binaries.yml) because `1.3.12` produces darwin-arm64 binaries that macOS codesign rejects. If you are rehearsing a release locally and plan to execute the compiled darwin-arm64 binary, match the CI pin. This will stop being relevant once the pin is lifted. Note the pin only covers compiling binaries — it sits below the workspace's `engines.bun` floor (`>=1.3.13`), which is what running the test suite requires (`bun test --parallel` support).
 
