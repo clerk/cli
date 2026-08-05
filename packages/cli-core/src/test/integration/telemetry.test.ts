@@ -42,8 +42,9 @@ test("sends one anonymous event for a successful command", async () => {
   // Env-dependent fields are strings, values depend on the host machine.
   expect(typeof event.payload.ai_agent).toBe("string");
   expect(typeof event.payload.install_method).toBe("string");
-  // Never collected:
-  expect(JSON.stringify(event)).not.toContain("zsh-value-of-an-option");
+  // Never collected: the argument value ("zsh") must not leak into any event
+  // field — fails if command path or flags ever start carrying argv values.
+  expect(JSON.stringify(event)).not.toContain("zsh");
 });
 
 test("records failures with error code and reuses the machine uuid", async () => {
