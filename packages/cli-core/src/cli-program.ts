@@ -45,6 +45,11 @@ import { isAgent } from "./mode.ts";
 import { log } from "./lib/log.ts";
 import { maybeNotifyUpdate, getCurrentVersion } from "./lib/update-check.ts";
 import { registerExtras } from "@clerk/cli-extras";
+import {
+  finalizeAndSendTelemetry,
+  startCommandTelemetry,
+  telemetryResultForError,
+} from "./lib/telemetry.ts";
 
 /**
  * The root `clerk` program with its global options applied, so registrants
@@ -100,7 +105,7 @@ export function createProgram(): Program {
     )
     .option("--verbose", "Show detailed output (enables debug messages)") as Program;
 
-  program.hook("preAction", async () => {
+  program.hook("preAction", async (_thisCommand, actionCommand) => {
     // Reset log level at the start of each command invocation so a previous
     // --verbose doesn't leak into subsequent runs.
     setLogLevel("info");
@@ -135,6 +140,7 @@ export function createProgram(): Program {
     if (activeEnv !== "production") {
       process.stderr.write(`[${activeEnv.toUpperCase()}]\n`);
     }
+    startCommandTelemetry(actionCommand);
   });
 
   // Show update notification after each command, except for commands that
@@ -231,7 +237,9 @@ export async function runProgram(
   try {
     const { argv, from } = await resolveArgv(args, options?.from);
     await program.parseAsync(argv, { from });
+    await finalizeAndSendTelemetry({ outcome: "success", exitCode: EXIT_CODE.SUCCESS });
   } catch (error) {
+    await finalizeAndSendTelemetry(telemetryResultForError(error));
     const verbose = program.opts().verbose ?? false;
 
     if (error instanceof UserAbortError || isPromptExitError(error)) {
