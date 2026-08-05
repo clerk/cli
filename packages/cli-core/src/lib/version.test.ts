@@ -1,7 +1,17 @@
-import { test, expect, describe } from "bun:test";
+import { test, expect, describe, afterEach } from "bun:test";
 import semver from "semver";
 import cliPackage from "../../../cli/package.json";
-import { isDevVersion, resolveCliVersion, resolveDevVersion } from "./version.ts";
+import {
+  getCurrentVersion,
+  isDevVersion,
+  resolveCliVersion,
+  resolveDevVersion,
+} from "./version.ts";
+
+// `CLI_VERSION` is a compile-time define, absent under the test runner. Setting
+// the global stands in for a binary built with one, since the unresolved
+// identifier reads through to `globalThis`.
+const globals = globalThis as unknown as { CLI_VERSION?: string };
 
 // ── isDevVersion ──────────────────────────────────────────────────────────────
 
@@ -31,8 +41,47 @@ describe("isDevVersion", () => {
 // ── resolveCliVersion ─────────────────────────────────────────────────────────
 
 describe("resolveCliVersion", () => {
+  afterEach(() => {
+    delete globals.CLI_VERSION;
+  });
+
   test("returns undefined under the test runner, where CLI_VERSION is undefined", () => {
     expect(resolveCliVersion()).toBeUndefined();
+  });
+
+  test("returns an injected release version", () => {
+    globals.CLI_VERSION = "3.1.0";
+    expect(resolveCliVersion()).toBe("3.1.0");
+  });
+
+  test("treats an injected dev version as unversioned", () => {
+    globals.CLI_VERSION = "3.0.0-dev.20260803.f51f1e4";
+    expect(resolveCliVersion()).toBeUndefined();
+  });
+});
+
+// ── getCurrentVersion ─────────────────────────────────────────────────────────
+
+describe("getCurrentVersion", () => {
+  afterEach(() => {
+    delete globals.CLI_VERSION;
+  });
+
+  test("falls back to the checkout when nothing was injected", () => {
+    expect(getCurrentVersion()).toBe(resolveDevVersion());
+  });
+
+  test("reports an injected release version", () => {
+    globals.CLI_VERSION = "3.1.0";
+    expect(getCurrentVersion()).toBe("3.1.0");
+  });
+
+  test("keeps the commit segment of an injected dev version", () => {
+    // A locally compiled binary can't reach git at runtime — `import.meta.dir`
+    // points into its embedded filesystem — so the version stamped in at build
+    // time is the only thing that still knows which commit it came from.
+    globals.CLI_VERSION = "3.0.0-dev.20260803.f51f1e4.dirty";
+    expect(getCurrentVersion()).toBe("3.0.0-dev.20260803.f51f1e4.dirty");
   });
 });
 

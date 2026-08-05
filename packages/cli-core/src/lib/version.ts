@@ -13,6 +13,10 @@
  * moves when you pull, which is what makes `clerk --version` able to answer
  * "is the `clerk` on my PATH the code I just fetched?".
  *
+ * Anything that *displays* a version — `--version`, the outbound user agent,
+ * MCP client info — calls `getCurrentVersion()`, which prefers whatever was
+ * injected even when that is itself a dev version.
+ *
  * Two callers care about the dev/release *distinction* rather than the string:
  * `credential-store` namespaces the macOS keychain away from release builds,
  * and `update-check` suppresses update prompts. Both go through
@@ -38,8 +42,8 @@ export function isDevVersion(version: string): boolean {
 
 /**
  * Resolve the current CLI version, or `undefined` when running an unversioned
- * dev build. Anything that wants to *display* a version should fall back to
- * `resolveDevVersion()`; anything that wants to *decide* whether this binary is
+ * dev build. Anything that wants to *display* a version should call
+ * `getCurrentVersion()`; anything that wants to *decide* whether this binary is
  * meaningfully versioned should check for `undefined` here.
  */
 export function resolveCliVersion(): string | undefined {
@@ -77,8 +81,11 @@ function describeCheckout(): string | undefined {
   // escape for the same problem.
   const commit = /^0\d*$/.test(sha) ? `g${sha}` : sha;
 
-  const diff = git(["diff", "--quiet", "HEAD"]);
-  const dirty = diff?.exitCode === 1 ? ".dirty" : "";
+  // `status --porcelain` rather than `diff --quiet HEAD`: an untracked source
+  // file is code the build picks up but the commit doesn't describe, so it
+  // makes the checkout dirty just as a modified tracked file does.
+  const status = git(["status", "--porcelain", "--untracked-files=normal"]);
+  const dirty = status?.exitCode === 0 && status.stdout !== "" ? ".dirty" : "";
 
   return `${date.replaceAll("-", "")}.${commit}${dirty}`;
 }
@@ -95,4 +102,20 @@ export function resolveDevVersion(): string {
   const checkout = describeCheckout();
   devVersion = `${cliPackage.version}-${DEV_TAG}${checkout ? `.${checkout}` : ""}`;
   return devVersion;
+}
+
+/**
+ * The version this build reports to anyone who asks — `--version`, the outbound
+ * user agent, MCP client info.
+ *
+ * Prefers the injected `CLI_VERSION` even when it is a dev version. A local
+ * `build:compile` stamps the checkout it was built from into the binary, and
+ * that string is strictly better than anything the binary can recompute later:
+ * `import.meta.dir` inside a compiled binary points at the embedded virtual
+ * filesystem, so git is unreachable and `resolveDevVersion()` would degrade to
+ * a bare `<base>-dev`, dropping the date and commit.
+ */
+export function getCurrentVersion(): string {
+  if (typeof CLI_VERSION !== "undefined") return CLI_VERSION;
+  return resolveDevVersion();
 }

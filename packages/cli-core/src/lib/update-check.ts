@@ -10,7 +10,7 @@ import {
 } from "./constants.ts";
 import { loggedFetch } from "./fetch.ts";
 import { log } from "./log.ts";
-import { isDevVersion, resolveDevVersion } from "./version.ts";
+import { getCurrentVersion, isDevVersion } from "./version.ts";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -37,12 +37,8 @@ export function getUpdateChannel(): string {
 
 // ── Version helpers ───────────────────────────────────────────────────────────
 
-export function getCurrentVersion(): string {
-  return typeof CLI_VERSION !== "undefined" ? CLI_VERSION : resolveDevVersion();
-}
-
 // Re-exported so callers can pull the whole version/update surface from here.
-export { isDevVersion };
+export { getCurrentVersion, isDevVersion };
 
 export function compareSemver(a: string, b: string): number {
   return semver.compare(a, b);

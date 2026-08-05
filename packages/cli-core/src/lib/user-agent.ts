@@ -10,10 +10,10 @@
  *   - `ci` segment is appended when running under a recognized CI environment.
  */
 
-import { resolveCliVersion, resolveDevVersion } from "./version.ts";
+import { getCurrentVersion } from "./version.ts";
 
 export function buildUserAgent(): string {
-  const version = resolveCliVersion() ?? resolveDevVersion();
+  const version = getCurrentVersion();
   const segments = [`Bun/${Bun.version}`, `${process.platform}-${process.arch}`];
   if (process.env.CI) segments.push("ci");
   return `Clerk-CLI/${version} (${segments.join("; ")})`;
