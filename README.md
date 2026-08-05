@@ -56,3 +56,12 @@ Commands:
   help             [command]                      Display help for command
   bird                                            Play Clerk Bird, a Flappy Bird game in your terminal
 ```
+
+## Telemetry
+
+The Clerk CLI collects anonymous usage telemetry (command name, flag names, duration,
+outcome, and environment signals like OS, install method, and terminal). It never
+collects command arguments, option values, file paths, or personal data. See
+https://clerk.com/docs/telemetry for details.
+
+Opt out by setting `CLERK_TELEMETRY_DISABLED=1` (or the standard `DO_NOT_TRACK=1`).
