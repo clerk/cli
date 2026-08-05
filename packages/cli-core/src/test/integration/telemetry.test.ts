@@ -4,15 +4,25 @@
  * fetch, so events are captured from http.requests.
  */
 
-import { afterEach, expect, test } from "bun:test";
+import { afterEach, beforeEach, expect, test } from "bun:test";
 import { clerk, http, useIntegrationTestHarness } from "./lib/harness.ts";
 
 useIntegrationTestHarness();
 
 const TELEMETRY_URL = "https://test-telemetry.clerk.com/v1/event";
 
+// Isolate from ambient env: clear before each test too (not just after) so a
+// pre-set CLERK_TELEMETRY_URL/CLERK_TELEMETRY_DISABLED/DO_NOT_TRACK in the
+// shell can't change whether telemetry is enabled for the first test.
+beforeEach(() => {
+  delete process.env.CLERK_TELEMETRY_URL;
+  delete process.env.CLERK_TELEMETRY_DISABLED;
+  delete process.env.DO_NOT_TRACK;
+});
 afterEach(() => {
   delete process.env.CLERK_TELEMETRY_URL;
+  delete process.env.CLERK_TELEMETRY_DISABLED;
+  delete process.env.DO_NOT_TRACK;
 });
 
 function telemetryEvents() {
@@ -70,6 +80,26 @@ test("records failures with error code and reuses the machine uuid", async () =>
   expect(event.payload.exit_code).toBe(1);
   expect(event.payload.error_code).toBe("unexpected_error");
   expect(event.payload.machine_uuid).toBe(firstUuid);
+});
+
+test("maps a soft failure (process.exitCode set without throwing) to outcome error", async () => {
+  process.env.CLERK_TELEMETRY_URL = TELEMETRY_URL;
+  http.mock({ "test-telemetry.clerk.com": {} });
+
+  try {
+    // Simulates commands (api, deploy status, mcp, users) that report
+    // failure by setting process.exitCode instead of throwing.
+    process.exitCode = 1;
+    await clerk.raw("completion", "zsh");
+
+    const bodies = telemetryEvents();
+    expect(bodies).toHaveLength(1);
+    const event = bodies[0]!.events[0]!;
+    expect(event.payload.outcome).toBe("error");
+    expect(event.payload.exit_code).toBe(1);
+  } finally {
+    process.exitCode = undefined;
+  }
 });
 
 test("command succeeds even when the telemetry endpoint is down", async () => {
