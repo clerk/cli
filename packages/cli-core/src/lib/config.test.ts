@@ -16,6 +16,9 @@ const {
   resolveInstanceId,
   resolveAppContext,
   resolveFetchedApplicationInstance,
+  ensureMachineUuid,
+  markTelemetryNoticeShown,
+  setEnvironment,
   _setConfigDir,
 } = await import("./config.ts");
 type Profile =
@@ -329,6 +332,27 @@ describe("config", () => {
       ).rejects.toMatchObject({
         code: "instance_not_found",
       });
+    });
+  });
+
+  describe("telemetry config", () => {
+    test("ensureMachineUuid generates once and persists", async () => {
+      const first = await ensureMachineUuid();
+      expect(first).toMatch(/^[0-9a-f-]{36}$/);
+      const second = await ensureMachineUuid();
+      expect(second).toBe(first);
+    });
+
+    test("machineUuid survives readConfig round-trip with other fields", async () => {
+      const uuid = await ensureMachineUuid();
+      await setEnvironment("production");
+      const config = await readConfig();
+      expect(config.machineUuid).toBe(uuid);
+    });
+
+    test("markTelemetryNoticeShown returns true exactly once", async () => {
+      expect(await markTelemetryNoticeShown()).toBe(true);
+      expect(await markTelemetryNoticeShown()).toBe(false);
     });
   });
 });
