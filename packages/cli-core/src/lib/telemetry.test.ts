@@ -95,9 +95,20 @@ describe("telemetryResultForError", () => {
 
 describe("finalizeAndSendTelemetry", () => {
   const originalFetch = globalThis.fetch;
+
+  // Isolate from ambient env: clear before each test too (not just after) so a
+  // pre-set CLERK_TELEMETRY_DISABLED/DO_NOT_TRACK/CLERK_TELEMETRY_URL in the
+  // shell can't change whether telemetry is enabled for the first test.
+  beforeEach(() => {
+    delete process.env.CLERK_TELEMETRY_URL;
+    delete process.env.CLERK_TELEMETRY_DISABLED;
+    delete process.env.DO_NOT_TRACK;
+  });
   afterEach(() => {
     globalThis.fetch = originalFetch;
     delete process.env.CLERK_TELEMETRY_URL;
+    delete process.env.CLERK_TELEMETRY_DISABLED;
+    delete process.env.DO_NOT_TRACK;
   });
 
   function fakeCommand(): TelemetryCommand {
