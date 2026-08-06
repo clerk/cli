@@ -1,4 +1,5 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from "bun:test";
+import { getMode, setMode } from "../../../mode.ts";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -414,7 +415,15 @@ describe("exportFirebase", () => {
 
   test("names the command that consumes the file", async () => {
     stubFirebase([[fbUser(0)]], { signIn: {} });
-    await exportFirebase({ serviceAccount: "./sa.json" });
+    // The suggestion now rides the gutter's Next steps block, which only
+    // renders in human mode.
+    const originalMode = getMode();
+    setMode("human");
+    try {
+      await exportFirebase({ serviceAccount: "./sa.json" });
+    } finally {
+      setMode(originalMode);
+    }
     expect(captured.err).toContain(
       "migrate run --transformer firebase --file exports/firebase-export.json",
     );

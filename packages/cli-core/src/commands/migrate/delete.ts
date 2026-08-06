@@ -31,6 +31,7 @@ import {
 } from "../../lib/errors.ts";
 import { describeBapiTarget, resolveBapiSecretKey } from "../../lib/bapi-command.ts";
 import { log } from "../../lib/log.ts";
+import { NEXT_STEPS } from "../../lib/next-steps.ts";
 import { confirm } from "../../lib/prompts.ts";
 import { withGutter, withSpinner, type SpinnerControls } from "../../lib/spinner.ts";
 import { isAgent, isHuman } from "../../mode.ts";
@@ -130,7 +131,7 @@ export async function findMigratedUsers(options: {
   const batches = batch(options.externalIds, EXTERNAL_ID_BATCH);
 
   for (const [index, ids] of batches.entries()) {
-    options.spinner?.update(`Finding migrated users: batch ${index + 1}/${batches.length}`);
+    options.spinner?.update(`Finding migrated users: batch ${index + 1}/${batches.length}...`);
 
     const params = new URLSearchParams();
     params.set("limit", String(EXTERNAL_ID_BATCH));
@@ -181,7 +182,7 @@ export async function deleteMigratedUsers(options: {
 
   const progress = () =>
     spinner?.update(
-      `Deleting users: [${processed}/${users.length}] (${deleted} deleted, ${failed} failed)`,
+      `Deleting users: [${processed}/${users.length}] (${deleted} deleted, ${failed} failed)...`,
     );
 
   // A failure on one user must not abort the rest: a half-undone migration
@@ -264,7 +265,7 @@ export async function deleteMigration(options: MigrateDeleteOptions): Promise<vo
 
   const { file, key } = await resolveMigrationToUndo();
 
-  await withGutter("Undoing a migration", async () => {
+  await withGutter("Undoing a migration", async ({ setNextSteps }) => {
     const target = await describeBapiTarget({ ...options, secretKey: secretKeyOption });
     const secretKey = await resolveBapiSecretKey({ ...options, secretKey: secretKeyOption });
     const limits = resolveLimits(secretKey);
@@ -277,15 +278,13 @@ export async function deleteMigration(options: MigrateDeleteOptions): Promise<vo
       return;
     }
 
-    const users = await withSpinner(
-      "Finding migrated users",
-      (spinner) => findMigratedUsers({ externalIds, secretKey, spinner }),
-      "Search complete",
+    const users = await withSpinner("Finding migrated users...", (spinner) =>
+      findMigratedUsers({ externalIds, secretKey, spinner }),
     );
 
     if (users.length === 0) {
       log.info(
-        `None of the ${externalIds.length} user(s) in ${file} are in ${target ?? "this instance"}. Nothing to delete.`,
+        `None of the ${externalIds.length} user${externalIds.length === 1 ? "" : "s"} in ${file} are in ${target ?? "this instance"}. Nothing to delete.`,
       );
       return;
     }
@@ -297,7 +296,7 @@ export async function deleteMigration(options: MigrateDeleteOptions): Promise<vo
     if (users.length < externalIds.length) {
       log.info(
         dim(
-          `${externalIds.length - users.length} of the file's user(s) are not in this instance and will be left alone.`,
+          `${externalIds.length - users.length} of the file's users ${externalIds.length - users.length === 1 ? "is" : "are"} not in this instance and will be left alone.`,
         ),
       );
     }
@@ -305,7 +304,7 @@ export async function deleteMigration(options: MigrateDeleteOptions): Promise<vo
     if (!options.yes) {
       if (isAgent() || !isHuman()) {
         throwUsageError(
-          `\`clerk migrate delete\` permanently deletes ${users.length} user(s) and cannot prompt here. Pass -y to confirm.`,
+          `\`clerk migrate delete\` permanently deletes ${users.length} user${users.length === 1 ? "" : "s"} and cannot prompt here. Pass -y to confirm.`,
           undefined,
           undefined,
           [
@@ -324,13 +323,13 @@ export async function deleteMigration(options: MigrateDeleteOptions): Promise<vo
       if (!proceed) throwUserAbort();
     }
 
-    const summary = await withSpinner(
-      `Deleting users: [0/${users.length}]`,
-      (spinner) => deleteMigratedUsers({ users, secretKey, limits, dateTime, spinner }),
-      "Deletion complete",
+    const summary = await withSpinner(`Deleting users: [0/${users.length}]...`, (spinner) =>
+      deleteMigratedUsers({ users, secretKey, limits, dateTime, spinner }),
     );
 
-    log.raw(formatSummary(summary, logFile));
+    log.info(formatSummary(summary, logFile));
+
+    setNextSteps(NEXT_STEPS.MIGRATE_DELETE);
 
     if (summary.failed > 0) process.exitCode = 1;
   });

@@ -1,4 +1,5 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from "bun:test";
+import { getMode, setMode } from "../../../mode.ts";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -240,12 +241,20 @@ describe("exportClerk", () => {
     expect(written).toHaveLength(1);
     expect(written[0]?.id).toBe("u1");
     expect(captured.err).toContain("Field coverage");
-    expect(captured.err).toContain("Exported 1 user(s)");
+    expect(captured.err).toContain("Exported 1 user");
   });
 
   test("names the command that consumes the file", async () => {
     stubPages([[user()], []]);
-    await exportClerk({ secretKey: "sk_test_x" });
+    // The suggestion now rides the gutter's Next steps block, which only
+    // renders in human mode.
+    const originalMode = getMode();
+    setMode("human");
+    try {
+      await exportClerk({ secretKey: "sk_test_x" });
+    } finally {
+      setMode(originalMode);
+    }
     expect(captured.err).toContain(
       "migrate run --transformer clerk --file exports/clerk-export.json",
     );
@@ -277,5 +286,30 @@ describe("exportClerk", () => {
     expect(
       JSON.parse(fs.readFileSync(path.join(workDir, "exports", "clerk-export.json"), "utf-8")),
     ).toEqual([]);
+  });
+
+  test("an empty export warns but does not suggest importing it", async () => {
+    stubPages([[]]);
+    const originalMode = getMode();
+    setMode("human");
+    try {
+      await exportClerk({ secretKey: "sk_test_x" });
+    } finally {
+      setMode(originalMode);
+    }
+
+    expect(captured.err).toContain("No users found to export");
+    expect(captured.err).not.toContain("Next steps");
+    expect(captured.err).not.toContain("migrate run --transformer");
+  });
+
+  test("agent mode suppresses the Next steps block", async () => {
+    stubPages([[user()], []]);
+
+    await exportClerk({ secretKey: "sk_test_x" });
+
+    expect(captured.err).toContain("Exported 1 user");
+    expect(captured.err).not.toContain("Next steps");
+    expect(captured.err).not.toContain("migrate run --transformer");
   });
 });

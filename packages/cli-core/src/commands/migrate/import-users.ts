@@ -299,7 +299,7 @@ export async function importUsers(options: ImportUsersOptions): Promise<ImportSu
 
   const progress = () =>
     spinner?.update(
-      `Importing users: [${processed}/${total}] (${successful} succeeded, ${failed} failed)`,
+      `Importing users: [${processed}/${total}] (${successful} succeeded, ${failed} failed)...`,
     );
 
   const recordFailure = (userId: string, message: string, code: string) => {

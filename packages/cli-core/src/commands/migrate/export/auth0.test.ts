@@ -1,4 +1,5 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from "bun:test";
+import { getMode, setMode } from "../../../mode.ts";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -290,7 +291,15 @@ describe("exportAuth0", () => {
 
   test("names the command that consumes the file", async () => {
     stubAuth0([[auth0User(0)], []]);
-    await exportAuth0({ ...CREDENTIALS });
+    // The suggestion now rides the gutter's Next steps block, which only
+    // renders in human mode.
+    const originalMode = getMode();
+    setMode("human");
+    try {
+      await exportAuth0({ ...CREDENTIALS });
+    } finally {
+      setMode(originalMode);
+    }
     expect(captured.err).toContain(
       "migrate run --transformer auth0 --file exports/auth0-export.json",
     );

@@ -255,7 +255,7 @@ export async function fetchAllFirebaseUsers(options: {
 
     const body = (await response.json()) as { users?: FirebaseUser[]; nextPageToken?: string };
     all.push(...(body.users ?? []));
-    options.spinner?.update(`Fetching users from Firebase: ${all.length} so far`);
+    options.spinner?.update(`Fetching users from Firebase: ${all.length} so far...`);
     pageToken = body.nextPageToken;
   } while (pageToken);
 
@@ -424,28 +424,30 @@ export async function exportFirebase(options: ExportFirebaseOptions): Promise<vo
   // fails in a second rather than after an auth round-trip.
   const account = readServiceAccount(options.serviceAccount);
 
-  await withGutter("Exporting users from Firebase", async () => {
+  await withGutter("Exporting users from Firebase", async ({ setNextSteps }) => {
     const dateTime = getDateTimeStamp();
     log.info(`Exporting from the ${account.project_id} project.`);
 
-    const token = await withSpinner("Authenticating with Google", () => fetchAccessToken(account));
+    const token = await withSpinner("Authenticating with Google...", () =>
+      fetchAccessToken(account),
+    );
 
-    const users = await withSpinner(
-      "Fetching users from Firebase",
-      (spinner) => fetchAllFirebaseUsers({ account, token, spinner }),
-      "Users fetched",
+    const users = await withSpinner("Fetching users from Firebase...", (spinner) =>
+      fetchAllFirebaseUsers({ account, token, spinner }),
     );
 
     const { users: exported, coverage } = buildFirebaseExport(users, dateTime);
     const outputPath = writeExportOutput(exported, options.output ?? defaultOutputPath("firebase"));
 
-    reportExport({
-      platform: "firebase",
-      userCount: exported.length,
-      outputPath,
-      coverage,
-      transformerKey: "firebase",
-    });
+    setNextSteps(
+      reportExport({
+        platform: "firebase",
+        userCount: exported.length,
+        outputPath,
+        coverage,
+        transformerKey: "firebase",
+      }),
+    );
 
     const passwordCount = coverage.find((entry) => entry.label.includes("password"))?.count ?? 0;
     const hashConfig = passwordCount > 0 ? await fetchHashConfig(account, token) : null;

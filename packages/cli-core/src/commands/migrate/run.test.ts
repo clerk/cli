@@ -263,7 +263,7 @@ describe("run", () => {
 
     const created = requests.filter((r) => r.url.endsWith("/v1/users"));
     expect(created.map((r) => (r.body as { external_id: string }).external_id)).toEqual(["u1"]);
-    expect(captured.err).toContain("skipping 1 user(s) without a password");
+    expect(captured.err).toContain("skipping 1 user without a password");
   });
 
   test("--resume-after skips everyone up to and including that ID", async () => {
@@ -279,7 +279,7 @@ describe("run", () => {
     await run(baseOptions);
 
     expect(requests.filter((r) => r.url.endsWith("/v1/users"))).toHaveLength(2);
-    expect(captured.err).toContain("1 user(s) failed validation");
+    expect(captured.err).toContain("1 user failed validation");
   });
 
   test("warns that --clerk-secret-key is deprecated but still honours it", async () => {
@@ -750,7 +750,7 @@ describe("run", () => {
       await run({ ...baseOptions, transformer: "supabase", skipUnsupportedProviders: true });
 
       expect(created()).toEqual(["sb_email", "sb_both"]);
-      expect(captured.err).toContain("skipping 1 user(s)");
+      expect(captured.err).toContain("skipping 1 user ");
       expect(captured.err).toContain("discord: 1");
     });
 

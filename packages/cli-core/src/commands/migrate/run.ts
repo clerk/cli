@@ -14,6 +14,7 @@ import { describeBapiTarget, resolveBapiSecretKey } from "../../lib/bapi-command
 import { bold, dim, green, red, yellow } from "../../lib/color.ts";
 import { CliError, ERROR_CODE, throwUsageError, throwUserAbort } from "../../lib/errors.ts";
 import { log } from "../../lib/log.ts";
+import { NEXT_STEPS } from "../../lib/next-steps.ts";
 import { confirm } from "../../lib/prompts.ts";
 import { withGutter, withSpinner } from "../../lib/spinner.ts";
 import { isAgent, isHuman } from "../../mode.ts";
@@ -270,7 +271,7 @@ async function skipDisabledProviderUsers(
     return users;
   }
 
-  const settings = await withSpinner("Checking enabled providers", () =>
+  const settings = await withSpinner("Checking enabled providers...", () =>
     fetchInstanceSettings(secretKey),
   );
   const enabled = settings ? enabledSocialProviders(settings) : null;
@@ -300,7 +301,7 @@ async function skipDisabledProviderUsers(
     .map(([provider, count]) => `${provider}: ${count}`)
     .join(", ");
   log.warn(
-    `--skip-unsupported-providers: skipping ${excludedIds.size} user(s) whose only provider is not enabled in Clerk (${breakdown}).`,
+    `--skip-unsupported-providers: skipping ${excludedIds.size} user${excludedIds.size === 1 ? "" : "s"} whose only provider is not enabled in Clerk (${breakdown}).`,
   );
 
   return users.filter((user) => !excludedIds.has(user.userId));
@@ -328,7 +329,7 @@ async function showReadinessReport(input: {
 }): Promise<void> {
   if (input.skipReport) return;
 
-  const settings = await withSpinner("Checking instance settings", () =>
+  const settings = await withSpinner("Checking instance settings...", () =>
     fetchInstanceSettings(input.secretKey),
   );
 
@@ -443,7 +444,7 @@ export async function run(rawOptions: MigrateRunOptions): Promise<void> {
   const { transformer, file } = validateRunOptions(options);
   const firebaseHashConfig = await resolveFirebaseHashConfig(options);
 
-  await withGutter("Migrating users to Clerk", async () => {
+  await withGutter("Migrating users to Clerk", async ({ setNextSteps }) => {
     const target = await describeBapiTarget({ ...options, secretKey: secretKeyOption });
     const secretKey = await resolveBapiSecretKey({ ...options, secretKey: secretKeyOption });
     const limits = resolveLimits(secretKey);
@@ -451,9 +452,8 @@ export async function run(rawOptions: MigrateRunOptions): Promise<void> {
     const logFile = getLogFilePath("migration", dateTime);
 
     const { users: loaded, validationFailed } = await withSpinner(
-      `Loading users from ${file}`,
+      `Loading users from ${file}...`,
       () => loadUsersFromFile(file, transformer, dateTime, { context: { firebaseHashConfig } }),
-      "Users loaded",
     );
 
     let users = applyResumeAfter(loaded, options.resumeAfter);
@@ -469,14 +469,16 @@ export async function run(rawOptions: MigrateRunOptions): Promise<void> {
       const withPassword = users.filter((user) => Boolean(user.password));
       const dropped = users.length - withPassword.length;
       if (dropped > 0) {
-        log.info(`--require-password: skipping ${dropped} user(s) without a password.`);
+        log.info(
+          `--require-password: skipping ${dropped} user${dropped === 1 ? "" : "s"} without a password.`,
+        );
       }
       users = withPassword;
     }
 
     if (validationFailed > 0) {
       log.warn(
-        `${validationFailed} user(s) failed validation and will be skipped. See ${logFile}.`,
+        `${validationFailed} user${validationFailed === 1 ? "" : "s"} failed validation and will be skipped. See ${logFile}.`,
       );
     }
 
@@ -493,9 +495,12 @@ export async function run(rawOptions: MigrateRunOptions): Promise<void> {
       );
     }
 
+    // `target` already carries the instance's environment ("My App
+    // (development)"), so the detected type is only worth spelling out when
+    // there is no app context to name — an explicit `--secret-key`.
     log.info(
-      `Importing ${users.length} user(s) via the ${transformer} transformer into ` +
-        `${target ?? "the resolved instance"} (${limits.instanceType}).`,
+      `Importing ${users.length} user${users.length === 1 ? "" : "s"} via the ${transformer} transformer into ` +
+        `${target ?? `the resolved instance (${limits.instanceType})`}.`,
     );
 
     await showReadinessReport({
@@ -509,7 +514,7 @@ export async function run(rawOptions: MigrateRunOptions): Promise<void> {
 
     if (!options.yes && isHuman() && !isAgent()) {
       const proceed = await confirm({
-        message: `Import ${users.length} user(s)?`,
+        message: `Import ${users.length} user${users.length === 1 ? "" : "s"}?`,
         default: false,
       });
       if (!proceed) throwUserAbort();
@@ -523,22 +528,23 @@ export async function run(rawOptions: MigrateRunOptions): Promise<void> {
       ...(options.skipUnsupportedProviders ? { skipUnsupportedProviders: true } : {}),
     });
 
-    const summary = await withSpinner(
-      `Importing users: [0/${users.length}]`,
-      (spinner) =>
-        importUsers({
-          users,
-          secretKey,
-          limits,
-          dateTime,
-          skipPasswordRequirement: !options.requirePassword,
-          validationFailed,
-          spinner,
-        }),
-      "Import complete",
+    const summary = await withSpinner(`Importing users: [0/${users.length}]...`, (spinner) =>
+      importUsers({
+        users,
+        secretKey,
+        limits,
+        dateTime,
+        skipPasswordRequirement: !options.requirePassword,
+        validationFailed,
+        spinner,
+      }),
     );
 
-    log.raw(formatSummary(summary, logFile));
+    log.info(formatSummary(summary, logFile));
+
+    // Offered even when some users failed: a partial import is exactly when
+    // reading the log and knowing how to undo it matters most.
+    setNextSteps(NEXT_STEPS.MIGRATE_DONE);
 
     if (summary.failed > 0) process.exitCode = 1;
   });

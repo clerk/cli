@@ -172,7 +172,7 @@ export async function fetchAllClerkUsers(options: {
 
     const page = Array.isArray(response.body) ? (response.body as BapiUser[]) : [];
     all.push(...page);
-    options.spinner?.update(`Fetching users from Clerk: ${all.length} so far`);
+    options.spinner?.update(`Fetching users from Clerk: ${all.length} so far...`);
 
     // A short page means the end; anything else would loop forever on an
     // instance whose size happens to be a multiple of the page size.
@@ -229,29 +229,29 @@ export async function exportClerk(options: ExportClerkOptions): Promise<void> {
   }
   const secretKeyOption = options.secretKey ?? options.clerkSecretKey;
 
-  await withGutter("Exporting users from Clerk", async () => {
+  await withGutter("Exporting users from Clerk", async ({ setNextSteps }) => {
     const target = await describeBapiTarget({ ...options, secretKey: secretKeyOption });
     const secretKey = await resolveBapiSecretKey({ ...options, secretKey: secretKeyOption });
     const dateTime = getDateTimeStamp();
 
     log.info(`Exporting from ${target ?? "the resolved instance"}.`);
 
-    const users = await withSpinner(
-      "Fetching users from Clerk",
-      (spinner) => fetchAllClerkUsers({ secretKey, spinner }),
-      "Users fetched",
+    const users = await withSpinner("Fetching users from Clerk...", (spinner) =>
+      fetchAllClerkUsers({ secretKey, spinner }),
     );
 
     const { users: exported, coverage } = buildClerkExport(users, dateTime);
     const outputPath = writeExportOutput(exported, options.output ?? defaultOutputPath("clerk"));
 
-    reportExport({
-      platform: "clerk",
-      userCount: exported.length,
-      outputPath,
-      coverage,
-      transformerKey: "clerk",
-    });
+    setNextSteps(
+      reportExport({
+        platform: "clerk",
+        userCount: exported.length,
+        outputPath,
+        coverage,
+        transformerKey: "clerk",
+      }),
+    );
 
     if (exported.length > 0) {
       log.warn(

@@ -160,10 +160,10 @@ export async function exportBetterAuth(options: DbExportOptions): Promise<void> 
     hint: "Postgres, MySQL or a SQLite file — whichever your Better Auth install uses.",
   });
 
-  await withGutter("Exporting users from Better Auth", async () => {
+  await withGutter("Exporting users from Better Auth", async ({ setNextSteps }) => {
     const dateTime = getDateTimeStamp();
 
-    const { rows, plugins } = await withSpinner("Reading the user table", () =>
+    const { rows, plugins } = await withSpinner("Reading the user table...", () =>
       withDbClient(dbUrl, "betterauth", async (client) => {
         const plugins = await detectPluginColumns(client);
         const rows = await client.query<BetterAuthRow>(buildBetterAuthQuery(client, plugins));
@@ -180,12 +180,14 @@ export async function exportBetterAuth(options: DbExportOptions): Promise<void> 
     const { users, coverage } = buildBetterAuthExport(rows, dateTime);
     const outputPath = writeExportOutput(users, options.output ?? defaultOutputPath("betterauth"));
 
-    reportExport({
-      platform: "betterauth",
-      userCount: users.length,
-      outputPath,
-      coverage,
-      transformerKey: "betterauth",
-    });
+    setNextSteps(
+      reportExport({
+        platform: "betterauth",
+        userCount: users.length,
+        outputPath,
+        coverage,
+        transformerKey: "betterauth",
+      }),
+    );
   });
 }

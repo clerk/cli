@@ -382,7 +382,7 @@ describe("deleteMigration", () => {
     await deleteMigration(baseOptions);
 
     expect(deleteCalls()).toEqual([expect.stringContaining("/v1/users/user_1")]);
-    expect(captured.err).toContain("1 of the file's user(s) are not in this instance");
+    expect(captured.err).toContain("1 of the file's users is not in this instance");
   });
 
   test("does nothing when none of the migration's users are present", async () => {
@@ -399,7 +399,7 @@ describe("deleteMigration", () => {
     stubBapi({ legacy_a: "user_1", legacy_b: "user_2" });
 
     await expect(deleteMigration({ secretKey: "sk_test_x" })).rejects.toThrow(
-      /permanently deletes 2 user\(s\) and cannot prompt here/,
+      /permanently deletes 2 users and cannot prompt here/,
     );
     expect(deleteCalls()).toHaveLength(0);
   });

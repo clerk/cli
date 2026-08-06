@@ -213,7 +213,7 @@ describe("authjs export", () => {
 
     const written = JSON.parse(fs.readFileSync(path.join(workDir, "authjs.json"), "utf-8"));
     expect(written).toHaveLength(2);
-    expect(captured.err).toContain("Read 2 row(s) from");
+    expect(captured.err).toContain("Read 2 rows from");
     expect(captured.err).toContain("stores no passwords");
   });
 });

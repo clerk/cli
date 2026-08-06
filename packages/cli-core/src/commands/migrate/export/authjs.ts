@@ -113,24 +113,26 @@ export async function exportAuthJs(options: DbExportOptions): Promise<void> {
     hint: "Postgres, MySQL or a SQLite file — whichever your Auth.js adapter uses.",
   });
 
-  await withGutter("Exporting users from Auth.js", async () => {
+  await withGutter("Exporting users from Auth.js", async ({ setNextSteps }) => {
     const dateTime = getDateTimeStamp();
 
-    const { rows, table } = await withSpinner("Reading the user table", () =>
+    const { rows, table } = await withSpinner("Reading the user table...", () =>
       withDbClient(dbUrl, "authjs", fetchAuthJsUsers),
     );
-    log.info(`Read ${rows.length} row(s) from ${table}.`);
+    log.info(`Read ${rows.length} row${rows.length === 1 ? "" : "s"} from ${table}.`);
 
     const { users, coverage } = buildAuthJsExport(rows, dateTime);
     const outputPath = writeExportOutput(users, options.output ?? defaultOutputPath("authjs"));
 
-    reportExport({
-      platform: "authjs",
-      userCount: users.length,
-      outputPath,
-      coverage,
-      transformerKey: "authjs",
-    });
+    setNextSteps(
+      reportExport({
+        platform: "authjs",
+        userCount: users.length,
+        outputPath,
+        coverage,
+        transformerKey: "authjs",
+      }),
+    );
 
     if (users.length > 0) {
       log.warn(

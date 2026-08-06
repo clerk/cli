@@ -107,7 +107,9 @@ export async function withGutter<T>(
   let nextSteps: readonly string[] | undefined;
   const controls: GutterControls = {
     setNextSteps(steps) {
-      nextSteps = steps;
+      // Empty is ignored rather than stored: `outro([])` would render the
+      // "Next steps" header with no bullets under it. Matches printNextSteps.
+      if (steps.length > 0) nextSteps = steps;
     },
   };
 

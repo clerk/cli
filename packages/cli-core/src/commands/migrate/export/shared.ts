@@ -13,6 +13,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { dim, green, yellow } from "../../../lib/color.ts";
 import { log } from "../../../lib/log.ts";
+import { NEXT_STEPS } from "../../../lib/next-steps.ts";
 
 /** Where an export lands when `--output` is not given. */
 export function defaultOutputPath(platform: string): string {
@@ -36,13 +37,13 @@ export type CoverageField = { label: string; count: number };
 /**
  * How complete an export is, per field.
  *
- * ● every user, ○ some, dim ○ none. The point is to see *before* importing
+ * ✓ every user, ! some, dim ✗ none. The point is to see *before* importing
  * that, say, only 3 of 400 users have a password — which changes what the
  * migration means.
  */
 export function formatFieldCoverage(fields: CoverageField[], total: number): string[] {
   return fields.map(({ label, count }) => {
-    const icon = count === total ? green("●") : count > 0 ? yellow("○") : dim("○");
+    const icon = count === total ? green("✓") : count > 0 ? yellow("!") : dim("✗");
     return `  ${icon} ${dim(`${count}/${total} ${label}`)}`;
   });
 }
@@ -56,12 +57,18 @@ export type ExportSummary = {
   transformerKey: string;
 };
 
-/** Reports the coverage table and the exact command that consumes the file. */
-export function reportExport(summary: ExportSummary): void {
+/**
+ * Reports the coverage table.
+ *
+ * @returns The next steps for the caller to hand to `setNextSteps`, so the
+ *   suggested import command closes the gutter like every other command's.
+ *   Empty when nothing was exported — there is nothing to import.
+ */
+export function reportExport(summary: ExportSummary): readonly string[] {
   log.blank();
   if (summary.userCount === 0) {
     log.warn(`No users found to export. Wrote an empty file to ${summary.outputPath}.`);
-    return;
+    return [];
   }
 
   log.info("Field coverage");
@@ -70,12 +77,11 @@ export function reportExport(summary: ExportSummary): void {
   }
 
   log.blank();
-  log.success(`Exported ${summary.userCount} user(s) to ${summary.outputPath}`);
-  log.info(
-    dim(
-      `Next: clerk migrate run --transformer ${summary.transformerKey} --file ${relativeIfInside(summary.outputPath)}`,
-    ),
+  log.success(
+    `Exported ${summary.userCount} user${summary.userCount === 1 ? "" : "s"} to ${summary.outputPath}`,
   );
+
+  return NEXT_STEPS.MIGRATE_EXPORT(summary.transformerKey, relativeIfInside(summary.outputPath));
 }
 
 /** Shortens a path for display when it sits under the working directory. */

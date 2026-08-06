@@ -53,6 +53,8 @@ export async function clear(options: SettingsClearOptions = {}): Promise<void> {
 
   if (hadConfig) log.success("Cleared the saved transformer and file.");
   if (dropped.length > 0) {
-    log.success(`Removed ${dropped.length} credential(s) from ${MIGRATE_ENV_FILE}.`);
+    log.success(
+      `Removed ${dropped.length} credential${dropped.length === 1 ? "" : "s"} from ${MIGRATE_ENV_FILE}.`,
+    );
   }
 }

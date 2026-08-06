@@ -111,23 +111,25 @@ export async function exportSupabase(options: DbExportOptions): Promise<void> {
     hint: "Dashboard → Connect → Session pooler. Direct connections need the IPv4 add-on.",
   });
 
-  await withGutter("Exporting users from Supabase", async () => {
+  await withGutter("Exporting users from Supabase", async ({ setNextSteps }) => {
     const dateTime = getDateTimeStamp();
 
-    const rows = await withSpinner("Reading auth.users", () =>
+    const rows = await withSpinner("Reading auth.users...", () =>
       withDbClient(dbUrl, "supabase", fetchSupabaseUsers),
     );
 
     const { users, coverage } = buildSupabaseExport(rows, dateTime);
     const outputPath = writeExportOutput(users, options.output ?? defaultOutputPath("supabase"));
 
-    reportExport({
-      platform: "supabase",
-      userCount: users.length,
-      outputPath,
-      coverage,
-      transformerKey: "supabase",
-    });
+    setNextSteps(
+      reportExport({
+        platform: "supabase",
+        userCount: users.length,
+        outputPath,
+        coverage,
+        transformerKey: "supabase",
+      }),
+    );
 
     if (users.length > 0) {
       log.info(

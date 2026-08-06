@@ -165,13 +165,14 @@ import it, not after:
 
 ```
 Field coverage
-  ● 3/3 have an email address
-  ○ 0/3 have a phone number
-  ○ 1/3 have a username
-  ○ 2/3 have a password (not exportable — see below)
+  ✓ 3/3 have an email address
+  ✗ 0/3 have a phone number
+  ! 1/3 have a username
+  ! 2/3 have a password (not exportable — see below)
 
-Exported 3 user(s) to /project/exports/clerk-export.json
-Next: clerk migrate run --transformer clerk --file exports/clerk-export.json
+Exported 3 users to /project/exports/clerk-export.json
+└  Next steps
+   → Run `clerk migrate run --transformer clerk --file exports/clerk-export.json` to import them
 ```
 
 Every export also writes `logs/export-<timestamp>.log`, so `migrate logs list`

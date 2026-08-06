@@ -219,7 +219,7 @@ export async function fetchAllAuth0Users(options: {
   for (let page = 0; ; page++) {
     const { users, total } = await fetchAuth0Page(options.credentials, options.token, page);
     all.push(...users);
-    options.spinner?.update(`Fetching users from Auth0: ${all.length} so far`);
+    options.spinner?.update(`Fetching users from Auth0: ${all.length} so far...`);
 
     if (users.length < PAGE_SIZE) break;
 
@@ -316,30 +316,30 @@ export function buildAuth0Export(users: Auth0User[], dateTime: string): Auth0Exp
 export async function exportAuth0(options: ExportAuth0Options): Promise<void> {
   const credentials = await resolveAuth0Credentials(options);
 
-  await withGutter("Exporting users from Auth0", async () => {
+  await withGutter("Exporting users from Auth0", async ({ setNextSteps }) => {
     const dateTime = getDateTimeStamp();
     log.info(`Exporting from ${credentials.domain}.`);
 
-    const token = await withSpinner("Authenticating with Auth0", () =>
+    const token = await withSpinner("Authenticating with Auth0...", () =>
       fetchAuth0Token(credentials),
     );
 
-    const users = await withSpinner(
-      "Fetching users from Auth0",
-      (spinner) => fetchAllAuth0Users({ credentials, token, spinner }),
-      "Users fetched",
+    const users = await withSpinner("Fetching users from Auth0...", (spinner) =>
+      fetchAllAuth0Users({ credentials, token, spinner }),
     );
 
     const { users: exported, coverage } = buildAuth0Export(users, dateTime);
     const outputPath = writeExportOutput(exported, options.output ?? defaultOutputPath("auth0"));
 
-    reportExport({
-      platform: "auth0",
-      userCount: exported.length,
-      outputPath,
-      coverage,
-      transformerKey: "auth0",
-    });
+    setNextSteps(
+      reportExport({
+        platform: "auth0",
+        userCount: exported.length,
+        outputPath,
+        coverage,
+        transformerKey: "auth0",
+      }),
+    );
 
     if (exported.length > 0) {
       log.warn(

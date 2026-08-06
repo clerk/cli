@@ -190,7 +190,7 @@ function renderItem(item: ReadinessItem, total: number): string {
     return `  ${green("✓")} ${item.label} — ${dim(`enabled in Clerk — ${coverage}`)}`;
   }
   // Settings unavailable: state coverage without claiming anything about Clerk.
-  return `  ${yellow("○")} ${item.label} — ${dim(`${coverage} — check it is enabled in Clerk`)}`;
+  return `  ${yellow("!")} ${item.label} — ${dim(`${coverage} — check it is enabled in Clerk`)}`;
 }
 
 /** Renders the report for a human, as lines. */
@@ -210,7 +210,7 @@ export function formatReadinessReport(report: ReadinessReport): string[] {
   if (report.settingsUnavailable) {
     lines.push(
       "",
-      `  ${yellow("○")} ${dim("Could not read this instance's settings, so the checks below are coverage only.")}`,
+      `  ${yellow("!")} ${dim("Could not read this instance's settings, so the checks below are coverage only.")}`,
       `  ${dim(`  Verify your settings at ${DASHBOARD_URL}`)}`,
     );
   }
