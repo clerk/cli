@@ -13,11 +13,13 @@
 import { describeBapiTarget, resolveBapiSecretKey } from "../../lib/bapi-command.ts";
 import { bold, dim, green, red, yellow } from "../../lib/color.ts";
 import { CliError, ERROR_CODE, throwUsageError, throwUserAbort } from "../../lib/errors.ts";
+import { resolveInstanceTarget, type InstanceTarget } from "../../lib/keyless-target.ts";
 import { log } from "../../lib/log.ts";
 import { NEXT_STEPS } from "../../lib/next-steps.ts";
-import { confirm } from "../../lib/prompts.ts";
+import { confirm, multiselect } from "../../lib/prompts.ts";
 import { withGutter, withSpinner } from "../../lib/spinner.ts";
 import { isAgent, isHuman } from "../../mode.ts";
+import { writeInstanceConfig } from "../config/io.ts";
 import { importUsers } from "./import-users.ts";
 import { analyzeFields } from "./lib/analysis.ts";
 import { findMigrateEnvValue } from "./lib/env-file.ts";
@@ -26,7 +28,18 @@ import {
   fetchInstanceSettings,
   toClerkStrategy,
 } from "./lib/clerk-config.ts";
-import { buildReadinessReport, formatReadinessReport } from "./lib/readiness.ts";
+import {
+  buildReadinessReport,
+  DASHBOARD_URL,
+  formatReadinessReport,
+  type ReadinessReport,
+} from "./lib/readiness.ts";
+import {
+  applyChanges,
+  buildChangePayload,
+  buildSettingChanges,
+  type SettingChange,
+} from "./lib/modify-settings.ts";
 import { DEV_USER_LIMIT, resolveLimits } from "./lib/instance.ts";
 import { getDateTimeStamp, getLogFilePath } from "./lib/logger.ts";
 import { saveSettings } from "./lib/settings.ts";
@@ -307,32 +320,19 @@ async function skipDisabledProviderUsers(
   return users.filter((user) => !excludedIds.has(user.userId));
 }
 
-/**
- * Prints the Migration Readiness report: what the file contains, cross-
- * referenced against what the destination instance accepts.
- *
- * Rendered immediately before the confirmation prompt, so declining that
- * prompt aborts with nothing written to Clerk.
- *
- * Skipped only for `-y`, which says "don't ask, don't lecture" and should not
- * pay for two extra network round-trips. Agent mode still gets it: an agent
- * driving a migration can act on "this field is required and 40 users lack it"
- * exactly as a human would.
- */
-async function showReadinessReport(input: {
+type ReportInput = {
   users: User[];
   file: string;
   transformer: string;
   secretKey: string;
   validationFailed: number;
-  skipReport: boolean;
-}): Promise<void> {
-  if (input.skipReport) return;
+};
 
-  const settings = await withSpinner("Checking instance settings...", () =>
-    fetchInstanceSettings(input.secretKey),
-  );
-
+/**
+ * Everything the report needs except the instance's settings — the half that
+ * comes from the file, and so does not change when the instance does.
+ */
+async function readFileSide(input: ReportInput) {
   // Only Supabase exports record per-user providers, so only they can be
   // cross-referenced against the instance's social connections.
   let providerCounts: Record<string, number> | undefined;
@@ -344,16 +344,132 @@ async function showReadinessReport(input: {
     }
   }
 
-  const report = buildReadinessReport({
+  return {
     analysis: analyzeFields(input.users),
-    settings,
     validationFailed: input.validationFailed,
     providerCounts,
-  });
+  };
+}
 
+function printReport(report: ReadinessReport): void {
   log.blank();
   for (const line of formatReadinessReport(report)) log.info(line);
   log.blank();
+}
+
+/**
+ * Offers to change the instance's settings, one selectable change per flagged
+ * row.
+ *
+ * Without this the report names something the operator has to leave the CLI to
+ * act on. Nothing is preselected and selecting nothing continues to the import
+ * prompt unchanged: a flagged setting is not a wrong setting, and relaxing an
+ * instance's sign-up requirements is a real decision rather than a default.
+ *
+ * @returns The changes that were written, so the caller can redraw the report.
+ */
+async function offerSettingChanges(
+  report: ReadinessReport,
+  options: MigrateRunOptions,
+): Promise<SettingChange[]> {
+  const changes = buildSettingChanges(report.blocking);
+  if (changes.length === 0) return [];
+
+  // Navigation keys are in the prompt's own footer; what that footer cannot say
+  // is that selecting nothing is a valid answer rather than an unfinished one.
+  const chosen = await multiselect<string>({
+    message: "Update this instance's settings first? (enter to skip)",
+    options: changes.map((change) => ({ value: change.id, label: change.label })),
+    initialValues: [],
+    required: false,
+  });
+  // Filtered before anything is resolved or sent: a selection that matches no
+  // offered change is the same as no selection, and must not become an empty
+  // PATCH.
+  const applied = changes.filter((change) => chosen.includes(change.id));
+  if (applied.length === 0) return [];
+
+  // Resolved here rather than up front: an operator who selects nothing should
+  // not pay for a Platform API round-trip, and a target that cannot be resolved
+  // (a bare `--secret-key` against an unlinked directory) should not fail the
+  // whole run before the report has even been offered.
+  let target: InstanceTarget;
+  try {
+    target = await resolveInstanceTarget({ app: options.app, instance: options.instance });
+  } catch (error) {
+    log.warn(
+      "Could not resolve which instance to configure, so nothing was changed. " +
+        "Link a project with `clerk link`, or pass `--app <app_id>`.",
+    );
+    log.debug(`migrate: settings change target unresolved: ${String(error)}`);
+    return [];
+  }
+
+  // The Backend API a keyless application is reachable through has no route for
+  // any of these settings — `config patch` rejects the same payload by name.
+  if (target.kind === "keyless") {
+    log.warn(
+      "These settings need an account to change. Run `clerk auth login` to claim this application, " +
+        `then re-run, or update them at ${DASHBOARD_URL}.`,
+    );
+    return [];
+  }
+
+  await withSpinner(`Updating settings on ${target.label}...`, () =>
+    writeInstanceConfig(target, buildChangePayload(applied), {
+      method: "PATCH",
+      failureContext: "Failed to update instance settings",
+    }),
+  );
+  log.success(`Updated ${applied.length} setting${applied.length === 1 ? "" : "s"}.`);
+
+  return applied;
+}
+
+/**
+ * Prints the Migration Readiness report: what the file contains, cross-
+ * referenced against what the destination instance accepts.
+ *
+ * Rendered immediately before the confirmation prompt, so declining that
+ * prompt aborts with nothing written to Clerk.
+ *
+ * Skipped only for `-y`, which says "don't ask, don't lecture" and should not
+ * pay for two extra network round-trips. Agent mode still gets it: an agent
+ * driving a migration can act on "10 users will not be imported, because email
+ * is required" exactly as a human would — but not the prompt, which needs one.
+ */
+async function showReadinessReport(
+  input: ReportInput & { skipReport: boolean; options: MigrateRunOptions },
+): Promise<void> {
+  if (input.skipReport) return;
+
+  let settings = await withSpinner("Checking instance settings...", () =>
+    fetchInstanceSettings(input.secretKey),
+  );
+  const fileSide = { ...(await readFileSide(input)), users: input.users };
+
+  let report = buildReadinessReport({ ...fileSide, settings });
+  printReport(report);
+
+  if (!isHuman() || isAgent()) return;
+
+  // Every redraw is another decision point, not a receipt. Applying one change
+  // routinely leaves others still worth making — and can surface consequences
+  // that were masked behind the row just cleared — so the offer repeats for as
+  // long as the report has something to offer.
+  while (report.blocking.length > 0) {
+    const applied = await offerSettingChanges(report, input.options);
+    // Nothing selected, nothing offerable, or nowhere to write it: the operator
+    // has said their piece and the import prompt is next.
+    if (applied.length === 0) return;
+
+    // Redrawn from the write, not from a re-read. Clerk's Frontend API is
+    // eventually consistent, so fetching settings again here routinely returns
+    // the pre-write ones and redraws every row the operator just cleared.
+    settings = applyChanges(settings, applied);
+    report = buildReadinessReport({ ...fileSide, settings });
+    printReport(report);
+  }
 }
 
 /**
@@ -510,6 +626,7 @@ export async function run(rawOptions: MigrateRunOptions): Promise<void> {
       secretKey,
       validationFailed,
       skipReport: Boolean(options.yes),
+      options,
     });
 
     if (!options.yes && isHuman() && !isAgent()) {

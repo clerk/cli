@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import type { UserSettingsJSON } from "../../../lib/fapi.ts";
-import type { FieldAnalysis } from "./analysis.ts";
+import { analyzeFields, type FieldAnalysis } from "./analysis.ts";
 import { buildReadinessReport, formatReadinessReport, type ReadinessItem } from "./readiness.ts";
 
 /** Instance settings carrying only the attributes and providers a test names. */
@@ -97,7 +97,9 @@ describe("required in Clerk but missing from the file", () => {
 
     const email = item(report, "Email");
     expect(email?.blocking).toBe(true);
-    expect(email?.detail).toContain("3 users lack it");
+    expect(email?.detail).toContain("required in Clerk");
+    // A required identifier is the one verdict Clerk refuses the user over.
+    expect(email?.consequence).toBe("rejects");
     expect(report.blocking).toHaveLength(1);
   });
 
@@ -126,20 +128,23 @@ describe("required in Clerk but missing from the file", () => {
     expect(report.blocking).toHaveLength(0);
   });
 
-  test("uses the singular form for a single missing user", () => {
+  // The import sends `skip_password_requirement`, so a required password costs
+  // the user their password rather than their whole account.
+  test("a required password drops rather than rejects", () => {
     const report = buildReadinessReport({
       analysis: analysis({
-        totalUsers: 2,
-        identifiers: { verifiedEmails: 1, hasAnyIdentifier: 2, username: 2 } as never,
+        totalUsers: 4,
+        identifiers: { verifiedEmails: 4, hasAnyIdentifier: 4 } as never,
+        fieldCounts: { password: 1 },
       }),
       settings: settings({
         attributes: {
-          email_address: { enabled: true, required: true },
-          username: { enabled: true },
+          email_address: { enabled: true },
+          password: { enabled: true, required: true },
         },
       }),
     });
-    expect(item(report, "Email")?.detail).toContain("1 user lacks it");
+    expect(item(report, "Password")?.consequence).toBe("drops");
   });
 });
 
@@ -255,6 +260,168 @@ describe("file-level totals", () => {
   });
 });
 
+/**
+ * The counts an operator actually decides on. Built from the users themselves,
+ * because per-field coverage cannot answer them: the users missing an email and
+ * the users missing a password overlap by an amount only a per-user pass knows.
+ */
+describe("what the settings mean for these users", () => {
+  const REQUIRE_EMAIL_AND_PASSWORD = settings({
+    attributes: {
+      email_address: { enabled: true, required: true },
+      password: { enabled: true, required: true },
+    },
+  });
+
+  /** Two with everything, two with no email, one with an email but no password. */
+  const USERS = [
+    { userId: "a", email: "a@x.dev", password: "hash" },
+    { userId: "b", email: "b@x.dev", password: "hash" },
+    { userId: "c", username: "c" },
+    { userId: "d", username: "d" },
+    { userId: "e", email: "e@x.dev" },
+  ] as never;
+
+  const outcomes = () =>
+    buildReadinessReport({
+      analysis: analyzeFields(USERS),
+      users: USERS,
+      settings: REQUIRE_EMAIL_AND_PASSWORD,
+    }).outcomes;
+
+  test("the three totals account for every user exactly once", () => {
+    const result = outcomes();
+    expect(result).toMatchObject({ rejected: 2, incomplete: 1, complete: 2 });
+    expect((result?.rejected ?? 0) + (result?.incomplete ?? 0) + (result?.complete ?? 0)).toBe(5);
+  });
+
+  // The file has three users without a password, but two of them are already
+  // rejected for the email — counting them twice would overstate the damage.
+  test("a rejected user is not also counted as incomplete", () => {
+    expect(outcomes()?.incompleteReasons).toEqual([
+      {
+        label: "Password",
+        count: 1,
+        detail: expect.stringContaining("1 has no password, which this instance requires"),
+      },
+    ]);
+  });
+
+  test("names why the rejected users are rejected", () => {
+    expect(outcomes()?.rejectedReasons).toEqual([
+      { label: "Email", count: 2, detail: "2 have no email, which this instance requires" },
+    ]);
+  });
+
+  /**
+   * The rejected users lose nothing today — they are not being created. But the
+   * moment the operator relaxes the requirement rejecting them (one of the
+   * changes on offer) every masked setting lands at once. Surfacing it here is
+   * what saves an apply → re-check → discover → apply → re-check loop.
+   */
+  describe("what is masked behind a rejection", () => {
+    // b and c have no email, so both are rejected; b also carries a phone the
+    // instance is not set up to store. Exactly the shape the supabase sample
+    // hits: every phone belongs to a user who has no email.
+    const MASKED_USERS = [
+      { userId: "a", email: "a@x.dev" },
+      { userId: "b", username: "b", phone: "+15551234567" },
+      { userId: "c", username: "c" },
+    ] as never;
+
+    const report = (attributes: Record<string, { enabled: boolean; required?: boolean }>) =>
+      buildReadinessReport({
+        analysis: analyzeFields(MASKED_USERS),
+        users: MASKED_USERS,
+        settings: settings({ attributes }),
+      });
+
+    const REQUIRE_EMAIL_PHONE_OFF = {
+      email_address: { enabled: true, required: true },
+      phone_number: { enabled: false },
+      username: { enabled: true },
+    };
+
+    test("counts a setting that only bites once the rejected users get in", () => {
+      const outcomes = report(REQUIRE_EMAIL_PHONE_OFF).outcomes;
+
+      expect(outcomes).toMatchObject({ rejected: 2, incomplete: 0, complete: 1 });
+      expect(outcomes?.maskedReasons).toEqual([
+        {
+          label: "Phone",
+          count: 1,
+          detail: "1 has a phone, which this instance is not set up to store",
+        },
+      ]);
+    });
+
+    test("keeps it out of the incomplete count, which is about users being imported", () => {
+      expect(report(REQUIRE_EMAIL_PHONE_OFF).outcomes?.incompleteReasons).toEqual([]);
+    });
+
+    test("renders it under the rejected group", () => {
+      const output = formatReadinessReport(report(REQUIRE_EMAIL_PHONE_OFF)).join("\n");
+
+      expect(output).toContain("If you import them, this applies to them too:");
+      expect(output).toContain("1 has a phone, which this instance is not set up to store");
+    });
+
+    // Enabling phone is the other change on offer, and it empties the block —
+    // which is the check that the two offers really do interact this way.
+    test("is empty once the masked setting is no longer a problem", () => {
+      const outcomes = report({
+        email_address: { enabled: true, required: true },
+        phone_number: { enabled: true },
+        username: { enabled: true },
+      }).outcomes;
+
+      expect(outcomes).toMatchObject({ rejected: 2 });
+      expect(outcomes?.maskedReasons).toEqual([]);
+    });
+  });
+
+  test("a disabled attribute costs the users who carry it, not the ones who don't", () => {
+    const users = [
+      { userId: "a", email: "a@x.dev", username: "a" },
+      { userId: "b", email: "b@x.dev" },
+    ] as never;
+
+    const result = buildReadinessReport({
+      analysis: analyzeFields(users),
+      users,
+      settings: settings({
+        attributes: { email_address: { enabled: true }, username: { enabled: false } },
+      }),
+    }).outcomes;
+
+    expect(result).toMatchObject({ rejected: 0, incomplete: 1, complete: 1 });
+    expect(result?.incompleteReasons[0]?.detail).toContain("not set up to store");
+  });
+
+  test("is omitted when the caller passes no users", () => {
+    const report = buildReadinessReport({
+      analysis: analyzeFields(USERS),
+      settings: REQUIRE_EMAIL_AND_PASSWORD,
+    });
+    expect(report.outcomes).toBeUndefined();
+  });
+
+  test("renders each outcome with the reasons behind it", () => {
+    const output = formatReadinessReport(
+      buildReadinessReport({
+        analysis: analyzeFields(USERS),
+        users: USERS,
+        settings: REQUIRE_EMAIL_AND_PASSWORD,
+      }),
+    ).join("\n");
+
+    expect(output).toContain("2 users will not be imported");
+    expect(output).toContain("1 user will be imported, but not everything they carry");
+    expect(output).toContain("2 users will be imported in full");
+    expect(output).toContain("they will have to reset it to sign in");
+  });
+});
+
 describe("rendering", () => {
   const blocked = () =>
     buildReadinessReport({
@@ -273,7 +440,7 @@ describe("rendering", () => {
 
   test("leads with the counts an operator needs before confirming", () => {
     const output = formatReadinessReport(blocked()).join("\n");
-    expect(output).toContain("10 users ready to import");
+    expect(output).toContain("10 users in this file");
     expect(output).toContain("2 failed validation");
     expect(output).toContain("2 without any identifier");
   });
@@ -281,7 +448,7 @@ describe("rendering", () => {
   test("names the blocking rows and points at the dashboard", () => {
     const output = formatReadinessReport(blocked()).join("\n");
     expect(output).toContain("1 setting needs attention");
-    expect(output).toContain("3 users lack it");
+    expect(output).toContain("required in Clerk, and not every user has one");
     expect(output).toContain("dashboard.clerk.com");
   });
 

@@ -409,7 +409,7 @@ describe("run", () => {
       await run({ ...baseOptions, yes: false });
 
       expect(captured.err).toContain("Migration readiness");
-      expect(captured.err).toContain("1 user lacks it");
+      expect(captured.err).toContain("1 user will not be imported");
 
       // The report was printed before the first POST /v1/users.
       const reportIndex = requests.findIndex((r) => r.url.includes("/v1/environment"));

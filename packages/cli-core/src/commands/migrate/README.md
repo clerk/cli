@@ -40,8 +40,9 @@ platform and file from the last run so a repeat migration is mostly pressing
 enter. Anything already passed as a flag is not asked for. Firebase's hash
 parameters are never pre-filled — see [below](#--firebase--firebase).
 
-Then it prints the [Migration Readiness report](#migration-readiness-report)
-and waits for confirmation. Declining writes nothing to Clerk.
+Then it prints the [Migration Readiness report](#migration-readiness-report),
+offers to [change whatever it flagged](#changing-the-flagged-settings), and
+waits for confirmation. Declining writes nothing to Clerk.
 
 **Agent mode never prompts.** `clerk migrate` with no flags exits with a usage
 error naming exactly what to pass:
@@ -695,34 +696,162 @@ lecture" and should not pay for the two extra round-trips. Agent runs without
 
 It cross-references the file against the destination instance's live settings
 (BAPI `/v1/domains` → that instance's Frontend API `/v1/environment`) and
-flags the two failure modes a migration otherwise discovers halfway through:
-
-- **Required in Clerk, missing from the file.** Those users fail one at a time,
-  mid-import, after earlier users already exist.
-- **Present in the file, disabled in Clerk.** Social providers users actually
-  signed up with, or an identifier the instance has switched off.
+answers the two questions worth answering before writing anything: **who won't
+be imported**, and **who will arrive incomplete**.
 
 ```
 Migration readiness
-  120 users ready to import
+  120 users in this file
   3 failed validation and will be skipped
 
+  ✗ 12 users will not be imported
+      12 have no email, which this instance requires
+      If you import them, this applies to them too:
+        12 have a phone, which this instance is not set up to store
+  ⚠ 20 users will be imported, but not everything they carry
+      14 have no password, which this instance requires — they will have to reset it to sign in
+      6 have a username, which this instance is not set up to store
+  ✓ 88 users will be imported in full
+
 Identifiers
-  ⚠ Email — required in Clerk, but 12 users lack it — 108/120 users
-  ✓ Username — enabled in Clerk — all users
+  ⚠ Email — required in Clerk, and not every user has one — 108/120 users
+  ⚠ Username — not enabled in Clerk — 6/120 users
 
 Social connections
   ✓ Google — enabled in Clerk — 40/120 users
   ⚠ Discord — not enabled in Clerk — 12/120 users
 
-⚠ 2 settings need attention
+⚠ 3 settings need attention
 ```
+
+### The two blocks
+
+**The outcome block** classifies each user **once**, into the worst outcome that
+applies to them, so its three totals add up to the file. This matters: per-field
+coverage cannot answer "how many won't be imported", because the users missing
+an email and the users missing a password overlap by an amount only a per-user
+pass knows. A user rejected for their missing email is not also counted under
+the missing password they happen to share.
+
+**"If you import them, this applies to them too"** is the part that stops the
+settings interacting invisibly. A user who is not being created cannot lose a
+field, so a setting that only affects rejected users costs nothing _today_ and
+would otherwise never be mentioned — right up until the operator relaxes the
+requirement rejecting them, at which point all of it lands at once. Naming it
+up front is what turns
+
+> make email optional → re-check → discover the phones are being dropped →
+> enable phone → re-check
+
+into a single decision with both offers visible. It is also why a setting can
+be flagged in the section rows while contributing nothing to the ✗/⚠/✓ totals.
+
+**The section rows below** are the other question — per-field coverage against
+each setting — and deliberately do not restate user counts, which would read as
+contradicting the block above.
+
+### Which settings cost what
+
+| Setting                                    | Consequence                                                                                   |
+| ------------------------------------------ | --------------------------------------------------------------------------------------------- |
+| Identifier (email/phone/username) required | **Not imported.** `POST /v1/users` enforces the sign-up identifier requirements.              |
+| Password required, user has none           | **Imported without a password.** The import sends `skip_password_requirement`, so the user is |
+|                                            | created and has to reset their password before they can sign in with one.                     |
+| Attribute disabled in Clerk                | **Imported without that field.** The instance has nowhere to put it.                          |
+| Social provider disabled                   | **Imported**, but that sign-in method is unavailable to them.                                 |
+
+Social rows are not part of the per-user outcome counts: which providers a user
+signed up with lives in the raw export rather than the transformed user, so it
+cannot be attributed per user. Their coverage row still names them.
 
 If the instance settings cannot be read — the secret key is rejected, or FAPI
 is unreachable — the report degrades to a coverage-only listing with a note.
 Nothing is flagged in that case: "could not read" is not the same as "switched
 off", and treating it as such would raise alarms about settings that are
 perfectly fine.
+
+### Changing the flagged settings
+
+When the report flags anything, a human run offers one selectable change per
+flagged row before the import confirmation, so acting on the report does not
+mean leaving the CLI for the dashboard:
+
+```
+Update this instance's settings first? (enter to skip)
+  ◻ Make Email optional at sign-up
+  ◻ Enable Discord sign-in
+  ↑/↓ to navigate • Space: select • a: all • Enter: confirm
+```
+
+**Nothing is preselected** — relaxing an instance's sign-up requirements is a
+real decision, not a default — and selecting nothing continues to the import
+prompt with the instance untouched, which is what "enter to skip" is there to
+say.
+
+`a: all` is added to clack's legend in `lib/prompts.ts`: `MultiSelectPrompt`
+has always bound `a` to toggle everything (and `i` to invert), but clack's
+footer never listed them and takes no override, so the key was undiscoverable.
+It applies to every multiselect in the CLI, because it is a property of the
+prompt rather than of any one question.
+
+These are offers, not corrections: **a flagged setting is not a wrong setting.**
+An instance that genuinely requires an email address is configured exactly as
+its owner intended, and the right answer may well be to fix the export instead.
+
+Whatever is selected becomes a single `PATCH` of the instance config document,
+the same document `clerk config patch` writes. The report is then redrawn so
+the confirmation that follows is against the settings the write established.
+
+**The offer repeats while anything is still flagged.** A redraw is another
+decision point, not a receipt: applying one change routinely leaves others
+worth making, and each round re-offers only what is left. It ends when the
+report has nothing flagged, when the operator selects nothing, or when there is
+nothing offerable for the rows that remain — so reaching the second change
+never costs a second run of the command.
+
+The redraw is computed from the write, **not** from a second settings fetch.
+Clerk's Frontend API is eventually consistent, so a `/v1/environment` read
+issued this soon after the config write routinely still reports the pre-write
+settings — which would redraw the report with every row the operator just
+cleared still flagged. The Platform API accepting the write is the
+authoritative statement of what took, exactly as `clerk config patch` treats
+it (see that command's [round-trip verification](../config/README.md#round-trip-verification)
+notes for the same reasoning).
+
+The config leaves each option writes are not shown in the prompt — internal
+detail an operator cannot act on — but they are fixed and listed here:
+
+| Flagged row                     | Change offered                                                                    |
+| ------------------------------- | --------------------------------------------------------------------------------- |
+| Email/Phone/Username — required | `auth_<x>.required_for_sign_up → false`                                           |
+| Email — disabled                | `auth_email.used_for_sign_up → true` + `verification_strategies → ["email_code"]` |
+| Phone — disabled                | `auth_phone.used_for_sign_up → true` + `verification_strategies → ["phone_code"]` |
+| Username — disabled             | `auth_username.used_for_sign_up → true`                                           |
+| Password — required / disabled  | `auth_password.required → false` / `auth_password.enabled → true`                 |
+| First/Last name                 | `user_model.<x>.required → false` / `user_model.<x>.enabled → true`               |
+| Social provider — disabled      | `connection_oauth_<x>.enabled → true`                                             |
+
+`used_for_sign_up` is the enable field that matters: `POST /v1/users` validates
+an import against the instance's sign-up requirements, not its sign-in
+strategies.
+
+**Email and phone take two writes, not one.** They are _verifiable_ attributes,
+and Clerk rejects one that is on with no way to verify it:
+
+```
+422 phone_number: verifiable attributes need to have at least one verification
+```
+
+Switching the attribute off empties `verification_strategies`, so whatever
+turns it back on has to put a strategy back in the same request. Username,
+password and the name fields are not verifiable and take one write each.
+
+The offer is skipped entirely for `-y` and in agent mode, both of which say
+"don't prompt". It also stands down, with a warning rather than a failed run,
+when the instance to configure cannot be resolved (a bare `--secret-key` in an
+unlinked directory) or when it is a **keyless** application — the Backend API
+those are reachable through has no route for any of these settings, so
+`clerk auth login` is the way in.
 
 ## Artifacts
 
@@ -783,6 +912,14 @@ NDJSON is. The original `.log` stays put.
 | `GET`    | `/v1/users?limit=&offset=` | `migrate export clerk` — pages the whole instance, 500 at a time                     |
 | `DELETE` | `/v1/users/{user_id}`      | `migrate delete` — removes one user                                                  |
 | `GET`    | `/v1/domains`              | Readiness report and `--skip-unsupported-providers` — resolves the Frontend API host |
+
+The readiness report also reads the instance's Frontend API
+`GET /v1/environment` (bootstrapping a dev browser first on development
+instances), and its settings-change offer writes through the Platform API:
+
+| Method  | Path                                                              | Used by                                                |
+| ------- | ----------------------------------------------------------------- | ------------------------------------------------------ |
+| `PATCH` | `/v1/platform/applications/{appID}/instances/{instanceID}/config` | Applying the settings changes selected from the report |
 
 Two exports talk to their own platform rather than to Clerk:
 
