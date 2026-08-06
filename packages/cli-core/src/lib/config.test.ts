@@ -11,6 +11,9 @@ const {
   clearAuth,
   getProfile,
   setProfile,
+  getMigrationEntry,
+  setMigrationEntry,
+  getProjectKey,
   listProfiles,
   resolveProfile,
   resolveInstanceId,
@@ -81,6 +84,42 @@ describe("config", () => {
     await setAuth({ userId: "user_789" });
     await clearAuth();
     expect(await getAuth()).toBeUndefined();
+  });
+
+  test("setMigrationEntry and getMigrationEntry", async () => {
+    expect(await getMigrationEntry("/projects/my-app")).toBeUndefined();
+    await setMigrationEntry("/projects/my-app", { transformer: "clerk", file: "users.json" });
+    expect(await getMigrationEntry("/projects/my-app")).toEqual({
+      transformer: "clerk",
+      file: "users.json",
+    });
+    expect(await getMigrationEntry("/projects/other")).toBeUndefined();
+  });
+
+  // readConfig rebuilds the document field by field, so a key it does not know
+  // about is dropped on the next write rather than merely ignored.
+  // readConfig rebuilds the document field by field, so a section it does not
+  // know about is dropped on the next write rather than merely ignored.
+  test("migrations survive a write to another section", async () => {
+    await setMigrationEntry("/projects/my-app", { transformer: "clerk" });
+    await setProfile("/projects/my-app", {
+      workspaceId: "org_abc",
+      appId: "app_def",
+      instances: { development: "ins_ghi" },
+    });
+
+    expect(await getMigrationEntry("/projects/my-app")).toEqual({ transformer: "clerk" });
+  });
+
+  test("getProjectKey prefers the linked profile's key over the directory", async () => {
+    expect(await getProjectKey("/projects/unlinked")).toBe("/projects/unlinked");
+
+    await setProfile("/projects/linked", {
+      workspaceId: "org_abc",
+      appId: "app_def",
+      instances: { development: "ins_ghi" },
+    });
+    expect(await getProjectKey("/projects/linked/src")).toBe("/projects/linked");
   });
 
   test("setProfile and getProfile", async () => {

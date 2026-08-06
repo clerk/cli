@@ -28,27 +28,33 @@ mock.module("../../lib/prompts.ts", () => ({
 
 const { runWizard, throwAgentFlagsRequired } = await import("./wizard.ts");
 const { saveSettings } = await import("./lib/settings.ts");
+const { _setConfigDir } = await import("../../lib/config.ts");
 
 let workDir: string;
+let configDir: string;
 let originalCwd: string;
 
 beforeAll(() => {
   originalCwd = process.cwd();
   workDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "clerk-migrate-wizard-")));
+  configDir = fs.mkdtempSync(path.join(os.tmpdir(), "clerk-migrate-wizard-config-"));
+  _setConfigDir(configDir);
   process.chdir(workDir);
   fs.writeFileSync(path.join(workDir, "users.json"), "[]");
   fs.writeFileSync(path.join(workDir, "other.csv"), "");
 });
 
 afterAll(() => {
+  _setConfigDir(undefined);
   process.chdir(originalCwd);
   fs.rmSync(workDir, { recursive: true, force: true });
+  fs.rmSync(configDir, { recursive: true, force: true });
 });
 
 beforeEach(() => {
   mockSelect.mockReset();
   mockText.mockReset();
-  fs.rmSync(path.join(workDir, ".settings"), { force: true });
+  fs.rmSync(path.join(configDir, "config.json"), { force: true });
 });
 
 /** The config object the wizard passed to its Nth `text`/`select` prompt. */
@@ -93,7 +99,7 @@ describe("transformer picker", () => {
 
 describe("defaults from the previous run", () => {
   test("pre-selects the last transformer and pre-fills the last file", async () => {
-    saveSettings({ key: "supabase", file: "other.csv" });
+    await saveSettings({ transformer: "supabase", file: "other.csv" });
     mockSelect.mockResolvedValue("supabase");
     mockText.mockResolvedValue("other.csv");
 
@@ -116,7 +122,7 @@ describe("defaults from the previous run", () => {
   // A saved key from a build that has since dropped that transformer would
   // otherwise pre-select a value the picker cannot offer.
   test("ignores a saved transformer that is no longer registered", async () => {
-    saveSettings({ key: "okta" });
+    await saveSettings({ transformer: "okta" });
     mockSelect.mockResolvedValue("clerk");
     mockText.mockResolvedValue("users.json");
 
@@ -187,27 +193,21 @@ describe("firebase hash parameters", () => {
     expect(mockText).toHaveBeenCalledTimes(2);
   });
 
-  test("are pre-filled from the previous run", async () => {
-    saveSettings({
-      firebaseHashConfig: {
-        base64_signer_key: "SAVED",
-        base64_salt_separator: "Bw==",
-        rounds: 8,
-        mem_cost: 14,
-      },
-    });
+  // The signer key is a Firebase secret, so it is never written to disk and so
+  // there is nothing to offer back. A repeat run passes it as a flag or env var.
+  test("are never pre-filled, because they are not saved", async () => {
     mockSelect.mockResolvedValue("firebase");
     mockText
       .mockResolvedValueOnce("users.json")
-      .mockResolvedValueOnce("SAVED")
+      .mockResolvedValueOnce("SIGNER")
       .mockResolvedValueOnce("Bw==")
       .mockResolvedValueOnce("8")
       .mockResolvedValueOnce("14");
 
     await runWizard({});
 
-    expect(textCall(1)?.default).toBe("SAVED");
-    expect(textCall(3)?.default).toBe("8");
+    expect(textCall(1)?.default).toBeUndefined();
+    expect(textCall(3)?.default).toBeUndefined();
   });
 
   test("are not asked for on a non-firebase transformer", async () => {

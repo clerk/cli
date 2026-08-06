@@ -27,7 +27,7 @@ import {
 import { buildReadinessReport, formatReadinessReport } from "./lib/readiness.ts";
 import { DEV_USER_LIMIT, resolveLimits } from "./lib/instance.ts";
 import { getDateTimeStamp, getLogFilePath } from "./lib/logger.ts";
-import { loadSettings, saveSettings } from "./lib/settings.ts";
+import { saveSettings } from "./lib/settings.ts";
 import {
   countSocialProviders,
   findDisabledProviders,
@@ -62,15 +62,38 @@ export type MigrateRunOptions = {
 };
 
 const FIREBASE_FLAGS = [
-  ["firebaseSignerKey", "--firebase-signer-key"],
-  ["firebaseSaltSeparator", "--firebase-salt-separator"],
-  ["firebaseRounds", "--firebase-rounds"],
-  ["firebaseMemCost", "--firebase-mem-cost"],
+  ["firebaseSignerKey", "--firebase-signer-key", "CLERK_FIREBASE_SIGNER_KEY"],
+  ["firebaseSaltSeparator", "--firebase-salt-separator", "CLERK_FIREBASE_SALT_SEPARATOR"],
+  ["firebaseRounds", "--firebase-rounds", "CLERK_FIREBASE_ROUNDS"],
+  ["firebaseMemCost", "--firebase-mem-cost", "CLERK_FIREBASE_MEM_COST"],
 ] as const;
 
+const FIREBASE_NUMERIC: ReadonlySet<string> = new Set(["firebaseRounds", "firebaseMemCost"]);
+
 /**
- * Resolves Firebase's four hash parameters from flags, falling back to
- * `.settings` when none were passed.
+ * Overlays the `CLERK_FIREBASE_*` environment variables onto whichever flags
+ * were not passed.
+ *
+ * The signer key is a Firebase secret, so it is read rather than stored: the
+ * CLI never persists these, and `.env.local` is already gitignored and already
+ * where the CLI keeps a project's local secrets.
+ */
+function withFirebaseEnv(options: MigrateRunOptions): MigrateRunOptions {
+  const merged = { ...options };
+  for (const [key, , envVar] of FIREBASE_FLAGS) {
+    if (merged[key] !== undefined) continue;
+    const value = process.env[envVar];
+    if (value === undefined || value.trim() === "") continue;
+    // A non-numeric round count is left to fail the flag's own validation
+    // rather than silently becoming NaN.
+    (merged as Record<string, unknown>)[key] = FIREBASE_NUMERIC.has(key) ? Number(value) : value;
+  }
+  return merged;
+}
+
+/**
+ * Resolves Firebase's four hash parameters from flags, falling back to the
+ * `CLERK_FIREBASE_*` environment variables.
  *
  * The four are required as a set: a digest built from a partial set is
  * well-formed but verifies against nothing, so every migrated user would fail
@@ -80,12 +103,12 @@ const FIREBASE_FLAGS = [
  *   for an export that carries no password hashes.
  */
 export function resolveFirebaseHashConfig(
-  options: MigrateRunOptions,
-  saved?: FirebaseHashConfig,
+  rawOptions: MigrateRunOptions,
 ): FirebaseHashConfig | undefined {
+  const options = withFirebaseEnv(rawOptions);
   const provided = FIREBASE_FLAGS.filter(([key]) => options[key] !== undefined);
 
-  if (provided.length === 0) return saved;
+  if (provided.length === 0) return undefined;
 
   if (provided.length < FIREBASE_FLAGS.length) {
     const missing = FIREBASE_FLAGS.filter(([key]) => options[key] === undefined).map(
@@ -415,8 +438,7 @@ export async function run(rawOptions: MigrateRunOptions): Promise<void> {
   const secretKeyOption = options.secretKey ?? options.clerkSecretKey;
 
   const { transformer, file } = validateRunOptions(options);
-  const saved = loadSettings();
-  const firebaseHashConfig = resolveFirebaseHashConfig(options, saved.firebaseHashConfig);
+  const firebaseHashConfig = resolveFirebaseHashConfig(options);
 
   await withGutter("Migrating users to Clerk", async () => {
     const target = await describeBapiTarget({ ...options, secretKey: secretKeyOption });
@@ -490,11 +512,12 @@ export async function run(rawOptions: MigrateRunOptions): Promise<void> {
       if (!proceed) throwUserAbort();
     }
 
-    saveSettings({
-      key: transformer,
+    // The Firebase hash parameters are deliberately not among these: the signer
+    // key is a secret, and remembering it would write it to disk in plaintext.
+    await saveSettings({
+      transformer,
       file,
       ...(options.skipUnsupportedProviders ? { skipUnsupportedProviders: true } : {}),
-      ...(firebaseHashConfig ? { firebaseHashConfig } : {}),
     });
 
     const summary = await withSpinner(

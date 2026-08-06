@@ -2,6 +2,7 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } fr
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { _setConfigDir } from "../../lib/config.ts";
 import { CliError } from "../../lib/errors.ts";
 import { useCaptureLog } from "../../test/lib/stubs.ts";
 import {
@@ -22,6 +23,7 @@ const LIMITS: ResolvedLimits = { instanceType: "dev", rateLimit: 10_000, concurr
 const DATE_TIME = "2026-01-01T00:00:00";
 
 let workDir: string;
+let configDir: string;
 let originalCwd: string;
 let originalFetch: typeof globalThis.fetch;
 let requests: { method: string; url: string }[];
@@ -35,19 +37,23 @@ beforeAll(() => {
   originalCwd = process.cwd();
   originalFetch = globalThis.fetch;
   workDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "clerk-migrate-delete-")));
+  configDir = fs.mkdtempSync(path.join(os.tmpdir(), "clerk-migrate-delete-config-"));
+  _setConfigDir(configDir);
   process.chdir(workDir);
 });
 
 afterAll(() => {
   globalThis.fetch = originalFetch;
+  _setConfigDir(undefined);
   process.chdir(originalCwd);
   fs.rmSync(workDir, { recursive: true, force: true });
+  fs.rmSync(configDir, { recursive: true, force: true });
 });
 
 beforeEach(() => {
   requests = [];
   fs.rmSync(getLogDir(), { recursive: true, force: true });
-  fs.rmSync(path.join(workDir, ".settings"), { force: true });
+  fs.rmSync(path.join(configDir, "config.json"), { force: true });
   fs.writeFileSync(path.join(workDir, "export.json"), JSON.stringify(EXPORT));
 });
 
@@ -91,27 +97,27 @@ const logEntries = () =>
 const deleteCalls = () => requests.filter((r) => r.method === "DELETE").map((r) => r.url);
 
 describe("resolveMigrationToUndo", () => {
-  test("reads the file and transformer from .settings", () => {
-    saveSettings({ key: "clerk", file: "export.json" });
-    expect(resolveMigrationToUndo()).toEqual({ file: "export.json", key: "clerk" });
+  test("reads the file and transformer from the saved migration", async () => {
+    await saveSettings({ transformer: "clerk", file: "export.json" });
+    expect(await resolveMigrationToUndo()).toEqual({ file: "export.json", key: "clerk" });
   });
 
   // Deleting nothing silently would look like a successful undo.
-  test("explains when there is no .settings at all", () => {
-    expect(() => resolveMigrationToUndo()).toThrow(/no `.settings` from a previous/);
+  test("explains when there is no saved migration at all", async () => {
+    await expect(resolveMigrationToUndo()).rejects.toThrow(/no record of a previous/);
   });
 
   test.each([
-    ["no file", { key: "clerk" }],
+    ["no file", { transformer: "clerk" }],
     ["no transformer", { file: "export.json" }],
-  ])("explains when .settings has %s", (_label, settings) => {
-    saveSettings(settings);
-    expect(() => resolveMigrationToUndo()).toThrow(CliError);
+  ])("explains when the saved migration has %s", async (_label, settings) => {
+    await saveSettings(settings);
+    await expect(resolveMigrationToUndo()).rejects.toThrow(CliError);
   });
 
-  test("explains when the migration file has since been removed", () => {
-    saveSettings({ key: "clerk", file: "gone.json" });
-    expect(() => resolveMigrationToUndo()).toThrow(/no longer there/);
+  test("explains when the migration file has since been removed", async () => {
+    await saveSettings({ transformer: "clerk", file: "gone.json" });
+    await expect(resolveMigrationToUndo()).rejects.toThrow(/no longer there/);
   });
 });
 
@@ -344,8 +350,8 @@ describe("deleteMigratedUsers", () => {
 describe("deleteMigration", () => {
   const baseOptions = { yes: true, secretKey: "sk_test_x" };
 
-  beforeEach(() => {
-    saveSettings({ key: "clerk", file: "export.json" });
+  beforeEach(async () => {
+    await saveSettings({ transformer: "clerk", file: "export.json" });
   });
 
   test("deletes the users the last run created", async () => {
@@ -398,8 +404,8 @@ describe("deleteMigration", () => {
     expect(deleteCalls()).toHaveLength(0);
   });
 
-  test("fails before any API call when there is no .settings", async () => {
-    fs.rmSync(path.join(workDir, ".settings"), { force: true });
+  test("fails before any API call when there is no saved migration", async () => {
+    fs.rmSync(path.join(configDir, "config.json"), { force: true });
     stubBapi({ legacy_a: "user_1" });
 
     await expect(deleteMigration(baseOptions)).rejects.toThrow(CliError);

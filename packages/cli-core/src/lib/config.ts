@@ -50,11 +50,19 @@ interface RelayEntry {
   token: string;
 }
 
+/** What `clerk migrate run` last imported for a project, and how. */
+interface MigrationEntry {
+  transformer?: string;
+  file?: string;
+  skipUnsupportedProviders?: boolean;
+}
+
 interface ClerkConfig {
   environment?: string;
   auth?: Record<string, Auth>;
   profiles: Record<string, Profile>;
   relay?: Record<string, RelayEntry>;
+  migrations?: Record<string, MigrationEntry>;
 }
 
 function defaultConfig(): ClerkConfig {
@@ -84,6 +92,13 @@ function migrateRawConfig(raw: Record<string, unknown>): ClerkConfig {
       }
     }
     config.relay = relay;
+  }
+
+  // Not validated per entry the way `relay` is: every field is optional, so
+  // there is no key whose absence marks an entry as junk. A malformed one costs
+  // a remembered default, not a failed run.
+  if (raw.migrations && typeof raw.migrations === "object" && !Array.isArray(raw.migrations)) {
+    config.migrations = raw.migrations as Record<string, MigrationEntry>;
   }
 
   if (raw.auth && typeof raw.auth === "object") {
@@ -207,6 +222,18 @@ export async function setRelayEntry(key: string, entry: RelayEntry): Promise<voi
   await writeConfig(config);
 }
 
+export async function getMigrationEntry(key: string): Promise<MigrationEntry | undefined> {
+  const config = await readConfig();
+  return config.migrations?.[key];
+}
+
+export async function setMigrationEntry(key: string, entry: MigrationEntry): Promise<void> {
+  const config = await readConfig();
+  if (!config.migrations) config.migrations = {};
+  config.migrations[key] = entry;
+  await writeConfig(config);
+}
+
 type ResolvedVia = "remote" | "git-common-dir" | "directory";
 
 export async function resolveProfile(cwd: string): Promise<
@@ -256,6 +283,20 @@ export async function resolveProfile(cwd: string): Promise<
     dir = parent;
   }
   return undefined;
+}
+
+/**
+ * The key a per-project record (e.g. `migrations`) is filed under.
+ *
+ * Prefers the linked profile's own key so the record sits beside the profile it
+ * belongs to, and so it survives `clerk link` being re-run from a subdirectory.
+ * Falls back to the git remote and then the directory, because a project that
+ * has never been linked still deserves to be remembered.
+ */
+export async function getProjectKey(cwd: string): Promise<string> {
+  const resolved = await resolveProfile(cwd);
+  if (resolved) return resolved.path;
+  return (await getGitNormalizedRemote(cwd)) ?? cwd;
 }
 
 const INSTANCE_ALIASES: Record<string, "development" | "production"> = {
@@ -397,4 +438,4 @@ export async function resolveAppContext(
   };
 }
 
-export type { Auth, Profile, ClerkConfig, AppContextOptions };
+export type { Auth, Profile, ClerkConfig, MigrationEntry, AppContextOptions };

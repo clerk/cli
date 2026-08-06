@@ -118,20 +118,6 @@ export type ImportSummary = {
 };
 
 /**
- * Per-directory migration state, persisted to a cwd-relative `.settings` file.
- *
- * Deliberately not routed through `~/.config/clerk/config.json`: that file is
- * keyed by linked-project identity, which is a different concept from "which
- * file did I last migrate with".
- */
-export type Settings = {
-  key?: string;
-  file?: string;
-  skipUnsupportedProviders?: boolean;
-  firebaseHashConfig?: FirebaseHashConfig;
-};
-
-/**
  * Firebase's scrypt parameters, needed to rebuild a password hash Clerk can
  * verify.
  *

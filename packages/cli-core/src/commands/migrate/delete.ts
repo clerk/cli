@@ -64,28 +64,29 @@ export type MigratedUser = {
 /**
  * Resolves which migration is being undone.
  *
- * `.settings` is the only record of that — this command has no independent way
- * to know what a previous run created, which is why it is coupled to `run`.
+ * The saved migration record is the only account of that — this command has no
+ * independent way to know what a previous run created, which is why it is
+ * coupled to `run`.
  */
-export function resolveMigrationToUndo(): { file: string; key: string } {
-  const settings = loadSettings();
+export async function resolveMigrationToUndo(): Promise<{ file: string; key: string }> {
+  const settings = await loadSettings();
 
-  if (!settings.file || !settings.key) {
+  if (!settings.file || !settings.transformer) {
     throw new CliError(
-      "No migration to undo: this directory has no `.settings` from a previous `clerk migrate run`.\n" +
-        "Run `clerk migrate delete` from the directory you migrated from.",
+      "No migration to undo: this project has no record of a previous `clerk migrate run`.\n" +
+        "Run `clerk migrate delete` from the project you migrated from.",
       { code: ERROR_CODE.FILE_NOT_FOUND },
     );
   }
 
   if (!fileExists(settings.file)) {
     throw new CliError(
-      `The migration file ${settings.file} named in .settings is no longer there, so the users it created cannot be identified.`,
+      `The migration file ${settings.file} is no longer there, so the users it created cannot be identified.`,
       { code: ERROR_CODE.FILE_NOT_FOUND },
     );
   }
 
-  return { file: settings.file, key: settings.key };
+  return { file: settings.file, key: settings.transformer };
 }
 
 /**
@@ -261,7 +262,7 @@ export async function deleteMigration(options: MigrateDeleteOptions): Promise<vo
   }
   const secretKeyOption = options.secretKey ?? options.clerkSecretKey;
 
-  const { file, key } = resolveMigrationToUndo();
+  const { file, key } = await resolveMigrationToUndo();
 
   await withGutter("Undoing a migration", async () => {
     const target = await describeBapiTarget({ ...options, secretKey: secretKeyOption });

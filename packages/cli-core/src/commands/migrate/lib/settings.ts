@@ -1,43 +1,39 @@
 /**
- * The cwd-relative `.settings` file: what this directory last migrated, and
- * with which transformer.
+ * What this project last migrated, and with which transformer.
  *
- * Ported from the standalone migration-tool's `src/lib/settings.ts`. Kept out
- * of `~/.config/clerk/config.json` on purpose — that file is keyed by linked
- * project identity, not by "which export file am I working through".
+ * Kept in the CLI's own config file under `migrations`, keyed by project — the
+ * same shape `clerk webhooks listen` files its relay token under. An earlier
+ * version wrote a `.settings` file into the user's cwd instead, which the CLI
+ * cannot gitignore on the user's behalf and which put migration state inside
+ * the repository being migrated.
  *
- * Both halves fail silently: a missing, unreadable or unwritable `.settings`
- * only costs the user a remembered default.
+ * Both halves fail silently: an unreadable or unwritable config only costs the
+ * user a remembered default, so it must not take the run down with it.
  */
 
-import fs from "node:fs";
-import path from "node:path";
-import type { Settings } from "../types.ts";
+import {
+  getMigrationEntry,
+  getProjectKey,
+  setMigrationEntry,
+  type MigrationEntry,
+} from "../../../lib/config.ts";
+import { log } from "../../../lib/log.ts";
 
-const SETTINGS_FILE = ".settings";
-
-function settingsPath(): string {
-  return path.join(process.cwd(), SETTINGS_FILE);
-}
-
-/** Reads saved settings, or `{}` when absent or corrupt. */
-export function loadSettings(): Settings {
+/** Reads saved settings, or `{}` when absent or unreadable. */
+export async function loadSettings(): Promise<MigrationEntry> {
   try {
-    const file = settingsPath();
-    if (fs.existsSync(file)) {
-      return JSON.parse(fs.readFileSync(file, "utf-8")) as Settings;
-    }
-  } catch {
-    // Corrupt or unreadable settings are indistinguishable from none.
+    return (await getMigrationEntry(await getProjectKey(process.cwd()))) ?? {};
+  } catch (error) {
+    log.debug(`config: could not read migration settings — ${error}`);
+    return {};
   }
-  return {};
 }
 
-/** Persists settings for the next run in this directory. */
-export function saveSettings(settings: Settings): void {
+/** Persists settings for the next run in this project. */
+export async function saveSettings(settings: MigrationEntry): Promise<void> {
   try {
-    fs.writeFileSync(settingsPath(), JSON.stringify(settings, null, 2));
-  } catch {
-    // Read-only cwd; the run itself is unaffected.
+    await setMigrationEntry(await getProjectKey(process.cwd()), settings);
+  } catch (error) {
+    log.debug(`config: could not save migration settings — ${error}`);
   }
 }

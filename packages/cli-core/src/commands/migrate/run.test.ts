@@ -2,15 +2,17 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } fr
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { _setConfigDir } from "../../lib/config.ts";
 import { CliError } from "../../lib/errors.ts";
 import { useCaptureLog } from "../../test/lib/stubs.ts";
 import { getLogDir } from "./lib/logger.ts";
 import { __resetCustomTransformersForTesting } from "./transformers/registry.ts";
 import { loadSettings } from "./lib/settings.ts";
 import { applyResumeAfter, resolveFirebaseHashConfig, run, validateRunOptions } from "./run.ts";
-import type { FirebaseHashConfig, User } from "./types.ts";
+import type { User } from "./types.ts";
 
 let workDir: string;
+let configDir: string;
 let originalCwd: string;
 
 const users = (...ids: string[]): User[] => ids.map((userId) => ({ userId }) as User);
@@ -18,14 +20,18 @@ const users = (...ids: string[]): User[] => ids.map((userId) => ({ userId }) as 
 beforeAll(() => {
   originalCwd = process.cwd();
   workDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "clerk-migrate-run-")));
+  configDir = fs.mkdtempSync(path.join(os.tmpdir(), "clerk-migrate-run-config-"));
+  _setConfigDir(configDir);
   process.chdir(workDir);
   fs.writeFileSync(path.join(workDir, "users.json"), "[]");
   fs.writeFileSync(path.join(workDir, "users.txt"), "");
 });
 
 afterAll(() => {
+  _setConfigDir(undefined);
   process.chdir(originalCwd);
   fs.rmSync(workDir, { recursive: true, force: true });
+  fs.rmSync(configDir, { recursive: true, force: true });
 });
 
 describe("validateRunOptions", () => {
@@ -91,27 +97,62 @@ describe("resolveFirebaseHashConfig", () => {
     );
   });
 
-  test("falls back to saved settings when no flag is passed", () => {
-    const saved: FirebaseHashConfig = {
-      base64_signer_key: "S",
-      base64_salt_separator: "B",
-      rounds: 8,
-      mem_cost: 14,
+  describe("environment fallback", () => {
+    const ENV = {
+      CLERK_FIREBASE_SIGNER_KEY: "ENV_SIGNER",
+      CLERK_FIREBASE_SALT_SEPARATOR: "Bw==",
+      CLERK_FIREBASE_ROUNDS: "8",
+      CLERK_FIREBASE_MEM_COST: "14",
     };
-    expect(resolveFirebaseHashConfig({}, saved)).toEqual(saved);
+
+    afterEach(() => {
+      for (const name of Object.keys(ENV)) delete process.env[name];
+    });
+
+    const setEnv = (vars: Partial<typeof ENV>) => Object.assign(process.env, vars);
+
+    test("builds the config when no flag is passed", () => {
+      setEnv(ENV);
+      expect(resolveFirebaseHashConfig({})).toEqual({
+        base64_signer_key: "ENV_SIGNER",
+        base64_salt_separator: "Bw==",
+        rounds: 8,
+        mem_cost: 14,
+      });
+    });
+
+    test("prefers a flag over the environment", () => {
+      setEnv(ENV);
+      expect(resolveFirebaseHashConfig(ALL)?.base64_signer_key).toBe("SIGNER");
+    });
+
+    // Half from the environment and half from flags is still a complete set.
+    test("fills only the gaps the flags left", () => {
+      setEnv({ CLERK_FIREBASE_ROUNDS: "8", CLERK_FIREBASE_MEM_COST: "14" });
+      expect(
+        resolveFirebaseHashConfig({ firebaseSignerKey: "SIGNER", firebaseSaltSeparator: "Bw==" }),
+      ).toEqual({
+        base64_signer_key: "SIGNER",
+        base64_salt_separator: "Bw==",
+        rounds: 8,
+        mem_cost: 14,
+      });
+    });
+
+    test("still demands the full set when the environment supplies only part", () => {
+      setEnv({ CLERK_FIREBASE_SIGNER_KEY: "ENV_SIGNER" });
+      expect(() => resolveFirebaseHashConfig({})).toThrow(/--firebase-salt-separator/);
+    });
+
+    // An empty var is how a shell spells "unset", and treating it as set would
+    // demand the other three for a config nobody asked for.
+    test("ignores an empty variable", () => {
+      setEnv({ CLERK_FIREBASE_SIGNER_KEY: "" });
+      expect(resolveFirebaseHashConfig({})).toBeUndefined();
+    });
   });
 
-  test("prefers flags over saved settings", () => {
-    const saved: FirebaseHashConfig = {
-      base64_signer_key: "OLD",
-      base64_salt_separator: "B",
-      rounds: 1,
-      mem_cost: 1,
-    };
-    expect(resolveFirebaseHashConfig(ALL, saved)?.base64_signer_key).toBe("SIGNER");
-  });
-
-  test("returns nothing when neither flags nor settings supply a config", () => {
+  test("returns nothing when neither flags nor the environment supply a config", () => {
     expect(resolveFirebaseHashConfig({})).toBeUndefined();
   });
 });
@@ -157,7 +198,7 @@ describe("run", () => {
     requests = [];
     delete process.env.CLERK_MIGRATE_RATE_LIMIT;
     fs.rmSync(getLogDir(), { recursive: true, force: true });
-    fs.rmSync(path.join(workDir, ".settings"), { force: true });
+    fs.rmSync(path.join(configDir, "config.json"), { force: true });
     fs.writeFileSync(path.join(workDir, "export.json"), JSON.stringify(export2));
     globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
       requests.push({
@@ -209,9 +250,9 @@ describe("run", () => {
     expect(entries.filter((e) => e.status === "success")).toHaveLength(2);
   });
 
-  test("records the run's key and file in .settings", async () => {
+  test("records the run's transformer and file for the next run", async () => {
     await run(baseOptions);
-    expect(loadSettings()).toEqual({ key: "clerk", file: "export.json" });
+    expect(await loadSettings()).toEqual({ transformer: "clerk", file: "export.json" });
   });
 
   test("--require-password imports only the users that have one", async () => {
@@ -738,12 +779,12 @@ describe("run", () => {
       expect(captured.err).toContain("only applies to supabase");
     });
 
-    test("records the flag in .settings", async () => {
+    test("records the flag for the next run", async () => {
       stubInstance({ oauth_discord: { enabled: true } });
 
       await run({ ...baseOptions, transformer: "supabase", skipUnsupportedProviders: true });
 
-      expect(loadSettings().skipUnsupportedProviders).toBe(true);
+      expect((await loadSettings()).skipUnsupportedProviders).toBe(true);
     });
   });
 });

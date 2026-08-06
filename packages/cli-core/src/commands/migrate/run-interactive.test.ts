@@ -40,10 +40,12 @@ const { run } = await import("./run.ts");
 const { deleteMigration } = await import("./delete.ts");
 const { UserAbortError } = await import("../../lib/errors.ts");
 const { loadSettings, saveSettings } = await import("./lib/settings.ts");
+const { _setConfigDir } = await import("../../lib/config.ts");
 
 const captured = useCaptureLog();
 
 let workDir: string;
+let configDir: string;
 let originalCwd: string;
 let originalFetch: typeof globalThis.fetch;
 let requests: { method: string; url: string; body: unknown }[];
@@ -61,14 +63,18 @@ beforeAll(() => {
   originalCwd = process.cwd();
   originalFetch = globalThis.fetch;
   workDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "clerk-migrate-interactive-")));
+  configDir = fs.mkdtempSync(path.join(os.tmpdir(), "clerk-migrate-interactive-config-"));
+  _setConfigDir(configDir);
   process.chdir(workDir);
 });
 
 afterAll(() => {
   setMode(originalMode);
   globalThis.fetch = originalFetch;
+  _setConfigDir(undefined);
   process.chdir(originalCwd);
   fs.rmSync(workDir, { recursive: true, force: true });
+  fs.rmSync(configDir, { recursive: true, force: true });
 });
 
 beforeEach(() => {
@@ -79,7 +85,7 @@ beforeEach(() => {
   mockSelect.mockResolvedValue("clerk");
   mockText.mockResolvedValue("export.json");
   fs.rmSync(path.join(workDir, "logs"), { recursive: true, force: true });
-  fs.rmSync(path.join(workDir, ".settings"), { force: true });
+  fs.rmSync(path.join(configDir, "config.json"), { force: true });
   fs.writeFileSync(path.join(workDir, "export.json"), JSON.stringify(EXPORT));
   stubInstanceSettings({ attributes: { email_address: { enabled: true } } });
 });
@@ -137,7 +143,7 @@ describe("the wizard fills in missing flags", () => {
   test("records the wizard's answers for the next run", async () => {
     await run({ secretKey: "sk_test_x" });
 
-    expect(loadSettings()).toMatchObject({ key: "clerk", file: "export.json" });
+    expect(await loadSettings()).toMatchObject({ transformer: "clerk", file: "export.json" });
   });
 });
 
@@ -261,8 +267,8 @@ describe("migrate delete confirmation", () => {
 
   const deleted = () => requests.filter((r) => r.method === "DELETE");
 
-  beforeEach(() => {
-    saveSettings({ key: "clerk", file: "export.json" });
+  beforeEach(async () => {
+    await saveSettings({ transformer: "clerk", file: "export.json" });
     stubDeleteTargets({ legacy_a: "user_1", legacy_b: "user_2" });
     fs.writeFileSync(
       path.join(workDir, "export.json"),

@@ -2,8 +2,9 @@
  * The interactive path behind a bare `clerk migrate`.
  *
  * Ported from the standalone migration-tool's `src/migrate/cli.ts` interactive
- * flow. Every answer is pre-filled from the previous run's `.settings`, so a
- * repeat migration is mostly pressing enter.
+ * flow. The platform and file are pre-filled from the previous run, so a repeat
+ * migration is mostly pressing enter. Firebase's hash parameters are not: the
+ * signer key is a secret, and the CLI does not keep those.
  *
  * Agent mode never reaches here — `run` raises a usage error naming the flags
  * instead, because an agent cannot answer a prompt.
@@ -65,18 +66,17 @@ async function askFile(defaultFile: string | undefined): Promise<string> {
  * nothing. Pressing enter through all four leaves the config unset, which is
  * correct for an export with no password hashes.
  */
-async function askFirebaseHashConfig(
-  saved: FirebaseHashConfig | undefined,
-): Promise<FirebaseHashConfig | undefined> {
+async function askFirebaseHashConfig(): Promise<FirebaseHashConfig | undefined> {
   log.info(
     "Firebase password hashes need the project's hash parameters. Find them in the Firebase console under Authentication → Users → (⋮) → Password hash parameters.",
   );
-  log.info(dimIfSaved(saved));
+  log.info(
+    "Set CLERK_FIREBASE_SIGNER_KEY, CLERK_FIREBASE_SALT_SEPARATOR, CLERK_FIREBASE_ROUNDS and CLERK_FIREBASE_MEM_COST to skip these prompts on the next run.",
+  );
 
   const signerKey = (
     await text({
       message: "base64 signer key (leave blank if this export has no passwords)",
-      default: saved?.base64_signer_key,
     })
   ).trim();
   if (!signerKey) return undefined;
@@ -84,32 +84,21 @@ async function askFirebaseHashConfig(
   const saltSeparator = (
     await text({
       message: "base64 salt separator",
-      default: saved?.base64_salt_separator,
       validate: (value) => (value?.trim() ? undefined : "Required alongside the signer key"),
     })
   ).trim();
 
-  const rounds = await askNumber("rounds", saved?.rounds);
-  const memCost = await askNumber("mem cost", saved?.mem_cost);
-
   return {
     base64_signer_key: signerKey,
     base64_salt_separator: saltSeparator,
-    rounds,
-    mem_cost: memCost,
+    rounds: await askNumber("rounds"),
+    mem_cost: await askNumber("mem cost"),
   };
 }
 
-function dimIfSaved(saved: FirebaseHashConfig | undefined): string {
-  return saved
-    ? "Saved parameters found — press enter to reuse them."
-    : "Leave the signer key blank if this export carries no passwords.";
-}
-
-async function askNumber(label: string, defaultValue: number | undefined): Promise<number> {
+async function askNumber(label: string): Promise<number> {
   const answer = await text({
     message: label,
-    default: defaultValue === undefined ? undefined : String(defaultValue),
     validate: (value) => {
       const parsed = Number(value?.trim());
       return Number.isInteger(parsed) && parsed > 0 ? undefined : "Enter a positive whole number";
@@ -128,14 +117,17 @@ export async function runWizard(provided: {
   file?: string;
   firebaseHashConfig?: FirebaseHashConfig;
 }): Promise<WizardResult> {
-  const saved = loadSettings();
+  const saved = await loadSettings();
 
-  const transformer = provided.transformer ?? (await pickTransformer(saved.key));
+  const transformer = provided.transformer ?? (await pickTransformer(saved.transformer));
   const file = provided.file ?? (await askFile(saved.file));
 
   let firebaseHashConfig = provided.firebaseHashConfig;
   if (transformer === "firebase" && !firebaseHashConfig) {
-    firebaseHashConfig = await askFirebaseHashConfig(saved.firebaseHashConfig);
+    // Never prefilled: the signer key is a secret the CLI does not keep. A
+    // repeat run supplies it through `--firebase-*` or `CLERK_FIREBASE_*`,
+    // which short-circuits this prompt entirely.
+    firebaseHashConfig = await askFirebaseHashConfig();
   }
 
   return { transformer, file, ...(firebaseHashConfig ? { firebaseHashConfig } : {}) };

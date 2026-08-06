@@ -35,9 +35,10 @@ clerk migrate
 ```
 
 It picks the transformer from a list built off the registry, asks for the file,
-collects Firebase's hash parameters when they are needed, and pre-fills every
-answer from the last run's `.settings` so a repeat migration is mostly pressing
-enter. Anything already passed as a flag is not asked for.
+collects Firebase's hash parameters when they are needed, and pre-fills the
+platform and file from the last run so a repeat migration is mostly pressing
+enter. Anything already passed as a flag is not asked for. Firebase's hash
+parameters are never pre-filled — see [below](#--firebase--firebase).
 
 Then it prints the [Migration Readiness report](#migration-readiness-report)
 and waits for confirmation. Declining writes nothing to Clerk.
@@ -312,8 +313,8 @@ destroys data **in Clerk**, and is worth keeping short and prominent. (Contrast
 
 #### What it will and will not touch
 
-`.settings` is the only record of what a run created, so that is what
-identifies the migration being undone. Without it the command fails and
+The saved migration record is the only account of what a run created, so that
+is what identifies the migration being undone. Without it the command fails and
 explains — deleting nothing silently would look like a successful undo.
 
 Users are found with `GET /v1/users?external_id=…`, 100 IDs per request. Only a
@@ -525,7 +526,21 @@ clerk migrate run -y -t firebase -f users.json \
 All four are **required as a set** — supplying some but not all is a usage error
 naming what is missing. A partial set produces a well-formed digest that
 verifies against nothing, so users would import successfully and then be unable
-to sign in. They are saved to `.settings` and reused on the next run.
+to sign in.
+
+They are **never saved**: the signer key is a Firebase secret, and remembering
+it would mean writing it to disk in plaintext. To avoid re-passing all four on
+every run, set them in the environment (`.env.local` is already gitignored):
+
+| Variable                        | Flag                        |
+| ------------------------------- | --------------------------- |
+| `CLERK_FIREBASE_SIGNER_KEY`     | `--firebase-signer-key`     |
+| `CLERK_FIREBASE_SALT_SEPARATOR` | `--firebase-salt-separator` |
+| `CLERK_FIREBASE_ROUNDS`         | `--firebase-rounds`         |
+| `CLERK_FIREBASE_MEM_COST`       | `--firebase-mem-cost`       |
+
+Flags win over the environment, and the two can be mixed as long as all four
+end up supplied.
 
 An export with no password hashes needs no parameters at all.
 
@@ -666,10 +681,13 @@ rather than "which project is linked here".
 | `./logs/user-deletion-<timestamp>.log` | NDJSON: one line per `migrate delete` attempt                         |
 | `./logs/export-<timestamp>.log`        | NDJSON: one line per exported user                                    |
 | `./exports/<platform>-export.json`     | The export itself, unless `--output` says otherwise                   |
-| `./.settings`                          | The transformer key and file path of the last run                     |
 
-`.settings` is what `migrate delete` reads to know which migration to undo, so
-it is load-bearing rather than a convenience.
+The transformer and file of the last run are **not** written here. They go to
+the `migrations` section of the CLI's own config file (`clerk config --help`
+names its location), keyed by project the same way a linked profile is. That is
+what `migrate delete` reads to know which migration to undo, so it is
+load-bearing rather than a convenience — and it has no business being written
+into the repository being migrated.
 
 Log writes are synchronous appends, so a run interrupted with Ctrl-C still
 leaves a complete record of everything already processed. Use the last
