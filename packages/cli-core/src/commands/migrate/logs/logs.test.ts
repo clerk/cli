@@ -3,6 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { CliError } from "../../../lib/errors.ts";
+import { getMode, setMode, type Mode } from "../../../mode.ts";
 import { useCaptureLog } from "../../../test/lib/stubs.ts";
 import { getLogDir } from "../lib/logger.ts";
 import { clean } from "./clean.ts";
@@ -42,21 +43,21 @@ const MIGRATION = "migration-2026-01-01T12-00-00.log";
 const DELETION = "user-deletion-2026-02-01T12-00-00.log";
 
 describe("logs list", () => {
-  test("says so plainly when there is no logs directory", () => {
-    list();
+  test("says so plainly when there is no logs directory", async () => {
+    await list();
     expect(captured.err).toContain("No migration logs in");
   });
 
-  test("says so plainly when the directory is empty", () => {
+  test("says so plainly when the directory is empty", async () => {
     fs.mkdirSync(getLogDir(), { recursive: true });
-    list();
+    await list();
     expect(captured.err).toContain("No migration logs in");
   });
 
-  test("reports type, timestamp, size and entry count", () => {
+  test("reports type, timestamp, size and entry count", async () => {
     writeLog(MIGRATION, [{ userId: "u1" }, { userId: "u2" }, { userId: "u3" }]);
 
-    list();
+    await list();
 
     expect(captured.err).toContain("TYPE");
     expect(captured.err).toContain("TIMESTAMP");
@@ -68,21 +69,21 @@ describe("logs list", () => {
     expect(captured.err).toContain("3");
   });
 
-  test("lists every log kind", () => {
+  test("lists every log kind", async () => {
     writeLog(MIGRATION, [{ a: 1 }]);
     writeLog(DELETION, [{ a: 1 }]);
 
-    list();
+    await list();
 
     expect(captured.err).toContain("migration");
     expect(captured.err).toContain("deletion");
     expect(captured.err).toContain("2 log files");
   });
 
-  test("--json emits a machine-readable listing on stdout", () => {
+  test("--json emits a machine-readable listing on stdout", async () => {
     writeLog(MIGRATION, [{ userId: "u1" }]);
 
-    list({ json: true });
+    await list({ json: true });
 
     const parsed = JSON.parse(captured.out) as Record<string, unknown>[];
     expect(parsed).toHaveLength(1);
@@ -94,8 +95,8 @@ describe("logs list", () => {
     });
   });
 
-  test("--json emits an empty array rather than prose when there are no logs", () => {
-    list({ json: true });
+  test("--json emits an empty array rather than prose when there are no logs", async () => {
+    await list({ json: true });
     expect(JSON.parse(captured.out)).toEqual([]);
   });
 });
@@ -215,5 +216,46 @@ describe("logs convert", () => {
     await convert({ all: true });
 
     expect(captured.err).toContain("3 entries");
+  });
+});
+
+describe("human-mode frame", () => {
+  let originalMode: Mode;
+
+  beforeAll(() => {
+    originalMode = getMode();
+    setMode("human");
+  });
+
+  afterAll(() => {
+    setMode(originalMode);
+  });
+
+  test("logs list wraps its output in an intro/outro gutter", async () => {
+    writeLog(MIGRATION, [{ a: 1 }]);
+
+    await list();
+
+    expect(captured.err).toContain("\u250c");
+    expect(captured.err).toContain("Listing migration logs");
+    expect(captured.err).toContain("\u2514");
+    expect(captured.err).toContain("Done");
+  });
+
+  test("--json stays outside the gutter, on stdout only", async () => {
+    writeLog(MIGRATION, [{ a: 1 }]);
+
+    await list({ json: true });
+
+    expect(JSON.parse(captured.out)).toHaveLength(1);
+    expect(captured.err).not.toContain("\u250c");
+  });
+
+  test("a failure inside logs convert closes with Failed and still throws", async () => {
+    writeLog(MIGRATION, [{ a: 1 }]);
+
+    await expect(convert({ files: ["nope.log"] })).rejects.toThrow(CliError);
+
+    expect(captured.err).toContain("Failed");
   });
 });

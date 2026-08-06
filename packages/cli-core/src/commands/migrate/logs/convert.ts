@@ -12,6 +12,7 @@ import { CliError, ERROR_CODE, throwUsageError, throwUserAbort } from "../../../
 import { dim } from "../../../lib/color.ts";
 import { log } from "../../../lib/log.ts";
 import { multiselect } from "../../../lib/prompts.ts";
+import { withGutter } from "../../../lib/spinner.ts";
 import { isAgent, isHuman } from "../../../mode.ts";
 import { findLogFile, listLogFiles, readNdjson, type LogFile } from "../lib/log-files.ts";
 import { getLogDir } from "../lib/logger.ts";
@@ -81,41 +82,47 @@ async function resolveTargets(options: LogsConvertOptions): Promise<LogFile[]> {
 }
 
 export async function convert(options: LogsConvertOptions = {}): Promise<void> {
-  const targets = await resolveTargets(options);
-  if (targets.length === 0) return;
+  // The multiselect lives inside the gutter so cancelling it closes with
+  // `└ Paused` rather than leaving a half-drawn frame.
+  await withGutter("Converting migration logs", async () => {
+    const targets = await resolveTargets(options);
+    if (targets.length === 0) return;
 
-  let converted = 0;
-  let malformed = 0;
+    let converted = 0;
+    let malformed = 0;
 
-  for (const file of targets) {
-    const output = outputPathFor(file);
+    for (const file of targets) {
+      const output = outputPathFor(file);
 
-    try {
-      const { entries, errors } = readNdjson(file.path);
+      try {
+        const { entries, errors } = readNdjson(file.path);
 
-      // Reported per line, so a truncated final line from an interrupted run
-      // is visible rather than silently missing from the output.
-      for (const error of errors) {
-        malformed++;
-        log.warn(`${file.name}:${error.line} is not valid JSON and was skipped — ${error.message}`);
+        // Reported per line, so a truncated final line from an interrupted run
+        // is visible rather than silently missing from the output.
+        for (const error of errors) {
+          malformed++;
+          log.warn(
+            `${file.name}:${error.line} is not valid JSON and was skipped — ${error.message}`,
+          );
+        }
+
+        fs.writeFileSync(output, JSON.stringify(entries, null, 2));
+        converted++;
+        const count = `${entries.length} ${entries.length === 1 ? "entry" : "entries"}`;
+        log.info(`${file.name} → ${output.split("/").pop()} ${dim(`(${count})`)}`);
+      } catch (error) {
+        log.warn(`Could not convert ${file.name}: ${(error as Error).message}`);
+        process.exitCode = 1;
       }
-
-      fs.writeFileSync(output, JSON.stringify(entries, null, 2));
-      converted++;
-      const count = `${entries.length} ${entries.length === 1 ? "entry" : "entries"}`;
-      log.info(`${file.name} → ${output.split("/").pop()} ${dim(`(${count})`)}`);
-    } catch (error) {
-      log.warn(`Could not convert ${file.name}: ${(error as Error).message}`);
-      process.exitCode = 1;
     }
-  }
 
-  if (converted > 0) {
-    log.success(
-      `Converted ${converted} log file${converted === 1 ? "" : "s"}. Originals left in place.`,
-    );
-  }
-  if (malformed > 0) {
-    log.warn(`${malformed} malformed line${malformed === 1 ? "" : "s"} skipped.`);
-  }
+    if (converted > 0) {
+      log.success(
+        `Converted ${converted} log file${converted === 1 ? "" : "s"}. Originals left in place.`,
+      );
+    }
+    if (malformed > 0) {
+      log.warn(`${malformed} malformed line${malformed === 1 ? "" : "s"} skipped.`);
+    }
+  });
 }

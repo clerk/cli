@@ -13,6 +13,7 @@ import fs from "node:fs";
 import { throwUsageError, throwUserAbort } from "../../../lib/errors.ts";
 import { log } from "../../../lib/log.ts";
 import { confirm } from "../../../lib/prompts.ts";
+import { withGutter } from "../../../lib/spinner.ts";
 import { isAgent, isHuman } from "../../../mode.ts";
 import { listLogFiles } from "../lib/log-files.ts";
 import { getLogDir } from "../lib/logger.ts";
@@ -22,48 +23,50 @@ export type LogsCleanOptions = {
 };
 
 export async function clean(options: LogsCleanOptions = {}): Promise<void> {
-  const files = listLogFiles();
+  await withGutter("Cleaning migration logs", async () => {
+    const files = listLogFiles();
 
-  if (files.length === 0) {
-    log.info(`No migration logs to clean in ${getLogDir()}.`);
-    return;
-  }
-
-  const label = `${files.length} log file${files.length === 1 ? "" : "s"}`;
-
-  if (!options.yes) {
-    if (isAgent() || !isHuman()) {
-      throwUsageError(
-        `\`clerk migrate logs clean\` deletes ${label} from ${getLogDir()} and cannot prompt here. Pass -y to confirm.`,
-        undefined,
-        undefined,
-        [
-          {
-            command: "clerk migrate logs clean -y",
-            description: "Delete every migration log without prompting",
-          },
-        ],
-      );
+    if (files.length === 0) {
+      log.info(`No migration logs to clean in ${getLogDir()}.`);
+      return;
     }
 
-    const proceed = await confirm({ message: `Delete ${label}?`, default: false });
-    if (!proceed) throwUserAbort();
-  }
+    const label = `${files.length} log file${files.length === 1 ? "" : "s"}`;
 
-  let deleted = 0;
-  const failures: string[] = [];
+    if (!options.yes) {
+      if (isAgent() || !isHuman()) {
+        throwUsageError(
+          `\`clerk migrate logs clean\` deletes ${label} from ${getLogDir()} and cannot prompt here. Pass -y to confirm.`,
+          undefined,
+          undefined,
+          [
+            {
+              command: "clerk migrate logs clean -y",
+              description: "Delete every migration log without prompting",
+            },
+          ],
+        );
+      }
 
-  for (const file of files) {
-    try {
-      fs.unlinkSync(file.path);
-      deleted++;
-    } catch (error) {
-      failures.push(`${file.name}: ${(error as Error).message}`);
+      const proceed = await confirm({ message: `Delete ${label}?`, default: false });
+      if (!proceed) throwUserAbort();
     }
-  }
 
-  for (const failure of failures) log.warn(`Could not delete ${failure}`);
+    let deleted = 0;
+    const failures: string[] = [];
 
-  log.success(`Deleted ${deleted} log file${deleted === 1 ? "" : "s"}.`);
-  if (failures.length > 0) process.exitCode = 1;
+    for (const file of files) {
+      try {
+        fs.unlinkSync(file.path);
+        deleted++;
+      } catch (error) {
+        failures.push(`${file.name}: ${(error as Error).message}`);
+      }
+    }
+
+    for (const failure of failures) log.warn(`Could not delete ${failure}`);
+
+    log.success(`Deleted ${deleted} log file${deleted === 1 ? "" : "s"}.`);
+    if (failures.length > 0) process.exitCode = 1;
+  });
 }

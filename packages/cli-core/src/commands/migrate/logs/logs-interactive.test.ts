@@ -175,3 +175,27 @@ describe("logs convert", () => {
     expect(mockMultiselect).not.toHaveBeenCalled();
   });
 });
+
+// withGutter turns a UserAbortError into `└ Paused`; a real failure would close
+// with `└ Failed`. Declining a prompt is not a failure, so the two must not swap.
+describe("cancelling inside the gutter", () => {
+  test("declining the logs clean confirm closes with Paused, not Failed", async () => {
+    writeLog(MIGRATION, [{ a: 1 }]);
+    mockConfirm.mockResolvedValue(false);
+
+    await expect(clean()).rejects.toThrow(UserAbortError);
+
+    expect(captured.err).toContain("Paused");
+    expect(captured.err).not.toContain("Failed");
+  });
+
+  test("selecting nothing in the logs convert multiselect closes with Paused", async () => {
+    writeLog(MIGRATION, [{ a: 1 }]);
+    mockMultiselect.mockResolvedValue([]);
+
+    await expect(convert()).rejects.toThrow(UserAbortError);
+
+    expect(captured.err).toContain("Paused");
+    expect(captured.err).not.toContain("Failed");
+  });
+});

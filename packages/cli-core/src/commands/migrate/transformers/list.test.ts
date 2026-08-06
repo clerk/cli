@@ -3,6 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { CliError } from "../../../lib/errors.ts";
+import { getMode, setMode, type Mode } from "../../../mode.ts";
 import { useCaptureLog } from "../../../test/lib/stubs.ts";
 import { list } from "./list.ts";
 import { transformers } from "./registry.ts";
@@ -112,5 +113,34 @@ describe("--json", () => {
 describe("a bad --transformer-file", () => {
   test("fails rather than listing only the built-ins", async () => {
     await expect(list({ transformerFile: "./nope.ts" })).rejects.toThrow(CliError);
+  });
+});
+
+describe("human-mode frame", () => {
+  let originalMode: Mode;
+
+  beforeAll(() => {
+    originalMode = getMode();
+    setMode("human");
+  });
+
+  afterAll(() => {
+    setMode(originalMode);
+  });
+
+  test("wraps its output in an intro/outro gutter", async () => {
+    await list();
+
+    expect(captured.err).toContain("┌");
+    expect(captured.err).toContain("Listing transformers");
+    expect(captured.err).toContain("└");
+    expect(captured.err).toContain("Done");
+  });
+
+  test("--json stays outside the gutter, on stdout only", async () => {
+    await list({ json: true });
+
+    expect(() => JSON.parse(captured.out)).not.toThrow();
+    expect(captured.err).not.toContain("┌");
   });
 });

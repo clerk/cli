@@ -8,6 +8,7 @@
 
 import { bold, cyan, dim } from "../../../lib/color.ts";
 import { log } from "../../../lib/log.ts";
+import { withGutter } from "../../../lib/spinner.ts";
 import type { TransformerRegistryEntry } from "../types.ts";
 import { loadCustomTransformer } from "./load-custom.ts";
 import { transformers } from "./registry.ts";
@@ -44,24 +45,26 @@ export async function list(options: TransformersListOptions = {}): Promise<void>
     return;
   }
 
-  for (const entry of entries) {
-    const suffix = entry.builtIn ? "" : ` ${dim(`(custom — ${entry.source})`)}`;
-    log.info(`${cyan(bold(entry.key))}  ${entry.label}${suffix}`);
-    log.info(`  ${dim(entry.description)}`);
-    log.info("");
-  }
+  await withGutter("Listing transformers", async () => {
+    for (const entry of entries) {
+      const suffix = entry.builtIn ? "" : ` ${dim(`(custom — ${entry.source})`)}`;
+      log.info(`${cyan(bold(entry.key))}  ${entry.label}${suffix}`);
+      log.info(`  ${dim(entry.description)}`);
+      log.info("");
+    }
 
-  const custom = entries.length - transformers.length;
-  log.info(
-    dim(
-      `${transformers.length} built-in transformer${transformers.length === 1 ? "" : "s"}` +
-        (custom > 0 ? ` plus ${custom} loaded from --transformer-file` : ""),
-    ),
-  );
-
-  if (custom === 0) {
+    const custom = entries.length - transformers.length;
     log.info(
-      dim("Migrating from something else? Write a transformer and pass --transformer-file."),
+      dim(
+        `${transformers.length} built-in transformer${transformers.length === 1 ? "" : "s"}` +
+          (custom > 0 ? ` plus ${custom} loaded from --transformer-file` : ""),
+      ),
     );
-  }
+
+    if (custom === 0) {
+      log.info(
+        dim("Migrating from something else? Write a transformer and pass --transformer-file."),
+      );
+    }
+  });
 }

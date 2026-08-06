@@ -8,6 +8,7 @@
 
 import { cyan, dim } from "../../../lib/color.ts";
 import { log } from "../../../lib/log.ts";
+import { withGutter } from "../../../lib/spinner.ts";
 import { formatSize, listLogFiles, type LogFile } from "../lib/log-files.ts";
 import { getLogDir } from "../lib/logger.ts";
 
@@ -26,7 +27,7 @@ function toJson(files: LogFile[]) {
   }));
 }
 
-export function list(options: LogsListOptions = {}): void {
+export async function list(options: LogsListOptions = {}): Promise<void> {
   const files = listLogFiles();
 
   if (options.json) {
@@ -34,31 +35,34 @@ export function list(options: LogsListOptions = {}): void {
     return;
   }
 
-  if (files.length === 0) {
-    log.info(`No migration logs in ${getLogDir()}.`);
-    return;
-  }
+  await withGutter("Listing migration logs", async () => {
+    if (files.length === 0) {
+      log.info(`No migration logs in ${getLogDir()}.`);
+      return;
+    }
 
-  const kindWidth = Math.max(...files.map((file) => file.kind.length), "TYPE".length) + 2;
-  const timeWidth = Math.max(...files.map((file) => file.timestamp.length), "TIMESTAMP".length) + 2;
-  const sizeWidth = Math.max(...files.map((file) => formatSize(file.sizeBytes).length), 4) + 2;
+    const kindWidth = Math.max(...files.map((file) => file.kind.length), "TYPE".length) + 2;
+    const timeWidth =
+      Math.max(...files.map((file) => file.timestamp.length), "TIMESTAMP".length) + 2;
+    const sizeWidth = Math.max(...files.map((file) => formatSize(file.sizeBytes).length), 4) + 2;
 
-  log.info(
-    dim("TYPE".padEnd(kindWidth)) +
-      dim("TIMESTAMP".padEnd(timeWidth)) +
-      dim("SIZE".padEnd(sizeWidth)) +
-      dim("ENTRIES"),
-  );
-
-  for (const file of files) {
     log.info(
-      cyan(file.kind.padEnd(kindWidth)) +
-        (file.timestamp || dim("—")).padEnd(timeWidth) +
-        dim(formatSize(file.sizeBytes).padEnd(sizeWidth)) +
-        String(file.entryCount),
+      dim("TYPE".padEnd(kindWidth)) +
+        dim("TIMESTAMP".padEnd(timeWidth)) +
+        dim("SIZE".padEnd(sizeWidth)) +
+        dim("ENTRIES"),
     );
-  }
 
-  log.info("");
-  log.info(dim(`${files.length} log file${files.length === 1 ? "" : "s"} in ${getLogDir()}`));
+    for (const file of files) {
+      log.info(
+        cyan(file.kind.padEnd(kindWidth)) +
+          (file.timestamp || dim("—")).padEnd(timeWidth) +
+          dim(formatSize(file.sizeBytes).padEnd(sizeWidth)) +
+          String(file.entryCount),
+      );
+    }
+
+    log.info("");
+    log.info(dim(`${files.length} log file${files.length === 1 ? "" : "s"} in ${getLogDir()}`));
+  });
 }
