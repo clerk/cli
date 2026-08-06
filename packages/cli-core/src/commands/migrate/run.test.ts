@@ -69,8 +69,8 @@ describe("resolveFirebaseHashConfig", () => {
     firebaseMemCost: 14,
   };
 
-  test("builds the config when all four flags are present", () => {
-    expect(resolveFirebaseHashConfig(ALL)).toEqual({
+  test("builds the config when all four flags are present", async () => {
+    expect(await resolveFirebaseHashConfig(ALL)).toEqual({
       base64_signer_key: "SIGNER",
       base64_salt_separator: "Bw==",
       rounds: 8,
@@ -85,14 +85,14 @@ describe("resolveFirebaseHashConfig", () => {
     ["firebaseSaltSeparator", "--firebase-salt-separator"],
     ["firebaseRounds", "--firebase-rounds"],
     ["firebaseMemCost", "--firebase-mem-cost"],
-  ] as const)("rejects a set missing %s, naming the flag", (omit, flag) => {
+  ] as const)("rejects a set missing %s, naming the flag", async (omit, flag) => {
     const partial = { ...ALL };
     delete (partial as Record<string, unknown>)[omit];
-    expect(() => resolveFirebaseHashConfig(partial)).toThrow(new RegExp(flag));
+    await expect(resolveFirebaseHashConfig(partial)).rejects.toThrow(new RegExp(flag));
   });
 
-  test("names every missing flag at once", () => {
-    expect(() => resolveFirebaseHashConfig({ firebaseSignerKey: "SIGNER" })).toThrow(
+  test("names every missing flag at once", async () => {
+    await expect(resolveFirebaseHashConfig({ firebaseSignerKey: "SIGNER" })).rejects.toThrow(
       /--firebase-salt-separator.*--firebase-rounds.*--firebase-mem-cost/,
     );
   });
@@ -111,9 +111,9 @@ describe("resolveFirebaseHashConfig", () => {
 
     const setEnv = (vars: Partial<typeof ENV>) => Object.assign(process.env, vars);
 
-    test("builds the config when no flag is passed", () => {
+    test("builds the config when no flag is passed", async () => {
       setEnv(ENV);
-      expect(resolveFirebaseHashConfig({})).toEqual({
+      expect(await resolveFirebaseHashConfig({})).toEqual({
         base64_signer_key: "ENV_SIGNER",
         base64_salt_separator: "Bw==",
         rounds: 8,
@@ -121,16 +121,19 @@ describe("resolveFirebaseHashConfig", () => {
       });
     });
 
-    test("prefers a flag over the environment", () => {
+    test("prefers a flag over the environment", async () => {
       setEnv(ENV);
-      expect(resolveFirebaseHashConfig(ALL)?.base64_signer_key).toBe("SIGNER");
+      expect((await resolveFirebaseHashConfig(ALL))?.base64_signer_key).toBe("SIGNER");
     });
 
     // Half from the environment and half from flags is still a complete set.
-    test("fills only the gaps the flags left", () => {
+    test("fills only the gaps the flags left", async () => {
       setEnv({ CLERK_FIREBASE_ROUNDS: "8", CLERK_FIREBASE_MEM_COST: "14" });
       expect(
-        resolveFirebaseHashConfig({ firebaseSignerKey: "SIGNER", firebaseSaltSeparator: "Bw==" }),
+        await resolveFirebaseHashConfig({
+          firebaseSignerKey: "SIGNER",
+          firebaseSaltSeparator: "Bw==",
+        }),
       ).toEqual({
         base64_signer_key: "SIGNER",
         base64_salt_separator: "Bw==",
@@ -139,21 +142,21 @@ describe("resolveFirebaseHashConfig", () => {
       });
     });
 
-    test("still demands the full set when the environment supplies only part", () => {
+    test("still demands the full set when the environment supplies only part", async () => {
       setEnv({ CLERK_FIREBASE_SIGNER_KEY: "ENV_SIGNER" });
-      expect(() => resolveFirebaseHashConfig({})).toThrow(/--firebase-salt-separator/);
+      await expect(resolveFirebaseHashConfig({})).rejects.toThrow(/--firebase-salt-separator/);
     });
 
     // An empty var is how a shell spells "unset", and treating it as set would
     // demand the other three for a config nobody asked for.
-    test("ignores an empty variable", () => {
+    test("ignores an empty variable", async () => {
       setEnv({ CLERK_FIREBASE_SIGNER_KEY: "" });
-      expect(resolveFirebaseHashConfig({})).toBeUndefined();
+      expect(await resolveFirebaseHashConfig({})).toBeUndefined();
     });
   });
 
-  test("returns nothing when neither flags nor the environment supply a config", () => {
-    expect(resolveFirebaseHashConfig({})).toBeUndefined();
+  test("returns nothing when neither flags nor the environment supply a config", async () => {
+    expect(await resolveFirebaseHashConfig({})).toBeUndefined();
   });
 });
 

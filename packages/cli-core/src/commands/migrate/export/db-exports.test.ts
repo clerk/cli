@@ -27,6 +27,9 @@ import {
 import { buildSupabaseExport } from "./supabase.ts";
 import { looksLikeConnectionString, resolveDbUrl } from "./db-options.ts";
 
+/** A cwd with no `.env` files, so these tests exercise only the injected env. */
+const NO_ENV_FILES = fs.mkdtempSync(path.join(os.tmpdir(), "clerk-no-env-"));
+
 const captured = useCaptureLog();
 
 let workDir: string;
@@ -105,32 +108,45 @@ describe("resolveDbUrl", () => {
   const config = { platform: "authjs" as const, envVar: "AUTHJS_DB_URL", prompt: "url" };
 
   test("prefers the flag", async () => {
-    const url = await resolveDbUrl({ dbUrl: "postgres://u:p@h/db" }, config, {
+    const url = await resolveDbUrl({ dbUrl: "postgres://u:p@h/db" }, config, NO_ENV_FILES, {
       AUTHJS_DB_URL: "mysql://u:p@h/db",
     });
     expect(url).toBe("postgres://u:p@h/db");
   });
 
   test("falls back to the environment variable", async () => {
-    expect(await resolveDbUrl({}, config, { AUTHJS_DB_URL: "mysql://u:p@h/db" })).toBe(
-      "mysql://u:p@h/db",
-    );
+    expect(
+      await resolveDbUrl({}, config, NO_ENV_FILES, { AUTHJS_DB_URL: "mysql://u:p@h/db" }),
+    ).toBe("mysql://u:p@h/db");
   });
 
   test("rejects a flag that is not a connection string, naming the encoding trap", async () => {
-    await expect(resolveDbUrl({ dbUrl: "not a url" }, config, {})).rejects.toThrow(/URL-encode it/);
+    await expect(resolveDbUrl({ dbUrl: "not a url" }, config, NO_ENV_FILES, {})).rejects.toThrow(
+      /URL-encode it/,
+    );
   });
 
   test("warns and moves on when the environment variable is unusable", async () => {
     // Tests run non-TTY, so it then hits the agent-mode branch.
-    await expect(resolveDbUrl({}, config, { AUTHJS_DB_URL: "garbage" })).rejects.toThrow(
-      /cannot prompt here/,
-    );
+    await expect(
+      resolveDbUrl({}, config, NO_ENV_FILES, { AUTHJS_DB_URL: "garbage" }),
+    ).rejects.toThrow(/cannot prompt here/);
     expect(captured.err).toContain("AUTHJS_DB_URL is not a valid connection string");
   });
 
+  // The env var reaching process.env is the runtime's job; this is the fallback
+  // for when it did not, and is the rung the secret key has always had.
+  test("falls back to a .env file when the variable is not in the environment", async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "clerk-dburl-env-"));
+    fs.writeFileSync(path.join(dir, ".env.local"), "AUTHJS_DB_URL=postgres://u:p@h/db\n");
+
+    expect(await resolveDbUrl({}, config, dir, {})).toBe("postgres://u:p@h/db");
+  });
+
   test("names both the flag and the variable when it cannot prompt", async () => {
-    await expect(resolveDbUrl({}, config, {})).rejects.toThrow(/--db-url.*AUTHJS_DB_URL/s);
+    await expect(resolveDbUrl({}, config, NO_ENV_FILES, {})).rejects.toThrow(
+      /--db-url.*AUTHJS_DB_URL/s,
+    );
   });
 });
 

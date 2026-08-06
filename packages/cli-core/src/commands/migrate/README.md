@@ -441,6 +441,54 @@ clerk migrate transformers list --transformer-file ./my-transformer.ts
 `--json` gives an agent the same data, including which source field each
 transformer maps to `userId`.
 
+### `clerk migrate settings`
+
+What a run in this directory would pick up, and where each value comes from.
+
+```sh
+clerk migrate settings                                     # list
+clerk migrate settings set transformer firebase
+clerk migrate settings set firebase-signer-key abc123…
+clerk migrate settings clear -y
+```
+
+```
+SETTING                     VALUE      SOURCE
+transformer                 firebase   clerk config
+file                        ./users.json  clerk config
+firebase-signer-key         aVer…3456  .env.clerk-migrate
+firebase-rounds             —          not set
+```
+
+The source column is the point. A migration reads from flags, the environment,
+two of the app's env files and the CLI's config, so when a run picks up a stale
+value the question is never "what is it" but "which of those won".
+
+| Command                       | Description                                           |
+| ----------------------------- | ----------------------------------------------------- |
+| `settings` / `settings list`  | Show every setting, its value and its source          |
+| `settings list --json`        | The same, machine-readable                            |
+| `settings set <name> <value>` | Change one setting                                    |
+| `settings clear [-y]`         | Forget this project's settings and delete its secrets |
+
+#### Where each setting is kept
+
+Two stores, split by what the value **is** rather than by which command wrote it:
+
+| Store                | Holds                                               | Why                                                              |
+| -------------------- | --------------------------------------------------- | ---------------------------------------------------------------- |
+| CLI config           | `transformer`, `file`, `skip-unsupported-providers` | Project state, not secret, useless outside the CLI               |
+| `.env.clerk-migrate` | `firebase-*`                                        | Credentials: gitignored on write, and hand-editable for rotation |
+
+`.env.clerk-migrate` is the migration's own file rather than the app's
+`.env.local`, because a Firebase signer key is of no use to the application
+being migrated and does not belong in the file its developers read daily. The
+CLI adds it to `.gitignore` the first time it writes it, and deletes it when
+`settings clear` removes the last value.
+
+Credentials are redacted wherever they are displayed, including under `--json`,
+so the output is safe to paste into an issue.
+
 ### Custom transformers (`--transformer-file`)
 
 Migrating from a platform with no built-in, without recompiling the CLI:
@@ -528,9 +576,10 @@ naming what is missing. A partial set produces a well-formed digest that
 verifies against nothing, so users would import successfully and then be unable
 to sign in.
 
-They are **never saved**: the signer key is a Firebase secret, and remembering
-it would mean writing it to disk in plaintext. To avoid re-passing all four on
-every run, set them in the environment (`.env.local` is already gitignored):
+They never go into the CLI's config: the signer key is a Firebase secret, and
+that file is not a secret store. To avoid re-passing all four on every run, set
+them once with [`clerk migrate settings`](#clerk-migrate-settings), or export
+them yourself:
 
 | Variable                        | Flag                        |
 | ------------------------------- | --------------------------- |
@@ -539,8 +588,9 @@ every run, set them in the environment (`.env.local` is already gitignored):
 | `CLERK_FIREBASE_ROUNDS`         | `--firebase-rounds`         |
 | `CLERK_FIREBASE_MEM_COST`       | `--firebase-mem-cost`       |
 
-Flags win over the environment, and the two can be mixed as long as all four
-end up supplied.
+Resolution order is flag, then exported variable, then `.env.clerk-migrate`,
+then the app's `.env.local`/`.env`. The sources can be mixed as long as all four
+end up supplied. Run with `--verbose` to see which one each came from.
 
 An export with no password hashes needs no parameters at all.
 
@@ -681,13 +731,13 @@ rather than "which project is linked here".
 | `./logs/user-deletion-<timestamp>.log` | NDJSON: one line per `migrate delete` attempt                         |
 | `./logs/export-<timestamp>.log`        | NDJSON: one line per exported user                                    |
 | `./exports/<platform>-export.json`     | The export itself, unless `--output` says otherwise                   |
+| `./.env.clerk-migrate`                 | Migration credentials, written by `settings set` and gitignored       |
 
 The transformer and file of the last run are **not** written here. They go to
-the `migrations` section of the CLI's own config file (`clerk config --help`
-names its location), keyed by project the same way a linked profile is. That is
-what `migrate delete` reads to know which migration to undo, so it is
-load-bearing rather than a convenience — and it has no business being written
-into the repository being migrated.
+the `migrations` section of the CLI's own config file, keyed by project the
+same way a linked profile is. That is what `migrate delete` reads to know which
+migration to undo, so it is load-bearing rather than a convenience — and it has
+no business being written into the repository being migrated.
 
 Log writes are synchronous appends, so a run interrupted with Ctrl-C still
 leaves a complete record of everything already processed. Use the last

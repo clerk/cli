@@ -21,6 +21,7 @@ import { log } from "../../../lib/log.ts";
 import { password as passwordPrompt, text } from "../../../lib/prompts.ts";
 import { withGutter, withSpinner, type SpinnerControls } from "../../../lib/spinner.ts";
 import { isAgent, isHuman } from "../../../mode.ts";
+import { findMigrateEnvValue } from "../lib/env-file.ts";
 import { exportLogger, getDateTimeStamp } from "../lib/logger.ts";
 import { defaultOutputPath, reportExport, writeExportOutput } from "./shared.ts";
 
@@ -64,12 +65,16 @@ export function normalizeAuth0Domain(domain: string): string {
  */
 export async function resolveAuth0Credentials(
   options: ExportAuth0Options,
+  cwd: string = process.cwd(),
   env: Record<string, string | undefined> = process.env,
 ): Promise<Auth0Credentials> {
+  const fromEnv = async (name: string): Promise<string | undefined> =>
+    (await findMigrateEnvValue([name], cwd, env))?.value;
+
   const resolved = {
-    domain: options.domain ?? env.AUTH0_DOMAIN,
-    clientId: options.clientId ?? env.AUTH0_CLIENT_ID,
-    clientSecret: options.clientSecret ?? env.AUTH0_CLIENT_SECRET,
+    domain: options.domain ?? (await fromEnv("AUTH0_DOMAIN")),
+    clientId: options.clientId ?? (await fromEnv("AUTH0_CLIENT_ID")),
+    clientSecret: options.clientSecret ?? (await fromEnv("AUTH0_CLIENT_SECRET")),
   };
 
   const missing = (

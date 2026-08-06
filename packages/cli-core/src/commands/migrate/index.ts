@@ -4,6 +4,7 @@ import { parseIntegerOption } from "../../lib/option-parsers.ts";
 import { deleteMigration } from "./delete.ts";
 import { registerMigrateExport } from "./export/index.ts";
 import { registerMigrateLogs } from "./logs/index.ts";
+import { registerMigrateSettings } from "./settings/index.ts";
 import { run } from "./run.ts";
 import { list as transformersList } from "./transformers/list.ts";
 import { transformerKeys } from "./transformers/registry.ts";
@@ -131,4 +132,5 @@ export function registerMigrate(program: Program): void {
     );
 
   registerMigrateLogs(migrateCommand);
+  registerMigrateSettings(migrateCommand);
 }

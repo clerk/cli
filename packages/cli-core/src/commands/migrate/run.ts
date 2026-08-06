@@ -19,6 +19,7 @@ import { withGutter, withSpinner } from "../../lib/spinner.ts";
 import { isAgent, isHuman } from "../../mode.ts";
 import { importUsers } from "./import-users.ts";
 import { analyzeFields } from "./lib/analysis.ts";
+import { findMigrateEnvValue } from "./lib/env-file.ts";
 import {
   enabledSocialProviders,
   fetchInstanceSettings,
@@ -71,29 +72,31 @@ const FIREBASE_FLAGS = [
 const FIREBASE_NUMERIC: ReadonlySet<string> = new Set(["firebaseRounds", "firebaseMemCost"]);
 
 /**
- * Overlays the `CLERK_FIREBASE_*` environment variables onto whichever flags
- * were not passed.
+ * Overlays the `CLERK_FIREBASE_*` values onto whichever flags were not passed.
  *
- * The signer key is a Firebase secret, so it is read rather than stored: the
- * CLI never persists these, and `.env.local` is already gitignored and already
- * where the CLI keeps a project's local secrets.
+ * Resolved through {@link findMigrateEnvValue}: the environment first, then
+ * `.env.clerk-migrate`, then the app's own `.env` files. The signer key is a
+ * Firebase secret, so it is never written to the CLI's config —
+ * `.env.clerk-migrate` is gitignored on creation.
  */
-function withFirebaseEnv(options: MigrateRunOptions): MigrateRunOptions {
+async function withFirebaseEnv(options: MigrateRunOptions): Promise<MigrateRunOptions> {
   const merged = { ...options };
   for (const [key, , envVar] of FIREBASE_FLAGS) {
     if (merged[key] !== undefined) continue;
-    const value = process.env[envVar];
-    if (value === undefined || value.trim() === "") continue;
+    const located = await findMigrateEnvValue([envVar]);
+    if (!located || located.value.trim() === "") continue;
     // A non-numeric round count is left to fail the flag's own validation
     // rather than silently becoming NaN.
-    (merged as Record<string, unknown>)[key] = FIREBASE_NUMERIC.has(key) ? Number(value) : value;
+    (merged as Record<string, unknown>)[key] = FIREBASE_NUMERIC.has(key)
+      ? Number(located.value)
+      : located.value;
   }
   return merged;
 }
 
 /**
  * Resolves Firebase's four hash parameters from flags, falling back to the
- * `CLERK_FIREBASE_*` environment variables.
+ * `CLERK_FIREBASE_*` environment variables and the project's `.env` files.
  *
  * The four are required as a set: a digest built from a partial set is
  * well-formed but verifies against nothing, so every migrated user would fail
@@ -102,10 +105,10 @@ function withFirebaseEnv(options: MigrateRunOptions): MigrateRunOptions {
  * @returns The config, or `undefined` when none was supplied — which is fine
  *   for an export that carries no password hashes.
  */
-export function resolveFirebaseHashConfig(
+export async function resolveFirebaseHashConfig(
   rawOptions: MigrateRunOptions,
-): FirebaseHashConfig | undefined {
-  const options = withFirebaseEnv(rawOptions);
+): Promise<FirebaseHashConfig | undefined> {
+  const options = await withFirebaseEnv(rawOptions);
   const provided = FIREBASE_FLAGS.filter(([key]) => options[key] !== undefined);
 
   if (provided.length === 0) return undefined;
@@ -370,7 +373,7 @@ async function resolveMissingOptions(options: MigrateRunOptions): Promise<Migrat
 
   // A partial Firebase flag set is a usage error whether or not the wizard is
   // filling in the rest, so it is checked before any prompt.
-  const firebaseHashConfig = resolveFirebaseHashConfig(options);
+  const firebaseHashConfig = await resolveFirebaseHashConfig(options);
   const answers = await runWizard({
     transformer: options.transformer,
     file: options.file,
@@ -438,7 +441,7 @@ export async function run(rawOptions: MigrateRunOptions): Promise<void> {
   const secretKeyOption = options.secretKey ?? options.clerkSecretKey;
 
   const { transformer, file } = validateRunOptions(options);
-  const firebaseHashConfig = resolveFirebaseHashConfig(options);
+  const firebaseHashConfig = await resolveFirebaseHashConfig(options);
 
   await withGutter("Migrating users to Clerk", async () => {
     const target = await describeBapiTarget({ ...options, secretKey: secretKeyOption });

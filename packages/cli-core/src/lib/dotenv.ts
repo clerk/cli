@@ -28,6 +28,74 @@ export async function findExistingEnvFile(cwd: string, fallback: string): Promis
   return fallback;
 }
 
+/**
+ * The env files read back when resolving a value, as opposed to written to.
+ *
+ * Deliberately shorter than {@link ENV_FILE_CANDIDATES}: the runtime has
+ * already loaded every `.env*` variant it recognises into `process.env`, which
+ * {@link findEnvValue} checks first. This list only has to cover the case where
+ * the CLI's own process did not load the file — a different cwd at startup, or
+ * a runtime with no dotenv support.
+ */
+const ENV_FILES = [".env", ".env.local"];
+
+export interface FindEnvValueOptions {
+  /** Injectable in tests; defaults to the real environment. */
+  env?: Record<string, string | undefined>;
+  /** Lowest priority first — a later file overrides an earlier one. */
+  files?: readonly string[];
+}
+
+export interface LocatedEnvValue {
+  value: string;
+  /** Where it came from, for `--verbose` (`CLERK_SECRET_KEY env var`, `.env.local`). */
+  source: string;
+}
+
+/**
+ * Looks for a value under any of `names`, in the order the app itself would
+ * resolve one: the environment first, then env files with a later file
+ * overriding an earlier one.
+ *
+ * This is the CLI's one way to read a project-level setting. Reading
+ * `process.env` directly instead skips the file fallback and reports no source,
+ * so a command that does it cannot explain where its input came from.
+ */
+export async function findEnvValue(
+  cwd: string,
+  names: string[],
+  options: FindEnvValueOptions = {},
+): Promise<LocatedEnvValue | undefined> {
+  const { env = process.env, files = ENV_FILES } = options;
+
+  for (const name of new Set(names)) {
+    const value = env[name];
+    if (value) return { value, source: `${name} env var` };
+  }
+
+  // Priority is by name, not by position: the framework-specific name beats
+  // the generic fallback even when the generic one appears later in the same
+  // file. Within one name, a later file still overrides an earlier one.
+  const foundByName = new Map<string, LocatedEnvValue>();
+  for (const envFile of files) {
+    const file = Bun.file(join(cwd, envFile));
+    if (!(await file.exists())) continue;
+
+    for (const line of parseEnvFile(await file.text())) {
+      if (line.type !== "entry" || !line.value) continue;
+      if (names.includes(line.key)) {
+        foundByName.set(line.key, { value: line.value, source: envFile });
+      }
+    }
+  }
+
+  for (const name of names) {
+    const located = foundByName.get(name);
+    if (located) return located;
+  }
+  return undefined;
+}
+
 export type EnvLine =
   | { type: "comment"; raw: string }
   | { type: "blank" }
