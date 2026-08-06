@@ -64,7 +64,7 @@ export const SETTINGS: SettingDef[] = [
     name: "skip-unsupported-providers",
     store: "config",
     configKey: "skipUnsupportedProviders",
-    description: "Supabase: skip users with no provider enabled in Clerk",
+    description: "Skip users with no provider enabled in Clerk (Supabase)",
     validate: boolean,
   },
   {
