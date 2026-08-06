@@ -22,6 +22,7 @@ import { registerCompletion } from "./commands/completion/index.ts";
 import { registerUpdate } from "./commands/update/index.ts";
 import { registerDeploy } from "./commands/deploy/index.ts";
 import { registerWebhooks } from "./commands/webhooks/index.ts";
+import { registerMigrate } from "./commands/migrate/index.ts";
 import { getEnvironment } from "./lib/config.ts";
 import {
   setCurrentEnv,
@@ -75,6 +76,7 @@ const registrants: CommandRegistrant[] = [
   registerUpdate,
   registerDeploy,
   registerWebhooks,
+  registerMigrate,
   registerExtras,
 ];
 

@@ -12,6 +12,8 @@ coverage
 
 # logs
 logs
+!packages/cli-core/src/commands/migrate/logs/
+!packages/cli-core/src/commands/migrate/logs/**
 _.log
 report.[0-9]_.[0-9]_.[0-9]_.[0-9]_.json
 
