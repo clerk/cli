@@ -7,15 +7,33 @@
 import {
   confirm as clackConfirm,
   isCancel,
+  MULTISELECT_INSTRUCTIONS,
   text as clackText,
   password as clackPassword,
   multiselect as clackMultiselect,
   type Option as ClackOption,
 } from "@clack/prompts";
 import { editAsync } from "external-editor";
+import { dim } from "./color.ts";
 import { throwUserAbort } from "./errors.ts";
 import { ttyContext } from "./listage.ts";
 import { log } from "./log.ts";
+
+/**
+ * Advertise select-all in the multiselect footer.
+ *
+ * `MultiSelectPrompt` binds `a` to toggle every option (and `i` to invert), but
+ * clack's instruction footer has never listed them and takes no override — the
+ * array below is the only seam, and it is read fresh on every render. So a
+ * genuinely useful key stays undiscoverable unless each call site spells it out
+ * in its own message, which is worse: it is a property of the prompt, not of
+ * any one question.
+ *
+ * Inserted second-to-last so `Enter: confirm` stays where readers expect it.
+ * `i` is left out deliberately — inverting is rarely what anyone wants, and a
+ * four-item legend stops being scannable.
+ */
+MULTISELECT_INSTRUCTIONS.splice(MULTISELECT_INSTRUCTIONS.length - 1, 0, `${dim("a:")} all`);
 
 type ValidationResult = string | Error | true | undefined;
 type Validate = (value: string | undefined) => ValidationResult | Promise<ValidationResult>;
