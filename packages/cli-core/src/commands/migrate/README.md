@@ -453,12 +453,16 @@ clerk migrate settings clear -y
 ```
 
 ```
-SETTING                     VALUE      SOURCE
-transformer                 firebase   clerk config
-file                        ./users.json  clerk config
-firebase-signer-key         aVer…3456  .env.clerk-migrate
-firebase-rounds             —          not set
+SETTING                     VALUE      SOURCE              DESCRIPTION
+transformer                 firebase   clerk config        Source platform the export came from
+file                        users.json clerk config        Export file to import users from
+firebase-signer-key         aVer…3456  .env.clerk-migrate  Firebase base64 signer key
+firebase-rounds             —          not set             Firebase scrypt rounds
 ```
+
+Setting names are kebab-case and identical to the `migrate run` flag each one
+backs, so `firebase-signer-key` here is `--firebase-signer-key` there rather
+than a second spelling to learn. The description column carries the prose.
 
 The source column is the point. A migration reads from flags, the environment,
 two of the app's env files and the CLI's config, so when a run picks up a stale

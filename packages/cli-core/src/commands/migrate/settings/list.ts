@@ -46,12 +46,23 @@ function toJson(resolved: ResolvedSetting[]) {
   return resolved.map(({ setting, value, source }) => ({
     name: setting.name,
     store: setting.store,
+    description: setting.description,
     // Redacted here too: `--json` is what gets piped into a log or a ticket.
     value: value === undefined ? null : displayValue(setting, value),
     set: value !== undefined,
     secret: Boolean(setting.secret),
     source: source ?? null,
   }));
+}
+
+/**
+ * Pads to a visible width, then colours.
+ *
+ * Colouring first and padding after would count the ANSI escape bytes towards
+ * the width and pull every later column left by however many they took.
+ */
+function column(text: string, width: number, paint: (value: string) => string): string {
+  return paint(text) + " ".repeat(Math.max(0, width - text.length));
 }
 
 export async function list(options: SettingsListOptions = {}): Promise<void> {
@@ -62,23 +73,34 @@ export async function list(options: SettingsListOptions = {}): Promise<void> {
     return;
   }
 
-  const nameWidth = Math.max(...SETTINGS.map((s) => s.name.length), "SETTING".length) + 2;
-  const valueWidth =
-    Math.max(
-      ...resolved.map(({ setting, value }) =>
-        value === undefined ? 1 : displayValue(setting, value).length,
-      ),
-      "VALUE".length,
-    ) + 2;
+  const cells = resolved.map(({ setting, value, source }) => ({
+    setting,
+    name: setting.name,
+    value: value === undefined ? "—" : displayValue(setting, value),
+    unset: value === undefined,
+    source: source ?? "not set",
+  }));
 
-  log.info(dim("SETTING".padEnd(nameWidth)) + dim("VALUE".padEnd(valueWidth)) + dim("SOURCE"));
+  const width = (header: string, pick: (cell: (typeof cells)[number]) => string) =>
+    Math.max(header.length, ...cells.map((cell) => pick(cell).length)) + 2;
 
-  for (const { setting, value, source } of resolved) {
-    const shown = value === undefined ? dim("—") : displayValue(setting, value);
+  const nameWidth = width("SETTING", (c) => c.name);
+  const valueWidth = width("VALUE", (c) => c.value);
+  const sourceWidth = width("SOURCE", (c) => c.source);
+
+  log.info(
+    column("SETTING", nameWidth, dim) +
+      column("VALUE", valueWidth, dim) +
+      column("SOURCE", sourceWidth, dim) +
+      dim("DESCRIPTION"),
+  );
+
+  for (const cell of cells) {
     log.info(
-      cyan(setting.name.padEnd(nameWidth)) +
-        shown.padEnd(valueWidth + (value === undefined ? dim("—").length - 1 : 0)) +
-        dim(source ?? "not set"),
+      column(cell.name, nameWidth, cyan) +
+        column(cell.value, valueWidth, cell.unset ? dim : (value) => value) +
+        column(cell.source, sourceWidth, dim) +
+        dim(cell.setting.description),
     );
   }
 

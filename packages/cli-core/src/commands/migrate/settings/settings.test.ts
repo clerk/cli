@@ -139,6 +139,43 @@ describe("list", () => {
     );
   });
 
+  // The names are kebab-case because they mirror the `migrate run` flags; the
+  // description column is what makes the list readable.
+  test("explains each setting in prose", async () => {
+    await list();
+
+    expect(captured.err).toContain("Source platform the export came from");
+    expect(captured.err).toContain("Export file to import users from");
+  });
+
+  test("carries the description into JSON too", async () => {
+    await list({ json: true });
+
+    expect(JSON.parse(captured.out)).toContainEqual(
+      expect.objectContaining({ name: "file", description: "Export file to import users from" }),
+    );
+  });
+
+  // Colouring before padding counts the ANSI bytes towards the column width,
+  // which pulls later columns left on exactly the rows that have a value.
+  test("starts the description at one column, set or not", async () => {
+    await set("transformer", "supabase");
+    captured.clear();
+
+    await list();
+
+    const plain = captured.err.replaceAll(/\u001B\[\d+m/g, "");
+    const columnOf = (description: string) =>
+      plain
+        .split("\n")
+        .find((row) => row.includes(description))
+        ?.indexOf(description);
+
+    expect(columnOf("Source platform the export came from")).toBe(
+      columnOf("Export file to import users from") as number,
+    );
+  });
+
   test("marks everything as unset in a fresh project", async () => {
     await list({ json: true });
     expect(JSON.parse(captured.out).every((entry: { set: boolean }) => !entry.set)).toBe(true);

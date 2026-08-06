@@ -17,7 +17,15 @@
 export type SettingStore = "config" | "env";
 
 export interface SettingDef {
-  /** What the user types: `clerk migrate settings set <name> <value>`. */
+  /**
+   * What the user types: `clerk migrate settings set <name> <value>`.
+   *
+   * Kebab-case, and identical to the `migrate run` flag it backs. A setting and
+   * its flag are the same knob reached two ways, so `firebase-signer-key` here
+   * and `--firebase-signer-key` there must not drift into two spellings the
+   * user has to learn separately. Sentence-case prose belongs in
+   * `description`, which is what the list renders alongside it.
+   */
   name: string;
   store: SettingStore;
   description: string;
@@ -44,19 +52,19 @@ export const SETTINGS: SettingDef[] = [
     name: "transformer",
     store: "config",
     configKey: "transformer",
-    description: "Source platform the last run imported from",
+    description: "Source platform the export came from",
   },
   {
     name: "file",
     store: "config",
     configKey: "file",
-    description: "Export file the last run imported",
+    description: "Export file to import users from",
   },
   {
     name: "skip-unsupported-providers",
     store: "config",
     configKey: "skipUnsupportedProviders",
-    description: "Supabase: skip users whose only social provider is disabled in Clerk",
+    description: "Supabase: skip users with no provider enabled in Clerk",
     validate: boolean,
   },
   {
