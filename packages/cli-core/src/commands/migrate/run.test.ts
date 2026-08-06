@@ -8,7 +8,7 @@ import { useCaptureLog } from "../../test/lib/stubs.ts";
 import { getLogDir } from "./lib/logger.ts";
 import { __resetCustomTransformersForTesting } from "./transformers/registry.ts";
 import { loadSettings } from "./lib/settings.ts";
-import { applyResumeAfter, resolveFirebaseHashConfig, run, validateRunOptions } from "./run.ts";
+import { applyResumeAfter, run, validateRunOptions } from "./run.ts";
 import type { User } from "./types.ts";
 
 let workDir: string;
@@ -58,118 +58,6 @@ describe("validateRunOptions", () => {
 
   test("names the valid transformers when one is missing", () => {
     expect(() => validateRunOptions({ file: "users.json" })).toThrow(/clerk/);
-  });
-});
-
-describe("resolveFirebaseHashConfig", () => {
-  const ALL = {
-    firebaseSignerKey: "SIGNER",
-    firebaseSaltSeparator: "Bw==",
-    firebaseRounds: 8,
-    firebaseMemCost: 14,
-  };
-
-  test("builds the config when all four flags are present", async () => {
-    expect(await resolveFirebaseHashConfig(ALL)).toEqual({
-      base64_signer_key: "SIGNER",
-      base64_salt_separator: "Bw==",
-      rounds: 8,
-      mem_cost: 14,
-    });
-  });
-
-  // A digest built from a partial set is well-formed but verifies against
-  // nothing, so every migrated user would silently fail to sign in.
-  test.each([
-    ["firebaseSignerKey", "--firebase-signer-key"],
-    ["firebaseSaltSeparator", "--firebase-salt-separator"],
-    ["firebaseRounds", "--firebase-rounds"],
-    ["firebaseMemCost", "--firebase-mem-cost"],
-  ] as const)("rejects a set missing %s, naming the flag", async (omit, flag) => {
-    const partial = { ...ALL };
-    delete (partial as Record<string, unknown>)[omit];
-    await expect(resolveFirebaseHashConfig(partial)).rejects.toThrow(new RegExp(flag));
-  });
-
-  test("names every missing flag at once", async () => {
-    await expect(resolveFirebaseHashConfig({ firebaseSignerKey: "SIGNER" })).rejects.toThrow(
-      /--firebase-salt-separator.*--firebase-rounds.*--firebase-mem-cost/,
-    );
-  });
-
-  describe("environment fallback", () => {
-    const captured = useCaptureLog();
-    const ENV = {
-      CLERK_FIREBASE_SIGNER_KEY: "ENV_SIGNER",
-      CLERK_FIREBASE_SALT_SEPARATOR: "Bw==",
-      CLERK_FIREBASE_ROUNDS: "8",
-      CLERK_FIREBASE_MEM_COST: "14",
-    };
-
-    afterEach(() => {
-      for (const name of Object.keys(ENV)) delete process.env[name];
-    });
-
-    const setEnv = (vars: Partial<typeof ENV>) => Object.assign(process.env, vars);
-
-    test("builds the config when no flag is passed", async () => {
-      setEnv(ENV);
-      expect(await resolveFirebaseHashConfig({})).toEqual({
-        base64_signer_key: "ENV_SIGNER",
-        base64_salt_separator: "Bw==",
-        rounds: 8,
-        mem_cost: 14,
-      });
-    });
-
-    test("prefers a flag over the environment", async () => {
-      setEnv(ENV);
-      expect((await resolveFirebaseHashConfig(ALL))?.base64_signer_key).toBe("SIGNER");
-    });
-
-    // Half from the environment and half from flags is still a complete set.
-    test("fills only the gaps the flags left", async () => {
-      setEnv({ CLERK_FIREBASE_ROUNDS: "8", CLERK_FIREBASE_MEM_COST: "14" });
-      expect(
-        await resolveFirebaseHashConfig({
-          firebaseSignerKey: "SIGNER",
-          firebaseSaltSeparator: "Bw==",
-        }),
-      ).toEqual({
-        base64_signer_key: "SIGNER",
-        base64_salt_separator: "Bw==",
-        rounds: 8,
-        mem_cost: 14,
-      });
-    });
-
-    // Stale saved config, not an instruction: a signer key left over from a
-    // Firebase migration must not fail the Supabase run that follows it. The
-    // flag path stays strict — see "rejects a set missing %s" above.
-    test("ignores a partial set rather than failing a run that never asked for it", async () => {
-      setEnv({ CLERK_FIREBASE_SIGNER_KEY: "ENV_SIGNER" });
-
-      expect(await resolveFirebaseHashConfig({})).toBeUndefined();
-      expect(captured.err).toContain("Ignoring an incomplete Firebase hash configuration");
-    });
-
-    test("still fails when a flag supplied part of the set", async () => {
-      setEnv({ CLERK_FIREBASE_SIGNER_KEY: "ENV_SIGNER" });
-      await expect(resolveFirebaseHashConfig({ firebaseRounds: 8 })).rejects.toThrow(
-        /--firebase-salt-separator/,
-      );
-    });
-
-    // An empty var is how a shell spells "unset", and treating it as set would
-    // demand the other three for a config nobody asked for.
-    test("ignores an empty variable", async () => {
-      setEnv({ CLERK_FIREBASE_SIGNER_KEY: "" });
-      expect(await resolveFirebaseHashConfig({})).toBeUndefined();
-    });
-  });
-
-  test("returns nothing when neither flags nor the environment supply a config", async () => {
-    expect(await resolveFirebaseHashConfig({})).toBeUndefined();
   });
 });
 

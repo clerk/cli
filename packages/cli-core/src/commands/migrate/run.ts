@@ -24,7 +24,7 @@ import { isAgent, isHuman } from "../../mode.ts";
 import { writeInstanceConfig } from "../config/io.ts";
 import { importUsers } from "./import-users.ts";
 import { analyzeFields } from "./lib/analysis.ts";
-import { findMigrateEnvValue } from "./lib/env-file.ts";
+import { resolveFirebaseHashConfig, type FirebaseHashFlags } from "./lib/firebase-hash.ts";
 import {
   enabledSocialProviders,
   fetchInstanceSettings,
@@ -54,7 +54,7 @@ import {
 import { fileExists, getFileType, loadUsersFromFile } from "./lib/transform.ts";
 import { loadCustomTransformer } from "./transformers/load-custom.ts";
 import { registerCustomTransformer, transformerKeys } from "./transformers/registry.ts";
-import type { FirebaseHashConfig, ImportSummary, User } from "./types.ts";
+import type { ImportSummary, User } from "./types.ts";
 import { runWizard, throwAgentFlagsRequired } from "./wizard.ts";
 
 export type MigrateRunOptions = {
@@ -72,96 +72,7 @@ export type MigrateRunOptions = {
   transformerFile?: string;
   /** Supabase: drop users whose only social provider is disabled in Clerk. */
   skipUnsupportedProviders?: boolean;
-  firebaseSignerKey?: string;
-  firebaseSaltSeparator?: string;
-  firebaseRounds?: number;
-  firebaseMemCost?: number;
-};
-
-const FIREBASE_FLAGS = [
-  ["firebaseSignerKey", "--firebase-signer-key", "CLERK_FIREBASE_SIGNER_KEY"],
-  ["firebaseSaltSeparator", "--firebase-salt-separator", "CLERK_FIREBASE_SALT_SEPARATOR"],
-  ["firebaseRounds", "--firebase-rounds", "CLERK_FIREBASE_ROUNDS"],
-  ["firebaseMemCost", "--firebase-mem-cost", "CLERK_FIREBASE_MEM_COST"],
-] as const;
-
-const FIREBASE_NUMERIC: ReadonlySet<string> = new Set(["firebaseRounds", "firebaseMemCost"]);
-
-/**
- * Overlays the `CLERK_FIREBASE_*` values onto whichever flags were not passed.
- *
- * Resolved through {@link findMigrateEnvValue}: the environment first, then
- * `.env.clerk-migrate`, then the app's own `.env` files. The signer key is a
- * Firebase secret, so it is never written to the CLI's config —
- * `.env.clerk-migrate` is gitignored on creation.
- */
-async function withFirebaseEnv(options: MigrateRunOptions): Promise<MigrateRunOptions> {
-  const merged = { ...options };
-  for (const [key, , envVar] of FIREBASE_FLAGS) {
-    if (merged[key] !== undefined) continue;
-    const located = await findMigrateEnvValue([envVar]);
-    if (!located || located.value.trim() === "") continue;
-    // A non-numeric round count is left to fail the flag's own validation
-    // rather than silently becoming NaN.
-    (merged as Record<string, unknown>)[key] = FIREBASE_NUMERIC.has(key)
-      ? Number(located.value)
-      : located.value;
-  }
-  return merged;
-}
-
-/**
- * Resolves Firebase's four hash parameters from flags, falling back to the
- * `CLERK_FIREBASE_*` environment variables and the project's `.env` files.
- *
- * The four are required as a set: a digest built from a partial set is
- * well-formed but verifies against nothing, so every migrated user would fail
- * to sign in with no error at import time.
- *
- * @returns The config, or `undefined` when none was supplied — which is fine
- *   for an export that carries no password hashes.
- */
-export async function resolveFirebaseHashConfig(
-  rawOptions: MigrateRunOptions,
-): Promise<FirebaseHashConfig | undefined> {
-  const fromFlags = FIREBASE_FLAGS.filter(([key]) => rawOptions[key] !== undefined);
-  const options = await withFirebaseEnv(rawOptions);
-  const provided = FIREBASE_FLAGS.filter(([key]) => options[key] !== undefined);
-
-  if (provided.length === 0) return undefined;
-
-  if (provided.length < FIREBASE_FLAGS.length) {
-    const missing = FIREBASE_FLAGS.filter(([key]) => options[key] === undefined).map(
-      ([, flag]) => flag,
-    );
-
-    // A partial set nobody asked for on this command line is stale saved
-    // config, not an instruction: a `CLERK_FIREBASE_SIGNER_KEY` left in
-    // `.env.clerk-migrate` after a Firebase migration must not fail the
-    // Supabase run that follows it. Warned rather than dropped silently,
-    // because on a Firebase run it is the reason passwords will not import.
-    if (fromFlags.length === 0) {
-      log.warn(
-        `Ignoring an incomplete Firebase hash configuration (no ${missing.join(", ")}). ` +
-          "Run `clerk migrate settings` to see what is set.",
-      );
-      return undefined;
-    }
-
-    throwUsageError(
-      `The Firebase hash parameters must be supplied together. Missing: ${missing.join(", ")}.\n` +
-        "Find all four in the Firebase console under Authentication → Users → (⋮) → Password hash parameters.",
-      "https://clerk.com/docs/guides/development/migrating/firebase",
-    );
-  }
-
-  return {
-    base64_signer_key: options.firebaseSignerKey as string,
-    base64_salt_separator: options.firebaseSaltSeparator as string,
-    rounds: options.firebaseRounds as number,
-    mem_cost: options.firebaseMemCost as number,
-  };
-}
+} & FirebaseHashFlags;
 
 /**
  * Validates the flags a run needs before anything is read or sent.
@@ -504,14 +415,11 @@ async function resolveMissingOptions(options: MigrateRunOptions): Promise<Migrat
     throwAgentFlagsRequired(missing);
   }
 
-  // A partial Firebase flag set is a usage error whether or not the wizard is
-  // filling in the rest, so it is checked before any prompt.
-  const firebaseHashConfig = await resolveFirebaseHashConfig(options);
-  const answers = await runWizard({
-    transformer: options.transformer,
-    file: options.file,
-    firebaseHashConfig,
-  });
+  // Resolved before the prompt only when `--transformer firebase` was already
+  // passed; otherwise the wizard picks the platform first and looks them up
+  // itself, so a non-Firebase migration never reads them at all.
+  const firebaseHashConfig = await resolveFirebaseHashConfig(options, options.transformer);
+  const answers = await runWizard({ ...options, firebaseHashConfig });
 
   return {
     ...options,
@@ -574,7 +482,7 @@ export async function run(rawOptions: MigrateRunOptions): Promise<void> {
   const secretKeyOption = options.secretKey ?? options.clerkSecretKey;
 
   const { transformer, file } = validateRunOptions(options);
-  const firebaseHashConfig = await resolveFirebaseHashConfig(options);
+  const firebaseHashConfig = await resolveFirebaseHashConfig(options, transformer);
 
   await withGutter("Migrating users to Clerk", async ({ setNextSteps }) => {
     const target = await describeBapiTarget({ ...options, secretKey: secretKeyOption });

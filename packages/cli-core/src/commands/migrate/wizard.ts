@@ -14,6 +14,7 @@ import { throwUsageError } from "../../lib/errors.ts";
 import { select } from "../../lib/listage.ts";
 import { log } from "../../lib/log.ts";
 import { text } from "../../lib/prompts.ts";
+import { resolveFirebaseHashConfig, type FirebaseHashFlags } from "./lib/firebase-hash.ts";
 import { loadSettings } from "./lib/settings.ts";
 import { fileExists, getFileType } from "./lib/transform.ts";
 import { transformers } from "./transformers/registry.ts";
@@ -112,11 +113,13 @@ async function askNumber(label: string): Promise<number> {
  *
  * @param provided - Flags the caller already supplied; those are not asked for.
  */
-export async function runWizard(provided: {
-  transformer?: string;
-  file?: string;
-  firebaseHashConfig?: FirebaseHashConfig;
-}): Promise<WizardResult> {
+export async function runWizard(
+  provided: {
+    transformer?: string;
+    file?: string;
+    firebaseHashConfig?: FirebaseHashConfig;
+  } & FirebaseHashFlags,
+): Promise<WizardResult> {
   const saved = await loadSettings();
 
   const transformer = provided.transformer ?? (await pickTransformer(saved.transformer));
@@ -124,9 +127,14 @@ export async function runWizard(provided: {
 
   let firebaseHashConfig = provided.firebaseHashConfig;
   if (transformer === "firebase" && !firebaseHashConfig) {
-    // Never prefilled: the signer key is a secret the CLI does not keep. A
-    // repeat run supplies it through `--firebase-*` or `CLERK_FIREBASE_*`,
-    // which short-circuits this prompt entirely.
+    // Looked up here rather than before the picker: until the platform is
+    // chosen there is no reason to read Firebase's variables at all, and a
+    // migration from anywhere else must not see them.
+    firebaseHashConfig = await resolveFirebaseHashConfig(provided, "firebase");
+  }
+  if (transformer === "firebase" && !firebaseHashConfig) {
+    // Prompted, never prefilled: the signer key is a secret the CLI does not
+    // keep, so there is nothing to offer back.
     firebaseHashConfig = await askFirebaseHashConfig();
   }
 
