@@ -255,9 +255,7 @@ describe("exportClerk", () => {
     } finally {
       setMode(originalMode);
     }
-    expect(captured.err).toContain(
-      "migrate run --transformer clerk --file exports/clerk-export.json",
-    );
+    expect(captured.err).toContain("migrate --transformer clerk --file exports/clerk-export.json");
   });
 
   test("--output controls the destination, relative to the working directory", async () => {
@@ -300,7 +298,7 @@ describe("exportClerk", () => {
 
     expect(captured.err).toContain("No users found to export");
     expect(captured.err).not.toContain("Next steps");
-    expect(captured.err).not.toContain("migrate run --transformer");
+    expect(captured.err).not.toContain("migrate --transformer");
   });
 
   test("agent mode suppresses the Next steps block", async () => {
@@ -310,6 +308,6 @@ describe("exportClerk", () => {
 
     expect(captured.err).toContain("Exported 1 user");
     expect(captured.err).not.toContain("Next steps");
-    expect(captured.err).not.toContain("migrate run --transformer");
+    expect(captured.err).not.toContain("migrate --transformer");
   });
 });

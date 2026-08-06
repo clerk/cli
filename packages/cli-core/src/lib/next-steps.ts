@@ -79,7 +79,7 @@ export const NEXT_STEPS = {
   // The only parameterized entry: a suggested import is worthless unless it
   // names the transformer that reads this export and the file just written.
   MIGRATE_EXPORT: (transformerKey: string, file: string) => [
-    `Run \`clerk migrate run --transformer ${transformerKey} --file ${file}\` to import them`,
+    `Run \`clerk migrate --transformer ${transformerKey} --file ${file}\` to import them`,
   ],
 } as const;
 

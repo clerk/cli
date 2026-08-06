@@ -60,10 +60,26 @@ function resolve(tokens: string[]): { command: Command; rest: string[] } {
   return { command, rest: tokens.slice(index) };
 }
 
+/**
+ * The flags a command accepts, including those of a default subcommand.
+ *
+ * `clerk migrate` carries no options of its own — `run` is registered
+ * `isDefault`, so Commander hands it everything after the group name. The
+ * documented spelling is `clerk migrate --transformer …`, and this has to see
+ * the same flags Commander does or every such example reads as unsupported.
+ */
 function flagsOf(command: Command): string[] {
-  return command.options.flatMap(
+  const own = command.options.flatMap(
     (option) => [option.short, option.long].filter(Boolean) as string[],
   );
+
+  const defaultChild = command.commands.find(
+    // Commander records the default subcommand on the parent, not the child.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (child) => child.name() === (command as any)._defaultCommandName,
+  );
+
+  return defaultChild ? [...own, ...flagsOf(defaultChild)] : own;
 }
 
 /** Every command under `migrate`, so no subcommand escapes the flag sweep. */

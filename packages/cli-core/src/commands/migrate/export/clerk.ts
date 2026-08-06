@@ -5,7 +5,7 @@
  * onto `bapiRequest` instead of `@clerk/backend` so it shares the CLI's auth
  * resolution, `--verbose` request tracing and error taxonomy.
  *
- * The output feeds `clerk migrate run --transformer clerk` unedited, which is
+ * The output feeds `clerk migrate --transformer clerk` unedited, which is
  * what makes development → production a two-command operation.
  *
  * **Passwords do not come out of this endpoint.** Clerk never returns password

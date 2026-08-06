@@ -300,9 +300,7 @@ describe("exportAuth0", () => {
     } finally {
       setMode(originalMode);
     }
-    expect(captured.err).toContain(
-      "migrate run --transformer auth0 --file exports/auth0-export.json",
-    );
+    expect(captured.err).toContain("migrate --transformer auth0 --file exports/auth0-export.json");
   });
 
   test("--output controls the destination", async () => {

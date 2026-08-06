@@ -164,6 +164,7 @@ describe("list", () => {
 
     await list();
 
+    // eslint-disable-next-line no-control-regex
     const plain = captured.err.replaceAll(/\u001B\[\d+m/g, "");
     const columnOf = (description: string) =>
       plain

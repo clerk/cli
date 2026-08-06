@@ -5,7 +5,7 @@ Clerk instance.
 
 ## Targeting And Auth
 
-`migrate run` resolves its Backend API key through the CLI's standard chain:
+`clerk migrate` resolves its Backend API key through the CLI's standard chain:
 
 | Flag                     | Description                                                      |
 | ------------------------ | ---------------------------------------------------------------- |
@@ -26,7 +26,7 @@ defaults and the hard development-instance cap below.
 
 ### `clerk migrate` (interactive)
 
-Bare `clerk migrate` dispatches to `migrate run`, which walks a human through
+Bare `clerk migrate` walks a human through
 the migration instead of demanding flags — mirroring how bare `clerk deploy`
 dispatches to `deploy run`.
 
@@ -52,13 +52,13 @@ error naming exactly what to pass:
 Pass --transformer <platform> and --file <path>.
 ```
 
-### `clerk migrate run`
+### `clerk migrate`
 
 Reads an exported user file, maps it onto Clerk's user schema, validates every
 record, and creates the users through the Backend API.
 
 ```sh
-clerk migrate run -y --transformer clerk --file users.json
+clerk migrate -y --transformer clerk --file users.json
 ```
 
 | Flag                                    | Description                                                     |
@@ -121,7 +121,7 @@ limit — the run fails before any request is sent.
 ### `clerk migrate export`
 
 Gets users **out** of a source platform, so there is something to feed
-`migrate run`.
+`clerk migrate`.
 
 ```sh
 clerk migrate export                                    # pick a platform
@@ -158,7 +158,7 @@ other path flag here.
 | `--client-secret <secret>` | `auth0`                            | Machine-to-machine application client secret |
 
 `export clerk` also takes the targeting flags — it reads from a Clerk instance,
-so it resolves a key exactly the way `migrate run` does.
+so it resolves a key exactly the way `clerk migrate` does.
 
 After each export you get a field-coverage table — which Clerk-relevant fields
 were present on how many users — so you know the data is thin _before_ you
@@ -173,7 +173,7 @@ Field coverage
 
 Exported 3 users to /project/exports/clerk-export.json
 └  Next steps
-   → Run `clerk migrate run --transformer clerk --file exports/clerk-export.json` to import them
+   → Run `clerk migrate --transformer clerk --file exports/clerk-export.json` to import them
 ```
 
 Every export also writes `logs/export-<timestamp>.log`, so `migrate logs list`
@@ -259,7 +259,7 @@ prints the exact import command:
 ```
 Password hash parameters
 Read from the project. Import with:
-  clerk migrate run -y --transformer firebase --file exports/firebase-export.json \
+  clerk migrate -y --transformer firebase --file exports/firebase-export.json \
     --firebase-signer-key "…" --firebase-salt-separator "…" \
     --firebase-rounds 8 --firebase-mem-cost 14
 ```
@@ -297,7 +297,7 @@ returning the first thousand would read as "that is everyone".
 
 ### `clerk migrate delete`
 
-The undo for a bad migration. Deletes the users a previous `clerk migrate run`
+The undo for a bad migration. Deletes the users a previous `clerk migrate`
 created in this directory, matched by the `external_id` the import stamped on
 each one.
 
@@ -306,7 +306,7 @@ clerk migrate delete        # confirms first
 clerk migrate delete -y     # non-interactive
 ```
 
-Takes the same targeting flags as `migrate run` (`--secret-key`, `--app`,
+Takes the same targeting flags as `clerk migrate` (`--secret-key`, `--app`,
 `--instance`).
 
 Flat rather than under a noun group: it is the one command in this tree that
@@ -462,7 +462,7 @@ firebase-signer-key         aVer…3456  .env.clerk-migrate  Firebase base64 sig
 firebase-rounds             —          not set             Firebase scrypt rounds
 ```
 
-Setting names are kebab-case and identical to the `migrate run` flag each one
+Setting names are kebab-case and identical to the `clerk migrate` flag each one
 backs, so `firebase-signer-key` here is `--firebase-signer-key` there rather
 than a second spelling to learn. The description column carries the prose.
 
@@ -500,7 +500,7 @@ so the output is safe to paste into an issue.
 Migrating from a platform with no built-in, without recompiling the CLI:
 
 ```sh
-clerk migrate run --transformer-file ./my-platform.ts --file users.json
+clerk migrate --transformer-file ./my-platform.ts --file users.json
 ```
 
 The file lives in **your** project, not in the CLI, and is imported at runtime.
@@ -572,7 +572,7 @@ alongside each digest. Find them in the Firebase console under
 **Authentication → Users → (⋮) → Password hash parameters**.
 
 ```sh
-clerk migrate run -y -t firebase -f users.json \
+clerk migrate -y -t firebase -f users.json \
   --firebase-signer-key <key> --firebase-salt-separator <sep> \
   --firebase-rounds 8 --firebase-mem-cost 14
 ```
@@ -905,9 +905,9 @@ NDJSON is. The original `.log` stays put.
 
 | Method   | Path                       | Used by                                                                              |
 | -------- | -------------------------- | ------------------------------------------------------------------------------------ |
-| `POST`   | `/v1/users`                | `migrate run` — creates each user                                                    |
-| `POST`   | `/v1/email_addresses`      | `migrate run` — attaches additional emails                                           |
-| `POST`   | `/v1/phone_numbers`        | `migrate run` — attaches additional phones                                           |
+| `POST`   | `/v1/users`                | `clerk migrate` — creates each user                                                  |
+| `POST`   | `/v1/email_addresses`      | `clerk migrate` — attaches additional emails                                         |
+| `POST`   | `/v1/phone_numbers`        | `clerk migrate` — attaches additional phones                                         |
 | `GET`    | `/v1/users?external_id=…`  | `migrate delete` — finds this migration's users, 100 IDs a call                      |
 | `GET`    | `/v1/users?limit=&offset=` | `migrate export clerk` — pages the whole instance, 500 at a time                     |
 | `DELETE` | `/v1/users/{user_id}`      | `migrate delete` — removes one user                                                  |

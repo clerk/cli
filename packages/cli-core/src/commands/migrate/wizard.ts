@@ -151,7 +151,7 @@ export function throwAgentFlagsRequired(missing: { transformer: boolean; file: b
     undefined,
     [
       {
-        command: `clerk migrate run -y --transformer ${transformers[0]?.key ?? "clerk"} --file users.json`,
+        command: `clerk migrate -y --transformer ${transformers[0]?.key ?? "clerk"} --file users.json`,
         description: "Run non-interactively",
       },
     ],

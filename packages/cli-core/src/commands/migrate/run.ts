@@ -1,13 +1,15 @@
 /**
- * `clerk migrate run` — non-interactive user import.
+ * `clerk migrate` — the user import itself.
  *
  * Ported from the standalone migration-tool's `src/migrate/cli.ts`
  * (`runNonInteractive`), with auth moved onto the CLI's standard secret-key
  * resolution chain and every failure raised as a `CliError` instead of
  * `console.error` + `process.exit`.
  *
- * The interactive wizard that a bare `clerk migrate` will launch is a separate
- * command; this path is the one an agent or a script drives.
+ * Registered as the `run` subcommand and marked default, so `clerk migrate` and
+ * `clerk migrate run` both land here. Whatever the flags did not supply is
+ * filled in by `wizard.ts` for a human, or raised as a usage error naming the
+ * missing flags for an agent, which cannot answer a prompt.
  */
 
 import { describeBapiTarget, resolveBapiSecretKey } from "../../lib/bapi-command.ts";
@@ -122,6 +124,7 @@ async function withFirebaseEnv(options: MigrateRunOptions): Promise<MigrateRunOp
 export async function resolveFirebaseHashConfig(
   rawOptions: MigrateRunOptions,
 ): Promise<FirebaseHashConfig | undefined> {
+  const fromFlags = FIREBASE_FLAGS.filter(([key]) => rawOptions[key] !== undefined);
   const options = await withFirebaseEnv(rawOptions);
   const provided = FIREBASE_FLAGS.filter(([key]) => options[key] !== undefined);
 
@@ -131,6 +134,20 @@ export async function resolveFirebaseHashConfig(
     const missing = FIREBASE_FLAGS.filter(([key]) => options[key] === undefined).map(
       ([, flag]) => flag,
     );
+
+    // A partial set nobody asked for on this command line is stale saved
+    // config, not an instruction: a `CLERK_FIREBASE_SIGNER_KEY` left in
+    // `.env.clerk-migrate` after a Firebase migration must not fail the
+    // Supabase run that follows it. Warned rather than dropped silently,
+    // because on a Firebase run it is the reason passwords will not import.
+    if (fromFlags.length === 0) {
+      log.warn(
+        `Ignoring an incomplete Firebase hash configuration (no ${missing.join(", ")}). ` +
+          "Run `clerk migrate settings` to see what is set.",
+      );
+      return undefined;
+    }
+
     throwUsageError(
       `The Firebase hash parameters must be supplied together. Missing: ${missing.join(", ")}.\n` +
         "Find all four in the Firebase console under Authentication → Users → (⋮) → Password hash parameters.",
@@ -167,8 +184,7 @@ export function validateRunOptions(options: MigrateRunOptions): {
         ERROR_CODE.USAGE_ERROR,
         [
           {
-            command:
-              "clerk migrate run -y --transformer-file ./my-transformer.ts --file users.json",
+            command: "clerk migrate -y --transformer-file ./my-transformer.ts --file users.json",
             description: "Import with a custom transformer",
           },
         ],
@@ -190,7 +206,7 @@ export function validateRunOptions(options: MigrateRunOptions): {
       ERROR_CODE.USAGE_ERROR,
       [
         {
-          command: "clerk migrate run -y --transformer clerk --file users.json",
+          command: "clerk migrate -y --transformer clerk --file users.json",
           description: "Import a Clerk export",
         },
       ],
@@ -208,7 +224,7 @@ export function validateRunOptions(options: MigrateRunOptions): {
       ERROR_CODE.USAGE_ERROR,
       [
         {
-          command: "clerk migrate run -y --transformer clerk --file users.json",
+          command: "clerk migrate -y --transformer clerk --file users.json",
           description: "Import a Clerk export",
         },
       ],
@@ -530,11 +546,11 @@ async function applyCustomTransformer(options: MigrateRunOptions): Promise<Migra
       undefined,
       [
         {
-          command: "clerk migrate run -y --transformer-file ./my-transformer.ts --file users.json",
+          command: "clerk migrate -y --transformer-file ./my-transformer.ts --file users.json",
           description: "Use a transformer you wrote",
         },
         {
-          command: "clerk migrate run -y --transformer clerk --file users.json",
+          command: "clerk migrate -y --transformer clerk --file users.json",
           description: "Use a built-in transformer",
         },
       ],

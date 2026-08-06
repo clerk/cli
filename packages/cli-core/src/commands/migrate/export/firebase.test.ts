@@ -425,7 +425,7 @@ describe("exportFirebase", () => {
       setMode(originalMode);
     }
     expect(captured.err).toContain(
-      "migrate run --transformer firebase --file exports/firebase-export.json",
+      "migrate --transformer firebase --file exports/firebase-export.json",
     );
   });
 

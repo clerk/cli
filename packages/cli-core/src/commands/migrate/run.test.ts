@@ -98,6 +98,7 @@ describe("resolveFirebaseHashConfig", () => {
   });
 
   describe("environment fallback", () => {
+    const captured = useCaptureLog();
     const ENV = {
       CLERK_FIREBASE_SIGNER_KEY: "ENV_SIGNER",
       CLERK_FIREBASE_SALT_SEPARATOR: "Bw==",
@@ -142,9 +143,21 @@ describe("resolveFirebaseHashConfig", () => {
       });
     });
 
-    test("still demands the full set when the environment supplies only part", async () => {
+    // Stale saved config, not an instruction: a signer key left over from a
+    // Firebase migration must not fail the Supabase run that follows it. The
+    // flag path stays strict — see "rejects a set missing %s" above.
+    test("ignores a partial set rather than failing a run that never asked for it", async () => {
       setEnv({ CLERK_FIREBASE_SIGNER_KEY: "ENV_SIGNER" });
-      await expect(resolveFirebaseHashConfig({})).rejects.toThrow(/--firebase-salt-separator/);
+
+      expect(await resolveFirebaseHashConfig({})).toBeUndefined();
+      expect(captured.err).toContain("Ignoring an incomplete Firebase hash configuration");
+    });
+
+    test("still fails when a flag supplied part of the set", async () => {
+      setEnv({ CLERK_FIREBASE_SIGNER_KEY: "ENV_SIGNER" });
+      await expect(resolveFirebaseHashConfig({ firebaseRounds: 8 })).rejects.toThrow(
+        /--firebase-salt-separator/,
+      );
     });
 
     // An empty var is how a shell spells "unset", and treating it as set would

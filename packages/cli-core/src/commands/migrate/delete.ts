@@ -74,7 +74,7 @@ export async function resolveMigrationToUndo(): Promise<{ file: string; key: str
 
   if (!settings.file || !settings.transformer) {
     throw new CliError(
-      "No migration to undo: this project has no record of a previous `clerk migrate run`.\n" +
+      "No migration to undo: this project has no record of a previous `clerk migrate`.\n" +
         "Run `clerk migrate delete` from the project you migrated from.",
       { code: ERROR_CODE.FILE_NOT_FOUND },
     );
