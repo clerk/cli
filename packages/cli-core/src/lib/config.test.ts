@@ -17,7 +17,9 @@ const {
   resolveAppContext,
   resolveFetchedApplicationInstance,
   ensureMachineUuid,
+  getTelemetryDisabled,
   markTelemetryNoticeShown,
+  setTelemetryDisabled,
   setEnvironment,
   _setConfigDir,
 } = await import("./config.ts");
@@ -353,6 +355,28 @@ describe("config", () => {
     test("markTelemetryNoticeShown returns true exactly once", async () => {
       expect(await markTelemetryNoticeShown()).toBe(true);
       expect(await markTelemetryNoticeShown()).toBe(false);
+    });
+
+    test("setTelemetryDisabled(true) persists and getTelemetryDisabled reads it", async () => {
+      expect(await getTelemetryDisabled()).toBe(false);
+      await setTelemetryDisabled(true);
+      expect(await getTelemetryDisabled()).toBe(true);
+      const config = await readConfig();
+      expect(config.telemetryDisabled).toBe(true);
+    });
+
+    test("setTelemetryDisabled(false) removes the flag entirely", async () => {
+      await setTelemetryDisabled(true);
+      await setTelemetryDisabled(false);
+      expect(await getTelemetryDisabled()).toBe(false);
+      const config = await readConfig();
+      expect(config.telemetryDisabled).toBeUndefined();
+    });
+
+    test("telemetryDisabled survives a round-trip with other config writes", async () => {
+      await setTelemetryDisabled(true);
+      await setEnvironment("production");
+      expect(await getTelemetryDisabled()).toBe(true);
     });
   });
 });

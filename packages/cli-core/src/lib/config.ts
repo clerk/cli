@@ -57,6 +57,7 @@ interface ClerkConfig {
   relay?: Record<string, RelayEntry>;
   machineUuid?: string;
   telemetryNoticeShown?: boolean;
+  telemetryDisabled?: boolean;
 }
 
 function defaultConfig(): ClerkConfig {
@@ -75,6 +76,7 @@ function migrateRawConfig(raw: Record<string, unknown>): ClerkConfig {
 
   if (typeof raw.machineUuid === "string") config.machineUuid = raw.machineUuid;
   if (raw.telemetryNoticeShown === true) config.telemetryNoticeShown = true;
+  if (raw.telemetryDisabled === true) config.telemetryDisabled = true;
 
   if (raw.relay && typeof raw.relay === "object" && !Array.isArray(raw.relay)) {
     const relay: Record<string, RelayEntry> = {};
@@ -228,6 +230,22 @@ export async function markTelemetryNoticeShown(): Promise<boolean> {
   config.telemetryNoticeShown = true;
   await writeConfig(config);
   return true;
+}
+
+/** Persisted telemetry opt-out, set via `clerk telemetry disable`. */
+export async function getTelemetryDisabled(): Promise<boolean> {
+  const config = await readConfig();
+  return config.telemetryDisabled === true;
+}
+
+export async function setTelemetryDisabled(disabled: boolean): Promise<void> {
+  const config = await readConfig();
+  if (disabled) {
+    config.telemetryDisabled = true;
+  } else {
+    delete config.telemetryDisabled;
+  }
+  await writeConfig(config);
 }
 
 type ResolvedVia = "remote" | "git-common-dir" | "directory";
