@@ -49,14 +49,20 @@ type TelemetryContext = {
 
 let context: TelemetryContext | null = null;
 
-const isTruthyEnv = (value?: string) => value === "1" || value?.toLowerCase() === "true";
+// A privacy control must fail toward "off": any non-empty value counts as an
+// opt-out unless it is explicitly "0" or "false" (case-insensitive).
+const isOptOutEnv = (value?: string): boolean => {
+  if (!value) return false;
+  const normalized = value.toLowerCase();
+  return normalized !== "0" && normalized !== "false";
+};
 
 export function telemetryEnabled(
   env: EnvLike = process.env,
   version: string = resolveCliVersion() ?? DEV_CLI_VERSION,
 ): boolean {
-  if (isTruthyEnv(env.CLERK_TELEMETRY_DISABLED)) return false;
-  if (isTruthyEnv(env.DO_NOT_TRACK)) return false;
+  if (isOptOutEnv(env.CLERK_TELEMETRY_DISABLED)) return false;
+  if (isOptOutEnv(env.DO_NOT_TRACK)) return false;
   if (env.CLERK_TELEMETRY_URL) return true;
   return version !== DEV_CLI_VERSION;
 }

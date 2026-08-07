@@ -31,13 +31,30 @@ describe("telemetryEnabled", () => {
     expect(telemetryEnabled({}, REAL)).toBe(true);
   });
 
+  // Any non-empty value except an explicit "0"/"false" opts out — a user who
+  // sets CLERK_TELEMETRY_DISABLED=yes meant to disable; silently staying on is
+  // the worst failure mode for a privacy control.
   test.each([
     [{ CLERK_TELEMETRY_DISABLED: "1" }],
     [{ CLERK_TELEMETRY_DISABLED: "true" }],
+    [{ CLERK_TELEMETRY_DISABLED: "yes" }],
+    [{ CLERK_TELEMETRY_DISABLED: "anything" }],
     [{ DO_NOT_TRACK: "1" }],
     [{ DO_NOT_TRACK: "TRUE" }],
+    [{ DO_NOT_TRACK: "on" }],
   ])("opt-out env %o disables", (env) => {
     expect(telemetryEnabled(env, REAL)).toBe(false);
+  });
+
+  test.each([
+    [{ CLERK_TELEMETRY_DISABLED: "0" }],
+    [{ CLERK_TELEMETRY_DISABLED: "false" }],
+    [{ CLERK_TELEMETRY_DISABLED: "FALSE" }],
+    [{ CLERK_TELEMETRY_DISABLED: "" }],
+    [{ DO_NOT_TRACK: "0" }],
+    [{ DO_NOT_TRACK: "false" }],
+  ])("explicit-false env %o stays enabled", (env) => {
+    expect(telemetryEnabled(env, REAL)).toBe(true);
   });
 
   test("dev builds are disabled unless CLERK_TELEMETRY_URL is set", () => {
