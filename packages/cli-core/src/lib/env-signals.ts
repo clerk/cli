@@ -9,6 +9,9 @@
 
 export type EnvLike = Record<string, string | undefined>;
 
+// Truthiness (not equality) is deliberate: harnesses use different marker
+// values — gemini/opencode set "1", cline sets "true", openclaw sets a mode
+// string like "tui-local" (verified against each tool's shipped code).
 export function detectAiAgent(env: EnvLike): string {
   if (env.ANTIGRAVITY_CLI_ALIAS) return "antigravity";
   if (env.CLAUDECODE) return "claude_code";
