@@ -60,10 +60,13 @@ Commands:
 
 ## Telemetry
 
-The Clerk CLI collects anonymous usage telemetry (command name, flag names, duration,
-outcome, environment signals like OS, install method, and terminal, a random machine
-identifier, and — when a project is linked — the app and workspace IDs). It never
-collects command arguments, option values, file paths, or personal data. See
-https://clerk.com/docs/telemetry for details.
+The Clerk CLI collects usage telemetry: command name, flag names, duration, outcome,
+environment signals (OS, install method, terminal), a random machine identifier — and
+your workspace and app IDs when a project is linked. It never collects command
+arguments, option values, file paths, or personal data. The first run only shows a
+notice and sends nothing, and `clerk --verbose` prints every event before it is sent.
+See https://clerk.com/docs/telemetry for details.
 
-Opt out by setting `CLERK_TELEMETRY_DISABLED=1` (or the standard `DO_NOT_TRACK=1`).
+Opt out with `clerk telemetry disable`, or by setting `CLERK_TELEMETRY_DISABLED=1`
+(the standard `DO_NOT_TRACK=1` also works). `clerk telemetry status` shows the
+effective state and why.

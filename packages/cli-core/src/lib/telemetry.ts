@@ -1,5 +1,5 @@
 /**
- * Anonymous per-invocation usage telemetry (GROW-1200).
+ * Per-invocation usage telemetry (GROW-1200).
  *
  * One CLI_COMMAND_EXECUTED event per command run, POSTed to the
  * telemetry-service worker (BigQuery behind it). Opt out with

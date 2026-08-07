@@ -214,7 +214,7 @@ export async function setRelayEntry(key: string, entry: RelayEntry): Promise<voi
   await writeConfig(config);
 }
 
-/** Persistent anonymous machine id for telemetry. Generated on first use. */
+/** Persistent random machine id for telemetry. Generated on first use. */
 export async function ensureMachineUuid(): Promise<string> {
   const config = await readConfig();
   if (config.machineUuid) return config.machineUuid;
