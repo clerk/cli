@@ -52,8 +52,8 @@ test("sends one event for a successful command", async () => {
   const event = bodies[0]!.events[0]!;
   expect(event.sdk).toBe("clerk-cli");
   expect(event.event).toBe("CLI_COMMAND_EXECUTED");
-  // Command path is subcommand NAMES only — "zsh" is an argument value and
-  // is deliberately excluded (spec: "resolved command path, never raw argv").
+  // Command path is subcommand names only — "zsh" is an argument value and
+  // is deliberately excluded.
   expect(event.payload.command).toBe("completion");
   expect(event.payload.outcome).toBe("success");
   expect(event.payload.exit_code).toBe(0);
@@ -99,8 +99,7 @@ test("maps a soft failure (process.exitCode set without throwing) to outcome err
   http.mock({ "test-telemetry.clerk.com": {} });
 
   try {
-    // Simulates commands (api, deploy status, mcp, users) that report
-    // failure by setting process.exitCode instead of throwing.
+    // Simulates commands that report failure via process.exitCode instead of throwing.
     process.exitCode = 1;
     await clerk.raw("completion", "zsh");
 

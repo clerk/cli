@@ -1,5 +1,5 @@
 /**
- * Per-invocation usage telemetry (GROW-1200).
+ * Per-invocation usage telemetry.
  *
  * One CLI_COMMAND_EXECUTED event per command run, POSTed to the
  * telemetry-service worker (BigQuery behind it). Opt out with
@@ -90,7 +90,6 @@ export type TelemetryStatus =
 /**
  * Effective enablement with the winning reason, in precedence order:
  * env opt-out > persisted `clerk telemetry disable` > dev-build guard.
- * Source of truth for both the finalize path and `clerk telemetry status`.
  */
 export async function getTelemetryStatus(
   env: EnvLike = process.env,
@@ -125,7 +124,7 @@ function collectSetFlagNames(cmd: TelemetryCommand): string[] {
   return names;
 }
 
-/** Called from the root preAction hook. Pure in-memory; never throws. */
+/** Pure in-memory; never throws. */
 export function startCommandTelemetry(actionCommand: TelemetryCommand): void {
   try {
     context = {
@@ -166,7 +165,6 @@ export async function finalizeAndSendTelemetry(result: TelemetryResult): Promise
     // sees the freshly persisted opt-out and sends nothing.
     if (!(await getTelemetryStatus()).enabled) return;
 
-    // The run that first discloses telemetry sends nothing — the notice says so.
     if (await maybeShowTelemetryNotice()) return;
 
     const machineUuid = await ensureMachineUuid();
@@ -222,9 +220,9 @@ export async function finalizeAndSendTelemetry(result: TelemetryResult): Promise
 }
 
 /**
- * One-time stderr disclosure; human runs outside CI only. Docs cover the rest.
- * Returns true when the notice was just shown — that run sends nothing, so
- * disclosure always precedes the first event.
+ * One-time stderr disclosure; human runs outside CI only. Returns true when
+ * the notice was just shown — that run sends nothing, so disclosure always
+ * precedes the first event.
  */
 async function maybeShowTelemetryNotice(): Promise<boolean> {
   if (!isHuman() || process.env.CI) return false;

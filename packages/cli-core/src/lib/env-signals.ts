@@ -1,7 +1,7 @@
 /**
- * Anonymous environment signals for CLI telemetry (GROW-1200).
- * Detection tables ported from stripe-cli's pkg/useragent (their field/value
- * enums are the reference the ticket's proposed scope was written against).
+ * Environment signals for CLI telemetry: which AI agent, terminal, and
+ * install method a run came from. The returned strings are analytics keys —
+ * renaming one breaks downstream queries.
  *
  * All functions take an injected env so tests never depend on the ambient
  * environment (the dev machine may itself run inside an AI agent or tmux).
@@ -11,7 +11,7 @@ export type EnvLike = Record<string, string | undefined>;
 
 // Truthiness (not equality) is deliberate: harnesses use different marker
 // values — gemini/opencode set "1", cline sets "true", openclaw sets a mode
-// string like "tui-local" (verified against each tool's shipped code).
+// string like "tui-local".
 export function detectAiAgent(env: EnvLike): string {
   if (env.ANTIGRAVITY_CLI_ALIAS) return "antigravity";
   if (env.CLAUDECODE) return "claude_code";

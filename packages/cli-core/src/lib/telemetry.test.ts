@@ -34,9 +34,7 @@ describe("telemetryEnabled", () => {
     expect(telemetryEnabled({}, REAL)).toBe(true);
   });
 
-  // Any non-empty value except an explicit "0"/"false" opts out — a user who
-  // sets CLERK_TELEMETRY_DISABLED=yes meant to disable; silently staying on is
-  // the worst failure mode for a privacy control.
+  // Any non-empty value except an explicit "0"/"false" opts out.
   test.each([
     [{ CLERK_TELEMETRY_DISABLED: "1" }],
     [{ CLERK_TELEMETRY_DISABLED: "true" }],

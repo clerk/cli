@@ -239,9 +239,8 @@ export async function runProgram(
   try {
     const { argv, from } = await resolveArgv(args, options?.from);
     await program.parseAsync(argv, { from });
-    // Some commands report failure via process.exitCode instead of throwing
-    // (e.g. api, deploy status, mcp, users) — read it back so telemetry
-    // doesn't record those as a success.
+    // Some commands report failure via process.exitCode instead of throwing —
+    // read it back so telemetry doesn't record them as successes.
     const softExitCode = Number(process.exitCode ?? EXIT_CODE.SUCCESS);
     await finalizeAndSendTelemetry({
       outcome: softExitCode === EXIT_CODE.SUCCESS ? "success" : "error",
