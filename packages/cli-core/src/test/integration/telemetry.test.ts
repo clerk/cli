@@ -30,7 +30,17 @@ function telemetryEvents() {
   return requests.map((r) => JSON.parse(r.body ?? "{}") as { events: Record<string, any>[] });
 }
 
-test("sends one anonymous event for a successful command", async () => {
+// The run that first shows the disclosure notice deliberately sends nothing,
+// so tests that expect an event pre-mark the notice as already shown.
+// Dynamic import per the harness rule: config.ts transitively imports mocked
+// modules, so it must load after the harness registers its mocks.
+async function markNoticeAlreadyShown() {
+  const { markTelemetryNoticeShown } = await import("../../lib/config.ts");
+  await markTelemetryNoticeShown();
+}
+
+test("sends one event for a successful command", async () => {
+  await markNoticeAlreadyShown();
   process.env.CLERK_TELEMETRY_URL = TELEMETRY_URL;
   http.mock({ "test-telemetry.clerk.com": {} });
 
@@ -58,6 +68,7 @@ test("sends one anonymous event for a successful command", async () => {
 });
 
 test("records failures with error code and reuses the machine uuid", async () => {
+  await markNoticeAlreadyShown();
   process.env.CLERK_TELEMETRY_URL = TELEMETRY_URL;
   http.mock({ "test-telemetry.clerk.com": {} });
   const first = await clerk("completion", "zsh");
@@ -83,6 +94,7 @@ test("records failures with error code and reuses the machine uuid", async () =>
 });
 
 test("maps a soft failure (process.exitCode set without throwing) to outcome error", async () => {
+  await markNoticeAlreadyShown();
   process.env.CLERK_TELEMETRY_URL = TELEMETRY_URL;
   http.mock({ "test-telemetry.clerk.com": {} });
 

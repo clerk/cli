@@ -3,15 +3,21 @@
  *
  * One CLI_COMMAND_EXECUTED event per command run, POSTed to the
  * telemetry-service worker (BigQuery behind it). Opt out with
- * CLERK_TELEMETRY_DISABLED=1 or DO_NOT_TRACK=1. Dev builds send nothing
- * unless CLERK_TELEMETRY_URL overrides the endpoint (test escape hatch).
+ * `clerk telemetry disable` (persisted) or the CLERK_TELEMETRY_DISABLED /
+ * DO_NOT_TRACK env vars. Dev builds send nothing unless CLERK_TELEMETRY_URL
+ * overrides the endpoint (test escape hatch).
  *
  * Telemetry must never affect the command: every entry point swallows its
  * own failures to log.debug and the send is capped at TELEMETRY_TIMEOUT_MS.
  */
 
 import { DEFAULT_TELEMETRY_ENDPOINT, TELEMETRY_TIMEOUT_MS } from "./constants.ts";
-import { ensureMachineUuid, markTelemetryNoticeShown, resolveProfile } from "./config.ts";
+import {
+  ensureMachineUuid,
+  getTelemetryDisabled,
+  markTelemetryNoticeShown,
+  resolveProfile,
+} from "./config.ts";
 import {
   detectAiAgent,
   detectInScreen,
@@ -57,14 +63,44 @@ const isOptOutEnv = (value?: string): boolean => {
   return normalized !== "0" && normalized !== "false";
 };
 
+type OptOutEnvVar = "CLERK_TELEMETRY_DISABLED" | "DO_NOT_TRACK";
+
+function optOutEnvVar(env: EnvLike): OptOutEnvVar | null {
+  if (isOptOutEnv(env.CLERK_TELEMETRY_DISABLED)) return "CLERK_TELEMETRY_DISABLED";
+  if (isOptOutEnv(env.DO_NOT_TRACK)) return "DO_NOT_TRACK";
+  return null;
+}
+
+/** Pure env + version check; the persisted opt-out lives in getTelemetryStatus. */
 export function telemetryEnabled(
   env: EnvLike = process.env,
   version: string = resolveCliVersion() ?? DEV_CLI_VERSION,
 ): boolean {
-  if (isOptOutEnv(env.CLERK_TELEMETRY_DISABLED)) return false;
-  if (isOptOutEnv(env.DO_NOT_TRACK)) return false;
+  if (optOutEnvVar(env)) return false;
   if (env.CLERK_TELEMETRY_URL) return true;
   return version !== DEV_CLI_VERSION;
+}
+
+export type TelemetryStatus =
+  | { enabled: true }
+  | { enabled: false; reason: "env"; envVar: OptOutEnvVar }
+  | { enabled: false; reason: "config" }
+  | { enabled: false; reason: "dev-build" };
+
+/**
+ * Effective enablement with the winning reason, in precedence order:
+ * env opt-out > persisted `clerk telemetry disable` > dev-build guard.
+ * Source of truth for both the finalize path and `clerk telemetry status`.
+ */
+export async function getTelemetryStatus(
+  env: EnvLike = process.env,
+  version: string = resolveCliVersion() ?? DEV_CLI_VERSION,
+): Promise<TelemetryStatus> {
+  const envVar = optOutEnvVar(env);
+  if (envVar) return { enabled: false, reason: "env", envVar };
+  if (await getTelemetryDisabled()) return { enabled: false, reason: "config" };
+  if (!telemetryEnabled(env, version)) return { enabled: false, reason: "dev-build" };
+  return { enabled: true };
 }
 
 /** "users list" for `clerk users list` — root name excluded, never raw argv. */
@@ -123,10 +159,15 @@ export function telemetryResultForError(error: unknown): TelemetryResult {
 export async function finalizeAndSendTelemetry(result: TelemetryResult): Promise<void> {
   const current = context;
   context = null;
-  if (!current || !telemetryEnabled()) return;
+  if (!current) return;
 
   try {
-    await maybeShowTelemetryNotice();
+    // Re-checked here (not just at start) so `clerk telemetry disable` itself
+    // sees the freshly persisted opt-out and sends nothing.
+    if (!(await getTelemetryStatus()).enabled) return;
+
+    // The run that first discloses telemetry sends nothing — the notice says so.
+    if (await maybeShowTelemetryNotice()) return;
 
     const machineUuid = await ensureMachineUuid();
     const resolved = await resolveProfile(process.cwd()).catch(() => undefined);
@@ -159,6 +200,8 @@ export async function finalizeAndSendTelemetry(result: TelemetryResult): Promise
       },
     };
 
+    log.debug(`telemetry: event ${JSON.stringify(event)}`);
+
     const url = process.env.CLERK_TELEMETRY_URL ?? DEFAULT_TELEMETRY_ENDPOINT;
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), TELEMETRY_TIMEOUT_MS);
@@ -178,14 +221,23 @@ export async function finalizeAndSendTelemetry(result: TelemetryResult): Promise
   }
 }
 
-/** One-time stderr disclosure; human runs outside CI only. Docs cover the rest. */
-async function maybeShowTelemetryNotice(): Promise<void> {
-  if (!isHuman() || process.env.CI) return;
-  if (!(await markTelemetryNoticeShown())) return;
+/**
+ * One-time stderr disclosure; human runs outside CI only. Docs cover the rest.
+ * Returns true when the notice was just shown — that run sends nothing, so
+ * disclosure always precedes the first event.
+ */
+async function maybeShowTelemetryNotice(): Promise<boolean> {
+  if (!isHuman() || process.env.CI) return false;
+  if (!(await markTelemetryNoticeShown())) return false;
   log.blank();
-  log.info("The Clerk CLI collects anonymous usage telemetry to help improve the CLI.");
   log.info(
-    "Learn more or opt out: https://clerk.com/docs/telemetry (`CLERK_TELEMETRY_DISABLED=1`)",
+    "The Clerk CLI collects usage telemetry to help improve the CLI: command name, flag names,",
   );
+  log.info(
+    "duration, outcome, a random machine identifier — and your workspace and app IDs when a",
+  );
+  log.info("project is linked. Nothing has been sent during this run.");
+  log.info("Opt out: `clerk telemetry disable` — details: https://clerk.com/docs/telemetry");
   log.blank();
+  return true;
 }
