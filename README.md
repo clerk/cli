@@ -44,6 +44,7 @@ Commands:
   impersonate|imp  [options] [user]               Impersonate a Clerk user
   env                                             Manage environment variables
   config                                          Manage instance configuration
+  telemetry                                       Control CLI usage telemetry (status, disable, enable)
   enable                                          Enable Clerk features on the linked instance
   disable                                         Disable Clerk features on the linked instance
   api              [options] [endpoint] [filter]  Make authenticated requests to the Clerk API

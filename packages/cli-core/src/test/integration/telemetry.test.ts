@@ -126,3 +126,77 @@ test("no telemetry traffic without CLERK_TELEMETRY_URL (dev build guard)", async
   await clerk("completion", "zsh");
   expect(http.requests).toHaveLength(0);
 });
+
+test("the first human run shows the notice and sends nothing; the next run sends", async () => {
+  const originalCi = process.env.CI;
+  delete process.env.CI; // the notice is suppressed in CI environments
+  try {
+    process.env.CLERK_TELEMETRY_URL = TELEMETRY_URL;
+    http.mock({ "test-telemetry.clerk.com": {} });
+
+    const first = await clerk("completion", "zsh");
+    expect(first.stderr).toContain("Nothing has been sent during this run");
+    expect(first.stderr).toContain("clerk telemetry disable");
+    expect(telemetryEvents()).toHaveLength(0);
+
+    const second = await clerk("completion", "zsh");
+    expect(second.stderr).not.toContain("Nothing has been sent during this run");
+    expect(telemetryEvents()).toHaveLength(1);
+  } finally {
+    if (originalCi === undefined) delete process.env.CI;
+    else process.env.CI = originalCi;
+  }
+});
+
+test("`clerk telemetry disable` itself sends nothing, and the opt-out persists", async () => {
+  await markNoticeAlreadyShown();
+  process.env.CLERK_TELEMETRY_URL = TELEMETRY_URL;
+  http.mock(); // any fetch would record and throw — none may happen
+
+  await clerk("telemetry", "disable");
+  await clerk("completion", "zsh");
+  expect(http.requests).toHaveLength(0);
+});
+
+test("`clerk telemetry enable` turns events back on", async () => {
+  await markNoticeAlreadyShown();
+  process.env.CLERK_TELEMETRY_URL = TELEMETRY_URL;
+  http.mock({ "test-telemetry.clerk.com": {} });
+
+  await clerk("telemetry", "disable"); // sends nothing: opt-out visible at finalize
+  await clerk("telemetry", "enable"); // sends: the user just opted back in
+  await clerk("completion", "zsh");
+
+  const bodies = telemetryEvents();
+  expect(bodies).toHaveLength(2);
+  expect(bodies[0]!.events[0]!.payload.command).toBe("telemetry enable");
+  expect(bodies[1]!.events[0]!.payload.command).toBe("completion");
+});
+
+test("`clerk telemetry status` reports the state and the winning reason", async () => {
+  await markNoticeAlreadyShown();
+  process.env.CLERK_TELEMETRY_URL = TELEMETRY_URL; // lifts the dev-build guard
+  http.mock({ "test-telemetry.clerk.com": {} });
+
+  const enabled = await clerk("telemetry", "status");
+  expect(enabled.stdout).toContain("Telemetry is enabled");
+
+  // Broadened env parsing honored end-to-end: "yes" opts out.
+  process.env.CLERK_TELEMETRY_DISABLED = "yes";
+  const disabledByEnv = await clerk("telemetry", "status");
+  expect(disabledByEnv.stdout).toContain("Telemetry is disabled");
+  expect(disabledByEnv.stderr).toContain("CLERK_TELEMETRY_DISABLED");
+  delete process.env.CLERK_TELEMETRY_DISABLED;
+
+  await clerk("telemetry", "disable");
+  const disabledByConfig = await clerk("telemetry", "status");
+  expect(disabledByConfig.stdout).toContain("Telemetry is disabled");
+  expect(disabledByConfig.stderr).toContain("clerk telemetry enable");
+});
+
+test("`clerk telemetry status` explains the dev-build guard", async () => {
+  http.mock(); // dev build without the URL escape hatch: no network at all
+  const result = await clerk("telemetry", "status");
+  expect(result.stdout).toContain("Telemetry is disabled");
+  expect(result.stderr).toContain("dev build");
+});
