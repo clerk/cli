@@ -189,6 +189,15 @@ describe("finalizeAndSendTelemetry", () => {
     await finalizeAndSendTelemetry({ outcome: "success", exitCode: 0 });
   });
 
+  test("the deadline bounds the whole telemetry job, not just the fetch", async () => {
+    process.env.CLERK_TELEMETRY_URL = "https://capture.invalid/v1/event";
+    globalThis.fetch = (() => new Promise(() => {})) as unknown as typeof fetch; // hangs forever
+    startCommandTelemetry(fakeCommand());
+    const started = Date.now();
+    await finalizeAndSendTelemetry({ outcome: "success", exitCode: 0 }, 100);
+    expect(Date.now() - started).toBeLessThan(500);
+  });
+
   test("no send when telemetry is disabled via persisted config", async () => {
     let called = 0;
     globalThis.fetch = (async () => {

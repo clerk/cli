@@ -153,70 +153,89 @@ export function telemetryResultForError(error: unknown): TelemetryResult {
 /**
  * Build + send the event, and surface the one-time disclosure notice.
  * Awaited by runProgram before process.exit; must never throw or exceed
- * TELEMETRY_TIMEOUT_MS by more than scheduling noise.
+ * `deadlineMs` by more than scheduling noise. The deadline covers the entire
+ * job — config I/O, git profile lookup, and the POST — not just the fetch;
+ * on timeout the event is dropped (`deadlineMs` is overridden in tests).
  */
-export async function finalizeAndSendTelemetry(result: TelemetryResult): Promise<void> {
+export async function finalizeAndSendTelemetry(
+  result: TelemetryResult,
+  deadlineMs: number = TELEMETRY_TIMEOUT_MS,
+): Promise<void> {
   const current = context;
   context = null;
   if (!current) return;
 
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), deadlineMs);
   try {
-    // Re-checked here (not just at start) so `clerk telemetry disable` itself
-    // sees the freshly persisted opt-out and sends nothing.
-    if (!(await getTelemetryStatus()).enabled) return;
-
-    if (await maybeShowTelemetryNotice()) return;
-
-    const machineUuid = await ensureMachineUuid();
-    const resolved = await resolveProfile(process.cwd()).catch(() => undefined);
-    const version = resolveCliVersion() ?? DEV_CLI_VERSION;
-
-    const event = {
-      sdk: "clerk-cli",
-      sdkv: version,
-      event: "CLI_COMMAND_EXECUTED",
-      payload: {
-        command: current.command,
-        flags: current.flags,
-        outcome: result.outcome,
-        exit_code: result.exitCode,
-        error_code: result.errorCode ?? null,
-        duration_ms: Date.now() - current.startedAt,
-        machine_uuid: machineUuid,
-        install_method: detectInstallMethod(process.env, process.execPath),
-        ai_agent: detectAiAgent(process.env),
-        terminal_program: detectTerminalProgram(process.env),
-        mode: getMode(),
-        os: process.platform,
-        arch: process.arch,
-        ci: Boolean(process.env.CI),
-        in_tmux: detectInTmux(process.env),
-        in_screen: detectInScreen(process.env),
-        env: getCurrentEnvName(),
-        workspace_id: resolved?.profile.workspaceId ?? null,
-        app_id: resolved?.profile.appId ?? null,
-      },
-    };
-
-    log.debug(`telemetry: event ${JSON.stringify(event)}`);
-
-    const url = process.env.CLERK_TELEMETRY_URL ?? DEFAULT_TELEMETRY_ENDPOINT;
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), TELEMETRY_TIMEOUT_MS);
-    try {
-      await loggedFetch(url, {
-        tag: "telemetry",
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ events: [event] }),
-        signal: controller.signal,
-      });
-    } finally {
-      clearTimeout(timer);
-    }
-  } catch (error) {
-    log.debug(`telemetry: send failed: ${error}`);
+    const work = buildAndSend(current, result, controller.signal).catch((error: unknown) => {
+      log.debug(`telemetry: send failed: ${error}`);
+    });
+    await Promise.race([work, abortedToResolved(controller.signal)]);
+  } finally {
+    clearTimeout(timer);
   }
+}
+
+function abortedToResolved(signal: AbortSignal): Promise<void> {
+  return new Promise((resolve) => {
+    if (signal.aborted) return resolve();
+    signal.addEventListener("abort", () => resolve(), { once: true });
+  });
+}
+
+async function buildAndSend(
+  current: TelemetryContext,
+  result: TelemetryResult,
+  signal: AbortSignal,
+): Promise<void> {
+  // Re-checked here (not just at start) so `clerk telemetry disable` itself
+  // sees the freshly persisted opt-out and sends nothing.
+  if (!(await getTelemetryStatus()).enabled) return;
+
+  if (await maybeShowTelemetryNotice()) return;
+
+  const machineUuid = await ensureMachineUuid();
+  const resolved = await resolveProfile(process.cwd()).catch(() => undefined);
+  const version = resolveCliVersion() ?? DEV_CLI_VERSION;
+
+  const event = {
+    sdk: "clerk-cli",
+    sdkv: version,
+    event: "CLI_COMMAND_EXECUTED",
+    payload: {
+      command: current.command,
+      flags: current.flags,
+      outcome: result.outcome,
+      exit_code: result.exitCode,
+      error_code: result.errorCode ?? null,
+      duration_ms: Date.now() - current.startedAt,
+      machine_uuid: machineUuid,
+      install_method: detectInstallMethod(process.env, process.execPath),
+      ai_agent: detectAiAgent(process.env),
+      terminal_program: detectTerminalProgram(process.env),
+      mode: getMode(),
+      os: process.platform,
+      arch: process.arch,
+      ci: Boolean(process.env.CI),
+      in_tmux: detectInTmux(process.env),
+      in_screen: detectInScreen(process.env),
+      env: getCurrentEnvName(),
+      workspace_id: resolved?.profile.workspaceId ?? null,
+      app_id: resolved?.profile.appId ?? null,
+    },
+  };
+
+  log.debug(`telemetry: event ${JSON.stringify(event)}`);
+
+  const url = process.env.CLERK_TELEMETRY_URL ?? DEFAULT_TELEMETRY_ENDPOINT;
+  await loggedFetch(url, {
+    tag: "telemetry",
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ events: [event] }),
+    signal,
+  });
 }
 
 /**
