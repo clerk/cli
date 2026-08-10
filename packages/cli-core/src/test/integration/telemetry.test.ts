@@ -130,6 +130,25 @@ test("an invalid --mode value still produces an error event", async () => {
   expect(event.payload.exit_code).toBe(2);
 });
 
+// payload.command comes from the resolved Command objects' registered names,
+// never from argv — a typo or pasted secret either becomes an argument (never
+// serialized) or dies inside Commander before any hook runs (no event).
+test.each([[["users", "sk_test_secret123"]], [["sk_live_pasted"]]])(
+  "mistyped input %o never reaches an event",
+  async (argv) => {
+    await markNoticeAlreadyShown();
+    process.env.CLERK_TELEMETRY_URL = TELEMETRY_URL;
+    http.mock(); // any fetch would record and throw
+
+    const result = await clerk.raw(...argv);
+    expect(result.exitCode).not.toBe(0);
+    expect(telemetryEvents()).toHaveLength(0);
+    const allRequestBodies = http.requests.map((r) => r.body ?? "").join("\n");
+    expect(allRequestBodies).not.toContain("sk_test_secret123");
+    expect(allRequestBodies).not.toContain("sk_live_pasted");
+  },
+);
+
 test("command succeeds even when the telemetry endpoint is down", async () => {
   process.env.CLERK_TELEMETRY_URL = TELEMETRY_URL;
   http.mock(); // no routes: every fetch throws, including the telemetry send
