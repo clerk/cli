@@ -54,13 +54,18 @@ async function performOAuthFlow(): Promise<UserInfo> {
   authorizeUrl.searchParams.set("code_challenge_method", "S256");
   authorizeUrl.searchParams.set("clerk_client", CLERK_CLIENT_CLI);
 
-  // Critical fallback: the OAuth callback can't complete unless the user
-  // reaches the authorize URL somehow.
+  // Printed unconditionally: a launcher can exit 0 without anything visibly
+  // opening (WSL, headless shells), and the flow can't complete unless the
+  // user reaches this URL. Safe to display — the token exchange also requires
+  // the PKCE code verifier, which never leaves this process.
   const urlString = authorizeUrl.toString();
+  log.info(
+    `Opening your browser to sign in. If it doesn't open, use this URL:\n  ${cyan(urlString)}`,
+  );
   const result = await openBrowser(urlString);
   if (!result.ok) {
     log.warn(
-      `\nCould not open your browser automatically. Open this URL to continue:\n  ${cyan(urlString)}\n${dim("(Reason: " + result.reason + ")")}\n`,
+      `Could not open your browser automatically ${dim(`(${result.reason})`)}. Open the URL above to continue.`,
     );
   }
 

@@ -31,16 +31,11 @@ export type OpenResult =
 /**
  * Candidate browser-launcher binaries per platform, in preference order.
  * The first one that exists on PATH wins.
- *
- * Linux ordering rationale: `wslview` first because it correctly hands the
- * URL to the Windows host browser inside WSL (xdg-open inside WSL usually
- * fails or opens nothing). `xdg-open` is the standard Linux tool. The other
- * entries are direct browser binaries as last-ditch fallbacks.
  */
 const LAUNCHERS: Record<NodeJS.Platform, readonly string[]> = {
   darwin: ["open"],
   win32: ["start"],
-  linux: ["wslview", "xdg-open", "gnome-open", "kde-open", "sensible-browser"],
+  linux: ["xdg-open", "gnome-open", "kde-open", "sensible-browser"],
   // Other platforms (freebsd, openbsd, sunos, aix, android) get xdg-open as
   // a best guess.
   aix: ["xdg-open"],
@@ -52,6 +47,65 @@ const LAUNCHERS: Record<NodeJS.Platform, readonly string[]> = {
   sunos: ["xdg-open"],
   cygwin: ["start"],
 };
+
+/**
+ * Launcher chain for WSL (Windows Subsystem for Linux), where the goal is to
+ * reach the *Windows host's* browser, not a Linux one:
+ *
+ *  1. `wslview` (from wslu) — purpose-built for this, but not always installed
+ *  2. `powershell.exe` — present on PATH in every default WSL install via
+ *     Windows interop (/mnt/c/...); `Start-Process <url>` opens the host's
+ *     default browser
+ *  3. `xdg-open` and friends — last resort, useful under WSLg with a Linux
+ *     browser installed
+ *
+ * `explorer.exe` is deliberately absent: it opens URLs fine but always exits
+ * with code 1, which our fast-non-zero-exit failure detection would misread
+ * as a launch failure.
+ */
+const WSL_LAUNCHERS = ["wslview", "powershell.exe", ...LAUNCHERS.linux] as const;
+
+/**
+ * WSL2 sets `WSL_DISTRO_NAME` and `WSL_INTEROP`; as a fallback (older WSL1,
+ * sanitized environments) the kernel version string in /proc/version
+ * contains "microsoft".
+ */
+async function isWsl(): Promise<boolean> {
+  if (process.platform !== "linux") return false;
+  if (process.env.WSL_DISTRO_NAME || process.env.WSL_INTEROP) return true;
+  try {
+    return /microsoft/i.test(await Bun.file("/proc/version").text());
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Build the spawn command for a given launcher.
+ *
+ * - `start` (Windows): invoked via cmd.exe. The entire command is passed as a
+ *   single string after `/c` so that cmd.exe parses it exactly as if typed at
+ *   the prompt: `start "" "https://..."`. The empty `""` is the window title
+ *   (otherwise `start` interprets a quoted URL as the title), and the URL is
+ *   quoted so `&` in OAuth query strings is not treated as a cmd.exe command
+ *   separator.
+ * - `powershell.exe` (WSL interop): `Start-Process '<url>'` with the URL in
+ *   single quotes so `&` is not treated as a PowerShell operator; embedded
+ *   single quotes are doubled per PowerShell quoting rules.
+ */
+function launchCommand(launcher: string, url: string): string[] {
+  if (launcher === "start") return ["cmd.exe", "/c", `start "" "${url}"`];
+  if (launcher === "powershell.exe") {
+    return [
+      "powershell.exe",
+      "-NoProfile",
+      "-NonInteractive",
+      "-Command",
+      `Start-Process '${url.replace(/'/g, "''")}'`,
+    ];
+  }
+  return [launcher, url];
+}
 
 /**
  * Try to open `url` in the user's default browser.
@@ -68,7 +122,9 @@ const LAUNCHERS: Record<NodeJS.Platform, readonly string[]> = {
  * ```
  */
 export async function openBrowser(url: string): Promise<OpenResult> {
-  const candidates = LAUNCHERS[process.platform] ?? ["xdg-open"];
+  const candidates = (await isWsl())
+    ? WSL_LAUNCHERS
+    : (LAUNCHERS[process.platform] ?? ["xdg-open"]);
 
   // Pick the first launcher that's actually installed. `start` is a cmd.exe
   // builtin (not a real binary on PATH), so we treat it as always-available
@@ -79,13 +135,7 @@ export async function openBrowser(url: string): Promise<OpenResult> {
     return { ok: false, reason: "no-launcher" };
   }
 
-  // On Windows, invoke `start` via cmd.exe. The entire command is passed as a
-  // single string after `/c` so that cmd.exe parses it exactly as if typed at
-  // the prompt: `start "" "https://..."`.  The empty `""` is the window title
-  // (otherwise `start` interprets a quoted URL as the title), and the URL is
-  // quoted so `&` in OAuth query strings is not treated as a cmd.exe command
-  // separator.
-  const command = launcher === "start" ? ["cmd.exe", "/c", `start "" "${url}"`] : [launcher, url];
+  const command = launchCommand(launcher, url);
 
   try {
     const result = await withBrowserLaunch(
