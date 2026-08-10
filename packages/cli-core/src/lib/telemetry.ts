@@ -63,11 +63,20 @@ const isOptOutEnv = (value?: string): boolean => {
   return normalized !== "0" && normalized !== "false";
 };
 
-type OptOutEnvVar = "CLERK_TELEMETRY_DISABLED" | "DO_NOT_TRACK";
+const OPT_OUT_ENV_VARS = [
+  "CLERK_TELEMETRY_DISABLED",
+  "DO_NOT_TRACK",
+] as const;
+
+type OptOutEnvVar = (typeof OPT_OUT_ENV_VARS)[number];
 
 function optOutEnvVar(env: EnvLike): OptOutEnvVar | null {
-  if (isOptOutEnv(env.CLERK_TELEMETRY_DISABLED)) return "CLERK_TELEMETRY_DISABLED";
-  if (isOptOutEnv(env.DO_NOT_TRACK)) return "DO_NOT_TRACK";
+  for (const envVar of OPT_OUT_ENV_VARS) {
+    if (isOptOutEnv(env[envVar])) {
+      return envVar;
+    }
+  }
+
   return null;
 }
 
