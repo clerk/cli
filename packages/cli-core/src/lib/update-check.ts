@@ -10,7 +10,7 @@ import {
 } from "./constants.ts";
 import { loggedFetch } from "./fetch.ts";
 import { log } from "./log.ts";
-import { getCurrentVersion, isDevVersion } from "./version.ts";
+import { CURRENT_VERSION, IS_DEV_BUILD } from "./version.ts";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -32,13 +32,8 @@ export function inferChannelFromVersion(version: string): string {
 
 export function getUpdateChannel(): string {
   if (process.env.CLERK_UPDATE_CHANNEL) return process.env.CLERK_UPDATE_CHANNEL;
-  return inferChannelFromVersion(getCurrentVersion());
+  return inferChannelFromVersion(CURRENT_VERSION);
 }
-
-// ── Version helpers ───────────────────────────────────────────────────────────
-
-// Re-exported so callers can pull the whole version/update surface from here.
-export { getCurrentVersion, isDevVersion };
 
 export function compareSemver(a: string, b: string): number {
   return semver.compare(a, b);
@@ -46,9 +41,9 @@ export function compareSemver(a: string, b: string): number {
 
 // ── Guards ────────────────────────────────────────────────────────────────────
 
-export function shouldCheckForUpdates(version: string): boolean {
+export function shouldCheckForUpdates(isDevBuild: boolean): boolean {
   if (isAgent()) return false;
-  if (isDevVersion(version)) return false;
+  if (isDevBuild) return false;
   if (process.env.CI) return false;
   if (process.env.NO_UPDATE_NOTIFIER) return false;
   if (process.env.CLERK_NO_UPDATE_CHECK) return false;
@@ -144,7 +139,7 @@ function notifyIfNewer(currentVersion: string, latestVersion: string, distTag: s
 }
 
 export async function maybeNotifyUpdate(currentVersion: string): Promise<void> {
-  if (!shouldCheckForUpdates(currentVersion)) return;
+  if (!shouldCheckForUpdates(IS_DEV_BUILD)) return;
 
   const distTag = getUpdateChannel();
   const cache = await readUpdateCache();

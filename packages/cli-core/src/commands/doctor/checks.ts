@@ -7,10 +7,9 @@ import { detectPublishableKeyName, detectSecretKeyName } from "../../lib/framewo
 import { parseEnvFile } from "../../lib/dotenv.ts";
 import { hasAccountCredentials } from "../../lib/credential-store.ts";
 import type { KeylessTarget } from "../../lib/keyless-target.ts";
+import { CURRENT_VERSION, IS_DEV_BUILD } from "../../lib/version.ts";
 import {
-  getCurrentVersion,
   getUpdateChannel,
-  isDevVersion,
   compareSemver,
   fetchLatestVersion,
   writeUpdateCache,
@@ -448,9 +447,7 @@ export async function checkConfigFile(ctx: DoctorContext): Promise<CheckResult> 
 
 export async function checkCliVersion(): Promise<CheckResult> {
   const check = defineCheck("CLI version");
-  const currentVersion = getCurrentVersion();
-
-  if (isDevVersion(currentVersion)) {
+  if (IS_DEV_BUILD) {
     return check.pass("Running development build");
   }
 
@@ -468,11 +465,11 @@ export async function checkCliVersion(): Promise<CheckResult> {
   // Write to cache so the postAction notification fires from cache next time
   await writeUpdateCache({ checkedAt: Date.now(), latest, distTag: channel });
 
-  if (compareSemver(latest, currentVersion) <= 0) {
-    return check.pass(`Up to date (${currentVersion}${channelLabel})`);
+  if (compareSemver(latest, CURRENT_VERSION) <= 0) {
+    return check.pass(`Up to date (${CURRENT_VERSION}${channelLabel})`);
   }
 
-  return check.warn(`Update available: ${currentVersion} → ${latest}${channelLabel}`, {
+  return check.warn(`Update available: ${CURRENT_VERSION} → ${latest}${channelLabel}`, {
     remedy: `Run \`clerk update${formatChannelFlag(channel)}\` to update`,
   });
 }
