@@ -4,8 +4,9 @@
  * fetch, so events are captured from http.requests.
  */
 
-import { afterEach, beforeEach, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { clerk, http, useIntegrationTestHarness } from "./lib/harness.ts";
+import { useCaptureLog } from "../lib/stubs.ts";
 
 useIntegrationTestHarness();
 
@@ -124,6 +125,30 @@ test("no telemetry traffic without CLERK_TELEMETRY_URL (dev build guard)", async
   http.mock(); // guard mock: any fetch would throw
   await clerk("completion", "zsh");
   expect(http.requests).toHaveLength(0);
+});
+
+describe("error rendering is not blocked by the telemetry send", () => {
+  // Own capture buffer so the stub below can inspect stderr mid-run.
+  const captured = useCaptureLog();
+
+  test("the error is on stderr before the telemetry POST fires", async () => {
+    await markNoticeAlreadyShown();
+    process.env.CLERK_TELEMETRY_URL = TELEMETRY_URL;
+
+    let stderrWhenTelemetryFired: string | null = null;
+    http.stub(async (url) => {
+      if (url.startsWith(TELEMETRY_URL)) {
+        stderrWhenTelemetryFired = captured.err;
+        return Response.json({ ok: true });
+      }
+      throw new Error(`Unmocked fetch route: ${url}`);
+    });
+
+    const result = await clerk.raw("apps", "list");
+    expect(result.exitCode).toBe(1);
+    expect(stderrWhenTelemetryFired).not.toBeNull();
+    expect(stderrWhenTelemetryFired!).toContain("Unmocked fetch route");
+  });
 });
 
 test("the first human run shows the notice and sends nothing; the next run sends", async () => {

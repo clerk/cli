@@ -247,10 +247,13 @@ export async function runProgram(
       exitCode: softExitCode,
     });
   } catch (error) {
-    await finalizeAndSendTelemetry(telemetryResultForError(error));
+    // Started here but awaited only right before each exit, so a slow
+    // telemetry endpoint never delays the error output.
+    const pendingTelemetry = finalizeAndSendTelemetry(telemetryResultForError(error));
     const verbose = program.opts().verbose ?? false;
 
     if (error instanceof UserAbortError || isPromptExitError(error)) {
+      await pendingTelemetry;
       process.exit(EXIT_CODE.SUCCESS);
     }
 
@@ -268,6 +271,7 @@ export async function runProgram(
           log.info(`\nFor more information, see: ${error.docsUrl}`);
         }
       }
+      await pendingTelemetry;
       process.exit(error.exitCode);
     }
 
@@ -300,6 +304,7 @@ export async function runProgram(
           log.error(`       Trace: ${error.clerkTraceId}`);
         }
       }
+      await pendingTelemetry;
       process.exit(EXIT_CODE.GENERAL);
     }
 
@@ -309,6 +314,7 @@ export async function runProgram(
       } else {
         log.error(error.message);
       }
+      await pendingTelemetry;
       process.exit(EXIT_CODE.GENERAL);
     }
 
@@ -317,6 +323,7 @@ export async function runProgram(
     } else {
       log.error("An unexpected error occurred");
     }
+    await pendingTelemetry;
     process.exit(EXIT_CODE.GENERAL);
   }
 }
