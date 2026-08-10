@@ -43,7 +43,8 @@ import {
 import { clerkHelpConfig, formatExamplesBlock, type Example } from "./lib/help.ts";
 import { isAgent } from "./mode.ts";
 import { log } from "./lib/log.ts";
-import { maybeNotifyUpdate, getCurrentVersion } from "./lib/update-check.ts";
+import { maybeNotifyUpdate } from "./lib/update-check.ts";
+import { CURRENT_VERSION } from "./lib/version.ts";
 import { registerExtras } from "@clerk/cli-extras";
 
 /**
@@ -87,7 +88,7 @@ export function createProgram(): Program {
       writeOut: (msg) => log.data(msg.replace(/\n$/, "")),
       writeErr: (msg) => log.ui(msg),
     })
-    .version(getCurrentVersion(), "-v, --version", "Output the version number")
+    .version(CURRENT_VERSION, "-v, --version", "Output the version number")
     .helpOption("-h, --help", "Display help for command")
     .addHelpCommand("help [command]", "Display help for command")
     .option(
@@ -142,7 +143,7 @@ export function createProgram(): Program {
   program.hook("postAction", async (_thisCommand, actionCommand) => {
     const cmdName = actionCommand.name();
     if (cmdName === "doctor" || cmdName === "update") return;
-    await maybeNotifyUpdate(getCurrentVersion());
+    await maybeNotifyUpdate(CURRENT_VERSION);
   });
 
   for (const register of registrants) {

@@ -2,10 +2,22 @@ import cliPackage from "../../../cli/package.json";
 
 const DEV_TAG = "dev";
 
+type VersionValues = {
+  currentVersion: string;
+  isDevBuild: boolean;
+};
+
 type GitResult = {
   exitCode: number;
   stdout: string;
 };
+
+function isDevVersion(version: string): boolean {
+  const dash = version.indexOf("-");
+  if (dash === -1) return false;
+  const prerelease = version.slice(dash + 1);
+  return prerelease === DEV_TAG || prerelease.startsWith(`${DEV_TAG}.`);
+}
 
 function git(args: string[]): GitResult | undefined {
   try {
@@ -41,12 +53,22 @@ function describeCheckout(): string | undefined {
 }
 
 /**
- * Resolve the checkout-derived development version during Bun transpilation.
+ * Resolve the current version and dev-build status during Bun transpilation.
  *
- * Bun inlines the returned string at each macro call, so compiled binaries do
- * not execute Git commands at runtime.
+ * Bun inlines the returned values at the macro call, so compiled binaries do
+ * not execute Git commands or classify versions at runtime.
  */
-export function resolveDevVersionAtBuildTime(): string {
-  const checkout = describeCheckout();
-  return `${cliPackage.version}-${DEV_TAG}${checkout ? `.${checkout}` : ""}`;
+export function resolveVersionAtBuildTime(): VersionValues {
+  let currentVersion: string;
+  if (typeof CLI_VERSION === "undefined") {
+    const checkout = describeCheckout();
+    currentVersion = `${cliPackage.version}-${DEV_TAG}${checkout ? `.${checkout}` : ""}`;
+  } else {
+    currentVersion = CLI_VERSION;
+  }
+
+  return {
+    currentVersion,
+    isDevBuild: isDevVersion(currentVersion),
+  };
 }
