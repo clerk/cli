@@ -378,5 +378,16 @@ describe("config", () => {
       await setEnvironment("production");
       expect(await getTelemetryDisabled()).toBe(true);
     });
+
+    test("disabling telemetry sheds the machine identity", async () => {
+      const before = await ensureMachineUuid();
+      await setTelemetryDisabled(true);
+      const config = await readConfig();
+      expect(config.machineUuid).toBeUndefined();
+
+      await setTelemetryDisabled(false);
+      const after = await ensureMachineUuid();
+      expect(after).not.toBe(before);
+    });
   });
 });

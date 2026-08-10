@@ -242,6 +242,9 @@ export async function setTelemetryDisabled(disabled: boolean): Promise<void> {
   const config = await readConfig();
   if (disabled) {
     config.telemetryDisabled = true;
+    // Opting out is an identity boundary: shed the machine id so a later
+    // opt-in starts unlinkable from prior events.
+    delete config.machineUuid;
   } else {
     delete config.telemetryDisabled;
   }
