@@ -172,6 +172,30 @@ test("the first human run shows the notice and sends nothing; the next run sends
   }
 });
 
+test("agent-mode first run also gets the notice and sends nothing", async () => {
+  const originalCi = process.env.CI;
+  delete process.env.CI;
+  try {
+    process.env.CLERK_TELEMETRY_URL = TELEMETRY_URL;
+    http.mock({ "test-telemetry.clerk.com": {} });
+
+    const first = await clerk("--mode", "agent", "completion", "zsh");
+    expect(first.stderr).toContain("Nothing has been sent during this run");
+    expect(telemetryEvents()).toHaveLength(0);
+
+    const second = await clerk("--mode", "agent", "completion", "zsh");
+    expect(second.stderr).not.toContain("Nothing has been sent during this run");
+    expect(telemetryEvents()).toHaveLength(1);
+  } finally {
+    if (originalCi === undefined) delete process.env.CI;
+    else process.env.CI = originalCi;
+    // --mode agent sets the mocked mode module's state, which the harness does
+    // not reset between tests in the same file — restore it.
+    const { setMode } = await import("../../mode.ts");
+    setMode("human");
+  }
+});
+
 test("`clerk telemetry disable` itself sends nothing, and the opt-out persists", async () => {
   await markNoticeAlreadyShown();
   process.env.CLERK_TELEMETRY_URL = TELEMETRY_URL;

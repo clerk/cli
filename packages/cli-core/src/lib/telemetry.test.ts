@@ -180,6 +180,7 @@ describe("finalizeAndSendTelemetry", () => {
   });
 
   test("swallows network failures", async () => {
+    await markTelemetryNoticeShown(); // past the grace run — reach the send path
     process.env.CLERK_TELEMETRY_URL = "https://unreachable.invalid/v1/event";
     globalThis.fetch = (async () => {
       throw new Error("network down");
@@ -190,6 +191,7 @@ describe("finalizeAndSendTelemetry", () => {
   });
 
   test("the deadline bounds the whole telemetry job, not just the fetch", async () => {
+    await markTelemetryNoticeShown();
     process.env.CLERK_TELEMETRY_URL = "https://capture.invalid/v1/event";
     globalThis.fetch = (() => new Promise(() => {})) as unknown as typeof fetch; // hangs forever
     startCommandTelemetry(fakeCommand());
@@ -215,9 +217,9 @@ describe("finalizeAndSendTelemetry", () => {
     const captured = useCaptureLog();
 
     test("dumps the event payload at debug level before the POST", async () => {
+      await markTelemetryNoticeShown();
       globalThis.fetch = (async () => new Response("{}")) as unknown as typeof fetch;
       process.env.CLERK_TELEMETRY_URL = "https://capture.invalid/v1/event";
-      // Agent-mode run (no TTY in tests) → notice path skipped, event sends.
       setLogLevel("debug");
       try {
         startCommandTelemetry(fakeCommand());
@@ -227,6 +229,53 @@ describe("finalizeAndSendTelemetry", () => {
       }
       expect(captured.err).toContain("telemetry: event {");
       expect(captured.err).toContain('"machine_uuid"');
+    });
+  });
+
+  describe("first-run notice (agent mode, non-CI)", () => {
+    const captured = useCaptureLog();
+    let originalCi: string | undefined;
+
+    beforeEach(() => {
+      originalCi = process.env.CI;
+      delete process.env.CI;
+      process.env.CLERK_TELEMETRY_URL = "https://capture.invalid/v1/event";
+    });
+    afterEach(() => {
+      if (originalCi === undefined) delete process.env.CI;
+      else process.env.CI = originalCi;
+    });
+
+    test("agents get the notice and the no-send grace run too", async () => {
+      let called = 0;
+      globalThis.fetch = (async () => {
+        called += 1;
+        return new Response("{}");
+      }) as unknown as typeof fetch;
+
+      // No CLERK_MODE and no TTY in tests → agent mode.
+      startCommandTelemetry(fakeCommand());
+      await finalizeAndSendTelemetry({ outcome: "success", exitCode: 0 });
+      expect(called).toBe(0);
+      expect(captured.err).toContain("Nothing has been sent during this run");
+
+      startCommandTelemetry(fakeCommand());
+      await finalizeAndSendTelemetry({ outcome: "success", exitCode: 0 });
+      expect(called).toBe(1);
+    });
+
+    test("CI sends from the first run with no notice", async () => {
+      process.env.CI = "true";
+      let called = 0;
+      globalThis.fetch = (async () => {
+        called += 1;
+        return new Response("{}");
+      }) as unknown as typeof fetch;
+
+      startCommandTelemetry(fakeCommand());
+      await finalizeAndSendTelemetry({ outcome: "success", exitCode: 0 });
+      expect(called).toBe(1);
+      expect(captured.err).not.toContain("usage telemetry");
     });
   });
 

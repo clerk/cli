@@ -30,7 +30,7 @@ import { getCurrentEnvName } from "./environment.ts";
 import { ApiError, CliError, EXIT_CODE, UserAbortError, isPromptExitError } from "./errors.ts";
 import { loggedFetch } from "./fetch.ts";
 import { log } from "./log.ts";
-import { getMode, isHuman } from "../mode.ts";
+import { getMode } from "../mode.ts";
 import { DEV_CLI_VERSION, resolveCliVersion } from "./version.ts";
 
 export type TelemetryResult = {
@@ -239,12 +239,14 @@ async function buildAndSend(
 }
 
 /**
- * One-time stderr disclosure; human runs outside CI only. Returns true when
+ * One-time stderr disclosure for humans and agents alike. Returns true when
  * the notice was just shown — that run sends nothing, so disclosure always
- * precedes the first event.
+ * precedes a machine's first event. CI is exempt from both the notice and
+ * the grace run: ephemeral CI machines are always on their "first run", so
+ * a grace there would mean CI never sends at all.
  */
 async function maybeShowTelemetryNotice(): Promise<boolean> {
-  if (!isHuman() || process.env.CI) return false;
+  if (process.env.CI) return false;
   if (!(await markTelemetryNoticeShown())) return false;
   log.blank();
   log.info(
