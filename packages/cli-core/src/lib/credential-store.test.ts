@@ -21,7 +21,7 @@ mock.module("@napi-rs/keyring", () => ({
 }));
 
 mock.module("./version.ts", () => ({
-  DEV_CLI_VERSION: "0.0.0-dev",
+  isDevVersion: (version: string) => version.includes("-dev"),
   resolveCliVersion: () => undefined,
 }));
 

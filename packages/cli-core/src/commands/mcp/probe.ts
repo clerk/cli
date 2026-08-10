@@ -11,7 +11,7 @@
 import { isRecord } from "../../lib/objects.ts";
 import { errorMessage } from "../../lib/errors.ts";
 import { loggedFetch } from "../../lib/fetch.ts";
-import { DEV_CLI_VERSION, resolveCliVersion } from "../../lib/version.ts";
+import { getCurrentVersion } from "../../lib/version.ts";
 import { sseEventData } from "./sse.ts";
 // Type-only: erased at compile, so the SDK stays a devDependency and is never
 // bundled — it exists purely as a TS gate keeping this request spec-valid.
@@ -38,7 +38,7 @@ const INITIALIZE_REQUEST = {
   params: {
     protocolVersion: "2024-11-05",
     capabilities: {},
-    clientInfo: { name: "clerk-cli", version: resolveCliVersion() ?? DEV_CLI_VERSION },
+    clientInfo: { name: "clerk-cli", version: getCurrentVersion() },
   },
 } satisfies JSONRPCRequest & InitializeRequest;
 

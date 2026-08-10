@@ -256,7 +256,7 @@ export async function update(options: UpdateOptions): Promise<void> {
   const currentVersion = getCurrentVersion();
 
   if (isDevVersion(currentVersion)) {
-    log.info("Running development build (0.0.0-dev); update not applicable.");
+    log.info(`Running development build (${currentVersion}); update not applicable.`);
     return;
   }
 

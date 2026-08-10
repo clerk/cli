@@ -73,14 +73,15 @@ describe("getUpdateChannel", () => {
 
   test("falls through to version inference when env var is empty string", () => {
     process.env.CLERK_UPDATE_CHANNEL = "";
-    // CLI_VERSION is undefined in tests, so getCurrentVersion() = "0.0.0-dev"
-    // inferChannelFromVersion("0.0.0-dev") = "dev"
+    // CLI_VERSION is undefined in tests, so getCurrentVersion() returns the
+    // checkout-derived dev version ("<base>-dev[.<date>.<sha>]"), whose first
+    // prerelease identifier — and therefore inferred channel — is "dev"
     expect(getUpdateChannel()).toBe("dev");
   });
 
   test("falls through to version inference when env var is unset", () => {
     delete process.env.CLERK_UPDATE_CHANNEL;
-    // CLI_VERSION is undefined in tests → "0.0.0-dev" → "dev"
+    // CLI_VERSION is undefined in tests → "<base>-dev.…" → "dev"
     expect(getUpdateChannel()).toBe("dev");
   });
 });
@@ -167,6 +168,11 @@ describe("shouldCheckForUpdates", () => {
 
   test("returns false for dev version", () => {
     expect(shouldCheckForUpdates("0.0.0-dev")).toBe(false);
+  });
+
+  test("returns false for a dev version carrying a commit", () => {
+    expect(shouldCheckForUpdates("3.0.0-dev.20260803.f51f1e4")).toBe(false);
+    expect(shouldCheckForUpdates("3.0.0-dev.20260803.f51f1e4.dirty")).toBe(false);
   });
 
   test("returns false when CI is set", () => {
