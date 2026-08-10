@@ -243,24 +243,24 @@ test("`clerk telemetry status` reports the state and the winning reason", async 
   http.mock({ "test-telemetry.clerk.com": {} });
 
   const enabled = await clerk("telemetry", "status");
-  expect(enabled.stdout).toContain("Telemetry is enabled");
+  expect(enabled.stdout.trim()).toBe("enabled");
 
   // Broadened env parsing honored end-to-end: "yes" opts out.
   process.env.CLERK_TELEMETRY_DISABLED = "yes";
   const disabledByEnv = await clerk("telemetry", "status");
-  expect(disabledByEnv.stdout).toContain("Telemetry is disabled");
+  expect(disabledByEnv.stdout.trim()).toBe("disabled");
   expect(disabledByEnv.stderr).toContain("CLERK_TELEMETRY_DISABLED");
   delete process.env.CLERK_TELEMETRY_DISABLED;
 
   await clerk("telemetry", "disable");
   const disabledByConfig = await clerk("telemetry", "status");
-  expect(disabledByConfig.stdout).toContain("Telemetry is disabled");
+  expect(disabledByConfig.stdout.trim()).toBe("disabled");
   expect(disabledByConfig.stderr).toContain("clerk telemetry enable");
 });
 
 test("`clerk telemetry status` explains the dev-build guard", async () => {
   http.mock(); // dev build without the URL escape hatch: no network at all
   const result = await clerk("telemetry", "status");
-  expect(result.stdout).toContain("Telemetry is disabled");
+  expect(result.stdout.trim()).toBe("disabled");
   expect(result.stderr).toContain("dev build");
 });

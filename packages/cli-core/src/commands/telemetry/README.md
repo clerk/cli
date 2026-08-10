@@ -10,7 +10,8 @@ clerk telemetry disable   # Persist an opt-out for this machine
 clerk telemetry enable    # Remove the persisted opt-out
 ```
 
-`status` prints the effective state and the winning reason, in precedence order: the
+`status` prints the bare state (`enabled`/`disabled`) on stdout for scripts, with the
+winning reason on stderr, in precedence order: the
 `CLERK_TELEMETRY_DISABLED` / `DO_NOT_TRACK` environment variables, then the persisted
 opt-out from `clerk telemetry disable`, then the automatic dev-build guard. In agent
 mode it emits the status object as JSON on stdout.

@@ -21,7 +21,7 @@ export async function telemetryStatus(): Promise<void> {
     log.data(JSON.stringify(status));
     return;
   }
-  log.data(`Telemetry is ${status.enabled ? "enabled" : "disabled"}`);
+  log.data(status.enabled ? "enabled" : "disabled");
   if (status.enabled) {
     log.info("Opt out with `clerk telemetry disable` (or `CLERK_TELEMETRY_DISABLED=1`).");
   } else {
