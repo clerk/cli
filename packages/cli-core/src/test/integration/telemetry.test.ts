@@ -114,6 +114,22 @@ test("maps a soft failure (process.exitCode set without throwing) to outcome err
   }
 });
 
+test("an invalid --mode value still produces an error event", async () => {
+  await markNoticeAlreadyShown();
+  process.env.CLERK_TELEMETRY_URL = TELEMETRY_URL;
+  http.mock({ "test-telemetry.clerk.com": {} });
+
+  const result = await clerk.raw("--mode", "banana", "completion", "zsh");
+  expect(result.exitCode).toBe(2);
+
+  const bodies = telemetryEvents();
+  expect(bodies).toHaveLength(1);
+  const event = bodies[0]!.events[0]!;
+  expect(event.payload.command).toBe("completion");
+  expect(event.payload.outcome).toBe("error");
+  expect(event.payload.exit_code).toBe(2);
+});
+
 test("command succeeds even when the telemetry endpoint is down", async () => {
   process.env.CLERK_TELEMETRY_URL = TELEMETRY_URL;
   http.mock(); // no routes: every fetch throws, including the telemetry send

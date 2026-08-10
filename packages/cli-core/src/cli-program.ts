@@ -108,6 +108,8 @@ export function createProgram(): Program {
     .option("--verbose", "Show detailed output (enables debug messages)") as Program;
 
   program.hook("preAction", async (_thisCommand, actionCommand) => {
+    // First so hook-time failures (e.g. invalid --mode) still produce an event.
+    startCommandTelemetry(actionCommand);
     // Reset log level at the start of each command invocation so a previous
     // --verbose doesn't leak into subsequent runs.
     setLogLevel("info");
@@ -142,7 +144,6 @@ export function createProgram(): Program {
     if (activeEnv !== "production") {
       process.stderr.write(`[${activeEnv.toUpperCase()}]\n`);
     }
-    startCommandTelemetry(actionCommand);
   });
 
   // Show update notification after each command, except for commands that

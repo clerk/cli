@@ -62,7 +62,7 @@ describe("detectTerminalProgram", () => {
     expect(detectTerminalProgram(env)).toBe(expected);
   });
 
-  test("falls back to TERM_PROGRAM verbatim, then empty string", () => {
+  test("falls back to slugged TERM_PROGRAM, then empty string", () => {
     expect(detectTerminalProgram({ TERM_PROGRAM: "vscode" })).toBe("vscode");
     expect(detectTerminalProgram({})).toBe("");
   });
