@@ -9,6 +9,28 @@
 
 export type EnvLike = Record<string, string | undefined>;
 
+// A privacy control must fail toward "off": any non-empty value counts as an
+// opt-out unless it is explicitly "0" or "false" (case-insensitive).
+const isOptOutEnv = (value?: string): boolean => {
+  if (!value) return false;
+  const normalized = value.toLowerCase();
+  return normalized !== "0" && normalized !== "false";
+};
+
+const OPT_OUT_ENV_VARS = ["CLERK_TELEMETRY_DISABLED", "DO_NOT_TRACK"] as const;
+
+export type OptOutEnvVar = (typeof OPT_OUT_ENV_VARS)[number];
+
+export function optOutEnvVar(env: EnvLike): OptOutEnvVar | null {
+  for (const envVar of OPT_OUT_ENV_VARS) {
+    if (isOptOutEnv(env[envVar])) {
+      return envVar;
+    }
+  }
+
+  return null;
+}
+
 // Truthiness (not equality) is deliberate: harnesses use different marker
 // values — gemini/opencode set "1", cline sets "true", openclaw sets a mode
 // string like "tui-local".

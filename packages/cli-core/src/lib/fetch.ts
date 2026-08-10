@@ -11,8 +11,26 @@
 import { log } from "./log.ts";
 import { withNetworkAccess } from "./host-execution.ts";
 import { buildUserAgent } from "./user-agent.ts";
+import { optOutEnvVar } from "./env-signals.ts";
+import { getTelemetryDisabled } from "./config.ts";
 
-const USER_AGENT = buildUserAgent();
+let userAgentPromise: Promise<string> | undefined;
+
+/** Test-only: recompute the User-Agent on the next request. */
+export function _resetUserAgentCache(): void {
+  userAgentPromise = undefined;
+}
+
+function resolveUserAgent(): Promise<string> {
+  // The AIAgent segment exists purely for analytics classification, so it
+  // honors the telemetry opt-outs (env vars and `clerk telemetry disable`).
+  userAgentPromise ??= (async () => {
+    const optedOut =
+      optOutEnvVar(process.env) !== null || (await getTelemetryDisabled().catch(() => true));
+    return buildUserAgent(process.env, { agentToken: !optedOut });
+  })();
+  return userAgentPromise;
+}
 
 export type LoggedFetchInit = RequestInit & { tag: string; bestEffort?: boolean };
 
@@ -33,7 +51,7 @@ export async function loggedFetch(url: URL | string, options: LoggedFetchInit): 
   const method = init.method ?? "GET";
   const urlStr = url.toString();
   const headers = new Headers(init.headers);
-  if (!headers.has("user-agent")) headers.set("User-Agent", USER_AGENT);
+  if (!headers.has("user-agent")) headers.set("User-Agent", await resolveUserAgent());
   log.debug(`${tag}: ${method} ${urlStr}`);
   const response = await withNetworkAccess(
     { operation: "connect", target: urlStr, label: tag, bestEffort },

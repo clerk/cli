@@ -26,12 +26,20 @@ describe("buildUserAgent", () => {
     expect(buildUserAgent({})).toMatch(/^[\x20-\x7e]+$/);
   });
 
-  test("appends AIAgent product token when an agent is detected", () => {
+  test("appends an AIAgent segment when an agent is detected", () => {
     const ua = buildUserAgent({ CLAUDECODE: "1" });
-    expect(ua).toMatch(/^Clerk-CLI\/.+\(.+\) AIAgent\/claude_code$/);
+    expect(ua).toMatch(/; AIAgent\/claude_code\)$/);
   });
 
-  test("no AIAgent token when no agent env is present", () => {
+  test("ci and AIAgent segments compose inside the parens", () => {
+    expect(buildUserAgent({ CI: "1", CLAUDECODE: "1" })).toMatch(/; ci; AIAgent\/claude_code\)$/);
+  });
+
+  test("no AIAgent segment when no agent env is present", () => {
     expect(buildUserAgent({})).not.toContain("AIAgent/");
+  });
+
+  test("agentToken: false omits the segment even when an agent is detected", () => {
+    expect(buildUserAgent({ CLAUDECODE: "1" }, { agentToken: false })).not.toContain("AIAgent/");
   });
 });

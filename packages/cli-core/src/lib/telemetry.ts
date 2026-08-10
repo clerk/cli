@@ -24,7 +24,9 @@ import {
   detectInstallMethod,
   detectInTmux,
   detectTerminalProgram,
+  optOutEnvVar,
   type EnvLike,
+  type OptOutEnvVar,
 } from "./env-signals.ts";
 import { getCurrentEnvName } from "./environment.ts";
 import { ApiError, CliError, EXIT_CODE, UserAbortError, isPromptExitError } from "./errors.ts";
@@ -54,31 +56,6 @@ type TelemetryContext = {
 };
 
 let context: TelemetryContext | null = null;
-
-// A privacy control must fail toward "off": any non-empty value counts as an
-// opt-out unless it is explicitly "0" or "false" (case-insensitive).
-const isOptOutEnv = (value?: string): boolean => {
-  if (!value) return false;
-  const normalized = value.toLowerCase();
-  return normalized !== "0" && normalized !== "false";
-};
-
-const OPT_OUT_ENV_VARS = [
-  "CLERK_TELEMETRY_DISABLED",
-  "DO_NOT_TRACK",
-] as const;
-
-type OptOutEnvVar = (typeof OPT_OUT_ENV_VARS)[number];
-
-function optOutEnvVar(env: EnvLike): OptOutEnvVar | null {
-  for (const envVar of OPT_OUT_ENV_VARS) {
-    if (isOptOutEnv(env[envVar])) {
-      return envVar;
-    }
-  }
-
-  return null;
-}
 
 /** Pure env + version check; the persisted opt-out lives in getTelemetryStatus. */
 export function telemetryEnabled(

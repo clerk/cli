@@ -15,6 +15,8 @@ mock.module("../../../lib/listage.ts", () => ({
 }));
 
 mock.module("../../../lib/config.ts", () => ({
+  // fetch.ts (imported process-wide) reads this from config.ts.
+  getTelemetryDisabled: async () => false,
   resolveAppContext: (...args: unknown[]) => mockResolveAppContext(...args),
   resolveProfile: (...args: unknown[]) => mockResolveProfile(...args),
   resolveFetchedApplicationInstance: (
