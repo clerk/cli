@@ -14,7 +14,7 @@ import { buildUserAgent } from "./user-agent.ts";
 
 const USER_AGENT = buildUserAgent();
 
-export type LoggedFetchInit = RequestInit & { tag: string };
+export type LoggedFetchInit = RequestInit & { tag: string; bestEffort?: boolean };
 
 /**
  * Normalized response shape returned by the higher-level API request wrappers
@@ -29,14 +29,14 @@ export interface ApiResponse {
 }
 
 export async function loggedFetch(url: URL | string, options: LoggedFetchInit): Promise<Response> {
-  const { tag, ...init } = options;
+  const { tag, bestEffort, ...init } = options;
   const method = init.method ?? "GET";
   const urlStr = url.toString();
   const headers = new Headers(init.headers);
   if (!headers.has("user-agent")) headers.set("User-Agent", USER_AGENT);
   log.debug(`${tag}: ${method} ${urlStr}`);
   const response = await withNetworkAccess(
-    { operation: "connect", target: urlStr, label: tag },
+    { operation: "connect", target: urlStr, label: tag, bestEffort },
     async () => fetch(url, { ...init, headers }),
   );
   if (!response.ok) {

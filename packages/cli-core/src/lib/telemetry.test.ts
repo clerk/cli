@@ -213,6 +213,22 @@ describe("finalizeAndSendTelemetry", () => {
     expect(called).toBe(0);
   });
 
+  describe("sandbox-looking failures", () => {
+    const captured = useCaptureLog();
+
+    test("permission-shaped telemetry failures never trigger the sandbox warning", async () => {
+      await markTelemetryNoticeShown();
+      process.env.CLERK_TELEMETRY_URL = "https://capture.invalid/v1/event";
+      globalThis.fetch = (async () => {
+        throw new Error("EPERM: operation not permitted");
+      }) as unknown as typeof fetch;
+      // Agent mode (no TTY in tests) — the mode where the sandbox hint fires.
+      startCommandTelemetry(fakeCommand());
+      await finalizeAndSendTelemetry({ outcome: "success", exitCode: 0 });
+      expect(captured.err).not.toContain("Host-only");
+    });
+  });
+
   describe("verbose payload dump", () => {
     const captured = useCaptureLog();
 

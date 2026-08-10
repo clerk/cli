@@ -235,6 +235,7 @@ async function buildAndSend(
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ events: [event] }),
     signal,
+    bestEffort: true,
   });
 }
 
