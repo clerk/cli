@@ -179,6 +179,7 @@ async function buildAndSend(
   // sees the freshly persisted opt-out and sends nothing.
   if (!(await getTelemetryStatus()).enabled) return;
 
+  // The notice tells the user "Nothing has been sent during this run" — honor it.
   if (await maybeShowTelemetryNotice()) return;
 
   const machineUuid = await ensureMachineUuid();
