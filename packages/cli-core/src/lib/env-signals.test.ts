@@ -34,10 +34,19 @@ describe("detectAiAgent", () => {
 });
 
 describe("detectTerminalProgram", () => {
-  test("LC_TERMINAL wins and is returned verbatim", () => {
+  test("LC_TERMINAL wins and is slugged", () => {
     expect(detectTerminalProgram({ LC_TERMINAL: "iTerm2", TERM_PROGRAM: "Apple_Terminal" })).toBe(
-      "iTerm2",
+      "iterm2",
     );
+  });
+
+  test("fallback values are slugged and capped, never verbatim", () => {
+    expect(detectTerminalProgram({ TERM_PROGRAM: "Apple_Terminal" })).toBe("apple_terminal");
+    expect(detectTerminalProgram({ TERM_PROGRAM: "iTerm.app" })).toBe("iterm.app");
+    expect(detectTerminalProgram({ TERM_PROGRAM: "/Users/x/secret stuff!" })).toBe(
+      "usersxsecretstuff",
+    );
+    expect(detectTerminalProgram({ LC_TERMINAL: "x".repeat(100) })).toHaveLength(32);
   });
 
   test.each([
@@ -62,8 +71,21 @@ describe("detectTerminalProgram", () => {
 describe("detectInstallMethod", () => {
   const noEnv = {};
 
-  test("CLERK_INSTALL_METHOD override wins", () => {
+  test("CLERK_INSTALL_METHOD override wins for known values only", () => {
     expect(detectInstallMethod({ CLERK_INSTALL_METHOD: "homebrew" }, "/anything")).toBe("homebrew");
+  });
+
+  test("unknown CLERK_INSTALL_METHOD values are ignored, not forwarded", () => {
+    expect(detectInstallMethod({ CLERK_INSTALL_METHOD: "/tmp/evil" }, "/usr/local/bin/clerk")).toBe(
+      "unknown",
+    );
+    // Falls through to normal detection instead of trusting the override.
+    expect(
+      detectInstallMethod(
+        { CLERK_INSTALL_METHOD: "scoop" },
+        "/opt/homebrew/Cellar/clerk/bin/clerk",
+      ),
+    ).toBe("homebrew");
   });
 
   test.each([

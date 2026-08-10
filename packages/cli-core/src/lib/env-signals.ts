@@ -31,15 +31,25 @@ export function detectAiAgent(env: EnvLike): string {
   return "";
 }
 
+// LC_TERMINAL / TERM_PROGRAM carry arbitrary text; every other signal here is
+// a closed enum. Slug + cap them so no unbounded string reaches the payload.
+const TERMINAL_SLUG_MAX = 32;
+function slugTerminal(value: string): string {
+  return value
+    .toLowerCase()
+    .replace(/[^a-z0-9._-]/g, "")
+    .slice(0, TERMINAL_SLUG_MAX);
+}
+
 export function detectTerminalProgram(env: EnvLike): string {
-  if (env.LC_TERMINAL) return env.LC_TERMINAL;
+  if (env.LC_TERMINAL) return slugTerminal(env.LC_TERMINAL);
   if (env.WARP_CLIENT_VERSION) return "warp";
   if (env.WT_SESSION) return "windows_terminal";
   if (env.KITTY_WINDOW_ID) return "kitty";
   if (env.ALACRITTY_WINDOW_ID || env.ALACRITTY_LOG) return "alacritty";
   if (env.WEZTERM_EXECUTABLE || env.WEZTERM_PANE) return "wezterm";
   if (env.GHOSTTY_RESOURCES_DIR) return "ghostty";
-  return env.TERM_PROGRAM ?? "";
+  return env.TERM_PROGRAM ? slugTerminal(env.TERM_PROGRAM) : "";
 }
 
 /**
@@ -47,8 +57,14 @@ export function detectTerminalProgram(env: EnvLike): string {
  * runners leave `npm_*` vars in the child env; direct binary installs are
  * classified by executable path.
  */
+const INSTALL_METHODS = new Set(["npm_global", "npm_run", "npx", "bunx", "homebrew"]);
+
 export function detectInstallMethod(env: EnvLike, execPath: string): string {
-  if (env.CLERK_INSTALL_METHOD) return env.CLERK_INSTALL_METHOD;
+  // The override is only honored for known values — it must not become an
+  // arbitrary-string channel into the payload.
+  if (env.CLERK_INSTALL_METHOD && INSTALL_METHODS.has(env.CLERK_INSTALL_METHOD)) {
+    return env.CLERK_INSTALL_METHOD;
+  }
 
   const path = execPath.toLowerCase().replaceAll("\\", "/");
   if (path.includes("/cellar/") || path.includes("/homebrew/") || path.includes("/linuxbrew/")) {
