@@ -1,17 +1,55 @@
-import { test, expect, describe, afterEach } from "bun:test";
+import { test, expect, describe } from "bun:test";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import semver from "semver";
 import cliPackage from "../../../cli/package.json";
-import {
-  getCurrentVersion,
-  isDevVersion,
-  resolveCliVersion,
-  resolveDevVersion,
-} from "./version.ts";
+import { getCurrentVersion, isDevVersion, resolveCliVersion } from "./version.ts";
 
-// `CLI_VERSION` is a compile-time define, absent under the test runner. Setting
-// the global stands in for a binary built with one, since the unresolved
-// identifier reads through to `globalThis`.
-const globals = globalThis as unknown as { CLI_VERSION?: string };
+type CompiledVersions = {
+  current: string;
+  resolved: string | null;
+};
+
+async function compileVersionFixture(version: string | undefined): Promise<CompiledVersions> {
+  const directory = mkdtempSync(join(tmpdir(), "clerk-version-test-"));
+  const entrypoint = join(directory, "version-fixture.ts");
+  const executable = join(
+    directory,
+    process.platform === "win32" ? "version-fixture.exe" : "version-fixture",
+  );
+
+  try {
+    await Bun.write(
+      entrypoint,
+      `import { getCurrentVersion, resolveCliVersion } from ${JSON.stringify(join(import.meta.dir, "version.ts"))};\n` +
+        `console.log(JSON.stringify({ current: getCurrentVersion(), resolved: resolveCliVersion() ?? null }));\n`,
+    );
+
+    const buildArgs = [process.execPath, "build", "--compile"];
+    if (version) {
+      buildArgs.push("--define", `CLI_VERSION=${JSON.stringify(version)}`);
+    }
+    buildArgs.push(entrypoint, "--outfile", executable);
+
+    const build = Bun.spawnSync(buildArgs, { stdio: ["ignore", "pipe", "pipe"] });
+    if (build.exitCode !== 0) {
+      throw new Error(`Failed to compile version fixture: ${build.stderr.toString().trim()}`);
+    }
+
+    const run = Bun.spawnSync([executable], {
+      env: { ...process.env, PATH: "" },
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    if (run.exitCode !== 0) {
+      throw new Error(`Failed to run version fixture: ${run.stderr.toString().trim()}`);
+    }
+
+    return JSON.parse(run.stdout.toString()) as CompiledVersions;
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+}
 
 // ── isDevVersion ──────────────────────────────────────────────────────────────
 
@@ -41,21 +79,7 @@ describe("isDevVersion", () => {
 // ── resolveCliVersion ─────────────────────────────────────────────────────────
 
 describe("resolveCliVersion", () => {
-  afterEach(() => {
-    delete globals.CLI_VERSION;
-  });
-
-  test("returns undefined under the test runner, where CLI_VERSION is undefined", () => {
-    expect(resolveCliVersion()).toBeUndefined();
-  });
-
-  test("returns an injected release version", () => {
-    globals.CLI_VERSION = "3.1.0";
-    expect(resolveCliVersion()).toBe("3.1.0");
-  });
-
-  test("treats an injected dev version as unversioned", () => {
-    globals.CLI_VERSION = "3.0.0-dev.20260803.f51f1e4";
+  test("returns undefined for the checkout-derived test version", () => {
     expect(resolveCliVersion()).toBeUndefined();
   });
 });
@@ -63,32 +87,7 @@ describe("resolveCliVersion", () => {
 // ── getCurrentVersion ─────────────────────────────────────────────────────────
 
 describe("getCurrentVersion", () => {
-  afterEach(() => {
-    delete globals.CLI_VERSION;
-  });
-
-  test("falls back to the checkout when nothing was injected", () => {
-    expect(getCurrentVersion()).toBe(resolveDevVersion());
-  });
-
-  test("reports an injected release version", () => {
-    globals.CLI_VERSION = "3.1.0";
-    expect(getCurrentVersion()).toBe("3.1.0");
-  });
-
-  test("keeps the commit segment of an injected dev version", () => {
-    // A locally compiled binary can't reach git at runtime — `import.meta.dir`
-    // points into its embedded filesystem — so the version stamped in at build
-    // time is the only thing that still knows which commit it came from.
-    globals.CLI_VERSION = "3.0.0-dev.20260803.f51f1e4.dirty";
-    expect(getCurrentVersion()).toBe("3.0.0-dev.20260803.f51f1e4.dirty");
-  });
-});
-
-// ── resolveDevVersion ─────────────────────────────────────────────────────────
-
-describe("resolveDevVersion", () => {
-  const version = resolveDevVersion();
+  const version = getCurrentVersion();
 
   test("is built on the version packages/cli publishes at", () => {
     expect(version.startsWith(`${cliPackage.version}-dev`)).toBe(true);
@@ -106,14 +105,32 @@ describe("resolveDevVersion", () => {
     expect(semver.lt(version, cliPackage.version)).toBe(true);
   });
 
-  test("is memoized", () => {
-    expect(resolveDevVersion()).toBe(version);
+  test("is stable for the lifetime of the process", () => {
+    expect(getCurrentVersion()).toBe(version);
   });
 
   test("carries a YYYYMMDD.<sha> commit segment when run from a git checkout", () => {
-    // The suite always runs from a checkout, but guard anyway: an exported
-    // tarball with no .git must still produce a usable version.
+    // The suite normally runs from a checkout, but an exported tarball with no
+    // .git must still produce a usable version.
     const suffix = version.slice(`${cliPackage.version}-dev`.length);
     expect(suffix === "" || /^\.\d{8}\.[0-9a-fg]+(\.dirty)?$/.test(suffix)).toBe(true);
+  });
+});
+
+// ── compiled version ──────────────────────────────────────────────────────────
+
+describe("compiled version", () => {
+  test("bakes checkout metadata into a local compiled binary", async () => {
+    expect(await compileVersionFixture(undefined)).toEqual({
+      current: getCurrentVersion(),
+      resolved: null,
+    });
+  });
+
+  test("prefers an explicitly defined release version", async () => {
+    expect(await compileVersionFixture("3.1.0")).toEqual({
+      current: "3.1.0",
+      resolved: "3.1.0",
+    });
   });
 });

@@ -23,7 +23,6 @@ mock.module("@napi-rs/keyring", () => ({
 mock.module("./version.ts", () => ({
   isDevVersion: (version: string) => version.includes("-dev"),
   resolveCliVersion: () => undefined,
-  resolveDevVersion: () => "0.0.0-dev",
 }));
 
 mock.module("./token-exchange.ts", () => ({

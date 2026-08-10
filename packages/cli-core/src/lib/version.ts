@@ -1,32 +1,32 @@
 /**
  * Release binaries are compiled with `--define CLI_VERSION="x.y.z"`, so the
- * global holds the published version. Everything else — `bun run dev`, a
- * `bun link`ed checkout on your PATH, a local `build:compile` — has no define
- * and reports a *dev* version derived from the checkout it runs from:
+ * global holds the published version. Everything else (`bun run dev`, a
+ * `bun link`ed checkout on your PATH, or a local `build:compile`) reports a dev
+ * version derived from the checkout it was transpiled or compiled from:
  *
  *   3.0.0-dev.20260803.f51f1e4          clean tree at commit f51f1e4
  *   3.0.0-dev.20260803.f51f1e4.dirty    ...with uncommitted changes
  *   3.0.0-dev                           git unavailable, or not run from a checkout
  *
- * The base is the version `packages/cli` currently publishes at, so you can see
- * which release your checkout sits on. The commit segment is the part that
- * moves when you pull, which is what makes `clerk --version` able to answer
- * "is the `clerk` on my PATH the code I just fetched?".
+ * A Bun macro computes the fallback before the CLI starts and inlines the
+ * result into the module. Compiled binaries therefore retain their checkout
+ * metadata without executing Git commands at runtime.
  *
- * Anything that *displays* a version — `--version`, the outbound user agent,
- * MCP client info — calls `getCurrentVersion()`, which prefers whatever was
- * injected even when that is itself a dev version.
+ * Anything that displays a version (`--version`, the outbound user agent, or
+ * MCP client info) calls `getCurrentVersion()`, which prefers an injected
+ * version even when that is itself a dev version.
  *
- * Two callers care about the dev/release *distinction* rather than the string:
+ * Two callers care about the dev/release distinction rather than the string:
  * `credential-store` namespaces the macOS keychain away from release builds,
  * and `update-check` suppresses update prompts. Both go through
- * `resolveCliVersion` / `isDevVersion` rather than matching a fixed constant,
- * since a dev version is no longer a single literal.
+ * `resolveCliVersion` / `isDevVersion` rather than matching a fixed constant.
  */
 
-import cliPackage from "../../../cli/package.json";
+import { resolveDevVersionAtBuildTime } from "./version.macro.ts" with { type: "macro" };
 
 const DEV_TAG = "dev";
+const CURRENT_VERSION =
+  typeof CLI_VERSION === "undefined" ? resolveDevVersionAtBuildTime() : CLI_VERSION;
 
 /**
  * True for any version whose prerelease starts with `dev` — the shape every
@@ -47,75 +47,13 @@ export function isDevVersion(version: string): boolean {
  * meaningfully versioned should check for `undefined` here.
  */
 export function resolveCliVersion(): string | undefined {
-  if (typeof CLI_VERSION === "undefined") return undefined;
-  if (isDevVersion(CLI_VERSION)) return undefined;
-  return CLI_VERSION;
-}
-
-function git(args: string[]): { exitCode: number; stdout: string } | undefined {
-  try {
-    // `-C import.meta.dir` anchors on the checkout this code was loaded from,
-    // not the user's cwd — the CLI is normally run from some other project.
-    // `--no-optional-locks` keeps a version lookup from fighting a concurrent
-    // git command for the index lock.
-    const proc = Bun.spawnSync(["git", "--no-optional-locks", "-C", import.meta.dir, ...args], {
-      stdio: ["ignore", "pipe", "pipe"],
-    });
-    return { exitCode: proc.exitCode, stdout: proc.stdout.toString().trim() };
-  } catch {
-    // git missing from PATH, or import.meta.dir isn't a real directory (it
-    // points inside the virtual filesystem of a compiled binary).
-    return undefined;
-  }
-}
-
-function describeCheckout(): string | undefined {
-  const head = git(["log", "-1", "--format=%cs %h"]);
-  if (!head || head.exitCode !== 0) return undefined;
-
-  const [date, sha] = head.stdout.split(" ");
-  if (!date || !sha) return undefined;
-
-  // Semver forbids leading zeroes in an all-numeric prerelease identifier, and
-  // an abbreviated sha can come out all digits. `g` is git-describe's own
-  // escape for the same problem.
-  const commit = /^0\d*$/.test(sha) ? `g${sha}` : sha;
-
-  // `status --porcelain` rather than `diff --quiet HEAD`: an untracked source
-  // file is code the build picks up but the commit doesn't describe, so it
-  // makes the checkout dirty just as a modified tracked file does.
-  const status = git(["status", "--porcelain", "--untracked-files=normal"]);
-  const dirty = status?.exitCode === 0 && status.stdout !== "" ? ".dirty" : "";
-
-  return `${date.replaceAll("-", "")}.${commit}${dirty}`;
-}
-
-let devVersion: string | undefined;
-
-/**
- * The version string an unversioned build reports. Memoized: it shells out to
- * git, and `--version`, the outbound user agent, and MCP client info all ask
- * for it.
- */
-export function resolveDevVersion(): string {
-  if (devVersion) return devVersion;
-  const checkout = describeCheckout();
-  devVersion = `${cliPackage.version}-${DEV_TAG}${checkout ? `.${checkout}` : ""}`;
-  return devVersion;
+  if (isDevVersion(CURRENT_VERSION)) return undefined;
+  return CURRENT_VERSION;
 }
 
 /**
- * The version this build reports to anyone who asks — `--version`, the outbound
- * user agent, MCP client info.
- *
- * Prefers the injected `CLI_VERSION` even when it is a dev version. A local
- * `build:compile` stamps the checkout it was built from into the binary, and
- * that string is strictly better than anything the binary can recompute later:
- * `import.meta.dir` inside a compiled binary points at the embedded virtual
- * filesystem, so git is unreachable and `resolveDevVersion()` would degrade to
- * a bare `<base>-dev`, dropping the date and commit.
+ * Return the version embedded while this module was transpiled or compiled.
  */
 export function getCurrentVersion(): string {
-  if (typeof CLI_VERSION !== "undefined") return CLI_VERSION;
-  return resolveDevVersion();
+  return CURRENT_VERSION;
 }

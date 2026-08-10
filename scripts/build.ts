@@ -1,7 +1,6 @@
 import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import { parseArgs } from "node:util";
-import { resolveDevVersion } from "../packages/cli-core/src/lib/version.ts";
 import { type Target, targets } from "./lib/targets.ts";
 
 function keyringBindingPath(target: Target): string {
@@ -15,15 +14,15 @@ const { values } = parseArgs({
   args: Bun.argv.slice(2),
   options: {
     target: { type: "string" },
-    // CI always passes --version. Without it (local rehearsal), stamp the
-    // binary with the checkout it was built from rather than a fixed literal.
-    version: { type: "string", default: resolveDevVersion() },
+    // CI always passes --version. Without it, the version macro derives a dev
+    // version from the checkout while Bun compiles the binary.
+    version: { type: "string" },
     "env-profiles-path": { type: "string" },
   },
 });
 
 const targetFilter = values.target;
-const version = values.version!;
+const version = values.version;
 
 let envProfilesJson: string | undefined;
 const envProfilesRaw = process.env.ENV_PROFILES;
@@ -78,7 +77,9 @@ if (missingBindings.length > 0) {
   );
 }
 
-console.log(`Building ${selectedTargets.length} target(s) with version ${version}\n`);
+console.log(
+  `Building ${selectedTargets.length} target(s) with ${version ? `version ${version}` : "a checkout-derived dev version"}\n`,
+);
 
 let failed = false;
 for (const target of selectedTargets) {
@@ -96,9 +97,11 @@ for (const target of selectedTargets) {
     "--no-compile-autoload-dotenv",
     "--no-compile-autoload-bunfig",
     `--target=${target.bunTarget}`,
-    `--define`,
-    `CLI_VERSION="${version}"`,
   ];
+
+  if (version) {
+    buildArgs.push("--define", `CLI_VERSION=${JSON.stringify(version)}`);
+  }
 
   if (envProfilesJson) {
     buildArgs.push("--define", `CLI_ENV_PROFILES=${envProfilesJson}`);
