@@ -160,6 +160,7 @@ export const configStubs = {
     profile.appName ? `${profile.appName} (${profile.appId})` : profile.appId,
   ensureMachineUuid: async () => "00000000-0000-4000-8000-000000000000",
   markTelemetryNoticeShown: async () => false,
+  getTelemetryNoticeShown: async () => true,
   getTelemetryDisabled: async () => false,
   setTelemetryDisabled: noop,
 };

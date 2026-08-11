@@ -12,7 +12,7 @@ import { log } from "./log.ts";
 import { withNetworkAccess } from "./host-execution.ts";
 import { buildUserAgent } from "./user-agent.ts";
 import { optOutEnvVar } from "./env-signals.ts";
-import { getTelemetryDisabled } from "./config.ts";
+import { getTelemetryDisabled, getTelemetryNoticeShown } from "./config.ts";
 
 let userAgentPromise: Promise<string> | undefined;
 
@@ -23,11 +23,17 @@ export function _resetUserAgentCache(): void {
 
 function resolveUserAgent(): Promise<string> {
   // The AIAgent segment exists purely for analytics classification, so it
-  // honors the telemetry opt-outs (env vars and `clerk telemetry disable`).
+  // honors the telemetry opt-outs (env vars and `clerk telemetry disable`)
+  // and, like the events, stays absent until the disclosure notice has been
+  // shown — CI exempt, matching maybeShowTelemetryNotice.
   userAgentPromise ??= (async () => {
-    const optedOut =
-      optOutEnvVar(process.env) !== null || (await getTelemetryDisabled().catch(() => true));
-    return buildUserAgent(process.env, { agentToken: !optedOut });
+    const beforeDisclosure =
+      !process.env.CI && !(await getTelemetryNoticeShown().catch(() => false));
+    const omitAgentSegment =
+      optOutEnvVar(process.env) !== null ||
+      beforeDisclosure ||
+      (await getTelemetryDisabled().catch(() => true));
+    return buildUserAgent(process.env, { agentToken: !omitAgentSegment });
   })();
   return userAgentPromise;
 }

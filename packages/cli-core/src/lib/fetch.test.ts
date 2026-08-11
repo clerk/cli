@@ -3,7 +3,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { _resetUserAgentCache, loggedFetch } from "./fetch.ts";
-import { _setConfigDir, setTelemetryDisabled } from "./config.ts";
+import { _setConfigDir, markTelemetryNoticeShown, setTelemetryDisabled } from "./config.ts";
 
 const originalFetch = globalThis.fetch;
 
@@ -50,6 +50,7 @@ describe("loggedFetch", () => {
 describe("AIAgent segment honors the telemetry opt-out", () => {
   let configDir: string;
   let originalClaudecode: string | undefined;
+  let originalCi: string | undefined;
 
   async function sentUserAgent(): Promise<string> {
     globalThis.fetch = mock(
@@ -65,7 +66,9 @@ describe("AIAgent segment honors the telemetry opt-out", () => {
     _setConfigDir(configDir);
     _resetUserAgentCache();
     originalClaudecode = process.env.CLAUDECODE;
+    originalCi = process.env.CI;
     process.env.CLAUDECODE = "1";
+    delete process.env.CI;
     delete process.env.CLERK_TELEMETRY_DISABLED;
     delete process.env.DO_NOT_TRACK;
   });
@@ -76,21 +79,35 @@ describe("AIAgent segment honors the telemetry opt-out", () => {
     _resetUserAgentCache();
     if (originalClaudecode === undefined) delete process.env.CLAUDECODE;
     else process.env.CLAUDECODE = originalClaudecode;
+    if (originalCi === undefined) delete process.env.CI;
+    else process.env.CI = originalCi;
     delete process.env.CLERK_TELEMETRY_DISABLED;
     delete process.env.DO_NOT_TRACK;
     await rm(configDir, { recursive: true, force: true });
   });
 
-  test("segment present when telemetry is enabled", async () => {
+  test("segment present once the disclosure notice has been shown", async () => {
+    await markTelemetryNoticeShown();
+    expect(await sentUserAgent()).toContain("AIAgent/claude_code");
+  });
+
+  test("segment omitted before the disclosure notice has been shown", async () => {
+    expect(await sentUserAgent()).not.toContain("AIAgent/");
+  });
+
+  test("segment present in CI even before the notice (CI is exempt from the grace)", async () => {
+    process.env.CI = "1";
     expect(await sentUserAgent()).toContain("AIAgent/claude_code");
   });
 
   test("segment omitted under an env opt-out", async () => {
+    await markTelemetryNoticeShown();
     process.env.DO_NOT_TRACK = "yes";
     expect(await sentUserAgent()).not.toContain("AIAgent/");
   });
 
   test("segment omitted after clerk telemetry disable", async () => {
+    await markTelemetryNoticeShown();
     await setTelemetryDisabled(true);
     expect(await sentUserAgent()).not.toContain("AIAgent/");
   });

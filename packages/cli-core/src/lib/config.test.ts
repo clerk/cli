@@ -18,6 +18,7 @@ const {
   resolveFetchedApplicationInstance,
   ensureMachineUuid,
   getTelemetryDisabled,
+  getTelemetryNoticeShown,
   markTelemetryNoticeShown,
   setTelemetryDisabled,
   setEnvironment,
@@ -355,6 +356,13 @@ describe("config", () => {
     test("markTelemetryNoticeShown returns true exactly once", async () => {
       expect(await markTelemetryNoticeShown()).toBe(true);
       expect(await markTelemetryNoticeShown()).toBe(false);
+    });
+
+    test("getTelemetryNoticeShown peeks without mutating", async () => {
+      expect(await getTelemetryNoticeShown()).toBe(false);
+      expect(await getTelemetryNoticeShown()).toBe(false);
+      await markTelemetryNoticeShown();
+      expect(await getTelemetryNoticeShown()).toBe(true);
     });
 
     test("setTelemetryDisabled(true) persists and getTelemetryDisabled reads it", async () => {

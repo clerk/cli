@@ -223,6 +223,12 @@ export async function ensureMachineUuid(): Promise<string> {
   return config.machineUuid;
 }
 
+/** Read-only peek at the notice flag (the User-Agent gating needs it). */
+export async function getTelemetryNoticeShown(): Promise<boolean> {
+  const config = await readConfig();
+  return config.telemetryNoticeShown === true;
+}
+
 /** Flip the one-time telemetry notice flag. Returns true only on the transition. */
 export async function markTelemetryNoticeShown(): Promise<boolean> {
   const config = await readConfig();
