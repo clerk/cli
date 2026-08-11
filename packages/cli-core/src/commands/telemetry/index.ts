@@ -38,8 +38,13 @@ export async function telemetryEnable(): Promise<void> {
   await setTelemetryDisabled(false);
   log.success("Telemetry enabled.");
   const status = await getTelemetryStatus();
-  if (!status.enabled && status.reason === "env") {
+  if (status.enabled) return;
+  if (status.reason === "env") {
     log.warn(`\`${status.envVar}\` is still set — telemetry stays disabled until it is unset.`);
+    return;
+  }
+  if (status.reason === "dev-build") {
+    log.warn("This is a dev build (`0.0.0-dev`) — telemetry stays disabled regardless.");
   }
 }
 

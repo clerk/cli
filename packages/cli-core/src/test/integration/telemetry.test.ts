@@ -277,6 +277,13 @@ test("`clerk telemetry status` reports the state and the winning reason", async 
   expect(disabledByConfig.stderr).toContain("clerk telemetry enable");
 });
 
+test("`clerk telemetry enable` warns when the dev-build guard keeps telemetry off", async () => {
+  http.mock(); // dev build without the URL escape hatch: no network at all
+  const result = await clerk("telemetry", "enable");
+  expect(result.stderr).toContain("Telemetry enabled");
+  expect(result.stderr).toContain("dev build");
+});
+
 test("`clerk telemetry status` explains the dev-build guard", async () => {
   http.mock(); // dev build without the URL escape hatch: no network at all
   const result = await clerk("telemetry", "status");
