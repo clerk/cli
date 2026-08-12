@@ -44,6 +44,7 @@ Commands:
   impersonate|imp  [options] [user]               Impersonate a Clerk user
   env                                             Manage environment variables
   config                                          Manage instance configuration
+  telemetry                                       Control CLI usage telemetry (status, disable, enable)
   enable                                          Enable Clerk features on the linked instance
   disable                                         Disable Clerk features on the linked instance
   api              [options] [endpoint] [filter]  Make authenticated requests to the Clerk API
@@ -56,3 +57,17 @@ Commands:
   help             [command]                      Display help for command
   bird                                            Play Clerk Bird, a Flappy Bird game in your terminal
 ```
+
+## Telemetry
+
+The Clerk CLI collects usage telemetry: command name, flag names, duration, outcome,
+environment signals (OS, install method, terminal), a random machine identifier — and
+your workspace and app IDs when a project is linked. It never collects command
+arguments, option values, file paths, or personal data. The first run only shows a
+disclosure notice and sends nothing (CI environments send from the first run), and
+`clerk --verbose` prints every event before it is sent.
+See https://clerk.com/docs/telemetry for details.
+
+Opt out with `clerk telemetry disable`, or by setting `CLERK_TELEMETRY_DISABLED=1`
+(the standard `DO_NOT_TRACK=1` also works). `clerk telemetry status` shows the
+effective state and why.

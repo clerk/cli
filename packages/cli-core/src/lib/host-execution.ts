@@ -19,6 +19,8 @@ export interface HostCapabilityDetails {
   operation?: HostOperation;
   target?: string;
   label?: string;
+  /** Optional call (e.g. telemetry): its failure never surfaces capability warnings. */
+  bestEffort?: boolean;
 }
 
 export interface HostStateProbeFailure {
@@ -165,7 +167,9 @@ export async function withHostCapability<T>(
   try {
     return await fn();
   } catch (error) {
-    observeHostCapabilityFailure(capability, error, details);
+    if (!details.bestEffort) {
+      observeHostCapabilityFailure(capability, error, details);
+    }
     throw error;
   }
 }

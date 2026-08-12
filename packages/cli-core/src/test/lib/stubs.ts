@@ -158,6 +158,11 @@ export const configStubs = {
   resolveAppContext: async () => ({ appId: "", appLabel: "", instanceId: "", instanceLabel: "" }),
   profileLabel: (profile: { appName?: string; appId: string }) =>
     profile.appName ? `${profile.appName} (${profile.appId})` : profile.appId,
+  ensureMachineUuid: async () => "00000000-0000-4000-8000-000000000000",
+  markTelemetryNoticeShown: async () => false,
+  getTelemetryNoticeShown: async () => true,
+  getTelemetryDisabled: async () => false,
+  setTelemetryDisabled: noop,
 };
 
 // Same wholesale-replacement rule as configStubs: this must cover every

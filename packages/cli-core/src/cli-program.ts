@@ -13,6 +13,7 @@ import { registerUsers } from "./commands/users/index.ts";
 import { registerImpersonate } from "./commands/impersonate/index.ts";
 import { registerEnv } from "./commands/env/index.ts";
 import { registerConfig } from "./commands/config/index.ts";
+import { registerTelemetry } from "./commands/telemetry/index.ts";
 import { registerToggles } from "./commands/toggles/index.ts";
 import { registerApi } from "./commands/api/index.ts";
 import { registerDoctor } from "./commands/doctor/index.ts";
@@ -46,6 +47,11 @@ import { log } from "./lib/log.ts";
 import { maybeNotifyUpdate } from "./lib/update-check.ts";
 import { CURRENT_VERSION } from "./lib/version.ts";
 import { registerExtras } from "@clerk/cli-extras";
+import {
+  finalizeAndSendTelemetry,
+  startCommandTelemetry,
+  telemetryResultForError,
+} from "./lib/telemetry.ts";
 
 /**
  * The root `clerk` program with its global options applied, so registrants
@@ -67,6 +73,7 @@ const registrants: CommandRegistrant[] = [
   registerImpersonate,
   registerEnv,
   registerConfig,
+  registerTelemetry,
   registerToggles,
   registerApi,
   registerDoctor,
@@ -101,7 +108,9 @@ export function createProgram(): Program {
     )
     .option("--verbose", "Show detailed output (enables debug messages)") as Program;
 
-  program.hook("preAction", async () => {
+  program.hook("preAction", async (_thisCommand, actionCommand) => {
+    // First so hook-time failures (e.g. invalid --mode) still produce an event.
+    startCommandTelemetry(actionCommand);
     // Reset log level at the start of each command invocation so a previous
     // --verbose doesn't leak into subsequent runs.
     setLogLevel("info");
@@ -232,78 +241,109 @@ export async function runProgram(
   try {
     const { argv, from } = await resolveArgv(args, options?.from);
     await program.parseAsync(argv, { from });
+    // Some commands report failure via process.exitCode instead of throwing —
+    // read it back so telemetry doesn't record them as successes.
+    const softExitCode = Number(process.exitCode ?? EXIT_CODE.SUCCESS);
+    await finalizeAndSendTelemetry({
+      outcome: softExitCode === EXIT_CODE.SUCCESS ? "success" : "error",
+      exitCode: softExitCode,
+    });
   } catch (error) {
-    const verbose = program.opts().verbose ?? false;
+    // Started before rendering so the message is printed before we block on the
+    // send — a slow telemetry endpoint never delays the error output — then
+    // awaited once at the single exit below, so no branch can forget to flush.
+    // `reportError` is synchronous, so the send makes no progress until the
+    // await; the ordering is the point, not overlap.
+    const pendingTelemetry = finalizeAndSendTelemetry(telemetryResultForError(error));
+    const exitCode = reportError(error, program.opts().verbose ?? false);
+    await pendingTelemetry;
+    process.exit(exitCode);
+  }
+}
 
-    if (error instanceof UserAbortError || isPromptExitError(error)) {
-      process.exit(EXIT_CODE.SUCCESS);
-    }
+/**
+ * Render the user-facing form of a thrown error and return the exit code it
+ * should produce. Deliberately does not exit: `runProgram` owns the single
+ * exit so the pending telemetry send is always awaited first.
+ *
+ * Must stay synchronous — `runProgram` relies on nothing awaiting between the
+ * telemetry send starting and the message reaching the terminal.
+ *
+ * The returned code must match `telemetryResultForError`'s `exitCode` for the
+ * same error, or telemetry records an exit code the user never saw. Both
+ * cascades are pinned together in `cli-program.test.ts`.
+ *
+ * Exported for testing; production callers go through `runProgram`.
+ */
+export function reportError(error: unknown, verbose: boolean): number {
+  if (error instanceof UserAbortError || isPromptExitError(error)) {
+    return EXIT_CODE.SUCCESS;
+  }
 
-    if (error instanceof CliError) {
-      if (isAgent() && error.code) {
-        outputJsonError(error.code, error.message, error.docsUrl, undefined, error.examples);
-      } else {
-        if (error.message) {
-          log.error(error.message);
-        }
-        if (error.examples?.length) {
-          log.info(`\n${formatExamplesBlock(error.examples)}`);
-        }
-        if (error.docsUrl) {
-          log.info(`\nFor more information, see: ${error.docsUrl}`);
-        }
-      }
-      process.exit(error.exitCode);
-    }
-
-    if (error instanceof ApiError) {
-      const detail = formatApiBody(error, verbose);
-      const prefix = error.context ?? "Request failed";
-      if (isAgent()) {
-        const apiErrors: ApiErrorEntry[] | undefined =
-          error.code || error.meta
-            ? [
-                {
-                  ...(error.code ? { code: error.code } : {}),
-                  ...(error.message ? { message: error.message } : {}),
-                  ...(error.meta ? { meta: error.meta } : {}),
-                },
-              ]
-            : undefined;
-        outputJsonError(
-          error.code ?? "api_error",
-          `${prefix} (${error.status}): ${detail}`,
-          undefined,
-          apiErrors,
-        );
-      } else {
-        log.error(`${prefix} (${error.status}): ${detail}`);
-        if (verbose && (error instanceof PlapiError || error instanceof FapiError) && error.url) {
-          log.error(`       URL: ${error.url}`);
-        }
-        if (verbose && error.clerkTraceId) {
-          log.error(`       Trace: ${error.clerkTraceId}`);
-        }
-      }
-      process.exit(EXIT_CODE.GENERAL);
-    }
-
-    if (error instanceof Error) {
-      if (isAgent()) {
-        outputJsonError("unexpected_error", error.message);
-      } else {
+  if (error instanceof CliError) {
+    if (isAgent() && error.code) {
+      outputJsonError(error.code, error.message, error.docsUrl, undefined, error.examples);
+    } else {
+      if (error.message) {
         log.error(error.message);
       }
-      process.exit(EXIT_CODE.GENERAL);
+      if (error.examples?.length) {
+        log.info(`\n${formatExamplesBlock(error.examples)}`);
+      }
+      if (error.docsUrl) {
+        log.info(`\nFor more information, see: ${error.docsUrl}`);
+      }
     }
-
-    if (isAgent()) {
-      outputJsonError("unexpected_error", "An unexpected error occurred");
-    } else {
-      log.error("An unexpected error occurred");
-    }
-    process.exit(EXIT_CODE.GENERAL);
+    return error.exitCode;
   }
+
+  if (error instanceof ApiError) {
+    const detail = formatApiBody(error, verbose);
+    const prefix = error.context ?? "Request failed";
+    if (isAgent()) {
+      const apiErrors: ApiErrorEntry[] | undefined =
+        error.code || error.meta
+          ? [
+              {
+                ...(error.code ? { code: error.code } : {}),
+                ...(error.message ? { message: error.message } : {}),
+                ...(error.meta ? { meta: error.meta } : {}),
+              },
+            ]
+          : undefined;
+      outputJsonError(
+        error.code ?? "api_error",
+        `${prefix} (${error.status}): ${detail}`,
+        undefined,
+        apiErrors,
+      );
+    } else {
+      log.error(`${prefix} (${error.status}): ${detail}`);
+      if (verbose && (error instanceof PlapiError || error instanceof FapiError) && error.url) {
+        log.error(`       URL: ${error.url}`);
+      }
+      if (verbose && error.clerkTraceId) {
+        log.error(`       Trace: ${error.clerkTraceId}`);
+      }
+    }
+    return EXIT_CODE.GENERAL;
+  }
+
+  if (error instanceof Error) {
+    if (isAgent()) {
+      outputJsonError("unexpected_error", error.message);
+    } else {
+      log.error(error.message);
+    }
+    return EXIT_CODE.GENERAL;
+  }
+
+  if (isAgent()) {
+    outputJsonError("unexpected_error", "An unexpected error occurred");
+  } else {
+    log.error("An unexpected error occurred");
+  }
+  return EXIT_CODE.GENERAL;
 }
 
 interface ApiErrorEntry {

@@ -4,16 +4,27 @@
  * we fall through to Bun's default `User-Agent: Bun/<version>`, which is
  * indistinguishable from any other Bun-based client.
  *
- * Format: `Clerk-CLI/<version> (Bun/<bun-version>; <platform>-<arch>[; ci])`
+ * Format: `Clerk-CLI/<version> (Bun/<bun-version>; <platform>-<arch>[; ci][; AIAgent/<agent>])`
  *   - <platform>: darwin | linux | win32 | …  (process.platform)
  *   - <arch>:     arm64 | x64 | …             (process.arch)
  *   - `ci` segment is appended when running under a recognized CI environment.
+ *   - `AIAgent/<agent>` segment is appended when an AI agent is detected —
+ *     analytics-purposed, so the fetch layer omits it when telemetry is
+ *     opted out or not yet disclosed.
  */
 
+import { detectAiAgent, type EnvLike } from "./env-signals.ts";
 import { CURRENT_VERSION } from "./version.ts";
 
-export function buildUserAgent(): string {
+export function buildUserAgent(
+  env: EnvLike = process.env,
+  options: { agentToken?: boolean } = {},
+): string {
   const segments = [`Bun/${Bun.version}`, `${process.platform}-${process.arch}`];
-  if (process.env.CI) segments.push("ci");
+  if (env.CI) segments.push("ci");
+  if (options.agentToken !== false) {
+    const agent = detectAiAgent(env);
+    if (agent) segments.push(`AIAgent/${agent}`);
+  }
   return `Clerk-CLI/${CURRENT_VERSION} (${segments.join("; ")})`;
 }

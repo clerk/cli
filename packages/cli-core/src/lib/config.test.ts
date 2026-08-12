@@ -16,6 +16,12 @@ const {
   resolveInstanceId,
   resolveAppContext,
   resolveFetchedApplicationInstance,
+  ensureMachineUuid,
+  getTelemetryDisabled,
+  getTelemetryNoticeShown,
+  markTelemetryNoticeShown,
+  setTelemetryDisabled,
+  setEnvironment,
   _setConfigDir,
 } = await import("./config.ts");
 type Profile =
@@ -329,6 +335,67 @@ describe("config", () => {
       ).rejects.toMatchObject({
         code: "instance_not_found",
       });
+    });
+  });
+
+  describe("telemetry config", () => {
+    test("ensureMachineUuid generates once and persists", async () => {
+      const first = await ensureMachineUuid();
+      expect(first).toMatch(/^[0-9a-f-]{36}$/);
+      const second = await ensureMachineUuid();
+      expect(second).toBe(first);
+    });
+
+    test("machineUuid survives readConfig round-trip with other fields", async () => {
+      const uuid = await ensureMachineUuid();
+      await setEnvironment("production");
+      const config = await readConfig();
+      expect(config.machineUuid).toBe(uuid);
+    });
+
+    test("markTelemetryNoticeShown returns true exactly once", async () => {
+      expect(await markTelemetryNoticeShown()).toBe(true);
+      expect(await markTelemetryNoticeShown()).toBe(false);
+    });
+
+    test("getTelemetryNoticeShown peeks without mutating", async () => {
+      expect(await getTelemetryNoticeShown()).toBe(false);
+      expect(await getTelemetryNoticeShown()).toBe(false);
+      await markTelemetryNoticeShown();
+      expect(await getTelemetryNoticeShown()).toBe(true);
+    });
+
+    test("setTelemetryDisabled(true) persists and getTelemetryDisabled reads it", async () => {
+      expect(await getTelemetryDisabled()).toBe(false);
+      await setTelemetryDisabled(true);
+      expect(await getTelemetryDisabled()).toBe(true);
+      const config = await readConfig();
+      expect(config.telemetryDisabled).toBe(true);
+    });
+
+    test("setTelemetryDisabled(false) removes the flag entirely", async () => {
+      await setTelemetryDisabled(true);
+      await setTelemetryDisabled(false);
+      expect(await getTelemetryDisabled()).toBe(false);
+      const config = await readConfig();
+      expect(config.telemetryDisabled).toBeUndefined();
+    });
+
+    test("telemetryDisabled survives a round-trip with other config writes", async () => {
+      await setTelemetryDisabled(true);
+      await setEnvironment("production");
+      expect(await getTelemetryDisabled()).toBe(true);
+    });
+
+    test("disabling telemetry sheds the machine identity", async () => {
+      const before = await ensureMachineUuid();
+      await setTelemetryDisabled(true);
+      const config = await readConfig();
+      expect(config.machineUuid).toBeUndefined();
+
+      await setTelemetryDisabled(false);
+      const after = await ensureMachineUuid();
+      expect(after).not.toBe(before);
     });
   });
 });
