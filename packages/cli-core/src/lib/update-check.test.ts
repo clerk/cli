@@ -73,14 +73,15 @@ describe("getUpdateChannel", () => {
 
   test("falls through to version inference when env var is empty string", () => {
     process.env.CLERK_UPDATE_CHANNEL = "";
-    // CLI_VERSION is undefined in tests, so getCurrentVersion() = "0.0.0-dev"
-    // inferChannelFromVersion("0.0.0-dev") = "dev"
+    // CLI_VERSION is undefined in tests, so CURRENT_VERSION is a
+    // checkout-derived dev version ("<base>-dev[.<date>.<sha>]"), whose first
+    // prerelease identifier — and therefore inferred channel — is "dev"
     expect(getUpdateChannel()).toBe("dev");
   });
 
   test("falls through to version inference when env var is unset", () => {
     delete process.env.CLERK_UPDATE_CHANNEL;
-    // CLI_VERSION is undefined in tests → "0.0.0-dev" → "dev"
+    // CLI_VERSION is undefined in tests → "<base>-dev.…" → "dev"
     expect(getUpdateChannel()).toBe("dev");
   });
 });
@@ -159,35 +160,35 @@ describe("shouldCheckForUpdates", () => {
     // can override env vars, making env-based control unreliable in shared runs
     const spy = spyOn(mode, "isAgent").mockReturnValue(true);
     try {
-      expect(shouldCheckForUpdates("1.0.0")).toBe(false);
+      expect(shouldCheckForUpdates(false)).toBe(false);
     } finally {
       spy.mockRestore();
     }
   });
 
-  test("returns false for dev version", () => {
-    expect(shouldCheckForUpdates("0.0.0-dev")).toBe(false);
+  test("returns false for a dev build", () => {
+    expect(shouldCheckForUpdates(true)).toBe(false);
   });
 
   test("returns false when CI is set", () => {
     process.env.CI = "1";
-    expect(shouldCheckForUpdates("1.0.0")).toBe(false);
+    expect(shouldCheckForUpdates(false)).toBe(false);
   });
 
   test("returns false when NO_UPDATE_NOTIFIER is set", () => {
     process.env.NO_UPDATE_NOTIFIER = "1";
-    expect(shouldCheckForUpdates("1.0.0")).toBe(false);
+    expect(shouldCheckForUpdates(false)).toBe(false);
   });
 
   test("returns false when CLERK_NO_UPDATE_CHECK is set", () => {
     process.env.CLERK_NO_UPDATE_CHECK = "1";
-    expect(shouldCheckForUpdates("1.0.0")).toBe(false);
+    expect(shouldCheckForUpdates(false)).toBe(false);
   });
 
   test("returns true for stable version with no guards", () => {
     const spy = spyOn(mode, "isAgent").mockReturnValue(false);
     try {
-      expect(shouldCheckForUpdates("1.0.0")).toBe(true);
+      expect(shouldCheckForUpdates(false)).toBe(true);
     } finally {
       spy.mockRestore();
     }
@@ -196,7 +197,7 @@ describe("shouldCheckForUpdates", () => {
   test("returns true for canary version with no guards", () => {
     const spy = spyOn(mode, "isAgent").mockReturnValue(false);
     try {
-      expect(shouldCheckForUpdates("0.0.2-canary.v20260409211526")).toBe(true);
+      expect(shouldCheckForUpdates(false)).toBe(true);
     } finally {
       spy.mockRestore();
     }

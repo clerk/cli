@@ -20,7 +20,7 @@ import {
 } from "./host-execution.ts";
 import { log } from "./log.ts";
 import { refreshAccessToken, type TokenResponse } from "./token-exchange.ts";
-import { resolveCliVersion } from "./version.ts";
+import { CURRENT_VERSION, IS_DEV_BUILD } from "./version.ts";
 
 export const KEYCHAIN_SERVICE = "clerk-cli";
 export const LOCAL_DEV_KEYCHAIN_SERVICE = "clerk-cli-dev";
@@ -82,8 +82,7 @@ async function resolveKeychainService(): Promise<string> {
   if (keychainServicePromise) return keychainServicePromise;
 
   keychainServicePromise = (async () => {
-    const cliVersion = resolveCliVersion();
-    if (!cliVersion) {
+    if (IS_DEV_BUILD) {
       log.debug(
         `credentials: using local macOS keychain namespace (service=${LOCAL_DEV_KEYCHAIN_SERVICE}, reason=unversioned-cli)`,
       );
@@ -95,7 +94,7 @@ async function resolveKeychainService(): Promise<string> {
     });
     const codesignOutput = `${proc.stdout.toString()}${proc.stderr.toString()}`;
 
-    if (proc.exitCode === 0 && isReleaseSignedMacosBinary(cliVersion, codesignOutput)) {
+    if (proc.exitCode === 0 && isReleaseSignedMacosBinary(CURRENT_VERSION, codesignOutput)) {
       return KEYCHAIN_SERVICE;
     }
 

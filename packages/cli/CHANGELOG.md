@@ -1,5 +1,11 @@
 # clerk
 
+## 3.0.1
+
+### Patch Changes
+
+- Fix `clerk auth login` in WSL2, SSH, and headless environments: the sign-in URL is now always printed as a copy-friendly manual fallback, WSL launches the Windows host browser via PowerShell interop when `wslview` is not installed, and the authentication timeout error now explains how to recover. ([#412](https://github.com/clerk/cli/pull/412)) by [@rafa-thayto](https://github.com/rafa-thayto)
+
 ## 3.0.0
 
 ### Major Changes

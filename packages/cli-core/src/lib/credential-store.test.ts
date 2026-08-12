@@ -21,8 +21,8 @@ mock.module("@napi-rs/keyring", () => ({
 }));
 
 mock.module("./version.ts", () => ({
-  DEV_CLI_VERSION: "0.0.0-dev",
-  resolveCliVersion: () => undefined,
+  CURRENT_VERSION: "0.0.0-dev",
+  IS_DEV_BUILD: true,
 }));
 
 mock.module("./token-exchange.ts", () => ({

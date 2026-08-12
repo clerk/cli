@@ -17,12 +17,11 @@ import {
 import { log } from "../../lib/log.ts";
 import { intro, outro, withSpinner } from "../../lib/spinner.ts";
 import { UPDATE_PACKAGE_NAME } from "../../lib/constants.ts";
+import { CURRENT_VERSION, IS_DEV_BUILD } from "../../lib/version.ts";
 import {
-  getCurrentVersion,
   getUpdateChannel,
   fetchLatestVersion,
   compareSemver,
-  isDevVersion,
   writeUpdateCache,
   formatChannelLabel,
 } from "../../lib/update-check.ts";
@@ -253,10 +252,8 @@ async function confirmUpdate(currentVersion: string, latestVersion: string): Pro
 // ── Main ─────────────────────────────────────────────────────────────────────
 
 export async function update(options: UpdateOptions): Promise<void> {
-  const currentVersion = getCurrentVersion();
-
-  if (isDevVersion(currentVersion)) {
-    log.info("Running development build (0.0.0-dev); update not applicable.");
+  if (IS_DEV_BUILD) {
+    log.info(`Running development build (${CURRENT_VERSION}); update not applicable.`);
     return;
   }
 
@@ -273,14 +270,14 @@ export async function update(options: UpdateOptions): Promise<void> {
 
   const { primary, others } = await resolveTargets(process.execPath, installDirs);
 
-  if (compareSemver(latest, currentVersion) <= 0) {
-    log.info(`${green("✓")} Already on latest (${currentVersion})`);
+  if (compareSemver(latest, CURRENT_VERSION) <= 0) {
+    log.info(`${green("✓")} Already on latest (${CURRENT_VERSION})`);
     reportOtherInstalls(others, channel);
     if (isHuman()) outro("Up to date");
     return;
   }
 
-  log.info(`  Current: ${currentVersion}`);
+  log.info(`  Current: ${CURRENT_VERSION}`);
   log.info(`  Latest:  ${cyan(latest)}${formatChannelLabel(channel)}`);
   log.info(`  Target:  ${formatTarget(primary)}`);
   log.blank();
@@ -347,7 +344,7 @@ export async function update(options: UpdateOptions): Promise<void> {
     return;
   }
 
-  const shouldInstall = options.yes || (await confirmUpdate(currentVersion, latest));
+  const shouldInstall = options.yes || (await confirmUpdate(CURRENT_VERSION, latest));
 
   if (!shouldInstall) {
     if (isHuman()) outro("Update cancelled");

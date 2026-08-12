@@ -10,22 +10,21 @@
  *   - `ci` segment is appended when running under a recognized CI environment.
  *   - `AIAgent/<agent>` segment is appended when an AI agent is detected —
  *     analytics-purposed, so the fetch layer omits it when telemetry is
- *     opted out.
+ *     opted out or not yet disclosed.
  */
 
 import { detectAiAgent, type EnvLike } from "./env-signals.ts";
-import { DEV_CLI_VERSION, resolveCliVersion } from "./version.ts";
+import { CURRENT_VERSION } from "./version.ts";
 
 export function buildUserAgent(
   env: EnvLike = process.env,
   options: { agentToken?: boolean } = {},
 ): string {
-  const version = resolveCliVersion() ?? DEV_CLI_VERSION;
   const segments = [`Bun/${Bun.version}`, `${process.platform}-${process.arch}`];
   if (env.CI) segments.push("ci");
   if (options.agentToken !== false) {
     const agent = detectAiAgent(env);
     if (agent) segments.push(`AIAgent/${agent}`);
   }
-  return `Clerk-CLI/${version} (${segments.join("; ")})`;
+  return `Clerk-CLI/${CURRENT_VERSION} (${segments.join("; ")})`;
 }

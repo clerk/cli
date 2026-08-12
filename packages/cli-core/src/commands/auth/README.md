@@ -11,7 +11,7 @@ Authenticates the user via an OAuth 2.0 PKCE flow. After a successful login (or 
 1. Checks for an existing valid token — if found, prompts to re-authenticate (in agent mode, skips and runs autoclaim immediately)
 2. Generates PKCE parameters (code verifier, challenge, state)
 3. Starts a local HTTP callback server on `127.0.0.1`
-4. Opens the browser to the Clerk OAuth authorization URL
+4. Prints the Clerk OAuth authorization URL and opens the browser to it. The URL is always printed as a manual fallback for environments where browser launch is unreliable (WSL2, SSH, headless shells). In WSL, the Windows host browser is reached via `wslview` or, when that is not installed, the always-present `powershell.exe` interop binary (`Start-Process`).
 5. Waits for the redirect callback with an authorization code
 6. Exchanges the code for an access token
 7. Stores the token and user info in local config

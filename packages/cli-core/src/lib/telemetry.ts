@@ -33,7 +33,7 @@ import { ApiError, CliError, EXIT_CODE, UserAbortError, isPromptExitError } from
 import { loggedFetch } from "./fetch.ts";
 import { log } from "./log.ts";
 import { getMode } from "../mode.ts";
-import { DEV_CLI_VERSION, resolveCliVersion } from "./version.ts";
+import { CURRENT_VERSION, IS_DEV_BUILD } from "./version.ts";
 
 export type TelemetryResult = {
   outcome: "success" | "error" | "abort";
@@ -57,14 +57,14 @@ type TelemetryContext = {
 
 let context: TelemetryContext | null = null;
 
-/** Pure env + version check; the persisted opt-out lives in getTelemetryStatus. */
+/** Pure env + build check; the persisted opt-out lives in getTelemetryStatus. */
 export function telemetryEnabled(
   env: EnvLike = process.env,
-  version: string = resolveCliVersion() ?? DEV_CLI_VERSION,
+  isDevBuild: boolean = IS_DEV_BUILD,
 ): boolean {
   if (optOutEnvVar(env)) return false;
   if (env.CLERK_TELEMETRY_URL) return true;
-  return version !== DEV_CLI_VERSION;
+  return !isDevBuild;
 }
 
 export type TelemetryStatus =
@@ -79,12 +79,12 @@ export type TelemetryStatus =
  */
 export async function getTelemetryStatus(
   env: EnvLike = process.env,
-  version: string = resolveCliVersion() ?? DEV_CLI_VERSION,
+  isDevBuild: boolean = IS_DEV_BUILD,
 ): Promise<TelemetryStatus> {
   const envVar = optOutEnvVar(env);
   if (envVar) return { enabled: false, reason: "env", envVar };
   if (await getTelemetryDisabled()) return { enabled: false, reason: "config" };
-  if (!telemetryEnabled(env, version)) return { enabled: false, reason: "dev-build" };
+  if (!telemetryEnabled(env, isDevBuild)) return { enabled: false, reason: "dev-build" };
   return { enabled: true };
 }
 
@@ -184,11 +184,10 @@ async function buildAndSend(
 
   const machineUuid = await ensureMachineUuid();
   const resolved = await resolveProfile(process.cwd()).catch(() => undefined);
-  const version = resolveCliVersion() ?? DEV_CLI_VERSION;
 
   const event = {
     sdk: "clerk-cli",
-    sdkv: version,
+    sdkv: CURRENT_VERSION,
     event: "CLI_COMMAND_EXECUTED",
     payload: {
       command: current.command,

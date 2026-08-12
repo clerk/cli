@@ -2,7 +2,6 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { DEV_CLI_VERSION } from "./version.ts";
 import { _setConfigDir, markTelemetryNoticeShown, setTelemetryDisabled } from "./config.ts";
 import {
   finalizeAndSendTelemetry,
@@ -28,10 +27,10 @@ afterEach(async () => {
 });
 
 describe("telemetryEnabled", () => {
-  const REAL = "1.2.3";
+  const RELEASE_BUILD = false;
 
   test("enabled for release builds by default", () => {
-    expect(telemetryEnabled({}, REAL)).toBe(true);
+    expect(telemetryEnabled({}, RELEASE_BUILD)).toBe(true);
   });
 
   // Any non-empty value except an explicit "0"/"false" opts out.
@@ -44,7 +43,7 @@ describe("telemetryEnabled", () => {
     [{ DO_NOT_TRACK: "TRUE" }],
     [{ DO_NOT_TRACK: "on" }],
   ])("opt-out env %o disables", (env) => {
-    expect(telemetryEnabled(env, REAL)).toBe(false);
+    expect(telemetryEnabled(env, RELEASE_BUILD)).toBe(false);
   });
 
   test.each([
@@ -55,31 +54,32 @@ describe("telemetryEnabled", () => {
     [{ DO_NOT_TRACK: "0" }],
     [{ DO_NOT_TRACK: "false" }],
   ])("explicit-false env %o stays enabled", (env) => {
-    expect(telemetryEnabled(env, REAL)).toBe(true);
+    expect(telemetryEnabled(env, RELEASE_BUILD)).toBe(true);
   });
 
   test("dev builds are disabled unless CLERK_TELEMETRY_URL is set", () => {
-    expect(telemetryEnabled({}, DEV_CLI_VERSION)).toBe(false);
-    expect(telemetryEnabled({ CLERK_TELEMETRY_URL: "http://localhost:9" }, DEV_CLI_VERSION)).toBe(
-      true,
-    );
+    expect(telemetryEnabled({}, true)).toBe(false);
+    expect(telemetryEnabled({ CLERK_TELEMETRY_URL: "http://localhost:9" }, true)).toBe(true);
   });
 
   test("opt-out beats the URL escape hatch", () => {
     expect(
-      telemetryEnabled({ CLERK_TELEMETRY_URL: "http://localhost:9", DO_NOT_TRACK: "1" }, REAL),
+      telemetryEnabled(
+        { CLERK_TELEMETRY_URL: "http://localhost:9", DO_NOT_TRACK: "1" },
+        RELEASE_BUILD,
+      ),
     ).toBe(false);
   });
 });
 
 describe("getTelemetryStatus", () => {
-  const REAL = "1.2.3";
+  const RELEASE_BUILD = false;
 
   test("reports env opt-out first, naming the winning variable", async () => {
     expect(
-      await getTelemetryStatus({ CLERK_TELEMETRY_DISABLED: "1", DO_NOT_TRACK: "1" }, REAL),
+      await getTelemetryStatus({ CLERK_TELEMETRY_DISABLED: "1", DO_NOT_TRACK: "1" }, RELEASE_BUILD),
     ).toEqual({ enabled: false, reason: "env", envVar: "CLERK_TELEMETRY_DISABLED" });
-    expect(await getTelemetryStatus({ DO_NOT_TRACK: "yes" }, REAL)).toEqual({
+    expect(await getTelemetryStatus({ DO_NOT_TRACK: "yes" }, RELEASE_BUILD)).toEqual({
       enabled: false,
       reason: "env",
       envVar: "DO_NOT_TRACK",
@@ -88,21 +88,27 @@ describe("getTelemetryStatus", () => {
 
   test("reports the persisted config opt-out", async () => {
     await setTelemetryDisabled(true);
-    expect(await getTelemetryStatus({}, REAL)).toEqual({ enabled: false, reason: "config" });
+    expect(await getTelemetryStatus({}, RELEASE_BUILD)).toEqual({
+      enabled: false,
+      reason: "config",
+    });
   });
 
   test("persisted opt-out beats the URL escape hatch", async () => {
     await setTelemetryDisabled(true);
-    const status = await getTelemetryStatus({ CLERK_TELEMETRY_URL: "http://localhost:9" }, REAL);
+    const status = await getTelemetryStatus(
+      { CLERK_TELEMETRY_URL: "http://localhost:9" },
+      RELEASE_BUILD,
+    );
     expect(status.enabled).toBe(false);
   });
 
   test("reports dev builds, and enabled otherwise", async () => {
-    expect(await getTelemetryStatus({}, DEV_CLI_VERSION)).toEqual({
+    expect(await getTelemetryStatus({}, true)).toEqual({
       enabled: false,
       reason: "dev-build",
     });
-    expect(await getTelemetryStatus({}, REAL)).toEqual({ enabled: true });
+    expect(await getTelemetryStatus({}, RELEASE_BUILD)).toEqual({ enabled: true });
   });
 });
 
