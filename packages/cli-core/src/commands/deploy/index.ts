@@ -31,8 +31,10 @@ import {
   pausedOperationNotice,
   printPlan,
   productionSummary,
+  proxyDomainHandoff,
 } from "./copy.ts";
 import { mapDeployError } from "./errors.ts";
+import { needsProxyDerivation, resolveProviderDomainProxyUrl, type ProxyDomain } from "./proxy.ts";
 import {
   providerLabel,
   providerSetupIntro,
@@ -183,7 +185,8 @@ async function startNewDeploy(ctx: DeployContext): Promise<void> {
   const production = productionOrExists;
   await persistProductionInstance(ctx, production.id);
 
-  if (!production.active_domain) {
+  const createdDomain = production.active_domain;
+  if (!createdDomain) {
     throw new CliError(
       "Production instance was created but Clerk did not return a domain. " +
         "Run `clerk deploy` again to retry domain provisioning.",
@@ -192,23 +195,29 @@ async function startNewDeploy(ctx: DeployContext): Promise<void> {
 
   log.blank();
 
-  const productionDomain = production.active_domain.name;
-  const cnameTargets = production.active_domain.cname_targets ?? [];
+  // The instances endpoint stores the domain without deriving a proxy URL, so
+  // provider domains arrive here half-configured. See ./proxy.ts.
+  const proxyUrl = await resolveProxyUrl(ctx, createdDomain);
+
+  const productionDomain = createdDomain.name;
+  const cnameTargets = createdDomain.cname_targets ?? [];
   let completedOAuthProviders: OAuthProvider[] = [];
   const operationState: DeployOperationState = {
     appId: ctx.appId,
     developmentInstanceId: ctx.developmentInstanceId,
     productionInstanceId: production.id,
-    productionDomainId: production.active_domain.id,
+    productionDomainId: createdDomain.id,
     domain: productionDomain,
-    frontendApiUrl: production.active_domain.frontend_api_url,
+    frontendApiUrl: createdDomain.frontend_api_url,
     pending: { type: "oauth", provider: oauthProviders[0]?.provider ?? "google" },
     oauthProviders: oauthProviders.map((descriptor) => descriptor.provider),
     completedOAuthProviders,
     cnameTargets,
+    proxyUrl,
+    isProviderDomain: createdDomain.is_provider_domain,
   };
 
-  await runDnsRecordHandoff({ ...operationState, pending: { type: "dns" } }, cnameTargets);
+  await runDomainHandoff({ ...operationState, pending: { type: "dns" } }, cnameTargets, proxyUrl);
 
   bar();
   completedOAuthProviders = await runOAuthSetup(ctx, operationState, oauthProviders);
@@ -365,6 +374,24 @@ async function confirmProductionInstanceCreation(domain: string): Promise<boolea
   return false;
 }
 
+/**
+ * Hands the domain setup to the user. Proxy-served domains (provider domains
+ * such as *.vercel.app) can't carry Clerk's CNAME records, so they get proxy
+ * instructions instead — no DNS records, no BIND export.
+ */
+async function runDomainHandoff(
+  state: DeployOperationState,
+  cnameTargets: readonly CnameTarget[],
+  proxyUrl: string | undefined,
+): Promise<void> {
+  if (proxyUrl) {
+    for (const line of proxyDomainHandoff(state.domain, proxyUrl)) log.info(line);
+    log.blank();
+    return;
+  }
+  await runDnsRecordHandoff(state, cnameTargets);
+}
+
 async function runDnsRecordHandoff(
   state: DeployOperationState,
   cnameTargets: readonly CnameTarget[],
@@ -393,8 +420,29 @@ async function runExistingDomainDnsVerification(
   ctx: DeployContext,
   state: DeployOperationState,
 ): Promise<DnsVerificationResult> {
-  await runDnsRecordHandoff(state, state.cnameTargets ?? []);
+  // A resumed deploy re-derives everything from the API, including a proxy URL
+  // the run that created the instance may never have gotten around to.
+  const proxyUrl = await resolveProxyUrl(ctx, {
+    name: state.domain,
+    is_provider_domain: state.isProviderDomain ?? false,
+    proxy_url: state.proxyUrl,
+  });
+  await runDomainHandoff(state, state.cnameTargets ?? [], proxyUrl);
   return runDnsVerificationPrompt(ctx, state);
+}
+
+/**
+ * Resolves the domain's proxy URL, spinning only when a derivation call is
+ * actually needed — ordinary domains resolve to undefined without a request.
+ */
+async function resolveProxyUrl(
+  ctx: DeployContext,
+  domain: ProxyDomain,
+): Promise<string | undefined> {
+  if (!needsProxyDerivation(domain)) return domain.proxy_url;
+  return withSpinner("Configuring domain proxy...", () =>
+    resolveProviderDomainProxyUrl(ctx.appId, domain),
+  );
 }
 
 async function runDnsVerificationPrompt(

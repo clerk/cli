@@ -18,6 +18,7 @@ import {
   deployComponentLabels,
   deployStatusRetryMessage,
   domainsDashboardUrl,
+  pendingDeployComponents,
   type DeployComponentStatus,
 } from "./copy.ts";
 import { mapDeployError } from "./errors.ts";
@@ -66,7 +67,7 @@ export interface DeployStatusReport {
   state: DeployStatusState;
   domain: string | null;
   productionInstanceId: string | null;
-  domainStatus: { dns: string; ssl: string; mail: string } | null;
+  domainStatus: { dns: string; ssl: string; mail: string; proxy: string } | null;
   pendingDnsRecords: { type: "CNAME"; host: string; value: string }[];
   oauth: { complete: boolean; configured: string[]; pending: string[]; unsupported: string[] };
   nextAction: string;
@@ -232,6 +233,8 @@ export async function resolveLiveDeploySnapshot(
     oauthProviderDescriptors,
     completedOAuthProviders,
     cnameTargets: domain.cname_targets ?? [],
+    proxyUrl: domain.proxy_url,
+    isProviderDomain: domain.is_provider_domain,
     componentStatus: deployComponentStatusFromDomainStatus(deployStatus),
     unsupportedOAuthProviderCount: unsupported.length,
     unsupportedOAuthProviders: unsupported,
@@ -300,6 +303,7 @@ export function pendingDomainStatus(): DomainStatusResponse {
     dns: { status: "not_started" },
     ssl: { status: "not_started", required: true },
     mail: { status: "not_started", required: true },
+    proxy: { status: "not_started", required: false },
   };
 }
 
@@ -370,6 +374,7 @@ export function buildDeployStatusReport(
       dns: domainComponentState(componentStatus.dns),
       ssl: domainComponentState(componentStatus.ssl),
       mail: domainComponentState(componentStatus.mail),
+      proxy: domainComponentState(componentStatus.proxy),
     },
     pendingDnsRecords,
     oauth: {
@@ -440,11 +445,7 @@ function deployNextAction(
     );
   }
 
-  const pendingComponents = [
-    !componentStatus.dns ? "DNS" : null,
-    !componentStatus.ssl ? "SSL" : null,
-    !componentStatus.mail ? "email DNS" : null,
-  ].filter((value): value is string => value !== null);
+  const pendingComponents = pendingDeployComponents(componentStatus);
 
   if (pendingComponents.length === 0) {
     return (
@@ -567,6 +568,9 @@ export function deployComponentStatusFromDomainStatus(
     dns: checkStatusComplete(response.dns),
     ssl: checkStatusComplete(response.ssl),
     mail: checkStatusComplete(response.mail),
+    // Unlike the other checks, an absent `proxy` means "not applicable" rather
+    // than "not started": the API omits it for domains that verify by CNAME.
+    proxy: response.proxy ? checkStatusComplete(response.proxy) : true,
   };
 }
 

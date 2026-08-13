@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { PlapiError } from "../../lib/errors.ts";
+import type { DomainStatusResponse } from "../../lib/plapi.ts";
 import type { LiveDeploySnapshot } from "./status.ts";
 
 const mockFetchApplication = mock();
@@ -19,8 +20,12 @@ mock.module("../../lib/plapi.ts", () => ({
     mockTriggerApplicationDomainDNSCheck(...args),
 }));
 
-const { buildDeployStatusReport, resolveDeployState, waitForDeployStatus } =
-  await import("./status.ts");
+const {
+  buildDeployStatusReport,
+  deployComponentStatusFromDomainStatus,
+  resolveDeployState,
+  waitForDeployStatus,
+} = await import("./status.ts");
 
 const ctx = {
   profileKey: "/tmp/x",
@@ -34,7 +39,7 @@ const ctx = {
   developmentInstanceId: "ins_dev",
 } as const;
 
-const completeStatus = {
+const completeStatus: DomainStatusResponse = {
   status: "complete",
   dns: { status: "complete" },
   ssl: { status: "complete", required: true },
@@ -168,7 +173,7 @@ describe("waitForDeployStatus", () => {
     );
     expect(outcome).toEqual({
       verified: true,
-      status: { dns: true, ssl: true, mail: true },
+      status: { dns: true, ssl: true, mail: true, proxy: true },
     });
   });
 
@@ -182,8 +187,34 @@ describe("waitForDeployStatus", () => {
 
     expect(outcome).toEqual({
       verified: true,
-      status: { dns: true, ssl: true, mail: true },
+      status: { dns: true, ssl: true, mail: true, proxy: true },
     });
+  });
+});
+
+describe("deployComponentStatusFromDomainStatus for proxy-served domains", () => {
+  // What the API returns for a provider domain once its proxy URL is derived:
+  // the CNAMEs go optional, SSL and email stop being required, and the proxy
+  // check is the only thing keeping the domain incomplete.
+  const proxyPending: DomainStatusResponse = {
+    status: "incomplete",
+    dns: { status: "complete" },
+    ssl: { status: "not_started", required: false },
+    mail: { status: "not_started", required: false },
+    proxy: { status: "not_configured", required: true },
+  };
+
+  test("reports the proxy as pending instead of declaring the domain verified", () => {
+    expect(deployComponentStatusFromDomainStatus(proxyPending)).toEqual({
+      dns: true,
+      ssl: true,
+      mail: true,
+      proxy: false,
+    });
+  });
+
+  test("treats an absent proxy check as not applicable rather than pending", () => {
+    expect(deployComponentStatusFromDomainStatus(completeStatus).proxy).toBe(true);
   });
 });
 
@@ -202,7 +233,7 @@ describe("buildDeployStatusReport", () => {
       { host: "clkmail.example.com", value: "mail.clerk.services", required: true },
     ],
     domainComplete: false,
-    componentStatus: { dns: false, ssl: false, mail: false },
+    componentStatus: { dns: false, ssl: false, mail: false, proxy: true },
     unsupportedOAuthProviderCount: 0,
     unsupportedOAuthProviders: [],
     pending: { type: "oauth" as const, provider: "github" },
@@ -236,7 +267,7 @@ describe("buildDeployStatusReport", () => {
   test("active with pending domain gives domain precedence over OAuth", () => {
     const report = buildDeployStatusReport(
       { kind: "active", snapshot: activeSnapshot },
-      { verified: false, status: { dns: false, ssl: true, mail: true } },
+      { verified: false, status: { dns: false, ssl: true, mail: true, proxy: true } },
     );
 
     expect(report.state).toBe("domain_pending");
@@ -246,7 +277,12 @@ describe("buildDeployStatusReport", () => {
     );
     expect(report.nextAction).toContain("Ask the user to visit");
     expect(report.nextAction).toContain("offer to open it");
-    expect(report.domainStatus).toEqual({ dns: "pending", ssl: "complete", mail: "complete" });
+    expect(report.domainStatus).toEqual({
+      dns: "pending",
+      ssl: "complete",
+      mail: "complete",
+      proxy: "complete",
+    });
     expect(report.pendingDnsRecords).toContainEqual({
       type: "CNAME",
       host: "clerk.example.com",
@@ -258,7 +294,7 @@ describe("buildDeployStatusReport", () => {
   test("active with pending email DNS reports only email CNAME records", () => {
     const report = buildDeployStatusReport(
       { kind: "active", snapshot: activeSnapshot },
-      { verified: false, status: { dns: true, ssl: true, mail: false } },
+      { verified: false, status: { dns: true, ssl: true, mail: false, proxy: true } },
     );
 
     expect(report.pendingDnsRecords).toEqual([
@@ -273,7 +309,7 @@ describe("buildDeployStatusReport", () => {
   test("active with complete domain but pending OAuth reports oauth_pending", () => {
     const report = buildDeployStatusReport(
       { kind: "active", snapshot: activeSnapshot },
-      { verified: true, status: { dns: true, ssl: true, mail: true } },
+      { verified: true, status: { dns: true, ssl: true, mail: true, proxy: true } },
     );
 
     expect(report.state).toBe("oauth_pending");
@@ -295,12 +331,17 @@ describe("buildDeployStatusReport", () => {
     } satisfies LiveDeploySnapshot;
     const report = buildDeployStatusReport(
       { kind: "active", snapshot: allDone },
-      { verified: true, status: { dns: true, ssl: true, mail: true } },
+      { verified: true, status: { dns: true, ssl: true, mail: true, proxy: true } },
     );
 
     expect(report.state).toBe("complete");
     expect(report.complete).toBe(true);
-    expect(report.domainStatus).toEqual({ dns: "complete", ssl: "complete", mail: "complete" });
+    expect(report.domainStatus).toEqual({
+      dns: "complete",
+      ssl: "complete",
+      mail: "complete",
+      proxy: "complete",
+    });
     expect(report.nextAction).toContain("https://example.com");
     expect(report.nextAction).toContain(
       "https://dashboard.clerk.com/apps/app_1/instances/ins_prod/domains",
@@ -316,7 +357,7 @@ describe("buildDeployStatusReport", () => {
     } satisfies LiveDeploySnapshot;
     const report = buildDeployStatusReport(
       { kind: "active", snapshot: withUnsupported },
-      { verified: true, status: { dns: true, ssl: true, mail: true } },
+      { verified: true, status: { dns: true, ssl: true, mail: true, proxy: true } },
     );
 
     expect(report.complete).toBe(true);

@@ -253,6 +253,25 @@ export async function createProductionInstance(
   return response.json() as Promise<ProductionInstanceResponse>;
 }
 
+export type UpdateApplicationDomainParams = {
+  name?: string;
+  proxy_path?: string;
+};
+
+/**
+ * Updates the application's primary domain. Re-sending the current `name` is a
+ * no-op for the name itself, but runs the API's domain normalization — which
+ * derives the proxy URL for provider domains. See ../commands/deploy/proxy.ts.
+ */
+export async function updateApplicationDomain(
+  applicationId: string,
+  params: UpdateApplicationDomainParams,
+): Promise<ApplicationDomain> {
+  const url = new URL(`/v1/platform/applications/${applicationId}/domain`, getPlapiBaseUrl());
+  const response = await plapiFetch("PATCH", url, { body: JSON.stringify(params) });
+  return response.json() as Promise<ApplicationDomain>;
+}
+
 export async function getApplicationDomainStatus(
   applicationId: string,
   domainIdOrName: string,

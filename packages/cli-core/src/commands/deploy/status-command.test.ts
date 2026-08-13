@@ -186,7 +186,12 @@ describe("deploy status", () => {
       state: "complete",
       domain: "example.com",
     });
-    expect(payload.domainStatus).toEqual({ dns: "complete", ssl: "complete", mail: "complete" });
+    expect(payload.domainStatus).toEqual({
+      dns: "complete",
+      ssl: "complete",
+      mail: "complete",
+      proxy: "complete",
+    });
   });
 
   test("human mode not_started prints a readable status block and no JSON stdout", async () => {
@@ -217,7 +222,12 @@ describe("deploy status", () => {
     const payload = JSON.parse(captured.out);
     expect(payload.state).toBe("domain_pending");
     expect(payload.complete).toBe(false);
-    expect(payload.domainStatus).toEqual({ dns: "pending", ssl: "complete", mail: "complete" });
+    expect(payload.domainStatus).toEqual({
+      dns: "pending",
+      ssl: "complete",
+      mail: "complete",
+      proxy: "complete",
+    });
     expect(payload.pendingDnsRecords).toContainEqual({
       type: "CNAME",
       host: "clerk.example.com",

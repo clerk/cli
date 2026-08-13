@@ -2,12 +2,19 @@ import { test, expect, describe } from "bun:test";
 import {
   bindZoneFile,
   deployComponentLabels,
+  deployComponentStatus,
+  deployStatusPendingFooter,
   deployStatusRetryMessage,
   dnsRecords,
   nextStepsBlock,
   pendingDnsRecords,
+  proxyDomainHandoff,
 } from "./copy.ts";
 import type { CnameTarget } from "../../lib/plapi.ts";
+
+function stripAnsi(value: string): string {
+  return value.replace(new RegExp(`${String.fromCharCode(27)}\\[[0-9;]*m`, "g"), "");
+}
 
 describe("bindZoneFile", () => {
   const fixedDate = new Date("2026-05-20T18:30:00.000Z");
@@ -131,11 +138,18 @@ describe("pendingDnsRecords", () => {
   ];
 
   test("returns no records when only SSL remains pending", () => {
-    expect(pendingDnsRecords(targets, { dns: true, ssl: false, mail: true })).toEqual([]);
+    expect(pendingDnsRecords(targets, { dns: true, ssl: false, mail: true, proxy: true })).toEqual(
+      [],
+    );
   });
 
   test("returns only email records when email DNS remains pending", () => {
-    const output = pendingDnsRecords(targets, { dns: true, ssl: true, mail: false }).join("\n");
+    const output = pendingDnsRecords(targets, {
+      dns: true,
+      ssl: true,
+      mail: false,
+      proxy: true,
+    }).join("\n");
 
     expect(output).toContain("clkmail.example.com");
     expect(output).not.toContain("clerk.example.com");
@@ -143,7 +157,12 @@ describe("pendingDnsRecords", () => {
   });
 
   test("returns non-email records when DNS remains pending", () => {
-    const output = pendingDnsRecords(targets, { dns: false, ssl: true, mail: true }).join("\n");
+    const output = pendingDnsRecords(targets, {
+      dns: false,
+      ssl: true,
+      mail: true,
+      proxy: true,
+    }).join("\n");
 
     expect(output).toContain("clerk.example.com");
     expect(output).toContain("accounts.example.com");
@@ -160,5 +179,53 @@ describe("dnsRecords", () => {
 
     expect(output).toContain("Email (Clerk handles SPF/DKIM automatically)");
     expect(output).not.toContain("\n  CNAME\n    Type:");
+  });
+});
+
+describe("proxy-served domains", () => {
+  const allVerified = { dns: true, ssl: true, mail: true, proxy: true };
+
+  test("omits the proxy check from the status line when it does not apply", () => {
+    expect(stripAnsi(deployComponentStatus(allVerified))).toBe("DNS: ✓  SSL: ✓  Email DNS: ✓");
+  });
+
+  // Every CNAME-based check reports complete for a proxied domain (the CNAMEs
+  // become optional and SSL/email stop being required), so without this the
+  // CLI would call an unserved instance fully verified.
+  test("surfaces a pending proxy even when every CNAME check passes", () => {
+    const status = { ...allVerified, proxy: false };
+
+    expect(stripAnsi(deployComponentStatus(status))).toBe(
+      "DNS: ✓  SSL: ✓  Email DNS: ✓  Proxy: pending",
+    );
+    expect(stripAnsi(deployStatusPendingFooter("my-app.vercel.app", status).join("\n"))).toContain(
+      "proxy still pending for my-app.vercel.app.",
+    );
+  });
+
+  test("points at the proxy docs instead of DNS propagation when the proxy is pending", () => {
+    const output = deployStatusPendingFooter("my-app.vercel.app", {
+      ...allVerified,
+      proxy: false,
+    }).join("\n");
+
+    expect(output).toContain("https://clerk.com/docs/guides/dashboard/dns-domains/proxy-fapi");
+    expect(output).not.toContain("DNS propagation can take several hours");
+  });
+});
+
+describe("proxyDomainHandoff", () => {
+  const output = stripAnsi(
+    proxyDomainHandoff("my-app.vercel.app", "https://my-app.vercel.app/__clerk").join("\n"),
+  );
+
+  test("tells the user their app must serve the proxy path", () => {
+    expect(output).toContain("https://my-app.vercel.app/__clerk");
+    expect(output).toContain("my-app.vercel.app");
+  });
+
+  test("does not ask for DNS records the provider domain cannot carry", () => {
+    expect(output).not.toContain("CNAME");
+    expect(output).not.toContain("DNS provider");
   });
 });
