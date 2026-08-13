@@ -308,7 +308,7 @@ export async function resolveProfile(cwd: string): Promise<
   return undefined;
 }
 
-const INSTANCE_ALIASES: Record<string, "development" | "production"> = {
+export const INSTANCE_ALIASES: Record<string, "development" | "production"> = {
   dev: "development",
   development: "development",
   prod: "production",
@@ -398,6 +398,25 @@ export function resolveFetchedApplicationInstance(
 }
 
 /**
+ * `resolveInstanceId` against a stored profile, with one recovery attempt when
+ * the profile predates the instance being asked for. The recovery lives in
+ * `link-refresh.ts` and is imported lazily so `resolveInstanceId` stays sync,
+ * pure, and offline for every caller that doesn't need the second chance.
+ */
+async function resolveLinkedInstance(
+  profileKey: string,
+  profile: Profile,
+  instance: string | undefined,
+): Promise<{ id: string; label: string }> {
+  try {
+    return resolveInstanceId(profile, instance);
+  } catch (error) {
+    const { recoverMissingInstance } = await import("./link-refresh.ts");
+    return recoverMissingInstance(error, profileKey, profile, instance);
+  }
+}
+
+/**
  * Resolve app context from explicit flags or linked profile.
  * This is the isomorphic resolution chain used by profile-dependent commands:
  *   1. Explicit --app flag (works from any directory)
@@ -438,7 +457,7 @@ export async function resolveAppContext(
     );
   }
 
-  const instance = resolveInstanceId(resolved.profile, options.instance);
+  const instance = await resolveLinkedInstance(resolved.path, resolved.profile, options.instance);
   return {
     appId: resolved.profile.appId,
     appLabel: resolved.profile.appName || resolved.profile.appId,

@@ -149,6 +149,12 @@ export const configStubs = {
   resolveProfile: noop,
   resolveProfileOrAutolink: noop,
   resolveInstanceId: () => ({ id: "", label: "" }),
+  INSTANCE_ALIASES: {
+    dev: "development",
+    development: "development",
+    prod: "production",
+    production: "production",
+  } as Record<string, "development" | "production">,
   resolveFetchedApplicationInstance: () => ({
     found: false,
     instanceId: "",
