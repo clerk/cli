@@ -334,7 +334,7 @@ function renameDefaultMiddlewareExport(existing: string): string | null {
 }
 
 function hasMiddlewareConfigExport(existing: string): boolean {
-  return /export\s+const\s+config\s*=/.test(existing);
+  return /export\s+const\s+config\b[^=]*=/.test(existing);
 }
 
 /**
@@ -379,10 +379,13 @@ function stripMiddlewareConfigExport(existing: string): string {
 
   const valueStart = declaration.index + declaration[0].length;
   const opener = existing[valueStart];
-  const end =
-    opener === "{" || opener === "["
-      ? endOfLiteral(existing, valueStart)
-      : existing.slice(valueStart).search(/[;\n]/) + valueStart + 1 || existing.length;
+  let end: number;
+  if (opener === "{" || opener === "[") {
+    end = endOfLiteral(existing, valueStart);
+  } else {
+    const terminator = existing.slice(valueStart).search(/[;\n]/);
+    end = terminator === -1 ? existing.length : valueStart + terminator + 1;
+  }
 
   const before = existing.slice(0, declaration.index).trimEnd();
   const after = existing

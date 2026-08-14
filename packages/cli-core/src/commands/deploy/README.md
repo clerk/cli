@@ -141,10 +141,11 @@ sequenceDiagram
 
     %% Create production instance + domain in one round-trip, including clone validation
     CLI->>API: POST /v1/platform/applications/{appID}/instances { domain, environment_type, clone_instance_id }
+    API-->>CLI: { id, active_domain: { id, name, cname_targets }, publishable_key, secret_key }
     opt active_domain.is_provider_domain and no proxy_url
         CLI->>API: PATCH /v1/platform/applications/{appID}/domain { name }
+        API-->>CLI: { active_domain: { id, name, proxy_url } }
     end
-    API-->>CLI: { id, active_domain: { id, name, cname_targets }, publishable_key, secret_key }
 
     CLI->>User: Add these CNAME records to your DNS provider
 

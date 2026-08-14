@@ -21,6 +21,7 @@
  */
 
 import { updateApplicationDomain, type ApplicationDomain } from "../../lib/plapi.ts";
+import { CliError, ERROR_CODE } from "../../lib/errors.ts";
 import { mapDeployError } from "./errors.ts";
 
 /** The parts of a domain that decide whether it still needs a proxy URL. */
@@ -49,5 +50,10 @@ export async function resolveProviderDomainProxyUrl(
   if (!needsProxyDerivation(domain)) return domain.proxy_url;
 
   const updated = await mapDeployError(updateApplicationDomain(appId, { name: domain.name }));
+  if (!updated.proxy_url) {
+    throw new CliError("Clerk did not return a proxy URL for this provider domain.", {
+      code: ERROR_CODE.PROXY_URL_REQUIRED,
+    });
+  }
   return updated.proxy_url;
 }
