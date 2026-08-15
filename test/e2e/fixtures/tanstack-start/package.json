@@ -13,10 +13,10 @@
   },
   "dependencies": {
     "@tailwindcss/vite": "4.3.3",
-    "@tanstack/react-devtools": "0.10.9",
-    "@tanstack/react-router": "1.170.18",
-    "@tanstack/react-router-devtools": "1.167.0",
-    "@tanstack/react-start": "1.168.32",
+    "@tanstack/react-devtools": "0.10.10",
+    "@tanstack/react-router": "1.170.29",
+    "@tanstack/react-router-devtools": "1.167.1",
+    "@tanstack/react-start": "1.168.46",
     "react": "19.2.8",
     "react-dom": "19.2.8",
     "tailwindcss": "4.3.3",
@@ -24,14 +24,14 @@
   },
   "devDependencies": {
     "@tanstack/devtools-vite": "0.8.3",
-    "@tanstack/router-cli": "1.167.21",
+    "@tanstack/router-cli": "1.167.30",
     "@types/node": "22.20.1",
-    "@types/react": "19.2.17",
-    "@types/react-dom": "19.2.3",
-    "@vitejs/plugin-react": "6.0.4",
+    "@types/react": "19.2.18",
+    "@types/react-dom": "19.2.4",
+    "@vitejs/plugin-react": "6.0.5",
     "typescript": "6.0.3",
-    "vite": "8.1.5",
-    "@rsbuild/core": "2.1.7"
+    "vite": "8.2.1",
+    "@rsbuild/core": "2.1.13"
   },
   "pnpm": {
     "onlyBuiltDependencies": [
