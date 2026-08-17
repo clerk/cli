@@ -11,6 +11,7 @@ const tempDir = await mkdtemp(join(tmpdir(), "clerk-cred-test-"));
 process.env.CLERK_CONFIG_DIR = tempDir;
 
 const mockRefreshAccessToken = mock();
+const mockRevokeToken = mock();
 
 mock.module("@napi-rs/keyring", () => ({
   Entry: class {
@@ -27,10 +28,18 @@ mock.module("./version.ts", () => ({
 
 mock.module("./token-exchange.ts", () => ({
   refreshAccessToken: (...args: unknown[]) => mockRefreshAccessToken(...args),
+  revokeToken: (...args: unknown[]) => mockRevokeToken(...args),
 }));
 
-const { createOAuthSession, deleteToken, getStoredSession, getToken, getValidToken, storeToken } =
-  await import("./credential-store.ts");
+const {
+  createOAuthSession,
+  deleteToken,
+  getStoredSession,
+  getToken,
+  getValidToken,
+  revokeAndDeleteToken,
+  storeToken,
+} = await import("./credential-store.ts");
 
 async function writeLegacyToken(value: string): Promise<void> {
   await writeFile(join(tempDir, "credentials"), value, { mode: 0o600 });
@@ -44,7 +53,41 @@ afterAll(async () => {
 describe("credential-store", () => {
   beforeEach(async () => {
     mockRefreshAccessToken.mockReset();
+    mockRevokeToken.mockReset();
     await deleteToken();
+  });
+
+  test("revokeAndDeleteToken revokes the stored refresh token before deleting it", async () => {
+    await storeToken({
+      accessToken: "access-token",
+      refreshToken: "refresh-token",
+      expiresAt: Date.now() + 60_000,
+      tokenType: "Bearer",
+    });
+
+    await revokeAndDeleteToken();
+
+    expect(mockRevokeToken).toHaveBeenCalledWith("refresh-token", "refresh_token");
+    expect(await getStoredSession()).toBeNull();
+  });
+
+  test("revokeAndDeleteToken skips revocation when nothing is stored", async () => {
+    await revokeAndDeleteToken();
+
+    expect(mockRevokeToken).not.toHaveBeenCalled();
+  });
+
+  test("revokeAndDeleteToken deletes local credentials even if revocation throws", async () => {
+    await storeToken({
+      accessToken: "access-token",
+      refreshToken: "refresh-token",
+      expiresAt: Date.now() + 60_000,
+      tokenType: "Bearer",
+    });
+    mockRevokeToken.mockRejectedValue(new Error("network unreachable"));
+
+    await expect(revokeAndDeleteToken()).rejects.toThrow("network unreachable");
+    expect(await getStoredSession()).toBeNull();
   });
 
   test("getToken returns null when no token is stored", async () => {

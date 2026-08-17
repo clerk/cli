@@ -10,8 +10,9 @@
  */
 
 import { getOAuthConfig } from "./environment.ts";
-import { ApiError, withApiContext } from "./errors.ts";
+import { ApiError, errorMessage, withApiContext } from "./errors.ts";
 import { loggedFetch } from "./fetch.ts";
+import { log } from "./log.ts";
 
 export interface TokenResponse {
   access_token: string;
@@ -19,6 +20,9 @@ export interface TokenResponse {
   expires_in: number;
   refresh_token: string;
 }
+
+/** `token_type_hint` values the revocation endpoint accepts (RFC 7009 §2.1). */
+export type TokenTypeHint = "access_token" | "refresh_token";
 
 export interface UserInfo {
   userId: string;
@@ -85,6 +89,41 @@ export async function refreshAccessToken(refreshToken: string): Promise<TokenRes
     })(),
     "Token refresh failed",
   );
+}
+
+/**
+ * Revoke a token at the OAuth revocation endpoint (RFC 7009).
+ *
+ * Revoking the refresh token invalidates the whole grant server-side, so a
+ * stored session that has been discarded locally cannot be replayed by anyone
+ * who recovered it from a backup, a shared machine, or a CI cache.
+ *
+ * Best-effort by contract: the caller is already discarding the credentials,
+ * and a network blip or a server error must not leave the user unable to log
+ * out. Failures are logged under `--verbose` and swallowed. Per RFC 7009 §2.2
+ * the endpoint also answers 200 for a token it does not recognise, so an
+ * already-expired session is indistinguishable from a successful revocation —
+ * which is exactly the outcome we want either way.
+ */
+export async function revokeToken(token: string, tokenTypeHint: TokenTypeHint): Promise<void> {
+  const oauth = getOAuthConfig();
+  const body = new URLSearchParams({
+    token,
+    token_type_hint: tokenTypeHint,
+    client_id: oauth.clientId,
+  });
+
+  try {
+    await loggedFetch(oauth.revokeUrl, {
+      tag: "oauth",
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: body.toString(),
+      bestEffort: true,
+    });
+  } catch (error) {
+    log.debug(`oauth: token revocation failed — ${errorMessage(error)}`);
+  }
 }
 
 export async function fetchUserInfo(accessToken: string): Promise<UserInfo> {

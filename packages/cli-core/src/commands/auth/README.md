@@ -15,7 +15,8 @@ Authenticates the user via an OAuth 2.0 PKCE flow. After a successful login (or 
 5. Waits for the redirect callback with an authorization code
 6. Exchanges the code for an access token
 7. Stores the token and user info in local config
-8. **Autoclaim**: if `.clerk/keyless.json` exists in the current directory, claims the temporary application, links it to the project, and pulls environment variables
+8. If this was a re-authentication over an existing session, revokes the previous grant. This happens only after the replacement is stored, so an abandoned browser flow leaves the original session intact
+9. **Autoclaim**: if `.clerk/keyless.json` exists in the current directory, claims the temporary application, links it to the project, and pulls environment variables
 
 #### Keyless autoclaim breadcrumb lifecycle
 
@@ -35,8 +36,17 @@ OAuth requests are made against the Clerk OAuth system instance (default `https:
 | Authorize      | `GET`  | `/oauth/authorize`                            | Browser redirect with PKCE `code_challenge`, `state`, `client_id`, `redirect_uri` |
 | Token exchange | `POST` | `/oauth/token`                                | Exchanges authorization code + `code_verifier` for an access token                |
 | User info      | `GET`  | `/oauth/userinfo`                             | Fetches `sub` (user ID) and `email` using the access token                        |
+| Revoke         | `POST` | `/oauth/token/revoke`                         | Revokes the superseded refresh token on re-authentication (RFC 7009)              |
 | Autoclaim      | `POST` | `/v1/platform/accountless_applications/claim` | Claims a keyless application by token; returns the full `Application` object      |
 
 ### `clerk auth logout` (aliases: `signout`, `sign-out`)
 
-Removes the stored authentication token and clears auth info from local config. No API calls are made.
+Revokes the stored OAuth grant server-side, removes the stored authentication token, and clears auth info from local config.
+
+Revocation is best-effort: a network failure or a server error is logged under `--verbose` and never blocks logout, and the local credentials are deleted either way. Per RFC 7009 §2.2 the endpoint answers `200` even for a token it does not recognise, so an already-expired session is indistinguishable from a successful revocation.
+
+#### API Endpoints
+
+| Step   | Method | Endpoint              | Description                                                    |
+| ------ | ------ | --------------------- | -------------------------------------------------------------- |
+| Revoke | `POST` | `/oauth/token/revoke` | Revokes the stored refresh token, invalidating the whole grant |

@@ -1,8 +1,18 @@
 import { generateCodeVerifier, generateCodeChallenge, generateState } from "../../lib/pkce.ts";
 import { startAuthServer } from "../../lib/auth-server.ts";
-import { exchangeCodeForToken, fetchUserInfo, type UserInfo } from "../../lib/token-exchange.ts";
+import {
+  exchangeCodeForToken,
+  fetchUserInfo,
+  revokeToken,
+  type UserInfo,
+} from "../../lib/token-exchange.ts";
 import { getOAuthConfig } from "../../lib/environment.ts";
-import { createOAuthSession, getValidToken, storeToken } from "../../lib/credential-store.ts";
+import {
+  createOAuthSession,
+  getStoredSession,
+  getValidToken,
+  storeToken,
+} from "../../lib/credential-store.ts";
 import { getAuth, setAuth, resolveProfile } from "../../lib/config.ts";
 import { AUTH_TIMEOUT_MS, CALLBACK_PATH, CLERK_CLIENT_CLI } from "../../lib/constants.ts";
 import { confirm } from "../../lib/prompts.ts";
@@ -122,7 +132,21 @@ export async function login(options: LoginOptions = {}): Promise<UserInfo> {
     }
   }
 
+  // Captured before the new flow so the outgoing grant can be revoked once the
+  // replacement is stored. Read from the credential store rather than reused
+  // from `existingSession` because the session check above may have refreshed
+  // it, and the server rotates the refresh token on every exchange.
+  const previousSession = existingSession ? await getStoredSession() : null;
+
   const userInfo = await performOAuthFlow();
+
+  // Only after the replacement is safely stored: revoking up front would leave
+  // the user with no session at all if the browser flow were abandoned.
+  if (previousSession) {
+    await withSpinner("Revoking previous session...", () =>
+      revokeToken(previousSession.refreshToken, "refresh_token"),
+    );
+  }
 
   // Best-effort: ensure the user has at least one application so downstream
   // commands (clerk link, clerk init) have something to operate on.
