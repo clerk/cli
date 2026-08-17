@@ -34,12 +34,13 @@ beforeAll(() => {
   configDir = mkdtempSync(join(tmpdir(), "clerk-cli-e2e-users-list-"));
 });
 
+// Deletes run concurrently, and the hook gets a real timeout: each one shells
+// out to a cold `bun src/cli.ts` and hits BAPI, so three serial deletes blow
+// past bun's 5s default hook timeout on a loaded CI runner.
 afterAll(async () => {
-  for (const id of createdIds) {
-    await deleteTestUser(id, configDir, { appId: APP_ID });
-  }
+  await Promise.all(createdIds.map((id) => deleteTestUser(id, configDir, { appId: APP_ID })));
   rmSync(configDir, { recursive: true, force: true });
-});
+}, 60_000);
 
 test("users list --json returns a { data, hasMore } envelope around the BAPI users", async () => {
   const createTrackedUser = async () => {
