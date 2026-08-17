@@ -1,12 +1,12 @@
 import { test, expect, describe, afterEach, mock, spyOn } from "bun:test";
 import { useCaptureLog, credentialStoreStubs, configStubs } from "../../test/lib/stubs.ts";
 
-const mockDeleteToken = mock();
+const mockRevokeAndDeleteToken = mock();
 const mockClearAuth = mock();
 
 mock.module("../../lib/credential-store.ts", () => ({
   ...credentialStoreStubs,
-  deleteToken: (...args: unknown[]) => mockDeleteToken(...args),
+  revokeAndDeleteToken: (...args: unknown[]) => mockRevokeAndDeleteToken(...args),
 }));
 
 mock.module("../../lib/config.ts", () => ({
@@ -21,7 +21,7 @@ describe("logout", () => {
   const captured = useCaptureLog();
 
   afterEach(() => {
-    mockDeleteToken.mockReset();
+    mockRevokeAndDeleteToken.mockReset();
     mockClearAuth.mockReset();
     consoleSpy?.mockRestore();
   });
@@ -30,19 +30,19 @@ describe("logout", () => {
     return logout();
   }
 
-  test("deletes token and clears auth config", async () => {
-    mockDeleteToken.mockResolvedValue(undefined);
+  test("revokes the session, deletes the token, and clears auth config", async () => {
+    mockRevokeAndDeleteToken.mockResolvedValue(undefined);
     mockClearAuth.mockResolvedValue(undefined);
 
     consoleSpy = spyOn(console, "log").mockImplementation(() => {});
     await runLogout();
 
-    expect(mockDeleteToken).toHaveBeenCalledTimes(1);
+    expect(mockRevokeAndDeleteToken).toHaveBeenCalledTimes(1);
     expect(mockClearAuth).toHaveBeenCalledTimes(1);
   });
 
   test("prints success message", async () => {
-    mockDeleteToken.mockResolvedValue(undefined);
+    mockRevokeAndDeleteToken.mockResolvedValue(undefined);
     mockClearAuth.mockResolvedValue(undefined);
 
     consoleSpy = spyOn(console, "log").mockImplementation(() => {});

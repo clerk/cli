@@ -13,6 +13,8 @@ const mockSetAuth = mock();
 const mockResolveProfile = mock();
 const mockExchangeCodeForToken = mock();
 const mockFetchUserInfo = mock();
+const mockRevokeToken = mock();
+const mockGetStoredSession = mock();
 const mockStartAuthServer = mock();
 const mockIsHuman = mock();
 const mockConfirm = mock();
@@ -24,6 +26,7 @@ mock.module("../../lib/credential-store.ts", () => ({
   getValidToken: (...args: unknown[]) => mockGetValidToken(...args),
   storeToken: (...args: unknown[]) => mockStoreToken(...args),
   createOAuthSession: (...args: unknown[]) => mockCreateOAuthSession(...args),
+  getStoredSession: (...args: unknown[]) => mockGetStoredSession(...args),
 }));
 
 mock.module("../../lib/config.ts", () => ({
@@ -36,6 +39,7 @@ mock.module("../../lib/config.ts", () => ({
 mock.module("../../lib/token-exchange.ts", () => ({
   exchangeCodeForToken: (...args: unknown[]) => mockExchangeCodeForToken(...args),
   fetchUserInfo: (...args: unknown[]) => mockFetchUserInfo(...args),
+  revokeToken: (...args: unknown[]) => mockRevokeToken(...args),
 }));
 
 mock.module("../../lib/environment.ts", () => ({
@@ -114,6 +118,8 @@ describe("login", () => {
     mockResolveProfile.mockReset();
     mockExchangeCodeForToken.mockReset();
     mockFetchUserInfo.mockReset();
+    mockRevokeToken.mockReset();
+    mockGetStoredSession.mockReset();
     mockStartAuthServer.mockReset();
     mockIsHuman.mockReset();
     mockConfirm.mockReset();
@@ -340,6 +346,65 @@ describe("login", () => {
     expect(mockConfirm).not.toHaveBeenCalled();
     expect(mockStartAuthServer).toHaveBeenCalled();
     expect(result).toEqual({ userId: "user_new", email: "new@example.com" });
+  });
+
+  test("revokes the superseded grant after re-authenticating", async () => {
+    mockIsHuman.mockReturnValue(true);
+    mockGetValidToken.mockResolvedValue("existing-token");
+    mockGetAuth.mockResolvedValue({ userId: "user_123" });
+    mockGetStoredSession.mockResolvedValue({
+      accessToken: "old-access-token",
+      refreshToken: "old-refresh-token",
+      expiresAt: Date.now() + 60_000,
+      tokenType: "Bearer",
+    });
+    mockFetchUserInfo
+      .mockResolvedValueOnce({ userId: "user_123", email: "old@example.com" })
+      .mockResolvedValueOnce({ userId: "user_new", email: "new@example.com" });
+    mockConfirm.mockResolvedValue(true);
+    mockOAuthSuccess({ code: "reauth-code", user: null });
+
+    await runLogin();
+
+    expect(mockRevokeToken).toHaveBeenCalledWith("old-refresh-token", "refresh_token");
+    // The replacement must be stored before the old grant is torn down.
+    expect(mockStoreToken.mock.invocationCallOrder[0]!).toBeLessThan(
+      mockRevokeToken.mock.invocationCallOrder[0]!,
+    );
+  });
+
+  test("does not revoke anything when logging in without an existing session", async () => {
+    mockIsHuman.mockReturnValue(true);
+    mockGetValidToken.mockResolvedValue(null);
+    mockGetAuth.mockResolvedValue(null);
+    mockFetchUserInfo.mockResolvedValue({ userId: "user_123", email: "new@example.com" });
+    mockOAuthSuccess({ code: "fresh-code", user: null });
+
+    await runLogin();
+
+    expect(mockRevokeToken).not.toHaveBeenCalled();
+  });
+
+  test("leaves the existing session intact when the browser flow fails", async () => {
+    mockIsHuman.mockReturnValue(true);
+    mockGetValidToken.mockResolvedValue("existing-token");
+    mockGetAuth.mockResolvedValue({ userId: "user_123" });
+    mockGetStoredSession.mockResolvedValue({
+      accessToken: "old-access-token",
+      refreshToken: "old-refresh-token",
+      expiresAt: Date.now() + 60_000,
+      tokenType: "Bearer",
+    });
+    mockFetchUserInfo.mockResolvedValueOnce({ userId: "user_123", email: "old@example.com" });
+    mockConfirm.mockResolvedValue(true);
+    mockStartAuthServer.mockReturnValue({
+      port: 3000,
+      waitForCallback: () => Promise.reject(new Error("Authentication timed out.")),
+      stop: () => {},
+    });
+
+    await expect(runLogin()).rejects.toThrow("Authentication timed out.");
+    expect(mockRevokeToken).not.toHaveBeenCalled();
   });
 
   test("in human mode, throws UserAbortError when user declines re-auth", async () => {

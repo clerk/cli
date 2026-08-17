@@ -1,5 +1,10 @@
 import { test, expect, describe, afterEach, mock } from "bun:test";
-import { exchangeCodeForToken, refreshAccessToken, fetchUserInfo } from "./token-exchange.ts";
+import {
+  exchangeCodeForToken,
+  refreshAccessToken,
+  revokeToken,
+  fetchUserInfo,
+} from "./token-exchange.ts";
 
 const originalFetch = globalThis.fetch;
 
@@ -170,5 +175,48 @@ describe("refreshAccessToken", () => {
     const body = new URLSearchParams(calledInit.body);
     expect(body.get("grant_type")).toBe("refresh_token");
     expect(body.get("refresh_token")).toBe("refresh-token-123");
+  });
+});
+
+describe("revokeToken", () => {
+  afterEach(() => {
+    globalThis.fetch = originalFetch;
+  });
+
+  test("posts the token, hint, and client_id to the revocation endpoint", async () => {
+    globalThis.fetch = mock(
+      async () => new Response("", { status: 200 }),
+    ) as unknown as typeof fetch;
+
+    await revokeToken("refresh-token-123", "refresh_token");
+
+    expect(globalThis.fetch).toHaveBeenCalledTimes(1);
+
+    const [calledUrl, calledInit] = (globalThis.fetch as unknown as ReturnType<typeof mock>).mock
+      .calls[0]!;
+    expect(String(calledUrl)).toContain("/oauth/token/revoke");
+    expect(calledInit.method).toBe("POST");
+    expect(calledInit.headers.get("Content-Type")).toBe("application/x-www-form-urlencoded");
+
+    const body = new URLSearchParams(calledInit.body);
+    expect(body.get("token")).toBe("refresh-token-123");
+    expect(body.get("token_type_hint")).toBe("refresh_token");
+    expect(body.get("client_id")).toBeTruthy();
+  });
+
+  test("resolves without throwing when the endpoint returns an error status", async () => {
+    globalThis.fetch = mock(
+      async () => new Response(JSON.stringify({ error: "invalid_request" }), { status: 400 }),
+    ) as unknown as typeof fetch;
+
+    expect(await revokeToken("spent-token", "refresh_token")).toBeUndefined();
+  });
+
+  test("resolves without throwing when the request fails outright", async () => {
+    globalThis.fetch = mock(async () => {
+      throw new Error("network unreachable");
+    }) as unknown as typeof fetch;
+
+    expect(await revokeToken("refresh-token-123", "refresh_token")).toBeUndefined();
   });
 });

@@ -194,6 +194,7 @@ export const credentialStoreStubs = {
   hasAccountCredentials: async () => Boolean(process.env.CLERK_PLATFORM_API_KEY),
   storeToken: async () => {},
   deleteToken: async () => {},
+  revokeAndDeleteToken: async () => {},
   createOAuthSession: (tokenResponse: {
     access_token: string;
     refresh_token: string;
@@ -233,6 +234,7 @@ export { listageStubs } from "./listage-stubs.ts";
 export const tokenExchangeStubs = {
   exchangeCodeForToken: async () => ({}),
   refreshAccessToken: async () => ({}),
+  revokeToken: async () => {},
   fetchUserInfo: async () => ({}),
 };
 

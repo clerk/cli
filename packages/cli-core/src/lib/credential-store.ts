@@ -19,7 +19,7 @@ import {
   withKeychainAccess,
 } from "./host-execution.ts";
 import { log } from "./log.ts";
-import { refreshAccessToken, type TokenResponse } from "./token-exchange.ts";
+import { refreshAccessToken, revokeToken, type TokenResponse } from "./token-exchange.ts";
 import { CURRENT_VERSION, IS_DEV_BUILD } from "./version.ts";
 
 export const KEYCHAIN_SERVICE = "clerk-cli";
@@ -489,4 +489,31 @@ export async function getValidToken(): Promise<string | null> {
 export async function deleteToken(): Promise<void> {
   await keyringDelete();
   await fileDelete();
+}
+
+/**
+ * Revoke the stored OAuth grant server-side, then delete it locally.
+ *
+ * Use this for deliberate session teardown — `clerk auth logout`, and
+ * re-authenticating over a live session — where leaving the old refresh token
+ * redeemable would make the local delete a false reassurance.
+ *
+ * Not used by the refresh path: a session that failed with `invalid_grant` has
+ * already been spent server-side, so there is nothing left to revoke and the
+ * extra round trip would only slow down the re-auth prompt.
+ */
+export async function revokeAndDeleteToken(): Promise<void> {
+  const session = await getStoredSession().catch(() => null);
+
+  try {
+    if (session) {
+      log.debug("credentials: revoking stored OAuth session");
+      await revokeToken(session.refreshToken, "refresh_token");
+    }
+  } finally {
+    // Deleting locally is the part the user asked for and the part that must
+    // not be skippable. `revokeToken` already swallows its own failures, so
+    // this only guards against an unexpected throw further up.
+    await deleteToken();
+  }
 }
