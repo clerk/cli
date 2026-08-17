@@ -19,7 +19,12 @@ import {
   withKeychainAccess,
 } from "./host-execution.ts";
 import { log } from "./log.ts";
-import { refreshAccessToken, revokeToken, type TokenResponse } from "./token-exchange.ts";
+import {
+  refreshAccessToken,
+  revokeToken,
+  type RevocationResult,
+  type TokenResponse,
+} from "./token-exchange.ts";
 import { CURRENT_VERSION, IS_DEV_BUILD } from "./version.ts";
 
 export const KEYCHAIN_SERVICE = "clerk-cli";
@@ -36,6 +41,13 @@ export interface OAuthSession {
   expiresAt: number;
   tokenType: string;
 }
+
+/**
+ * Result of tearing down the stored session. Distinguishes "there was nothing
+ * redeemable to revoke" from "we tried and could not", because only the second
+ * one should warn the user.
+ */
+export type RevocationOutcome = RevocationResult | "nothing_to_revoke";
 
 function keychainAccount(): string {
   const envName = getCurrentEnvName();
@@ -494,26 +506,50 @@ export async function deleteToken(): Promise<void> {
 /**
  * Revoke the stored OAuth grant server-side, then delete it locally.
  *
- * Use this for deliberate session teardown — `clerk auth logout`, and
- * re-authenticating over a live session — where leaving the old refresh token
- * redeemable would make the local delete a false reassurance.
+ * Use this for deliberate session teardown — `clerk auth logout` — where
+ * leaving the refresh token redeemable would make the local delete a false
+ * reassurance. The local delete always happens; the return value reports
+ * whether the server-side half succeeded so the caller can say so.
+ *
+ * `"nothing_to_revoke"` means there was no redeemable refresh token in the
+ * first place, which is a success, not a failure.
  *
  * Not used by the refresh path: a session that failed with `invalid_grant` has
- * already been spent server-side, so there is nothing left to revoke and the
- * extra round trip would only slow down the re-auth prompt.
+ * a spent token, so revoking it would be a no-op round trip.
  */
-export async function revokeAndDeleteToken(): Promise<void> {
-  const session = await getStoredSession().catch(() => null);
+export async function revokeAndDeleteToken(): Promise<RevocationOutcome> {
+  let session: OAuthSession | null = null;
+  let readFailed = false;
+
+  try {
+    session = await getStoredSession();
+  } catch (error) {
+    // "Nothing is stored" and "the store could not be read" lead to opposite
+    // security conclusions, so they must not collapse into the same branch.
+    readFailed = true;
+    log.debug(`credentials: could not read stored session — ${errorMessage(error)}`);
+  }
 
   try {
     if (session) {
       log.debug("credentials: revoking stored OAuth session");
-      await revokeToken(session.refreshToken, "refresh_token");
+      return await revokeToken(session.refreshToken, "refresh_token");
     }
+
+    if (readFailed) return "failed";
+
+    // A pre-JSON raw token, or a corrupt blob, parses to null. There are
+    // credentials here and they may still be redeemable, but we have no
+    // refresh token to present, so this is a failure to revoke — not an
+    // absence of anything to revoke.
+    if (await hasStoredCredentials()) {
+      log.debug("credentials: stored credentials are not a revocable OAuth session");
+      return "failed";
+    }
+
+    return "nothing_to_revoke";
   } finally {
-    // Deleting locally is the part the user asked for and the part that must
-    // not be skippable. `revokeToken` already swallows its own failures, so
-    // this only guards against an unexpected throw further up.
+    // Deleting locally is what the user asked for and must not be skippable.
     await deleteToken();
   }
 }

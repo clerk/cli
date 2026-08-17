@@ -24,6 +24,12 @@ export interface TokenResponse {
 /** `token_type_hint` values the revocation endpoint accepts (RFC 7009 §2.1). */
 export type TokenTypeHint = "access_token" | "refresh_token";
 
+/**
+ * Outcome of a revocation attempt. `"failed"` means the server was not reached
+ * or refused the request, so the grant should be assumed still live.
+ */
+export type RevocationResult = "revoked" | "failed";
+
 export interface UserInfo {
   userId: string;
   email: string;
@@ -94,35 +100,52 @@ export async function refreshAccessToken(refreshToken: string): Promise<TokenRes
 /**
  * Revoke a token at the OAuth revocation endpoint (RFC 7009).
  *
- * Revoking the refresh token invalidates the whole grant server-side, so a
- * stored session that has been discarded locally cannot be replayed by anyone
- * who recovered it from a backup, a shared machine, or a CI cache.
+ * Revoking a refresh token invalidates that token and, when the instance issues
+ * opaque access tokens, the access token from the same grant. It does **not**
+ * invalidate a JWT access token: the server refuses to revoke those outright
+ * (`JWT access tokens cannot be revoked`), and a JWT stays valid until it
+ * expires because it is verified by signature rather than by a lookup. Callers
+ * must not describe revocation as ending the session everywhere.
  *
- * Best-effort by contract: the caller is already discarding the credentials,
- * and a network blip or a server error must not leave the user unable to log
- * out. Failures are logged under `--verbose` and swallowed. Per RFC 7009 §2.2
- * the endpoint also answers 200 for a token it does not recognise, so an
- * already-expired session is indistinguishable from a successful revocation —
- * which is exactly the outcome we want either way.
+ * Never throws: the caller is already discarding the credentials, and a network
+ * blip or a server error must not leave the user unable to log out. Failures
+ * are reported through the return value and logged under `--verbose` so the
+ * caller can tell the user rather than claiming a success that did not happen.
+ *
+ * Note that `"revoked"` is weaker than it looks. Per RFC 7009 §2.2 the endpoint
+ * answers 200 for a token it does not recognise, and it also answers 200 for a
+ * token that another process already rotated away — in that case the grant
+ * survives under the new token and nothing was actually revoked.
  */
-export async function revokeToken(token: string, tokenTypeHint: TokenTypeHint): Promise<void> {
-  const oauth = getOAuthConfig();
-  const body = new URLSearchParams({
-    token,
-    token_type_hint: tokenTypeHint,
-    client_id: oauth.clientId,
-  });
-
+export async function revokeToken(
+  token: string,
+  tokenTypeHint: TokenTypeHint,
+): Promise<RevocationResult> {
   try {
-    await loggedFetch(oauth.revokeUrl, {
+    // Inside the try: getOAuthConfig() parses URLs and throws on a malformed
+    // CLERK_OAUTH_BASE_URL. Escaping here would abort the caller's teardown
+    // partway through, which is exactly what this function promises not to do.
+    const oauth = getOAuthConfig();
+    const body = new URLSearchParams({
+      token,
+      token_type_hint: tokenTypeHint,
+      client_id: oauth.clientId,
+    });
+
+    const response = await loggedFetch(oauth.revokeUrl, {
       tag: "oauth",
       method: "POST",
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
       body: body.toString(),
-      bestEffort: true,
     });
+
+    // A 4xx here is permanent — a wrong client_id, or an instance whose OAuth
+    // provider does not implement revocation. Without this check that failure
+    // is indistinguishable from success on every run, forever.
+    return response.ok ? "revoked" : "failed";
   } catch (error) {
     log.debug(`oauth: token revocation failed — ${errorMessage(error)}`);
+    return "failed";
   }
 }
 

@@ -15,7 +15,7 @@ Authenticates the user via an OAuth 2.0 PKCE flow. After a successful login (or 
 5. Waits for the redirect callback with an authorization code
 6. Exchanges the code for an access token
 7. Stores the token and user info in local config
-8. If this was a re-authentication over an existing session, revokes the previous grant. This happens only after the replacement is stored, so an abandoned browser flow leaves the original session intact
+8. If this was a re-authentication over an existing session, revokes the previous grant. The outgoing session is read once the authorization code arrives and just before the token exchange replaces it, and revoked only after the replacement is stored — so an abandoned browser flow leaves the original session intact, and a concurrent refresh has the smallest possible window to rotate the token out from under the revocation. A failure here warns rather than failing the login
 9. **Autoclaim**: if `.clerk/keyless.json` exists in the current directory, claims the temporary application, links it to the project, and pulls environment variables
 
 #### Keyless autoclaim breadcrumb lifecycle
@@ -41,12 +41,20 @@ OAuth requests are made against the Clerk OAuth system instance (default `https:
 
 ### `clerk auth logout` (aliases: `signout`, `sign-out`)
 
-Revokes the stored OAuth grant server-side, removes the stored authentication token, and clears auth info from local config.
+Revokes the **current environment's** OAuth grant server-side, removes the stored authentication token, and clears auth info from local config.
 
-Revocation is best-effort: a network failure or a server error is logged under `--verbose` and never blocks logout, and the local credentials are deleted either way. Per RFC 7009 §2.2 the endpoint answers `200` even for a token it does not recognise, so an already-expired session is indistinguishable from a successful revocation.
+#### What revocation does and does not cover
+
+- **Does**: invalidates the refresh token for the active environment's session, so it can no longer be redeemed.
+- **Does not**: invalidate an outstanding JWT access token. The server refuses to revoke those (`JWT access tokens cannot be revoked`) because a JWT is verified by signature, not by a lookup — it stays usable until it expires.
+- **Does not**: touch sessions stored for other environments, the user's dashboard/browser session, or `CLERK_PLATFORM_API_KEY`. Logout warns when that variable is set, since it continues to authenticate requests.
+
+Revocation never blocks logout: the local credentials are deleted whether or not the server was reached. When revocation fails, the command says so and points at the dashboard rather than reporting a clean sign-out. Details are logged under `--verbose`.
+
+Two cases report success without anything actually being revoked server-side, both inherent to RFC 7009 §2.2, which specifies `200` for an unrecognised token: an already-expired session, and a token another process rotated away while the flow was in progress.
 
 #### API Endpoints
 
-| Step   | Method | Endpoint              | Description                                                    |
-| ------ | ------ | --------------------- | -------------------------------------------------------------- |
-| Revoke | `POST` | `/oauth/token/revoke` | Revokes the stored refresh token, invalidating the whole grant |
+| Step   | Method | Endpoint              | Description                                                  |
+| ------ | ------ | --------------------- | ------------------------------------------------------------ |
+| Revoke | `POST` | `/oauth/token/revoke` | Revokes the stored refresh token for the current environment |
