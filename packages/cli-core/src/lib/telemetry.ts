@@ -110,11 +110,25 @@ function collectSetFlagNames(cmd: TelemetryCommand): string[] {
   return names;
 }
 
+/**
+ * Commands that run without a user asking for them, so their events say
+ * nothing about usage. `completion` is re-run by every new shell that has
+ * `eval "$(clerk completion zsh)"` in its rc file — a handful of machines
+ * drowned out the real command mix. (`__complete`, fired on each Tab press,
+ * exits in cli.ts before Commander ever reaches this hook.)
+ */
+const UNTRACKED_COMMANDS = new Set(["completion"]);
+
 /** Pure in-memory; never throws. */
 export function startCommandTelemetry(actionCommand: TelemetryCommand): void {
   try {
+    const command = commandPathOf(actionCommand);
+    if (UNTRACKED_COMMANDS.has(command)) {
+      context = null;
+      return;
+    }
     context = {
-      command: commandPathOf(actionCommand),
+      command,
       flags: collectSetFlagNames(actionCommand).join(","),
       startedAt: Date.now(),
     };
