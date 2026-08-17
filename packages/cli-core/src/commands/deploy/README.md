@@ -85,7 +85,7 @@ After displaying the DNS records block, when CNAME records are present the CLI p
 
 PLAPI errors are translated to typed `CliError`s by `commands/deploy/errors.ts`. The CLI does not auto-retry SSL issuance or email DNS verification beyond the shared DNS verification loop. When domain status polling times out with SSL or email DNS still incomplete, the CLI surfaces the component status and instructs the user to rerun `clerk deploy` once DNS propagates.
 
-If the user presses Ctrl-C at a prompt after the production instance has been created, the wizard tells them to run `clerk deploy` again and exits 0 — cancelling a prompt is a clean exit, not a failure. The next run derives the current DNS or OAuth step from API state and resumes without starting another production instance.
+If the user presses Ctrl-C after the production instance has been created — at a prompt or during the DNS wait — the wizard tells them to run `clerk deploy` again and exits with SIGINT code 130. The deploy is unfinished either way, so `clerk deploy && ./cutover.sh` stops rather than proceeding against a half-configured instance. The next run derives the current DNS or OAuth step from API state and resumes without starting another production instance.
 
 ## Sequence Diagram
 

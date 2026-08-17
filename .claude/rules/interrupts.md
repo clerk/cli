@@ -11,14 +11,31 @@ alwaysApply: false
 
 Ctrl-C reports what the CLI was doing when it arrived:
 
-| What was happening                                    | Exit code                   |
-| ----------------------------------------------------- | --------------------------- |
-| Waiting on the user — prompt, picker, browser sign-in | `0`                         |
-| Waiting on a timer — countdown, poll interval         | `0`                         |
-| An operation in progress — request, child process     | `130`, by dying from SIGINT |
+| What was happening                                                     | Exit code                   |
+| ---------------------------------------------------------------------- | --------------------------- |
+| Waiting on a human — prompt, picker, browser sign-in, `$EDITOR`        | `0`                         |
+| Anything else — request, timer, poll interval, child process, the tail | `130`, by dying from SIGINT |
 
-Everything is **work** unless it says otherwise. Only wait seams annotate
-themselves, so new code needs no changes to get the correct (130) default.
+Only **waiting on a human** is a clean exit, because nothing is in progress to
+lose. Everything else is work and exits 130. Work is the default: only the two
+human-wait seams annotate themselves, so new code gets 130 without doing
+anything.
+
+Two things are deliberately _not_ human waits, and both have cost a bug:
+
+- **A timer.** A `sleep()` between polls is a step inside an operation, not the
+  CLI sitting idle. When `sleep` wrapped itself in the wait seam,
+  `clerk deploy status --wait` — which spends ~93s of a ~95s run asleep between
+  polls — exited 0 on Ctrl-C. That command's exit code is what a script reads as
+  "the deploy is complete", so `clerk deploy status --wait && ./promote.sh`
+  promoted a deploy the user had just interrupted.
+- **The bookkeeping tail.** The update check and telemetry flush run after the
+  command's output is on screen, and a `markCommandComplete()` flag used to make
+  Ctrl-C there exit 0. It no longer does: a Ctrl-C is a Ctrl-C, and the exit code
+  says so. The cost is real and accepted — the update check allows 1500ms
+  against the npm registry, and the shine animation another ~450ms, so every
+  successful command has a roughly two-second window where Ctrl-C halts a
+  wrapping script even though the command itself finished.
 
 ## Reach: clack owns Ctrl-C while it is on screen
 
@@ -45,43 +62,32 @@ spinner has stopped.
 This split is deliberate: patching `block()` to re-raise the signal was
 considered and rejected in favour of not patching a dependency.
 
-## Adding a wait
+## Adding a human wait
 
-Wrap the promise in `whileWaiting` from `src/lib/signals.ts`. It is a counter,
-so it nests and is safe to leave un-awaited at the call site:
+Wrap the promise in `whileAwaitingUser` from `src/lib/signals.ts`. It is a
+counter, so it nests and is safe to leave un-awaited at the call site:
 
 ```ts
-import { whileWaiting } from "../lib/signals.ts";
+import { whileAwaitingUser } from "../lib/signals.ts";
 
-waitForCallback: () => whileWaiting(callbackPromise),
+waitForCallback: () => whileAwaitingUser(callbackPromise),
 ```
 
-The waits today are `sleep`, `auth-server`'s `waitForCallback`, `prompts.ts`'s
-`$EDITOR` round-trip, and the `gradient.ts` shine animation. If you add
-another, wrap it; otherwise interrupting it reports 130 as though real work
-were cancelled.
+There are exactly two: `auth-server`'s `waitForCallback` (the browser sign-in
+round-trip) and `prompts.ts`'s `$EDITOR` round-trip. Both are the CLI doing
+literally nothing until a person acts.
 
-Two traps this has already hit:
+The name is load-bearing. Its predecessor was `whileWaiting`, and `sleep()` read
+as an obvious "wait" and got wrapped — which is how a poll loop came to report
+success. **If the thing being awaited is a timer or a request rather than a
+person, it does not belong here.**
 
-- **A private `sleep` shadow.** `gradient.ts` defined its own
-  `const sleep = (ms) => new Promise(...)` and so was silently classified as
-  work. Grep for local timer helpers before assuming `lib/sleep.ts` covers a
-  file.
-- **A wait that can never settle.** `whileWaiting(callbackPromise)` in
-  `auth-server.ts` never decrements, because nothing rejects that promise on
-  abort. Harmless only because the process always exits while the wait is open.
-  If you race such a promise and then continue, the counter stays pinned and
-  _every_ later Ctrl-C in that process reports 0.
-
-## The bookkeeping tail
-
-`markCommandComplete()` is called from the `postAction` hook in
-`cli-program.ts` the moment the command's own action finishes. Everything after
-it — the update check, the telemetry flush — counts as a wait.
-
-Without it, Ctrl-C during that tail kills a _successful_ command with a signal,
-which halts any script wrapping the CLI. The window is real: the update check
-alone allows 1500ms against the npm registry.
+One trap to know about: **a wait that can never settle.**
+`whileAwaitingUser(callbackPromise)` in `auth-server.ts` never decrements,
+because nothing rejects that promise on abort. Harmless only because the process
+always exits while the wait is open. If you race such a promise and then
+continue, the counter stays pinned and _every_ later Ctrl-C in that process
+reports 0.
 
 ## Adding an interruptible operation
 
@@ -121,8 +127,26 @@ makes it plain-exit instead. Keep that name CLI-namespaced: an earlier version
 keyed off `NODE_ENV === "test"`, which would have silently disabled the whole
 signal-death contract for any user whose shell or CI image exports it.
 
-A `CliError` whose `exitCode` is 0 is guidance, not a failure — `deploy`'s
-resumable pause is the one case. `reportError` renders it with `log.info`
-rather than a red `error:` prefix, and `telemetryResultForError` reports it as
-`outcome: "abort"`. Do not add a zero-exit `CliError` that is actually an
-error.
+Call it as `return exitInterrupted(...)` at call sites too, not just inside its
+own guards. `webhooks listen`'s double-Ctrl-C branch relied on `never` for
+control flow and fell through to start a second drain under a stubbed
+`process.exit`.
+
+## Reporting the interrupt
+
+`reportAndExitInterrupted(code)` flushes telemetry on a 250ms budget and then
+exits. It is the single owner of that ordering, and any handler that terminates
+the process on Ctrl-C must go through it. `webhooks listen` installs its own
+SIGINT handler so it can drain in-flight forwards first; before this helper
+existed it called `exitInterrupted` directly, which left the one command most
+likely to actually receive a SIGINT as the one that never reported it.
+
+## Printing on the way out
+
+`runProgram` returns early the moment an interrupt is latched, handing
+rendering, telemetry, and the exit to the signal handler. **A thrown error's
+message therefore never reaches the terminal on an interrupt path.** If a
+command has something the user needs to see — `deploy`'s "run it again to
+continue" hint, `deploy status`'s partial report — it must print it as a side
+effect from its own `catch`, gated on `interruptedExitCode() !== null`, before
+rethrowing.

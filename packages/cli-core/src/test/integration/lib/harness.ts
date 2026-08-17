@@ -448,6 +448,7 @@ export interface CLIResult {
 
 async function execCLI(...args: string[]): Promise<CLIResult> {
   const { createProgram, runProgram } = await import("../../../cli-program.ts");
+  const { _resetInterruptState } = await import("../../../lib/signals.ts");
   const program = createProgram();
   program.exitOverride();
 
@@ -460,6 +461,10 @@ async function execCLI(...args: string[]): Promise<CLIResult> {
   currentHarness.exitSpy.mockClear();
   currentHarness.captured.stdout.length = 0;
   currentHarness.captured.stderr.length = 0;
+  // Signals state is module-level and this harness runs many commands in one
+  // process. A latched interrupt would make every later `runProgram` return
+  // early before telemetry, and the failure would read as a signals bug.
+  _resetInterruptState();
 
   let exitCode = 0;
 

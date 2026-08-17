@@ -47,6 +47,18 @@ mock.module("../../mode.ts", () => ({
   getMode: () => "human",
 }));
 
+// The drain reports the interrupt before exiting, which pulls telemetry.ts into
+// this file's graph — and it imports far more of config.ts than the partial mock
+// above provides. Stubbing it keeps the graph small and lets the drain assert
+// what it reported.
+const mockFinalizeAndSendTelemetry = mock(
+  async (_result: { outcome: string; exitCode: number }) => {},
+);
+mock.module("../../lib/telemetry.ts", () => ({
+  finalizeAndSendTelemetry: (...args: [{ outcome: string; exitCode: number }]) =>
+    mockFinalizeAndSendTelemetry(...args),
+}));
+
 const { webhooksListen } = await import("./listen.ts");
 
 const RELAY_KEY = "__relay_only__";
@@ -295,6 +307,29 @@ describe("webhooks listen (V1, relay-only)", () => {
       await new Promise((resolve) => setTimeout(resolve, 0));
       expect(lastClient()!.stopped).toBe(true);
       expect(exitSpy).toHaveBeenCalledWith(130);
+    } finally {
+      exitSpy.mockRestore();
+    }
+  });
+
+  test("SIGINT reports the interrupted run before exiting", async () => {
+    // `listen` handles its own Ctrl-C so it can drain in-flight forwards, and it
+    // used to exit without telling telemetry anything — leaving the command most
+    // likely to actually receive a SIGINT as the one that never reported it.
+    mockFinalizeAndSendTelemetry.mockClear();
+    await startListen({}, captured);
+
+    const exitSpy = spyOn(process, "exit").mockImplementation((() => {}) as () => never);
+    try {
+      process.emit("SIGINT");
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      expect(mockFinalizeAndSendTelemetry).toHaveBeenCalled();
+      // Draining makes the shutdown clean, not the run successful.
+      expect(mockFinalizeAndSendTelemetry.mock.calls[0]?.[0]).toMatchObject({
+        outcome: "abort",
+        exitCode: 130,
+      });
     } finally {
       exitSpy.mockRestore();
     }

@@ -1,6 +1,11 @@
 import { getRelayEntry, setRelayEntry } from "../../lib/config.ts";
 import { EXIT_CODE, errorMessage, throwUsageError } from "../../lib/errors.ts";
-import { beginInterrupt, CLI_SIGINT_HANDLER, exitInterrupted } from "../../lib/signals.ts";
+import {
+  beginInterrupt,
+  CLI_SIGINT_HANDLER,
+  exitInterrupted,
+  reportAndExitInterrupted,
+} from "../../lib/signals.ts";
 import { withSpinner } from "../../lib/spinner.ts";
 import { dim } from "../../lib/color.ts";
 import type { Example } from "../../lib/help.ts";
@@ -141,8 +146,10 @@ export async function webhooksListen(options: WebhooksListenOptions = {}): Promi
   process.removeListener("SIGINT", CLI_SIGINT_HANDLER);
   process.on("SIGINT", () => {
     if (shuttingDown) {
-      // Double Ctrl+C: force-quit immediately.
-      exitInterrupted(EXIT_CODE.SIGINT);
+      // Double Ctrl+C: force-quit immediately, skipping the telemetry flush the
+      // drain would otherwise do. `return` because a stubbed `process.exit`
+      // under test would otherwise fall through and start a second drain.
+      return exitInterrupted(EXIT_CODE.SIGINT);
     }
     void (async () => {
       beginInterrupt(); // latch the interrupt so the drain can still exit by signal
@@ -154,7 +161,10 @@ export async function webhooksListen(options: WebhooksListenOptions = {}): Promi
         Promise.allSettled(pending),
         new Promise<void>((resolve) => setTimeout(resolve, 2_000)),
       ]);
-      exitInterrupted(EXIT_CODE.SIGINT);
+      // Reports the interrupt before dying, exactly as the global handler does.
+      // Draining makes the shutdown clean, not the run successful, so this stays
+      // an abort — `listen` ends no other way.
+      await reportAndExitInterrupted(EXIT_CODE.SIGINT);
     })();
   });
 

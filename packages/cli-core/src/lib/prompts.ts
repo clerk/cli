@@ -16,7 +16,7 @@ import { editAsync } from "external-editor";
 import { throwUserAbort } from "./errors.ts";
 import { ttyContext } from "./listage.ts";
 import { log } from "./log.ts";
-import { whileWaiting } from "./signals.ts";
+import { whileAwaitingUser } from "./signals.ts";
 
 type ValidationResult = string | Error | true | undefined;
 type Validate = (value: string | undefined) => ValidationResult | Promise<ValidationResult>;
@@ -170,7 +170,7 @@ export async function editor(config: {
   for (;;) {
     // The user is sitting in $EDITOR — the CLI is doing nothing but waiting on
     // them, so interrupting is a cancel, not a failed operation.
-    const raw = await whileWaiting(
+    const raw = await whileAwaitingUser(
       new Promise<string>((resolve, reject) => {
         editAsync(config.default ?? "", (err, value) => (err ? reject(err) : resolve(value)), {
           postfix: config.postfix,

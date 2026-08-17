@@ -1,6 +1,7 @@
 import { isAgent } from "../../mode.ts";
 import { CliError, ERROR_CODE, EXIT_CODE } from "../../lib/errors.ts";
 import { log } from "../../lib/log.ts";
+import { interruptedExitCode } from "../../lib/signals.ts";
 import { sleep } from "../../lib/sleep.ts";
 import { withSpinner } from "../../lib/spinner.ts";
 import { deployComponentLabels } from "./copy.ts";
@@ -35,10 +36,22 @@ export async function deployStatus(options: DeployStatusOptions = {}): Promise<v
   const preflightTriggered = await runPreflightDeployStatusCheck(ctx);
   const state = await resolveDeployState(ctx);
   const shouldWait = options.wait === true || !isAgent();
-  const outcome =
-    state.kind === "active" && shouldWait
-      ? await runWait(state, { triggerCheck: !preflightTriggered })
-      : null;
+
+  let outcome: DeployStatusOutcome | null = null;
+  if (state.kind === "active" && shouldWait) {
+    try {
+      outcome = await runWait(state, { triggerCheck: !preflightTriggered });
+    } catch (error) {
+      if (interruptedExitCode() === null) throw error;
+      // Ctrl-C mid-poll. `runProgram` hands the exit to the signal handler, so
+      // nothing below this frame runs and the command would otherwise print
+      // nothing at all. Emit what the last completed poll established; the exit
+      // code stays 130, so no script reads this as a finished deploy.
+      emitReport(buildDeployStatusReport(state, null));
+      throw error;
+    }
+  }
+
   const report = buildDeployStatusReport(state, outcome);
 
   emitReport(report);

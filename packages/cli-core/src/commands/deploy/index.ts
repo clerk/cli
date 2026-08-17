@@ -6,6 +6,7 @@ import { bold, dim } from "../../lib/color.ts";
 import { animateHeader } from "../../lib/gradient.ts";
 import { bar, intro, outro, pausedOutro, withSpinner } from "../../lib/spinner.ts";
 import { CliError, ERROR_CODE, UserAbortError, throwUsageError } from "../../lib/errors.ts";
+import { interruptedExitCode } from "../../lib/signals.ts";
 import { setProfile } from "../../lib/config.ts";
 import {
   createProductionInstance as apiCreateProductionInstance,
@@ -81,6 +82,15 @@ export async function deploy(_options: DeployOptions = {}) {
     const ctx = await resolveDeployContext();
     await runDeploy(ctx);
   } catch (error) {
+    // Ctrl-C during a request or a DNS poll rejects with an `AbortError`, not a
+    // `UserAbortError`, and `runProgram` hands rendering to the signal handler
+    // the moment an interrupt is latched — so nothing below would ever print.
+    // A half-finished deploy is exactly when the resume hint matters, so emit it
+    // here as a side effect rather than relying on the thrown error's message.
+    if (interruptedExitCode() !== null && isInsideGutter()) {
+      pausedOutro(pausedOperationNotice());
+      throw error;
+    }
     if (error instanceof DeployPausedError && isInsideGutter()) {
       outro("Paused");
     }

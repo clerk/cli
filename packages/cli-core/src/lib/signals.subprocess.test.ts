@@ -16,11 +16,11 @@ type Outcome = { exitCode: number | null; signalCode: string | null };
 
 async function runInterrupted(mode: "work" | "wait"): Promise<Outcome> {
   const source = `
-    const { CLI_SIGINT_HANDLER, whileWaiting } = await import(${JSON.stringify(SIGNALS_MODULE)});
+    const { CLI_SIGINT_HANDLER, whileAwaitingUser } = await import(${JSON.stringify(SIGNALS_MODULE)});
     process.on("SIGINT", CLI_SIGINT_HANDLER);
     if (${JSON.stringify(mode)} === "wait") {
       // Deliberately not awaited: opening the wait is what the handler reads.
-      whileWaiting(new Promise((resolve) => setTimeout(resolve, 30_000)));
+      whileAwaitingUser(new Promise((resolve) => setTimeout(resolve, 30_000)));
     }
     setTimeout(() => process.kill(process.pid, "SIGINT"), 50);
     setTimeout(() => process.exit(99), 10_000); // guard against a hang

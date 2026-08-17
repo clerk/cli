@@ -780,7 +780,7 @@ describe("deploy", () => {
       }
 
       expect(error?.message).toContain("Deploy paused at: DNS verification");
-      expect(error?.exitCode).toBe(EXIT_CODE.SUCCESS);
+      expect(error?.exitCode).toBe(EXIT_CODE.SIGINT);
       const terminalOutput = stripAnsi(captured.err);
       expect(terminalOutput).toContain("Paused");
       expect(terminalOutput).not.toContain("Done");
@@ -1089,7 +1089,7 @@ describe("deploy", () => {
       }
       expect(error?.message).toContain("Deploy paused at: DNS verification");
       expect(error?.message).toContain("Run `clerk deploy` again");
-      expect(error?.exitCode).toBe(EXIT_CODE.SUCCESS);
+      expect(error?.exitCode).toBe(EXIT_CODE.SIGINT);
       const terminalOutput = stripAnsi(captured.err);
       expect(terminalOutput).toContain("Paused");
       expect(terminalOutput).not.toContain("Done");
@@ -1792,7 +1792,7 @@ describe("deploy", () => {
       }
       expect(error?.message).toContain("Deploy paused at: Google OAuth credential setup");
       expect(error?.message).toContain("Run `clerk deploy` again");
-      expect(error?.exitCode).toBe(EXIT_CODE.SUCCESS);
+      expect(error?.exitCode).toBe(EXIT_CODE.SIGINT);
       const terminalOutput = stripAnsi(captured.err);
       expect(terminalOutput).toContain("Paused");
       expect(terminalOutput).not.toContain("Done");

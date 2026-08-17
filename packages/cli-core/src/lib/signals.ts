@@ -2,12 +2,16 @@
  * Ctrl-C handling.
  *
  * The exit code depends on what the CLI was doing when the interrupt arrived:
- * waiting on the user or on a timer is a clean exit (0), because the user
- * changed their mind; anything else was an operation in progress and exits 130.
+ * only *waiting on a human* is a clean exit (0), because nothing was in
+ * progress to lose. Everything else — a request, a timer, a poll interval, the
+ * bookkeeping tail after the command's output is on screen — is an operation,
+ * and exits 130.
  *
- * Everything is work unless it says otherwise — the wait seams call
- * {@link whileWaiting}, and once the command's own action has finished
- * {@link markCommandComplete} makes the bookkeeping tail count as a wait too.
+ * Everything is work unless it says otherwise; the two human-wait seams call
+ * {@link whileAwaitingUser}. A timer is deliberately *not* one of them: a poll
+ * loop that sleeps between requests is still an operation in progress, and
+ * classifying its sleep as idle made `clerk deploy status` report a deploy as
+ * complete when the user interrupted it mid-countdown.
  */
 
 import { EXIT_CODE } from "./errors.ts";
@@ -27,7 +31,6 @@ const NO_RERAISE_ENV = "CLERK_CLI_NO_SIGNAL_RERAISE";
 
 let controller = new AbortController();
 let waits = 0;
-let commandComplete = false;
 let interrupted: number | null = null;
 
 /**
@@ -43,31 +46,27 @@ export function interruptSignal(): AbortSignal {
 }
 
 /**
- * Wrap a stretch of time spent waiting on the user or on a timer. Ctrl-C during
+ * Wrap a stretch of time the CLI spends doing nothing but waiting on a human —
+ * the browser sign-in round-trip and the `$EDITOR` round-trip. Ctrl-C during
  * one of these exits 0; everything not wrapped is work, and exits 130.
+ *
+ * Named for the human on purpose. The predecessor was called `whileWaiting`,
+ * and `sleep()` read as an obvious "wait" and got wrapped — which is how a poll
+ * loop came to report success when it was interrupted. If the thing being
+ * awaited is a timer or a request rather than a person, it does not belong
+ * here.
  *
  * Prompts and pickers deliberately do not need this: clack holds stdin in raw
  * mode, so no SIGINT is delivered at all and cancelling one already surfaces as
  * a `UserAbortError`.
  */
-export async function whileWaiting<T>(work: Promise<T>): Promise<T> {
+export async function whileAwaitingUser<T>(work: Promise<T>): Promise<T> {
   waits++;
   try {
     return await work;
   } finally {
     waits--;
   }
-}
-
-/**
- * The command's own action has finished; everything after this point is the
- * CLI's bookkeeping tail — the update check and the telemetry flush. Ctrl-C
- * there must not report a failed operation, because the operation succeeded and
- * its output is already on screen. Without this, interrupting that tail kills
- * the CLI with a signal and halts any script wrapping it.
- */
-export function markCommandComplete(): void {
-  commandComplete = true;
 }
 
 /**
@@ -89,7 +88,7 @@ export const interruptedExitCode = (): number | null => interrupted;
  * handler below and by `webhooks listen`, which does its own graceful drain.
  */
 export function beginInterrupt(): number {
-  interrupted ??= waits > 0 || commandComplete ? EXIT_CODE.SUCCESS : EXIT_CODE.SIGINT;
+  interrupted ??= waits > 0 ? EXIT_CODE.SUCCESS : EXIT_CODE.SIGINT;
   return interrupted;
 }
 
@@ -123,6 +122,25 @@ export function exitInterrupted(code: number): never {
 }
 
 /**
+ * Report the interrupted run, then exit by the route `code` calls for.
+ *
+ * The single owner of that ordering. `webhooks listen` handles its own Ctrl-C
+ * so it can drain in-flight forwards first, and before this existed it reached
+ * `exitInterrupted` directly — leaving the one command most likely to actually
+ * receive a SIGINT as the one that never reported it.
+ *
+ * `finalizeAndSendTelemetry` is imported lazily so this module stays a leaf.
+ * `loggedFetch` needs `interruptSignal`, so a static import would be a cycle,
+ * and it would drag telemetry's whole dependency tree into everything that
+ * handles signals.
+ */
+export async function reportAndExitInterrupted(code: number): Promise<never> {
+  const { finalizeAndSendTelemetry } = await import("./telemetry.ts");
+  await finalizeAndSendTelemetry({ outcome: "abort", exitCode: code }, INTERRUPT_FLUSH_MS);
+  return exitInterrupted(code);
+}
+
+/**
  * The CLI's SIGINT handler. Named (not an inline arrow) so `webhooks listen`
  * can `process.removeListener("SIGINT", CLI_SIGINT_HANDLER)` and install its own
  * graceful-drain handling without disturbing anything else.
@@ -140,18 +158,12 @@ export const CLI_SIGINT_HANDLER = async (): Promise<void> => {
   // clack's block() hid the cursor and its cleanup will not run. Only worth
   // emitting to a terminal; in a pipe or CI log it is just noise.
   if (process.stderr.isTTY) log.ui("\x1b[?25h");
-  // Imported lazily so this module stays a leaf. `loggedFetch` needs
-  // `interruptSignal`, so a static import here would be a cycle, and it would
-  // drag telemetry's whole dependency tree into everything that handles signals.
-  const { finalizeAndSendTelemetry } = await import("./telemetry.ts");
-  await finalizeAndSendTelemetry({ outcome: "abort", exitCode: code }, INTERRUPT_FLUSH_MS);
-  exitInterrupted(code);
+  await reportAndExitInterrupted(code);
 };
 
 /** Test-only: clear every latch, including the controller the signal comes from. */
 export function _resetInterruptState(): void {
   controller = new AbortController();
   waits = 0;
-  commandComplete = false;
   interrupted = null;
 }

@@ -138,12 +138,6 @@ export function telemetryResultForError(error: unknown): TelemetryResult {
     return { outcome: "abort", exitCode: EXIT_CODE.SUCCESS };
   }
   if (error instanceof CliError) {
-    // A CliError that exits 0 is a clean stop the user chose (e.g. `deploy`'s
-    // paused-and-resumable state), so it reports like any other abort rather
-    // than as a failure with a zero exit code.
-    if (error.exitCode === EXIT_CODE.SUCCESS) {
-      return { outcome: "abort", exitCode: EXIT_CODE.SUCCESS };
-    }
     return { outcome: "error", exitCode: error.exitCode, errorCode: error.code ?? "cli_error" };
   }
   if (error instanceof ApiError) {

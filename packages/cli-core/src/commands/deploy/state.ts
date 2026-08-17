@@ -36,15 +36,16 @@ export function pausedStepDescription(state: DeployOperationState): string {
 export class DeployPausedError extends CliError {}
 
 /**
- * `interrupted` means the user cancelled a prompt, which is a clean exit (0)
- * with a resume hint. Without it the deploy is genuinely incomplete — waiting on
- * DNS or OAuth — so it exits nonzero.
+ * Either way the deploy is unfinished, so both codes are nonzero: a production
+ * instance exists but DNS or OAuth is incomplete, and `clerk deploy && cutover`
+ * must not proceed. `interrupted` (the user stopped it) reports 130 to match
+ * every other Ctrl-C; otherwise it is an ordinary failure and reports 1.
  */
 export function deployPausedError(
   state: DeployOperationState,
   options?: { interrupted?: boolean },
 ): DeployPausedError {
   return new DeployPausedError(pausedMessage(pausedStepDescription(state)), {
-    exitCode: options?.interrupted ? EXIT_CODE.SUCCESS : EXIT_CODE.GENERAL,
+    exitCode: options?.interrupted ? EXIT_CODE.SIGINT : EXIT_CODE.GENERAL,
   });
 }

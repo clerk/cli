@@ -1,14 +1,15 @@
 import { afterEach, beforeEach, describe, expect, mock, spyOn, test } from "bun:test";
 import { EXIT_CODE } from "./errors.ts";
+import { sleep } from "./sleep.ts";
 import {
   _resetInterruptState,
+  abortInFlight,
   beginInterrupt,
   CLI_SIGINT_HANDLER,
   exitInterrupted,
   interruptedExitCode,
   interruptSignal,
-  markCommandComplete,
-  whileWaiting,
+  whileAwaitingUser,
 } from "./signals.ts";
 
 /**
@@ -44,9 +45,9 @@ function exitCodeFrom(fn: () => never): number {
   return calls[calls.length - 1]![0] as number;
 }
 
-describe("whileWaiting", () => {
-  test("classifies an interrupt during a wait as a clean exit", async () => {
-    const pending = whileWaiting(new Promise<void>((resolve) => setTimeout(resolve, 20)));
+describe("whileAwaitingUser", () => {
+  test("classifies an interrupt while awaiting the user as a clean exit", async () => {
+    const pending = whileAwaitingUser(new Promise<void>((resolve) => setTimeout(resolve, 20)));
     expect(beginInterrupt()).toBe(EXIT_CODE.SUCCESS);
     await pending;
   });
@@ -56,48 +57,55 @@ describe("whileWaiting", () => {
   });
 
   test("stops counting once the wait resolves", async () => {
-    await whileWaiting(Promise.resolve("done"));
+    await whileAwaitingUser(Promise.resolve("done"));
     expect(beginInterrupt()).toBe(EXIT_CODE.SIGINT);
   });
 
   test("stops counting when the wait rejects", async () => {
-    await expect(whileWaiting(Promise.reject(new Error("boom")))).rejects.toThrow("boom");
+    await expect(whileAwaitingUser(Promise.reject(new Error("boom")))).rejects.toThrow("boom");
     expect(beginInterrupt()).toBe(EXIT_CODE.SIGINT);
   });
 
   test("nests, so an inner wait finishing does not unmark the outer one", async () => {
-    await whileWaiting(
+    await whileAwaitingUser(
       (async () => {
-        await whileWaiting(Promise.resolve());
+        await whileAwaitingUser(Promise.resolve());
         expect(beginInterrupt()).toBe(EXIT_CODE.SUCCESS);
       })(),
     );
   });
 
   test("passes the wrapped value through", async () => {
-    expect(await whileWaiting(Promise.resolve(42))).toBe(42);
+    expect(await whileAwaitingUser(Promise.resolve(42))).toBe(42);
   });
 });
 
-describe("markCommandComplete", () => {
-  test("makes the bookkeeping tail a clean exit", () => {
-    // The update check and telemetry flush run after the command has printed
-    // its output. Interrupting them must not kill a successful run with a
-    // signal, which would halt any script wrapping the CLI.
-    expect(interruptedExitCode()).toBeNull();
-    markCommandComplete();
-    expect(beginInterrupt()).toBe(EXIT_CODE.SUCCESS);
+describe("sleep", () => {
+  test("is work, so interrupting a poll interval exits 130", async () => {
+    // Regression: `sleep` used to wrap itself in the wait seam. Because
+    // `deploy status --wait` spends ~93s of a ~95s run asleep between polls,
+    // Ctrl-C almost always landed in that window and exited 0 — which is
+    // exactly what that command's exit code means to a script: "deploy
+    // complete". A timer inside an operation is not the CLI sitting idle.
+    const pending = sleep(50);
+    expect(beginInterrupt()).toBe(EXIT_CODE.SIGINT);
+    abortInFlight();
+    await expect(pending).rejects.toThrow();
   });
 
-  test("does not affect an interrupt that lands before the command finishes", () => {
-    expect(beginInterrupt()).toBe(EXIT_CODE.SIGINT);
+  test("rejects on interrupt rather than serving out the delay", async () => {
+    const started = performance.now();
+    const pending = sleep(30_000);
+    abortInFlight();
+    await expect(pending).rejects.toThrow();
+    expect(performance.now() - started).toBeLessThan(1_000);
   });
 });
 
 describe("beginInterrupt", () => {
   test("latches the first verdict so a later wait cannot change it", async () => {
     expect(beginInterrupt()).toBe(EXIT_CODE.SIGINT);
-    const pending = whileWaiting(new Promise<void>((resolve) => setTimeout(resolve, 10)));
+    const pending = whileAwaitingUser(new Promise<void>((resolve) => setTimeout(resolve, 10)));
     expect(beginInterrupt()).toBe(EXIT_CODE.SIGINT);
     await pending;
   });
@@ -111,7 +119,7 @@ describe("beginInterrupt", () => {
 
 describe("exitInterrupted", () => {
   test("exits with a clean code when the interrupt landed during a wait", async () => {
-    const pending = whileWaiting(new Promise<void>((resolve) => setTimeout(resolve, 10)));
+    const pending = whileAwaitingUser(new Promise<void>((resolve) => setTimeout(resolve, 10)));
     const code = beginInterrupt();
     expect(exitCodeFrom(() => exitInterrupted(code))).toBe(EXIT_CODE.SUCCESS);
     await pending;
