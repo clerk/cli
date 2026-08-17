@@ -3,7 +3,7 @@ import { intro as clackIntro, outro as clackOutro, spinner as clackSpinner } fro
 import { isHuman } from "../mode.ts";
 import { dim, cyan } from "./color.ts";
 import { animateHeader } from "./gradient.ts";
-import { UserAbortError, isPromptExitError } from "./errors.ts";
+import { UserAbortError } from "./errors.ts";
 import { log, pushPrefix, popPrefix } from "./log.ts";
 import { getUiOutput } from "./ui.ts";
 
@@ -119,7 +119,7 @@ export async function withGutter<T>(
     await outro(nextSteps);
     return result;
   } catch (error) {
-    if (error instanceof UserAbortError || isPromptExitError(error)) {
+    if (error instanceof UserAbortError) {
       pausedOutro();
     } else {
       await outro("Failed");

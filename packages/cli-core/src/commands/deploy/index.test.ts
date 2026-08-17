@@ -77,10 +77,9 @@ function stripAnsi(value: string): string {
   return value.replace(new RegExp(`${String.fromCharCode(27)}\\[[0-9;]*m`, "g"), "");
 }
 
+/** What the clack prompt wrappers throw when the user presses Ctrl-C. */
 function promptExitError(): Error {
-  const error = new Error("User force closed the prompt with SIGINT");
-  error.name = "ExitPromptError";
-  return error;
+  return new UserAbortError();
 }
 
 function domainStatus({
@@ -781,7 +780,7 @@ describe("deploy", () => {
       }
 
       expect(error?.message).toContain("Deploy paused at: DNS verification");
-      expect(error?.exitCode).toBe(EXIT_CODE.SIGINT);
+      expect(error?.exitCode).toBe(EXIT_CODE.SUCCESS);
       const terminalOutput = stripAnsi(captured.err);
       expect(terminalOutput).toContain("Paused");
       expect(terminalOutput).not.toContain("Done");
@@ -1090,7 +1089,7 @@ describe("deploy", () => {
       }
       expect(error?.message).toContain("Deploy paused at: DNS verification");
       expect(error?.message).toContain("Run `clerk deploy` again");
-      expect(error?.exitCode).toBe(EXIT_CODE.SIGINT);
+      expect(error?.exitCode).toBe(EXIT_CODE.SUCCESS);
       const terminalOutput = stripAnsi(captured.err);
       expect(terminalOutput).toContain("Paused");
       expect(terminalOutput).not.toContain("Done");
@@ -1793,7 +1792,7 @@ describe("deploy", () => {
       }
       expect(error?.message).toContain("Deploy paused at: Google OAuth credential setup");
       expect(error?.message).toContain("Run `clerk deploy` again");
-      expect(error?.exitCode).toBe(EXIT_CODE.SIGINT);
+      expect(error?.exitCode).toBe(EXIT_CODE.SUCCESS);
       const terminalOutput = stripAnsi(captured.err);
       expect(terminalOutput).toContain("Paused");
       expect(terminalOutput).not.toContain("Done");

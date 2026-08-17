@@ -1,6 +1,6 @@
 import { resolveBapiSecretKey } from "../../lib/bapi-command.ts";
 import { dim, cyan } from "../../lib/color.ts";
-import { CliError, ERROR_CODE, UserAbortError, isPromptExitError } from "../../lib/errors.ts";
+import { CliError, ERROR_CODE, UserAbortError } from "../../lib/errors.ts";
 import { isInsideGutter, log } from "../../lib/log.ts";
 import { isAgent, isHuman } from "../../mode.ts";
 import { withSpinner, intro, outro, pausedOutro } from "../../lib/spinner.ts";
@@ -208,7 +208,7 @@ export async function list(options: UsersListOptions = {}): Promise<void> {
     }
     closeStatus = "success";
   } catch (error) {
-    closeStatus = error instanceof UserAbortError || isPromptExitError(error) ? "paused" : "failed";
+    closeStatus = error instanceof UserAbortError ? "paused" : "failed";
     throw error;
   } finally {
     if (shouldWrap) {

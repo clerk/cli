@@ -2,7 +2,6 @@ import { isHuman } from "../../mode.ts";
 import {
   CliError,
   UserAbortError,
-  isPromptExitError,
   throwUsageError,
   throwUserAbort,
   ERROR_CODE,
@@ -136,7 +135,7 @@ async function configPush(options: ConfigPushOptions, op: Operation): Promise<vo
     }
     closeStatus = "success";
   } catch (error) {
-    closeStatus = error instanceof UserAbortError || isPromptExitError(error) ? "paused" : "failed";
+    closeStatus = error instanceof UserAbortError ? "paused" : "failed";
     throw error;
   } finally {
     if (shouldWrap) {

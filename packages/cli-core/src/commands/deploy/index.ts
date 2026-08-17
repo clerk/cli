@@ -5,13 +5,7 @@ import { applyPrefix, isInsideGutter, log } from "../../lib/log.ts";
 import { bold, dim } from "../../lib/color.ts";
 import { animateHeader } from "../../lib/gradient.ts";
 import { bar, intro, outro, pausedOutro, withSpinner } from "../../lib/spinner.ts";
-import {
-  CliError,
-  ERROR_CODE,
-  UserAbortError,
-  isPromptExitError,
-  throwUsageError,
-} from "../../lib/errors.ts";
+import { CliError, ERROR_CODE, UserAbortError, throwUsageError } from "../../lib/errors.ts";
 import { setProfile } from "../../lib/config.ts";
 import {
   createProductionInstance as apiCreateProductionInstance,
@@ -90,7 +84,7 @@ export async function deploy(_options: DeployOptions = {}) {
     if (error instanceof DeployPausedError && isInsideGutter()) {
       outro("Paused");
     }
-    if (isPromptExitError(error) && isInsideGutter()) {
+    if (error instanceof UserAbortError && isInsideGutter()) {
       pausedOutro(pausedOperationNotice());
       throw new UserAbortError();
     }
@@ -378,7 +372,7 @@ async function runDnsRecordHandoff(
     await offerBindZoneExport(state.domain, cnameTargets);
     log.blank();
   } catch (error) {
-    if (isPromptExitError(error)) {
+    if (error instanceof UserAbortError) {
       throw deployPausedError(state, { interrupted: true });
     }
     throw error;
@@ -406,7 +400,7 @@ async function runDnsVerificationPrompt(
     }
     return await runDnsVerification(ctx, state);
   } catch (error) {
-    if (isPromptExitError(error)) {
+    if (error instanceof UserAbortError) {
       throw deployPausedError(state, { interrupted: true });
     }
     throw error;
@@ -453,7 +447,7 @@ async function runDnsVerification(
     try {
       action = await chooseDnsVerificationRetryAction();
     } catch (error) {
-      if (isPromptExitError(error)) {
+      if (error instanceof UserAbortError) {
         throw deployPausedError(state, { interrupted: true });
       }
       throw error;
@@ -534,7 +528,7 @@ async function runOAuthSetup(
         });
       }
     } catch (error) {
-      if (isPromptExitError(error)) {
+      if (error instanceof UserAbortError) {
         throw deployPausedError(
           {
             ...state,

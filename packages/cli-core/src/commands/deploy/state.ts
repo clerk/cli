@@ -35,11 +35,16 @@ export function pausedStepDescription(state: DeployOperationState): string {
 
 export class DeployPausedError extends CliError {}
 
+/**
+ * `interrupted` means the user cancelled a prompt, which is a clean exit (0)
+ * with a resume hint. Without it the deploy is genuinely incomplete — waiting on
+ * DNS or OAuth — so it exits nonzero.
+ */
 export function deployPausedError(
   state: DeployOperationState,
   options?: { interrupted?: boolean },
 ): DeployPausedError {
   return new DeployPausedError(pausedMessage(pausedStepDescription(state)), {
-    exitCode: options?.interrupted ? EXIT_CODE.SIGINT : EXIT_CODE.GENERAL,
+    exitCode: options?.interrupted ? EXIT_CODE.SUCCESS : EXIT_CODE.GENERAL,
   });
 }

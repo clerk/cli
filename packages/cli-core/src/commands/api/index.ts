@@ -10,7 +10,6 @@ import {
   ApiError,
   ERROR_CODE,
   UserAbortError,
-  isPromptExitError,
   throwUsageError,
   throwUserAbort,
 } from "../../lib/errors.ts";
@@ -157,7 +156,7 @@ export async function api(
       throw error;
     }
   } catch (error) {
-    closeStatus = error instanceof UserAbortError || isPromptExitError(error) ? "paused" : "failed";
+    closeStatus = error instanceof UserAbortError ? "paused" : "failed";
     throw error;
   } finally {
     if (!nested) {

@@ -30,7 +30,7 @@ import {
   type OptOutEnvVar,
 } from "./env-signals.ts";
 import { getCurrentEnvName } from "./environment.ts";
-import { ApiError, CliError, EXIT_CODE, UserAbortError, isPromptExitError } from "./errors.ts";
+import { ApiError, CliError, EXIT_CODE, UserAbortError } from "./errors.ts";
 import { loggedFetch } from "./fetch.ts";
 import { log } from "./log.ts";
 import { getMode } from "../mode.ts";
@@ -134,7 +134,7 @@ export function startCommandTelemetry(actionCommand: TelemetryCommand): void {
 }
 
 export function telemetryResultForError(error: unknown): TelemetryResult {
-  if (error instanceof UserAbortError || isPromptExitError(error)) {
+  if (error instanceof UserAbortError) {
     return { outcome: "abort", exitCode: EXIT_CODE.SUCCESS };
   }
   if (error instanceof CliError) {

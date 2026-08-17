@@ -38,7 +38,6 @@ import {
   PlapiError,
   FapiError,
   EXIT_CODE,
-  isPromptExitError,
   throwUsageError,
 } from "./lib/errors.ts";
 import { clerkHelpConfig, formatExamplesBlock, type Example } from "./lib/help.ts";
@@ -276,7 +275,7 @@ export async function runProgram(
  * Exported for testing; production callers go through `runProgram`.
  */
 export function reportError(error: unknown, verbose: boolean): number {
-  if (error instanceof UserAbortError || isPromptExitError(error)) {
+  if (error instanceof UserAbortError) {
     return EXIT_CODE.SUCCESS;
   }
 
