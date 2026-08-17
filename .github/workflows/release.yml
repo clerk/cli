@@ -168,10 +168,14 @@ jobs:
           HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
 
   notify-stable-failure:
+    # `ci` and `versioning` are deliberately excluded: they run on every push to
+    # main, before the release channel is decided, so a failure there is not a
+    # stable release failure. `notify-ci-failure` covers those.
     if: >-
       always() &&
+      needs.versioning.outputs.release_created == 'true' &&
       contains(needs.*.result, 'failure')
-    needs: [ci, versioning, build, sign-macos, smoke-test, publish-npm, publish-github, homebrew]
+    needs: [versioning, build, sign-macos, smoke-test, publish-npm, publish-github, homebrew]
     uses: ./.github/workflows/notify-failure.yml
     with:
       workflow-name: Stable release
@@ -318,12 +322,16 @@ jobs:
           GH_TOKEN: ${{ github.token }}
 
   notify-canary-failure:
+    # Gate on `== 'false'`, never `!= 'true'`: when `versioning` is skipped the
+    # output is the empty string, which satisfies `!= 'true'` and would fire this
+    # notification for failures that never reached the canary path.
     if: >-
       always() &&
+      needs.versioning.outputs.release_created == 'false' &&
       contains(needs.*.result, 'failure')
     needs:
       [
-        ci,
+        versioning,
         canary-version,
         canary-build,
         canary-sign-macos,
@@ -334,6 +342,21 @@ jobs:
     uses: ./.github/workflows/notify-failure.yml
     with:
       workflow-name: Canary release
+    secrets:
+      SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+
+  # ─── Pre-release CI ────────────────────────────────────────────────
+
+  notify-ci-failure:
+    # Covers failures in the jobs shared by both channels, which run before the
+    # release channel is decided and so belong to neither.
+    if: >-
+      always() &&
+      contains(needs.*.result, 'failure')
+    needs: [ci, versioning]
+    uses: ./.github/workflows/notify-failure.yml
+    with:
+      workflow-name: Main CI
     secrets:
       SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
 
