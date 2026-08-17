@@ -206,30 +206,6 @@ describe("finalizeAndSendTelemetry", () => {
     expect(Date.now() - started).toBeLessThan(500);
   });
 
-  test("no send for `completion` — shells re-run it, so its events aren't usage", async () => {
-    await markTelemetryNoticeShown();
-    let called = 0;
-    globalThis.fetch = (async () => {
-      called += 1;
-      return new Response("{}");
-    }) as unknown as typeof fetch;
-    process.env.CLERK_TELEMETRY_URL = "https://capture.invalid/v1/event";
-    const root: TelemetryCommand = {
-      name: () => "clerk",
-      options: [],
-      getOptionValueSource: () => undefined,
-      parent: null,
-    };
-    startCommandTelemetry({
-      name: () => "completion",
-      options: [],
-      getOptionValueSource: () => undefined,
-      parent: root,
-    });
-    await finalizeAndSendTelemetry({ outcome: "success", exitCode: 0 });
-    expect(called).toBe(0);
-  });
-
   test("no send when telemetry is disabled via persisted config", async () => {
     let called = 0;
     globalThis.fetch = (async () => {
