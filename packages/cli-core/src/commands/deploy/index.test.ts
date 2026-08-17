@@ -238,7 +238,10 @@ describe("deploy", () => {
     // leak an artifact into the repo on every run. Intercept only `.zone` writes
     // so config writes (setProfile) still hit disk in the temp dir.
     const realBunWrite = Bun.write.bind(Bun) as (...args: unknown[]) => Promise<number>;
-    writeSpy = spyOn(Bun, "write").mockImplementation(((destination: unknown, ...rest: unknown[]) =>
+    writeSpy = spyOn(Bun, "write").mockImplementation(((
+      destination: unknown,
+      ...rest: unknown[]
+    ) =>
       String(destination).endsWith(".zone")
         ? Promise.resolve(0)
         : realBunWrite(destination, ...rest)) as typeof Bun.write);
