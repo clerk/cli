@@ -1,6 +1,7 @@
 import { Command } from "@commander-js/extra-typings";
 import { expandInputJson } from "./lib/input-json.ts";
 import { setLogLevel } from "./lib/log.ts";
+import { interruptedExitCode } from "./lib/signals.ts";
 import { setMode, type Mode } from "./mode.ts";
 import { registerInit } from "./commands/init/index.ts";
 import { registerAuth } from "./commands/auth/index.ts";
@@ -240,6 +241,10 @@ export async function runProgram(
   try {
     const { argv, from } = await resolveArgv(args, options?.from);
     await program.parseAsync(argv, { from });
+    // Ctrl-C aborts in-flight work, so a command can finish or fail *because* it
+    // was interrupted. The SIGINT handler already owns rendering, telemetry, and
+    // the exit for that case; racing it here would report the wrong outcome.
+    if (interruptedExitCode() !== null) return;
     // Some commands report failure via process.exitCode instead of throwing —
     // read it back so telemetry doesn't record them as successes.
     const softExitCode = Number(process.exitCode ?? EXIT_CODE.SUCCESS);
@@ -248,6 +253,7 @@ export async function runProgram(
       exitCode: softExitCode,
     });
   } catch (error) {
+    if (interruptedExitCode() !== null) return;
     // Started before rendering so the message is printed before we block on the
     // send — a slow telemetry endpoint never delays the error output — then
     // awaited once at the single exit below, so no branch can forget to flush.

@@ -6,6 +6,7 @@
 import { AUTH_TIMEOUT_MS, CALLBACK_PATH } from "./constants.ts";
 import { observeHostCapabilityFailure } from "./host-execution.ts";
 import { log } from "./log.ts";
+import { whileWaiting } from "./signals.ts";
 
 function escapeHtml(str: string): string {
   return str
@@ -270,7 +271,9 @@ export function startAuthServer(expectedState: string): AuthServerResult {
 
   return {
     port: activeServer.port!,
-    waitForCallback: () => callbackPromise,
+    // The CLI is idle here while the user signs in through their browser, so
+    // Ctrl-C is them abandoning the login rather than an interrupted operation.
+    waitForCallback: () => whileWaiting(callbackPromise),
     stop: () => {
       clearTimeout(timeout);
       activeServer.stop();

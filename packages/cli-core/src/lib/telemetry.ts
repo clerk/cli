@@ -232,6 +232,8 @@ async function buildAndSend(
     body: JSON.stringify({ events: [event] }),
     signal,
     bestEffort: true,
+    // This send reports the interrupt, so it has to outlive it.
+    ignoreInterrupt: true,
   });
 }
 

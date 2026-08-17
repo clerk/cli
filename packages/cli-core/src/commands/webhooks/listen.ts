@@ -1,6 +1,6 @@
 import { getRelayEntry, setRelayEntry } from "../../lib/config.ts";
 import { EXIT_CODE, errorMessage, throwUsageError } from "../../lib/errors.ts";
-import { CLI_SIGINT_HANDLER } from "../../lib/signals.ts";
+import { beginInterrupt, CLI_SIGINT_HANDLER, exitInterrupted } from "../../lib/signals.ts";
 import { withSpinner } from "../../lib/spinner.ts";
 import { dim } from "../../lib/color.ts";
 import type { Example } from "../../lib/help.ts";
@@ -134,15 +134,18 @@ export async function webhooksListen(options: WebhooksListenOptions = {}): Promi
   const { promise: setupGate, resolve: resolveSetupGate } = Promise.withResolvers<void>();
 
   // Own SIGINT handling, registered BEFORE the socket opens. The global handler
-  // (cli.ts) is a cleanup-free exit(130) and would fire first, so remove it:
-  // close the socket, drain in-flight forwards, then exit 130.
+  // would fire first and exit without draining, so remove it: close the socket,
+  // drain in-flight forwards, then exit 130. A running relay is an operation,
+  // not a wait, so the code is always 130 — `exitInterrupted` re-raises it so a
+  // wrapping shell script sees a real signal death.
   process.removeListener("SIGINT", CLI_SIGINT_HANDLER);
   process.on("SIGINT", () => {
     if (shuttingDown) {
       // Double Ctrl+C: force-quit immediately.
-      process.exit(EXIT_CODE.SIGINT);
+      exitInterrupted(EXIT_CODE.SIGINT);
     }
     void (async () => {
+      beginInterrupt(); // latch the interrupt so the drain can still exit by signal
       shuttingDown = true; // MUST precede resolveSetupGate so processDelivery short-circuits
       resolveSetupGate(); // gated deliveries must settle or the drain hangs
       client?.stop();
@@ -151,7 +154,7 @@ export async function webhooksListen(options: WebhooksListenOptions = {}): Promi
         Promise.allSettled(pending),
         new Promise<void>((resolve) => setTimeout(resolve, 2_000)),
       ]);
-      process.exit(EXIT_CODE.SIGINT);
+      exitInterrupted(EXIT_CODE.SIGINT);
     })();
   });
 
