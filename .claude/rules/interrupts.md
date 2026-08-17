@@ -20,6 +20,31 @@ Ctrl-C reports what the CLI was doing when it arrived:
 Everything is **work** unless it says otherwise. Only wait seams annotate
 themselves, so new code needs no changes to get the correct (130) default.
 
+## Reach: clack owns Ctrl-C while it is on screen
+
+`@clack/core` puts stdin in raw mode for both prompts and spinners, so Ctrl-C
+arrives as a `\x03` byte and **the OS delivers no SIGINT at all**:
+
+- **Prompts** return clack's cancel symbol, which the wrappers in
+  `lib/prompts.ts` turn into `UserAbortError` → exit 0. This is the intended
+  behavior — cancelling a prompt is a safe exit.
+- **Spinners** call `block()`, which calls `process.exit(0)` outright
+  (`@clack/core/dist/index.mjs`, the `isActionKey(..., "cancel")` branch).
+
+So while a spinner is on screen — which is most of an interactive command's
+runtime, since `withSpinner` wraps nearly every API call — Ctrl-C exits 0 and
+none of the machinery below runs. Verified under a PTY: interrupting a
+spinner-wrapped request gives `WEXITSTATUS=0`, no signal death, no telemetry.
+
+The rules below therefore govern every interrupt that is _not_ absorbed by
+clack: non-TTY and CI runs, and the stretches where no spinner is on screen —
+notably `clerk init` while a project generator or package install is running,
+and `clerk webhooks listen` once the relay is connected and its startup
+spinner has stopped.
+
+This split is deliberate: patching `block()` to re-raise the signal was
+considered and rejected in favour of not patching a dependency.
+
 ## Adding a wait
 
 Wrap the promise in `whileWaiting` from `src/lib/signals.ts`. It is a counter,
@@ -31,10 +56,9 @@ import { whileWaiting } from "../lib/signals.ts";
 waitForCallback: () => whileWaiting(callbackPromise),
 ```
 
-There are only three waits today — `sleep`, `auth-server`'s
-`waitForCallback`, and clack prompts (which need nothing, see below). If you
-add a fourth, wrap it; otherwise interrupting it reports 130 as though real
-work were cancelled.
+There are only two waits today — `sleep` and `auth-server`'s
+`waitForCallback`. If you add a third, wrap it; otherwise interrupting it
+reports 130 as though real work were cancelled.
 
 ## Adding an interruptible operation
 
@@ -62,17 +86,5 @@ script stop; `exit(130)` sets `WIFEXITED` and the script keeps going.
 `exitInterrupted` must `return process.exit(...)` on every early branch —
 tests stub `process.exit` with a no-op, and falling through to `process.kill`
 kills the test runner for real. `packages/cli-core/src/lib/signals.test.ts`
-pins this.
-
-## Prompts need nothing
-
-`@clack/core` keeps stdin in raw mode during prompts, so Ctrl-C arrives as a
-`\x03` byte and **no SIGINT is delivered**. The prompt wrappers already turn
-clack's cancel symbol into `UserAbortError`, which exits 0 (see
-[errors.md](./errors.md)).
-
-Spinners were the same story until `patches/@clack%2Fcore@1.4.3.patch`: clack's
-`block()` called `process.exit(0)` on that byte, swallowing the interrupt for
-every spinner-wrapped command. The patch re-raises SIGINT instead. **If that
-patch is ever dropped, Ctrl-C silently reports success again** — the
-subprocess test in `signals.subprocess.test.ts` is what catches it.
+pins this, and `signals.subprocess.test.ts` pins the `WIFSIGNALED` contract
+that the spy cannot observe.

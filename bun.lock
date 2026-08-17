@@ -58,7 +58,6 @@
     },
   },
   "patchedDependencies": {
-    "@clack/core@1.4.3": "patches/@clack%2Fcore@1.4.3.patch",
     "playwright-core@1.60.0": "patches/playwright-core@1.60.0.patch",
   },
   "packages": {
