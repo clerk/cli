@@ -1,4 +1,4 @@
-import { test, expect, describe, afterEach, mock, spyOn } from "bun:test";
+import { test, expect, describe, afterEach, beforeEach, mock, spyOn } from "bun:test";
 import { AuthError } from "../../lib/errors.ts";
 import { useCaptureLog, credentialStoreStubs, configStubs } from "../../test/lib/stubs.ts";
 
@@ -13,6 +13,8 @@ const mockSetAuth = mock();
 const mockResolveProfile = mock();
 const mockExchangeCodeForToken = mock();
 const mockFetchUserInfo = mock();
+const mockRevokeToken = mock();
+const mockGetStoredSession = mock();
 const mockStartAuthServer = mock();
 const mockIsHuman = mock();
 const mockConfirm = mock();
@@ -24,6 +26,7 @@ mock.module("../../lib/credential-store.ts", () => ({
   getValidToken: (...args: unknown[]) => mockGetValidToken(...args),
   storeToken: (...args: unknown[]) => mockStoreToken(...args),
   createOAuthSession: (...args: unknown[]) => mockCreateOAuthSession(...args),
+  getStoredSession: (...args: unknown[]) => mockGetStoredSession(...args),
 }));
 
 mock.module("../../lib/config.ts", () => ({
@@ -36,6 +39,7 @@ mock.module("../../lib/config.ts", () => ({
 mock.module("../../lib/token-exchange.ts", () => ({
   exchangeCodeForToken: (...args: unknown[]) => mockExchangeCodeForToken(...args),
   fetchUserInfo: (...args: unknown[]) => mockFetchUserInfo(...args),
+  revokeToken: (...args: unknown[]) => mockRevokeToken(...args),
 }));
 
 mock.module("../../lib/environment.ts", () => ({
@@ -101,6 +105,10 @@ describe("login", () => {
   const captured = useCaptureLog();
   const origSpawn = Bun.spawn;
 
+  beforeEach(() => {
+    consoleSpy = spyOn(console, "log").mockImplementation(() => {});
+  });
+
   afterEach(() => {
     mockGetValidToken.mockReset();
     mockStoreToken.mockReset();
@@ -110,6 +118,8 @@ describe("login", () => {
     mockResolveProfile.mockReset();
     mockExchangeCodeForToken.mockReset();
     mockFetchUserInfo.mockReset();
+    mockRevokeToken.mockReset();
+    mockGetStoredSession.mockReset();
     mockStartAuthServer.mockReset();
     mockIsHuman.mockReset();
     mockConfirm.mockReset();
@@ -118,6 +128,8 @@ describe("login", () => {
     mockEnsureFirstApplication.mockResolvedValue(undefined);
     mockIsHuman.mockReturnValue(false);
     mockOpenBrowser.mockResolvedValue({ ok: true, launcher: "test" });
+    mockRevokeToken.mockResolvedValue("revoked");
+    mockGetStoredSession.mockResolvedValue(null);
     setLogLevel("info");
     consoleSpy?.mockRestore();
     consoleErrorSpy?.mockRestore();
@@ -140,6 +152,50 @@ describe("login", () => {
     }
   }
 
+  interface OAuthFlowOverrides {
+    code?: string;
+    tokens?: { accessToken: string; refreshToken: string; expiresAt: number };
+    /** Pass null when the test wires mockFetchUserInfo itself (e.g. resolveOnce chains). */
+    user?: { userId: string; email: string } | null;
+  }
+
+  /** Arrange every mock a successful OAuth flow needs; returns the auth server stub. */
+  function mockOAuthSuccess(overrides: OAuthFlowOverrides = {}) {
+    const {
+      code = "fresh-auth-code",
+      tokens = {
+        accessToken: "new-access-token",
+        refreshToken: "new-refresh-token",
+        expiresAt: 123,
+      },
+      user = { userId: "user_new", email: "new@example.com" },
+    } = overrides;
+
+    mockBunSpawn();
+    const server = {
+      port: 54321,
+      waitForCallback: mock().mockResolvedValue({ code }),
+      stop: mock(),
+    };
+    mockStartAuthServer.mockReturnValue(server);
+    mockExchangeCodeForToken.mockResolvedValue({
+      access_token: tokens.accessToken,
+      token_type: "Bearer",
+      expires_in: 3600,
+      refresh_token: tokens.refreshToken,
+    });
+    mockCreateOAuthSession.mockReturnValue({
+      accessToken: tokens.accessToken,
+      refreshToken: tokens.refreshToken,
+      expiresAt: tokens.expiresAt,
+      tokenType: "Bearer",
+    });
+    mockStoreToken.mockResolvedValue(undefined);
+    mockSetAuth.mockResolvedValue(undefined);
+    if (user) mockFetchUserInfo.mockResolvedValue(user);
+    return server;
+  }
+
   test("returns early when already authenticated with valid token", async () => {
     mockGetValidToken.mockResolvedValue("existing-token");
     mockGetAuth.mockResolvedValue({ userId: "user_123" });
@@ -148,7 +204,6 @@ describe("login", () => {
       email: "existing@example.com",
     });
 
-    consoleSpy = spyOn(console, "log").mockImplementation(() => {});
     const result = await runLogin();
 
     expect(result).toEqual({ userId: "user_123", email: "existing@example.com" });
@@ -158,35 +213,8 @@ describe("login", () => {
 
   test("performs fresh login when no token exists", async () => {
     mockGetValidToken.mockResolvedValue(null);
-    mockBunSpawn();
+    mockOAuthSuccess();
 
-    const mockServer = {
-      port: 54321,
-      waitForCallback: mock().mockResolvedValue({ code: "fresh-auth-code" }),
-      stop: mock(),
-    };
-    mockStartAuthServer.mockReturnValue(mockServer);
-
-    mockExchangeCodeForToken.mockResolvedValue({
-      access_token: "new-access-token",
-      token_type: "Bearer",
-      expires_in: 3600,
-      refresh_token: "new-refresh-token",
-    });
-    mockCreateOAuthSession.mockReturnValue({
-      accessToken: "new-access-token",
-      refreshToken: "new-refresh-token",
-      expiresAt: 123,
-      tokenType: "Bearer",
-    });
-    mockStoreToken.mockResolvedValue(undefined);
-    mockFetchUserInfo.mockResolvedValue({
-      userId: "user_new",
-      email: "new@example.com",
-    });
-    mockSetAuth.mockResolvedValue(undefined);
-
-    consoleSpy = spyOn(console, "log").mockImplementation(() => {});
     const result = await runLogin();
 
     expect(result).toEqual({ userId: "user_new", email: "new@example.com" });
@@ -219,31 +247,16 @@ describe("login", () => {
       userId: "user_refreshed",
       email: "refreshed@example.com",
     });
-    mockBunSpawn();
-
-    const mockServer = {
-      port: 54321,
-      waitForCallback: mock().mockResolvedValue({ code: "refresh-code" }),
-      stop: mock(),
-    };
-    mockStartAuthServer.mockReturnValue(mockServer);
-
-    mockExchangeCodeForToken.mockResolvedValue({
-      access_token: "refreshed-token",
-      token_type: "Bearer",
-      expires_in: 3600,
-      refresh_token: "refreshed-refresh-token",
+    mockOAuthSuccess({
+      code: "refresh-code",
+      tokens: {
+        accessToken: "refreshed-token",
+        refreshToken: "refreshed-refresh-token",
+        expiresAt: 456,
+      },
+      user: null,
     });
-    mockCreateOAuthSession.mockReturnValue({
-      accessToken: "refreshed-token",
-      refreshToken: "refreshed-refresh-token",
-      expiresAt: 456,
-      tokenType: "Bearer",
-    });
-    mockStoreToken.mockResolvedValue(undefined);
-    mockSetAuth.mockResolvedValue(undefined);
 
-    consoleSpy = spyOn(console, "log").mockImplementation(() => {});
     const result = await runLogin();
 
     expect(result).toEqual({ userId: "user_refreshed", email: "refreshed@example.com" });
@@ -269,8 +282,6 @@ describe("login", () => {
     };
     mockStartAuthServer.mockReturnValue(mockServer);
 
-    consoleSpy = spyOn(console, "log").mockImplementation(() => {});
-
     await expect(runLogin()).rejects.toThrow("Authentication timed out");
     expect(mockServer.stop).toHaveBeenCalled();
   });
@@ -278,35 +289,8 @@ describe("login", () => {
   test("proceeds with login when token exists but no auth config", async () => {
     mockGetValidToken.mockResolvedValue("orphan-token");
     mockGetAuth.mockResolvedValue(undefined);
-    mockBunSpawn();
+    mockOAuthSuccess({ user: { userId: "user_brand_new", email: "brandnew@example.com" } });
 
-    const mockServer = {
-      port: 54321,
-      waitForCallback: mock().mockResolvedValue({ code: "new-code" }),
-      stop: mock(),
-    };
-    mockStartAuthServer.mockReturnValue(mockServer);
-
-    mockExchangeCodeForToken.mockResolvedValue({
-      access_token: "brand-new-token",
-      token_type: "Bearer",
-      expires_in: 3600,
-      refresh_token: "brand-new-refresh-token",
-    });
-    mockCreateOAuthSession.mockReturnValue({
-      accessToken: "brand-new-token",
-      refreshToken: "brand-new-refresh-token",
-      expiresAt: 789,
-      tokenType: "Bearer",
-    });
-    mockStoreToken.mockResolvedValue(undefined);
-    mockFetchUserInfo.mockResolvedValue({
-      userId: "user_brand_new",
-      email: "brandnew@example.com",
-    });
-    mockSetAuth.mockResolvedValue(undefined);
-
-    consoleSpy = spyOn(console, "log").mockImplementation(() => {});
     const result = await runLogin();
 
     expect(result).toEqual({ userId: "user_brand_new", email: "brandnew@example.com" });
@@ -322,7 +306,6 @@ describe("login", () => {
       email: "agent@example.com",
     });
 
-    consoleSpy = spyOn(console, "log").mockImplementation(() => {});
     const result = await runLogin();
 
     expect(result).toEqual({ userId: "user_123", email: "agent@example.com" });
@@ -339,31 +322,8 @@ describe("login", () => {
       .mockResolvedValueOnce({ userId: "user_123", email: "old@example.com" })
       .mockResolvedValueOnce({ userId: "user_new", email: "new@example.com" });
     mockConfirm.mockResolvedValue(true);
-    mockBunSpawn();
+    mockOAuthSuccess({ code: "reauth-code", user: null });
 
-    const mockServer = {
-      port: 54321,
-      waitForCallback: mock().mockResolvedValue({ code: "reauth-code" }),
-      stop: mock(),
-    };
-    mockStartAuthServer.mockReturnValue(mockServer);
-
-    mockExchangeCodeForToken.mockResolvedValue({
-      access_token: "new-token",
-      token_type: "Bearer",
-      expires_in: 3600,
-      refresh_token: "new-refresh-token",
-    });
-    mockCreateOAuthSession.mockReturnValue({
-      accessToken: "new-token",
-      refreshToken: "new-refresh-token",
-      expiresAt: 999,
-      tokenType: "Bearer",
-    });
-    mockStoreToken.mockResolvedValue(undefined);
-    mockSetAuth.mockResolvedValue(undefined);
-
-    consoleSpy = spyOn(console, "log").mockImplementation(() => {});
     const result = await runLogin();
 
     expect(mockConfirm).toHaveBeenCalledWith({
@@ -381,36 +341,131 @@ describe("login", () => {
     mockFetchUserInfo
       .mockResolvedValueOnce({ userId: "user_123", email: "old@example.com" })
       .mockResolvedValueOnce({ userId: "user_new", email: "new@example.com" });
-    mockBunSpawn();
+    mockOAuthSuccess({ code: "reauth-code", user: null });
 
-    const mockServer = {
-      port: 54321,
-      waitForCallback: mock().mockResolvedValue({ code: "reauth-code" }),
-      stop: mock(),
-    };
-    mockStartAuthServer.mockReturnValue(mockServer);
-
-    mockExchangeCodeForToken.mockResolvedValue({
-      access_token: "new-token",
-      token_type: "Bearer",
-      expires_in: 3600,
-      refresh_token: "new-refresh-token",
-    });
-    mockCreateOAuthSession.mockReturnValue({
-      accessToken: "new-token",
-      refreshToken: "new-refresh-token",
-      expiresAt: 999,
-      tokenType: "Bearer",
-    });
-    mockStoreToken.mockResolvedValue(undefined);
-    mockSetAuth.mockResolvedValue(undefined);
-
-    consoleSpy = spyOn(console, "log").mockImplementation(() => {});
     const result = await runLogin({ yes: true });
 
     expect(mockConfirm).not.toHaveBeenCalled();
     expect(mockStartAuthServer).toHaveBeenCalled();
     expect(result).toEqual({ userId: "user_new", email: "new@example.com" });
+  });
+
+  /**
+   * Wires getStoredSession/storeToken as a single stateful store, so that
+   * storing the new session changes what a subsequent read returns. A stateless
+   * mock cannot distinguish "captured the outgoing session" from "captured the
+   * one we just created", which is the refactor these tests exist to catch.
+   */
+  function useStatefulCredentialStore(initial: Record<string, unknown> | null) {
+    let stored = initial;
+    mockGetStoredSession.mockImplementation(async () => stored);
+    mockStoreToken.mockImplementation(async (session: unknown) => {
+      stored = session as Record<string, unknown>;
+    });
+    return {
+      current: () => stored,
+    };
+  }
+
+  const OLD_SESSION = {
+    accessToken: "old-access-token",
+    refreshToken: "old-refresh-token",
+    expiresAt: Date.now() + 60_000,
+    tokenType: "Bearer",
+  };
+
+  test("revokes the superseded grant after re-authenticating", async () => {
+    mockIsHuman.mockReturnValue(true);
+    mockGetValidToken.mockResolvedValue("existing-token");
+    mockGetAuth.mockResolvedValue({ userId: "user_123" });
+    useStatefulCredentialStore(OLD_SESSION);
+    mockFetchUserInfo
+      .mockResolvedValueOnce({ userId: "user_123", email: "old@example.com" })
+      .mockResolvedValueOnce({ userId: "user_new", email: "new@example.com" });
+    mockConfirm.mockResolvedValue(true);
+    mockOAuthSuccess({ code: "reauth-code", user: null });
+
+    await runLogin();
+
+    // The OLD refresh token, not the newly minted one. With a stateful store
+    // this fails if the capture moves below the token exchange.
+    expect(mockRevokeToken).toHaveBeenCalledWith("old-refresh-token", "refresh_token");
+    // The replacement must be stored before the old grant is torn down.
+    expect(mockStoreToken.mock.invocationCallOrder[0]!).toBeLessThan(
+      mockRevokeToken.mock.invocationCallOrder[0]!,
+    );
+    // …and the capture must happen before the store, or it reads the new one.
+    expect(mockGetStoredSession.mock.invocationCallOrder.at(-1)!).toBeLessThan(
+      mockStoreToken.mock.invocationCallOrder[0]!,
+    );
+  });
+
+  test("revokes the outgoing grant even when the session pre-check fails", async () => {
+    mockIsHuman.mockReturnValue(true);
+    // A live session exists in the store, but the pre-flight probe blows up.
+    // getExistingSession swallows it, so `existingSession` is null — the old
+    // grant must still be revoked rather than orphaned.
+    mockGetValidToken.mockRejectedValue(new Error("network unreachable"));
+    mockGetAuth.mockResolvedValue({ userId: "user_123" });
+    useStatefulCredentialStore(OLD_SESSION);
+    mockFetchUserInfo.mockResolvedValue({ userId: "user_new", email: "new@example.com" });
+    mockOAuthSuccess({ code: "reauth-code", user: null });
+
+    await runLogin();
+
+    expect(mockRevokeToken).toHaveBeenCalledWith("old-refresh-token", "refresh_token");
+  });
+
+  test("warns when the superseded grant could not be revoked", async () => {
+    mockIsHuman.mockReturnValue(true);
+    mockGetValidToken.mockResolvedValue("existing-token");
+    mockGetAuth.mockResolvedValue({ userId: "user_123" });
+    useStatefulCredentialStore(OLD_SESSION);
+    mockFetchUserInfo
+      .mockResolvedValueOnce({ userId: "user_123", email: "old@example.com" })
+      .mockResolvedValueOnce({ userId: "user_new", email: "new@example.com" });
+    mockConfirm.mockResolvedValue(true);
+    mockRevokeToken.mockResolvedValue("failed");
+    mockOAuthSuccess({ code: "reauth-code", user: null });
+
+    await runLogin();
+
+    expect(captured.err).toContain("could not be revoked");
+  });
+
+  test("does not revoke anything when logging in without an existing session", async () => {
+    mockIsHuman.mockReturnValue(true);
+    mockGetValidToken.mockResolvedValue(null);
+    mockGetAuth.mockResolvedValue(null);
+    useStatefulCredentialStore(null);
+    mockFetchUserInfo.mockResolvedValue({ userId: "user_123", email: "new@example.com" });
+    mockOAuthSuccess({ code: "fresh-code", user: null });
+
+    await runLogin();
+
+    expect(mockRevokeToken).not.toHaveBeenCalled();
+  });
+
+  test("leaves the existing session intact when the browser flow fails", async () => {
+    mockIsHuman.mockReturnValue(true);
+    mockGetValidToken.mockResolvedValue("existing-token");
+    mockGetAuth.mockResolvedValue({ userId: "user_123" });
+    mockGetStoredSession.mockResolvedValue({
+      accessToken: "old-access-token",
+      refreshToken: "old-refresh-token",
+      expiresAt: Date.now() + 60_000,
+      tokenType: "Bearer",
+    });
+    mockFetchUserInfo.mockResolvedValueOnce({ userId: "user_123", email: "old@example.com" });
+    mockConfirm.mockResolvedValue(true);
+    mockStartAuthServer.mockReturnValue({
+      port: 3000,
+      waitForCallback: () => Promise.reject(new Error("Authentication timed out.")),
+      stop: () => {},
+    });
+
+    await expect(runLogin()).rejects.toThrow("Authentication timed out.");
+    expect(mockRevokeToken).not.toHaveBeenCalled();
   });
 
   test("in human mode, throws UserAbortError when user declines re-auth", async () => {
@@ -423,8 +478,6 @@ describe("login", () => {
     });
     mockConfirm.mockResolvedValue(false);
 
-    consoleSpy = spyOn(console, "log").mockImplementation(() => {});
-
     await expect(runLogin()).rejects.toThrow("User aborted");
     expect(mockConfirm).toHaveBeenCalled();
     expect(mockStartAuthServer).not.toHaveBeenCalled();
@@ -432,33 +485,7 @@ describe("login", () => {
 
   test("shows linked app with name and id in next steps when linked", async () => {
     mockGetValidToken.mockResolvedValue(null);
-    mockBunSpawn();
-
-    const mockServer = {
-      port: 54321,
-      waitForCallback: mock().mockResolvedValue({ code: "fresh-auth-code" }),
-      stop: mock(),
-    };
-    mockStartAuthServer.mockReturnValue(mockServer);
-
-    mockExchangeCodeForToken.mockResolvedValue({
-      access_token: "new-access-token",
-      token_type: "Bearer",
-      expires_in: 3600,
-      refresh_token: "new-refresh-token",
-    });
-    mockCreateOAuthSession.mockReturnValue({
-      accessToken: "new-access-token",
-      refreshToken: "new-refresh-token",
-      expiresAt: 123,
-      tokenType: "Bearer",
-    });
-    mockStoreToken.mockResolvedValue(undefined);
-    mockFetchUserInfo.mockResolvedValue({
-      userId: "user_new",
-      email: "new@example.com",
-    });
-    mockSetAuth.mockResolvedValue(undefined);
+    mockOAuthSuccess();
     mockResolveProfile.mockResolvedValue({
       path: "/some/path",
       profile: {
@@ -470,7 +497,6 @@ describe("login", () => {
       resolvedVia: "remote",
     });
 
-    consoleSpy = spyOn(console, "log").mockImplementation(() => {});
     await runLogin();
 
     expect(captured.err).toContain("Linked to `My App` (app_abc123)");
@@ -478,33 +504,7 @@ describe("login", () => {
 
   test("shows linked app with only id when appName is missing", async () => {
     mockGetValidToken.mockResolvedValue(null);
-    mockBunSpawn();
-
-    const mockServer = {
-      port: 54321,
-      waitForCallback: mock().mockResolvedValue({ code: "fresh-auth-code" }),
-      stop: mock(),
-    };
-    mockStartAuthServer.mockReturnValue(mockServer);
-
-    mockExchangeCodeForToken.mockResolvedValue({
-      access_token: "new-access-token",
-      token_type: "Bearer",
-      expires_in: 3600,
-      refresh_token: "new-refresh-token",
-    });
-    mockCreateOAuthSession.mockReturnValue({
-      accessToken: "new-access-token",
-      refreshToken: "new-refresh-token",
-      expiresAt: 123,
-      tokenType: "Bearer",
-    });
-    mockStoreToken.mockResolvedValue(undefined);
-    mockFetchUserInfo.mockResolvedValue({
-      userId: "user_new",
-      email: "new@example.com",
-    });
-    mockSetAuth.mockResolvedValue(undefined);
+    mockOAuthSuccess();
     mockResolveProfile.mockResolvedValue({
       path: "/some/path",
       profile: {
@@ -515,7 +515,6 @@ describe("login", () => {
       resolvedVia: "remote",
     });
 
-    consoleSpy = spyOn(console, "log").mockImplementation(() => {});
     await runLogin();
 
     expect(captured.err).toContain("Linked to `app_abc123`");
@@ -523,36 +522,9 @@ describe("login", () => {
 
   test("shows default next steps when not linked", async () => {
     mockGetValidToken.mockResolvedValue(null);
-    mockBunSpawn();
-
-    const mockServer = {
-      port: 54321,
-      waitForCallback: mock().mockResolvedValue({ code: "fresh-auth-code" }),
-      stop: mock(),
-    };
-    mockStartAuthServer.mockReturnValue(mockServer);
-
-    mockExchangeCodeForToken.mockResolvedValue({
-      access_token: "new-access-token",
-      token_type: "Bearer",
-      expires_in: 3600,
-      refresh_token: "new-refresh-token",
-    });
-    mockCreateOAuthSession.mockReturnValue({
-      accessToken: "new-access-token",
-      refreshToken: "new-refresh-token",
-      expiresAt: 123,
-      tokenType: "Bearer",
-    });
-    mockStoreToken.mockResolvedValue(undefined);
-    mockFetchUserInfo.mockResolvedValue({
-      userId: "user_new",
-      email: "new@example.com",
-    });
-    mockSetAuth.mockResolvedValue(undefined);
+    mockOAuthSuccess();
     mockResolveProfile.mockResolvedValue(undefined);
 
-    consoleSpy = spyOn(console, "log").mockImplementation(() => {});
     await runLogin();
 
     expect(captured.err).not.toContain("Linked to");
@@ -560,35 +532,8 @@ describe("login", () => {
 
   test("authorize URL includes clerk_client=cli so dashboard recognizes CLI sign-up", async () => {
     mockGetValidToken.mockResolvedValue(null);
-    mockBunSpawn();
+    mockOAuthSuccess();
 
-    const mockServer = {
-      port: 54321,
-      waitForCallback: mock().mockResolvedValue({ code: "fresh-auth-code" }),
-      stop: mock(),
-    };
-    mockStartAuthServer.mockReturnValue(mockServer);
-
-    mockExchangeCodeForToken.mockResolvedValue({
-      access_token: "new-access-token",
-      token_type: "Bearer",
-      expires_in: 3600,
-      refresh_token: "new-refresh-token",
-    });
-    mockCreateOAuthSession.mockReturnValue({
-      accessToken: "new-access-token",
-      refreshToken: "new-refresh-token",
-      expiresAt: 123,
-      tokenType: "Bearer",
-    });
-    mockStoreToken.mockResolvedValue(undefined);
-    mockFetchUserInfo.mockResolvedValue({
-      userId: "user_new",
-      email: "new@example.com",
-    });
-    mockSetAuth.mockResolvedValue(undefined);
-
-    consoleSpy = spyOn(console, "log").mockImplementation(() => {});
     await runLogin({ showNextSteps: false });
 
     expect(mockOpenBrowser).toHaveBeenCalledTimes(1);
@@ -597,76 +542,46 @@ describe("login", () => {
     expect(parsed.searchParams.get("clerk_client")).toBe("cli");
   });
 
-  test("does not emit the OAuth authorize URL through debug logging", async () => {
-    setLogLevel("debug");
+  test("always prints the authorize URL as a manual fallback, even when the browser opens", async () => {
     mockGetValidToken.mockResolvedValue(null);
-    mockBunSpawn();
+    mockOAuthSuccess();
+    mockOpenBrowser.mockResolvedValue({ ok: true, launcher: "open" });
 
-    const mockServer = {
-      port: 54321,
-      waitForCallback: mock().mockResolvedValue({ code: "fresh-auth-code" }),
-      stop: mock(),
-    };
-    mockStartAuthServer.mockReturnValue(mockServer);
-
-    mockExchangeCodeForToken.mockResolvedValue({
-      access_token: "new-access-token",
-      token_type: "Bearer",
-      expires_in: 3600,
-      refresh_token: "new-refresh-token",
-    });
-    mockCreateOAuthSession.mockReturnValue({
-      accessToken: "new-access-token",
-      refreshToken: "new-refresh-token",
-      expiresAt: 123,
-      tokenType: "Bearer",
-    });
-    mockStoreToken.mockResolvedValue(undefined);
-    mockFetchUserInfo.mockResolvedValue({
-      userId: "user_new",
-      email: "new@example.com",
-    });
-    mockSetAuth.mockResolvedValue(undefined);
-
-    consoleSpy = spyOn(console, "log").mockImplementation(() => {});
     await runLogin({ showNextSteps: false });
 
-    expect(captured.err).not.toContain("https://test.example.com/oauth/authorize");
-    expect(captured.err).not.toContain("test-state-value");
-    expect(captured.err).not.toContain("test-code-challenge");
+    expect(captured.err).toContain("https://test.example.com/oauth/authorize");
+    expect(captured.err).toContain("If it doesn't open, use this URL");
+  });
+
+  test("warns when the browser cannot be opened, pointing at the printed URL", async () => {
+    mockGetValidToken.mockResolvedValue(null);
+    mockOAuthSuccess();
+    mockOpenBrowser.mockResolvedValue({ ok: false, reason: "no-launcher" });
+
+    await runLogin({ showNextSteps: false });
+
+    expect(captured.err).toContain("https://test.example.com/oauth/authorize");
+    expect(captured.err).toContain("Could not open your browser automatically");
+  });
+
+  test("does not emit the PKCE code verifier through debug logging", async () => {
+    setLogLevel("debug");
+    mockGetValidToken.mockResolvedValue(null);
+    mockOAuthSuccess();
+
+    await runLogin({ showNextSteps: false });
+
+    // The authorize URL (containing state + code_challenge) is printed on
+    // purpose as the manual fallback. The code verifier is the secret that
+    // makes possession of that URL useless to an attacker — it must never
+    // appear in any output.
+    expect(captured.err).not.toContain("test-code-verifier");
   });
 
   test("calls ensureFirstApplication after a successful OAuth flow", async () => {
     mockGetValidToken.mockResolvedValue(null);
-    mockBunSpawn();
+    mockOAuthSuccess();
 
-    const mockServer = {
-      port: 54321,
-      waitForCallback: mock().mockResolvedValue({ code: "fresh-auth-code" }),
-      stop: mock(),
-    };
-    mockStartAuthServer.mockReturnValue(mockServer);
-
-    mockExchangeCodeForToken.mockResolvedValue({
-      access_token: "new-access-token",
-      token_type: "Bearer",
-      expires_in: 3600,
-      refresh_token: "new-refresh-token",
-    });
-    mockCreateOAuthSession.mockReturnValue({
-      accessToken: "new-access-token",
-      refreshToken: "new-refresh-token",
-      expiresAt: 123,
-      tokenType: "Bearer",
-    });
-    mockStoreToken.mockResolvedValue(undefined);
-    mockFetchUserInfo.mockResolvedValue({
-      userId: "user_new",
-      email: "new@example.com",
-    });
-    mockSetAuth.mockResolvedValue(undefined);
-
-    consoleSpy = spyOn(console, "log").mockImplementation(() => {});
     await runLogin({ showNextSteps: false });
 
     expect(mockEnsureFirstApplication).toHaveBeenCalledTimes(1);
@@ -680,7 +595,6 @@ describe("login", () => {
       email: "existing@example.com",
     });
 
-    consoleSpy = spyOn(console, "log").mockImplementation(() => {});
     await runLogin();
 
     expect(mockEnsureFirstApplication).not.toHaveBeenCalled();
@@ -688,35 +602,7 @@ describe("login", () => {
 
   test("suppresses auth next-steps when requested", async () => {
     mockGetValidToken.mockResolvedValue(null);
-    mockBunSpawn();
-
-    const mockServer = {
-      port: 54321,
-      waitForCallback: mock().mockResolvedValue({ code: "fresh-auth-code" }),
-      stop: mock(),
-    };
-    mockStartAuthServer.mockReturnValue(mockServer);
-
-    mockExchangeCodeForToken.mockResolvedValue({
-      access_token: "new-access-token",
-      token_type: "Bearer",
-      expires_in: 3600,
-      refresh_token: "new-refresh-token",
-    });
-    mockCreateOAuthSession.mockReturnValue({
-      accessToken: "new-access-token",
-      refreshToken: "new-refresh-token",
-      expiresAt: 123,
-      tokenType: "Bearer",
-    });
-    mockStoreToken.mockResolvedValue(undefined);
-    mockFetchUserInfo.mockResolvedValue({
-      userId: "user_new",
-      email: "new@example.com",
-    });
-    mockSetAuth.mockResolvedValue(undefined);
-
-    consoleSpy = spyOn(console, "log").mockImplementation(() => {});
+    mockOAuthSuccess();
     consoleErrorSpy = spyOn(console, "error").mockImplementation(() => {});
 
     await runLogin({ showNextSteps: false });

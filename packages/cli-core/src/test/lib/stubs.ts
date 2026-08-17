@@ -161,6 +161,11 @@ export const configStubs = {
   resolveAppContext: async () => ({ appId: "", appLabel: "", instanceId: "", instanceLabel: "" }),
   profileLabel: (profile: { appName?: string; appId: string }) =>
     profile.appName ? `${profile.appName} (${profile.appId})` : profile.appId,
+  ensureMachineUuid: async () => "00000000-0000-4000-8000-000000000000",
+  markTelemetryNoticeShown: async () => false,
+  getTelemetryNoticeShown: async () => true,
+  getTelemetryDisabled: async () => false,
+  setTelemetryDisabled: noop,
 };
 
 // Same wholesale-replacement rule as configStubs: this must cover every
@@ -192,6 +197,7 @@ export const credentialStoreStubs = {
   hasAccountCredentials: async () => Boolean(process.env.CLERK_PLATFORM_API_KEY),
   storeToken: async () => {},
   deleteToken: async () => {},
+  revokeAndDeleteToken: async () => "nothing_to_revoke" as const,
   createOAuthSession: (tokenResponse: {
     access_token: string;
     refresh_token: string;
@@ -236,6 +242,7 @@ export { listageStubs } from "./listage-stubs.ts";
 export const tokenExchangeStubs = {
   exchangeCodeForToken: async () => ({}),
   refreshAccessToken: async () => ({}),
+  revokeToken: async () => "revoked" as const,
   fetchUserInfo: async () => ({}),
 };
 

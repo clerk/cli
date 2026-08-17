@@ -133,6 +133,7 @@ export function getOAuthConfig() {
     scopes: process.env.CLERK_OAUTH_SCOPES ?? "",
     authorizeUrl: new URL("/oauth/authorize", baseUrl).href,
     tokenUrl: new URL("/oauth/token", baseUrl).href,
+    revokeUrl: new URL("/oauth/token/revoke", baseUrl).href,
     userinfoUrl: new URL("/oauth/userinfo", baseUrl).href,
   };
 }

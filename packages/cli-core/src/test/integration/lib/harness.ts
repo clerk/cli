@@ -75,6 +75,11 @@ mock.module(
         expiresAt: Date.now() + tokenResponse.expires_in * 1000,
         tokenType: tokenResponse.token_type,
       }),
+      revokeAndDeleteToken: async () => {
+        const had = mockState.storedToken !== null;
+        mockState.storedToken = null;
+        return had ? ("revoked" as const) : ("nothing_to_revoke" as const);
+      },
       _setTokenOverride: () => {},
       KEYCHAIN_SERVICE: "clerk-cli",
       LOCAL_DEV_KEYCHAIN_SERVICE: "clerk-cli-dev",
@@ -228,6 +233,7 @@ mock.module(
         expires_in: 3600,
         refresh_token: "mock_refresh_token",
       }),
+      revokeToken: async () => "revoked" as const,
       fetchUserInfo: async (token: string) => {
         if (!token || token === "expired_token") throw new Error("Unauthorized");
         return { userId: "user_123", email: "test@example.com" };

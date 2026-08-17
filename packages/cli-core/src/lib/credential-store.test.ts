@@ -11,6 +11,7 @@ const tempDir = await mkdtemp(join(tmpdir(), "clerk-cred-test-"));
 process.env.CLERK_CONFIG_DIR = tempDir;
 
 const mockRefreshAccessToken = mock();
+const mockRevokeToken = mock();
 
 mock.module("@napi-rs/keyring", () => ({
   Entry: class {
@@ -21,16 +22,24 @@ mock.module("@napi-rs/keyring", () => ({
 }));
 
 mock.module("./version.ts", () => ({
-  DEV_CLI_VERSION: "0.0.0-dev",
-  resolveCliVersion: () => undefined,
+  CURRENT_VERSION: "0.0.0-dev",
+  IS_DEV_BUILD: true,
 }));
 
 mock.module("./token-exchange.ts", () => ({
   refreshAccessToken: (...args: unknown[]) => mockRefreshAccessToken(...args),
+  revokeToken: (...args: unknown[]) => mockRevokeToken(...args),
 }));
 
-const { createOAuthSession, deleteToken, getStoredSession, getToken, getValidToken, storeToken } =
-  await import("./credential-store.ts");
+const {
+  createOAuthSession,
+  deleteToken,
+  getStoredSession,
+  getToken,
+  getValidToken,
+  revokeAndDeleteToken,
+  storeToken,
+} = await import("./credential-store.ts");
 
 async function writeLegacyToken(value: string): Promise<void> {
   await writeFile(join(tempDir, "credentials"), value, { mode: 0o600 });
@@ -44,7 +53,78 @@ afterAll(async () => {
 describe("credential-store", () => {
   beforeEach(async () => {
     mockRefreshAccessToken.mockReset();
+    mockRevokeToken.mockReset();
     await deleteToken();
+  });
+
+  test("revokeAndDeleteToken revokes the stored refresh token before deleting it", async () => {
+    await storeToken({
+      accessToken: "access-token",
+      refreshToken: "refresh-token",
+      expiresAt: Date.now() + 60_000,
+      tokenType: "Bearer",
+    });
+    // Observed from inside the mock: by the time revokeToken is called the
+    // session must still be readable, which is what "before deleting" means.
+    // Asserting only the final state would pass for delete-then-revoke too.
+    let sessionVisibleDuringRevoke: unknown = "not-called";
+    mockRevokeToken.mockImplementation(async () => {
+      sessionVisibleDuringRevoke = await getStoredSession();
+      return "revoked";
+    });
+
+    const outcome = await revokeAndDeleteToken();
+
+    expect(mockRevokeToken).toHaveBeenCalledWith("refresh-token", "refresh_token");
+    expect(sessionVisibleDuringRevoke).not.toBeNull();
+    expect(sessionVisibleDuringRevoke).not.toBe("not-called");
+    expect(outcome).toBe("revoked");
+    expect(await getStoredSession()).toBeNull();
+  });
+
+  test("revokeAndDeleteToken reports nothing_to_revoke when nothing is stored", async () => {
+    const outcome = await revokeAndDeleteToken();
+
+    expect(mockRevokeToken).not.toHaveBeenCalled();
+    expect(outcome).toBe("nothing_to_revoke");
+  });
+
+  test("revokeAndDeleteToken propagates a failed revocation", async () => {
+    await storeToken({
+      accessToken: "access-token",
+      refreshToken: "refresh-token",
+      expiresAt: Date.now() + 60_000,
+      tokenType: "Bearer",
+    });
+    mockRevokeToken.mockResolvedValue("failed");
+
+    expect(await revokeAndDeleteToken()).toBe("failed");
+    expect(await getStoredSession()).toBeNull();
+  });
+
+  test("revokeAndDeleteToken reports failure for unrevocable legacy credentials", async () => {
+    await writeLegacyToken("raw-access-token-with-no-refresh-token");
+
+    const outcome = await revokeAndDeleteToken();
+
+    // Nothing to present to the revocation endpoint, but credentials existed —
+    // that is a failure to revoke, not an absence of anything to revoke.
+    expect(mockRevokeToken).not.toHaveBeenCalled();
+    expect(outcome).toBe("failed");
+    expect(await getToken()).toBeNull();
+  });
+
+  test("revokeAndDeleteToken deletes local credentials even if revocation throws", async () => {
+    await storeToken({
+      accessToken: "access-token",
+      refreshToken: "refresh-token",
+      expiresAt: Date.now() + 60_000,
+      tokenType: "Bearer",
+    });
+    mockRevokeToken.mockRejectedValue(new Error("network unreachable"));
+
+    await expect(revokeAndDeleteToken()).rejects.toThrow("network unreachable");
+    expect(await getStoredSession()).toBeNull();
   });
 
   test("getToken returns null when no token is stored", async () => {

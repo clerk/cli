@@ -11,10 +11,34 @@
 import { log } from "./log.ts";
 import { withNetworkAccess } from "./host-execution.ts";
 import { buildUserAgent } from "./user-agent.ts";
+import { optOutEnvVar } from "./env-signals.ts";
+import { getTelemetryDisabled, getTelemetryNoticeShown } from "./config.ts";
 
-const USER_AGENT = buildUserAgent();
+let userAgentPromise: Promise<string> | undefined;
 
-export type LoggedFetchInit = RequestInit & { tag: string };
+/** Test-only: recompute the User-Agent on the next request. */
+export function _resetUserAgentCache(): void {
+  userAgentPromise = undefined;
+}
+
+function resolveUserAgent(): Promise<string> {
+  // The AIAgent segment exists purely for analytics classification, so it
+  // honors the telemetry opt-outs (env vars and `clerk telemetry disable`)
+  // and, like the events, stays absent until the disclosure notice has been
+  // shown — CI exempt, matching maybeShowTelemetryNotice.
+  userAgentPromise ??= (async () => {
+    const beforeDisclosure =
+      !process.env.CI && !(await getTelemetryNoticeShown().catch(() => false));
+    const omitAgentSegment =
+      optOutEnvVar(process.env) !== null ||
+      beforeDisclosure ||
+      (await getTelemetryDisabled().catch(() => true));
+    return buildUserAgent(process.env, { agentToken: !omitAgentSegment });
+  })();
+  return userAgentPromise;
+}
+
+export type LoggedFetchInit = RequestInit & { tag: string; bestEffort?: boolean };
 
 /**
  * Normalized response shape returned by the higher-level API request wrappers
@@ -29,14 +53,14 @@ export interface ApiResponse {
 }
 
 export async function loggedFetch(url: URL | string, options: LoggedFetchInit): Promise<Response> {
-  const { tag, ...init } = options;
+  const { tag, bestEffort, ...init } = options;
   const method = init.method ?? "GET";
   const urlStr = url.toString();
   const headers = new Headers(init.headers);
-  if (!headers.has("user-agent")) headers.set("User-Agent", USER_AGENT);
+  if (!headers.has("user-agent")) headers.set("User-Agent", await resolveUserAgent());
   log.debug(`${tag}: ${method} ${urlStr}`);
   const response = await withNetworkAccess(
-    { operation: "connect", target: urlStr, label: tag },
+    { operation: "connect", target: urlStr, label: tag, bestEffort },
     async () => fetch(url, { ...init, headers }),
   );
   if (!response.ok) {

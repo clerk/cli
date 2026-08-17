@@ -76,9 +76,7 @@ Common list filters:
 
 ```json
 {
-  "data": [
-    /* user objects */
-  ],
+  "data": [/* user objects */],
   "hasMore": true
 }
 ```

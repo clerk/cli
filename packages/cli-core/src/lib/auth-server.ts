@@ -186,7 +186,11 @@ export function startAuthServer(expectedState: string): AuthServerResult {
 
   const timeout = setTimeout(() => {
     log.debug(`auth-server: timed out after ${AUTH_TIMEOUT_MS}ms`);
-    rejectCallback(new Error("Authentication timed out. Please try again."));
+    rejectCallback(
+      new Error(
+        "Authentication timed out. Run `clerk auth login` to try again — if your browser did not open, copy the printed URL into any browser on this machine.",
+      ),
+    );
     server?.stop();
   }, AUTH_TIMEOUT_MS);
 

@@ -1,5 +1,12 @@
 import { test, expect, describe, afterEach, mock } from "bun:test";
-import { exchangeCodeForToken, refreshAccessToken, fetchUserInfo } from "./token-exchange.ts";
+import {
+  exchangeCodeForToken,
+  refreshAccessToken,
+  revokeToken,
+  fetchUserInfo,
+} from "./token-exchange.ts";
+import { setLogLevel } from "./log.ts";
+import { useCaptureLog } from "../test/lib/stubs.ts";
 
 const originalFetch = globalThis.fetch;
 
@@ -170,5 +177,86 @@ describe("refreshAccessToken", () => {
     const body = new URLSearchParams(calledInit.body);
     expect(body.get("grant_type")).toBe("refresh_token");
     expect(body.get("refresh_token")).toBe("refresh-token-123");
+  });
+});
+
+describe("revokeToken", () => {
+  const captured = useCaptureLog();
+
+  afterEach(() => {
+    globalThis.fetch = originalFetch;
+  });
+
+  test("posts the token, hint, and client_id to the revocation endpoint", async () => {
+    globalThis.fetch = mock(
+      async () => new Response("", { status: 200 }),
+    ) as unknown as typeof fetch;
+
+    expect(await revokeToken("refresh-token-123", "refresh_token")).toBe("revoked");
+
+    expect(globalThis.fetch).toHaveBeenCalledTimes(1);
+
+    const [calledUrl, calledInit] = (globalThis.fetch as unknown as ReturnType<typeof mock>).mock
+      .calls[0]!;
+    expect(String(calledUrl)).toContain("/oauth/token/revoke");
+    expect(calledInit.method).toBe("POST");
+    expect(calledInit.headers.get("Content-Type")).toBe("application/x-www-form-urlencoded");
+
+    const body = new URLSearchParams(calledInit.body);
+    expect(body.get("token")).toBe("refresh-token-123");
+    expect(body.get("token_type_hint")).toBe("refresh_token");
+    expect(body.get("client_id")).toBeTruthy();
+  });
+
+  test("reports failure when the endpoint returns an error status", async () => {
+    globalThis.fetch = mock(
+      async () => new Response(JSON.stringify({ error: "invalid_request" }), { status: 400 }),
+    ) as unknown as typeof fetch;
+
+    // A permanent 4xx must not read as success, or a misconfigured client
+    // silently never revokes anything while reporting a clean logout.
+    expect(await revokeToken("spent-token", "refresh_token")).toBe("failed");
+  });
+
+  test("reports failure without throwing when the request fails outright", async () => {
+    globalThis.fetch = mock(async () => {
+      throw new Error("network unreachable");
+    }) as unknown as typeof fetch;
+
+    expect(await revokeToken("refresh-token-123", "refresh_token")).toBe("failed");
+  });
+
+  test("reports failure without throwing when the OAuth base URL is malformed", async () => {
+    const previous = process.env.CLERK_OAUTH_BASE_URL;
+    process.env.CLERK_OAUTH_BASE_URL = "not-a-url";
+    globalThis.fetch = mock(
+      async () => new Response("", { status: 200 }),
+    ) as unknown as typeof fetch;
+
+    try {
+      // Resolving the config throws here. If that escapes, it aborts the
+      // caller's teardown partway through — credentials deleted, config left
+      // stale. It must surface as a failed result instead.
+      expect(await revokeToken("refresh-token-123", "refresh_token")).toBe("failed");
+      expect(globalThis.fetch).not.toHaveBeenCalled();
+    } finally {
+      if (previous === undefined) delete process.env.CLERK_OAUTH_BASE_URL;
+      else process.env.CLERK_OAUTH_BASE_URL = previous;
+    }
+  });
+
+  test("logs the failure reason under --verbose", async () => {
+    globalThis.fetch = mock(async () => {
+      throw new Error("network unreachable");
+    }) as unknown as typeof fetch;
+
+    setLogLevel("debug");
+    try {
+      await revokeToken("refresh-token-123", "refresh_token");
+    } finally {
+      setLogLevel("info");
+    }
+
+    expect(captured.err).toContain("token revocation failed");
   });
 });

@@ -32,6 +32,9 @@ mock.module("./relay-client.ts", () => ({ RelayClient: FakeRelayClient }));
 const mockGetRelayEntry = mock();
 const mockSetRelayEntry = mock();
 mock.module("../../lib/config.ts", () => ({
+  // fetch.ts (imported process-wide) reads these from config.ts.
+  getTelemetryDisabled: async () => false,
+  getTelemetryNoticeShown: async () => true,
   getRelayEntry: (...args: unknown[]) => mockGetRelayEntry(...args),
   setRelayEntry: (...args: unknown[]) => mockSetRelayEntry(...args),
 }));

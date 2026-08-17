@@ -1,5 +1,17 @@
 # clerk
 
+## 3.1.0
+
+### Minor Changes
+
+- Collect usage telemetry (command name, flag names, duration, outcome, a random machine identifier — and your workspace and app IDs when a project is linked; never arguments, option values, paths, or personal data). The first run only shows a disclosure notice and sends nothing (CI environments send from the first run), and `--verbose` prints every event before it is sent. Control it with the new `clerk telemetry status|disable|enable` subcommand, or the `CLERK_TELEMETRY_DISABLED` / `DO_NOT_TRACK` environment variables (any non-false value opts out). ([#410](https://github.com/clerk/cli/pull/410)) by [@djgould](https://github.com/djgould)
+
+## 3.0.1
+
+### Patch Changes
+
+- Fix `clerk auth login` in WSL2, SSH, and headless environments: the sign-in URL is now always printed as a copy-friendly manual fallback, WSL launches the Windows host browser via PowerShell interop when `wslview` is not installed, and the authentication timeout error now explains how to recover. ([#412](https://github.com/clerk/cli/pull/412)) by [@rafa-thayto](https://github.com/rafa-thayto)
+
 ## 3.0.0
 
 ### Major Changes
