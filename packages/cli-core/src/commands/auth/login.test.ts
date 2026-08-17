@@ -128,6 +128,8 @@ describe("login", () => {
     mockEnsureFirstApplication.mockResolvedValue(undefined);
     mockIsHuman.mockReturnValue(false);
     mockOpenBrowser.mockResolvedValue({ ok: true, launcher: "test" });
+    mockRevokeToken.mockResolvedValue("revoked");
+    mockGetStoredSession.mockResolvedValue(null);
     setLogLevel("info");
     consoleSpy?.mockRestore();
     consoleErrorSpy?.mockRestore();
@@ -348,16 +350,35 @@ describe("login", () => {
     expect(result).toEqual({ userId: "user_new", email: "new@example.com" });
   });
 
+  /**
+   * Wires getStoredSession/storeToken as a single stateful store, so that
+   * storing the new session changes what a subsequent read returns. A stateless
+   * mock cannot distinguish "captured the outgoing session" from "captured the
+   * one we just created", which is the refactor these tests exist to catch.
+   */
+  function useStatefulCredentialStore(initial: Record<string, unknown> | null) {
+    let stored = initial;
+    mockGetStoredSession.mockImplementation(async () => stored);
+    mockStoreToken.mockImplementation(async (session: unknown) => {
+      stored = session as Record<string, unknown>;
+    });
+    return {
+      current: () => stored,
+    };
+  }
+
+  const OLD_SESSION = {
+    accessToken: "old-access-token",
+    refreshToken: "old-refresh-token",
+    expiresAt: Date.now() + 60_000,
+    tokenType: "Bearer",
+  };
+
   test("revokes the superseded grant after re-authenticating", async () => {
     mockIsHuman.mockReturnValue(true);
     mockGetValidToken.mockResolvedValue("existing-token");
     mockGetAuth.mockResolvedValue({ userId: "user_123" });
-    mockGetStoredSession.mockResolvedValue({
-      accessToken: "old-access-token",
-      refreshToken: "old-refresh-token",
-      expiresAt: Date.now() + 60_000,
-      tokenType: "Bearer",
-    });
+    useStatefulCredentialStore(OLD_SESSION);
     mockFetchUserInfo
       .mockResolvedValueOnce({ userId: "user_123", email: "old@example.com" })
       .mockResolvedValueOnce({ userId: "user_new", email: "new@example.com" });
@@ -366,17 +387,57 @@ describe("login", () => {
 
     await runLogin();
 
+    // The OLD refresh token, not the newly minted one. With a stateful store
+    // this fails if the capture moves below the token exchange.
     expect(mockRevokeToken).toHaveBeenCalledWith("old-refresh-token", "refresh_token");
     // The replacement must be stored before the old grant is torn down.
     expect(mockStoreToken.mock.invocationCallOrder[0]!).toBeLessThan(
       mockRevokeToken.mock.invocationCallOrder[0]!,
     );
+    // …and the capture must happen before the store, or it reads the new one.
+    expect(mockGetStoredSession.mock.invocationCallOrder.at(-1)!).toBeLessThan(
+      mockStoreToken.mock.invocationCallOrder[0]!,
+    );
+  });
+
+  test("revokes the outgoing grant even when the session pre-check fails", async () => {
+    mockIsHuman.mockReturnValue(true);
+    // A live session exists in the store, but the pre-flight probe blows up.
+    // getExistingSession swallows it, so `existingSession` is null — the old
+    // grant must still be revoked rather than orphaned.
+    mockGetValidToken.mockRejectedValue(new Error("network unreachable"));
+    mockGetAuth.mockResolvedValue({ userId: "user_123" });
+    useStatefulCredentialStore(OLD_SESSION);
+    mockFetchUserInfo.mockResolvedValue({ userId: "user_new", email: "new@example.com" });
+    mockOAuthSuccess({ code: "reauth-code", user: null });
+
+    await runLogin();
+
+    expect(mockRevokeToken).toHaveBeenCalledWith("old-refresh-token", "refresh_token");
+  });
+
+  test("warns when the superseded grant could not be revoked", async () => {
+    mockIsHuman.mockReturnValue(true);
+    mockGetValidToken.mockResolvedValue("existing-token");
+    mockGetAuth.mockResolvedValue({ userId: "user_123" });
+    useStatefulCredentialStore(OLD_SESSION);
+    mockFetchUserInfo
+      .mockResolvedValueOnce({ userId: "user_123", email: "old@example.com" })
+      .mockResolvedValueOnce({ userId: "user_new", email: "new@example.com" });
+    mockConfirm.mockResolvedValue(true);
+    mockRevokeToken.mockResolvedValue("failed");
+    mockOAuthSuccess({ code: "reauth-code", user: null });
+
+    await runLogin();
+
+    expect(captured.err).toContain("could not be revoked");
   });
 
   test("does not revoke anything when logging in without an existing session", async () => {
     mockIsHuman.mockReturnValue(true);
     mockGetValidToken.mockResolvedValue(null);
     mockGetAuth.mockResolvedValue(null);
+    useStatefulCredentialStore(null);
     mockFetchUserInfo.mockResolvedValue({ userId: "user_123", email: "new@example.com" });
     mockOAuthSuccess({ code: "fresh-code", user: null });
 

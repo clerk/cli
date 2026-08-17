@@ -64,17 +64,54 @@ describe("credential-store", () => {
       expiresAt: Date.now() + 60_000,
       tokenType: "Bearer",
     });
+    // Observed from inside the mock: by the time revokeToken is called the
+    // session must still be readable, which is what "before deleting" means.
+    // Asserting only the final state would pass for delete-then-revoke too.
+    let sessionVisibleDuringRevoke: unknown = "not-called";
+    mockRevokeToken.mockImplementation(async () => {
+      sessionVisibleDuringRevoke = await getStoredSession();
+      return "revoked";
+    });
 
-    await revokeAndDeleteToken();
+    const outcome = await revokeAndDeleteToken();
 
     expect(mockRevokeToken).toHaveBeenCalledWith("refresh-token", "refresh_token");
+    expect(sessionVisibleDuringRevoke).not.toBeNull();
+    expect(sessionVisibleDuringRevoke).not.toBe("not-called");
+    expect(outcome).toBe("revoked");
     expect(await getStoredSession()).toBeNull();
   });
 
-  test("revokeAndDeleteToken skips revocation when nothing is stored", async () => {
-    await revokeAndDeleteToken();
+  test("revokeAndDeleteToken reports nothing_to_revoke when nothing is stored", async () => {
+    const outcome = await revokeAndDeleteToken();
 
     expect(mockRevokeToken).not.toHaveBeenCalled();
+    expect(outcome).toBe("nothing_to_revoke");
+  });
+
+  test("revokeAndDeleteToken propagates a failed revocation", async () => {
+    await storeToken({
+      accessToken: "access-token",
+      refreshToken: "refresh-token",
+      expiresAt: Date.now() + 60_000,
+      tokenType: "Bearer",
+    });
+    mockRevokeToken.mockResolvedValue("failed");
+
+    expect(await revokeAndDeleteToken()).toBe("failed");
+    expect(await getStoredSession()).toBeNull();
+  });
+
+  test("revokeAndDeleteToken reports failure for unrevocable legacy credentials", async () => {
+    await writeLegacyToken("raw-access-token-with-no-refresh-token");
+
+    const outcome = await revokeAndDeleteToken();
+
+    // Nothing to present to the revocation endpoint, but credentials existed —
+    // that is a failure to revoke, not an absence of anything to revoke.
+    expect(mockRevokeToken).not.toHaveBeenCalled();
+    expect(outcome).toBe("failed");
+    expect(await getToken()).toBeNull();
   });
 
   test("revokeAndDeleteToken deletes local credentials even if revocation throws", async () => {
