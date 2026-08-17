@@ -1,7 +1,8 @@
 /**
  * Per-invocation usage telemetry.
  *
- * One CLI_COMMAND_EXECUTED event per command run, POSTed to the
+ * One CLI_COMMAND_EXECUTED event per command run — except `completion`, which
+ * never emits (see startCommandTelemetry) — POSTed to the
  * telemetry-service worker (BigQuery behind it). Opt out with
  * `clerk telemetry disable` (persisted) or the CLERK_TELEMETRY_DISABLED /
  * DO_NOT_TRACK env vars. Dev builds send nothing unless CLERK_TELEMETRY_URL
@@ -113,8 +114,17 @@ function collectSetFlagNames(cmd: TelemetryCommand): string[] {
 /** Pure in-memory; never throws. */
 export function startCommandTelemetry(actionCommand: TelemetryCommand): void {
   try {
+    const command = commandPathOf(actionCommand);
+    // `completion` runs without a user asking for it: every new shell with
+    // `eval "$(clerk completion zsh)"` in its rc file re-runs it, so a handful
+    // of machines drowned out the real command mix. (`__complete`, fired on
+    // each Tab press, exits in cli.ts before Commander reaches this hook.)
+    if (command === "completion") {
+      context = null;
+      return;
+    }
     context = {
-      command: commandPathOf(actionCommand),
+      command,
       flags: collectSetFlagNames(actionCommand).join(","),
       startedAt: Date.now(),
     };

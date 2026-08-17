@@ -45,7 +45,7 @@ test("sends one event for a successful command", async () => {
   process.env.CLERK_TELEMETRY_URL = TELEMETRY_URL;
   http.mock({ "test-telemetry.clerk.com": {} });
 
-  await clerk("completion", "zsh");
+  await clerk("webhooks", "token", "--json");
 
   const bodies = telemetryEvents();
   expect(bodies).toHaveLength(1);
@@ -53,9 +53,7 @@ test("sends one event for a successful command", async () => {
   const event = bodies[0]!.events[0]!;
   expect(event.sdk).toBe("clerk-cli");
   expect(event.event).toBe("CLI_COMMAND_EXECUTED");
-  // Command path is subcommand names only — "zsh" is an argument value and
-  // is deliberately excluded.
-  expect(event.payload.command).toBe("completion");
+  expect(event.payload.command).toBe("webhooks token");
   expect(event.payload.outcome).toBe("success");
   expect(event.payload.exit_code).toBe(0);
   expect(event.payload.machine_uuid).toMatch(/^[0-9a-f-]{36}$/);
@@ -63,16 +61,40 @@ test("sends one event for a successful command", async () => {
   // Env-dependent fields are strings, values depend on the host machine.
   expect(typeof event.payload.ai_agent).toBe("string");
   expect(typeof event.payload.install_method).toBe("string");
-  // Never collected: the argument value ("zsh") must not leak into any event
-  // field — fails if command path or flags ever start carrying argv values.
-  expect(JSON.stringify(event)).not.toContain("zsh");
+});
+
+// `eval "$(clerk completion zsh)"` in an rc file re-runs the command on every
+// new shell, so its events measured shell startups, not CLI usage.
+test("`completion` sends nothing — not even the first-run notice", async () => {
+  const originalCi = process.env.CI;
+  delete process.env.CI; // the notice is suppressed in CI environments
+  try {
+    process.env.CLERK_TELEMETRY_URL = TELEMETRY_URL;
+    http.mock(); // any fetch would record and throw
+
+    const result = await clerk("completion", "zsh");
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stderr).not.toContain("Nothing has been sent during this run");
+    expect(http.requests).toHaveLength(0);
+
+    // Past the grace run, where every other command starts sending: without
+    // this, the notice alone suppresses the POST and the assertion above
+    // passes even with the `completion` guard removed.
+    await markNoticeAlreadyShown();
+    await clerk("completion", "zsh");
+    expect(http.requests).toHaveLength(0);
+  } finally {
+    if (originalCi === undefined) delete process.env.CI;
+    else process.env.CI = originalCi;
+  }
 });
 
 test("records failures with error code and reuses the machine uuid", async () => {
   await markNoticeAlreadyShown();
   process.env.CLERK_TELEMETRY_URL = TELEMETRY_URL;
   http.mock({ "test-telemetry.clerk.com": {} });
-  const first = await clerk("completion", "zsh");
+  const first = await clerk("webhooks", "token", "--json");
   expect(first.exitCode).toBe(0);
   const firstUuid = telemetryEvents()[0]!.events[0]!.payload.machine_uuid;
 
@@ -102,7 +124,7 @@ test("maps a soft failure (process.exitCode set without throwing) to outcome err
   try {
     // Simulates commands that report failure via process.exitCode instead of throwing.
     process.exitCode = 1;
-    await clerk.raw("completion", "zsh");
+    await clerk.raw("webhooks", "token", "--json");
 
     const bodies = telemetryEvents();
     expect(bodies).toHaveLength(1);
@@ -119,15 +141,18 @@ test("an invalid --mode value still produces an error event", async () => {
   process.env.CLERK_TELEMETRY_URL = TELEMETRY_URL;
   http.mock({ "test-telemetry.clerk.com": {} });
 
-  const result = await clerk.raw("--mode", "banana", "completion", "zsh");
+  const result = await clerk.raw("--mode", "banana", "webhooks", "token", "--json");
   expect(result.exitCode).toBe(2);
 
   const bodies = telemetryEvents();
   expect(bodies).toHaveLength(1);
   const event = bodies[0]!.events[0]!;
-  expect(event.payload.command).toBe("completion");
+  expect(event.payload.command).toBe("webhooks token");
   expect(event.payload.outcome).toBe("error");
   expect(event.payload.exit_code).toBe(2);
+  // Option values must never reach any event field — fails if the command
+  // path or flags ever start carrying argv values into a sent event.
+  expect(JSON.stringify(event)).not.toContain("banana");
 });
 
 // payload.command comes from the resolved Command objects' registered names,
@@ -152,13 +177,13 @@ test.each([[["users", "sk_test_secret123"]], [["sk_live_pasted"]]])(
 test("command succeeds even when the telemetry endpoint is down", async () => {
   process.env.CLERK_TELEMETRY_URL = TELEMETRY_URL;
   http.mock(); // no routes: every fetch throws, including the telemetry send
-  const result = await clerk.raw("completion", "zsh");
+  const result = await clerk.raw("webhooks", "token", "--json");
   expect(result.exitCode).toBe(0);
 });
 
 test("no telemetry traffic without CLERK_TELEMETRY_URL (dev build guard)", async () => {
   http.mock(); // guard mock: any fetch would throw
-  await clerk("completion", "zsh");
+  await clerk("webhooks", "token", "--json");
   expect(http.requests).toHaveLength(0);
 });
 
@@ -193,12 +218,12 @@ test("the first human run shows the notice and sends nothing; the next run sends
     process.env.CLERK_TELEMETRY_URL = TELEMETRY_URL;
     http.mock({ "test-telemetry.clerk.com": {} });
 
-    const first = await clerk("completion", "zsh");
+    const first = await clerk("webhooks", "token", "--json");
     expect(first.stderr).toContain("Nothing has been sent during this run");
     expect(first.stderr).toContain("clerk telemetry disable");
     expect(telemetryEvents()).toHaveLength(0);
 
-    const second = await clerk("completion", "zsh");
+    const second = await clerk("webhooks", "token", "--json");
     expect(second.stderr).not.toContain("Nothing has been sent during this run");
     expect(telemetryEvents()).toHaveLength(1);
   } finally {
@@ -214,11 +239,11 @@ test("agent-mode first run also gets the notice and sends nothing", async () => 
     process.env.CLERK_TELEMETRY_URL = TELEMETRY_URL;
     http.mock({ "test-telemetry.clerk.com": {} });
 
-    const first = await clerk("--mode", "agent", "completion", "zsh");
+    const first = await clerk("--mode", "agent", "webhooks", "token", "--json");
     expect(first.stderr).toContain("Nothing has been sent during this run");
     expect(telemetryEvents()).toHaveLength(0);
 
-    const second = await clerk("--mode", "agent", "completion", "zsh");
+    const second = await clerk("--mode", "agent", "webhooks", "token", "--json");
     expect(second.stderr).not.toContain("Nothing has been sent during this run");
     expect(telemetryEvents()).toHaveLength(1);
   } finally {
@@ -237,7 +262,7 @@ test("`clerk telemetry disable` itself sends nothing, and the opt-out persists",
   http.mock(); // any fetch would record and throw — none may happen
 
   await clerk("telemetry", "disable");
-  await clerk("completion", "zsh");
+  await clerk("webhooks", "token", "--json");
   expect(http.requests).toHaveLength(0);
 });
 
@@ -248,12 +273,12 @@ test("`clerk telemetry enable` turns events back on", async () => {
 
   await clerk("telemetry", "disable"); // sends nothing: opt-out visible at finalize
   await clerk("telemetry", "enable"); // sends: the user just opted back in
-  await clerk("completion", "zsh");
+  await clerk("webhooks", "token", "--json");
 
   const bodies = telemetryEvents();
   expect(bodies).toHaveLength(2);
   expect(bodies[0]!.events[0]!.payload.command).toBe("telemetry enable");
-  expect(bodies[1]!.events[0]!.payload.command).toBe("completion");
+  expect(bodies[1]!.events[0]!.payload.command).toBe("webhooks token");
 });
 
 test("`clerk telemetry status` reports the state and the winning reason", async () => {
