@@ -68,7 +68,7 @@ function interruptSignalFor(
   ignoreInterrupt: boolean | undefined,
 ): RequestInit["signal"] {
   if (ignoreInterrupt) return own;
-  return own ? AbortSignal.any([own, interruptSignal]) : interruptSignal;
+  return own ? AbortSignal.any([own, interruptSignal()]) : interruptSignal();
 }
 
 export async function loggedFetch(url: URL | string, options: LoggedFetchInit): Promise<Response> {

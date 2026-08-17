@@ -1,4 +1,5 @@
 import { log } from "./log.ts";
+import { whileWaiting } from "./signals.ts";
 
 export function hslToRgb(h: number, s: number, l: number): [number, number, number] {
   const c = (1 - Math.abs(2 * l - 1)) * s;
@@ -184,7 +185,9 @@ export async function animateHeader(options: AnimateHeaderOptions): Promise<void
     for (let frame = 0; frame < frames; frame++) {
       const center = -0.3 + (frame / span) * 1.6;
       write(`\r\x1b[K${prefix}${shineText(label, { center, truecolor })}`);
-      await sleep(intervalMs);
+      // A decorative animation that runs after the command has succeeded, so
+      // Ctrl-C here is the user skipping the shine, not cancelling work.
+      await whileWaiting(sleep(intervalMs));
     }
     write(`\r\x1b[K${prefix}${shineText(label, { truecolor })}`);
     write(`\x1b[${rowsBelow}B\r`);

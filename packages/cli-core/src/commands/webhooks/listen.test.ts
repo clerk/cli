@@ -89,6 +89,10 @@ describe("webhooks listen (V1, relay-only)", () => {
   let savedSigintListeners: NodeJS.SignalsListener[] = [];
 
   beforeEach(() => {
+    // `listen`'s Ctrl-C path exits through `exitInterrupted`, which re-raises
+    // SIGINT for real. `process.kill` is not stubbable, so without this the
+    // drain test takes the whole test worker down instead of asserting.
+    process.env.CLERK_CLI_NO_SIGNAL_RERAISE = "1";
     savedSigintListeners = process.listeners("SIGINT") as NodeJS.SignalsListener[];
     mockIsAgent.mockReturnValue(false);
     relayClients.length = 0;
@@ -97,6 +101,7 @@ describe("webhooks listen (V1, relay-only)", () => {
   });
 
   afterEach(() => {
+    delete process.env.CLERK_CLI_NO_SIGNAL_RERAISE;
     process.removeAllListeners("SIGINT");
     for (const listener of savedSigintListeners) process.on("SIGINT", listener);
     globalThis.fetch = originalFetch;

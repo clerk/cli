@@ -56,21 +56,48 @@ import { whileWaiting } from "../lib/signals.ts";
 waitForCallback: () => whileWaiting(callbackPromise),
 ```
 
-There are only two waits today — `sleep` and `auth-server`'s
-`waitForCallback`. If you add a third, wrap it; otherwise interrupting it
-reports 130 as though real work were cancelled.
+The waits today are `sleep`, `auth-server`'s `waitForCallback`, `prompts.ts`'s
+`$EDITOR` round-trip, and the `gradient.ts` shine animation. If you add
+another, wrap it; otherwise interrupting it reports 130 as though real work
+were cancelled.
+
+Two traps this has already hit:
+
+- **A private `sleep` shadow.** `gradient.ts` defined its own
+  `const sleep = (ms) => new Promise(...)` and so was silently classified as
+  work. Grep for local timer helpers before assuming `lib/sleep.ts` covers a
+  file.
+- **A wait that can never settle.** `whileWaiting(callbackPromise)` in
+  `auth-server.ts` never decrements, because nothing rejects that promise on
+  abort. Harmless only because the process always exits while the wait is open.
+  If you race such a promise and then continue, the counter stays pinned and
+  _every_ later Ctrl-C in that process reports 0.
+
+## The bookkeeping tail
+
+`markCommandComplete()` is called from the `postAction` hook in
+`cli-program.ts` the moment the command's own action finishes. Everything after
+it — the update check, the telemetry flush — counts as a wait.
+
+Without it, Ctrl-C during that tail kills a _successful_ command with a signal,
+which halts any script wrapping the CLI. The window is real: the update check
+alone allows 1500ms against the npm registry.
 
 ## Adding an interruptible operation
 
-Nothing to do. `loggedFetch` already composes `interruptSignal` into every
+Nothing to do. `loggedFetch` already composes `interruptSignal()` into every
 request, so Ctrl-C aborts in-flight HTTP. If you introduce a new abortable
-primitive, pass `interruptSignal`:
+primitive, pass the signal:
 
 ```ts
 import { interruptSignal } from "../lib/signals.ts";
 
-await delay(ms, undefined, { signal: interruptSignal });
+await delay(ms, undefined, { signal: interruptSignal() });
 ```
+
+It is a function, not a value: `_resetInterruptState` swaps the controller
+between tests, and a captured `const` would hand out a permanently-aborted
+signal.
 
 The one exception is `ignoreInterrupt: true` on `loggedFetch`, which exists
 solely for the shutdown telemetry flush — it runs _after_ the interrupt and
@@ -88,3 +115,14 @@ tests stub `process.exit` with a no-op, and falling through to `process.kill`
 kills the test runner for real. `packages/cli-core/src/lib/signals.test.ts`
 pins this, and `signals.subprocess.test.ts` pins the `WIFSIGNALED` contract
 that the spy cannot observe.
+
+Tests that reach `exitInterrupted` set `CLERK_CLI_NO_SIGNAL_RERAISE=1`, which
+makes it plain-exit instead. Keep that name CLI-namespaced: an earlier version
+keyed off `NODE_ENV === "test"`, which would have silently disabled the whole
+signal-death contract for any user whose shell or CI image exports it.
+
+A `CliError` whose `exitCode` is 0 is guidance, not a failure — `deploy`'s
+resumable pause is the one case. `reportError` renders it with `log.info`
+rather than a red `error:` prefix, and `telemetryResultForError` reports it as
+`outcome: "abort"`. Do not add a zero-exit `CliError` that is actually an
+error.

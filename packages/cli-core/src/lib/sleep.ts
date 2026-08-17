@@ -6,5 +6,5 @@ import { interruptSignal, whileWaiting } from "./signals.ts";
  * waiting rather than an interrupted operation, so it exits 0.
  */
 export function sleep(ms: number): Promise<void> {
-  return whileWaiting(delay(ms, undefined, { signal: interruptSignal }));
+  return whileWaiting(delay(ms, undefined, { signal: interruptSignal() }));
 }

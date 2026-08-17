@@ -4,8 +4,8 @@
  * `process.exit(130)` and dying from SIGINT both make the shell print 130, but
  * only the latter sets `WIFSIGNALED`, which is what a wrapping script inspects
  * to decide whether to stop. A spy on `process.exit` cannot tell the two apart,
- * so this has to run in a real child process — and `exitInterrupted` refuses to
- * re-raise while `NODE_ENV=test`, so the child gets a clean environment.
+ * so this has to run in a real child process, with the test-only escape hatch
+ * that suppresses re-raising explicitly cleared from the child's environment.
  */
 
 import { describe, expect, test } from "bun:test";
@@ -26,12 +26,12 @@ async function runInterrupted(mode: "work" | "wait"): Promise<Outcome> {
     setTimeout(() => process.exit(99), 10_000); // guard against a hang
   `;
 
+  const { CLERK_CLI_NO_SIGNAL_RERAISE: _suppressed, ...cleanEnv } = process.env;
   const proc = Bun.spawn(["bun", "-e", source], {
     stdout: "ignore",
     stderr: "ignore",
     env: {
-      ...process.env,
-      NODE_ENV: "production",
+      ...cleanEnv,
       // Never emit a real event from a test run.
       CLERK_TELEMETRY_DISABLED: "1",
     },

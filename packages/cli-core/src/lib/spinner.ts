@@ -4,6 +4,7 @@ import { isHuman } from "../mode.ts";
 import { dim, cyan } from "./color.ts";
 import { animateHeader } from "./gradient.ts";
 import { UserAbortError } from "./errors.ts";
+import { interruptedExitCode } from "./signals.ts";
 import { log, pushPrefix, popPrefix } from "./log.ts";
 import { getUiOutput } from "./ui.ts";
 
@@ -85,6 +86,11 @@ export function bar() {
   writeUi(`${dim(S_BAR)}\n`);
 }
 
+/** A cancelled run is not a failed one, whether the user cancelled a prompt or pressed Ctrl-C. */
+function isCancelled(error: unknown): boolean {
+  return error instanceof UserAbortError || interruptedExitCode() !== null;
+}
+
 export type SpinnerControls = {
   update(message: string): void;
 };
@@ -119,7 +125,7 @@ export async function withGutter<T>(
     await outro(nextSteps);
     return result;
   } catch (error) {
-    if (error instanceof UserAbortError) {
+    if (isCancelled(error)) {
       pausedOutro();
     } else {
       await outro("Failed");
@@ -142,7 +148,11 @@ export async function withSpinner<T>(
     s.stop(doneMessage ?? message.replace(/\.{3}$/, ""));
     return result;
   } catch (error) {
-    s.error("Failed");
+    // An interrupt aborts whatever the spinner was waiting on, so the rejection
+    // arrives here first. Rendering "Failed" for a cancel the user asked for is
+    // wrong, and it prints before the SIGINT handler finishes exiting.
+    if (isCancelled(error)) s.stop(message.replace(/\.{3}$/, ""));
+    else s.error("Failed");
     throw error;
   }
 }

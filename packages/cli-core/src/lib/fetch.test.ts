@@ -3,6 +3,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { _resetUserAgentCache, loggedFetch } from "./fetch.ts";
+import { _resetInterruptState, abortInFlight, beginInterrupt, interruptSignal } from "./signals.ts";
 import { _setConfigDir, markTelemetryNoticeShown, setTelemetryDisabled } from "./config.ts";
 
 const originalFetch = globalThis.fetch;
@@ -116,6 +117,10 @@ describe("AIAgent segment honors the telemetry opt-out", () => {
 describe("loggedFetch interrupt signal", () => {
   afterEach(() => {
     globalThis.fetch = originalFetch;
+    // These cases abort the shared controller. Without a reset the signal stays
+    // aborted for the rest of the file and every later request gets a
+    // pre-cancelled one, which fails in confusing, order-dependent ways.
+    _resetInterruptState();
   });
 
   /** The signal `loggedFetch` actually handed to fetch. */
@@ -128,10 +133,19 @@ describe("loggedFetch interrupt signal", () => {
     return init.signal as AbortSignal;
   }
 
-  test("requests are abortable by Ctrl-C", async () => {
+  test("requests carry the interrupt signal itself, not just some signal", async () => {
+    // Identity, not shape: asserting `instanceof AbortSignal` would still pass
+    // if the wiring were swapped for an unrelated controller, silently ending
+    // Ctrl-C cancellation of in-flight HTTP.
+    expect(await signalPassedTo({ tag: "test" })).toBe(interruptSignal());
+  });
+
+  test("an interrupt aborts the request", async () => {
     const signal = await signalPassedTo({ tag: "test" });
-    expect(signal).toBeInstanceOf(AbortSignal);
     expect(signal.aborted).toBe(false);
+    beginInterrupt();
+    abortInFlight();
+    expect(signal.aborted).toBe(true);
   });
 
   test("a caller's own signal still aborts the request", async () => {
@@ -140,6 +154,15 @@ describe("loggedFetch interrupt signal", () => {
     own.abort();
     // Composed with the interrupt signal rather than replaced by it, so a
     // caller's timeout keeps working.
+    expect(signal.aborted).toBe(true);
+  });
+
+  test("an interrupt aborts a request that brought its own signal", async () => {
+    const own = new AbortController();
+    const signal = await signalPassedTo({ tag: "test", signal: own.signal });
+    expect(signal.aborted).toBe(false);
+    beginInterrupt();
+    abortInFlight();
     expect(signal.aborted).toBe(true);
   });
 

@@ -1,7 +1,7 @@
 import { Command } from "@commander-js/extra-typings";
 import { expandInputJson } from "./lib/input-json.ts";
 import { setLogLevel } from "./lib/log.ts";
-import { interruptedExitCode } from "./lib/signals.ts";
+import { interruptedExitCode, markCommandComplete } from "./lib/signals.ts";
 import { setMode, type Mode } from "./mode.ts";
 import { registerInit } from "./commands/init/index.ts";
 import { registerAuth } from "./commands/auth/index.ts";
@@ -150,6 +150,10 @@ export function createProgram(): Program {
   // Show update notification after each command, except for commands that
   // already perform their own version check (doctor, update).
   program.hook("postAction", async (_thisCommand, actionCommand) => {
+    // The command's own work is done and its output is printed. Everything from
+    // here on — the update check below, then the telemetry flush — is
+    // bookkeeping, so Ctrl-C during it must not report an interrupted operation.
+    markCommandComplete();
     const cmdName = actionCommand.name();
     if (cmdName === "doctor" || cmdName === "update") return;
     await maybeNotifyUpdate(CURRENT_VERSION);
@@ -290,7 +294,11 @@ export function reportError(error: unknown, verbose: boolean): number {
       outputJsonError(error.code, error.message, error.docsUrl, undefined, error.examples);
     } else {
       if (error.message) {
-        log.error(error.message);
+        // A CliError that exits 0 is guidance, not a failure — `deploy`'s
+        // "run it again to continue" pause is the case. Rendering it red and
+        // prefixed with `error:` on a successful exit contradicts itself.
+        if (error.exitCode === EXIT_CODE.SUCCESS) log.info(error.message);
+        else log.error(error.message);
       }
       if (error.examples?.length) {
         log.info(`\n${formatExamplesBlock(error.examples)}`);

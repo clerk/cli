@@ -5,8 +5,9 @@
  * waiting on the user or on a timer is a clean exit (0), because the user
  * changed their mind; anything else was an operation in progress and exits 130.
  *
- * Everything is work unless it says otherwise — only the wait seams call
- * {@link whileWaiting}, so nothing else has to be annotated.
+ * Everything is work unless it says otherwise — the wait seams call
+ * {@link whileWaiting}, and once the command's own action has finished
+ * {@link markCommandComplete} makes the bookkeeping tail count as a wait too.
  */
 
 import { EXIT_CODE } from "./errors.ts";
@@ -15,21 +16,35 @@ import { log } from "./log.ts";
 /** Telemetry budget on Ctrl-C — the user wants their shell back. */
 const INTERRUPT_FLUSH_MS = 250;
 
-const controller = new AbortController();
+/**
+ * Set by tests that need `exitInterrupted` to stay observable. Re-raising is a
+ * real `process.kill`, which a stubbed `process.exit` cannot intercept, so a
+ * test that reaches it would take the runner down. Deliberately CLI-namespaced:
+ * keying this off `NODE_ENV` would let any ambient `NODE_ENV=test` silently
+ * disable the signal-death contract for a real user.
+ */
+const NO_RERAISE_ENV = "CLERK_CLI_NO_SIGNAL_RERAISE";
+
+let controller = new AbortController();
+let waits = 0;
+let commandComplete = false;
+let interrupted: number | null = null;
 
 /**
  * Threaded into every abortable primitive (`loggedFetch`, `sleep`) and aborted
  * only by {@link CLI_SIGINT_HANDLER}, so in-flight work stops when the user
  * interrupts rather than when the process finally dies.
+ *
+ * A function, not a value: `_resetInterruptState` swaps the controller between
+ * tests, and a captured `const` would hand out a permanently-aborted signal.
  */
-export const interruptSignal: AbortSignal = controller.signal;
-
-let waits = 0;
-let interrupted: number | null = null;
+export function interruptSignal(): AbortSignal {
+  return controller.signal;
+}
 
 /**
  * Wrap a stretch of time spent waiting on the user or on a timer. Ctrl-C during
- * one of these exits 0; everything not wrapped exits 130.
+ * one of these exits 0; everything not wrapped is work, and exits 130.
  *
  * Prompts and pickers deliberately do not need this: clack holds stdin in raw
  * mode, so no SIGINT is delivered at all and cancelling one already surfaces as
@@ -44,6 +59,28 @@ export async function whileWaiting<T>(work: Promise<T>): Promise<T> {
   }
 }
 
+/**
+ * The command's own action has finished; everything after this point is the
+ * CLI's bookkeeping tail — the update check and the telemetry flush. Ctrl-C
+ * there must not report a failed operation, because the operation succeeded and
+ * its output is already on screen. Without this, interrupting that tail kills
+ * the CLI with a signal and halts any script wrapping it.
+ */
+export function markCommandComplete(): void {
+  commandComplete = true;
+}
+
+/**
+ * Cancel everything holding {@link interruptSignal}, so in-flight requests stop
+ * when the user interrupts rather than when the process finally dies.
+ *
+ * Not called by `webhooks listen`: its Ctrl-C path drains in-flight webhook
+ * forwards, and aborting them is precisely what the drain exists to avoid.
+ */
+export function abortInFlight(): void {
+  controller.abort();
+}
+
 /** The code a Ctrl-C settled on, or null if none has arrived. */
 export const interruptedExitCode = (): number | null => interrupted;
 
@@ -52,7 +89,7 @@ export const interruptedExitCode = (): number | null => interrupted;
  * handler below and by `webhooks listen`, which does its own graceful drain.
  */
 export function beginInterrupt(): number {
-  interrupted ??= waits > 0 ? EXIT_CODE.SUCCESS : EXIT_CODE.SIGINT;
+  interrupted ??= waits > 0 || commandComplete ? EXIT_CODE.SUCCESS : EXIT_CODE.SIGINT;
   return interrupted;
 }
 
@@ -63,8 +100,7 @@ export function beginInterrupt(): number {
  * `WIFEXITED` instead and the script keeps going.
  *
  * Only re-raises once {@link beginInterrupt} has run — you may only claim to
- * die from a signal you actually received, and `process.kill` is real even
- * under a test harness that stubs `process.exit`.
+ * die from a signal you actually received.
  *
  * Windows' default SIGINT action exits 3 rather than following the 128+N
  * convention, and clerk.exe is a release target, so it plain-exits there.
@@ -77,7 +113,7 @@ export function exitInterrupted(code: number): never {
     code !== EXIT_CODE.SIGINT ||
     interrupted === null ||
     process.platform === "win32" ||
-    process.env.NODE_ENV === "test"
+    process.env[NO_RERAISE_ENV]
   ) {
     return process.exit(code);
   }
@@ -99,9 +135,11 @@ export function exitInterrupted(code: number): never {
 export const CLI_SIGINT_HANDLER = async (): Promise<void> => {
   if (interrupted !== null) exitInterrupted(interrupted);
   const code = beginInterrupt();
-  controller.abort();
+  abortInFlight();
   if (process.stdin.isTTY) process.stdin.setRawMode(false);
-  log.ui("\x1b[?25h"); // clack's block() hid the cursor and its cleanup will not run
+  // clack's block() hid the cursor and its cleanup will not run. Only worth
+  // emitting to a terminal; in a pipe or CI log it is just noise.
+  if (process.stderr.isTTY) log.ui("\x1b[?25h");
   // Imported lazily so this module stays a leaf. `loggedFetch` needs
   // `interruptSignal`, so a static import here would be a cycle, and it would
   // drag telemetry's whole dependency tree into everything that handles signals.
@@ -110,8 +148,10 @@ export const CLI_SIGINT_HANDLER = async (): Promise<void> => {
   exitInterrupted(code);
 };
 
-/** Test-only: clear the latched interrupt between cases. */
+/** Test-only: clear every latch, including the controller the signal comes from. */
 export function _resetInterruptState(): void {
+  controller = new AbortController();
   waits = 0;
+  commandComplete = false;
   interrupted = null;
 }
