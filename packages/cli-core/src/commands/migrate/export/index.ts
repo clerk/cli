@@ -111,7 +111,7 @@ export function registerMigrateExport(migrateCommand: Command<[], Record<string,
     .setExamples([
       {
         command: "clerk migrate export clerk",
-        description: "Export to ./exports/clerk-export-<timestamp>.json",
+        description: "Prompts for the source instance and where to save the file",
       },
       {
         command: "clerk migrate export clerk --instance prod --output prod-users.json",

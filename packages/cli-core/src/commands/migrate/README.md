@@ -174,7 +174,28 @@ unattended rather than stalling on a prompt with everything held in memory.
 | `--client-secret <secret>` | `auth0`                            | Machine-to-machine application client secret |
 
 `export clerk` also takes the targeting flags — it reads from a Clerk instance,
-so it resolves a key exactly the way `clerk migrate` does.
+so it resolves a key the same way `clerk migrate import` does, with one extra
+step. The linked project is usually the migration's _destination_, so taking it
+as the source without asking is how a run exports an instance and imports it
+back into itself. Instead:
+
+- `--secret-key <sk_…>` names the source instance outright and runs unquestioned.
+- Anything resolved on your behalf — the linked project, a keyless app — is
+  never taken silently. A picker of every **instance** on your account opens
+  instead — one flat row each, `my-app - Production instance (ins_…)`, not an
+  application picker followed by an instance picker — with the resolved
+  application's instances listed **first** so taking one is still a single
+  Enter. Only when there are no instances to offer does it stop and list
+  `--secret-key`, `--app`/`--instance` and `clerk link` instead.
+- With nothing to resolve at all (no link, no key, no flags), that same picker
+  opens directly, rather than an error about an unlinked directory.
+
+The picker has no "create a new application" choice, unlike `clerk link`'s — a
+new application has no users to export. Rows are searchable by what they show,
+so typing an application name, `production`, or an instance id all narrow it.
+
+In agent mode the resolved instance is used without a prompt; pass
+`--secret-key` or `--app`/`--instance` to be explicit.
 
 After each export you get a field-coverage table — which Clerk-relevant fields
 were present on how many users — so you know the data is thin _before_ you

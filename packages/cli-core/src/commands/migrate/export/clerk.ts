@@ -15,11 +15,11 @@
  */
 
 import { bapiRequest } from "../../../lib/bapi.ts";
-import { describeBapiTarget, resolveBapiSecretKey } from "../../../lib/bapi-command.ts";
 import { log } from "../../../lib/log.ts";
 import { withGutter, withSpinner, type SpinnerControls } from "../../../lib/spinner.ts";
 import { exportLogger, getDateTimeStamp } from "../lib/logger.ts";
 import { retryOn429 } from "../lib/retry.ts";
+import { resolveClerkSource } from "./clerk-source.ts";
 import { reportExport, resolveOutputPath, writeExportOutput } from "./shared.ts";
 
 /** BAPI's maximum page size for `GET /v1/users`. */
@@ -223,17 +223,24 @@ export function buildClerkExport(users: BapiUser[], dateTime: string): ClerkExpo
 }
 
 export async function exportClerk(options: ExportClerkOptions): Promise<void> {
+  // Resolved before the gutter opens, the way `export auth0` resolves its
+  // credentials: confirming the source is a question about whether to run at
+  // all, not a step of the run.
+  const source = await resolveClerkSource({
+    secretKey: options.secretKey,
+    app: options.app,
+    instance: options.instance,
+  });
+
   const destination = await resolveOutputPath("clerk", options.output);
 
   await withGutter("Exporting users from Clerk", async ({ setNextSteps }) => {
-    const target = await describeBapiTarget({ ...options, secretKey: options.secretKey });
-    const secretKey = await resolveBapiSecretKey({ ...options, secretKey: options.secretKey });
     const dateTime = getDateTimeStamp();
 
-    log.info(`Exporting from ${target ?? "the resolved instance"}.`);
+    log.info(`Exporting from ${source.target ?? "the resolved instance"}.`);
 
     const users = await withSpinner("Fetching users from Clerk...", (spinner) =>
-      fetchAllClerkUsers({ secretKey, spinner }),
+      fetchAllClerkUsers({ secretKey: source.secretKey, spinner }),
     );
 
     const { users: exported, coverage } = buildClerkExport(users, dateTime);
