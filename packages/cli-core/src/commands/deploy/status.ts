@@ -40,6 +40,12 @@ export interface DeployProgressHandlers {
     work: (controls: SpinnerControls) => Promise<T>,
   ): Promise<T>;
   onVerified?(): void;
+  /**
+   * Fires every time a poll resolves a fresh status. Ctrl-C rejects out of the
+   * next poll or its countdown, discarding the loop's local status, so a caller
+   * that wants to report partial progress on interrupt has to capture it here.
+   */
+  onStatus?(status: DeployComponentStatus): void;
 }
 
 export type DeployStatusOutcome = { verified: boolean; status: DeployComponentStatus };
@@ -460,6 +466,7 @@ export async function waitForDeployStatus(
   }
   let response = await mapDeployError(getApplicationDomainStatus(appId, domainIdOrName));
   let status = deployComponentStatusFromDomainStatus(response);
+  handlers.onStatus?.(status);
 
   const labels = deployComponentLabels("dns", domain);
   const verified = await handlers.runVerification(labels.progress, async (spinner) => {
@@ -479,6 +486,7 @@ export async function waitForDeployStatus(
       nextRetryDelay *= DEPLOY_STATUS_BACKOFF_FACTOR;
       response = await mapDeployError(getApplicationDomainStatus(appId, domainIdOrName));
       status = deployComponentStatusFromDomainStatus(response);
+      handlers.onStatus?.(status);
       if (response.status === "complete") return true;
     }
     return false;

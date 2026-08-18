@@ -1,15 +1,9 @@
 import { isHuman } from "../../mode.ts";
-import {
-  CliError,
-  UserAbortError,
-  isPromptExitError,
-  throwUsageError,
-  throwUserAbort,
-  ERROR_CODE,
-} from "../../lib/errors.ts";
+import { CliError, throwUsageError, throwUserAbort, ERROR_CODE } from "../../lib/errors.ts";
 import { confirm } from "../../lib/prompts.ts";
 import { dim, bold, red, green } from "../../lib/color.ts";
 import { withSpinner, intro, outro, pausedOutro } from "../../lib/spinner.ts";
+import { closeStatusForError } from "../../lib/signals.ts";
 import { isInsideGutter, log } from "../../lib/log.ts";
 import { keylessCopy } from "../../lib/copy.ts";
 import { NEXT_STEPS, printNextSteps } from "../../lib/next-steps.ts";
@@ -136,7 +130,7 @@ async function configPush(options: ConfigPushOptions, op: Operation): Promise<vo
     }
     closeStatus = "success";
   } catch (error) {
-    closeStatus = error instanceof UserAbortError || isPromptExitError(error) ? "paused" : "failed";
+    closeStatus = closeStatusForError(error);
     throw error;
   } finally {
     if (shouldWrap) {

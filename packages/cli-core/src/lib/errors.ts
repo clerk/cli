@@ -304,14 +304,6 @@ function parseApiBody(status: number, body: string): ParsedApiBody {
   };
 }
 
-export function isPromptExitError(error: unknown): boolean {
-  return (
-    error instanceof Error &&
-    error.name === "ExitPromptError" &&
-    error.message.includes("User force closed the prompt")
-  );
-}
-
 /**
  * Base class for HTTP API errors.
  *

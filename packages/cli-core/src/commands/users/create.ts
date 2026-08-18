@@ -1,10 +1,5 @@
 import { handleBapiError, resolveBapiSecretKey } from "../../lib/bapi-command.ts";
-import {
-  UserAbortError,
-  isPromptExitError,
-  throwUsageError,
-  throwUserAbort,
-} from "../../lib/errors.ts";
+import { UserAbortError, throwUsageError, throwUserAbort } from "../../lib/errors.ts";
 import { isInsideGutter, log } from "../../lib/log.ts";
 import {
   buildCreateUserPayload,
@@ -105,7 +100,7 @@ export async function create(options: CreateUserOptions): Promise<void> {
       if (shouldWrap) outro("Failed");
       return;
     }
-    if (shouldWrap && (error instanceof UserAbortError || isPromptExitError(error))) {
+    if (shouldWrap && error instanceof UserAbortError) {
       pausedOutro();
     } else if (shouldWrap) {
       outro("Failed");

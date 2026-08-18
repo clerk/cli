@@ -9,6 +9,7 @@
  */
 
 import { log } from "./log.ts";
+import { interruptSignal } from "./signals.ts";
 import { withNetworkAccess } from "./host-execution.ts";
 import { buildUserAgent } from "./user-agent.ts";
 import { optOutEnvVar } from "./env-signals.ts";
@@ -38,7 +39,16 @@ function resolveUserAgent(): Promise<string> {
   return userAgentPromise;
 }
 
-export type LoggedFetchInit = RequestInit & { tag: string; bestEffort?: boolean };
+export type LoggedFetchInit = RequestInit & {
+  tag: string;
+  bestEffort?: boolean;
+  /**
+   * Survives Ctrl-C. Only for the shutdown telemetry flush, which runs *after*
+   * the interrupt has aborted everything and exists to report that very
+   * interrupt — without this it would cancel itself before it could send.
+   */
+  ignoreInterrupt?: boolean;
+};
 
 /**
  * Normalized response shape returned by the higher-level API request wrappers
@@ -52,16 +62,26 @@ export interface ApiResponse {
   rawBody: string;
 }
 
+/** Ctrl-C aborts the request, without discarding a caller's own timeout signal. */
+function interruptSignalFor(
+  own: RequestInit["signal"],
+  ignoreInterrupt: boolean | undefined,
+): RequestInit["signal"] {
+  if (ignoreInterrupt) return own;
+  return own ? AbortSignal.any([own, interruptSignal()]) : interruptSignal();
+}
+
 export async function loggedFetch(url: URL | string, options: LoggedFetchInit): Promise<Response> {
-  const { tag, bestEffort, ...init } = options;
+  const { tag, bestEffort, ignoreInterrupt, ...init } = options;
   const method = init.method ?? "GET";
   const urlStr = url.toString();
   const headers = new Headers(init.headers);
   if (!headers.has("user-agent")) headers.set("User-Agent", await resolveUserAgent());
   log.debug(`${tag}: ${method} ${urlStr}`);
+  const signal = interruptSignalFor(init.signal, ignoreInterrupt);
   const response = await withNetworkAccess(
     { operation: "connect", target: urlStr, label: tag, bestEffort },
-    async () => fetch(url, { ...init, headers }),
+    async () => fetch(url, { ...init, headers, signal }),
   );
   if (!response.ok) {
     // Clone so the caller can still consume the body for error construction.

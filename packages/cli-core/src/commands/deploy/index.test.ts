@@ -77,10 +77,9 @@ function stripAnsi(value: string): string {
   return value.replace(new RegExp(`${String.fromCharCode(27)}\\[[0-9;]*m`, "g"), "");
 }
 
+/** What the clack prompt wrappers throw when the user presses Ctrl-C. */
 function promptExitError(): Error {
-  const error = new Error("User force closed the prompt with SIGINT");
-  error.name = "ExitPromptError";
-  return error;
+  return new UserAbortError();
 }
 
 function domainStatus({

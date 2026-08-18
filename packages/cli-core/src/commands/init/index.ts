@@ -26,6 +26,7 @@ import {
   type KeylessTemplate,
 } from "../../lib/keyless.js";
 import { readSdkKeylessApp } from "../../lib/keyless-target.ts";
+import { interruptedExitCode } from "../../lib/signals.ts";
 import { printNextSteps } from "../../lib/next-steps.js";
 import { gatherContext, hasPackageJson } from "./context.js";
 import { scaffold, enrichProjectContext } from "./scaffold.js";
@@ -527,6 +528,11 @@ async function setupKeylessApp(
     printKeylessInfo(envFile);
   } catch (error) {
     log.debug(`Could not create accountless app: ${errorMessage(error)}`);
+    // Ctrl-C aborts the in-flight request, so an interrupt arrives here as an
+    // `AbortError` indistinguishable from the 15s timeout. Swallowing it would
+    // blame the network and carry on with the rest of init; rethrow so the
+    // interrupt keeps its exit code and stops the run.
+    if (interruptedExitCode() !== null) throw error;
     const isTimeout = error instanceof Error && error.name === "AbortError";
     const prefix = isTimeout
       ? "Could not reach api.clerk.com within 15s."

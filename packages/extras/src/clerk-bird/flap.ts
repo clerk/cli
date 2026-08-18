@@ -1203,6 +1203,16 @@ export async function startFlap2(): Promise<void> {
   return new Promise<void>((resolve, reject) => {
     let interval: ReturnType<typeof setInterval> | null = null;
 
+    // The CLI's own SIGINT handler exits the process immediately, which would
+    // strand the terminal in the alt screen with raw mode still on. Suspend
+    // every outer listener for the duration of the game and restore them in
+    // teardown, so quitting always runs the cleanup below first.
+    // `rawListeners`, not `listeners`: the latter unwraps `once` registrations,
+    // so restoring them with `process.on` below would silently promote a
+    // one-shot listener into a permanent one.
+    const outerSigintListeners = process.rawListeners("SIGINT") as ((...args: unknown[]) => void)[];
+    for (const listener of outerSigintListeners) process.removeListener("SIGINT", listener);
+
     const teardown = () => {
       if (interval) clearInterval(interval);
       interval = null;
@@ -1213,6 +1223,7 @@ export async function startFlap2(): Promise<void> {
       process.removeListener("SIGINT", onSignal);
       process.removeListener("SIGTERM", onSignal);
       process.removeListener("uncaughtException", onException);
+      for (const listener of outerSigintListeners) process.on("SIGINT", listener);
     };
 
     const stop = () => {

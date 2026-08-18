@@ -3,7 +3,7 @@ import { intro as clackIntro, outro as clackOutro, spinner as clackSpinner } fro
 import { isHuman } from "../mode.ts";
 import { dim, cyan } from "./color.ts";
 import { animateHeader } from "./gradient.ts";
-import { UserAbortError, isPromptExitError } from "./errors.ts";
+import { isCancelled } from "./signals.ts";
 import { log, pushPrefix, popPrefix } from "./log.ts";
 import { getUiOutput } from "./ui.ts";
 
@@ -119,7 +119,7 @@ export async function withGutter<T>(
     await outro(nextSteps);
     return result;
   } catch (error) {
-    if (error instanceof UserAbortError || isPromptExitError(error)) {
+    if (isCancelled(error)) {
       pausedOutro();
     } else {
       await outro("Failed");
@@ -142,7 +142,11 @@ export async function withSpinner<T>(
     s.stop(doneMessage ?? message.replace(/\.{3}$/, ""));
     return result;
   } catch (error) {
-    s.error("Failed");
+    // An interrupt aborts whatever the spinner was waiting on, so the rejection
+    // arrives here first. Rendering "Failed" for a cancel the user asked for is
+    // wrong, and it prints before the SIGINT handler finishes exiting.
+    if (isCancelled(error)) s.stop(message.replace(/\.{3}$/, ""));
+    else s.error("Failed");
     throw error;
   }
 }
