@@ -189,6 +189,14 @@ describe("proxy-served domains", () => {
     expect(stripAnsi(deployComponentStatus(allVerified))).toBe("DNS: ✓  SSL: ✓  Email DNS: ✓");
   });
 
+  // The proxy is the one meaningful check for a provider domain, so the user
+  // must see it turn green rather than watch the segment silently disappear.
+  test("keeps the proxy check visible after it passes on a proxied domain", () => {
+    expect(stripAnsi(deployComponentStatus(allVerified, { proxied: true }))).toBe(
+      "DNS: ✓  SSL: ✓  Email DNS: ✓  Proxy: ✓",
+    );
+  });
+
   // Every CNAME-based check reports complete for a proxied domain (the CNAMEs
   // become optional and SSL/email stop being required), so without this the
   // CLI would call an unserved instance fully verified.

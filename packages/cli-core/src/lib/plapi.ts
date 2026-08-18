@@ -253,9 +253,11 @@ export async function createProductionInstance(
   return response.json() as Promise<ProductionInstanceResponse>;
 }
 
+// No `proxy_path` here on purpose: sending one changes the API's validation
+// behavior (a blank value actively clears the proxy), and every CLI caller
+// relies on the server-side derivation instead.
 export type UpdateApplicationDomainParams = {
   name?: string;
-  proxy_path?: string;
 };
 
 /**

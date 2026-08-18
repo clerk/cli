@@ -10,13 +10,8 @@ function plapiError(status: number, code: string, message = "long message"): Pla
   );
 }
 
-async function mapped(error: PlapiError): Promise<CliError | PlapiError> {
-  try {
-    await mapDeployError(Promise.reject(error));
-  } catch (caught) {
-    return caught as CliError | PlapiError;
-  }
-  throw new Error("expected mapDeployError to reject");
+function mapped(status: number, code: string): Promise<never> {
+  return mapDeployError(Promise.reject(plapiError(status, code)));
 }
 
 describe("mapDeployError", () => {
@@ -25,40 +20,44 @@ describe("mapDeployError", () => {
   // ProviderDomainOperationNotAllowedForAPI is 403 under the code
   // `provider_domain_operation_not_allowed` (no `_for_api` suffix).
   test("translates a known hosting domain rejection", async () => {
-    const error = await mapped(plapiError(422, "known_hosting_domain"));
+    const rejection = mapped(422, "known_hosting_domain");
 
-    expect(error).toBeInstanceOf(CliError);
-    expect((error as CliError).code).toBe(ERROR_CODE.PROVIDER_DOMAIN_NOT_ALLOWED);
+    await expect(rejection).rejects.toBeInstanceOf(CliError);
+    await expect(rejection).rejects.toMatchObject({
+      code: ERROR_CODE.PROVIDER_DOMAIN_NOT_ALLOWED,
+    });
   });
 
   test("translates a provider domain rejection at its real 403 status", async () => {
-    const error = await mapped(plapiError(403, "provider_domain_operation_not_allowed"));
+    const rejection = mapped(403, "provider_domain_operation_not_allowed");
 
-    expect(error).toBeInstanceOf(CliError);
-    expect((error as CliError).code).toBe(ERROR_CODE.PROVIDER_DOMAIN_NOT_ALLOWED);
+    await expect(rejection).rejects.toBeInstanceOf(CliError);
+    await expect(rejection).rejects.toMatchObject({
+      code: ERROR_CODE.PROVIDER_DOMAIN_NOT_ALLOWED,
+    });
   });
 
   test("translates a taken home URL at its real 422 status", async () => {
-    const error = await mapped(plapiError(422, "home_url_taken"));
+    const rejection = mapped(422, "home_url_taken");
 
-    expect(error).toBeInstanceOf(CliError);
-    expect((error as CliError).code).toBe(ERROR_CODE.HOME_URL_TAKEN);
-    expect(error.message).toContain("already using that home URL");
+    await expect(rejection).rejects.toBeInstanceOf(CliError);
+    await expect(rejection).rejects.toMatchObject({ code: ERROR_CODE.HOME_URL_TAKEN });
+    await expect(rejection).rejects.toThrow("already using that home URL");
   });
 
   // The domain is fine here; the proxy derivation failed. Sharing a code with
   // an outright rejection would send the user off to pick a new domain.
   test("distinguishes a missing proxy from a rejected domain", async () => {
-    const error = await mapped(plapiError(422, "proxy_url_required_for_provider_domain"));
+    const rejection = mapped(422, "proxy_url_required_for_provider_domain");
 
-    expect(error).toBeInstanceOf(CliError);
-    expect((error as CliError).code).toBe(ERROR_CODE.PROXY_URL_REQUIRED);
-    expect(error.message).toContain("proxy");
+    await expect(rejection).rejects.toBeInstanceOf(CliError);
+    await expect(rejection).rejects.toMatchObject({ code: ERROR_CODE.PROXY_URL_REQUIRED });
+    await expect(rejection).rejects.toThrow("proxy");
   });
 
   test("passes unrelated errors through untouched", async () => {
     const original = plapiError(500, "internal_error");
 
-    expect(await mapped(original)).toBe(original);
+    await expect(mapDeployError(Promise.reject(original))).rejects.toBe(original);
   });
 });

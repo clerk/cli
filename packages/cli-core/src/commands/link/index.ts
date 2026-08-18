@@ -54,6 +54,12 @@ export async function link(options: LinkOptions = {}): Promise<void> {
   const existing = await resolveProfile(cwd);
 
   if (options.refresh) {
+    // A silent no-op on --app would refresh whatever app happens to be linked.
+    if (options.app) {
+      throwUsageError(
+        "--refresh cannot be combined with --app. Use `clerk link --app <id>` to change the linked application, or `clerk link --refresh` to refresh the current one.",
+      );
+    }
     await refreshExistingLink(existing);
     return;
   }
@@ -148,12 +154,17 @@ async function refreshExistingLink(
   const app = await withSpinner(`Fetching ${profileLabel(existing.profile)}...`, () =>
     fetchLinkedApplication(existing.profile),
   );
-  const { profile, updated } = await refreshProfileInstances(existing.path, existing.profile, app);
+  const { profile, updated, renamed } = await refreshProfileInstances(
+    existing.path,
+    existing.profile,
+    app,
+  );
 
-  if (updated.length === 0) {
+  if (updated.length === 0 && !renamed) {
     log.info(`Already up to date — ${describeInstances(profile)}`);
   } else {
-    log.success(`Link refreshed — ${describeInstances(profile)}`);
+    const renameNote = renamed ? `app name updated to \`${profile.appName}\`, ` : "";
+    log.success(`Link refreshed — ${renameNote}${describeInstances(profile)}`);
   }
 
   await outro();

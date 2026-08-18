@@ -14,7 +14,7 @@
  * and a nested `intro()` would double the gutter.
  */
 
-import { INSTANCE_ALIASES, resolveInstanceId, setProfile, type Profile } from "./config.ts";
+import { instanceAliasEnv, resolveInstanceId, setProfile, type Profile } from "./config.ts";
 import { CliError, ERROR_CODE, withApiContext } from "./errors.ts";
 import { log } from "./log.ts";
 import { isAgent } from "../mode.ts";
@@ -27,6 +27,8 @@ export interface RefreshResult {
   profile: Profile;
   /** Environments whose recorded instance ID the refresh added, changed, or dropped. */
   updated: InstanceEnv[];
+  /** Whether the stored app name was rewritten to match the API. */
+  renamed: boolean;
 }
 
 const DOCS_URL = "https://clerk.com/docs/guides/development/managing-environments";
@@ -67,12 +69,13 @@ export async function refreshProfileInstances(
 
   // The returned profile carries the fetched app name, so persist on a rename
   // too — otherwise callers report a name that never reached disk.
-  if (updated.length > 0 || refreshed.appName !== profile.appName) {
+  const renamed = refreshed.appName !== profile.appName;
+  if (updated.length > 0 || renamed) {
     await setProfile(profileKey, refreshed);
     log.debug(`config: refreshed instances for ${profile.appId} (${updated.join(", ") || "name"})`);
   }
 
-  return { profile: refreshed, updated };
+  return { profile: refreshed, updated, renamed };
 }
 
 function missingUpstream(env: InstanceEnv, appId: string): CliError {
@@ -105,7 +108,7 @@ export async function recoverMissingInstance(
   profile: Profile,
   flag: string | undefined,
 ): Promise<{ id: string; label: string }> {
-  const env = flag ? INSTANCE_ALIASES[flag] : undefined;
+  const env = flag ? instanceAliasEnv(flag) : undefined;
   const recoverable =
     env && error instanceof CliError && error.code === ERROR_CODE.INSTANCE_NOT_FOUND;
   if (!env || !recoverable) throw error;

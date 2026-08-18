@@ -567,6 +567,76 @@ export const config = {
   expect(mw.description).toContain("replacing");
 });
 
+// The config strip is regex surgery: shapes it can't cut cleanly (a call
+// expression spanning lines, a literal followed by `satisfies`) must degrade
+// to a skip rather than a silent write of a middleware file that no longer
+// parses.
+test("skips when the config export's value is a call expression", async () => {
+  await Bun.write(
+    join(tempDir, "middleware.ts"),
+    `async function middleware(req) { return; }
+
+export const config = buildConfig({
+  matcher: ["/foo"],
+});
+
+export default middleware;
+`,
+  );
+  await mkdir(join(tempDir, "app"), { recursive: true });
+  await Bun.write(join(tempDir, "app/layout.tsx"), "<html><body>{children}</body></html>");
+
+  const plan = await nextjsApp.scaffold(makeCtx());
+  const mw = findAction(plan.actions, "middleware.ts");
+
+  expect(mw.type).toBe("skip");
+});
+
+test("skips when the config export uses a satisfies clause", async () => {
+  await Bun.write(
+    join(tempDir, "middleware.ts"),
+    `export default async function middleware(req) {}
+
+export const config = { matcher: ["/x"] } satisfies MiddlewareConfig;
+`,
+  );
+  await mkdir(join(tempDir, "app"), { recursive: true });
+  await Bun.write(join(tempDir, "app/layout.tsx"), "<html><body>{children}</body></html>");
+
+  const plan = await nextjsApp.scaffold(makeCtx());
+  const mw = findAction(plan.actions, "middleware.ts");
+
+  expect(mw.type).toBe("skip");
+});
+
+test("strips a config export containing a closing brace inside a comment", async () => {
+  await Bun.write(
+    join(tempDir, "middleware.ts"),
+    `import { NextResponse } from "next/server";
+
+export default function middleware() {
+  return NextResponse.next();
+}
+
+export const config = {
+  // closing } brace in comment
+  matcher: ["/x"],
+};
+`,
+  );
+  await mkdir(join(tempDir, "app"), { recursive: true });
+  await Bun.write(join(tempDir, "app/layout.tsx"), "<html><body>{children}</body></html>");
+
+  const plan = await nextjsApp.scaffold(makeCtx());
+  const mw = findAction(plan.actions, "middleware.ts");
+
+  if (mw.type !== "modify") throw new Error("Expected modify action");
+  expect(mw.content).toContain(CLERK_PROXY_MATCHER);
+  expect(mw.content).not.toContain("brace in comment");
+  // The composed file must parse — the strip must not orphan config remnants
+  new Bun.Transpiler({ loader: "tsx" }).transformSync(mw.content);
+});
+
 test("preserves user logic when the config export precedes the default export", async () => {
   await Bun.write(
     join(tempDir, "middleware.ts"),

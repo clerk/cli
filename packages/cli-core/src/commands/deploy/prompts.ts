@@ -29,6 +29,21 @@ const KNOWN_HOSTING_DOMAIN_SUFFIXES = [
   ".railway.app",
 ];
 
+/**
+ * Domains the API accepts but that can never verify: they are not provider
+ * domains (`constants` lists only vercel.app and replit.app, so no proxy is
+ * derived), and the user cannot create the `clerk.<domain>` CNAME records
+ * because the suffix belongs to the hosting provider. `pages.dev` sits on the
+ * PSL's private section, so `validators.DomainName` passes it too — this
+ * prompt is the only surface that can catch these before an instance exists.
+ */
+const UNVERIFIABLE_HOSTING_DOMAIN_SUFFIXES = [
+  ".pages.dev",
+  ".workers.dev",
+  ".clerk.app",
+  ".github.io",
+];
+
 const VERCEL_APP_SUFFIX = ".vercel.app";
 
 export async function confirmProceed(): Promise<boolean> {
@@ -55,6 +70,9 @@ export function validateDomain(value: string | undefined): true | string {
   const lowercased = domain.toLowerCase();
   if (KNOWN_HOSTING_DOMAIN_SUFFIXES.some((suffix) => lowercased.endsWith(suffix))) {
     return `${domain} is a shared hosting domain, which Clerk refuses for production instances. Use a domain you own. See https://clerk.com/docs/guides/development/deployment/production`;
+  }
+  if (UNVERIFIABLE_HOSTING_DOMAIN_SUFFIXES.some((suffix) => lowercased.endsWith(suffix))) {
+    return `${domain} can never verify: Clerk needs CNAME records under it, and its DNS belongs to the hosting provider. Use a domain you own. See https://clerk.com/docs/guides/development/deployment/production`;
   }
   const vercelAppHost = readVercelAppHost(lowercased);
   if (vercelAppHost && vercelAppHost.includes(".")) {

@@ -102,17 +102,20 @@ instance afterwards. A rejected domain would therefore leave the user with an
 instance that can never verify and that the CLI cannot undo. So the prompt
 pre-empts exactly the set the rest of Clerk refuses:
 
-| Domain                                                                                          | Prompt   | Why                                                                                                                                                               |
-| ----------------------------------------------------------------------------------------------- | -------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `*.vercel.app`, `*.replit.app`                                                                  | accepted | Provider domains are supported production domains, served through a proxy instead of CNAMEs.                                                                      |
-| `preview.my-app.vercel.app`                                                                     | rejected | Only the project domain itself is valid; the dashboard applies the same rule client-side, and DAPI rejects nested hosts with "must be a valid Vercel app domain". |
-| `*.web.app`, `*.onrender.com`, `*.netlify.app`, `*.herokuapp.com`, `*.fly.dev`, `*.railway.app` | rejected | Mirrors `hostingDomainNames` in clerk_go; every other surface refuses these with `known_hosting_domain`.                                                          |
-| anything else                                                                                   | accepted | Reserved names, taken domains, and PSL problems come back from the API as typed errors.                                                                           |
+| Domain                                                                                          | Prompt   | Why                                                                                                                                                                                                                                                                                    |
+| ----------------------------------------------------------------------------------------------- | -------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `*.vercel.app`, `*.replit.app`                                                                  | accepted | Provider domains are supported production domains, served through a proxy instead of CNAMEs.                                                                                                                                                                                           |
+| `preview.my-app.vercel.app`                                                                     | rejected | Only the project domain itself is valid; the dashboard applies the same rule client-side, and DAPI rejects nested hosts with "must be a valid Vercel app domain".                                                                                                                      |
+| `*.web.app`, `*.onrender.com`, `*.netlify.app`, `*.herokuapp.com`, `*.fly.dev`, `*.railway.app` | rejected | Mirrors `hostingDomainNames` in clerk_go; every other surface refuses these with `known_hosting_domain`.                                                                                                                                                                               |
+| `*.pages.dev`, `*.workers.dev`, `*.clerk.app`, `*.github.io`                                    | rejected | The API accepts these, but the instance can never verify: they aren't provider domains (no proxy is derived) and the user can't create CNAME records under a suffix the hosting provider owns. `pages.dev` is on the PSL's private section, so even `validators.DomainName` passes it. |
+| anything else                                                                                   | accepted | Reserved names, taken domains, and PSL problems come back from the API as typed errors.                                                                                                                                                                                                |
 
-**Delete the hosting-domain list once `CreateInstance` validates.** It exists
-only because that endpoint currently does not. Everything else — including
-which providers count as provider domains — is read from the API's own
-`is_provider_domain` flag rather than tracked locally.
+**Delete the `known_hosting_domain` mirror once `CreateInstance` validates.**
+That first rejected tier exists only because the endpoint currently does not
+validate. The unverifiable tier outlives it: those domains pass API validation
+and still produce an instance that can never verify. Everything else —
+including which providers count as provider domains — is read from the API's
+own `is_provider_domain` flag rather than tracked locally.
 
 ## Sequence Diagram
 

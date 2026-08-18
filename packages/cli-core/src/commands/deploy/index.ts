@@ -476,12 +476,12 @@ async function runDnsVerification(
 
     if (outcome.verified) {
       log.blank();
-      log.info(deployComponentStatus(outcome.status));
+      log.info(deployComponentStatus(outcome.status, { proxied: state.isProviderDomain }));
       return "verified";
     }
 
     log.blank();
-    log.info(deployComponentStatus(outcome.status));
+    log.info(deployComponentStatus(outcome.status, { proxied: state.isProviderDomain }));
     log.blank();
     for (const line of deployStatusPendingFooter(state.domain, outcome.status)) {
       log.warn(line);

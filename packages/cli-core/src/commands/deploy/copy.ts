@@ -202,13 +202,19 @@ export function proxyDomainHandoff(domain: string, proxyUrl: string): string[] {
  * instance is created: DNS propagation, SSL issuance via Let's Encrypt, and
  * email DNS records. Each value comes from the same domain status response.
  */
-export function deployComponentStatus(status: DeployComponentStatus): string {
+export function deployComponentStatus(
+  status: DeployComponentStatus,
+  options: { proxied?: boolean } = {},
+): string {
   const mark = (ok: boolean) => (ok ? green("✓") : yellow("pending"));
   const line = `DNS: ${mark(status.dns)}  SSL: ${mark(status.ssl)}  Email DNS: ${mark(status.mail)}`;
   // Only proxied domains have a proxy check; elsewhere the API reports it as
-  // not required and a permanent "Proxy: ✓" would be noise.
-  const proxyPending = !status.proxy;
-  return proxyPending ? `${line}  Proxy: ${mark(status.proxy)}` : line;
+  // not required and a permanent "Proxy: ✓" would be noise. For proxied
+  // domains the segment stays visible after it passes — it's the one check
+  // standing between the user and a working Frontend API, so it must be seen
+  // turning green rather than silently disappearing.
+  const showProxy = options.proxied || !status.proxy;
+  return showProxy ? `${line}  Proxy: ${mark(status.proxy)}` : line;
 }
 
 export function deployStatusRetryMessage(

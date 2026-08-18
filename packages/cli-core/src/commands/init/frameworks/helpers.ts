@@ -339,7 +339,8 @@ function hasMiddlewareConfigExport(existing: string): boolean {
 
 /**
  * Index just past the literal opening at `start`, tracking nesting and skipping
- * quoted text so braces inside matcher strings don't end the scan early.
+ * quoted text and comments so braces inside matcher strings or comments don't
+ * end the scan early.
  */
 function endOfLiteral(source: string, start: number): number {
   let depth = 0;
@@ -351,6 +352,19 @@ function endOfLiteral(source: string, start: number): number {
     if (quote) {
       if (char === "\\") i++;
       else if (char === quote) quote = null;
+      continue;
+    }
+
+    if (char === "/" && source[i + 1] === "/") {
+      const lineEnd = source.indexOf("\n", i);
+      if (lineEnd === -1) break;
+      i = lineEnd;
+      continue;
+    }
+    if (char === "/" && source[i + 1] === "*") {
+      const blockEnd = source.indexOf("*/", i + 2);
+      if (blockEnd === -1) break;
+      i = blockEnd + 1;
       continue;
     }
 
@@ -396,6 +410,22 @@ function stripMiddlewareConfigExport(existing: string): string {
   return after ? `${before}\n\n${after}\n` : `${before}\n`;
 }
 
+/**
+ * The composers are regex surgery, not parsers, so an input shape they don't
+ * anticipate (a config export whose value is a call expression, one followed
+ * by `satisfies`, …) can produce output that no longer parses. Rejecting
+ * unparseable output downgrades every such case to the safe "unsupported
+ * shape" skip instead of silently writing a broken middleware file.
+ */
+function composedOrNull(source: string): string | null {
+  try {
+    new Bun.Transpiler({ loader: "tsx" }).transformSync(source);
+    return source;
+  } catch {
+    return null;
+  }
+}
+
 export function composeWithExistingMiddleware(existing: string): string | null {
   const clerkImport = `import { clerkMiddleware } from "@clerk/nextjs/server";\n`;
   const preamble = clerkImport + "\n";
@@ -406,16 +436,18 @@ export function composeWithExistingMiddleware(existing: string): string | null {
   if (reExportsDefault(stripped)) return null;
 
   if (!/export\s+default\s+/.test(stripped)) {
-    return `${preamble}${stripped}\n${nextjsMiddlewareHandler()}\n\n${nextjsMiddlewareConfig()}\n`;
+    return composedOrNull(
+      `${preamble}${stripped}\n${nextjsMiddlewareHandler()}\n\n${nextjsMiddlewareConfig()}\n`,
+    );
   }
 
   const content = renameDefaultMiddlewareExport(stripped);
   if (!content) return null;
 
-  return (
+  return composedOrNull(
     preamble +
-    content +
-    `\n${nextjsMiddlewareHandler("middleware(request)")}\n\n${nextjsMiddlewareConfig()}\n`
+      content +
+      `\n${nextjsMiddlewareHandler("middleware(request)")}\n\n${nextjsMiddlewareConfig()}\n`,
   );
 }
 
@@ -452,10 +484,10 @@ export function composeWithI18nMiddleware(existing: string): string | null {
   // Verify the rename succeeded — if export default is still present, bail
   if (/export\s+default\s+/.test(content)) return null;
 
-  return (
+  return composedOrNull(
     clerkImport +
-    content +
-    `\n\n${nextjsMiddlewareHandler(`${lib.varName}(request)`)}\n\n${nextjsMiddlewareConfig()}\n`
+      content +
+      `\n\n${nextjsMiddlewareHandler(`${lib.varName}(request)`)}\n\n${nextjsMiddlewareConfig()}\n`,
   );
 }
 

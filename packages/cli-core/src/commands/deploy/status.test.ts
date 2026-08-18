@@ -291,6 +291,30 @@ describe("buildDeployStatusReport", () => {
     expect(report.oauth.pending).toEqual(["github"]);
   });
 
+  // Provider domains have no pending DNS records to publish, so the report must
+  // carry the proxy URL and tell the agent that waiting alone never completes
+  // the check — the deployed app has to start serving the proxy path.
+  test("active with pending proxy reports the proxy URL and a serve-the-path next action", () => {
+    const proxied = {
+      ...activeSnapshot,
+      domain: "my-app.vercel.app",
+      proxyUrl: "https://my-app.vercel.app/__clerk",
+      isProviderDomain: true,
+      cnameTargets: [],
+    } satisfies LiveDeploySnapshot;
+    const report = buildDeployStatusReport(
+      { kind: "active", snapshot: proxied },
+      { verified: false, status: { dns: true, ssl: true, mail: true, proxy: false } },
+    );
+
+    expect(report.state).toBe("domain_pending");
+    expect(report.proxyUrl).toBe("https://my-app.vercel.app/__clerk");
+    expect(report.pendingDnsRecords).toEqual([]);
+    expect(report.nextAction).toContain("https://my-app.vercel.app/__clerk");
+    expect(report.nextAction).toContain("serve Clerk's proxy path");
+    expect(report.nextAction).not.toContain("DNS propagation");
+  });
+
   test("active with pending email DNS reports only email CNAME records", () => {
     const report = buildDeployStatusReport(
       { kind: "active", snapshot: activeSnapshot },

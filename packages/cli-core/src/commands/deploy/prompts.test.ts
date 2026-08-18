@@ -10,9 +10,6 @@ describe("validateDomain", () => {
     // through a proxy instead of CNAME records.
     ["my-app.vercel.app"],
     ["my-app.replit.app"],
-    // Neither the API nor the dashboard refuses these.
-    ["my-app.pages.dev"],
-    ["my-app.clerk.app"],
   ])("accepts %s", (domain) => {
     expect(validateDomain(domain)).toBe(true);
   });
@@ -40,6 +37,18 @@ describe("validateDomain", () => {
     ["demo.railway.app"],
   ])("rejects the shared hosting domain %s", (domain) => {
     expect(validateDomain(domain)).toContain("shared hosting domain");
+  });
+
+  // The API accepts these, but the instance could never verify: no proxy is
+  // derived (they aren't provider domains) and the user can't add CNAME
+  // records under a suffix the hosting provider owns.
+  test.each([
+    ["my-app.pages.dev"],
+    ["my-app.workers.dev"],
+    ["my-app.clerk.app"],
+    ["my-app.github.io"],
+  ])("rejects the unverifiable hosting domain %s", (domain) => {
+    expect(validateDomain(domain)).toContain("can never verify");
   });
 
   // Mirrors isValidVercelAppDomain in the dashboard: DAPI rejects nested

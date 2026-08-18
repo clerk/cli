@@ -68,6 +68,12 @@ export interface DeployStatusReport {
   domain: string | null;
   productionInstanceId: string | null;
   domainStatus: { dns: string; ssl: string; mail: string; proxy: string } | null;
+  /**
+   * For provider domains, the path the deployed app must serve for the proxy
+   * check to pass. Pending DNS records are empty for these domains, so this is
+   * the one actionable datum an agent has when the proxy check is pending.
+   */
+  proxyUrl: string | null;
   pendingDnsRecords: { type: "CNAME"; host: string; value: string }[];
   oauth: { complete: boolean; configured: string[]; pending: string[]; unsupported: string[] };
   nextAction: string;
@@ -322,6 +328,7 @@ export function buildDeployStatusReport(
       domain: null,
       productionInstanceId: null,
       domainStatus: null,
+      proxyUrl: null,
       pendingDnsRecords: [],
       oauth: { complete: false, configured: [], pending: [], unsupported: [] },
       nextAction:
@@ -340,6 +347,7 @@ export function buildDeployStatusReport(
       domain: null,
       productionInstanceId: state.productionInstanceId,
       domainStatus: null,
+      proxyUrl: null,
       pendingDnsRecords: [],
       oauth: { complete: false, configured: [], pending: [], unsupported: [] },
       nextAction:
@@ -376,6 +384,7 @@ export function buildDeployStatusReport(
       mail: domainComponentState(componentStatus.mail),
       proxy: domainComponentState(componentStatus.proxy),
     },
+    proxyUrl: snapshot.proxyUrl ?? null,
     pendingDnsRecords,
     oauth: {
       complete: oauthComplete,
@@ -387,6 +396,7 @@ export function buildDeployStatusReport(
       reportState,
       snapshot.domain,
       componentStatus,
+      snapshot.proxyUrl ?? null,
       oauthPending,
       snapshot.productionInstanceId
         ? domainsDashboardUrl(snapshot.appId, snapshot.productionInstanceId)
@@ -429,6 +439,7 @@ function deployNextAction(
   state: DeployStatusState,
   domain: string,
   componentStatus: DeployComponentStatus,
+  proxyUrl: string | null,
   oauthPending: string[],
   domainsUrl: string | null,
 ): string {
@@ -441,6 +452,19 @@ function deployNextAction(
     return (
       `Domain verified, but these OAuth providers are missing production credentials: ` +
       `${oauthPending.join(", ")}. Ask the user to finish \`clerk deploy\`, then run \`clerk deploy status\`.` +
+      domainsAction
+    );
+  }
+
+  // A pending proxy never clears by waiting: the deployed app has to start
+  // serving Clerk's proxy path. Mirror deployStatusPendingFooter instead of
+  // the generic "re-run in a few minutes" tail.
+  if (!componentStatus.proxy) {
+    const proxyPath = proxyUrl ? `: ${proxyUrl}` : "";
+    return (
+      `Waiting for ${domain} to serve Clerk's proxy path${proxyPath}. Re-running does not ` +
+      `resolve this on its own — deploy the app so it forwards that path to Clerk's Frontend API ` +
+      `(https://clerk.com/docs/guides/dashboard/dns-domains/proxy-fapi), then run \`clerk deploy status\` again.` +
       domainsAction
     );
   }
