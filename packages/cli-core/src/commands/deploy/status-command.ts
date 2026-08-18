@@ -26,18 +26,10 @@ type DeployStatusOptions = {
 const DEPLOY_STATUS_PREFLIGHT_DELAY_MS = 2000;
 
 export async function deployStatus(options: DeployStatusOptions = {}): Promise<void> {
-  const ctx = await resolveDeployContext();
-  if (!ctx.appId || !ctx.developmentInstanceId) {
-    throw new CliError(
-      "No Clerk project linked to this directory. Run `clerk link`, then rerun `clerk deploy status`.",
-      { code: ERROR_CODE.NOT_LINKED },
-    );
-  }
-
-  // Everything from the preflight on is covered by one interrupt catch.
-  // `runProgram` returns early the moment an interrupt latches, so nothing
-  // below this frame runs and an uncovered stretch prints nothing at all — the
-  // preflight was such a stretch until it moved inside.
+  // The whole command is covered by one interrupt catch, starting at the first
+  // await. `runProgram` returns early the moment an interrupt latches, so
+  // nothing below this frame runs and any stretch left outside prints nothing
+  // at all — every await here reaches the Platform API or the config file.
   //
   // Both of these are read by the catch, so they live outside the `try`:
   // `state` is what a report can be built from, and `lastPolledStatus` is what
@@ -47,6 +39,15 @@ export async function deployStatus(options: DeployStatusOptions = {}): Promise<v
   let state: DeployState | null = null;
   let lastPolledStatus: DeployComponentStatus | undefined;
   try {
+    const ctx = await resolveDeployContext();
+    // Not an interrupt, so the catch rethrows this untouched.
+    if (!ctx.appId || !ctx.developmentInstanceId) {
+      throw new CliError(
+        "No Clerk project linked to this directory. Run `clerk link`, then rerun `clerk deploy status`.",
+        { code: ERROR_CODE.NOT_LINKED },
+      );
+    }
+
     const preflightTriggered = await runPreflightDeployStatusCheck(ctx);
     state = await resolveDeployState(ctx);
     const shouldWait = options.wait === true || !isAgent();

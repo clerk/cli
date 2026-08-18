@@ -253,6 +253,18 @@ describe("deploy status", () => {
     expect(mockSleep).toHaveBeenCalledWith(2000);
   });
 
+  test("agent mode Ctrl-C while resolving the linked application emits an interrupted report", async () => {
+    // The first PLAPI read of the command, inside `resolveDeployContext`.
+    mockFetchApplication.mockImplementation(() => {
+      beginInterrupt();
+      throw abortError();
+    });
+
+    await expect(deployStatus()).rejects.toThrow();
+
+    expect(JSON.parse(captured.out).state).toBe("interrupted");
+  });
+
   test("agent mode Ctrl-C during the preflight emits an interrupted report", async () => {
     mockFetchApplication.mockResolvedValue(appWith(true));
     mockDomain();
