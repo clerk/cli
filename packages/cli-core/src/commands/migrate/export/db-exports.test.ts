@@ -25,7 +25,11 @@ import {
   PLUGIN_COLUMNS,
 } from "./betterauth.ts";
 import { buildSupabaseExport } from "./supabase.ts";
-import { looksLikeConnectionString, resolveDbUrl } from "./db-options.ts";
+import {
+  looksLikeConnectionString,
+  normalizeConnectionString,
+  resolveDbUrl,
+} from "./db-options.ts";
 
 /** A cwd with no `.env` files, so these tests exercise only the injected env. */
 const NO_ENV_FILES = fs.mkdtempSync(path.join(os.tmpdir(), "clerk-no-env-"));
@@ -104,6 +108,33 @@ describe("looksLikeConnectionString", () => {
   });
 });
 
+describe("normalizeConnectionString", () => {
+  test("encodes a password pasted in raw", () => {
+    const raw = "postgres://postgres:aB#c%92^d@db.example.supabase.co:5432/postgres";
+    const normalized = normalizeConnectionString(raw);
+
+    expect(looksLikeConnectionString(normalized)).toBe(true);
+    expect(decodeURIComponent(new URL(normalized).password)).toBe("aB#c%92^d");
+    expect(new URL(normalized).hostname).toBe("db.example.supabase.co");
+  });
+
+  test("encodes an unencoded @ in the password", () => {
+    const normalized = normalizeConnectionString("postgres://u:p@ss@host:5432/db");
+
+    expect(decodeURIComponent(new URL(normalized).password)).toBe("p@ss");
+    expect(new URL(normalized).hostname).toBe("host");
+  });
+
+  test("leaves an already-valid string alone", () => {
+    const encoded = "postgres://u:p%40ss@host:5432/db";
+    expect(normalizeConnectionString(encoded)).toBe(encoded);
+  });
+
+  test("leaves non-URL forms alone", () => {
+    expect(normalizeConnectionString("  ./db.sqlite  ")).toBe("./db.sqlite");
+  });
+});
+
 describe("resolveDbUrl", () => {
   const config = { platform: "authjs" as const, envVar: "AUTHJS_DB_URL", prompt: "url" };
 
@@ -118,6 +149,16 @@ describe("resolveDbUrl", () => {
     expect(
       await resolveDbUrl({}, config, NO_ENV_FILES, { AUTHJS_DB_URL: "mysql://u:p@h/db" }),
     ).toBe("mysql://u:p@h/db");
+  });
+
+  test("encodes a raw password passed to the flag", async () => {
+    const url = await resolveDbUrl(
+      { dbUrl: "postgres://u:p#ss@host:5432/db" },
+      config,
+      NO_ENV_FILES,
+      {},
+    );
+    expect(decodeURIComponent(new URL(url).password)).toBe("p#ss");
   });
 
   test("rejects a flag that is not a connection string, naming the encoding trap", async () => {

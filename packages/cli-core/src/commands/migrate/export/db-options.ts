@@ -27,22 +27,60 @@ type ResolveConfig = {
   hint?: string;
 };
 
+const URL_SCHEME = /^(postgresql|postgres|mysql|mysql2):\/\//i;
+
+/**
+ * True when the string parses as a URL with a host.
+ *
+ * A hostname is required: `postgres://` alone parses as a valid URL, and
+ * accepting it only defers the failure into the driver.
+ */
+function parsesAsUrl(value: string): boolean {
+  try {
+    return new URL(value).hostname.length > 0;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Percent-encodes the credentials when the raw string will not parse as a URL.
+ *
+ * Dashboards hand out `postgres://user:[YOUR-PASSWORD]@host/db` and people
+ * paste their real password in verbatim. A `#`, `@`, `/` or `^` in it makes the
+ * whole string unparseable — here and later inside `Bun.SQL` — so encode it for
+ * them rather than bouncing a paste they cannot even see (the prompt is
+ * masked). Strings that already parse are returned untouched, so a password
+ * that was correctly encoded is never double-encoded.
+ */
+export function normalizeConnectionString(value: string): string {
+  const trimmed = value.trim();
+  if (!URL_SCHEME.test(trimmed) || parsesAsUrl(trimmed)) return trimmed;
+
+  // Greedy up to the LAST `@`: everything before it is userinfo, so an
+  // unencoded `@` inside the password does not split the string early.
+  const match = /^([a-z0-9+]+:\/\/)(.*)@([^@]*)$/i.exec(trimmed);
+  if (!match) return trimmed;
+
+  const [, scheme = "", userinfo = "", rest = ""] = match;
+  const separator = userinfo.indexOf(":");
+  const user = separator === -1 ? userinfo : userinfo.slice(0, separator);
+  const secret = separator === -1 ? undefined : userinfo.slice(separator + 1);
+  const credentials =
+    secret === undefined
+      ? encodeURIComponent(user)
+      : `${encodeURIComponent(user)}:${encodeURIComponent(secret)}`;
+
+  const encoded = `${scheme}${credentials}@${rest}`;
+  return parsesAsUrl(encoded) ? encoded : trimmed;
+}
+
 /** True for something that could plausibly be a connection string. */
 export function looksLikeConnectionString(value: string): boolean {
   const trimmed = value.trim();
   if (!trimmed) return false;
 
-  if (/^(postgresql|postgres|mysql|mysql2):\/\//i.test(trimmed)) {
-    try {
-      // A hostname is required: `postgres://` alone parses as a valid URL, and
-      // accepting it only defers the failure into the driver.
-      return new URL(trimmed).hostname.length > 0;
-    } catch {
-      // A password with an unencoded `@` or `#` is the usual cause, and it is
-      // worth saying so rather than failing later inside the driver.
-      return false;
-    }
-  }
+  if (URL_SCHEME.test(trimmed)) return parsesAsUrl(trimmed);
 
   return (
     trimmed.startsWith("file:") || /\.(sqlite3?|db)$/i.test(trimmed) || trimmed.startsWith("./")
@@ -61,7 +99,7 @@ export async function resolveDbUrl(
   cwd: string = process.cwd(),
   env: Record<string, string | undefined> = process.env,
 ): Promise<string> {
-  const fromFlag = options.dbUrl?.trim();
+  const fromFlag = options.dbUrl ? normalizeConnectionString(options.dbUrl) : undefined;
   if (fromFlag) {
     if (!looksLikeConnectionString(fromFlag)) {
       throwUsageError(
@@ -73,7 +111,7 @@ export async function resolveDbUrl(
   }
 
   const located = await findMigrateEnvValue([config.envVar], cwd, env);
-  const fromEnv = located?.value.trim();
+  const fromEnv = located ? normalizeConnectionString(located.value) : undefined;
   if (fromEnv) {
     if (looksLikeConnectionString(fromEnv)) return fromEnv;
     // Falling through silently would make the prompt look unexplained.
@@ -100,12 +138,12 @@ export async function resolveDbUrl(
   const answer = await passwordPrompt({
     message: config.prompt,
     validate: (value) =>
-      looksLikeConnectionString(value ?? "")
+      looksLikeConnectionString(normalizeConnectionString(value ?? ""))
         ? undefined
         : "Expected postgres://…, mysql://… or a SQLite file path",
   });
 
-  return answer.trim();
+  return normalizeConnectionString(answer);
 }
 
 /** Describes the target for the run's opening line, credentials removed. */
