@@ -1,5 +1,5 @@
 /**
- * The interactive path behind a bare `clerk migrate`.
+ * The interactive path behind a bare `clerk migrate import`.
  *
  * Ported from the standalone migration-tool's `src/migrate/cli.ts` interactive
  * flow. The platform and file are pre-filled from the previous run, so a repeat
@@ -154,12 +154,12 @@ export function throwAgentFlagsRequired(missing: { transformer: boolean; file: b
   ].filter(Boolean);
 
   throwUsageError(
-    `\`clerk migrate\` is interactive and cannot prompt in agent mode. Pass ${flags.join(" and ")}.`,
+    `\`clerk migrate import\` is interactive and cannot prompt in agent mode. Pass ${flags.join(" and ")}.`,
     undefined,
     undefined,
     [
       {
-        command: `clerk migrate -y --transformer ${transformers[0]?.key ?? "clerk"} --file users.json`,
+        command: `clerk migrate import -y --transformer ${transformers[0]?.key ?? "clerk"} --file users.json`,
         description: "Run non-interactively",
       },
     ],

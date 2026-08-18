@@ -183,13 +183,6 @@ describe("run", () => {
     expect(captured.err).toContain("1 user failed validation");
   });
 
-  test("warns that --clerk-secret-key is deprecated but still honours it", async () => {
-    await run({ ...baseOptions, secretKey: undefined, clerkSecretKey: "sk_test_x" });
-
-    expect(captured.err).toContain("--clerk-secret-key is deprecated");
-    expect(requests.filter((r) => r.url.endsWith("/v1/users"))).toHaveLength(2);
-  });
-
   test("refuses to exceed the development-instance user limit", async () => {
     fs.writeFileSync(
       path.join(workDir, "export.json"),

@@ -1,5 +1,5 @@
 /**
- * The human-mode half of `migrate run`: the wizard fills in missing flags, the
+ * The human-mode half of `migrate import`: the wizard fills in missing flags, the
  * readiness report renders, and declining the confirmation writes nothing.
  *
  * Kept in its own file because `mock.module` registrations are process-lifetime,
@@ -164,7 +164,7 @@ function stubInstanceSettings(settings: StubSettings) {
 const created = () => requests.filter((r) => r.url.endsWith("/v1/users"));
 
 describe("the wizard fills in missing flags", () => {
-  test("bare `clerk migrate` prompts for the transformer and file, then imports", async () => {
+  test("bare `clerk migrate import` prompts for the transformer and file, then imports", async () => {
     await run({ secretKey: "sk_test_x" });
 
     expect(mockSelect).toHaveBeenCalledTimes(1);

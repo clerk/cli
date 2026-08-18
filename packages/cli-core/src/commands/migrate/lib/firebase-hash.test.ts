@@ -39,7 +39,7 @@ afterEach(() => {
 });
 
 describe("gating on the transformer", () => {
-  // `migrate run` is one command for every platform, so a signer key left in
+  // `migrate import` is one command for every platform, so a signer key left in
   // .env.clerk-migrate after a Firebase migration is in scope for whatever runs
   // next unless the transformer says otherwise.
   test.each([["clerk"], ["supabase"], ["auth0"], ["authjs"], ["betterauth"]])(

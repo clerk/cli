@@ -4,7 +4,7 @@
  *
  * Ported from the standalone migration-tool's `src/lib/clerk.ts`, rewritten
  * onto the CLI's own primitives: the FAPI host comes from BAPI `/v1/domains`
- * — a secret key is all `migrate run` is given — and the settings come from
+ * — a secret key is all `migrate import` is given — and the settings come from
  * `lib/fapi.ts` rather than a bespoke fetch.
  */
 

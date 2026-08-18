@@ -1,5 +1,5 @@
 /**
- * Rate-limit backoff, shared by `migrate run` and `migrate delete`.
+ * Rate-limit backoff, shared by `migrate import` and `migrate delete`.
  *
  * Both walk the whole user set through BAPI and hit the same limits, so they
  * back off identically rather than approximately: extracting this is what

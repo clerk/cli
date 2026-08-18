@@ -84,7 +84,7 @@ const DB_PLATFORMS = [
 export function registerMigrateExport(migrateCommand: Command<[], Record<string, unknown>>): void {
   const exportCommand = migrateCommand
     .command("export")
-    .description("Export users from a source platform, ready for `clerk migrate`")
+    .description("Export users from a source platform, ready for `clerk migrate import`")
     .setExamples([
       { command: "clerk migrate export", description: "Pick a platform interactively" },
       {
@@ -104,7 +104,6 @@ export function registerMigrateExport(migrateCommand: Command<[], Record<string,
     .description("Export users from a Clerk instance (default: ./exports/clerk-export.json)")
     .option("-o, --output <path>", "Where to write the export, relative to the current directory")
     .option("--secret-key <key>", "Backend API secret key to use")
-    .option("--clerk-secret-key <key>", "Deprecated alias for --secret-key")
     .option("--app <id>", "Application ID to target (works from any directory)")
     .option("--instance <id>", "Instance to target (dev, prod, or a full instance ID)")
     .setExamples([

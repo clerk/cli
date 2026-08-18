@@ -50,7 +50,6 @@ const EXTERNAL_ID_BATCH = 100;
 export type MigrateDeleteOptions = {
   yes?: boolean;
   secretKey?: string;
-  clerkSecretKey?: string;
   app?: string;
   instance?: string;
 };
@@ -74,7 +73,7 @@ export async function resolveMigrationToUndo(): Promise<{ file: string; key: str
 
   if (!settings.file || !settings.transformer) {
     throw new CliError(
-      "No migration to undo: this project has no record of a previous `clerk migrate`.\n" +
+      "No migration to undo: this project has no record of a previous `clerk migrate import`.\n" +
         "Run `clerk migrate delete` from the project you migrated from.",
       { code: ERROR_CODE.FILE_NOT_FOUND },
     );
@@ -258,16 +257,11 @@ function formatSummary(summary: DeleteSummary, logFile: string): string {
 }
 
 export async function deleteMigration(options: MigrateDeleteOptions): Promise<void> {
-  if (options.clerkSecretKey) {
-    log.warn("--clerk-secret-key is deprecated; use --secret-key instead.");
-  }
-  const secretKeyOption = options.secretKey ?? options.clerkSecretKey;
-
   const { file, key } = await resolveMigrationToUndo();
 
   await withGutter("Undoing a migration", async ({ setNextSteps }) => {
-    const target = await describeBapiTarget({ ...options, secretKey: secretKeyOption });
-    const secretKey = await resolveBapiSecretKey({ ...options, secretKey: secretKeyOption });
+    const target = await describeBapiTarget({ ...options, secretKey: options.secretKey });
+    const secretKey = await resolveBapiSecretKey({ ...options, secretKey: options.secretKey });
     const limits = resolveLimits(secretKey);
     const dateTime = getDateTimeStamp();
     const logFile = getLogFilePath("user-deletion", dateTime);

@@ -5,7 +5,7 @@
  * onto `bapiRequest` instead of `@clerk/backend` so it shares the CLI's auth
  * resolution, `--verbose` request tracing and error taxonomy.
  *
- * The output feeds `clerk migrate --transformer clerk` unedited, which is
+ * The output feeds `clerk migrate import --transformer clerk` unedited, which is
  * what makes development → production a two-command operation.
  *
  * **Passwords do not come out of this endpoint.** Clerk never returns password
@@ -28,7 +28,6 @@ const PAGE_SIZE = 500;
 export type ExportClerkOptions = {
   output?: string;
   secretKey?: string;
-  clerkSecretKey?: string;
   app?: string;
   instance?: string;
 };
@@ -67,7 +66,7 @@ type IdentifierWithId = BapiIdentifier & { id?: string };
 /**
  * Splits identifiers into verified and unverified, primary first.
  *
- * The primary has to lead: `migrate run` puts the first entry on
+ * The primary has to lead: `migrate import` puts the first entry on
  * `POST /v1/users` and attaches the rest afterwards, so a reordered list would
  * silently change which address the user signs in with.
  */
@@ -224,14 +223,9 @@ export function buildClerkExport(users: BapiUser[], dateTime: string): ClerkExpo
 }
 
 export async function exportClerk(options: ExportClerkOptions): Promise<void> {
-  if (options.clerkSecretKey) {
-    log.warn("--clerk-secret-key is deprecated; use --secret-key instead.");
-  }
-  const secretKeyOption = options.secretKey ?? options.clerkSecretKey;
-
   await withGutter("Exporting users from Clerk", async ({ setNextSteps }) => {
-    const target = await describeBapiTarget({ ...options, secretKey: secretKeyOption });
-    const secretKey = await resolveBapiSecretKey({ ...options, secretKey: secretKeyOption });
+    const target = await describeBapiTarget({ ...options, secretKey: options.secretKey });
+    const secretKey = await resolveBapiSecretKey({ ...options, secretKey: options.secretKey });
     const dateTime = getDateTimeStamp();
 
     log.info(`Exporting from ${target ?? "the resolved instance"}.`);

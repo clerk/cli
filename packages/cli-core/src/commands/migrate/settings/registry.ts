@@ -20,7 +20,7 @@ export interface SettingDef {
   /**
    * What the user types: `clerk migrate settings set <name> <value>`.
    *
-   * Kebab-case, and identical to the `migrate run` flag it backs. A setting and
+   * Kebab-case, and identical to the `migrate import` flag it backs. A setting and
    * its flag are the same knob reached two ways, so `firebase-signer-key` here
    * and `--firebase-signer-key` there must not drift into two spellings the
    * user has to learn separately. Sentence-case prose belongs in

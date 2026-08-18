@@ -2,7 +2,7 @@
  * Firebase's four scrypt parameters: where they come from, and when they are
  * looked for at all.
  *
- * **Only read when the transformer is `firebase`.** `migrate run` is one
+ * **Only read when the transformer is `firebase`.** `migrate import` is one
  * command serving every platform, so a `CLERK_FIREBASE_SIGNER_KEY` left in
  * `.env.clerk-migrate` after a Firebase migration is in scope for the Supabase
  * run that follows it unless something says otherwise. Nothing downstream would

@@ -5,14 +5,14 @@ Clerk instance.
 
 ## Targeting And Auth
 
-`clerk migrate` resolves its Backend API key through the CLI's standard chain:
+`clerk migrate import` resolves its Backend API key through the CLI's standard
+chain:
 
-| Flag                     | Description                                                      |
-| ------------------------ | ---------------------------------------------------------------- |
-| `--secret-key <key>`     | Use a specific Backend API secret key directly                   |
-| `--clerk-secret-key <k>` | **Deprecated** alias for `--secret-key`; warns and keeps working |
-| `--app <id>`             | Target an application directly, even outside a linked project    |
-| `--instance <id>`        | Target `dev`, `prod`, or a full instance ID                      |
+| Flag                 | Description                                                   |
+| -------------------- | ------------------------------------------------------------- |
+| `--secret-key <key>` | Use a specific Backend API secret key directly                |
+| `--app <id>`         | Target an application directly, even outside a linked project |
+| `--instance <id>`    | Target `dev`, `prod`, or a full instance ID                   |
 
 Resolution order: `--secret-key` → `--app` + Platform API lookup →
 `CLERK_SECRET_KEY` → the keyless project's own key → a linked project profile
@@ -24,14 +24,18 @@ defaults and the hard development-instance cap below.
 
 ## Commands
 
-### `clerk migrate` (interactive)
+`clerk migrate` on its own is a group name, not a command: it prints its help
+and lists the subcommands below. The direction is always spelled out —
+`migrate import` moves users **into** Clerk, `migrate export` gets them **out**
+of a source platform — so neither is implied by the group.
 
-Bare `clerk migrate` walks a human through
-the migration instead of demanding flags — mirroring how bare `clerk deploy`
-dispatches to `deploy run`.
+### `clerk migrate import` (interactive)
+
+Bare `clerk migrate import` walks a human through the import instead of
+demanding flags.
 
 ```sh
-clerk migrate
+clerk migrate import
 ```
 
 It picks the transformer from a list built off the registry, asks for the file,
@@ -44,21 +48,21 @@ Then it prints the [Migration Readiness report](#migration-readiness-report),
 offers to [change whatever it flagged](#changing-the-flagged-settings), and
 waits for confirmation. Declining writes nothing to Clerk.
 
-**Agent mode never prompts.** `clerk migrate` with no flags exits with a usage
-error naming exactly what to pass:
+**Agent mode never prompts.** `clerk migrate import` with no flags exits with a
+usage error naming exactly what to pass:
 
 ```
-`clerk migrate` is interactive and cannot prompt in agent mode.
+`clerk migrate import` is interactive and cannot prompt in agent mode.
 Pass --transformer <platform> and --file <path>.
 ```
 
-### `clerk migrate`
+### `clerk migrate import`
 
 Reads an exported user file, maps it onto Clerk's user schema, validates every
 record, and creates the users through the Backend API.
 
 ```sh
-clerk migrate -y --transformer clerk --file users.json
+clerk migrate import -y --transformer clerk --file users.json
 ```
 
 | Flag                                    | Description                                                     |
@@ -75,8 +79,8 @@ clerk migrate -y --transformer clerk --file users.json
 | `--firebase-mem-cost <n>`               | Firebase scrypt memory cost                                     |
 | `-y, --yes`                             | Skip the confirmation prompt                                    |
 
-Plus the targeting flags from the table above: `--secret-key`,
-`--clerk-secret-key`, `--app` and `--instance`.
+Plus the targeting flags from the table above: `--secret-key`, `--app` and
+`--instance`.
 
 `--transformer` and `--file` are required. Omitting either fails with a usage
 error that names the valid values.
@@ -121,7 +125,7 @@ limit — the run fails before any request is sent.
 ### `clerk migrate export`
 
 Gets users **out** of a source platform, so there is something to feed
-`clerk migrate`.
+`clerk migrate import`.
 
 ```sh
 clerk migrate export                                    # pick a platform
@@ -259,7 +263,7 @@ prints the exact import command:
 ```
 Password hash parameters
 Read from the project. Import with:
-  clerk migrate -y --transformer firebase --file exports/firebase-export.json \
+  clerk migrate import -y --transformer firebase --file exports/firebase-export.json \
     --firebase-signer-key "…" --firebase-salt-separator "…" \
     --firebase-rounds 8 --firebase-mem-cost 14
 ```
@@ -297,16 +301,16 @@ returning the first thousand would read as "that is everyone".
 
 ### `clerk migrate delete`
 
-The undo for a bad migration. Deletes the users a previous `clerk migrate`
-created in this directory, matched by the `external_id` the import stamped on
-each one.
+The undo for a bad migration. Deletes the users a previous
+`clerk migrate import` created in this directory, matched by the `external_id`
+the import stamped on each one.
 
 ```sh
 clerk migrate delete        # confirms first
 clerk migrate delete -y     # non-interactive
 ```
 
-Takes the same targeting flags as `clerk migrate` (`--secret-key`, `--app`,
+Takes the same targeting flags as `clerk migrate import` (`--secret-key`, `--app`,
 `--instance`).
 
 Flat rather than under a noun group: it is the one command in this tree that
@@ -462,7 +466,7 @@ firebase-signer-key         aVer…3456  .env.clerk-migrate  Firebase base64 sig
 firebase-rounds             —          not set             Firebase scrypt rounds
 ```
 
-Setting names are kebab-case and identical to the `clerk migrate` flag each one
+Setting names are kebab-case and identical to the `clerk migrate import` flag each one
 backs, so `firebase-signer-key` here is `--firebase-signer-key` there rather
 than a second spelling to learn. The description column carries the prose.
 
@@ -500,7 +504,7 @@ so the output is safe to paste into an issue.
 Migrating from a platform with no built-in, without recompiling the CLI:
 
 ```sh
-clerk migrate --transformer-file ./my-platform.ts --file users.json
+clerk migrate import --transformer-file ./my-platform.ts --file users.json
 ```
 
 The file lives in **your** project, not in the CLI, and is imported at runtime.
@@ -572,7 +576,7 @@ alongside each digest. Find them in the Firebase console under
 **Authentication → Users → (⋮) → Password hash parameters**.
 
 ```sh
-clerk migrate -y -t firebase -f users.json \
+clerk migrate import -y -t firebase -f users.json \
   --firebase-signer-key <key> --firebase-salt-separator <sep> \
   --firebase-rounds 8 --firebase-mem-cost 14
 ```
@@ -859,13 +863,13 @@ Both are written relative to the **current working directory**, not to the
 CLI's config directory, because they describe "which file am I migrating"
 rather than "which project is linked here".
 
-| Path                                   | Contents                                                              |
-| -------------------------------------- | --------------------------------------------------------------------- |
-| `./logs/migration-<timestamp>.log`     | NDJSON: one line per user, plus validation failures and retry notices |
-| `./logs/user-deletion-<timestamp>.log` | NDJSON: one line per `migrate delete` attempt                         |
-| `./logs/export-<timestamp>.log`        | NDJSON: one line per exported user                                    |
-| `./exports/<platform>-export.json`     | The export itself, unless `--output` says otherwise                   |
-| `./.env.clerk-migrate`                 | Migration credentials, written by `settings set` and gitignored       |
+| Path                                       | Contents                                                              |
+| ------------------------------------------ | --------------------------------------------------------------------- |
+| `./logs/migration-<timestamp>.log`         | NDJSON: one line per user, plus validation failures and retry notices |
+| `./logs/user-deletion-<timestamp>.log`     | NDJSON: one line per `migrate delete` attempt                         |
+| `./logs/export-<timestamp>.log`            | NDJSON: one line per exported user                                    |
+| `./exports/<platform>-export-<stamp>.json` | The export itself, unless `--output` says otherwise                   |
+| `./.env.clerk-migrate`                     | Migration credentials, written by `settings set` and gitignored       |
 
 The transformer and file of the last run are **not** written here. They go to
 the `migrations` section of the CLI's own config file, keyed by project the
@@ -905,9 +909,9 @@ NDJSON is. The original `.log` stays put.
 
 | Method   | Path                       | Used by                                                                              |
 | -------- | -------------------------- | ------------------------------------------------------------------------------------ |
-| `POST`   | `/v1/users`                | `clerk migrate` — creates each user                                                  |
-| `POST`   | `/v1/email_addresses`      | `clerk migrate` — attaches additional emails                                         |
-| `POST`   | `/v1/phone_numbers`        | `clerk migrate` — attaches additional phones                                         |
+| `POST`   | `/v1/users`                | `migrate import` — creates each user                                                 |
+| `POST`   | `/v1/email_addresses`      | `migrate import` — attaches additional emails                                        |
+| `POST`   | `/v1/phone_numbers`        | `migrate import` — attaches additional phones                                        |
 | `GET`    | `/v1/users?external_id=…`  | `migrate delete` — finds this migration's users, 100 IDs a call                      |
 | `GET`    | `/v1/users?limit=&offset=` | `migrate export clerk` — pages the whole instance, 500 at a time                     |
 | `DELETE` | `/v1/users/{user_id}`      | `migrate delete` — removes one user                                                  |

@@ -371,7 +371,7 @@ export function buildFirebaseExport(users: FirebaseUser[], dateTime: string) {
   };
 }
 
-/** The exact `migrate run` invocation, with the project's own parameters. */
+/** The exact `migrate import` invocation, with the project's own parameters. */
 export function formatHashConfigGuidance(
   config: HashConfig | null,
   outputPath: string,
@@ -397,7 +397,7 @@ export function formatHashConfigGuidance(
     bold("Password hash parameters"),
     "Read from the project. Import with:",
     dim(
-      `  clerk migrate -y --transformer firebase --file ${outputPath} \\\n` +
+      `  clerk migrate import -y --transformer firebase --file ${outputPath} \\\n` +
         `    --firebase-signer-key "${config.signerKey}" \\\n` +
         `    --firebase-salt-separator "${config.saltSeparator}" \\\n` +
         `    --firebase-rounds ${config.rounds} --firebase-mem-cost ${config.memoryCost}`,

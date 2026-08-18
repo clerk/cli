@@ -1,15 +1,15 @@
 /**
- * `clerk migrate` — the user import itself.
+ * `clerk migrate import` — the user import itself.
  *
  * Ported from the standalone migration-tool's `src/migrate/cli.ts`
  * (`runNonInteractive`), with auth moved onto the CLI's standard secret-key
  * resolution chain and every failure raised as a `CliError` instead of
  * `console.error` + `process.exit`.
  *
- * Registered as the `run` subcommand and marked default, so `clerk migrate` and
- * `clerk migrate run` both land here. Whatever the flags did not supply is
- * filled in by `wizard.ts` for a human, or raised as a usage error naming the
- * missing flags for an agent, which cannot answer a prompt.
+ * Registered as the `import` subcommand. The exported handler keeps the name
+ * `run` because `import` is a reserved word. Whatever the flags did not supply
+ * is filled in by `wizard.ts` for a human, or raised as a usage error naming
+ * the missing flags for an agent, which cannot answer a prompt.
  */
 
 import { describeBapiTarget, resolveBapiSecretKey } from "../../lib/bapi-command.ts";
@@ -64,8 +64,6 @@ export type MigrateRunOptions = {
   requirePassword?: boolean;
   yes?: boolean;
   secretKey?: string;
-  /** Deprecated alias for `--secret-key`, kept for existing prompts and docs. */
-  clerkSecretKey?: string;
   app?: string;
   instance?: string;
   /** Path to a user-authored transformer, for a platform with no built-in. */
@@ -95,7 +93,8 @@ export function validateRunOptions(options: MigrateRunOptions): {
         ERROR_CODE.USAGE_ERROR,
         [
           {
-            command: "clerk migrate -y --transformer-file ./my-transformer.ts --file users.json",
+            command:
+              "clerk migrate import -y --transformer-file ./my-transformer.ts --file users.json",
             description: "Import with a custom transformer",
           },
         ],
@@ -117,7 +116,7 @@ export function validateRunOptions(options: MigrateRunOptions): {
       ERROR_CODE.USAGE_ERROR,
       [
         {
-          command: "clerk migrate -y --transformer clerk --file users.json",
+          command: "clerk migrate import -y --transformer clerk --file users.json",
           description: "Import a Clerk export",
         },
       ],
@@ -135,7 +134,7 @@ export function validateRunOptions(options: MigrateRunOptions): {
       ERROR_CODE.USAGE_ERROR,
       [
         {
-          command: "clerk migrate -y --transformer clerk --file users.json",
+          command: "clerk migrate import -y --transformer clerk --file users.json",
           description: "Import a Clerk export",
         },
       ],
@@ -404,7 +403,7 @@ async function showReadinessReport(
  * to pass.
  *
  * Agent mode is the CLI's existing non-interactive signal, so an agent that
- * runs bare `clerk migrate` gets a usage error naming the flags rather than a
+ * runs bare `clerk migrate import` gets a usage error naming the flags rather than a
  * prompt it cannot answer.
  */
 async function resolveMissingOptions(options: MigrateRunOptions): Promise<MigrateRunOptions> {
@@ -454,11 +453,12 @@ async function applyCustomTransformer(options: MigrateRunOptions): Promise<Migra
       undefined,
       [
         {
-          command: "clerk migrate -y --transformer-file ./my-transformer.ts --file users.json",
+          command:
+            "clerk migrate import -y --transformer-file ./my-transformer.ts --file users.json",
           description: "Use a transformer you wrote",
         },
         {
-          command: "clerk migrate -y --transformer clerk --file users.json",
+          command: "clerk migrate import -y --transformer clerk --file users.json",
           description: "Use a built-in transformer",
         },
       ],
@@ -473,20 +473,15 @@ async function applyCustomTransformer(options: MigrateRunOptions): Promise<Migra
 }
 
 export async function run(rawOptions: MigrateRunOptions): Promise<void> {
-  if (rawOptions.clerkSecretKey) {
-    log.warn("--clerk-secret-key is deprecated; use --secret-key instead.");
-  }
-
   rawOptions = await applyCustomTransformer(rawOptions);
   const options = await resolveMissingOptions(rawOptions);
-  const secretKeyOption = options.secretKey ?? options.clerkSecretKey;
 
   const { transformer, file } = validateRunOptions(options);
   const firebaseHashConfig = await resolveFirebaseHashConfig(options, transformer);
 
   await withGutter("Migrating users to Clerk", async ({ setNextSteps }) => {
-    const target = await describeBapiTarget({ ...options, secretKey: secretKeyOption });
-    const secretKey = await resolveBapiSecretKey({ ...options, secretKey: secretKeyOption });
+    const target = await describeBapiTarget({ ...options, secretKey: options.secretKey });
+    const secretKey = await resolveBapiSecretKey({ ...options, secretKey: options.secretKey });
     const limits = resolveLimits(secretKey);
     const dateTime = getDateTimeStamp();
     const logFile = getLogFilePath("migration", dateTime);

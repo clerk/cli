@@ -14,15 +14,15 @@ const migrate = { run, delete: deleteMigration, transformersList };
 export function registerMigrate(program: Program): void {
   const migrateCommand = program
     .command("migrate")
-    .description("Migrate users into Clerk from another auth provider")
+    .description("Migrate users into Clerk from another auth provider or another Clerk instance")
     .setExamples([
-      { command: "clerk migrate", description: "Walk through a migration interactively" },
+      { command: "clerk migrate import", description: "Walk through an import interactively" },
       {
-        command: "clerk migrate -y --transformer clerk --file users.json",
+        command: "clerk migrate import -y --transformer clerk --file users.json",
         description: "Import users from a Clerk export",
       },
       {
-        command: "clerk migrate -y -t supabase -f users.json --skip-unsupported-providers",
+        command: "clerk migrate import -y -t supabase -f users.json --skip-unsupported-providers",
         description: "Skip Supabase users whose provider is not enabled",
       },
       {
@@ -39,16 +39,16 @@ export function registerMigrate(program: Program): void {
       { command: "clerk migrate delete", description: "Undo the last migration" },
     ]);
 
-  // `isDefault` so `clerk migrate` is the whole command: bare, it runs the
-  // wizard; with flags, they fall through to here. `run` stays addressable
-  // because scripts and older docs use it, but `clerk migrate` is the spelling
-  // every example gives.
+  // Named, not `isDefault`. `import` and `export` are the two directions this
+  // group moves users in, and neither is implied by the bare group name — a
+  // default would make `clerk migrate --file users.json` mean "import" while
+  // its sibling has to be spelled out. Bare `clerk migrate` prints help.
   //
   // The flags stay here rather than on `migrate`, matching how `config` keeps
   // its own on `pull`/`patch`/`put` — a group's help is a list of subcommands
   // and examples, not a merge of everything underneath it.
   migrateCommand
-    .command("run", { isDefault: true })
+    .command("import")
     .description("Import users from an exported JSON or CSV file")
     .addOption(
       createOption(
@@ -77,24 +77,23 @@ export function registerMigrate(program: Program): void {
     )
     .option("-y, --yes", "Skip the confirmation prompt")
     .option("--secret-key <key>", "Backend API secret key to use")
-    .option("--clerk-secret-key <key>", "Deprecated alias for --secret-key")
     .option("--app <id>", "Application ID to target (works from any directory)")
     .option("--instance <id>", "Instance to target (dev, prod, or a full instance ID)")
     .setExamples([
       {
-        command: "clerk migrate -y --transformer clerk --file users.json",
+        command: "clerk migrate import -y --transformer clerk --file users.json",
         description: "Import a Clerk Dashboard export",
       },
       {
-        command: "clerk migrate -y -t clerk -f users.csv --require-password",
+        command: "clerk migrate import -y -t clerk -f users.csv --require-password",
         description: "Import only the users that carry a password digest",
       },
       {
-        command: "clerk migrate -y -t clerk -f users.json -r user_2x9k",
+        command: "clerk migrate import -y -t clerk -f users.json -r user_2x9k",
         description: "Resume a partial migration after the last imported user",
       },
       {
-        command: "clerk migrate -y -t supabase -f users.json --skip-unsupported-providers",
+        command: "clerk migrate import -y -t supabase -f users.json --skip-unsupported-providers",
         description: "Skip Supabase users whose only provider is not enabled in Clerk",
       },
     ])
@@ -109,7 +108,6 @@ export function registerMigrate(program: Program): void {
     .description("Delete the users created by the last migration for this project")
     .option("-y, --yes", "Skip the confirmation prompt")
     .option("--secret-key <key>", "Backend API secret key to use")
-    .option("--clerk-secret-key <key>", "Deprecated alias for --secret-key")
     .option("--app <id>", "Application ID to target (works from any directory)")
     .option("--instance <id>", "Instance to target (dev, prod, or a full instance ID)")
     .setExamples([

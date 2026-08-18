@@ -139,7 +139,7 @@ describe("list", () => {
     );
   });
 
-  // The names are kebab-case because they mirror the `migrate run` flags; the
+  // The names are kebab-case because they mirror the `migrate import` flags; the
   // description column is what makes the list readable.
   test("explains each setting in prose", async () => {
     await list();

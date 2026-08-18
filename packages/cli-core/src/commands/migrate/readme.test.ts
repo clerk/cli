@@ -63,10 +63,10 @@ function resolve(tokens: string[]): { command: Command; rest: string[] } {
 /**
  * The flags a command accepts, including those of a default subcommand.
  *
- * `clerk migrate` carries no options of its own — `run` is registered
- * `isDefault`, so Commander hands it everything after the group name. The
- * documented spelling is `clerk migrate --transformer …`, and this has to see
- * the same flags Commander does or every such example reads as unsupported.
+ * `migrate logs` and `migrate transformers` register their `list` `isDefault`,
+ * so Commander hands it everything after the group name. The documented
+ * spelling is `clerk migrate logs --json`, and this has to see the same flags
+ * Commander does or every such example reads as unsupported.
  */
 function flagsOf(command: Command): string[] {
   const own = command.options.flatMap(

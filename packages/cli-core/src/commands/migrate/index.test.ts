@@ -18,24 +18,15 @@ describe("registerMigrate", () => {
     expect(migrate?.description()).toContain("Migrate users");
   });
 
-  test("registers the run subcommand", () => {
-    expect(findCommand(["migrate", "run"])).toBeDefined();
+  test("registers the import subcommand", () => {
+    expect(findCommand(["migrate", "import"])).toBeDefined();
   });
 
-  // Bare `clerk migrate` dispatches to `migrate run`, mirroring how bare
-  // `clerk deploy` dispatches to `deploy run`.
-  test("makes run the default subcommand, so bare `clerk migrate` starts the wizard", () => {
-    const run = findCommand(["migrate", "run"]);
-    expect(run as unknown as { _defaultCommandName?: unknown }).toBeDefined();
+  // The direction is never implied: `import` and `export` are siblings, so a
+  // default would make one of them the meaning of the bare group name.
+  test("leaves migrate with no default subcommand", () => {
     const migrate = findCommand(["migrate"]) as unknown as { _defaultCommandName?: string };
-    expect(migrate._defaultCommandName).toBe("run");
-  });
-
-  test("keeps run visible in help, unlike deploy's hidden default", () => {
-    expect(findCommand(["migrate", "run"])?.parent?.commands.map((c) => c.name())).toContain("run");
-    expect(
-      (findCommand(["migrate", "run"]) as unknown as { _hidden?: boolean })._hidden,
-    ).toBeFalsy();
+    expect(migrate._defaultCommandName).toBeFalsy();
   });
 
   test.each([
@@ -50,11 +41,10 @@ describe("registerMigrate", () => {
     "--firebase-mem-cost",
     "--yes",
     "--secret-key",
-    "--clerk-secret-key",
     "--app",
     "--instance",
-  ])("migrate run accepts %s", (flag) => {
-    const flags = findCommand(["migrate", "run"])?.options.map((option) => option.long);
+  ])("migrate import accepts %s", (flag) => {
+    const flags = findCommand(["migrate", "import"])?.options.map((option) => option.long);
     expect(flags).toContain(flag);
   });
 
@@ -120,10 +110,10 @@ describe("registerMigrate", () => {
 
   test("documents the default output location in help", () => {
     expect(findCommand(["migrate", "export", "clerk"])?.description()).toContain(
-      "./exports/clerk-export.json",
+      "./exports/clerk-export-<timestamp>.json",
     );
     expect(findCommand(["migrate", "export", "auth0"])?.description()).toContain(
-      "./exports/auth0-export.json",
+      "./exports/auth0-export-<timestamp>.json",
     );
   });
 
@@ -140,8 +130,8 @@ describe("registerMigrate", () => {
     );
   });
 
-  test("migrate run accepts --transformer-file", () => {
-    expect(findCommand(["migrate", "run"])?.options.map((o) => o.long)).toContain(
+  test("migrate import accepts --transformer-file", () => {
+    expect(findCommand(["migrate", "import"])?.options.map((o) => o.long)).toContain(
       "--transformer-file",
     );
   });
@@ -153,7 +143,7 @@ describe("registerMigrate", () => {
     expect(findCommand(["migrate", "delete"])?.description()).toContain("last migration");
   });
 
-  test.each(["--yes", "--secret-key", "--clerk-secret-key", "--app", "--instance"])(
+  test.each(["--yes", "--secret-key", "--app", "--instance"])(
     "migrate delete accepts %s",
     (flag) => {
       expect(findCommand(["migrate", "delete"])?.options.map((o) => o.long)).toContain(flag);
@@ -191,7 +181,9 @@ describe("registerMigrate", () => {
   });
 
   test("constrains --transformer to the registered transformers, for validation and completion", () => {
-    const option = findCommand(["migrate", "run"])?.options.find((o) => o.long === "--transformer");
+    const option = findCommand(["migrate", "import"])?.options.find(
+      (o) => o.long === "--transformer",
+    );
     // Tracks the registry so adding a platform needs no edit here.
     expect(option?.argChoices).toEqual(transformerKeys());
   });
@@ -202,7 +194,7 @@ describe("registerMigrate", () => {
     ["-r", "--resume-after"],
     ["-y", "--yes"],
   ])("exposes %s as the short form of %s", (short, long) => {
-    const option = findCommand(["migrate", "run"])?.options.find((o) => o.long === long);
+    const option = findCommand(["migrate", "import"])?.options.find((o) => o.long === long);
     expect(option?.short).toBe(short);
   });
 });

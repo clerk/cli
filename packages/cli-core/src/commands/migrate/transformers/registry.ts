@@ -1,7 +1,7 @@
 /**
  * Transformer registry.
  *
- * `migrate run` reads this array to resolve `--transformer` and to list the
+ * `migrate import` reads this array to resolve `--transformer` and to list the
  * valid choices in help output and tab-completion.
  *
  * To add a platform: create `transformers/<platform>.ts` exporting a

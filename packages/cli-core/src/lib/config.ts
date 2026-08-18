@@ -50,7 +50,7 @@ interface RelayEntry {
   token: string;
 }
 
-/** What `clerk migrate` last imported for a project, and how. */
+/** What `clerk migrate import` last imported for a project, and how. */
 interface MigrationEntry {
   transformer?: string;
   file?: string;
