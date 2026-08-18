@@ -277,6 +277,17 @@ export async function setProfile(
   return (await getConfigModule()).setProfile(...args);
 }
 
+// ── Real environment module ──────────────────────────────────────────────────
+
+type EnvironmentModule = typeof import("../../../lib/environment.ts");
+
+let environmentModulePromise: Promise<EnvironmentModule> | null = null;
+
+function getEnvironmentModule(): Promise<EnvironmentModule> {
+  environmentModulePromise ??= import("../../../lib/environment.ts");
+  return environmentModulePromise;
+}
+
 // ── Mock data ────────────────────────────────────────────────────────────────
 
 /**
@@ -545,10 +556,18 @@ export async function setupTest(): Promise<TestHarness> {
   const tempDir = await mkdtemp(join(tmpdir(), "clerk-integration-"));
   const { _setConfigDir } = await getConfigModule();
   _setConfigDir(tempDir);
+  // `_mode` is module-level state in the mode.ts mock; reset it so a prior
+  // test that switched to agent mode can't leak `--mode agent` into the next.
+  _mode = "human";
   process.cwd = () => tempDir;
   setEnv("CLERK_PLATFORM_API_KEY", "test_platform_key");
   setEnv("CLERK_PLATFORM_API_URL", "https://test-api.clerk.com");
   setEnv("CLERK_BACKEND_API_URL", "https://test-bapi.clerk.dev");
+  // Point the active profile's platform URL at the same host as the override
+  // above, so `getPlatformApiUrlOverride()` sees no mismatch and the CLI's
+  // credential-mismatch warning never fires as a stray first line of stderr.
+  const { _setProfileOverrideForTest } = await getEnvironmentModule();
+  _setProfileOverrideForTest({ platformApiUrl: "https://test-api.clerk.com" });
   mockState.storedToken = "mock_token";
   mockState.gitNormalizedRemote = "github.com/test/project";
   mockState.gitRepoRoot = "/repo";
@@ -578,11 +597,13 @@ export async function setupTest(): Promise<TestHarness> {
  */
 export async function teardownTest(harness: TestHarness): Promise<void> {
   const { _setConfigDir } = await getConfigModule();
+  const { _setProfileOverrideForTest } = await getEnvironmentModule();
   currentHarness = null;
   setActiveCapture(null);
   assertPromptQueuesEmpty();
   http.assertRoutesConsumed();
   _setConfigDir(undefined);
+  _setProfileOverrideForTest(undefined);
   process.cwd = originalCwd;
   for (const [key, original] of envMutations) {
     if (original === undefined) {
