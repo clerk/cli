@@ -28,6 +28,8 @@ import { CliError, ERROR_CODE, throwUsageError } from "../../../lib/errors.ts";
 import { bold, dim } from "../../../lib/color.ts";
 import { loggedFetch } from "../../../lib/fetch.ts";
 import { log } from "../../../lib/log.ts";
+import { password as passwordPrompt } from "../../../lib/prompts.ts";
+import { isHuman } from "../../../mode.ts";
 import { withGutter, withSpinner, type SpinnerControls } from "../../../lib/spinner.ts";
 import { exportLogger, getDateTimeStamp } from "../lib/logger.ts";
 import { reportExport, resolveOutputPath, writeExportOutput } from "./shared.ts";
@@ -55,35 +57,19 @@ export type ServiceAccount = {
 };
 
 /**
- * Reads and validates a service-account key file.
+ * Validates already-parsed JSON as a service-account key.
  *
  * Every failure names the field, because the usual causes are downloading the
  * wrong JSON from the console (a web app config rather than a service account)
  * or pasting a key with its newlines mangled.
+ *
+ * @param label how to refer to the source in an error — a file name, or
+ *   "the pasted key" when it came from the prompt.
  */
-export function readServiceAccount(file: string): ServiceAccount {
-  const resolved = path.resolve(process.cwd(), file);
-
-  if (!fs.existsSync(resolved)) {
-    throw new CliError(`No service account file at ${resolved}.`, {
-      code: ERROR_CODE.FILE_NOT_FOUND,
-      docsUrl: DOCS_URL,
-    });
-  }
-
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(fs.readFileSync(resolved, "utf-8"));
-  } catch (error) {
-    throw new CliError(`${file} is not valid JSON: ${(error as Error).message}`, {
-      code: ERROR_CODE.INVALID_JSON,
-      docsUrl: DOCS_URL,
-    });
-  }
-
+function validateServiceAccount(parsed: unknown, label: string): ServiceAccount {
   const account = parsed as Partial<ServiceAccount> & { type?: string };
   const invalid = (problem: string): never => {
-    throw new CliError(`${file} is not a usable service account key: ${problem}`, {
+    throw new CliError(`${label} is not a usable service account key: ${problem}`, {
       code: ERROR_CODE.USAGE_ERROR,
       docsUrl: DOCS_URL,
     });
@@ -105,6 +91,94 @@ export function readServiceAccount(file: string): ServiceAccount {
   }
 
   return account as ServiceAccount;
+}
+
+/** Reads and validates a service-account key file. */
+export function readServiceAccount(file: string): ServiceAccount {
+  const resolved = path.resolve(process.cwd(), file);
+
+  if (!fs.existsSync(resolved)) {
+    throw new CliError(`No service account file at ${resolved}.`, {
+      code: ERROR_CODE.FILE_NOT_FOUND,
+      docsUrl: DOCS_URL,
+    });
+  }
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(fs.readFileSync(resolved, "utf-8"));
+  } catch (error) {
+    throw new CliError(`${file} is not valid JSON: ${(error as Error).message}`, {
+      code: ERROR_CODE.INVALID_JSON,
+      docsUrl: DOCS_URL,
+    });
+  }
+
+  return validateServiceAccount(parsed, file);
+}
+
+/**
+ * Accepts what the prompt accepts: a path to the downloaded key file, or the
+ * key's JSON pasted in whole. Console downloads land as a file, but a key
+ * copied out of a password manager or CI secret never touches disk.
+ */
+export function loadServiceAccount(source: string): ServiceAccount {
+  const trimmed = source.trim();
+  if (!trimmed.startsWith("{")) return readServiceAccount(trimmed);
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(trimmed);
+  } catch (error) {
+    throw new CliError(`The pasted key is not valid JSON: ${(error as Error).message}`, {
+      code: ERROR_CODE.INVALID_JSON,
+      docsUrl: DOCS_URL,
+    });
+  }
+
+  return validateServiceAccount(parsed, "The pasted key");
+}
+
+/**
+ * Resolves the key: the flag, then a prompt — the shape `export supabase` uses
+ * for its connection string. Prompted as a password: the JSON carries a private
+ * key, and a path typed blind is short enough to survive being masked.
+ */
+async function resolveServiceAccount(options: ExportFirebaseOptions): Promise<ServiceAccount> {
+  if (options.serviceAccount) return loadServiceAccount(options.serviceAccount);
+
+  if (!isHuman()) {
+    throwUsageError(
+      "`clerk migrate export firebase` needs a service account key file and cannot prompt here. " +
+        "Pass --service-account <path>.",
+      DOCS_URL,
+      undefined,
+      [
+        {
+          command: "clerk migrate export firebase --service-account ./service-account.json",
+          description: "Export using a downloaded service account key",
+        },
+      ],
+    );
+  }
+
+  log.info(
+    dim("Firebase console → Project settings → Service accounts → Generate new private key."),
+  );
+
+  const answer = await passwordPrompt({
+    message: "Path to the service account key file, or paste the key JSON",
+    validate: (value) => {
+      try {
+        loadServiceAccount(value ?? "");
+        return undefined;
+      } catch (error) {
+        return error instanceof CliError ? error.message : String(error);
+      }
+    },
+  });
+
+  return loadServiceAccount(answer);
 }
 
 function base64Url(input: string | Uint8Array): string {
@@ -406,23 +480,9 @@ export function formatHashConfigGuidance(
 }
 
 export async function exportFirebase(options: ExportFirebaseOptions): Promise<void> {
-  if (!options.serviceAccount) {
-    throwUsageError(
-      "`clerk migrate export firebase` needs a service account key file. Pass --service-account <path>.",
-      DOCS_URL,
-      undefined,
-      [
-        {
-          command: "clerk migrate export firebase --service-account ./service-account.json",
-          description: "Export using a downloaded service account key",
-        },
-      ],
-    );
-  }
-
   // Read and validate before anything reaches the network, so a wrong file
   // fails in a second rather than after an auth round-trip.
-  const account = readServiceAccount(options.serviceAccount);
+  const account = await resolveServiceAccount(options);
 
   const destination = await resolveOutputPath("firebase", options.output);
 

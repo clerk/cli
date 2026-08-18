@@ -284,10 +284,18 @@ clerk migrate export firebase --service-account ./service-account.json
 ```
 
 Needs a service account key from **Project settings → Service accounts →
-Generate new private key**, with the Firebase Authentication Admin role. The
-file is validated before anything reaches the network, so downloading the web
-app config by mistake fails in a second with the right console page named
-rather than after an auth round-trip. Key material never appears in output.
+Generate new private key**, with the Firebase Authentication Admin role.
+
+Without `--service-account` you are prompted for it, the way `export supabase`
+prompts for its connection string. The answer can be a path to the downloaded
+file _or_ the key's JSON pasted whole, so a key kept in a password manager or a
+CI secret never has to be written to disk. The prompt is masked, since the key
+carries a private key. Agent mode cannot prompt, so it names the flag instead.
+
+Either way the key is validated before anything reaches the network, so
+downloading the web app config by mistake fails in a second with the right
+console page named rather than after an auth round-trip. Key material never
+appears in output.
 
 Firebase's scrypt is a modified variant, so a digest is worthless without the
 project's four hash parameters. The export **reads them from the project** and

@@ -13,6 +13,7 @@ import {
   fetchAllFirebaseUsers,
   fetchHashConfig,
   formatHashConfigGuidance,
+  loadServiceAccount,
   mapFirebaseUserToExport,
   readServiceAccount,
   signServiceAccountJwt,
@@ -109,6 +110,28 @@ const fbUser = (i: number, overrides: Record<string, unknown> = {}) => ({
   salt: `U2FsdA${i}`,
   createdAt: "1704067200000",
   ...overrides,
+});
+
+describe("loadServiceAccount", () => {
+  // The prompt takes either, so a key pasted out of a password manager never
+  // has to be written to disk first.
+  test("accepts the key JSON pasted whole", () => {
+    expect(loadServiceAccount(`  ${JSON.stringify(account)}  `).project_id).toBe("demo-fb");
+  });
+
+  test("accepts a path to the key file", () => {
+    expect(loadServiceAccount("./sa.json").project_id).toBe("demo-fb");
+  });
+
+  test("rejects a paste that is not valid JSON", () => {
+    expect(() => loadServiceAccount('{"project_id":')).toThrow(/pasted key is not valid JSON/);
+  });
+
+  test("rejects a paste missing a required field", () => {
+    expect(() => loadServiceAccount('{"type":"service_account"}')).toThrow(
+      /The pasted key is not a usable service account key: "project_id" is missing/,
+    );
+  });
 });
 
 describe("readServiceAccount", () => {
@@ -450,7 +473,9 @@ describe("exportFirebase", () => {
     expect(fs.existsSync(path.join(workDir, "fb.json"))).toBe(true);
   });
 
-  test("requires --service-account, before anything is read", async () => {
+  // Human runs get a prompt instead; an agent has nobody to ask, so it is told
+  // which flag to pass.
+  test("agent mode names the flag rather than prompting", async () => {
     await expect(exportFirebase({})).rejects.toThrow(/needs a service account key file/);
   });
 
