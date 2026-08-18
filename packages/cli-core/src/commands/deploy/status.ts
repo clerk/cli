@@ -55,7 +55,11 @@ export type DeployStatusState =
   | "domain_pending"
   | "oauth_pending"
   | "domain_provisioning"
-  | "not_started";
+  | "not_started"
+  // Ctrl-C landed before the live state could be read, so nothing about the
+  // deploy is known. Never means "no production instance" — see
+  // buildInterruptedDeployStatusReport.
+  | "interrupted";
 
 export interface DeployStatusReport {
   complete: boolean;
@@ -383,6 +387,30 @@ export function buildDeployStatusReport(
         ? domainsDashboardUrl(snapshot.appId, snapshot.productionInstanceId)
         : null,
     ),
+  };
+}
+
+/**
+ * The report for a Ctrl-C that arrived before {@link resolveDeployState} could
+ * answer — during the preflight DNS check, or during the state read itself.
+ *
+ * `not_started` would be a lie here: it asserts there is no production
+ * instance, which is exactly the question that never got answered. This says
+ * "unknown" instead, so an agent parsing stdout gets a well-formed document
+ * rather than the empty output this path used to produce.
+ */
+export function buildInterruptedDeployStatusReport(): DeployStatusReport {
+  return {
+    complete: false,
+    state: "interrupted",
+    domain: null,
+    productionInstanceId: null,
+    domainStatus: null,
+    pendingDnsRecords: [],
+    oauth: { complete: false, configured: [], pending: [], unsupported: [] },
+    nextAction:
+      "Interrupted before the deploy status could be read, so nothing is known about this " +
+      "deploy. Run `clerk deploy status` again to check it.",
   };
 }
 

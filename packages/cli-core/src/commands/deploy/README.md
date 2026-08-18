@@ -47,7 +47,7 @@ Agent-mode `clerk deploy` exits successfully for linked projects because it is i
 In agent mode, `clerk deploy status` emits JSON on stdout with:
 
 - `complete`: `true` only when the domain is verified and all supported OAuth providers enabled in development have production credentials.
-- `state`: `complete`, `domain_pending`, `oauth_pending`, `domain_provisioning`, or `not_started`.
+- `state`: `complete`, `domain_pending`, `oauth_pending`, `domain_provisioning`, `not_started`, or `interrupted`.
 - `domainStatus`: per-component DNS, SSL, and email DNS status when a domain exists.
 - `pendingDnsRecords`: CNAME records still tied to pending DNS-backed checks.
 - `oauth`: configured, pending, and unsupported provider slugs.
@@ -86,6 +86,8 @@ After displaying the DNS records block, when CNAME records are present the CLI p
 PLAPI errors are translated to typed `CliError`s by `commands/deploy/errors.ts`. The CLI does not auto-retry SSL issuance or email DNS verification beyond the shared DNS verification loop. When domain status polling times out with SSL or email DNS still incomplete, the CLI surfaces the component status and instructs the user to rerun `clerk deploy` once DNS propagates.
 
 If the user presses Ctrl-C after the production instance has been created — at a prompt or during the DNS wait — the wizard tells them to run `clerk deploy` again and exits with SIGINT code 130. The deploy is unfinished either way, so `clerk deploy && ./cutover.sh` stops rather than proceeding against a half-configured instance. The next run derives the current DNS or OAuth step from API state and resumes without starting another production instance.
+
+`clerk deploy status` also exits 130 on Ctrl-C, and always emits a report on the way out. Interrupted mid-wait, it reports what the last completed poll established. Interrupted before the live state resolves — during the preflight DNS check or the state read — it reports `state: "interrupted"`, which asserts nothing about the deploy. See [`.claude/rules/interrupts.md`](../../../../../.claude/rules/interrupts.md).
 
 ## Sequence Diagram
 

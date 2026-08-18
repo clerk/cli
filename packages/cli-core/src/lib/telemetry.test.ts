@@ -12,6 +12,7 @@ import {
   type TelemetryCommand,
 } from "./telemetry.ts";
 import { ApiError, CliError, EXIT_CODE, UserAbortError } from "./errors.ts";
+import { abortInFlight, beginInterrupt, _resetInterruptState } from "./signals.ts";
 import { setLogLevel } from "./log.ts";
 import { useCaptureLog } from "../test/lib/stubs.ts";
 
@@ -217,6 +218,111 @@ describe("finalizeAndSendTelemetry", () => {
     startCommandTelemetry(fakeCommand());
     await finalizeAndSendTelemetry({ outcome: "success", exitCode: 0 });
     expect(called).toBe(0);
+  });
+
+  // A run gets one event across both flushes: the normal end-of-command one and
+  // the shutdown one the SIGINT handler starts.
+  describe("interrupted runs", () => {
+    afterEach(() => {
+      _resetInterruptState();
+    });
+
+    /** Lands the abort event; the success event only ever settles by aborting. */
+    function fetchThatOnlyLandsAborts(landed: string[]): typeof fetch {
+      return (async (_url: string, init?: RequestInit) => {
+        const body = String(init?.body ?? "");
+        if (body.includes('"outcome":"abort"')) {
+          landed.push(body);
+          return new Response("{}");
+        }
+        return await new Promise<Response>((_resolve, reject) => {
+          const fail = () => reject(new DOMException("The operation was aborted.", "AbortError"));
+          const signal = init?.signal;
+          if (!signal) return;
+          if (signal.aborted) return fail();
+          signal.addEventListener("abort", fail, { once: true });
+        });
+      }) as unknown as typeof fetch;
+    }
+
+    test("an aborted normal flush leaves the run for the shutdown flush to report", async () => {
+      await markTelemetryNoticeShown();
+      process.env.CLERK_TELEMETRY_URL = "https://capture.invalid/v1/event";
+      const landed: string[] = [];
+      globalThis.fetch = fetchThatOnlyLandsAborts(landed);
+      startCommandTelemetry(fakeCommand());
+
+      beginInterrupt();
+      abortInFlight();
+      await finalizeAndSendTelemetry({ outcome: "success", exitCode: 0 }, 1000);
+      expect(landed).toEqual([]);
+
+      await finalizeAndSendTelemetry({ outcome: "abort", exitCode: EXIT_CODE.SIGINT }, 250, true);
+
+      expect(landed).toHaveLength(1);
+      expect(landed[0]).toContain('"outcome":"abort"');
+    });
+
+    test("a flush still in flight when the interrupt lands still yields one event", async () => {
+      await markTelemetryNoticeShown();
+      process.env.CLERK_TELEMETRY_URL = "https://capture.invalid/v1/event";
+      const landed: string[] = [];
+      globalThis.fetch = fetchThatOnlyLandsAborts(landed);
+      startCommandTelemetry(fakeCommand());
+
+      const normal = finalizeAndSendTelemetry({ outcome: "success", exitCode: 0 }, 1000);
+      beginInterrupt();
+      abortInFlight();
+      await finalizeAndSendTelemetry({ outcome: "abort", exitCode: EXIT_CODE.SIGINT }, 250, true);
+      await normal;
+
+      expect(landed).toHaveLength(1);
+      expect(landed[0]).toContain('"outcome":"abort"');
+    });
+
+    test("the shutdown flush is not held up by a normal flush that ignores the interrupt", async () => {
+      await markTelemetryNoticeShown();
+      process.env.CLERK_TELEMETRY_URL = "https://capture.invalid/v1/event";
+      const landed: string[] = [];
+      globalThis.fetch = (async (_url: string, init?: RequestInit) => {
+        const body = String(init?.body ?? "");
+        if (body.includes('"outcome":"abort"')) {
+          landed.push(body);
+          return new Response("{}");
+        }
+        // Stands in for the config, Git, and user-agent reads a normal flush
+        // does around its POST: slow, and blind to the interrupt signal.
+        return await new Promise<Response>(() => {});
+      }) as unknown as typeof fetch;
+      startCommandTelemetry(fakeCommand());
+
+      const normal = finalizeAndSendTelemetry({ outcome: "success", exitCode: 0 }, 300);
+      beginInterrupt();
+      abortInFlight();
+      await finalizeAndSendTelemetry({ outcome: "abort", exitCode: EXIT_CODE.SIGINT }, 250, true);
+
+      // Landed inside the shutdown budget rather than being starved by work
+      // the interrupt cannot cancel.
+      expect(landed).toHaveLength(1);
+      await normal;
+    });
+
+    test("a landed normal flush is not reported a second time", async () => {
+      await markTelemetryNoticeShown();
+      process.env.CLERK_TELEMETRY_URL = "https://capture.invalid/v1/event";
+      const bodies: string[] = [];
+      globalThis.fetch = (async (_url: string, init?: RequestInit) => {
+        bodies.push(String(init?.body ?? ""));
+        return new Response("{}");
+      }) as unknown as typeof fetch;
+      startCommandTelemetry(fakeCommand());
+
+      await finalizeAndSendTelemetry({ outcome: "success", exitCode: 0 });
+      await finalizeAndSendTelemetry({ outcome: "abort", exitCode: EXIT_CODE.SIGINT }, 250, true);
+
+      expect(bodies).toHaveLength(1);
+      expect(bodies[0]).toContain('"outcome":"success"');
+    });
   });
 
   describe("sandbox-looking failures", () => {

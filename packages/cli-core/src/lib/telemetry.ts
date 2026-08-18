@@ -58,6 +58,28 @@ type TelemetryContext = {
 
 let context: TelemetryContext | null = null;
 
+/**
+ * Whether this run has been accounted for — the send completed, or it was
+ * decided that nothing would be sent at all (opt-out, disclosure notice).
+ *
+ * The context is what a flush needs to build an event, so it is held until one
+ * of those settles rather than cleared at entry. A Ctrl-C mid-POST aborts the
+ * normal flush, which leaves the context in place for the shutdown flush to
+ * re-send as `outcome: "abort"` — before this the context was already gone and
+ * an interrupted run reported nothing at all.
+ *
+ * This flag alone is what keeps a run to one event, and it is enough because a
+ * normal flush still running when the shutdown flush starts can no longer
+ * land: it passes `ignoreInterrupt: false`, so its POST is composed with
+ * `interruptSignal()` and the interrupt that triggered the shutdown flush
+ * already aborted it. One that landed *before* the interrupt has already set
+ * this flag — its continuations are microtasks and the signal handler is a
+ * macrotask, so they run first. The shutdown flush therefore never waits on
+ * the normal one, whose remaining config, Git, and user-agent reads observe no
+ * signal and could otherwise burn its entire 250ms budget.
+ */
+let finalized = false;
+
 /** Pure env + build check; the persisted opt-out lives in getTelemetryStatus. */
 export function telemetryEnabled(
   env: EnvLike = process.env,
@@ -115,6 +137,9 @@ function collectSetFlagNames(cmd: TelemetryCommand): string[] {
 export function startCommandTelemetry(actionCommand: TelemetryCommand): void {
   try {
     const command = commandPathOf(actionCommand);
+    // A process runs one command, but tests reuse the module — start each run
+    // owing an event.
+    finalized = false;
     // `completion` runs without a user asking for it: every new shell with
     // `eval "$(clerk completion zsh)"` in its rc file re-runs it, so a handful
     // of machines drowned out the real command mix. (`__complete`, fired on
@@ -152,24 +177,36 @@ export function telemetryResultForError(error: unknown): TelemetryResult {
  * `deadlineMs` by more than scheduling noise. The deadline covers the entire
  * job — config I/O, git profile lookup, and the POST — not just the fetch;
  * on timeout the event is dropped (`deadlineMs` is overridden in tests).
+ *
+ * Callable twice per run — once normally, once from the SIGINT handler — and
+ * emits at most one event across both. The one case a run is still reported as
+ * a success it did not have is a Ctrl-C in the bookkeeping tail *after* the
+ * POST has already landed: that event cannot be retracted, and sending a second
+ * would double-count the run.
  */
 export async function finalizeAndSendTelemetry(
   result: TelemetryResult,
   deadlineMs: number = TELEMETRY_TIMEOUT_MS,
   outlivesInterrupt = false,
 ): Promise<void> {
-  const current = context;
-  context = null;
-  if (!current) return;
+  if (finalized || !context) return;
 
+  const current = context;
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), deadlineMs);
   try {
-    const work = buildAndSend(current, result, controller.signal, outlivesInterrupt).catch(
-      (error: unknown) => {
+    const work = buildAndSend(current, result, controller.signal, outlivesInterrupt)
+      .then(() => {
+        // Reached the endpoint, or decided nothing would be sent at all. Either
+        // way the run is accounted for and no later flush reports it again.
+        finalized = true;
+        context = null;
+      })
+      .catch((error: unknown) => {
+        // Aborted or failed. The context stays put so the shutdown flush can
+        // report the interrupt that most likely caused this.
         log.debug(`telemetry: send failed: ${error}`);
-      },
-    );
+      });
     await Promise.race([work, abortedToResolved(controller.signal)]);
   } finally {
     clearTimeout(timer);
@@ -239,8 +276,8 @@ async function buildAndSend(
     // Only the shutdown flush reports the interrupt, so only it may outlive
     // one. A normal end-of-command flush must stay interruptible: bypassing
     // the signal there would let a Ctrl-C mid-POST record the run's success
-    // event, and `context` is already cleared so the handler cannot replace
-    // it with the abort event.
+    // event. Being aborted is how it hands the run to the shutdown flush,
+    // which finds the context still in place and re-sends it as an abort.
     ignoreInterrupt: outlivesInterrupt,
   });
 }
