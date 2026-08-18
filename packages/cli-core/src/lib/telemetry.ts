@@ -58,6 +58,30 @@ type TelemetryContext = {
 
 let context: TelemetryContext | null = null;
 
+/**
+ * Whether this run has been accounted for — the send completed, or it was
+ * decided that nothing would be sent at all (opt-out, disclosure notice).
+ *
+ * The context is what a flush needs to build an event, so it is held until one
+ * of those settles rather than cleared at entry. A Ctrl-C mid-POST aborts the
+ * normal flush, which leaves the context in place for the shutdown flush to
+ * re-send as `outcome: "abort"` — before this the context was already gone and
+ * an interrupted run reported nothing at all.
+ */
+let finalized = false;
+
+/**
+ * The flush currently running, resolving to whether it finalized the run.
+ *
+ * Both flushes can be alive at once: the normal one is racing a 1500ms deadline
+ * while the interrupt that aborted it starts the shutdown flush on a 250ms one,
+ * and `reportAndExitInterrupted`'s dynamic `import("./telemetry.ts")` makes the
+ * ordering between them unpredictable. A second flush therefore waits out the
+ * first and only sends if the first did not, so a run produces at most one
+ * event.
+ */
+let inFlight: Promise<boolean> | null = null;
+
 /** Pure env + build check; the persisted opt-out lives in getTelemetryStatus. */
 export function telemetryEnabled(
   env: EnvLike = process.env,
@@ -115,6 +139,10 @@ function collectSetFlagNames(cmd: TelemetryCommand): string[] {
 export function startCommandTelemetry(actionCommand: TelemetryCommand): void {
   try {
     const command = commandPathOf(actionCommand);
+    // A process runs one command, but tests reuse the module — start each run
+    // owing an event.
+    finalized = false;
+    inFlight = null;
     // `completion` runs without a user asking for it: every new shell with
     // `eval "$(clerk completion zsh)"` in its rc file re-runs it, so a handful
     // of machines drowned out the real command mix. (`__complete`, fired on
@@ -152,28 +180,72 @@ export function telemetryResultForError(error: unknown): TelemetryResult {
  * `deadlineMs` by more than scheduling noise. The deadline covers the entire
  * job — config I/O, git profile lookup, and the POST — not just the fetch;
  * on timeout the event is dropped (`deadlineMs` is overridden in tests).
+ *
+ * Callable twice per run — once normally, once from the SIGINT handler — and
+ * emits at most one event across both. The one case a run is still reported as
+ * a success it did not have is a Ctrl-C in the bookkeeping tail *after* the
+ * POST has already landed: that event cannot be retracted, and sending a second
+ * would double-count the run.
  */
 export async function finalizeAndSendTelemetry(
   result: TelemetryResult,
   deadlineMs: number = TELEMETRY_TIMEOUT_MS,
   outlivesInterrupt = false,
 ): Promise<void> {
-  const current = context;
-  context = null;
-  if (!current) return;
+  if (finalized || !context) return;
 
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), deadlineMs);
   try {
-    const work = buildAndSend(current, result, controller.signal, outlivesInterrupt).catch(
-      (error: unknown) => {
-        log.debug(`telemetry: send failed: ${error}`);
-      },
-    );
-    await Promise.race([work, abortedToResolved(controller.signal)]);
+    // The deadline covers waiting out an earlier flush as well as our own send,
+    // so a shutdown flush cannot be held past its budget by the normal one it
+    // interrupted.
+    await Promise.race([
+      flush(result, controller.signal, outlivesInterrupt),
+      abortedToResolved(controller.signal),
+    ]);
   } finally {
     clearTimeout(timer);
   }
+}
+
+/**
+ * Send this run's event, unless a flush already accounted for it.
+ *
+ * The `inFlight` handoff is what keeps the two flushes to one event between
+ * them. It is assigned before the first await, so a flush that starts later
+ * always observes it.
+ */
+async function flush(
+  result: TelemetryResult,
+  signal: AbortSignal,
+  outlivesInterrupt: boolean,
+): Promise<void> {
+  if (inFlight && (await inFlight)) return;
+  if (finalized) return;
+
+  const current = context;
+  if (!current) return;
+
+  const work = buildAndSend(current, result, signal, outlivesInterrupt)
+    .then(() => {
+      // Reached the endpoint, or decided nothing would be sent at all. Either
+      // way the run is accounted for and no later flush should report it again.
+      finalized = true;
+      context = null;
+      return true;
+    })
+    .catch((error: unknown) => {
+      // Aborted or failed. The context stays put so the shutdown flush can
+      // report the interrupt that most likely caused this.
+      log.debug(`telemetry: send failed: ${error}`);
+      return false;
+    })
+    .finally(() => {
+      inFlight = null;
+    });
+  inFlight = work;
+  await work;
 }
 
 function abortedToResolved(signal: AbortSignal): Promise<void> {
@@ -239,8 +311,8 @@ async function buildAndSend(
     // Only the shutdown flush reports the interrupt, so only it may outlive
     // one. A normal end-of-command flush must stay interruptible: bypassing
     // the signal there would let a Ctrl-C mid-POST record the run's success
-    // event, and `context` is already cleared so the handler cannot replace
-    // it with the abort event.
+    // event. Being aborted is how it hands the run to the shutdown flush,
+    // which finds the context still in place and re-sends it as an abort.
     ignoreInterrupt: outlivesInterrupt,
   });
 }
