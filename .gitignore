@@ -46,3 +46,7 @@ test/e2e/.har
 
 # Local planning/spec docs
 docs/superpowers/
+
+# Local migration exports and the credentials that produced them
+exports/
+*service-account*.json
