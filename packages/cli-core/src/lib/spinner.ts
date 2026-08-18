@@ -3,8 +3,7 @@ import { intro as clackIntro, outro as clackOutro, spinner as clackSpinner } fro
 import { isHuman } from "../mode.ts";
 import { dim, cyan } from "./color.ts";
 import { animateHeader } from "./gradient.ts";
-import { UserAbortError } from "./errors.ts";
-import { interruptedExitCode } from "./signals.ts";
+import { isCancelled } from "./signals.ts";
 import { log, pushPrefix, popPrefix } from "./log.ts";
 import { getUiOutput } from "./ui.ts";
 
@@ -84,11 +83,6 @@ export function pausedOutro(instruction = PAUSED_INSTRUCTION) {
 export function bar() {
   if (!isHuman()) return;
   writeUi(`${dim(S_BAR)}\n`);
-}
-
-/** A cancelled run is not a failed one, whether the user cancelled a prompt or pressed Ctrl-C. */
-function isCancelled(error: unknown): boolean {
-  return error instanceof UserAbortError || interruptedExitCode() !== null;
 }
 
 export type SpinnerControls = {

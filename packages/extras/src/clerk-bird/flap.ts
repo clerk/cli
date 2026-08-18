@@ -1207,7 +1207,10 @@ export async function startFlap2(): Promise<void> {
     // strand the terminal in the alt screen with raw mode still on. Suspend
     // every outer listener for the duration of the game and restore them in
     // teardown, so quitting always runs the cleanup below first.
-    const outerSigintListeners = process.listeners("SIGINT");
+    // `rawListeners`, not `listeners`: the latter unwraps `once` registrations,
+    // so restoring them with `process.on` below would silently promote a
+    // one-shot listener into a permanent one.
+    const outerSigintListeners = process.rawListeners("SIGINT") as ((...args: unknown[]) => void)[];
     for (const listener of outerSigintListeners) process.removeListener("SIGINT", listener);
 
     const teardown = () => {

@@ -4,7 +4,7 @@ import { log } from "../../lib/log.ts";
 import { interruptedExitCode } from "../../lib/signals.ts";
 import { sleep } from "../../lib/sleep.ts";
 import { withSpinner } from "../../lib/spinner.ts";
-import { deployComponentLabels } from "./copy.ts";
+import { deployComponentLabels, type DeployComponentStatus } from "./copy.ts";
 import {
   buildDeployStatusReport,
   loadProductionDomain,
@@ -39,15 +39,26 @@ export async function deployStatus(options: DeployStatusOptions = {}): Promise<v
 
   let outcome: DeployStatusOutcome | null = null;
   if (state.kind === "active" && shouldWait) {
+    // The wait loop's status is local to it, and Ctrl-C rejects out of the next
+    // poll before it returns. Capture each poll's result so the interrupt path
+    // below reports what was actually established rather than the pre-wait
+    // snapshot, which would list components as pending after they verified.
+    let lastPolledStatus: DeployComponentStatus | undefined;
     try {
-      outcome = await runWait(state, { triggerCheck: !preflightTriggered });
+      outcome = await runWait(state, {
+        triggerCheck: !preflightTriggered,
+        onStatus: (status) => {
+          lastPolledStatus = status;
+        },
+      });
     } catch (error) {
       if (interruptedExitCode() === null) throw error;
       // Ctrl-C mid-poll. `runProgram` hands the exit to the signal handler, so
       // nothing below this frame runs and the command would otherwise print
       // nothing at all. Emit what the last completed poll established; the exit
       // code stays 130, so no script reads this as a finished deploy.
-      emitReport(buildDeployStatusReport(state, null));
+      const partial = lastPolledStatus ? { verified: false, status: lastPolledStatus } : null;
+      emitReport(buildDeployStatusReport(state, partial));
       throw error;
     }
   }
@@ -74,10 +85,11 @@ async function runPreflightDeployStatusCheck(ctx: DeployContext): Promise<boolea
 
 function runWait(
   state: Extract<DeployState, { kind: "active" }>,
-  options: { triggerCheck?: boolean } = {},
+  options: { triggerCheck?: boolean; onStatus?: (status: DeployComponentStatus) => void } = {},
 ): Promise<DeployStatusOutcome> {
   const { snapshot } = state;
   const domainIdOrName = snapshot.productionDomainId ?? snapshot.domain;
+  const { onStatus, ...waitOptions } = options;
   return waitForDeployStatus(
     snapshot.appId,
     domainIdOrName,
@@ -87,8 +99,9 @@ function runWait(
       onVerified: () => {
         if (!isAgent()) log.success(deployComponentLabels("dns", snapshot.domain).done);
       },
+      onStatus,
     },
-    options,
+    waitOptions,
   );
 }
 

@@ -156,6 +156,7 @@ export function telemetryResultForError(error: unknown): TelemetryResult {
 export async function finalizeAndSendTelemetry(
   result: TelemetryResult,
   deadlineMs: number = TELEMETRY_TIMEOUT_MS,
+  outlivesInterrupt = false,
 ): Promise<void> {
   const current = context;
   context = null;
@@ -164,9 +165,11 @@ export async function finalizeAndSendTelemetry(
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), deadlineMs);
   try {
-    const work = buildAndSend(current, result, controller.signal).catch((error: unknown) => {
-      log.debug(`telemetry: send failed: ${error}`);
-    });
+    const work = buildAndSend(current, result, controller.signal, outlivesInterrupt).catch(
+      (error: unknown) => {
+        log.debug(`telemetry: send failed: ${error}`);
+      },
+    );
     await Promise.race([work, abortedToResolved(controller.signal)]);
   } finally {
     clearTimeout(timer);
@@ -184,6 +187,7 @@ async function buildAndSend(
   current: TelemetryContext,
   result: TelemetryResult,
   signal: AbortSignal,
+  outlivesInterrupt: boolean,
 ): Promise<void> {
   // Re-checked here (not just at start) so `clerk telemetry disable` itself
   // sees the freshly persisted opt-out and sends nothing.
@@ -232,8 +236,12 @@ async function buildAndSend(
     body: JSON.stringify({ events: [event] }),
     signal,
     bestEffort: true,
-    // This send reports the interrupt, so it has to outlive it.
-    ignoreInterrupt: true,
+    // Only the shutdown flush reports the interrupt, so only it may outlive
+    // one. A normal end-of-command flush must stay interruptible: bypassing
+    // the signal there would let a Ctrl-C mid-POST record the run's success
+    // event, and `context` is already cleared so the handler cannot replace
+    // it with the abort event.
+    ignoreInterrupt: outlivesInterrupt,
   });
 }
 

@@ -1,7 +1,8 @@
 import { createApplication, fetchApplication } from "../../lib/plapi.ts";
-import { UserAbortError, withApiContext } from "../../lib/errors.ts";
+import { withApiContext } from "../../lib/errors.ts";
 import { dim, cyan } from "../../lib/color.ts";
 import { withSpinner, intro, outro, pausedOutro } from "../../lib/spinner.ts";
+import { closeStatusForError } from "../../lib/signals.ts";
 import { stripSecrets, displayName, printJson, type AppsOptions } from "./shared.ts";
 import { isInsideGutter, log } from "../../lib/log.ts";
 import { isAgent } from "../../mode.ts";
@@ -33,7 +34,7 @@ export async function create(name: string, options: AppsOptions = {}): Promise<v
     ];
     closeStatus = "success";
   } catch (error) {
-    closeStatus = error instanceof UserAbortError ? "paused" : "failed";
+    closeStatus = closeStatusForError(error);
     throw error;
   } finally {
     if (shouldWrap) {

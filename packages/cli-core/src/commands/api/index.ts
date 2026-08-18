@@ -6,16 +6,11 @@ import { type ApiResponse } from "../../lib/fetch.ts";
 import { bapiRequest } from "../../lib/bapi.ts";
 import { fapiRequest } from "../../lib/fapi.ts";
 import { resolveFapiHost } from "./fapi.ts";
-import {
-  ApiError,
-  ERROR_CODE,
-  UserAbortError,
-  throwUsageError,
-  throwUserAbort,
-} from "../../lib/errors.ts";
+import { ApiError, ERROR_CODE, throwUsageError, throwUserAbort } from "../../lib/errors.ts";
 import { isHuman } from "../../mode.ts";
 import { confirm } from "../../lib/prompts.ts";
 import { withSpinner, intro, outro, pausedOutro } from "../../lib/spinner.ts";
+import { closeStatusForError } from "../../lib/signals.ts";
 import { isInsideGutter, log } from "../../lib/log.ts";
 
 export interface ApiOptions {
@@ -156,7 +151,7 @@ export async function api(
       throw error;
     }
   } catch (error) {
-    closeStatus = error instanceof UserAbortError ? "paused" : "failed";
+    closeStatus = closeStatusForError(error);
     throw error;
   } finally {
     if (!nested) {

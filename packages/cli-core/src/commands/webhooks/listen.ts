@@ -165,7 +165,11 @@ export async function webhooksListen(options: WebhooksListenOptions = {}): Promi
       // Draining makes the shutdown clean, not the run successful, so this stays
       // an abort — `listen` ends no other way.
       await reportAndExitInterrupted(EXIT_CODE.SIGINT);
-    })();
+      // The drain is fire-and-forget, so an unobserved rejection anywhere above
+      // — `client.stop()`, the lazy telemetry import — would leave the process
+      // alive and never reach the signal death this command promises. Exit by
+      // signal anyway; a failed drain is still an interrupt.
+    })().catch(() => exitInterrupted(EXIT_CODE.SIGINT));
   });
 
   async function processDelivery(

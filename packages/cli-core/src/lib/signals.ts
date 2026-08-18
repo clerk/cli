@@ -14,7 +14,9 @@
  * complete when the user interrupted it mid-countdown.
  */
 
-import { EXIT_CODE } from "./errors.ts";
+import { setMaxListeners } from "node:events";
+
+import { EXIT_CODE, UserAbortError } from "./errors.ts";
 import { log } from "./log.ts";
 
 /** Telemetry budget on Ctrl-C — the user wants their shell back. */
@@ -29,7 +31,21 @@ const INTERRUPT_FLUSH_MS = 250;
  */
 const NO_RERAISE_ENV = "CLERK_CLI_NO_SIGNAL_RERAISE";
 
-let controller = new AbortController();
+/**
+ * Every `loggedFetch` that brings its own signal composes it with this one via
+ * `AbortSignal.any`, which registers a listener here that only clears when the
+ * derived signal is collected. `webhooks forward` passes a per-delivery
+ * `AbortSignal.timeout` and deliveries run concurrently, so a burst would trip
+ * the default max-listeners warning. Unbounded observers are the design here,
+ * so say so rather than leaking a warning to the user.
+ */
+function newInterruptController(): AbortController {
+  const next = new AbortController();
+  setMaxListeners(0, next.signal);
+  return next;
+}
+
+let controller = newInterruptController();
 let waits = 0;
 let interrupted: number | null = null;
 
@@ -82,6 +98,27 @@ export function abortInFlight(): void {
 
 /** The code a Ctrl-C settled on, or null if none has arrived. */
 export const interruptedExitCode = (): number | null => interrupted;
+
+/** A cancelled run is not a failed one, whether the user cancelled a prompt or pressed Ctrl-C. */
+export function isCancelled(error: unknown): boolean {
+  return error instanceof UserAbortError || interruptedExitCode() !== null;
+}
+
+/**
+ * How a command's gutter should close when `error` escaped it.
+ *
+ * Shared so the command wrappers agree with `withSpinner` on what counts as a
+ * cancellation. Checking only `UserAbortError` would render "Failed" on Ctrl-C:
+ * an interrupt aborts the in-flight request, which rejects with `AbortError`,
+ * not `UserAbortError`.
+ *
+ * Lives here rather than beside the outro helpers because this is interrupt
+ * state, not rendering — and `spinner.ts` is stubbed by many command tests,
+ * which would leave every consumer mocking a predicate they do not care about.
+ */
+export function closeStatusForError(error: unknown): "paused" | "failed" {
+  return isCancelled(error) ? "paused" : "failed";
+}
 
 /**
  * Record that a Ctrl-C arrived and latch the code it settled on. Called by the
@@ -136,7 +173,9 @@ export function exitInterrupted(code: number): never {
  */
 export async function reportAndExitInterrupted(code: number): Promise<never> {
   const { finalizeAndSendTelemetry } = await import("./telemetry.ts");
-  await finalizeAndSendTelemetry({ outcome: "abort", exitCode: code }, INTERRUPT_FLUSH_MS);
+  // `true`: this is the shutdown flush, the one send that reports the very
+  // interrupt that triggered it, so it must not be aborted by that interrupt.
+  await finalizeAndSendTelemetry({ outcome: "abort", exitCode: code }, INTERRUPT_FLUSH_MS, true);
   return exitInterrupted(code);
 }
 
@@ -151,7 +190,7 @@ export async function reportAndExitInterrupted(code: number): Promise<never> {
  * immediately.
  */
 export const CLI_SIGINT_HANDLER = async (): Promise<void> => {
-  if (interrupted !== null) exitInterrupted(interrupted);
+  if (interrupted !== null) return exitInterrupted(interrupted);
   const code = beginInterrupt();
   abortInFlight();
   if (process.stdin.isTTY) process.stdin.setRawMode(false);
@@ -163,7 +202,7 @@ export const CLI_SIGINT_HANDLER = async (): Promise<void> => {
 
 /** Test-only: clear every latch, including the controller the signal comes from. */
 export function _resetInterruptState(): void {
-  controller = new AbortController();
+  controller = newInterruptController();
   waits = 0;
   interrupted = null;
 }
