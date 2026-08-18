@@ -238,6 +238,7 @@ export async function setMigrationEntry(key: string, entry: MigrationEntry): Pro
   const config = await readConfig();
   if (!config.migrations) config.migrations = {};
   config.migrations[key] = entry;
+  await writeConfig(config);
 }
 
 /** Persistent random machine id for telemetry. Generated on first use. */
