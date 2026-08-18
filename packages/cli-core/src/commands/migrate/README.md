@@ -485,6 +485,28 @@ clerk migrate transformers list --transformer-file ./my-transformer.ts
 | `--json`                    | Output as JSON                    |
 | `--transformer-file <path>` | Also list a transformer you wrote |
 
+Each entry prints its key, the platform label, and what the transformer assumes
+about the export — wrapped to the terminal, capped at 80 columns so two runs of
+the same command lay out the same way. A backticked span is never broken across
+lines. There is no intro/outro gutter: this reads a static registry rather than
+running anything.
+
+```
+A transformer maps one platform's export onto the fields Clerk imports. Pass the
+one your export came from as `--transformer <key>`.
+
+Transformers:
+  clerk  Clerk
+    Migrate between Clerk instances (e.g. development to production, or to
+    another Clerk application). Export your users from the Clerk Dashboard
+    first.
+
+  …
+
+6 built-in transformers
+Migrating from something else? Write a transformer and pass --transformer-file.
+```
+
 `--json` gives an agent the same data, including which source field each
 transformer maps to `userId`.
 

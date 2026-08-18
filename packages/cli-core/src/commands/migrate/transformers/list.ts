@@ -6,9 +6,8 @@
  * A compiled binary's users have neither, so the list is a command.
  */
 
-import { bold, cyan, dim } from "../../../lib/color.ts";
+import { bold, cyan } from "../../../lib/color.ts";
 import { log } from "../../../lib/log.ts";
-import { withGutter } from "../../../lib/spinner.ts";
 import type { TransformerRegistryEntry } from "../types.ts";
 import { loadCustomTransformer } from "./load-custom.ts";
 import { transformers } from "./registry.ts";
@@ -32,6 +31,47 @@ function toJson(entries: Listed[]) {
   }));
 }
 
+/**
+ * Capped, not just measured: a description that rewrapped differently on every
+ * terminal makes two runs of the same command look like different output. 80 is
+ * the same width `--help` lays itself out at.
+ */
+const MAX_WIDTH = 80;
+
+function outputWidth(): number {
+  return Math.min(process.stderr.columns || MAX_WIDTH, MAX_WIDTH);
+}
+
+/**
+ * A run of non-space characters, except that a backticked span counts as one
+ * character run even when it contains spaces. Keeps `SELECT a, b FROM users`
+ * whole: `log.info` pairs backticks per line, so a span broken across two lines
+ * leaves an unmatched backtick on each and colours the wrong half of both.
+ */
+const WORD = /(?:`[^`]*`|\S)+/g;
+
+/**
+ * Wraps on whitespace. Safe to measure raw because the backtick spans
+ * `log.info` highlights keep their backticks — the colour it adds is invisible
+ * to width, and nothing here is coloured before wrapping.
+ */
+export function wrapText(text: string, width: number): string[] {
+  const lines: string[] = [];
+  let line = "";
+
+  for (const word of text.match(WORD) ?? []) {
+    if (!line) line = word;
+    else if (line.length + 1 + word.length <= width) line += ` ${word}`;
+    else {
+      lines.push(line);
+      line = word;
+    }
+  }
+  if (line) lines.push(line);
+
+  return lines;
+}
+
 export async function list(options: TransformersListOptions = {}): Promise<void> {
   const entries: Listed[] = transformers.map((entry) => ({ ...entry, builtIn: true }));
 
@@ -45,26 +85,36 @@ export async function list(options: TransformersListOptions = {}): Promise<void>
     return;
   }
 
-  await withGutter("Listing transformers", async () => {
-    for (const entry of entries) {
-      const suffix = entry.builtIn ? "" : ` ${dim(`(custom — ${entry.source})`)}`;
-      log.info(`${cyan(bold(entry.key))}  ${entry.label}${suffix}`);
-      log.info(`  ${dim(entry.description)}`);
-      log.info("");
-    }
+  const width = outputWidth();
 
-    const custom = entries.length - transformers.length;
-    log.info(
-      dim(
-        `${transformers.length} built-in transformer${transformers.length === 1 ? "" : "s"}` +
-          (custom > 0 ? ` plus ${custom} loaded from --transformer-file` : ""),
-      ),
-    );
+  // No gutter: this reads a static registry, it does not run anything. The
+  // frame belongs on `migrate import`, where there is progress to bracket.
+  for (const line of wrapText(
+    "A transformer maps one platform's export onto the fields Clerk imports. " +
+      "Pass the one your export came from as `--transformer <key>`.",
+    width,
+  )) {
+    log.info(line);
+  }
+  log.blank();
 
-    if (custom === 0) {
-      log.info(
-        dim("Migrating from something else? Write a transformer and pass --transformer-file."),
-      );
+  log.info(bold("Transformers:"));
+  for (const entry of entries) {
+    const suffix = entry.builtIn ? "" : ` (custom — ${entry.source})`;
+    log.info(`  ${cyan(bold(entry.key))}  ${entry.label}${suffix}`);
+    for (const line of wrapText(entry.description, width - 4)) {
+      log.info(`    ${line}`);
     }
-  });
+    log.blank();
+  }
+
+  const custom = entries.length - transformers.length;
+  log.info(
+    `${transformers.length} built-in transformer${transformers.length === 1 ? "" : "s"}` +
+      (custom > 0 ? ` plus ${custom} loaded from --transformer-file` : ""),
+  );
+
+  if (custom === 0) {
+    log.info("Migrating from something else? Write a transformer and pass --transformer-file.");
+  }
 }

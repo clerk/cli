@@ -5,7 +5,7 @@ import path from "node:path";
 import { CliError } from "../../../lib/errors.ts";
 import { getMode, setMode, type Mode } from "../../../mode.ts";
 import { useCaptureLog } from "../../../test/lib/stubs.ts";
-import { list } from "./list.ts";
+import { list, wrapText } from "./list.ts";
 import { transformers } from "./registry.ts";
 
 const captured = useCaptureLog();
@@ -43,11 +43,15 @@ describe("human output", () => {
     expect(captured.err).toContain(transformer.label);
   });
 
-  // `log.info` auto-highlights backticked spans, so the rendered description
-  // carries colour codes the source string does not.
+  // Two normalizations: `log.info` auto-highlights backticked spans, so the
+  // rendered description carries colour codes the source string does not, and
+  // descriptions are wrapped to the terminal width across several indented
+  // lines. Collapsing whitespace compares the words, not the layout.
+  const collapse = (value: string) => stripAnsi(value).replace(/\s+/g, " ");
+
   test.each([...transformers])("includes the $key description", async (transformer) => {
     await list();
-    expect(stripAnsi(captured.err)).toContain(transformer.description);
+    expect(collapse(captured.err)).toContain(collapse(transformer.description));
   });
 
   test("counts the built-ins", async () => {
@@ -128,19 +132,41 @@ describe("human-mode frame", () => {
     setMode(originalMode);
   });
 
-  test("wraps its output in an intro/outro gutter", async () => {
+  // Reading a static registry is not a run: there is no progress to bracket,
+  // and the gutter's `│` would sit in front of every wrapped line.
+  test("prints no intro/outro gutter", async () => {
     await list();
 
-    expect(captured.err).toContain("┌");
-    expect(captured.err).toContain("Listing transformers");
-    expect(captured.err).toContain("└");
-    expect(captured.err).toContain("Done");
+    expect(captured.err).not.toContain("┌");
+    expect(captured.err).not.toContain("└");
+    expect(stripAnsi(captured.err)).toContain("Transformers:");
   });
 
-  test("--json stays outside the gutter, on stdout only", async () => {
+  test("--json stays on stdout only", async () => {
     await list({ json: true });
 
     expect(() => JSON.parse(captured.out)).not.toThrow();
-    expect(captured.err).not.toContain("┌");
+    expect(captured.err).toBe("");
+  });
+});
+
+describe("wrapText", () => {
+  test("breaks on whitespace within the width", () => {
+    expect(wrapText("one two three four", 9)).toEqual(["one two", "three", "four"]);
+  });
+
+  // `log.info` pairs backticks per line, so a span split across two lines
+  // leaves one unmatched backtick on each and colours the wrong half of both.
+  test("never breaks inside a backticked span", () => {
+    const lines = wrapText("Assumes an export of `SELECT id, name FROM users`.", 30);
+
+    expect(lines).toContain("`SELECT id, name FROM users`.");
+    for (const line of lines) {
+      expect((line.match(/`/g) ?? []).length % 2).toBe(0);
+    }
+  });
+
+  test("gives an over-long word its own line rather than dropping it", () => {
+    expect(wrapText("short supercalifragilistic", 8)).toEqual(["short", "supercalifragilistic"]);
   });
 });
