@@ -148,9 +148,21 @@ with what a database export needs.
 | `betterauth` | Better Auth database             | `--transformer betterauth` |
 | `firebase`   | Firebase Identity Toolkit        | `--transformer firebase`   |
 
-Exports land at `./exports/<platform>-export.json` unless `--output` says
-otherwise. `--output` resolves against the **current directory**, like every
-other path flag here.
+Every export asks where to save the file before it starts, proposing
+`./exports/<platform>-export-<YYYYMMDD-HHmm>.json`. Press enter to take it,
+or type over it to save somewhere else — the proposal is prefilled, so it is
+one prompt rather than a confirm and a path question.
+
+The stamp is ISO 8601 basic format in local time, to the minute: it goes in a
+name people read off the screen and tab-complete, and it means a second export
+never silently overwrites the first.
+
+`--output` answers that prompt up front and skips it, as does agent mode, which
+takes the proposed path. `--output` resolves against the **current directory**,
+like every other path flag here.
+
+The question comes before any users are fetched, so a long export can be left
+unattended rather than stalling on a prompt with everything held in memory.
 
 | Flag                       | Platforms                          | Description                                  |
 | -------------------------- | ---------------------------------- | -------------------------------------------- |
@@ -175,9 +187,9 @@ Field coverage
   ! 1/3 have a username
   ! 2/3 have a password (not exportable — see below)
 
-Exported 3 users to /project/exports/clerk-export.json
+Exported 3 users to /project/exports/clerk-export-20260817-1432.json
 └  Next steps
-   → Run `clerk migrate --transformer clerk --file exports/clerk-export.json` to import them
+   → Run `clerk migrate import --transformer clerk --file exports/clerk-export-20260817-1432.json` to import them
 ```
 
 Every export also writes `logs/export-<timestamp>.log`, so `migrate logs list`

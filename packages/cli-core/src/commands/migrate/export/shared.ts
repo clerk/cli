@@ -14,10 +14,58 @@ import path from "node:path";
 import { dim, green, yellow } from "../../../lib/color.ts";
 import { log } from "../../../lib/log.ts";
 import { NEXT_STEPS } from "../../../lib/next-steps.ts";
+import { text } from "../../../lib/prompts.ts";
+import { isHuman } from "../../../mode.ts";
+
+/**
+ * `YYYYMMDD-HHmm`, local time — ISO 8601 basic format, minus seconds.
+ *
+ * Basic throughout rather than `2026-08-17-1954`, which mixes the extended
+ * date form with the basic time form and leaves the trailing group looking
+ * like a fourth date component. One separator, and it sorts lexically.
+ *
+ * Seconds are dropped on purpose. This lands in a filename people read off the
+ * screen, type back and tab-complete, and two exports of the same platform
+ * inside one minute is not an accident anyone has by surprise.
+ *
+ * Local rather than UTC because the only reader is the person who just ran the
+ * command, deciding which of two files is the one they meant.
+ */
+export function outputStamp(now: Date = new Date()): string {
+  const pad = (value: number) => String(value).padStart(2, "0");
+  const date = `${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}`;
+  return `${date}-${pad(now.getHours())}${pad(now.getMinutes())}`;
+}
 
 /** Where an export lands when `--output` is not given. */
-export function defaultOutputPath(platform: string): string {
-  return path.join("exports", `${platform}-export.json`);
+export function defaultOutputPath(platform: string, now?: Date): string {
+  return path.join("exports", `${platform}-export-${outputStamp(now)}.json`);
+}
+
+/**
+ * Settles where the file lands, before the export runs.
+ *
+ * Asked up front rather than at write time so a long export can be left
+ * unattended — coming back to a stalled prompt with every user held in memory
+ * and nothing on disk is the worse half of that trade.
+ *
+ * One prompt, not a confirm followed by a path prompt: the proposed path is
+ * prefilled, so Enter accepts it and typing replaces it.
+ *
+ * `--output` is an answer already given, and agent mode has nobody to ask.
+ */
+export async function resolveOutputPath(platform: string, output?: string): Promise<string> {
+  if (output) return output;
+
+  const proposed = defaultOutputPath(platform);
+  if (!isHuman()) return proposed;
+
+  const chosen = await text({
+    message: "Save the export to:",
+    default: proposed,
+    validate: (value) => (value?.trim() ? undefined : "A path is required"),
+  });
+  return chosen.trim();
 }
 
 /**

@@ -15,7 +15,7 @@ import { withGutter, withSpinner } from "../../../lib/spinner.ts";
 import { log } from "../../../lib/log.ts";
 import { exportLogger, getDateTimeStamp } from "../lib/logger.ts";
 import { withDbClient, type DbClient } from "../lib/db.ts";
-import { defaultOutputPath, reportExport, writeExportOutput } from "./shared.ts";
+import { reportExport, resolveOutputPath, writeExportOutput } from "./shared.ts";
 import { resolveDbUrl, type DbExportOptions } from "./db-options.ts";
 
 /** Table names to try, in order. Prisma capitalizes; Drizzle does not. */
@@ -113,6 +113,8 @@ export async function exportAuthJs(options: DbExportOptions): Promise<void> {
     hint: "Postgres, MySQL or a SQLite file — whichever your Auth.js adapter uses.",
   });
 
+  const destination = await resolveOutputPath("authjs", options.output);
+
   await withGutter("Exporting users from Auth.js", async ({ setNextSteps }) => {
     const dateTime = getDateTimeStamp();
 
@@ -122,7 +124,7 @@ export async function exportAuthJs(options: DbExportOptions): Promise<void> {
     log.info(`Read ${rows.length} row${rows.length === 1 ? "" : "s"} from ${table}.`);
 
     const { users, coverage } = buildAuthJsExport(rows, dateTime);
-    const outputPath = writeExportOutput(users, options.output ?? defaultOutputPath("authjs"));
+    const outputPath = writeExportOutput(users, destination);
 
     setNextSteps(
       reportExport({

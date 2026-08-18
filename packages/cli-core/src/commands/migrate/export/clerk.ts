@@ -20,7 +20,7 @@ import { log } from "../../../lib/log.ts";
 import { withGutter, withSpinner, type SpinnerControls } from "../../../lib/spinner.ts";
 import { exportLogger, getDateTimeStamp } from "../lib/logger.ts";
 import { retryOn429 } from "../lib/retry.ts";
-import { defaultOutputPath, reportExport, writeExportOutput } from "./shared.ts";
+import { reportExport, resolveOutputPath, writeExportOutput } from "./shared.ts";
 
 /** BAPI's maximum page size for `GET /v1/users`. */
 const PAGE_SIZE = 500;
@@ -223,6 +223,8 @@ export function buildClerkExport(users: BapiUser[], dateTime: string): ClerkExpo
 }
 
 export async function exportClerk(options: ExportClerkOptions): Promise<void> {
+  const destination = await resolveOutputPath("clerk", options.output);
+
   await withGutter("Exporting users from Clerk", async ({ setNextSteps }) => {
     const target = await describeBapiTarget({ ...options, secretKey: options.secretKey });
     const secretKey = await resolveBapiSecretKey({ ...options, secretKey: options.secretKey });
@@ -235,7 +237,7 @@ export async function exportClerk(options: ExportClerkOptions): Promise<void> {
     );
 
     const { users: exported, coverage } = buildClerkExport(users, dateTime);
-    const outputPath = writeExportOutput(exported, options.output ?? defaultOutputPath("clerk"));
+    const outputPath = writeExportOutput(exported, destination);
 
     setNextSteps(
       reportExport({

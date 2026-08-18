@@ -42,6 +42,9 @@ afterAll(() => {
 });
 
 beforeEach(() => {
+  // Tests that need a prompt set human mode themselves; without this a
+  // leaked "human" from an earlier test stops a later one on the destination prompt.
+  setMode("agent");
   requests = [];
   fs.rmSync(getLogDir(), { recursive: true, force: true });
   fs.rmSync(path.join(workDir, "exports"), { recursive: true, force: true });
@@ -276,15 +279,25 @@ describe("buildAuth0Export", () => {
   });
 });
 
+/** The one file the export just wrote into `exports/`, whatever it stamped it. */
+function onlyExportFile(): string {
+  const entries = fs.readdirSync(path.join(workDir, "exports"));
+  expect(entries).toHaveLength(1);
+  return path.join(workDir, "exports", entries[0] as string);
+}
+
 describe("exportAuth0", () => {
   test("writes the default path and reports coverage", async () => {
     stubAuth0([[auth0User(0)], []]);
 
     await exportAuth0({ ...CREDENTIALS });
 
-    const written = JSON.parse(
-      fs.readFileSync(path.join(workDir, "exports", "auth0-export.json"), "utf-8"),
-    ) as Record<string, unknown>[];
+    // Stamped to the minute, so a second export does not overwrite the first.
+    expect(path.basename(onlyExportFile())).toMatch(/^auth0-export-\d{8}-\d{4}\.json$/);
+    const written = JSON.parse(fs.readFileSync(onlyExportFile(), "utf-8")) as Record<
+      string,
+      unknown
+    >[];
     expect(written[0]?.user_id).toBe("auth0|a0");
     expect(captured.err).toContain("Field coverage");
   });
@@ -296,11 +309,13 @@ describe("exportAuth0", () => {
     const originalMode = getMode();
     setMode("human");
     try {
-      await exportAuth0({ ...CREDENTIALS });
+      // --output answers the destination prompt, which human mode would
+      // otherwise stop on.
+      await exportAuth0({ ...CREDENTIALS, output: "exports/mine.json" });
     } finally {
       setMode(originalMode);
     }
-    expect(captured.err).toContain("migrate --transformer auth0 --file exports/auth0-export.json");
+    expect(captured.err).toContain("migrate import --transformer auth0 --file exports/mine.json");
   });
 
   test("--output controls the destination", async () => {

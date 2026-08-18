@@ -23,7 +23,7 @@ import { withGutter, withSpinner, type SpinnerControls } from "../../../lib/spin
 import { isAgent, isHuman } from "../../../mode.ts";
 import { findMigrateEnvValue } from "../lib/env-file.ts";
 import { exportLogger, getDateTimeStamp } from "../lib/logger.ts";
-import { defaultOutputPath, reportExport, writeExportOutput } from "./shared.ts";
+import { reportExport, resolveOutputPath, writeExportOutput } from "./shared.ts";
 
 const PAGE_SIZE = 100;
 
@@ -316,6 +316,8 @@ export function buildAuth0Export(users: Auth0User[], dateTime: string): Auth0Exp
 export async function exportAuth0(options: ExportAuth0Options): Promise<void> {
   const credentials = await resolveAuth0Credentials(options);
 
+  const destination = await resolveOutputPath("auth0", options.output);
+
   await withGutter("Exporting users from Auth0", async ({ setNextSteps }) => {
     const dateTime = getDateTimeStamp();
     log.info(`Exporting from ${credentials.domain}.`);
@@ -329,7 +331,7 @@ export async function exportAuth0(options: ExportAuth0Options): Promise<void> {
     );
 
     const { users: exported, coverage } = buildAuth0Export(users, dateTime);
-    const outputPath = writeExportOutput(exported, options.output ?? defaultOutputPath("auth0"));
+    const outputPath = writeExportOutput(exported, destination);
 
     setNextSteps(
       reportExport({

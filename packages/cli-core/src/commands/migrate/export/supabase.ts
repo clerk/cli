@@ -14,7 +14,7 @@ import { log } from "../../../lib/log.ts";
 import { withGutter, withSpinner } from "../../../lib/spinner.ts";
 import { exportLogger, getDateTimeStamp } from "../lib/logger.ts";
 import { withDbClient, type DbClient } from "../lib/db.ts";
-import { defaultOutputPath, reportExport, writeExportOutput } from "./shared.ts";
+import { reportExport, resolveOutputPath, writeExportOutput } from "./shared.ts";
 import { resolveDbUrl, type DbExportOptions } from "./db-options.ts";
 
 /**
@@ -111,6 +111,8 @@ export async function exportSupabase(options: DbExportOptions): Promise<void> {
     hint: "Dashboard → Connect → Session pooler. Direct connections need the IPv4 add-on.",
   });
 
+  const destination = await resolveOutputPath("supabase", options.output);
+
   await withGutter("Exporting users from Supabase", async ({ setNextSteps }) => {
     const dateTime = getDateTimeStamp();
 
@@ -119,7 +121,7 @@ export async function exportSupabase(options: DbExportOptions): Promise<void> {
     );
 
     const { users, coverage } = buildSupabaseExport(rows, dateTime);
-    const outputPath = writeExportOutput(users, options.output ?? defaultOutputPath("supabase"));
+    const outputPath = writeExportOutput(users, destination);
 
     setNextSteps(
       reportExport({

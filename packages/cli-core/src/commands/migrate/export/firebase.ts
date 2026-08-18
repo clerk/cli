@@ -30,7 +30,7 @@ import { loggedFetch } from "../../../lib/fetch.ts";
 import { log } from "../../../lib/log.ts";
 import { withGutter, withSpinner, type SpinnerControls } from "../../../lib/spinner.ts";
 import { exportLogger, getDateTimeStamp } from "../lib/logger.ts";
-import { defaultOutputPath, reportExport, writeExportOutput } from "./shared.ts";
+import { reportExport, resolveOutputPath, writeExportOutput } from "./shared.ts";
 
 /** Identity Toolkit's maximum for `accounts:batchGet`. */
 const PAGE_SIZE = 1000;
@@ -424,6 +424,8 @@ export async function exportFirebase(options: ExportFirebaseOptions): Promise<vo
   // fails in a second rather than after an auth round-trip.
   const account = readServiceAccount(options.serviceAccount);
 
+  const destination = await resolveOutputPath("firebase", options.output);
+
   await withGutter("Exporting users from Firebase", async ({ setNextSteps }) => {
     const dateTime = getDateTimeStamp();
     log.info(`Exporting from the ${account.project_id} project.`);
@@ -437,7 +439,7 @@ export async function exportFirebase(options: ExportFirebaseOptions): Promise<vo
     );
 
     const { users: exported, coverage } = buildFirebaseExport(users, dateTime);
-    const outputPath = writeExportOutput(exported, options.output ?? defaultOutputPath("firebase"));
+    const outputPath = writeExportOutput(exported, destination);
 
     setNextSteps(
       reportExport({

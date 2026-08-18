@@ -33,6 +33,9 @@ afterAll(() => {
 });
 
 beforeEach(() => {
+  // Tests that need a prompt set human mode themselves; without this a
+  // leaked "human" from an earlier test stops a later one on the destination prompt.
+  setMode("agent");
   requests = [];
   fs.rmSync(getLogDir(), { recursive: true, force: true });
   fs.rmSync(path.join(workDir, "exports"), { recursive: true, force: true });
@@ -74,7 +77,7 @@ describe("mapClerkUserToExport", () => {
     });
   });
 
-  // `migrate run` puts the first entry on POST /v1/users and attaches the rest
+  // `migrate import` puts the first entry on POST /v1/users and attaches the rest
   // afterwards, so a reordered list would change which address signs the user in.
   test("keeps the primary identifier out of the additional list", () => {
     const mapped = mapClerkUserToExport(
@@ -229,15 +232,25 @@ describe("buildClerkExport", () => {
   });
 });
 
+/** The one file the export just wrote into `exports/`, whatever it stamped it. */
+function onlyExportFile(): string {
+  const entries = fs.readdirSync(path.join(workDir, "exports"));
+  expect(entries).toHaveLength(1);
+  return path.join(workDir, "exports", entries[0] as string);
+}
+
 describe("exportClerk", () => {
   test("writes the default path and reports coverage", async () => {
     stubPages([[user({ id: "u1", first_name: "Ada" })], []]);
 
     await exportClerk({ secretKey: "sk_test_x" });
 
-    const written = JSON.parse(
-      fs.readFileSync(path.join(workDir, "exports", "clerk-export.json"), "utf-8"),
-    ) as Record<string, unknown>[];
+    // Stamped to the minute, so a second export does not overwrite the first.
+    expect(path.basename(onlyExportFile())).toMatch(/^clerk-export-\d{8}-\d{4}\.json$/);
+    const written = JSON.parse(fs.readFileSync(onlyExportFile(), "utf-8")) as Record<
+      string,
+      unknown
+    >[];
     expect(written).toHaveLength(1);
     expect(written[0]?.id).toBe("u1");
     expect(captured.err).toContain("Field coverage");
@@ -251,11 +264,13 @@ describe("exportClerk", () => {
     const originalMode = getMode();
     setMode("human");
     try {
-      await exportClerk({ secretKey: "sk_test_x" });
+      // --output answers the destination prompt, which human mode would
+      // otherwise stop on.
+      await exportClerk({ secretKey: "sk_test_x", output: "exports/mine.json" });
     } finally {
       setMode(originalMode);
     }
-    expect(captured.err).toContain("migrate --transformer clerk --file exports/clerk-export.json");
+    expect(captured.err).toContain("migrate import --transformer clerk --file exports/mine.json");
   });
 
   test("--output controls the destination, relative to the working directory", async () => {
@@ -264,7 +279,7 @@ describe("exportClerk", () => {
     await exportClerk({ secretKey: "sk_test_x", output: "somewhere/mine.json" });
 
     expect(fs.existsSync(path.join(workDir, "somewhere", "mine.json"))).toBe(true);
-    expect(fs.existsSync(path.join(workDir, "exports", "clerk-export.json"))).toBe(false);
+    expect(fs.existsSync(path.join(workDir, "exports"))).toBe(false);
   });
 
   // Silence here would be the worst outcome: the operator finds out when
@@ -281,9 +296,7 @@ describe("exportClerk", () => {
     await exportClerk({ secretKey: "sk_test_x" });
 
     expect(captured.err).toContain("No users found to export");
-    expect(
-      JSON.parse(fs.readFileSync(path.join(workDir, "exports", "clerk-export.json"), "utf-8")),
-    ).toEqual([]);
+    expect(JSON.parse(fs.readFileSync(onlyExportFile(), "utf-8"))).toEqual([]);
   });
 
   test("an empty export warns but does not suggest importing it", async () => {
@@ -291,7 +304,7 @@ describe("exportClerk", () => {
     const originalMode = getMode();
     setMode("human");
     try {
-      await exportClerk({ secretKey: "sk_test_x" });
+      await exportClerk({ secretKey: "sk_test_x", output: "exports/mine.json" });
     } finally {
       setMode(originalMode);
     }

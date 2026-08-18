@@ -65,6 +65,9 @@ afterAll(() => {
 });
 
 beforeEach(() => {
+  // Tests that need a prompt set human mode themselves; without this a
+  // leaked "human" from an earlier test stops a later one on the destination prompt.
+  setMode("agent");
   requests = [];
   delete process.env.FIREBASE_AUTH_EMULATOR_HOST;
   fs.rmSync(getLogDir(), { recursive: true, force: true });
@@ -397,6 +400,13 @@ describe("formatHashConfigGuidance", () => {
   });
 });
 
+/** The one file the export just wrote into `exports/`, whatever it stamped it. */
+function onlyExportFile(): string {
+  const entries = fs.readdirSync(path.join(workDir, "exports"));
+  expect(entries).toHaveLength(1);
+  return path.join(workDir, "exports", entries[0] as string);
+}
+
 describe("exportFirebase", () => {
   test("exports end to end and reports coverage", async () => {
     stubFirebase([[fbUser(0), fbUser(1)]], {
@@ -405,9 +415,12 @@ describe("exportFirebase", () => {
 
     await exportFirebase({ serviceAccount: "./sa.json" });
 
-    const written = JSON.parse(
-      fs.readFileSync(path.join(workDir, "exports", "firebase-export.json"), "utf-8"),
-    ) as Record<string, unknown>[];
+    // Stamped to the minute, so a second export does not overwrite the first.
+    expect(path.basename(onlyExportFile())).toMatch(/^firebase-export-\d{8}-\d{4}\.json$/);
+    const written = JSON.parse(fs.readFileSync(onlyExportFile(), "utf-8")) as Record<
+      string,
+      unknown
+    >[];
     expect(written).toHaveLength(2);
     expect(captured.err).toContain("Field coverage");
     expect(captured.err).toContain("demo-fb project");
@@ -420,12 +433,14 @@ describe("exportFirebase", () => {
     const originalMode = getMode();
     setMode("human");
     try {
-      await exportFirebase({ serviceAccount: "./sa.json" });
+      // --output answers the destination prompt, which human mode would
+      // otherwise stop on.
+      await exportFirebase({ serviceAccount: "./sa.json", output: "exports/mine.json" });
     } finally {
       setMode(originalMode);
     }
     expect(captured.err).toContain(
-      "migrate --transformer firebase --file exports/firebase-export.json",
+      "migrate import --transformer firebase --file exports/mine.json",
     );
   });
 

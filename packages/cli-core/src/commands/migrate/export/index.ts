@@ -101,7 +101,9 @@ export function registerMigrateExport(migrateCommand: Command<[], Record<string,
 
   exportCommand
     .command("clerk")
-    .description("Export users from a Clerk instance (default: ./exports/clerk-export.json)")
+    .description(
+      "Export users from a Clerk instance (default: ./exports/clerk-export-<timestamp>.json)",
+    )
     .option("-o, --output <path>", "Where to write the export, relative to the current directory")
     .option("--secret-key <key>", "Backend API secret key to use")
     .option("--app <id>", "Application ID to target (works from any directory)")
@@ -109,7 +111,7 @@ export function registerMigrateExport(migrateCommand: Command<[], Record<string,
     .setExamples([
       {
         command: "clerk migrate export clerk",
-        description: "Export to ./exports/clerk-export.json",
+        description: "Export to ./exports/clerk-export-<timestamp>.json",
       },
       {
         command: "clerk migrate export clerk --instance prod --output prod-users.json",
@@ -122,7 +124,9 @@ export function registerMigrateExport(migrateCommand: Command<[], Record<string,
 
   exportCommand
     .command("auth0")
-    .description("Export users from an Auth0 tenant (default: ./exports/auth0-export.json)")
+    .description(
+      "Export users from an Auth0 tenant (default: ./exports/auth0-export-<timestamp>.json)",
+    )
     .option("--domain <domain>", "Auth0 tenant domain, e.g. my-tenant.us.auth0.com")
     .option("--client-id <id>", "Machine-to-machine application client ID")
     .option("--client-secret <secret>", "Machine-to-machine application client secret")
@@ -144,7 +148,9 @@ export function registerMigrateExport(migrateCommand: Command<[], Record<string,
 
   exportCommand
     .command("firebase")
-    .description("Export users from a Firebase project (default: ./exports/firebase-export.json)")
+    .description(
+      "Export users from a Firebase project (default: ./exports/firebase-export-<timestamp>.json)",
+    )
     .option("--service-account <path>", "Path to a service account key JSON file")
     .option("-o, --output <path>", "Where to write the export, relative to the current directory")
     .setExamples([
@@ -162,7 +168,9 @@ export function registerMigrateExport(migrateCommand: Command<[], Record<string,
   for (const platform of DB_PLATFORMS) {
     exportCommand
       .command(platform.key)
-      .description(`${platform.summary} (default: ./exports/${platform.key}-export.json)`)
+      .description(
+        `${platform.summary} (default: ./exports/${platform.key}-export-<timestamp>.json)`,
+      )
       .option("--db-url <url>", "Postgres, MySQL or SQLite connection string")
       .option("-o, --output <path>", "Where to write the export, relative to the current directory")
       .setExamples([

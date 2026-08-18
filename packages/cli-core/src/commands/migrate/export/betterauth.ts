@@ -19,7 +19,7 @@ import { log } from "../../../lib/log.ts";
 import { withGutter, withSpinner } from "../../../lib/spinner.ts";
 import { exportLogger, getDateTimeStamp } from "../lib/logger.ts";
 import { withDbClient, type DbClient } from "../lib/db.ts";
-import { defaultOutputPath, reportExport, writeExportOutput } from "./shared.ts";
+import { reportExport, resolveOutputPath, writeExportOutput } from "./shared.ts";
 import { resolveDbUrl, type DbExportOptions } from "./db-options.ts";
 
 /** Columns a Better Auth plugin adds to the user table. */
@@ -160,6 +160,8 @@ export async function exportBetterAuth(options: DbExportOptions): Promise<void> 
     hint: "Postgres, MySQL or a SQLite file — whichever your Better Auth install uses.",
   });
 
+  const destination = await resolveOutputPath("betterauth", options.output);
+
   await withGutter("Exporting users from Better Auth", async ({ setNextSteps }) => {
     const dateTime = getDateTimeStamp();
 
@@ -178,7 +180,7 @@ export async function exportBetterAuth(options: DbExportOptions): Promise<void> 
     );
 
     const { users, coverage } = buildBetterAuthExport(rows, dateTime);
-    const outputPath = writeExportOutput(users, options.output ?? defaultOutputPath("betterauth"));
+    const outputPath = writeExportOutput(users, destination);
 
     setNextSteps(
       reportExport({
