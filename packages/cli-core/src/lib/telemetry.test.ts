@@ -280,6 +280,33 @@ describe("finalizeAndSendTelemetry", () => {
       expect(landed[0]).toContain('"outcome":"abort"');
     });
 
+    test("the shutdown flush is not held up by a normal flush that ignores the interrupt", async () => {
+      await markTelemetryNoticeShown();
+      process.env.CLERK_TELEMETRY_URL = "https://capture.invalid/v1/event";
+      const landed: string[] = [];
+      globalThis.fetch = (async (_url: string, init?: RequestInit) => {
+        const body = String(init?.body ?? "");
+        if (body.includes('"outcome":"abort"')) {
+          landed.push(body);
+          return new Response("{}");
+        }
+        // Stands in for the config, Git, and user-agent reads a normal flush
+        // does around its POST: slow, and blind to the interrupt signal.
+        return await new Promise<Response>(() => {});
+      }) as unknown as typeof fetch;
+      startCommandTelemetry(fakeCommand());
+
+      const normal = finalizeAndSendTelemetry({ outcome: "success", exitCode: 0 }, 300);
+      beginInterrupt();
+      abortInFlight();
+      await finalizeAndSendTelemetry({ outcome: "abort", exitCode: EXIT_CODE.SIGINT }, 250, true);
+
+      // Landed inside the shutdown budget rather than being starved by work
+      // the interrupt cannot cancel.
+      expect(landed).toHaveLength(1);
+      await normal;
+    });
+
     test("a landed normal flush is not reported a second time", async () => {
       await markTelemetryNoticeShown();
       process.env.CLERK_TELEMETRY_URL = "https://capture.invalid/v1/event";

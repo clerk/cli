@@ -67,20 +67,18 @@ let context: TelemetryContext | null = null;
  * normal flush, which leaves the context in place for the shutdown flush to
  * re-send as `outcome: "abort"` — before this the context was already gone and
  * an interrupted run reported nothing at all.
+ *
+ * This flag alone is what keeps a run to one event, and it is enough because a
+ * normal flush still running when the shutdown flush starts can no longer
+ * land: it passes `ignoreInterrupt: false`, so its POST is composed with
+ * `interruptSignal()` and the interrupt that triggered the shutdown flush
+ * already aborted it. One that landed *before* the interrupt has already set
+ * this flag — its continuations are microtasks and the signal handler is a
+ * macrotask, so they run first. The shutdown flush therefore never waits on
+ * the normal one, whose remaining config, Git, and user-agent reads observe no
+ * signal and could otherwise burn its entire 250ms budget.
  */
 let finalized = false;
-
-/**
- * The flush currently running, resolving to whether it finalized the run.
- *
- * Both flushes can be alive at once: the normal one is racing a 1500ms deadline
- * while the interrupt that aborted it starts the shutdown flush on a 250ms one,
- * and `reportAndExitInterrupted`'s dynamic `import("./telemetry.ts")` makes the
- * ordering between them unpredictable. A second flush therefore waits out the
- * first and only sends if the first did not, so a run produces at most one
- * event.
- */
-let inFlight: Promise<boolean> | null = null;
 
 /** Pure env + build check; the persisted opt-out lives in getTelemetryStatus. */
 export function telemetryEnabled(
@@ -142,7 +140,6 @@ export function startCommandTelemetry(actionCommand: TelemetryCommand): void {
     // A process runs one command, but tests reuse the module — start each run
     // owing an event.
     finalized = false;
-    inFlight = null;
     // `completion` runs without a user asking for it: every new shell with
     // `eval "$(clerk completion zsh)"` in its rc file re-runs it, so a handful
     // of machines drowned out the real command mix. (`__complete`, fired on
@@ -194,58 +191,26 @@ export async function finalizeAndSendTelemetry(
 ): Promise<void> {
   if (finalized || !context) return;
 
+  const current = context;
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), deadlineMs);
   try {
-    // The deadline covers waiting out an earlier flush as well as our own send,
-    // so a shutdown flush cannot be held past its budget by the normal one it
-    // interrupted.
-    await Promise.race([
-      flush(result, controller.signal, outlivesInterrupt),
-      abortedToResolved(controller.signal),
-    ]);
+    const work = buildAndSend(current, result, controller.signal, outlivesInterrupt)
+      .then(() => {
+        // Reached the endpoint, or decided nothing would be sent at all. Either
+        // way the run is accounted for and no later flush reports it again.
+        finalized = true;
+        context = null;
+      })
+      .catch((error: unknown) => {
+        // Aborted or failed. The context stays put so the shutdown flush can
+        // report the interrupt that most likely caused this.
+        log.debug(`telemetry: send failed: ${error}`);
+      });
+    await Promise.race([work, abortedToResolved(controller.signal)]);
   } finally {
     clearTimeout(timer);
   }
-}
-
-/**
- * Send this run's event, unless a flush already accounted for it.
- *
- * The `inFlight` handoff is what keeps the two flushes to one event between
- * them. It is assigned before the first await, so a flush that starts later
- * always observes it.
- */
-async function flush(
-  result: TelemetryResult,
-  signal: AbortSignal,
-  outlivesInterrupt: boolean,
-): Promise<void> {
-  if (inFlight && (await inFlight)) return;
-  if (finalized) return;
-
-  const current = context;
-  if (!current) return;
-
-  const work = buildAndSend(current, result, signal, outlivesInterrupt)
-    .then(() => {
-      // Reached the endpoint, or decided nothing would be sent at all. Either
-      // way the run is accounted for and no later flush should report it again.
-      finalized = true;
-      context = null;
-      return true;
-    })
-    .catch((error: unknown) => {
-      // Aborted or failed. The context stays put so the shutdown flush can
-      // report the interrupt that most likely caused this.
-      log.debug(`telemetry: send failed: ${error}`);
-      return false;
-    })
-    .finally(() => {
-      inFlight = null;
-    });
-  inFlight = work;
-  await work;
 }
 
 function abortedToResolved(signal: AbortSignal): Promise<void> {
