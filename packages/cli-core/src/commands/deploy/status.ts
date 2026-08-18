@@ -421,6 +421,7 @@ export function buildInterruptedDeployStatusReport(): DeployStatusReport {
     domain: null,
     productionInstanceId: null,
     domainStatus: null,
+    proxyUrl: null,
     pendingDnsRecords: [],
     oauth: { complete: false, configured: [], pending: [], unsupported: [] },
     nextAction:

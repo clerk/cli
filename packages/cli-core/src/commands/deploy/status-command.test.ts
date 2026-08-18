@@ -328,7 +328,12 @@ describe("deploy status", () => {
     const payload = JSON.parse(captured.out);
     expect(payload.state).toBe("domain_pending");
     // From the second poll, not the pre-wait snapshot — which still had DNS pending.
-    expect(payload.domainStatus).toEqual({ dns: "complete", ssl: "pending", mail: "complete" });
+    expect(payload.domainStatus).toEqual({
+      dns: "complete",
+      ssl: "pending",
+      mail: "complete",
+      proxy: "complete",
+    });
   });
 
   test("human mode Ctrl-C during the preflight prints only the next action", async () => {
