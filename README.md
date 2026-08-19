@@ -47,7 +47,7 @@ Commands:
   telemetry                                       Control CLI usage telemetry (status, disable, enable)
   enable                                          Enable Clerk features on the linked instance
   disable                                         Disable Clerk features on the linked instance
-  api              [options] [endpoint] [filter]  Make authenticated requests to the Clerk API
+  api              [options] [endpoint] [filter]  Call any Clerk API endpoint (200+; `clerk api ls` to browse)
   doctor           [options]                      Check your project's Clerk integration health
   mcp                                             Manage the Clerk remote MCP server connection for AI editors and CLIs
   completion       [shell]                        Generate shell autocompletion script
