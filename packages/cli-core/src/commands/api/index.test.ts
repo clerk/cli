@@ -631,6 +631,55 @@ describe("api command", () => {
     expect(captured.out).toContain(JSON.stringify(errorBody, null, 2));
     expect(captured.err).toContain("Failed");
     expect(captured.err).not.toContain("Done");
+    // A structured Clerk error means the endpoint resolved; don't suggest searching.
+    expect(captured.err).not.toContain("clerk api ls");
+  });
+
+  // --- 404 endpoint-search hint ---
+
+  test("suggests the endpoint search on an unstructured 404", async () => {
+    setMode("human");
+    stubFetch(async () => new Response("404 page not found", { status: 404 }));
+
+    await runApi("/organization_role");
+    expect(process.exitCode).toBe(1);
+    expect(captured.err).toContain("If the endpoint path was a guess");
+    expect(captured.err).toContain("clerk api ls <keyword>");
+    // Diagnostics on stderr only; stdout stays the raw response body for piping.
+    expect(captured.out).not.toContain("clerk api ls");
+    expect(captured.out).toContain("404 page not found");
+  });
+
+  test("scopes the endpoint search hint to the platform catalog with --platform", async () => {
+    setMode("human");
+    process.env.CLERK_PLATFORM_API_KEY = "plat_key_123";
+    stubFetch(async () => new Response("404 page not found", { status: 404 }));
+
+    await runApi("/v1/platform/bogus", { platform: true });
+    expect(captured.err).toContain("clerk api ls <keyword> --platform");
+  });
+
+  test("omits the endpoint search hint for FAPI, which has no catalog", async () => {
+    setMode("human");
+    process.env.CLERK_PLATFORM_API_KEY = "ak_test_platform";
+    const pk = `pk_test_${btoa("clerk.example.com$")}`;
+    stubFetch(async (input) => {
+      if (input.toString().includes("/v1/platform/applications/app_1")) {
+        return new Response(
+          JSON.stringify({
+            application_id: "app_1",
+            instances: [
+              { instance_id: "ins_dev", environment_type: "development", publishable_key: pk },
+            ],
+          }),
+          { status: 200 },
+        );
+      }
+      return new Response("404 page not found", { status: 404 });
+    });
+
+    await runApi("/bogus", { fapi: true, app: "app_1", instance: "dev" });
+    expect(captured.err).not.toContain("clerk api ls");
   });
 
   test("shows Paused with instructions when a confirmation prompt is cancelled", async () => {

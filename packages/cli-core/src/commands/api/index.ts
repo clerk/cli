@@ -144,6 +144,15 @@ export async function api(
           printHeaders(error.status, error.headers);
         }
         prettyPrint(error.body);
+        // A 404 can mean either "no such endpoint" or "endpoint exists, resource
+        // doesn't", so the wording stays conditional. A parsed Clerk error code is
+        // evidence the request reached the API and was rejected semantically, so we
+        // skip the hint there to keep it off the common resource-not-found path —
+        // a heuristic, not a guarantee. FAPI has no endpoint catalog to search.
+        if (error.status === 404 && error.code === null && !options.fapi) {
+          const scope = options.platform ? " --platform" : "";
+          log.info(`If the endpoint path was a guess, search with: clerk api ls <keyword>${scope}`);
+        }
         process.exitCode = 1;
         closeStatus = "failed";
         return;
@@ -227,7 +236,13 @@ function prettyPrintToStderr(text: string): void {
 export function registerApi(program: Program): void {
   program
     .command("api")
-    .description("Make authenticated requests to the Clerk API")
+    .summary("Call any Clerk API endpoint (200+; `clerk api ls` to browse)")
+    .description(
+      "Call any endpoint in the Clerk API directly.\n\n" +
+        "The other commands cover common operations. This one reaches everything " +
+        "else — invitations and waitlist entries, billing subscriptions and credits, " +
+        "organization roles and permissions, enterprise SSO connections.",
+    )
     .argument(
       "[endpoint]",
       "API endpoint path, 'ls' to list endpoints, or omit for interactive mode",
@@ -240,7 +255,10 @@ export function registerApi(program: Program): void {
     .option("--app <id>", "Application ID to target when resolving keys")
     .option("--secret-key <key>", "Override the secret key")
     .option("--instance <id>", "Instance to target (dev, prod, or instance ID)")
-    .option("--platform", "Use Platform API instead of Backend API")
+    .option(
+      "--platform",
+      "Use the Platform API (applications and instances) instead of the Backend API; has its own endpoint list",
+    )
     .option(
       "--fapi",
       "Use the instance's public Frontend API (unauthenticated endpoints only; host derived from the publishable key)",
@@ -248,8 +266,12 @@ export function registerApi(program: Program): void {
     .option("--dry-run", "Show the request without executing it")
     .option("--yes", "Skip confirmation for mutating requests")
     .setExamples([
-      { command: "clerk api ls", description: "List all available endpoints" },
-      { command: "clerk api ls users", description: 'List endpoints matching "users"' },
+      { command: "clerk api ls", description: "List Backend API endpoints" },
+      { command: "clerk api ls users", description: 'List Backend API endpoints matching "users"' },
+      {
+        command: "clerk api ls --platform",
+        description: "List Platform API endpoints (applications, instances)",
+      },
       { command: "clerk api /users", description: "GET /v1/users" },
       {
         command: 'clerk api /users -d \'{"first_name":"Alice"}\'',
