@@ -92,7 +92,7 @@ export async function deploy(_options: DeployOptions = {}) {
       throw error;
     }
     if (error instanceof DeployPausedError && isInsideGutter()) {
-      outro("Paused");
+      await outro("Paused");
     }
     if (error instanceof UserAbortError && isInsideGutter()) {
       pausedOutro(pausedOperationNotice());
@@ -103,7 +103,7 @@ export async function deploy(_options: DeployOptions = {}) {
     // Successful and paused paths call outro themselves. This balances the
     // intro gutter if an unexpected error escapes.
     if (isInsideGutter()) {
-      outro("Failed");
+      await outro("Failed");
     }
   }
 }
@@ -154,7 +154,7 @@ async function startNewDeploy(ctx: DeployContext): Promise<void> {
   const proceed = await confirmProceed();
   if (!proceed) {
     log.info("No changes were made.");
-    outro("Cancelled");
+    await outro("Cancelled");
     return;
   }
 
@@ -233,7 +233,7 @@ async function reconcileExistingDeploy(ctx: DeployContext): Promise<void> {
     log.blank();
     log.info("A production instance exists, but Clerk did not return a production domain yet.");
     log.info("Run `clerk deploy` again after the domain is available from the API.");
-    outro("No deploy actions available");
+    await outro("No deploy actions available");
     return;
   }
 
@@ -361,7 +361,7 @@ async function confirmProductionInstanceCreation(domain: string): Promise<boolea
 
   log.blank();
   log.info("No production instance was created.");
-  outro("Cancelled");
+  await outro("Cancelled");
   return false;
 }
 
@@ -639,7 +639,7 @@ async function finishDeploy(
     fallback: bold,
     body: `${applyPrefix(nextStepsBody(ctx.appId, productionInstanceId))}\n`,
   });
-  outro("Success");
+  await outro("Success");
 }
 
 export function registerDeploy(program: Program): void {

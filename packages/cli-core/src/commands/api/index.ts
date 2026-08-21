@@ -167,9 +167,9 @@ export async function api(
       if (closeStatus === "paused") {
         pausedOutro();
       } else if (closeStatus === "failed") {
-        outro("Failed");
+        await outro("Failed");
       } else {
-        outro();
+        await outro();
       }
     }
   }

@@ -216,9 +216,9 @@ export async function list(options: UsersListOptions = {}): Promise<void> {
       if (closeStatus === "paused") {
         pausedOutro();
       } else if (closeStatus === "failed") {
-        outro("Failed");
+        await outro("Failed");
       } else if (closeStatus === "success") {
-        outro();
+        await outro();
       }
     }
   }

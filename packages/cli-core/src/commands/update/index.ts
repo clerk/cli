@@ -273,7 +273,7 @@ export async function update(options: UpdateOptions): Promise<void> {
   if (compareSemver(latest, CURRENT_VERSION) <= 0) {
     log.info(`${green("✓")} Already on latest (${CURRENT_VERSION})`);
     reportOtherInstalls(others, channel);
-    if (isHuman()) outro("Up to date");
+    if (isHuman()) await outro("Up to date");
     return;
   }
 
@@ -320,7 +320,7 @@ export async function update(options: UpdateOptions): Promise<void> {
       }
     }
     reportOtherInstalls(others, channel);
-    if (isHuman()) outro("Update required manual action");
+    if (isHuman()) await outro("Update required manual action");
     return;
   }
 
@@ -347,7 +347,7 @@ export async function update(options: UpdateOptions): Promise<void> {
   const shouldInstall = options.yes || (await confirmUpdate(CURRENT_VERSION, latest));
 
   if (!shouldInstall) {
-    if (isHuman()) outro("Update cancelled");
+    if (isHuman()) await outro("Update cancelled");
     return;
   }
 
@@ -424,7 +424,7 @@ export async function update(options: UpdateOptions): Promise<void> {
   }
 
   if (isHuman()) {
-    outro(anyFailed ? "Update completed with errors" : `Successfully updated to ${latest}`);
+    await outro(anyFailed ? "Update completed with errors" : `Successfully updated to ${latest}`);
   }
 }
 

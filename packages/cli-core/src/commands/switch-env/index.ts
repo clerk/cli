@@ -48,12 +48,12 @@ export async function switchEnv(environmentArg: string | undefined): Promise<voi
     } else if (available.length <= 1) {
       log.info(`Current environment: ${current}`);
       log.info("Only one environment configured — nothing to switch to.");
-      outro();
+      await outro();
       return;
     } else {
       log.info(`Current environment: ${current}`);
       log.info(`Available environments: ${available.join(", ")}`);
-      outro();
+      await outro();
       return;
     }
   }
@@ -68,7 +68,7 @@ export async function switchEnv(environmentArg: string | undefined): Promise<voi
 
   if (previousEnv === target) {
     log.data(`Already on ${target} environment.`);
-    outro();
+    await outro();
     return;
   }
 
@@ -81,10 +81,10 @@ export async function switchEnv(environmentArg: string | undefined): Promise<voi
   const token = await getToken();
   if (!token) {
     log.data(`No credentials found for ${target}.`);
-    outro(NEXT_STEPS.SWITCH_ENV_NO_TOKEN);
+    await outro(NEXT_STEPS.SWITCH_ENV_NO_TOKEN);
     return;
   }
-  outro(NEXT_STEPS.SWITCH_ENV);
+  await outro(NEXT_STEPS.SWITCH_ENV);
 }
 
 export function registerSwitchEnv(program: Program): void {

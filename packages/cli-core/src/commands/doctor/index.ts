@@ -128,7 +128,7 @@ export async function doctor(options: DoctorOptions = {}): Promise<void> {
           code: ERROR_CODE.DOCTOR_FAILED,
         });
       }
-      outro("All checks passing");
+      await outro("All checks passing");
       return;
     }
   }
@@ -139,7 +139,7 @@ export async function doctor(options: DoctorOptions = {}): Promise<void> {
       code: ERROR_CODE.DOCTOR_FAILED,
     });
   }
-  outro("All checks passing");
+  await outro("All checks passing");
 }
 
 export function registerDoctor(program: Program): void {
