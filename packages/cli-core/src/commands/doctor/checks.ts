@@ -5,7 +5,6 @@ import { fetchUserInfo } from "../../lib/token-exchange.ts";
 import { errorMessage, isAuthError, PlapiError } from "../../lib/errors.ts";
 import { detectPublishableKeyName, detectSecretKeyName } from "../../lib/framework.ts";
 import { parseEnvFile } from "../../lib/dotenv.ts";
-import { hasAccountCredentials } from "../../lib/credential-store.ts";
 import type { KeylessTarget } from "../../lib/keyless-target.ts";
 import { CURRENT_VERSION, IS_DEV_BUILD } from "../../lib/version.ts";
 import {
@@ -102,6 +101,20 @@ export async function checkLoggedIn(ctx: DoctorContext): Promise<CheckResult> {
   const keyless = await ctx.getKeylessTarget();
   const keyError = await ctx.getKeylessKeyError();
 
+  if (ctx.hasPlatformAPIKey()) {
+    if (keyError) {
+      return check.warn(
+        `Platform API key configured, but the local secret key is unusable: ${keyError.message}`,
+        {
+          remedy:
+            "Fix or remove the malformed secret key — some commands prefer it over account credentials.",
+          fixable: false,
+        },
+      );
+    }
+    return check.pass("Authenticated with a Platform API key");
+  }
+
   if (token) {
     if (keyError) {
       return check.warn(`Logged in, but the local secret key is unusable: ${keyError.message}`, {
@@ -158,8 +171,14 @@ export async function checkHostExecution(): Promise<CheckResult> {
 
 export async function checkTokenValid(ctx: DoctorContext): Promise<CheckResult> {
   const check = defineCheck("Authentication valid", ctx.fixes.login);
+  if (ctx.hasPlatformAPIKey()) {
+    return check.pass("Platform API key configured; access is verified by API checks");
+  }
   const storedToken = await ctx.getToken();
   if (!storedToken) {
+    if (await ctx.hasAccountCredentials()) {
+      return check.pass("Platform API key configured; access is verified by API checks");
+    }
     const keyless = await ctx.getKeylessTarget();
     return keyless
       ? check.pass("No account session — not required for this keyless application")
@@ -173,6 +192,23 @@ export async function checkTokenValid(ctx: DoctorContext): Promise<CheckResult> 
     return check.pass(`Authenticated as ${userInfo.email}`);
   } catch (error) {
     if (isAuthError(error)) {
+      // The OAuth userinfo surface is not available in every environment that
+      // can accept the same account credential through PLAPI. When a linked
+      // application is reachable, that authenticated request is stronger
+      // evidence for the CLI than a userinfo rejection. `getApplication()` is
+      // cached by the real context, so the later application check reuses this
+      // request. A genuinely expired hosted session still falls through: PLAPI
+      // rejects the same token (or token refresh) too.
+      try {
+        const app = await ctx.getApplication();
+        if (app) {
+          return check.pass("Account access verified through the Clerk API");
+        }
+      } catch {
+        // Preserve the existing expired-session diagnosis below. The
+        // application check reports its own endpoint-specific failure later.
+      }
+
       // Same fallback whoami uses: an expired session doesn't strand a keyless
       // project, so don't tell the user their setup is broken.
       const keyless = await ctx.getKeylessTarget();
@@ -229,7 +265,7 @@ export async function checkProjectLinked(ctx: DoctorContext): Promise<CheckResul
 
     // Someone with an account who hasn't linked this directory *could* reach
     // the full account configuration — say so, unlike the fully unclaimed case.
-    if (await hasAccountCredentials()) {
+    if (await ctx.hasAccountCredentials()) {
       return check.warn(
         `Not linked — using the keyless application ${label}, which covers fewer settings`,
         {
@@ -251,8 +287,7 @@ export async function checkProjectLinked(ctx: DoctorContext): Promise<CheckResul
 
 export async function checkLinkedAppExists(ctx: DoctorContext): Promise<CheckResult> {
   const check = defineCheck("Application reachable", ctx.fixes.link);
-  const token = await ctx.getToken();
-  if (!token) {
+  if (!(await ctx.hasAccountCredentials())) {
     // This check is account-only — the Platform API application record has no
     // keyless equivalent — so an unclaimed keyless project has nothing to skip
     // *over*, just nothing to verify.
@@ -286,8 +321,7 @@ export async function checkLinkedAppExists(ctx: DoctorContext): Promise<CheckRes
 
 export async function checkInstances(ctx: DoctorContext): Promise<CheckResult> {
   const check = defineCheck("Instance IDs", ctx.fixes.link);
-  const token = await ctx.getToken();
-  if (!token) {
+  if (!(await ctx.hasAccountCredentials())) {
     // A linked profile's dev/prod instance IDs are an account-only concept —
     // the secret key on disk already addresses its one instance directly.
     const keyless = await ctx.getKeylessTarget();

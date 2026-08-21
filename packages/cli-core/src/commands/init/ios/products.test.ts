@@ -25,6 +25,7 @@ function target(): IOSAppTarget {
       environmentInjections: [],
       rootEnvironmentInjections: [],
       environmentConsumers: [],
+      authViewReferences: [],
       authFlowReferences: [],
       openURLHandlers: [],
       status: "absent",

@@ -766,6 +766,7 @@ export async function inspectSwiftSources(
   const environmentInjections: IOSSourceEvidence[] = [];
   const rootEnvironmentInjections: IOSSourceEvidence[] = [];
   const environmentConsumers: IOSSourceEvidence[] = [];
+  const authViewReferences: IOSSourceEvidence[] = [];
   const authFlowReferences: IOSSourceEvidence[] = [];
   const openURLHandlers: IOSSourceEvidence[] = [];
   let sourceFilesScanned = 0;
@@ -826,8 +827,12 @@ export async function inspectSwiftSources(
     if (importsClerkModule && has(sanitized, CLERK_ENVIRONMENT_CONSUMER)) {
       environmentConsumers.push(evidence);
     }
+    const constructsAuthView = importsUI && has(sanitized, CLERK_AUTH_VIEW);
+    if (constructsAuthView) {
+      authViewReferences.push(evidence);
+    }
     if (
-      (importsUI && has(sanitized, CLERK_AUTH_VIEW)) ||
+      constructsAuthView ||
       (importsClerkModule &&
         (has(sanitized, CLERK_NATIVE_AUTH_FLOW) || has(sanitized, CLERK_EMAIL_LINK_AUTH_FLOW)))
     ) {
@@ -874,6 +879,7 @@ export async function inspectSwiftSources(
     environmentInjections,
     rootEnvironmentInjections: provenRootEnvironmentInjections,
     environmentConsumers,
+    authViewReferences,
     authFlowReferences,
     openURLHandlers,
     status,

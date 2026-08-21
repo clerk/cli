@@ -5,6 +5,7 @@ import { useCaptureLog } from "../../../test/lib/stubs.ts";
 import type { IOSNativeReadinessTarget } from "./native-readiness.ts";
 import {
   applyIOSNativeRemoteSetup,
+  auditIOSNativeRemoteSetup,
   buildIOSNativeRemotePlan,
   prepareIOSNativeRemoteSetup,
   validateAppIdPrefix,
@@ -14,6 +15,7 @@ import {
   type IOSNativeRemotePrompts,
   type IOSNativeRemoteTargetReader,
   type IOSNativeRemoteTargetSnapshot,
+  type IOSNativeRemoteReadAPI,
 } from "./native-remote.ts";
 import {
   validateNativeSettings,
@@ -319,6 +321,66 @@ function prompts(
 }
 
 describe("Clerk Native Application remote setup", () => {
+  test("audits through a GET-only API and returns the redacted remote plan", async () => {
+    const calls: string[] = [];
+    const sensitiveUnexpectedField = "pk_test_MUST_NOT_ESCAPE";
+    const api: IOSNativeRemoteReadAPI = {
+      async getNativeSettings(applicationId, instanceId) {
+        expect([applicationId, instanceId]).toEqual([APPLICATION_ID, INSTANCE_ID]);
+        calls.push("GET native settings");
+        return {
+          ...nativeSettings(true),
+          publishable_key: sensitiveUnexpectedField,
+        } as NativeSettings;
+      },
+      async listIOSApplications(applicationId, instanceId) {
+        expect([applicationId, instanceId]).toEqual([APPLICATION_ID, INSTANCE_ID]);
+        calls.push("GET iOS registrations");
+        return [registration()];
+      },
+    };
+
+    const result = await auditIOSNativeRemoteSetup(
+      {
+        applicationId: APPLICATION_ID,
+        instanceId: INSTANCE_ID,
+        target: selectedTarget(),
+      },
+      api,
+    );
+
+    expect(result).toMatchObject({
+      status: "satisfied",
+      nativeApi: "satisfied",
+      registration: "satisfied",
+    });
+    expect(calls.sort()).toEqual(["GET iOS registrations", "GET native settings"]);
+    expect(JSON.stringify(result)).not.toContain(sensitiveUnexpectedField);
+  });
+
+  test("preserves GET transport errors for diagnostic classification", async () => {
+    const transportError = new Error("native audit transport failure");
+    const api: IOSNativeRemoteReadAPI = {
+      async getNativeSettings() {
+        throw transportError;
+      },
+      async listIOSApplications() {
+        return [];
+      },
+    };
+
+    await expect(
+      auditIOSNativeRemoteSetup(
+        {
+          applicationId: APPLICATION_ID,
+          instanceId: INSTANCE_ID,
+          target: selectedTarget(),
+        },
+        api,
+      ),
+    ).rejects.toBe(transportError);
+  });
+
   test("validates Apple identity formats without equating a prefix to the Team ID", () => {
     expect(validateAppIdPrefix("  LeGaCy1234  ")).toBe("LeGaCy1234");
     expect(validateAppIdPrefix("legacy.prefix-value")).toBeUndefined();
