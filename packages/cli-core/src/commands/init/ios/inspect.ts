@@ -12,6 +12,7 @@ import {
 import {
   discoverIOSContainers,
   inspectWorkspace,
+  maskXMLComments,
   pathIsSafelyWithinIOSRoot,
   relativeIOSPath,
   xmlAttribute,
@@ -216,7 +217,7 @@ async function schemePublishableKeyCandidates(
     if (!(await file.exists()) || file.size > 2_000_000) continue;
     let xml: string;
     try {
-      xml = (await file.text()).replace(/<!--[\s\S]*?-->/g, "");
+      xml = maskXMLComments(await file.text());
     } catch {
       continue;
     }

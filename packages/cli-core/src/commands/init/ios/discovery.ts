@@ -235,7 +235,7 @@ function resolveWorkspaceLocation(
  * comment outright could synthesize markup from two otherwise inert fragments
  * (for example, `<Fi<!-- -->leRef>`).
  */
-function maskXMLComments(source: string): string {
+export function maskXMLComments(source: string): string {
   const chunks: string[] = [];
   let cursor = 0;
   while (cursor < source.length) {
