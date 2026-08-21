@@ -55,7 +55,7 @@ function addNuxtModule(content: string): string {
   }
 }
 
-function scaffoldConfig(ctx: ProjectContext): Promise<FileAction> {
+async function scaffoldConfig(ctx: ProjectContext): Promise<FileAction> {
   return scaffoldConfigFile(ctx.cwd, {
     candidates: ["nuxt.config.ts", "nuxt.config.js"],
     existsCheck: "@clerk/nuxt",

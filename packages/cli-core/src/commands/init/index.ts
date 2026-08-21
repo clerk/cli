@@ -313,7 +313,7 @@ async function resolveProjectContext(
     return bootstrapAndDetect(cwd, frameworkOverride, overrides);
   }
 
-  const ctx = await withSpinner("Detecting framework...", () =>
+  const ctx = await withSpinner("Detecting framework...", async () =>
     gatherContext(cwd, frameworkOverride, overrides.pmOverride),
   );
   if (ctx) return { ctx, bootstrap: null };
@@ -516,7 +516,7 @@ async function setupKeylessApp(
       template
         ? `Creating development application (${template})...`
         : "Creating development application...",
-      () => createAccountlessApp(frameworkDep, template),
+      async () => createAccountlessApp(frameworkDep, template),
     );
 
     await writeKeysToEnvFile(cwd, {
@@ -564,7 +564,7 @@ async function detectAndInstall(
   // Non-npm ecosystems (Swift Package Manager, Gradle) can't be installed by a
   // package manager here — the framework's scaffold plan prints install steps.
 
-  return await scaffoldAndWrite(cwd, ctx, skipConfirm);
+  return scaffoldAndWrite(cwd, ctx, skipConfirm);
 }
 
 async function scaffoldAndWrite(
@@ -607,7 +607,7 @@ async function scaffoldAndWrite(
   const writtenFiles = await writePlan(cwd, plan);
   await runFormatters(ctx, writtenFiles);
 
-  const findings = await withSpinner("Scanning for issues...", () =>
+  const findings = await withSpinner("Scanning for issues...", async () =>
     scanForIssues(cwd, ctx.framework.dep),
   );
   printOutro(plan, findings);

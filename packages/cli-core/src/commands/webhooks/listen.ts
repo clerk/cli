@@ -227,7 +227,7 @@ export async function webhooksListen(options: WebhooksListenOptions = {}): Promi
       inFlight.add(task);
       void task.finally(() => inFlight.delete(task));
     },
-    onTokenRotated: (newToken) => {
+    onTokenRotated: async (newToken) => {
       // Persist the new token so the next run reuses it. There's no registered
       // endpoint to re-point (a dashboard endpoint needs a manual URL update
       // after a collision, which is rare).
@@ -245,7 +245,7 @@ export async function webhooksListen(options: WebhooksListenOptions = {}): Promi
 
   // Spinner is a no-op in agent/--json mode (isHuman() guard in lib/spinner.ts),
   // so NDJSON stdout stays clean; on a failed handshake it stops with "Failed".
-  await withSpinner("Connecting to the webhook relay…", () => client.start());
+  await withSpinner("Connecting to the webhook relay…", async () => client.start());
 
   const readyInfo = { relayUrl: relayReceiveUrl(client.token), forwardTo };
   if (ndjson) {

@@ -141,6 +141,27 @@ SIGINT handler so it can drain in-flight forwards first; before this helper
 existed it called `exitInterrupted` directly, which left the one command most
 likely to actually receive a SIGINT as the one that never reported it.
 
+## Registering a handler
+
+The sequence itself is `runInterruptSequence` — async, because awaiting the
+telemetry flush is what keeps the event loop alive long enough to report the
+run. **Never hand that function to `process.on` directly.** `process.on`
+discards a listener's return value, so a rejection anywhere in the sequence
+becomes an unhandled rejection _during shutdown_, where the user gets a stack
+trace instead of their shell back.
+
+`CLI_SIGINT_HANDLER` is the registration-safe wrapper and the identity that
+gets added and removed:
+
+```ts
+process.on("SIGINT", CLI_SIGINT_HANDLER);
+process.removeListener("SIGINT", CLI_SIGINT_HANDLER); // webhooks listen
+```
+
+It returns `void` and routes a failed sequence to `exitInterrupted` anyway — a
+drain that could not report itself is still an interrupt. Tests that need to
+observe the sequence await `runInterruptSequence()` directly.
+
 ## Printing on the way out
 
 `runProgram` returns early the moment an interrupt is latched, handing

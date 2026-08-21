@@ -97,13 +97,13 @@ async function runPreflightDeployStatusCheck(ctx: DeployContext): Promise<boolea
 
   const domainIdOrName = domain.id ?? domain.name;
   await triggerDeployStatusCheck(ctx.appId, domainIdOrName);
-  await withSpinner("Waiting for Clerk DNS check to process...", () =>
+  await withSpinner("Waiting for Clerk DNS check to process...", async () =>
     sleep(DEPLOY_STATUS_PREFLIGHT_DELAY_MS),
   );
   return true;
 }
 
-function runWait(
+async function runWait(
   state: Extract<DeployState, { kind: "active" }>,
   options: { triggerCheck?: boolean; onStatus?: (status: DeployComponentStatus) => void } = {},
 ): Promise<DeployStatusOutcome> {
@@ -115,7 +115,7 @@ function runWait(
     domainIdOrName,
     snapshot.domain,
     {
-      runVerification: (progressLabel, work) => withSpinner(progressLabel, work),
+      runVerification: async (progressLabel, work) => withSpinner(progressLabel, work),
       onVerified: () => {
         if (!isAgent()) log.success(deployComponentLabels("dns", snapshot.domain).done);
       },

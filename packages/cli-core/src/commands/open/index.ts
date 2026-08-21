@@ -156,7 +156,7 @@ async function openKeylessDashboard(
   // missing secret key shouldn't block opening it — it just means the
   // output won't include instance details.
   const instance = await resolveKeylessTarget({ cwd })
-    .then((keyless) => (keyless ? describeKeylessInstance(keyless.secretKey) : null))
+    .then(async (keyless) => (keyless ? describeKeylessInstance(keyless.secretKey) : null))
     .catch(() => null);
 
   // Output strategy mirrors the linked-app flow above:
@@ -215,5 +215,5 @@ export function registerOpen(program: Program): void {
       { command: "clerk open api-keys", description: "Open the API keys page" },
       { command: "clerk open --print", description: "Print the dashboard URL" },
     ])
-    .action((subpath, options) => openDashboard(subpath, options));
+    .action(async (subpath, options) => openDashboard(subpath, options));
 }

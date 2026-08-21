@@ -613,6 +613,8 @@ export async function scaffoldAuthFiles(
   specs: readonly AuthFileSpec[],
 ): Promise<FileAction[]> {
   return Promise.all(
-    specs.map((spec) => scaffoldAuthFile(cwd, spec.path, spec.content, spec.kind, spec.surface)),
+    specs.map(async (spec) =>
+      scaffoldAuthFile(cwd, spec.path, spec.content, spec.kind, spec.surface),
+    ),
   );
 }

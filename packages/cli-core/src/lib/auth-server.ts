@@ -192,7 +192,10 @@ export function startAuthServer(expectedState: string): AuthServerResult {
         "Authentication timed out. Run `clerk auth login` to try again — if your browser did not open, copy the printed URL into any browser on this machine.",
       ),
     );
-    server?.stop();
+    // `stop()` is a promise nothing can wait on: the login flow has already
+    // settled by every point we close from, and these are timer and request
+    // callbacks with nowhere to return it. Dropped explicitly, here and below.
+    void server?.stop();
   }, AUTH_TIMEOUT_MS);
 
   try {
@@ -212,7 +215,7 @@ export function startAuthServer(expectedState: string): AuthServerResult {
               log.debug(`auth-server: OAuth error in callback — ${error}: ${description}`);
               rejectCallback(new Error(`OAuth error: ${description}`));
               clearTimeout(timeout);
-              setTimeout(() => server?.stop(), 100);
+              setTimeout(() => void server?.stop(), 100);
               return new Response(ERROR_HTML(description), {
                 headers: { "Content-Type": "text/html; charset=utf-8" },
               });
@@ -222,7 +225,7 @@ export function startAuthServer(expectedState: string): AuthServerResult {
               log.debug(`auth-server: state mismatch (expected=${expectedState}, got=${state})`);
               rejectCallback(new Error("Invalid state parameter. Possible CSRF attack."));
               clearTimeout(timeout);
-              setTimeout(() => server?.stop(), 100);
+              setTimeout(() => void server?.stop(), 100);
               return new Response(ERROR_HTML("Invalid state parameter."), {
                 status: 400,
                 headers: { "Content-Type": "text/html; charset=utf-8" },
@@ -233,7 +236,7 @@ export function startAuthServer(expectedState: string): AuthServerResult {
               log.debug("auth-server: callback received with no authorization code");
               rejectCallback(new Error("No authorization code received."));
               clearTimeout(timeout);
-              setTimeout(() => server?.stop(), 100);
+              setTimeout(() => void server?.stop(), 100);
               return new Response(ERROR_HTML("No authorization code received."), {
                 status: 400,
                 headers: { "Content-Type": "text/html; charset=utf-8" },
@@ -243,7 +246,7 @@ export function startAuthServer(expectedState: string): AuthServerResult {
             log.debug("auth-server: callback received with valid code and state");
             resolveCallback({ code });
             clearTimeout(timeout);
-            setTimeout(() => server?.stop(), 100);
+            setTimeout(() => void server?.stop(), 100);
             return new Response(SUCCESS_HTML, {
               headers: { "Content-Type": "text/html; charset=utf-8" },
             });
@@ -273,10 +276,10 @@ export function startAuthServer(expectedState: string): AuthServerResult {
     port: activeServer.port!,
     // The CLI is idle here while the user signs in through their browser, so
     // Ctrl-C is them abandoning the login rather than an interrupted operation.
-    waitForCallback: () => whileAwaitingUser(callbackPromise),
+    waitForCallback: async () => whileAwaitingUser(callbackPromise),
     stop: () => {
       clearTimeout(timeout);
-      activeServer.stop();
+      void activeServer.stop();
     },
   };
 }

@@ -18,5 +18,5 @@ export const cursorClient = makeJsonClient({
   encode: clerkRunDescriptor,
   extractUrl: clerkRunUrl,
   configPath: () => userPath(".cursor", "mcp.json"),
-  detect: () => pathExists(userPath(".cursor")),
+  detect: async () => pathExists(userPath(".cursor")),
 });

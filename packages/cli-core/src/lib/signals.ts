@@ -180,16 +180,16 @@ export async function reportAndExitInterrupted(code: number): Promise<never> {
 }
 
 /**
- * The CLI's SIGINT handler. Named (not an inline arrow) so `webhooks listen`
- * can `process.removeListener("SIGINT", CLI_SIGINT_HANDLER)` and install its own
- * graceful-drain handling without disturbing anything else.
+ * The interrupt sequence itself.
  *
  * Async on purpose: awaiting the telemetry flush keeps the event loop alive
  * long enough to report the interrupted run, which `process.exit` from a
  * synchronous handler never could. A second Ctrl-C during that window quits
  * immediately.
+ *
+ * Exported for testing; the process registers {@link CLI_SIGINT_HANDLER}.
  */
-export const CLI_SIGINT_HANDLER = async (): Promise<void> => {
+export const runInterruptSequence = async (): Promise<void> => {
   if (interrupted !== null) return exitInterrupted(interrupted);
   const code = beginInterrupt();
   abortInFlight();
@@ -198,6 +198,33 @@ export const CLI_SIGINT_HANDLER = async (): Promise<void> => {
   // emitting to a terminal; in a pipe or CI log it is just noise.
   if (process.stderr.isTTY) log.ui("\x1b[?25h");
   await reportAndExitInterrupted(code);
+};
+
+/**
+ * The CLI's SIGINT listener. Named (not an inline arrow) so `webhooks listen`
+ * can `process.removeListener("SIGINT", CLI_SIGINT_HANDLER)` and install its own
+ * graceful-drain handling without disturbing anything else.
+ *
+ * Synchronous because `process.on` discards a listener's return value: handing
+ * it {@link runInterruptSequence} directly would leave a rejection — a failed
+ * telemetry import, a throwing flush — as an unhandled rejection *during
+ * shutdown*, where the user sees a stack trace instead of their shell back. The
+ * fallback still exits by the route the interrupt calls for.
+ */
+export const CLI_SIGINT_HANDLER = (): void => {
+  runInterruptSequence().catch((error: unknown) => {
+    log.debug(`signals: interrupt sequence failed — ${String(error)}`);
+    try {
+      exitInterrupted(interrupted ?? EXIT_CODE.SIGINT);
+    } catch {
+      // The fallback is the one thing here that may not fail: `exitInterrupted`
+      // re-raises through `process.kill`, which can throw (EPERM, ESRCH), and a
+      // throw from this handler rejects the `.catch` chain — landing as exactly
+      // the unhandled-rejection-during-shutdown this wrapper exists to prevent.
+      // Plain-exit instead: the code is still right, only `WIFSIGNALED` is lost.
+      process.exit(EXIT_CODE.SIGINT);
+    }
+  });
 };
 
 /** Test-only: clear every latch, including the controller the signal comes from. */

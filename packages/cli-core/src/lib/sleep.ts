@@ -11,6 +11,6 @@ import { interruptSignal } from "./signals.ts";
  * exit 0 when interrupted mid-countdown, and that command's exit code is what
  * a script reads as "the deploy is complete".
  */
-export function sleep(ms: number): Promise<void> {
+export async function sleep(ms: number): Promise<void> {
   return delay(ms, undefined, { signal: interruptSignal() });
 }

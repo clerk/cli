@@ -16,7 +16,7 @@ export async function configPull(options: ConfigPullOptions): Promise<void> {
   await withGutter("Pulling configuration", async () => {
     const target = await resolveInstanceTarget(options);
 
-    const config = await withSpinner(`Pulling config from ${target.label}...`, () =>
+    const config = await withSpinner(`Pulling config from ${target.label}...`, async () =>
       target.kind === "keyless"
         ? pullKeylessConfig(target.keyless, options.keys)
         : withApiContext(

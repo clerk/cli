@@ -62,7 +62,7 @@ describe("PKCE", () => {
 
   test("generateCodeChallenge produces valid base64url S256 hash", async () => {
     const verifier = "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk";
-    const challenge = await generateCodeChallenge(verifier);
+    const challenge = generateCodeChallenge(verifier);
     // base64url: no +, /, or = padding
     expect(challenge).toMatch(/^[A-Za-z0-9\-_]+$/);
     expect(challenge.length).toBeGreaterThan(0);
@@ -70,14 +70,14 @@ describe("PKCE", () => {
 
   test("generateCodeChallenge is deterministic for same input", async () => {
     const verifier = "test-verifier-value";
-    const a = await generateCodeChallenge(verifier);
-    const b = await generateCodeChallenge(verifier);
+    const a = generateCodeChallenge(verifier);
+    const b = generateCodeChallenge(verifier);
     expect(a).toBe(b);
   });
 
   test("generateCodeChallenge differs for different inputs", async () => {
-    const a = await generateCodeChallenge("verifier-a");
-    const b = await generateCodeChallenge("verifier-b");
+    const a = generateCodeChallenge("verifier-a");
+    const b = generateCodeChallenge("verifier-b");
     expect(a).not.toBe(b);
   });
 

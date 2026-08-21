@@ -6,7 +6,7 @@ import { NEXT_STEPS } from "../../lib/next-steps.ts";
 
 export async function logout(): Promise<void> {
   intro("Signing out");
-  const outcome = await withSpinner("Revoking session...", () => revokeAndDeleteToken());
+  const outcome = await withSpinner("Revoking session...", async () => revokeAndDeleteToken());
   await clearAuth();
 
   if (outcome === "failed") {

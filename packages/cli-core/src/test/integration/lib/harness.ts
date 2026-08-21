@@ -251,7 +251,7 @@ mock.module(
   () =>
     ({
       generateCodeVerifier: () => "mock_verifier",
-      generateCodeChallenge: async () => "mock_challenge",
+      generateCodeChallenge: () => "mock_challenge",
       generateState: () => "mock_state",
     }) satisfies typeof import("../../../lib/pkce.ts"),
 );

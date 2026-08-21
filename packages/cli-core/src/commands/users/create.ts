@@ -73,7 +73,7 @@ export async function create(options: CreateUserOptions): Promise<void> {
       }
     }
 
-    const response = await withSpinner("Creating user...", () =>
+    const response = await withSpinner("Creating user...", async () =>
       bapiRequest({
         method: "POST",
         path: "/users",

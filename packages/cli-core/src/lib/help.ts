@@ -27,7 +27,8 @@ const examplesMap = new WeakMap<object, Example[]>();
 
 // Augment Commander's Command type with .setExamples()
 declare module "@commander-js/extra-typings" {
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars -- generics required for declaration merging
+  // The generics are unused here but required: declaration merging only applies
+  // when the augmenting interface's parameter list matches the original's.
   interface Command<Args, Opts, GlobalOpts> {
     setExamples(examples: Example[]): this;
   }

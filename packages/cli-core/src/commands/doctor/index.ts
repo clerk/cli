@@ -69,7 +69,7 @@ export async function doctor(options: DoctorOptions = {}): Promise<void> {
   }
 
   const ctx = createDoctorContext();
-  const allResults = await withSpinner("Running diagnostics...", () => runChecks(ctx));
+  const allResults = await withSpinner("Running diagnostics...", async () => runChecks(ctx));
 
   if (!options.json) {
     printResults(allResults, options);
@@ -119,7 +119,9 @@ export async function doctor(options: DoctorOptions = {}): Promise<void> {
       bar();
 
       const verifyCtx = createDoctorContext();
-      const verifyResults = await withSpinner("Verifying fixes...", () => runChecks(verifyCtx));
+      const verifyResults = await withSpinner("Verifying fixes...", async () =>
+        runChecks(verifyCtx),
+      );
       printResults(verifyResults, { ...options, fix: false, spotlight: false });
 
       const hasVerifyFailure = verifyResults.some((r) => r.status === "fail");

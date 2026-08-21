@@ -48,18 +48,18 @@ async function resolveApiTarget(
   if (options.fapi) {
     const fapiHost = await resolveFapiHost(options);
     const baseUrl = `https://${fapiHost}`;
-    return { baseUrl, runRequest: (req) => fapiRequest({ ...req, fapiHost }) };
+    return { baseUrl, runRequest: async (req) => fapiRequest({ ...req, fapiHost }) };
   }
 
   if (options.platform) {
     const secretKey = await getAuthToken();
     const baseUrl = getPlapiBaseUrl();
-    return { baseUrl, runRequest: (req) => bapiRequest({ ...req, secretKey, baseUrl }) };
+    return { baseUrl, runRequest: async (req) => bapiRequest({ ...req, secretKey, baseUrl }) };
   }
 
   const secretKey = await resolveBapiSecretKey(options);
   const baseUrl = getBapiBaseUrl();
-  return { baseUrl, runRequest: (req) => bapiRequest({ ...req, secretKey, baseUrl }) };
+  return { baseUrl, runRequest: async (req) => bapiRequest({ ...req, secretKey, baseUrl }) };
 }
 
 export async function api(
@@ -127,7 +127,7 @@ export async function api(
 
     // 6. Execute request
     try {
-      const response = await withSpinner("Executing request...", () =>
+      const response = await withSpinner("Executing request...", async () =>
         runRequest({ method, path: endpoint, body: body ?? undefined }),
       );
 

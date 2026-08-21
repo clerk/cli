@@ -9,6 +9,7 @@ import {
   exitInterrupted,
   interruptedExitCode,
   interruptSignal,
+  runInterruptSequence,
   whileAwaitingUser,
 } from "./signals.ts";
 
@@ -168,7 +169,7 @@ describe("exitInterrupted", () => {
   });
 });
 
-describe("CLI_SIGINT_HANDLER", () => {
+describe("runInterruptSequence", () => {
   /** `finalizeAndSendTelemetry`'s shape, so `.mock.calls` stays typed. */
   const flushSpy = () => mock(async (_result: { outcome: string; exitCode: number }) => {});
 
@@ -193,7 +194,7 @@ describe("CLI_SIGINT_HANDLER", () => {
 
     try {
       expect(interruptSignal().aborted).toBe(false);
-      await expect(CLI_SIGINT_HANDLER()).rejects.toThrow("process.exit");
+      await expect(runInterruptSequence()).rejects.toThrow("process.exit");
 
       expect(interruptSignal().aborted).toBe(true); // in-flight requests cancelled
       expect(writes.join("")).toContain("\x1b[?25h"); // cursor restored
@@ -214,9 +215,82 @@ describe("CLI_SIGINT_HANDLER", () => {
     mock.module("./telemetry.ts", () => ({ finalizeAndSendTelemetry: flush }));
 
     beginInterrupt(); // stand in for the first press having already landed
-    await expect(CLI_SIGINT_HANDLER()).rejects.toThrow("process.exit");
+    await expect(runInterruptSequence()).rejects.toThrow("process.exit");
 
     expect(flush).not.toHaveBeenCalled();
     expect(exitSpy).toHaveBeenCalledWith(EXIT_CODE.SIGINT);
+  });
+});
+
+describe("CLI_SIGINT_HANDLER", () => {
+  /**
+   * The shared stub throws to make `exitInterrupted` observable, but this
+   * handler's whole job is to survive a failing sequence — a throwing exit
+   * would just move the explosion into the fallback.
+   *
+   * Resolves a promise instead of recording, so the test awaits the exit
+   * itself. Waiting a fixed number of turns would be guessing: the handler's
+   * chain runs a dynamic `import()` of the telemetry module, and how many
+   * turns that costs is not ours to pin.
+   */
+  function stubExitQuietly(): Promise<number> {
+    const { promise, resolve } = Promise.withResolvers<number>();
+    exitSpy.mockRestore();
+    exitSpy = spyOn(process, "exit").mockImplementation(((code: number) => {
+      resolve(code);
+    }) as never);
+    return promise;
+  }
+
+  test("returns void so process.on never sees a promise", async () => {
+    const exited = stubExitQuietly();
+    mock.module("./telemetry.ts", () => ({ finalizeAndSendTelemetry: mock(async () => {}) }));
+
+    expect(CLI_SIGINT_HANDLER()).toBeUndefined();
+
+    expect(await exited).toBe(EXIT_CODE.SIGINT);
+  });
+
+  test("a failing interrupt sequence still exits instead of rejecting", async () => {
+    const exited = stubExitQuietly();
+    mock.module("./telemetry.ts", () => ({
+      finalizeAndSendTelemetry: mock(() => Promise.reject(new Error("flush exploded"))),
+    }));
+
+    CLI_SIGINT_HANDLER();
+
+    expect(await exited).toBe(EXIT_CODE.SIGINT);
+  });
+
+  test("plain-exits when the re-raise inside the fallback throws", async () => {
+    // The last line of defence. A failing sequence routes to `exitInterrupted`,
+    // which re-raises via `process.kill` — and if *that* throws (EPERM, ESRCH)
+    // the handler would reject and land as the unhandled rejection the whole
+    // wrapper exists to prevent. Drive it with the escape hatch off so the
+    // re-raise is actually attempted.
+    const exited = stubExitQuietly();
+    const killSpy = spyOn(process, "kill").mockImplementation((() => {
+      throw new Error("kill: operation not permitted");
+    }) as never);
+    // Stubbed so restoring the default disposition cannot strip the runner's
+    // own SIGINT listeners; only the re-raise attempt is under test here.
+    const removeAllSpy = spyOn(process, "removeAllListeners").mockImplementation(
+      (() => process) as never,
+    );
+    mock.module("./telemetry.ts", () => ({
+      finalizeAndSendTelemetry: mock(() => Promise.reject(new Error("flush exploded"))),
+    }));
+
+    try {
+      delete process.env[NO_RERAISE];
+      CLI_SIGINT_HANDLER();
+
+      expect(await exited).toBe(EXIT_CODE.SIGINT);
+      expect(killSpy).toHaveBeenCalled(); // the re-raise was attempted, not skipped
+    } finally {
+      process.env[NO_RERAISE] = "1";
+      removeAllSpy.mockRestore();
+      killSpy.mockRestore();
+    }
   });
 });

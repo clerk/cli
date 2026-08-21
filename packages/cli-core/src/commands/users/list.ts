@@ -175,7 +175,7 @@ export async function list(options: UsersListOptions = {}): Promise<void> {
     // Request one extra row so we can detect whether more pages exist without
     // a separate /users/count round-trip. The CLI's --limit caps at 250, so
     // pageSize + 1 always fits under BAPI's MaxLimit of 500.
-    const response = await withSpinner("Fetching users...", () =>
+    const response = await withSpinner("Fetching users...", async () =>
       bapiRequest({
         method: "GET",
         path: buildUsersListPath(options, limit + 1),
