@@ -6,7 +6,8 @@
  * lives in `lib/fapi.ts` (`fapiRequest`) alongside the other FAPI helpers.
  */
 
-import { resolveAppContext, resolveFetchedApplicationInstance } from "../../lib/config.ts";
+import { resolveAppContext } from "../../lib/app-context.ts";
+import { resolveFetchedApplicationInstance } from "../../lib/config.ts";
 import { CliError, ERROR_CODE, throwUsageError, withApiContext } from "../../lib/errors.ts";
 import { decodePublishableKey } from "../../lib/fapi.ts";
 import { fetchApplication, type ApplicationInstance } from "../../lib/plapi.ts";

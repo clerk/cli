@@ -6,13 +6,20 @@ import { getToken } from "../../lib/credential-store.ts";
 import { login } from "../auth/login.ts";
 import { createApplication, fetchApplication, type Application } from "../../lib/plapi.ts";
 import { appLabel, fetchAppsTolerantly, pickOrCreateApp } from "../../lib/app-picker.ts";
-import { setProfile, resolveProfile, moveProfile } from "../../lib/config.ts";
+import {
+  setProfile,
+  resolveProfile,
+  moveProfile,
+  profileLabel,
+  type Profile,
+} from "../../lib/config.ts";
+import { fetchLinkedApplication, refreshProfileInstances } from "../../lib/link-refresh.ts";
 import { autolink, findClerkKeys, matchKeyToApp } from "../../lib/autolink.ts";
 import { getGitRepoIdentifier, getGitRepoRoot, getGitNormalizedRemote } from "../../lib/git.ts";
 import { dim, cyan } from "../../lib/color.ts";
 import { NEXT_STEPS } from "../../lib/next-steps.ts";
 import { CliError, ERROR_CODE, throwUsageError, withApiContext } from "../../lib/errors.ts";
-import { intro, outro } from "../../lib/spinner.ts";
+import { intro, outro, withSpinner } from "../../lib/spinner.ts";
 import { log } from "../../lib/log.ts";
 
 interface LinkOptions {
@@ -26,6 +33,13 @@ interface LinkOptions {
    * interactive end-to-end.
    */
   createIfMissing?: string;
+  /**
+   * Re-read the linked application's instances and write them back into the
+   * profile, without the app picker. This is the remedy other commands point
+   * at when the stored link predates an instance, so it must stay
+   * non-interactive for agents and CI.
+   */
+  refresh?: boolean;
 }
 
 export async function link(options: LinkOptions = {}): Promise<void> {
@@ -38,6 +52,18 @@ export async function link(options: LinkOptions = {}): Promise<void> {
   const displayPath = repoRoot ?? cwd;
 
   const existing = await resolveProfile(cwd);
+
+  if (options.refresh) {
+    // A silent no-op on --app would refresh whatever app happens to be linked.
+    if (options.app) {
+      throwUsageError(
+        "--refresh cannot be combined with --app. Use `clerk link --app <id>` to change the linked application, or `clerk link --refresh` to refresh the current one.",
+      );
+    }
+    await refreshExistingLink(existing);
+    return;
+  }
+
   const targetsDifferentApp = options.app && existing && options.app !== existing.profile.appId;
 
   if (existing && options.skipIfLinked && !targetsDifferentApp) {
@@ -108,6 +134,48 @@ export async function link(options: LinkOptions = {}): Promise<void> {
   await outro(NEXT_STEPS.LINK);
 }
 
+/**
+ * `clerk link --refresh`: reconcile the stored instance IDs with the API
+ * without touching which application the project is linked to.
+ */
+async function refreshExistingLink(
+  existing: Awaited<ReturnType<typeof resolveProfile>>,
+): Promise<void> {
+  if (!existing) {
+    throw new CliError(
+      "No Clerk project linked to this directory. Run `clerk link` to link one first.",
+      { code: ERROR_CODE.NOT_LINKED },
+    );
+  }
+
+  await ensureAuth();
+  intro("Refreshing link");
+
+  const app = await withSpinner(`Fetching ${profileLabel(existing.profile)}...`, () =>
+    fetchLinkedApplication(existing.profile),
+  );
+  const { profile, updated, renamed } = await refreshProfileInstances(
+    existing.path,
+    existing.profile,
+    app,
+  );
+
+  if (updated.length === 0 && !renamed) {
+    log.info(`Already up to date — ${describeInstances(profile)}`);
+  } else {
+    const renameNote = renamed ? `app name updated to \`${profile.appName}\`, ` : "";
+    log.success(`Link refreshed — ${renameNote}${describeInstances(profile)}`);
+  }
+
+  await outro();
+}
+
+function describeInstances(profile: Profile): string {
+  const parts = [`development ${profile.instances.development}`];
+  if (profile.instances.production) parts.push(`production ${profile.instances.production}`);
+  return parts.join(", ");
+}
+
 async function ensureAuth() {
   // CLERK_PLATFORM_API_KEY is a valid non-interactive auth mechanism.
   // The PLAPI fetch helpers use it directly for API calls, so no OAuth
@@ -165,6 +233,10 @@ async function handleExistingProfile(
     return confirm({ message: `Re-link to ${cyan(appLabel(targetApp))}?`, default: false });
   }
 
+  // Deliberately not offering an instance refresh here: most linked apps have
+  // no production instance yet, so the question would fire on nearly every
+  // re-link. `clerk link --refresh` is the targeted entry point, and it's what
+  // the stale-link errors point at.
   return confirm({ message: "Re-link to a different application?", default: false });
 }
 
@@ -203,9 +275,14 @@ export function registerLink(program: Program): void {
     .command("link")
     .description("Link this project to a Clerk application")
     .option("--app <id>", "Application ID to link (skips interactive picker)")
+    .option("--refresh", "Re-read the linked application's instances without changing the app")
     .setExamples([
       { command: "clerk link", description: "Pick an app interactively" },
       { command: "clerk link --app app_abc123", description: "Link directly by application ID" },
+      {
+        command: "clerk link --refresh",
+        description: "Pick up a production instance created in the Dashboard",
+      },
     ])
     .action(link);
 }

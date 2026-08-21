@@ -10,13 +10,35 @@ automatically shared across all clones and worktrees of the same repository.
 ```sh
 clerk link                    # Interactive app picker
 clerk link --app app_abc123   # Link directly by app ID
+clerk link --refresh          # Re-read the linked app's instances
 ```
 
 ## Options
 
-| Flag         | Description                                       |
-| ------------ | ------------------------------------------------- |
-| `--app <id>` | Application ID to link (skips interactive picker) |
+| Flag         | Description                                                         |
+| ------------ | ------------------------------------------------------------------- |
+| `--app <id>` | Application ID to link (skips interactive picker)                   |
+| `--refresh`  | Re-read the linked application's instances without changing the app |
+
+## `--refresh`
+
+The profile stores instance IDs as a snapshot taken when the link was created.
+An instance added afterwards — most often a production instance created in the
+Clerk Dashboard — is invisible to every command that resolves through the
+profile, which then reports that no production instance is configured.
+
+`clerk link --refresh` re-reads the linked application and writes its current
+instance IDs back into the profile. It never changes which application the
+project is linked to and never prompts, so agents and CI can run it. It fails
+with `not_linked` when the directory has no profile.
+
+The reconciliation itself lives in `src/lib/link-refresh.ts`. `resolveAppContext`
+calls into the same module to recover in place: when a command asks for
+`--instance prod` and the profile has no production ID, it fetches the
+application and then either offers to update the link (human mode) or fails
+pointing at `clerk link --refresh` (agent mode). If the application genuinely
+has no production instance, both modes point at `clerk deploy` instead —
+`clerk link` cannot create one.
 
 ## Agent Mode
 

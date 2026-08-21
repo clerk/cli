@@ -14,7 +14,6 @@ const {
   listProfiles,
   resolveProfile,
   resolveInstanceId,
-  resolveAppContext,
   resolveFetchedApplicationInstance,
   ensureMachineUuid,
   getTelemetryDisabled,
@@ -24,6 +23,9 @@ const {
   setEnvironment,
   _setConfigDir,
 } = await import("./config.ts");
+// resolveAppContext is tested here rather than in its own file because it
+// composes the profile storage this file already stubs (_setConfigDir + tempDir).
+const { resolveAppContext } = await import("./app-context.ts");
 type Profile =
   Awaited<ReturnType<typeof getProfile>> extends infer T ? Exclude<T, undefined> : never;
 const plapiModule = await import("./plapi.ts");
