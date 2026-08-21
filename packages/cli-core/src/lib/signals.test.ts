@@ -261,4 +261,36 @@ describe("CLI_SIGINT_HANDLER", () => {
 
     expect(await exited).toBe(EXIT_CODE.SIGINT);
   });
+
+  test("plain-exits when the re-raise inside the fallback throws", async () => {
+    // The last line of defence. A failing sequence routes to `exitInterrupted`,
+    // which re-raises via `process.kill` — and if *that* throws (EPERM, ESRCH)
+    // the handler would reject and land as the unhandled rejection the whole
+    // wrapper exists to prevent. Drive it with the escape hatch off so the
+    // re-raise is actually attempted.
+    const exited = stubExitQuietly();
+    const killSpy = spyOn(process, "kill").mockImplementation((() => {
+      throw new Error("kill: operation not permitted");
+    }) as never);
+    // Stubbed so restoring the default disposition cannot strip the runner's
+    // own SIGINT listeners; only the re-raise attempt is under test here.
+    const removeAllSpy = spyOn(process, "removeAllListeners").mockImplementation(
+      (() => process) as never,
+    );
+    mock.module("./telemetry.ts", () => ({
+      finalizeAndSendTelemetry: mock(() => Promise.reject(new Error("flush exploded"))),
+    }));
+
+    try {
+      delete process.env[NO_RERAISE];
+      CLI_SIGINT_HANDLER();
+
+      expect(await exited).toBe(EXIT_CODE.SIGINT);
+      expect(killSpy).toHaveBeenCalled(); // the re-raise was attempted, not skipped
+    } finally {
+      process.env[NO_RERAISE] = "1";
+      removeAllSpy.mockRestore();
+      killSpy.mockRestore();
+    }
+  });
 });

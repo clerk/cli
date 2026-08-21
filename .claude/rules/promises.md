@@ -67,14 +67,25 @@ effect of wanting promise safety.
 
 ## Fire-and-forget needs to say so
 
-`no-floating-promises` accepts three endings: `await`, a rejection handler, or an
-explicit `void`. Reach for `void` only where there is genuinely nowhere to
-return the promise — a timer callback, a request handler, a shutdown path that
-has already settled the flow:
+`no-floating-promises` accepts four endings: `await` it, `return` it, attach a
+rejection handler, or mark it `void`.
+
+The first three keep the rejection reachable. **`void` does not.** It silences
+the diagnostic, not the rejection — a promise that rejects after being `void`ed
+is still an unhandled rejection at runtime, exactly the failure the rest of this
+rule set exists to prevent. Read it as a claim that the promise cannot
+meaningfully fail, not as a way of handling it when it does.
+
+So reach for `void` only where there is genuinely nowhere to return the promise
+_and_ a rejection would be nothing to act on — a timer callback, a request
+handler, a shutdown path that has already settled the flow:
 
 ```ts
 setTimeout(() => void server?.stop(), 100);
 ```
+
+If it can fail in a way anyone would want to know about, attach a `.catch()` and
+log there instead. `void` will not do it for you.
 
 Never register an `async` function as an event listener. `process.on` and
 friends discard the return value, so a rejection lands as an unhandled rejection
