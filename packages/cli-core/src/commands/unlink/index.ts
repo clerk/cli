@@ -45,7 +45,7 @@ export async function unlink(options: UnlinkOptions = {}): Promise<void> {
 
   await removeProfile(existing.path);
   log.data(`\nUnlinked ${cyan(label)} from ${dim(displayPath)}`);
-  outro(NEXT_STEPS.UNLINK);
+  await outro(NEXT_STEPS.UNLINK);
 }
 
 export function registerUnlink(program: Program): void {

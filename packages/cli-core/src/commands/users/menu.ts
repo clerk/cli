@@ -39,5 +39,5 @@ export async function usersMenu(targeting: UsersActionTargeting = {}): Promise<v
   }
 
   await chosen.handler(targeting);
-  outro();
+  await outro();
 }

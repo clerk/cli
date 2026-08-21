@@ -160,7 +160,7 @@ export async function init(options: InitOptions = {}) {
     if (agent && strategy === "manual") {
       printBootstrapManualSetupInfo(ctx.framework);
     }
-    outro("Done");
+    await outro("Done");
     return;
   }
 
@@ -183,7 +183,7 @@ export async function init(options: InitOptions = {}) {
     printBootstrapNextSteps(bootstrap, strategy === "keyless");
   }
 
-  outro("Done");
+  await outro("Done");
 }
 
 /**

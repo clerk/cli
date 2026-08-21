@@ -41,9 +41,9 @@ export async function create(name: string, options: AppsOptions = {}): Promise<v
       if (closeStatus === "paused") {
         pausedOutro();
       } else if (closeStatus === "failed") {
-        outro("Failed");
+        await outro("Failed");
       } else if (closeStatus === "success") {
-        outro(nextSteps);
+        await outro(nextSteps);
       }
     }
   }

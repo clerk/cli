@@ -26,5 +26,5 @@ export async function logout(): Promise<void> {
     );
   }
 
-  outro(NEXT_STEPS.LOGOUT);
+  await outro(NEXT_STEPS.LOGOUT);
 }

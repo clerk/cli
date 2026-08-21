@@ -140,7 +140,7 @@ export async function login(options: LoginOptions = {}): Promise<UserInfo> {
     if (showNextSteps) {
       await outro(await loginNextSteps(claimResult));
     } else {
-      outro("Done");
+      await outro("Done");
     }
     return existingSession;
   }
@@ -151,7 +151,7 @@ export async function login(options: LoginOptions = {}): Promise<UserInfo> {
       default: false,
     });
     if (!reauthenticate) {
-      outro();
+      await outro();
       throwUserAbort();
     }
   }
@@ -188,7 +188,7 @@ export async function login(options: LoginOptions = {}): Promise<UserInfo> {
   if (showNextSteps) {
     await outro(await loginNextSteps(claimResult));
   } else {
-    outro("Done");
+    await outro("Done");
   }
 
   return userInfo;

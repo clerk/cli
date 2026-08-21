@@ -102,7 +102,7 @@ export async function openDashboard(
     );
   }
 
-  outro();
+  await outro();
 }
 
 /**
@@ -196,7 +196,7 @@ async function openKeylessDashboard(
     );
   }
 
-  outro();
+  await outro();
 }
 
 export function registerOpen(program: Program): void {

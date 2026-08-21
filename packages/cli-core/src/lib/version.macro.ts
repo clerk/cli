@@ -2,22 +2,10 @@ import cliPackage from "../../../cli/package.json";
 
 const DEV_TAG = "dev";
 
-type VersionValues = {
-  currentVersion: string;
-  isDevBuild: boolean;
-};
-
 type GitResult = {
   exitCode: number;
   stdout: string;
 };
-
-function isDevVersion(version: string): boolean {
-  const dash = version.indexOf("-");
-  if (dash === -1) return false;
-  const prerelease = version.slice(dash + 1);
-  return prerelease === DEV_TAG || prerelease.startsWith(`${DEV_TAG}.`);
-}
 
 function git(args: string[]): GitResult | undefined {
   try {
@@ -53,22 +41,15 @@ function describeCheckout(): string | undefined {
 }
 
 /**
- * Resolve the current version and dev-build status during Bun transpilation.
+ * Derive the checkout-based fallback version during Bun transpilation.
  *
- * Bun inlines the returned values at the macro call, so compiled binaries do
- * not execute Git commands or classify versions at runtime.
+ * Bun inlines the returned string at the macro call, so compiled binaries do
+ * not execute Git commands at runtime. The `CLI_VERSION` define is deliberately
+ * NOT read here: since Bun 1.4 macros execute in a sealed transpiler context
+ * that `--define` globals no longer reach, so the injected-vs-fallback choice
+ * lives in `version.ts`, where define substitution still applies.
  */
-export function resolveVersionAtBuildTime(): VersionValues {
-  let currentVersion: string;
-  if (typeof CLI_VERSION === "undefined") {
-    const checkout = describeCheckout();
-    currentVersion = `${cliPackage.version}-${DEV_TAG}${checkout ? `.${checkout}` : ""}`;
-  } else {
-    currentVersion = CLI_VERSION;
-  }
-
-  return {
-    currentVersion,
-    isDevBuild: isDevVersion(currentVersion),
-  };
+export function resolveFallbackVersionAtBuildTime(): string {
+  const checkout = describeCheckout();
+  return `${cliPackage.version}-${DEV_TAG}${checkout ? `.${checkout}` : ""}`;
 }
