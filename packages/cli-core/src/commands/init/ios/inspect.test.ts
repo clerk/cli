@@ -300,6 +300,27 @@ struct MyApp: App {
     expect(JSON.stringify(inspection)).not.toContain(schemeKey);
   });
 
+  test("does not synthesize Run scheme markup across XML comments", async () => {
+    const root = await fixture({ includeKey: false });
+    const schemeDirectory = join(root, "MyApp.xcodeproj", "xcshareddata", "xcschemes");
+    await mkdir(schemeDirectory, { recursive: true });
+    const schemeKey = `pk_test_${Buffer.from("comment.clerk.example$").toString("base64")}`;
+    await Bun.write(
+      join(schemeDirectory, "MyApp.xcscheme"),
+      `<Scheme><Launch<!-- -->Action><BuildableProductRunnable><BuildableReference BlueprintIdentifier="${IOS_FIXTURE_IDS.appTarget}" /></BuildableProductRunnable><EnvironmentVariables><EnvironmentVariable key="CLERK_PUBLISHABLE_KEY" value="${schemeKey}" isEnabled="YES" /></EnvironmentVariables></Launch<!-- -->Action></Scheme>`,
+    );
+
+    const inspection = await inspectIOSProject(root);
+
+    expect(inspection.localPublishableKey).toEqual({
+      found: false,
+      conflict: false,
+      candidateSources: [],
+      invalidSources: [],
+    });
+    expect(JSON.stringify(inspection)).not.toContain(schemeKey);
+  });
+
   test("ignores a workspace scheme that references a different same-named project container", async () => {
     const root = await fixture({ includeKey: false, workspace: true });
     const schemeDirectory = join(root, "MyApp.xcworkspace", "xcshareddata", "xcschemes");
