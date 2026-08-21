@@ -101,7 +101,7 @@ export function makeCliClient(spec: CliClientSpec): McpClient {
     scope: base.scope,
     activation: base.activation,
     configPath: (cwd) => base.configPath(cwd),
-    detect: async () => Promise.resolve(findClientBinary(binary) !== null),
+    detect: async () => findClientBinary(binary) !== null,
     list: async (cwd) => base.list(cwd),
 
     async upsert(entry: McpServerEntry, cwd: string): Promise<UpsertResult> {

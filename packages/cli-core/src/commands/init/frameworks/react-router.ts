@@ -370,7 +370,7 @@ function shouldEnableV8MiddlewareFlag(ctx: ProjectContext): boolean {
 }
 
 async function scaffoldConfig(ctx: ProjectContext): Promise<FileAction | null> {
-  if (!shouldEnableV8MiddlewareFlag(ctx)) return Promise.resolve(null);
+  if (!shouldEnableV8MiddlewareFlag(ctx)) return null;
 
   return scaffoldConfigFile(ctx.cwd, {
     candidates: ["react-router.config.ts", "react-router.config.js"],
