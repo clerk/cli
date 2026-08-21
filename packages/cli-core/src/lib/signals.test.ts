@@ -226,36 +226,39 @@ describe("CLI_SIGINT_HANDLER", () => {
   /**
    * The shared stub throws to make `exitInterrupted` observable, but this
    * handler's whole job is to survive a failing sequence — a throwing exit
-   * would just move the explosion into the fallback. Record instead.
+   * would just move the explosion into the fallback.
+   *
+   * Resolves a promise instead of recording, so the test awaits the exit
+   * itself. Waiting a fixed number of turns would be guessing: the handler's
+   * chain runs a dynamic `import()` of the telemetry module, and how many
+   * turns that costs is not ours to pin.
    */
-  function stubExitQuietly() {
+  function stubExitQuietly(): Promise<number> {
+    const { promise, resolve } = Promise.withResolvers<number>();
     exitSpy.mockRestore();
-    exitSpy = spyOn(process, "exit").mockImplementation((() => undefined) as never);
-    return exitSpy;
+    exitSpy = spyOn(process, "exit").mockImplementation(((code: number) => {
+      resolve(code);
+    }) as never);
+    return promise;
   }
 
-  /** One macrotask, so the handler's promise chain settles. Not `sleep`, which aborts on interrupt. */
-  const tick = () => new Promise<void>((resolve) => setTimeout(resolve, 0));
-
   test("returns void so process.on never sees a promise", async () => {
-    const exit = stubExitQuietly();
+    const exited = stubExitQuietly();
     mock.module("./telemetry.ts", () => ({ finalizeAndSendTelemetry: mock(async () => {}) }));
 
     expect(CLI_SIGINT_HANDLER()).toBeUndefined();
 
-    await tick();
-    expect(exit).toHaveBeenCalledWith(EXIT_CODE.SIGINT);
+    expect(await exited).toBe(EXIT_CODE.SIGINT);
   });
 
   test("a failing interrupt sequence still exits instead of rejecting", async () => {
-    const exit = stubExitQuietly();
+    const exited = stubExitQuietly();
     mock.module("./telemetry.ts", () => ({
       finalizeAndSendTelemetry: mock(() => Promise.reject(new Error("flush exploded"))),
     }));
 
     CLI_SIGINT_HANDLER();
-    await tick();
 
-    expect(exit).toHaveBeenCalledWith(EXIT_CODE.SIGINT);
+    expect(await exited).toBe(EXIT_CODE.SIGINT);
   });
 });

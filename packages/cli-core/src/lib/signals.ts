@@ -214,7 +214,16 @@ export const runInterruptSequence = async (): Promise<void> => {
 export const CLI_SIGINT_HANDLER = (): void => {
   runInterruptSequence().catch((error: unknown) => {
     log.debug(`signals: interrupt sequence failed — ${String(error)}`);
-    exitInterrupted(interrupted ?? EXIT_CODE.SIGINT);
+    try {
+      exitInterrupted(interrupted ?? EXIT_CODE.SIGINT);
+    } catch {
+      // The fallback is the one thing here that may not fail: `exitInterrupted`
+      // re-raises through `process.kill`, which can throw (EPERM, ESRCH), and a
+      // throw from this handler rejects the `.catch` chain — landing as exactly
+      // the unhandled-rejection-during-shutdown this wrapper exists to prevent.
+      // Plain-exit instead: the code is still right, only `WIFSIGNALED` is lost.
+      process.exit(EXIT_CODE.SIGINT);
+    }
   });
 };
 
