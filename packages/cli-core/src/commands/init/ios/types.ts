@@ -122,6 +122,9 @@ export interface IOSSwiftInspection {
   localSecretsRuntimeBindings: IOSSourceEvidence[];
   environmentInjections: IOSSourceEvidence[];
   environmentConsumers: IOSSourceEvidence[];
+  /** Selected-target sources that import ClerkKitUI and construct AuthView. */
+  authViewReferences: IOSSourceEvidence[];
+  /** Selected-target sources that reference AuthView or a custom native Clerk auth flow. */
   authFlowReferences: IOSSourceEvidence[];
   openURLHandlers: IOSSourceEvidence[];
   status: "complete" | "partial" | "absent" | "ambiguous";

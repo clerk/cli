@@ -192,6 +192,88 @@ describe("credential-store", () => {
     });
   });
 
+  test("getValidToken coalesces concurrent refreshes in one process", async () => {
+    const session = {
+      accessToken: "expired-access-token",
+      refreshToken: "refresh-token",
+      expiresAt: Date.now() - 60_000,
+      tokenType: "Bearer",
+    };
+    await storeToken(session);
+
+    let releaseRefresh:
+      | ((value: {
+          access_token: string;
+          token_type: string;
+          expires_in: number;
+          refresh_token: string;
+        }) => void)
+      | null = null;
+    let markRefreshStarted: (() => void) | null = null;
+    const refreshStarted = new Promise<void>((resolve) => {
+      markRefreshStarted = resolve;
+    });
+    const refreshResult = new Promise<{
+      access_token: string;
+      token_type: string;
+      expires_in: number;
+      refresh_token: string;
+    }>((resolve) => {
+      releaseRefresh = resolve;
+    });
+    mockRefreshAccessToken.mockImplementation(() => {
+      markRefreshStarted!();
+      return refreshResult;
+    });
+
+    const first = getValidToken();
+    const second = getValidToken();
+
+    await refreshStarted;
+    expect(mockRefreshAccessToken).toHaveBeenCalledTimes(1);
+
+    releaseRefresh!({
+      access_token: "refreshed-access-token",
+      token_type: "Bearer",
+      expires_in: 3600,
+      refresh_token: "rotated-refresh-token",
+    });
+
+    expect(await Promise.all([first, second])).toEqual([
+      "refreshed-access-token",
+      "refreshed-access-token",
+    ]);
+    expect(mockRefreshAccessToken).toHaveBeenCalledTimes(1);
+  });
+
+  test("concurrent callers share invalid_grant recovery from another process", async () => {
+    const session = {
+      accessToken: "expired-access-token",
+      refreshToken: "refresh-token",
+      expiresAt: Date.now() - 60_000,
+      tokenType: "Bearer",
+    };
+    const refreshedSession = {
+      accessToken: "other-process-access-token",
+      refreshToken: "other-process-refresh-token",
+      expiresAt: Date.now() + 60_000,
+      tokenType: "Bearer",
+    };
+    await storeToken(session);
+
+    mockRefreshAccessToken.mockImplementation(async () => {
+      await storeToken(refreshedSession);
+      throw new ApiError(400, "invalid_grant");
+    });
+
+    expect(await Promise.all([getValidToken(), getValidToken()])).toEqual([
+      "other-process-access-token",
+      "other-process-access-token",
+    ]);
+    expect(mockRefreshAccessToken).toHaveBeenCalledTimes(1);
+    expect(await getStoredSession()).toEqual(refreshedSession);
+  });
+
   test("getValidToken recovers from a concurrent refresh race when another process completes the refresh first (invalid_grant)", async () => {
     const session = {
       accessToken: "expired-access-token",

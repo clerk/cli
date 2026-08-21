@@ -4,11 +4,13 @@ import type { InstanceConfigSchema } from "../../../lib/plapi.ts";
 import { useCaptureLog } from "../../../test/lib/stubs.ts";
 import {
   applyIOSNativeAppleConnection,
+  auditIOSNativeAppleHealth,
   buildIOSNativeApplePlan,
   prepareIOSNativeAppleConnection,
   type IOSNativeAppleAPI,
   type IOSNativeApplePatchOptions,
   type IOSNativeApplePrompts,
+  type IOSNativeAppleReadAPI,
 } from "./native-apple.ts";
 
 const APPLICATION_ID = "app_native_apple";
@@ -206,6 +208,144 @@ function statefulAPI(
 }
 
 describe("native Sign in with Apple remote setup", () => {
+  test("audits runtime health through a credential-free GET-only projection", async () => {
+    const calls: string[] = [];
+    const api: IOSNativeAppleReadAPI = {
+      async fetchInstanceConfig(applicationId, instanceId, keys) {
+        expect([applicationId, instanceId]).toEqual([APPLICATION_ID, INSTANCE_ID]);
+        expect(keys).toEqual(["connection_oauth_apple"]);
+        calls.push("GET config");
+        return config(
+          connection(true, true, {
+            bundle_id: BUNDLE_IDENTIFIER,
+            client_id: SERVICES_ID,
+            client_secret: PRIVATE_KEY,
+            team_id: TEAM_ID,
+            key_id: KEY_ID,
+          }),
+        );
+      },
+      async fetchInstanceConfigSchema(applicationId, instanceId, keys) {
+        expect([applicationId, instanceId]).toEqual([APPLICATION_ID, INSTANCE_ID]);
+        expect(keys).toEqual(["connection_oauth_apple"]);
+        calls.push("GET schema");
+        return {};
+      },
+    };
+
+    const result = await auditIOSNativeAppleHealth(
+      {
+        applicationId: APPLICATION_ID,
+        instanceId: INSTANCE_ID,
+        bundleIdentifier: BUNDLE_IDENTIFIER,
+      },
+      api,
+    );
+
+    expect(result.runtime).toEqual({
+      status: "satisfied",
+      connection: "satisfied",
+      bundleIdentifierConfiguration: "satisfied",
+      current: { enabled: true, authenticatable: true },
+      blockers: [],
+    });
+    expect(result.automation).toMatchObject({
+      status: "unsupported",
+      configVersion: CONFIG_VERSION,
+      blockers: [expect.objectContaining({ code: "apple-config-unsupported" })],
+    });
+    expect(calls.sort()).toEqual(["GET config", "GET schema"]);
+    const serialized = JSON.stringify(result);
+    for (const sensitive of [SERVICES_ID, PRIVATE_KEY, TEAM_ID, KEY_ID]) {
+      expect(serialized).not.toContain(sensitive);
+    }
+  });
+
+  test("reports repairable runtime state independently from supported automation", async () => {
+    const api: IOSNativeAppleReadAPI = {
+      async fetchInstanceConfig() {
+        return config(connection(false, true));
+      },
+      async fetchInstanceConfigSchema() {
+        return appleSchema();
+      },
+    };
+
+    const result = await auditIOSNativeAppleHealth(
+      {
+        applicationId: APPLICATION_ID,
+        instanceId: INSTANCE_ID,
+        bundleIdentifier: BUNDLE_IDENTIFIER,
+      },
+      api,
+    );
+
+    expect(result.runtime).toMatchObject({
+      status: "required",
+      connection: "required",
+      bundleIdentifierConfiguration: "required",
+      blockers: [],
+    });
+    expect(result.automation).toEqual({
+      status: "supported",
+      configVersion: CONFIG_VERSION,
+      blockers: [],
+    });
+  });
+
+  test("keeps malformed automation metadata from poisoning healthy runtime state", async () => {
+    const api: IOSNativeAppleReadAPI = {
+      async fetchInstanceConfig() {
+        return config(
+          connection(true, true, { bundle_id: BUNDLE_IDENTIFIER }),
+          `v1_${PRIVATE_KEY}`,
+        );
+      },
+      async fetchInstanceConfigSchema() {
+        return appleSchema();
+      },
+    };
+
+    const result = await auditIOSNativeAppleHealth(
+      {
+        applicationId: APPLICATION_ID,
+        instanceId: INSTANCE_ID,
+        bundleIdentifier: BUNDLE_IDENTIFIER,
+      },
+      api,
+    );
+
+    expect(result.runtime.status).toBe("satisfied");
+    expect(result.automation).toMatchObject({
+      status: "unsupported",
+      blockers: [expect.objectContaining({ code: "apple-config-invalid" })],
+    });
+    expect(JSON.stringify(result)).not.toContain(PRIVATE_KEY);
+  });
+
+  test("preserves GET transport errors for diagnostic classification", async () => {
+    const transportError = new Error(API_SECRET);
+    const api: IOSNativeAppleReadAPI = {
+      async fetchInstanceConfig() {
+        throw transportError;
+      },
+      async fetchInstanceConfigSchema() {
+        return appleSchema();
+      },
+    };
+
+    await expect(
+      auditIOSNativeAppleHealth(
+        {
+          applicationId: APPLICATION_ID,
+          instanceId: INSTANCE_ID,
+          bundleIdentifier: BUNDLE_IDENTIFIER,
+        },
+        api,
+      ),
+    ).rejects.toBe(transportError);
+  });
+
   test("builds a narrow redacted plan without retaining web credentials", () => {
     const sensitiveConnection = connection(false, true, {
       client_id: SERVICES_ID,

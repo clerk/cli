@@ -494,6 +494,7 @@ describe("inspectTargetBuildConfigurations", () => {
             localSecretsRuntimeBindings: [],
             environmentInjections: [],
             environmentConsumers: [],
+            authViewReferences: [],
             authFlowReferences: [],
             openURLHandlers: [],
             status: "absent",

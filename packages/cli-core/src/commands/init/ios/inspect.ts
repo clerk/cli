@@ -93,6 +93,7 @@ function emptySwiftInspection() {
     localSecretsRuntimeBindings: [],
     environmentInjections: [],
     environmentConsumers: [],
+    authViewReferences: [],
     authFlowReferences: [],
     openURLHandlers: [],
     status: "absent" as const,
