@@ -48,6 +48,7 @@ import { maybeNotifyUpdate } from "./lib/update-check.ts";
 import { CURRENT_VERSION } from "./lib/version.ts";
 import { registerExtras } from "@clerk/cli-extras";
 import {
+  discardCommandTelemetry,
   finalizeAndSendTelemetry,
   startCommandTelemetry,
   telemetryResultForError,
@@ -60,6 +61,18 @@ import {
 export type Program = Command<[], { inputJson?: string; mode?: string; verbose?: boolean }>;
 
 type CommandRegistrant = (program: Program) => void;
+
+/**
+ * `init --dry-run` promises an invocation-wide read-only boundary. Keep the
+ * check here, outside the init action, so global hooks cannot send telemetry,
+ * fetch an update, or persist their caches around an otherwise read-only run.
+ */
+function isReadOnlyInitDryRun(actionCommand: {
+  name(): string;
+  getOptionValue(key: string): unknown;
+}): boolean {
+  return actionCommand.name() === "init" && actionCommand.getOptionValue("dryRun") === true;
+}
 
 const registrants: CommandRegistrant[] = [
   registerInit,
@@ -109,8 +122,15 @@ export function createProgram(): Program {
     .option("--verbose", "Show detailed output (enables debug messages)") as Program;
 
   program.hook("preAction", async (_thisCommand, actionCommand) => {
+    const readOnlyInitDryRun = isReadOnlyInitDryRun(actionCommand);
     // First so hook-time failures (e.g. invalid --mode) still produce an event.
-    startCommandTelemetry(actionCommand);
+    // A read-only iOS inspection is the exception: its boundary covers global
+    // command hooks as well as the init action itself.
+    if (readOnlyInitDryRun) {
+      discardCommandTelemetry();
+    } else {
+      startCommandTelemetry(actionCommand);
+    }
     // Reset log level at the start of each command invocation so a previous
     // --verbose doesn't leak into subsequent runs.
     setLogLevel("info");
@@ -124,6 +144,11 @@ export function createProgram(): Program {
       }
       setMode(opts.mode as Mode);
     }
+
+    // Environment selection only affects remote Clerk operations. Avoid even
+    // reading or rendering persisted CLI environment state for this local-only
+    // inspection path.
+    if (readOnlyInitDryRun) return;
 
     // Initialize the active environment from persisted config
     const envName = await getEnvironment();
@@ -150,6 +175,7 @@ export function createProgram(): Program {
   // Show update notification after each command, except for commands that
   // already perform their own version check (doctor, update).
   program.hook("postAction", async (_thisCommand, actionCommand) => {
+    if (isReadOnlyInitDryRun(actionCommand)) return;
     const cmdName = actionCommand.name();
     if (cmdName === "doctor" || cmdName === "update") return;
     await maybeNotifyUpdate(CURRENT_VERSION);

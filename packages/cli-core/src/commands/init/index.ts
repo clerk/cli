@@ -2,10 +2,16 @@ import { createOption } from "@commander-js/extra-typings";
 import type { Program } from "../../cli-program.ts";
 import { login } from "../auth/login.js";
 import { link } from "../link/index.js";
-import { pull } from "../env/pull.js";
+import { pull, resolveEnvironmentKeys } from "../env/pull.js";
 import { isAgent } from "../../mode.js";
 import { dim, bold } from "../../lib/color.js";
-import { throwUserAbort, throwUsageError, CliError, errorMessage } from "../../lib/errors.js";
+import {
+  throwUserAbort,
+  throwUsageError,
+  CliError,
+  errorMessage,
+  isAuthError,
+} from "../../lib/errors.js";
 import {
   lookupFramework,
   isNpmFramework,
@@ -27,6 +33,8 @@ import {
 } from "../../lib/keyless.js";
 import { readSdkKeylessApp } from "../../lib/keyless-target.ts";
 import { interruptedExitCode } from "../../lib/signals.ts";
+import { listApplications } from "../../lib/plapi.ts";
+import { decodePublishableKey, fetchUserSettings } from "../../lib/fapi.ts";
 import { printNextSteps } from "../../lib/next-steps.js";
 import { gatherContext, hasPackageJson } from "./context.js";
 import { scaffold, enrichProjectContext } from "./scaffold.js";
@@ -54,6 +62,33 @@ import {
 } from "./bootstrap.js";
 import type { ProjectContext } from "./frameworks/types.js";
 import { type PackageManager, PACKAGE_MANAGERS } from "../../lib/package-manager.ts";
+import { inspectIOSProject } from "./ios/inspect.ts";
+import { buildIOSSetupPlan, hasIOSRuntimeKeyHandoffShape } from "./ios/plan.ts";
+import { planIOSDirectConfig } from "./ios/direct-config.ts";
+import { clerkKitUIInstallDecision, shouldPlanIOSDirectConfig } from "./ios/products.ts";
+import { planIOSRuntimeKey } from "./ios/runtime-key.ts";
+import { planIOSAssociatedDomain } from "./ios/associated-domain.ts";
+import { planIOSAppleEntitlement } from "./ios/apple-entitlement.ts";
+import { planIOSPrebuiltAuth } from "./ios/prebuilt-auth.ts";
+import { createIOSDryRunOutput, formatIOSSetupPlan } from "./ios/output.ts";
+import {
+  applyIOSLocalSetup,
+  applyIOSPlannedLocalSetup,
+  planIOSPrebuiltAuthSDKCompatibility,
+  planIOSPrebuiltAuthRuntimeBlockers,
+  type IOSLocalSetupResult,
+} from "./ios/apply.ts";
+import {
+  applyIOSNativeRemoteSetup,
+  prepareIOSNativeRemoteSetup,
+  validateAppIdPrefix,
+} from "./ios/native-remote.ts";
+import {
+  applyIOSNativeAppleConnection,
+  prepareIOSNativeAppleConnection,
+  type IOSNativeApplePlan,
+} from "./ios/native-apple.ts";
+import { auditIOSPrebuiltAuthEnvironment } from "./ios/prebuilt-auth-environment.ts";
 
 type InitOptions = {
   /** Framework to set up (skips auto-detection). */
@@ -75,17 +110,59 @@ type InitOptions = {
   template?: KeylessTemplate;
   /** Replace an existing unclaimed keyless application instead of keeping it. */
   fresh?: boolean;
+  /** Inspect an iOS project and print the setup plan without changing local or remote state. */
+  dryRun?: boolean;
+  /** Emit the read-only iOS inspection and setup plan as JSON. */
+  json?: boolean;
+  /** iOS application target name or PBX object ID. */
+  target?: string;
+  /** Allow an iOS apply action to update a project file that already has local changes. */
+  allowDirty?: boolean;
+  /** Apple App ID Prefix used when a new Clerk iOS registration is required. */
+  appIdPrefix?: string;
+  /** Opt into native Sign in with Apple setup for the selected iOS target. */
+  signInWithApple?: boolean;
+  /** Opt into ClerkKitUI's prebuilt AuthView flow for a proven pristine SwiftUI target. */
+  prebuiltAuthUI?: boolean;
+  /** Commander's camel-case form of --prebuilt-auth-ui. Normalized at the command boundary. */
+  prebuiltAuthUi?: boolean;
 };
 
 export async function init(options: InitOptions = {}) {
+  if (options.prebuiltAuthUI == null && options.prebuiltAuthUi != null) {
+    options = { ...options, prebuiltAuthUI: options.prebuiltAuthUi };
+  }
   const cwd = process.cwd();
   const agent = isAgent();
+  const machineOutput = options.dryRun === true && (options.json === true || agent);
 
-  await assertUsableFlags(options, agent);
+  assertUsableFlags(options);
+
+  // An agent cannot recover by completing an interactive browser login. This
+  // read-only credential validation happens before project detection so an
+  // invalid authenticated invocation cannot bootstrap or mutate anything.
+  let validatedAgentAuthLabel =
+    agent && (options.login || options.app) ? await validateAgentAuthentication() : undefined;
+  if (validatedAgentAuthLabel === null) {
+    throwUsageError(
+      `${options.app ? "--app" : "--login"} requires authentication that agent mode cannot complete interactively. Ask the user to run \`clerk auth login\`, then re-run \`clerk init\`.`,
+    );
+  }
 
   const frameworkOverride = options.framework
     ? (lookupFramework(options.framework) ?? undefined)
     : undefined;
+  const requiresExistingIOSProject =
+    options.target != null ||
+    options.allowDirty === true ||
+    options.appIdPrefix != null ||
+    options.signInWithApple === true ||
+    options.prebuiltAuthUI === true;
+  if (requiresExistingIOSProject && frameworkOverride && frameworkOverride.dep !== "ios") {
+    throwUsageError(
+      "--target, --allow-dirty, --app-id-prefix, --sign-in-with-apple, and --prebuilt-auth-ui apply only to native iOS projects.",
+    );
+  }
 
   // In agent mode, implicitly enable --yes to skip all confirmation prompts.
   const overrides: BootstrapOverrides = {
@@ -94,11 +171,17 @@ export async function init(options: InitOptions = {}) {
     nameOverride: options.name,
   };
 
-  intro("Setting up Clerk");
+  if (!machineOutput) {
+    intro(options.dryRun ? "Inspecting Clerk setup" : "Setting up Clerk");
+  }
 
-  const resolved = options.starter
-    ? await handleStarter(cwd, frameworkOverride, overrides)
-    : await resolveProjectContext(cwd, frameworkOverride, overrides);
+  const resolved = options.dryRun
+    ? await resolveReadOnlyProjectContext(cwd, frameworkOverride, overrides, machineOutput)
+    : requiresExistingIOSProject
+      ? await resolveExistingProjectContext(cwd, frameworkOverride, overrides)
+      : options.starter
+        ? await handleStarter(cwd, frameworkOverride, overrides)
+        : await resolveProjectContext(cwd, frameworkOverride, overrides);
 
   if (!resolved) return;
 
@@ -106,6 +189,199 @@ export async function init(options: InitOptions = {}) {
 
   if (bootstrap) {
     ctx.isBootstrap = true;
+  }
+
+  if (
+    !options.dryRun &&
+    ctx.framework.dep !== "ios" &&
+    (options.target ||
+      options.allowDirty ||
+      options.appIdPrefix ||
+      options.signInWithApple ||
+      options.prebuiltAuthUI)
+  ) {
+    throwUsageError(
+      "--target, --allow-dirty, --app-id-prefix, --sign-in-with-apple, and --prebuilt-auth-ui apply only to native iOS projects.",
+    );
+  }
+  if (ctx.framework.dep === "ios") {
+    ctx.iosTarget = options.target;
+    assertIOSUsableFlags(options);
+  }
+
+  if (options.dryRun) {
+    if (ctx.framework.dep !== "ios") {
+      throwUsageError(
+        `--dry-run currently supports native iOS projects only; detected ${ctx.framework.name}.`,
+      );
+    }
+    const inspect = async () => inspectIOSProject(ctx.cwd, { target: options.target });
+    const inspection = machineOutput
+      ? await inspect()
+      : await withSpinner("Inspecting Xcode project...", inspect);
+    const dryRunSelection = inspection.selection;
+    const selectedTarget =
+      dryRunSelection.state === "selected"
+        ? inspection.appTargets.find(
+            (target) =>
+              target.id === dryRunSelection.targetId &&
+              target.projectPath === dryRunSelection.projectPath,
+          )
+        : undefined;
+    const productDecision = selectedTarget ? clerkKitUIInstallDecision(selectedTarget) : undefined;
+    const inspectedPrebuiltAuthPlan =
+      dryRunSelection.state === "selected"
+        ? await planIOSPrebuiltAuth({
+            root: ctx.cwd,
+            projectPath: dryRunSelection.projectPath,
+            targetId: dryRunSelection.targetId,
+          })
+        : undefined;
+    const prebuiltAuthActive =
+      inspectedPrebuiltAuthPlan != null &&
+      inspectedPrebuiltAuthPlan.status !== "blocked" &&
+      (options.prebuiltAuthUI === true || inspectedPrebuiltAuthPlan.status === "satisfied");
+    const directConfigPlan =
+      dryRunSelection.state === "selected" &&
+      selectedTarget &&
+      productDecision &&
+      shouldPlanIOSDirectConfig(
+        inspection,
+        selectedTarget,
+        prebuiltAuthActive ? "prebuilt" : productDecision,
+      )
+        ? await planIOSDirectConfig({
+            root: ctx.cwd,
+            projectPath: dryRunSelection.projectPath,
+            targetId: dryRunSelection.targetId,
+          })
+        : undefined;
+    const preliminaryPlan = buildIOSSetupPlan(inspection, { directConfigPlan });
+    const configureStep = preliminaryPlan.steps.find(
+      (step) => step.id === "configure-publishable-key",
+    );
+    const needsRuntimeKeyHandoff =
+      dryRunSelection.state === "selected" &&
+      selectedTarget != null &&
+      configureStep?.status === "required" &&
+      hasIOSRuntimeKeyHandoffShape(inspection, selectedTarget);
+    const runtimeKeyPlan = needsRuntimeKeyHandoff
+      ? await planIOSRuntimeKey({
+          root: ctx.cwd,
+          projectPath: dryRunSelection.projectPath,
+          targetId: dryRunSelection.targetId,
+        })
+      : undefined;
+    const prebuiltRuntimeBlockers = prebuiltAuthActive
+      ? planIOSPrebuiltAuthRuntimeBlockers(
+          inspection,
+          directConfigPlan,
+          runtimeKeyPlan?.status === "ready" ? runtimeKeyPlan : undefined,
+        )
+      : [];
+    const prebuiltAuthPlan =
+      inspectedPrebuiltAuthPlan && prebuiltRuntimeBlockers.length > 0
+        ? {
+            ...inspectedPrebuiltAuthPlan,
+            status: "blocked" as const,
+            actions: [],
+            blockers: [
+              ...inspectedPrebuiltAuthPlan.blockers,
+              {
+                code: "runtime-prerequisites" as const,
+                message: prebuiltRuntimeBlockers.join(" "),
+              },
+            ],
+          }
+        : inspectedPrebuiltAuthPlan;
+    const associatedDomainPlan =
+      dryRunSelection.state === "selected"
+        ? await planIOSAssociatedDomain({
+            root: ctx.cwd,
+            projectPath: dryRunSelection.projectPath,
+            targetId: dryRunSelection.targetId,
+            deferToPublishableKey:
+              directConfigPlan != null && inspection.localPublishableKey.frontendApiHost == null,
+            allowMissingEntitlementsCreation: runtimeKeyPlan?.status !== "ready",
+          })
+        : undefined;
+    const hasLocalAppleIntent = selectedTarget?.configurations.some(
+      (configuration) => configuration.entitlements?.signInWithApple === true,
+    );
+    const appleEntitlementPlan =
+      dryRunSelection.state === "selected" &&
+      (options.signInWithApple === true || hasLocalAppleIntent === true)
+        ? await planIOSAppleEntitlement({
+            root: ctx.cwd,
+            projectPath: dryRunSelection.projectPath,
+            targetId: dryRunSelection.targetId,
+            allowMissingEntitlementsCreation: runtimeKeyPlan?.status !== "ready",
+          })
+        : undefined;
+    const sdkInstallPlan =
+      dryRunSelection.state === "selected" && selectedTarget != null && prebuiltAuthActive
+        ? await planIOSPrebuiltAuthSDKCompatibility({
+            root: ctx.cwd,
+            projectPath: dryRunSelection.projectPath,
+            targetId: dryRunSelection.targetId,
+          })
+        : undefined;
+    const plan = buildIOSSetupPlan(inspection, {
+      sdkInstallPlan,
+      runtimeKeyPlan: runtimeKeyPlan && {
+        status: runtimeKeyPlan.status,
+        blockers: runtimeKeyPlan.blockers,
+      },
+      directConfigPlan,
+      associatedDomainPlan,
+      appleEntitlementPlan,
+      prebuiltAuthPlan,
+      prebuiltAuthSelected: options.prebuiltAuthUI === true,
+    });
+    if (machineOutput) {
+      log.data(
+        JSON.stringify(createIOSDryRunOutput(inspection, plan, { associatedDomainPlan }), null, 2),
+      );
+    } else {
+      log.info(formatIOSSetupPlan(inspection, plan, { associatedDomainPlan }));
+      await outro(plan.status === "ready" ? "Setup looks ready" : "Setup incomplete");
+    }
+    return;
+  }
+
+  let iosLocalSetup: IOSLocalSetupResult | undefined;
+  let iosProfile: Awaited<ReturnType<typeof resolveProfile>> | undefined;
+  let preauthenticatedIOSLabel: string | undefined;
+  if (ctx.framework.dep === "ios") {
+    // Resolve the local link before the redacted preview. No application key
+    // is fetched and no local file is written until the user has authorized
+    // the complete semantic plan.
+    iosProfile = await resolveProfile(ctx.cwd);
+    if (agent && validatedAgentAuthLabel === undefined) {
+      validatedAgentAuthLabel = await validateAgentAuthentication();
+    }
+    if (agent && validatedAgentAuthLabel === null) {
+      throwUsageError(
+        "Native iOS setup in agent mode requires valid Clerk authentication before any Xcode files can be changed. Ask the user to run `clerk auth login` or provide a valid Platform API key, then rerun `clerk init`.",
+      );
+    }
+
+    preauthenticatedIOSLabel = agent ? validatedAgentAuthLabel! : undefined;
+
+    iosLocalSetup = await applyIOSLocalSetup({
+      root: ctx.cwd,
+      target: options.target,
+      yes: options.yes === true,
+      agent,
+      allowDirty: options.allowDirty === true,
+      signInWithApple: options.signInWithApple,
+      prebuiltAuthUI: options.prebuiltAuthUI,
+    });
+    if (agent && iosLocalSetup.verifiesExistingKey && !options.app && !iosProfile) {
+      throwUsageError(
+        "This iOS target already contains a publishable key. Agent mode cannot choose its matching Clerk application safely; rerun with --app <app_id>. No local files were changed.",
+      );
+    }
   }
 
   await enrichProjectContext(ctx);
@@ -119,14 +395,23 @@ export async function init(options: InitOptions = {}) {
   // stale/broken credential ends up blocked on an interactive browser OAuth
   // round-trip it can never complete. So agent mode validates the credential
   // (it can fall back to keyless) instead of trusting mere presence.
+  if (!optsKeyless && agent && validatedAgentAuthLabel === undefined) {
+    validatedAgentAuthLabel = await validateAgentAuthentication();
+  }
   const authed = optsKeyless
     ? false
     : agent
-      ? await isAuthenticatedForAgent()
+      ? validatedAgentAuthLabel !== null
       : await isAuthenticated();
   const linkedProfile =
-    !optsKeyless && agent && !options.app ? await resolveProfile(ctx.cwd) : undefined;
-  const hasRealAppTarget = Boolean(options.app || linkedProfile);
+    ctx.framework.dep === "ios"
+      ? iosProfile
+      : !optsKeyless && agent && authed && !options.app
+        ? await resolveProfile(ctx.cwd)
+        : undefined;
+  const hasRealAppTarget = Boolean(
+    options.app || linkedProfile || iosLocalSetup?.requiresLinkedApp,
+  );
 
   const strategy = pickStrategy({
     optsKeyless,
@@ -140,12 +425,209 @@ export async function init(options: InitOptions = {}) {
 
   assertKeylessOnlyFlags(options, strategy);
 
+  let authenticatedAppId: string | undefined;
   if (strategy === "authenticate") {
     bar();
     const createIfMissing = agent
       ? await deriveProjectName(ctx.cwd, bootstrap?.projectName)
       : undefined;
-    await authenticateAndLink(ctx.cwd, options.app, createIfMissing);
+    authenticatedAppId = await authenticateAndLink(
+      ctx.cwd,
+      options.app,
+      createIfMissing,
+      iosLocalSetup?.requiresLinkedApp === true,
+      preauthenticatedIOSLabel,
+    );
+  }
+
+  let authenticatedKeysHandled = false;
+  if (iosLocalSetup?.requiresLinkedApp) {
+    if (strategy !== "authenticate") {
+      throw new CliError(
+        "The approved iOS configuration requires a linked Clerk application, but authentication did not complete. No local setup changes were written.",
+      );
+    }
+    if (!authenticatedAppId) {
+      throw new CliError(
+        "The Clerk application link could not be verified. No local setup changes were written.",
+      );
+    }
+    const keys = await withSpinner("Fetching the development publishable key...", async () =>
+      resolveEnvironmentKeys({ app: authenticatedAppId, cwd: ctx.cwd }),
+    );
+    if (keys.instanceLabel !== "development") {
+      throw new CliError(
+        "Automatic iOS configuration is limited to the linked development instance. No local setup changes were written.",
+      );
+    }
+    if (keys.appId !== authenticatedAppId) {
+      throw new CliError(
+        "The linked Clerk application changed while its iOS publishable key was being resolved. No local setup changes were written; rerun clerk init.",
+      );
+    }
+    let iosSetupForCommit = iosLocalSetup;
+    let inspectedAuthViewAppleRequirement: "required" | "not-required" | undefined;
+    if (iosLocalSetup.prebuiltAuthActive) {
+      const authEnvironment = await withSpinner(
+        "Inspecting AuthView authentication methods...",
+        async () => {
+          try {
+            const { fapiHost } = decodePublishableKey(keys.publishableKey);
+            const settings = await fetchUserSettings(fapiHost, {});
+            return auditIOSPrebuiltAuthEnvironment(settings);
+          } catch (error) {
+            if (interruptedExitCode() !== null) throw error;
+            log.debug(`Could not inspect AuthView authentication methods: ${errorMessage(error)}`);
+            throw new CliError(
+              "The linked Clerk application's AuthView methods could not be inspected safely. No local setup changes were written; rerun clerk init.",
+            );
+          }
+        },
+      );
+      if (authEnvironment.apple === "blocked") {
+        throw new CliError(`${authEnvironment.message} No local setup changes were written.`);
+      }
+      inspectedAuthViewAppleRequirement = authEnvironment.apple;
+      if (authEnvironment.apple === "required") {
+        const conditionalPlan = iosLocalSetup.prebuiltAuthAppleEntitlementPlan;
+        if (!conditionalPlan || conditionalPlan.status === "blocked") {
+          const reasons = conditionalPlan?.blockers
+            .map((blocker) => `  • ${blocker.message}`)
+            .join("\n");
+          throw new CliError(
+            `AuthView exposes Sign in with Apple for the linked development instance, but the required selected-target entitlement could not be prepared safely. No local setup changes were written${reasons ? `:\n${reasons}` : "."}`,
+          );
+        }
+      }
+    }
+    const nativeRemotePlan = await prepareIOSNativeRemoteSetup({
+      applicationId: keys.appId,
+      instanceId: keys.instanceId,
+      target: iosLocalSetup.nativeReadiness.target,
+      appIdPrefix: options.appIdPrefix,
+      ...(iosLocalSetup.unverifiedAppIdPrefixSuggestion
+        ? { unverifiedAppIdPrefixSuggestion: iosLocalSetup.unverifiedAppIdPrefixSuggestion }
+        : {}),
+      agent,
+      yes: options.yes === true,
+    });
+    let nativeApplePlan: IOSNativeApplePlan | undefined;
+    if (iosLocalSetup.nativeAppleRequested) {
+      if (!iosLocalSetup.appleEntitlementPlan) {
+        throw new CliError(
+          "Native Sign in with Apple was requested without a validated local entitlement plan. No local or Apple connection changes were written; rerun clerk init.",
+        );
+      }
+      const target = iosLocalSetup.nativeReadiness.target;
+      if (target.status !== "selected" || target.bundleIdentifier.status !== "resolved") {
+        throw new CliError(
+          "The selected iOS Bundle ID could not be revalidated for native Sign in with Apple. No local or Apple connection changes were written.",
+        );
+      }
+      const preparedApple = await prepareIOSNativeAppleConnection({
+        applicationId: keys.appId,
+        instanceId: keys.instanceId,
+        bundleIdentifier: target.bundleIdentifier.value,
+        nativeApplicationReady:
+          nativeRemotePlan.status !== "blocked" && nativeRemotePlan.registration !== "blocked",
+        requested: true,
+        agent,
+        yes: options.yes === true,
+      });
+      if (preparedApple.status === "skipped") {
+        throw new CliError(
+          "Native Sign in with Apple was selected locally but its Clerk connection plan was skipped. No local or Apple connection changes were written; rerun clerk init.",
+        );
+      }
+      nativeApplePlan = preparedApple;
+    }
+    const commitProfile = await resolveProfile(ctx.cwd);
+    if (commitProfile?.profile.appId !== authenticatedAppId) {
+      throw new CliError(
+        "The local Clerk application link changed before the approved iOS setup could be committed. No local or remote setup changes were written; rerun clerk init.",
+      );
+    }
+
+    if (iosLocalSetup.prebuiltAuthActive) {
+      const authEnvironment = await withSpinner(
+        "Revalidating AuthView authentication methods...",
+        async () => {
+          try {
+            const { fapiHost } = decodePublishableKey(keys.publishableKey);
+            const settings = await fetchUserSettings(fapiHost, {});
+            return auditIOSPrebuiltAuthEnvironment(settings);
+          } catch (error) {
+            if (interruptedExitCode() !== null) throw error;
+            log.debug(
+              `Could not revalidate AuthView authentication methods: ${errorMessage(error)}`,
+            );
+            throw new CliError(
+              "The linked Clerk application's AuthView methods could not be revalidated safely. No local or remote setup changes were written; rerun clerk init.",
+            );
+          }
+        },
+      );
+      if (authEnvironment.apple === "blocked") {
+        throw new CliError(
+          `${authEnvironment.message} No local or remote setup changes were written.`,
+        );
+      }
+      if (authEnvironment.apple !== inspectedAuthViewAppleRequirement) {
+        throw new CliError(
+          "The linked Clerk application's AuthView methods changed while the approved iOS setup was being prepared. No local or remote setup changes were written; rerun clerk init.",
+        );
+      }
+
+      if (authEnvironment.apple === "required") {
+        const conditionalPlan = iosLocalSetup.prebuiltAuthAppleEntitlementPlan;
+        if (!conditionalPlan || conditionalPlan.status === "blocked") {
+          throw new CliError(
+            "AuthView exposes Sign in with Apple for the linked development instance, but the required selected-target entitlement could not be revalidated safely. No local or remote setup changes were written; rerun clerk init.",
+          );
+        }
+        iosSetupForCommit = {
+          ...iosLocalSetup,
+          appleEntitlementPlan: iosLocalSetup.appleEntitlementPlan ?? conditionalPlan,
+          prebuiltAuthAppleEntitlementPlan: undefined,
+        };
+      } else {
+        iosSetupForCommit = {
+          ...iosLocalSetup,
+          prebuiltAuthAppleEntitlementPlan: undefined,
+        };
+      }
+    }
+
+    await applyIOSPlannedLocalSetup(
+      iosSetupForCommit,
+      iosSetupForCommit.requiresDevelopmentKey ? keys.publishableKey : undefined,
+    );
+    try {
+      await applyIOSNativeRemoteSetup(nativeRemotePlan);
+    } catch (error) {
+      if (interruptedExitCode() !== null) throw error;
+      log.debug(`Could not reconcile Clerk Native Application settings: ${errorMessage(error)}`);
+      throw new CliError(
+        "The local iOS setup completed, but Clerk Native Application settings could not be completed remotely. Local changes remain intact; rerun clerk init to safely reconcile the additive remote steps.",
+      );
+    }
+    log.success("Clerk Native API and iOS application registration verified");
+    ctx.iosNativeRemoteReady = true;
+    if (nativeApplePlan) {
+      try {
+        await applyIOSNativeAppleConnection(nativeApplePlan);
+      } catch (error) {
+        if (interruptedExitCode() !== null) throw error;
+        log.debug(`Could not reconcile the native Apple connection: ${errorMessage(error)}`);
+        throw new CliError(
+          "The local iOS setup and Clerk Native Application registration completed, but the native Apple connection could not be completed. Those completed changes remain intact; rerun clerk init to reconcile Sign in with Apple safely.",
+        );
+      }
+      ctx.iosNativeAppleReady = true;
+    }
+    authenticatedKeysHandled = true;
+  } else if (iosLocalSetup) {
+    await applyIOSPlannedLocalSetup(iosLocalSetup);
   }
 
   // Short-circuit on a fully-clean re-run so env pull / skills prompt don't
@@ -169,6 +651,7 @@ export async function init(options: InitOptions = {}) {
     template: options.template,
     fresh: options.fresh === true,
     skipConfirm: overrides.skipConfirm,
+    authenticatedKeysHandled,
   });
 
   // Native platforms (iOS/Android) have no npx/Node toolchain to run `skills add` with.
@@ -192,7 +675,46 @@ export async function init(options: InitOptions = {}) {
  * application the CLI creates; `--login` and `--app` describe one that
  * already exists.
  */
-async function assertUsableFlags(options: InitOptions, agent: boolean): Promise<void> {
+function assertUsableFlags(options: InitOptions): void {
+  if (options.json && !options.dryRun) {
+    throwUsageError("--json currently requires --dry-run.");
+  }
+  if (options.dryRun && options.allowDirty) {
+    throwUsageError("--allow-dirty applies only when clerk init is making local changes.");
+  }
+  if (options.dryRun && options.appIdPrefix != null) {
+    throwUsageError(
+      "--app-id-prefix cannot be combined with --dry-run because dry-run never reads or changes remote application state.",
+    );
+  }
+  if (options.appIdPrefix != null && !validateAppIdPrefix(options.appIdPrefix)) {
+    throwUsageError("--app-id-prefix must contain between 1 and 255 characters after trimming.");
+  }
+  if (options.dryRun && options.starter) {
+    throwUsageError(
+      "--dry-run cannot be combined with --starter because dry-run never creates files.",
+    );
+  }
+  if (
+    options.starter &&
+    (options.target ||
+      options.allowDirty ||
+      options.appIdPrefix ||
+      options.signInWithApple ||
+      options.prebuiltAuthUI)
+  ) {
+    throwUsageError(
+      "--target, --allow-dirty, --app-id-prefix, --sign-in-with-apple, and --prebuilt-auth-ui require an existing native iOS project and cannot be combined with --starter.",
+    );
+  }
+  if (
+    options.dryRun &&
+    (options.app || options.keyless || options.login || options.template || options.fresh)
+  ) {
+    throwUsageError(
+      "--dry-run cannot be combined with --app, --keyless, --login, --template, or --fresh because it never reads or changes remote application state.",
+    );
+  }
   if (options.keyless && options.login) {
     throwUsageError("--keyless and --login cannot be combined.");
   }
@@ -209,12 +731,27 @@ async function assertUsableFlags(options: InitOptions, agent: boolean): Promise<
   if (options.fresh && options.login) {
     throwUsageError("--fresh applies to keyless applications and cannot be combined with --login.");
   }
-  // Presence-only here would repeat the hang below: an agent can't complete an
-  // interactive login, so a stored-but-broken credential must read as
-  // unauthenticated rather than let this guard wave the request through.
-  if (options.login && agent && !(await isAuthenticatedForAgent())) {
+}
+
+/**
+ * Rejects keyless-only flags before the iOS apply phase. Native iOS does not
+ * consume Clerk's keyless bootstrap, so letting strategy resolution reject
+ * these later could otherwise modify the Xcode project before a usage error.
+ */
+function assertIOSUsableFlags(options: InitOptions): void {
+  if (options.keyless) {
     throwUsageError(
-      "--login requires an interactive terminal to complete the browser login. Ask the user to run `clerk auth login`, then re-run `clerk init`.",
+      "--keyless is not supported for iOS (Swift). Run `clerk auth login` and use `clerk init --app <app_id>` instead.",
+    );
+  }
+  if (options.template) {
+    throwUsageError(
+      "--template only applies to keyless applications, but iOS (Swift) does not support keyless mode. Drop --template.",
+    );
+  }
+  if (options.fresh) {
+    throwUsageError(
+      "--fresh only applies to keyless applications, but iOS (Swift) does not support keyless mode. Drop --fresh.",
     );
   }
 }
@@ -225,13 +762,23 @@ async function assertUsableFlags(options: InitOptions, agent: boolean): Promise<
  * credential, because a human who turns out to be unauthenticated just gets
  * an interactive login prompt. An agent has no such fallback — if it trusts a
  * stale/broken credential, it ends up blocked on a browser OAuth round-trip
- * that can never complete. So this validates before trusting: a real API key
- * is accepted outright (no OAuth involved), everything else must actually
- * resolve to a user.
+ * that can never complete. Platform API keys are validated with a read-only
+ * request; stored OAuth credentials must actually resolve to a user.
  */
-async function isAuthenticatedForAgent(): Promise<boolean> {
-  if (process.env.CLERK_PLATFORM_API_KEY) return true;
-  return (await getAuthenticatedEmail()) !== null;
+async function validateAgentAuthentication(): Promise<string | null> {
+  if (process.env.CLERK_PLATFORM_API_KEY) {
+    try {
+      await listApplications();
+      return "Using API key";
+    } catch (error) {
+      if (interruptedExitCode() !== null) throw error;
+      if (!isAuthError(error)) throw error;
+      return null;
+    }
+  }
+
+  const email = await getAuthenticatedEmail();
+  return email ? `Logged in as ${email}` : null;
 }
 
 /**
@@ -329,6 +876,38 @@ async function resolveProjectContext(
   return bootstrapAndDetect(cwd, frameworkOverride, overrides);
 }
 
+async function resolveExistingProjectContext(
+  cwd: string,
+  frameworkOverride: FrameworkInfo | undefined,
+  overrides: BootstrapOverrides,
+): Promise<ResolvedContext> {
+  const ctx = await withSpinner("Detecting framework...", async () =>
+    gatherContext(cwd, frameworkOverride, overrides.pmOverride),
+  );
+  if (!ctx) {
+    throw new CliError(
+      "Could not detect an existing native iOS project. --target, --allow-dirty, --app-id-prefix, --sign-in-with-apple, and --prebuilt-auth-ui never bootstrap a new project.",
+    );
+  }
+  return { ctx, bootstrap: null };
+}
+
+async function resolveReadOnlyProjectContext(
+  cwd: string,
+  frameworkOverride: FrameworkInfo | undefined,
+  overrides: BootstrapOverrides,
+  machineOutput: boolean,
+): Promise<ResolvedContext> {
+  const detect = async () => gatherContext(cwd, frameworkOverride, overrides.pmOverride);
+  const ctx = machineOutput ? await detect() : await withSpinner("Detecting framework...", detect);
+  if (!ctx) {
+    throw new CliError(
+      "Could not detect an existing project. Read-only mode never bootstraps or modifies a directory.",
+    );
+  }
+  return { ctx, bootstrap: null };
+}
+
 // --- Next steps ---
 
 function devCommand(pm: string): string {
@@ -347,6 +926,17 @@ function printBootstrapNextSteps(
 }
 
 function printBootstrapManualSetupInfo(framework: FrameworkInfo): void {
+  if (framework.dep === "ios") {
+    const lines = [
+      `\n  Set up Clerk for ${framework.name}:`,
+      "    Run `clerk init --app <app_id>` to link the project and configure a safely inspectable fresh SwiftUI target automatically.",
+      '    Manual source setup uses `Clerk.configure(publishableKey: "<development-publishable-key>")` in the shipping @main App initializer and `.environment(Clerk.shared)` on the WindowGroup root.',
+      "    Existing ProcessInfo/Run-scheme and LocalSecrets loaders remain supported compatibility paths; clerk init does not replace a custom runtime source.",
+    ];
+    log.info(lines.map(dim).join("\n"));
+    return;
+  }
+
   // Only reachable for non-keyless frameworks: keyless-capable ones resolve to
   // the "keyless" or "authenticate" strategy in agent mode instead.
   const lines = [
@@ -408,6 +998,8 @@ type KeylessRunOptions = {
   fresh: boolean;
   /** Agent mode and `-y` both skip y/n prompts, so both must default to *not* replacing. */
   skipConfirm: boolean;
+  /** The linked publishable key was wired directly into a proven native runtime sink. */
+  authenticatedKeysHandled?: boolean;
 };
 
 async function runStrategy(
@@ -420,6 +1012,12 @@ async function runStrategy(
       printBootstrapManualSetupInfo(ctx.framework);
       return;
     case "authenticate":
+      if (keylessOptions.authenticatedKeysHandled) return;
+      // Native Swift does not load Clerk configuration from a dotenv file.
+      // A proven runtime sink is handled above; otherwise leave the project
+      // untouched and print the remaining source-level setup instead of
+      // creating an unused key file that may be tracked.
+      if (ctx.framework.dep === "ios") return;
       await pull({ file: ctx.envFile, cwd: ctx.cwd });
       return;
     case "keyless":
@@ -445,22 +1043,42 @@ async function authenticateAndLink(
   cwd: string,
   app: string | undefined,
   createIfMissing: string | undefined,
-): Promise<void> {
-  const label = await resolveAuthLabel();
+  requireLinkedAppId: boolean,
+  preauthenticatedLabel?: string,
+): Promise<string | undefined> {
+  const label = preauthenticatedLabel ?? (await resolveAuthLabel());
   const profile = await resolveProfile(cwd);
 
   const alreadyOnRequestedApp = profile && (!app || profile.profile.appId === app);
 
   if (label && alreadyOnRequestedApp) {
     log.info(dim(`${label} · Linked to ${profile.profile.appId}`));
-    return;
+    return profile.profile.appId;
   }
 
   if (label) {
     log.info(dim(label));
   }
 
-  await link({ skipIfLinked: true, app, cwd, createIfMissing });
+  await link({
+    skipIfLinked: true,
+    app,
+    cwd,
+    createIfMissing,
+    ...(requireLinkedAppId && { skipAutolink: true }),
+  });
+
+  const linked = app || requireLinkedAppId ? await resolveProfile(cwd) : undefined;
+  if (app && linked?.profile.appId !== app) {
+    if (profile) throwUserAbort();
+    throw new CliError(
+      `The project was not linked to the requested Clerk application ${app}. No keys were written.`,
+    );
+  }
+  if (requireLinkedAppId && !linked) {
+    throw new CliError("The Clerk application link could not be verified. No keys were written.");
+  }
+  return linked?.profile.appId;
 }
 
 // --- Keyless app setup ---
@@ -561,8 +1179,9 @@ async function detectAndInstall(
   } else if (isNpmFramework(ctx.framework)) {
     await installSdk(ctx);
   }
-  // Non-npm ecosystems (Swift Package Manager, Gradle) can't be installed by a
-  // package manager here — the framework's scaffold plan prints install steps.
+  // The dedicated iOS phase already handled its Xcode package graph. Other
+  // non-npm ecosystems (for example Gradle) print install steps from their
+  // framework scaffold plan.
 
   return scaffoldAndWrite(cwd, ctx, skipConfirm);
 }
@@ -651,6 +1270,22 @@ export function registerInit(program: Program): void {
       "--fresh",
       "Replace an existing unclaimed keyless application with a new one, instead of keeping it. Only applies when the strategy resolves to keyless — errors otherwise",
     )
+    .option(
+      "--dry-run",
+      "Inspect an existing iOS project and print a setup plan without changing local or remote state",
+    )
+    .option("--json", "Output the read-only iOS inspection and setup plan as JSON")
+    .option("--target <name-or-id>", "Select an iOS application target by name or PBX object ID")
+    .option("--allow-dirty", "Allow an iOS project file with existing local changes to be updated")
+    .option(
+      "--app-id-prefix <prefix>",
+      "Apple App ID Prefix to use when Clerk needs to register the selected iOS Bundle ID",
+    )
+    .option("--sign-in-with-apple", "Enable native Sign in with Apple for the selected iOS target")
+    .option(
+      "--prebuilt-auth-ui",
+      "Add ClerkKitUI's prebuilt AuthView flow to a proven pristine SwiftUI target",
+    )
     .option("-y, --yes", "Skip confirmation prompts")
     .option("--no-skills", "Skip the optional agent skills install prompt")
     .setExamples([
@@ -683,6 +1318,14 @@ export function registerInit(program: Program): void {
       {
         command: "clerk init --keyless --fresh",
         description: "Replace an existing unclaimed keyless app with a new one",
+      },
+      {
+        command: "clerk init --dry-run",
+        description: "Inspect an iOS project and print its setup plan without changes",
+      },
+      {
+        command: "clerk init --dry-run --target MyApp --json",
+        description: "Inspect one iOS app target and emit a machine-readable plan",
       },
       { command: "clerk init -y", description: "Skip all confirmation prompts" },
       { command: "clerk init --no-skills", description: "Skip the agent skills install prompt" },

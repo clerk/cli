@@ -1,11 +1,12 @@
 import { describe, expect, test } from "bun:test";
 import {
   buildOAuthProviderDescriptors,
+  inspectNativeAppleConfiguration,
   providerFields,
   providerLabel,
   type OAuthProviderDescriptor,
 } from "./providers.ts";
-import type { InstanceConfigSchema } from "../../lib/plapi.ts";
+import type { IOSApplication, InstanceConfigSchema } from "../../lib/plapi.ts";
 
 const oauthSchema = (properties: Record<string, unknown>) => ({
   type: "object",
@@ -27,6 +28,21 @@ const basicOAuthSchema = oauthSchema({
   },
 });
 
+const appleOAuthSchema = oauthSchema({
+  client_id: { type: "string", description: "Apple Services ID" },
+  client_secret: {
+    type: "string",
+    description: "Apple Private Key",
+    "x-clerk-sensitive": true,
+  },
+  key_id: { type: "string", description: "Apple Key ID" },
+  team_id: { type: "string", description: "Apple Team ID" },
+  bundle_id: {
+    type: "string",
+    description: "iOS app Bundle ID for native Sign in with Apple",
+  },
+});
+
 const schemaResponse = (properties: Record<string, unknown>): InstanceConfigSchema => ({
   $schema: "https://json-schema.org/draft/2020-12/schema",
   $id: "https://clerk.com/schemas/platform-config/2025-01-01",
@@ -41,6 +57,17 @@ function descriptorByProvider(
   const descriptor = descriptors.find((item) => item.provider === provider);
   if (!descriptor) throw new Error(`missing descriptor for ${provider}`);
   return descriptor;
+}
+
+function iosApplication(bundleId: string): IOSApplication {
+  return {
+    object: "ios_application",
+    id: `ios_${bundleId}`,
+    app_id_prefix: "ABCDE12345",
+    bundle_id: bundleId,
+    created_at: 1,
+    updated_at: 1,
+  };
 }
 
 describe("deploy OAuth provider descriptors", () => {
@@ -147,22 +174,7 @@ describe("deploy OAuth provider descriptors", () => {
   test("applies Apple production credential overrides", () => {
     const result = buildOAuthProviderDescriptors(
       ["apple"],
-      schemaResponse({
-        connection_oauth_apple: oauthSchema({
-          client_id: { type: "string", description: "Apple Services ID" },
-          client_secret: {
-            type: "string",
-            description: "Apple Private Key",
-            "x-clerk-sensitive": true,
-          },
-          key_id: { type: "string", description: "Apple Key ID" },
-          team_id: { type: "string", description: "Apple Team ID" },
-          bundle_id: {
-            type: "string",
-            description: "iOS app Bundle ID for native Sign in with Apple",
-          },
-        }),
-      }),
+      schemaResponse({ connection_oauth_apple: appleOAuthSchema }),
     );
 
     const apple = descriptorByProvider(result.supported, "apple");
@@ -188,6 +200,105 @@ describe("deploy OAuth provider descriptors", () => {
       "key_id",
       "client_secret",
     ]);
+  });
+
+  test("recognizes native-only Apple only for an exact production registration", () => {
+    const result = buildOAuthProviderDescriptors(
+      ["apple"],
+      schemaResponse({ connection_oauth_apple: appleOAuthSchema }),
+    );
+    const apple = descriptorByProvider(result.supported, "apple");
+    const config = {
+      connection_oauth_apple: {
+        enabled: true,
+        authenticatable: true,
+        bundle_id: "com.example.app",
+      },
+    };
+
+    expect(
+      inspectNativeAppleConfiguration(config, apple, [iosApplication("com.example.app")], {
+        object: "native_settings",
+        api_enabled: true,
+      }),
+    ).toEqual({ status: "ready", bundleId: "com.example.app" });
+    expect(
+      inspectNativeAppleConfiguration(config, apple, [iosApplication("com.example.other")], {
+        object: "native_settings",
+        api_enabled: true,
+      }),
+    ).toEqual({ status: "registration-missing", bundleId: "com.example.app" });
+  });
+
+  test("requires Native API and authenticatable Apple settings for native readiness", () => {
+    const result = buildOAuthProviderDescriptors(
+      ["apple"],
+      schemaResponse({ connection_oauth_apple: appleOAuthSchema }),
+    );
+    const apple = descriptorByProvider(result.supported, "apple");
+    const iosApplications = [iosApplication("com.example.app")];
+    const connection = {
+      enabled: true,
+      authenticatable: true,
+      bundle_id: "com.example.app",
+    };
+
+    expect(
+      inspectNativeAppleConfiguration(
+        { connection_oauth_apple: connection },
+        apple,
+        iosApplications,
+        { object: "native_settings", api_enabled: false },
+      ),
+    ).toEqual({ status: "native-api-disabled", bundleId: "com.example.app" });
+    expect(
+      inspectNativeAppleConfiguration(
+        {
+          connection_oauth_apple: {
+            ...connection,
+            authenticatable: false,
+          },
+        },
+        apple,
+        iosApplications,
+        { object: "native_settings", api_enabled: true },
+      ),
+    ).toEqual({ status: "authentication-disabled", bundleId: "com.example.app" });
+    expect(
+      inspectNativeAppleConfiguration(
+        {
+          connection_oauth_apple: {
+            enabled: true,
+            bundle_id: "com.example.app",
+          },
+        },
+        apple,
+        iosApplications,
+        { object: "native_settings", api_enabled: true },
+      ),
+    ).toEqual({ status: "authentication-disabled", bundleId: "com.example.app" });
+  });
+
+  test("keeps hosted Apple credentials on the hosted OAuth path", () => {
+    const result = buildOAuthProviderDescriptors(
+      ["apple"],
+      schemaResponse({ connection_oauth_apple: appleOAuthSchema }),
+    );
+    const apple = descriptorByProvider(result.supported, "apple");
+
+    expect(
+      inspectNativeAppleConfiguration(
+        {
+          connection_oauth_apple: {
+            enabled: true,
+            bundle_id: "com.example.app",
+            client_id: "com.example.web",
+          },
+        },
+        apple,
+        [iosApplication("com.example.app")],
+      ),
+    ).toEqual({ status: "hosted-or-unconfigured" });
   });
 
   test("keeps compatibility prompt labels only for behavioral overrides", () => {

@@ -4,7 +4,8 @@ import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 import { inspectTargetBuildConfigurations } from "./build-settings.ts";
 import type { PbxObject, PbxObjects } from "./pbx.ts";
-import type { IOSDiagnostic } from "./types.ts";
+import { buildIOSSetupPlan } from "./plan.ts";
+import type { IOSDiagnostic, IOSProjectInspectionResult } from "./types.ts";
 
 const temporaryDirectories: string[] = [];
 
@@ -452,7 +453,7 @@ describe("inspectTargetBuildConfigurations", () => {
   });
 
   test("preserves dangling target configurations as blocking placeholders", async () => {
-    const { configurations, diagnostics } = await inspectFixture({
+    const { configurations, diagnostics, root } = await inspectFixture({
       targetConfigurationIds: ["target-debug", "missing-target-release"],
     });
 
@@ -468,6 +469,55 @@ describe("inspectTargetBuildConfigurations", () => {
         message: expect.stringContaining("missing-target-release"),
       }),
     );
+
+    const inspection: IOSProjectInspectionResult = {
+      schemaVersion: 1,
+      platform: "ios",
+      root,
+      workspaces: [],
+      projects: [],
+      appTargets: [
+        {
+          id: "target",
+          name: "Example",
+          projectPath: "Example.xcodeproj",
+          configurations: configurations.map(({ model }) => model),
+          packages: { package: "absent", clerkKit: "absent", clerkKitUI: "absent" },
+          runtimeKeySinks: [],
+          swift: {
+            sourceFilesScanned: 0,
+            evidenceComplete: true,
+            entryPoints: [],
+            importsClerkKit: [],
+            importsClerkKitUI: [],
+            configureCalls: [],
+            localSecretsRuntimeBindings: [],
+            environmentInjections: [],
+            environmentConsumers: [],
+            authFlowReferences: [],
+            openURLHandlers: [],
+            status: "absent",
+          },
+        },
+      ],
+      selection: {
+        state: "selected",
+        targetId: "target",
+        targetName: "Example",
+        projectPath: "Example.xcodeproj",
+      },
+      localPublishableKey: {
+        found: false,
+        conflict: false,
+        candidateSources: [],
+        invalidSources: [],
+      },
+      generatedProject: null,
+      diagnostics,
+    };
+    expect(
+      buildIOSSetupPlan(inspection).steps.find(({ id }) => id === "register-native-application"),
+    ).toMatchObject({ status: "blocked" });
   });
 
   test("taints target settings when the project configuration list is incomplete", async () => {

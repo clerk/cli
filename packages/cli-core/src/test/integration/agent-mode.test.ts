@@ -125,18 +125,22 @@ test("init creates and links a real app for keyless framework when authed in age
 
 test("init prints manual setup for non-keyless framework without an app target in agent mode", async () => {
   await writeReactProject();
+  http.mock({
+    "/v1/platform/applications": [],
+  });
 
   const { stderr } = await clerk("--mode", "agent", "init", "--no-skills");
 
   expect(stderr).toContain("clerk init --app <app_id>");
-  expect(http.requests).toHaveLength(0);
+  expect(http.requests).toHaveLength(1);
+  expect(http.requests[0]?.url).toContain("/v1/platform/applications");
 });
 
 test("init with --app uses real app flow in agent mode", async () => {
   await writeReactProject();
   const devInstance = getInstance(MOCK_APP, "development");
   http.mock({
-    [`/applications/${MOCK_APP.application_id}`]: MOCK_APP,
+    "/v1/platform/applications": MOCK_APP,
   });
 
   await clerk("--mode", "agent", "init", "--app", MOCK_APP.application_id, "--no-skills");

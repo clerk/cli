@@ -26,6 +26,12 @@ interface LinkOptions {
    * interactive end-to-end.
    */
   createIfMissing?: string;
+  /**
+   * Skip generic process-env/dotenv key discovery when those sources are not
+   * runtime inputs for the calling framework. Native iOS direct setup uses
+   * this so a web app's ambient key cannot silently choose the embedded app.
+   */
+  skipAutolink?: boolean;
 }
 
 export async function link(options: LinkOptions = {}): Promise<void> {
@@ -45,7 +51,7 @@ export async function link(options: LinkOptions = {}): Promise<void> {
     return;
   }
 
-  if (!existing && !options.app && (options.skipIfLinked || agent)) {
+  if (!existing && !options.app && !options.skipAutolink && (options.skipIfLinked || agent)) {
     const autolinked = await autolink(cwd);
     if (autolinked) return;
   }
@@ -75,13 +81,16 @@ export async function link(options: LinkOptions = {}): Promise<void> {
   await ensureAuth();
 
   const app = options.app
-    ? await withApiContext(fetchApplication(options.app), "Failed to fetch application")
+    ? await withApiContext(
+        fetchApplication(options.app, { includeSecretKeys: false }),
+        "Failed to fetch application",
+      )
     : agent && options.createIfMissing
       ? await withApiContext(
           createApplication(options.createIfMissing),
           "Failed to create application",
         )
-      : await resolveApp(cwd, displayPath, !existing);
+      : await resolveApp(cwd, displayPath, !existing && !options.skipAutolink);
 
   const devInstance = app.instances.find((i) => i.environment_type === "development");
   const prodInstance = app.instances.find((i) => i.environment_type === "production");
@@ -159,7 +168,7 @@ async function handleExistingProfile(
   if (options.app) {
     await ensureAuth();
     const targetApp = await withApiContext(
-      fetchApplication(options.app),
+      fetchApplication(options.app, { includeSecretKeys: false }),
       "Failed to fetch application",
     );
     return confirm({ message: `Re-link to ${cyan(appLabel(targetApp))}?`, default: false });
