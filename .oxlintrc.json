@@ -1,5 +1,14 @@
 {
   "$schema": "./node_modules/oxlint/configuration_schema.json",
+  // Type-aware linting lives here rather than as a `--type-aware` flag on each
+  // `lint` script: there are four invocation sites (root, two packages, the
+  // nano-staged hook) and a rule set this large is only meaningful if every one
+  // of them runs it. A flag that has to be repeated is a flag that drifts, and a
+  // site that loses it fails open — type-aware rules just stop running, exit 0.
+  // Only the root config may set this; nested configs must not.
+  "options": {
+    "typeAware": true
+  },
   "rules": {
     "unicorn/no-process-exit": "error",
     "no-console": "error",

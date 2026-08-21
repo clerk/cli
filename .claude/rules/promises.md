@@ -8,12 +8,21 @@ paths:
 alwaysApply: false
 ---
 
-`bun run lint` runs oxlint with `--type-aware`, which needs type information and
+`bun run lint` runs oxlint in type-aware mode, which needs type information and
 therefore the `oxlint-tsgolint` companion binary (a devDependency; its version
 tracks the TypeScript version, currently `7.0.2001` against `typescript@7`).
 Without it oxlint fails with `Failed to find tsgolint executable`. The whole
 repo lints in well under a second, so the pass runs everywhere the plain lint
 did: the workspace `lint` scripts, the `nano-staged` pre-commit hook, and CI.
+
+Type-aware mode is switched on by `options.typeAware` in `.oxlintrc.json`, not by
+a `--type-aware` flag on each script. There are four invocation sites — the root
+`lint`, the two package `lint` scripts, and the `nano-staged` hook — and a flag
+that has to be repeated four times is a flag that drifts. The failure is silent:
+a site that loses it runs zero type-aware rules and still exits `0`. **Only the
+root config may set `options.typeAware`**; oxlint ignores it in nested configs,
+so it has to live in the one config every site resolves to. The package scripts
+pass no `-c` at all and find that config by walking up from their cwd.
 
 The `lint` scripts also pass
 `--report-unused-disable-directives-severity=error`, so a suppression that has
