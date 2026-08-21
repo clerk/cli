@@ -23,9 +23,24 @@
  * `IS_DEV_BUILD`.
  */
 
-import { resolveVersionAtBuildTime } from "./version.macro.ts" with { type: "macro" };
+import { resolveDevVersionAtBuildTime } from "./version.macro.ts" with { type: "macro" };
 
-const { currentVersion, isDevBuild } = resolveVersionAtBuildTime();
+const DEV_TAG = "dev";
+
+function isDevVersion(version: string): boolean {
+  const dash = version.indexOf("-");
+  if (dash === -1) return false;
+  const prerelease = version.slice(dash + 1);
+  return prerelease === DEV_TAG || prerelease.startsWith(`${DEV_TAG}.`);
+}
+
+// The `CLI_VERSION` check must live in module code, not inside the macro: Bun
+// 1.4.0 no longer substitutes `--define` globals during macro execution. The
+// macro contributes only the checkout-derived fallback (always a dev version);
+// an injected version is classified by the one-line scan above at module load.
+const currentVersion =
+  typeof CLI_VERSION === "undefined" ? resolveDevVersionAtBuildTime() : CLI_VERSION;
+const isDevBuild = typeof CLI_VERSION === "undefined" ? true : isDevVersion(CLI_VERSION);
 
 /**
  * The version embedded while this module was transpiled or compiled.
