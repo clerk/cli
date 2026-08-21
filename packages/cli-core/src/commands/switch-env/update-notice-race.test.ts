@@ -68,9 +68,14 @@ describe("switch-env update-notice race", () => {
     // The postAction hook prints the update notice as soon as the action's
     // promise resolves — reproduce that exact ordering.
     log.warn(NOTICE);
-    // Drain any animation frames still in flight so the buffer is complete
-    // (and so a buggy run doesn't leak writes into the next test).
-    await Bun.sleep(700);
+    // On fixed code the animation completed before switchEnv() resolved, so
+    // this returns immediately; on a regression it waits (bounded) for the
+    // orphaned animation's trailing frames so the ordering assertion below
+    // fails with a precise message instead of a missing-cursor-restore -1.
+    const deadline = Date.now() + 2_000;
+    while (!captured.err.includes(CURSOR_SHOW) && Date.now() < deadline) {
+      await Bun.sleep(25);
+    }
 
     const err = captured.err;
     const cursorRestoredAt = err.lastIndexOf(CURSOR_SHOW);
