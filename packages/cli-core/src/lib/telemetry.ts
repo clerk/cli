@@ -64,6 +64,12 @@ export type TelemetryStage =
   | "already_set_up"
   | "keys"
   | "skills"
+  | "ios_inspect"
+  | "ios_native_plan"
+  | "ios_apple_plan"
+  | "ios_local_setup"
+  | "ios_native_setup"
+  | "ios_apple_setup"
   // `clerk auth login`
   | "session_check"
   | "awaiting_callback"
@@ -206,6 +212,11 @@ export function setTelemetryStage(stage: TelemetryStage): void {
 /** Read the stage a caller had set, so a nested flow can hand it back. */
 export function currentTelemetryStage(): TelemetryStage | null {
   return context?.stage ?? null;
+}
+
+/** Clears any prior in-memory invocation context without reading or writing state. */
+export function discardCommandTelemetry(): void {
+  context = null;
 }
 
 export function telemetryResultForError(error: unknown): TelemetryResult {

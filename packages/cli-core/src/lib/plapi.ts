@@ -69,13 +69,22 @@ export async function getAuthToken(): Promise<string> {
  * throws PlapiError on non-ok responses. Debug logging is centralized in
  * `loggedFetch`; don't add inline `log.debug` calls here or in callers.
  */
-async function plapiFetch(method: string, url: URL, init?: { body?: string }): Promise<Response> {
+type PlapiFetchInit = {
+  body?: string;
+  idempotencyKey?: string;
+  /** Config version used for optimistic concurrency control. */
+  ifMatch?: string;
+};
+
+async function plapiFetch(method: string, url: URL, init?: PlapiFetchInit): Promise<Response> {
   const token = await getAuthToken();
   const headers: Record<string, string> = {
     Authorization: `Bearer ${token}`,
     Accept: "application/json",
   };
   if (init?.body) headers["Content-Type"] = "application/json";
+  if (init?.idempotencyKey) headers["Idempotency-Key"] = init.idempotencyKey;
+  if (init?.ifMatch) headers["If-Match"] = init.ifMatch;
   const response = await loggedFetch(url, {
     tag: "plapi",
     method,
@@ -229,9 +238,107 @@ export type TriggerDNSCheckResponse = DomainStatusResponse & {
   last_run_at: number | null;
 };
 
-export async function fetchApplication(applicationId: string): Promise<Application> {
+export type NativeSettings = {
+  object: "native_settings";
+  api_enabled: boolean;
+};
+
+export type IOSApplication = {
+  object: "ios_application";
+  id: string;
+  app_id_prefix: string;
+  bundle_id: string;
+  created_at: number;
+  updated_at: number;
+};
+
+export type CreateIOSApplicationParams = {
+  appIdPrefix: string;
+  bundleId: string;
+};
+
+export type IdempotentMutationOptions = {
+  /** Reuse this value when retrying the same mutation. */
+  idempotencyKey: string;
+};
+
+export async function getNativeSettings(
+  applicationId: string,
+  envOrInstanceId: string,
+): Promise<NativeSettings> {
+  const url = new URL(
+    `/v1/platform/applications/${applicationId}/instances/${envOrInstanceId}/native_settings`,
+    getPlapiBaseUrl(),
+  );
+  const response = await plapiFetch("GET", url);
+  return response.json() as Promise<NativeSettings>;
+}
+
+export async function enableNativeApi(
+  applicationId: string,
+  envOrInstanceId: string,
+  options?: IdempotentMutationOptions,
+): Promise<NativeSettings> {
+  const url = new URL(
+    `/v1/platform/applications/${applicationId}/instances/${envOrInstanceId}/native_settings`,
+    getPlapiBaseUrl(),
+  );
+  const response = await plapiFetch("PATCH", url, {
+    body: JSON.stringify({ api_enabled: true }),
+    idempotencyKey: options?.idempotencyKey,
+  });
+  return response.json() as Promise<NativeSettings>;
+}
+
+export async function listIOSApplications(
+  applicationId: string,
+  envOrInstanceId: string,
+): Promise<IOSApplication[]> {
+  const url = new URL(
+    `/v1/platform/applications/${applicationId}/instances/${envOrInstanceId}/native_applications/ios`,
+    getPlapiBaseUrl(),
+  );
+  const response = await plapiFetch("GET", url);
+  return response.json() as Promise<IOSApplication[]>;
+}
+
+export async function createIOSApplication(
+  applicationId: string,
+  envOrInstanceId: string,
+  params: CreateIOSApplicationParams,
+  options: IdempotentMutationOptions,
+): Promise<IOSApplication> {
+  const url = new URL(
+    `/v1/platform/applications/${applicationId}/instances/${envOrInstanceId}/native_applications/ios`,
+    getPlapiBaseUrl(),
+  );
+  const response = await plapiFetch("POST", url, {
+    body: JSON.stringify({
+      app_id_prefix: params.appIdPrefix,
+      bundle_id: params.bundleId,
+    }),
+    idempotencyKey: options.idempotencyKey,
+  });
+  return response.json() as Promise<IOSApplication>;
+}
+
+export interface FetchApplicationOptions {
+  /**
+   * Include instance secret keys in the response. This defaults to true for
+   * backwards compatibility; callers that only need publishable metadata
+   * should opt out so secret keys never enter their process.
+   */
+  includeSecretKeys?: boolean;
+}
+
+export async function fetchApplication(
+  applicationId: string,
+  options: FetchApplicationOptions = {},
+): Promise<Application> {
   const url = new URL(`/v1/platform/applications/${applicationId}`, getPlapiBaseUrl());
-  url.searchParams.set("include_secret_keys", "true");
+  if (options.includeSecretKeys !== false) {
+    url.searchParams.set("include_secret_keys", "true");
+  }
   const response = await plapiFetch("GET", url);
   return response.json() as Promise<Application>;
 }
@@ -277,12 +384,18 @@ export async function triggerApplicationDomainDNSCheck(
   return response.json() as Promise<TriggerDNSCheckResponse>;
 }
 
+export type InstanceConfigMutationOptions = {
+  destructive?: boolean;
+  dryRun?: boolean;
+  ifMatch?: string;
+};
+
 async function sendInstanceConfig(
   method: "PUT" | "PATCH",
   applicationId: string,
   instanceId: string,
   config: Record<string, unknown>,
-  options?: { destructive?: boolean; dryRun?: boolean },
+  options?: InstanceConfigMutationOptions,
 ): Promise<Record<string, unknown>> {
   const url = new URL(
     `/v1/platform/applications/${applicationId}/instances/${instanceId}/config`,
@@ -294,7 +407,10 @@ async function sendInstanceConfig(
   if (options?.dryRun) {
     url.searchParams.set("dry_run", "true");
   }
-  const response = await plapiFetch(method, url, { body: JSON.stringify(config) });
+  const response = await plapiFetch(method, url, {
+    body: JSON.stringify(config),
+    ifMatch: options?.ifMatch,
+  });
   return response.json() as Promise<Record<string, unknown>>;
 }
 
@@ -302,14 +418,14 @@ export const putInstanceConfig = async (
   applicationId: string,
   instanceId: string,
   config: Record<string, unknown>,
-  options?: { destructive?: boolean; dryRun?: boolean },
+  options?: InstanceConfigMutationOptions,
 ) => sendInstanceConfig("PUT", applicationId, instanceId, config, options);
 
 export const patchInstanceConfig = async (
   applicationId: string,
   instanceId: string,
   config: Record<string, unknown>,
-  options?: { destructive?: boolean; dryRun?: boolean },
+  options?: InstanceConfigMutationOptions,
 ) => sendInstanceConfig("PATCH", applicationId, instanceId, config, options);
 
 export async function createApplication(name: string): Promise<Application> {

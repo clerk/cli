@@ -11,7 +11,8 @@ import { getGitRepoIdentifier, getGitNormalizedRemote } from "./git.ts";
 import { CliError, ERROR_CODE } from "./errors.ts";
 import { withHomeFsAccess } from "./host-execution.ts";
 import { log } from "./log.ts";
-import type { Application, ApplicationInstance } from "./plapi.ts";
+import { INSTANCE_ALIASES, resolveFetchedApplicationInstance } from "./config-instance.ts";
+export { resolveFetchedApplicationInstance } from "./config-instance.ts";
 
 let overrideConfigFile: string | undefined;
 
@@ -308,13 +309,6 @@ export async function resolveProfile(cwd: string): Promise<
   return undefined;
 }
 
-const INSTANCE_ALIASES: Record<string, "development" | "production"> = {
-  dev: "development",
-  development: "development",
-  prod: "production",
-  production: "production",
-};
-
 export function resolveInstanceId(profile: Profile, flag?: string): { id: string; label: string } {
   if (!flag) {
     return { id: profile.instances.development, label: "development" };
@@ -337,64 +331,6 @@ interface AppContextOptions {
   app?: string;
   instance?: string;
   cwd?: string;
-}
-
-export function resolveFetchedApplicationInstance(
-  appId: string,
-  app: Application,
-  instance?: string,
-):
-  | { found: true; instance: ApplicationInstance; instanceId: string; instanceLabel: string }
-  | { found: false; instanceId: string; instanceLabel: string } {
-  if (instance) {
-    const env = INSTANCE_ALIASES[instance];
-    if (env) {
-      const matched = app.instances.find((entry) => entry.environment_type === env);
-      if (!matched) {
-        throw new CliError(`No ${env} instance found for application ${appId}.`, {
-          code: ERROR_CODE.INSTANCE_NOT_FOUND,
-        });
-      }
-      return {
-        found: true,
-        instance: matched,
-        instanceId: matched.instance_id,
-        instanceLabel: env,
-      };
-    }
-
-    const matched = app.instances.find((entry) => entry.instance_id === instance);
-    if (matched) {
-      return {
-        found: true,
-        instance: matched,
-        instanceId: matched.instance_id,
-        // Label by environment type, not the raw id — downstream guardrails
-        // (e.g. the production impersonation warning) key off this label.
-        instanceLabel: matched.environment_type || instance,
-      };
-    }
-
-    return {
-      found: false,
-      instanceId: instance,
-      instanceLabel: instance,
-    };
-  }
-
-  const development = app.instances.find((entry) => entry.environment_type === "development");
-  if (!development) {
-    throw new CliError(`No development instance found for application ${appId}.`, {
-      code: ERROR_CODE.INSTANCE_NOT_FOUND,
-    });
-  }
-
-  return {
-    found: true,
-    instance: development,
-    instanceId: development.instance_id,
-    instanceLabel: "development",
-  };
 }
 
 /**

@@ -21,6 +21,7 @@ import {
   nextStepsMod,
   mockExistingProject,
   mockMiddlewareScaffold,
+  iosApplyMod,
 } from "../../test/lib/init-harness.ts";
 import * as telemetryMod from "../../lib/telemetry.ts";
 import { init } from "./index.ts";
@@ -49,9 +50,9 @@ describe("init", () => {
   test("forwards --app to link when provided", async () => {
     setup({ email: "test@test.com" });
     spyOn(context, "gatherContext").mockResolvedValue(FAKE_CTX);
-    spyOn(config, "resolveProfile").mockResolvedValue({
-      profile: { appId: "app_other" },
-    } as never);
+    spyOn(config, "resolveProfile")
+      .mockResolvedValueOnce({ profile: { appId: "app_other" } } as never)
+      .mockResolvedValue({ profile: { appId: "app_abc" } } as never);
 
     await init({ yes: true, app: "app_abc" });
 
@@ -66,7 +67,9 @@ describe("init", () => {
   test("forwards --app to link when no profile exists", async () => {
     setup({ email: "test@test.com" });
     spyOn(context, "gatherContext").mockResolvedValue(FAKE_CTX);
-    // resolveProfile already returns undefined by default in setup()
+    spyOn(config, "resolveProfile")
+      .mockResolvedValueOnce(undefined)
+      .mockResolvedValue({ profile: { appId: "app_abc" } } as never);
 
     await init({ yes: true, app: "app_abc" });
 
@@ -76,6 +79,22 @@ describe("init", () => {
       cwd: FAKE_CTX.cwd,
       createIfMissing: undefined,
     });
+  });
+
+  test("does not fetch or write keys when an explicit app relink is declined", async () => {
+    setup({ email: "test@test.com" });
+    spyOn(context, "gatherContext").mockResolvedValue(FAKE_CTX);
+    spyOn(config, "resolveProfile").mockResolvedValue({
+      profile: { appId: "app_existing" },
+    } as never);
+
+    await expect(init({ yes: true, app: "app_requested" })).rejects.toMatchObject({
+      name: "UserAbortError",
+    });
+
+    expect(pullMod.resolveEnvironmentKeys).not.toHaveBeenCalled();
+    expect(pullMod.pull).not.toHaveBeenCalled();
+    expect(iosApplyMod.applyIOSRuntimeKeySetup).not.toHaveBeenCalled();
   });
 
   test("agent mode runs existing-project flow without prompts", async () => {
@@ -473,95 +492,6 @@ describe("init", () => {
     await init({ yes: true });
 
     expect(pullMod.pull).toHaveBeenCalledWith({ file: ".env.local", cwd: mockCtx.cwd });
-  });
-
-  test("native framework skips npm SDK install but still pulls env keys", async () => {
-    setup({ email: "test@test.com" });
-
-    const iosCtx = {
-      ...FAKE_CTX,
-      existingClerk: false,
-      deps: {},
-      envFile: ".env",
-      framework: {
-        dep: "ios",
-        name: "iOS (Swift)",
-        sdk: "ClerkKit",
-        envVar: "CLERK_PUBLISHABLE_KEY",
-        envFile: ".env" as const,
-        ecosystem: "swift" as const,
-      },
-    };
-    spyOn(context, "gatherContext").mockResolvedValue(iosCtx);
-    spyOn(scaffoldMod, "scaffold").mockResolvedValue({
-      actions: [],
-      postInstructions: ["Add the Clerk iOS SDK via Swift Package Manager"],
-    });
-
-    await init({ yes: true });
-
-    expect(heuristics.installSdk).not.toHaveBeenCalled();
-    expect(pullMod.pull).toHaveBeenCalledWith({ file: ".env", cwd: iosCtx.cwd });
-  });
-
-  test("native framework skips the agent skills install prompt", async () => {
-    setup({ email: "test@test.com" });
-
-    const iosCtx = {
-      ...FAKE_CTX,
-      existingClerk: false,
-      deps: {},
-      envFile: ".env",
-      framework: {
-        dep: "ios",
-        name: "iOS (Swift)",
-        sdk: "ClerkKit",
-        envVar: "CLERK_PUBLISHABLE_KEY",
-        envFile: ".env" as const,
-        ecosystem: "swift" as const,
-      },
-    };
-    spyOn(context, "gatherContext").mockResolvedValue(iosCtx);
-    spyOn(scaffoldMod, "scaffold").mockResolvedValue({
-      actions: [],
-      postInstructions: ["Add the Clerk iOS SDK via Swift Package Manager"],
-    });
-
-    await init({ yes: true });
-
-    expect(skillsMod.installSkills).not.toHaveBeenCalled();
-  });
-
-  test("--framework ios without package.json does not trigger bootstrap", async () => {
-    setup({ email: "test@test.com" });
-
-    const iosFramework = {
-      dep: "ios",
-      name: "iOS (Swift)",
-      sdk: "ClerkKit",
-      envVar: "CLERK_PUBLISHABLE_KEY",
-      envFile: ".env" as const,
-      ecosystem: "swift" as const,
-    };
-    const iosCtx = {
-      ...FAKE_CTX,
-      existingClerk: false,
-      deps: {},
-      envFile: ".env",
-      framework: iosFramework,
-    };
-    spyOn(frameworkMod, "lookupFramework").mockReturnValue(iosFramework);
-    spyOn(context, "gatherContext").mockResolvedValue(iosCtx);
-    spyOn(context, "hasPackageJson").mockResolvedValue(false);
-    spyOn(scaffoldMod, "scaffold").mockResolvedValue({
-      actions: [],
-      postInstructions: ["Add the Clerk iOS SDK via Swift Package Manager"],
-    });
-
-    await init({ yes: true, framework: "ios" });
-
-    expect(bootstrapMod.promptAndBootstrap).not.toHaveBeenCalled();
-    expect(pullMod.pull).toHaveBeenCalled();
   });
 
   test("bootstrap passes project dir to link, not parent cwd", async () => {

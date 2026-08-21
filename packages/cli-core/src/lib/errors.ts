@@ -115,6 +115,31 @@ export const ERROR_CODE = {
   OAUTH_NO_CODE: "oauth_no_code",
   /** The loopback callback server could not bind a local port. */
   CALLBACK_BIND_FAILED: "callback_bind_failed",
+
+  /** No single native iOS application target or Bundle ID could be resolved safely. */
+  IOS_TARGET_UNRESOLVED: "ios_target_unresolved",
+  /** The inspected iOS project has a known condition that prevents safe automatic setup. */
+  IOS_SETUP_BLOCKED: "ios_setup_blocked",
+  /** The iOS worktree cannot be proven safe to modify. */
+  IOS_WORKTREE_UNSAFE: "ios_worktree_unsafe",
+  /** The iOS project or Clerk application changed after the approved setup was planned. */
+  IOS_SETUP_STALE: "ios_setup_stale",
+  /** An internally inconsistent or incomplete iOS setup plan reached the apply boundary. */
+  IOS_SETUP_PLAN_INVALID: "ios_setup_plan_invalid",
+  /** An approved local iOS transaction could not be applied or verified. */
+  IOS_LOCAL_APPLY_FAILED: "ios_local_apply_failed",
+  /** A failed iOS transaction could not restore every original file safely. */
+  IOS_LOCAL_ROLLBACK_FAILED: "ios_local_rollback_failed",
+  /** The development publishable key required by the approved iOS setup is unavailable. */
+  IOS_PUBLISHABLE_KEY_UNAVAILABLE: "ios_publishable_key_unavailable",
+  /** The iOS runtime publishable key does not belong to the linked Clerk application. */
+  IOS_PUBLISHABLE_KEY_MISMATCH: "ios_publishable_key_mismatch",
+  /** An approved Clerk native configuration change could not be applied or confirmed. */
+  IOS_REMOTE_APPLY_FAILED: "ios_remote_apply_failed",
+  /** Clerk native configuration was readable after apply but did not match the approved state. */
+  IOS_REMOTE_VERIFY_FAILED: "ios_remote_verify_failed",
+  /** Platform API returned a successful response with missing or contradictory data. */
+  PLAPI_UNEXPECTED_RESPONSE: "plapi_unexpected_response",
 } as const;
 
 export type ErrorCode = (typeof ERROR_CODE)[keyof typeof ERROR_CODE];

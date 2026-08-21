@@ -27,6 +27,8 @@ const mockPatchInstanceConfig = mock();
 const mockFetchInstanceConfig = mock();
 const mockFetchInstanceConfigSchema = mock();
 const mockFetchApplication = mock();
+const mockListIOSApplications = mock();
+const mockGetNativeSettings = mock();
 const mockListApplicationDomains = mock();
 const mockCreateProductionInstance = mock();
 const mockGetApplicationDomainStatus = mock();
@@ -49,6 +51,8 @@ mock.module("../../lib/plapi.ts", () => ({
   fetchInstanceConfig: (...args: unknown[]) => mockFetchInstanceConfig(...args),
   fetchInstanceConfigSchema: (...args: unknown[]) => mockFetchInstanceConfigSchema(...args),
   fetchApplication: (...args: unknown[]) => mockFetchApplication(...args),
+  listIOSApplications: (...args: unknown[]) => mockListIOSApplications(...args),
+  getNativeSettings: (...args: unknown[]) => mockGetNativeSettings(...args),
   listApplicationDomains: (...args: unknown[]) => mockListApplicationDomains(...args),
   createProductionInstance: (...args: unknown[]) => mockCreateProductionInstance(...args),
   getApplicationDomainStatus: (...args: unknown[]) => mockGetApplicationDomainStatus(...args),
@@ -228,6 +232,8 @@ describe("deploy", () => {
     mockGetApplicationDomainStatus.mockResolvedValue(
       domainStatus({ status: "complete", dns: true, ssl: true, mail: true }),
     );
+    mockListIOSApplications.mockResolvedValue([]);
+    mockGetNativeSettings.mockResolvedValue({ object: "native_settings", api_enabled: true });
     stubCreateProductionInstance();
     mockTriggerApplicationDomainDNSCheck.mockResolvedValue(
       domainStatus({ status: "complete", dns: true, ssl: true, mail: true }),
@@ -261,6 +267,8 @@ describe("deploy", () => {
     mockFetchInstanceConfig.mockReset();
     mockFetchInstanceConfigSchema.mockReset();
     mockFetchApplication.mockReset();
+    mockListIOSApplications.mockReset();
+    mockGetNativeSettings.mockReset();
     mockListApplicationDomains.mockReset();
     mockCreateProductionInstance.mockReset();
     mockGetApplicationDomainStatus.mockReset();
@@ -1253,6 +1261,213 @@ describe("deploy", () => {
       expect(err).not.toContain("https://accounts.example.com/v1/oauth_callback");
     });
 
+    test("skips Apple web credential prompts for an exact native-only production registration", async () => {
+      await linkedProject({
+        instances: { development: "ins_dev_123", production: "ins_prod_native_apple" },
+      });
+      mockLiveProduction({
+        instanceId: "ins_prod_native_apple",
+        developmentConfig: {
+          connection_oauth_apple: {
+            enabled: true,
+            authenticatable: true,
+            bundle_id: "com.example.native",
+          },
+        },
+        productionConfig: {
+          connection_oauth_apple: {
+            enabled: true,
+            authenticatable: true,
+            bundle_id: "com.example.native",
+          },
+        },
+      });
+      mockListIOSApplications.mockResolvedValueOnce([
+        {
+          object: "ios_application",
+          id: "ios_native",
+          app_id_prefix: "ABCDE12345",
+          bundle_id: "com.example.native",
+          created_at: 1,
+          updated_at: 1,
+        },
+      ]);
+      mockIsAgent.mockReturnValue(false);
+
+      await runDeploy({});
+
+      expect(mockListIOSApplications).toHaveBeenCalledWith("app_xyz789", "ins_prod_native_apple");
+      expect(mockGetNativeSettings).toHaveBeenCalledWith("app_xyz789", "ins_prod_native_apple");
+      expect(mockSelect).not.toHaveBeenCalled();
+      expect(mockInput).not.toHaveBeenCalled();
+      expect(mockPassword).not.toHaveBeenCalled();
+      expect(mockPatchInstanceConfig).not.toHaveBeenCalled();
+      const err = stripAnsi(captured.err);
+      expect(err).toContain("No deploy actions remain.");
+      expect(err).toContain("OAuth       Apple");
+      expect(err).not.toContain("Configure Apple OAuth for production");
+    });
+
+    test("refuses to infer an App ID Prefix when native Apple lacks an exact production registration", async () => {
+      await linkedProject({
+        instances: { development: "ins_dev_123", production: "ins_prod_native_apple" },
+      });
+      mockLiveProduction({
+        instanceId: "ins_prod_native_apple",
+        developmentConfig: {
+          connection_oauth_apple: {
+            enabled: true,
+            authenticatable: true,
+            bundle_id: "com.example.native",
+          },
+        },
+        productionConfig: {
+          connection_oauth_apple: {
+            enabled: true,
+            authenticatable: true,
+            bundle_id: "com.example.native",
+          },
+        },
+      });
+      mockListIOSApplications.mockResolvedValueOnce([
+        {
+          object: "ios_application",
+          id: "ios_other",
+          app_id_prefix: "OTHER12345",
+          bundle_id: "com.example.other",
+          created_at: 1,
+          updated_at: 1,
+        },
+      ]);
+      mockIsAgent.mockReturnValue(false);
+
+      await expect(runDeploy({})).rejects.toThrow(
+        "the production instance does not have an exact iOS Native Application registration for that Bundle ID",
+      );
+
+      expect(mockSelect).not.toHaveBeenCalled();
+      expect(mockInput).not.toHaveBeenCalled();
+      expect(mockPassword).not.toHaveBeenCalled();
+      expect(mockPatchInstanceConfig).not.toHaveBeenCalled();
+      expect(stripAnsi(captured.err)).toContain("Failed");
+    });
+
+    test("preserves Ctrl-C while verifying a native-only Apple registration", async () => {
+      await linkedProject({
+        instances: { development: "ins_dev_123", production: "ins_prod_native_apple" },
+      });
+      mockLiveProduction({
+        instanceId: "ins_prod_native_apple",
+        developmentConfig: {
+          connection_oauth_apple: {
+            enabled: true,
+            authenticatable: true,
+            bundle_id: "com.example.native",
+          },
+        },
+        productionConfig: {
+          connection_oauth_apple: {
+            enabled: true,
+            authenticatable: true,
+            bundle_id: "com.example.native",
+          },
+        },
+      });
+      mockListIOSApplications
+        .mockRejectedValueOnce(new Error("native status endpoint unavailable"))
+        .mockRejectedValueOnce(promptExitError());
+      mockIsAgent.mockReturnValue(false);
+
+      await expect(runDeploy({})).rejects.toMatchObject({ exitCode: EXIT_CODE.SIGINT });
+
+      expect(mockSelect).not.toHaveBeenCalled();
+      expect(mockInput).not.toHaveBeenCalled();
+      expect(mockPassword).not.toHaveBeenCalled();
+      expect(mockPatchInstanceConfig).not.toHaveBeenCalled();
+      expect(stripAnsi(captured.err)).toContain("Paused");
+    });
+
+    test("refuses native-only Apple when production Native API is disabled", async () => {
+      await linkedProject({
+        instances: { development: "ins_dev_123", production: "ins_prod_native_apple" },
+      });
+      mockLiveProduction({
+        instanceId: "ins_prod_native_apple",
+        developmentConfig: {
+          connection_oauth_apple: {
+            enabled: true,
+            authenticatable: true,
+            bundle_id: "com.example.native",
+          },
+        },
+        productionConfig: {
+          connection_oauth_apple: {
+            enabled: true,
+            authenticatable: true,
+            bundle_id: "com.example.native",
+          },
+        },
+      });
+      mockListIOSApplications.mockResolvedValue([
+        {
+          object: "ios_application",
+          id: "ios_native",
+          app_id_prefix: "ABCDE12345",
+          bundle_id: "com.example.native",
+          created_at: 1,
+          updated_at: 1,
+        },
+      ]);
+      mockGetNativeSettings.mockResolvedValue({
+        object: "native_settings",
+        api_enabled: false,
+      });
+      mockIsAgent.mockReturnValue(false);
+
+      await expect(runDeploy({})).rejects.toThrow(
+        "Enable Native API at https://dashboard.clerk.com/~/native-applications",
+      );
+
+      expect(mockSelect).not.toHaveBeenCalled();
+      expect(mockInput).not.toHaveBeenCalled();
+      expect(mockPassword).not.toHaveBeenCalled();
+      expect(mockPatchInstanceConfig).not.toHaveBeenCalled();
+    });
+
+    test("refuses native-only Apple that is not explicitly authenticatable", async () => {
+      await linkedProject({
+        instances: { development: "ins_dev_123", production: "ins_prod_native_apple" },
+      });
+      mockLiveProduction({
+        instanceId: "ins_prod_native_apple",
+        developmentConfig: {
+          connection_oauth_apple: {
+            enabled: true,
+            authenticatable: true,
+            bundle_id: "com.example.native",
+          },
+        },
+        productionConfig: {
+          connection_oauth_apple: {
+            enabled: true,
+            bundle_id: "com.example.native",
+          },
+        },
+      });
+      mockIsAgent.mockReturnValue(false);
+
+      await expect(runDeploy({})).rejects.toThrow(
+        "Apple is not explicitly enabled for authentication on the production instance",
+      );
+
+      expect(mockListIOSApplications).not.toHaveBeenCalled();
+      expect(mockGetNativeSettings).not.toHaveBeenCalled();
+      expect(mockSelect).not.toHaveBeenCalled();
+      expect(mockInput).not.toHaveBeenCalled();
+      expect(mockPassword).not.toHaveBeenCalled();
+      expect(mockPatchInstanceConfig).not.toHaveBeenCalled();
+    });
+
     test("Apple .p8 file prompt validates path and PEM framing before continuing", async () => {
       await linkedProject({
         instances: { development: "ins_dev_123", production: "ins_prod_apple" },
@@ -1306,6 +1521,8 @@ describe("deploy", () => {
             "-----BEGIN PRIVATE KEY-----\nMIGTAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBHkwdwIBAQQg\n-----END PRIVATE KEY-----\n",
         },
       });
+      expect(mockListIOSApplications).not.toHaveBeenCalled();
+      expect(mockGetNativeSettings).not.toHaveBeenCalled();
       const p8Input = mockInput.mock.calls.find((call) =>
         String((call[0] as { message?: string }).message).includes("Apple Private Key"),
       )?.[0] as { validate: (value: string) => Promise<true | string> };
