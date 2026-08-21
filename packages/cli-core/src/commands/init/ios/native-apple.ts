@@ -91,6 +91,43 @@ export interface IOSNativeAppleAPI {
   ): Promise<Record<string, unknown>>;
 }
 
+/** GET-only Apple connection API surface used by read-only diagnostics. */
+export type IOSNativeAppleReadAPI = Pick<
+  IOSNativeAppleAPI,
+  "fetchInstanceConfig" | "fetchInstanceConfigSchema"
+>;
+
+export interface AuditIOSNativeAppleHealthOptions {
+  applicationId: string;
+  instanceId: string;
+  bundleIdentifier: string;
+}
+
+/**
+ * Credential-free health projection of the current Apple runtime state. The
+ * ability to automate a repair is reported separately so an unsupported patch
+ * schema cannot make an already-correct runtime configuration look broken.
+ */
+export interface IOSNativeAppleHealthAudit {
+  schemaVersion: 1;
+  kind: "clerk-ios-native-apple-health";
+  applicationId: string;
+  instanceId: string;
+  bundleIdentifier: string;
+  runtime: {
+    status: "required" | "satisfied" | "blocked";
+    connection: "required" | "satisfied" | "blocked";
+    bundleIdentifierConfiguration: "required" | "satisfied" | "blocked";
+    current?: AppleConnectionState;
+    blockers: IOSNativeAppleBlocker[];
+  };
+  automation: {
+    status: "supported" | "unsupported";
+    configVersion?: string;
+    blockers: IOSNativeAppleBlocker[];
+  };
+}
+
 const defaultAPI: IOSNativeAppleAPI = {
   supportsIfMatch: true,
   fetchInstanceConfig,
@@ -196,6 +233,139 @@ function parseConfigVersion(
     return { status: "invalid" };
   }
   return { status: "valid", value };
+}
+
+function buildIOSNativeAppleHealthAudit(
+  options: AuditIOSNativeAppleHealthOptions & {
+    config: Record<string, unknown>;
+    schema: InstanceConfigSchema;
+  },
+): IOSNativeAppleHealthAudit {
+  const bundleIdentifier = options.bundleIdentifier.trim();
+  const runtimeBlockers: IOSNativeAppleBlocker[] = [];
+  if (!bundleIdentifier) {
+    runtimeBlockers.push(
+      blocker(
+        "bundle-identifier-unavailable",
+        "Resolve one Bundle ID for the selected iOS target before verifying native Sign in with Apple.",
+      ),
+    );
+  }
+
+  const parsed = parseConnection(options.config);
+  if (parsed.status === "invalid") {
+    runtimeBlockers.push(
+      blocker(
+        "apple-config-invalid",
+        "The existing Apple connection configuration could not be interpreted safely. Review it in the Clerk Dashboard before continuing.",
+      ),
+    );
+  }
+  if (
+    parsed.status === "valid" &&
+    parsed.bundleIdentifier &&
+    bundleIdentifier &&
+    parsed.bundleIdentifier !== bundleIdentifier
+  ) {
+    runtimeBlockers.push(
+      blocker(
+        "apple-bundle-identifier-conflict",
+        "The existing Apple connection references a different iOS Bundle ID. clerk init will not replace it.",
+      ),
+    );
+  }
+  if (parsed.status === "valid" && parsed.value.enabled && !parsed.value.authenticatable) {
+    runtimeBlockers.push(
+      blocker(
+        "apple-authenticatable-conflict",
+        "Apple is enabled but intentionally unavailable for authentication. clerk init will not override that policy automatically.",
+      ),
+    );
+  }
+
+  const current = parsed.status === "valid" ? parsed.value : undefined;
+  const bundleIdentifierConfiguration =
+    runtimeBlockers.length > 0
+      ? "blocked"
+      : parsed.status !== "valid"
+        ? "blocked"
+        : parsed.bundleIdentifier === bundleIdentifier
+          ? "satisfied"
+          : "required";
+  const connection =
+    runtimeBlockers.length > 0
+      ? "blocked"
+      : current?.enabled === true &&
+          current.authenticatable === true &&
+          bundleIdentifierConfiguration === "satisfied"
+        ? "satisfied"
+        : "required";
+  const runtimeStatus =
+    connection === "blocked" ? "blocked" : connection === "satisfied" ? "satisfied" : "required";
+
+  const automationBlockers: IOSNativeAppleBlocker[] = [];
+  if (!schemaSupportsNarrowApplePatch(options.schema)) {
+    automationBlockers.push(
+      blocker(
+        "apple-config-unsupported",
+        "This Clerk instance does not expose the narrow native Apple connection configuration required by clerk init.",
+      ),
+    );
+  }
+  const configVersion = parseConfigVersion(options.config);
+  if (configVersion.status === "invalid") {
+    automationBlockers.push(
+      blocker(
+        "apple-config-invalid",
+        "The Apple connection configuration version could not be interpreted safely. Rerun clerk init before making remote changes.",
+      ),
+    );
+  }
+
+  return {
+    schemaVersion: 1,
+    kind: "clerk-ios-native-apple-health",
+    applicationId: options.applicationId,
+    instanceId: options.instanceId,
+    bundleIdentifier,
+    runtime: {
+      status: runtimeStatus,
+      connection,
+      bundleIdentifierConfiguration,
+      ...(current ? { current } : {}),
+      blockers: runtimeBlockers,
+    },
+    automation: {
+      status: automationBlockers.length === 0 ? "supported" : "unsupported",
+      ...(configVersion.status === "valid" ? { configVersion: configVersion.value } : {}),
+      blockers: automationBlockers,
+    },
+  };
+}
+
+async function readIOSNativeAppleState(
+  applicationId: string,
+  instanceId: string,
+  api: IOSNativeAppleReadAPI,
+): Promise<{ config: Record<string, unknown>; schema: InstanceConfigSchema }> {
+  const [config, schema] = await Promise.all([
+    api.fetchInstanceConfig(applicationId, instanceId, [APPLE_CONNECTION_KEY]),
+    api.fetchInstanceConfigSchema(applicationId, instanceId, [APPLE_CONNECTION_KEY]),
+  ]);
+  return { config, schema };
+}
+
+/**
+ * Reads Apple connection configuration without a spinner, prompt, mutation,
+ * or error wrapping. Raw config and schema responses remain internal; only a
+ * credential-free health projection is returned.
+ */
+export async function auditIOSNativeAppleHealth(
+  options: AuditIOSNativeAppleHealthOptions,
+  api: IOSNativeAppleReadAPI = defaultAPI,
+): Promise<IOSNativeAppleHealthAudit> {
+  const state = await readIOSNativeAppleState(options.applicationId, options.instanceId, api);
+  return buildIOSNativeAppleHealthAudit({ ...options, ...state });
 }
 
 export function buildIOSNativeApplePlan(
@@ -325,18 +495,10 @@ export async function auditIOSNativeAppleConnection(
   let config: Record<string, unknown>;
   let schema: InstanceConfigSchema;
   try {
-    [config, schema] = await withSpinner(
+    ({ config, schema } = await withSpinner(
       "Auditing Clerk Sign in with Apple settings...",
-      async () =>
-        Promise.all([
-          api.fetchInstanceConfig(options.applicationId, options.instanceId, [
-            APPLE_CONNECTION_KEY,
-          ]),
-          api.fetchInstanceConfigSchema(options.applicationId, options.instanceId, [
-            APPLE_CONNECTION_KEY,
-          ]),
-        ]),
-    );
+      async () => readIOSNativeAppleState(options.applicationId, options.instanceId, api),
+    ));
   } catch {
     throw new CliError(
       "Clerk Sign in with Apple settings could not be inspected safely. No remote Apple connection changes were made; verify application access and rerun clerk init.",

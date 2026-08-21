@@ -25,6 +25,7 @@ function target(): IOSAppTarget {
       localSecretsRuntimeBindings: [],
       environmentInjections: [],
       environmentConsumers: [],
+      authViewReferences: [],
       authFlowReferences: [],
       openURLHandlers: [],
       status: "absent",

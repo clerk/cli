@@ -1657,6 +1657,7 @@ export async function inspectSwiftSources(
   const localSecretsRuntimeSymbols = new Set<string>();
   const environmentInjections: IOSSourceEvidence[] = [];
   const environmentConsumers: IOSSourceEvidence[] = [];
+  const authViewReferences: IOSSourceEvidence[] = [];
   const authFlowReferences: IOSSourceEvidence[] = [];
   const openURLHandlers: IOSSourceEvidence[] = [];
   let sourceFilesScanned = 0;
@@ -1711,10 +1712,11 @@ export async function inspectSwiftSources(
     if (importsClerkModule && has(sanitized, /@Environment\s*\(\s*Clerk\s*\.\s*self\s*\)/)) {
       environmentConsumers.push(evidence);
     }
-    if (
-      (importsUI && has(sanitized, /\bAuthView\s*\(/)) ||
-      (importsClerkModule && has(sanitized, CLERK_NATIVE_AUTH_FLOW))
-    ) {
+    const constructsAuthView = importsUI && has(sanitized, /\bAuthView\s*\(/);
+    if (constructsAuthView) {
+      authViewReferences.push(evidence);
+    }
+    if (constructsAuthView || (importsClerkModule && has(sanitized, CLERK_NATIVE_AUTH_FLOW))) {
       authFlowReferences.push(evidence);
     }
     if (importsClerkModule && hasClerkOpenURLHandler(sanitized)) {
@@ -1764,6 +1766,7 @@ export async function inspectSwiftSources(
     localSecretsRuntimeBindings,
     environmentInjections,
     environmentConsumers,
+    authViewReferences,
     authFlowReferences,
     openURLHandlers,
     status,

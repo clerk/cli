@@ -66,6 +66,7 @@ describe("inspectSwiftSources", () => {
       },
     ]);
     expect(inspection.environmentInjections).toEqual([{ path: "App.swift" }]);
+    expect(inspection.authViewReferences).toEqual([{ path: "App.swift" }]);
     expect(inspection.authFlowReferences).toEqual([{ path: "App.swift" }]);
     expect(inspection.openURLHandlers).toEqual([{ path: "App.swift" }]);
     expect(JSON.stringify(inspection)).not.toContain("must-not-leak");
@@ -810,6 +811,7 @@ describe("inspectSwiftSources", () => {
       { path: "Password.swift" },
       { path: "SignUp.swift" },
     ]);
+    expect(inspection.authViewReferences).toEqual([]);
   });
 
   test("marks multiple entry points as ambiguous", async () => {
@@ -874,6 +876,7 @@ describe("inspectSwiftSources", () => {
       { absolutePath: path, relativePath: "ContentView.swift" },
     ]);
 
+    expect(inspection.authViewReferences).toEqual([]);
     expect(inspection.authFlowReferences).toEqual([]);
   });
 });
