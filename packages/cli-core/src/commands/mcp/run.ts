@@ -195,7 +195,9 @@ async function dispatch(message: JSONRPCMessage, ctx: DispatchCtx): Promise<void
     // codes with `data.supported`) carries information the driving client
     // needs — most importantly for the 2026-07-28 negotiation-retry flow.
     // Relay it verbatim instead of collapsing it into a generic -32000.
-    if (await relayUpstreamError(response, emitPayload)) return;
+    // Notifications never get a reply, not even a relayed upstream error —
+    // emitError below already stays silent for them.
+    if ("id" in message && (await relayUpstreamError(response, emitPayload))) return;
     await emitError(message, emit, -32000, `Upstream returned HTTP ${response.status}.`);
     return;
   }
@@ -303,7 +305,14 @@ async function emitError(
  * -32000.
  */
 async function relayUpstreamError(response: Response, emitPayload: Emit): Promise<boolean> {
-  const text = await readTextCapped(response, MAX_LINE_BYTES);
+  let text: string | undefined;
+  try {
+    text = await readTextCapped(response, MAX_LINE_BYTES);
+  } catch {
+    // A body that dies mid-read is just an unreadable body — fall back rather
+    // than letting the rejection escape and take the whole bridge down.
+    return false;
+  }
   if (text === undefined || text.trim().length === 0) return false;
   let parsed: unknown;
   try {
