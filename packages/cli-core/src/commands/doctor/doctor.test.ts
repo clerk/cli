@@ -109,9 +109,13 @@ function createMockContext(
     keylessInstance?: KeylessInstanceInfo | null;
     claimBreadcrumb?: boolean;
     keylessKeyError?: CliError;
+    accountCredentials?: boolean;
+    platformAPIKey?: boolean;
   } = {},
 ): DoctorContext {
   return {
+    hasPlatformAPIKey: () => overrides.platformAPIKey ?? false,
+    hasAccountCredentials: async () => overrides.accountCredentials ?? overrides.token != null,
     getToken: async () => overrides.token ?? null,
     getValidToken: async () => {
       if (overrides.validToken instanceof Error) throw overrides.validToken;
@@ -210,6 +214,20 @@ describe("checkLoggedIn", () => {
     const ctx = createMockContext({ token: "test_token" });
     const result = await checkLoggedIn(ctx);
     expectCheck(result, { name: "Logged in", status: "pass", message: "Logged in" });
+  });
+
+  test("pass when a Platform API key is configured without an OAuth token", async () => {
+    const ctx = createMockContext({
+      token: null,
+      accountCredentials: true,
+      platformAPIKey: true,
+    });
+    const result = await checkLoggedIn(ctx);
+    expectCheck(result, {
+      name: "Logged in",
+      status: "pass",
+      message: "Platform API key",
+    });
   });
 
   test("fail when no token", async () => {
@@ -317,6 +335,35 @@ describe("checkHostExecution", () => {
 });
 
 describe("checkTokenValid", () => {
+  test("passes Platform API-key auth to the endpoint checks", async () => {
+    const ctx = createMockContext({
+      token: null,
+      accountCredentials: true,
+      platformAPIKey: true,
+    });
+    const result = await checkTokenValid(ctx);
+    expectCheck(result, {
+      name: "Authentication valid",
+      status: "pass",
+      message: "Platform API key configured",
+    });
+  });
+
+  test("does not validate stale OAuth when PLAPI will use a Platform API key", async () => {
+    const ctx = createMockContext({
+      token: "stale-oauth-token",
+      validToken: new AuthError({ reason: "session_expired" }),
+      accountCredentials: true,
+      platformAPIKey: true,
+    });
+    const result = await checkTokenValid(ctx);
+    expectCheck(result, {
+      name: "Authentication valid",
+      status: "pass",
+      message: "Platform API key configured",
+    });
+  });
+
   test("pass with valid token", async () => {
     mockUserInfo = { userId: "user_1", email: "dev@example.com" };
     const ctx = createMockContext({ token: "test_token" });
@@ -331,6 +378,33 @@ describe("checkTokenValid", () => {
   test("fail when token is expired (401)", async () => {
     mockUserInfoError = new ApiError(401, "Unauthorized");
     const ctx = createMockContext({ token: "expired_token" });
+    const result = await checkTokenValid(ctx);
+    expectCheck(result, {
+      name: "Authentication valid",
+      status: "fail",
+      message: "expired or invalid",
+      remedy: "clerk auth login",
+      fix: true,
+    });
+  });
+
+  test("passes when userinfo rejects a credential that the linked application API accepts", async () => {
+    mockUserInfoError = new ApiError(401, "Unauthorized");
+    const ctx = createMockContext({ token: "local_token", application: mockApplication });
+    const result = await checkTokenValid(ctx);
+    expectCheck(result, {
+      name: "Authentication valid",
+      status: "pass",
+      message: "verified through the Clerk API",
+    });
+  });
+
+  test("still fails when both userinfo and the linked application API reject an expired token", async () => {
+    mockUserInfoError = new ApiError(401, "Unauthorized");
+    const ctx = createMockContext({
+      token: "expired_token",
+      applicationError: new ApiError(401, "Unauthorized"),
+    });
     const result = await checkTokenValid(ctx);
     expectCheck(result, {
       name: "Authentication valid",
@@ -440,9 +514,10 @@ describe("checkProjectLinked", () => {
   });
 
   test("warn (not fail) when signed in but unlinked, falling back to a keyless application", async () => {
-    // beforeEach sets CLERK_PLATFORM_API_KEY, so hasAccountCredentials() is true here —
-    // the directory *could* reach the full account configuration by linking.
+    // The directory has account credentials, so it could reach the full
+    // account configuration by linking.
     const ctx = createMockContext({
+      accountCredentials: true,
       keylessTarget: mockKeylessTarget,
       keylessInstance: mockKeylessInstance,
     });

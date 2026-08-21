@@ -923,6 +923,7 @@ describe("inspectTargetBuildConfigurations", () => {
             environmentInjections: [],
             rootEnvironmentInjections: [],
             environmentConsumers: [],
+            authViewReferences: [],
             authFlowReferences: [],
             openURLHandlers: [],
             status: "absent",
