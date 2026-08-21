@@ -107,7 +107,7 @@ export type DiscoveredOAuthProviders = {
 };
 
 export async function resolveDeployContext(): Promise<DeployContext> {
-  const resolved = await withSpinner("Resolving linked Clerk application...", () =>
+  const resolved = await withSpinner("Resolving linked Clerk application...", async () =>
     resolveProfile(process.cwd()),
   );
   if (!resolved) {
@@ -127,7 +127,7 @@ export async function resolveDeployContext(): Promise<DeployContext> {
   return {
     profileKey: resolved.path,
     profile: resolved.profile,
-    ...(await withSpinner("Checking for production instance...", () =>
+    ...(await withSpinner("Checking for production instance...", async () =>
       resolveLiveApplicationContext(resolved.profile),
     )),
   };

@@ -32,7 +32,7 @@ export async function list(options: AppsOptions = {}): Promise<void> {
   let closeStatus: "success" | "failed" | "paused" | undefined;
 
   try {
-    const fetchApps = () => withApiContext(listApplications(), "Failed to list applications");
+    const fetchApps = async () => withApiContext(listApplications(), "Failed to list applications");
     const result = shouldWrap
       ? await withSpinner("Fetching applications...", fetchApps)
       : await fetchApps();

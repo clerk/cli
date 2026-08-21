@@ -218,7 +218,7 @@ export function observeHostCapabilityFailure(
 export async function probeHostStateAccess(): Promise<HostStateProbeResult> {
   const failures = (
     await Promise.all(
-      getProbeTargets().map((target) => probeDirectoryWrite(target.label, target.dir)),
+      getProbeTargets().map(async (target) => probeDirectoryWrite(target.label, target.dir)),
     )
   ).filter((failure): failure is HostStateProbeFailure => failure !== null);
 

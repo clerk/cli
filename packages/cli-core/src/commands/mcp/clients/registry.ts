@@ -40,6 +40,6 @@ export const CLIENT_ALIASES: Readonly<Record<string, ClientId>> = { copilot: "vs
 export const CLIENT_ID_CHOICES: readonly string[] = [...CLIENT_IDS, ...Object.keys(CLIENT_ALIASES)];
 
 export async function detectInstalledClients(cwd: string): Promise<McpClient[]> {
-  const flags = await Promise.all(CLIENTS.map((c) => c.detect(cwd)));
+  const flags = await Promise.all(CLIENTS.map(async (c) => c.detect(cwd)));
   return CLIENTS.filter((_, i) => flags[i]);
 }

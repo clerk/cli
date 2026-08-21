@@ -213,7 +213,7 @@ export async function finalizeAndSendTelemetry(
   }
 }
 
-function abortedToResolved(signal: AbortSignal): Promise<void> {
+async function abortedToResolved(signal: AbortSignal): Promise<void> {
   return new Promise((resolve) => {
     if (signal.aborted) return resolve();
     signal.addEventListener("abort", () => resolve(), { once: true });

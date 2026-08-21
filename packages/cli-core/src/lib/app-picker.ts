@@ -29,7 +29,7 @@ export function appLabel(app: Application): string {
  */
 export async function fetchAppsTolerantly(): Promise<Application[]> {
   try {
-    return await withSpinner("Fetching applications...", () =>
+    return await withSpinner("Fetching applications...", async () =>
       withApiContext(listApplications(), "Failed to fetch applications"),
     );
   } catch (error) {

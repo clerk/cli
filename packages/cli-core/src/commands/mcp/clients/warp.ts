@@ -20,5 +20,5 @@ export const warpClient = makeJsonClient({
   encode: clerkRunDescriptor,
   extractUrl: clerkRunUrl,
   configPath: () => userPath(".warp", ".mcp.json"),
-  detect: () => pathExists(userPath(".warp")),
+  detect: async () => pathExists(userPath(".warp")),
 });

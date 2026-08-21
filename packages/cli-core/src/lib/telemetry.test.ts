@@ -235,7 +235,7 @@ describe("finalizeAndSendTelemetry", () => {
           landed.push(body);
           return new Response("{}");
         }
-        return await new Promise<Response>((_resolve, reject) => {
+        return new Promise<Response>((_resolve, reject) => {
           const fail = () => reject(new DOMException("The operation was aborted.", "AbortError"));
           const signal = init?.signal;
           if (!signal) return;
@@ -292,7 +292,7 @@ describe("finalizeAndSendTelemetry", () => {
         }
         // Stands in for the config, Git, and user-agent reads a normal flush
         // does around its POST: slow, and blind to the interrupt signal.
-        return await new Promise<Response>(() => {});
+        return new Promise<Response>(() => {});
       }) as unknown as typeof fetch;
       startCommandTelemetry(fakeCommand());
 

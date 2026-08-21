@@ -77,7 +77,7 @@ export async function mcpInstall(options: McpOptions = {}): Promise<void> {
   await withGutter(
     `Installing Clerk MCP (${cyan(url)})`,
     async ({ setNextSteps }) => {
-      const outcome = await settleClients(clients, (c) => c.upsert({ name, url }, cwd));
+      const outcome = await settleClients(clients, async (c) => c.upsert({ name, url }, cwd));
       const { succeeded, failed } = outcome;
       if (json) {
         log.data(

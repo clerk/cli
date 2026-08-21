@@ -34,7 +34,9 @@ export async function applyConfigPatch(opts: ApplyPatchOptions): Promise<boolean
 
   const current =
     opts.currentConfig ??
-    (await withSpinner("Fetching current config...", () => readInstanceConfig(target, payload)));
+    (await withSpinner("Fetching current config...", async () =>
+      readInstanceConfig(target, payload),
+    ));
 
   if (!hasConfigChanges(current, payload, true)) {
     log.info(dryRun ? "[dry-run] No changes detected" : "No changes detected");
@@ -60,7 +62,7 @@ export async function applyConfigPatch(opts: ApplyPatchOptions): Promise<boolean
   }
 
   const spinnerMsg = `${dryRun ? "[dry-run] " : ""}${verb} on ${target.label}...`;
-  const result = await withSpinner(spinnerMsg, () =>
+  const result = await withSpinner(spinnerMsg, async () =>
     writeInstanceConfig(target, payload, { method: "PATCH", dryRun, failureContext }),
   );
 

@@ -298,14 +298,14 @@ async function sendInstanceConfig(
   return response.json() as Promise<Record<string, unknown>>;
 }
 
-export const putInstanceConfig = (
+export const putInstanceConfig = async (
   applicationId: string,
   instanceId: string,
   config: Record<string, unknown>,
   options?: { destructive?: boolean; dryRun?: boolean },
 ) => sendInstanceConfig("PUT", applicationId, instanceId, config, options);
 
-export const patchInstanceConfig = (
+export const patchInstanceConfig = async (
   applicationId: string,
   instanceId: string,
   config: Record<string, unknown>,

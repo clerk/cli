@@ -133,7 +133,7 @@ function makeFileClient(spec: FileClientSpec, codec: ConfigCodec): McpClient {
     scope: spec.scope,
     activation: spec.activation,
     configPath: spec.configPath,
-    detect: spec.detect ?? (() => Promise.resolve(false)),
+    detect: spec.detect ?? (async () => Promise.resolve(false)),
 
     async upsert(entry: McpServerEntry, cwd: string): Promise<UpsertResult> {
       const configPath = spec.configPath(cwd);

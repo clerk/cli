@@ -101,8 +101,8 @@ export function makeCliClient(spec: CliClientSpec): McpClient {
     scope: base.scope,
     activation: base.activation,
     configPath: (cwd) => base.configPath(cwd),
-    detect: () => Promise.resolve(findClientBinary(binary) !== null),
-    list: (cwd) => base.list(cwd),
+    detect: async () => Promise.resolve(findClientBinary(binary) !== null),
+    list: async (cwd) => base.list(cwd),
 
     async upsert(entry: McpServerEntry, cwd: string): Promise<UpsertResult> {
       const bin = requireBinary(binary, spec.installHint);

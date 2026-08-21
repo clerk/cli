@@ -87,7 +87,7 @@ async function resolveIdentity(): Promise<Identity> {
 
   let userInfo;
   try {
-    userInfo = await withSpinner("Fetching account info...", () => fetchUserInfo(token));
+    userInfo = await withSpinner("Fetching account info...", async () => fetchUserInfo(token));
   } catch {
     throw new AuthError({ reason: "session_expired" });
   }
@@ -232,5 +232,5 @@ export function registerWhoami(program: Program): void {
       { command: "clerk whoami", description: "Show your email and linked app" },
       { command: "clerk whoami --json", description: "Emit a structured payload on stdout" },
     ])
-    .action((options) => whoami({ json: options.json }));
+    .action(async (options) => whoami({ json: options.json }));
 }

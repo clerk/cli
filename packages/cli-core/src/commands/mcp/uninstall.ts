@@ -54,7 +54,7 @@ async function removeFrom(
   cwd: string,
   json: boolean,
 ): Promise<void> {
-  const outcome = await settleClients(clients, (c) => c.remove(name, cwd));
+  const outcome = await settleClients(clients, async (c) => c.remove(name, cwd));
   const { succeeded, failed } = outcome;
   const results = succeeded.map((s) => s.result);
   const removedCount = results.filter((r) => r.removed).length;

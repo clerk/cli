@@ -170,7 +170,7 @@ async function startNewDeploy(ctx: DeployContext): Promise<void> {
       "A production instance already exists for this application. Resuming the existing deploy.",
     );
     log.blank();
-    const refreshed = await withSpinner("Refreshing application state...", () =>
+    const refreshed = await withSpinner("Refreshing application state...", async () =>
       resolveLiveApplicationContext(ctx.profile),
     );
     ctx.productionInstanceId = refreshed.productionInstanceId;
@@ -476,7 +476,7 @@ async function pollDeployStatus(
   domain: string,
 ): Promise<DeployStatusOutcome> {
   return waitForDeployStatus(appId, domainIdOrName, domain, {
-    runVerification: (progressLabel, work) => withSpinner(progressLabel, work),
+    runVerification: async (progressLabel, work) => withSpinner(progressLabel, work),
     onVerified: () => log.success(deployComponentLabels("dns", domain).done),
   });
 }

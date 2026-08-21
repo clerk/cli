@@ -56,7 +56,7 @@ interface OAuthFlowResult {
 
 async function performOAuthFlow(): Promise<OAuthFlowResult> {
   const codeVerifier = generateCodeVerifier();
-  const codeChallenge = await generateCodeChallenge(codeVerifier);
+  const codeChallenge = generateCodeChallenge(codeVerifier);
   const state = generateState();
 
   const authServer = startAuthServer(state);
@@ -92,7 +92,7 @@ async function performOAuthFlow(): Promise<OAuthFlowResult> {
   const timeoutMinutes = Math.round(AUTH_TIMEOUT_MS / 60_000);
   log.info(`Waiting for authentication (timeout in ${timeoutMinutes}m)...`);
 
-  const { code } = await withSpinner("Waiting for authentication...", () =>
+  const { code } = await withSpinner("Waiting for authentication...", async () =>
     authServer.waitForCallback().catch((error: unknown) => {
       authServer.stop();
       throw error;
@@ -113,7 +113,7 @@ async function performOAuthFlow(): Promise<OAuthFlowResult> {
     log.debug(`credentials: could not read outgoing session — ${errorMessage(error)}`);
   }
 
-  const tokenResponse = await withSpinner("Completing authentication...", () =>
+  const tokenResponse = await withSpinner("Completing authentication...", async () =>
     exchangeCodeForToken({
       code,
       codeVerifier,
@@ -132,7 +132,9 @@ async function performOAuthFlow(): Promise<OAuthFlowResult> {
 export async function login(options: LoginOptions = {}): Promise<UserInfo> {
   const { showNextSteps = true, yes } = options;
   intro("Signing in");
-  const existingSession = await withSpinner("Checking session...", () => getExistingSession());
+  const existingSession = await withSpinner("Checking session...", async () =>
+    getExistingSession(),
+  );
 
   if (existingSession && !isHuman()) {
     log.success(`Logged in as ${existingSession.email}`);
@@ -166,7 +168,7 @@ export async function login(options: LoginOptions = {}): Promise<UserInfo> {
   // Revoked only after the replacement is safely stored: doing it up front
   // would leave the user with no session at all if the flow were abandoned.
   if (previousSession) {
-    const outcome = await withSpinner("Revoking previous session...", () =>
+    const outcome = await withSpinner("Revoking previous session...", async () =>
       revokeToken(previousSession.refreshToken, "refresh_token"),
     );
     if (outcome === "failed") {
@@ -178,7 +180,7 @@ export async function login(options: LoginOptions = {}): Promise<UserInfo> {
 
   // Best-effort: ensure the user has at least one application so downstream
   // commands (clerk link, clerk init) have something to operate on.
-  await withSpinner("Setting up your default application...", () => ensureFirstApplication());
+  await withSpinner("Setting up your default application...", async () => ensureFirstApplication());
 
   bar();
   log.success(`Logged in as ${userInfo.email}`);

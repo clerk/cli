@@ -48,5 +48,5 @@ export const opencodeClient = makeJsonClient({
   extractUrl: extractOpencodeUrl,
   isOurs: isOpencodeBridge,
   configPath: () => xdgConfigPath("opencode", "opencode.json"),
-  detect: () => pathExists(xdgConfigPath("opencode")),
+  detect: async () => pathExists(xdgConfigPath("opencode")),
 });

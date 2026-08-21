@@ -504,12 +504,13 @@ const SHELL_COMPLETION: Record<
   }
 > = {
   fish: {
-    isInstalled: (home) => Bun.file(join(home, ".config/fish/completions/clerk.fish")).exists(),
+    isInstalled: async (home) =>
+      Bun.file(join(home, ".config/fish/completions/clerk.fish")).exists(),
     remedy:
       "Run `mkdir -p ~/.config/fish/completions && clerk completion fish > ~/.config/fish/completions/clerk.fish`",
   },
   bash: {
-    isInstalled: (home) =>
+    isInstalled: async (home) =>
       fileContains([join(home, ".bashrc"), join(home, ".bash_profile")], "clerk completion"),
     remedy: 'Add `eval "$(clerk completion bash)"` to your ~/.bashrc',
   },

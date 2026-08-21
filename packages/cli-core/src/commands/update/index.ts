@@ -51,7 +51,7 @@ async function resolveTargets(
     safeRealpath(runningPath),
   ]);
 
-  const resolved = await Promise.all(onPath.map((p) => resolveAsdfShim(p)));
+  const resolved = await Promise.all(onPath.map(async (p) => resolveAsdfShim(p)));
   const candidates = onPath.map((displayPath, i) => ({
     displayPath,
     resolvedPath: resolved[i]!,
@@ -262,7 +262,7 @@ export async function update(options: UpdateOptions): Promise<void> {
   if (isHuman()) intro("Checking for updates");
 
   const [latest, installDirs] = await Promise.all([
-    withSpinner("Checking for updates...", () => fetchLatestVersion(channel)).catch(() => {
+    withSpinner("Checking for updates...", async () => fetchLatestVersion(channel)).catch(() => {
       throw new CliError("Could not reach npm registry. Check your network connection.");
     }),
     getInstallerPackageDirs(),
@@ -360,7 +360,7 @@ export async function update(options: UpdateOptions): Promise<void> {
     try {
       await withSpinner(
         `Installing ${packageSpec} via ${owner} (${t.displayPath})...`,
-        () => runGlobalInstall(owner, packageSpec, latest),
+        async () => runGlobalInstall(owner, packageSpec, latest),
         `Updated ${owner}: ${t.displayPath}`,
       );
       results.push({ target: t, ok: true });

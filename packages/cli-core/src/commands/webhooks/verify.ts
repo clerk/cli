@@ -104,7 +104,7 @@ export function parseDeliveryLine(raw: string): DeliveryFields {
 
 async function readFileOrStdin(value: string, flag: string): Promise<string> {
   if (value === "-") {
-    return await Bun.stdin.text();
+    return Bun.stdin.text();
   }
   if (value.startsWith("@")) {
     const path = value.slice(1);

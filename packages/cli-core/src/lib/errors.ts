@@ -498,7 +498,7 @@ export function throwUserAbort(): never {
  * );
  * ```
  */
-export function withApiContext<T>(promise: Promise<T>, context: string): Promise<T> {
+export async function withApiContext<T>(promise: Promise<T>, context: string): Promise<T> {
   return promise.catch((error) => {
     if (error instanceof ApiError) {
       error.context = context;

@@ -22,6 +22,9 @@ export function _resetUserAgentCache(): void {
   userAgentPromise = undefined;
 }
 
+// Not `async`: the body hands back a memoized promise, and wrapping it per call
+// would allocate a fresh one on every request for no gain.
+// oxlint-disable-next-line typescript/promise-function-async
 function resolveUserAgent(): Promise<string> {
   // The AIAgent segment exists purely for analytics classification, so it
   // honors the telemetry opt-outs (env vars and `clerk telemetry disable`)

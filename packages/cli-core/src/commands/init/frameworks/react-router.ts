@@ -369,7 +369,7 @@ function shouldEnableV8MiddlewareFlag(ctx: ProjectContext): boolean {
   return major !== null && major < 8;
 }
 
-function scaffoldConfig(ctx: ProjectContext): Promise<FileAction | null> {
+async function scaffoldConfig(ctx: ProjectContext): Promise<FileAction | null> {
   if (!shouldEnableV8MiddlewareFlag(ctx)) return Promise.resolve(null);
 
   return scaffoldConfigFile(ctx.cwd, {

@@ -62,7 +62,7 @@ mock.module("../../lib/constants.ts", () => ({
 
 mock.module("../../lib/pkce.ts", () => ({
   generateCodeVerifier: () => "test-code-verifier",
-  generateCodeChallenge: async () => "test-code-challenge",
+  generateCodeChallenge: () => "test-code-challenge",
   generateState: () => "test-state-value",
 }));
 
