@@ -1,4 +1,10 @@
 {
+  // Base config only — every real project (packages/*, scripts, test/e2e) extends
+  // this and declares its own `include`. Without `files: []` this would default to
+  // the whole repo, and type-aware oxlint would build a program from it for any
+  // file no other tsconfig claims. Children inherit the empty `files` but supply
+  // their own `include`, which is what populates them.
+  "files": [],
   "compilerOptions": {
     // Environment setup & latest features
     "lib": ["ESNext"],

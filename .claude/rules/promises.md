@@ -15,6 +15,30 @@ Without it oxlint fails with `Failed to find tsgolint executable`. The whole
 repo lints in well under a second, so the pass runs everywhere the plain lint
 did: the workspace `lint` scripts, the `nano-staged` pre-commit hook, and CI.
 
+The `lint` scripts also pass
+`--report-unused-disable-directives-severity=error`, so a suppression that has
+outlived its violation fails the build instead of rotting in place. Use the
+`-severity=error` form, not the bare `--report-unused-disable-directives`: that
+one reports at `warning`, and oxlint exits `0` on warnings, so it would never
+gate anything. The pre-commit hook deliberately omits it — it lints only staged
+files, and a directive is not unused just because the line it covers wasn't
+staged.
+
+## Type-aware linting needs a tsconfig that claims the file
+
+tsgolint maps each file to the nearest `tsconfig.json` and builds a program per
+project. A file no tsconfig claims is reported as `Unmatched` and **silently
+skipped** — type-aware rules never run on it, and the exit code stays `0`. Run
+`OXC_LOG=debug bun run lint` and check the `Done assigning files to programs`
+line if you suspect a file is being skipped.
+
+The root `tsconfig.json` is a base config with `"files": []`. It must stay that
+way. Dropping that makes it default to the entire repository, so it becomes the
+fallback project for every unclaimed file and builds a program of ~1300 source
+files where the scoped ones need ~950. New source belongs under a directory an
+existing project already includes (`packages/*/src`, `scripts`, `test/e2e`), or
+it needs its own `tsconfig.json`.
+
 ## The rules
 
 | Rule                                      | What it catches                                                                                                                |

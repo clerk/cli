@@ -8,7 +8,7 @@
   },
   "scripts": {
     "typecheck": "tsc --noEmit -p tsconfig.json",
-    "lint": "oxlint --type-aware src/",
+    "lint": "oxlint --type-aware --report-unused-disable-directives-severity=error src/",
     "format": "oxfmt --write src/",
     "format:check": "oxfmt --check src/"
   },
