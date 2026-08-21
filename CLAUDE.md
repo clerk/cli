@@ -41,7 +41,7 @@ After modifying files, run these commands to match what CI enforces on pull requ
 
 ```sh
 bun run format       # Format with oxfmt (writes changes)
-bun run lint         # Lint with oxlint
+bun run lint         # Lint with oxlint (type-aware; see .claude/rules/promises.md)
 bun run typecheck    # Type-check all packages and scripts
 bun run test         # Run unit tests
 bun run test:e2e:op  # Run E2E tests with secrets resolved from 1Password (preferred locally)

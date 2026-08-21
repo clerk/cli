@@ -11,7 +11,7 @@
     "build:compile": "bun build --compile --minify --no-compile-autoload-dotenv --no-compile-autoload-bunfig ./src/cli.ts --outfile ./dist/clerk",
     "dev": "bun run ./src/cli.ts",
     "typecheck": "tsc --noEmit -p tsconfig.json",
-    "lint": "oxlint src/",
+    "lint": "oxlint --type-aware src/",
     "format": "oxfmt --write src/",
     "format:check": "oxfmt --check src/",
     "test": "bun test src/ --parallel"
