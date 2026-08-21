@@ -1,5 +1,42 @@
 # clerk
 
+## 3.1.1
+
+### Patch Changes
+
+- Make the `clerk api` endpoint catalog discoverable from help output and 404 responses. ([#430](https://github.com/clerk/cli/pull/430)) by [@shane-kercheval](https://github.com/shane-kercheval)
+
+  - Root help now describes `api` as "Call any Clerk API endpoint (200+; `clerk api ls` to browse)" instead of "Make authenticated requests to the Clerk API", and `clerk api --help` explains that this command covers what the dedicated commands do not.
+  - `--platform` now explains that the Platform API has its own endpoint list, `clerk api ls` examples say which API they list (they cover the Backend API, not every endpoint), and `clerk api ls --platform` is shown as an example.
+  - A 404 with no parsed Clerk error code now suggests `clerk api ls <keyword>` on stderr, leaving stdout as the pipeable response body. The suggestion is scoped per surface: `--platform` appends that flag, and `--fapi` gets none since it has no endpoint catalog.
+
+- Report what was established when Ctrl-C interrupts `clerk deploy status`, and record interrupted runs in usage telemetry. ([#425](https://github.com/clerk/cli/pull/425)) by [@wyattjoh](https://github.com/wyattjoh)
+
+  - `clerk deploy status` no longer exits silently when the interrupt arrives before the deploy state is read. Agent mode emits a report with `state: "interrupted"`, which asserts nothing about the deploy.
+  - An interrupted command now sends its `abort` outcome instead of no event at all.
+
+- Report when signing out cannot revoke the session with Clerk, instead of always printing a clean sign-out. Local credentials are still removed either way, and `clerk auth logout` now also warns when `CLERK_PLATFORM_API_KEY` is set, since that key keeps authenticating requests. ([#422](https://github.com/clerk/cli/pull/422)) by [@wyattjoh](https://github.com/wyattjoh)
+
+  Revoke the superseded session more reliably when re-authenticating: a transient error while checking the existing session no longer leaves the old session un-revoked, and a malformed `CLERK_OAUTH_BASE_URL` no longer aborts sign-out partway through.
+
+- Revoke the OAuth session with Clerk when signing out, so `clerk auth logout` ends the session everywhere instead of only deleting the local credentials. Re-authenticating over an existing session now revokes the previous one as well. ([#418](https://github.com/clerk/cli/pull/418)) by [@wyattjoh](https://github.com/wyattjoh)
+
+- Stop a failing interrupt sequence from printing an unhandled rejection on Ctrl-C. ([#436](https://github.com/clerk/cli/pull/436)) by [@wyattjoh](https://github.com/wyattjoh)
+
+  The SIGINT handler is async so it can await the telemetry flush that reports the interrupted run, but it was registered directly with `process.on`, which discards a listener's return value. If anything in that sequence rejected — the lazy telemetry import, the flush itself — the failure surfaced as an unhandled rejection stack trace at the exact moment the user was trying to get their shell back, and the process never reached the signal death that a wrapping script reads. The registered listener is now a synchronous wrapper that exits by the route the interrupt calls for even when the sequence fails.
+
+- Stop sending telemetry for `clerk completion`. Shells re-run it on every startup when it is wired into an rc file, so its events measured shell startups rather than CLI usage. ([#417](https://github.com/clerk/cli/pull/417)) by [@djgould](https://github.com/djgould)
+
+- Fix the exit code when a command is interrupted with Ctrl-C. Interrupting a command now exits 130 by terminating on SIGINT rather than calling `process.exit(130)`, so a wrapping shell script sees a real signal death and stops as expected, and the interrupted run is reported to telemetry instead of going unrecorded. This covers in-flight requests, poll intervals and retry backoffs, project generators run by `clerk init`, and `clerk webhooks listen` once it has drained. Ctrl-C while the CLI is only waiting on you — at a prompt, during browser sign-in, or in `$EDITOR` — still exits 0. ([#420](https://github.com/clerk/cli/pull/420)) by [@wyattjoh](https://github.com/wyattjoh)
+
+- Keep `--define CLI_VERSION` working when building with Bun 1.4. ([#435](https://github.com/clerk/cli/pull/435)) by [@rafa-thayto](https://github.com/rafa-thayto)
+
+  Bun 1.4 runs macros in a sealed transpiler context that `--define` globals no longer reach, so the version macro silently fell back to the checkout-derived dev version even when a release version was injected. The define check and dev classification now live in `version.ts` module scope, where define substitution still applies; the macro only derives the Git checkout fallback.
+
+- Stop the "Update available" notice from garbling the "Next steps" block. ([#435](https://github.com/clerk/cli/pull/435)) by [@rafa-thayto](https://github.com/rafa-thayto)
+
+  The next-steps outro animation moves the cursor back onto the header line for ~450ms, but several commands (`switch-env`, `auth logout`, `unlink`, `users create`, `apps create`, and others) did not await it. The command's promise resolved mid-animation, so the post-command update check printed its notice at the parked cursor position — overwriting the step lines and leaving a stray duplicate "Next steps" header. Every `outro(...)` call is now awaited, so output printed after a command lands below the finished block.
+
 ## 3.1.0
 
 ### Minor Changes
