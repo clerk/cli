@@ -10,6 +10,9 @@ import { interruptedExitCode } from "../../lib/signals.ts";
 import { setProfile } from "../../lib/config.ts";
 import {
   createProductionInstance as apiCreateProductionInstance,
+  fetchInstanceConfig,
+  getNativeSettings,
+  listIOSApplications,
   patchInstanceConfig,
   type CnameTarget,
   type ProductionInstanceResponse,
@@ -34,6 +37,7 @@ import {
 } from "./copy.ts";
 import { mapDeployError } from "./errors.ts";
 import {
+  inspectNativeAppleConfiguration,
   providerLabel,
   providerSetupIntro,
   showOAuthWalkthrough,
@@ -566,6 +570,10 @@ async function collectAndSaveOAuthCredentials(
   productionInstanceId: string,
   frontendApiUrl?: string,
 ): Promise<boolean> {
+  if (await nativeAppleCredentialsAreAlreadyConfigured(ctx, descriptor, productionInstanceId)) {
+    return true;
+  }
+
   for (const line of providerSetupIntro(descriptor)) log.info(line);
   log.blank();
 
@@ -598,6 +606,73 @@ async function collectAndSaveOAuthCredentials(
   });
   log.success(`Saved ${descriptor.label} OAuth credentials`);
   return true;
+}
+
+async function nativeAppleCredentialsAreAlreadyConfigured(
+  ctx: DeployContext,
+  descriptor: OAuthProviderDescriptor,
+  productionInstanceId: string,
+): Promise<boolean> {
+  if (descriptor.provider !== "apple") return false;
+
+  const productionConfig = await withSpinner(
+    "Checking production Sign in with Apple configuration...",
+    async () => fetchInstanceConfig(ctx.appId, productionInstanceId),
+  );
+  const preliminary = inspectNativeAppleConfiguration(productionConfig, descriptor, []);
+  if (preliminary.status === "authentication-disabled") {
+    throwUsageError(
+      `Native Sign in with Apple is configured for ${preliminary.bundleId}, but Apple is not explicitly enabled for authentication on the production instance. ` +
+        "Review the Apple connection in the Clerk Dashboard, then rerun `clerk deploy`. No Apple web credentials were requested.",
+    );
+  }
+  if (preliminary.status !== "registration-missing") {
+    return false;
+  }
+
+  let iosApplications: Awaited<ReturnType<typeof listIOSApplications>>;
+  let nativeSettings: Awaited<ReturnType<typeof getNativeSettings>>;
+  try {
+    [iosApplications, nativeSettings] = await withSpinner(
+      "Checking production Native Application settings...",
+      async () =>
+        Promise.all([
+          listIOSApplications(ctx.appId, productionInstanceId),
+          getNativeSettings(ctx.appId, productionInstanceId),
+        ]),
+    );
+  } catch (error) {
+    if (error instanceof UserAbortError) throw error;
+    throw new CliError(
+      `clerk deploy could not verify the production Native Application registration for ${preliminary.bundleId}. ` +
+        "No Apple web credentials were requested. Verify the exact Bundle ID at https://dashboard.clerk.com/~/native-applications, then rerun `clerk deploy`.",
+    );
+  }
+
+  const nativeConfiguration = inspectNativeAppleConfiguration(
+    productionConfig,
+    descriptor,
+    iosApplications,
+    nativeSettings,
+  );
+  if (nativeConfiguration.status === "ready") {
+    log.success(
+      `Native Sign in with Apple is configured for ${nativeConfiguration.bundleId}; Apple web credentials are not required`,
+    );
+    return true;
+  }
+
+  if (nativeConfiguration.status === "native-api-disabled") {
+    throwUsageError(
+      `Native Sign in with Apple is configured for ${nativeConfiguration.bundleId}, but Native API is disabled on the production instance. ` +
+        "Enable Native API at https://dashboard.clerk.com/~/native-applications, then rerun `clerk deploy`. The CLI will not infer an App ID Prefix or request unrelated Apple web credentials.",
+    );
+  }
+
+  throwUsageError(
+    `Native Sign in with Apple is configured for ${preliminary.bundleId}, but the production instance does not have an exact iOS Native Application registration for that Bundle ID. ` +
+      "Register it at https://dashboard.clerk.com/~/native-applications, then rerun `clerk deploy`. The CLI will not infer an App ID Prefix or request unrelated Apple web credentials.",
+  );
 }
 
 async function persistProductionInstance(ctx: DeployContext, productionInstanceId: string) {

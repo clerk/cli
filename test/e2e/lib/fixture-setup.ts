@@ -61,7 +61,11 @@ async function safeRm(path: string): Promise<void> {
  * CLERK_CONFIG_DIR, so `clerk init` finds an existing link and skips the
  * interactive app picker.
  */
-export async function linkProject(projectDir: string, configDir: string): Promise<void> {
+export async function linkProject(
+  projectDir: string,
+  configDir: string,
+  options: { platformApiUrl?: string } = {},
+): Promise<void> {
   const appId = requireEnv("CLERK_CLI_TEST_APP_ID");
   const platformAPIKey = requireEnv("CLERK_PLATFORM_API_KEY");
 
@@ -70,6 +74,7 @@ export async function linkProject(projectDir: string, configDir: string): Promis
     .env({
       CLERK_CONFIG_DIR: configDir,
       CLERK_PLATFORM_API_KEY: platformAPIKey,
+      ...(options.platformApiUrl ? { CLERK_PLATFORM_API_URL: options.platformApiUrl } : {}),
     })
     .quiet()
     .nothrow();

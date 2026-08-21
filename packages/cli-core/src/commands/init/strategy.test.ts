@@ -21,6 +21,7 @@ import {
   bootstrapMod,
   keylessMod,
   keylessTargetMod,
+  plapiMod,
 } from "../../test/lib/init-harness.ts";
 import * as promptsMod from "../../lib/prompts.ts";
 import { init } from "./index.ts";
@@ -243,7 +244,9 @@ describe("init strategy", () => {
   test("agent mode with --login while unauthenticated throws a usage error", async () => {
     setup({ isAgent: true, email: null });
 
-    await expect(init({ login: true })).rejects.toThrow(/--login requires an interactive terminal/);
+    await expect(init({ login: true })).rejects.toThrow(
+      /--login requires authentication.*interactively/,
+    );
     expect(bootstrapMod.promptAndBootstrap).not.toHaveBeenCalled();
     expect(keylessMod.createAccountlessApp).not.toHaveBeenCalled();
     expect(loginMod.login).not.toHaveBeenCalled();
@@ -313,6 +316,9 @@ describe("init strategy", () => {
   test("agent mode with keyless framework and --app uses real app flow", async () => {
     setup({ isAgent: true, email: "user@example.com" });
     mockExistingProject(KEYLESS_CTX);
+    spyOn(config, "resolveProfile")
+      .mockResolvedValueOnce(undefined)
+      .mockResolvedValue({ profile: { appId: "app_abc" } } as never);
     mockMiddlewareScaffold();
 
     await init({ app: "app_abc" });
@@ -356,19 +362,48 @@ describe("init strategy", () => {
     expect(captured.err).toContain("clerk init --app <app_id>");
   });
 
-  test("agent mode with real app target and no auth launches login", async () => {
+  test("authenticated agent iOS setup without an app target prints native runtime guidance", async () => {
+    const { captured } = setup({ isAgent: true, email: "user@example.com" });
+    const iosCtx = {
+      ...FAKE_CTX,
+      existingClerk: false,
+      deps: {},
+      framework: {
+        dep: "ios",
+        name: "iOS (Swift)",
+        sdk: "ClerkKit",
+        envVar: "CLERK_PUBLISHABLE_KEY",
+        envFile: ".env" as const,
+        ecosystem: "swift" as const,
+      },
+      envFile: ".env",
+    };
+    spyOn(context, "gatherContext").mockResolvedValue(iosCtx);
+    spyOn(scaffoldMod, "scaffold").mockResolvedValue({
+      actions: [{ type: "create", path: "MyApp/MyAppApp.swift", content: "", description: "" }],
+      postInstructions: [],
+    });
+
+    await init({ yes: true });
+
+    expect(linkMod.link).not.toHaveBeenCalled();
+    expect(pullMod.pull).not.toHaveBeenCalled();
+    expect(loginMod.login).not.toHaveBeenCalled();
+    expect(captured.err).toContain("clerk init --app <app_id>");
+    expect(captured.err).toContain("Clerk.configure(publishableKey:");
+    expect(captured.err).toContain(".environment(Clerk.shared)");
+    expect(captured.err).toContain("LocalSecrets loaders remain supported compatibility paths");
+    expect(captured.err).not.toContain("clerk env pull");
+  });
+
+  test("agent mode with real app target and no auth fails before interactive login", async () => {
     setup({ isAgent: true });
     spyOn(context, "gatherContext").mockResolvedValue(FAKE_CTX);
 
-    await init({ app: "app_abc" });
+    await expect(init({ app: "app_abc" })).rejects.toThrow("--app requires authentication");
 
-    expect(loginMod.login).toHaveBeenCalledWith({ showNextSteps: false });
-    expect(linkMod.link).toHaveBeenCalledWith({
-      skipIfLinked: true,
-      app: "app_abc",
-      cwd: FAKE_CTX.cwd,
-      createIfMissing: expect.any(String),
-    });
+    expect(loginMod.login).not.toHaveBeenCalled();
+    expect(linkMod.link).not.toHaveBeenCalled();
   });
 
   test("-y flag triggers login when unauthenticated", async () => {
@@ -727,14 +762,14 @@ describe("init strategy", () => {
       spyOn(heuristics, "isAuthenticated").mockResolvedValue(true);
 
       await expect(init({ login: true })).rejects.toThrow(
-        /--login requires an interactive terminal/,
+        /--login requires authentication.*interactively/,
       );
       expect(loginMod.login).not.toHaveBeenCalled();
       expect(bootstrapMod.promptAndBootstrap).not.toHaveBeenCalled();
     });
 
-    test("a real CLERK_PLATFORM_API_KEY is trusted outright, without needing to validate a stored session", async () => {
-      process.env.CLERK_PLATFORM_API_KEY = "test_key";
+    test("a Platform API key is trusted only after read-only PLAPI validation", async () => {
+      process.env.CLERK_PLATFORM_API_KEY = "ak_test_agent_validation";
       try {
         setup({ isAgent: true, email: null });
         mockExistingProject(KEYLESS_CTX);
@@ -743,6 +778,7 @@ describe("init strategy", () => {
 
         await init({});
 
+        expect(plapiMod.listApplications).toHaveBeenCalled();
         expect(linkMod.link).toHaveBeenCalled();
         expect(keylessMod.createAccountlessApp).not.toHaveBeenCalled();
       } finally {

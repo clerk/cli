@@ -158,6 +158,11 @@ export function startCommandTelemetry(actionCommand: TelemetryCommand): void {
   }
 }
 
+/** Clears any prior in-memory invocation context without reading or writing state. */
+export function discardCommandTelemetry(): void {
+  context = null;
+}
+
 export function telemetryResultForError(error: unknown): TelemetryResult {
   if (error instanceof UserAbortError) {
     return { outcome: "abort", exitCode: EXIT_CODE.SUCCESS };

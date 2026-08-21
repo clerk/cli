@@ -1,0 +1,644 @@
+import type {
+  IOSAppTarget,
+  IOSProjectInspectionResult,
+  IOSSetupPlan,
+  IOSSetupStep,
+  IOSSetupStepStatus,
+  IOSSourceEvidence,
+  IOSValueResolution,
+} from "./types.ts";
+import { hasIOSDirectConfigCompatibility } from "./products.ts";
+import { clerkKitUIInstallDecision } from "./products.ts";
+import type { IOSDirectConfigPlan } from "./direct-config.ts";
+import type { IOSRuntimeKeyPlan } from "./runtime-key.ts";
+import type { IOSAssociatedDomainPlan } from "./associated-domain.ts";
+import type { IOSAppleEntitlementPlan } from "./apple-entitlement.ts";
+import type { IOSPrebuiltAuthPlan } from "./prebuilt-auth.ts";
+import type { IOSSDKInstallPlan } from "./install-sdk.ts";
+
+const NATIVE_APPLICATIONS_URL = "https://dashboard.clerk.com/~/native-applications";
+const QUICKSTART_URL = "https://clerk.com/docs/ios/getting-started/quickstart";
+const NATIVE_APPLE_URL =
+  "https://clerk.com/docs/ios/guides/configure/auth-strategies/sign-in-with-apple";
+
+function associatedDomainMatches(actual: string, expected: string): boolean {
+  return actual.toLowerCase() === expected.toLowerCase();
+}
+
+function selectedTarget(inspection: IOSProjectInspectionResult): IOSAppTarget | undefined {
+  const selection = inspection.selection;
+  if (selection.state !== "selected") return undefined;
+  return inspection.appTargets.find(
+    (target) => target.id === selection.targetId && target.projectPath === selection.projectPath,
+  );
+}
+
+function selectedEvidence(target: IOSAppTarget | undefined): IOSSourceEvidence[] {
+  return target ? [{ path: target.projectPath, objectId: target.id }] : [];
+}
+
+function distinctResolved(
+  target: IOSAppTarget,
+  select: (configuration: IOSAppTarget["configurations"][number]) => IOSValueResolution,
+): string[] {
+  return [
+    ...new Set(
+      target.configurations
+        .map(select)
+        .filter(
+          (value): value is Extract<IOSValueResolution, { state: "resolved" }> =>
+            value.state === "resolved",
+        )
+        .map((value) => value.value),
+    ),
+  ].sort();
+}
+
+function allEvidence(
+  target: IOSAppTarget,
+  select: (configuration: IOSAppTarget["configurations"][number]) => IOSValueResolution,
+): IOSSourceEvidence[] {
+  return target.configurations.flatMap((configuration) => select(configuration).evidence);
+}
+
+function step(
+  id: IOSSetupStep["id"],
+  title: string,
+  status: IOSSetupStepStatus,
+  description: string,
+  evidence: IOSSourceEvidence[] = [],
+  links?: IOSSetupStep["links"],
+  automatable = false,
+): IOSSetupStep {
+  return { id, title, status, automatable, description, links, evidence };
+}
+
+function publishableKeyRuntimeSource(
+  source: string | undefined,
+  target: IOSAppTarget,
+): "inline-literal" | "run-scheme" | "local-secrets" | "available-only" | undefined {
+  if (!source) return undefined;
+  if (
+    target.swift.configureCalls.some(
+      (call) => call.path === source && call.publishableKeyWiring === "inline-literal",
+    )
+  ) {
+    return "inline-literal";
+  }
+  if (source.endsWith(".xcscheme")) return "run-scheme";
+  if (target.runtimeKeySinks.some((sink) => sink.path === source)) {
+    return "local-secrets";
+  }
+  return "available-only";
+}
+
+export function hasIOSRuntimeKeyHandoffShape(
+  inspection: IOSProjectInspectionResult,
+  target: IOSAppTarget,
+): boolean {
+  const hasEnabledSchemeKey = inspection.localPublishableKey.candidateSources.some((source) =>
+    source.endsWith(".xcscheme"),
+  );
+  return (
+    inspection.generatedProject === null &&
+    target.swift.evidenceComplete &&
+    target.swift.entryPoints.length === 1 &&
+    target.swift.configureCalls.length === 1 &&
+    target.swift.configureCalls[0]?.publishableKeyWiring === "local-secrets-loader" &&
+    target.swift.configureCalls[0]?.localSecretsRuntimeBinding === "proven" &&
+    target.swift.configureCalls[0]?.startupBinding === "app-init" &&
+    target.swift.configureCalls[0]?.path === target.swift.entryPoints[0]?.path &&
+    target.swift.localSecretsRuntimeBindings.length === 1 &&
+    target.runtimeKeySinks.length === 1 &&
+    !hasEnabledSchemeKey
+  );
+}
+
+export interface BuildIOSSetupPlanOptions {
+  /** Strict SDK/package compatibility from the same planner used by apply. */
+  sdkInstallPlan?: Pick<IOSSDKInstallPlan, "status" | "blockers">;
+  /** Strict, redacted file/Git readiness from the same planner used by apply. */
+  runtimeKeyPlan?: Pick<IOSRuntimeKeyPlan, "status" | "blockers">;
+  /** Strict, publishable-key-redacted Swift source readiness from the apply planner. */
+  directConfigPlan?: IOSDirectConfigPlan;
+  /** Strict existing-entitlements readiness from the same planner used by apply. */
+  associatedDomainPlan?: Pick<
+    IOSAssociatedDomainPlan,
+    | "status"
+    | "expectedDomain"
+    | "requiresPublishableKey"
+    | "blockers"
+    | "files"
+    | "missingEntitlementsSettings"
+  >;
+  /** Optional native Apple capability requested or already present locally. */
+  appleEntitlementPlan?: Pick<IOSAppleEntitlementPlan, "status" | "actions" | "blockers">;
+  /** Strict source readiness for the optional prebuilt AuthView scaffold. */
+  prebuiltAuthPlan?: Pick<IOSPrebuiltAuthPlan, "status" | "sourcePath" | "actions" | "blockers">;
+  /** Whether this invocation explicitly selected the optional AuthView scaffold. */
+  prebuiltAuthSelected?: boolean;
+}
+
+export function buildIOSSetupPlan(
+  inspection: IOSProjectInspectionResult,
+  options: BuildIOSSetupPlanOptions = {},
+): IOSSetupPlan {
+  const target = selectedTarget(inspection);
+  const targetEvidence = selectedEvidence(target);
+  const steps: IOSSetupStep[] = [];
+
+  steps.push(
+    step(
+      "select-target",
+      "Select the iOS application target",
+      target ? "satisfied" : "blocked",
+      target
+        ? `Using ${target.name} in ${target.projectPath}.`
+        : inspection.selection.state === "ambiguous"
+          ? "More than one iOS app target is eligible. Rerun with --target <name-or-id>; the CLI will not guess."
+          : inspection.selection.state === "not-found"
+            ? `The requested target "${inspection.selection.requested}" was not found.${inspection.selection.candidates.length > 0 ? ` Available targets: ${inspection.selection.candidates.join(", ")}.` : ""}`
+            : "No usable iOS application target was found.",
+      targetEvidence,
+    ),
+  );
+
+  if (!target) {
+    const blockedSteps: Array<[IOSSetupStep["id"], string]> = [
+      ["install-clerk-sdk", "Install Clerk's iOS SDK"],
+      ["configure-publishable-key", "Configure Clerk"],
+      ["inject-clerk-environment", "Inject Clerk into SwiftUI"],
+      ["wire-auth-callbacks", "Wire authentication callbacks"],
+      ["register-native-application", "Register the native application"],
+      ["add-associated-domain", "Add the associated domain"],
+      ["add-authentication-flow", "Add an authentication flow"],
+      ["verify-integration", "Verify the integration"],
+    ];
+    for (const [id, title] of blockedSteps) {
+      steps.push(
+        step(id, title, "blocked", "Select an iOS application target before planning this step."),
+      );
+    }
+    return finishPlan(inspection, steps);
+  }
+
+  const usesClerkKitUI = target.swift.importsClerkKitUI.length > 0;
+  const productDecision = clerkKitUIInstallDecision(target);
+  const includeClerkKitUI =
+    productDecision === "prebuilt" ||
+    options.prebuiltAuthSelected === true ||
+    options.prebuiltAuthPlan?.status === "satisfied";
+  const sourceEntryPointIsAmbiguous = target.swift.status === "ambiguous";
+  const requiredProductsLinked =
+    target.packages.clerkKit === "linked" &&
+    (!includeClerkKitUI || target.packages.clerkKitUI === "linked");
+  const packageIsVerified =
+    target.packages.package === "remote" || target.packages.package === "local";
+  const strictSDKBlocked = options.sdkInstallPlan?.status === "blocked";
+  const strictSDKBlocker = strictSDKBlocked
+    ? options.sdkInstallPlan?.blockers.map((blocker) => blocker.message).join(" ")
+    : undefined;
+  const sdkStatus: IOSSetupStepStatus = strictSDKBlocked
+    ? "blocked"
+    : productDecision === "unknown"
+      ? "review"
+      : !requiredProductsLinked
+        ? "required"
+        : packageIsVerified
+          ? "satisfied"
+          : target.packages.package === "unattributed"
+            ? "review"
+            : "required";
+  const sdkAutomatable =
+    sdkStatus === "required" &&
+    inspection.generatedProject === null &&
+    target.packages.package !== "unattributed";
+  steps.push(
+    step(
+      "install-clerk-sdk",
+      "Install Clerk's iOS SDK for the selected target",
+      sdkStatus,
+      strictSDKBlocked
+        ? `The selected Clerk iOS SDK cannot support this approved setup safely: ${strictSDKBlocker ?? "Update the clerk-ios package and rerun the plan."}`
+        : productDecision === "unknown"
+          ? `Swift source membership for ${target.name} is incomplete, so the CLI cannot safely choose between the prebuilt ClerkKitUI path and a core-only custom flow. Resolve the source-membership diagnostics or make the product choice manually.`
+          : sdkStatus === "satisfied"
+            ? `ClerkKit is linked to ${target.name}${target.packages.clerkKitUI === "linked" ? "; ClerkKitUI is linked too" : ""}.`
+            : sdkStatus === "review"
+              ? `ClerkKit${target.packages.clerkKitUI === "linked" ? " and ClerkKitUI are" : " is"} linked to ${target.name}, but the package reference could not be verified as clerk-ios. Confirm the linked products come from Clerk's remote or local package.`
+              : includeClerkKitUI && target.packages.clerkKitUI !== "linked"
+                ? usesClerkKitUI
+                  ? `${target.name} imports ClerkKitUI, but that product is not linked to the target. Link both ClerkKit and ClerkKitUI from the clerk-ios Swift package.`
+                  : target.packages.clerkKitUI === "declared"
+                    ? `ClerkKitUI is declared for ${target.name} but not linked in its Frameworks phase. Link it alongside ClerkKit.`
+                    : target.packages.clerkKit !== "absent"
+                      ? `${target.name} already has ClerkKit but no source-proven custom flow. Link ClerkKitUI from the same clerk-ios package so the prebuilt AuthView path is ready by default.`
+                      : `${target.name} has no existing Clerk integration. Link both ClerkKit and ClerkKitUI from the clerk-ios Swift package so the prebuilt AuthView is ready by default.`
+                : includeClerkKitUI
+                  ? `Add https://github.com/clerk/clerk-ios with Swift Package Manager and link ClerkKit and ClerkKitUI to ${target.name} for the fastest prebuilt AuthView path.`
+                  : `${target.name} already shows core-only or custom-flow intent. Add https://github.com/clerk/clerk-ios with Swift Package Manager and link ClerkKit; ClerkKitUI is not required for that path.`,
+      targetEvidence,
+      undefined,
+      sdkAutomatable,
+    ),
+  );
+
+  const configured = target.swift.configureCalls.length > 0;
+  const usablePublishableKey =
+    inspection.localPublishableKey.found &&
+    !inspection.localPublishableKey.conflict &&
+    inspection.localPublishableKey.frontendApiHost != null;
+  const runtimeKeySource = publishableKeyRuntimeSource(
+    inspection.localPublishableKey.source,
+    target,
+  );
+  const publishableKeySourceIsRuntime =
+    runtimeKeySource === "inline-literal" ||
+    runtimeKeySource === "run-scheme" ||
+    runtimeKeySource === "local-secrets";
+  const configureCallConnectedToRuntime =
+    usablePublishableKey &&
+    runtimeKeySource != null &&
+    runtimeKeySource !== "available-only" &&
+    target.swift.configureCalls.some(
+      (call) =>
+        call.startupBinding === "app-init" &&
+        (runtimeKeySource === "inline-literal"
+          ? call.publishableKeyWiring === "inline-literal" &&
+            call.inlinePublishableKey?.state === "valid"
+          : runtimeKeySource === "local-secrets"
+            ? call.publishableKeyWiring === "local-secrets-loader" &&
+              call.localSecretsRuntimeBinding === "proven"
+            : call.publishableKeyWiring === "process-info-environment"),
+    );
+  const publishableKeyBlocked =
+    publishableKeySourceIsRuntime &&
+    (inspection.localPublishableKey.conflict ||
+      (!inspection.localPublishableKey.found &&
+        inspection.localPublishableKey.invalidSources.length > 0));
+  const localSecretsHandoff = hasIOSRuntimeKeyHandoffShape(inspection, target);
+  const needsLocalSecretsHandoff = localSecretsHandoff && !configureCallConnectedToRuntime;
+  const hasDirectConfigCompatibility = hasIOSDirectConfigCompatibility(inspection, target);
+  const directConfigPlanApplies = options.directConfigPlan != null && !hasDirectConfigCompatibility;
+  const directConfigAutomationReady =
+    directConfigPlanApplies &&
+    options.directConfigPlan?.status === "ready" &&
+    options.directConfigPlan.changes?.configuration !== "verify-existing";
+  const directConfigBlocked =
+    directConfigPlanApplies && options.directConfigPlan?.status === "blocked";
+  const directConfigBlocker = directConfigBlocked
+    ? options.directConfigPlan?.blockers.map((blocker) => blocker.message).join(" ")
+    : undefined;
+  const runtimeKeyAutomationReady =
+    needsLocalSecretsHandoff && options.runtimeKeyPlan?.status === "ready";
+  const runtimeKeyBlocker =
+    needsLocalSecretsHandoff && options.runtimeKeyPlan?.status === "blocked"
+      ? options.runtimeKeyPlan.blockers.map((blocker) => blocker.message).join(" ")
+      : undefined;
+  const configuredStatus: IOSSetupStepStatus = needsLocalSecretsHandoff
+    ? options.runtimeKeyPlan?.status === "blocked"
+      ? "blocked"
+      : "required"
+    : publishableKeyBlocked
+      ? "blocked"
+      : directConfigBlocked
+        ? "blocked"
+        : configured
+          ? sourceEntryPointIsAmbiguous || !configureCallConnectedToRuntime
+            ? "review"
+            : "satisfied"
+          : directConfigAutomationReady
+            ? "required"
+            : target.swift.evidenceComplete
+              ? "required"
+              : "review";
+  steps.push(
+    step(
+      "configure-publishable-key",
+      "Configure Clerk with a publishable key",
+      configuredStatus,
+      needsLocalSecretsHandoff
+        ? runtimeKeyAutomationReady
+          ? `Clerk.configure(publishableKey:) is connected to the selected target's proven LocalSecrets.plist loader, but that runtime source does not contain a usable key. clerk init can fetch the linked development instance's publishable key directly into that plist without printing it or creating an env file.`
+          : runtimeKeyBlocker
+            ? `Clerk.configure(publishableKey:) is connected to the selected target's LocalSecrets.plist loader, but automatic key wiring is blocked: ${runtimeKeyBlocker}`
+            : "Clerk.configure(publishableKey:) is connected to the selected target's LocalSecrets.plist loader, but that source has no usable key. Add the development key manually or run the strict iOS setup preflight before applying it."
+        : publishableKeyBlocked
+          ? inspection.localPublishableKey.conflict
+            ? "Multiple effective publishable-key sources point at different Clerk instances. Resolve the conflict before configuring the app."
+            : "The effective publishable-key source is malformed. Replace it before relying on Clerk.configure(...)."
+          : directConfigBlocked
+            ? `Automatic direct configuration stopped because the selected Swift startup source is not safe to edit: ${directConfigBlocker ?? "Review the selected target's @main App initializer and root Scene manually."}`
+            : configured
+              ? sourceEntryPointIsAmbiguous
+                ? "A Clerk.configure(...) call is present, but multiple @main entry points make startup ownership ambiguous. Confirm which entry point ships."
+                : configureCallConnectedToRuntime
+                  ? runtimeKeySource === "inline-literal"
+                    ? "Clerk is configured directly in the selected target's @main initializer with a valid publishable key. The value is intentionally redacted from this plan."
+                    : "A Clerk.configure(...) call is connected to a recognized selected-target runtime key loader. The key expression and value are intentionally redacted from this plan."
+                  : usablePublishableKey
+                    ? runtimeKeySource === "available-only"
+                      ? "A usable publishable key is available to copy, but the app is not proven to load it at runtime. Configure Clerk directly in the selected target's @main App initializer, or repair the app's existing runtime loader if it intentionally uses one."
+                      : "A selected-target runtime publishable key is present, but the Clerk.configure(...) expression could not be connected to its loader. Confirm the wiring manually; the expression and value are intentionally redacted."
+                    : "A Clerk.configure(...) call is present, but the inspector could not validate a usable selected-target runtime key source. Confirm the runtime value manually; the expression is intentionally redacted."
+              : !target.swift.evidenceComplete
+                ? "No Clerk.configure(...) call was found in the safely inspected source subset. Complete source membership inspection or confirm startup setup manually."
+                : inspection.localPublishableKey.conflict
+                  ? "Available publishable-key candidates point to different Clerk instances. Choose the intended development instance and call Clerk.configure(publishableKey:) directly in the selected target's @main App initializer."
+                  : inspection.localPublishableKey.invalidSources.length > 0
+                    ? "The available publishable-key candidate is malformed. Replace it with the intended development key and call Clerk.configure(publishableKey:) directly in the selected target's @main App initializer."
+                    : inspection.localPublishableKey.found
+                      ? "A local publishable key is available, but it is not proven to configure this target. New projects should call Clerk.configure(publishableKey:) directly in the selected target's @main App initializer; the plan will never print the key."
+                      : directConfigAutomationReady
+                        ? `clerk init can add Clerk.configure(publishableKey:) directly to ${options.directConfigPlan?.sourcePath ?? "the single shipping @main App initializer"} with the selected application's development key. The preview and result keep the value redacted.`
+                        : "Select a Clerk application and call Clerk.configure(publishableKey:) with its development publishable key directly in the selected target's @main App initializer.",
+      target.swift.configureCalls,
+      undefined,
+      runtimeKeyAutomationReady || directConfigAutomationReady,
+    ),
+  );
+
+  const injected = target.swift.environmentInjections.length > 0;
+  const requiresSwiftUIEnvironment =
+    target.swift.environmentConsumers.length > 0 || includeClerkKitUI || directConfigPlanApplies;
+  const directEnvironmentAutomationReady =
+    directConfigPlanApplies &&
+    options.directConfigPlan?.status === "ready" &&
+    options.directConfigPlan.changes?.environment === "insert";
+  const directEnvironmentBlocked = !injected && requiresSwiftUIEnvironment && directConfigBlocked;
+  const injectedStatus: IOSSetupStepStatus = injected
+    ? sourceEntryPointIsAmbiguous
+      ? "review"
+      : "satisfied"
+    : directEnvironmentBlocked
+      ? "blocked"
+      : target.swift.evidenceComplete && requiresSwiftUIEnvironment
+        ? "required"
+        : "review";
+  steps.push(
+    step(
+      "inject-clerk-environment",
+      "Inject Clerk into the SwiftUI environment",
+      injectedStatus,
+      injected
+        ? sourceEntryPointIsAmbiguous
+          ? "Clerk.shared is injected, but multiple @main entry points make the shipping root ambiguous."
+          : "Clerk.shared is injected into SwiftUI."
+        : directEnvironmentBlocked
+          ? `Automatic SwiftUI environment injection stopped because the selected startup source is not safe to edit: ${directConfigBlocker ?? "Review the selected target's WindowGroup root manually."}`
+          : target.swift.evidenceComplete && requiresSwiftUIEnvironment
+            ? directEnvironmentAutomationReady
+              ? `clerk init can add \`.environment(Clerk.shared)\` to the proven WindowGroup root in ${options.directConfigPlan?.sourcePath ?? "the single shipping @main App source"}.`
+              : "At the app's root view, add `.environment(Clerk.shared)` so Clerk-aware views receive the configured client."
+            : requiresSwiftUIEnvironment
+              ? "Clerk.shared injection was not found in the safely inspected source subset. Confirm the shipping root manually."
+              : "No target source was found consuming Clerk from SwiftUI's environment. Add `.environment(Clerk.shared)` only if AuthView or an `@Environment(Clerk.self)` view needs it.",
+      target.swift.environmentInjections,
+      undefined,
+      directEnvironmentAutomationReady,
+    ),
+  );
+
+  const handlesURLs = target.swift.openURLHandlers.length > 0;
+  const selectedPrebuiltAuthReady =
+    options.prebuiltAuthSelected === true &&
+    options.prebuiltAuthPlan?.status === "ready" &&
+    !strictSDKBlocked;
+  const prebuiltAuthHandlesItsOwnCallbacks =
+    selectedPrebuiltAuthReady || options.prebuiltAuthPlan?.status === "satisfied";
+  steps.push(
+    step(
+      "wire-auth-callbacks",
+      "Wire authentication callbacks",
+      handlesURLs && !sourceEntryPointIsAmbiguous
+        ? "satisfied"
+        : prebuiltAuthHandlesItsOwnCallbacks && !sourceEntryPointIsAmbiguous
+          ? "satisfied"
+          : "review",
+      handlesURLs
+        ? "An onOpenURL handler forwards redirect URLs to Clerk."
+        : prebuiltAuthHandlesItsOwnCallbacks
+          ? "ClerkKitUI's AuthView handles its callback lifecycle while presented, so this quickstart flow does not need generated app-level callback code."
+          : "For redirect-based authentication launched outside AuthView, verify that the app forwards incoming URLs to Clerk.",
+      target.swift.openURLHandlers,
+      undefined,
+      false,
+    ),
+  );
+
+  const bundleIdentifiers = distinctResolved(
+    target,
+    (configuration) => configuration.bundleIdentifier,
+  );
+  const appPrefixes = [
+    ...new Set(
+      target.configurations
+        .map((configuration) => configuration.entitlements?.literalAppIdentifierPrefix)
+        .filter((value): value is string => value != null),
+    ),
+  ].sort();
+  const registrationBlocked =
+    target.configurations.length === 0 ||
+    target.configurations.some(
+      (configuration) => configuration.bundleIdentifier.state !== "resolved",
+    ) ||
+    bundleIdentifiers.length !== 1;
+  steps.push(
+    step(
+      "register-native-application",
+      "Register the iOS app in Clerk Dashboard",
+      registrationBlocked ? "blocked" : "review",
+      registrationBlocked
+        ? "A single Bundle ID could not be resolved across build configurations. Make it explicit or consistent before registering the app."
+        : appPrefixes.length === 1
+          ? `The source entitlements contain the literal App ID Prefix candidate ${appPrefixes[0]} for ${bundleIdentifiers[0]}. Confirm it in Apple Developer, then verify the app is registered and Native API is enabled. Dashboard state is not changed or assumed by dry-run.`
+          : `Verify that ${bundleIdentifiers[0]} is registered and Native API is enabled. Supply the Apple App ID Prefix from the Developer portal; DEVELOPMENT_TEAM is not assumed to be the prefix.`,
+      allEvidence(target, (configuration) => configuration.bundleIdentifier),
+      [{ kind: "dashboard", url: NATIVE_APPLICATIONS_URL }],
+    ),
+  );
+
+  if (options.appleEntitlementPlan) {
+    const appleStatus: IOSSetupStepStatus =
+      options.appleEntitlementPlan.status === "ready"
+        ? "required"
+        : options.appleEntitlementPlan.status === "satisfied"
+          ? "satisfied"
+          : "blocked";
+    const description =
+      options.appleEntitlementPlan.status === "ready"
+        ? "Add the native Sign in with Apple entitlement with the exact Default value. After authentication, clerk init will separately audit and enable the matching Clerk Apple connection without requesting hosted/web Apple credentials."
+        : options.appleEntitlementPlan.status === "satisfied"
+          ? "The selected target has the exact native Sign in with Apple entitlement. Regular clerk init will verify the matching Clerk Apple connection after authentication."
+          : `Native Sign in with Apple needs review: ${options.appleEntitlementPlan.blockers.map((item) => item.message).join(" ")}`;
+    steps.push(
+      step(
+        "enable-native-apple",
+        "Enable native Sign in with Apple",
+        appleStatus,
+        description,
+        target.configurations.flatMap((configuration) => configuration.entitlementsPath.evidence),
+        [{ kind: "documentation", url: NATIVE_APPLE_URL }],
+        options.appleEntitlementPlan.status === "ready",
+      ),
+    );
+  }
+
+  const expectedDomain = inspection.localPublishableKey.frontendApiHost
+    ? `webcredentials:${inspection.localPublishableKey.frontendApiHost}`
+    : undefined;
+  const expectedDomainIsSelectedTargetRuntime =
+    runtimeKeySource === "inline-literal" ||
+    runtimeKeySource === "run-scheme" ||
+    runtimeKeySource === "local-secrets";
+  const entitlements = target.configurations
+    .map((configuration) => configuration.entitlements)
+    .filter((value) => value != null);
+  const allEntitlementsPresent =
+    entitlements.length === target.configurations.length && entitlements.length > 0;
+  const domainPresent =
+    expectedDomain != null &&
+    allEntitlementsPresent &&
+    entitlements.every((value) =>
+      value.associatedDomains.some((domain) => associatedDomainMatches(domain, expectedDomain)),
+    );
+  const hasUnresolvedAssociatedDomains = entitlements.some(
+    (value) => value.unresolvedAssociatedDomains.length > 0,
+  );
+  const associatedDomainPlan = options.associatedDomainPlan;
+  const associatedDomainStatus: IOSSetupStepStatus =
+    associatedDomainPlan?.status === "ready"
+      ? "required"
+      : associatedDomainPlan?.status === "satisfied"
+        ? "satisfied"
+        : associatedDomainPlan?.status === "blocked"
+          ? "review"
+          : expectedDomain && !expectedDomainIsSelectedTargetRuntime
+            ? "review"
+            : domainPresent
+              ? "satisfied"
+              : expectedDomain && allEntitlementsPresent && hasUnresolvedAssociatedDomains
+                ? "review"
+                : expectedDomain
+                  ? "required"
+                  : "blocked";
+  const associatedDomainDescription =
+    associatedDomainPlan?.status === "ready"
+      ? associatedDomainPlan.expectedDomain
+        ? associatedDomainPlan.missingEntitlementsSettings
+          ? `Create and attach ${associatedDomainPlan.files[0]?.path ?? "an entitlements file"} only to iPhone and iPad builds, then add ${associatedDomainPlan.expectedDomain}. clerk init can apply this safely.`
+          : `Add ${associatedDomainPlan.expectedDomain} to every selected-target entitlements configuration. clerk init can apply the exact existing-file edits safely.`
+        : associatedDomainPlan.missingEntitlementsSettings
+          ? `The selected target has one safe synchronized destination for a new entitlements file. clerk init will create and attach it only to iPhone and iPad builds, then add the linked development application's exact webcredentials host without exposing the publishable key.`
+          : "The existing selected-target entitlements files are safe to edit. clerk init will derive the exact webcredentials host from the linked development application after authentication and add it without exposing the publishable key."
+      : associatedDomainPlan?.status === "blocked"
+        ? `Automatic Associated Domains setup needs review: ${associatedDomainPlan.blockers.map((blocker) => blocker.message).join(" ")}`
+        : expectedDomain && !expectedDomainIsSelectedTargetRuntime
+          ? domainPresent
+            ? `${expectedDomain} matches every inspected entitlements configuration, but the key is only available to copy and is not proven to be the selected target's runtime key. Confirm the runtime key before treating this domain as final.`
+            : `The available key candidate maps to ${expectedDomain}, but it is not proven to be the selected target's runtime key. Wire or confirm the runtime key before adding its Associated Domain.`
+          : domainPresent
+            ? `${expectedDomain} is present in every inspected entitlements configuration.`
+            : expectedDomain
+              ? allEntitlementsPresent && hasUnresolvedAssociatedDomains
+                ? `Some associated-domain values use unresolved build settings. Confirm they expand to ${expectedDomain} in every selected-target configuration.`
+                : `Enable Associated Domains for ${target.name} and add ${expectedDomain} to every selected-target entitlements configuration.`
+              : inspection.localPublishableKey.conflict
+                ? "Local publishable-key sources point at different Clerk instances, so the associated domain cannot be chosen safely. Resolve the key conflict and rerun this plan."
+                : "A valid local publishable key is needed to derive the exact `webcredentials:` Frontend API host. Add the key, then rerun this plan.";
+  steps.push(
+    step(
+      "add-associated-domain",
+      "Add Clerk's associated domain",
+      associatedDomainStatus,
+      associatedDomainDescription,
+      target.configurations.flatMap((configuration) => configuration.entitlementsPath.evidence),
+      undefined,
+      associatedDomainPlan?.status === "ready",
+    ),
+  );
+
+  const hasAuthFlow = target.swift.authFlowReferences.length > 0;
+  const prebuiltAuthReady = options.prebuiltAuthPlan?.status === "ready" && !strictSDKBlocked;
+  const prebuiltAuthSatisfied = options.prebuiltAuthPlan?.status === "satisfied";
+  const selectedPrebuiltAuthBlocked =
+    options.prebuiltAuthSelected === true &&
+    (options.prebuiltAuthPlan?.status === "blocked" || strictSDKBlocked);
+  const authFlowStatus: IOSSetupStepStatus = selectedPrebuiltAuthBlocked
+    ? "blocked"
+    : hasAuthFlow || prebuiltAuthSatisfied
+      ? sourceEntryPointIsAmbiguous
+        ? "review"
+        : "satisfied"
+      : prebuiltAuthReady
+        ? "required"
+        : target.swift.evidenceComplete
+          ? "required"
+          : "review";
+  steps.push(
+    step(
+      "add-authentication-flow",
+      "Add an authentication flow",
+      authFlowStatus,
+      selectedPrebuiltAuthBlocked
+        ? `The prebuilt AuthView scaffold was requested, but this app is not safe to rewrite automatically: ${strictSDKBlocker ?? options.prebuiltAuthPlan?.blockers.map((blocker) => blocker.message).join(" ") ?? "Review the existing signed-out route and integrate AuthView manually."} Linked AuthView providers are not inspected by this network-free local plan.`
+        : hasAuthFlow || prebuiltAuthSatisfied
+          ? sourceEntryPointIsAmbiguous
+            ? "A Clerk authentication flow is referenced, but multiple @main entry points make the shipping route ambiguous."
+            : prebuiltAuthSatisfied
+              ? "ClerkKitUI's documented UserButton entry and AuthView sheet are already configured in target source."
+              : "A Clerk authentication UI or sign-in/sign-up flow is referenced in target source."
+          : prebuiltAuthReady
+            ? options.prebuiltAuthSelected
+              ? `Add ClerkKitUI's documented UserButton entry, AuthView sheet, and image prefetching to ${options.prebuiltAuthPlan?.sourcePath ?? "the proven placeholder SwiftUI view"}. Linked AuthView providers are not inspected by this network-free local plan; regular clerk init will add or verify the local Sign in with Apple entitlement only if Apple is enabled for the linked instance.`
+              : `This target's pristine placeholder is eligible for the optional prebuilt AuthView scaffold. Run clerk init with --prebuilt-auth-ui or select it when prompted; existing application UI is never replaced automatically.`
+            : target.swift.evidenceComplete
+              ? productDecision === "core-only"
+                ? "Complete the custom ClerkKit sign-in/sign-up flow and route signed-out users to it."
+                : "Present ClerkKitUI's AuthView or build a custom ClerkKit sign-in/sign-up flow, then route signed-out users to it."
+              : "No Clerk authentication flow was found in the safely inspected source subset. Confirm the signed-out route manually.",
+      target.swift.authFlowReferences,
+      undefined,
+      prebuiltAuthReady,
+    ),
+  );
+
+  const actionable = steps.some((item) => item.status === "required" || item.status === "blocked");
+  steps.push(
+    step(
+      "verify-integration",
+      "Build and verify sign-in",
+      "review",
+      actionable
+        ? "After completing the required steps, build the selected target and verify sign-in, sign-out, app relaunch, and any redirect-based method you enabled."
+        : "The local evidence looks complete. Build the selected target and verify sign-in, sign-out, app relaunch, and any redirect-based method you enabled.",
+      targetEvidence,
+      [{ kind: "documentation", url: QUICKSTART_URL }],
+    ),
+  );
+
+  return finishPlan(inspection, steps);
+}
+
+function finishPlan(inspection: IOSProjectInspectionResult, steps: IOSSetupStep[]): IOSSetupPlan {
+  const summary: IOSSetupPlan["summary"] = {
+    satisfied: 0,
+    required: 0,
+    review: 0,
+    blocked: 0,
+  };
+  for (const item of steps) summary[item.status]++;
+  const status: IOSSetupPlan["status"] =
+    summary.blocked > 0 ? "blocked" : summary.required > 0 ? "action-required" : "ready";
+
+  return {
+    schemaVersion: 1,
+    kind: "clerk-ios-setup",
+    root: inspection.root,
+    status,
+    selection: inspection.selection,
+    summary,
+    steps,
+    diagnostics: inspection.diagnostics,
+  };
+}

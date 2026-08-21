@@ -252,6 +252,22 @@ describe("plapi", () => {
       expect(capturedHeaders?.get("Content-Type")).toBe("application/json");
     });
 
+    test("sends If-Match when a config version is supplied", async () => {
+      let capturedHeaders: Headers | undefined;
+      stubFetch(async (_input, init) => {
+        capturedHeaders = new Headers(init?.headers);
+        return new Response(JSON.stringify({}), { status: 200 });
+      });
+
+      await patchInstanceConfig(
+        "app_1",
+        "ins_1",
+        { connection_oauth_apple: { enabled: true } },
+        { ifMatch: "v1_12345678" },
+      );
+      expect(capturedHeaders?.get("If-Match")).toBe("v1_12345678");
+    });
+
     test("sends JSON body", async () => {
       let capturedBody = "";
       stubFetch(async (_input, init) => {
@@ -293,7 +309,7 @@ describe("plapi", () => {
       ],
     };
 
-    test("always sends include_secret_keys=true", async () => {
+    test("sends include_secret_keys=true by default", async () => {
       let requestedUrl = "";
       stubFetch(async (input) => {
         requestedUrl = input.toString();
@@ -304,6 +320,19 @@ describe("plapi", () => {
       const url = new URL(requestedUrl);
       expect(url.pathname).toBe("/v1/platform/applications/app_abc");
       expect(url.searchParams.get("include_secret_keys")).toBe("true");
+    });
+
+    test("omits include_secret_keys when the caller only needs public metadata", async () => {
+      let requestedUrl = "";
+      stubFetch(async (input) => {
+        requestedUrl = input.toString();
+        return new Response(JSON.stringify(mockApp), { status: 200 });
+      });
+
+      await fetchApplication("app_abc", { includeSecretKeys: false });
+      const url = new URL(requestedUrl);
+      expect(url.pathname).toBe("/v1/platform/applications/app_abc");
+      expect(url.searchParams.has("include_secret_keys")).toBe(false);
     });
 
     test("returns parsed application JSON", async () => {
