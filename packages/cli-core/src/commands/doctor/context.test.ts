@@ -135,6 +135,7 @@ describe("createDoctorContext", () => {
     });
 
     test("returns null when no token", async () => {
+      delete process.env.CLERK_PLATFORM_API_KEY;
       mockGetToken.mockResolvedValue(null);
 
       const ctx = createDoctorContext();
@@ -142,6 +143,21 @@ describe("createDoctorContext", () => {
 
       expect(result).toBeNull();
       expect(mockFetch).not.toHaveBeenCalled();
+    });
+
+    test("fetches the public application shape with a Platform API key", async () => {
+      mockGetToken.mockResolvedValue(null);
+      mockResolveProfile.mockResolvedValue({
+        path: "github.com/org/repo",
+        profile: { workspaceId: "org_1", appId: "app_1", instances: { development: "ins_dev" } },
+        resolvedVia: "remote" as const,
+      });
+      mockAppResponse = { application_id: "app_1", name: "My App", instances: [] };
+
+      const ctx = createDoctorContext();
+      expect(await ctx.getApplication()).toEqual(mockAppResponse);
+      expect(mockFetch).toHaveBeenCalledTimes(1);
+      expect(String(mockFetch.mock.calls[0]?.[0])).not.toContain("include_secret_keys");
     });
 
     test("returns null when no profile", async () => {

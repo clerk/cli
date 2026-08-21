@@ -128,6 +128,21 @@ export interface IOSNativeRemoteAPI {
   ): Promise<IOSApplication>;
 }
 
+/** GET-only Native Application API surface used by read-only diagnostics. */
+export type IOSNativeRemoteReadAPI = Pick<
+  IOSNativeRemoteAPI,
+  "getNativeSettings" | "listIOSApplications"
+>;
+
+export interface AuditIOSNativeRemoteSetupOptions {
+  applicationId: string;
+  instanceId: string;
+  /** Included by mutating init plans so their exact local target can be revalidated. */
+  root?: string;
+  target: IOSNativeReadinessTarget;
+  requestedAppIdPrefix?: string;
+}
+
 const defaultAPI: IOSNativeRemoteAPI = {
   getNativeSettings,
   enableNativeApi,
@@ -473,7 +488,7 @@ export function buildIOSNativeRemotePlan(options: {
 async function readRemoteState(
   applicationId: string,
   instanceId: string,
-  api: IOSNativeRemoteAPI,
+  api: IOSNativeRemoteReadAPI,
 ): Promise<{ nativeSettings: NativeSettings; registrations: IOSApplication[] }> {
   const [nativeSettings, registrations] = await Promise.all([
     api.getNativeSettings(applicationId, instanceId),
@@ -483,6 +498,39 @@ async function readRemoteState(
     nativeSettings: validateNativeSettings(nativeSettings),
     registrations: validateIOSApplications(registrations),
   };
+}
+
+async function readIOSNativeRemoteAudit(
+  options: AuditIOSNativeRemoteSetupOptions,
+  api: IOSNativeRemoteReadAPI,
+): Promise<{
+  plan: IOSNativeRemotePlan;
+  state: Awaited<ReturnType<typeof readRemoteState>>;
+}> {
+  const state = await readRemoteState(options.applicationId, options.instanceId, api);
+  return {
+    plan: buildIOSNativeRemotePlan({
+      applicationId: options.applicationId,
+      instanceId: options.instanceId,
+      root: options.root,
+      target: options.target,
+      requestedAppIdPrefix: options.requestedAppIdPrefix,
+      ...state,
+    }),
+    state,
+  };
+}
+
+/**
+ * Reads Native API and iOS registration state without prompting, mutating, or
+ * wrapping transport errors. The returned plan is a redacted projection of
+ * the two GET responses; raw response objects are not exposed.
+ */
+export async function auditIOSNativeRemoteSetup(
+  options: AuditIOSNativeRemoteSetupOptions,
+  api: IOSNativeRemoteReadAPI = defaultAPI,
+): Promise<IOSNativeRemotePlan> {
+  return (await readIOSNativeRemoteAudit(options, api)).plan;
 }
 
 function formatBlockers(plan: IOSNativeRemotePlan): string {
@@ -586,10 +634,22 @@ export async function prepareIOSNativeRemoteSetup(
   const api = dependencies.api ?? defaultAPI;
   const prompts = dependencies.prompts ?? defaultPrompts;
   let state: Awaited<ReturnType<typeof readRemoteState>>;
+  let plan: IOSNativeRemotePlan;
   try {
-    state = await withSpinner("Auditing Clerk Native Application settings...", async () =>
-      readRemoteState(options.applicationId, options.instanceId, api),
+    const audit = await withSpinner("Auditing Clerk Native Application settings...", async () =>
+      readIOSNativeRemoteAudit(
+        {
+          applicationId: options.applicationId,
+          instanceId: options.instanceId,
+          root: options.root,
+          target: options.target,
+          requestedAppIdPrefix: options.appIdPrefix,
+        },
+        api,
+      ),
     );
+    state = audit.state;
+    plan = audit.plan;
   } catch (error) {
     logSuppressedFailure("Could not inspect Clerk Native Application settings");
     rethrowKnownRemoteError(error);
@@ -598,15 +658,6 @@ export async function prepareIOSNativeRemoteSetup(
       ERROR_CODE.IOS_REMOTE_VERIFY_FAILED,
     );
   }
-  let plan = buildIOSNativeRemotePlan({
-    applicationId: options.applicationId,
-    instanceId: options.instanceId,
-    root: options.root,
-    target: options.target,
-    requestedAppIdPrefix: options.appIdPrefix,
-    ...state,
-  });
-
   const onlyMissingPrefix =
     plan.status === "blocked" &&
     plan.blockers.length === 1 &&
