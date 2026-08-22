@@ -147,6 +147,7 @@ async function pullKeylessKeys(
       throw new CliError(
         `The publishable key found locally doesn't belong to the application the secret key from \`${keyless.source}\` addresses. Writing this pair would leave the server trusting one app while the browser talks to another.\n` +
           `Remove the mismatched ${publishableKeyName} from your env files, or run \`clerk auth login\` to claim the intended application, then pull again.`,
+        { code: ERROR_CODE.KEY_PAIR_MISMATCH },
       );
     }
   }
