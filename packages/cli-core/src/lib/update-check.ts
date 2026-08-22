@@ -8,6 +8,7 @@ import {
   UPDATE_PACKAGE_NAME,
   UPDATE_CACHE_FILE,
 } from "./constants.ts";
+import { CliError, ERROR_CODE } from "./errors.ts";
 import { loggedFetch } from "./fetch.ts";
 import { log } from "./log.ts";
 import { CURRENT_VERSION, IS_DEV_BUILD } from "./version.ts";
@@ -106,11 +107,23 @@ export async function fetchLatestVersion(distTag: string, timeoutMs = 1500): Pro
       signal: controller.signal,
       headers: { Accept: "application/vnd.npm.install-v1+json" },
     });
-    if (!res.ok) throw new Error(`registry HTTP ${res.status}`);
+    if (!res.ok) {
+      throw new CliError(`Registry returned HTTP ${res.status}.`, {
+        code: ERROR_CODE.UPDATE_FAILED,
+      });
+    }
     const data: unknown = await res.json();
-    if (!isNpmDistTagsResponse(data)) throw new Error("unexpected registry response shape");
+    if (!isNpmDistTagsResponse(data)) {
+      throw new CliError("Unexpected response shape from the npm registry.", {
+        code: ERROR_CODE.UPDATE_FAILED,
+      });
+    }
     const version = data["dist-tags"][distTag];
-    if (!version) throw new Error(`dist-tag "${distTag}" not found`);
+    if (!version) {
+      throw new CliError(`Release channel "${distTag}" does not exist.`, {
+        code: ERROR_CODE.USAGE_ERROR,
+      });
+    }
     return version;
   } finally {
     clearTimeout(timer);

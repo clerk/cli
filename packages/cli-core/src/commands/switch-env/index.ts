@@ -16,7 +16,7 @@ import {
   isValidEnv,
   setCurrentEnv,
 } from "../../lib/environment.ts";
-import { CliError } from "../../lib/errors.ts";
+import { CliError, ERROR_CODE } from "../../lib/errors.ts";
 import { log } from "../../lib/log.ts";
 import { isHuman } from "../../mode.ts";
 import { select } from "../../lib/listage.ts";
@@ -44,6 +44,7 @@ export async function switchEnv(environmentArg: string | undefined): Promise<voi
     } else if (isHuman() && available.length > 1 && !process.stdin.isTTY) {
       throw new CliError(
         "No interactive terminal available — pass an environment name explicitly: `clerk switch-env <name>`",
+        { code: ERROR_CODE.NO_INTERACTIVE_TERMINAL },
       );
     } else if (available.length <= 1) {
       log.info(`Current environment: ${current}`);
@@ -61,6 +62,7 @@ export async function switchEnv(environmentArg: string | undefined): Promise<voi
   if (!isValidEnv(target)) {
     throw new CliError(
       `Unknown environment "${target}". Available environments: ${available.join(", ")}`,
+      { code: ERROR_CODE.INVALID_ENVIRONMENT },
     );
   }
 
