@@ -97,6 +97,7 @@ mock.module("../../lib/autoclaim.ts", () => ({
 }));
 
 const { setLogLevel } = await import("../../lib/log.ts");
+const telemetryMod = await import("../../lib/telemetry.ts");
 const { login } = await import("./login.ts");
 
 describe("login", () => {
@@ -608,5 +609,56 @@ describe("login", () => {
     await runLogin({ showNextSteps: false });
 
     expect(captured.err).not.toContain("Next steps:");
+  });
+
+  describe("telemetry stages", () => {
+    function trackStages() {
+      const stage = spyOn(telemetryMod, "setTelemetryStage");
+      return {
+        calls: () => stage.mock.calls.map((call) => call[0]),
+        restore: () => stage.mockRestore(),
+      };
+    }
+
+    test("a completed login reports the terminal stage", async () => {
+      mockGetValidToken.mockResolvedValue(null);
+      mockOAuthSuccess();
+      const stages = trackStages();
+
+      await runLogin();
+
+      expect(stages.calls().at(-1)).toBe("done");
+      stages.restore();
+    });
+
+    // The browser wait is where the flow is known to lose people; a run that
+    // stops there must be attributable to that step and no other.
+    test("a login abandoned during the browser wait stops at awaiting_callback", async () => {
+      mockGetValidToken.mockResolvedValue(null);
+      mockBunSpawn();
+      mockStartAuthServer.mockReturnValue({
+        port: 54321,
+        waitForCallback: mock().mockRejectedValue(new Error("Authentication timed out.")),
+        stop: mock(),
+      });
+      const stages = trackStages();
+
+      await expect(runLogin()).rejects.toThrow("Authentication timed out");
+
+      expect(stages.calls().at(-1)).toBe("awaiting_callback");
+      stages.restore();
+    });
+
+    test("a failure exchanging the code stops at token_exchange", async () => {
+      mockGetValidToken.mockResolvedValue(null);
+      mockOAuthSuccess();
+      mockExchangeCodeForToken.mockRejectedValue(new Error("exchange failed"));
+      const stages = trackStages();
+
+      await expect(runLogin()).rejects.toThrow("exchange failed");
+
+      expect(stages.calls().at(-1)).toBe("token_exchange");
+      stages.restore();
+    });
   });
 });

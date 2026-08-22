@@ -25,6 +25,7 @@ import { attemptAutoclaim, type AutoclaimResult } from "../../lib/autoclaim.ts";
 import { openBrowser } from "../../lib/open.ts";
 import { cyan, dim } from "../../lib/color.ts";
 import { log } from "../../lib/log.ts";
+import { setTelemetryStage } from "../../lib/telemetry.js";
 import { ensureFirstApplication } from "../../lib/first-application.ts";
 
 interface LoginOptions {
@@ -92,6 +93,7 @@ async function performOAuthFlow(): Promise<OAuthFlowResult> {
   const timeoutMinutes = Math.round(AUTH_TIMEOUT_MS / 60_000);
   log.info(`Waiting for authentication (timeout in ${timeoutMinutes}m)...`);
 
+  setTelemetryStage("awaiting_callback");
   const { code } = await withSpinner("Waiting for authentication...", async () =>
     authServer.waitForCallback().catch((error: unknown) => {
       authServer.stop();
@@ -113,6 +115,7 @@ async function performOAuthFlow(): Promise<OAuthFlowResult> {
     log.debug(`credentials: could not read outgoing session — ${errorMessage(error)}`);
   }
 
+  setTelemetryStage("token_exchange");
   const tokenResponse = await withSpinner("Completing authentication...", async () =>
     exchangeCodeForToken({
       code,
@@ -121,6 +124,7 @@ async function performOAuthFlow(): Promise<OAuthFlowResult> {
     }),
   );
 
+  setTelemetryStage("store");
   await storeToken(createOAuthSession(tokenResponse));
 
   const userInfo = await fetchUserInfo(tokenResponse.access_token);
@@ -132,11 +136,13 @@ async function performOAuthFlow(): Promise<OAuthFlowResult> {
 export async function login(options: LoginOptions = {}): Promise<UserInfo> {
   const { showNextSteps = true, yes } = options;
   intro("Signing in");
+  setTelemetryStage("session_check");
   const existingSession = await withSpinner("Checking session...", async () =>
     getExistingSession(),
   );
 
   if (existingSession && !isHuman()) {
+    setTelemetryStage("done");
     log.success(`Logged in as ${existingSession.email}`);
     const claimResult = await handleAutoclaim(process.cwd());
     if (showNextSteps) {
@@ -183,6 +189,7 @@ export async function login(options: LoginOptions = {}): Promise<UserInfo> {
   await withSpinner("Setting up your default application...", async () => ensureFirstApplication());
 
   bar();
+  setTelemetryStage("done");
   log.success(`Logged in as ${userInfo.email}`);
 
   const claimResult = await handleAutoclaim(process.cwd());

@@ -48,10 +48,12 @@ export type TelemetryResult = {
  * instead of silently splitting the funnel into two buckets in the warehouse,
  * and so no interpolated value (a path, a project name) can reach the payload.
  *
- * Declared in execution order: this is the funnel, so a new stage goes where it
- * runs, not at the end. `already_set_up` is a terminal branch off `scaffold`.
+ * Declared in execution order, grouped per command: each group is that
+ * command's funnel, so a new stage goes where it runs, not at the end.
+ * `already_set_up` is a terminal branch off `scaffold`.
  */
 export type TelemetryStage =
+  // `clerk init`
   | "flags"
   | "detect"
   | "bootstrap"
@@ -62,6 +64,12 @@ export type TelemetryStage =
   | "already_set_up"
   | "keys"
   | "skills"
+  // `clerk auth login`
+  | "session_check"
+  | "awaiting_callback"
+  | "token_exchange"
+  | "store"
+  // shared terminal marker
   | "done";
 
 /** Structural slice of Commander's Command — avoids its generic types. */
