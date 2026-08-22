@@ -1,7 +1,7 @@
 import type { Program } from "../../cli-program.ts";
 import { isAgent, isHuman } from "../../mode.ts";
 import { green, cyan, yellow, dim } from "../../lib/color.ts";
-import { CliError } from "../../lib/errors.ts";
+import { CliError, ERROR_CODE } from "../../lib/errors.ts";
 import {
   asdfPluginFromPath,
   asdfReshim,
@@ -134,12 +134,18 @@ async function runGlobalInstall(
     const stderr = result.stderr.toString();
     const hint = globalInstallCommand(installer, packageSpec);
     if (stderr.includes("EACCES") || stderr.includes("permission denied")) {
-      throw new CliError(`Permission denied. Try: sudo ${hint}`);
+      throw new CliError(`Permission denied. Try: sudo ${hint}`, {
+        code: ERROR_CODE.UPDATE_PERMISSION_DENIED,
+      });
     }
     if (result.exitCode === 127 || stderr.includes("not found")) {
-      throw new CliError(`${installer} not found on PATH.`);
+      throw new CliError(`${installer} not found on PATH.`, {
+        code: ERROR_CODE.INSTALLER_NOT_FOUND,
+      });
     }
-    throw new CliError(`Update failed: ${stderr.trim() || "unknown error"}`);
+    throw new CliError(`Update failed: ${stderr.trim() || "unknown error"}`, {
+      code: ERROR_CODE.UPDATE_FAILED,
+    });
   }
 
   // Homebrew installs whatever version its tap currently publishes, ignoring
@@ -154,6 +160,7 @@ async function runGlobalInstall(
         `Homebrew tap is stale: installed ${installed}, expected ${targetVersion}. ` +
           `Update via another installer (e.g. \`npm install -g ${packageSpec}\`) ` +
           `or wait for the tap to catch up.`,
+        { code: ERROR_CODE.UPDATE_FAILED },
       );
     }
   }
@@ -262,9 +269,17 @@ export async function update(options: UpdateOptions): Promise<void> {
   if (isHuman()) intro("Checking for updates");
 
   const [latest, installDirs] = await Promise.all([
-    withSpinner("Checking for updates...", async () => fetchLatestVersion(channel)).catch(() => {
-      throw new CliError("Could not reach npm registry. Check your network connection.");
-    }),
+    withSpinner("Checking for updates...", async () => fetchLatestVersion(channel)).catch(
+      (error: unknown) => {
+        // A registry that answered — badly, or without the requested channel —
+        // already carries its own code. Only transport and timeout failures are
+        // genuinely "unreachable", and retrying is only right for those.
+        if (error instanceof CliError) throw error;
+        throw new CliError("Could not reach npm registry. Check your network connection.", {
+          code: ERROR_CODE.REGISTRY_UNREACHABLE,
+        });
+      },
+    ),
     getInstallerPackageDirs(),
   ]);
 

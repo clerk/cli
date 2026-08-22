@@ -5,7 +5,13 @@ import { link } from "../link/index.js";
 import { pull } from "../env/pull.js";
 import { isAgent } from "../../mode.js";
 import { dim, bold } from "../../lib/color.js";
-import { throwUserAbort, throwUsageError, CliError, errorMessage } from "../../lib/errors.js";
+import {
+  throwUserAbort,
+  throwUsageError,
+  CliError,
+  ERROR_CODE,
+  errorMessage,
+} from "../../lib/errors.js";
 import {
   lookupFramework,
   isNpmFramework,
@@ -15,6 +21,7 @@ import {
 import { resolveProfile } from "../../lib/config.js";
 import { deriveProjectName } from "../../lib/project-name.js";
 import { log } from "../../lib/log.js";
+import { setTelemetryStage } from "../../lib/telemetry.js";
 import { confirm } from "../../lib/prompts.ts";
 import {
   createAccountlessApp,
@@ -81,6 +88,7 @@ export async function init(options: InitOptions = {}) {
   const cwd = process.cwd();
   const agent = isAgent();
 
+  setTelemetryStage("flags");
   await assertUsableFlags(options, agent);
 
   const frameworkOverride = options.framework
@@ -96,6 +104,7 @@ export async function init(options: InitOptions = {}) {
 
   intro("Setting up Clerk");
 
+  setTelemetryStage("detect");
   const resolved = options.starter
     ? await handleStarter(cwd, frameworkOverride, overrides)
     : await resolveProjectContext(cwd, frameworkOverride, overrides);
@@ -119,6 +128,7 @@ export async function init(options: InitOptions = {}) {
   // stale/broken credential ends up blocked on an interactive browser OAuth
   // round-trip it can never complete. So agent mode validates the credential
   // (it can fall back to keyless) instead of trusting mere presence.
+  setTelemetryStage("strategy");
   const authed = optsKeyless
     ? false
     : agent
@@ -141,6 +151,7 @@ export async function init(options: InitOptions = {}) {
   assertKeylessOnlyFlags(options, strategy);
 
   if (strategy === "authenticate") {
+    setTelemetryStage("link");
     bar();
     const createIfMissing = agent
       ? await deriveProjectName(ctx.cwd, bootstrap?.projectName)
@@ -156,6 +167,7 @@ export async function init(options: InitOptions = {}) {
   const { alreadySetUp } = await detectAndInstall(ctx.cwd, ctx, skipScaffoldConfirm);
 
   if (alreadySetUp) {
+    setTelemetryStage("already_set_up");
     log.success("\nClerk is already set up in this project.");
     if (agent && strategy === "manual") {
       printBootstrapManualSetupInfo(ctx.framework);
@@ -164,6 +176,7 @@ export async function init(options: InitOptions = {}) {
     return;
   }
 
+  setTelemetryStage("keys");
   bar();
   await runStrategy(strategy, ctx, {
     template: options.template,
@@ -173,6 +186,7 @@ export async function init(options: InitOptions = {}) {
 
   // Native platforms (iOS/Android) have no npx/Node toolchain to run `skills add` with.
   if (options.skills !== false && isNpmFramework(ctx.framework)) {
+    setTelemetryStage("skills");
     bar();
     await installSkills(ctx.cwd, ctx.framework.dep, ctx.packageManager, overrides.skipConfirm);
   }
@@ -183,6 +197,7 @@ export async function init(options: InitOptions = {}) {
     printBootstrapNextSteps(bootstrap, strategy === "keyless");
   }
 
+  setTelemetryStage("done");
   await outro("Done");
 }
 
@@ -275,11 +290,14 @@ async function bootstrapAndDetect(
   frameworkOverride: FrameworkInfo | undefined,
   overrides: BootstrapOverrides,
 ): Promise<ResolvedContext> {
+  setTelemetryStage("bootstrap");
   const bootstrap = await promptAndBootstrap(cwd, frameworkOverride, overrides);
 
   const ctx = await gatherContext(bootstrap.projectDir);
   if (!ctx) {
-    throw new CliError("Project generation did not produce a detectable framework.");
+    throw new CliError("Project generation did not produce a detectable framework.", {
+      code: ERROR_CODE.FRAMEWORK_UNDETECTED,
+    });
   }
   return { ctx, bootstrap };
 }
@@ -289,6 +307,7 @@ async function handleStarter(
   frameworkOverride: FrameworkInfo | undefined,
   overrides: BootstrapOverrides,
 ): Promise<ResolvedContext> {
+  setTelemetryStage("bootstrap");
   if (!overrides.skipConfirm) {
     await confirmOverwrite(cwd);
   }
@@ -323,6 +342,7 @@ async function resolveProjectContext(
   if (!isBlank) {
     throw new CliError(
       `Could not detect a framework. Install the appropriate Clerk SDK manually: https://clerk.com/docs`,
+      { code: ERROR_CODE.FRAMEWORK_UNDETECTED },
     );
   }
 
@@ -559,11 +579,13 @@ async function detectAndInstall(
   if (ctx.existingClerk) {
     log.info(dim(`${ctx.framework.sdk} is already installed`));
   } else if (isNpmFramework(ctx.framework)) {
+    setTelemetryStage("install");
     await installSdk(ctx);
   }
   // Non-npm ecosystems (Swift Package Manager, Gradle) can't be installed by a
   // package manager here — the framework's scaffold plan prints install steps.
 
+  setTelemetryStage("scaffold");
   return scaffoldAndWrite(cwd, ctx, skipConfirm);
 }
 

@@ -187,6 +187,7 @@ async function startNewDeploy(ctx: DeployContext): Promise<void> {
     throw new CliError(
       "Production instance was created but Clerk did not return a domain. " +
         "Run `clerk deploy` again to retry domain provisioning.",
+      { code: ERROR_CODE.DEPLOY_DOMAIN_MISSING },
     );
   }
 

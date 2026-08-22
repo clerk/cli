@@ -78,6 +78,32 @@ export const ERROR_CODE = {
   MCP_CLIENT_CLI_NOT_FOUND: "mcp_client_cli_not_found",
   /** The target client's own CLI exited non-zero or timed out while registering/removing the entry. */
   MCP_CLIENT_CLI_FAILED: "mcp_client_cli_failed",
+  /** No supported framework could be detected in the target directory. */
+  FRAMEWORK_UNDETECTED: "framework_undetected",
+  /** The detected framework has no `clerk init` bootstrap generator. */
+  BOOTSTRAP_UNSUPPORTED: "bootstrap_unsupported",
+  /** A third-party generator (create-next-app et al) failed or produced nothing. */
+  GENERATOR_FAILED: "generator_failed",
+  /** The target project directory is already taken. */
+  PROJECT_DIR_EXISTS: "project_dir_exists",
+  /** Self-update failed for a reason the installer didn't attribute. */
+  UPDATE_FAILED: "update_failed",
+  /** Self-update needs elevated permissions. */
+  UPDATE_PERMISSION_DENIED: "update_permission_denied",
+  /** The installer that owns this binary isn't on PATH. */
+  INSTALLER_NOT_FOUND: "installer_not_found",
+  /** The npm registry was unreachable. */
+  REGISTRY_UNREACHABLE: "registry_unreachable",
+  /** Production instance was created but came back without a domain. */
+  DEPLOY_DOMAIN_MISSING: "deploy_domain_missing",
+  /** Local publishable key and secret key address different applications. */
+  KEY_PAIR_MISMATCH: "key_pair_mismatch",
+  /** BAPI returned a response the CLI could not use. */
+  BAPI_UNEXPECTED_RESPONSE: "bapi_unexpected_response",
+  /** The command needs a TTY that isn't available. */
+  NO_INTERACTIVE_TERMINAL: "no_interactive_terminal",
+  /** Named environment isn't configured. */
+  INVALID_ENVIRONMENT: "invalid_environment",
 } as const;
 
 export type ErrorCode = (typeof ERROR_CODE)[keyof typeof ERROR_CODE];

@@ -19,7 +19,10 @@ import {
   skillsMod,
   bootstrapMod,
   nextStepsMod,
+  mockExistingProject,
+  mockMiddlewareScaffold,
 } from "../../test/lib/init-harness.ts";
+import * as telemetryMod from "../../lib/telemetry.ts";
 import { init } from "./index.ts";
 
 describe("init", () => {
@@ -582,6 +585,87 @@ describe("init", () => {
       skipIfLinked: true,
       app: undefined,
       cwd: FAKE_BOOTSTRAP.projectDir,
+    });
+  });
+
+  describe("telemetry stages", () => {
+    /** Spy registered with the harness so its calls reset between tests. */
+    function trackStages() {
+      const stage = spyOn(telemetryMod, "setTelemetryStage");
+      track(stage);
+      return () => stage.mock.calls.map((call) => call[0]);
+    }
+
+    test("a completed run reports the terminal stage", async () => {
+      setup({ email: "test@test.com" });
+      mockExistingProject(FAKE_CTX);
+      mockMiddlewareScaffold();
+      const stages = trackStages();
+
+      await init({ yes: true });
+
+      expect(stages().at(-1)).toBe("done");
+    });
+
+    test("a run with nothing to do stops at already_set_up", async () => {
+      setup({ email: "test@test.com" });
+      mockExistingProject(FAKE_CTX);
+      const stages = trackStages();
+
+      await init({ yes: true });
+
+      expect(stages().at(-1)).toBe("already_set_up");
+    });
+
+    // A run that dies in flag validation must not claim any later stage —
+    // that's what makes the funnel readable.
+    test("a rejected flag combination stops at the flags stage", async () => {
+      setup({ email: "test@test.com" });
+      const stages = trackStages();
+
+      await expect(init({ keyless: true, login: true })).rejects.toThrow();
+
+      expect(stages()).toEqual(["flags"]);
+    });
+
+    test("declining the scaffold preview stops at the scaffold stage", async () => {
+      setup({ email: "test@test.com" });
+      mockExistingProject(FAKE_CTX);
+      mockMiddlewareScaffold();
+      track(spyOn(previewMod, "previewAndConfirm").mockResolvedValue(false));
+      const stages = trackStages();
+
+      await expect(init({})).rejects.toThrow();
+
+      expect(stages().at(-1)).toBe("scaffold");
+    });
+
+    // Declining the overwrite prompt is the default answer on --starter, so it
+    // is a common drop-off — and it happens before bootstrapAndDetect runs.
+    test("declining the starter overwrite prompt stops at the bootstrap stage", async () => {
+      setup({ email: "test@test.com" });
+      spyOn(context, "gatherContext").mockResolvedValue(FAKE_CTX);
+      spyOn(config, "resolveProfile").mockResolvedValue({ profile: { appId: "app_123" } } as never);
+      track(
+        spyOn(bootstrapMod, "confirmOverwrite").mockRejectedValue(
+          Object.assign(new Error(), { name: "UserAbortError" }),
+        ),
+      );
+      const stages = trackStages();
+
+      await expect(init({ starter: true })).rejects.toMatchObject({ name: "UserAbortError" });
+
+      expect(stages().at(-1)).toBe("bootstrap");
+    });
+
+    test("a failure inside the generator stops at the bootstrap stage", async () => {
+      setup();
+      track(spyOn(bootstrapMod, "promptAndBootstrap").mockRejectedValue(new Error("gen failed")));
+      const stages = trackStages();
+
+      await expect(init({})).rejects.toThrow();
+
+      expect(stages().at(-1)).toBe("bootstrap");
     });
   });
 });
