@@ -70,6 +70,11 @@ export async function linkProject(projectDir: string, configDir: string): Promis
     .env({
       CLERK_CONFIG_DIR: configDir,
       CLERK_PLATFORM_API_KEY: platformAPIKey,
+      // Named here rather than inherited: Bun's .env() replaces the
+      // environment, so the workflow-level opt-out in ci.yml does not reach
+      // this subprocess. Spreading process.env instead would leak an ambient
+      // CLERK_SECRET_KEY into a run that must resolve its own.
+      CLERK_TELEMETRY_DISABLED: "1",
     })
     .quiet()
     .nothrow();
@@ -107,6 +112,7 @@ async function runClerkInit(projectDir: string, configDir: string): Promise<void
     .env({
       CLERK_CONFIG_DIR: configDir,
       CLERK_PLATFORM_API_KEY: platformAPIKey,
+      CLERK_TELEMETRY_DISABLED: "1",
     })
     .quiet()
     .nothrow();
