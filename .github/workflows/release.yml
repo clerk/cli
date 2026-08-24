@@ -381,6 +381,7 @@ jobs:
     outputs:
       version: ${{ steps.version.outputs.version }}
       sha: ${{ steps.pr.outputs.sha }}
+      reason: ${{ steps.pr.outputs.reason }}
     steps:
       - name: React to comment
         env:
@@ -392,27 +393,32 @@ jobs:
 
       # Runs before checkout: this job executes the PR's package.json scripts
       # in the default branch's privileged context, so fork code must never be
-      # fetched. Also reject PRs that changed after the comment was posted so
-      # the reviewer approved the code that actually runs.
+      # fetched. Also reject PRs whose head commit is newer than the comment so
+      # the reviewer approved the code that actually runs. Keyed on the commit
+      # date rather than the PR's updated_at, which moves on comments/labels.
       - name: Validate PR source and freshness
         id: pr
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
           COMMENT_CREATED_AT: ${{ github.event.comment.created_at }}
+          LC_ALL: C
         run: |
           pr_json=$(gh api "repos/${GH_REPO}/pulls/${{ github.event.issue.number }}")
           sha=$(echo "$pr_json" | jq -r '.head.sha')
           head_repo=$(echo "$pr_json" | jq -r '.head.repo.full_name')
           base_repo=$(echo "$pr_json" | jq -r '.base.repo.full_name')
-          pr_updated_at=$(echo "$pr_json" | jq -r '.updated_at')
+          reject() {
+            echo "reason=$1" >> "$GITHUB_OUTPUT"
+            echo "::error::$1"
+            exit 1
+          }
           if [ "$head_repo" != "$base_repo" ]; then
-            echo "::error::Snapshots are restricted to branches within ${base_repo} (PR head: ${head_repo})."
-            exit 1
+            reject "Snapshots are restricted to branches within ${base_repo} (PR head: ${head_repo})."
           fi
-          if [[ "$pr_updated_at" > "$COMMENT_CREATED_AT" ]]; then
-            echo "::error::The PR has been updated since !snapshot was posted. Review the changes and comment !snapshot again."
-            exit 1
+          head_committed_at=$(gh api "repos/${GH_REPO}/commits/${sha}" --jq '.commit.committer.date')
+          if [[ "$head_committed_at" > "$COMMENT_CREATED_AT" ]]; then
+            reject "The PR head moved after \`!snapshot\` was posted (${sha:0:7} committed at ${head_committed_at}). Review the changes and comment \`!snapshot\` again."
           fi
           echo "sha=${sha}" >> "$GITHUB_OUTPUT"
 
@@ -481,9 +487,23 @@ jobs:
       pull-requests: write
       id-token: write
     steps:
+      # Independent of the snapshot job's check: this job mints the npm OIDC
+      # token, so it must not rely on an upstream step for the fork boundary.
+      - name: Verify PR head is not a fork
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          pr_json=$(gh api "repos/${GH_REPO}/pulls/${{ github.event.issue.number }}")
+          if [ "$(echo "$pr_json" | jq -r '.head.repo.full_name')" != "$(echo "$pr_json" | jq -r '.base.repo.full_name')" ]; then
+            echo "::error::Refusing to publish from a fork PR."
+            exit 1
+          fi
+
       - uses: actions/checkout@v7
         with:
           ref: ${{ needs.snapshot.outputs.sha }}
+          persist-credentials: false
       - uses: oven-sh/setup-bun@v2
       - uses: actions/setup-node@v7
         with:
@@ -568,10 +588,15 @@ jobs:
           GH_REPO: ${{ github.repository }}
           PR_NUMBER: ${{ github.event.issue.number }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          REASON: ${{ needs.snapshot.outputs.reason }}
         run: |
           {
             echo '## Snapshot failed'
             echo ''
-            echo "The snapshot publish workflow failed. [View the workflow run](${RUN_URL}) for details."
+            if [ -n "$REASON" ]; then
+              echo "$REASON"
+              echo ''
+            fi
+            echo "[View the workflow run](${RUN_URL}) for details."
           } > /tmp/comment-body.md
           gh pr comment "${PR_NUMBER}" --repo "${GH_REPO}" --body-file /tmp/comment-body.md
