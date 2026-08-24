@@ -1,10 +1,10 @@
 import { afterEach, describe, expect, spyOn, test } from "bun:test";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, readlink, rm, symlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { basename, join } from "node:path";
+import { basename, isAbsolute, join } from "node:path";
 import { fixtures } from "../test/e2e/fixtures.manifest.ts";
 import type { FixtureConfig } from "../test/e2e/lib/types.ts";
-import { refreshFixtures } from "./refresh-e2e-fixtures.ts";
+import { normalizeProjectSymlinks, refreshFixtures } from "./refresh-e2e-fixtures.ts";
 
 describe("react-router fixture scaffold command", () => {
   test("disables git initialization", () => {
@@ -14,12 +14,12 @@ describe("react-router fixture scaffold command", () => {
   test("pins React Router fixture packages to v7", () => {
     expect(fixtures["react-router"].packageJsonOverrides).toEqual({
       dependencies: {
-        "@react-router/node": "7.15.0",
-        "@react-router/serve": "7.15.0",
-        "react-router": "7.15.0",
+        "@react-router/node": "7.18.2",
+        "@react-router/serve": "7.18.2",
+        "react-router": "7.18.2",
       },
       devDependencies: {
-        "@react-router/dev": "7.15.0",
+        "@react-router/dev": "7.18.2",
       },
     });
   });

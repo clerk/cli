@@ -9,16 +9,16 @@
     "typecheck": "react-router typegen && tsc"
   },
   "dependencies": {
-    "@react-router/node": "7.15.0",
-    "@react-router/serve": "7.15.0",
+    "@react-router/node": "7.18.2",
+    "@react-router/serve": "7.18.2",
     "isbot": "5.2.1",
     "react": "19.2.8",
     "react-dom": "19.2.8",
-    "react-router": "7.15.0",
+    "react-router": "7.18.2",
     "@clerk/react-router": "latest"
   },
   "devDependencies": {
-    "@react-router/dev": "7.15.0",
+    "@react-router/dev": "7.18.2",
     "@tailwindcss/vite": "4.3.3",
     "@types/node": "22.20.1",
     "@types/react": "19.2.18",
