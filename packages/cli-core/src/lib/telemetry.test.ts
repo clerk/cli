@@ -6,12 +6,14 @@ import { _setConfigDir, markTelemetryNoticeShown, setTelemetryDisabled } from ".
 import {
   finalizeAndSendTelemetry,
   getTelemetryStatus,
+  setTelemetryStage,
   startCommandTelemetry,
   telemetryEnabled,
   telemetryResultForError,
   type TelemetryCommand,
+  type TelemetryResult,
 } from "./telemetry.ts";
-import { ApiError, CliError, EXIT_CODE, UserAbortError } from "./errors.ts";
+import { ApiError, CliError, ERROR_CODE, EXIT_CODE, UserAbortError } from "./errors.ts";
 import { abortInFlight, beginInterrupt, _resetInterruptState } from "./signals.ts";
 import { setLogLevel } from "./log.ts";
 import { useCaptureLog } from "../test/lib/stubs.ts";
@@ -455,6 +457,76 @@ describe("finalizeAndSendTelemetry", () => {
       await finalizeAndSendTelemetry({ outcome: "success", exitCode: 0 });
       expect(called).toBe(1);
       expect(captured.err).not.toContain("usage telemetry");
+    });
+  });
+
+  describe("stage", () => {
+    /** Captures the payload of the single event a finalize call sends. */
+    async function sendAndCapturePayload(
+      run: () => void | Promise<void>,
+      result: TelemetryResult,
+    ): Promise<Record<string, unknown>> {
+      await markTelemetryNoticeShown(); // past the grace run — reach the send path
+      process.env.CLERK_TELEMETRY_URL = "https://capture.invalid/v1/event";
+      let sent: string | undefined;
+      globalThis.fetch = (async (_url: unknown, init: { body?: string }) => {
+        sent = init.body;
+        return new Response("{}");
+      }) as unknown as typeof fetch;
+
+      startCommandTelemetry(fakeCommand());
+      await run();
+      await finalizeAndSendTelemetry(result);
+
+      expect(sent).toBeDefined();
+      const parsed = JSON.parse(sent as string) as {
+        events: { payload: Record<string, unknown> }[];
+      };
+      return parsed.events[0]!.payload;
+    }
+
+    test("reports the furthest stage reached on success", async () => {
+      const payload = await sendAndCapturePayload(
+        () => {
+          setTelemetryStage("detect");
+          setTelemetryStage("scaffold");
+          setTelemetryStage("done");
+        },
+        { outcome: "success", exitCode: 0 },
+      );
+      expect(payload.stage).toBe("done");
+    });
+
+    test("reports where an error stopped the command", async () => {
+      const payload = await sendAndCapturePayload(
+        () => {
+          setTelemetryStage("detect");
+          setTelemetryStage("bootstrap");
+        },
+        telemetryResultForError(new CliError("boom", { code: ERROR_CODE.GENERATOR_FAILED })),
+      );
+      expect(payload.stage).toBe("bootstrap");
+      expect(payload.error_code).toBe("generator_failed");
+    });
+
+    // The whole point of stage: an abort is a drop-off, and drop-offs are only
+    // legible if you can see which step the user backed out of.
+    test("reports the stage on abort", async () => {
+      const payload = await sendAndCapturePayload(
+        () => setTelemetryStage("scaffold"),
+        telemetryResultForError(new UserAbortError()),
+      );
+      expect(payload.outcome).toBe("abort");
+      expect(payload.stage).toBe("scaffold");
+    });
+
+    test("stage is null when the command never sets one", async () => {
+      const payload = await sendAndCapturePayload(() => {}, { outcome: "success", exitCode: 0 });
+      expect(payload.stage).toBeNull();
+    });
+
+    test("setting a stage with no active context is a no-op", () => {
+      expect(() => setTelemetryStage("flags")).not.toThrow();
     });
   });
 });

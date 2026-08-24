@@ -4,8 +4,11 @@ import {
   getUpdateChannel,
   compareSemver,
   shouldCheckForUpdates,
+  fetchLatestVersion,
 } from "./update-check.ts";
 import * as mode from "../mode.ts";
+import * as fetchMod from "./fetch.ts";
+import { ERROR_CODE, EXIT_CODE } from "./errors.ts";
 
 // ── inferChannelFromVersion ───────────────────────────────────────────────────
 
@@ -201,5 +204,73 @@ describe("shouldCheckForUpdates", () => {
     } finally {
       spy.mockRestore();
     }
+  });
+});
+
+// ── fetchLatestVersion ────────────────────────────────────────────────────────
+
+describe("fetchLatestVersion", () => {
+  function mockRegistry(body: unknown, ok = true, status = 200) {
+    return spyOn(fetchMod, "loggedFetch").mockResolvedValue({
+      ok,
+      status,
+      json: async () => body,
+    } as Response);
+  }
+
+  afterEach(() => {
+    spyOn(fetchMod, "loggedFetch").mockRestore();
+  });
+
+  test("returns the version published under the requested channel", async () => {
+    mockRegistry({ "dist-tags": { latest: "3.2.0", canary: "3.3.0-canary.1" } });
+
+    await expect(fetchLatestVersion("canary")).resolves.toBe("3.3.0-canary.1");
+  });
+
+  // A channel that does not exist is bad input, not a broken network — telling
+  // the two apart is what stops an agent retrying a permanent failure.
+  test("a missing dist-tag is a usage error, not an unreachable registry", async () => {
+    mockRegistry({ "dist-tags": { latest: "3.2.0" } });
+
+    await expect(fetchLatestVersion("typo")).rejects.toMatchObject({
+      code: ERROR_CODE.USAGE_ERROR,
+      exitCode: EXIT_CODE.USAGE,
+    });
+  });
+
+  // The shape guard only checks that dist-tags is an object — a tag whose
+  // value is not a version string must not escape as one.
+  test("a non-string dist-tag value is an update failure, not a version", async () => {
+    mockRegistry({ "dist-tags": { latest: 42 } });
+
+    await expect(fetchLatestVersion("latest")).rejects.toMatchObject({
+      code: ERROR_CODE.UPDATE_FAILED,
+    });
+  });
+
+  test("a malformed registry response is an update failure", async () => {
+    mockRegistry({ nope: true });
+
+    await expect(fetchLatestVersion("latest")).rejects.toMatchObject({
+      code: ERROR_CODE.UPDATE_FAILED,
+    });
+  });
+
+  test("a non-ok registry response is an update failure", async () => {
+    mockRegistry({}, false, 503);
+
+    await expect(fetchLatestVersion("latest")).rejects.toMatchObject({
+      code: ERROR_CODE.UPDATE_FAILED,
+    });
+  });
+
+  // Transport failures stay untyped so the caller can label them unreachable.
+  test("a transport failure carries no error code", async () => {
+    spyOn(fetchMod, "loggedFetch").mockRejectedValue(new Error("ECONNREFUSED"));
+
+    const error = await fetchLatestVersion("latest").catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(Error);
+    expect((error as { code?: string }).code).toBeUndefined();
   });
 });

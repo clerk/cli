@@ -42,6 +42,28 @@ export type TelemetryResult = {
   errorCode?: string;
 };
 
+/**
+ * Closed set of drop-off points a command can report. A union rather than a
+ * bare string so a typo or a rename that misses a call site fails to compile
+ * instead of silently splitting the funnel into two buckets in the warehouse,
+ * and so no interpolated value (a path, a project name) can reach the payload.
+ *
+ * Declared in execution order: this is the funnel, so a new stage goes where it
+ * runs, not at the end. `already_set_up` is a terminal branch off `scaffold`.
+ */
+export type TelemetryStage =
+  | "flags"
+  | "detect"
+  | "bootstrap"
+  | "strategy"
+  | "link"
+  | "install"
+  | "scaffold"
+  | "already_set_up"
+  | "keys"
+  | "skills"
+  | "done";
+
 /** Structural slice of Commander's Command — avoids its generic types. */
 export type TelemetryCommand = {
   name(): string;
@@ -54,6 +76,8 @@ type TelemetryContext = {
   command: string;
   flags: string;
   startedAt: number;
+  /** Last stage set — see setTelemetryStage. */
+  stage: TelemetryStage | null;
 };
 
 let context: TelemetryContext | null = null;
@@ -152,10 +176,22 @@ export function startCommandTelemetry(actionCommand: TelemetryCommand): void {
       command,
       flags: collectSetFlagNames(actionCommand).join(","),
       startedAt: Date.now(),
+      stage: null,
     };
   } catch (error) {
     log.debug(`telemetry: failed to start context: ${error}`);
   }
+}
+
+/**
+ * Mark how far a multi-step command got. The last stage set is the one sent,
+ * on every outcome — a success reports where it finished, an error or abort
+ * reports where it stopped. That makes `stage` a drop-off funnel rather than
+ * an error-only dimension: a user declining the scaffold preview and a
+ * failure inside the generator are both legible, and distinguishable.
+ */
+export function setTelemetryStage(stage: TelemetryStage): void {
+  if (context) context.stage = stage;
 }
 
 export function telemetryResultForError(error: unknown): TelemetryResult {
@@ -246,6 +282,7 @@ async function buildAndSend(
       outcome: result.outcome,
       exit_code: result.exitCode,
       error_code: result.errorCode ?? null,
+      stage: current.stage,
       duration_ms: Date.now() - current.startedAt,
       machine_uuid: machineUuid,
       install_method: detectInstallMethod(process.env, process.execPath),
@@ -297,9 +334,10 @@ async function maybeShowTelemetryNotice(): Promise<boolean> {
     "The Clerk CLI collects usage telemetry to help improve the CLI: command name, flag names,",
   );
   log.info(
-    "duration, outcome, a random machine identifier — and your workspace and app IDs when a",
+    "duration, outcome, the step a multi-step command reached, a random machine identifier —",
   );
-  log.info("project is linked. Nothing has been sent during this run.");
+  log.info("and your workspace and app IDs when a project is linked.");
+  log.info("Nothing has been sent during this run.");
   log.info("Opt out: `clerk telemetry disable` — details: https://clerk.com/docs/telemetry");
   log.blank();
   return true;
