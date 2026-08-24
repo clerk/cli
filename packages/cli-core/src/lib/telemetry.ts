@@ -47,18 +47,21 @@ export type TelemetryResult = {
  * bare string so a typo or a rename that misses a call site fails to compile
  * instead of silently splitting the funnel into two buckets in the warehouse,
  * and so no interpolated value (a path, a project name) can reach the payload.
+ *
+ * Declared in execution order: this is the funnel, so a new stage goes where it
+ * runs, not at the end. `already_set_up` is a terminal branch off `scaffold`.
  */
 export type TelemetryStage =
   | "flags"
   | "detect"
+  | "bootstrap"
   | "strategy"
   | "link"
-  | "bootstrap"
   | "install"
   | "scaffold"
+  | "already_set_up"
   | "keys"
   | "skills"
-  | "already_set_up"
   | "done";
 
 /** Structural slice of Commander's Command — avoids its generic types. */
@@ -73,7 +76,7 @@ type TelemetryContext = {
   command: string;
   flags: string;
   startedAt: number;
-  /** Furthest stage reached — see setTelemetryStage. */
+  /** Last stage set — see setTelemetryStage. */
   stage: TelemetryStage | null;
 };
 

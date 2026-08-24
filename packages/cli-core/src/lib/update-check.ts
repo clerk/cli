@@ -8,7 +8,7 @@ import {
   UPDATE_PACKAGE_NAME,
   UPDATE_CACHE_FILE,
 } from "./constants.ts";
-import { CliError, ERROR_CODE } from "./errors.ts";
+import { CliError, ERROR_CODE, throwUsageError } from "./errors.ts";
 import { loggedFetch } from "./fetch.ts";
 import { log } from "./log.ts";
 import { CURRENT_VERSION, IS_DEV_BUILD } from "./version.ts";
@@ -118,10 +118,13 @@ export async function fetchLatestVersion(distTag: string, timeoutMs = 1500): Pro
         code: ERROR_CODE.UPDATE_FAILED,
       });
     }
-    const version = data["dist-tags"][distTag];
-    if (!version) {
-      throw new CliError(`Release channel "${distTag}" does not exist.`, {
-        code: ERROR_CODE.USAGE_ERROR,
+    const version: unknown = data["dist-tags"][distTag];
+    if (version === undefined) {
+      throwUsageError(`Release channel "${distTag}" does not exist.`);
+    }
+    if (typeof version !== "string" || version.length === 0) {
+      throw new CliError("Unexpected response shape from the npm registry.", {
+        code: ERROR_CODE.UPDATE_FAILED,
       });
     }
     return version;

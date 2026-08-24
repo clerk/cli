@@ -2,6 +2,7 @@ import type { Program } from "../../cli-program.ts";
 import { isAgent, isHuman } from "../../mode.ts";
 import { green, cyan, yellow, dim } from "../../lib/color.ts";
 import { CliError, ERROR_CODE } from "../../lib/errors.ts";
+import { isCancelled } from "../../lib/signals.ts";
 import {
   asdfPluginFromPath,
   asdfReshim,
@@ -272,9 +273,10 @@ export async function update(options: UpdateOptions): Promise<void> {
     withSpinner("Checking for updates...", async () => fetchLatestVersion(channel)).catch(
       (error: unknown) => {
         // A registry that answered — badly, or without the requested channel —
-        // already carries its own code. Only transport and timeout failures are
-        // genuinely "unreachable", and retrying is only right for those.
-        if (error instanceof CliError) throw error;
+        // already carries its own code, and a Ctrl-C is the user's decision,
+        // not the network's. Only transport and timeout failures are genuinely
+        // "unreachable", and retrying is only right for those.
+        if (error instanceof CliError || isCancelled(error)) throw error;
         throw new CliError("Could not reach npm registry. Check your network connection.", {
           code: ERROR_CODE.REGISTRY_UNREACHABLE,
         });

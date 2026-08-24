@@ -8,7 +8,7 @@ import {
 } from "./update-check.ts";
 import * as mode from "../mode.ts";
 import * as fetchMod from "./fetch.ts";
-import { ERROR_CODE } from "./errors.ts";
+import { ERROR_CODE, EXIT_CODE } from "./errors.ts";
 
 // ── inferChannelFromVersion ───────────────────────────────────────────────────
 
@@ -235,6 +235,17 @@ describe("fetchLatestVersion", () => {
 
     await expect(fetchLatestVersion("typo")).rejects.toMatchObject({
       code: ERROR_CODE.USAGE_ERROR,
+      exitCode: EXIT_CODE.USAGE,
+    });
+  });
+
+  // The shape guard only checks that dist-tags is an object — a tag whose
+  // value is not a version string must not escape as one.
+  test("a non-string dist-tag value is an update failure, not a version", async () => {
+    mockRegistry({ "dist-tags": { latest: 42 } });
+
+    await expect(fetchLatestVersion("latest")).rejects.toMatchObject({
+      code: ERROR_CODE.UPDATE_FAILED,
     });
   });
 
