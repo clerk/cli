@@ -381,7 +381,6 @@ jobs:
     outputs:
       version: ${{ steps.version.outputs.version }}
       sha: ${{ steps.pr.outputs.sha }}
-      is_fork: ${{ steps.pr.outputs.is_fork }}
     steps:
       - name: React to comment
         env:
@@ -391,27 +390,36 @@ jobs:
           gh api "repos/${GH_REPO}/issues/comments/${{ github.event.comment.id }}/reactions" \
             -f content=eyes --silent
 
-      - name: Get PR head SHA
+      # Runs before checkout: this job executes the PR's package.json scripts
+      # in the default branch's privileged context, so fork code must never be
+      # fetched. Also reject PRs that changed after the comment was posted so
+      # the reviewer approved the code that actually runs.
+      - name: Validate PR source and freshness
         id: pr
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
+          COMMENT_CREATED_AT: ${{ github.event.comment.created_at }}
         run: |
           pr_json=$(gh api "repos/${GH_REPO}/pulls/${{ github.event.issue.number }}")
           sha=$(echo "$pr_json" | jq -r '.head.sha')
           head_repo=$(echo "$pr_json" | jq -r '.head.repo.full_name')
           base_repo=$(echo "$pr_json" | jq -r '.base.repo.full_name')
-          is_fork="false"
+          pr_updated_at=$(echo "$pr_json" | jq -r '.updated_at')
           if [ "$head_repo" != "$base_repo" ]; then
-            is_fork="true"
-            echo "::warning::Snapshot requested on fork PR (head: ${head_repo}) — publish will be skipped."
+            echo "::error::Snapshots are restricted to branches within ${base_repo} (PR head: ${head_repo})."
+            exit 1
+          fi
+          if [[ "$pr_updated_at" > "$COMMENT_CREATED_AT" ]]; then
+            echo "::error::The PR has been updated since !snapshot was posted. Review the changes and comment !snapshot again."
+            exit 1
           fi
           echo "sha=${sha}" >> "$GITHUB_OUTPUT"
-          echo "is_fork=${is_fork}" >> "$GITHUB_OUTPUT"
 
       - uses: actions/checkout@v7
         with:
           ref: ${{ steps.pr.outputs.sha }}
+          persist-credentials: false
       - uses: oven-sh/setup-bun@v2
       - run: bun install --frozen-lockfile
 
@@ -429,7 +437,6 @@ jobs:
 
   snapshot-ci:
     needs: snapshot
-    if: needs.snapshot.outputs.is_fork != 'true'
     uses: ./.github/workflows/ci.yml
     with:
       ref: ${{ needs.snapshot.outputs.sha }}
@@ -437,7 +444,6 @@ jobs:
 
   snapshot-build:
     needs: [snapshot, snapshot-ci]
-    if: needs.snapshot.outputs.is_fork != 'true'
     uses: ./.github/workflows/build-binaries.yml
     with:
       version: ${{ needs.snapshot.outputs.version }}
@@ -447,7 +453,6 @@ jobs:
 
   snapshot-sign-macos:
     needs: [snapshot, snapshot-build]
-    if: needs.snapshot.outputs.is_fork != 'true'
     uses: ./.github/workflows/sign-macos.yml
     with:
       artifact-prefix: clerk-snapshot
@@ -460,7 +465,6 @@ jobs:
 
   snapshot-smoke-test:
     needs: [snapshot, snapshot-build, snapshot-sign-macos]
-    if: needs.snapshot.outputs.is_fork != 'true'
     uses: ./.github/workflows/smoke-test.yml
     with:
       version: ${{ needs.snapshot.outputs.version }}
@@ -469,7 +473,6 @@ jobs:
 
   snapshot-publish:
     needs: [snapshot, snapshot-build, snapshot-sign-macos, snapshot-smoke-test]
-    if: needs.snapshot.outputs.is_fork != 'true'
     # Must run on GitHub-hosted runner for npm OIDC trusted publishing
     runs-on: ubuntu-latest
     timeout-minutes: 15
