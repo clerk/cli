@@ -20,6 +20,12 @@ on:
 permissions:
   contents: read
 
+# The one place CI runs a real release binary, where the dev-build guard does
+# not apply. `--version` exits before the telemetry hook today, but that is a
+# property of Commander, not a decision this workflow made. See ci.yml.
+env:
+  CLERK_TELEMETRY_DISABLED: "1"
+
 jobs:
   resolve-matrix:
     runs-on: ubuntu-latest
