@@ -1,1 +1,1 @@
-/tmp/clerk-fixture-astro-4ff1i6/AGENTS.md
+/tmp/clerk-fixture-astro-c7nceg/AGENTS.md
