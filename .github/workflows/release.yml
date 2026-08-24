@@ -393,9 +393,11 @@ jobs:
 
       # Runs before checkout: this job executes the PR's package.json scripts
       # in the default branch's privileged context, so fork code must never be
-      # fetched. Also reject PRs whose head commit is newer than the comment so
-      # the reviewer approved the code that actually runs. Keyed on the commit
-      # date rather than the PR's updated_at, which moves on comments/labels.
+      # fetched. The fork check plus the MEMBER/OWNER gate above are the trust
+      # boundary. The freshness check is only a race guard for the honest case
+      # (a colleague pushes between the comment and this step); it keys on the
+      # commit date, which is client-settable, and that is acceptable because
+      # pushing to a same-repo branch already requires write access.
       - name: Validate PR source and freshness
         id: pr
         env:
