@@ -21,6 +21,9 @@ concurrency:
 permissions:
   contents: read
 
+env:
+  CLERK_TELEMETRY_DISABLED: "1"
+
 jobs:
   build:
     name: Build
