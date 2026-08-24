@@ -97,6 +97,7 @@ mock.module("../../lib/autoclaim.ts", () => ({
 }));
 
 const { setLogLevel } = await import("../../lib/log.ts");
+const telemetryMod = await import("../../lib/telemetry.ts");
 const { login } = await import("./login.ts");
 
 describe("login", () => {
@@ -608,5 +609,85 @@ describe("login", () => {
     await runLogin({ showNextSteps: false });
 
     expect(captured.err).not.toContain("Next steps:");
+  });
+
+  describe("telemetry stages", () => {
+    let stageSpy: ReturnType<typeof spyOn> | undefined;
+    let callerStageSpy: ReturnType<typeof spyOn> | undefined;
+
+    afterEach(() => {
+      stageSpy?.mockRestore();
+      callerStageSpy?.mockRestore();
+      stageSpy = undefined;
+      callerStageSpy = undefined;
+    });
+
+    function trackStages() {
+      const spy = spyOn(telemetryMod, "setTelemetryStage");
+      stageSpy = spy;
+      return { calls: () => spy.mock.calls.map((call) => call[0]) };
+    }
+
+    test("a completed login reports the terminal stage", async () => {
+      mockGetValidToken.mockResolvedValue(null);
+      mockOAuthSuccess();
+      const stages = trackStages();
+
+      await runLogin();
+
+      expect(stages.calls().at(-1)).toBe("done");
+    });
+
+    // The browser wait is where the flow is known to lose people; a run that
+    // stops there must be attributable to that step and no other.
+    test("a login abandoned during the browser wait stops at awaiting_callback", async () => {
+      mockGetValidToken.mockResolvedValue(null);
+      mockBunSpawn();
+      mockStartAuthServer.mockReturnValue({
+        port: 54321,
+        waitForCallback: mock().mockRejectedValue(new Error("Authentication timed out.")),
+        stop: mock(),
+      });
+      const stages = trackStages();
+
+      await expect(runLogin()).rejects.toThrow("Authentication timed out");
+
+      expect(stages.calls().at(-1)).toBe("awaiting_callback");
+    });
+
+    // `init` and `link` invoke login mid-flow; a clean return must hand the
+    // caller's stage back instead of leaving the outer command at "done".
+    test("a nested login hands the caller's stage back on success", async () => {
+      mockGetValidToken.mockResolvedValue(null);
+      mockOAuthSuccess();
+      callerStageSpy = spyOn(telemetryMod, "currentTelemetryStage").mockReturnValue("link");
+      const stages = trackStages();
+
+      await runLogin({ showNextSteps: false });
+
+      expect(stages.calls().at(-1)).toBe("link");
+    });
+
+    test("a failure persisting the token stops at store", async () => {
+      mockGetValidToken.mockResolvedValue(null);
+      mockOAuthSuccess();
+      mockStoreToken.mockRejectedValue(new Error("keychain unavailable"));
+      const stages = trackStages();
+
+      await expect(runLogin()).rejects.toThrow("keychain unavailable");
+
+      expect(stages.calls().at(-1)).toBe("store");
+    });
+
+    test("a failure exchanging the code stops at token_exchange", async () => {
+      mockGetValidToken.mockResolvedValue(null);
+      mockOAuthSuccess();
+      mockExchangeCodeForToken.mockRejectedValue(new Error("exchange failed"));
+      const stages = trackStages();
+
+      await expect(runLogin()).rejects.toThrow("exchange failed");
+
+      expect(stages.calls().at(-1)).toBe("token_exchange");
+    });
   });
 });

@@ -104,6 +104,17 @@ export const ERROR_CODE = {
   NO_INTERACTIVE_TERMINAL: "no_interactive_terminal",
   /** Named environment isn't configured. */
   INVALID_ENVIRONMENT: "invalid_environment",
+
+  /** The browser sign-in wait expired before a callback arrived. */
+  AUTH_TIMEOUT: "auth_timeout",
+  /** The authorization server redirected back with an `error` parameter. */
+  OAUTH_PROVIDER_ERROR: "oauth_provider_error",
+  /** Callback `state` did not match what this process generated. */
+  OAUTH_STATE_MISMATCH: "oauth_state_mismatch",
+  /** Callback arrived without an authorization code. */
+  OAUTH_NO_CODE: "oauth_no_code",
+  /** The loopback callback server could not bind a local port. */
+  CALLBACK_BIND_FAILED: "callback_bind_failed",
 } as const;
 
 export type ErrorCode = (typeof ERROR_CODE)[keyof typeof ERROR_CODE];
