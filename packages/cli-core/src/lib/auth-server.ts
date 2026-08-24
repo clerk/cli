@@ -282,6 +282,9 @@ export function startAuthServer(expectedState: string): AuthServerResult {
     });
     // A sandbox or firewall that forbids binding loopback fails every login on
     // the machine; it is a distinct condition from anything the user did.
+    log.debug(
+      `auth-server: bind failed — ${error instanceof Error ? (error.stack ?? error.message) : String(error)}`,
+    );
     throw new CliError(
       `Could not start the local sign-in callback server: ${errorMessage(error)}`,
       {

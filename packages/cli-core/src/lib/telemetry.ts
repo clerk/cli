@@ -69,6 +69,7 @@ export type TelemetryStage =
   | "awaiting_callback"
   | "token_exchange"
   | "store"
+  | "first_application"
   // shared terminal marker
   | "done";
 
@@ -200,6 +201,11 @@ export function startCommandTelemetry(actionCommand: TelemetryCommand): void {
  */
 export function setTelemetryStage(stage: TelemetryStage): void {
   if (context) context.stage = stage;
+}
+
+/** Read the stage a caller had set, so a nested flow can hand it back. */
+export function currentTelemetryStage(): TelemetryStage | null {
+  return context?.stage ?? null;
 }
 
 export function telemetryResultForError(error: unknown): TelemetryResult {

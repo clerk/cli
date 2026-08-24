@@ -1,5 +1,5 @@
 ---
-"clerk": minor
+"clerk": patch
 ---
 
 Report why `clerk auth login` failed instead of collapsing every failure into one error.

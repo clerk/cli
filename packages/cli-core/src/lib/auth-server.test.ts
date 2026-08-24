@@ -7,13 +7,19 @@ import { useCaptureLog } from "../test/lib/stubs.ts";
 describe("auth-server", () => {
   let serveSpy: ReturnType<typeof spyOn> | undefined;
   let clearTimeoutSpy: ReturnType<typeof spyOn> | undefined;
+  let timeoutSpy: ReturnType<typeof spyOn> | undefined;
+  let openServer: { stop: () => void } | undefined;
   useCaptureLog();
 
   afterEach(() => {
     serveSpy?.mockRestore();
     clearTimeoutSpy?.mockRestore();
+    timeoutSpy?.mockRestore();
+    openServer?.stop();
     serveSpy = undefined;
     clearTimeoutSpy = undefined;
+    timeoutSpy = undefined;
+    openServer = undefined;
   });
 
   test("starts on a random port", () => {
@@ -50,7 +56,7 @@ describe("auth-server", () => {
   test("the callback wait timing out carries the auth_timeout code", async () => {
     let fire: (() => void) | undefined;
     const realSetTimeout = globalThis.setTimeout;
-    const timeoutSpy = spyOn(globalThis, "setTimeout").mockImplementation(((
+    timeoutSpy = spyOn(globalThis, "setTimeout").mockImplementation(((
       cb: () => void,
       ms?: number,
       ...rest: unknown[]
@@ -64,6 +70,7 @@ describe("auth-server", () => {
     }) as typeof setTimeout);
 
     const server = startAuthServer("test-state");
+    openServer = server;
     const errorPromise = server.waitForCallback().catch((e: unknown) => e);
 
     expect(fire).toBeDefined();
@@ -72,9 +79,6 @@ describe("auth-server", () => {
     const error = await errorPromise;
     expect(error).toMatchObject({ code: ERROR_CODE.AUTH_TIMEOUT });
     expect((error as Error).message).toContain("timed out");
-
-    timeoutSpy.mockRestore();
-    server.stop();
   });
 
   test("callback resolves with code on valid request", async () => {

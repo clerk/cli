@@ -612,12 +612,20 @@ describe("login", () => {
   });
 
   describe("telemetry stages", () => {
+    let stageSpy: ReturnType<typeof spyOn> | undefined;
+    let callerStageSpy: ReturnType<typeof spyOn> | undefined;
+
+    afterEach(() => {
+      stageSpy?.mockRestore();
+      callerStageSpy?.mockRestore();
+      stageSpy = undefined;
+      callerStageSpy = undefined;
+    });
+
     function trackStages() {
-      const stage = spyOn(telemetryMod, "setTelemetryStage");
-      return {
-        calls: () => stage.mock.calls.map((call) => call[0]),
-        restore: () => stage.mockRestore(),
-      };
+      const spy = spyOn(telemetryMod, "setTelemetryStage");
+      stageSpy = spy;
+      return { calls: () => spy.mock.calls.map((call) => call[0]) };
     }
 
     test("a completed login reports the terminal stage", async () => {
@@ -628,7 +636,6 @@ describe("login", () => {
       await runLogin();
 
       expect(stages.calls().at(-1)).toBe("done");
-      stages.restore();
     });
 
     // The browser wait is where the flow is known to lose people; a run that
@@ -646,7 +653,30 @@ describe("login", () => {
       await expect(runLogin()).rejects.toThrow("Authentication timed out");
 
       expect(stages.calls().at(-1)).toBe("awaiting_callback");
-      stages.restore();
+    });
+
+    // `init` and `link` invoke login mid-flow; a clean return must hand the
+    // caller's stage back instead of leaving the outer command at "done".
+    test("a nested login hands the caller's stage back on success", async () => {
+      mockGetValidToken.mockResolvedValue(null);
+      mockOAuthSuccess();
+      callerStageSpy = spyOn(telemetryMod, "currentTelemetryStage").mockReturnValue("link");
+      const stages = trackStages();
+
+      await runLogin({ showNextSteps: false });
+
+      expect(stages.calls().at(-1)).toBe("link");
+    });
+
+    test("a failure persisting the token stops at store", async () => {
+      mockGetValidToken.mockResolvedValue(null);
+      mockOAuthSuccess();
+      mockStoreToken.mockRejectedValue(new Error("keychain unavailable"));
+      const stages = trackStages();
+
+      await expect(runLogin()).rejects.toThrow("keychain unavailable");
+
+      expect(stages.calls().at(-1)).toBe("store");
     });
 
     test("a failure exchanging the code stops at token_exchange", async () => {
@@ -658,7 +688,6 @@ describe("login", () => {
       await expect(runLogin()).rejects.toThrow("exchange failed");
 
       expect(stages.calls().at(-1)).toBe("token_exchange");
-      stages.restore();
     });
   });
 });

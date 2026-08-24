@@ -25,7 +25,7 @@ import { attemptAutoclaim, type AutoclaimResult } from "../../lib/autoclaim.ts";
 import { openBrowser } from "../../lib/open.ts";
 import { cyan, dim } from "../../lib/color.ts";
 import { log } from "../../lib/log.ts";
-import { setTelemetryStage } from "../../lib/telemetry.js";
+import { currentTelemetryStage, setTelemetryStage } from "../../lib/telemetry.ts";
 import { ensureFirstApplication } from "../../lib/first-application.ts";
 
 interface LoginOptions {
@@ -134,6 +134,18 @@ async function performOAuthFlow(): Promise<OAuthFlowResult> {
 }
 
 export async function login(options: LoginOptions = {}): Promise<UserInfo> {
+  // `init` and `link` call this mid-flow and share the one process-global
+  // telemetry stage. Login's own markers are worth having while it runs, but
+  // on a clean return the caller's stage comes back so the rest of *their*
+  // work isn't reported as `done`. On a throw the login stage stands: that is
+  // genuinely where the run stopped.
+  const callerStage = currentTelemetryStage();
+  const userInfo = await runLogin(options);
+  if (callerStage) setTelemetryStage(callerStage);
+  return userInfo;
+}
+
+async function runLogin(options: LoginOptions = {}): Promise<UserInfo> {
   const { showNextSteps = true, yes } = options;
   intro("Signing in");
   setTelemetryStage("session_check");
@@ -186,6 +198,7 @@ export async function login(options: LoginOptions = {}): Promise<UserInfo> {
 
   // Best-effort: ensure the user has at least one application so downstream
   // commands (clerk link, clerk init) have something to operate on.
+  setTelemetryStage("first_application");
   await withSpinner("Setting up your default application...", async () => ensureFirstApplication());
 
   bar();
