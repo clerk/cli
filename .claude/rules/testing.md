@@ -3,6 +3,7 @@ description: Unit test conventions using bun:test
 paths:
   - "**/*.test.ts"
   - "**/*.test.tsx"
+  - "test/e2e/lib/**"
 alwaysApply: false
 ---
 
