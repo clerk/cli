@@ -178,14 +178,19 @@ export const fixtures = {
     clerkSdk: "@clerk/react-router",
     buildCmd: ["react-router", "build"],
     devCmd: ["react-router", "dev"],
+    // create-react-router scaffolds v8, but the fixture stays on v7 so the
+    // `v8_middleware` config path in the React Router scaffolder keeps its
+    // e2e coverage (see shouldEnableV8MiddlewareFlag). Keep this at the
+    // latest 7.x: 7.18.2 is the first release clearing GHSA-chx6-hx7r-mcp5
+    // and GHSA-qwww-vcr4-c8h2, and @clerk/react-router peers ^7.9.0 || ^8.3.0.
     packageJsonOverrides: {
       dependencies: {
-        "@react-router/node": "7.15.0",
-        "@react-router/serve": "7.15.0",
-        "react-router": "7.15.0",
+        "@react-router/node": "7.18.2",
+        "@react-router/serve": "7.18.2",
+        "react-router": "7.18.2",
       },
       devDependencies: {
-        "@react-router/dev": "7.15.0",
+        "@react-router/dev": "7.18.2",
       },
     },
   },

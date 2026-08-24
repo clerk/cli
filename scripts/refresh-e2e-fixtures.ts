@@ -12,8 +12,8 @@
  *   bun run scripts/refresh-e2e-fixtures.ts --only nextjs-app-router
  */
 
-import { rm, cp, mkdir } from "node:fs/promises";
-import { join } from "node:path";
+import { rm, cp, mkdir, readdir, readlink, realpath, symlink } from "node:fs/promises";
+import { isAbsolute, join, relative, resolve } from "node:path";
 import { tmpdir } from "node:os";
 import { parseArgs } from "node:util";
 import semver from "semver";
@@ -50,6 +50,55 @@ async function resolveNpmDependencyVersion(name: string, spec: string): Promise<
   }
 
   return version;
+}
+
+/**
+ * Rewrite a scaffolded project's symlinks so none of them point outside it.
+ *
+ * Scaffolders leave links into their own working directory behind — Astro
+ * writes `CLAUDE.md` -> `<tmpProject>/AGENTS.md`. Copied verbatim into a
+ * fixture that becomes a committed absolute path under a world-writable
+ * `/tmp` that does not exist on any checkout, so whatever resolves the link
+ * next reads whatever a local user happened to leave at that path. Since the
+ * path ships in the repo it is also perfectly predictable. `CLAUDE.md` in
+ * particular is read as agent instructions, so the content is not inert.
+ *
+ * Links that stay inside the project are rewritten relative to their own
+ * directory, which survives the copy into `test/e2e/fixtures/<name>/`. Links
+ * that escape it are dropped: no in-repo path could stand in for them.
+ */
+export async function normalizeProjectSymlinks(projectDir: string): Promise<string[]> {
+  const root = await realpath(projectDir);
+  const entries = await readdir(projectDir, { recursive: true, withFileTypes: true });
+  const dropped: string[] = [];
+
+  for (const entry of entries) {
+    if (!entry.isSymbolicLink()) continue;
+
+    const linkDir = entry.parentPath;
+    const linkPath = join(linkDir, entry.name);
+    const target = await readlink(linkPath);
+
+    // realpath collapses platform aliasing (macOS /tmp -> /private/tmp) so the
+    // containment check compares like with like. A dangling link has no
+    // realpath, and there is nothing to preserve, so it falls through to the
+    // escape branch below.
+    const resolved = await realpath(resolve(linkDir, target)).catch(() => resolve(linkDir, target));
+    const fromRoot = relative(root, resolved);
+
+    if (fromRoot === "" || fromRoot.startsWith("..") || isAbsolute(fromRoot)) {
+      dropped.push(`${relative(projectDir, linkPath)} -> ${target}`);
+      await rm(linkPath);
+      continue;
+    }
+
+    if (!isAbsolute(target)) continue;
+
+    await rm(linkPath);
+    await symlink(relative(await realpath(linkDir), resolved), linkPath);
+  }
+
+  return dropped;
 }
 
 type FixtureEntry = [string, FixtureConfig];
@@ -190,6 +239,13 @@ export async function refreshFixtures({
       ];
       for (const entry of toRemove) {
         await rm(join(tmpProject, entry), { recursive: true, force: true });
+      }
+
+      // Must run before the copy: `cp` preserves symlinks verbatim, so an
+      // absolute link into the temp project would land in the fixture.
+      const droppedLinks = await normalizeProjectSymlinks(tmpProject);
+      for (const link of droppedLinks) {
+        console.warn(`⚠️  ${name}: dropped symlink escaping the fixture: ${link}`);
       }
 
       // Copy generated files into fixture dir

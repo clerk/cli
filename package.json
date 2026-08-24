@@ -11,6 +11,7 @@
     "test:e2e": "bun run scripts/check-bun-version.ts && bun test 'test/e2e/' --retry 1 --parallel --only-failures",
     "test:e2e:op": "bun run scripts/run-e2e-op.ts",
     "e2e:refresh-fixtures": "bun run scripts/refresh-e2e-fixtures.ts",
+    "e2e:audit-fixtures": "bun run scripts/audit-e2e-fixtures.ts",
     "typecheck": "bun run --filter './packages/*' typecheck && tsc --noEmit -p scripts/tsconfig.json && tsc --noEmit -p test/e2e/tsconfig.json",
     "lint": "bun run --filter './packages/*' lint && oxlint --report-unused-disable-directives-severity=error -c .oxlintrc.json scripts/ test/e2e/",
     "format": "bun run --filter './packages/*' format && oxfmt --write scripts/ test/e2e/",
