@@ -21,7 +21,7 @@ import {
 import { resolveProfile } from "../../lib/config.js";
 import { deriveProjectName } from "../../lib/project-name.js";
 import { log } from "../../lib/log.js";
-import { setTelemetryStage } from "../../lib/telemetry.js";
+import { setTelemetryStage } from "../../lib/telemetry.ts";
 import { confirm } from "../../lib/prompts.ts";
 import {
   createAccountlessApp,
