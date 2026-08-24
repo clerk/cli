@@ -20,9 +20,6 @@ on:
 permissions:
   contents: read
 
-# The one place CI runs a real release binary, where the dev-build guard does
-# not apply. `--version` exits before the telemetry hook today, but that is a
-# property of Commander, not a decision this workflow made. See ci.yml.
 env:
   CLERK_TELEMETRY_DISABLED: "1"
 
@@ -99,10 +96,7 @@ jobs:
           BIN: ${{ matrix.bin }}
         run: |
           if [ -n "$DOCKER_IMAGE" ]; then
-            # -e forwards the opt-out below; a container does not inherit the
-            # runner's environment, and these are release binaries where the
-            # dev-build guard does not apply.
-            actual=$(docker run --rm -e CLERK_TELEMETRY_DISABLED -v "$PWD:/work" "$DOCKER_IMAGE" sh -c "apk add --no-cache libstdc++ libgcc >/dev/null 2>&1; /work/$BIN --version")
+            actual=$(docker run --rm -e CLERK_TELEMETRY_DISABLED=1 -v "$PWD:/work" "$DOCKER_IMAGE" sh -c "apk add --no-cache libstdc++ libgcc >/dev/null 2>&1; /work/$BIN --version")
           else
             actual=$("$BIN" --version)
           fi

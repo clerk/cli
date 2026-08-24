@@ -14,7 +14,6 @@ concurrency:
 permissions:
   contents: read
 
-# Regenerating fixtures drives the CLI over every framework. See ci.yml.
 env:
   CLERK_TELEMETRY_DISABLED: "1"
 

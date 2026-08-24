@@ -21,12 +21,6 @@ concurrency:
 permissions:
   contents: read
 
-# Our own CI is not a user, so keep its runs out of the telemetry dataset.
-# Nothing is sent today only because tests invoke the CLI from source, where
-# the dev-build guard in telemetryEnabled() short-circuits the send — CI runs
-# are otherwise a supported reporting case (the event carries `ci: true` and
-# the disclosure notice deliberately exempts CI). Stating the opt-out here
-# means a step that later runs a compiled binary can't start reporting.
 env:
   CLERK_TELEMETRY_DISABLED: "1"
 
