@@ -133,6 +133,7 @@ function successfulXcodeRunner(
     const args = [...argv];
     invocations.push({ argv: args, options: commandOptions });
     if (args.includes("-version")) return success("Xcode 26.0\nBuild version 1A1\n");
+    if (args.includes("-resolvePackageDependencies")) return success();
     if (args.includes("-list") && args.includes("xcodebuild")) {
       return success(
         JSON.stringify({
@@ -191,7 +192,8 @@ function dependencies(runner: IOSXcodeCommandRunner) {
 describe("runIOSXcodeVerification", () => {
   test("uses a verified auto-created scheme for a frozen isolated build", async () => {
     await createIOSFixture(root);
-    await writeProjectPackageResolved();
+    const lockPath = await writeProjectPackageResolved();
+    const lockBefore = await Bun.file(lockPath).text();
     const inspection = await inspectIOSProject(root, { target: "MyApp" });
     const invocations: Invocation[] = [];
 
@@ -209,6 +211,29 @@ describe("runIOSXcodeVerification", () => {
       "Xcode scheme",
       "Xcode build",
     ]);
+
+    const hydrationIndex = invocations.findIndex((invocation) =>
+      invocation.argv.includes("-resolvePackageDependencies"),
+    );
+    const listIndex = invocations.findIndex((invocation) => invocation.argv.includes("-list"));
+    const hydration = invocations[hydrationIndex];
+    expect(hydrationIndex).toBeGreaterThan(-1);
+    expect(hydrationIndex).toBeLessThan(listIndex);
+    expect(hydration?.argv).toContain("-disableAutomaticPackageResolution");
+    expect(hydration?.argv).toContain("-onlyUsePackageVersionsFromResolvedFile");
+    expect(hydration?.argv).toContain("-skipPackageUpdates");
+    expect(hydration?.argv).toContain(join(temporaryBuildRoot, "SourcePackages"));
+    expect(await Bun.file(lockPath).text()).toBe(lockBefore);
+
+    const packagePhases = invocations.filter(
+      (invocation) =>
+        invocation.argv.includes("xcodebuild") && !invocation.argv.includes("-version"),
+    );
+    expect(packagePhases).toHaveLength(4);
+    for (const phase of packagePhases) {
+      expect(phase.argv).toContain("-packageCachePath");
+      expect(phase.argv).toContain(join(temporaryBuildRoot, "PackageCache"));
+    }
 
     const build = invocations.find(
       (invocation) => invocation.argv.includes("xcodebuild") && invocation.argv.includes("build"),
@@ -231,6 +256,141 @@ describe("runIOSXcodeVerification", () => {
       expect(invocation.options.env.GITHUB_TOKEN).toBeUndefined();
       expect(JSON.stringify(invocation)).not.toContain("must_not_escape");
     }
+  });
+
+  test("stops when locked-package hydration changes Package.resolved", async () => {
+    await createIOSFixture(root);
+    const lockPath = await writeProjectPackageResolved();
+    const inspection = await inspectIOSProject(root, { target: "MyApp" });
+    const invocations: Invocation[] = [];
+    const baseRunner = successfulXcodeRunner(invocations);
+    const runner: IOSXcodeCommandRunner = async (argv, commandOptions) => {
+      if (argv.includes("-resolvePackageDependencies")) {
+        invocations.push({ argv: [...argv], options: commandOptions });
+        await Bun.write(
+          lockPath,
+          packageResolvedContents().replace('"revision":"abc"', '"revision":"changed"'),
+        );
+        return success();
+      }
+      return baseRunner(argv, commandOptions);
+    };
+
+    const results = await runIOSXcodeVerification(
+      inspection,
+      { build: true },
+      dependencies(runner),
+    );
+
+    expect(results.at(-1)).toMatchObject({ name: "Swift packages", status: "fail" });
+    expect(results.at(-1)?.message).toContain("Package.resolved updated");
+    expect(invocations.some((invocation) => invocation.argv.includes("-list"))).toBe(false);
+  });
+
+  test("reports locked-package hydration failures as Swift package failures", async () => {
+    await createIOSFixture(root);
+    await writeProjectPackageResolved();
+    const inspection = await inspectIOSProject(root, { target: "MyApp" });
+    const invocations: Invocation[] = [];
+    const baseRunner = successfulXcodeRunner(invocations);
+    const runner: IOSXcodeCommandRunner = async (argv, commandOptions) => {
+      if (argv.includes("-resolvePackageDependencies")) {
+        invocations.push({ argv: [...argv], options: commandOptions });
+        return failure(
+          "xcodebuild: error: Could not resolve package dependencies: Couldn't check out revision 'abc'",
+        );
+      }
+      return baseRunner(argv, commandOptions);
+    };
+
+    const results = await runIOSXcodeVerification(
+      inspection,
+      { build: true },
+      dependencies(runner),
+    );
+
+    expect(results.at(-1)).toMatchObject({ name: "Swift packages", status: "fail" });
+    expect(results.at(-1)?.message).toContain("Fetching locked Swift packages");
+    expect(results.at(-1)?.remedy).toContain("network access");
+    expect(results.at(-1)?.remedy).toContain("--resolve-packages");
+    expect(invocations.some((invocation) => invocation.argv.includes("-list"))).toBe(false);
+  });
+
+  test("classifies package checkout failures during scheme discovery accurately", async () => {
+    await createIOSFixture(root);
+    await writeProjectPackageResolved();
+    const inspection = await inspectIOSProject(root, { target: "MyApp" });
+    const invocations: Invocation[] = [];
+    const baseRunner = successfulXcodeRunner(invocations);
+    const runner: IOSXcodeCommandRunner = async (argv, commandOptions) => {
+      if (argv.includes("-list")) {
+        invocations.push({ argv: [...argv], options: commandOptions });
+        return failure("error: Couldn't fetch updates from remote repositories for clerk-ios");
+      }
+      return baseRunner(argv, commandOptions);
+    };
+
+    const results = await runIOSXcodeVerification(
+      inspection,
+      { build: true },
+      dependencies(runner),
+    );
+
+    expect(results.at(-1)).toMatchObject({ name: "Swift packages", status: "fail" });
+    expect(results.at(-1)?.message).toContain("during scheme discovery");
+    expect(results.at(-1)?.remedy).toContain("package repositories");
+  });
+
+  test("classifies package checkout failures during a build accurately", async () => {
+    await createIOSFixture(root);
+    await writeProjectPackageResolved();
+    const inspection = await inspectIOSProject(root, { target: "MyApp" });
+    const invocations: Invocation[] = [];
+
+    const results = await runIOSXcodeVerification(
+      inspection,
+      { build: true },
+      dependencies(
+        successfulXcodeRunner(invocations, {
+          buildFailure:
+            "xcodebuild: error: Could not resolve package dependencies: Couldn't check out revision 'abc'",
+        }),
+      ),
+    );
+
+    expect(results.at(-1)).toMatchObject({ name: "Swift packages", status: "fail" });
+    expect(results.at(-1)?.message).toContain("during the build");
+    expect(results.at(-1)?.remedy).toContain("package repositories");
+  });
+
+  test("does not classify an ordinary package-source compilation error as resolution failure", async () => {
+    await createIOSFixture(root);
+    await writeProjectPackageResolved();
+    const inspection = await inspectIOSProject(root, { target: "MyApp" });
+    const invocations: Invocation[] = [];
+    const packageSource = join(
+      temporaryBuildRoot,
+      "SourcePackages",
+      "checkouts",
+      "clerk-ios",
+      "Sources",
+      "ClerkKit",
+      "Session.swift",
+    );
+
+    const results = await runIOSXcodeVerification(
+      inspection,
+      { build: true },
+      dependencies(
+        successfulXcodeRunner(invocations, {
+          buildFailure: `${packageSource}:42:5: error: value of type 'Session' has no member 'invalid'`,
+        }),
+      ),
+    );
+
+    expect(results.at(-1)).toMatchObject({ name: "Xcode build", status: "fail" });
+    expect(results.at(-1)?.message).toContain("iOS Simulator build");
+    expect(results.at(-1)?.remedy).toContain("compilation error");
   });
 
   test("requires explicit package resolution before a remote-package build", async () => {
@@ -282,6 +442,8 @@ describe("runIOSXcodeVerification", () => {
     );
     expect(resolutionIndex).toBeGreaterThan(-1);
     expect(buildIndex).toBeGreaterThan(resolutionIndex);
+    expect(invocations[resolutionIndex]?.argv).toContain("-packageCachePath");
+    expect(invocations[resolutionIndex]?.argv).toContain(join(temporaryBuildRoot, "PackageCache"));
   });
 
   test("does not run Xcode when Package.resolved is a symbolic link", async () => {
