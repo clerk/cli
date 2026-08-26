@@ -49,7 +49,7 @@ jobs:
         run: bun run scripts/check-release.ts
 
       - id: changesets
-        uses: changesets/action@v1
+        uses: changesets/action@v2
         with:
           version: bun run version-packages
           commit: "ci(repo): version packages"
