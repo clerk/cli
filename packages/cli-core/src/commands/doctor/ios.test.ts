@@ -148,6 +148,37 @@ describe("runIOSDoctorChecks", () => {
     expect(remote?.remedy).toContain("clerk init");
   });
 
+  test("directs established apps to integrate their missing authentication flow manually", async () => {
+    const root = await fixture();
+    await writeFile(
+      join(root, "MyApp", "ContentView.swift"),
+      `import SwiftUI
+
+struct ContentView: View {
+  var body: some View {
+    NavigationStack {
+      List {
+        NavigationLink("Profile") { Text("Existing profile flow") }
+      }
+      .navigationTitle("Settings")
+    }
+  }
+}
+`,
+    );
+
+    const audit = await runIOSDoctorChecks(context(), { root, target: "MyApp" }, dependencies());
+    const authFlow = audit.results.find(
+      (result) => result.name === "iOS: Add an authentication flow",
+    );
+
+    expect(authFlow?.status).toBe("fail");
+    expect(authFlow?.remedy).toContain("signed-out entry point");
+    expect(authFlow?.remedy).toContain("AuthView");
+    expect(authFlow?.remedy).toContain("custom ClerkKit sign-in/sign-up flow");
+    expect(authFlow?.remedy).not.toContain("clerk init");
+  });
+
   test("does not call remote endpoints until one target is selected", async () => {
     const root = await fixture({ secondTarget: true });
     let remoteCalls = 0;
