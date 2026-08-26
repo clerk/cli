@@ -94,6 +94,8 @@ export interface PrepareIOSNativeRemoteSetupOptions {
   target: IOSNativeReadinessTarget;
   appIdPrefix?: string;
   unverifiedAppIdPrefixSuggestion?: IOSUnverifiedAppIdPrefixSuggestion;
+  /** A completed application/link change that must be reported if planning stops here. */
+  applicationLinkChange?: "created-and-linked" | "link-updated";
   agent: boolean;
   yes: boolean;
 }
@@ -338,6 +340,93 @@ function formatBlockers(plan: IOSNativeRemotePlan): string {
   return plan.blockers.map((item) => `  • ${item.message}`).join("\n");
 }
 
+function nativeSetupOutcome(
+  applicationLinkChange?: PrepareIOSNativeRemoteSetupOptions["applicationLinkChange"],
+): string {
+  return applicationLinkChange === "created-and-linked"
+    ? "A new Clerk application was created and linked, but no Xcode or Clerk Native Application settings changes were written."
+    : applicationLinkChange === "link-updated"
+      ? "The project's Clerk application link was updated, but no Xcode or Clerk Native Application settings changes were written."
+      : "No local or remote setup changes were written.";
+}
+
+function agentAppIdPrefixRequiredMessage(
+  bundleIdentifier: string,
+  suggestion?: IOSNativeRemoteAppIdPrefixSuggestion,
+  applicationLinkChange?: PrepareIOSNativeRemoteSetupOptions["applicationLinkChange"],
+): string {
+  const retry =
+    'After the user confirms the value, rerun the same command with --app-id-prefix "<confirmed_prefix>".';
+  const outcome = nativeSetupOutcome(applicationLinkChange);
+
+  if (!suggestion) {
+    return `Registering ${bundleIdentifier} in agent mode requires --app-id-prefix <prefix>. Ask the user to copy the value labeled App ID Prefix in Apple Developer. ${retry} ${outcome}`;
+  }
+
+  const source =
+    suggestion.source === "xcode-development-team"
+      ? "the selected target's Xcode DEVELOPMENT_TEAM setting. DEVELOPMENT_TEAM often matches the Apple App ID Prefix, but older Apple Developer accounts can differ"
+      : "literal App ID Prefix evidence found in only some of the selected target's entitlement configurations, so it could not be verified across the whole target";
+
+  return `Registering ${bundleIdentifier} in agent mode requires a confirmed App ID Prefix through --app-id-prefix <prefix>. The CLI found ${suggestion.value} from ${source}. Treat it only as an unverified suggestion: do not use it automatically. Ask the user whether to use ${suggestion.value} or enter a different App ID Prefix. ${retry} ${outcome}`;
+}
+
+function appIdPrefixSuggestion(
+  target: IOSNativeReadinessTarget,
+  unverifiedSuggestion?: IOSUnverifiedAppIdPrefixSuggestion,
+): IOSNativeRemoteAppIdPrefixSuggestion | undefined {
+  const literalSuggestion =
+    target.status === "selected" && target.appIdPrefix.status === "missing"
+      ? target.appIdPrefix.candidates?.length === 1
+        ? {
+            source: "partial-literal-entitlements" as const,
+            value: target.appIdPrefix.candidates[0]!,
+          }
+        : undefined
+      : undefined;
+  return literalSuggestion ?? unverifiedSuggestion;
+}
+
+/**
+ * A newly created Clerk application cannot already contain the selected iOS
+ * registration. Stop before application creation when agent mode still needs
+ * the user to confirm an App ID Prefix.
+ */
+export function assertIOSAppIdPrefixBeforeApplicationCreation(options: {
+  target: IOSNativeReadinessTarget;
+  appIdPrefix?: string;
+  unverifiedAppIdPrefixSuggestion?: IOSUnverifiedAppIdPrefixSuggestion;
+}): void {
+  const plan = buildIOSNativeRemotePlan({
+    applicationId: "preflight",
+    instanceId: "preflight",
+    target: options.target,
+    requestedAppIdPrefix: options.appIdPrefix,
+    nativeSettings: { object: "native_settings", api_enabled: false },
+    registrations: [],
+  });
+  if (plan.status !== "blocked") return;
+
+  const onlyMissingPrefix =
+    plan.blockers.length === 1 &&
+    plan.blockers[0]?.code === "app-id-prefix-required" &&
+    options.appIdPrefix == null &&
+    plan.bundleIdentifier != null;
+  if (!onlyMissingPrefix) {
+    throw iosRemoteError(
+      `Clerk Native Application readiness could not be completed safely. No local or remote setup changes were written:\n${formatBlockers(plan)}`,
+      ERROR_CODE.IOS_SETUP_BLOCKED,
+    );
+  }
+
+  throwUsageError(
+    agentAppIdPrefixRequiredMessage(
+      plan.bundleIdentifier!,
+      appIdPrefixSuggestion(options.target, options.unverifiedAppIdPrefixSuggestion),
+    ),
+  );
+}
+
 export async function prepareIOSNativeRemoteSetup(
   options: PrepareIOSNativeRemoteSetupOptions,
   dependencies: {
@@ -356,7 +445,7 @@ export async function prepareIOSNativeRemoteSetup(
     log.debug(`Could not inspect Clerk Native Application settings: ${errorMessage(error)}`);
     rethrowKnownRemoteError(error);
     throw iosRemoteError(
-      "Clerk Native Application settings could not be inspected. No local or remote setup changes were written; verify your application access and rerun clerk init.",
+      `Clerk Native Application settings could not be inspected. ${nativeSetupOutcome(options.applicationLinkChange)} Verify your application access and rerun clerk init.`,
       ERROR_CODE.IOS_REMOTE_VERIFY_FAILED,
     );
   }
@@ -375,24 +464,20 @@ export async function prepareIOSNativeRemoteSetup(
     options.appIdPrefix == null &&
     plan.bundleIdentifier != null;
   if (onlyMissingPrefix) {
+    const suggestion = appIdPrefixSuggestion(
+      options.target,
+      options.unverifiedAppIdPrefixSuggestion,
+    );
     if (options.agent) {
       throwUsageError(
-        `Registering ${plan.bundleIdentifier} in agent mode requires --app-id-prefix <prefix>. Verify the App ID Prefix in Apple Developer, then rerun. No local or remote setup changes were written.`,
+        agentAppIdPrefixRequiredMessage(
+          plan.bundleIdentifier!,
+          suggestion,
+          options.applicationLinkChange,
+        ),
       );
     }
-    const literalSuggestion =
-      options.target.status === "selected" && options.target.appIdPrefix.status === "missing"
-        ? options.target.appIdPrefix.candidates?.length === 1
-          ? {
-              source: "partial-literal-entitlements" as const,
-              value: options.target.appIdPrefix.candidates[0]!,
-            }
-          : undefined
-        : undefined;
-    const appIdPrefix = await prompts.appIdPrefix(
-      plan.bundleIdentifier!,
-      literalSuggestion ?? options.unverifiedAppIdPrefixSuggestion,
-    );
+    const appIdPrefix = await prompts.appIdPrefix(plan.bundleIdentifier!, suggestion);
     plan = buildIOSNativeRemotePlan({
       applicationId: options.applicationId,
       instanceId: options.instanceId,
@@ -404,7 +489,7 @@ export async function prepareIOSNativeRemoteSetup(
 
   if (plan.status === "blocked") {
     throw iosRemoteError(
-      `Clerk Native Application readiness could not be completed safely. No local or remote setup changes were written:\n${formatBlockers(plan)}\n  Review https://dashboard.clerk.com/~/native-applications`,
+      `Clerk Native Application readiness could not be completed safely. ${nativeSetupOutcome(options.applicationLinkChange)}\n${formatBlockers(plan)}\n  Review https://dashboard.clerk.com/~/native-applications`,
       ERROR_CODE.IOS_SETUP_BLOCKED,
     );
   }

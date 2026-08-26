@@ -392,25 +392,100 @@ describe("Clerk Native Application remote setup", () => {
     });
   });
 
-  test("requires an explicit prefix in agent mode instead of prompting", async () => {
+  test("offers an unverified Xcode suggestion in agent mode instead of prompting", async () => {
     const { api } = scriptedAPI({
       nativeReads: [nativeSettings(false)],
       registrationReads: [[]],
     });
 
-    await expect(
-      prepareIOSNativeRemoteSetup(
-        prepareOptions({
-          target: selectedTarget({ appIdPrefix: null }),
-          unverifiedAppIdPrefixSuggestion: {
-            source: "xcode-development-team",
-            value: "ABCDE12345",
-          },
-          agent: true,
+    const error = await prepareIOSNativeRemoteSetup(
+      prepareOptions({
+        target: selectedTarget({ appIdPrefix: null }),
+        unverifiedAppIdPrefixSuggestion: {
+          source: "xcode-development-team",
+          value: "ABCDE12345",
+        },
+        agent: true,
+      }),
+      { api, prompts: prompts() },
+    ).catch((cause: unknown) => cause);
+
+    expect(error).toBeInstanceOf(Error);
+    const message = (error as Error).message;
+    expect(message).toContain("ABCDE12345");
+    expect(message).toContain("Xcode DEVELOPMENT_TEAM");
+    expect(message).toContain("unverified suggestion");
+    expect(message).toContain("Ask the user whether to use ABCDE12345 or enter a different");
+    expect(message).toContain('--app-id-prefix "<confirmed_prefix>"');
+  });
+
+  test("offers partial literal entitlement evidence in agent mode", async () => {
+    const { api } = scriptedAPI({
+      nativeReads: [nativeSettings(false)],
+      registrationReads: [[]],
+    });
+
+    const error = await prepareIOSNativeRemoteSetup(
+      prepareOptions({
+        target: selectedTarget({
+          appIdPrefix: null,
+          appIdPrefixCandidates: [LOCAL_PREFIX],
         }),
-        { api, prompts: prompts() },
-      ),
-    ).rejects.toThrow("requires --app-id-prefix");
+        agent: true,
+      }),
+      { api, prompts: prompts() },
+    ).catch((cause: unknown) => cause);
+
+    expect(error).toBeInstanceOf(Error);
+    const message = (error as Error).message;
+    expect(message).toContain(LOCAL_PREFIX);
+    expect(message).toContain("literal App ID Prefix evidence");
+    expect(message).toContain("unverified suggestion");
+    expect(message).toContain(`Ask the user whether to use ${LOCAL_PREFIX} or enter a different`);
+  });
+
+  test("directs the agent to Apple Developer when no prefix suggestion exists", async () => {
+    const { api } = scriptedAPI({
+      nativeReads: [nativeSettings(false)],
+      registrationReads: [[]],
+    });
+
+    const error = await prepareIOSNativeRemoteSetup(
+      prepareOptions({
+        target: selectedTarget({ appIdPrefix: null }),
+        agent: true,
+      }),
+      { api, prompts: prompts() },
+    ).catch((cause: unknown) => cause);
+
+    expect(error).toBeInstanceOf(Error);
+    const message = (error as Error).message;
+    expect(message).toContain("requires --app-id-prefix");
+    expect(message).toContain("copy the value labeled App ID Prefix in Apple Developer");
+    expect(message).toContain('--app-id-prefix "<confirmed_prefix>"');
+  });
+
+  test("reports an application link that changed before a missing-prefix block", async () => {
+    const { api } = scriptedAPI({
+      nativeReads: [nativeSettings(false)],
+      registrationReads: [[]],
+    });
+
+    const error = await prepareIOSNativeRemoteSetup(
+      prepareOptions({
+        target: selectedTarget({ appIdPrefix: null }),
+        applicationLinkChange: "link-updated",
+        agent: true,
+      }),
+      { api, prompts: prompts() },
+    ).catch((cause: unknown) => cause);
+
+    expect(error).toBeInstanceOf(Error);
+    expect((error as Error).message).toContain("The project's Clerk application link was updated");
+    expect((error as Error).message).toContain(
+      "no Xcode or Clerk Native Application settings changes were written",
+    );
+    expect((error as Error).message).not.toContain("No local or remote setup changes were written");
   });
 
   test("blocks an explicit prefix that conflicts with a partial local candidate", () => {

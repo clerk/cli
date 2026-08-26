@@ -83,6 +83,7 @@ import {
 } from "./ios/apply.ts";
 import {
   applyIOSNativeRemoteSetup,
+  assertIOSAppIdPrefixBeforeApplicationCreation,
   prepareIOSNativeRemoteSetup,
   validateAppIdPrefix,
 } from "./ios/native-remote.ts";
@@ -435,19 +436,35 @@ export async function init(options: InitOptions = {}) {
   assertKeylessOnlyFlags(options, strategy);
 
   let authenticatedAppId: string | undefined;
+  let iosApplicationLinkChange: "created-and-linked" | "link-updated" | undefined;
   if (strategy === "authenticate") {
     setTelemetryStage("link");
+    if (agent && iosLocalSetup?.requiresLinkedApp && !iosProfile && !options.app) {
+      assertIOSAppIdPrefixBeforeApplicationCreation({
+        target: iosLocalSetup.nativeReadiness.target,
+        appIdPrefix: options.appIdPrefix,
+        ...(iosLocalSetup.unverifiedAppIdPrefixSuggestion
+          ? { unverifiedAppIdPrefixSuggestion: iosLocalSetup.unverifiedAppIdPrefixSuggestion }
+          : {}),
+      });
+    }
     bar();
-    const createIfMissing = agent
-      ? await deriveProjectName(ctx.cwd, bootstrap?.projectName)
+    const mayCreateApplication =
+      agent && (ctx.framework.dep !== "ios" || (!iosProfile && !options.app));
+    const createIfMissing = mayCreateApplication
+      ? await deriveProjectName(ctx.cwd, bootstrap?.projectName ?? iosLocalSetup?.targetName)
       : undefined;
-    authenticatedAppId = await authenticateAndLink(
+    const authenticated = await authenticateAndLink(
       ctx.cwd,
       options.app,
       createIfMissing,
       iosLocalSetup?.requiresLinkedApp === true,
       preauthenticatedIOSLabel,
     );
+    authenticatedAppId = authenticated.applicationId;
+    if (ctx.framework.dep === "ios") {
+      iosApplicationLinkChange = authenticated.applicationLinkChange;
+    }
   }
 
   let authenticatedKeysHandled = false;
@@ -529,6 +546,7 @@ export async function init(options: InitOptions = {}) {
       ...(iosLocalSetup.unverifiedAppIdPrefixSuggestion
         ? { unverifiedAppIdPrefixSuggestion: iosLocalSetup.unverifiedAppIdPrefixSuggestion }
         : {}),
+      ...(iosApplicationLinkChange ? { applicationLinkChange: iosApplicationLinkChange } : {}),
       agent,
       yes: options.yes === true,
     });
@@ -1095,7 +1113,10 @@ async function authenticateAndLink(
   createIfMissing: string | undefined,
   requireLinkedAppId: boolean,
   preauthenticatedLabel?: string,
-): Promise<string | undefined> {
+): Promise<{
+  applicationId?: string;
+  applicationLinkChange?: "created-and-linked" | "link-updated";
+}> {
   const label = preauthenticatedLabel ?? (await resolveAuthLabel());
   const profile = await resolveProfile(cwd);
 
@@ -1103,7 +1124,7 @@ async function authenticateAndLink(
 
   if (label && alreadyOnRequestedApp) {
     log.info(dim(`${label} · Linked to ${profile.profile.appId}`));
-    return profile.profile.appId;
+    return { applicationId: profile.profile.appId };
   }
 
   if (label) {
@@ -1131,7 +1152,17 @@ async function authenticateAndLink(
       code: ERROR_CODE.NOT_LINKED,
     });
   }
-  return linked?.profile.appId;
+  const applicationId = linked?.profile.appId;
+  const applicationLinkChange =
+    applicationId && !profile && !app && createIfMissing
+      ? ("created-and-linked" as const)
+      : applicationId && profile?.profile.appId !== applicationId
+        ? ("link-updated" as const)
+        : undefined;
+  return {
+    applicationId,
+    ...(applicationLinkChange ? { applicationLinkChange } : {}),
+  };
 }
 
 // --- Keyless app setup ---

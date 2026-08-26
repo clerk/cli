@@ -30,6 +30,7 @@ import type { IOSLocalSetupResult } from "./ios/apply.ts";
 import type { IOSAppleEntitlementPlan } from "./ios/apple-entitlement.ts";
 import type { IOSNativeApplePlan } from "./ios/native-apple.ts";
 import type { IOSNativeRemotePlan } from "./ios/native-remote.ts";
+import type { IOSNativeReadinessTarget } from "./ios/native-readiness.ts";
 import type { IOSPrebuiltAuthPlan } from "./ios/prebuilt-auth.ts";
 
 const VALID_DEVELOPMENT_KEY = `pk_test_${btoa("example.clerk.accounts.dev$")}`;
@@ -138,6 +139,14 @@ function iosSetupResult(overrides: Partial<IOSLocalSetupResult> = {}): IOSLocalS
   };
 }
 
+function selectedNativeTarget(
+  overrides: Partial<Extract<IOSNativeReadinessTarget, { status: "selected" }>> = {},
+): Extract<IOSNativeReadinessTarget, { status: "selected" }> {
+  const target = FAKE_IOS_NATIVE_READINESS.target;
+  if (target.status !== "selected") throw new Error("Expected a selected iOS test target");
+  return { ...target, ...overrides };
+}
+
 describe("init iOS", () => {
   const { setup, track } = useInitHarness();
 
@@ -239,6 +248,155 @@ describe("init iOS", () => {
     } finally {
       if (previous !== undefined) process.env.CLERK_PLATFORM_API_KEY = previous;
     }
+  });
+
+  test("requires a confirmed App ID Prefix before an agent creates or links a new application", async () => {
+    setup({ isAgent: true, email: "test@test.com" });
+    const iosCtx = nativeIOSContext();
+    spyOn(context, "gatherContext").mockResolvedValue(iosCtx);
+    spyOn(iosApplyMod, "applyIOSLocalSetup").mockResolvedValue(
+      iosSetupResult({
+        requiresLinkedApp: true,
+        nativeReadiness: {
+          ...FAKE_IOS_NATIVE_READINESS,
+          target: selectedNativeTarget({
+            appIdPrefix: { status: "missing", source: "literal-entitlements" },
+          }),
+        },
+        unverifiedAppIdPrefixSuggestion: {
+          source: "xcode-development-team",
+          value: "ABCDE12345",
+        },
+      }),
+    );
+
+    await expect(init({ yes: true })).rejects.toThrow(
+      "Ask the user whether to use ABCDE12345 or enter a different App ID Prefix",
+    );
+
+    expect(linkMod.link).not.toHaveBeenCalled();
+    expect(pullMod.resolveEnvironmentKeys).not.toHaveBeenCalled();
+    expect(nativeRemoteMod.prepareIOSNativeRemoteSetup).not.toHaveBeenCalled();
+    expect(iosApplyMod.applyIOSPlannedLocalSetup).not.toHaveBeenCalled();
+  });
+
+  test("names an agent-created Clerk application after the selected Xcode target", async () => {
+    setup({ isAgent: true, email: "test@test.com" });
+    const iosCtx = nativeIOSContext();
+    spyOn(context, "gatherContext").mockResolvedValue(iosCtx);
+    spyOn(config, "resolveProfile")
+      .mockResolvedValueOnce(undefined)
+      .mockResolvedValueOnce(undefined)
+      .mockResolvedValue({ profile: { appId: "app_test" } } as never);
+    spyOn(iosApplyMod, "applyIOSLocalSetup").mockResolvedValue(
+      iosSetupResult({
+        targetName: "AnotherPromptTest",
+        requiresLinkedApp: true,
+        nativeReadiness: {
+          ...FAKE_IOS_NATIVE_READINESS,
+          target: selectedNativeTarget({
+            projectPath: "ContainerProject.xcodeproj",
+            targetName: "AnotherPromptTest",
+            appIdPrefix: { status: "missing", source: "literal-entitlements" },
+          }),
+        },
+      }),
+    );
+
+    await init({ yes: true, appIdPrefix: "CONFIRMED123" });
+
+    expect(linkMod.link).toHaveBeenCalledWith({
+      skipIfLinked: true,
+      app: undefined,
+      cwd: iosCtx.cwd,
+      createIfMissing: "AnotherPromptTest",
+      skipAutolink: true,
+    });
+    expect(nativeRemoteMod.prepareIOSNativeRemoteSetup).toHaveBeenCalledWith(
+      expect.objectContaining({
+        appIdPrefix: "CONFIRMED123",
+        applicationLinkChange: "created-and-linked",
+      }),
+    );
+  });
+
+  test("lets an explicit existing app supply its registered prefix without auto-creation", async () => {
+    setup({ isAgent: true, email: "test@test.com" });
+    const iosCtx = nativeIOSContext();
+    spyOn(context, "gatherContext").mockResolvedValue(iosCtx);
+    spyOn(config, "resolveProfile")
+      .mockResolvedValueOnce(undefined)
+      .mockResolvedValueOnce(undefined)
+      .mockResolvedValue({ profile: { appId: "app_existing" } } as never);
+    spyOn(iosApplyMod, "applyIOSLocalSetup").mockResolvedValue(
+      iosSetupResult({
+        requiresLinkedApp: true,
+        nativeReadiness: {
+          ...FAKE_IOS_NATIVE_READINESS,
+          target: selectedNativeTarget({
+            appIdPrefix: { status: "missing", source: "literal-entitlements" },
+          }),
+        },
+      }),
+    );
+    spyOn(pullMod, "resolveEnvironmentKeys").mockResolvedValue({
+      appId: "app_existing",
+      instanceId: "ins_existing",
+      instanceLabel: "development",
+      publishableKey: VALID_DEVELOPMENT_KEY,
+    });
+    spyOn(nativeRemoteMod, "prepareIOSNativeRemoteSetup").mockResolvedValue(
+      iosRemotePlan({
+        applicationId: "app_existing",
+        instanceId: "ins_existing",
+        appIdPrefix: "REGISTERED123",
+        nativeApi: "satisfied",
+        registration: "satisfied",
+        status: "satisfied",
+        actions: [],
+      }),
+    );
+
+    await init({ yes: true, app: "app_existing" });
+
+    expect(linkMod.link).toHaveBeenCalledWith({
+      skipIfLinked: true,
+      app: "app_existing",
+      cwd: iosCtx.cwd,
+      createIfMissing: undefined,
+      skipAutolink: true,
+    });
+    expect(nativeRemoteMod.prepareIOSNativeRemoteSetup).toHaveBeenCalledWith(
+      expect.objectContaining({
+        appIdPrefix: undefined,
+        applicationLinkChange: "link-updated",
+      }),
+    );
+  });
+
+  test("does not auto-create a replacement when an existing iOS link disappears", async () => {
+    setup({ isAgent: true, email: "test@test.com" });
+    const iosCtx = nativeIOSContext();
+    spyOn(context, "gatherContext").mockResolvedValue(iosCtx);
+    spyOn(config, "resolveProfile")
+      .mockResolvedValueOnce({ profile: { appId: "app_existing" } } as never)
+      .mockResolvedValue(undefined);
+    spyOn(iosApplyMod, "applyIOSLocalSetup").mockResolvedValue(
+      iosSetupResult({ requiresLinkedApp: true }),
+    );
+
+    await expect(init({ yes: true })).rejects.toThrow(
+      "The Clerk application link could not be verified",
+    );
+
+    expect(linkMod.link).toHaveBeenCalledWith({
+      skipIfLinked: true,
+      app: undefined,
+      cwd: iosCtx.cwd,
+      createIfMissing: undefined,
+      skipAutolink: true,
+    });
+    expect(pullMod.resolveEnvironmentKeys).not.toHaveBeenCalled();
   });
 
   test("rejects --allow-dirty with --dry-run before project work", async () => {
