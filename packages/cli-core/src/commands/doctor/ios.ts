@@ -19,6 +19,8 @@ import type { IOSAppTarget, IOSProjectInspectionResult, IOSSetupStep } from "../
 import type { CheckResult, DoctorContext } from "./types.ts";
 
 const LOCAL_STEP_REMEDY = "Run `clerk init --target <target>` to safely complete this step.";
+const AUTH_FLOW_REMEDY =
+  "Integrate authentication at the app's intended signed-out entry point without replacing existing application UI: present ClerkKitUI's `AuthView`, or build a custom ClerkKit sign-in/sign-up flow.";
 const REMOTE_REMEDY =
   "Run `clerk init --target <target>` to preview and apply the missing Native Application setup.";
 
@@ -145,6 +147,12 @@ async function authViewEnvironmentResult(
 
 function localStepResult(step: IOSSetupStep): CheckResult {
   const name = `iOS: ${step.title}`;
+  const remedy =
+    step.id === "select-target"
+      ? step.description
+      : step.id === "add-authentication-flow"
+        ? AUTH_FLOW_REMEDY
+        : LOCAL_STEP_REMEDY;
   switch (step.status) {
     case "satisfied":
       return {
@@ -167,7 +175,7 @@ function localStepResult(step: IOSSetupStep): CheckResult {
         status: "fail",
         message: `${step.title}: setup required`,
         detail: step.description,
-        remedy: LOCAL_STEP_REMEDY,
+        remedy,
       };
     case "blocked":
       return {
@@ -175,7 +183,7 @@ function localStepResult(step: IOSSetupStep): CheckResult {
         status: "fail",
         message: `${step.title}: blocked`,
         detail: step.description,
-        remedy: step.id === "select-target" ? step.description : LOCAL_STEP_REMEDY,
+        remedy,
       };
   }
 }

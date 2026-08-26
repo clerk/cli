@@ -219,6 +219,27 @@ function commandFailure(
   return fail(name, reason, remedy, diagnosticDetail(result));
 }
 
+const SWIFT_PACKAGE_RECOVERY =
+  "Check network access and credentials for the Swift package repositories, then rerun the command. To intentionally change package versions, rerun with --resolve-packages and review Package.resolved.";
+
+function isSwiftPackageResolutionFailure(result: IOSXcodeCommandResult): boolean {
+  const output = sanitizeIOSXcodeDiagnostic(
+    [result.stderr, result.stdout, result.spawnError ?? ""].join("\n"),
+  );
+  return [
+    /could not resolve package dependencies/i,
+    /(?:package dependency|package graph|package resolution).*(?:error|failed|failure)/i,
+    /(?:error|failed|failure).*(?:package dependency|package graph|package resolution)/i,
+    /(?:could(?:n['’]t| not)|failed to|unable to)\s+(?:clone|fetch|update|check\s*out)\b[^\n]{0,160}\b(?:package|repository|repositories|revision)\b/i,
+    /(?:invalid|corrupt|malformed).*Package\.resolved/i,
+    /Package\.resolved.*(?:invalid|corrupt|malformed)/i,
+  ].some((pattern) => pattern.test(output));
+}
+
+function swiftPackageCommandFailure(action: string, result: IOSXcodeCommandResult): CheckResult {
+  return commandFailure("Swift packages", action, result, SWIFT_PACKAGE_RECOVERY);
+}
+
 function isCommandSuccess(result: IOSXcodeCommandResult): boolean {
   return !result.timedOut && !result.spawnError && result.exitCode === 0;
 }
@@ -692,10 +713,22 @@ function packageSnapshotChange(
   return "invalid";
 }
 
-function packageSafetyArgs(sourcePackagesPath: string, requireResolvedVersions: boolean): string[] {
+function packageIsolationArgs(sourcePackagesPath: string, packageCachePath: string): string[] {
   return [
     "-clonedSourcePackagesDirPath",
     sourcePackagesPath,
+    "-packageCachePath",
+    packageCachePath,
+  ];
+}
+
+function packageSafetyArgs(
+  sourcePackagesPath: string,
+  packageCachePath: string,
+  requireResolvedVersions: boolean,
+): string[] {
+  return [
+    ...packageIsolationArgs(sourcePackagesPath, packageCachePath),
     "-disableAutomaticPackageResolution",
     ...(requireResolvedVersions ? ["-onlyUsePackageVersionsFromResolvedFile"] : []),
     "-skipPackageUpdates",
@@ -1180,6 +1213,7 @@ export async function runIOSXcodeVerification(
   }
 
   const sourcePackagesPath = join(temporaryDirectory, "SourcePackages");
+  const packageCachePath = join(temporaryDirectory, "PackageCache");
   const derivedDataPath = join(temporaryDirectory, "DerivedData");
   const containerArgs = [container.flag, container.absolutePath];
 
@@ -1192,8 +1226,7 @@ export async function runIOSXcodeVerification(
           "xcodebuild",
           ...containerArgs,
           "-resolvePackageDependencies",
-          "-clonedSourcePackagesDirPath",
-          sourcePackagesPath,
+          ...packageIsolationArgs(sourcePackagesPath, packageCachePath),
           "-quiet",
         ],
         RESOLUTION_TIMEOUT_MS,
@@ -1265,16 +1298,94 @@ export async function runIOSXcodeVerification(
         ),
       );
       return results;
-    } else if (hasRemotePackages) {
-      results.push(pass("Swift packages", "Remote Swift packages are locked"));
-    } else {
+    } else if (!hasRemotePackages) {
       results.push(pass("Swift packages", "No remote Swift package lock is required"));
     }
 
     const buildRequested = options.build === true || options.simulator === true;
     if (!buildRequested) return results;
 
-    const safetyArgs = packageSafetyArgs(sourcePackagesPath, hasRemotePackages);
+    const safetyArgs = packageSafetyArgs(sourcePackagesPath, packageCachePath, hasRemotePackages);
+    if (!options.resolvePackages && hasRemotePackages) {
+      const beforeHydrationRead = await readSafePackageResolvedSnapshot(
+        inspection.root,
+        container.absolutePath,
+        resolvedPath,
+      );
+      if (!beforeHydrationRead.snapshot) {
+        results.push(
+          fail(
+            "Swift packages",
+            "The Package.resolved path became unsafe before fetching locked packages",
+            "Inspect the package lock path without following symbolic links before continuing.",
+            beforeHydrationRead.detail,
+          ),
+        );
+        return results;
+      }
+      const beforeHydrationLock = beforeHydrationRead.snapshot;
+      const preHydrationLockChange = packageSnapshotChange(lockSnapshot, beforeHydrationLock);
+      if (preHydrationLockChange !== "unchanged") {
+        results.push(
+          fail(
+            "Swift packages",
+            `Package.resolved became ${preHydrationLockChange} before fetching locked packages`,
+            "Review the package change and rerun doctor from a stable checkout.",
+          ),
+        );
+        return results;
+      }
+
+      const hydration = await run(
+        [
+          xcrun,
+          "xcodebuild",
+          ...containerArgs,
+          "-resolvePackageDependencies",
+          ...safetyArgs,
+          "-quiet",
+        ],
+        RESOLUTION_TIMEOUT_MS,
+      );
+      if (!isCommandSuccess(hydration)) {
+        results.push(swiftPackageCommandFailure("Fetching locked Swift packages", hydration));
+        return results;
+      }
+
+      const afterHydrationRead = await readSafePackageResolvedSnapshot(
+        inspection.root,
+        container.absolutePath,
+        resolvedPath,
+      );
+      if (!afterHydrationRead.snapshot) {
+        results.push(
+          fail(
+            "Swift packages",
+            "Fetching locked packages left the Package.resolved path unsafe",
+            "Inspect the package lock path without following symbolic links before continuing.",
+            afterHydrationRead.detail,
+          ),
+        );
+        return results;
+      }
+      const afterHydrationLock = afterHydrationRead.snapshot;
+      const hydrationLockChange = packageSnapshotChange(beforeHydrationLock, afterHydrationLock);
+      if (hydrationLockChange !== "unchanged") {
+        results.push(
+          fail(
+            "Swift packages",
+            `Fetching locked packages unexpectedly left Package.resolved ${hydrationLockChange}`,
+            "Review the package change; doctor will not restore or continue from unexpected Xcode mutations.",
+          ),
+        );
+        return results;
+      }
+      lockSnapshot = afterHydrationLock;
+      results.push(
+        pass("Swift packages", "Fetched the locked remote Swift packages for verification"),
+      );
+    }
+
     const listResult = await run(
       [xcrun, "xcodebuild", ...containerArgs, "-list", "-json", ...safetyArgs],
       DISCOVERY_TIMEOUT_MS,
@@ -1282,12 +1393,14 @@ export async function runIOSXcodeVerification(
     );
     if (!isCommandSuccess(listResult) || listResult.truncated) {
       results.push(
-        commandFailure(
-          "Xcode scheme",
-          "Scheme discovery",
-          listResult,
-          "Open the selected container in Xcode and confirm its shared or automatic schemes.",
-        ),
+        isSwiftPackageResolutionFailure(listResult)
+          ? swiftPackageCommandFailure("Swift package checkout during scheme discovery", listResult)
+          : commandFailure(
+              "Xcode scheme",
+              "Scheme discovery",
+              listResult,
+              "Open the selected container in Xcode and confirm its shared or automatic schemes.",
+            ),
       );
       return results;
     }
@@ -1334,12 +1447,17 @@ export async function runIOSXcodeVerification(
     );
     if (!isCommandSuccess(settingsResult) || settingsResult.truncated) {
       results.push(
-        commandFailure(
-          "Xcode scheme",
-          "Scheme validation",
-          settingsResult,
-          "Open the selected scheme in Xcode and confirm it builds the selected application target.",
-        ),
+        isSwiftPackageResolutionFailure(settingsResult)
+          ? swiftPackageCommandFailure(
+              "Swift package checkout during scheme validation",
+              settingsResult,
+            )
+          : commandFailure(
+              "Xcode scheme",
+              "Scheme validation",
+              settingsResult,
+              "Open the selected scheme in Xcode and confirm it builds the selected application target.",
+            ),
       );
       return results;
     }
@@ -1396,12 +1514,14 @@ export async function runIOSXcodeVerification(
     );
     if (!isCommandSuccess(buildResult)) {
       results.push(
-        commandFailure(
-          "Xcode build",
-          "iOS Simulator build",
-          buildResult,
-          "Open the selected scheme's build log in Xcode and fix the reported compilation error.",
-        ),
+        isSwiftPackageResolutionFailure(buildResult)
+          ? swiftPackageCommandFailure("Swift package checkout during the build", buildResult)
+          : commandFailure(
+              "Xcode build",
+              "iOS Simulator build",
+              buildResult,
+              "Open the selected scheme's build log in Xcode and fix the reported compilation error.",
+            ),
       );
       return results;
     }
