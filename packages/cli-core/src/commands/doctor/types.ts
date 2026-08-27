@@ -32,6 +32,8 @@ export interface DoctorContext {
   hasPlatformAPIKey(): boolean;
   /** OAuth or Platform API-key presence; does not perform a network request. */
   hasAccountCredentials(): Promise<boolean>;
+  /** Read-only, memoized Platform API request used to verify the configured key. */
+  verifyPlatformAPIKey(): Promise<void>;
   getToken(): Promise<string | null>;
   getValidToken(): Promise<string | null>;
   getProfile(): Promise<ResolvedProfile | undefined>;
