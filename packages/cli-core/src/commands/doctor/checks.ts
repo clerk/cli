@@ -173,7 +173,7 @@ export async function checkTokenValid(ctx: DoctorContext): Promise<CheckResult> 
   const check = defineCheck("Authentication valid", ctx.fixes.login);
   if (ctx.hasPlatformAPIKey()) {
     try {
-      await ctx.verifyPlatformAPIKey();
+      await ctx.verifyAccountAccess();
       return check.pass("Platform API key access verified");
     } catch (error) {
       if (
@@ -215,20 +215,34 @@ export async function checkTokenValid(ctx: DoctorContext): Promise<CheckResult> 
   } catch (error) {
     if (isAuthError(error)) {
       // The OAuth userinfo surface is not available in every environment that
-      // can accept the same account credential through PLAPI. When a linked
-      // application is reachable, that authenticated request is stronger
-      // evidence for the CLI than a userinfo rejection. `getApplication()` is
-      // cached by the real context, so the later application check reuses this
-      // request. A genuinely expired hosted session still falls through: PLAPI
-      // rejects the same token (or token refresh) too.
+      // can accept the same account credential through PLAPI. Verify it with
+      // an account-scoped application-list request: unlike getApplication(),
+      // this does not depend on the current directory being linked or its
+      // linked application continuing to exist.
       try {
-        const app = await ctx.getApplication();
-        if (app) {
-          return check.pass("Account access verified through the Clerk API");
+        await ctx.verifyAccountAccess();
+        return check.pass("Account access verified through the Clerk API");
+      } catch (verificationError) {
+        if (!isAuthError(verificationError)) {
+          if (verificationError instanceof PlapiError) {
+            const unavailable = verificationError.status === 404 ? "endpoint" : "API";
+            return check.warn(
+              `Could not verify authentication — Clerk ${unavailable} unavailable`,
+              {
+                detail: errorMessage(verificationError),
+                remedy:
+                  "Check the Clerk environment and service status, then rerun `clerk doctor`.",
+                fixable: false,
+              },
+            );
+          }
+
+          return check.warn("Could not reach Clerk to verify authentication — network issue", {
+            detail: errorMessage(verificationError),
+            remedy: "Check your network connection, then rerun `clerk doctor`.",
+            fixable: false,
+          });
         }
-      } catch {
-        // Preserve the existing expired-session diagnosis below. The
-        // application check reports its own endpoint-specific failure later.
       }
 
       // Same fallback whoami uses: an expired session doesn't strand a keyless

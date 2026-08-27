@@ -1,4 +1,17 @@
-import { lstat, mkdtemp, readFile, readdir, realpath, rm } from "node:fs/promises";
+import {
+  copyFile,
+  cp,
+  lstat,
+  mkdir,
+  mkdtemp,
+  readFile,
+  readdir,
+  realpath,
+  rename,
+  rm,
+  writeFile,
+} from "node:fs/promises";
+import { randomUUID } from "node:crypto";
 import { tmpdir } from "node:os";
 import { basename, dirname, extname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { errorMessage } from "../../lib/errors.ts";
@@ -109,6 +122,25 @@ interface PackageResolvedPathSafety {
 interface SafePackageResolvedSnapshot {
   snapshot?: PackageResolvedSnapshot;
   detail?: string;
+}
+
+interface IsolatedXcodeContainer {
+  container: SelectedContainer;
+  lockSnapshot: PackageResolvedSnapshot;
+  path: string;
+  device: number;
+  inode: number;
+}
+
+type OwnedTemporaryDirectory = Pick<IsolatedXcodeContainer, "path" | "device" | "inode">;
+
+class IsolatedWorkspaceReplacementError extends Error {
+  constructor(readonly preservedPath: string) {
+    super(
+      `The isolated Xcode workspace was replaced before cleanup. Its replacement was preserved at ${preservedPath}.`,
+    );
+    this.name = "IsolatedWorkspaceReplacementError";
+  }
 }
 
 interface VerifiedBuildSettings {
@@ -917,6 +949,139 @@ async function readSafePackageResolvedSnapshot(
   return { snapshot };
 }
 
+function encodeXMLAttribute(value: string): string {
+  return value
+    .replaceAll("&", "&amp;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&apos;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;");
+}
+
+async function createIsolatedFrozenContainer(
+  inspectionRoot: string,
+  source: SelectedContainer,
+  sourceLock: PackageResolvedSnapshot,
+): Promise<IsolatedXcodeContainer> {
+  const shadowPath = join(
+    dirname(source.absolutePath),
+    `.clerk-doctor-${randomUUID()}.xcworkspace`,
+  );
+  let ownership: OwnedTemporaryDirectory | undefined;
+
+  try {
+    await mkdir(shadowPath, { mode: 0o700 });
+    const created = await lstat(shadowPath);
+    if (!created.isDirectory() || created.isSymbolicLink()) {
+      throw new Error("The isolated Xcode workspace is not a local directory.");
+    }
+    ownership = {
+      path: shadowPath,
+      device: created.dev,
+      inode: created.ino,
+    };
+
+    if (source.kind === "workspace") {
+      for (const entry of await readdir(source.absolutePath)) {
+        await cp(join(source.absolutePath, entry), join(shadowPath, entry), {
+          recursive: true,
+          force: false,
+          errorOnExist: true,
+        });
+      }
+    } else {
+      await writeFile(
+        join(shadowPath, "contents.xcworkspacedata"),
+        `<?xml version="1.0" encoding="UTF-8"?>\n<Workspace version="1.0"><FileRef location="absolute:${encodeXMLAttribute(
+          source.absolutePath,
+        )}"></FileRef></Workspace>\n`,
+        { mode: 0o600 },
+      );
+      if (sourceLock.status === "valid") {
+        const shadowLockPath = join(shadowPath, "xcshareddata", "swiftpm", "Package.resolved");
+        await mkdir(dirname(shadowLockPath), { recursive: true, mode: 0o700 });
+        await copyFile(sourceLock.path, shadowLockPath);
+      }
+    }
+
+    if (!(await pathIsSafelyWithinIOSRoot(inspectionRoot, shadowPath))) {
+      throw new Error("The isolated Xcode workspace escaped the inspected project root.");
+    }
+    const info = await lstat(shadowPath);
+    if (!info.isDirectory() || info.isSymbolicLink()) {
+      throw new Error("The isolated Xcode workspace is not a local directory.");
+    }
+    if (info.dev !== ownership.device || info.ino !== ownership.inode) {
+      throw new Error("The isolated Xcode workspace was replaced while it was being prepared.");
+    }
+
+    const container: SelectedContainer = {
+      kind: "workspace",
+      flag: "-workspace",
+      absolutePath: shadowPath,
+      relativePath: source.relativePath,
+      ...(source.workspace ? { workspace: source.workspace } : {}),
+    };
+    const shadowLockPath = packageResolvedPath(container);
+    const shadowRead = await readSafePackageResolvedSnapshot(
+      inspectionRoot,
+      shadowPath,
+      shadowLockPath,
+    );
+    if (!shadowRead.snapshot) {
+      throw new Error(
+        shadowRead.detail ?? "The isolated Package.resolved could not be inspected safely.",
+      );
+    }
+    if (packageSnapshotChange(sourceLock, shadowRead.snapshot) !== "unchanged") {
+      throw new Error("Package.resolved changed while the isolated workspace was being prepared.");
+    }
+
+    return {
+      container,
+      lockSnapshot: shadowRead.snapshot,
+      path: shadowPath,
+      device: info.dev,
+      inode: info.ino,
+    };
+  } catch (error) {
+    if (ownership) {
+      try {
+        await removeIsolatedFrozenContainer(ownership);
+      } catch (cleanupError) {
+        throw new Error(
+          `${errorMessage(error)} Cleanup also failed: ${errorMessage(cleanupError)}`,
+        );
+      }
+    }
+    throw error;
+  }
+}
+
+async function removeIsolatedFrozenContainer(isolated: OwnedTemporaryDirectory): Promise<void> {
+  const cleanupPath = join(
+    dirname(isolated.path),
+    `.clerk-doctor-cleanup-${randomUUID()}.xcworkspace`,
+  );
+  try {
+    await rename(isolated.path, cleanupPath);
+  } catch (error) {
+    if (isMissingPathError(error)) return;
+    throw error;
+  }
+
+  const info = await lstat(cleanupPath);
+  if (
+    !info.isDirectory() ||
+    info.isSymbolicLink() ||
+    info.dev !== isolated.device ||
+    info.ino !== isolated.inode
+  ) {
+    throw new IsolatedWorkspaceReplacementError(cleanupPath);
+  }
+  await rm(cleanupPath, { recursive: true, force: false });
+}
+
 function packageSnapshotChange(
   before: PackageResolvedSnapshot,
   after: PackageResolvedSnapshot,
@@ -1349,7 +1514,8 @@ export async function runIOSXcodeVerification(
     );
     return results;
   }
-  let lockSnapshot = initialLockRead.snapshot;
+  const originalLockSnapshot = initialLockRead.snapshot;
+  let lockSnapshot = originalLockSnapshot;
   if (lockSnapshot.status === "invalid") {
     results.push(
       fail(
@@ -1438,7 +1604,10 @@ export async function runIOSXcodeVerification(
   const sourcePackagesPath = join(temporaryDirectory, "SourcePackages");
   const packageCachePath = join(temporaryDirectory, "PackageCache");
   const derivedDataPath = join(temporaryDirectory, "DerivedData");
-  const containerArgs = [container.flag, container.absolutePath];
+  let executionContainer = container;
+  let executionResolvedPath = resolvedPath;
+  let containerArgs = [executionContainer.flag, executionContainer.absolutePath];
+  let isolatedContainer: IsolatedXcodeContainer | undefined;
 
   try {
     if (options.resolvePackages) {
@@ -1534,6 +1703,18 @@ export async function runIOSXcodeVerification(
     const buildRequested = options.build === true || options.simulator === true;
     if (!buildRequested) return results;
 
+    if (!options.resolvePackages) {
+      isolatedContainer = await createIsolatedFrozenContainer(
+        inspection.root,
+        container,
+        lockSnapshot,
+      );
+      executionContainer = isolatedContainer.container;
+      executionResolvedPath = packageResolvedPath(executionContainer);
+      lockSnapshot = isolatedContainer.lockSnapshot;
+      containerArgs = [executionContainer.flag, executionContainer.absolutePath];
+    }
+
     const safetyArgs = packageSafetyArgs(
       sourcePackagesPath,
       packageCachePath,
@@ -1542,8 +1723,8 @@ export async function runIOSXcodeVerification(
     if (!options.resolvePackages && usesResolvedPackageLock) {
       const beforeHydrationRead = await readSafePackageResolvedSnapshot(
         inspection.root,
-        container.absolutePath,
-        resolvedPath,
+        executionContainer.absolutePath,
+        executionResolvedPath,
       );
       if (!beforeHydrationRead.snapshot) {
         results.push(
@@ -1587,8 +1768,8 @@ export async function runIOSXcodeVerification(
 
       const afterHydrationRead = await readSafePackageResolvedSnapshot(
         inspection.root,
-        container.absolutePath,
-        resolvedPath,
+        executionContainer.absolutePath,
+        executionResolvedPath,
       );
       if (!afterHydrationRead.snapshot) {
         results.push(
@@ -1607,8 +1788,8 @@ export async function runIOSXcodeVerification(
         results.push(
           fail(
             "Swift packages",
-            `Fetching locked packages unexpectedly left Package.resolved ${hydrationLockChange}`,
-            "Review the package change; doctor will not restore or continue from unexpected Xcode mutations.",
+            `Fetching locked packages changed the isolated Package.resolved (${hydrationLockChange})`,
+            "The original Package.resolved was left unchanged. Rerun with --resolve-packages only if you intend to update it.",
           ),
         );
         return results;
@@ -1637,7 +1818,7 @@ export async function runIOSXcodeVerification(
       );
       return results;
     }
-    const availableSchemes = parseSchemeNames(listResult.stdout, container.kind);
+    const availableSchemes = parseSchemeNames(listResult.stdout, executionContainer.kind);
     if (!availableSchemes || availableSchemes.length === 0) {
       results.push(
         fail(
@@ -1714,8 +1895,8 @@ export async function runIOSXcodeVerification(
 
     const beforeBuildRead = await readSafePackageResolvedSnapshot(
       inspection.root,
-      container.absolutePath,
-      resolvedPath,
+      executionContainer.absolutePath,
+      executionResolvedPath,
     );
     if (!beforeBuildRead.snapshot) {
       results.push(
@@ -1760,8 +1941,8 @@ export async function runIOSXcodeVerification(
     }
     const afterBuildRead = await readSafePackageResolvedSnapshot(
       inspection.root,
-      container.absolutePath,
-      resolvedPath,
+      executionContainer.absolutePath,
+      executionResolvedPath,
     );
     if (!afterBuildRead.snapshot) {
       results.push(
@@ -1780,8 +1961,8 @@ export async function runIOSXcodeVerification(
       results.push(
         fail(
           "Xcode build",
-          `The frozen build unexpectedly left Package.resolved ${lockChange}`,
-          "Review the package change; doctor will not restore or continue from unexpected Xcode mutations.",
+          `The frozen build changed the isolated Package.resolved (${lockChange})`,
+          "The original Package.resolved was left unchanged. Rerun with --resolve-packages only if you intend to update it.",
         ),
       );
       return results;
@@ -1925,6 +2106,24 @@ export async function runIOSXcodeVerification(
     );
     return results;
   } finally {
+    if (isolatedContainer) {
+      try {
+        await removeIsolatedFrozenContainer(isolatedContainer);
+      } catch (error) {
+        const remedy =
+          error instanceof IsolatedWorkspaceReplacementError
+            ? `Inspect ${error.preservedPath} and move any user-owned files back to their intended location.`
+            : `Remove ${isolatedContainer.path} after confirming it still belongs to this Doctor run.`;
+        results.push(
+          warn(
+            "Xcode temporary files",
+            "The isolated Xcode workspace could not be removed safely",
+            remedy,
+            errorMessage(error),
+          ),
+        );
+      }
+    }
     try {
       await removeTemporaryDirectory(temporaryDirectory);
     } catch (error) {
@@ -1936,6 +2135,37 @@ export async function runIOSXcodeVerification(
           errorMessage(error),
         ),
       );
+    }
+    if (!options.resolvePackages) {
+      const finalOriginalRead = await readSafePackageResolvedSnapshot(
+        inspection.root,
+        container.absolutePath,
+        resolvedPath,
+      );
+      if (!finalOriginalRead.snapshot) {
+        results.push(
+          fail(
+            "Swift packages",
+            "The original Package.resolved path changed while Doctor was running",
+            "Review the project change; Doctor ran Xcode against an isolated workspace and did not restore or overwrite it.",
+            finalOriginalRead.detail,
+          ),
+        );
+      } else {
+        const originalChange = packageSnapshotChange(
+          originalLockSnapshot,
+          finalOriginalRead.snapshot,
+        );
+        if (originalChange !== "unchanged") {
+          results.push(
+            fail(
+              "Swift packages",
+              `The original Package.resolved became ${originalChange} while Doctor was running`,
+              "Review the concurrent project change; Doctor ran Xcode against an isolated workspace and did not restore or overwrite it.",
+            ),
+          );
+        }
+      }
     }
   }
 }
