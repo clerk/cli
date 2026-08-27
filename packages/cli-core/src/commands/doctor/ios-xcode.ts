@@ -198,6 +198,17 @@ function sanitizeSupportedURLTokens(value: string): string {
   });
 }
 
+function redactPEMPrivateKeys(value: string): string {
+  const completePrivateKey =
+    /-----BEGIN ((?:[A-Z0-9]+[ -]+)*PRIVATE KEY(?:[ -]+[A-Z0-9]+)*)-----[\s\S]*?-----END \1-----/gi;
+  const unterminatedPrivateKey =
+    /-----BEGIN (?:[A-Z0-9]+[ -]+)*PRIVATE KEY(?:[ -]+[A-Z0-9]+)*-----[\s\S]*$/gi;
+
+  return value
+    .replace(completePrivateKey, "<redacted>")
+    .replace(unterminatedPrivateKey, "<redacted>");
+}
+
 /**
  * Removes terminal control sequences and credentials before subprocess output
  * reaches human, verbose, debug, or JSON doctor output.
@@ -214,7 +225,7 @@ export function sanitizeIOSXcodeDiagnostic(value: string): string {
     }
   }
 
-  return sanitizeSupportedURLTokens(withoutControls)
+  return sanitizeSupportedURLTokens(redactPEMPrivateKeys(withoutControls))
     .replace(
       /(^|[\s("'`=])[A-Za-z0-9._~%!$&'()*+,;=:+-]+@((?:\[[0-9A-Fa-f:.]+\]|[A-Za-z0-9.-]+):[^\s"'`<>]+)/gm,
       "$1<redacted>@$2",
