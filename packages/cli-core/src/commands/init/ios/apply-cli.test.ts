@@ -239,14 +239,15 @@ struct MyApp: App {
     await createIOSFixture(root, { complete: true, includeKey: false, localSecrets: true });
     await addStarterContentViewToFixture(root);
     const appPath = join(root, "MyApp", "MyAppApp.swift");
-    await Bun.write(
-      appPath,
-      (await Bun.file(appPath).text()).replace("import ClerkKitUI\n", "").replace(
-        `AuthView()
+    const appSource = (await Bun.file(appPath).text()).replace("import ClerkKitUI\n", "").replace(
+      `AuthView()
         .environment(Clerk.shared)
         .onOpenURL { url in Task { try await Clerk.shared.handle(url) } }`,
-        "ContentView()",
-      ),
+      "ContentView()",
+    );
+    await Bun.write(
+      appPath,
+      `${appSource}\nstruct UnusedClerkEnvironment: View {\n  var body: some View { Text("Unused").environment(Clerk.shared) }\n}\n`,
     );
     await Bun.write(
       join(root, "MyApp", "LocalSecrets.plist"),

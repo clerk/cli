@@ -93,10 +93,14 @@ function emptySwiftInspection() {
     importsClerkKit: [],
     importsClerkKitUI: [],
     configureCalls: [],
+    appRootEvidence: [],
     environmentInjections: [],
+    rootEnvironmentInjections: [],
     environmentConsumers: [],
     authFlowReferences: [],
+    magicLinkAuthReferences: [],
     openURLHandlers: [],
+    rootOpenURLHandlers: [],
     status: "absent" as const,
   };
 }

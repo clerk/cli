@@ -168,7 +168,6 @@ export function buildIOSSetupPlan(
       ["install-clerk-sdk", "Install Clerk's iOS SDK"],
       ["configure-publishable-key", "Configure Clerk"],
       ["inject-clerk-environment", "Inject Clerk into SwiftUI"],
-      ["wire-auth-callbacks", "Wire authentication callbacks"],
       ["register-native-application", "Register the native application"],
       ["add-associated-domain", "Add the associated domain"],
       ["add-authentication-flow", "Add an authentication flow"],
@@ -358,7 +357,17 @@ export function buildIOSSetupPlan(
     ),
   );
 
-  const injected = target.swift.environmentInjections.length > 0;
+  const provenAppRoot =
+    !sourceEntryPointIsAmbiguous &&
+    target.swift.entryPoints.length === 1 &&
+    target.swift.appRootEvidence.length === 1 &&
+    target.swift.appRootEvidence[0]?.path === target.swift.entryPoints[0]?.path;
+  const injected =
+    provenAppRoot &&
+    target.swift.rootEnvironmentInjections.some(
+      (evidence) => evidence.path === target.swift.appRootEvidence[0]?.path,
+    );
+  const hasUnprovenInjection = target.swift.environmentInjections.length > 0 && !injected;
   const requiresSwiftUIEnvironment =
     target.swift.environmentConsumers.length > 0 || includeClerkKitUI || directConfigPlanApplies;
   const directEnvironmentAutomationReady =
@@ -367,13 +376,13 @@ export function buildIOSSetupPlan(
     options.directConfigPlan.changes?.environment === "insert";
   const directEnvironmentBlocked = !injected && requiresSwiftUIEnvironment && directConfigBlocked;
   const injectedStatus: IOSSetupStepStatus = injected
-    ? sourceEntryPointIsAmbiguous
-      ? "review"
-      : "satisfied"
+    ? "satisfied"
     : directEnvironmentBlocked
       ? "blocked"
-      : target.swift.evidenceComplete && requiresSwiftUIEnvironment
-        ? "required"
+      : requiresSwiftUIEnvironment
+        ? target.swift.evidenceComplete && provenAppRoot && !hasUnprovenInjection
+          ? "required"
+          : "review"
         : "review";
   steps.push(
     step(
@@ -381,50 +390,56 @@ export function buildIOSSetupPlan(
       "Inject Clerk into the SwiftUI environment",
       injectedStatus,
       injected
-        ? sourceEntryPointIsAmbiguous
-          ? "Clerk.shared is injected, but multiple @main entry points make the shipping root ambiguous."
-          : "Clerk.shared is injected into SwiftUI."
+        ? "Clerk.shared is injected into the proven shipping WindowGroup root."
         : directEnvironmentBlocked
           ? `Automatic SwiftUI environment injection stopped because the selected startup source is not safe to edit: ${directConfigBlocker ?? "Review the selected target's WindowGroup root manually."}`
-          : target.swift.evidenceComplete && requiresSwiftUIEnvironment
-            ? directEnvironmentAutomationReady
-              ? `clerk init can add \`.environment(Clerk.shared)\` to the proven WindowGroup root in ${options.directConfigPlan?.sourcePath ?? "the single shipping @main App source"}.`
-              : "At the app's root view, add `.environment(Clerk.shared)` so Clerk-aware views receive the configured client."
-            : requiresSwiftUIEnvironment
-              ? "Clerk.shared injection was not found in the safely inspected source subset. Confirm the shipping root manually."
-              : "No target source was found consuming Clerk from SwiftUI's environment. Add `.environment(Clerk.shared)` only if AuthView or an `@Environment(Clerk.self)` view needs it.",
-      target.swift.environmentInjections,
+          : hasUnprovenInjection
+            ? "A Clerk.shared environment modifier exists in target source, but it is not proven on the shipping WindowGroup root. Confirm the mounted root manually."
+            : requiresSwiftUIEnvironment && !provenAppRoot
+              ? "The shipping SwiftUI root could not be proven structurally. Confirm that its mounted root injects Clerk.shared."
+              : target.swift.evidenceComplete && requiresSwiftUIEnvironment
+                ? directEnvironmentAutomationReady
+                  ? `clerk init can add \`.environment(Clerk.shared)\` to the proven WindowGroup root in ${options.directConfigPlan?.sourcePath ?? "the single shipping @main App source"}.`
+                  : "At the app's root view, add `.environment(Clerk.shared)` so Clerk-aware views receive the configured client."
+                : requiresSwiftUIEnvironment
+                  ? "Clerk.shared injection was not found in the safely inspected source subset. Confirm the shipping root manually."
+                  : "No target source was found consuming Clerk from SwiftUI's environment. Add `.environment(Clerk.shared)` only if AuthView or an `@Environment(Clerk.self)` view needs it.",
+      injected ? target.swift.rootEnvironmentInjections : target.swift.environmentInjections,
       undefined,
       directEnvironmentAutomationReady,
     ),
   );
 
-  const handlesURLs = target.swift.openURLHandlers.length > 0;
-  const selectedPrebuiltAuthReady =
-    options.prebuiltAuthSelected === true &&
-    options.prebuiltAuthPlan?.status === "ready" &&
-    !strictSDKBlocked;
-  const prebuiltAuthHandlesItsOwnCallbacks =
-    selectedPrebuiltAuthReady || options.prebuiltAuthPlan?.status === "satisfied";
-  steps.push(
-    step(
-      "wire-auth-callbacks",
-      "Wire authentication callbacks",
-      handlesURLs && !sourceEntryPointIsAmbiguous
-        ? "satisfied"
-        : prebuiltAuthHandlesItsOwnCallbacks && !sourceEntryPointIsAmbiguous
-          ? "satisfied"
-          : "review",
-      handlesURLs
-        ? "An onOpenURL handler forwards redirect URLs to Clerk."
-        : prebuiltAuthHandlesItsOwnCallbacks
-          ? "ClerkKitUI's AuthView handles its callback lifecycle while presented, so this quickstart flow does not need generated app-level callback code."
-          : "For redirect-based authentication launched outside AuthView, verify that the app forwards incoming URLs to Clerk.",
-      target.swift.openURLHandlers,
-      undefined,
-      false,
-    ),
-  );
+  if (target.swift.magicLinkAuthReferences.length > 0) {
+    const rootHandlesMagicLinks =
+      provenAppRoot &&
+      target.swift.rootOpenURLHandlers.some(
+        (evidence) => evidence.path === target.swift.appRootEvidence[0]?.path,
+      );
+    const hasUnprovenHandler = target.swift.openURLHandlers.length > 0 && !rootHandlesMagicLinks;
+    steps.push(
+      step(
+        "wire-auth-callbacks",
+        "Wire custom email-link callbacks",
+        rootHandlesMagicLinks ? "satisfied" : "review",
+        rootHandlesMagicLinks
+          ? "The proven shipping WindowGroup root forwards custom email-link callbacks to Clerk."
+          : hasUnprovenHandler
+            ? "A Clerk onOpenURL handler exists in target source, but it is not proven on the shipping WindowGroup root. Confirm that custom email-link callbacks reach Clerk."
+            : provenAppRoot
+              ? "A custom email-link flow is referenced, but the proven shipping WindowGroup root does not forward incoming URLs to Clerk. Review the flow's callback wiring."
+              : "A custom email-link flow is referenced, but the shipping root and its callback wiring could not be proven structurally. Review the flow manually.",
+        [
+          ...target.swift.magicLinkAuthReferences,
+          ...(rootHandlesMagicLinks
+            ? target.swift.rootOpenURLHandlers
+            : target.swift.openURLHandlers),
+        ],
+        undefined,
+        false,
+      ),
+    );
+  }
 
   const bundleIdentifiers = distinctResolved(
     target,

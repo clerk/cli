@@ -119,10 +119,20 @@ export interface IOSSwiftInspection {
   importsClerkKit: IOSSourceEvidence[];
   importsClerkKitUI: IOSSourceEvidence[];
   configureCalls: IOSConfigureCallEvidence[];
+  /** Unique selected-target @main SwiftUI App with a structurally proven WindowGroup root. */
+  appRootEvidence: IOSSourceEvidence[];
+  /** Broad lexical evidence retained for diagnostics and conflict detection only. */
   environmentInjections: IOSSourceEvidence[];
+  /** Clerk environment injection directly attached to the proven shipping WindowGroup root. */
+  rootEnvironmentInjections: IOSSourceEvidence[];
   environmentConsumers: IOSSourceEvidence[];
   authFlowReferences: IOSSourceEvidence[];
+  /** Lexical selected-target evidence of a custom native email-link flow. */
+  magicLinkAuthReferences: IOSSourceEvidence[];
+  /** Broad lexical evidence retained for diagnostics and conflict detection only. */
   openURLHandlers: IOSSourceEvidence[];
+  /** Clerk URL handler directly attached to the proven shipping WindowGroup root. */
+  rootOpenURLHandlers: IOSSourceEvidence[];
   status: "complete" | "partial" | "absent" | "ambiguous";
 }
 

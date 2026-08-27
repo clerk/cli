@@ -10,6 +10,12 @@ import {
   type IOSFileMutationBoundary,
 } from "./file-transaction.ts";
 import { inspectIOSProject, inspectIOSSourceMembership } from "./inspect.ts";
+import {
+  inspectSwiftUIAppRoot,
+  inspectSwiftUIAppRootWithStatus,
+  type SwiftUIAppRootStructure,
+  type SwiftUIRootExpression,
+} from "./swift-app-root.ts";
 import { sanitizeSwiftSourceWithStatus } from "./swift.ts";
 
 const MAX_SWIFT_FILE_BYTES = 1_000_000;
@@ -145,10 +151,10 @@ interface AppStructure {
   source: string;
   sanitized: string;
   newline: "\n" | "\r\n";
-  appType: Range & { openingBrace: number; closingBrace: number; declarationStart: number };
+  appType: SwiftUIAppRootStructure["appType"];
   initializer?: Range & { openingBrace: number; closingBrace: number };
-  body: Range & { openingBrace: number; closingBrace: number; declarationStart: number };
-  root: Range & { modifierStarts: number[] };
+  body: SwiftUIAppRootStructure["body"];
+  root: SwiftUIAppRootStructure["root"];
   hasClerkKitImport: boolean;
   importInsertion: number;
   existingPublishableKey?: string;
@@ -226,12 +232,6 @@ function blocked(
 function skipWhitespace(source: string, start: number, end = source.length): number {
   let cursor = start;
   while (cursor < end && /\s/.test(source[cursor] ?? "")) cursor += 1;
-  return cursor;
-}
-
-function trimWhitespaceEnd(source: string, start: number, end: number): number {
-  let cursor = end;
-  while (cursor > start && /\s/.test(source[cursor - 1] ?? "")) cursor -= 1;
   return cursor;
 }
 
@@ -581,64 +581,6 @@ function importInsertionPosition(
   return last?.end;
 }
 
-function appTypeRange(
-  sanitized: string,
-  index: SwiftStructuralIndex,
-): AppStructure["appType"] | undefined {
-  const mainMatches = [...sanitized.matchAll(/@main\b/g)];
-  if (mainMatches.length !== 1 || mainMatches[0]?.index == null) return undefined;
-  const mainIndex = mainMatches[0].index;
-  if (isInsideConditionalCompilation(index, mainIndex) || braceDepthAt(index, 0, mainIndex) !== 0) {
-    return undefined;
-  }
-
-  let cursor = mainIndex + mainMatches[0][0].length;
-  while (true) {
-    cursor = skipWhitespace(sanitized, cursor);
-    const attribute = /^@[A-Za-z_][A-Za-z0-9_.]*/.exec(sanitized.slice(cursor));
-    if (attribute) {
-      cursor += attribute[0].length;
-      cursor = skipWhitespace(sanitized, cursor);
-      if (sanitized[cursor] === "(") {
-        const closing = matchingParenthesis(sanitized, cursor);
-        if (closing == null) return undefined;
-        cursor = closing + 1;
-      }
-      continue;
-    }
-    const modifier = /^(?:public|internal|private|fileprivate|final|nonisolated)\b/.exec(
-      sanitized.slice(cursor),
-    );
-    if (!modifier) break;
-    cursor += modifier[0].length;
-  }
-
-  cursor = skipWhitespace(sanitized, cursor);
-  const declaration = /^struct\s+([A-Za-z_][A-Za-z0-9_]*)/.exec(sanitized.slice(cursor));
-  if (!declaration) return undefined;
-  const headerStart = cursor + declaration[0].length;
-  const openingBrace = sanitized.indexOf("{", headerStart);
-  if (openingBrace === -1) return undefined;
-  const header = sanitized.slice(headerStart, openingBrace);
-  if (/[;{}<>]/.test(header) || /\bwhere\b/.test(header)) return undefined;
-  const inheritance = /^\s*:\s*([A-Za-z0-9_.,\s]+)\s*$/.exec(header)?.[1];
-  if (!inheritance || !inheritance.split(",").some((item) => item.trim() === "App")) {
-    return undefined;
-  }
-  const closingBrace = matchingBrace(sanitized, openingBrace);
-  if (closingBrace == null) return undefined;
-  if (/^[\t ]*#(?:if|elseif|else|endif)\b/m.test(sanitized.slice(openingBrace, closingBrace))) {
-    return undefined;
-  }
-  return {
-    start: mainIndex,
-    end: closingBrace + 1,
-    declarationStart: cursor,
-    openingBrace,
-    closingBrace,
-  };
-}
-
 interface InitializerCandidate {
   start: number;
   end: number;
@@ -693,145 +635,6 @@ function initializerCandidates(
   return candidates;
 }
 
-function bodyRange(
-  sanitized: string,
-  appType: AppStructure["appType"],
-  index: SwiftStructuralIndex,
-): AppStructure["body"] | undefined {
-  const candidates: AppStructure["body"][] = [];
-  const pattern = /\bvar\s+body\s*:\s*some\s+Scene\b/g;
-  pattern.lastIndex = appType.openingBrace + 1;
-  let match: RegExpExecArray | null;
-  while ((match = pattern.exec(sanitized)) !== null && match.index < appType.closingBrace) {
-    if (braceDepthAt(index, appType.openingBrace, match.index) !== 1) continue;
-    const openingBrace = skipWhitespace(sanitized, match.index + match[0].length);
-    if (sanitized[openingBrace] !== "{") continue;
-    const closingBrace = matchingBrace(sanitized, openingBrace);
-    if (closingBrace == null || closingBrace > appType.closingBrace) continue;
-    const declarationLineStart = lineStart(sanitized, match.index);
-    if (sanitized.slice(declarationLineStart, match.index).trim() !== "") continue;
-    candidates.push({
-      start: match.index,
-      end: closingBrace + 1,
-      declarationStart: declarationLineStart,
-      openingBrace,
-      closingBrace,
-    });
-    pattern.lastIndex = closingBrace + 1;
-  }
-  return candidates.length === 1 ? candidates[0] : undefined;
-}
-
-interface RootExpression {
-  start: number;
-  end: number;
-  containerStart: number;
-  modifierStarts: number[];
-}
-
-function identifierEnd(source: string, start: number): number | undefined {
-  const match = /^[A-Za-z_][A-Za-z0-9_]*/.exec(source.slice(start));
-  return match ? start + match[0].length : undefined;
-}
-
-function consumeBalancedSuffix(source: string, cursor: number, limit: number): number | undefined {
-  if (source[cursor] === "(") {
-    const closing = matchingParenthesis(source, cursor);
-    if (closing == null || closing >= limit) return undefined;
-    cursor = closing + 1;
-    cursor = skipWhitespace(source, cursor, limit);
-    if (source[cursor] === "{") {
-      const closureEnd = matchingBrace(source, cursor);
-      if (closureEnd == null || closureEnd >= limit) return undefined;
-      cursor = closureEnd + 1;
-    }
-    return cursor;
-  }
-  if (source[cursor] === "{") {
-    const closureEnd = matchingBrace(source, cursor);
-    if (closureEnd == null || closureEnd >= limit) return undefined;
-    return closureEnd + 1;
-  }
-  return undefined;
-}
-
-function rootExpression(
-  sanitized: string,
-  start: number,
-  end: number,
-  containerStart: number,
-): RootExpression | undefined {
-  let cursor = skipWhitespace(sanitized, start, end);
-  const expressionStart = cursor;
-  let identifier = identifierEnd(sanitized, cursor);
-  if (identifier == null) return undefined;
-  cursor = identifier;
-  while (true) {
-    const beforeDot = skipWhitespace(sanitized, cursor, end);
-    if (sanitized[beforeDot] !== ".") break;
-    const memberStart = skipWhitespace(sanitized, beforeDot + 1, end);
-    identifier = identifierEnd(sanitized, memberStart);
-    if (identifier == null) return undefined;
-    const afterMember = skipWhitespace(sanitized, identifier, end);
-    if (sanitized[afterMember] === "(" || sanitized[afterMember] === "{") break;
-    cursor = identifier;
-  }
-  cursor = skipWhitespace(sanitized, cursor, end);
-  const primaryEnd = consumeBalancedSuffix(sanitized, cursor, end);
-  if (primaryEnd == null) return undefined;
-  cursor = primaryEnd;
-
-  const modifierStarts: number[] = [];
-  while (true) {
-    cursor = skipWhitespace(sanitized, cursor, end);
-    if (sanitized[cursor] !== ".") break;
-    const modifierStart = cursor;
-    const nameStart = skipWhitespace(sanitized, cursor + 1, end);
-    const nameEnd = identifierEnd(sanitized, nameStart);
-    if (nameEnd == null) return undefined;
-    cursor = skipWhitespace(sanitized, nameEnd, end);
-    const suffixEnd = consumeBalancedSuffix(sanitized, cursor, end);
-    if (suffixEnd == null) return undefined;
-    modifierStarts.push(modifierStart);
-    cursor = suffixEnd;
-  }
-  cursor = skipWhitespace(sanitized, cursor, end);
-  if (cursor !== end) return undefined;
-  return {
-    start: expressionStart,
-    end: trimWhitespaceEnd(sanitized, expressionStart, end),
-    containerStart,
-    modifierStarts,
-  };
-}
-
-function windowGroupRoot(
-  sanitized: string,
-  body: AppStructure["body"],
-): RootExpression | undefined {
-  let cursor = skipWhitespace(sanitized, body.openingBrace + 1, body.closingBrace);
-  const windowGroupStart = cursor;
-  if (!sanitized.slice(cursor).startsWith("WindowGroup")) return undefined;
-  const wordEnd = cursor + "WindowGroup".length;
-  if (/[A-Za-z0-9_]/.test(sanitized[wordEnd] ?? "")) return undefined;
-  cursor = skipWhitespace(sanitized, wordEnd, body.closingBrace);
-  if (sanitized[cursor] === "(") {
-    const closingParenthesis = matchingParenthesis(sanitized, cursor);
-    if (closingParenthesis == null || closingParenthesis >= body.closingBrace) return undefined;
-    cursor = skipWhitespace(sanitized, closingParenthesis + 1, body.closingBrace);
-  }
-  if (sanitized[cursor] !== "{") return undefined;
-  const groupClosingBrace = matchingBrace(sanitized, cursor);
-  if (groupClosingBrace == null || groupClosingBrace >= body.closingBrace) return undefined;
-  if (skipWhitespace(sanitized, groupClosingBrace + 1, body.closingBrace) !== body.closingBrace) {
-    return undefined;
-  }
-  const expressionStart = skipWhitespace(sanitized, cursor + 1, groupClosingBrace);
-  const expressionEnd = trimWhitespaceEnd(sanitized, expressionStart, groupClosingBrace);
-  if (expressionStart === expressionEnd) return undefined;
-  return rootExpression(sanitized, expressionStart, expressionEnd, windowGroupStart);
-}
-
 /**
  * Proves the narrow SwiftUI starter root used by the optional AuthView
  * scaffold. This deliberately shares the direct-config parser's structural
@@ -843,12 +646,7 @@ export function hasExactIOSSwiftUIAppContentRoot(source: string): boolean {
   const sanitization = sanitizeSwiftSourceWithStatus(source);
   if (!sanitization.complete) return false;
   const sanitized = sanitization.sanitizedSource;
-  const structuralIndex = buildSwiftStructuralIndex(sanitized);
-  const appType = appTypeRange(sanitized, structuralIndex);
-  if (!appType) return false;
-  const body = bodyRange(sanitized, appType, structuralIndex);
-  if (!body) return false;
-  const root = windowGroupRoot(sanitized, body);
+  const root = inspectSwiftUIAppRoot(sanitized)?.root;
   if (!root) return false;
 
   const groupOpeningBrace = sanitized.lastIndexOf("{", root.start);
@@ -858,32 +656,6 @@ export function hasExactIOSSwiftUIAppContentRoot(source: string): boolean {
 
   const expression = sanitized.slice(root.start, root.end).replace(/\s+/g, "");
   return expression === "ContentView()" || expression === "ContentView().environment(Clerk.shared)";
-}
-
-function exactEnvironmentModifier(
-  sanitized: string,
-  root: RootExpression,
-): { found: boolean; conflicting: boolean } {
-  let found = false;
-  let conflicting = false;
-  for (const modifierStart of root.modifierStarts) {
-    const remainder = sanitized.slice(modifierStart, root.end);
-    const name = /^\.\s*([A-Za-z_][A-Za-z0-9_]*)/.exec(remainder)?.[1];
-    if (name !== "environment") continue;
-    const openingParenthesis = sanitized.indexOf("(", modifierStart);
-    const closingParenthesis = matchingParenthesis(sanitized, openingParenthesis);
-    if (closingParenthesis == null || closingParenthesis > root.end) {
-      conflicting = true;
-      continue;
-    }
-    const argumentsSource = sanitized.slice(openingParenthesis + 1, closingParenthesis);
-    if (/^\s*(?:\\?\.\s*self\s*,\s*)?Clerk\s*\.\s*shared\s*$/.test(argumentsSource)) {
-      found = true;
-    } else if (/\bClerk\s*\.\s*shared\b/.test(argumentsSource)) {
-      conflicting = true;
-    }
-  }
-  return { found, conflicting };
 }
 
 function exactConfigureCall(
@@ -994,7 +766,7 @@ function hasPreinitializationClerkSharedAccess(
 function environmentInsertion(
   source: string,
   newline: "\n" | "\r\n",
-  root: RootExpression,
+  root: SwiftUIRootExpression,
 ): AppStructure["environmentInsertion"] {
   const trailingLine = source.slice(root.end, lineEnd(source, root.end));
   const sharesLineWithComment = /\/\*|\/\//.test(trailingLine);
@@ -1037,8 +809,8 @@ function parseAppStructure(
   }
   const sanitized = sanitization.sanitizedSource;
   const structuralIndex = buildSwiftStructuralIndex(sanitized);
-  const appType = appTypeRange(sanitized, structuralIndex);
-  if (!appType) {
+  const appRootInspection = inspectSwiftUIAppRootWithStatus(sanitized);
+  if (appRootInspection.status === "unsupported-app") {
     return {
       blocker: {
         code: "unsupported-app-structure",
@@ -1046,8 +818,7 @@ function parseAppStructure(
       },
     };
   }
-  const body = bodyRange(sanitized, appType, structuralIndex);
-  if (!body) {
+  if (appRootInspection.status === "unsupported-body") {
     return {
       blocker: {
         code: "unsupported-scene",
@@ -1055,8 +826,7 @@ function parseAppStructure(
       },
     };
   }
-  const root = windowGroupRoot(sanitized, body);
-  if (!root) {
+  if (appRootInspection.status === "unsupported-scene") {
     return {
       blocker: {
         code: "unsupported-scene",
@@ -1065,6 +835,8 @@ function parseAppStructure(
       },
     };
   }
+  const appRoot = appRootInspection.structure;
+  const { appType, body, root } = appRoot;
 
   const initializerMatches = initializerCandidates(sanitized, appType, structuralIndex);
   if (
@@ -1166,7 +938,7 @@ function parseAppStructure(
     };
   }
 
-  const environment = exactEnvironmentModifier(sanitized, root);
+  const environment = appRoot.clerkEnvironment;
   if (environment.conflicting) {
     return {
       blocker: {
