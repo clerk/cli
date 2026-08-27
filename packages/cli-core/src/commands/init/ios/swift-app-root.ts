@@ -362,13 +362,41 @@ function clerkEnvironment(
   return { found, conflicting };
 }
 
+function regexEscape(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function onOpenURLClosureBody(body: string): string | undefined {
+  const trimmed = body.trim();
+  const wrapper = /^(?:perform\s*:\s*)?\{/.exec(trimmed);
+  if (!wrapper) return trimmed;
+  const openingBrace = trimmed.indexOf("{", wrapper.index);
+  const closingBrace = matchingBrace(trimmed, openingBrace);
+  if (closingBrace == null || trimmed.slice(closingBrace + 1).trim() !== "") return undefined;
+  return trimmed.slice(openingBrace + 1, closingBrace);
+}
+
+function closureURLParameter(body: string): string | undefined {
+  const captureList = /^\s*\[[^\]]*\]\s*/.exec(body)?.[0] ?? "";
+  const header = body.slice(captureList.length);
+  const parenthesized = /^\s*\(\s*([A-Za-z_][A-Za-z0-9_]*)\s*(?::[^)]*)?\)\s+in\b/.exec(header);
+  if (parenthesized?.[1]) return parenthesized[1];
+  const named = /^\s*([A-Za-z_][A-Za-z0-9_]*)\s+in\b/.exec(header);
+  return named?.[1];
+}
+
 function hasClerkOpenURLHandler(source: string, root: SwiftUIRootExpression): boolean {
-  const clerkHandler = /\b(?:Clerk\s*\.\s*shared|clerk)\s*\.\s*handle\s*\(/;
   return root.modifierStarts.some((modifierStart) => {
     const modifier = modifierDetails(source, root, modifierStart);
-    return (
-      modifier?.name === "onOpenURL" && modifier.body != null && clerkHandler.test(modifier.body)
+    if (modifier?.name !== "onOpenURL" || modifier.body == null) return false;
+    const closureBody = onOpenURLClosureBody(modifier.body);
+    if (!closureBody) return false;
+    const parameter = closureURLParameter(closureBody);
+    if (!parameter || parameter === "_") return false;
+    const clerkHandler = new RegExp(
+      `\\bClerk\\s*\\.\\s*shared\\s*\\.\\s*handle\\s*\\(\\s*${regexEscape(parameter)}\\s*\\)`,
     );
+    return clerkHandler.test(closureBody);
   });
 }
 

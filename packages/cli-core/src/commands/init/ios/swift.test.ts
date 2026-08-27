@@ -799,6 +799,66 @@ Clerk.configure(publishableKey: key)`,
     expect(inspection.status).toBe("complete");
   });
 
+  test("does not prove a root when selected-target source evidence is incomplete", async () => {
+    const root = await mkdtemp(join(tmpdir(), "clerk-ios-swift-root-incomplete-"));
+    temporaryDirectories.push(root);
+    const appPath = join(root, "App.swift");
+    await Bun.write(
+      appPath,
+      `import ClerkKit
+       import SwiftUI
+       @main struct AppMain: App {
+         var body: some Scene {
+           WindowGroup {
+             ContentView()
+               .environment(Clerk.shared)
+               .onOpenURL { url in Task { try await Clerk.shared.handle(url) } }
+           }
+         }
+       }`,
+    );
+
+    const inspection = await inspectSwiftSources([
+      { absolutePath: appPath, relativePath: "App.swift" },
+      { absolutePath: join(root, "Missing.swift"), relativePath: "Missing.swift" },
+    ]);
+
+    expect(inspection.evidenceComplete).toBe(false);
+    expect(inspection.appRootEvidence).toEqual([]);
+    expect(inspection.rootEnvironmentInjections).toEqual([]);
+    expect(inspection.rootOpenURLHandlers).toEqual([]);
+  });
+
+  test("proves only an incoming URL forwarded directly to Clerk.shared", async () => {
+    const root = await mkdtemp(join(tmpdir(), "clerk-ios-swift-root-callback-"));
+    temporaryDirectories.push(root);
+    const path = join(root, "App.swift");
+    const inspect = async (handler: string) => {
+      await Bun.write(
+        path,
+        `import ClerkKit
+         import SwiftUI
+         @main struct AppMain: App {
+           var body: some Scene {
+             WindowGroup { ContentView().onOpenURL { ${handler} } }
+           }
+         }`,
+      );
+      return inspectSwiftSources([{ absolutePath: path, relativePath: "App.swift" }]);
+    };
+
+    expect(
+      (await inspect("url in Task { try await Clerk.shared.handle(url) }")).rootOpenURLHandlers,
+    ).toEqual([{ path: "App.swift" }]);
+    expect(
+      (await inspect("_ in Task { try await Clerk.shared.handle(fallbackURL) }"))
+        .rootOpenURLHandlers,
+    ).toEqual([]);
+    expect(
+      (await inspect("url in Task { try await clerk.handle(url) }")).rootOpenURLHandlers,
+    ).toEqual([]);
+  });
+
   test("recognizes the Auth email-link convenience API as a custom magic-link flow", async () => {
     const root = await mkdtemp(join(tmpdir(), "clerk-ios-swift-magic-link-"));
     temporaryDirectories.push(root);

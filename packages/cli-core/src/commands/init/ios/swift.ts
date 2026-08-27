@@ -843,6 +843,7 @@ export async function inspectSwiftSources(
   }
 
   const hasUniqueProvenAppRoot =
+    evidenceComplete &&
     entryPoints.length === 1 &&
     appRootEvidence.length === 1 &&
     appRootEvidence[0]?.path === entryPoints[0]?.path;
