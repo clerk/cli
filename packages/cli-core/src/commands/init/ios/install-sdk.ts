@@ -8,7 +8,9 @@ import { pathIsSafelyWithinIOSRoot, relativeIOSPath } from "./discovery.ts";
 import {
   applyIOSExistingFileTransaction,
   hashIOSFileBytes,
+  prepareIOSFileMutationBoundary,
   type IOSExistingFileMutation,
+  type IOSFileMutationBoundary,
 } from "./file-transaction.ts";
 import {
   asString,
@@ -111,6 +113,7 @@ interface ProductGraph {
 interface PreparedInstall {
   plan: IOSSDKInstallPlan;
   pbxprojPath?: string;
+  boundary?: IOSFileMutationBoundary;
   originalBytes?: Uint8Array;
   originalHash?: string;
   candidateBytes?: Uint8Array;
@@ -872,8 +875,19 @@ async function prepareInstall(options: IOSSDKInstallOptions): Promise<PreparedIn
   }
   const originalBytes = new Uint8Array(originalBuffer);
   const originalHash = hashIOSFileBytes(originalBytes);
+  const boundary = await prepareIOSFileMutationBoundary(root, pbxprojPath);
+  if (!boundary) {
+    return blocked(
+      options,
+      root,
+      projectPath,
+      "external-path",
+      `${projectPath}/project.pbxproj moved outside its prepared project boundary.`,
+    );
+  }
   const source = {
     pbxprojPath,
+    boundary,
     originalBytes,
     originalHash,
     mode: info.mode & 0o7777,
@@ -1423,6 +1437,7 @@ export async function prepareIOSSDKInstallMutation(
   }
   if (
     !prepared.pbxprojPath ||
+    !prepared.boundary ||
     !prepared.originalBytes ||
     !prepared.candidateBytes ||
     !prepared.candidateHash ||
@@ -1459,6 +1474,7 @@ export async function prepareIOSSDKInstallMutation(
     plan: prepared.plan,
     mutation: {
       path: prepared.pbxprojPath,
+      boundary: prepared.boundary,
       originalBytes: prepared.originalBytes,
       originalHash: prepared.originalHash,
       candidateBytes: prepared.candidateBytes,

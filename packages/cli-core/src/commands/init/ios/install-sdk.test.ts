@@ -401,6 +401,7 @@ describe("iOS Clerk SDK installer", () => {
     expect(prepared.status).toBe("ready");
     expect(await readFile(pbxprojPath(root))).toEqual(before);
     if (prepared.status !== "ready") throw new Error("Expected a prepared SDK mutation.");
+    expect(prepared.mutation.boundary.rootPath).toBe(root);
     expect(await validateIOSSDKInstallPostcondition(prepared.plan)).toBe(false);
     expect(prepared.mutation.path).toBe(pbxprojPath(root));
     expect(JSON.stringify(prepared.plan)).not.toContain("candidateBytes");

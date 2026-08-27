@@ -11,6 +11,7 @@ import {
 import {
   applyIOSFileTransaction,
   hashIOSFileBytes,
+  prepareIOSFileMutationBoundary,
   type IOSCreateFileMutation,
   type IOSExistingFileMutation,
   type IOSFileMutation,
@@ -931,11 +932,19 @@ export async function prepareIOSAssociatedDomainMutation(
     ) {
       return { status: "blocked", plan };
     }
+    const boundary = await prepareIOSFileMutationBoundary(plan.root, createPath);
+    if (
+      !boundary ||
+      boundary.parentIdentity.device !== expectedParentIdentity.device ||
+      boundary.parentIdentity.inode !== expectedParentIdentity.inode
+    ) {
+      return { status: "stale", plan };
+    }
     const candidateBytes = newEntitlementsBytes(expectedDomain);
     const createMutation: IOSCreateFileMutation = {
       kind: "create",
       path: createPath,
-      expectedParentIdentity: { ...expectedParentIdentity },
+      boundary,
       candidateBytes,
       candidateHash: hashIOSFileBytes(candidateBytes),
       mode: 0o644,
@@ -964,8 +973,11 @@ export async function prepareIOSAssociatedDomainMutation(
     const candidateSource = addDomainToXML(inspected.file.source, expectedDomain);
     if (!candidateSource) return { status: "blocked", plan };
     const candidateBytes = bytesWithOptionalBOM(candidateSource, inspected.file.bom);
+    const boundary = await prepareIOSFileMutationBoundary(plan.root, inspected.file.absolutePath);
+    if (!boundary) return { status: "stale", plan };
     mutations.push({
       path: inspected.file.absolutePath,
+      boundary,
       originalBytes: inspected.file.bytes,
       originalHash: inspected.file.hash,
       candidateBytes,
