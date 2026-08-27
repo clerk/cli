@@ -131,6 +131,8 @@ export interface IOSSwiftInspection {
   authViewReferences: IOSSourceEvidence[];
   /** Selected-target sources that reference AuthView or a custom native Clerk auth flow. */
   authFlowReferences: IOSSourceEvidence[];
+  /** Selected-target sources that call Clerk's native Sign in with Apple flow. */
+  appleAuthReferences: IOSSourceEvidence[];
   /** Broad lexical evidence retained for diagnostics and conflict detection only. */
   openURLHandlers: IOSSourceEvidence[];
   status: "complete" | "partial" | "absent" | "ambiguous";

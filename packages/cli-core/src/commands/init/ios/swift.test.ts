@@ -425,6 +425,9 @@ Clerk.configure(publishableKey: key)`,
       `import ClerkKit
        import ClerkKitUI
        let native = #/Clerk.shared.auth.signInWithApple()/#
+       let text = "Clerk.shared.auth.signUpWithApple()"
+       // Clerk.shared.auth.signInWithApple()
+       /* Clerk.shared.auth.signUpWithApple() */
        let prebuilt = /AuthView()/`,
     );
 
@@ -434,6 +437,7 @@ Clerk.configure(publishableKey: key)`,
 
     expect(inspection.evidenceComplete).toBe(true);
     expect(inspection.authFlowReferences).toEqual([]);
+    expect(inspection.appleAuthReferences).toEqual([]);
   });
 
   test("still records a real authentication call adjacent to a regex literal", async () => {
@@ -446,6 +450,7 @@ Clerk.configure(publishableKey: key)`,
        let matcher = #/Clerk.shared.auth.signInWithApple()/#
        func authenticate() async throws {
          try await Clerk.shared.auth.signInWithApple()
+         try await Clerk.shared.auth.signUpWithApple()
        }`,
     );
 
@@ -455,6 +460,7 @@ Clerk.configure(publishableKey: key)`,
 
     expect(inspection.evidenceComplete).toBe(true);
     expect(inspection.authFlowReferences).toEqual([{ path: "Authentication.swift" }]);
+    expect(inspection.appleAuthReferences).toEqual([{ path: "Authentication.swift" }]);
   });
 
   test("marks source evidence incomplete for an unclosed regex literal", async () => {
@@ -474,6 +480,7 @@ Clerk.configure(publishableKey: key)`,
 
     expect(inspection.evidenceComplete).toBe(false);
     expect(inspection.authFlowReferences).toEqual([]);
+    expect(inspection.appleAuthReferences).toEqual([]);
   });
 
   test("records real Clerk evidence without retaining key expressions", async () => {
@@ -514,6 +521,7 @@ Clerk.configure(publishableKey: key)`,
     expect(inspection.environmentInjections).toEqual([{ path: "App.swift" }]);
     expect(inspection.authViewReferences).toEqual([{ path: "App.swift" }]);
     expect(inspection.authFlowReferences).toEqual([{ path: "App.swift" }]);
+    expect(inspection.appleAuthReferences).toEqual([]);
     expect(inspection.openURLHandlers).toEqual([{ path: "App.swift" }]);
     expect(JSON.stringify(inspection)).not.toContain("must-not-leak");
   });
@@ -1031,6 +1039,7 @@ Clerk.configure(publishableKey: key)`,
       { path: "SignUp.swift" },
     ]);
     expect(inspection.authViewReferences).toEqual([]);
+    expect(inspection.appleAuthReferences).toEqual([]);
   });
 
   test("marks multiple entry points as ambiguous", async () => {

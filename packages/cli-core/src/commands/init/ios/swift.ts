@@ -17,6 +17,8 @@ const CLERK_NATIVE_AUTH_FLOW =
   /\b(?:Clerk\s*\.\s*shared|clerk)\s*\.\s*auth\s*\.\s*(?:signIn(?:With(?:Password|EmailCode|EmailLink|PhoneCode|OAuth|IdToken|Apple|Passkey|EnterpriseSSO|Ticket))?|signUp(?:With(?:OAuth|Apple|IdToken|EnterpriseSSO|Ticket))?|startHostedAuth)\s*\(/;
 const CLERK_EMAIL_LINK_AUTH_FLOW =
   /(?:\b(?:Clerk\s*\.\s*shared|clerk)\s*\.\s*auth\s*\.\s*signInWithEmailLink|\.\s*sendEmailLink)\s*\(/;
+const CLERK_NATIVE_APPLE_AUTH_FLOW =
+  /\b(?:Clerk\s*\.\s*shared|clerk)\s*\.\s*auth\s*\.\s*(?:signIn|signUp)WithApple\s*\(/;
 const CLERK_ENVIRONMENT_INJECTION = /\.\s*environment\s*\(\s*Clerk\s*\.\s*shared\s*\)/;
 const CLERK_ENVIRONMENT_CONSUMER = /@Environment\s*\(\s*Clerk\s*\.\s*self\s*\)/;
 const CLERK_AUTH_VIEW = /\bAuthView\s*\(/;
@@ -99,6 +101,7 @@ const CLERK_EVIDENCE_PATTERNS = [
   CLERK_URL_HANDLER,
   CLERK_NATIVE_AUTH_FLOW,
   CLERK_EMAIL_LINK_AUTH_FLOW,
+  CLERK_NATIVE_APPLE_AUTH_FLOW,
   CLERK_ENVIRONMENT_INJECTION,
   CLERK_ENVIRONMENT_CONSUMER,
   CLERK_AUTH_VIEW,
@@ -768,6 +771,7 @@ export async function inspectSwiftSources(
   const environmentConsumers: IOSSourceEvidence[] = [];
   const authViewReferences: IOSSourceEvidence[] = [];
   const authFlowReferences: IOSSourceEvidence[] = [];
+  const appleAuthReferences: IOSSourceEvidence[] = [];
   const openURLHandlers: IOSSourceEvidence[] = [];
   let sourceFilesScanned = 0;
   let evidenceComplete = options.membershipComplete ?? true;
@@ -831,6 +835,9 @@ export async function inspectSwiftSources(
     if (constructsAuthView) {
       authViewReferences.push(evidence);
     }
+    if (importsClerkModule && has(sanitized, CLERK_NATIVE_APPLE_AUTH_FLOW)) {
+      appleAuthReferences.push(evidence);
+    }
     if (
       constructsAuthView ||
       (importsClerkModule &&
@@ -881,6 +888,7 @@ export async function inspectSwiftSources(
     environmentConsumers,
     authViewReferences,
     authFlowReferences,
+    appleAuthReferences,
     openURLHandlers,
     status,
   };

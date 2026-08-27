@@ -739,6 +739,7 @@ describe("inspectTargetBuildConfigurations", () => {
             environmentConsumers: [],
             authViewReferences: [],
             authFlowReferences: [],
+            appleAuthReferences: [],
             openURLHandlers: [],
             status: "absent",
           },

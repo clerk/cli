@@ -103,12 +103,14 @@ function dependencies(overrides: Partial<IOSDoctorDependencies> = {}): IOSDoctor
     planIOSAppleEntitlement:
       overrides.planIOSAppleEntitlement ??
       (async () => {
-        throw new Error("Apple planner should not run without a local entitlement");
+        throw new Error("Apple planner should not run without local Apple intent or entitlement");
       }),
     auditIOSNativeAppleHealth:
       overrides.auditIOSNativeAppleHealth ??
       (async () => {
-        throw new Error("Apple remote audit should not run without a local entitlement");
+        throw new Error(
+          "Apple remote audit should not run without local Apple intent or entitlement",
+        );
       }),
   };
 }
@@ -416,7 +418,7 @@ struct ContentView: View {
     );
   });
 
-  test("does not infer AuthView from a custom native authentication call", async () => {
+  test("audits a custom Apple flow without treating it as AuthView", async () => {
     const root = await fixture();
     await writeFile(
       join(root, "MyApp", "MyAppApp.swift"),
@@ -426,11 +428,13 @@ import ClerkKit
 @main
 struct MyApp: App {
   var body: some Scene { WindowGroup { Text("Hello") } }
-  func signIn() async throws { try await Clerk.shared.signInWithApple() }
+  func signIn() async throws { try await Clerk.shared.auth.signInWithApple() }
 }
 `,
     );
     let environmentCalls = 0;
+    let entitlementCalls = 0;
+    let appleHealthCalls = 0;
     const audit = await runIOSDoctorChecks(
       context(),
       { root, target: "MyApp" },
@@ -439,12 +443,77 @@ struct MyApp: App {
           environmentCalls++;
           return { social: {} } as UserSettingsJSON;
         },
+        planIOSAppleEntitlement: async (options) => {
+          entitlementCalls++;
+          const { planIOSAppleEntitlement } = await import("../init/ios/apple-entitlement.ts");
+          return planIOSAppleEntitlement(options);
+        },
+        auditIOSNativeAppleHealth: async ({ applicationId, instanceId, bundleIdentifier }) => {
+          appleHealthCalls++;
+          return {
+            schemaVersion: 1,
+            kind: "clerk-ios-native-apple-health",
+            applicationId,
+            instanceId,
+            bundleIdentifier,
+            runtime: {
+              status: "required",
+              connection: "required",
+              bundleIdentifierConfiguration: "satisfied",
+              current: { enabled: false, authenticatable: false },
+              blockers: [],
+            },
+            automation: { status: "supported", configVersion: "v1_12345678", blockers: [] },
+          };
+        },
       }),
     );
 
     expect(environmentCalls).toBe(0);
+    expect(entitlementCalls).toBe(1);
+    expect(appleHealthCalls).toBe(1);
     expect(
       audit.results.some((result) => result.name === "iOS: AuthView authentication methods"),
+    ).toBeFalse();
+    const entitlement = audit.results.find(
+      (result) => result.name === "iOS: Sign in with Apple entitlement",
+    );
+    expect(entitlement?.status).toBe("fail");
+    expect(entitlement?.remedy).toContain("--sign-in-with-apple");
+    const remote = audit.results.find((result) => result.name === "iOS: Clerk Sign in with Apple");
+    expect(remote?.status).toBe("fail");
+    expect(remote?.message).toContain("custom Apple sign-in is referenced");
+  });
+
+  test("does not run Apple checks for an unrelated custom authentication flow", async () => {
+    const root = await fixture();
+    await writeFile(
+      join(root, "MyApp", "MyAppApp.swift"),
+      `import SwiftUI
+import ClerkKit
+
+@main
+struct MyApp: App {
+  var body: some Scene { WindowGroup { Text("Hello") } }
+  func signIn() async throws {
+    try await Clerk.shared.auth.signInWithPassword(identifier: "person@example.com", password: "secret")
+  }
+}
+`,
+    );
+    const audit = await runIOSDoctorChecks(context(), { root, target: "MyApp" }, dependencies());
+
+    expect(
+      audit.results.find((result) => result.name === "iOS: Add an authentication flow")?.status,
+    ).toBe("pass");
+    expect(
+      audit.results.some((result) => result.name === "iOS: AuthView authentication methods"),
+    ).toBeFalse();
+    expect(
+      audit.results.some((result) => result.name === "iOS: Sign in with Apple entitlement"),
+    ).toBeFalse();
+    expect(
+      audit.results.some((result) => result.name === "iOS: Clerk Sign in with Apple"),
     ).toBeFalse();
   });
 
@@ -468,7 +537,7 @@ struct MyApp: App {
     expect(JSON.stringify(audit.results)).not.toContain("authview-transport-secret");
   });
 
-  test("audits the Clerk Apple connection only when the local entitlement is present", async () => {
+  test("audits the Clerk Apple connection from a local entitlement", async () => {
     const root = await fixture();
     await addAppleEntitlement(root);
     let appleCalls = 0;
