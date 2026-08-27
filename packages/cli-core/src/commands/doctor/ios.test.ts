@@ -133,6 +133,54 @@ describe("runIOSDoctorChecks", () => {
     );
   });
 
+  test("does not pass an associated domain that differs in simulator builds", async () => {
+    const root = await fixture({ complete: true, includeKey: false });
+    const key = publishableKey("clerk.example.test");
+    const sourcePath = join(root, "MyApp", "MyAppApp.swift");
+    const source = await readFile(sourcePath, "utf8");
+    await writeFile(
+      sourcePath,
+      source.replace('QuickstartLocalSecrets.load().publishableKey ?? ""', `"${key}"`),
+    );
+
+    const projectPath = join(root, "MyApp.xcodeproj", "project.pbxproj");
+    const project = await readFile(projectPath, "utf8");
+    await writeFile(
+      projectPath,
+      project.replaceAll(
+        'SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";',
+        '"ASSOCIATED_DOMAIN_HOST" = "clerk.example.test"; "ASSOCIATED_DOMAIN_HOST[sdk=iphonesimulator*]" = "simulator.example.test"; SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";',
+      ),
+    );
+
+    const entitlementsPath = join(root, "MyApp", "MyApp.entitlements");
+    const entitlements = await readFile(entitlementsPath, "utf8");
+    await writeFile(
+      entitlementsPath,
+      entitlements.replace(
+        "webcredentials:clerk.example.test",
+        "webcredentials:$(ASSOCIATED_DOMAIN_HOST)",
+      ),
+    );
+
+    const audit = await runIOSDoctorChecks(context(), { root, target: "MyApp" }, dependencies());
+
+    expect(
+      audit.results.find((result) => result.name === "iOS: Configure Clerk with a publishable key")
+        ?.status,
+    ).toBe("pass");
+    expect(audit.results.find((result) => result.name === "iOS: Native Application")?.status).toBe(
+      "pass",
+    );
+    const domain = audit.results.find(
+      (result) => result.name === "iOS: Add Clerk's associated domain",
+    );
+    expect(domain?.status).toBe("warn");
+    expect(domain?.message).not.toContain("configured");
+    expect(domain?.detail).toContain("unresolved build settings");
+    expect(JSON.stringify(audit.results)).not.toContain(key);
+  });
+
   test("reports missing Native API and registration as a fixable init requirement", async () => {
     const root = await fixture();
     const audit = await runIOSDoctorChecks(
