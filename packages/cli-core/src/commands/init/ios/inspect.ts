@@ -1,6 +1,5 @@
 import { readdir, readFile } from "node:fs/promises";
 import { dirname, extname, relative, resolve, sep } from "node:path";
-import plist from "@expo/plist";
 import { parse as parsePbxProject } from "@bacons/xcode/json";
 import { parseEnvFile } from "../../../lib/dotenv.ts";
 import { decodePublishableKey } from "../../../lib/fapi.ts";
@@ -29,6 +28,7 @@ import {
   type PbxObject,
   type PbxObjects,
 } from "./pbx.ts";
+import { parseIOSPlist } from "./plist.ts";
 import { inspectSwiftSources } from "./swift.ts";
 import type {
   IOSAppTarget,
@@ -335,7 +335,7 @@ async function readPublishableKeyCandidates(
     const file = Bun.file(path);
     if (!(await file.exists()) || file.size > 1_000_000) continue;
     try {
-      const parsed: unknown = plist.parse(await file.text());
+      const parsed = parseIOSPlist(await file.text());
       const value = isRecord(parsed) ? asString(parsed.CLERK_PUBLISHABLE_KEY) : undefined;
       if (value) {
         candidates.push({
@@ -666,7 +666,7 @@ async function inspectEntitlements(
     if (new TextDecoder().decode(bytes.slice(0, 8)).startsWith("bplist")) {
       throw new Error("binary plist");
     }
-    const parsed: unknown = plist.parse(new TextDecoder().decode(bytes));
+    const parsed = parseIOSPlist(new TextDecoder().decode(bytes));
     if (!isRecord(parsed)) throw new Error("plist root is not a dictionary");
 
     const applicationIdentifier = asString(parsed["application-identifier"]);
