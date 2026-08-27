@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { basename, dirname, extname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { errorMessage } from "../../lib/errors.ts";
 import { isRecord } from "../../lib/objects.ts";
+import { interruptSignal } from "../../lib/signals.ts";
 import {
   inspectWorkspace,
   maskXMLComments,
@@ -350,6 +351,25 @@ export const runIOSXcodeCommand: IOSXcodeCommandRunner = async (argv, options) =
     }
   };
 
+  let interrupted = false;
+  const sharedInterrupt = interruptSignal();
+  const stopForInterrupt = (): void => {
+    interrupted = true;
+    // The CLI exits after only a short telemetry flush. Kill synchronously so
+    // detached Xcode build scripts cannot outlive that shutdown window.
+    signalProcessTree("SIGKILL");
+  };
+  const stopForProcessExit = (): void => {
+    // In an interactive terminal, clack owns raw-mode Ctrl-C while its spinner
+    // is active and exits directly instead of emitting SIGINT. Process-exit
+    // cleanup covers that path as well as any other early parent shutdown.
+    signalProcessTree("SIGKILL");
+  };
+
+  globalThis.process.once("exit", stopForProcessExit);
+  if (sharedInterrupt.aborted) stopForInterrupt();
+  else sharedInterrupt.addEventListener("abort", stopForInterrupt, { once: true });
+
   let timedOut = false;
   let forceKillSent = false;
   let forceKillTimer: ReturnType<typeof setTimeout> | undefined;
@@ -386,6 +406,8 @@ export const runIOSXcodeCommand: IOSXcodeCommandRunner = async (argv, options) =
       spawnError: sanitizeIOSXcodeDiagnostic(errorMessage(error)),
     };
   } finally {
+    sharedInterrupt.removeEventListener("abort", stopForInterrupt);
+    globalThis.process.removeListener("exit", stopForProcessExit);
     clearTimeout(timeout);
     if (forceKillTimer) clearTimeout(forceKillTimer);
     // The leader can exit on SIGTERM while a descendant that closed its stdio
@@ -395,7 +417,7 @@ export const runIOSXcodeCommand: IOSXcodeCommandRunner = async (argv, options) =
       forceKillSent = true;
       signalProcessTree("SIGKILL");
     }
-    if (timedOut) await waitForProcessTreeExit();
+    if (timedOut || interrupted) await waitForProcessTreeExit();
   }
 };
 
