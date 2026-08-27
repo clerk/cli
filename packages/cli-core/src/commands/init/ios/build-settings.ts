@@ -30,9 +30,9 @@ const INSPECTED_BUILD_SETTING_KEYS = [
 const INSPECTED_BUILD_SETTINGS = new Set<string>(INSPECTED_BUILD_SETTING_KEYS);
 
 interface BuildContext {
-  label: "iphoneos" | "iphonesimulator";
+  label: "iphoneos/arm64" | "iphonesimulator/arm64" | "iphonesimulator/x86_64";
   sdk: "iphoneos" | "iphonesimulator";
-  arch: "arm64";
+  arch: "arm64" | "x86_64";
 }
 
 interface BuildSettingsEvaluation {
@@ -46,8 +46,9 @@ type XCConfigOperation =
   | { kind: "setting"; key: string; value: string; conditions?: XCConfigCondition[] };
 
 const BUILD_CONTEXTS: BuildContext[] = [
-  { label: "iphoneos", sdk: "iphoneos", arch: "arm64" },
-  { label: "iphonesimulator", sdk: "iphonesimulator", arch: "arm64" },
+  { label: "iphoneos/arm64", sdk: "iphoneos", arch: "arm64" },
+  { label: "iphonesimulator/arm64", sdk: "iphonesimulator", arch: "arm64" },
+  { label: "iphonesimulator/x86_64", sdk: "iphonesimulator", arch: "x86_64" },
 ];
 
 interface XCConfigCondition {
@@ -636,10 +637,11 @@ function resolveSettingAcrossContexts(
   addDiagnosticOnce(diagnostics, {
     code: "xcode.conflicting-build-setting",
     severity: "warning",
-    message: `${targetName} ${configurationName} has different ${key} values by SDK: ${variants
+    message: `${targetName} ${configurationName} has different ${key} values by SDK and architecture: ${variants
       .map(({ context, resolution }) => `${context.label}=${resolutionDisplay(resolution)}`)
       .join(", ")}`,
-    remedy: "Make device and simulator values consistent or select the intended SDK explicitly.",
+    remedy:
+      "Make device and simulator architecture values consistent or select the intended SDK and architecture explicitly.",
     evidence: variants.flatMap(({ resolution }) => resolution.evidence),
   });
 
@@ -649,7 +651,7 @@ function resolveSettingAcrossContexts(
       .map(({ context, resolution }) => `${context.label}=${resolutionDisplay(resolution)}`)
       .join("; "),
     missingVariables: unique([
-      "sdk-conditioned build setting",
+      "sdk/architecture-conditioned build setting",
       ...variants.flatMap(({ resolution }) =>
         resolution.state === "unresolved" ? resolution.missingVariables : [],
       ),
