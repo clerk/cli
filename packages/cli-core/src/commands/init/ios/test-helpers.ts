@@ -61,7 +61,7 @@ function secondTargetObjects(platform: "ios" | "watchos"): string {
   const sourceName = isWatchOS ? "WatchAppApp.swift" : "AdminAppApp.swift";
   const targetName = isWatchOS ? "MyApp Watch App" : "AdminApp";
   const platformSettings = isWatchOS
-    ? 'PRODUCT_BUNDLE_IDENTIFIER = com.example.WatchApp; DEVELOPMENT_TEAM = ABCDE12345; SDKROOT = watchos; SUPPORTED_PLATFORMS = "watchos watchsimulator"; WATCHOS_DEPLOYMENT_TARGET = 10.0;'
+    ? 'PRODUCT_BUNDLE_IDENTIFIER = com.example.WatchApp; DEVELOPMENT_TEAM = ABCDE12345; SDKROOT = watchos; SUPPORTED_PLATFORMS = "watchos watchsimulator"; WATCHOS_DEPLOYMENT_TARGET = 10.0; IPHONEOS_DEPLOYMENT_TARGET = 17.0;'
     : 'PRODUCT_BUNDLE_IDENTIFIER = com.example.AdminApp; DEVELOPMENT_TEAM = ABCDE12345; IPHONEOS_DEPLOYMENT_TARGET = 17.0; SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";';
   return `
     ${IDS.secondGroup} = { isa = PBXGroup; children = ( ${IDS.secondAppFile}, ); path = ${directoryName}; sourceTree = "<group>"; };

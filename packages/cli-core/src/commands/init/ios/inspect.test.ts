@@ -168,7 +168,7 @@ describe("inspectIOSProject", () => {
     ]);
   });
 
-  test("does not treat watchOS application products as iOS app candidates", async () => {
+  test("does not treat watchOS products with stale iOS settings as iOS app candidates", async () => {
     const root = await fixture({ secondTarget: "watchos" });
     const inspection = await inspectIOSProject(root);
 
