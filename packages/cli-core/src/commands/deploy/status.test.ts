@@ -447,13 +447,14 @@ describe("resolveDeployState", () => {
     }
   });
 
-  test("requires Apple to be explicitly authenticatable without reading native endpoints", async () => {
+  test("reports disabled native Apple without reading native endpoints", async () => {
     mockActiveProductionEnvironment();
     mockFetchInstanceConfig.mockImplementation((_appId: string, instanceId: string) =>
       instanceId === "ins_prod"
         ? {
             connection_oauth_apple: {
-              enabled: true,
+              enabled: false,
+              authenticatable: false,
               bundle_id: "com.example.native",
             },
           }

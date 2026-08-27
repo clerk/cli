@@ -249,14 +249,14 @@ export function inspectNativeAppleConfiguration(
     return { status: "hosted-or-unconfigured" };
   }
   const providerConfig = value as Record<string, unknown>;
-  if (providerConfig.enabled !== true || hasAppleHostedIdentifier(providerConfig)) {
+  if (hasAppleHostedIdentifier(providerConfig)) {
     return { status: "hosted-or-unconfigured" };
   }
 
   const rawBundleId = providerConfig.bundle_id;
   const bundleId = typeof rawBundleId === "string" ? rawBundleId.trim() : "";
   if (!bundleId) return { status: "hosted-or-unconfigured" };
-  if (providerConfig.authenticatable !== true) {
+  if (providerConfig.enabled !== true || providerConfig.authenticatable !== true) {
     return { status: "authentication-disabled", bundleId };
   }
 

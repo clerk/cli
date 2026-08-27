@@ -1541,7 +1541,7 @@ describe("deploy", () => {
       expect(mockPatchInstanceConfig).not.toHaveBeenCalled();
     });
 
-    test("refuses native-only Apple that is not explicitly authenticatable", async () => {
+    test("refuses disabled native-only Apple without requesting hosted credentials", async () => {
       await linkedProject({
         instances: { development: "ins_dev_123", production: "ins_prod_native_apple" },
       });
@@ -1556,7 +1556,8 @@ describe("deploy", () => {
         },
         productionConfig: {
           connection_oauth_apple: {
-            enabled: true,
+            enabled: false,
+            authenticatable: false,
             bundle_id: "com.example.native",
           },
         },

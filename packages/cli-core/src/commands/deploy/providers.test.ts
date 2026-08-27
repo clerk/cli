@@ -310,6 +310,20 @@ describe("deploy OAuth provider descriptors", () => {
       inspectNativeAppleConfiguration(
         {
           connection_oauth_apple: {
+            enabled: false,
+            authenticatable: false,
+            bundle_id: "com.example.app",
+          },
+        },
+        apple,
+        iosApplications,
+        { object: "native_settings", api_enabled: true },
+      ),
+    ).toEqual({ status: "authentication-disabled", bundleId: "com.example.app" });
+    expect(
+      inspectNativeAppleConfiguration(
+        {
+          connection_oauth_apple: {
             enabled: true,
             bundle_id: "com.example.app",
           },
@@ -332,7 +346,7 @@ describe("deploy OAuth provider descriptors", () => {
       inspectNativeAppleConfiguration(
         {
           connection_oauth_apple: {
-            enabled: true,
+            enabled: false,
             bundle_id: "com.example.app",
             client_id: "com.example.web",
           },
