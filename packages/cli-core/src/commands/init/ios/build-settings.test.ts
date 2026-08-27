@@ -266,24 +266,62 @@ describe("inspectTargetBuildConfigurations", () => {
 
     expect(configurations[0]?.model.bundleIdentifier).toMatchObject({
       state: "unresolved",
-      missingVariables: ["sdk-conditioned build setting"],
+      missingVariables: ["sdk/architecture-conditioned build setting"],
     });
     expect(diagnostics).toContainEqual(
       expect.objectContaining({
         code: "xcode.conflicting-build-setting",
         message: expect.stringContaining(
-          "iphoneos=com.example.Device, iphonesimulator=com.example.Simulator",
+          "iphoneos/arm64=com.example.Device, iphonesimulator/arm64=com.example.Simulator, iphonesimulator/x86_64=com.example.Simulator",
         ),
       }),
     );
   });
 
-  test("accepts matching device and simulator conditional build settings", async () => {
+  test.each([
+    [
+      "PRODUCT_BUNDLE_IDENTIFIER",
+      "bundleIdentifier",
+      "com.example.Native",
+      "com.example.IntelSimulator",
+    ],
+    ["DEVELOPMENT_TEAM", "developmentTeam", "ABCDE12345", "ZYXWV98765"],
+    [
+      "CODE_SIGN_ENTITLEMENTS",
+      "entitlementsPath",
+      "Example.entitlements",
+      "IntelSimulator.entitlements",
+    ],
+  ] as const)(
+    "fails closed when x86_64 simulator %s differs",
+    async (setting, modelKey, sharedValue, x86Value) => {
+      const { configurations, diagnostics } = await inspectFixture({
+        targetBuildSettings: {
+          [setting]: sharedValue,
+          [`${setting}[sdk=iphonesimulator*][arch=x86_64]`]: x86Value,
+        },
+      });
+
+      expect(configurations[0]?.model[modelKey]).toMatchObject({
+        state: "unresolved",
+        missingVariables: ["sdk/architecture-conditioned build setting"],
+      });
+      expect(diagnostics).toContainEqual(
+        expect.objectContaining({
+          code: "xcode.conflicting-build-setting",
+          message: expect.stringContaining(`iphonesimulator/x86_64=${x86Value}`),
+        }),
+      );
+    },
+  );
+
+  test("accepts matching device and simulator architecture build settings", async () => {
     const { configurations } = await inspectFixture({
       targetBuildSettings: {
         PRODUCT_BUNDLE_IDENTIFIER: "com.example.Base",
         "PRODUCT_BUNDLE_IDENTIFIER[sdk=iphoneos*]": "com.example.Native",
-        "PRODUCT_BUNDLE_IDENTIFIER[sdk=iphonesimulator*]": "com.example.Native",
+        "PRODUCT_BUNDLE_IDENTIFIER[sdk=iphonesimulator*][arch=arm64]": "com.example.Native",
+        "PRODUCT_BUNDLE_IDENTIFIER[sdk=iphonesimulator*][arch=x86_64]": "com.example.Native",
       },
     });
 
@@ -291,6 +329,46 @@ describe("inspectTargetBuildConfigurations", () => {
       state: "resolved",
       value: "com.example.Native",
     });
+  });
+
+  test("fails closed on x86_64 simulator differences from xcconfig", async () => {
+    const { configurations, diagnostics } = await inspectFixture({
+      xcconfig: [
+        "PRODUCT_BUNDLE_IDENTIFIER = com.example.Native",
+        "PRODUCT_BUNDLE_IDENTIFIER[sdk=iphonesimulator*][arch=x86_64] = com.example.IntelSimulator",
+      ].join("\n"),
+      targetBuildSettings: { PRODUCT_BUNDLE_IDENTIFIER: "$(inherited)" },
+    });
+
+    expect(configurations[0]?.model.bundleIdentifier).toMatchObject({
+      state: "unresolved",
+      missingVariables: ["sdk/architecture-conditioned build setting"],
+    });
+    expect(diagnostics).toContainEqual(
+      expect.objectContaining({
+        code: "xcode.conflicting-build-setting",
+        message: expect.stringContaining("iphonesimulator/x86_64=com.example.IntelSimulator"),
+      }),
+    );
+  });
+
+  test("ignores simulator architecture differences for device-only targets", async () => {
+    const { configurations, diagnostics } = await inspectFixture({
+      targetBuildSettings: {
+        SUPPORTED_PLATFORMS: "iphoneos",
+        PRODUCT_BUNDLE_IDENTIFIER: "com.example.Device",
+        "PRODUCT_BUNDLE_IDENTIFIER[sdk=iphonesimulator*][arch=x86_64]":
+          "com.example.IntelSimulator",
+      },
+    });
+
+    expect(configurations[0]?.model.bundleIdentifier).toMatchObject({
+      state: "resolved",
+      value: "com.example.Device",
+    });
+    expect(diagnostics).not.toContainEqual(
+      expect.objectContaining({ code: "xcode.conflicting-build-setting" }),
+    );
   });
 
   test("preserves the textual order of xcconfig assignments and includes", async () => {
