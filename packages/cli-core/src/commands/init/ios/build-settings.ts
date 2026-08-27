@@ -46,7 +46,8 @@ interface BuildSettingsEvaluation {
 
 type XCConfigOperation =
   | { kind: "include"; path: string; optional: boolean }
-  | { kind: "setting"; key: string; value: string; conditions?: XCConfigCondition[] };
+  | { kind: "setting"; key: string; value: string; conditions?: XCConfigCondition[] }
+  | { kind: "unresolved-continuation" };
 
 const BUILD_CONTEXTS: BuildContext[] = [
   { label: "iphoneos/arm64", sdk: "iphoneos", arch: "arm64" },
@@ -154,17 +155,36 @@ function addDiagnosticOnce(diagnostics: IOSDiagnostic[], diagnostic: IOSDiagnost
 function parseXCConfigOperations(content: string): XCConfigOperation[] {
   const operations: XCConfigOperation[] = [];
   // @bacons/xcode intentionally exposes includes and assignments separately.
-  // Parsing one source line at a time retains their interleaving, which is
-  // significant because a later include can override an earlier assignment.
-  for (const line of content.split(/\r?\n/)) {
+  // Parsing one logical source line at a time retains their interleaving,
+  // which is significant because a later include can override an earlier
+  // assignment. Xcode replaces a trailing backslash plus newline with a space,
+  // including when whitespace or a line comment follows the backslash.
+  let logicalLine = "";
+  let usedContinuation = false;
+  for (const rawLine of content.split(/\r?\n/)) {
+    const withoutComment = rawLine.replace(/\/\/.*/, "").trimEnd();
+    const continues = withoutComment.endsWith("\\");
+    const fragment = (continues ? withoutComment.slice(0, -1) : withoutComment).trim();
+    logicalLine = logicalLine ? `${logicalLine} ${fragment}`.trim() : fragment;
+    usedContinuation ||= continues;
+    if (continues) continue;
+
+    const line = logicalLine;
+    logicalLine = "";
     const parsed = parseXCConfig(line);
     const include = parsed.includes[0]?.include;
     if (include) {
+      if (usedContinuation) {
+        operations.push({ kind: "unresolved-continuation" });
+        usedContinuation = false;
+        continue;
+      }
       operations.push({
         kind: "include",
         path: include.path,
         optional: include.optional,
       });
+      usedContinuation = false;
       continue;
     }
     const setting = parsed.buildSettings[0];
@@ -175,6 +195,26 @@ function parseXCConfigOperations(content: string): XCConfigOperation[] {
         value: setting.value,
         conditions: setting.conditions,
       });
+    } else if (usedContinuation && line) {
+      operations.push({ kind: "unresolved-continuation" });
+    }
+    usedContinuation = false;
+  }
+
+  // Xcode accepts a trailing continuation at EOF and removes the final
+  // backslash, so parse the accumulated assignment once more.
+  if (logicalLine) {
+    const parsed = parseXCConfig(logicalLine);
+    const setting = parsed.buildSettings[0];
+    if (setting) {
+      operations.push({
+        kind: "setting",
+        key: setting.key,
+        value: setting.value,
+        conditions: setting.conditions,
+      });
+    } else {
+      operations.push({ kind: "unresolved-continuation" });
     }
   }
   return operations;
@@ -300,6 +340,18 @@ async function readXCConfigSettings(
   let evaluation = cloneEvaluation(inherited);
 
   for (const operation of parseXCConfigOperations(content)) {
+    if (operation.kind === "unresolved-continuation") {
+      taintInspectedSettings(evaluation, "unsupported xcconfig continuation");
+      addDiagnosticOnce(diagnostics, {
+        code: "xcode.unresolved-build-setting",
+        severity: "warning",
+        message: `${relativeIOSPath(root, path)} has an xcconfig continuation that could not be evaluated safely.`,
+        remedy:
+          "Keep continued build-setting values on consecutive lines using a trailing backslash.",
+        evidence: [{ path: relativeIOSPath(root, path), keyPath: "continuation" }],
+      });
+      continue;
+    }
     if (operation.kind === "setting") {
       if (!conditionsMatch(operation.conditions, configuration, context)) continue;
       applyEvaluatedSetting(evaluation, operation.key, operation.value, operation.conditions);

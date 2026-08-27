@@ -352,6 +352,50 @@ describe("inspectTargetBuildConfigurations", () => {
     );
   });
 
+  test("preserves all active platforms from continued xcconfig values", async () => {
+    const { configurations, diagnostics } = await inspectFixture({
+      xcconfig: [
+        "SUPPORTED_PLATFORMS = iphonesimulator \\   // device support continues below",
+        "  iphoneos",
+        "PRODUCT_BUNDLE_IDENTIFIER = com.example.Native",
+        "PRODUCT_BUNDLE_IDENTIFIER[sdk=iphoneos*] = com.example.Device",
+        "PRODUCT_BUNDLE_IDENTIFIER[sdk=iphonesimulator*] = com.example.Simulator",
+      ].join("\n"),
+      targetBuildSettings: {
+        SUPPORTED_PLATFORMS: "$(inherited)",
+        PRODUCT_BUNDLE_IDENTIFIER: "$(inherited)",
+      },
+    });
+
+    expect(configurations[0]?.model.bundleIdentifier).toMatchObject({
+      state: "unresolved",
+      missingVariables: ["sdk/architecture-conditioned build setting"],
+    });
+    expect(configurations[0]?.entitlementContexts.map((context) => context.label)).toEqual([
+      "iphoneos/arm64",
+      "iphonesimulator/arm64",
+      "iphonesimulator/x86_64",
+    ]);
+    expect(diagnostics).toContainEqual(
+      expect.objectContaining({
+        code: "xcode.conflicting-build-setting",
+        message: expect.stringContaining("iphoneos/arm64=com.example.Device"),
+      }),
+    );
+  });
+
+  test("removes only the final backslash from a continued xcconfig value", async () => {
+    const { configurations } = await inspectFixture({
+      xcconfig: ["DEVELOPMENT_TEAM = ABCDE123\\\\", "45"].join("\n"),
+      targetBuildSettings: { DEVELOPMENT_TEAM: "$(inherited)" },
+    });
+
+    expect(configurations[0]?.model.developmentTeam).toMatchObject({
+      state: "resolved",
+      value: "ABCDE123\\ 45",
+    });
+  });
+
   test("ignores simulator architecture differences for device-only targets", async () => {
     const { configurations, diagnostics } = await inspectFixture({
       targetBuildSettings: {
@@ -397,6 +441,8 @@ describe("inspectTargetBuildConfigurations", () => {
     const includeLast = await inspectFixture({
       xcconfig: [
         "PRODUCT_BUNDLE_IDENTIFIER = com.example.Before",
+        "HEADER_SEARCH_PATHS = $(SRCROOT)/include \\",
+        "  $(SRCROOT)/include/component",
         '#include "Included.xcconfig"',
       ].join("\n"),
       includedXCConfig: "PRODUCT_BUNDLE_IDENTIFIER = com.example.Included\n",
@@ -405,6 +451,8 @@ describe("inspectTargetBuildConfigurations", () => {
     const assignmentLast = await inspectFixture({
       xcconfig: [
         '#include "Included.xcconfig"',
+        "HEADER_SEARCH_PATHS = $(SRCROOT)/include \\",
+        "  $(SRCROOT)/include/component",
         "PRODUCT_BUNDLE_IDENTIFIER = com.example.After",
       ].join("\n"),
       includedXCConfig: "PRODUCT_BUNDLE_IDENTIFIER = com.example.Included\n",
@@ -419,6 +467,25 @@ describe("inspectTargetBuildConfigurations", () => {
       state: "resolved",
       value: "com.example.After",
     });
+  });
+
+  test("fails closed when continuation syntax is used for an include", async () => {
+    const { configurations, diagnostics } = await inspectFixture({
+      xcconfig: ["#include \\", '  "Included.xcconfig"'].join("\n"),
+      includedXCConfig: "PRODUCT_BUNDLE_IDENTIFIER = com.example.Included\n",
+      targetBuildSettings: { PRODUCT_BUNDLE_IDENTIFIER: "$(inherited)" },
+    });
+
+    expect(configurations[0]?.model.bundleIdentifier).toMatchObject({
+      state: "unresolved",
+      missingVariables: ["unsupported xcconfig continuation"],
+    });
+    expect(diagnostics).toContainEqual(
+      expect.objectContaining({
+        code: "xcode.unresolved-build-setting",
+        message: expect.stringContaining("continuation that could not be evaluated safely"),
+      }),
+    );
   });
 
   test("taints fallback settings when a required xcconfig include is missing", async () => {
