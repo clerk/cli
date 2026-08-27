@@ -27,6 +27,7 @@ function target(): IOSAppTarget {
       environmentConsumers: [],
       authViewReferences: [],
       authFlowReferences: [],
+      appleAuthReferences: [],
       openURLHandlers: [],
       status: "absent",
     },
