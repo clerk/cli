@@ -536,6 +536,7 @@ export async function init(options: InitOptions = {}) {
     const nativeRemotePlan = await prepareIOSNativeRemoteSetup({
       applicationId: keys.applicationId,
       instanceId: keys.instanceId,
+      root: iosLocalSetup.nativeReadiness.root,
       target: iosLocalSetup.nativeReadiness.target,
       appIdPrefix: options.appIdPrefix,
       ...(iosLocalSetup.unverifiedAppIdPrefixSuggestion

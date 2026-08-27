@@ -21,10 +21,12 @@ import {
 } from "../../../lib/plapi.ts";
 import { confirm, text } from "../../../lib/prompts.ts";
 import { withSpinner } from "../../../lib/spinner.ts";
+import { inspectIOSProject } from "./inspect.ts";
 import type {
   IOSNativeReadinessTarget,
   IOSUnverifiedAppIdPrefixSuggestion,
 } from "./native-readiness.ts";
+import { buildIOSNativeReadinessAudit } from "./native-readiness.ts";
 
 const APP_ID_PREFIX_MAX_LENGTH = 255;
 
@@ -51,12 +53,23 @@ export interface IOSNativeRemoteBlocker {
   message: string;
 }
 
+type IOSSelectedNativeReadinessTarget = Extract<IOSNativeReadinessTarget, { status: "selected" }>;
+
+export interface IOSNativeRemoteTargetSnapshot {
+  root: string;
+  projectPath: string;
+  targetId: string;
+  bundleIdentifier: IOSSelectedNativeReadinessTarget["bundleIdentifier"];
+  appIdPrefix: IOSSelectedNativeReadinessTarget["appIdPrefix"];
+}
+
 export type IOSNativeRemotePlan = {
   schemaVersion: 1;
   kind: "clerk-ios-native-remote-setup";
   status: "ready" | "satisfied" | "blocked";
   applicationId: string;
   instanceId: string;
+  localTarget?: IOSNativeRemoteTargetSnapshot;
   bundleIdentifier?: string;
   appIdPrefix?: string;
   nativeApi: "required" | "satisfied";
@@ -91,6 +104,7 @@ const defaultAPI: IOSNativeRemoteAPI = {
 export interface PrepareIOSNativeRemoteSetupOptions {
   applicationId: string;
   instanceId: string;
+  root: string;
   target: IOSNativeReadinessTarget;
   appIdPrefix?: string;
   unverifiedAppIdPrefixSuggestion?: IOSUnverifiedAppIdPrefixSuggestion;
@@ -103,6 +117,10 @@ export interface PrepareIOSNativeRemoteSetupOptions {
 export type IOSNativeRemoteAppIdPrefixSuggestion =
   | IOSUnverifiedAppIdPrefixSuggestion
   | { source: "partial-literal-entitlements"; value: string };
+
+export type IOSNativeRemoteTargetReader = (
+  snapshot: IOSNativeRemoteTargetSnapshot,
+) => Promise<IOSNativeReadinessTarget>;
 
 export interface IOSNativeRemotePrompts {
   appIdPrefix(
@@ -155,6 +173,36 @@ export function validateAppIdPrefix(value: string | undefined): string | undefin
   const normalized = value?.trim();
   return normalized && normalized.length <= APP_ID_PREFIX_MAX_LENGTH ? normalized : undefined;
 }
+
+function copyTargetSnapshot(
+  root: string | undefined,
+  target: IOSNativeReadinessTarget,
+): IOSNativeRemoteTargetSnapshot | undefined {
+  if (!root || target.status !== "selected") return undefined;
+  return {
+    root,
+    projectPath: target.projectPath,
+    targetId: target.targetId,
+    bundleIdentifier:
+      target.bundleIdentifier.status === "conflicting"
+        ? { ...target.bundleIdentifier, candidates: [...target.bundleIdentifier.candidates] }
+        : { ...target.bundleIdentifier },
+    appIdPrefix:
+      target.appIdPrefix.status === "resolved"
+        ? { ...target.appIdPrefix }
+        : {
+            ...target.appIdPrefix,
+            ...(target.appIdPrefix.candidates
+              ? { candidates: [...target.appIdPrefix.candidates] }
+              : {}),
+          },
+  };
+}
+
+const defaultTargetReader: IOSNativeRemoteTargetReader = async (snapshot) => {
+  const inspection = await inspectIOSProject(snapshot.root, { target: snapshot.targetId });
+  return buildIOSNativeReadinessAudit(inspection).target;
+};
 
 function localIdentity(target: IOSNativeReadinessTarget): {
   bundleIdentifier?: string;
@@ -213,6 +261,7 @@ function localIdentity(target: IOSNativeReadinessTarget): {
 export function buildIOSNativeRemotePlan(options: {
   applicationId: string;
   instanceId: string;
+  root?: string;
   target: IOSNativeReadinessTarget;
   requestedAppIdPrefix?: string;
   nativeSettings: NativeSettings;
@@ -315,6 +364,7 @@ export function buildIOSNativeRemotePlan(options: {
     status,
     applicationId: options.applicationId,
     instanceId: options.instanceId,
+    localTarget: copyTargetSnapshot(options.root, options.target),
     bundleIdentifier,
     appIdPrefix,
     nativeApi,
@@ -452,6 +502,7 @@ export async function prepareIOSNativeRemoteSetup(
   let plan = buildIOSNativeRemotePlan({
     applicationId: options.applicationId,
     instanceId: options.instanceId,
+    root: options.root,
     target: options.target,
     requestedAppIdPrefix: options.appIdPrefix,
     ...state,
@@ -481,6 +532,7 @@ export async function prepareIOSNativeRemoteSetup(
     plan = buildIOSNativeRemotePlan({
       applicationId: options.applicationId,
       instanceId: options.instanceId,
+      root: options.root,
       target: options.target,
       requestedAppIdPrefix: appIdPrefix,
       ...state,
@@ -522,7 +574,7 @@ async function reconciledPlan(
   api: IOSNativeRemoteAPI,
 ): Promise<IOSNativeRemotePlan> {
   const state = await readRemoteState(plan.applicationId, plan.instanceId, api);
-  return buildIOSNativeRemotePlan({
+  const reconciled = buildIOSNativeRemotePlan({
     applicationId: plan.applicationId,
     instanceId: plan.instanceId,
     target: {
@@ -538,6 +590,88 @@ async function reconciledPlan(
     requestedAppIdPrefix: plan.appIdPrefix,
     ...state,
   });
+  return { ...reconciled, localTarget: plan.localTarget };
+}
+
+function prefixEvidenceMatchesApprovedIdentity(
+  approved: IOSNativeRemoteTargetSnapshot["appIdPrefix"],
+  current: IOSSelectedNativeReadinessTarget["appIdPrefix"],
+  appIdPrefix: string,
+): boolean {
+  if (approved.status === "conflicting") return false;
+  if (approved.status === "resolved") {
+    return (
+      approved.value === appIdPrefix &&
+      current.status === "resolved" &&
+      current.value === appIdPrefix
+    );
+  }
+
+  // A prefix explicitly confirmed by the user or inherited from an existing
+  // Clerk registration need not become literal Xcode evidence. If evidence
+  // appears after approval, however, it may only prove that same prefix.
+  if (approved.candidates?.some((candidate) => candidate !== appIdPrefix)) return false;
+  if (current.status === "conflicting") return false;
+  if (current.status === "resolved") return current.value === appIdPrefix;
+  return !(current.candidates?.some((candidate) => candidate !== appIdPrefix) ?? false);
+}
+
+function localTargetStillMatchesApprovedIdentity(
+  plan: IOSNativeRemotePlan,
+  current: IOSNativeReadinessTarget,
+): boolean {
+  const approved = plan.localTarget;
+  if (
+    !approved ||
+    !plan.bundleIdentifier ||
+    !plan.appIdPrefix ||
+    approved.bundleIdentifier.status !== "resolved" ||
+    approved.bundleIdentifier.value !== plan.bundleIdentifier ||
+    current.status !== "selected" ||
+    current.projectPath !== approved.projectPath ||
+    current.targetId !== approved.targetId ||
+    current.bundleIdentifier.status !== "resolved" ||
+    current.bundleIdentifier.value !== plan.bundleIdentifier
+  ) {
+    return false;
+  }
+  return prefixEvidenceMatchesApprovedIdentity(
+    approved.appIdPrefix,
+    current.appIdPrefix,
+    plan.appIdPrefix,
+  );
+}
+
+async function revalidateLocalTargetBeforeRemoteMutation(
+  plan: IOSNativeRemotePlan,
+  targetReader: IOSNativeRemoteTargetReader,
+): Promise<void> {
+  if (!plan.localTarget) {
+    throw iosRemoteError(
+      "The approved Clerk Native Application plan does not identify the inspected Xcode target. No remote changes were made; rerun clerk init.",
+      ERROR_CODE.IOS_SETUP_PLAN_INVALID,
+    );
+  }
+
+  let current: IOSNativeReadinessTarget;
+  try {
+    current = await withSpinner("Rechecking the selected Xcode target identity...", async () =>
+      targetReader(plan.localTarget!),
+    );
+  } catch (error) {
+    log.debug(`Could not recheck the selected Xcode target identity: ${errorMessage(error)}`);
+    throw iosRemoteError(
+      "The selected Xcode target identity could not be rechecked. No remote changes were made; rerun clerk init.",
+      ERROR_CODE.IOS_REMOTE_VERIFY_FAILED,
+    );
+  }
+
+  if (!localTargetStillMatchesApprovedIdentity(plan, current)) {
+    throw iosRemoteError(
+      "The selected Xcode target identity changed after the approved preview. No remote changes were made; rerun clerk init to review the current Bundle ID and App ID Prefix.",
+      ERROR_CODE.IOS_SETUP_STALE,
+    );
+  }
 }
 
 function revalidatedActionSetIsAuthorized(
@@ -565,6 +699,7 @@ function revalidatedActionSetIsAuthorized(
 export async function applyIOSNativeRemoteSetup(
   plan: IOSNativeRemotePlan,
   api: IOSNativeRemoteAPI = defaultAPI,
+  targetReader: IOSNativeRemoteTargetReader = defaultTargetReader,
 ): Promise<void> {
   if (plan.status === "blocked" || !plan.bundleIdentifier || !plan.appIdPrefix) {
     throw iosRemoteError(
@@ -591,6 +726,10 @@ export async function applyIOSNativeRemoteSetup(
       "Clerk Native Application settings changed after the approved preview. No remote changes were made; rerun clerk init to review the new plan.",
       ERROR_CODE.IOS_SETUP_STALE,
     );
+  }
+
+  if (currentPlan.registration === "required" || currentPlan.nativeApi === "required") {
+    await revalidateLocalTargetBeforeRemoteMutation(plan, targetReader);
   }
 
   const registrationIdempotencyKey = `clerk-init-ios-registration-${randomUUID()}`;

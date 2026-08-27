@@ -315,6 +315,7 @@ describe("init iOS", () => {
     });
     expect(nativeRemoteMod.prepareIOSNativeRemoteSetup).toHaveBeenCalledWith(
       expect.objectContaining({
+        root: FAKE_IOS_NATIVE_READINESS.root,
         appIdPrefix: "CONFIRMED123",
         applicationLinkChange: "created-and-linked",
       }),
@@ -368,6 +369,7 @@ describe("init iOS", () => {
     });
     expect(nativeRemoteMod.prepareIOSNativeRemoteSetup).toHaveBeenCalledWith(
       expect.objectContaining({
+        root: FAKE_IOS_NATIVE_READINESS.root,
         appIdPrefix: undefined,
         applicationLinkChange: "link-updated",
       }),
@@ -921,6 +923,7 @@ describe("init iOS", () => {
     expect(prepareRemote).toHaveBeenCalledWith({
       applicationId: "app_test",
       instanceId: "ins_test",
+      root: setupResult.nativeReadiness.root,
       target: setupResult.nativeReadiness.target,
       appIdPrefix: "LEGACY1234",
       unverifiedAppIdPrefixSuggestion: setupResult.unverifiedAppIdPrefixSuggestion,

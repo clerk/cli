@@ -10,6 +10,8 @@ import {
   type IOSNativeRemoteAPI,
   type IOSNativeRemotePlan,
   type IOSNativeRemotePrompts,
+  type IOSNativeRemoteTargetReader,
+  type IOSNativeRemoteTargetSnapshot,
 } from "./native-remote.ts";
 import type { IOSApplication, NativeSettings } from "../../../lib/plapi.ts";
 
@@ -18,6 +20,7 @@ const INSTANCE_ID = "ins_native_development";
 const BUNDLE_IDENTIFIER = "com.example.NativeApp";
 const LOCAL_PREFIX = "LEGACY1234";
 const EXPLICIT_PREFIX = "EXPLICIT12";
+const IOS_ROOT = "/tmp/NativeApp";
 
 const captured = useCaptureLog();
 
@@ -45,13 +48,15 @@ function selectedTarget(
     bundleIdentifier?: string;
     appIdPrefix?: string | null;
     appIdPrefixCandidates?: string[];
+    projectPath?: string;
+    targetId?: string;
   } = {},
 ): IOSNativeReadinessTarget {
   const appIdPrefix = options.appIdPrefix === undefined ? LOCAL_PREFIX : options.appIdPrefix;
   return {
     status: "selected",
-    projectPath: "NativeApp.xcodeproj",
-    targetId: "TARGET_NATIVE_APP",
+    projectPath: options.projectPath ?? "NativeApp.xcodeproj",
+    targetId: options.targetId ?? "TARGET_NATIVE_APP",
     targetName: "NativeApp",
     bundleIdentifier: {
       status: "resolved",
@@ -68,12 +73,38 @@ function selectedTarget(
   };
 }
 
+function targetSnapshot(
+  target: IOSNativeReadinessTarget = selectedTarget(),
+): IOSNativeRemoteTargetSnapshot {
+  if (target.status !== "selected") throw new Error("test target must be selected");
+  return {
+    root: IOS_ROOT,
+    projectPath: target.projectPath,
+    targetId: target.targetId,
+    bundleIdentifier: target.bundleIdentifier,
+    appIdPrefix: target.appIdPrefix,
+  };
+}
+
+const approvedTargetReader: IOSNativeRemoteTargetReader = async (snapshot) => ({
+  status: "selected",
+  projectPath: snapshot.projectPath,
+  targetId: snapshot.targetId,
+  targetName: "NativeApp",
+  bundleIdentifier: snapshot.bundleIdentifier,
+  appIdPrefix: snapshot.appIdPrefix,
+});
+
 function plan(options: {
   nativeApi: "required" | "satisfied";
   registration: "required" | "satisfied";
   appIdPrefix?: string;
+  localAppIdPrefix?: string | null;
 }): IOSNativeRemotePlan {
   const appIdPrefix = options.appIdPrefix ?? LOCAL_PREFIX;
+  const localTarget = selectedTarget({
+    appIdPrefix: options.localAppIdPrefix === undefined ? appIdPrefix : options.localAppIdPrefix,
+  });
   return {
     schemaVersion: 1,
     kind: "clerk-ios-native-remote-setup",
@@ -83,6 +114,7 @@ function plan(options: {
         : "ready",
     applicationId: APPLICATION_ID,
     instanceId: INSTANCE_ID,
+    localTarget: targetSnapshot(localTarget),
     bundleIdentifier: BUNDLE_IDENTIFIER,
     appIdPrefix,
     nativeApi: options.nativeApi,
@@ -173,6 +205,7 @@ function prepareOptions(
   return {
     applicationId: APPLICATION_ID,
     instanceId: INSTANCE_ID,
+    root: IOS_ROOT,
     target: selectedTarget(),
     agent: false,
     yes: true,
@@ -223,6 +256,17 @@ describe("Clerk Native Application remote setup", () => {
       status: "satisfied",
       nativeApi: "satisfied",
       registration: "satisfied",
+      localTarget: {
+        root: IOS_ROOT,
+        projectPath: "NativeApp.xcodeproj",
+        targetId: "TARGET_NATIVE_APP",
+        bundleIdentifier: { status: "resolved", value: BUNDLE_IDENTIFIER },
+        appIdPrefix: {
+          status: "resolved",
+          source: "literal-entitlements",
+          value: LOCAL_PREFIX,
+        },
+      },
       bundleIdentifier: BUNDLE_IDENTIFIER,
       appIdPrefix: LOCAL_PREFIX,
       actions: [],
@@ -584,7 +628,11 @@ describe("Clerk Native Application remote setup", () => {
       registrationReads: [[], [exactRegistration]],
     });
 
-    await applyIOSNativeRemoteSetup(plan({ nativeApi: "required", registration: "required" }), api);
+    await applyIOSNativeRemoteSetup(
+      plan({ nativeApi: "required", registration: "required" }),
+      api,
+      approvedTargetReader,
+    );
 
     expect(calls).toContain("POST iOS registration");
     expect(calls).not.toContain("PATCH native settings");
@@ -597,10 +645,137 @@ describe("Clerk Native Application remote setup", () => {
     });
 
     await expect(
-      applyIOSNativeRemoteSetup(plan({ nativeApi: "satisfied", registration: "required" }), api),
+      applyIOSNativeRemoteSetup(
+        plan({ nativeApi: "satisfied", registration: "required" }),
+        api,
+        approvedTargetReader,
+      ),
     ).rejects.toThrow();
 
     expect(calls).not.toContain("POST iOS registration");
+    expect(calls).not.toContain("PATCH native settings");
+  });
+
+  test.each([
+    {
+      name: "the Bundle ID changes",
+      approved: plan({ nativeApi: "satisfied", registration: "required" }),
+      current: selectedTarget({ bundleIdentifier: "com.example.Changed" }),
+    },
+    {
+      name: "the proven App ID Prefix changes",
+      approved: plan({ nativeApi: "satisfied", registration: "required" }),
+      current: selectedTarget({ appIdPrefix: EXPLICIT_PREFIX }),
+    },
+    {
+      name: "the proven App ID Prefix disappears",
+      approved: plan({ nativeApi: "satisfied", registration: "required" }),
+      current: selectedTarget({ appIdPrefix: null }),
+    },
+    {
+      name: "the target changes",
+      approved: plan({ nativeApi: "satisfied", registration: "required" }),
+      current: selectedTarget({ targetId: "TARGET_CHANGED" }),
+    },
+    {
+      name: "the project changes",
+      approved: plan({ nativeApi: "satisfied", registration: "required" }),
+      current: selectedTarget({ projectPath: "Changed.xcodeproj" }),
+    },
+    {
+      name: "new evidence conflicts with a user-confirmed prefix",
+      approved: plan({
+        nativeApi: "satisfied",
+        registration: "required",
+        appIdPrefix: EXPLICIT_PREFIX,
+        localAppIdPrefix: null,
+      }),
+      current: selectedTarget({ appIdPrefix: LOCAL_PREFIX }),
+    },
+  ])("fails closed before mutation when $name", async ({ approved, current }) => {
+    const { api, calls } = scriptedAPI({
+      nativeReads: [nativeSettings(true)],
+      registrationReads: [[]],
+      expectedAppIdPrefix: approved.appIdPrefix,
+    });
+
+    await expect(
+      applyIOSNativeRemoteSetup(approved, api, async () => current),
+    ).rejects.toMatchObject({
+      code: ERROR_CODE.IOS_SETUP_STALE,
+      message: expect.stringContaining("Xcode target identity changed"),
+    });
+
+    expect(calls).toEqual(["GET native settings", "GET iOS registrations"]);
+    expect(calls).not.toContain("POST iOS registration");
+    expect(calls).not.toContain("PATCH native settings");
+  });
+
+  test("fails closed before mutation when the Xcode identity cannot be inspected", async () => {
+    const { api, calls } = scriptedAPI({
+      nativeReads: [nativeSettings(true)],
+      registrationReads: [[]],
+    });
+
+    await expect(
+      applyIOSNativeRemoteSetup(
+        plan({ nativeApi: "satisfied", registration: "required" }),
+        api,
+        async () => {
+          throw new Error("xcconfig unreadable");
+        },
+      ),
+    ).rejects.toMatchObject({
+      code: ERROR_CODE.IOS_REMOTE_VERIFY_FAILED,
+      message: expect.stringContaining("Xcode target identity could not be rechecked"),
+    });
+
+    expect(calls).toEqual(["GET native settings", "GET iOS registrations"]);
+    expect(calls).not.toContain("POST iOS registration");
+    expect(calls).not.toContain("PATCH native settings");
+  });
+
+  test("revalidates identity before a Native API-only mutation", async () => {
+    const { api, calls } = scriptedAPI({
+      nativeReads: [nativeSettings(false)],
+      registrationReads: [[registration()]],
+    });
+
+    await expect(
+      applyIOSNativeRemoteSetup(
+        plan({ nativeApi: "required", registration: "satisfied" }),
+        api,
+        async () => selectedTarget({ bundleIdentifier: "com.example.Changed" }),
+      ),
+    ).rejects.toMatchObject({ code: ERROR_CODE.IOS_SETUP_STALE });
+
+    expect(calls).toEqual(["GET native settings", "GET iOS registrations"]);
+    expect(calls).not.toContain("POST iOS registration");
+    expect(calls).not.toContain("PATCH native settings");
+  });
+
+  test("accepts unchanged identity and newly proven evidence matching a confirmed prefix", async () => {
+    const exactRegistration = registration(EXPLICIT_PREFIX);
+    const { api, calls } = scriptedAPI({
+      nativeReads: [nativeSettings(true), nativeSettings(true)],
+      registrationReads: [[], [exactRegistration]],
+      expectedAppIdPrefix: EXPLICIT_PREFIX,
+    });
+    let inspections = 0;
+    const approved = plan({
+      nativeApi: "satisfied",
+      registration: "required",
+      appIdPrefix: EXPLICIT_PREFIX,
+      localAppIdPrefix: null,
+    });
+
+    await applyIOSNativeRemoteSetup(approved, api, async () => {
+      inspections += 1;
+      return selectedTarget({ appIdPrefix: EXPLICIT_PREFIX });
+    });
+
+    expect(inspections).toBe(1);
+    expect(calls.filter((call) => call === "POST iOS registration")).toHaveLength(1);
     expect(calls).not.toContain("PATCH native settings");
   });
 
@@ -611,7 +786,11 @@ describe("Clerk Native Application remote setup", () => {
       registrationReads: [[], [exactRegistration]],
     });
 
-    await applyIOSNativeRemoteSetup(plan({ nativeApi: "required", registration: "required" }), api);
+    await applyIOSNativeRemoteSetup(
+      plan({ nativeApi: "required", registration: "required" }),
+      api,
+      approvedTargetReader,
+    );
 
     expect(calls.indexOf("POST iOS registration")).toBeGreaterThan(-1);
     expect(calls.indexOf("POST iOS registration")).toBeLessThan(
@@ -631,7 +810,11 @@ describe("Clerk Native Application remote setup", () => {
     });
 
     await expect(
-      applyIOSNativeRemoteSetup(plan({ nativeApi: "satisfied", registration: "required" }), api),
+      applyIOSNativeRemoteSetup(
+        plan({ nativeApi: "satisfied", registration: "required" }),
+        api,
+        approvedTargetReader,
+      ),
     ).resolves.toBeUndefined();
     expect(calls.filter((call) => call === "POST iOS registration")).toHaveLength(1);
   });
@@ -648,7 +831,11 @@ describe("Clerk Native Application remote setup", () => {
     });
 
     await expect(
-      applyIOSNativeRemoteSetup(plan({ nativeApi: "required", registration: "satisfied" }), api),
+      applyIOSNativeRemoteSetup(
+        plan({ nativeApi: "required", registration: "satisfied" }),
+        api,
+        approvedTargetReader,
+      ),
     ).resolves.toBeUndefined();
     expect(calls.filter((call) => call === "PATCH native settings")).toHaveLength(1);
   });
@@ -660,7 +847,11 @@ describe("Clerk Native Application remote setup", () => {
     });
 
     await expect(
-      applyIOSNativeRemoteSetup(plan({ nativeApi: "required", registration: "required" }), api),
+      applyIOSNativeRemoteSetup(
+        plan({ nativeApi: "required", registration: "required" }),
+        api,
+        approvedTargetReader,
+      ),
     ).rejects.toMatchObject({
       code: ERROR_CODE.IOS_REMOTE_VERIFY_FAILED,
       message: expect.stringContaining("did not pass the final verification"),
@@ -700,6 +891,7 @@ describe("Clerk Native Application remote setup", () => {
       await applyIOSNativeRemoteSetup(
         plan({ nativeApi: "satisfied", registration: "required" }),
         api,
+        approvedTargetReader,
       );
     } catch (error) {
       thrown = error;
