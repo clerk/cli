@@ -133,6 +133,143 @@ describe("runIOSDoctorChecks", () => {
     );
   });
 
+  test("does not pass an unused Clerk environment modifier as shipping root wiring", async () => {
+    const root = await fixture({ complete: false });
+    await writeFile(
+      join(root, "MyApp", "MyAppApp.swift"),
+      `import ClerkKit
+       import SwiftUI
+       @main struct MyApp: App {
+         var body: some Scene { WindowGroup { ContentView() } }
+       }
+       struct UnusedHelper: View {
+         var body: some View { Text("Unused").environment(Clerk.shared) }
+       }`,
+    );
+
+    const audit = await runIOSDoctorChecks(context(), { root, target: "MyApp" }, dependencies());
+    const environment = audit.results.find(
+      (result) => result.name === "iOS: Inject Clerk into the SwiftUI environment",
+    );
+
+    expect(environment?.status).toBe("warn");
+    expect(environment?.message).toContain("review needed");
+    expect(environment?.detail).toContain("not proven on the shipping WindowGroup root");
+  });
+
+  test("passes Clerk environment injection on the proven shipping root", async () => {
+    const root = await fixture({ complete: false });
+    await writeFile(
+      join(root, "MyApp", "MyAppApp.swift"),
+      `import ClerkKit
+       import SwiftUI
+       @main struct MyApp: App {
+         var body: some Scene {
+           WindowGroup { ContentView().environment(Clerk.shared) }
+         }
+       }`,
+    );
+
+    const audit = await runIOSDoctorChecks(context(), { root, target: "MyApp" }, dependencies());
+    const environment = audit.results.find(
+      (result) => result.name === "iOS: Inject Clerk into the SwiftUI environment",
+    );
+
+    expect(environment?.status).toBe("pass");
+    expect(environment?.detail).toContain("proven shipping WindowGroup root");
+  });
+
+  test("omits callback diagnostics for AuthView and non-magic authentication", async () => {
+    const root = await fixture({ complete: true });
+    const authViewAudit = await runIOSDoctorChecks(
+      context(),
+      { root, target: "MyApp" },
+      dependencies(),
+    );
+    expect(
+      authViewAudit.results.some(
+        (result) => result.name === "iOS: Wire custom email-link callbacks",
+      ),
+    ).toBeFalse();
+
+    await writeFile(
+      join(root, "MyApp", "MyAppApp.swift"),
+      `import ClerkKit
+       import SwiftUI
+       @main struct MyApp: App {
+         var body: some Scene { WindowGroup { ContentView().environment(Clerk.shared) } }
+       }
+       func authenticate() async throws {
+         _ = try await Clerk.shared.auth.signInWithPassword(identifier: "person@example.com", password: "secret")
+         _ = try await Clerk.shared.auth.signInWithEmailCode(emailAddress: "person@example.com")
+         _ = try await Clerk.shared.auth.startHostedAuth()
+       }`,
+    );
+    const customAudit = await runIOSDoctorChecks(
+      context(),
+      { root, target: "MyApp" },
+      dependencies(),
+    );
+    expect(
+      customAudit.results.some((result) => result.name === "iOS: Wire custom email-link callbacks"),
+    ).toBeFalse();
+  });
+
+  test("keeps custom email-link callbacks in review on the proven shipping root", async () => {
+    const root = await fixture({ complete: false });
+    const appPath = join(root, "MyApp", "MyAppApp.swift");
+    await writeFile(
+      appPath,
+      `import ClerkKit
+       import SwiftUI
+       @main struct MyApp: App {
+         var body: some Scene {
+           WindowGroup {
+             ContentView()
+               .environment(Clerk.shared)
+               .onOpenURL { url in Task { try await Clerk.shared.handle(url) } }
+           }
+         }
+       }
+       func begin(_ signIn: SignIn) async throws { try await signIn.sendEmailLink() }`,
+    );
+
+    const audit = await runIOSDoctorChecks(context(), { root, target: "MyApp" }, dependencies());
+    const callbacks = audit.results.find(
+      (result) => result.name === "iOS: Wire custom email-link callbacks",
+    );
+    expect(callbacks?.status).toBe("warn");
+    expect(callbacks?.message).toContain("review needed");
+    expect(callbacks?.detail).toContain("documented Clerk callback shape");
+    expect(callbacks?.detail).toContain("Confirm that custom email-link callbacks reach Clerk");
+  });
+
+  test("warns when a custom email-link handler exists only in an unused view", async () => {
+    const root = await fixture({ complete: false });
+    await writeFile(
+      join(root, "MyApp", "MyAppApp.swift"),
+      `import ClerkKit
+       import SwiftUI
+       @main struct MyApp: App {
+         var body: some Scene { WindowGroup { ContentView().environment(Clerk.shared) } }
+       }
+       struct UnusedCallback: View {
+         var body: some View {
+           Text("Unused").onOpenURL { url in Task { try await Clerk.shared.handle(url) } }
+         }
+       }
+       func begin(_ signIn: SignIn) async throws { try await signIn.sendEmailLink() }`,
+    );
+
+    const audit = await runIOSDoctorChecks(context(), { root, target: "MyApp" }, dependencies());
+    const callbacks = audit.results.find(
+      (result) => result.name === "iOS: Wire custom email-link callbacks",
+    );
+    expect(callbacks?.status).toBe("warn");
+    expect(callbacks?.message).toContain("review needed");
+    expect(callbacks?.detail).toContain("not proven on the shipping WindowGroup root");
+  });
+
   test("does not pass an associated domain that differs in simulator builds", async () => {
     const root = await fixture({ complete: true, includeKey: false });
     const key = publishableKey("clerk.example.test");
