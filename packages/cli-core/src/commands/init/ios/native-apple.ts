@@ -1,3 +1,4 @@
+import { isDeepStrictEqual } from "node:util";
 import { dim, yellow } from "../../../lib/color.ts";
 import {
   ApiError,
@@ -19,6 +20,7 @@ import { withSpinner } from "../../../lib/spinner.ts";
 
 const APPLE_CONNECTION_KEY = "connection_oauth_apple";
 const CONFIG_VERSION_PATTERN = /^v1_[0-9a-f]{8}$/;
+const NATIVE_APPLE_PATCH_FIELDS = new Set(["enabled", "authenticatable", "bundle_id"]);
 
 function iosAppleError(
   message: string,
@@ -77,6 +79,11 @@ export type IOSNativeAppleSkipped = {
 };
 
 export type IOSNativeApplePreparation = IOSNativeApplePlan | IOSNativeAppleSkipped;
+
+const preservedAppleFieldFingerprints = new WeakMap<
+  IOSNativeApplePlan,
+  ReadonlyMap<string, string>
+>();
 
 export interface IOSNativeApplePatchOptions {
   dryRun: boolean;
@@ -161,6 +168,50 @@ export interface PrepareIOSNativeAppleOptions extends IOSNativeAppleOptions {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function canonicalConfigValue(value: unknown): string | undefined {
+  if (value === null) return "null";
+  if (typeof value === "string" || typeof value === "boolean") return JSON.stringify(value);
+  if (typeof value === "number") return Number.isFinite(value) ? JSON.stringify(value) : undefined;
+  if (Array.isArray(value)) {
+    const items = value.map(canonicalConfigValue);
+    return items.some((item) => item == null) ? undefined : `[${items.join(",")}]`;
+  }
+  if (!isRecord(value)) return undefined;
+
+  const entries: string[] = [];
+  for (const key of Object.keys(value).sort()) {
+    const item = canonicalConfigValue(value[key]);
+    if (item == null) return undefined;
+    entries.push(`${JSON.stringify(key)}:${item}`);
+  }
+  return `{${entries.join(",")}}`;
+}
+
+function preservedFieldFingerprints(
+  container: Record<string, unknown>,
+): ReadonlyMap<string, string> | undefined {
+  const connection = container[APPLE_CONNECTION_KEY];
+  if (!isRecord(connection)) return undefined;
+
+  const fingerprints = new Map<string, string>();
+  for (const [key, value] of Object.entries(connection)) {
+    if (NATIVE_APPLE_PATCH_FIELDS.has(key)) continue;
+    const canonical = canonicalConfigValue(value);
+    if (canonical == null) return undefined;
+    fingerprints.set(key, new Bun.CryptoHasher("sha256").update(canonical).digest("hex"));
+  }
+  return fingerprints;
+}
+
+function preservedFieldsMatch(before: IOSNativeApplePlan, after: IOSNativeApplePlan): boolean {
+  const beforeFingerprints = preservedAppleFieldFingerprints.get(before);
+  const afterFingerprints = preservedAppleFieldFingerprints.get(after);
+  if (!beforeFingerprints || !afterFingerprints) return false;
+  return [...beforeFingerprints].every(
+    ([key, fingerprint]) => afterFingerprints.get(key) === fingerprint,
+  );
 }
 
 function blocker(code: IOSNativeAppleBlockerCode, message: string): IOSNativeAppleBlocker {
@@ -319,7 +370,7 @@ export function buildIOSNativeApplePlan(
         ]
       : [];
 
-  return {
+  const plan: IOSNativeApplePlan = {
     schemaVersion: 1,
     kind: "clerk-ios-native-apple-connection",
     status,
@@ -334,6 +385,9 @@ export function buildIOSNativeApplePlan(
     actions,
     blockers,
   };
+  const fingerprints = preservedFieldFingerprints(options.config);
+  if (fingerprints) preservedAppleFieldFingerprints.set(plan, fingerprints);
+  return plan;
 }
 
 export async function auditIOSNativeAppleConnection(
@@ -422,10 +476,14 @@ function validatePatchProjection(
   if (
     !isRecord(beforeConnection) ||
     !isRecord(afterConnection) ||
-    Object.keys(beforeConnection).some((key) => !Object.hasOwn(afterConnection, key))
+    Object.entries(beforeConnection).some(
+      ([key, value]) =>
+        !Object.hasOwn(afterConnection, key) ||
+        (!NATIVE_APPLE_PATCH_FIELDS.has(key) && !isDeepStrictEqual(afterConnection[key], value)),
+    )
   ) {
     throw iosAppleError(
-      "Clerk returned an Apple configuration projection that removed existing fields.",
+      "Clerk returned an Apple configuration projection that removed or changed existing fields.",
       ERROR_CODE.PLAPI_UNEXPECTED_RESPONSE,
     );
   }
@@ -659,7 +717,7 @@ export async function applyIOSNativeAppleConnection(
       ERROR_CODE.IOS_REMOTE_VERIFY_FAILED,
     );
   }
-  if (finalPlan.status !== "satisfied") {
+  if (finalPlan.status !== "satisfied" || !preservedFieldsMatch(current, finalPlan)) {
     throw iosAppleError(
       "Native Sign in with Apple did not pass final verification. Rerun clerk init to reconcile the remote state safely.",
       ERROR_CODE.IOS_REMOTE_VERIFY_FAILED,

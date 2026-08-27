@@ -110,6 +110,9 @@ function statefulAPI(
     failActual?: unknown;
     malformedDryRun?: boolean;
     replaceProjection?: boolean;
+    dryRunProjectionOverride?: Record<string, unknown>;
+    actualProjectionOverride?: Record<string, unknown>;
+    persistedActualState?: AppleConnection;
     persistActual?: boolean;
   } = {},
 ): {
@@ -173,12 +176,20 @@ function statefulAPI(
           ? { ...(update as Record<string, unknown>) }
           : { ...current, ...(update as Record<string, unknown>) }
       ) as AppleConnection;
+      const projectionOverride = patchOptions.dryRun
+        ? options.dryRunProjectionOverride
+        : options.actualProjectionOverride;
+      if (projectionOverride) Object.assign(after, structuredClone(projectionOverride));
       if (patchOptions.dryRun && options.malformedDryRun) {
         return { config_version: version, dry_run: true, before: {}, after: {} };
       }
       if (!patchOptions.dryRun) {
         writes += 1;
-        if (options.persistActual !== false) current = after;
+        if (options.persistActual !== false) {
+          current = options.persistedActualState
+            ? structuredClone(options.persistedActualState)
+            : after;
+        }
         version = NEXT_CONFIG_VERSION;
       }
       return {
@@ -587,6 +598,100 @@ describe("native Sign in with Apple remote setup", () => {
     );
     expect(harness.patchCalls.map((call) => call.options.dryRun)).toEqual([true]);
     expect(harness.actualWrites()).toBe(0);
+    expect(captured.err).not.toContain(PRIVATE_KEY);
+  });
+
+  test("rejects a dry-run projection that changes a nested preserved field", async () => {
+    const harness = statefulAPI({
+      initial: connection(false, false, {
+        unrelated_provider_setting: {
+          nested: { mode: "keep", secret: PRIVATE_KEY },
+        },
+      }),
+      dryRunProjectionOverride: {
+        unrelated_provider_setting: {
+          nested: { mode: "changed", secret: PRIVATE_KEY },
+        },
+      },
+    });
+    const prepared = await prepareIOSNativeAppleConnection(baseOptions(), {
+      api: harness.api,
+      prompts: unexpectedPrompts(),
+    });
+    if (prepared.status !== "ready") throw new Error("expected ready plan");
+
+    await expect(applyIOSNativeAppleConnection(prepared, harness.api)).rejects.toThrow(
+      "could not safely validate native Sign in with Apple",
+    );
+    expect(harness.patchCalls.map((call) => call.options.dryRun)).toEqual([true]);
+    expect(harness.actualWrites()).toBe(0);
+    expect(captured.err).not.toContain(PRIVATE_KEY);
+  });
+
+  test("rejects an actual-write projection that changes a preserved credential value", async () => {
+    const changedSecret = `${PRIVATE_KEY}_CHANGED`;
+    const harness = statefulAPI({
+      initial: connection(false, false, { client_secret: PRIVATE_KEY }),
+      actualProjectionOverride: { client_secret: changedSecret },
+    });
+    const prepared = await prepareIOSNativeAppleConnection(baseOptions(), {
+      api: harness.api,
+      prompts: unexpectedPrompts(),
+    });
+    if (prepared.status !== "ready") throw new Error("expected ready plan");
+
+    let thrown: unknown;
+    try {
+      await applyIOSNativeAppleConnection(prepared, harness.api);
+    } catch (error) {
+      thrown = error;
+    }
+    expect(thrown).toMatchObject({
+      code: ERROR_CODE.PLAPI_UNEXPECTED_RESPONSE,
+      message: expect.stringContaining("removed or changed existing fields"),
+    });
+    expect(harness.patchCalls.map((call) => call.options.dryRun)).toEqual([true, false]);
+    expect(harness.actualWrites()).toBe(1);
+    expect(String(thrown)).not.toContain(PRIVATE_KEY);
+    expect(String(thrown)).not.toContain(changedSecret);
+    expect(captured.err).not.toContain(PRIVATE_KEY);
+    expect(captured.err).not.toContain(changedSecret);
+  });
+
+  test("rejects a final state that drops a secret despite preserving projections", async () => {
+    const initial = connection(false, true, {
+      client_id: SERVICES_ID,
+      client_secret: PRIVATE_KEY,
+      unrelated_provider_setting: { nested: { mode: "keep" } },
+    });
+    const harness = statefulAPI({
+      initial,
+      persistedActualState: connection(true, true, {
+        bundle_id: BUNDLE_IDENTIFIER,
+        client_id: SERVICES_ID,
+        unrelated_provider_setting: { nested: { mode: "keep" } },
+      }),
+    });
+    const prepared = await prepareIOSNativeAppleConnection(baseOptions(), {
+      api: harness.api,
+      prompts: unexpectedPrompts(),
+    });
+    if (prepared.status !== "ready") throw new Error("expected ready plan");
+
+    let thrown: unknown;
+    try {
+      await applyIOSNativeAppleConnection(prepared, harness.api);
+    } catch (error) {
+      thrown = error;
+    }
+    expect(thrown).toMatchObject({
+      code: ERROR_CODE.IOS_REMOTE_VERIFY_FAILED,
+      message: expect.stringContaining("did not pass final verification"),
+    });
+    expect(harness.patchCalls.map((call) => call.options.dryRun)).toEqual([true, false]);
+    expect(harness.actualWrites()).toBe(1);
+    expect(String(thrown)).not.toContain(PRIVATE_KEY);
+    expect(JSON.stringify(prepared)).not.toContain(PRIVATE_KEY);
     expect(captured.err).not.toContain(PRIVATE_KEY);
   });
 
