@@ -16,17 +16,80 @@ function blankRange(chars: string[], start: number, end: number): void {
   }
 }
 
+export interface SwiftSourceSanitization {
+  sanitizedSource: string;
+  complete: boolean;
+}
+
+function hasExactHashes(chars: string[], start: number, hashCount: number): boolean {
+  if (hashCount === 0) return true;
+  for (let hash = 0; hash < hashCount; hash++) {
+    if (chars[start + hash] !== "#") return false;
+  }
+  return chars[start + hashCount] !== "#";
+}
+
+function isBareRegexOpening(chars: string[], index: number): boolean {
+  const first = chars[index + 1];
+  if (first == null || first === " " || first === "\t" || first === "\n" || first === "\r") {
+    return false;
+  }
+
+  if (index === 0) return true;
+  const previous = chars[index - 1];
+  return /\s/.test(previous ?? "") || "([{,:;".includes(previous ?? "");
+}
+
+function consumeRegexLiteral(
+  chars: string[],
+  openingSlash: number,
+  hashCount: number,
+): { end: number; complete: boolean } {
+  let cursor = openingSlash + 1;
+
+  while (cursor < chars.length) {
+    if (hashCount === 0 && (chars[cursor] === "\n" || chars[cursor] === "\r")) {
+      return { end: cursor, complete: false };
+    }
+
+    if (chars[cursor] === "\\") {
+      let escapeHashes = 0;
+      while (chars[cursor + 1 + escapeHashes] === "#") escapeHashes++;
+      if (escapeHashes === hashCount && chars[cursor + 1 + escapeHashes] === "(") {
+        // Regex interpolation contains arbitrary Swift expressions. Without a
+        // full Swift parser, a delimiter inside the expression cannot be
+        // distinguished safely from the regex's closing delimiter.
+        return { end: chars.length, complete: false };
+      }
+      cursor = Math.min(chars.length, cursor + 2);
+      continue;
+    }
+
+    if (chars[cursor] === "/" && hasExactHashes(chars, cursor + 1, hashCount)) {
+      if (hashCount === 0 && (chars[cursor - 1] === " " || chars[cursor - 1] === "\t")) {
+        return { end: cursor + 1, complete: false };
+      }
+      return { end: cursor + 1 + hashCount, complete: true };
+    }
+
+    cursor++;
+  }
+
+  return { end: chars.length, complete: false };
+}
+
 /**
  * Removes comments and string contents while preserving offsets and newlines.
  * This is intentionally a small lexer rather than a regex: Swift supports
  * nested block comments, multiline strings, and arbitrary raw-string hashes.
  */
-function sanitizeSwift(source: string, blankStrings: boolean): string {
+function sanitizeSwift(source: string, blankStrings: boolean): SwiftSourceSanitization {
   // Swift source offsets below are JavaScript UTF-16 indexes. Split into code
   // units so blanking an emoji or other astral character never shifts later
   // slices into the original source.
   const chars = source.split("");
   let i = 0;
+  let complete = true;
 
   while (i < chars.length) {
     if (chars[i] === "/" && chars[i + 1] === "/") {
@@ -52,13 +115,32 @@ function sanitizeSwift(source: string, blankStrings: boolean): string {
           i++;
         }
       }
+      if (depth > 0) complete = false;
       blankRange(chars, start, i);
       continue;
     }
 
     let hashCount = 0;
     while (chars[i + hashCount] === "#") hashCount++;
-    const quoteIndex = i + hashCount;
+    const delimiterIndex = i + hashCount;
+
+    if (hashCount > 0 && chars[delimiterIndex] === "/") {
+      const literal = consumeRegexLiteral(chars, delimiterIndex, hashCount);
+      blankRange(chars, i, literal.end);
+      complete &&= literal.complete;
+      i = literal.end;
+      continue;
+    }
+
+    if (hashCount === 0 && chars[i] === "/" && isBareRegexOpening(chars, i)) {
+      const literal = consumeRegexLiteral(chars, i, 0);
+      blankRange(chars, i, literal.end);
+      complete &&= literal.complete;
+      i = literal.end;
+      continue;
+    }
+
+    const quoteIndex = delimiterIndex;
     if (chars[quoteIndex] !== '"') {
       i++;
       continue;
@@ -68,6 +150,7 @@ function sanitizeSwift(source: string, blankStrings: boolean): string {
     const multiline =
       chars[quoteIndex] === '"' && chars[quoteIndex + 1] === '"' && chars[quoteIndex + 2] === '"';
     i = quoteIndex + (multiline ? 3 : 1);
+    let closed = false;
 
     while (i < chars.length) {
       const closesQuote = multiline
@@ -82,6 +165,7 @@ function sanitizeSwift(source: string, blankStrings: boolean): string {
         }
         if (closesHashes) {
           i += quoteLength + hashCount;
+          closed = true;
           break;
         }
       }
@@ -99,17 +183,22 @@ function sanitizeSwift(source: string, blankStrings: boolean): string {
       i++;
     }
 
+    if (!closed) complete = false;
     if (blankStrings) blankRange(chars, start, i);
   }
 
-  return chars.join("");
+  return { sanitizedSource: chars.join(""), complete };
 }
 
 export function sanitizeSwiftSource(source: string): string {
+  return sanitizeSwiftSourceWithStatus(source).sanitizedSource;
+}
+
+export function sanitizeSwiftSourceWithStatus(source: string): SwiftSourceSanitization {
   return sanitizeSwift(source, true);
 }
 
-function sourceWithoutComments(source: string): string {
+function sourceWithoutComments(source: string): SwiftSourceSanitization {
   return sanitizeSwift(source, false);
 }
 
@@ -1678,8 +1767,11 @@ export async function inspectSwiftSources(
     }
 
     sourceFilesScanned++;
-    const sanitized = withoutPreviewOnlyRegions(sanitizeSwiftSource(source));
-    const uncommented = withoutPreviewOnlyRegions(sourceWithoutComments(source));
+    const structuralSource = sanitizeSwiftSourceWithStatus(source);
+    const valueSource = sourceWithoutComments(source);
+    if (!structuralSource.complete || !valueSource.complete) evidenceComplete = false;
+    const sanitized = withoutPreviewOnlyRegions(structuralSource.sanitizedSource);
+    const uncommented = withoutPreviewOnlyRegions(valueSource.sanitizedSource);
     const evidence = { path: file.relativePath };
     const importsKit = has(
       sanitized,
