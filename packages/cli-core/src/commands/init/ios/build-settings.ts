@@ -27,7 +27,6 @@ const INSPECTED_BUILD_SETTING_KEYS = [
   "SDKROOT",
   "SUPPORTED_PLATFORMS",
 ] as const;
-const INSPECTED_BUILD_SETTINGS = new Set<string>(INSPECTED_BUILD_SETTING_KEYS);
 
 interface BuildContext {
   label: "iphoneos/arm64" | "iphonesimulator/arm64" | "iphonesimulator/x86_64";
@@ -39,6 +38,10 @@ interface BuildSettingsEvaluation {
   settings: Record<string, string>;
   /** Unknown inputs are tracked independently for each inspected setting. */
   settingTaints: Map<string, string[]>;
+  /** Unknown inputs that may define any setting not yet seen by the inspector. */
+  globalTaints: string[];
+  /** Literal assignments after the most recent global taint are authoritative. */
+  globalTaintOverrides: Set<string>;
 }
 
 type XCConfigOperation =
@@ -85,10 +88,14 @@ function cloneEvaluation(evaluation: BuildSettingsEvaluation): BuildSettingsEval
   return {
     settings: { ...evaluation.settings },
     settingTaints: cloneSettingTaints(evaluation.settingTaints),
+    globalTaints: [...evaluation.globalTaints],
+    globalTaintOverrides: new Set(evaluation.globalTaintOverrides),
   };
 }
 
 function taintInspectedSettings(evaluation: BuildSettingsEvaluation, taint: string): void {
+  evaluation.globalTaints = unique([...evaluation.globalTaints, taint]);
+  evaluation.globalTaintOverrides.clear();
   for (const key of INSPECTED_BUILD_SETTING_KEYS) {
     addSettingTaint(evaluation.settingTaints, key, taint);
   }
@@ -100,15 +107,26 @@ function applyEvaluatedSetting(
   value: string,
   conditions: XCConfigCondition[] | undefined,
 ): void {
+  const retainedInheritedOverride =
+    evaluation.globalTaintOverrides.has(key) && onlyUsesInheritedBuildSettingVariables(value);
   applySettings(evaluation.settings, { [key]: value });
-  if (!INSPECTED_BUILD_SETTINGS.has(key)) return;
 
   // An unconditional literal assignment fully overrides any earlier unknown
   // include for this setting. Inherited or variable-derived values may still
   // depend on the skipped input, so retain their existing taint.
   if ((conditions?.length ?? 0) === 0 && !hasBuildSettingVariable(value)) {
     evaluation.settingTaints.delete(key);
+    evaluation.globalTaintOverrides.add(key);
+  } else if (!retainedInheritedOverride) {
+    evaluation.globalTaintOverrides.delete(key);
   }
+}
+
+function onlyUsesInheritedBuildSettingVariables(value: string): boolean {
+  const variables = [...value.matchAll(/\$\(([^)]+)\)|\$\{([^}]+)\}/g)].map((match) =>
+    String(match[1] ?? match[2]).toLowerCase(),
+  );
+  return variables.length > 0 && variables.every((variable) => variable === "inherited");
 }
 
 function hasBuildSettingVariable(value: string): boolean {
@@ -189,7 +207,12 @@ async function readXCConfigSettings(
   configuration: string,
   context: BuildContext,
   diagnostics: IOSDiagnostic[],
-  inherited: BuildSettingsEvaluation = { settings: {}, settingTaints: new Map() },
+  inherited: BuildSettingsEvaluation = {
+    settings: {},
+    settingTaints: new Map(),
+    globalTaints: [],
+    globalTaintOverrides: new Set(),
+  },
   visited: Set<string> = new Set(),
   depth = 0,
   optional = false,
@@ -333,6 +356,13 @@ function addSettingTaint(settingTaints: Map<string, string[]>, key: string, tain
   settingTaints.set(key, unique([...(settingTaints.get(key) ?? []), taint]));
 }
 
+function settingTaintsFor(evaluation: BuildSettingsEvaluation, key: string): string[] {
+  return unique([
+    ...(evaluation.settingTaints.get(key) ?? []),
+    ...(evaluation.globalTaintOverrides.has(key) ? [] : evaluation.globalTaints),
+  ]);
+}
+
 function parseInlineBuildSettingKey(
   rawKey: string,
 ):
@@ -414,7 +444,7 @@ function resolveSetting(
 ): IOSValueResolution {
   const settings = evaluation.settings;
   const initial = settings[key];
-  const taints = evaluation.settingTaints.get(key) ?? [];
+  const taints = settingTaintsFor(evaluation, key);
   if ((initial == null || initial.trim() === "") && taints.length === 0) {
     return { state: "missing", evidence: [evidence] };
   }
@@ -530,6 +560,8 @@ async function settingsForConfiguration(
   inherited: BuildSettingsEvaluation = {
     settings: {},
     settingTaints: new Map(),
+    globalTaints: [],
+    globalTaintOverrides: new Set(),
   },
 ): Promise<BuildSettingsEvaluation> {
   let evaluation = cloneEvaluation(inherited);
@@ -597,8 +629,17 @@ async function settingsForConfiguration(
 
 export interface InspectedTargetConfiguration {
   model: IOSBuildConfiguration;
-  settings: Record<string, string>;
+  entitlementContexts: EntitlementBuildContext[];
   isIOS: boolean;
+}
+
+export interface EntitlementBuildContext {
+  label: string;
+  settings: Record<string, string>;
+  settingTaints: Map<string, string[]>;
+  globalTaints: string[];
+  globalTaintOverrides: Set<string>;
+  builtins: Record<string, string>;
 }
 
 interface EvaluatedBuildContext {
@@ -679,7 +720,7 @@ function missingConfiguration(
       entitlementsPath: missing,
       deploymentTarget: missing,
     },
-    settings: {},
+    entitlementContexts: [],
     // The product type identifies this as an application target, but the
     // dangling configuration does not contain enough evidence to exclude iOS.
     isIOS: true,
@@ -746,6 +787,8 @@ export async function inspectTargetBuildConfigurations(options: {
       const inherited: BuildSettingsEvaluation = {
         settings: {},
         settingTaints: new Map(),
+        globalTaints: [],
+        globalTaintOverrides: new Set(),
       };
       const projectSettings = await settingsForConfiguration(
         root,
@@ -908,7 +951,14 @@ export async function inspectTargetBuildConfigurations(options: {
 
     inspected.push({
       model,
-      settings: deviceContext.evaluation.settings,
+      entitlementContexts: activeContexts.map(({ context, evaluation, builtins }) => ({
+        label: context.label,
+        settings: { ...evaluation.settings },
+        settingTaints: cloneSettingTaints(evaluation.settingTaints),
+        globalTaints: [...evaluation.globalTaints],
+        globalTaintOverrides: new Set(evaluation.globalTaintOverrides),
+        builtins: { ...builtins },
+      })),
       isIOS: !explicitlyNonIOS,
     });
   }

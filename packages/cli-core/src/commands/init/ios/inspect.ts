@@ -7,6 +7,7 @@ import {
   addBuildSettingConflictDiagnostics,
   inspectTargetBuildConfigurations,
   resolveEntitlementsAbsolutePath,
+  type EntitlementBuildContext,
 } from "./build-settings.ts";
 import {
   discoverIOSContainers,
@@ -694,7 +695,7 @@ async function attachEntitlements(
   root: string,
   projectPath: string,
   configurations: IOSBuildConfiguration[],
-  settingsByConfiguration: Map<string, Record<string, string>>,
+  contextsByConfiguration: Map<string, EntitlementBuildContext[]>,
   diagnostics: IOSDiagnostic[],
 ): Promise<void> {
   const cache = new Map<string, IOSEntitlementsInspection | undefined>();
@@ -737,19 +738,21 @@ async function attachEntitlements(
     const entitlements = cache.get(absolutePath);
     if (!entitlements) continue;
 
-    const settings = settingsByConfiguration.get(configuration.name) ?? {};
+    const contexts = contextsByConfiguration.get(configuration.name) ?? [];
     const resolvedAssociatedDomains: string[] = [];
     const unresolvedAssociatedDomains: string[] = [];
     for (const domain of entitlements.associatedDomains) {
-      const expanded = expandEntitlementDomain(
-        domain,
-        settings,
-        configuration.bundleIdentifier.state === "resolved"
-          ? configuration.bundleIdentifier.value
-          : undefined,
-      );
-      if (expanded) resolvedAssociatedDomains.push(expanded);
-      else unresolvedAssociatedDomains.push(domain);
+      const expansions = contexts.map((context) => expandEntitlementDomain(domain, context));
+      const resolved = expansions.filter((value): value is string => value != null);
+      if (
+        contexts.length > 0 &&
+        resolved.length === contexts.length &&
+        new Set(resolved).size === 1
+      ) {
+        resolvedAssociatedDomains.push(resolved[0]!);
+      } else {
+        unresolvedAssociatedDomains.push(domain);
+      }
     }
     if (unresolvedAssociatedDomains.length > 0) {
       diagnostics.push({
@@ -781,14 +784,9 @@ async function attachEntitlements(
 
 function expandEntitlementDomain(
   raw: string,
-  settings: Record<string, string>,
-  bundleIdentifier: string | undefined,
+  context: EntitlementBuildContext,
 ): string | undefined {
   const variable = /\$\(([^)]+)\)|\$\{([^}]+)\}/g;
-  const builtins: Record<string, string | undefined> = {
-    CFBundleIdentifier: bundleIdentifier,
-    PRODUCT_BUNDLE_IDENTIFIER: bundleIdentifier,
-  };
   const resolving = new Set<string>();
   const expand = (value: string, depth: number): string | undefined => {
     if (depth > 20) return undefined;
@@ -796,18 +794,34 @@ function expandEntitlementDomain(
     variable.lastIndex = 0;
     const expanded = value.replace(variable, (_match, parenthesized, braced) => {
       const name = String(parenthesized ?? braced);
-      if (name.includes(":") || resolving.has(name)) {
+      if (name.includes(":")) {
         unresolved = true;
         return "";
       }
-      const replacement = settings[name] ?? builtins[name];
+      const settingName =
+        context.settings[name] == null && name === "CFBundleIdentifier"
+          ? "PRODUCT_BUNDLE_IDENTIFIER"
+          : name;
+      if (resolving.has(settingName)) {
+        unresolved = true;
+        return "";
+      }
+      const taints = [
+        ...(context.settingTaints.get(settingName) ?? []),
+        ...(context.globalTaintOverrides.has(settingName) ? [] : context.globalTaints),
+      ];
+      if (taints.length > 0) {
+        unresolved = true;
+        return "";
+      }
+      const replacement = context.settings[settingName] ?? context.builtins[settingName];
       if (replacement == null) {
         unresolved = true;
         return "";
       }
-      resolving.add(name);
+      resolving.add(settingName);
       const nested = expand(replacement, depth + 1);
-      resolving.delete(name);
+      resolving.delete(settingName);
       if (nested == null) unresolved = true;
       return nested ?? "";
     });
@@ -1337,7 +1351,7 @@ async function parseProject(
       new Map(
         targetConfigurations.map((configuration) => [
           configuration.model.name,
-          configuration.settings,
+          configuration.entitlementContexts,
         ]),
       ),
       diagnostics,
