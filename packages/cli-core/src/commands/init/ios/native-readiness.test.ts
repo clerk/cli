@@ -61,10 +61,16 @@ describe("buildIOSNativeReadinessAudit", () => {
         },
       },
       associatedDomain: {
-        status: "review",
-        expectedDomain: "webcredentials:clerk.example.test",
+        status: "blocked",
         files: ["MyApp/MyApp.entitlements"],
         automatable: false,
+        blockers: [
+          {
+            code: "expected-domain-unavailable",
+            message:
+              "A proven local publishable key is required to derive the webcredentials domain.",
+          },
+        ],
       },
       remote: {
         status: "not-inspected",
@@ -72,6 +78,7 @@ describe("buildIOSNativeReadinessAudit", () => {
         requirement: IOS_NATIVE_READINESS_PLAPI_BRIDGE_REQUIREMENT,
       },
     });
+    expect(audit.associatedDomain.expectedDomain).toBeUndefined();
     expect(audit.remote.requirement).toEqual({
       applicationId: "linked-application-id",
       instanceId: "linked-development-instance-id",

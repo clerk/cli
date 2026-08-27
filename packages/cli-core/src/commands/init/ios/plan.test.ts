@@ -45,10 +45,12 @@ describe("buildIOSSetupPlan", () => {
     expect(plan.steps.filter((step) => step.automatable)).toEqual([]);
     const configureStep = plan.steps.find((step) => step.id === "configure-publishable-key");
     expect(configureStep?.status).toBe("review");
-    expect(configureStep?.description).toContain("available to copy");
+    expect(configureStep?.description).toContain(
+      "could not validate a usable selected-target runtime key source",
+    );
     const domainStep = plan.steps.find((step) => step.id === "add-associated-domain");
-    expect(domainStep?.status).toBe("review");
-    expect(domainStep?.description).toContain("not proven to be the selected target's runtime key");
+    expect(domainStep?.status).toBe("blocked");
+    expect(domainStep?.description).toContain("valid local publishable key is needed");
     expect(plan.steps.find((step) => step.id === "register-native-application")?.status).toBe(
       "review",
     );
@@ -612,10 +614,16 @@ struct MyApp: App {
       projectPath: inspection.selection.projectPath,
       targetId: inspection.selection.targetId,
     });
-    inspection.localPublishableKey.source = "MyApp.xcodeproj/xcshareddata/xcschemes/MyApp.xcscheme";
-    inspection.localPublishableKey.candidateSources = [
-      "MyApp.xcodeproj/xcshareddata/xcschemes/MyApp.xcscheme",
-    ];
+    const schemePath = "MyApp.xcodeproj/xcshareddata/xcschemes/MyApp.xcscheme";
+    inspection.localPublishableKey = {
+      found: true,
+      source: schemePath,
+      frontendApiHost: "clerk.example.test",
+      instanceType: "development",
+      conflict: false,
+      candidateSources: [schemePath],
+      invalidSources: [],
+    };
     inspection.appTargets[0]!.swift.configureCalls = [
       {
         path: "MyApp/MyAppApp.swift",
@@ -643,7 +651,15 @@ struct MyApp: App {
       ".clerk/.tmp/keyless.json",
       "CLERK_PUBLISHABLE_KEY environment variable",
     ]) {
-      inspection.localPublishableKey.source = source;
+      inspection.localPublishableKey = {
+        found: true,
+        source,
+        frontendApiHost: "clerk.example.test",
+        instanceType: "development",
+        conflict: false,
+        candidateSources: [source],
+        invalidSources: [],
+      };
       const step = buildIOSSetupPlan(inspection).steps.find(
         (candidate) => candidate.id === "configure-publishable-key",
       );
@@ -663,9 +679,10 @@ struct MyApp: App {
 
     expect(inspection.localPublishableKey).toMatchObject({
       found: false,
-      source: ".env",
+      candidateSources: [".env"],
       invalidSources: [".env"],
     });
+    expect(inspection.localPublishableKey.source).toBeUndefined();
     expect(plan.steps.find((step) => step.id === "configure-publishable-key")?.status).toBe(
       "review",
     );
