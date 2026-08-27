@@ -1,6 +1,20 @@
-import { link, lstat, open, readFile, rename, rm } from "node:fs/promises";
+import { link, lstat, open, readFile, realpath, rename, rm } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
-import { basename, dirname, isAbsolute, resolve } from "node:path";
+import { basename, dirname, isAbsolute, relative, resolve, sep } from "node:path";
+
+/**
+ * The exact root and parent directory authorized while preparing a mutation.
+ *
+ * @internal Paths are canonical filesystem evidence and must not be serialized
+ * into plans or included in CLI output or telemetry.
+ */
+export interface IOSFileMutationBoundary {
+  rootPath: string;
+  realRootPath: string;
+  rootIdentity: { device: number; inode: number };
+  realParentPath: string;
+  parentIdentity: { device: number; inode: number };
+}
 
 /**
  * An already-inspected existing file and its validated replacement bytes.
@@ -10,6 +24,7 @@ import { basename, dirname, isAbsolute, resolve } from "node:path";
  */
 export interface IOSExistingFileMutation {
   path: string;
+  boundary: IOSFileMutationBoundary;
   originalBytes: Uint8Array;
   originalHash: string;
   candidateBytes: Uint8Array;
@@ -26,8 +41,7 @@ export interface IOSExistingFileMutation {
 export interface IOSCreateFileMutation {
   kind: "create";
   path: string;
-  /** Exact parent directory inspected while preparing this create. */
-  expectedParentIdentity: { device: number; inode: number };
+  boundary: IOSFileMutationBoundary;
   candidateBytes: Uint8Array;
   candidateHash: string;
   mode: number;
@@ -203,18 +217,86 @@ function sameFile(left: FileIdentity, right: FileIdentity): boolean {
   return left.dev === right.dev && left.ino === right.ino;
 }
 
-async function createParentStillMatches(mutation: IOSCreateFileMutation): Promise<boolean> {
-  const current = await readDirectoryIdentity(dirname(mutation.path));
+function directoryIdentitiesMatch(left: DirectoryIdentity, right: DirectoryIdentity): boolean {
+  return left.device === right.device && left.inode === right.inode;
+}
+
+function pathIsWithin(root: string, path: string): boolean {
+  const rel = relative(root, path);
+  return rel === "" || (!rel.startsWith(`..${sep}`) && rel !== ".." && !isAbsolute(rel));
+}
+
+async function readCurrentMutationBoundary(
+  rootPath: string,
+  parentPath: string,
+): Promise<Omit<IOSFileMutationBoundary, "rootPath"> | undefined> {
+  try {
+    const realRootPath = await realpath(rootPath);
+    const realParentPath = await realpath(parentPath);
+    if (!pathIsWithin(realRootPath, realParentPath)) return undefined;
+
+    const rootIdentity = await readDirectoryIdentity(realRootPath);
+    const parentIdentity = await readDirectoryIdentity(realParentPath);
+    if (!rootIdentity || !parentIdentity) return undefined;
+
+    const realRootAfterRead = await realpath(rootPath);
+    const realParentAfterRead = await realpath(parentPath);
+    const rootIdentityAfterRead = await readDirectoryIdentity(realRootAfterRead);
+    const parentIdentityAfterRead = await readDirectoryIdentity(realParentAfterRead);
+    if (
+      realRootAfterRead !== realRootPath ||
+      realParentAfterRead !== realParentPath ||
+      !rootIdentityAfterRead ||
+      !parentIdentityAfterRead ||
+      !directoryIdentitiesMatch(rootIdentityAfterRead, rootIdentity) ||
+      !directoryIdentitiesMatch(parentIdentityAfterRead, parentIdentity)
+    ) {
+      return undefined;
+    }
+
+    return { realRootPath, rootIdentity, realParentPath, parentIdentity };
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Captures the root and parent directory authorized for a prepared mutation.
+ * Both paths are resolved twice around the identity reads so a moving or
+ * replaced directory is rejected instead of being recorded inconsistently.
+ *
+ * @internal The returned evidence belongs only in hidden mutation state.
+ */
+export async function prepareIOSFileMutationBoundary(
+  rootInput: string,
+  mutationPathInput: string,
+): Promise<IOSFileMutationBoundary | undefined> {
+  const rootPath = resolve(rootInput);
+  const mutationPath = resolve(mutationPathInput);
+  if (!pathIsWithin(rootPath, mutationPath)) return undefined;
+
+  const current = await readCurrentMutationBoundary(rootPath, dirname(mutationPath));
+  return current ? { rootPath, ...current } : undefined;
+}
+
+async function mutationBoundaryStillMatches(mutation: IOSFileMutation): Promise<boolean> {
+  const { boundary } = mutation;
+  if (!pathIsWithin(boundary.rootPath, mutation.path)) return false;
+  const current = await readCurrentMutationBoundary(boundary.rootPath, dirname(mutation.path));
   return (
     current !== undefined &&
-    current.device === mutation.expectedParentIdentity.device &&
-    current.inode === mutation.expectedParentIdentity.inode
+    current.realRootPath === boundary.realRootPath &&
+    current.realParentPath === boundary.realParentPath &&
+    directoryIdentitiesMatch(current.rootIdentity, boundary.rootIdentity) &&
+    directoryIdentitiesMatch(current.parentIdentity, boundary.parentIdentity)
   );
 }
 
-async function createParentsStillMatch(mutations: readonly IOSFileMutation[]): Promise<boolean> {
+async function mutationBoundariesStillMatch(
+  mutations: readonly IOSFileMutation[],
+): Promise<boolean> {
   const matches = await Promise.all(
-    mutations.filter(isCreateMutation).map(async (mutation) => createParentStillMatches(mutation)),
+    mutations.map(async (mutation) => mutationBoundaryStillMatches(mutation)),
   );
   return matches.every(Boolean);
 }
@@ -398,6 +480,26 @@ function isCreateMutation(mutation: IOSFileMutation): mutation is IOSCreateFileM
   return "kind" in mutation && mutation.kind === "create";
 }
 
+function mutationBoundaryIsValid(mutation: IOSFileMutation): boolean {
+  const { boundary } = mutation;
+  return (
+    boundary != null &&
+    isAbsolute(boundary.rootPath) &&
+    isAbsolute(boundary.realRootPath) &&
+    isAbsolute(boundary.realParentPath) &&
+    pathIsWithin(boundary.rootPath, mutation.path) &&
+    pathIsWithin(boundary.realRootPath, boundary.realParentPath) &&
+    Number.isSafeInteger(boundary.rootIdentity?.device) &&
+    boundary.rootIdentity.device >= 0 &&
+    Number.isSafeInteger(boundary.rootIdentity.inode) &&
+    boundary.rootIdentity.inode >= 0 &&
+    Number.isSafeInteger(boundary.parentIdentity?.device) &&
+    boundary.parentIdentity.device >= 0 &&
+    Number.isSafeInteger(boundary.parentIdentity.inode) &&
+    boundary.parentIdentity.inode >= 0
+  );
+}
+
 function validateMutations(mutations: readonly IOSFileMutation[]): void {
   if (mutations.length === 0) {
     throw transactionError(
@@ -414,12 +516,8 @@ function validateMutations(mutations: readonly IOSFileMutation[]): void {
       !Number.isInteger(mutation.mode) ||
       mutation.mode < 0 ||
       mutation.mode > 0o7777 ||
+      !mutationBoundaryIsValid(mutation) ||
       hashIOSFileBytes(mutation.candidateBytes) !== mutation.candidateHash ||
-      (isCreateMutation(mutation) &&
-        (!Number.isSafeInteger(mutation.expectedParentIdentity?.device) ||
-          mutation.expectedParentIdentity.device < 0 ||
-          !Number.isSafeInteger(mutation.expectedParentIdentity.inode) ||
-          mutation.expectedParentIdentity.inode < 0)) ||
       (!isCreateMutation(mutation) &&
         hashIOSFileBytes(mutation.originalBytes) !== mutation.originalHash)
     ) {
@@ -438,11 +536,18 @@ function snapshotMutations(mutations: readonly IOSFileMutation[]): IOSFileMutati
       if (!mutation.path || !isAbsolute(mutation.path)) {
         throw new Error("mutation path must be absolute");
       }
+      const boundary: IOSFileMutationBoundary = {
+        rootPath: resolve(mutation.boundary.rootPath),
+        realRootPath: resolve(mutation.boundary.realRootPath),
+        rootIdentity: { ...mutation.boundary.rootIdentity },
+        realParentPath: resolve(mutation.boundary.realParentPath),
+        parentIdentity: { ...mutation.boundary.parentIdentity },
+      };
       if (isCreateMutation(mutation)) {
         return {
           kind: "create",
           path: resolve(mutation.path),
-          expectedParentIdentity: { ...mutation.expectedParentIdentity },
+          boundary,
           candidateBytes: new Uint8Array(mutation.candidateBytes),
           candidateHash: mutation.candidateHash,
           mode: mutation.mode,
@@ -450,6 +555,7 @@ function snapshotMutations(mutations: readonly IOSFileMutation[]): IOSFileMutati
       }
       return {
         path: resolve(mutation.path),
+        boundary,
         originalBytes: new Uint8Array(mutation.originalBytes),
         originalHash: mutation.originalHash,
         candidateBytes: new Uint8Array(mutation.candidateBytes),
@@ -478,7 +584,7 @@ async function stageBytes(
   let created = false;
   let openedIdentity: FileIdentity | undefined;
   try {
-    if (isCreateMutation(mutation) && !(await createParentStillMatches(mutation))) {
+    if (!(await mutationBoundaryStillMatches(mutation))) {
       throw new IOSFileTransactionStaleError();
     }
     const temporary = await open(temporaryPath, "wx", mutation.mode);
@@ -504,7 +610,7 @@ async function stageBytes(
     if (!stagedIdentity || stagedIdentity.mode !== mutation.mode) {
       throw new Error("staged file identity did not match its prepared mode");
     }
-    if (isCreateMutation(mutation) && !(await createParentStillMatches(mutation))) {
+    if (!(await mutationBoundaryStillMatches(mutation))) {
       throw new IOSFileTransactionStaleError();
     }
     return { mutation, temporaryPath, temporaryPresent: true, stagedIdentity };
@@ -590,8 +696,11 @@ async function captureInitialExistingFileIdentities(
   const states = await Promise.all(
     mutations.map(async (mutation) => {
       if (isCreateMutation(mutation)) {
-        return (await createParentStillMatches(mutation)) && (await pathIsAbsent(mutation.path));
+        return (
+          (await mutationBoundaryStillMatches(mutation)) && (await pathIsAbsent(mutation.path))
+        );
       }
+      if (!(await mutationBoundaryStillMatches(mutation))) return false;
       const identity = await readRegularFileIdentity(mutation.path);
       if (
         !identity ||
@@ -612,10 +721,11 @@ async function originalStateStillMatches(
   initialIdentities: ReadonlyMap<string, FileIdentity>,
 ): Promise<boolean> {
   if (isCreateMutation(mutation)) {
-    return (await createParentStillMatches(mutation)) && (await pathIsAbsent(mutation.path));
+    return (await mutationBoundaryStillMatches(mutation)) && (await pathIsAbsent(mutation.path));
   }
   const identity = initialIdentities.get(mutation.path);
   return (
+    (await mutationBoundaryStillMatches(mutation)) &&
     identity !== undefined &&
     fileMatchesIdentityAndHash(mutation.path, identity, mutation.originalHash)
   );
@@ -632,7 +742,7 @@ async function originalStatesStillMatch(
 }
 
 async function createdCandidateIsUntouched(item: StagedMutation): Promise<boolean> {
-  if (!isCreateMutation(item.mutation) || !(await createParentStillMatches(item.mutation))) {
+  if (!isCreateMutation(item.mutation) || !(await mutationBoundaryStillMatches(item.mutation))) {
     return false;
   }
   try {
@@ -655,7 +765,7 @@ async function createdCandidateIsUntouched(item: StagedMutation): Promise<boolea
         item.mutation.path,
         item.committedIdentity ?? item.stagedIdentity,
         item.mutation.candidateHash,
-      )) && (await createParentStillMatches(item.mutation))
+      )) && (await mutationBoundaryStillMatches(item.mutation))
     );
   } catch {
     return false;
@@ -664,7 +774,7 @@ async function createdCandidateIsUntouched(item: StagedMutation): Promise<boolea
 
 async function committedCandidateIsUntouched(item: StagedMutation): Promise<boolean> {
   if (isCreateMutation(item.mutation)) return createdCandidateIsUntouched(item);
-  if (!item.committedIdentity) return false;
+  if (!item.committedIdentity || !(await mutationBoundaryStillMatches(item.mutation))) return false;
   if (
     !(await fileMatchesIdentityAndHash(
       item.mutation.path,
@@ -691,6 +801,7 @@ async function claimedOriginalIsUntouched(item: StagedMutation): Promise<boolean
   if (isCreateMutation(item.mutation)) return true;
   const claim = item.claimedOriginal;
   return (
+    (await mutationBoundaryStillMatches(item.mutation)) &&
     claim !== undefined &&
     claim.present &&
     (await fileMatchesIdentityAndHash(claim.path, claim.identity, item.mutation.originalHash))
@@ -813,7 +924,7 @@ async function rollbackCommitted(
         });
         await syncDirectory(dirname(item.mutation.path));
         if (
-          !(await createParentStillMatches(item.mutation)) ||
+          !(await mutationBoundaryStillMatches(item.mutation)) ||
           !(await pathIsAbsent(item.mutation.path))
         ) {
           throw transactionError(
@@ -846,6 +957,12 @@ async function rollbackCommitted(
       // Rollback uses the same non-overwriting boundary as commit: preserve
       // the actual public inode first, then restore through an exclusive link.
       await hooks.beforeRollbackDestinationClaim?.(rollback.mutation.path);
+      if (!(await mutationBoundaryStillMatches(rollback.mutation))) {
+        throw transactionError(
+          "rollback-failed",
+          "The iOS mutation boundary changed during rollback; newer filesystem state was preserved.",
+        );
+      }
       const candidateIdentity = item.committedIdentity ?? item.stagedIdentity;
       const candidateClaimResult = await claimDestination(
         rollback.mutation.path,
@@ -864,6 +981,7 @@ async function rollbackCommitted(
       try {
         await hooks.afterRollbackDestinationClaim?.(rollback.mutation.path, candidateClaim.path);
         if (
+          !(await mutationBoundaryStillMatches(rollback.mutation)) ||
           !(await fileMatchesIdentityAndHash(
             originalSourcePath,
             originalSourceIdentity,
@@ -879,6 +997,12 @@ async function rollbackCommitted(
           originalSourcePath,
           candidateClaim.path,
         );
+        if (!(await mutationBoundaryStillMatches(rollback.mutation))) {
+          throw transactionError(
+            "rollback-failed",
+            "The iOS mutation boundary changed during rollback; newer filesystem state was preserved.",
+          );
+        }
         const installResult = await linkOwnedSourceWithoutClobber(
           originalSourcePath,
           originalSourceIdentity,
@@ -893,6 +1017,12 @@ async function rollbackCommitted(
         }
         sourceInstalled = true;
         await hooks.afterRollbackDestinationInstall?.(rollback.mutation.path);
+        if (!(await mutationBoundaryStillMatches(rollback.mutation))) {
+          throw transactionError(
+            "rollback-failed",
+            "The iOS mutation boundary changed during rollback; newer filesystem state was preserved.",
+          );
+        }
         const restoredIdentity = await readRegularFileIdentity(rollback.mutation.path);
         if (
           !restoredIdentity ||
@@ -919,7 +1049,11 @@ async function rollbackCommitted(
         }
         await syncDirectory(dirname(rollback.mutation.path));
       } catch (error) {
-        if (!sourceInstalled && (await pathIsAbsent(rollback.mutation.path))) {
+        if (
+          !sourceInstalled &&
+          (await mutationBoundaryStillMatches(rollback.mutation)) &&
+          (await pathIsAbsent(rollback.mutation.path))
+        ) {
           try {
             await restoreClaimWithoutClobber(candidateClaim, rollback.mutation.path);
           } catch (restoreError) {
@@ -994,10 +1128,10 @@ async function rollbackAfterFailure(
   } catch (error) {
     cleanupError = error;
   }
-  if (!(await createParentsStillMatch(committed.map((item) => item.mutation)))) {
+  if (!(await mutationBoundariesStillMatch(committed.map((item) => item.mutation)))) {
     cleanupError ??= transactionError(
       "rollback-failed",
-      "An iOS create destination changed while rollback was being finalized; newer filesystem state was preserved.",
+      "An iOS mutation boundary changed while rollback was being finalized; newer filesystem state was preserved.",
     );
   }
   if (rollbackError || cleanupError) {
@@ -1054,7 +1188,7 @@ export async function applyIOSFileTransaction(
   let stale = false;
   let commitError: unknown;
   for (const item of staged) {
-    if (!(await createParentsStillMatch(prepared))) {
+    if (!(await mutationBoundariesStillMatch(prepared))) {
       stale = true;
       break;
     }
@@ -1078,6 +1212,10 @@ export async function applyIOSFileTransaction(
         // absent. A concurrent writer therefore wins with EEXIST instead of
         // being overwritten.
         await hooks.beforeExistingDestinationClaim?.(item.mutation.path);
+        if (!(await mutationBoundariesStillMatch(prepared))) {
+          stale = true;
+          break;
+        }
         const claimResult = await claimDestination(
           item.mutation.path,
           expectedIdentity,
@@ -1090,7 +1228,7 @@ export async function applyIOSFileTransaction(
         item.claimedOriginal = claimResult.claim;
         await hooks.afterExistingDestinationClaim?.(item.mutation.path, item.claimedOriginal.path);
         if (
-          !(await createParentsStillMatch(prepared)) ||
+          !(await mutationBoundariesStillMatch(prepared)) ||
           !(await claimedOriginalIsUntouched(item)) ||
           !(await fileMatchesIdentityAndHash(
             item.temporaryPath,
@@ -1105,7 +1243,7 @@ export async function applyIOSFileTransaction(
           item.claimedOriginal.path,
         );
         if (
-          !(await createParentsStillMatch(prepared)) ||
+          !(await mutationBoundariesStillMatch(prepared)) ||
           !(await claimedOriginalIsUntouched(item))
         ) {
           throw new IOSFileTransactionStaleError();
@@ -1138,7 +1276,7 @@ export async function applyIOSFileTransaction(
           item.claimedOriginal.path,
         );
       }
-      if (!(await createParentsStillMatch(prepared))) {
+      if (!(await mutationBoundariesStillMatch(prepared))) {
         throw new IOSFileTransactionStaleError();
       }
       const committedIdentity = await readRegularFileIdentity(item.mutation.path);
@@ -1147,12 +1285,16 @@ export async function applyIOSFileTransaction(
       }
       item.committedIdentity = committedIdentity;
       await syncDirectory(dirname(item.mutation.path));
-      if (!(await createParentsStillMatch(prepared))) {
+      if (!(await mutationBoundariesStillMatch(prepared))) {
         throw new IOSFileTransactionStaleError();
       }
     } catch (error) {
       let effectiveError = error;
-      if (!committedThisItem && item.claimedOriginal?.present) {
+      if (
+        !committedThisItem &&
+        item.claimedOriginal?.present &&
+        (await mutationBoundaryStillMatches(item.mutation))
+      ) {
         try {
           await restoreClaimWithoutClobber(item.claimedOriginal, item.mutation.path);
         } catch (cleanupError) {
@@ -1184,19 +1326,19 @@ export async function applyIOSFileTransaction(
     );
   }
 
-  const parentsMatchedBeforePostvalidation = await createParentsStillMatch(prepared);
+  const boundariesMatchedBeforePostvalidation = await mutationBoundariesStillMatch(prepared);
   const candidatesMatchedBeforePostvalidation = await committedCandidatesAreUntouched(committed);
   const originalsMatchedBeforePostvalidation = await claimedOriginalsAreUntouched(committed);
   const postconditionsValid = await postconditionsAreValid(postconditions);
-  const parentsMatchedAfterPostvalidation = await createParentsStillMatch(prepared);
+  const boundariesMatchedAfterPostvalidation = await mutationBoundariesStillMatch(prepared);
   const candidatesMatchedAfterPostvalidation = await committedCandidatesAreUntouched(committed);
   const originalsMatchedAfterPostvalidation = await claimedOriginalsAreUntouched(committed);
   if (
-    parentsMatchedBeforePostvalidation &&
+    boundariesMatchedBeforePostvalidation &&
     candidatesMatchedBeforePostvalidation &&
     originalsMatchedBeforePostvalidation &&
     postconditionsValid &&
-    parentsMatchedAfterPostvalidation &&
+    boundariesMatchedAfterPostvalidation &&
     candidatesMatchedAfterPostvalidation &&
     originalsMatchedAfterPostvalidation
   ) {
@@ -1213,7 +1355,7 @@ export async function applyIOSFileTransaction(
     }
     await cleanupStaged(staged);
     if (
-      (await createParentsStillMatch(prepared)) &&
+      (await mutationBoundariesStillMatch(prepared)) &&
       (await committedCandidatesAreUntouched(committed))
     ) {
       return { status: "applied" };
@@ -1223,9 +1365,9 @@ export async function applyIOSFileTransaction(
   }
 
   await rollbackAfterFailure(committed, staged, hooks);
-  return parentsMatchedBeforePostvalidation &&
+  return boundariesMatchedBeforePostvalidation &&
     candidatesMatchedBeforePostvalidation &&
-    parentsMatchedAfterPostvalidation &&
+    boundariesMatchedAfterPostvalidation &&
     candidatesMatchedAfterPostvalidation &&
     originalsMatchedBeforePostvalidation &&
     originalsMatchedAfterPostvalidation

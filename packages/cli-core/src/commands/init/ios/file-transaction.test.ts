@@ -19,6 +19,7 @@ import {
   applyIOSFileTransaction,
   hashIOSFileBytes,
   IOSFileTransactionError,
+  prepareIOSFileMutationBoundary,
   type IOSCreateFileMutation,
   type IOSExistingFileMutation,
 } from "./file-transaction.ts";
@@ -31,12 +32,19 @@ async function temporaryRoot(): Promise<string> {
   return root;
 }
 
-async function mutation(path: string, candidate: string): Promise<IOSExistingFileMutation> {
+async function mutation(
+  path: string,
+  candidate: string,
+  root = dirname(path),
+): Promise<IOSExistingFileMutation> {
   const originalBytes = new Uint8Array(await readFile(path));
   const candidateBytes = new TextEncoder().encode(candidate);
   const info = await lstat(path);
+  const boundary = await prepareIOSFileMutationBoundary(root, path);
+  if (!boundary) throw new Error("expected a safe file mutation boundary");
   return {
     path,
+    boundary,
     originalBytes,
     originalHash: hashIOSFileBytes(originalBytes),
     candidateBytes,
@@ -49,13 +57,15 @@ async function createMutation(
   path: string,
   candidate: string,
   mode = 0o644,
+  root = dirname(path),
 ): Promise<IOSCreateFileMutation> {
   const candidateBytes = new TextEncoder().encode(candidate);
-  const parent = await lstat(dirname(path));
+  const boundary = await prepareIOSFileMutationBoundary(root, path);
+  if (!boundary) throw new Error("expected a safe file mutation boundary");
   return {
     kind: "create",
     path,
-    expectedParentIdentity: { device: parent.dev, inode: parent.ino },
+    boundary,
     candidateBytes,
     candidateHash: hashIOSFileBytes(candidateBytes),
     mode,
@@ -114,6 +124,60 @@ afterEach(async () => {
 });
 
 describe("iOS existing-file transaction", () => {
+  test("preserves an out-of-root file when its prepared parent is replaced before claim", async () => {
+    const root = await temporaryRoot();
+    const projectRoot = join(root, "project");
+    const preparedParent = join(projectRoot, "Sources");
+    const outsideRoot = join(root, "outside");
+    const displacedParent = join(outsideRoot, "Sources");
+    const path = join(preparedParent, "App.swift");
+    await mkdir(preparedParent, { recursive: true });
+    await mkdir(outsideRoot);
+    await writeFile(path, "original source\n");
+    const prepared = await mutation(path, "candidate source\n", projectRoot);
+
+    const result = await applyIOSExistingFileTransaction([prepared], [async () => true], {
+      beforeExistingDestinationClaim: async () => {
+        await rename(preparedParent, displacedParent);
+        await symlink(displacedParent, preparedParent, "dir");
+      },
+    });
+
+    expect(result).toEqual({ status: "stale" });
+    expect(await readFile(join(displacedParent, "App.swift"), "utf8")).toBe("original source\n");
+    expect(await readFile(path, "utf8")).toBe("original source\n");
+    await expectNoTemporaryFiles(displacedParent);
+  });
+
+  test("rejects an ancestor symlink even when the prepared parent inode still matches", async () => {
+    const root = await temporaryRoot();
+    const projectRoot = join(root, "project");
+    const preparedAncestor = join(projectRoot, "App");
+    const preparedParent = join(preparedAncestor, "Sources");
+    const outsideRoot = join(root, "outside");
+    const displacedAncestor = join(outsideRoot, "App");
+    const path = join(preparedParent, "App.swift");
+    await mkdir(preparedParent, { recursive: true });
+    await mkdir(outsideRoot);
+    await writeFile(path, "original source\n");
+    const prepared = await mutation(path, "candidate source\n", projectRoot);
+    const preparedParentIdentity = await lstat(preparedParent);
+
+    await rename(preparedAncestor, displacedAncestor);
+    await symlink(displacedAncestor, preparedAncestor, "dir");
+    const redirectedParentIdentity = await lstat(preparedParent);
+    expect(redirectedParentIdentity.dev).toBe(preparedParentIdentity.dev);
+    expect(redirectedParentIdentity.ino).toBe(preparedParentIdentity.ino);
+
+    const result = await applyIOSExistingFileTransaction([prepared], [async () => true]);
+
+    expect(result).toEqual({ status: "stale" });
+    expect(await readFile(join(displacedAncestor, "Sources", "App.swift"), "utf8")).toBe(
+      "original source\n",
+    );
+    await expectNoTemporaryFiles(join(displacedAncestor, "Sources"));
+  });
+
   test("stages and commits every file sequentially while preserving modes", async () => {
     const root = await temporaryRoot();
     const firstPath = join(root, "project.pbxproj");
