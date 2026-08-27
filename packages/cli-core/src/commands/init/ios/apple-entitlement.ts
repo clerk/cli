@@ -1,6 +1,5 @@
 import { lstat, readFile } from "node:fs/promises";
 import { dirname, isAbsolute, resolve } from "node:path";
-import plist from "@expo/plist";
 import {
   planIOSAssociatedDomain,
   type IOSAssociatedDomainBlockerCode,
@@ -19,6 +18,7 @@ import {
   type IOSMissingEntitlementsSettingsPlan,
 } from "./entitlements-settings.ts";
 import { isRecord } from "./pbx.ts";
+import { parseIOSPlist } from "./plist.ts";
 
 const APPLE_SIGN_IN_KEY = "com.apple.developer.applesignin";
 const APPLE_SIGN_IN_VALUE = "Default";
@@ -229,7 +229,7 @@ function inspectEntitlementsBytes(
     }
     const bom = bytes[0] === 0xef && bytes[1] === 0xbb && bytes[2] === 0xbf;
     const source = new TextDecoder("utf-8", { fatal: true }).decode(bom ? bytes.slice(3) : bytes);
-    const parsed: unknown = plist.parse(source);
+    const parsed = parseIOSPlist(source);
     if (!isRecord(parsed)) throw new Error("plist root is not a dictionary");
     const rawValue = parsed[APPLE_SIGN_IN_KEY];
     const structure = appleKeyStructure(source);
