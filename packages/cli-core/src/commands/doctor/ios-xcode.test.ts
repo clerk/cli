@@ -1211,6 +1211,57 @@ describe("Xcode subprocess safety", () => {
     expect(output).not.toContain(String.fromCharCode(27));
   });
 
+  test("redacts complete unquoted PEM private keys without hiding following output", () => {
+    const output = sanitizeIOSXcodeDiagnostic(
+      [
+        "PRIVATE_KEY=-----BEGIN PRIVATE KEY-----",
+        "unquoted-private-key-body",
+        "another-private-key-line",
+        "-----END PRIVATE KEY-----",
+        "ordinary Xcode failure after the key",
+      ].join("\n"),
+    );
+
+    expect(output).toContain("PRIVATE_KEY=<redacted>");
+    expect(output).toContain("ordinary Xcode failure after the key");
+    expect(output).not.toContain("BEGIN PRIVATE KEY");
+    expect(output).not.toContain("unquoted-private-key-body");
+    expect(output).not.toContain("another-private-key-line");
+    expect(output).not.toContain("END PRIVATE KEY");
+  });
+
+  test("redacts complete quoted PEM private keys without hiding following output", () => {
+    const output = sanitizeIOSXcodeDiagnostic(
+      [
+        'PRIVATE_KEY="-----BEGIN PGP PRIVATE KEY BLOCK-----',
+        "quoted-private-key-body",
+        '-----END PGP PRIVATE KEY BLOCK-----"',
+        "ordinary quoted-key failure",
+      ].join("\n"),
+    );
+
+    expect(output).toContain("PRIVATE_KEY=<redacted>");
+    expect(output).toContain("ordinary quoted-key failure");
+    expect(output).not.toContain("BEGIN PGP PRIVATE KEY BLOCK");
+    expect(output).not.toContain("quoted-private-key-body");
+    expect(output).not.toContain("END PGP PRIVATE KEY BLOCK");
+  });
+
+  test("redacts unterminated PEM private keys through truncated output", () => {
+    const output = sanitizeIOSXcodeDiagnostic(
+      [
+        "PRIVATE_KEY='-----BEGIN OPENSSH PRIVATE KEY-----",
+        "unterminated-private-key-body",
+        "the diagnostic ended before the PEM footer",
+      ].join("\n"),
+    );
+
+    expect(output).toBe("PRIVATE_KEY=<redacted>");
+    expect(output).not.toContain("BEGIN OPENSSH PRIVATE KEY");
+    expect(output).not.toContain("unterminated-private-key-body");
+    expect(output).not.toContain("diagnostic ended");
+  });
+
   test("redacts credentials embedded in HTTPS and SSH repository URLs", () => {
     const output = sanitizeIOSXcodeDiagnostic(
       [
