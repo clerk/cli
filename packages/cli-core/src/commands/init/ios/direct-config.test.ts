@@ -15,6 +15,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   applyIOSDirectConfig,
+  hasExactIOSSwiftUIAppContentRoot,
   planIOSDirectConfig,
   prepareIOSDirectConfigMutation,
   validatePreparedIOSDirectConfig,
@@ -157,6 +158,42 @@ struct MyApp: App {
     expect(blockerCodes(await planIOSDirectConfig(planOptions(root)))).toContain(
       "unsupported-app-structure",
     );
+  });
+
+  test("fails closed when Swift regex syntax cannot be inspected safely", async () => {
+    const malformed = await fixture();
+    await replaceSource(
+      malformed,
+      `import SwiftUI
+
+let matcher = /Clerk.shared.auth.signInWithApple()
+
+@main
+struct MyApp: App {
+  var body: some Scene { WindowGroup { ContentView() } }
+}
+`,
+    );
+
+    expect((await planIOSDirectConfig(planOptions(malformed))).status).toBe("blocked");
+    expect(hasExactIOSSwiftUIAppContentRoot(await source(malformed))).toBe(false);
+
+    const interpolated = await fixture();
+    await replaceSource(
+      interpolated,
+      `import SwiftUI
+
+let matcher = #/prefix\\#(value)Clerk.shared.auth.signInWithApple()/#
+
+@main
+struct MyApp: App {
+  var body: some Scene { WindowGroup { ContentView() } }
+}
+`,
+    );
+
+    expect((await planIOSDirectConfig(planOptions(interpolated))).status).toBe("blocked");
+    expect(hasExactIOSSwiftUIAppContentRoot(await source(interpolated))).toBe(false);
   });
 
   test("configures a compact pristine app and is byte-idempotent", async () => {
