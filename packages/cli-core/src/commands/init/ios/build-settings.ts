@@ -843,8 +843,6 @@ export async function inspectTargetBuildConfigurations(options: {
     const hasIOSPlatform =
       supportedPlatformsResolution.state === "resolved" &&
       /iphone(?:os|simulator)/.test(supportedPlatforms);
-    const hasPositiveIOSEvidence =
-      deploymentTarget.state !== "missing" || hasIOSSDK || hasIOSPlatform;
     const hasUnknownPlatformEvidence =
       sdkRootResolution.state === "unresolved" ||
       supportedPlatformsResolution.state === "unresolved";
@@ -853,8 +851,11 @@ export async function inspectTargetBuildConfigurations(options: {
       (supportedPlatformsResolution.state === "resolved" &&
         supportedPlatforms !== "" &&
         !hasIOSPlatform);
+    // SDKROOT and SUPPORTED_PLATFORMS describe the target platform directly.
+    // IPHONEOS_DEPLOYMENT_TARGET can remain as a stale setting on a non-iOS
+    // target, so it must not override resolved platform evidence.
     const explicitlyNonIOS =
-      !hasPositiveIOSEvidence && !hasUnknownPlatformEvidence && hasResolvedNonIOSEvidence;
+      !hasUnknownPlatformEvidence && !hasIOSSDK && !hasIOSPlatform && hasResolvedNonIOSEvidence;
 
     const model: IOSBuildConfiguration = {
       name,

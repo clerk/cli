@@ -451,6 +451,30 @@ describe("inspectTargetBuildConfigurations", () => {
     expect(configurations[0]?.isIOS).toBe(false);
   });
 
+  test("rejects resolved non-iOS targets despite a stale iOS deployment target", async () => {
+    const { configurations } = await inspectFixture({
+      targetBuildSettings: {
+        SDKROOT: "watchos",
+        SUPPORTED_PLATFORMS: "watchos watchsimulator",
+        IPHONEOS_DEPLOYMENT_TARGET: "17.0",
+      },
+    });
+
+    expect(configurations[0]?.isIOS).toBe(false);
+  });
+
+  test("keeps targets when some non-iOS platform evidence remains unresolved", async () => {
+    const { configurations } = await inspectFixture({
+      targetBuildSettings: {
+        SDKROOT: "watchos",
+        SUPPORTED_PLATFORMS: "$(UNKNOWN_PLATFORMS)",
+        IPHONEOS_DEPLOYMENT_TARGET: "17.0",
+      },
+    });
+
+    expect(configurations[0]?.isIOS).toBe(true);
+  });
+
   test("preserves dangling target configurations as blocking placeholders", async () => {
     const { configurations, diagnostics } = await inspectFixture({
       targetConfigurationIds: ["target-debug", "missing-target-release"],
