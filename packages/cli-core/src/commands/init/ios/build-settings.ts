@@ -161,10 +161,14 @@ function parseXCConfigOperations(content: string): XCConfigOperation[] {
   // including when whitespace or a line comment follows the backslash.
   let logicalLine = "";
   let usedContinuation = false;
-  for (const rawLine of content.split(/\r?\n/)) {
+  for (const rawLine of content.split(/\r\n|\r|\n/)) {
     const withoutComment = rawLine.replace(/\/\/.*/, "").trimEnd();
-    const continues = withoutComment.endsWith("\\");
-    const fragment = (continues ? withoutComment.slice(0, -1) : withoutComment).trim();
+    // Xcode also accepts an optional assignment terminator after a
+    // continuation marker (`VALUE = first \;`). Remove that terminator before
+    // checking for and consuming the final continuation backslash.
+    const continuationCandidate = withoutComment.replace(/\\\s*;$/, "\\").trimEnd();
+    const continues = continuationCandidate.endsWith("\\");
+    const fragment = (continues ? continuationCandidate.slice(0, -1) : withoutComment).trim();
     logicalLine = logicalLine ? `${logicalLine} ${fragment}`.trim() : fragment;
     usedContinuation ||= continues;
     if (continues) continue;
