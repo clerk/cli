@@ -80,7 +80,6 @@ export type IOSRuntimeKeyBlockerCode =
   | "malformed-local-secrets"
   | "unsupported-local-secrets"
   | "unproven-runtime-wiring"
-  | "scheme-override"
   | "tracked-local-secrets"
   | "git-state-unknown"
   | "git-repository-mismatch"
@@ -1458,18 +1457,6 @@ async function prepareRuntimeKeyVerification(
       "The selected target must have exactly one proven app entry point, LocalSecrets configure call, LocalSecrets runtime loader, and target-owned LocalSecrets.plist sink.",
     );
   }
-  if (
-    inspection.localPublishableKey.candidateSources.some((source) => source.endsWith(".xcscheme"))
-  ) {
-    return verificationBlocked(
-      options,
-      root,
-      projectPath,
-      "scheme-override",
-      "The selected target has an enabled CLERK_PUBLISHABLE_KEY Run-scheme override, so LocalSecrets.plist is not the exclusive runtime key source.",
-    );
-  }
-
   const membership = await targetLocalSecretsPaths(root, absoluteProjectPath, options.targetId);
   if (membership.blocker) {
     return verificationBlocked(
@@ -1759,18 +1746,6 @@ async function prepareRuntimeKeyPlan(
       "The selected target must have exactly one proven app entry point, LocalSecrets configure call, LocalSecrets runtime loader, and target-owned LocalSecrets.plist sink.",
     );
   }
-  if (
-    inspection.localPublishableKey.candidateSources.some((source) => source.endsWith(".xcscheme"))
-  ) {
-    return blocked(
-      options,
-      root,
-      projectPath,
-      "scheme-override",
-      "The selected target has an enabled CLERK_PUBLISHABLE_KEY Run-scheme override. Disable or remove it before managing LocalSecrets.plist.",
-    );
-  }
-
   const membership = await targetLocalSecretsPaths(root, absoluteProjectPath, options.targetId);
   if (membership.blocker) {
     return blocked(options, root, projectPath, membership.blocker.code, membership.blocker.message);
@@ -2825,8 +2800,7 @@ async function postWriteIsValid(plan: IOSRuntimeKeyPlan, publishableKey: string)
     inspection.selection.state !== "selected" ||
     inspection.selection.projectPath !== plan.projectPath ||
     inspection.selection.targetId !== plan.targetId ||
-    inspection.generatedProject != null ||
-    inspection.localPublishableKey.candidateSources.some((source) => source.endsWith(".xcscheme"))
+    inspection.generatedProject != null
   ) {
     return false;
   }

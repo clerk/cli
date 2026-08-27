@@ -443,25 +443,45 @@ describe("iOS runtime publishable-key transaction", () => {
     expect(await treeDigest(root)).toEqual(before);
   });
 
-  test("blocks every enabled selected-target Run-scheme override", async () => {
-    for (const schemeKey of [
-      publishableKey("same-scheme.clerk.example"),
-      publishableKey("other-scheme.clerk.example"),
-    ]) {
-      const root = await fixture("pk_test_...");
-      const directory = join(root, "MyApp.xcodeproj", "xcshareddata", "xcschemes");
-      await mkdir(directory, { recursive: true });
-      await Bun.write(
-        join(directory, "MyApp.xcscheme"),
-        `<Scheme><LaunchAction><BuildableProductRunnable><BuildableReference BlueprintIdentifier="${IOS_FIXTURE_IDS.appTarget}" ReferencedContainer="container:MyApp.xcodeproj" /></BuildableProductRunnable><EnvironmentVariables><EnvironmentVariable key="CLERK_PUBLISHABLE_KEY" value="${schemeKey}" isEnabled="YES" /></EnvironmentVariables></LaunchAction></Scheme>`,
-      );
+  test("hands off an empty proven LocalSecrets sink despite a stale Run-scheme key", async () => {
+    const schemeKey = publishableKey("stale-scheme.clerk.example");
+    const localKey = publishableKey("local-secrets.clerk.example");
+    const root = await fixture();
+    const directory = join(root, "MyApp.xcodeproj", "xcshareddata", "xcschemes");
+    await mkdir(directory, { recursive: true });
+    await Bun.write(
+      join(directory, "MyApp.xcscheme"),
+      `<Scheme><LaunchAction><BuildableProductRunnable><BuildableReference BlueprintIdentifier="${IOS_FIXTURE_IDS.appTarget}" ReferencedContainer="container:MyApp.xcodeproj" /></BuildableProductRunnable><EnvironmentVariables><EnvironmentVariable key="CLERK_PUBLISHABLE_KEY" value="${schemeKey}" isEnabled="YES" /></EnvironmentVariables></LaunchAction></Scheme>`,
+    );
 
-      const plan = await planIOSRuntimeKey(options(root));
+    const plan = await planIOSRuntimeKey(options(root));
+    const result = await applyIOSRuntimeKey(plan, localKey);
 
-      expect(plan.status).toBe("blocked");
-      expect(plan.blockers[0]?.code).toBe("scheme-override");
-      expect(JSON.stringify(plan)).not.toContain(schemeKey);
-    }
+    expect(plan.status).toBe("ready");
+    expect(plan.localSecretsPath).toBe("MyApp/LocalSecrets.plist");
+    expect(result.status).toBe("applied");
+    expect(JSON.stringify({ plan, result })).not.toContain(localKey);
+    expect(JSON.stringify({ plan, result })).not.toContain(schemeKey);
+  });
+
+  test("verifies a proven LocalSecrets key despite a stale Run-scheme key", async () => {
+    const localKey = publishableKey("local-secrets.clerk.example");
+    const schemeKey = publishableKey("stale-scheme.clerk.example");
+    const root = await fixture(localKey);
+    const directory = join(root, "MyApp.xcodeproj", "xcshareddata", "xcschemes");
+    await mkdir(directory, { recursive: true });
+    await Bun.write(
+      join(directory, "MyApp.xcscheme"),
+      `<Scheme><LaunchAction><BuildableProductRunnable><BuildableReference BlueprintIdentifier="${IOS_FIXTURE_IDS.appTarget}" ReferencedContainer="container:MyApp.xcodeproj" /></BuildableProductRunnable><EnvironmentVariables><EnvironmentVariable key="CLERK_PUBLISHABLE_KEY" value="${schemeKey}" isEnabled="YES" /></EnvironmentVariables></LaunchAction></Scheme>`,
+    );
+
+    const plan = await planIOSRuntimeKeyVerification(options(root));
+    const result = await verifyIOSRuntimeKey(plan, localKey);
+
+    expect(plan.status).toBe("ready");
+    expect(result.status).toBe("matched");
+    expect(JSON.stringify({ plan, result })).not.toContain(localKey);
+    expect(JSON.stringify({ plan, result })).not.toContain(schemeKey);
   });
 
   test("blocks malformed, binary, oversized, and symlinked sinks", async () => {
