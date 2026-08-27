@@ -4,7 +4,7 @@ import { basename, dirname, relative, resolve } from "node:path";
 import { decodePublishableKey } from "../../../lib/fapi.ts";
 import { pathIsSafelyWithinIOSRoot, relativeIOSPath } from "./discovery.ts";
 import { inspectIOSProject, inspectIOSSourceMembership } from "./inspect.ts";
-import { sanitizeSwiftSource } from "./swift.ts";
+import { sanitizeSwiftSourceWithStatus } from "./swift.ts";
 
 const MAX_SWIFT_FILE_BYTES = 1_000_000;
 
@@ -838,7 +838,9 @@ function windowGroupRoot(
  * whose direct root is ContentView.
  */
 export function hasExactIOSSwiftUIAppContentRoot(source: string): boolean {
-  const sanitized = sanitizeSwiftSource(source);
+  const sanitization = sanitizeSwiftSourceWithStatus(source);
+  if (!sanitization.complete) return false;
+  const sanitized = sanitization.sanitizedSource;
   const structuralIndex = buildSwiftStructuralIndex(sanitized);
   const appType = appTypeRange(sanitized, structuralIndex);
   if (!appType) return false;
@@ -1022,7 +1024,16 @@ function parseAppStructure(
       },
     };
   }
-  const sanitized = sanitizeSwiftSource(source);
+  const sanitization = sanitizeSwiftSourceWithStatus(source);
+  if (!sanitization.complete) {
+    return {
+      blocker: {
+        code: "unsupported-app-structure",
+        message: "The Swift entry source contains syntax that could not be inspected safely.",
+      },
+    };
+  }
+  const sanitized = sanitization.sanitizedSource;
   const structuralIndex = buildSwiftStructuralIndex(sanitized);
   const appType = appTypeRange(sanitized, structuralIndex);
   if (!appType) {
