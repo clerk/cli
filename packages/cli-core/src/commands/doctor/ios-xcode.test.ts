@@ -35,6 +35,15 @@ const failure = (stderr: string): IOSXcodeCommandResult => ({
   truncated: false,
 });
 
+function processIsAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 let root: string;
 let temporaryBuildRoot: string;
 
@@ -866,5 +875,42 @@ describe("Xcode subprocess safety", () => {
 
     expect(result.timedOut).toBe(true);
     expect(result.exitCode).not.toBe(0);
+  });
+
+  test("terminates descendants even when the leader exits before forced cleanup", async () => {
+    if (process.platform === "win32") return;
+
+    const descendantScript = join(root, "ignore-termination.ts");
+    await Bun.write(
+      descendantScript,
+      'process.on("SIGTERM", () => {});\nsetInterval(() => {}, 1000);\n',
+    );
+    const parentScript = join(root, "spawn-descendant.ts");
+    await Bun.write(
+      parentScript,
+      `const child = Bun.spawn([process.execPath, ${JSON.stringify(descendantScript)}], { stdin: "ignore", stdout: "ignore", stderr: "ignore" });\nconsole.log(child.pid);\nsetInterval(() => {}, 1000);\n`,
+    );
+
+    let descendantPid: number | undefined;
+    try {
+      const result = await runIOSXcodeCommand([process.execPath, parentScript], {
+        cwd: root,
+        env: createIOSXcodeChildEnvironment(process.env),
+        timeoutMs: 200,
+        maxOutputBytes: 128,
+      });
+      descendantPid = Number(result.stdout.trim());
+
+      expect(result.timedOut).toBe(true);
+      expect(result.exitCode).not.toBe(0);
+      expect(Number.isSafeInteger(descendantPid) && descendantPid > 0).toBe(true);
+      expect(processIsAlive(descendantPid)).toBe(false);
+    } finally {
+      if (descendantPid && processIsAlive(descendantPid)) {
+        try {
+          process.kill(descendantPid, "SIGKILL");
+        } catch {}
+      }
+    }
   });
 });
