@@ -250,8 +250,32 @@ function has(source: string, pattern: RegExp): boolean {
   return pattern.test(source);
 }
 
-const CLERK_ENVIRONMENT_DECLARATION =
-  /@Environment\s*\(\s*Clerk\s*\.\s*self\s*\)\s*(?:(?:(?:private|fileprivate|internal|package|public|open)\s*(?:\(\s*set\s*\))?|nonisolated\s*(?:\(\s*unsafe\s*\))?|unowned\s*(?:\(\s*(?:safe|unsafe)\s*\))?|weak|lazy|final|static|class)\s+)*var\s+([A-Za-z_][A-Za-z0-9_]*)\b/g;
+const CLERK_ENVIRONMENT_ATTRIBUTE = /@Environment\s*\(\s*Clerk\s*\.\s*self\s*\)/g;
+const CLERK_ENVIRONMENT_PROPERTY_MODIFIERS = new Set([
+  "class",
+  "dynamic",
+  "fileprivate",
+  "final",
+  "internal",
+  "lazy",
+  "nonisolated",
+  "open",
+  "override",
+  "package",
+  "private",
+  "public",
+  "static",
+  "unowned",
+  "weak",
+]);
+const CLERK_ENVIRONMENT_ACCESS_MODIFIERS = new Set([
+  "fileprivate",
+  "internal",
+  "open",
+  "package",
+  "private",
+  "public",
+]);
 
 interface ClerkEnvironmentAlias {
   identifier: string;
@@ -272,6 +296,12 @@ interface ClerkEnvironmentAuthInspection {
   native: boolean;
   apple: boolean;
   complete: boolean;
+}
+
+interface ParsedClerkEnvironmentDeclaration {
+  identifier: string;
+  declarationEnd: number;
+  crossFileVisible: boolean;
 }
 
 interface NominalTypeBody extends SourceBodyRange {
@@ -313,19 +343,79 @@ function innermostTypeBodyAt(
     )[0];
 }
 
+function parseClerkEnvironmentDeclaration(
+  source: string,
+  start: number,
+): ParsedClerkEnvironmentDeclaration | undefined {
+  let cursor = start;
+  let crossFileVisible = true;
+
+  while (true) {
+    cursor = skipWhitespace(source, cursor);
+
+    if (source[cursor] === "@") {
+      const attribute = /^@[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*/.exec(
+        source.slice(cursor),
+      );
+      if (!attribute) return undefined;
+      cursor += attribute[0].length;
+
+      const argumentsStart = skipWhitespace(source, cursor);
+      if (source[argumentsStart] === "(") {
+        const argumentsEnd = matchingParenthesis(source, argumentsStart);
+        if (argumentsEnd == null) return undefined;
+        cursor = argumentsEnd + 1;
+      }
+      continue;
+    }
+
+    const token = /^[A-Za-z_][A-Za-z0-9_]*/.exec(source.slice(cursor))?.[0];
+    if (!token) return undefined;
+    cursor += token.length;
+
+    if (token === "var") {
+      const identifierStart = skipWhitespace(source, cursor);
+      const identifier = /^[A-Za-z_][A-Za-z0-9_]*/.exec(source.slice(identifierStart))?.[0];
+      if (!identifier) return undefined;
+      return {
+        identifier,
+        declarationEnd: identifierStart + identifier.length,
+        crossFileVisible,
+      };
+    }
+
+    if (!CLERK_ENVIRONMENT_PROPERTY_MODIFIERS.has(token)) return undefined;
+
+    const argumentsStart = skipWhitespace(source, cursor);
+    if (source[argumentsStart] !== "(") {
+      if (token === "private" || token === "fileprivate") crossFileVisible = false;
+      continue;
+    }
+    const argumentsEnd = matchingParenthesis(source, argumentsStart);
+    if (argumentsEnd == null) return undefined;
+    const argument = source.slice(argumentsStart + 1, argumentsEnd).replace(/\s+/g, "");
+    const validArgument =
+      (CLERK_ENVIRONMENT_ACCESS_MODIFIERS.has(token) && argument === "set") ||
+      (token === "nonisolated" && argument === "unsafe") ||
+      (token === "unowned" && (argument === "safe" || argument === "unsafe"));
+    if (!validArgument) return undefined;
+    cursor = argumentsEnd + 1;
+  }
+}
+
 function clerkEnvironmentAliases(
   source: string,
   typeBodies: NominalTypeBody[],
 ): { aliases: ClerkEnvironmentAlias[]; complete: boolean } {
   const aliases: ClerkEnvironmentAlias[] = [];
   let complete = true;
-  CLERK_ENVIRONMENT_DECLARATION.lastIndex = 0;
+  CLERK_ENVIRONMENT_ATTRIBUTE.lastIndex = 0;
   let match: RegExpExecArray | null;
-  while ((match = CLERK_ENVIRONMENT_DECLARATION.exec(source)) !== null) {
-    const identifier = match[1];
+  while ((match = CLERK_ENVIRONMENT_ATTRIBUTE.exec(source)) !== null) {
+    const declaration = parseClerkEnvironmentDeclaration(source, match.index + match[0].length);
     const typeBody = innermostTypeBodyAt(typeBodies, match.index);
     if (
-      !identifier ||
+      !declaration ||
       !typeBody ||
       braceDepthAt(source, typeBody.openingBrace, match.index) !== 1
     ) {
@@ -333,10 +423,10 @@ function clerkEnvironmentAliases(
       continue;
     }
     aliases.push({
-      identifier,
+      identifier: declaration.identifier,
       declarationIndex: match.index,
-      declarationEnd: match.index + match[0].length,
-      crossFileVisible: !/\b(?:private|fileprivate)\b(?!\s*\()/.test(match[0]),
+      declarationEnd: declaration.declarationEnd,
+      crossFileVisible: declaration.crossFileVisible,
       typeBody,
     });
   }

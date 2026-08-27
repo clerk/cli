@@ -612,7 +612,7 @@ import ClerkKit
 
 @main
 struct MyApp: App {
-  @Environment(Clerk.self) private var authClient
+  @Environment(Clerk.self) @MainActor private var authClient
   var body: some Scene { WindowGroup { Text("Hello") } }
   func signIn() async throws { try await authClient.auth.signInWithApple() }
 }
