@@ -1290,11 +1290,12 @@ export async function applyIOSFileTransaction(
       }
     } catch (error) {
       let effectiveError = error;
-      if (
-        !committedThisItem &&
-        item.claimedOriginal?.present &&
-        (await mutationBoundaryStillMatches(item.mutation))
-      ) {
+      // A successful claim removed the public destination. Recovery must run
+      // even if its parent moved afterward: restoration uses an exclusive
+      // link, so a newer destination wins without being overwritten. If the
+      // claimed inode can no longer be restored safely, escalate explicitly
+      // instead of returning stale with the original stranded under its claim.
+      if (!committedThisItem && item.claimedOriginal?.present) {
         try {
           await restoreClaimWithoutClobber(item.claimedOriginal, item.mutation.path);
         } catch (cleanupError) {

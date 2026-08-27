@@ -149,6 +149,76 @@ describe("iOS existing-file transaction", () => {
     await expectNoTemporaryFiles(displacedParent);
   });
 
+  test.each([
+    ["after destination claim", "afterExistingDestinationClaim"],
+    ["immediately before destination install", "beforeExistingDestinationInstall"],
+  ] as const)("restores a claimed original when its parent moves %s", async (_label, hook) => {
+    const root = await temporaryRoot();
+    const projectRoot = join(root, "project");
+    const preparedParent = join(projectRoot, "Sources");
+    const outsideRoot = join(root, "outside");
+    const displacedParent = join(outsideRoot, "Sources");
+    const path = join(preparedParent, "App.swift");
+    await mkdir(preparedParent, { recursive: true });
+    await mkdir(outsideRoot);
+    await writeFile(path, "original source\n");
+    await chmod(path, 0o640);
+    const originalIdentity = await lstat(path);
+    const prepared = await mutation(path, "candidate source\n", projectRoot);
+    const moveParent = async () => {
+      await rename(preparedParent, displacedParent);
+      await symlink(displacedParent, preparedParent, "dir");
+    };
+
+    const result = await applyIOSExistingFileTransaction(
+      [prepared],
+      [async () => true],
+      hook === "afterExistingDestinationClaim"
+        ? { afterExistingDestinationClaim: moveParent }
+        : { beforeExistingDestinationInstall: moveParent },
+    );
+
+    expect(result).toEqual({ status: "stale" });
+    expect(await readFile(path, "utf8")).toBe("original source\n");
+    expect(await readFile(join(displacedParent, "App.swift"), "utf8")).toBe("original source\n");
+    const restoredIdentity = await lstat(path);
+    expect(restoredIdentity.ino).toBe(originalIdentity.ino);
+    expect(restoredIdentity.mode & 0o7777).toBe(0o640);
+    await expectNoTemporaryFiles(displacedParent);
+  });
+
+  test("fails explicitly rather than clobbering a newer file when a claimed original cannot be restored", async () => {
+    const root = await temporaryRoot();
+    const projectRoot = join(root, "project");
+    const preparedParent = join(projectRoot, "Sources");
+    const outsideRoot = join(root, "outside");
+    const displacedParent = join(outsideRoot, "Sources");
+    const path = join(preparedParent, "App.swift");
+    await mkdir(preparedParent, { recursive: true });
+    await mkdir(outsideRoot);
+    await writeFile(path, "original source\n");
+    const prepared = await mutation(path, "candidate source\n", projectRoot);
+
+    let caught: unknown;
+    try {
+      await applyIOSExistingFileTransaction([prepared], [async () => true], {
+        afterExistingDestinationClaim: async () => {
+          await rename(preparedParent, displacedParent);
+          await symlink(displacedParent, preparedParent, "dir");
+          await writeFile(path, "newer editor source\n");
+        },
+      });
+    } catch (error) {
+      caught = error;
+    }
+
+    expect(caught).toBeInstanceOf(IOSFileTransactionError);
+    expect((caught as IOSFileTransactionError).code).toBe("commit-failed");
+    expect(errorText(caught)).toContain("a claimed original could not be restored");
+    expect(await readFile(path, "utf8")).toBe("newer editor source\n");
+    await expectRecoverableClaimedOriginals(displacedParent, ["original source\n"]);
+  });
+
   test("rejects an ancestor symlink even when the prepared parent inode still matches", async () => {
     const root = await temporaryRoot();
     const projectRoot = join(root, "project");
