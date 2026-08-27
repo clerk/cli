@@ -31,6 +31,7 @@ import {
   getCurrentEnvName,
   getAvailableEnvs,
   getPlapiBaseUrl,
+  getPlatformApiUrlOverride,
 } from "./lib/environment.ts";
 import {
   CliError,
@@ -42,7 +43,7 @@ import {
   throwUsageError,
 } from "./lib/errors.ts";
 import { clerkHelpConfig, formatExamplesBlock, type Example } from "./lib/help.ts";
-import { isAgent } from "./mode.ts";
+import { isAgent, isHuman } from "./mode.ts";
 import { log } from "./lib/log.ts";
 import { maybeNotifyUpdate } from "./lib/update-check.ts";
 import { CURRENT_VERSION } from "./lib/version.ts";
@@ -145,6 +146,19 @@ export function createProgram(): Program {
     if (activeEnv !== "production") {
       process.stderr.write(`[${activeEnv.toUpperCase()}]\n`);
     }
+
+    // Warn (human mode only) when CLERK_PLATFORM_API_URL routes requests to a
+    // different host than the active environment's platform URL. Credentials are
+    // keyed by environment name, so the active env's token will be sent to the
+    // override host. Agent/scripted mode stays off stderr — stray lines there
+    // corrupt machine-readable output — but still gets the info via `log.debug`
+    // so a `--verbose` re-run of a failing script surfaces it.
+    const override = getPlatformApiUrlOverride();
+    if (override.overridden) {
+      const msg = `CLERK_PLATFORM_API_URL is routing requests to ${override.overrideUrl} instead of the "${override.envName}" environment's ${override.profileUrl} — the "${override.envName}" token will be sent to that host.`;
+      if (isHuman()) log.warn(msg);
+      else log.debug(`env: ${msg}`);
+    }
   });
 
   // Show update notification after each command, except for commands that
@@ -225,8 +239,26 @@ async function resolveArgv(
 ): Promise<{ argv: string[]; from: ParseFrom }> {
   const raw = args ?? process.argv;
   const effectiveFrom = from ?? (args === undefined ? "node" : "user");
+  // Honor an explicit `--mode` flag before `expandInputJson`, so a failure it
+  // throws (invalid JSON, missing file) is formatted in the right mode. The
+  // preAction hook re-applies and validates `--mode`, but it runs during
+  // parseAsync — too late for errors raised while resolving argv.
+  applyForcedModeFromArgv(raw);
   const argv = await expandInputJson([...raw]);
   return { argv, from: effectiveFrom };
+}
+
+/**
+ * Scan raw argv for an explicit `--mode human|agent` and force it early.
+ * Ignores an invalid value — the preAction hook reports that as a usage error.
+ */
+function applyForcedModeFromArgv(argv: string[]): void {
+  const idx = argv.indexOf("--mode");
+  if (idx === -1) return;
+  const value = argv[idx + 1];
+  if (value === "human" || value === "agent") {
+    setMode(value);
+  }
 }
 
 /**
