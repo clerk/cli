@@ -15,6 +15,33 @@ async function fixture(options: Parameters<typeof createIOSFixture>[1] = {}): Pr
   return root;
 }
 
+async function setAssociatedDomainTemplate(root: string, template: string): Promise<void> {
+  const entitlementsPath = join(root, "MyApp", "MyApp.entitlements");
+  const entitlements = await Bun.file(entitlementsPath).text();
+  await Bun.write(
+    entitlementsPath,
+    entitlements.replace("webcredentials:clerk.example.test", template),
+  );
+}
+
+async function addTargetBuildSettings(
+  root: string,
+  settings: Array<[key: string, value: string]>,
+): Promise<void> {
+  const projectPath = join(root, "MyApp.xcodeproj", "project.pbxproj");
+  const project = await Bun.file(projectPath).text();
+  const serialized = settings
+    .map(([key, value]) => `"${key.replaceAll('"', '\\"')}" = "${value.replaceAll('"', '\\"')}";`)
+    .join(" ");
+  await Bun.write(
+    projectPath,
+    project.replaceAll(
+      'SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";',
+      `${serialized} SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";`,
+    ),
+  );
+}
+
 afterEach(async () => {
   await Promise.all(temporaryDirectories.splice(0).map((path) => rm(path, { recursive: true })));
 });
@@ -147,6 +174,135 @@ describe("inspectIOSProject", () => {
       state: "selected",
       targetName: "MyApp",
       projectPath: "MyApp.xcodeproj",
+    });
+  });
+
+  test("resolves matching associated-domain variables across device and simulator contexts", async () => {
+    const root = await fixture({ complete: true });
+    await addTargetBuildSettings(root, [
+      ["ASSOCIATED_DOMAIN_HOST", "clerk.example.test"],
+      ["ASSOCIATED_DOMAIN_HOST[sdk=iphonesimulator*]", "clerk.example.test"],
+    ]);
+    await setAssociatedDomainTemplate(root, "webcredentials:$(ASSOCIATED_DOMAIN_HOST)");
+
+    const inspection = await inspectIOSProject(root);
+
+    expect(inspection.appTargets[0]?.configurations[0]?.entitlements).toMatchObject({
+      associatedDomains: ["webcredentials:clerk.example.test"],
+      unresolvedAssociatedDomains: [],
+    });
+  });
+
+  test("leaves associated-domain variables unresolved when device and simulator differ", async () => {
+    const root = await fixture({ complete: true });
+    await addTargetBuildSettings(root, [
+      ["ASSOCIATED_DOMAIN_HOST", "clerk.example.test"],
+      ["ASSOCIATED_DOMAIN_HOST[sdk=iphonesimulator*]", "simulator.example.test"],
+    ]);
+    await setAssociatedDomainTemplate(root, "webcredentials:$(ASSOCIATED_DOMAIN_HOST)");
+
+    const inspection = await inspectIOSProject(root);
+
+    expect(inspection.appTargets[0]?.configurations[0]?.entitlements).toMatchObject({
+      associatedDomains: [],
+      unresolvedAssociatedDomains: ["webcredentials:$(ASSOCIATED_DOMAIN_HOST)"],
+    });
+    expect(inspection.diagnostics).toContainEqual(
+      expect.objectContaining({
+        code: "xcode.unresolved-build-setting",
+        message: expect.stringContaining("associated-domain values"),
+      }),
+    );
+  });
+
+  test("leaves associated-domain variables unresolved when x86_64 simulator differs", async () => {
+    const root = await fixture({ complete: true });
+    await addTargetBuildSettings(root, [
+      ["ASSOCIATED_DOMAIN_HOST", "clerk.example.test"],
+      ["ASSOCIATED_DOMAIN_HOST[sdk=iphonesimulator*][arch=arm64]", "clerk.example.test"],
+      ["ASSOCIATED_DOMAIN_HOST[sdk=iphonesimulator*][arch=x86_64]", "intel.example.test"],
+    ]);
+    await setAssociatedDomainTemplate(root, "webcredentials:$(ASSOCIATED_DOMAIN_HOST)");
+
+    const inspection = await inspectIOSProject(root);
+
+    expect(inspection.appTargets[0]?.configurations[0]?.entitlements).toMatchObject({
+      associatedDomains: [],
+      unresolvedAssociatedDomains: ["webcredentials:$(ASSOCIATED_DOMAIN_HOST)"],
+    });
+  });
+
+  test("ignores simulator-only associated-domain values for device-only targets", async () => {
+    const root = await fixture({ complete: true });
+    await addTargetBuildSettings(root, [
+      ["ASSOCIATED_DOMAIN_HOST", "clerk.example.test"],
+      ["ASSOCIATED_DOMAIN_HOST[sdk=iphonesimulator*]", "simulator.example.test"],
+    ]);
+    const projectPath = join(root, "MyApp.xcodeproj", "project.pbxproj");
+    const project = await Bun.file(projectPath).text();
+    await Bun.write(
+      projectPath,
+      project.replaceAll(
+        'SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";',
+        "SUPPORTED_PLATFORMS = iphoneos;",
+      ),
+    );
+    await setAssociatedDomainTemplate(root, "webcredentials:$(ASSOCIATED_DOMAIN_HOST)");
+
+    const inspection = await inspectIOSProject(root);
+
+    expect(inspection.appTargets[0]?.configurations[0]?.entitlements).toMatchObject({
+      associatedDomains: ["webcredentials:clerk.example.test"],
+      unresolvedAssociatedDomains: [],
+    });
+  });
+
+  test("propagates referenced build-setting taints into associated-domain expansion", async () => {
+    const root = await fixture({ complete: true });
+    await addTargetBuildSettings(root, [
+      ["ASSOCIATED_DOMAIN_HOST", "clerk.example.test"],
+      ["DOMAIN_WRAPPER", "$(ASSOCIATED_DOMAIN_HOST)"],
+      ["ASSOCIATED_DOMAIN_HOST[variant=unsupported]", "unknown.example.test"],
+    ]);
+    await setAssociatedDomainTemplate(root, "webcredentials:$(DOMAIN_WRAPPER)");
+
+    const inspection = await inspectIOSProject(root);
+
+    expect(inspection.appTargets[0]?.configurations[0]?.entitlements).toMatchObject({
+      associatedDomains: [],
+      unresolvedAssociatedDomains: ["webcredentials:$(DOMAIN_WRAPPER)"],
+    });
+  });
+
+  test("fails associated-domain expansion closed after an incomplete xcconfig include", async () => {
+    const root = await fixture({ complete: true, xcconfig: true });
+    const xcconfigPath = join(root, "Config", "Target.xcconfig");
+    const xcconfig = await Bun.file(xcconfigPath).text();
+    await Bun.write(
+      xcconfigPath,
+      `${xcconfig}ASSOCIATED_DOMAIN_HOST = clerk.example.test\n#include "Missing.xcconfig"\n`,
+    );
+    await setAssociatedDomainTemplate(root, "webcredentials:$(ASSOCIATED_DOMAIN_HOST)");
+
+    const inspection = await inspectIOSProject(root);
+
+    expect(inspection.appTargets[0]?.configurations[0]?.entitlements).toMatchObject({
+      associatedDomains: [],
+      unresolvedAssociatedDomains: ["webcredentials:$(ASSOCIATED_DOMAIN_HOST)"],
+    });
+  });
+
+  test("keeps literal associated domains resolved when build-setting inputs are incomplete", async () => {
+    const root = await fixture({ complete: true, xcconfig: true });
+    const xcconfigPath = join(root, "Config", "Target.xcconfig");
+    const xcconfig = await Bun.file(xcconfigPath).text();
+    await Bun.write(xcconfigPath, `${xcconfig}#include "Missing.xcconfig"\n`);
+
+    const inspection = await inspectIOSProject(root);
+
+    expect(inspection.appTargets[0]?.configurations[0]?.entitlements).toMatchObject({
+      associatedDomains: ["webcredentials:clerk.example.test"],
+      unresolvedAssociatedDomains: [],
     });
   });
 
