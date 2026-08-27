@@ -1,8 +1,8 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { createIOSFixture } from "../init/ios/test-helpers.ts";
+import { createIOSFixture, IOS_FIXTURE_IDS } from "../init/ios/test-helpers.ts";
 import { PlapiError } from "../../lib/errors.ts";
 import type { UserSettingsJSON } from "../../lib/fapi.ts";
 import type { Application } from "../../lib/plapi.ts";
@@ -59,6 +59,15 @@ async function addAppleEntitlement(root: string): Promise<void> {
       "</dict>",
       "<key>com.apple.developer.applesignin</key><array><string>Default</string></array></dict>",
     ),
+  );
+}
+
+async function writeSelectedTargetRunSchemeKey(root: string, key: string): Promise<void> {
+  const schemeDirectory = join(root, "MyApp.xcodeproj", "xcshareddata", "xcschemes");
+  await mkdir(schemeDirectory, { recursive: true });
+  await writeFile(
+    join(schemeDirectory, "MyApp.xcscheme"),
+    `<Scheme><LaunchAction><BuildableProductRunnable><BuildableReference BlueprintIdentifier="${IOS_FIXTURE_IDS.appTarget}" /></BuildableProductRunnable><EnvironmentVariables><EnvironmentVariable key="CLERK_PUBLISHABLE_KEY" value="${key}" isEnabled="YES" /></EnvironmentVariables></LaunchAction></Scheme>`,
   );
 }
 
@@ -494,6 +503,70 @@ struct ContentView: View {
     expect(key?.message).toContain("different Clerk instance");
     expect(JSON.stringify(audit.results)).not.toContain("pk_");
     expect(JSON.stringify(audit.results)).not.toContain(secret);
+  });
+
+  test("uses the proven LocalSecrets key instead of a stale Run-scheme key", async () => {
+    const root = await fixture({ complete: true, includeKey: false, localSecrets: true });
+    const localKey = publishableKey("clerk.example.test");
+    const staleSchemeKey = publishableKey("stale-scheme.clerk.example");
+    await writeFile(
+      join(root, "MyApp", "LocalSecrets.plist"),
+      `<?xml version="1.0" encoding="UTF-8"?><plist version="1.0"><dict><key>CLERK_PUBLISHABLE_KEY</key><string>${localKey}</string></dict></plist>`,
+    );
+    await writeSelectedTargetRunSchemeKey(root, staleSchemeKey);
+    let inspectedEnvironmentHost: string | undefined;
+
+    const audit = await runIOSDoctorChecks(
+      context(),
+      { root, target: "MyApp" },
+      dependencies({
+        fetchUserSettings: async (host) => {
+          inspectedEnvironmentHost = host;
+          return { social: {} } as UserSettingsJSON;
+        },
+      }),
+    );
+
+    expect(
+      audit.results.find((result) => result.name === "iOS: Configure Clerk with a publishable key")
+        ?.status,
+    ).toBe("pass");
+    expect(audit.results.find((result) => result.name === "iOS: Linked development key")).toEqual(
+      expect.objectContaining({
+        status: "pass",
+        detail: "Frontend API host: clerk.example.test",
+      }),
+    );
+    expect(inspectedEnvironmentHost).toBe("clerk.example.test");
+    expect(audit.inspection.localPublishableKey).toMatchObject({
+      source: "MyApp/LocalSecrets.plist",
+      frontendApiHost: "clerk.example.test",
+    });
+    expect(JSON.stringify(audit)).not.toContain(localKey);
+    expect(JSON.stringify(audit)).not.toContain(staleSchemeKey);
+  });
+
+  test("warns when another same-target configure call is unproven", async () => {
+    const root = await fixture({ complete: true, includeKey: false, localSecrets: true });
+    const appPath = join(root, "MyApp", "MyAppApp.swift");
+    const source = await readFile(appPath, "utf8");
+    await writeFile(
+      appPath,
+      `${source}\nfunc reconfigureClerk(with publishableKey: String) {\n  Clerk.configure(publishableKey: publishableKey)\n}\n`,
+    );
+
+    const audit = await runIOSDoctorChecks(context(), { root, target: "MyApp" }, dependencies());
+    const configuration = audit.results.find(
+      (result) => result.name === "iOS: Configure Clerk with a publishable key",
+    );
+
+    expect(audit.inspection.appTargets[0]?.swift.configureCalls).toHaveLength(2);
+    expect(configuration?.status).toBe("warn");
+    expect(configuration?.message).toContain("review needed");
+    expect(configuration?.detail).toContain("More than one Clerk.configure");
+    expect(
+      audit.results.some((result) => result.name === "iOS: Linked development key"),
+    ).toBeFalse();
   });
 
   test("does not use an available-only key candidate to inspect AuthView methods", async () => {
