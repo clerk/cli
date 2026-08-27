@@ -216,10 +216,11 @@ async function appleEntitlementResult(
   target: IOSAppTarget,
   dependencies: IOSDoctorDependencies,
 ): Promise<CheckResult | undefined> {
+  const hasCustomAppleIntent = target.swift.appleAuthReferences.length > 0;
   const anyAppleEntitlement = target.configurations.some(
     (configuration) => configuration.entitlements?.signInWithApple === true,
   );
-  if (!anyAppleEntitlement) return undefined;
+  if (!hasCustomAppleIntent && !anyAppleEntitlement) return undefined;
 
   const plan = await dependencies.planIOSAppleEntitlement({
     root: inspection.root,
@@ -244,7 +245,8 @@ async function appleEntitlementResult(
     status: "fail",
     message: "Sign in with Apple entitlement: incomplete",
     ...(detail ? { detail } : {}),
-    remedy: LOCAL_STEP_REMEDY,
+    remedy:
+      "Run `clerk init --target <target> --sign-in-with-apple` to preview and safely add the required capability.",
   };
 }
 
@@ -407,8 +409,9 @@ async function remoteResults(
     const hasAppleEntitlement = target?.configurations.some(
       (configuration) => configuration.entitlements?.signInWithApple === true,
     );
+    const hasCustomAppleIntent = (target?.swift.appleAuthReferences.length ?? 0) > 0;
     if (
-      hasAppleEntitlement &&
+      (hasAppleEntitlement || hasCustomAppleIntent) &&
       bundleIdentifier.status === "resolved" &&
       remotePlan.registration === "satisfied"
     ) {
@@ -435,7 +438,9 @@ async function remoteResults(
             message:
               apple.runtime.bundleIdentifierConfiguration === "required"
                 ? "Clerk Sign in with Apple: the connection is not bound to the selected Bundle ID"
-                : "Clerk Sign in with Apple: local entitlement is present but the connection is disabled",
+                : hasAppleEntitlement
+                  ? "Clerk Sign in with Apple: local entitlement is present but the connection is disabled"
+                  : "Clerk Sign in with Apple: custom Apple sign-in is referenced but the connection is disabled",
             remedy:
               "Run `clerk init --target <target> --sign-in-with-apple` if this app should offer Apple sign-in.",
           });
