@@ -238,6 +238,125 @@ struct MyApp: App {
     expect(await treeDigest(root)).toEqual(before);
   });
 
+  test("non-prebuilt dry-run blocks duplicate Clerk package references without writing", async () => {
+    const root = await mkdtemp(join(tmpdir(), "clerk-ios-cli-sdk-duplicate-"));
+    temporaryDirectories.push(root);
+    await createIOSFixture(root, {
+      clerkSDK: "core-only",
+      includeKey: false,
+    });
+    await Bun.write(
+      join(root, "MyApp", "MyAppApp.swift"),
+      `import ClerkKit
+import SwiftUI
+
+@main
+struct MyApp: App {
+  var body: some Scene {
+    WindowGroup {
+      Text("Custom Clerk flow")
+    }
+  }
+}
+`,
+    );
+    const projectPath = join(root, "MyApp.xcodeproj", "project.pbxproj");
+    const project = await Bun.file(projectPath).text();
+    const packageReferences = `packageReferences = ( ${IOS_FIXTURE_IDS.clerkPackage}, );`;
+    expect(project).toContain(packageReferences);
+    await Bun.write(
+      projectPath,
+      project.replace(
+        packageReferences,
+        `packageReferences = ( ${IOS_FIXTURE_IDS.clerkPackage}, ${IOS_FIXTURE_IDS.clerkPackage}, );`,
+      ),
+    );
+    const configDir = await createIsolatedCLIState();
+    const projectBefore = await treeDigest(root);
+    const configBefore = await treeDigest(configDir);
+
+    const result = await runCLI(
+      root,
+      ["--mode", "human", "init", "--dry-run", "--json"],
+      isolatedCLIEnvironment(configDir),
+    );
+
+    expect(result.exitCode).toBe(0);
+    const output = JSON.parse(result.stdout);
+    const sdk = output.plan.steps.find((step: { id: string }) => step.id === "install-clerk-sdk");
+    expect(output.status).toBe("blocked");
+    expect(output.inspection.appTargets[0]?.packages).toMatchObject({
+      clerkKit: "linked",
+      clerkKitUI: "absent",
+    });
+    expect(sdk).toMatchObject({ status: "blocked", automatable: false });
+    expect(sdk.description).toContain("duplicate object ID");
+    expect(await treeDigest(root)).toEqual(projectBefore);
+    expect(await treeDigest(configDir)).toEqual(configBefore);
+  });
+
+  test("non-prebuilt dry-run reviews fully linked unattributed products without writing", async () => {
+    const root = await mkdtemp(join(tmpdir(), "clerk-ios-cli-sdk-unattributed-"));
+    temporaryDirectories.push(root);
+    await createIOSFixture(root, {
+      clerkSDK: "core-only",
+      includeKey: false,
+    });
+    await Bun.write(
+      join(root, "MyApp", "MyAppApp.swift"),
+      `import ClerkKit
+import SwiftUI
+
+@main
+struct MyApp: App {
+  var body: some Scene {
+    WindowGroup {
+      Text("Custom Clerk flow")
+    }
+  }
+}
+`,
+    );
+    const projectPath = join(root, "MyApp.xcodeproj", "project.pbxproj");
+    const project = await Bun.file(projectPath).text();
+    const attributedProduct = `package = ${IOS_FIXTURE_IDS.clerkPackage}; productName = ClerkKit;`;
+    const packageReferences = `packageReferences = ( ${IOS_FIXTURE_IDS.clerkPackage}, );`;
+    const packageObject = `    ${IOS_FIXTURE_IDS.clerkPackage} = { isa = XCRemoteSwiftPackageReference; repositoryURL = "https://github.com/clerk/clerk-ios.git"; requirement = { kind = upToNextMajorVersion; minimumVersion = 1.0.0; }; };\n`;
+    expect(project).toContain(attributedProduct);
+    expect(project).toContain(packageReferences);
+    expect(project).toContain(packageObject);
+    await Bun.write(
+      projectPath,
+      project
+        .replace(attributedProduct, "productName = ClerkKit;")
+        .replace(packageReferences, "packageReferences = ( );")
+        .replace(packageObject, ""),
+    );
+    const configDir = await createIsolatedCLIState();
+    const projectBefore = await treeDigest(root);
+    const configBefore = await treeDigest(configDir);
+
+    const result = await runCLI(
+      root,
+      ["--mode", "human", "init", "--dry-run", "--json"],
+      isolatedCLIEnvironment(configDir),
+    );
+
+    expect(result.exitCode).toBe(0);
+    const output = JSON.parse(result.stdout);
+    const sdk = output.plan.steps.find((step: { id: string }) => step.id === "install-clerk-sdk");
+    expect(output.status).not.toBe("blocked");
+    expect(output.inspection.appTargets[0]?.packages).toMatchObject({
+      package: "unattributed",
+      clerkKit: "linked",
+      clerkKitUI: "absent",
+    });
+    expect(sdk).toMatchObject({ status: "review", automatable: false });
+    expect(sdk.description).toContain("could not be verified as clerk-ios");
+    expect(await treeDigest(root)).toEqual(projectBefore);
+    expect(await treeDigest(configDir)).toEqual(configBefore);
+  });
+
   test("explicit AuthView dry-run blocks a ProcessInfo runtime without root environment injection", async () => {
     const root = await mkdtemp(join(tmpdir(), "clerk-ios-cli-auth-process-info-"));
     temporaryDirectories.push(root);

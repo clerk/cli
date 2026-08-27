@@ -69,6 +69,7 @@ import {
   type IOSPrebuiltAuthPlan,
   type PreparedIOSPrebuiltAuthMutation,
 } from "./prebuilt-auth.ts";
+import type { IOSAppTarget } from "./types.ts";
 
 function iosSetupError(message: string, code: ErrorCode = ERROR_CODE.IOS_SETUP_BLOCKED): CliError {
   return new CliError(message, { code });
@@ -86,17 +87,31 @@ export interface ApplyIOSLocalSetupOptions {
   prebuiltAuthUI?: boolean;
 }
 
-/** Read-only SDK compatibility planner shared by the AuthView dry-run path. */
-export async function planIOSPrebuiltAuthSDKCompatibility(options: {
-  root: string;
-  projectPath: string;
-  targetId: string;
-}): Promise<IOSSDKInstallPlan> {
-  return planIOSSDKInstall({
-    ...options,
-    includeClerkKitUI: true,
-    requirePrebuiltAuthCompatibility: true,
-  });
+/** Keep legacy, fully linked product graphs review-only while preserving every other SDK blocker. */
+export function normalizeIOSSDKInstallPlanForSetup(options: {
+  installPlan: IOSSDKInstallPlan;
+  selectedTarget: IOSAppTarget;
+  prebuiltAuthActive: boolean;
+}): {
+  sdkInstallPlan?: IOSSDKInstallPlan;
+  reviewOnlyUnattributedInstall: boolean;
+} {
+  const { installPlan, selectedTarget, prebuiltAuthActive } = options;
+  const reviewOnlyUnattributedInstall =
+    !prebuiltAuthActive &&
+    installPlan.requirePrebuiltAuthCompatibility !== true &&
+    installPlan.status === "blocked" &&
+    installPlan.blockers.length > 0 &&
+    installPlan.blockers.every((blocker) => blocker.code === "unattributed-product") &&
+    installPlan.products.every((product) =>
+      product === "ClerkKit"
+        ? selectedTarget.packages.clerkKit === "linked"
+        : selectedTarget.packages.clerkKitUI === "linked",
+    );
+  return {
+    sdkInstallPlan: reviewOnlyUnattributedInstall ? undefined : installPlan,
+    reviewOnlyUnattributedInstall,
+  };
 }
 
 export interface IOSLocalSetupResult {
@@ -513,18 +528,11 @@ export async function applyIOSLocalSetup(
       `Native Sign in with Apple could not be configured safely. No local files were changed:\n${blockerList(appleEntitlementPlan.blockers)}`,
     );
   }
-  const reviewOnlyUnattributedInstall =
-    !prebuiltAuthActive &&
-    installPlan.requirePrebuiltAuthCompatibility !== true &&
-    installPlan.status === "blocked" &&
-    installPlan.blockers.length > 0 &&
-    installPlan.blockers.every((blocker) => blocker.code === "unattributed-product") &&
-    installPlan.products.every((product) =>
-      product === "ClerkKit"
-        ? selectedTarget.packages.clerkKit === "linked"
-        : selectedTarget.packages.clerkKitUI === "linked",
-    );
-  const sdkInstallPlan = reviewOnlyUnattributedInstall ? undefined : installPlan;
+  const { sdkInstallPlan, reviewOnlyUnattributedInstall } = normalizeIOSSDKInstallPlanForSetup({
+    installPlan,
+    selectedTarget,
+    prebuiltAuthActive,
+  });
 
   if (plannedRuntimeKeyVerification?.status === "blocked") {
     throw iosSetupError(

@@ -73,12 +73,13 @@ import { planIOSRuntimeKey } from "./ios/runtime-key.ts";
 import { planIOSAssociatedDomain } from "./ios/associated-domain.ts";
 import { planIOSAppleEntitlement } from "./ios/apple-entitlement.ts";
 import { planIOSPrebuiltAuth } from "./ios/prebuilt-auth.ts";
+import { planIOSSDKInstall } from "./ios/install-sdk.ts";
 import { resolveIOSDevelopmentPublicKey } from "./ios/development-key.ts";
 import { createIOSDryRunOutput, formatIOSSetupPlan } from "./ios/output.ts";
 import {
   applyIOSLocalSetup,
   applyIOSPlannedLocalSetup,
-  planIOSPrebuiltAuthSDKCompatibility,
+  normalizeIOSSDKInstallPlanForSetup,
   planIOSPrebuiltAuthRuntimeBlockers,
   type IOSLocalSetupResult,
 } from "./ios/apply.ts";
@@ -325,13 +326,23 @@ export async function init(options: InitOptions = {}) {
             allowMissingEntitlementsCreation: runtimeKeyPlan?.status !== "ready",
           })
         : undefined;
-    const sdkInstallPlan =
-      dryRunSelection.state === "selected" && selectedTarget != null && prebuiltAuthActive
-        ? await planIOSPrebuiltAuthSDKCompatibility({
+    const strictSDKInstallPlan =
+      dryRunSelection.state === "selected" && selectedTarget != null
+        ? await planIOSSDKInstall({
             root: ctx.cwd,
             projectPath: dryRunSelection.projectPath,
             targetId: dryRunSelection.targetId,
+            includeClerkKitUI: productDecision === "prebuilt" || prebuiltAuthActive,
+            requirePrebuiltAuthCompatibility: prebuiltAuthActive,
           })
+        : undefined;
+    const sdkInstallPlan =
+      strictSDKInstallPlan && selectedTarget
+        ? normalizeIOSSDKInstallPlanForSetup({
+            installPlan: strictSDKInstallPlan,
+            selectedTarget,
+            prebuiltAuthActive,
+          }).sdkInstallPlan
         : undefined;
     const plan = buildIOSSetupPlan(inspection, {
       sdkInstallPlan,
