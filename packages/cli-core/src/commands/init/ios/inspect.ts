@@ -134,6 +134,13 @@ function buildFileIOSApplicability(object: PbxObject): {
 }
 
 interface PublishableKeyCandidate {
+  kind:
+    | "inline-literal"
+    | "run-scheme"
+    | "local-secrets-plist"
+    | "environment-file"
+    | "keyless-file"
+    | "ambient-environment";
   value?: string;
   decoded?: { frontendApiHost: string; instanceType: "development" | "production" };
   invalid?: true;
@@ -248,6 +255,7 @@ async function schemePublishableKeyCandidates(
         if (!value) continue;
         const source = relativeIOSPath(root, path);
         candidates.push({
+          kind: "run-scheme",
           value,
           source,
           evidence: [{ path: source, keyPath: "LaunchAction.EnvironmentVariables" }],
@@ -319,6 +327,7 @@ async function readPublishableKeyCandidates(
         for (const line of parseEnvFile(await file.text())) {
           if (line.type === "entry" && line.key === "CLERK_PUBLISHABLE_KEY" && line.value) {
             candidates.push({
+              kind: "environment-file",
               value: line.value,
               source: relativeIOSPath(root, path),
               evidence: [{ path: relativeIOSPath(root, path), keyPath: line.key }],
@@ -340,6 +349,7 @@ async function readPublishableKeyCandidates(
       const value = isRecord(parsed) ? asString(parsed.CLERK_PUBLISHABLE_KEY) : undefined;
       if (value) {
         candidates.push({
+          kind: "local-secrets-plist",
           value,
           source: relativeIOSPath(root, path),
           evidence: [{ path: relativeIOSPath(root, path), keyPath: "CLERK_PUBLISHABLE_KEY" }],
@@ -347,7 +357,13 @@ async function readPublishableKeyCandidates(
         });
       }
     } catch {
-      // Binary/malformed secret files are ignored rather than printing parser data.
+      candidates.push({
+        kind: "local-secrets-plist",
+        invalid: true,
+        source: relativeIOSPath(root, path),
+        evidence: [{ path: relativeIOSPath(root, path), keyPath: "CLERK_PUBLISHABLE_KEY" }],
+        priority: 10,
+      });
     }
   }
 
@@ -361,6 +377,7 @@ async function readPublishableKeyCandidates(
       const value = isRecord(parsed) ? asString(parsed.publishableKey) : undefined;
       if (value) {
         candidates.push({
+          kind: "keyless-file",
           value,
           source: relativeIOSPath(root, path),
           evidence: [{ path: relativeIOSPath(root, path), keyPath: "publishableKey" }],
@@ -375,6 +392,7 @@ async function readPublishableKeyCandidates(
   const ambient = process.env.CLERK_PUBLISHABLE_KEY;
   if (ambient) {
     candidates.push({
+      kind: "ambient-environment",
       value: ambient,
       source: "CLERK_PUBLISHABLE_KEY environment variable",
       evidence: [],
@@ -392,6 +410,7 @@ async function inspectLocalPublishableKeys(
   targetLocalSecretsPaths: string[],
   schemeRoots: string[],
   inlineCandidates: PublishableKeyCandidate[],
+  preferredKind: PublishableKeyCandidate["kind"] | undefined,
   diagnostics: IOSDiagnostic[],
 ): Promise<IOSProjectInspectionResult["localPublishableKey"]> {
   const candidates = await readPublishableKeyCandidates(
@@ -434,9 +453,12 @@ async function inspectLocalPublishableKeys(
 
   const localCandidates = decodedCandidates.filter((item) => !item.candidate.ambient);
   const ambientCandidates = decodedCandidates.filter((item) => item.candidate.ambient);
+  // Proven app-init wiring determines which class of candidate can reach the
+  // selected target. Discovery remains exhaustive and redacted for reporting.
   const effectivePriority = localCandidates[0]?.candidate.priority;
-  const effectiveCandidates =
-    effectivePriority == null
+  const effectiveCandidates = preferredKind
+    ? decodedCandidates.filter((item) => item.candidate.kind === preferredKind)
+    : effectivePriority == null
       ? ambientCandidates
       : localCandidates.filter((item) => item.candidate.priority === effectivePriority);
 
@@ -498,6 +520,27 @@ async function inspectLocalPublishableKeys(
     candidateSources,
     invalidSources: [...invalidSources].sort(),
   };
+}
+
+function preferredRuntimeKeyCandidateKind(
+  target: IOSAppTarget | undefined,
+): PublishableKeyCandidate["kind"] | undefined {
+  if (!target?.swift.evidenceComplete) return undefined;
+  const startupCalls = target.swift.configureCalls.filter(
+    (call) => call.startupBinding === "app-init",
+  );
+  if (startupCalls.length !== 1) return undefined;
+
+  const call = startupCalls[0]!;
+  if (call.publishableKeyWiring === "inline-literal") return "inline-literal";
+  if (
+    call.publishableKeyWiring === "local-secrets-loader" &&
+    call.localSecretsRuntimeBinding === "proven"
+  ) {
+    return "local-secrets-plist";
+  }
+  if (call.publishableKeyWiring === "process-info-environment") return "run-scheme";
+  return undefined;
 }
 
 async function localPackageIsClerk(root: string, packagePath: string): Promise<boolean> {
@@ -1622,6 +1665,7 @@ export async function inspectIOSProject(
     selectedAppTarget?.swift.configureCalls
       .filter((call) => call.publishableKeyWiring === "inline-literal")
       .map((call) => ({
+        kind: "inline-literal" as const,
         source: call.path,
         evidence: [{ path: call.path, keyPath: "Clerk.configure(publishableKey:)" }],
         priority: 0,
@@ -1643,6 +1687,7 @@ export async function inspectIOSProject(
       ...discovered.workspacePaths,
     ],
     inlinePublishableKeyCandidates,
+    preferredRuntimeKeyCandidateKind(selectedAppTarget),
     diagnostics,
   );
   const result: IOSProjectInspectionResult = {

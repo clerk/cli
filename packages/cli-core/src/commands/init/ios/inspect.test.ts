@@ -42,6 +42,17 @@ async function addTargetBuildSettings(
   );
 }
 
+async function writeSelectedTargetRunSchemeKey(root: string, value: string): Promise<string> {
+  const schemeDirectory = join(root, "MyApp.xcodeproj", "xcshareddata", "xcschemes");
+  await mkdir(schemeDirectory, { recursive: true });
+  const schemePath = join(schemeDirectory, "MyApp.xcscheme");
+  await Bun.write(
+    schemePath,
+    `<Scheme><LaunchAction><BuildableProductRunnable><BuildableReference BlueprintIdentifier="${IOS_FIXTURE_IDS.appTarget}" /></BuildableProductRunnable><EnvironmentVariables><EnvironmentVariable key="CLERK_PUBLISHABLE_KEY" value="${value}" isEnabled="YES" /></EnvironmentVariables></LaunchAction></Scheme>`,
+  );
+  return schemePath;
+}
+
 afterEach(async () => {
   await Promise.all(temporaryDirectories.splice(0).map((path) => rm(path, { recursive: true })));
 });
@@ -146,10 +157,7 @@ describe("inspectIOSProject", () => {
     });
     expect(target?.runtimeKeySinks).toEqual([]);
     expect(inspection.localPublishableKey).toEqual({
-      found: true,
-      source: ".env",
-      frontendApiHost: "clerk.example.test",
-      instanceType: "development",
+      found: false,
       conflict: false,
       candidateSources: [".env"],
       invalidSources: [],
@@ -478,8 +486,11 @@ describe("inspectIOSProject", () => {
   });
 
   test("treats a direct @main literal as the selected target's runtime key without exposing it", async () => {
-    const root = await fixture({ includeKey: false });
+    const root = await fixture({ includeKey: false, localSecrets: true });
     const publishableKey = `pk_test_${Buffer.from("inline.clerk.example$").toString("base64")}`;
+    const schemeKey = `pk_live_${Buffer.from("scheme.clerk.example$").toString("base64")}`;
+    const localSecretsKey = `pk_live_${Buffer.from("native.clerk.example$").toString("base64")}`;
+    await writeSelectedTargetRunSchemeKey(root, schemeKey);
     await Bun.write(
       join(root, "MyApp", "MyAppApp.swift"),
       `import ClerkKit
@@ -509,10 +520,54 @@ struct MyApp: App {
       source: "MyApp/MyAppApp.swift",
       frontendApiHost: "inline.clerk.example",
       instanceType: "development",
-      candidateSources: ["MyApp/MyAppApp.swift"],
+      candidateSources: [
+        "MyApp.xcodeproj/xcshareddata/xcschemes/MyApp.xcscheme",
+        "MyApp/LocalSecrets.plist",
+        "MyApp/MyAppApp.swift",
+      ],
       invalidSources: [],
     });
     expect(JSON.stringify(inspection)).not.toContain(publishableKey);
+    expect(JSON.stringify(inspection)).not.toContain(schemeKey);
+    expect(JSON.stringify(inspection)).not.toContain(localSecretsKey);
+  });
+
+  test("does not fall through from an invalid app-init literal to other key sources", async () => {
+    const root = await fixture({ includeKey: false, localSecrets: true });
+    const invalidInlineKey = "pk_test_inline-secret-must-not-leak";
+    const schemeKey = `pk_test_${Buffer.from("scheme.clerk.example$").toString("base64")}`;
+    await writeSelectedTargetRunSchemeKey(root, schemeKey);
+    await Bun.write(
+      join(root, "MyApp", "MyAppApp.swift"),
+      `import ClerkKit
+import SwiftUI
+
+@main
+struct MyApp: App {
+  init() {
+    Clerk.configure(publishableKey: "${invalidInlineKey}")
+  }
+
+  var body: some Scene { WindowGroup { Text("Hello") } }
+}
+`,
+    );
+
+    const inspection = await inspectIOSProject(root);
+
+    expect(inspection.localPublishableKey).toEqual({
+      found: false,
+      source: "MyApp/MyAppApp.swift",
+      conflict: false,
+      candidateSources: [
+        "MyApp.xcodeproj/xcshareddata/xcschemes/MyApp.xcscheme",
+        "MyApp/LocalSecrets.plist",
+        "MyApp/MyAppApp.swift",
+      ],
+      invalidSources: ["MyApp/MyAppApp.swift"],
+    });
+    expect(JSON.stringify(inspection)).not.toContain(invalidInlineKey);
+    expect(JSON.stringify(inspection)).not.toContain(schemeKey);
   });
 
   test("reads an enabled publishable key from the selected target's Run scheme", async () => {
@@ -534,6 +589,120 @@ struct MyApp: App {
       conflict: false,
     });
     expect(JSON.stringify(inspection)).not.toContain(schemeKey);
+  });
+
+  test("uses the LocalSecrets key proven by app-init wiring instead of a different scheme key", async () => {
+    const root = await fixture({ complete: true, includeKey: false, localSecrets: true });
+    const schemeKey = `pk_test_${Buffer.from("scheme.clerk.example$").toString("base64")}`;
+    const localSecretsKey = `pk_live_${Buffer.from("native.clerk.example$").toString("base64")}`;
+    await writeSelectedTargetRunSchemeKey(root, schemeKey);
+
+    const inspection = await inspectIOSProject(root);
+
+    expect(inspection.localPublishableKey).toEqual({
+      found: true,
+      source: "MyApp/LocalSecrets.plist",
+      frontendApiHost: "native.clerk.example",
+      instanceType: "production",
+      conflict: false,
+      candidateSources: [
+        "MyApp.xcodeproj/xcshareddata/xcschemes/MyApp.xcscheme",
+        "MyApp/LocalSecrets.plist",
+      ],
+      invalidSources: [],
+    });
+    expect(JSON.stringify(inspection)).not.toContain(schemeKey);
+    expect(JSON.stringify(inspection)).not.toContain(localSecretsKey);
+  });
+
+  test("does not fall through from a malformed LocalSecrets key proven by app-init wiring", async () => {
+    const root = await fixture({ complete: true, includeKey: false, localSecrets: true });
+    const schemeKey = `pk_test_${Buffer.from("scheme.clerk.example$").toString("base64")}`;
+    const malformedLocalSecretsKey = "pk_live_local-secret-must-not-leak";
+    await writeSelectedTargetRunSchemeKey(root, schemeKey);
+    await Bun.write(
+      join(root, "MyApp", "LocalSecrets.plist"),
+      `<?xml version="1.0" encoding="UTF-8"?><plist version="1.0"><dict><key>CLERK_PUBLISHABLE_KEY</key><string>${malformedLocalSecretsKey}</string></dict></plist>`,
+    );
+
+    const inspection = await inspectIOSProject(root);
+
+    expect(inspection.localPublishableKey).toEqual({
+      found: false,
+      source: "MyApp/LocalSecrets.plist",
+      conflict: false,
+      candidateSources: [
+        "MyApp.xcodeproj/xcshareddata/xcschemes/MyApp.xcscheme",
+        "MyApp/LocalSecrets.plist",
+      ],
+      invalidSources: ["MyApp/LocalSecrets.plist"],
+    });
+    expect(JSON.stringify(inspection)).not.toContain(schemeKey);
+    expect(JSON.stringify(inspection)).not.toContain(malformedLocalSecretsKey);
+  });
+
+  test("does not fall through from an empty LocalSecrets handoff to a stale scheme key", async () => {
+    const root = await fixture({ complete: true, includeKey: false, localSecrets: true });
+    const schemeKey = `pk_test_${Buffer.from("stale-scheme.clerk.example$").toString("base64")}`;
+    await writeSelectedTargetRunSchemeKey(root, schemeKey);
+    await Bun.write(
+      join(root, "MyApp", "LocalSecrets.plist"),
+      '<?xml version="1.0" encoding="UTF-8"?><plist version="1.0"><dict></dict></plist>',
+    );
+
+    const inspection = await inspectIOSProject(root);
+
+    expect(inspection.localPublishableKey).toEqual({
+      found: false,
+      conflict: false,
+      candidateSources: ["MyApp.xcodeproj/xcshareddata/xcschemes/MyApp.xcscheme"],
+      invalidSources: [],
+    });
+    expect(
+      inspection.diagnostics.some(
+        (diagnostic) => diagnostic.code === "clerk.invalid-publishable-key",
+      ),
+    ).toBe(false);
+    expect(JSON.stringify(inspection)).not.toContain(schemeKey);
+  });
+
+  test("uses the selected target's scheme when app-init reads ProcessInfo", async () => {
+    const root = await fixture({ includeKey: false, localSecrets: true });
+    const schemeKey = `pk_test_${Buffer.from("scheme-runtime.clerk.example$").toString("base64")}`;
+    const localSecretsKey = `pk_live_${Buffer.from("native.clerk.example$").toString("base64")}`;
+    await writeSelectedTargetRunSchemeKey(root, schemeKey);
+    await Bun.write(
+      join(root, "MyApp", "MyAppApp.swift"),
+      `import ClerkKit
+import SwiftUI
+
+@main
+struct MyApp: App {
+  init() {
+    Clerk.configure(publishableKey: ProcessInfo.processInfo.environment["CLERK_PUBLISHABLE_KEY"] ?? "")
+  }
+
+  var body: some Scene { WindowGroup { Text("Hello") } }
+}
+`,
+    );
+
+    const inspection = await inspectIOSProject(root);
+
+    expect(inspection.localPublishableKey).toEqual({
+      found: true,
+      source: "MyApp.xcodeproj/xcshareddata/xcschemes/MyApp.xcscheme",
+      frontendApiHost: "scheme-runtime.clerk.example",
+      instanceType: "development",
+      conflict: false,
+      candidateSources: [
+        "MyApp.xcodeproj/xcshareddata/xcschemes/MyApp.xcscheme",
+        "MyApp/LocalSecrets.plist",
+      ],
+      invalidSources: [],
+    });
+    expect(JSON.stringify(inspection)).not.toContain(schemeKey);
+    expect(JSON.stringify(inspection)).not.toContain(localSecretsKey);
   });
 
   test("does not synthesize Run scheme markup across XML comments", async () => {
