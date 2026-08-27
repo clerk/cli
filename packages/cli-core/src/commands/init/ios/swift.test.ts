@@ -497,6 +497,102 @@ Clerk.configure(publishableKey: key)`,
     expect(inspection.appleAuthReferences).toEqual([{ path: "Declared.swift" }]);
   });
 
+  test("recognizes a Clerk environment declaration with an intervening global-actor attribute", async () => {
+    const root = await mkdtemp(join(tmpdir(), "clerk-ios-swift-"));
+    temporaryDirectories.push(root);
+    const path = join(root, "MainActorFlow.swift");
+    await Bun.write(
+      path,
+      `import ClerkKit
+       struct MainActorFlow {
+         @Environment(Clerk.self) @MainActor private var authClient
+         func authenticate() async throws {
+           try await authClient.auth.signInWithApple()
+         }
+       }`,
+    );
+
+    const inspection = await inspectSwiftSources([
+      { absolutePath: path, relativePath: "MainActorFlow.swift" },
+    ]);
+
+    expect(inspection.evidenceComplete).toBe(true);
+    expect(inspection.authFlowReferences).toEqual([{ path: "MainActorFlow.swift" }]);
+    expect(inspection.appleAuthReferences).toEqual([{ path: "MainActorFlow.swift" }]);
+  });
+
+  test("recognizes a Clerk environment declaration with a parameterized attribute", async () => {
+    const root = await mkdtemp(join(tmpdir(), "clerk-ios-swift-"));
+    temporaryDirectories.push(root);
+    const path = join(root, "AvailableFlow.swift");
+    await Bun.write(
+      path,
+      `import ClerkKit
+       struct AvailableFlow {
+         @Environment(Clerk.self) @available(iOS 17.0, *) private var authClient
+         func authenticate() async throws {
+           try await authClient.auth.signInWithApple()
+         }
+       }`,
+    );
+
+    const inspection = await inspectSwiftSources([
+      { absolutePath: path, relativePath: "AvailableFlow.swift" },
+    ]);
+
+    expect(inspection.evidenceComplete).toBe(true);
+    expect(inspection.authFlowReferences).toEqual([{ path: "AvailableFlow.swift" }]);
+    expect(inspection.appleAuthReferences).toEqual([{ path: "AvailableFlow.swift" }]);
+  });
+
+  test("fails closed for malformed attributes after a Clerk environment declaration", async () => {
+    const root = await mkdtemp(join(tmpdir(), "clerk-ios-swift-"));
+    temporaryDirectories.push(root);
+    const path = join(root, "MalformedFlow.swift");
+    await Bun.write(
+      path,
+      `import ClerkKit
+       struct MalformedFlow {
+         @Environment(Clerk.self) @available(iOS 17.0, * private var authClient
+         func authenticate() async throws {
+           try await authClient.auth.signInWithApple()
+         }
+       }`,
+    );
+
+    const inspection = await inspectSwiftSources([
+      { absolutePath: path, relativePath: "MalformedFlow.swift" },
+    ]);
+
+    expect(inspection.evidenceComplete).toBe(false);
+    expect(inspection.authFlowReferences).toEqual([]);
+    expect(inspection.appleAuthReferences).toEqual([]);
+  });
+
+  test("fails closed for unsupported modifiers after a Clerk environment declaration", async () => {
+    const root = await mkdtemp(join(tmpdir(), "clerk-ios-swift-"));
+    temporaryDirectories.push(root);
+    const path = join(root, "UnsupportedFlow.swift");
+    await Bun.write(
+      path,
+      `import ClerkKit
+       struct UnsupportedFlow {
+         @Environment(Clerk.self) borrowing var authClient
+         func authenticate() async throws {
+           try await authClient.auth.signInWithApple()
+         }
+       }`,
+    );
+
+    const inspection = await inspectSwiftSources([
+      { absolutePath: path, relativePath: "UnsupportedFlow.swift" },
+    ]);
+
+    expect(inspection.evidenceComplete).toBe(false);
+    expect(inspection.authFlowReferences).toEqual([]);
+    expect(inspection.appleAuthReferences).toEqual([]);
+  });
+
   test("does not attribute a same-named receiver in another type to the Clerk environment", async () => {
     const root = await mkdtemp(join(tmpdir(), "clerk-ios-swift-"));
     temporaryDirectories.push(root);
