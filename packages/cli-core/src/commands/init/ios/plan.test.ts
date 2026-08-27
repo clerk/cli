@@ -6,7 +6,7 @@ import { planIOSDirectConfig } from "./direct-config.ts";
 import { planIOSAssociatedDomain } from "./associated-domain.ts";
 import { inspectIOSProject } from "./inspect.ts";
 import { formatIOSSetupPlan } from "./output.ts";
-import { buildIOSSetupPlan } from "./plan.ts";
+import { buildIOSSetupPlan, hasIOSRuntimeKeyHandoffShape } from "./plan.ts";
 import { planIOSRuntimeKey } from "./runtime-key.ts";
 import { createIOSFixture } from "./test-helpers.ts";
 
@@ -74,6 +74,55 @@ describe("buildIOSSetupPlan", () => {
     expect(plan.steps.find((step) => step.id === "configure-publishable-key")?.status).toBe(
       "satisfied",
     );
+  });
+
+  test("reviews configuration when an additional configure call is not proven", async () => {
+    const root = await mkdtemp(join(tmpdir(), "clerk-ios-plan-"));
+    temporaryDirectories.push(root);
+    await createIOSFixture(root, { complete: true, includeKey: false, localSecrets: true });
+    const inspection = await inspectIOSProject(root);
+    inspection.appTargets[0]!.swift.configureCalls.push({
+      path: "MyApp/SecondarySetup.swift",
+      publishableKeyWiring: "unknown",
+      startupBinding: "unproven",
+    });
+
+    const configureStep = buildIOSSetupPlan(inspection).steps.find(
+      (step) => step.id === "configure-publishable-key",
+    );
+
+    expect(configureStep).toMatchObject({ status: "review", automatable: false });
+    expect(configureStep?.description).toContain("More than one Clerk.configure");
+  });
+
+  test("keeps an empty LocalSecrets handoff despite a stale scheme candidate", async () => {
+    const root = await mkdtemp(join(tmpdir(), "clerk-ios-plan-"));
+    temporaryDirectories.push(root);
+    await createIOSFixture(root, { complete: true, includeKey: false, localSecrets: true });
+    await Bun.write(
+      join(root, "MyApp", "LocalSecrets.plist"),
+      '<?xml version="1.0"?><plist version="1.0"><dict></dict></plist>',
+    );
+    const inspection = await inspectIOSProject(root);
+    const target = inspection.appTargets[0]!;
+    const schemePath = "MyApp.xcodeproj/xcshareddata/xcschemes/MyApp.xcscheme";
+    inspection.localPublishableKey = {
+      found: true,
+      source: schemePath,
+      frontendApiHost: "stale.clerk.example",
+      instanceType: "development",
+      conflict: false,
+      candidateSources: [schemePath],
+      invalidSources: [],
+    };
+
+    const configureStep = buildIOSSetupPlan(inspection).steps.find(
+      (step) => step.id === "configure-publishable-key",
+    );
+
+    expect(hasIOSRuntimeKeyHandoffShape(inspection, target)).toBe(true);
+    expect(configureStep).toMatchObject({ status: "required", automatable: false });
+    expect(configureStep?.description).toContain("LocalSecrets.plist");
   });
 
   test("satisfies configuration and derives the domain from a redacted inline literal", async () => {

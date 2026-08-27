@@ -96,9 +96,6 @@ export function hasIOSRuntimeKeyHandoffShape(
   inspection: IOSProjectInspectionResult,
   target: IOSAppTarget,
 ): boolean {
-  const hasEnabledSchemeKey = inspection.localPublishableKey.candidateSources.some((source) =>
-    source.endsWith(".xcscheme"),
-  );
   return (
     inspection.generatedProject === null &&
     target.swift.evidenceComplete &&
@@ -109,8 +106,7 @@ export function hasIOSRuntimeKeyHandoffShape(
     target.swift.configureCalls[0]?.startupBinding === "app-init" &&
     target.swift.configureCalls[0]?.path === target.swift.entryPoints[0]?.path &&
     target.swift.localSecretsRuntimeBindings.length === 1 &&
-    target.runtimeKeySinks.length === 1 &&
-    !hasEnabledSchemeKey
+    target.runtimeKeySinks.length === 1
   );
 }
 
@@ -259,7 +255,8 @@ export function buildIOSSetupPlan(
     usablePublishableKey &&
     runtimeKeySource != null &&
     runtimeKeySource !== "available-only" &&
-    target.swift.configureCalls.some(
+    target.swift.configureCalls.length === 1 &&
+    target.swift.configureCalls.every(
       (call) =>
         call.startupBinding === "app-init" &&
         (runtimeKeySource === "inline-literal"
@@ -329,17 +326,19 @@ export function buildIOSSetupPlan(
           : directConfigBlocked
             ? `Automatic direct configuration stopped because the selected Swift startup source is not safe to edit: ${directConfigBlocker ?? "Review the selected target's @main App initializer and root Scene manually."}`
             : configured
-              ? sourceEntryPointIsAmbiguous
-                ? "A Clerk.configure(...) call is present, but multiple @main entry points make startup ownership ambiguous. Confirm which entry point ships."
-                : configureCallConnectedToRuntime
-                  ? runtimeKeySource === "inline-literal"
-                    ? "Clerk is configured directly in the selected target's @main initializer with a valid publishable key. The value is intentionally redacted from this plan."
-                    : "A Clerk.configure(...) call is connected to a recognized selected-target runtime key loader. The key expression and value are intentionally redacted from this plan."
-                  : usablePublishableKey
-                    ? runtimeKeySource === "available-only"
-                      ? "A usable publishable key is available to copy, but the app is not proven to load it at runtime. Configure Clerk directly in the selected target's @main App initializer, or repair the app's existing runtime loader if it intentionally uses one."
-                      : "A selected-target runtime publishable key is present, but the Clerk.configure(...) expression could not be connected to its loader. Confirm the wiring manually; the expression and value are intentionally redacted."
-                    : "A Clerk.configure(...) call is present, but the inspector could not validate a usable selected-target runtime key source. Confirm the runtime value manually; the expression is intentionally redacted."
+              ? target.swift.configureCalls.length > 1
+                ? "More than one Clerk.configure(...) call is present. Confirm that every call uses the intended selected-target runtime key and runs during app startup."
+                : sourceEntryPointIsAmbiguous
+                  ? "A Clerk.configure(...) call is present, but multiple @main entry points make startup ownership ambiguous. Confirm which entry point ships."
+                  : configureCallConnectedToRuntime
+                    ? runtimeKeySource === "inline-literal"
+                      ? "Clerk is configured directly in the selected target's @main initializer with a valid publishable key. The value is intentionally redacted from this plan."
+                      : "A Clerk.configure(...) call is connected to a recognized selected-target runtime key loader. The key expression and value are intentionally redacted from this plan."
+                    : usablePublishableKey
+                      ? runtimeKeySource === "available-only"
+                        ? "A usable publishable key is available to copy, but the app is not proven to load it at runtime. Configure Clerk directly in the selected target's @main App initializer, or repair the app's existing runtime loader if it intentionally uses one."
+                        : "A selected-target runtime publishable key is present, but the Clerk.configure(...) expression could not be connected to its loader. Confirm the wiring manually; the expression and value are intentionally redacted."
+                      : "A Clerk.configure(...) call is present, but the inspector could not validate a usable selected-target runtime key source. Confirm the runtime value manually; the expression is intentionally redacted."
               : !target.swift.evidenceComplete
                 ? "No Clerk.configure(...) call was found in the safely inspected source subset. Complete source membership inspection or confirm startup setup manually."
                 : inspection.localPublishableKey.conflict
