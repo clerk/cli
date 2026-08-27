@@ -857,6 +857,41 @@ Clerk.configure(publishableKey: key)`,
     expect(
       (await inspect("url in Task { try await clerk.handle(url) }")).rootOpenURLHandlers,
     ).toEqual([]);
+    expect(
+      (
+        await inspect(
+          "url in do { let url = fallbackURL; Task { try await Clerk.shared.handle(url) } }",
+        )
+      ).rootOpenURLHandlers,
+    ).toEqual([]);
+    expect(
+      (
+        await inspect(
+          "url in values.forEach { url in Task { try await Clerk.shared.handle(url) } }",
+        )
+      ).rootOpenURLHandlers,
+    ).toEqual([]);
+    expect(
+      (
+        await inspect(
+          "url in if case let .some(url) = fallbackURL { Task { try await Clerk.shared.handle(url) } }",
+        )
+      ).rootOpenURLHandlers,
+    ).toEqual([]);
+    expect(
+      (
+        await inspect(
+          "url in do { let ((first, second), url) = fallback; Task { try await Clerk.shared.handle(url) } }",
+        )
+      ).rootOpenURLHandlers,
+    ).toEqual([]);
+    expect(
+      (
+        await inspect(
+          "url in struct Local { init(url: URL) { Task { try await Clerk.shared.handle(url) } } }; _ = Local.self",
+        )
+      ).rootOpenURLHandlers,
+    ).toEqual([]);
   });
 
   test("recognizes the Auth email-link convenience API as a custom magic-link flow", async () => {

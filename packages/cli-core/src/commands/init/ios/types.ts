@@ -131,7 +131,7 @@ export interface IOSSwiftInspection {
   magicLinkAuthReferences: IOSSourceEvidence[];
   /** Broad lexical evidence retained for diagnostics and conflict detection only. */
   openURLHandlers: IOSSourceEvidence[];
-  /** Clerk URL handler directly attached to the proven shipping WindowGroup root. */
+  /** Documented-shape Clerk URL handler candidate on the proven shipping WindowGroup root. */
   rootOpenURLHandlers: IOSSourceEvidence[];
   status: "complete" | "partial" | "absent" | "ambiguous";
 }

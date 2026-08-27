@@ -421,9 +421,9 @@ export function buildIOSSetupPlan(
       step(
         "wire-auth-callbacks",
         "Wire custom email-link callbacks",
-        rootHandlesMagicLinks ? "satisfied" : "review",
+        "review",
         rootHandlesMagicLinks
-          ? "The proven shipping WindowGroup root forwards custom email-link callbacks to Clerk."
+          ? "The proven shipping WindowGroup root contains the documented Clerk callback shape. Confirm that custom email-link callbacks reach Clerk at runtime."
           : hasUnprovenHandler
             ? "A Clerk onOpenURL handler exists in target source, but it is not proven on the shipping WindowGroup root. Confirm that custom email-link callbacks reach Clerk."
             : provenAppRoot

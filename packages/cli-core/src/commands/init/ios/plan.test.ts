@@ -262,9 +262,12 @@ struct MyApp: App {
     const provenPlan = buildIOSSetupPlan(await inspectIOSProject(root));
     expect(provenPlan.steps.find((step) => step.id === "wire-auth-callbacks")).toMatchObject({
       title: "Wire custom email-link callbacks",
-      status: "satisfied",
+      status: "review",
       automatable: false,
     });
+    expect(
+      provenPlan.steps.find((step) => step.id === "wire-auth-callbacks")?.description,
+    ).toContain("Confirm that custom email-link callbacks reach Clerk at runtime");
 
     await Bun.write(
       appPath,

@@ -376,13 +376,28 @@ function onOpenURLClosureBody(body: string): string | undefined {
   return trimmed.slice(openingBrace + 1, closingBrace);
 }
 
-function closureURLParameter(body: string): string | undefined {
+function closureURLBinding(body: string): { parameter: string; bodyStart: number } | undefined {
   const captureList = /^\s*\[[^\]]*\]\s*/.exec(body)?.[0] ?? "";
   const header = body.slice(captureList.length);
   const parenthesized = /^\s*\(\s*([A-Za-z_][A-Za-z0-9_]*)\s*(?::[^)]*)?\)\s+in\b/.exec(header);
-  if (parenthesized?.[1]) return parenthesized[1];
+  if (parenthesized?.[1]) {
+    return {
+      parameter: parenthesized[1],
+      bodyStart: captureList.length + parenthesized[0].length,
+    };
+  }
   const named = /^\s*([A-Za-z_][A-Za-z0-9_]*)\s+in\b/.exec(header);
-  return named?.[1];
+  return named?.[1]
+    ? { parameter: named[1], bodyStart: captureList.length + named[0].length }
+    : undefined;
+}
+
+function isExactClerkOpenURLForwarder(body: string, parameter: string): boolean {
+  const escaped = regexEscape(parameter);
+  const forwarder = new RegExp(
+    `^\\s*Task\\s*\\{\\s*(?:_\\s*=\\s*)?try[!?]?\\s+await\\s+Clerk\\s*\\.\\s*shared\\s*\\.\\s*handle\\s*\\(\\s*${escaped}\\s*\\)\\s*;?\\s*\\}\\s*$`,
+  );
+  return forwarder.test(body);
 }
 
 function hasClerkOpenURLHandler(source: string, root: SwiftUIRootExpression): boolean {
@@ -391,12 +406,10 @@ function hasClerkOpenURLHandler(source: string, root: SwiftUIRootExpression): bo
     if (modifier?.name !== "onOpenURL" || modifier.body == null) return false;
     const closureBody = onOpenURLClosureBody(modifier.body);
     if (!closureBody) return false;
-    const parameter = closureURLParameter(closureBody);
-    if (!parameter || parameter === "_") return false;
-    const clerkHandler = new RegExp(
-      `\\bClerk\\s*\\.\\s*shared\\s*\\.\\s*handle\\s*\\(\\s*${regexEscape(parameter)}\\s*\\)`,
-    );
-    return clerkHandler.test(closureBody);
+    const binding = closureURLBinding(closureBody);
+    if (!binding || binding.parameter === "_") return false;
+    const handlerBody = closureBody.slice(binding.bodyStart);
+    return isExactClerkOpenURLForwarder(handlerBody, binding.parameter);
   });
 }
 
