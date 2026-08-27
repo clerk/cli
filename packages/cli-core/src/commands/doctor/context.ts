@@ -1,6 +1,6 @@
 import { getToken, getValidToken, hasAccountCredentials } from "../../lib/credential-store.ts";
 import { resolveProfile } from "../../lib/config.ts";
-import { fetchApplication, type Application } from "../../lib/plapi.ts";
+import { fetchApplication, listApplications, type Application } from "../../lib/plapi.ts";
 import { resolveKeylessTarget, type KeylessTarget } from "../../lib/keyless-target.ts";
 import { peekKeylessBreadcrumb } from "../../lib/keyless.ts";
 import { bapiRequest } from "../../lib/bapi.ts";
@@ -18,6 +18,7 @@ import type { DoctorContext, KeylessInstanceInfo, ResolvedProfile } from "./type
 export function createDoctorContext(): DoctorContext {
   let tokenPromise: Promise<string | null> | undefined;
   let accountCredentialsPromise: Promise<boolean> | undefined;
+  let platformAPIKeyVerificationPromise: Promise<void> | undefined;
   let validTokenPromise: Promise<string | null> | undefined;
   let profilePromise: Promise<ResolvedProfile | undefined> | undefined;
   let appPromise: Promise<Application | null> | undefined;
@@ -36,6 +37,13 @@ export function createDoctorContext(): DoctorContext {
         accountCredentialsPromise = hasAccountCredentials();
       }
       return accountCredentialsPromise;
+    },
+
+    verifyPlatformAPIKey() {
+      if (!platformAPIKeyVerificationPromise) {
+        platformAPIKeyVerificationPromise = listApplications().then(() => undefined);
+      }
+      return platformAPIKeyVerificationPromise;
     },
 
     getToken() {

@@ -30,6 +30,7 @@ function context(): DoctorContext {
   return {
     hasPlatformAPIKey: () => false,
     hasAccountCredentials: async () => true,
+    verifyPlatformAPIKey: async () => {},
     getToken: async () => "oauth-token",
     getValidToken: async () => "oauth-token",
     getProfile: async () => profile,

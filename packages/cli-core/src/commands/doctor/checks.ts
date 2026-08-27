@@ -2,7 +2,7 @@ import { join } from "node:path";
 import { homedir } from "node:os";
 import { getConfigFile } from "../../lib/config.ts";
 import { fetchUserInfo } from "../../lib/token-exchange.ts";
-import { errorMessage, isAuthError, PlapiError } from "../../lib/errors.ts";
+import { CliError, ERROR_CODE, errorMessage, isAuthError, PlapiError } from "../../lib/errors.ts";
 import { detectPublishableKeyName, detectSecretKeyName } from "../../lib/framework.ts";
 import { parseEnvFile } from "../../lib/dotenv.ts";
 import type { KeylessTarget } from "../../lib/keyless-target.ts";
@@ -112,7 +112,7 @@ export async function checkLoggedIn(ctx: DoctorContext): Promise<CheckResult> {
         },
       );
     }
-    return check.pass("Authenticated with a Platform API key");
+    return check.pass("Platform API key configured");
   }
 
   if (token) {
@@ -172,12 +172,34 @@ export async function checkHostExecution(): Promise<CheckResult> {
 export async function checkTokenValid(ctx: DoctorContext): Promise<CheckResult> {
   const check = defineCheck("Authentication valid", ctx.fixes.login);
   if (ctx.hasPlatformAPIKey()) {
-    return check.pass("Platform API key configured; access is verified by API checks");
+    try {
+      await ctx.verifyPlatformAPIKey();
+      return check.pass("Platform API key access verified");
+    } catch (error) {
+      if (
+        isAuthError(error) ||
+        (error instanceof CliError && error.code === ERROR_CODE.INVALID_KEY_FORMAT)
+      ) {
+        return check.fail("Platform API key is invalid or lacks applications:read access", {
+          remedy:
+            "Replace CLERK_PLATFORM_API_KEY with a valid key that has applications:read access, then rerun `clerk doctor`.",
+          fixable: false,
+        });
+      }
+      return check.warn("Could not reach Clerk to verify the Platform API key", {
+        detail: errorMessage(error),
+        remedy: "Check your network connection and rerun `clerk doctor`.",
+        fixable: false,
+      });
+    }
   }
   const storedToken = await ctx.getToken();
   if (!storedToken) {
     if (await ctx.hasAccountCredentials()) {
-      return check.pass("Platform API key configured; access is verified by API checks");
+      return check.warn("Account credentials are configured but could not be verified", {
+        remedy: "Check your Clerk authentication and rerun `clerk doctor`.",
+        fixable: false,
+      });
     }
     const keyless = await ctx.getKeylessTarget();
     return keyless

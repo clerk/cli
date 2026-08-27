@@ -111,11 +111,15 @@ function createMockContext(
     keylessKeyError?: CliError;
     accountCredentials?: boolean;
     platformAPIKey?: boolean;
+    platformAPIKeyError?: Error;
   } = {},
 ): DoctorContext {
   return {
     hasPlatformAPIKey: () => overrides.platformAPIKey ?? false,
     hasAccountCredentials: async () => overrides.accountCredentials ?? overrides.token != null,
+    verifyPlatformAPIKey: async () => {
+      if (overrides.platformAPIKeyError) throw overrides.platformAPIKeyError;
+    },
     getToken: async () => overrides.token ?? null,
     getValidToken: async () => {
       if (overrides.validToken instanceof Error) throw overrides.validToken;
@@ -226,7 +230,7 @@ describe("checkLoggedIn", () => {
     expectCheck(result, {
       name: "Logged in",
       status: "pass",
-      message: "Platform API key",
+      message: "Platform API key configured",
     });
   });
 
@@ -335,7 +339,7 @@ describe("checkHostExecution", () => {
 });
 
 describe("checkTokenValid", () => {
-  test("passes Platform API-key auth to the endpoint checks", async () => {
+  test("passes when a read-only request verifies the Platform API key", async () => {
     const ctx = createMockContext({
       token: null,
       accountCredentials: true,
@@ -345,7 +349,7 @@ describe("checkTokenValid", () => {
     expectCheck(result, {
       name: "Authentication valid",
       status: "pass",
-      message: "Platform API key configured",
+      message: "Platform API key access verified",
     });
   });
 
@@ -360,7 +364,61 @@ describe("checkTokenValid", () => {
     expectCheck(result, {
       name: "Authentication valid",
       status: "pass",
-      message: "Platform API key configured",
+      message: "Platform API key access verified",
+    });
+  });
+
+  for (const status of [401, 403]) {
+    test(`fails when the Platform API rejects the key with ${status}`, async () => {
+      const ctx = createMockContext({
+        platformAPIKey: true,
+        platformAPIKeyError: new ApiError(status, "Unauthorized"),
+      });
+
+      const result = await checkTokenValid(ctx);
+
+      expectCheck(result, {
+        name: "Authentication valid",
+        status: "fail",
+        message: ["Platform API key", "invalid", "applications:read"],
+        remedy: "CLERK_PLATFORM_API_KEY",
+        fix: false,
+      });
+    });
+  }
+
+  test("warns when a network failure prevents Platform API key verification", async () => {
+    const ctx = createMockContext({
+      platformAPIKey: true,
+      platformAPIKeyError: new TypeError("fetch failed"),
+    });
+
+    const result = await checkTokenValid(ctx);
+
+    expectCheck(result, {
+      name: "Authentication valid",
+      status: "warn",
+      message: "Could not reach Clerk",
+      detail: "fetch failed",
+      remedy: "network connection",
+      fix: false,
+    });
+  });
+
+  test("warns when Clerk is unavailable during Platform API key verification", async () => {
+    const ctx = createMockContext({
+      platformAPIKey: true,
+      platformAPIKeyError: new ApiError(503, "Service unavailable"),
+    });
+
+    const result = await checkTokenValid(ctx);
+
+    expectCheck(result, {
+      name: "Authentication valid",
+      status: "warn",
+      message: "Could not reach Clerk",
+      detail: "Service unavailable",
+      fix: false,
     });
   });
 
