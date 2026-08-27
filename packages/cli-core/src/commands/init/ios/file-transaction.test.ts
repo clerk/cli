@@ -152,83 +152,103 @@ describe("iOS existing-file transaction", () => {
     await expectNoTemporaryFiles(root);
   });
 
-  test("keeps the public destination present and both crash states recoverable", async () => {
+  test("keeps both inodes recoverable across the exclusive install boundary", async () => {
     const root = await temporaryRoot();
     const path = join(root, "App.swift");
     await writeFile(path, "original source\n");
     const prepared = await mutation(path, "candidate source\n");
-    let backupPath: string | undefined;
+    let claimPath: string | undefined;
     const observed: string[] = [];
 
     const result = await applyIOSExistingFileTransaction([prepared], [async () => true], {
-      beforeExistingDestinationBackup: async (destinationPath) => {
+      beforeExistingDestinationClaim: async (destinationPath) => {
         expect(await readFile(destinationPath, "utf8")).toBe("original source\n");
-        observed.push("before-backup");
+        observed.push("before-claim");
       },
-      afterExistingDestinationBackup: async (destinationPath, createdBackupPath) => {
-        backupPath = createdBackupPath;
-        expect(await readFile(destinationPath, "utf8")).toBe("original source\n");
-        expect(await readFile(createdBackupPath, "utf8")).toBe("original source\n");
+      afterExistingDestinationClaim: async (destinationPath, createdClaimPath) => {
+        claimPath = createdClaimPath;
+        await expect(lstat(destinationPath)).rejects.toMatchObject({ code: "ENOENT" });
+        expect(await readFile(createdClaimPath, "utf8")).toBe("original source\n");
         const stagedPath = (await readdir(root)).find((name) => name.endsWith(".tmp"));
         if (!stagedPath) throw new Error("expected the staged candidate to remain recoverable");
         expect(await readFile(join(root, stagedPath), "utf8")).toBe("candidate source\n");
-        observed.push("backup-before-rename");
+        observed.push("original-claimed");
       },
-      beforeExistingDestinationReplace: async (destinationPath, createdBackupPath) => {
-        expect(await readFile(destinationPath, "utf8")).toBe("original source\n");
-        expect(await readFile(createdBackupPath, "utf8")).toBe("original source\n");
-        observed.push("immediately-before-rename");
+      beforeExistingDestinationInstall: async (destinationPath, createdClaimPath) => {
+        await expect(lstat(destinationPath)).rejects.toMatchObject({ code: "ENOENT" });
+        expect(await readFile(createdClaimPath, "utf8")).toBe("original source\n");
+        observed.push("before-exclusive-install");
       },
-      afterExistingDestinationReplace: async (destinationPath, createdBackupPath) => {
+      afterExistingDestinationInstall: async (destinationPath, createdClaimPath) => {
         expect(await readFile(destinationPath, "utf8")).toBe("candidate source\n");
-        expect(await readFile(createdBackupPath, "utf8")).toBe("original source\n");
-        expect((await readdir(root)).filter((name) => name.endsWith(".tmp"))).toEqual([]);
-        observed.push("candidate-and-backup-after-rename");
+        expect(await readFile(createdClaimPath, "utf8")).toBe("original source\n");
+        const stagedPath = (await readdir(root)).find((name) => name.endsWith(".tmp"));
+        if (!stagedPath) throw new Error("expected the candidate recovery link to remain");
+        expect((await lstat(join(root, stagedPath))).ino).toBe((await lstat(destinationPath)).ino);
+        observed.push("candidate-and-original-recoverable");
       },
     });
 
     expect(result).toEqual({ status: "applied" });
     expect(observed).toEqual([
-      "before-backup",
-      "backup-before-rename",
-      "immediately-before-rename",
-      "candidate-and-backup-after-rename",
+      "before-claim",
+      "original-claimed",
+      "before-exclusive-install",
+      "candidate-and-original-recoverable",
     ]);
-    expect(backupPath).toBeDefined();
-    await expect(lstat(backupPath!)).rejects.toMatchObject({ code: "ENOENT" });
+    expect(claimPath).toBeDefined();
+    await expect(lstat(claimPath!)).rejects.toMatchObject({ code: "ENOENT" });
     expect(await readFile(path, "utf8")).toBe("candidate source\n");
     await expectNoTemporaryFiles(root);
   });
 
-  test("atomically restores the verified backup without an absent destination window", async () => {
+  test("restores the verified original through an exclusive rollback install", async () => {
     const root = await temporaryRoot();
     const path = join(root, "App.swift");
     await writeFile(path, "original source\n");
     const prepared = await mutation(path, "candidate source\n");
-    let backupPath: string | undefined;
+    let originalClaimPath: string | undefined;
+    let candidateClaimPath: string | undefined;
 
     const result = await applyIOSExistingFileTransaction([prepared], [async () => false], {
-      afterExistingDestinationBackup: (_destinationPath, createdBackupPath) => {
-        backupPath = createdBackupPath;
+      afterExistingDestinationClaim: (_destinationPath, createdClaimPath) => {
+        originalClaimPath = createdClaimPath;
       },
-      beforeRollbackDestinationReplace: async (destinationPath, originalSourcePath) => {
+      beforeRollbackDestinationClaim: async (destinationPath) => {
         expect(await readFile(destinationPath, "utf8")).toBe("candidate source\n");
-        expect(backupPath).toBe(originalSourcePath);
+      },
+      afterRollbackDestinationClaim: async (destinationPath, createdClaimPath) => {
+        candidateClaimPath = createdClaimPath;
+        await expect(lstat(destinationPath)).rejects.toMatchObject({ code: "ENOENT" });
+        expect(await readFile(createdClaimPath, "utf8")).toBe("candidate source\n");
+      },
+      beforeRollbackDestinationInstall: async (
+        destinationPath,
+        originalSourcePath,
+        createdCandidateClaimPath,
+      ) => {
+        await expect(lstat(destinationPath)).rejects.toMatchObject({ code: "ENOENT" });
+        expect(originalClaimPath).toBe(originalSourcePath);
+        expect(candidateClaimPath).toBe(createdCandidateClaimPath);
         expect(await readFile(originalSourcePath, "utf8")).toBe("original source\n");
       },
-      afterRollbackDestinationReplace: async (destinationPath) => {
+      afterRollbackDestinationInstall: async (destinationPath) => {
         expect(await readFile(destinationPath, "utf8")).toBe("original source\n");
-        expect(backupPath).toBeDefined();
-        await expect(lstat(backupPath!)).rejects.toMatchObject({ code: "ENOENT" });
+        expect(originalClaimPath).toBeDefined();
+        expect(candidateClaimPath).toBeDefined();
+        expect(await readFile(originalClaimPath!, "utf8")).toBe("original source\n");
+        expect(await readFile(candidateClaimPath!, "utf8")).toBe("candidate source\n");
       },
     });
 
     expect(result).toEqual({ status: "rolled-back" });
     expect(await readFile(path, "utf8")).toBe("original source\n");
+    await expect(lstat(originalClaimPath!)).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(lstat(candidateClaimPath!)).rejects.toMatchObject({ code: "ENOENT" });
     await expectNoTemporaryFiles(root);
   });
 
-  test("rolls back an after-rename failure without exposing candidate source bytes", async () => {
+  test("rolls back an after-install failure without exposing candidate source bytes", async () => {
     const root = await temporaryRoot();
     const path = join(root, "App.swift");
     const sensitiveCandidate = "pk_test_candidate_must_not_escape";
@@ -238,8 +258,8 @@ describe("iOS existing-file transaction", () => {
     let caught: unknown;
     try {
       await applyIOSExistingFileTransaction([prepared], [async () => true], {
-        afterExistingDestinationReplace: () => {
-          throw new Error("forced after-rename failure");
+        afterExistingDestinationInstall: () => {
+          throw new Error("forced after-install failure");
         },
       });
     } catch (error) {
@@ -456,7 +476,7 @@ describe("iOS existing-file transaction", () => {
     await expectNoTemporaryFiles(root);
   });
 
-  test("preserves a replacement visible before the final atomic commit check", async () => {
+  test("preserves an editor replacement that wins the commit install boundary", async () => {
     const root = await temporaryRoot();
     const path = join(root, "App.swift");
     const replacementPath = join(root, "external-replacement.tmp");
@@ -468,7 +488,7 @@ describe("iOS existing-file transaction", () => {
     const replacementIdentity = await lstat(replacementPath);
 
     const result = await applyIOSExistingFileTransaction([prepared], [async () => true], {
-      beforeExistingDestinationReplace: async (destinationPath) => {
+      beforeExistingDestinationInstall: async (destinationPath) => {
         await rename(replacementPath, destinationPath);
       },
     });
@@ -477,6 +497,36 @@ describe("iOS existing-file transaction", () => {
     expect(await readFile(path, "utf8")).toBe("newer user source\n");
     expect((await lstat(path)).ino).toBe(replacementIdentity.ino);
     expect((await lstat(path)).mode & 0o7777).toBe(0o600);
+    await expectNoTemporaryFiles(root);
+  });
+
+  test("rolls back earlier files when an editor wins a later install boundary", async () => {
+    const root = await temporaryRoot();
+    const firstPath = join(root, "First.swift");
+    const secondPath = join(root, "Second.swift");
+    const replacementPath = join(root, "external-second.tmp");
+    await writeFile(firstPath, "original first\n");
+    await writeFile(secondPath, "original second\n");
+    await chmod(secondPath, 0o640);
+    await writeFile(replacementPath, "newer editor second\n");
+    await chmod(replacementPath, 0o600);
+    const replacementIdentity = await lstat(replacementPath);
+    const prepared = await Promise.all([
+      mutation(firstPath, "candidate first\n"),
+      mutation(secondPath, "candidate second\n"),
+    ]);
+
+    const result = await applyIOSExistingFileTransaction(prepared, [async () => true], {
+      beforeExistingDestinationInstall: async (destinationPath) => {
+        if (destinationPath === secondPath) await rename(replacementPath, destinationPath);
+      },
+    });
+
+    expect(result).toEqual({ status: "stale" });
+    expect(await readFile(firstPath, "utf8")).toBe("original first\n");
+    expect(await readFile(secondPath, "utf8")).toBe("newer editor second\n");
+    expect((await lstat(secondPath)).ino).toBe(replacementIdentity.ino);
+    expect((await lstat(secondPath)).mode & 0o7777).toBe(0o600);
     await expectNoTemporaryFiles(root);
   });
 
@@ -605,7 +655,7 @@ describe("iOS existing-file transaction", () => {
     await expectRecoverableClaimedOriginals(root, ["original\n"]);
   });
 
-  test("preserves a replacement visible before the final atomic rollback check", async () => {
+  test("preserves an editor replacement that wins the rollback install boundary", async () => {
     const root = await temporaryRoot();
     const path = join(root, "App.swift");
     const replacementPath = join(root, "external-replacement.tmp");
@@ -619,7 +669,7 @@ describe("iOS existing-file transaction", () => {
     let caught: unknown;
     try {
       await applyIOSExistingFileTransaction([prepared], [async () => false], {
-        beforeRollbackDestinationReplace: async (destinationPath) => {
+        beforeRollbackDestinationInstall: async (destinationPath) => {
           await rename(replacementPath, destinationPath);
         },
       });
@@ -727,7 +777,7 @@ describe("iOS create-file transaction", () => {
     let caught: unknown;
     try {
       await applyIOSFileTransaction(prepared, [async () => true], {
-        beforeExistingDestinationReplace: async () => {
+        beforeExistingDestinationInstall: async () => {
           await rename(synchronizedRoot, displacedRoot);
           await mkdir(synchronizedRoot);
         },

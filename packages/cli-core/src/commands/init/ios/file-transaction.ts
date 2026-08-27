@@ -97,12 +97,18 @@ class IOSFileTransactionOwnershipError extends Error {}
  * @internal
  */
 export interface IOSFileTransactionTestHooks {
-  beforeExistingDestinationBackup?: (path: string) => void | Promise<void>;
-  afterExistingDestinationBackup?: (path: string, backupPath: string) => void | Promise<void>;
-  beforeExistingDestinationReplace?: (path: string, backupPath: string) => void | Promise<void>;
-  afterExistingDestinationReplace?: (path: string, backupPath: string) => void | Promise<void>;
-  beforeRollbackDestinationReplace?: (path: string, backupPath: string) => void | Promise<void>;
-  afterRollbackDestinationReplace?: (path: string) => void | Promise<void>;
+  beforeExistingDestinationClaim?: (path: string) => void | Promise<void>;
+  afterExistingDestinationClaim?: (path: string, claimPath: string) => void | Promise<void>;
+  beforeExistingDestinationInstall?: (path: string, claimPath: string) => void | Promise<void>;
+  afterExistingDestinationInstall?: (path: string, claimPath: string) => void | Promise<void>;
+  beforeRollbackDestinationClaim?: (path: string) => void | Promise<void>;
+  afterRollbackDestinationClaim?: (path: string, claimPath: string) => void | Promise<void>;
+  beforeRollbackDestinationInstall?: (
+    path: string,
+    originalSourcePath: string,
+    candidateClaimPath: string,
+  ) => void | Promise<void>;
+  afterRollbackDestinationInstall?: (path: string) => void | Promise<void>;
 }
 
 export function hashIOSFileBytes(value: string | Uint8Array): string {
@@ -150,6 +156,21 @@ async function readRegularFileIdentity(path: string): Promise<FileIdentity | und
     const info = await lstat(path);
     if (!info.isFile() || info.isSymbolicLink()) return undefined;
     return { dev: info.dev, ino: info.ino, mode: info.mode & 0o7777 };
+  } catch {
+    return undefined;
+  }
+}
+
+async function readRegularFileIdentityAndHash(
+  path: string,
+): Promise<{ identity: FileIdentity; hash: string } | undefined> {
+  try {
+    const beforeRead = await readRegularFileIdentity(path);
+    if (!beforeRead) return undefined;
+    const hash = hashIOSFileBytes(await readFile(path));
+    const afterRead = await readRegularFileIdentity(path);
+    if (!afterRead || !identitiesMatch(beforeRead, afterRead)) return undefined;
+    return { identity: afterRead, hash };
   } catch {
     return undefined;
   }
@@ -302,50 +323,6 @@ type ClaimDestinationResult =
   | { status: "stale" };
 
 /**
- * Hard-links the authorized destination to a unique same-directory recovery
- * path without ever removing the public destination. The backup remains until
- * aggregate postvalidation succeeds or rollback atomically restores it.
- */
-async function backupDestination(
-  destinationPath: string,
-  expectedIdentity: FileIdentity,
-  expectedHash: string,
-): Promise<ClaimDestinationResult> {
-  const backupPath = transactionSiblingPath(destinationPath, "claimed");
-  try {
-    await link(destinationPath, backupPath);
-  } catch (error) {
-    if (isFileSystemError(error, "ENOENT")) return { status: "stale" };
-    throw error;
-  }
-
-  const linkedIdentity = await readPathIdentity(backupPath);
-  if (!linkedIdentity) return { status: "stale" };
-  const backup: ClaimedDestination = {
-    path: backupPath,
-    present: true,
-    identity: linkedIdentity,
-  };
-  const backupIdentity = await readRegularFileIdentity(backupPath);
-  if (!backupIdentity) {
-    await removeClaimedPath(backup);
-    return { status: "stale" };
-  }
-  const backupMatches =
-    identitiesMatch(backupIdentity, expectedIdentity) &&
-    (await fileMatchesIdentityAndHash(backupPath, expectedIdentity, expectedHash));
-  const destinationMatches = await fileMatchesIdentityAndHash(
-    destinationPath,
-    expectedIdentity,
-    expectedHash,
-  );
-  if (backupMatches && destinationMatches) return { status: "claimed", claim: backup };
-
-  await removeClaimedPath(backup);
-  return { status: "stale" };
-}
-
-/**
  * Moves an existing destination to a unique same-directory name, then proves
  * which inode was moved. Unlike an overwriting rename, this never destroys a
  * replacement that arrives after the caller's last stale-input check.
@@ -381,6 +358,40 @@ async function claimDestination(
 
   await restoreClaimWithoutClobber(claim, destinationPath);
   return { status: "stale" };
+}
+
+async function linkOwnedSourceWithoutClobber(
+  sourcePath: string,
+  sourceIdentity: FileIdentity,
+  sourceHash: string,
+  destinationPath: string,
+): Promise<"linked" | "occupied"> {
+  if (!(await fileMatchesIdentityAndHash(sourcePath, sourceIdentity, sourceHash))) {
+    throw new IOSFileTransactionOwnershipError(
+      "a transaction source changed before it could be installed",
+    );
+  }
+  try {
+    await link(sourcePath, destinationPath);
+  } catch (error) {
+    if (isFileSystemError(error, "EEXIST")) return "occupied";
+    throw error;
+  }
+
+  const destinationIdentity = await readRegularFileIdentity(destinationPath);
+  const sourceAfterLink = await readRegularFileIdentity(sourcePath);
+  if (
+    !destinationIdentity ||
+    !sourceAfterLink ||
+    !identitiesMatch(destinationIdentity, sourceIdentity) ||
+    !identitiesMatch(sourceAfterLink, sourceIdentity) ||
+    !(await fileMatchesIdentityAndHash(destinationPath, sourceIdentity, sourceHash))
+  ) {
+    throw new IOSFileTransactionOwnershipError(
+      "an exclusively installed transaction source could not be identified",
+    );
+  }
+  return "linked";
 }
 
 function isCreateMutation(mutation: IOSFileMutation): mutation is IOSCreateFileMutation {
@@ -654,10 +665,18 @@ async function createdCandidateIsUntouched(item: StagedMutation): Promise<boolea
 async function committedCandidateIsUntouched(item: StagedMutation): Promise<boolean> {
   if (isCreateMutation(item.mutation)) return createdCandidateIsUntouched(item);
   if (!item.committedIdentity) return false;
-  return fileMatchesIdentityAndHash(
-    item.mutation.path,
-    item.committedIdentity,
-    item.mutation.candidateHash,
+  if (
+    !(await fileMatchesIdentityAndHash(
+      item.mutation.path,
+      item.committedIdentity,
+      item.mutation.candidateHash,
+    ))
+  ) {
+    return false;
+  }
+  return (
+    !item.temporaryPresent ||
+    fileMatchesIdentityAndHash(item.temporaryPath, item.stagedIdentity, item.mutation.candidateHash)
   );
 }
 
@@ -810,61 +829,108 @@ async function rollbackCommitted(
       }
       const originalBackup = item.claimedOriginal?.present ? item.claimedOriginal : undefined;
       const originalSourcePath = originalBackup?.path ?? rollback.temporaryPath;
-      const originalSourceIdentity = await readRegularFileIdentity(originalSourcePath);
+      const originalSource = await readRegularFileIdentityAndHash(originalSourcePath);
       if (
-        !originalSourceIdentity ||
-        (originalBackup && !sameFile(originalSourceIdentity, originalBackup.identity)) ||
+        !originalSource ||
+        (originalBackup && !sameFile(originalSource.identity, originalBackup.identity)) ||
         (!originalBackup &&
-          !(await fileMatchesIdentityAndHash(
-            originalSourcePath,
-            rollback.stagedIdentity,
-            item.mutation.originalHash,
-          )))
+          (!identitiesMatch(originalSource.identity, rollback.stagedIdentity) ||
+            originalSource.hash !== item.mutation.originalHash))
       ) {
         throw new IOSFileTransactionOwnershipError(
           "the original iOS file could not be identified during rollback",
         );
       }
-      await hooks.beforeRollbackDestinationReplace?.(rollback.mutation.path, originalSourcePath);
-      if (!(await committedCandidateIsUntouched(item))) {
+      const originalSourceIdentity = originalSource.identity;
+      const originalSourceHash = originalSource.hash;
+      // Rollback uses the same non-overwriting boundary as commit: preserve
+      // the actual public inode first, then restore through an exclusive link.
+      await hooks.beforeRollbackDestinationClaim?.(rollback.mutation.path);
+      const candidateIdentity = item.committedIdentity ?? item.stagedIdentity;
+      const candidateClaimResult = await claimDestination(
+        rollback.mutation.path,
+        candidateIdentity,
+        item.mutation.candidateHash,
+      );
+      if (candidateClaimResult.status === "stale") {
         throw transactionError(
           "rollback-failed",
           "The iOS file transaction changed again during rollback; newer bytes were preserved.",
         );
       }
-      const sourceIdentityBeforeRename = await readRegularFileIdentity(originalSourcePath);
-      if (
-        !sourceIdentityBeforeRename ||
-        !sameFile(sourceIdentityBeforeRename, originalSourceIdentity)
-      ) {
-        throw new IOSFileTransactionOwnershipError(
-          "the original iOS file changed before atomic rollback",
+      const candidateClaim = candidateClaimResult.claim;
+      rollbackClaims.push({ claim: candidateClaim, mutation: item.mutation });
+      let sourceInstalled = false;
+      try {
+        await hooks.afterRollbackDestinationClaim?.(rollback.mutation.path, candidateClaim.path);
+        if (
+          !(await fileMatchesIdentityAndHash(
+            originalSourcePath,
+            originalSourceIdentity,
+            originalSourceHash,
+          ))
+        ) {
+          throw new IOSFileTransactionOwnershipError(
+            "the original iOS file changed before rollback installation",
+          );
+        }
+        await hooks.beforeRollbackDestinationInstall?.(
+          rollback.mutation.path,
+          originalSourcePath,
+          candidateClaim.path,
         );
-      }
-      // This final ownership check and the atomic rename are the standard
-      // replacement linearization boundary. A writer that wins afterward is
-      // ordered before this rollback; portable Node APIs do not provide an
-      // inode-conditional rename primitive.
-      await rename(originalSourcePath, rollback.mutation.path);
-      if (originalBackup) originalBackup.present = false;
-      else rollback.temporaryPresent = false;
-      await hooks.afterRollbackDestinationReplace?.(rollback.mutation.path);
-      const restoredIdentity = await readRegularFileIdentity(rollback.mutation.path);
-      if (
-        !restoredIdentity ||
-        !sameFile(restoredIdentity, originalSourceIdentity) ||
-        (!originalBackup &&
+        const installResult = await linkOwnedSourceWithoutClobber(
+          originalSourcePath,
+          originalSourceIdentity,
+          originalSourceHash,
+          rollback.mutation.path,
+        );
+        if (installResult === "occupied") {
+          throw transactionError(
+            "rollback-failed",
+            "The iOS file transaction changed again during rollback; newer bytes were preserved.",
+          );
+        }
+        sourceInstalled = true;
+        await hooks.afterRollbackDestinationInstall?.(rollback.mutation.path);
+        const restoredIdentity = await readRegularFileIdentity(rollback.mutation.path);
+        if (
+          !restoredIdentity ||
+          !sameFile(restoredIdentity, originalSourceIdentity) ||
           !(await fileMatchesIdentityAndHash(
             rollback.mutation.path,
             originalSourceIdentity,
-            item.mutation.originalHash,
-          )))
-      ) {
-        throw new IOSFileTransactionOwnershipError(
-          "the restored iOS file did not match its rollback source",
-        );
+            originalSourceHash,
+          ))
+        ) {
+          throw new IOSFileTransactionOwnershipError(
+            "the restored iOS file did not match its rollback source",
+          );
+        }
+        await removeClaimedPath(candidateClaim, {
+          expectedHash: item.mutation.candidateHash,
+          expectedMode: item.mutation.mode,
+        });
+        if (originalBackup) {
+          await removeClaimedPath(originalBackup, {
+            expectedHash: originalSourceHash,
+            expectedMode: originalSourceIdentity.mode,
+          });
+        }
+        await syncDirectory(dirname(rollback.mutation.path));
+      } catch (error) {
+        if (!sourceInstalled && (await pathIsAbsent(rollback.mutation.path))) {
+          try {
+            await restoreClaimWithoutClobber(candidateClaim, rollback.mutation.path);
+          } catch (restoreError) {
+            throw new IOSFileTransactionOwnershipError(
+              "the claimed candidate could not be restored after rollback stopped",
+              { cause: aggregateCause([error, restoreError]) },
+            );
+          }
+        }
+        throw error;
       }
-      await syncDirectory(dirname(rollback.mutation.path));
     }
     await cleanupStaged(rollbackFiles);
   } catch (error) {
@@ -1006,25 +1072,26 @@ export async function applyIOSFileTransaction(
         if (!expectedIdentity) {
           throw new Error("an existing iOS file identity was missing during commit");
         }
-        await hooks.beforeExistingDestinationBackup?.(item.mutation.path);
-        const backupResult = await backupDestination(
+        // Portable Node APIs do not expose an inode-conditional replacement.
+        // Move whichever inode actually owns the destination into recovery,
+        // verify it, then link the candidate only while the public path is
+        // absent. A concurrent writer therefore wins with EEXIST instead of
+        // being overwritten.
+        await hooks.beforeExistingDestinationClaim?.(item.mutation.path);
+        const claimResult = await claimDestination(
           item.mutation.path,
           expectedIdentity,
           item.mutation.originalHash,
         );
-        if (backupResult.status === "stale") {
+        if (claimResult.status === "stale") {
           stale = true;
           break;
         }
-        item.claimedOriginal = backupResult.claim;
-        await hooks.afterExistingDestinationBackup?.(item.mutation.path, item.claimedOriginal.path);
-        await hooks.beforeExistingDestinationReplace?.(
-          item.mutation.path,
-          item.claimedOriginal.path,
-        );
+        item.claimedOriginal = claimResult.claim;
+        await hooks.afterExistingDestinationClaim?.(item.mutation.path, item.claimedOriginal.path);
         if (
           !(await createParentsStillMatch(prepared)) ||
-          !(await originalStateStillMatches(item.mutation, initialIdentities)) ||
+          !(await claimedOriginalIsUntouched(item)) ||
           !(await fileMatchesIdentityAndHash(
             item.temporaryPath,
             item.stagedIdentity,
@@ -1033,23 +1100,40 @@ export async function applyIOSFileTransaction(
         ) {
           throw new IOSFileTransactionStaleError();
         }
-        // The original remains available through the verified hard-link
-        // backup while this same-directory rename atomically replaces the
-        // public destination. There is no path-absence window. The final
-        // ownership check and rename form the standard replacement
-        // linearization boundary; portable Node APIs do not provide an
-        // inode-conditional rename primitive.
-        await rename(item.temporaryPath, item.mutation.path);
-        item.temporaryPresent = false;
+        await hooks.beforeExistingDestinationInstall?.(
+          item.mutation.path,
+          item.claimedOriginal.path,
+        );
+        if (
+          !(await createParentsStillMatch(prepared)) ||
+          !(await claimedOriginalIsUntouched(item))
+        ) {
+          throw new IOSFileTransactionStaleError();
+        }
+        const installResult = await linkOwnedSourceWithoutClobber(
+          item.temporaryPath,
+          item.stagedIdentity,
+          item.mutation.candidateHash,
+          item.mutation.path,
+        );
+        if (installResult === "occupied") {
+          await removeClaimedPath(item.claimedOriginal, {
+            expectedHash: item.mutation.originalHash,
+            expectedMode: item.mutation.mode,
+          });
+          await syncDirectory(dirname(item.mutation.path));
+          stale = true;
+          break;
+        }
       }
-      // A successful create link or existing-file rename proves that the
+      // A successful exclusive link proves that the
       // destination referred to the staged inode at the commit linearization
       // point. Record ownership synchronously before exposing it to rollback.
       item.committedIdentity = item.stagedIdentity;
       committed.push(item);
       committedThisItem = true;
       if (!isCreateMutation(item.mutation) && item.claimedOriginal) {
-        await hooks.afterExistingDestinationReplace?.(
+        await hooks.afterExistingDestinationInstall?.(
           item.mutation.path,
           item.claimedOriginal.path,
         );
@@ -1070,10 +1154,10 @@ export async function applyIOSFileTransaction(
       let effectiveError = error;
       if (!committedThisItem && item.claimedOriginal?.present) {
         try {
-          await removeClaimedPath(item.claimedOriginal);
+          await restoreClaimWithoutClobber(item.claimedOriginal, item.mutation.path);
         } catch (cleanupError) {
           effectiveError = new IOSFileTransactionOwnershipError(
-            "an original-file backup could not be released after commit stopped",
+            "a claimed original could not be restored after commit stopped",
             { cause: aggregateCause([error, cleanupError]) },
           );
         }
