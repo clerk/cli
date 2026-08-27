@@ -7,6 +7,8 @@ import {
   mkdir,
   mkdtemp,
   readFile,
+  readdir,
+  rename,
   rm,
   symlink,
   writeFile,
@@ -60,6 +62,11 @@ async function source(root: string): Promise<string> {
 
 async function replaceSource(root: string, value: string | Uint8Array): Promise<void> {
   await writeFile(appSourcePath(root), value);
+}
+
+async function expectNoTransactionArtifacts(root: string): Promise<void> {
+  const names = await readdir(join(root, "MyApp"));
+  expect(names.filter((name) => name.includes(".clerk-"))).toEqual([]);
 }
 
 async function updateProject(root: string, update: (objects: PbxObjects) => void): Promise<void> {
@@ -682,6 +689,27 @@ struct MyApp: App {
 
     expect(result.status).toBe("stale");
     expect(await readFile(appSourcePath(root))).toEqual(raced);
+  });
+
+  test("preserves an editor replacement that wins the commit install boundary", async () => {
+    const root = await fixture();
+    const plan = await planIOSDirectConfig(planOptions(root));
+    const replacementPath = join(root, "MyApp", ".MyAppApp.swift.editor-replacement");
+    const replacement = Buffer.from("// Newer editor source.\n");
+    await writeFile(replacementPath, replacement);
+    await chmod(replacementPath, 0o600);
+    const replacementIdentity = await lstat(replacementPath);
+
+    const result = await applyIOSDirectConfig(plan, DEVELOPMENT_KEY, {
+      beforeCommitInstall: async () => rename(replacementPath, appSourcePath(root)),
+    });
+
+    expect(result.status).toBe("stale");
+    expect(await readFile(appSourcePath(root))).toEqual(replacement);
+    const installedIdentity = await lstat(appSourcePath(root));
+    expect(installedIdentity.ino).toBe(replacementIdentity.ino);
+    expect(installedIdentity.mode & 0o7777).toBe(0o600);
+    await expectNoTransactionArtifacts(root);
   });
 
   test("rolls back an exact candidate after post-write validation fails", async () => {
