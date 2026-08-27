@@ -30,7 +30,7 @@ function context(): DoctorContext {
   return {
     hasPlatformAPIKey: () => false,
     hasAccountCredentials: async () => true,
-    verifyPlatformAPIKey: async () => {},
+    verifyAccountAccess: async () => {},
     getToken: async () => "oauth-token",
     getValidToken: async () => "oauth-token",
     getProfile: async () => profile,
@@ -612,8 +612,9 @@ import ClerkKit
 
 @main
 struct MyApp: App {
+  @Environment(Clerk.self) private var authClient
   var body: some Scene { WindowGroup { Text("Hello") } }
-  func signIn() async throws { try await Clerk.shared.auth.signInWithApple() }
+  func signIn() async throws { try await authClient.auth.signInWithApple() }
 }
 `,
     );

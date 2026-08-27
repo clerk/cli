@@ -95,13 +95,13 @@ describe("createDoctorContext", () => {
     });
   });
 
-  describe("verifyPlatformAPIKey", () => {
+  describe("verifyAccountAccess", () => {
     test("performs one memoized read-only application-list request, including for an empty list", async () => {
       mockAppResponse = [];
 
       const ctx = createDoctorContext();
-      const p1 = ctx.verifyPlatformAPIKey();
-      const p2 = ctx.verifyPlatformAPIKey();
+      const p1 = ctx.verifyAccountAccess();
+      const p2 = ctx.verifyAccountAccess();
 
       expect(p1).toBe(p2);
       await expect(p1).resolves.toBeUndefined();
@@ -116,8 +116,8 @@ describe("createDoctorContext", () => {
       mockAppError = new TypeError("fetch failed");
 
       const ctx = createDoctorContext();
-      const p1 = ctx.verifyPlatformAPIKey();
-      const p2 = ctx.verifyPlatformAPIKey();
+      const p1 = ctx.verifyAccountAccess();
+      const p2 = ctx.verifyAccountAccess();
 
       expect(p1).toBe(p2);
       await expect(p1).rejects.toThrow("fetch failed");
