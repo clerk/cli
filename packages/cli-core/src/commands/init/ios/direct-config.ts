@@ -5,7 +5,9 @@ import { pathIsSafelyWithinIOSRoot, relativeIOSPath } from "./discovery.ts";
 import {
   applyIOSExistingFileTransaction,
   IOSFileTransactionError,
+  prepareIOSFileMutationBoundary,
   type IOSExistingFileMutation,
+  type IOSFileMutationBoundary,
 } from "./file-transaction.ts";
 import { inspectIOSProject, inspectIOSSourceMembership } from "./inspect.ts";
 import { sanitizeSwiftSourceWithStatus } from "./swift.ts";
@@ -88,6 +90,7 @@ export interface IOSDirectConfigApplyResult {
 /** @internal A key-bearing in-memory mutation for a multi-file transaction coordinator. */
 export interface IOSDirectConfigFileMutation {
   absolutePath: string;
+  boundary: IOSFileMutationBoundary;
   expectedHash: string;
   candidateHash: string;
   mode: number;
@@ -1558,6 +1561,7 @@ function redactedKeyBlocker(
 function mutationWithHiddenBytes(
   snapshot: Pick<FileSnapshot, "absolutePath" | "bytes" | "hash" | "mode">,
   candidateBytes: Uint8Array,
+  boundary: IOSFileMutationBoundary,
 ): IOSDirectConfigFileMutation {
   const mutation = {
     absolutePath: snapshot.absolutePath,
@@ -1566,6 +1570,7 @@ function mutationWithHiddenBytes(
     mode: snapshot.mode,
   } as IOSDirectConfigFileMutation;
   Object.defineProperties(mutation, {
+    boundary: { value: boundary, enumerable: false },
     originalBytes: { value: snapshot.bytes, enumerable: false },
     candidateBytes: { value: candidateBytes, enumerable: false },
   });
@@ -1696,7 +1701,15 @@ export async function prepareIOSDirectConfigMutation(
   if (candidateHash === current.snapshot.hash) {
     return { status: "satisfied", plan };
   }
-  const mutation = mutationWithHiddenBytes(current.snapshot, candidateBytes);
+  const boundary = await prepareIOSFileMutationBoundary(plan.root, current.snapshot.absolutePath);
+  if (!boundary) {
+    return {
+      status: "stale",
+      plan,
+      message: "The selected Swift entry source moved outside its prepared project boundary.",
+    };
+  }
+  const mutation = mutationWithHiddenBytes(current.snapshot, candidateBytes, boundary);
   return readyPreparedMutation(plan, mutation, async () =>
     exactPostcondition(plan, normalizedKey, candidateHash),
   );
@@ -1719,6 +1732,7 @@ export async function applyIOSDirectConfig(
 
   const mutation: IOSExistingFileMutation = {
     path: prepared.mutation.absolutePath,
+    boundary: prepared.mutation.boundary,
     originalBytes: prepared.mutation.originalBytes,
     originalHash: prepared.mutation.expectedHash,
     candidateBytes: prepared.mutation.candidateBytes,

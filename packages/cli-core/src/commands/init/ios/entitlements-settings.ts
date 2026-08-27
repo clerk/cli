@@ -8,7 +8,11 @@ import {
   pathIsSafelyWithinIOSRoot,
   relativeIOSPath,
 } from "./discovery.ts";
-import { hashIOSFileBytes, type IOSExistingFileMutation } from "./file-transaction.ts";
+import {
+  hashIOSFileBytes,
+  prepareIOSFileMutationBoundary,
+  type IOSExistingFileMutation,
+} from "./file-transaction.ts";
 import { inspectIOSProject } from "./inspect.ts";
 import {
   asString,
@@ -1330,6 +1334,8 @@ export async function prepareIOSMissingEntitlementsSettingsMutation(
   } catch {
     return { status: "stale", plan };
   }
+  const boundary = await prepareIOSFileMutationBoundary(plan.root, pbxprojPath);
+  if (!boundary) return { status: "stale", plan };
   try {
     await lstat(entitlementsPath);
     return { status: "stale", plan };
@@ -1359,7 +1365,8 @@ export async function prepareIOSMissingEntitlementsSettingsMutation(
     if (
       resolve(baseMutation.path) !== pbxprojPath ||
       baseMutation.originalHash !== plan.expectedPbxprojHash ||
-      baseMutation.mode !== plan.expectedPbxprojMode
+      baseMutation.mode !== plan.expectedPbxprojMode ||
+      !isDeepStrictEqual(baseMutation.boundary, boundary)
     ) {
       return { status: "stale", plan };
     }
@@ -1463,6 +1470,7 @@ export async function prepareIOSMissingEntitlementsSettingsMutation(
   const candidateBytes = new TextEncoder().encode(candidate);
   return preparedWithHiddenMutation(plan, {
     path: pbxprojPath,
+    boundary: baseMutation?.boundary ?? boundary,
     originalBytes: baseMutation?.originalBytes ?? currentBytes,
     originalHash: baseMutation?.originalHash ?? plan.expectedPbxprojHash,
     candidateBytes,

@@ -821,6 +821,7 @@ struct MyApp: App {
 
     expect(prepared.status).toBe("ready");
     if (prepared.status !== "ready") throw new Error("Expected a prepared mutation.");
+    expect(prepared.mutation.boundary.rootPath).toBe(root);
     expect(prepared.mutation.candidateBytes.toString()).not.toBe("");
     expect(new TextDecoder().decode(prepared.mutation.candidateBytes)).toContain(DEVELOPMENT_KEY);
     expect(JSON.stringify(prepared)).not.toContain(DEVELOPMENT_KEY);

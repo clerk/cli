@@ -359,6 +359,8 @@ describe("iOS Associated Domains setup", () => {
     });
     expect(plan.expectedDomain).toBeUndefined();
     expect(prepared.status).toBe("ready");
+    if (prepared.status !== "ready") throw new Error("Expected prepared domain mutations.");
+    expect(prepared.mutations.every((mutation) => mutation.boundary.rootPath === root)).toBe(true);
     expect(JSON.stringify({ plan, prepared })).not.toContain(KEY);
     expect(JSON.stringify(prepared)).not.toContain("candidateBytes");
   });

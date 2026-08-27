@@ -18,6 +18,7 @@ import { join } from "node:path";
 import {
   applyIOSExistingFileTransaction,
   hashIOSFileBytes,
+  prepareIOSFileMutationBoundary,
   type IOSExistingFileMutation,
 } from "./file-transaction.ts";
 import {
@@ -206,6 +207,7 @@ describe("missing iOS entitlements build settings", () => {
     expect(prepared.status).toBe("ready");
     expect(JSON.stringify(prepared)).not.toContain("candidateBytes");
     if (prepared.status !== "ready") throw new Error("Expected a prepared mutation.");
+    expect(prepared.mutation.boundary.rootPath).toBe(root);
     expect(prepared.mutation.originalBytes).toEqual(before);
 
     const result = await applyIOSExistingFileTransaction(
@@ -252,6 +254,7 @@ describe("missing iOS entitlements build settings", () => {
     expect(combined.status).toBe("ready");
     if (combined.status !== "ready") throw new Error("Expected a combined mutation.");
     expect(combined.mutation.path).toBe(sdk.mutation.path);
+    expect(combined.mutation.boundary).toEqual(sdk.mutation.boundary);
     expect(combined.mutation.originalHash).toBe(sdk.mutation.originalHash);
     expect(combined.mutation.candidateHash).not.toBe(sdk.mutation.candidateHash);
 
@@ -502,8 +505,11 @@ describe("missing iOS entitlements build settings", () => {
     const baseRoot = await makeSynchronizedFixture();
     const basePlan = await planIOSMissingEntitlementsSettings(options(baseRoot));
     const bytes = new Uint8Array(await readFile(pbxprojPath(baseRoot)));
+    const boundary = await prepareIOSFileMutationBoundary(baseRoot, pbxprojPath(baseRoot));
+    if (!boundary) throw new Error("Expected a safe test mutation boundary.");
     const invalidBase: IOSExistingFileMutation = {
       path: join(baseRoot, "Other.xcodeproj", "project.pbxproj"),
+      boundary,
       originalBytes: bytes,
       originalHash: hashIOSFileBytes(bytes),
       candidateBytes: bytes,
