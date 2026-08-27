@@ -1,8 +1,12 @@
-import { randomUUID } from "node:crypto";
-import { chmod, lstat, open, readFile, rename, rm } from "node:fs/promises";
-import { basename, dirname, relative, resolve } from "node:path";
+import { lstat, readFile } from "node:fs/promises";
+import { dirname, relative, resolve } from "node:path";
 import { decodePublishableKey } from "../../../lib/fapi.ts";
 import { pathIsSafelyWithinIOSRoot, relativeIOSPath } from "./discovery.ts";
+import {
+  applyIOSExistingFileTransaction,
+  IOSFileTransactionError,
+  type IOSExistingFileMutation,
+} from "./file-transaction.ts";
 import { inspectIOSProject, inspectIOSSourceMembership } from "./inspect.ts";
 import { sanitizeSwiftSourceWithStatus } from "./swift.ts";
 
@@ -113,6 +117,7 @@ export type IOSDirectConfigPreparedMutation =
 /** @internal Test-only fault injection for the standalone atomic writer. */
 export interface IOSDirectConfigApplyOptions {
   beforeCommit?: () => void | Promise<void>;
+  beforeCommitInstall?: () => void | Promise<void>;
   beforePostWriteValidation?: () => void | Promise<void>;
   forcePostWriteValidationFailure?: boolean;
 }
@@ -161,12 +166,6 @@ interface PreparedDirectConfig {
 interface SourceEdit {
   index: number;
   text: string;
-}
-
-interface StagedSource {
-  temporaryPath: string;
-  mutation: IOSDirectConfigFileMutation;
-  committed: boolean;
 }
 
 const preparedValidators = new WeakMap<IOSDirectConfigPreparedMutation, () => Promise<boolean>>();
@@ -1710,98 +1709,6 @@ export async function validatePreparedIOSDirectConfig(
   return (await preparedValidators.get(prepared)?.()) ?? false;
 }
 
-async function fileHash(path: string): Promise<string | undefined> {
-  try {
-    const info = await lstat(path);
-    if (!info.isFile() || info.isSymbolicLink() || info.size > MAX_SWIFT_FILE_BYTES) {
-      return undefined;
-    }
-    return sha256(await readFile(path));
-  } catch {
-    return undefined;
-  }
-}
-
-async function syncDirectory(path: string): Promise<void> {
-  try {
-    const directory = await open(path, "r");
-    try {
-      await directory.sync();
-    } finally {
-      await directory.close();
-    }
-  } catch {
-    // Same-directory rename remains atomic where directory fsync is unavailable.
-  }
-}
-
-async function cleanupTemporarySource(path: string): Promise<void> {
-  try {
-    await rm(path, { force: true });
-  } catch {
-    throw new Error(
-      "A temporary direct iOS source file could not be removed. Inspect the entry-source directory for a .clerk-*.tmp file before retrying.",
-    );
-  }
-}
-
-async function stageSource(mutation: IOSDirectConfigFileMutation): Promise<StagedSource> {
-  const temporaryPath = resolve(
-    dirname(mutation.absolutePath),
-    `.${basename(mutation.absolutePath)}.clerk-${process.pid}-${randomUUID()}.tmp`,
-  );
-  let created = false;
-  try {
-    const file = await open(temporaryPath, "wx", 0o600);
-    created = true;
-    try {
-      await file.writeFile(mutation.candidateBytes);
-      await file.sync();
-    } finally {
-      await file.close();
-    }
-    await chmod(temporaryPath, mutation.mode);
-    return { temporaryPath, mutation, committed: false };
-  } catch {
-    if (created) await cleanupTemporarySource(temporaryPath);
-    throw new Error("The direct iOS source update could not be staged safely.");
-  }
-}
-
-async function commitStagedSource(staged: StagedSource): Promise<"written" | "stale"> {
-  if ((await fileHash(staged.mutation.absolutePath)) !== staged.mutation.expectedHash) {
-    return "stale";
-  }
-  await rename(staged.temporaryPath, staged.mutation.absolutePath);
-  staged.committed = true;
-  await syncDirectory(dirname(staged.mutation.absolutePath));
-  return "written";
-}
-
-async function rollbackStagedSource(staged: StagedSource): Promise<boolean> {
-  if (!staged.committed) return true;
-  if ((await fileHash(staged.mutation.absolutePath)) !== staged.mutation.candidateHash) {
-    return false;
-  }
-  const rollbackMutation = mutationWithHiddenBytes(
-    {
-      absolutePath: staged.mutation.absolutePath,
-      bytes: staged.mutation.candidateBytes,
-      hash: staged.mutation.candidateHash,
-      mode: staged.mutation.mode,
-    },
-    staged.mutation.originalBytes,
-  );
-  const rollback = await stageSource(rollbackMutation);
-  try {
-    if ((await commitStagedSource(rollback)) !== "written") return false;
-    staged.committed = false;
-    return (await fileHash(staged.mutation.absolutePath)) === staged.mutation.expectedHash;
-  } finally {
-    await cleanupTemporarySource(rollback.temporaryPath);
-  }
-}
-
 export async function applyIOSDirectConfig(
   plan: IOSDirectConfigPlan,
   publishableKey: string,
@@ -1810,45 +1717,48 @@ export async function applyIOSDirectConfig(
   const prepared = await prepareIOSDirectConfigMutation(plan, publishableKey);
   if (prepared.status !== "ready") return prepared;
 
-  const staged = await stageSource(prepared.mutation);
+  const mutation: IOSExistingFileMutation = {
+    path: prepared.mutation.absolutePath,
+    originalBytes: prepared.mutation.originalBytes,
+    originalHash: prepared.mutation.expectedHash,
+    candidateBytes: prepared.mutation.candidateBytes,
+    candidateHash: prepared.mutation.candidateHash,
+    mode: prepared.mutation.mode,
+  };
+  let result;
   try {
-    await options.beforeCommit?.();
-    if ((await commitStagedSource(staged)) === "stale") {
-      return {
-        status: "stale",
-        plan,
-        message: "The selected Swift entry source changed while the update was being committed.",
-      };
-    }
-    await options.beforePostWriteValidation?.();
-    const valid =
-      options.forcePostWriteValidationFailure !== true &&
-      (await validatePreparedIOSDirectConfig(prepared));
-    if (valid) return { status: "applied", plan };
-
-    if (!(await rollbackStagedSource(staged))) {
-      throw new Error(
-        "The direct iOS source update failed validation, and a concurrent edit prevented safe rollback. Inspect the entry source before retrying.",
-      );
-    }
-    return {
-      status: "rolled-back",
-      plan,
-      message: "The direct iOS source update failed validation and the original file was restored.",
-    };
+    result = await applyIOSExistingFileTransaction(
+      [mutation],
+      [
+        async () => {
+          await options.beforePostWriteValidation?.();
+          return (
+            options.forcePostWriteValidationFailure !== true &&
+            (await validatePreparedIOSDirectConfig(prepared))
+          );
+        },
+      ],
+      {
+        beforeExistingDestinationClaim: options.beforeCommit,
+        beforeExistingDestinationInstall: options.beforeCommitInstall,
+      },
+    );
   } catch (error) {
-    if (staged.committed && !(await rollbackStagedSource(staged))) {
-      throw new Error(
-        "The direct iOS source update failed, and a concurrent edit prevented safe rollback. Inspect the entry source before retrying.",
-      );
-    }
-    if (error instanceof Error && error.message.includes("concurrent edit")) throw error;
+    if (!(error instanceof IOSFileTransactionError) || error.code !== "commit-failed") throw error;
     return {
       status: "rolled-back",
       plan,
       message: "The direct iOS source update failed and the original file was restored.",
     };
-  } finally {
-    await cleanupTemporarySource(staged.temporaryPath);
   }
+
+  if (result.status === "applied") return { status: "applied", plan };
+  return {
+    status: result.status,
+    plan,
+    message:
+      result.status === "stale"
+        ? "The selected Swift entry source changed while the update was being committed."
+        : "The direct iOS source update failed validation and the original file was restored.",
+  };
 }
