@@ -1,12 +1,14 @@
 import { lstat, mkdtemp, readFile, readdir, realpath, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { basename, extname, isAbsolute, join, relative, resolve, sep } from "node:path";
+import { basename, dirname, extname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { errorMessage } from "../../lib/errors.ts";
 import { isRecord } from "../../lib/objects.ts";
 import {
+  inspectWorkspace,
   maskXMLComments,
   pathIsSafelyWithinIOSRoot,
   relativeIOSPath,
+  xmlAttribute as parseXMLAttribute,
 } from "../init/ios/discovery.ts";
 import type {
   IOSAppTarget,
@@ -30,6 +32,7 @@ const DEFAULT_OUTPUT_LIMIT_BYTES = 1024 * 1024;
 const JSON_OUTPUT_LIMIT_BYTES = 8 * 1024 * 1024;
 const MAX_PACKAGE_RESOLVED_BYTES = 2 * 1024 * 1024;
 const MAX_SCHEME_BYTES = 2 * 1024 * 1024;
+const MAX_WORKSPACE_BYTES = 2 * 1024 * 1024;
 const APP_PRODUCT_TYPE = "com.apple.product-type.application";
 
 export interface IOSXcodeVerificationOptions {
@@ -598,23 +601,161 @@ async function selectContainer(
   };
 }
 
-function containerProjectPaths(container: SelectedContainer, target: IOSAppTarget): string[] {
-  return container.kind === "workspace"
-    ? (container.workspace?.projectPaths ?? [])
-    : [target.projectPath];
+type ContainerPackageGraph = "direct-remote" | "local-unknown" | "none";
+
+interface WorkspacePackageReferences {
+  complete: boolean;
+  hasLocalPackage: boolean;
 }
 
-function containerHasRemotePackages(
+function resolveWorkspaceReference(
+  base: string,
+  location: string,
+  workspaceDirectory: string,
+): string {
+  const separatorIndex = location.indexOf(":");
+  const scheme = separatorIndex === -1 ? "group" : location.slice(0, separatorIndex);
+  const rawPath = separatorIndex === -1 ? location : location.slice(separatorIndex + 1);
+  if (scheme === "absolute") return resolve(rawPath);
+  if (scheme === "container") return resolve(workspaceDirectory, rawPath);
+  return resolve(base, rawPath);
+}
+
+async function classifyWorkspaceNonProjectReference(
+  root: string,
+  path: string,
+): Promise<"harmless" | "local-package" | "unknown"> {
+  if (path.endsWith(".xcodeproj")) return "harmless";
+  if (!(await pathIsSafelyWithinIOSRoot(root, path))) return "unknown";
+
+  let info;
+  try {
+    info = await lstat(path);
+  } catch {
+    return "unknown";
+  }
+  if (info.isSymbolicLink()) return "unknown";
+  if (info.isFile()) return basename(path) === "Package.swift" ? "local-package" : "harmless";
+  if (!info.isDirectory()) return "unknown";
+  if (path.endsWith(".xcworkspace")) return "harmless";
+
+  const manifestPath = join(path, "Package.swift");
+  if (!(await pathIsSafelyWithinIOSRoot(root, manifestPath))) return "unknown";
+  try {
+    const manifest = await lstat(manifestPath);
+    if (manifest.isSymbolicLink()) return "unknown";
+    return manifest.isFile() ? "local-package" : "unknown";
+  } catch (error) {
+    if (error instanceof Error && "code" in error && error.code === "ENOENT") return "harmless";
+    return "unknown";
+  }
+}
+
+async function inspectWorkspacePackageReferences(
+  root: string,
+  workspacePath: string,
+): Promise<WorkspacePackageReferences> {
+  const contentsPath = join(workspacePath, "contents.xcworkspacedata");
+  if (!(await pathIsSafelyWithinIOSRoot(root, contentsPath))) {
+    return { complete: false, hasLocalPackage: false };
+  }
+
+  let source: string;
+  try {
+    const info = await lstat(contentsPath);
+    if (!info.isFile() || info.isSymbolicLink() || info.size > MAX_WORKSPACE_BYTES) {
+      return { complete: false, hasLocalPackage: false };
+    }
+    source = maskXMLComments(await readFile(contentsPath, "utf8"));
+  } catch {
+    return { complete: false, hasLocalPackage: false };
+  }
+
+  const workspaceDirectory = dirname(workspacePath);
+  const groupBases = [workspaceDirectory];
+  let complete = true;
+  let hasLocalPackage = false;
+  let workspaceOpen = false;
+  const elementPattern = /<(\/)?(Workspace|Group|FileRef)\b([^>]*)>/g;
+  for (const match of source.matchAll(elementPattern)) {
+    const closing = match[1] === "/";
+    const tag = match[2];
+    const attributes = match[3] ?? "";
+    const selfClosing = attributes.trimEnd().endsWith("/");
+    if (tag === "Workspace") {
+      workspaceOpen = !closing && !selfClosing;
+      continue;
+    }
+    if (!workspaceOpen) {
+      complete = false;
+      continue;
+    }
+    if (tag === "Group") {
+      if (closing) {
+        if (groupBases.length > 1) groupBases.pop();
+        else complete = false;
+      } else {
+        const location = parseXMLAttribute(attributes, "location") ?? "group:";
+        groupBases.push(
+          resolveWorkspaceReference(
+            groupBases.at(-1) ?? workspaceDirectory,
+            location,
+            workspaceDirectory,
+          ),
+        );
+        if (selfClosing) groupBases.pop();
+      }
+      continue;
+    }
+    if (closing) continue;
+    const location = parseXMLAttribute(attributes, "location");
+    if (!location) {
+      complete = false;
+      continue;
+    }
+    const referencePath = resolveWorkspaceReference(
+      groupBases.at(-1) ?? workspaceDirectory,
+      location,
+      workspaceDirectory,
+    );
+    const state = await classifyWorkspaceNonProjectReference(root, referencePath);
+    if (state === "local-package") hasLocalPackage = true;
+    if (state === "unknown") complete = false;
+  }
+  return { complete: complete && !workspaceOpen && groupBases.length === 1, hasLocalPackage };
+}
+
+async function containerPackageGraph(
   inspection: IOSProjectInspectionResult,
   container: SelectedContainer,
   target: IOSAppTarget,
-): boolean {
-  const projects = new Set(containerProjectPaths(container, target));
-  return inspection.projects.some(
-    (project) =>
-      projects.has(project.path) &&
-      project.packages.some((reference) => reference.kind === "remote"),
-  );
+): Promise<ContainerPackageGraph> {
+  let complete = true;
+  let hasLocalPackage = false;
+  const projectPaths = new Set([target.projectPath]);
+  if (container.kind === "workspace") {
+    const [workspace, packageReferences] = await Promise.all([
+      inspectWorkspace(inspection.root, container.absolutePath),
+      inspectWorkspacePackageReferences(inspection.root, container.absolutePath),
+    ]);
+    complete = workspace.complete && packageReferences.complete;
+    hasLocalPackage = packageReferences.hasLocalPackage;
+    for (const projectPath of workspace.inspection.projectPaths) projectPaths.add(projectPath);
+  }
+
+  const inspectedProjects = new Map(inspection.projects.map((project) => [project.path, project]));
+  for (const projectPath of projectPaths) {
+    const project = inspectedProjects.get(projectPath);
+    if (!project) {
+      complete = false;
+      continue;
+    }
+    for (const reference of project.packages) {
+      if (reference.kind === "remote") return "direct-remote";
+      hasLocalPackage = true;
+    }
+  }
+  return hasLocalPackage || !complete ? "local-unknown" : "none";
 }
 
 function packageResolvedPath(container: SelectedContainer): string {
@@ -1168,7 +1309,7 @@ export async function runIOSXcodeVerification(
   if (!containerResolution.container) return [containerResolution.result!];
   const container = containerResolution.container;
   const results: CheckResult[] = [pass("Xcode container", `Using ${container.relativePath}`)];
-  const hasRemotePackages = containerHasRemotePackages(inspection, container, target);
+  const packageGraph = await containerPackageGraph(inspection, container, target);
   const resolvedPath = packageResolvedPath(container);
   const initialLockRead = await readSafePackageResolvedSnapshot(
     inspection.root,
@@ -1198,11 +1339,16 @@ export async function runIOSXcodeVerification(
     );
     return results;
   }
-  if (!options.resolvePackages && hasRemotePackages && lockSnapshot.status === "missing") {
+  let usesResolvedPackageLock =
+    packageGraph === "direct-remote" ||
+    (packageGraph === "local-unknown" && lockSnapshot.status === "valid");
+  if (!options.resolvePackages && packageGraph !== "none" && lockSnapshot.status === "missing") {
     results.push(
       fail(
         "Swift packages",
-        "Remote Swift packages are not recorded in a shared Package.resolved",
+        packageGraph === "direct-remote"
+          ? "Remote Swift packages are not recorded in a shared Package.resolved"
+          : "Swift package dependencies could not be proven local-only, and no shared Package.resolved was found",
         "Rerun with --resolve-packages --build after reviewing the package requirements.",
       ),
     );
@@ -1314,7 +1460,7 @@ export async function runIOSXcodeVerification(
         return results;
       }
       lockSnapshot = resolvedLockRead.snapshot;
-      if (hasRemotePackages && lockSnapshot.status !== "valid") {
+      if (packageGraph === "direct-remote" && lockSnapshot.status !== "valid") {
         results.push(
           fail(
             "Swift packages",
@@ -1324,6 +1470,7 @@ export async function runIOSXcodeVerification(
         );
         return results;
       }
+      usesResolvedPackageLock = lockSnapshot.status === "valid";
       const change = packageSnapshotChange(before, lockSnapshot);
       if (change === "invalid" || change === "removed") {
         results.push(
@@ -1336,13 +1483,18 @@ export async function runIOSXcodeVerification(
         return results;
       }
       results.push(
-        pass(
-          "Swift packages",
-          `Package resolution completed; Package.resolved ${change}`,
-          relativeIOSPath(inspection.root, resolvedPath),
-        ),
+        lockSnapshot.status === "missing"
+          ? pass(
+              "Swift packages",
+              "Package resolution completed; no remote package lock was produced",
+            )
+          : pass(
+              "Swift packages",
+              `Package resolution completed; Package.resolved ${change}`,
+              relativeIOSPath(inspection.root, resolvedPath),
+            ),
       );
-    } else if (hasRemotePackages && lockSnapshot.status !== "valid") {
+    } else if (usesResolvedPackageLock && lockSnapshot.status !== "valid") {
       results.push(
         fail(
           "Swift packages",
@@ -1353,15 +1505,19 @@ export async function runIOSXcodeVerification(
         ),
       );
       return results;
-    } else if (!hasRemotePackages) {
+    } else if (packageGraph === "none") {
       results.push(pass("Swift packages", "No remote Swift package lock is required"));
     }
 
     const buildRequested = options.build === true || options.simulator === true;
     if (!buildRequested) return results;
 
-    const safetyArgs = packageSafetyArgs(sourcePackagesPath, packageCachePath, hasRemotePackages);
-    if (!options.resolvePackages && hasRemotePackages) {
+    const safetyArgs = packageSafetyArgs(
+      sourcePackagesPath,
+      packageCachePath,
+      usesResolvedPackageLock,
+    );
+    if (!options.resolvePackages && usesResolvedPackageLock) {
       const beforeHydrationRead = await readSafePackageResolvedSnapshot(
         inspection.root,
         container.absolutePath,
