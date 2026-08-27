@@ -15,7 +15,8 @@ const CLERK_CONFIGURE_CALL = /\bClerk\s*\.\s*configure\s*\(/;
 const CLERK_URL_HANDLER = /\b(?:Clerk\s*\.\s*shared|clerk)\s*\.\s*handle\s*\(/;
 const CLERK_NATIVE_AUTH_FLOW =
   /\b(?:Clerk\s*\.\s*shared|clerk)\s*\.\s*auth\s*\.\s*(?:signIn(?:With(?:Password|EmailCode|EmailLink|PhoneCode|OAuth|IdToken|Apple|Passkey|EnterpriseSSO|Ticket))?|signUp(?:With(?:OAuth|Apple|IdToken|EnterpriseSSO|Ticket))?|startHostedAuth)\s*\(/;
-const CLERK_MAGIC_LINK_AUTH_FLOW = /\.\s*sendEmailLink\s*\(/;
+const CLERK_MAGIC_LINK_AUTH_FLOW =
+  /(?:\b(?:Clerk\s*\.\s*shared|clerk)\s*\.\s*auth\s*\.\s*signInWithEmailLink|\.\s*sendEmailLink)\s*\(/;
 const CLERK_ENVIRONMENT_INJECTION =
   /\.\s*environment\s*\(\s*(?:\\?\.\s*self\s*,\s*)?Clerk\s*\.\s*shared\s*\)/;
 const CLERK_ENVIRONMENT_CONSUMER = /@Environment\s*\(\s*Clerk\s*\.\s*self\s*\)/;

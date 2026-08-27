@@ -799,6 +799,25 @@ Clerk.configure(publishableKey: key)`,
     expect(inspection.status).toBe("complete");
   });
 
+  test("recognizes the Auth email-link convenience API as a custom magic-link flow", async () => {
+    const root = await mkdtemp(join(tmpdir(), "clerk-ios-swift-magic-link-"));
+    temporaryDirectories.push(root);
+    const path = join(root, "MagicLink.swift");
+    await Bun.write(
+      path,
+      `import ClerkKit
+       func beginMagicLink() async throws {
+         try await Clerk.shared.auth.signInWithEmailLink(emailAddress: "person@example.com")
+       }`,
+    );
+
+    const inspection = await inspectSwiftSources([
+      { absolutePath: path, relativePath: "MagicLink.swift" },
+    ]);
+
+    expect(inspection.magicLinkAuthReferences).toEqual([{ path: "MagicLink.swift" }]);
+  });
+
   test("does not prove an ambiguous, unsupported, or sanitized-decoy app root", async () => {
     const root = await mkdtemp(join(tmpdir(), "clerk-ios-swift-root-"));
     temporaryDirectories.push(root);
