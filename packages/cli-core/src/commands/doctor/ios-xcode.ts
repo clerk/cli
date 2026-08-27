@@ -3,7 +3,11 @@ import { tmpdir } from "node:os";
 import { basename, extname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { errorMessage } from "../../lib/errors.ts";
 import { isRecord } from "../../lib/objects.ts";
-import { pathIsSafelyWithinIOSRoot, relativeIOSPath } from "../init/ios/discovery.ts";
+import {
+  maskXMLComments,
+  pathIsSafelyWithinIOSRoot,
+  relativeIOSPath,
+} from "../init/ios/discovery.ts";
 import type {
   IOSAppTarget,
   IOSProjectInspectionResult,
@@ -807,7 +811,7 @@ async function sharedSchemesReferencingTarget(
       if (!info.isFile() || info.isSymbolicLink() || info.size > MAX_SCHEME_BYTES) continue;
       let xml: string;
       try {
-        xml = await readFile(path, "utf8");
+        xml = maskXMLComments(await readFile(path, "utf8"));
       } catch {
         continue;
       }

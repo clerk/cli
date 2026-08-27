@@ -3,7 +3,7 @@ import { mkdir, mkdtemp, rm, symlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { inspectIOSProject } from "../init/ios/inspect.ts";
-import { createIOSFixture } from "../init/ios/test-helpers.ts";
+import { createIOSFixture, IOS_FIXTURE_IDS } from "../init/ios/test-helpers.ts";
 import {
   createIOSXcodeChildEnvironment,
   runIOSXcodeCommand,
@@ -87,6 +87,12 @@ async function writeWorkspacePackageResolved(workspaceName = "MyApp"): Promise<s
   await mkdir(join(path, ".."), { recursive: true });
   await Bun.write(path, packageResolvedContents());
   return path;
+}
+
+async function writeSharedScheme(name: string, xml: string): Promise<void> {
+  const directory = join(root, "MyApp.xcodeproj", "xcshareddata", "xcschemes");
+  await mkdir(directory, { recursive: true });
+  await Bun.write(join(directory, `${name}.xcscheme`), xml);
 }
 
 function buildSettingsOutput(
@@ -572,6 +578,50 @@ describe("runIOSXcodeVerification", () => {
 
     expect(results.at(-1)).toMatchObject({ name: "Xcode scheme", status: "fail" });
     expect(results.at(-1)?.remedy).toContain("--scheme");
+    expect(invocations.some((invocation) => invocation.argv.includes("-showBuildSettings"))).toBe(
+      false,
+    );
+  });
+
+  test("ignores a BuildableReference inside an XML comment", async () => {
+    await createIOSFixture(root);
+    await writeProjectPackageResolved();
+    await writeSharedScheme(
+      "Alpha",
+      `<Scheme><BuildAction><!-- <BuildableReference BlueprintIdentifier="${IOS_FIXTURE_IDS.appTarget}" ReferencedContainer="container:MyApp.xcodeproj" /> --></BuildAction></Scheme>`,
+    );
+    const inspection = await inspectIOSProject(root, { target: "MyApp" });
+    const invocations: Invocation[] = [];
+
+    const results = await runIOSXcodeVerification(
+      inspection,
+      { build: true },
+      dependencies(successfulXcodeRunner(invocations, { schemes: ["Alpha", "Beta"] })),
+    );
+
+    expect(results.at(-1)).toMatchObject({ name: "Xcode scheme", status: "fail" });
+    expect(invocations.some((invocation) => invocation.argv.includes("-showBuildSettings"))).toBe(
+      false,
+    );
+  });
+
+  test("does not synthesize a BuildableReference across an XML comment", async () => {
+    await createIOSFixture(root);
+    await writeProjectPackageResolved();
+    await writeSharedScheme(
+      "Alpha",
+      `<Scheme><BuildAction><Buildable<!-- -->Reference BlueprintIdentifier="${IOS_FIXTURE_IDS.appTarget}" ReferencedContainer="container:MyApp.xcodeproj" /></BuildAction></Scheme>`,
+    );
+    const inspection = await inspectIOSProject(root, { target: "MyApp" });
+    const invocations: Invocation[] = [];
+
+    const results = await runIOSXcodeVerification(
+      inspection,
+      { build: true },
+      dependencies(successfulXcodeRunner(invocations, { schemes: ["Alpha", "Beta"] })),
+    );
+
+    expect(results.at(-1)).toMatchObject({ name: "Xcode scheme", status: "fail" });
     expect(invocations.some((invocation) => invocation.argv.includes("-showBuildSettings"))).toBe(
       false,
     );

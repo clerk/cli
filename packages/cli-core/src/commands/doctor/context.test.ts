@@ -38,7 +38,7 @@ mock.module("../../lib/bapi.ts", () => ({
 }));
 
 // stubFetch instead of mock.module for plapi — mock.module leaks globally in Bun
-let mockAppResponse: Application | null = null;
+let mockAppResponse: Application | Application[] | null = null;
 let mockAppError: Error | null = null;
 const mockFetch = mock();
 
@@ -92,6 +92,37 @@ describe("createDoctorContext", () => {
       expect(p1).toBe(p2);
       expect(await p1).toBe("test_token");
       expect(mockGetToken).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe("verifyPlatformAPIKey", () => {
+    test("performs one memoized read-only application-list request, including for an empty list", async () => {
+      mockAppResponse = [];
+
+      const ctx = createDoctorContext();
+      const p1 = ctx.verifyPlatformAPIKey();
+      const p2 = ctx.verifyPlatformAPIKey();
+
+      expect(p1).toBe(p2);
+      await expect(p1).resolves.toBeUndefined();
+      expect(mockFetch).toHaveBeenCalledTimes(1);
+      expect(String(mockFetch.mock.calls[0]?.[0])).toBe(
+        "https://api.clerk.com/v1/platform/applications",
+      );
+      expect(mockFetch.mock.calls[0]?.[1]).toMatchObject({ method: "GET" });
+    });
+
+    test("memoizes a failed verification request", async () => {
+      mockAppError = new TypeError("fetch failed");
+
+      const ctx = createDoctorContext();
+      const p1 = ctx.verifyPlatformAPIKey();
+      const p2 = ctx.verifyPlatformAPIKey();
+
+      expect(p1).toBe(p2);
+      await expect(p1).rejects.toThrow("fetch failed");
+      await expect(p2).rejects.toThrow("fetch failed");
+      expect(mockFetch).toHaveBeenCalledTimes(1);
     });
   });
 
