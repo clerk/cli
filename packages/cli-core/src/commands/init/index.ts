@@ -2,7 +2,7 @@ import { createOption } from "@commander-js/extra-typings";
 import type { Program } from "../../cli-program.ts";
 import { login } from "../auth/login.js";
 import { link } from "../link/index.js";
-import { pull, resolveEnvironmentKeys } from "../env/pull.js";
+import { pull } from "../env/pull.js";
 import { isAgent } from "../../mode.js";
 import { dim, bold } from "../../lib/color.js";
 import {
@@ -73,6 +73,7 @@ import { planIOSRuntimeKey } from "./ios/runtime-key.ts";
 import { planIOSAssociatedDomain } from "./ios/associated-domain.ts";
 import { planIOSAppleEntitlement } from "./ios/apple-entitlement.ts";
 import { planIOSPrebuiltAuth } from "./ios/prebuilt-auth.ts";
+import { resolveIOSDevelopmentPublicKey } from "./ios/development-key.ts";
 import { createIOSDryRunOutput, formatIOSSetupPlan } from "./ios/output.ts";
 import {
   applyIOSLocalSetup,
@@ -483,15 +484,9 @@ export async function init(options: InitOptions = {}) {
     }
     setTelemetryStage("keys");
     const keys = await withSpinner("Fetching the development publishable key...", async () =>
-      resolveEnvironmentKeys({ app: authenticatedAppId, cwd: ctx.cwd }),
+      resolveIOSDevelopmentPublicKey(authenticatedAppId),
     );
-    if (keys.instanceLabel !== "development") {
-      throw new CliError(
-        "Automatic iOS configuration is limited to the linked development instance. No local setup changes were written.",
-        { code: ERROR_CODE.INVALID_ENVIRONMENT },
-      );
-    }
-    if (keys.appId !== authenticatedAppId) {
+    if (keys.applicationId !== authenticatedAppId) {
       throw new CliError(
         "The linked Clerk application changed while its iOS publishable key was being resolved. No local setup changes were written; rerun clerk init.",
         { code: ERROR_CODE.IOS_SETUP_STALE },
@@ -539,7 +534,7 @@ export async function init(options: InitOptions = {}) {
     }
     setTelemetryStage("ios_native_plan");
     const nativeRemotePlan = await prepareIOSNativeRemoteSetup({
-      applicationId: keys.appId,
+      applicationId: keys.applicationId,
       instanceId: keys.instanceId,
       target: iosLocalSetup.nativeReadiness.target,
       appIdPrefix: options.appIdPrefix,
@@ -567,7 +562,7 @@ export async function init(options: InitOptions = {}) {
       }
       setTelemetryStage("ios_apple_plan");
       const preparedApple = await prepareIOSNativeAppleConnection({
-        applicationId: keys.appId,
+        applicationId: keys.applicationId,
         instanceId: keys.instanceId,
         bundleIdentifier: target.bundleIdentifier.value,
         nativeApplicationReady:

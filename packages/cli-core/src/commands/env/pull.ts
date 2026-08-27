@@ -1,9 +1,5 @@
 import { resolve, join, basename } from "node:path";
-import {
-  resolveAppContext,
-  resolveFetchedApplicationInstance,
-  type AppContextOptions,
-} from "../../lib/config.ts";
+import { resolveAppContext, type AppContextOptions } from "../../lib/config.ts";
 import { fetchApplication } from "../../lib/plapi.ts";
 import { parseEnvFile, mergeEnvVars, serializeEnvFile } from "../../lib/dotenv.ts";
 import {
@@ -28,27 +24,6 @@ const DEV_LOCAL_ENV_FILE = ".env.development.local";
 interface EnvPullOptions extends AppContextOptions {
   file?: string;
 }
-
-export interface ResolveEnvironmentKeysOptions {
-  /** Directory whose linked Clerk profile should be resolved. */
-  cwd?: string;
-  /** Application ID to resolve directly without consulting a linked profile. */
-  app?: string;
-  /** Instance alias or ID. Defaults to the linked development instance. */
-  instance?: string;
-  /** Request the instance secret key as well as its publishable key. */
-  includeSecretKey?: boolean;
-}
-
-export interface ResolvedEnvironmentKeys {
-  appId: string;
-  instanceId: string;
-  instanceLabel: string;
-  publishableKey: string;
-  secretKey?: string;
-}
-
-type ResolvedAppContext = Awaited<ReturnType<typeof resolveAppContext>>;
 
 /** Check whether a file contains Clerk keys (for backwards compat detection). */
 async function hasClerkKeys(path: string): Promise<boolean> {
@@ -80,72 +55,6 @@ async function resolveTargetFile(
   return fallback;
 }
 
-/**
- * Resolve an application's selected instance keys without writing them or
- * logging their values. With no explicit instance, linked profiles resolve to
- * their development instance. Secret keys are neither requested nor returned
- * unless the caller opts in.
- *
- * An explicit application is always resolved through a public-only request.
- * This path never consults the current directory's linked profile and ignores
- * `includeSecretKey`, so callers can safely resolve client-side credentials.
- *
- * `resolvedContext` lets command orchestrators that already resolved the
- * instance reuse that result without repeating profile or application lookup.
- */
-export async function resolveEnvironmentKeys(
-  options: ResolveEnvironmentKeysOptions,
-  resolvedContext?: ResolvedAppContext,
-): Promise<ResolvedEnvironmentKeys> {
-  if (options.app) {
-    const app = await withApiContext(
-      fetchApplication(options.app, { includeSecretKeys: false }),
-      "Failed to fetch API keys",
-    );
-    const resolved = resolveFetchedApplicationInstance(options.app, app, options.instance);
-    if (!resolved.found) {
-      throw new CliError(
-        `Instance ${resolved.instanceId} not found in application ${options.app}.`,
-        {
-          code: ERROR_CODE.INSTANCE_NOT_FOUND,
-          docsUrl: "https://clerk.com/docs/guides/development/managing-environments",
-        },
-      );
-    }
-
-    return {
-      appId: options.app,
-      instanceId: resolved.instanceId,
-      instanceLabel: resolved.instanceLabel,
-      publishableKey: resolved.instance.publishable_key,
-    };
-  }
-
-  const cwd = options.cwd ?? process.cwd();
-  const ctx = resolvedContext ?? (await resolveAppContext({ instance: options.instance, cwd }));
-  const app = await withApiContext(
-    fetchApplication(ctx.appId, { includeSecretKeys: options.includeSecretKey === true }),
-    "Failed to fetch API keys",
-  );
-
-  const matched = app.instances.find((instance) => instance.instance_id === ctx.instanceId);
-  if (!matched) {
-    throw new CliError(`Instance ${ctx.instanceId} not found in application response.`, {
-      code: ERROR_CODE.INSTANCE_NOT_FOUND,
-      docsUrl: "https://clerk.com/docs/guides/development/managing-environments",
-    });
-  }
-
-  return {
-    appId: ctx.appId,
-    instanceId: matched.instance_id,
-    instanceLabel: ctx.instanceLabel,
-    publishableKey: matched.publishable_key,
-    ...(options.includeSecretKey === true &&
-      matched.secret_key && { secretKey: matched.secret_key }),
-  };
-}
-
 export async function pull(options: EnvPullOptions): Promise<void> {
   await withGutter("Pulling environment variables", async () => {
     const cwd = options.cwd ?? process.cwd();
@@ -159,30 +68,36 @@ export async function pull(options: EnvPullOptions): Promise<void> {
       return;
     }
 
-    const [ctx, preferredEnvFile, framework] = await Promise.all([
+    const [ctx, preferredEnvFile] = await Promise.all([
       resolveAppContext({ ...options, cwd }),
       detectEnvFile(cwd),
-      detectFramework(cwd),
     ]);
     const targetFile = await resolveTargetFile(cwd, options.file, preferredEnvFile);
     const displayPath = options.file ?? basename(targetFile);
-    // Native platforms configure Clerk with only the publishable key. Avoid
-    // requesting a secret key that they cannot use; npm/server projects retain
-    // the existing key-pair behavior.
-    const includeSecretKey = isNpmFramework(framework ?? {});
 
     await withSpinner(`Pulling env vars from ${ctx.instanceLabel} instance...`, async () => {
-      const keys = await resolveEnvironmentKeys(
-        { cwd, instance: options.instance, includeSecretKey },
-        ctx,
-      );
+      const app = await withApiContext(fetchApplication(ctx.appId), "Failed to fetch API keys");
+
+      const matched = app.instances.find((i) => i.instance_id === ctx.instanceId);
+      if (!matched) {
+        throw new CliError(`Instance ${ctx.instanceId} not found in application response.`, {
+          code: ERROR_CODE.INSTANCE_NOT_FOUND,
+          docsUrl: "https://clerk.com/docs/guides/development/managing-environments",
+        });
+      }
 
       const publishableKeyName = await detectPublishableKeyName(cwd);
       const secretKeyName = await detectSecretKeyName(cwd);
+      // Native platforms (iOS/Android) configure Clerk with only the publishable
+      // key in client source; a secret key has no use there and their default
+      // .gitignore templates don't cover .env, so skip writing it entirely
+      // rather than leaving a live credential in a tracked file.
+      const framework = await detectFramework(cwd);
+      const includeSecretKey = isNpmFramework(framework ?? {});
 
       await mergeKeysIntoEnvFile(targetFile, {
-        [publishableKeyName]: keys.publishableKey,
-        ...(keys.secretKey && { [secretKeyName]: keys.secretKey }),
+        [publishableKeyName]: matched.publishable_key,
+        ...(matched.secret_key && includeSecretKey && { [secretKeyName]: matched.secret_key }),
       });
     });
 

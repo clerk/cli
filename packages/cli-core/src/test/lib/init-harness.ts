@@ -32,6 +32,7 @@ export * as keylessTargetMod from "../../lib/keyless-target.ts";
 export * as iosApplyMod from "../../commands/init/ios/apply.ts";
 export * as nativeRemoteMod from "../../commands/init/ios/native-remote.ts";
 export * as nativeAppleMod from "../../commands/init/ios/native-apple.ts";
+export * as iosDevelopmentKeyMod from "../../commands/init/ios/development-key.ts";
 export * as plapiMod from "../../lib/plapi.ts";
 export * as fapiMod from "../../lib/fapi.ts";
 
@@ -53,6 +54,7 @@ import * as keylessModule from "../../lib/keyless.ts";
 import * as iosApplyModule from "../../commands/init/ios/apply.ts";
 import * as nativeRemoteModule from "../../commands/init/ios/native-remote.ts";
 import * as nativeAppleModule from "../../commands/init/ios/native-apple.ts";
+import * as iosDevelopmentKeyModule from "../../commands/init/ios/development-key.ts";
 import * as plapiModule from "../../lib/plapi.ts";
 import * as fapiModule from "../../lib/fapi.ts";
 import {
@@ -202,10 +204,9 @@ export function useInitHarness(): InitHarness {
       spyOn(loginModule, "login").mockResolvedValue(undefined as never),
       spyOn(linkModule, "link").mockResolvedValue(undefined),
       spyOn(pullModule, "pull").mockResolvedValue(undefined),
-      spyOn(pullModule, "resolveEnvironmentKeys").mockResolvedValue({
-        appId: "app_test",
+      spyOn(iosDevelopmentKeyModule, "resolveIOSDevelopmentPublicKey").mockResolvedValue({
+        applicationId: "app_test",
         instanceId: "ins_test",
-        instanceLabel: "development",
         publishableKey: "pk_test_redacted",
       }),
       spyOn(fapiModule, "fetchUserSettings").mockResolvedValue({ social: {} } as never),

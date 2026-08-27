@@ -9,7 +9,6 @@ import {
   stubFetch,
   useCaptureLog,
 } from "../../test/lib/stubs.ts";
-import { resolveFetchedApplicationInstance } from "../../lib/config-instance.ts";
 
 mock.module("../../lib/credential-store.ts", () => credentialStoreStubs);
 mock.module("../../lib/git.ts", () => gitStubs);
@@ -30,7 +29,6 @@ mock.module("../../lib/spinner.ts", () => ({
 
 type Profile = { workspaceId: string; appId: string; instances: Record<string, string> };
 const _profiles: Record<string, Profile> = {};
-let _resolveAppContextCalls = 0;
 const INSTANCE_ALIASES: Record<string, string> = {
   dev: "development",
   development: "development",
@@ -56,9 +54,7 @@ mock.module("../../lib/config.ts", () => ({
     if (!id) throw new Error(`No ${env} instance configured. Run \`clerk link\` to set one up.`);
     return { id, label: env };
   },
-  resolveFetchedApplicationInstance,
   resolveAppContext: async (options: { app?: string; instance?: string; cwd?: string }) => {
-    _resolveAppContextCalls++;
     if (options.app) {
       const app = {
         application_id: "app_1",
@@ -158,7 +154,6 @@ describe("env pull", () => {
 
   beforeEach(async () => {
     Object.keys(_profiles).forEach((k) => delete _profiles[k]);
-    _resolveAppContextCalls = 0;
     tempDir = await mkdtemp(join(tmpdir(), "clerk-env-pull-test-"));
     _setConfigDir(tempDir);
     process.env.CLERK_PLATFORM_API_KEY = "test_key";
@@ -198,160 +193,6 @@ describe("env pull", () => {
     const { pull } = await import("./pull.ts");
     return pull(options);
   }
-
-  async function resolveKeys(
-    options: {
-      app?: string;
-      instance?: string;
-      cwd?: string;
-      includeSecretKey?: boolean;
-    } = {},
-  ) {
-    const { resolveEnvironmentKeys } = await import("./pull.ts");
-    return resolveEnvironmentKeys(options);
-  }
-
-  test("resolves the linked development publishable key in memory without requesting secrets", async () => {
-    await setProfile(tempDir, {
-      workspaceId: "org_1",
-      appId: "app_1",
-      instances: { development: "ins_dev", production: "ins_prod" },
-    });
-    let requestedUrl = "";
-    stubFetch(async (input) => {
-      requestedUrl = input.toString();
-      return new Response(JSON.stringify(mockApplication), { status: 200 });
-    });
-
-    const keys = await resolveKeys({ cwd: tempDir });
-
-    expect(keys).toEqual({
-      appId: "app_1",
-      instanceId: "ins_dev",
-      instanceLabel: "development",
-      publishableKey: "pk_test_abc123",
-    });
-    expect(new URL(requestedUrl).searchParams.has("include_secret_keys")).toBe(false);
-    expect(await Bun.file(join(tempDir, ".env")).exists()).toBe(false);
-    expect(await Bun.file(join(tempDir, ".env.local")).exists()).toBe(false);
-    expect(captured.out).not.toContain("pk_test_abc123");
-    expect(captured.err).not.toContain("pk_test_abc123");
-    expect(captured.out).not.toContain("sk_test_xyz789");
-    expect(captured.err).not.toContain("sk_test_xyz789");
-  });
-
-  test("returns a secret key only when explicitly requested", async () => {
-    await setProfile(tempDir, {
-      workspaceId: "org_1",
-      appId: "app_1",
-      instances: { development: "ins_dev" },
-    });
-    let requestedUrl = "";
-    stubFetch(async (input) => {
-      requestedUrl = input.toString();
-      return new Response(JSON.stringify(mockApplication), { status: 200 });
-    });
-
-    const keys = await resolveKeys({ cwd: tempDir, includeSecretKey: true });
-
-    expect(keys.secretKey).toBe("sk_test_xyz789");
-    expect(new URL(requestedUrl).searchParams.get("include_secret_keys")).toBe("true");
-    expect(await Bun.file(join(tempDir, ".env.local")).exists()).toBe(false);
-  });
-
-  test("resolves an explicit app's development key with one public-only request and no profile lookup", async () => {
-    const exactApp = {
-      application_id: "app_exact",
-      instances: [mockApplication.instances[1], mockApplication.instances[0]],
-    };
-    const requestedUrls: string[] = [];
-    stubFetch(async (input) => {
-      requestedUrls.push(input.toString());
-      return new Response(JSON.stringify(exactApp), { status: 200 });
-    });
-
-    const keys = await resolveKeys({
-      app: "app_exact",
-      cwd: join(tempDir, "unlinked"),
-      includeSecretKey: true,
-    });
-
-    expect(keys).toEqual({
-      appId: "app_exact",
-      instanceId: "ins_dev",
-      instanceLabel: "development",
-      publishableKey: "pk_test_abc123",
-    });
-    expect(requestedUrls).toHaveLength(1);
-    const requestedUrl = new URL(requestedUrls[0]!);
-    expect(requestedUrl.pathname).toEndWith("/v1/platform/applications/app_exact");
-    expect(requestedUrl.searchParams.has("include_secret_keys")).toBe(false);
-    expect(_resolveAppContextCalls).toBe(0);
-    expect(keys).not.toHaveProperty("secretKey");
-    expect(await Bun.file(join(tempDir, ".env")).exists()).toBe(false);
-    expect(await Bun.file(join(tempDir, ".env.local")).exists()).toBe(false);
-    expect(captured.out).not.toContain("pk_test_abc123");
-    expect(captured.err).not.toContain("pk_test_abc123");
-    expect(captured.out).not.toContain("sk_test_xyz789");
-    expect(captured.err).not.toContain("sk_test_xyz789");
-  });
-
-  test("uses canonical instance selection for an explicit app", async () => {
-    let requestCount = 0;
-    stubFetch(async () => {
-      requestCount++;
-      return new Response(JSON.stringify(mockApplication), { status: 200 });
-    });
-
-    const keys = await resolveKeys({ app: "app_1", instance: "prod" });
-
-    expect(keys).toEqual({
-      appId: "app_1",
-      instanceId: "ins_prod",
-      instanceLabel: "production",
-      publishableKey: "pk_live_abc123",
-    });
-    expect(requestCount).toBe(1);
-    expect(_resolveAppContextCalls).toBe(0);
-  });
-
-  test("propagates an inaccessible explicit-app fetch without logging credentials", async () => {
-    const publishableKey = "pk_test_must_not_be_logged";
-    const secretKey = "sk_test_must_not_be_logged";
-    let requestCount = 0;
-    stubFetch(async () => {
-      requestCount++;
-      return new Response(
-        JSON.stringify({
-          errors: [
-            {
-              code: "resource_not_found",
-              message: "Application is inaccessible",
-              meta: { publishableKey, secretKey },
-            },
-          ],
-        }),
-        { status: 404 },
-      );
-    });
-
-    let thrown: unknown;
-    try {
-      await resolveKeys({ app: "app_inaccessible" });
-    } catch (error) {
-      thrown = error;
-    }
-
-    const { PlapiError } = await import("../../lib/errors.ts");
-    expect(thrown).toBeInstanceOf(PlapiError);
-    expect((thrown as { context?: string }).context).toBe("Failed to fetch API keys");
-    expect(requestCount).toBe(1);
-    expect(_resolveAppContextCalls).toBe(0);
-    expect(captured.out).not.toContain(publishableKey);
-    expect(captured.err).not.toContain(publishableKey);
-    expect(captured.out).not.toContain(secretKey);
-    expect(captured.err).not.toContain(secretKey);
-  });
 
   test("errors when no profile is linked", async () => {
     await expect(runEnvPull()).rejects.toThrow("No Clerk project linked");
@@ -829,18 +670,12 @@ describe("env pull", () => {
     // Replace beforeEach's Express package.json with a native Xcode project marker.
     await rm(join(tempDir, "package.json"), { force: true });
     await mkdir(join(tempDir, "MyApp.xcodeproj"), { recursive: true });
-    let requestedUrl = "";
-    stubFetch(async (input) => {
-      requestedUrl = input.toString();
-      return new Response(JSON.stringify(mockApplication), { status: 200 });
-    });
 
     await runEnvPull();
 
     const content = await Bun.file(join(tempDir, ".env")).text();
     expect(content).toContain("CLERK_PUBLISHABLE_KEY=pk_test_abc123");
     expect(content).not.toContain("CLERK_SECRET_KEY");
-    expect(new URL(requestedUrl).searchParams.has("include_secret_keys")).toBe(false);
   });
 
   describe("keyless", () => {

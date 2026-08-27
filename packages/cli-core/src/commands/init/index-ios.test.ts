@@ -19,6 +19,7 @@ import {
   iosApplyMod,
   nativeRemoteMod,
   nativeAppleMod,
+  iosDevelopmentKeyMod,
   plapiMod,
   fapiMod,
   FAKE_IOS_NATIVE_READINESS,
@@ -275,7 +276,7 @@ describe("init iOS", () => {
     );
 
     expect(linkMod.link).not.toHaveBeenCalled();
-    expect(pullMod.resolveEnvironmentKeys).not.toHaveBeenCalled();
+    expect(iosDevelopmentKeyMod.resolveIOSDevelopmentPublicKey).not.toHaveBeenCalled();
     expect(nativeRemoteMod.prepareIOSNativeRemoteSetup).not.toHaveBeenCalled();
     expect(iosApplyMod.applyIOSPlannedLocalSetup).not.toHaveBeenCalled();
   });
@@ -339,10 +340,9 @@ describe("init iOS", () => {
         },
       }),
     );
-    spyOn(pullMod, "resolveEnvironmentKeys").mockResolvedValue({
-      appId: "app_existing",
+    spyOn(iosDevelopmentKeyMod, "resolveIOSDevelopmentPublicKey").mockResolvedValue({
+      applicationId: "app_existing",
       instanceId: "ins_existing",
-      instanceLabel: "development",
       publishableKey: VALID_DEVELOPMENT_KEY,
     });
     spyOn(nativeRemoteMod, "prepareIOSNativeRemoteSetup").mockResolvedValue(
@@ -396,7 +396,7 @@ describe("init iOS", () => {
       createIfMissing: undefined,
       skipAutolink: true,
     });
-    expect(pullMod.resolveEnvironmentKeys).not.toHaveBeenCalled();
+    expect(iosDevelopmentKeyMod.resolveIOSDevelopmentPublicKey).not.toHaveBeenCalled();
   });
 
   test("rejects --allow-dirty with --dry-run before project work", async () => {
@@ -524,7 +524,7 @@ describe("init iOS", () => {
     });
     expect(heuristics.installSdk).not.toHaveBeenCalled();
     expect(pullMod.pull).not.toHaveBeenCalled();
-    expect(pullMod.resolveEnvironmentKeys).not.toHaveBeenCalled();
+    expect(iosDevelopmentKeyMod.resolveIOSDevelopmentPublicKey).not.toHaveBeenCalled();
   });
 
   test("forwards only an explicit prebuilt AuthView opt-in to iOS preflight", async () => {
@@ -579,10 +579,9 @@ describe("init iOS", () => {
       profile: { appId: "app_test" },
     } as never);
     spyOn(iosApplyMod, "applyIOSLocalSetup").mockResolvedValue(setupResult);
-    spyOn(pullMod, "resolveEnvironmentKeys").mockResolvedValue({
-      appId: "app_test",
+    spyOn(iosDevelopmentKeyMod, "resolveIOSDevelopmentPublicKey").mockResolvedValue({
+      applicationId: "app_test",
       instanceId: "ins_test",
-      instanceLabel: "development",
       publishableKey: VALID_DEVELOPMENT_KEY,
     });
     const environment = spyOn(fapiMod, "fetchUserSettings").mockResolvedValue({
@@ -630,10 +629,9 @@ describe("init iOS", () => {
       profile: { appId: "app_test" },
     } as never);
     spyOn(iosApplyMod, "applyIOSLocalSetup").mockResolvedValue(setupResult);
-    spyOn(pullMod, "resolveEnvironmentKeys").mockResolvedValue({
-      appId: "app_test",
+    spyOn(iosDevelopmentKeyMod, "resolveIOSDevelopmentPublicKey").mockResolvedValue({
+      applicationId: "app_test",
       instanceId: "ins_test",
-      instanceLabel: "development",
       publishableKey: VALID_DEVELOPMENT_KEY,
     });
     spyOn(fapiMod, "fetchUserSettings").mockResolvedValue({
@@ -676,10 +674,9 @@ describe("init iOS", () => {
       profile: { appId: "app_test" },
     } as never);
     spyOn(iosApplyMod, "applyIOSLocalSetup").mockResolvedValue(setupResult);
-    spyOn(pullMod, "resolveEnvironmentKeys").mockResolvedValue({
-      appId: "app_test",
+    spyOn(iosDevelopmentKeyMod, "resolveIOSDevelopmentPublicKey").mockResolvedValue({
+      applicationId: "app_test",
       instanceId: "ins_test",
-      instanceLabel: "development",
       publishableKey: VALID_DEVELOPMENT_KEY,
     });
     const environment = spyOn(fapiMod, "fetchUserSettings")
@@ -734,10 +731,9 @@ describe("init iOS", () => {
       profile: { appId: "app_test" },
     } as never);
     spyOn(iosApplyMod, "applyIOSLocalSetup").mockResolvedValue(setupResult);
-    spyOn(pullMod, "resolveEnvironmentKeys").mockResolvedValue({
-      appId: "app_test",
+    spyOn(iosDevelopmentKeyMod, "resolveIOSDevelopmentPublicKey").mockResolvedValue({
+      applicationId: "app_test",
       instanceId: "ins_test",
-      instanceLabel: "development",
       publishableKey: VALID_DEVELOPMENT_KEY,
     });
     spyOn(fapiMod, "fetchUserSettings").mockResolvedValue({
@@ -776,10 +772,9 @@ describe("init iOS", () => {
       profile: { appId: "app_test" },
     } as never);
     spyOn(iosApplyMod, "applyIOSLocalSetup").mockResolvedValue(setupResult);
-    spyOn(pullMod, "resolveEnvironmentKeys").mockResolvedValue({
-      appId: "app_test",
+    spyOn(iosDevelopmentKeyMod, "resolveIOSDevelopmentPublicKey").mockResolvedValue({
+      applicationId: "app_test",
       instanceId: "ins_test",
-      instanceLabel: "development",
       publishableKey: VALID_DEVELOPMENT_KEY,
     });
     const secret = "provider-secret-must-not-escape";
@@ -847,10 +842,12 @@ describe("init iOS", () => {
     });
     const preflightSpy = spyOn(iosApplyMod, "applyIOSLocalSetup").mockResolvedValue(setupResult);
     const linkSpy = spyOn(linkMod, "link").mockResolvedValue(undefined);
-    const resolveKeysSpy = spyOn(pullMod, "resolveEnvironmentKeys").mockResolvedValue({
-      appId: "app_test",
+    const resolveKeysSpy = spyOn(
+      iosDevelopmentKeyMod,
+      "resolveIOSDevelopmentPublicKey",
+    ).mockResolvedValue({
+      applicationId: "app_test",
       instanceId: "ins_test",
-      instanceLabel: "development",
       publishableKey: "pk_test_redacted",
     });
     const applyPlannedSpy = spyOn(iosApplyMod, "applyIOSPlannedLocalSetup").mockResolvedValue(
@@ -863,11 +860,8 @@ describe("init iOS", () => {
 
     await init({ yes: true });
 
-    expect(pullMod.resolveEnvironmentKeys).toHaveBeenCalledWith({
-      app: "app_test",
-      cwd: iosCtx.cwd,
-    });
-    expect(pullMod.resolveEnvironmentKeys).toHaveBeenCalledTimes(1);
+    expect(iosDevelopmentKeyMod.resolveIOSDevelopmentPublicKey).toHaveBeenCalledWith("app_test");
+    expect(iosDevelopmentKeyMod.resolveIOSDevelopmentPublicKey).toHaveBeenCalledTimes(1);
     expect(iosApplyMod.applyIOSPlannedLocalSetup).toHaveBeenCalledWith(
       setupResult,
       "pk_test_redacted",
@@ -899,10 +893,12 @@ describe("init iOS", () => {
     spyOn(config, "resolveProfile").mockResolvedValue({
       profile: { appId: "app_test" },
     } as never);
-    const resolveKeys = spyOn(pullMod, "resolveEnvironmentKeys").mockResolvedValue({
-      appId: "app_test",
+    const resolveKeys = spyOn(
+      iosDevelopmentKeyMod,
+      "resolveIOSDevelopmentPublicKey",
+    ).mockResolvedValue({
+      applicationId: "app_test",
       instanceId: "ins_test",
-      instanceLabel: "development",
       publishableKey: "pk_test_must_not_be_forwarded",
     });
     spyOn(iosApplyMod, "applyIOSLocalSetup").mockResolvedValue(setupResult);
@@ -1171,10 +1167,9 @@ describe("init iOS", () => {
     spyOn(iosApplyMod, "applyIOSLocalSetup").mockResolvedValue(
       iosSetupResult({ runtimeKeyPlan, requiresLinkedApp: true }),
     );
-    spyOn(pullMod, "resolveEnvironmentKeys").mockResolvedValue({
-      appId: "app_changed",
+    spyOn(iosDevelopmentKeyMod, "resolveIOSDevelopmentPublicKey").mockResolvedValue({
+      applicationId: "app_changed",
       instanceId: "ins_changed",
-      instanceLabel: "development",
       publishableKey: "pk_test_redacted",
     });
 
@@ -1197,12 +1192,11 @@ describe("init iOS", () => {
       profile: { appId: "app_production" },
     } as never);
     spyOn(iosApplyMod, "applyIOSLocalSetup").mockResolvedValue(setupResult);
-    spyOn(pullMod, "resolveEnvironmentKeys").mockResolvedValue({
-      appId: "app_production",
-      instanceId: "ins_production",
-      instanceLabel: "production",
-      publishableKey: productionKey,
-    });
+    spyOn(iosDevelopmentKeyMod, "resolveIOSDevelopmentPublicKey").mockRejectedValue(
+      new Error(
+        "Automatic iOS configuration is limited to the linked development instance. No local setup changes were written.",
+      ),
+    );
 
     await expect(init({ yes: true })).rejects.toThrow("limited to the linked development instance");
 
@@ -1221,10 +1215,9 @@ describe("init iOS", () => {
       .mockResolvedValueOnce({ profile: { appId: "app_selected" } } as never)
       .mockResolvedValueOnce({ profile: { appId: "app_changed" } } as never);
     spyOn(iosApplyMod, "applyIOSLocalSetup").mockResolvedValue(setupResult);
-    spyOn(pullMod, "resolveEnvironmentKeys").mockResolvedValue({
-      appId: "app_selected",
+    spyOn(iosDevelopmentKeyMod, "resolveIOSDevelopmentPublicKey").mockResolvedValue({
+      applicationId: "app_selected",
       instanceId: "ins_selected",
-      instanceLabel: "development",
       publishableKey: "pk_test_redacted",
     });
 
@@ -1251,10 +1244,9 @@ describe("init iOS", () => {
     const commit = spyOn(iosApplyMod, "applyIOSPlannedLocalSetup").mockRejectedValue(
       new Error("The existing iOS runtime publishable key does not match the linked app."),
     );
-    spyOn(pullMod, "resolveEnvironmentKeys").mockResolvedValue({
-      appId: "app_same_profile",
+    spyOn(iosDevelopmentKeyMod, "resolveIOSDevelopmentPublicKey").mockResolvedValue({
+      applicationId: "app_same_profile",
       instanceId: "ins_same_profile",
-      instanceLabel: "development",
       publishableKey: linkedKey,
     });
     await expect(init({ yes: true, app: "app_same_profile" })).rejects.toThrow(
@@ -1287,10 +1279,9 @@ describe("init iOS", () => {
     spyOn(iosApplyMod, "applyIOSPlannedLocalSetup").mockRejectedValue(
       new Error("The existing iOS runtime publishable key does not match the linked app."),
     );
-    spyOn(pullMod, "resolveEnvironmentKeys").mockResolvedValue({
-      appId: "app_implicitly_linked",
+    spyOn(iosDevelopmentKeyMod, "resolveIOSDevelopmentPublicKey").mockResolvedValue({
+      applicationId: "app_implicitly_linked",
       instanceId: "ins_implicitly_linked",
-      instanceLabel: "development",
       publishableKey: linkedKey,
     });
     await expect(init({ yes: true })).rejects.toThrow("does not match the linked app");
@@ -1314,16 +1305,18 @@ describe("init iOS", () => {
       verifiesExistingKey: true,
     });
     spyOn(iosApplyMod, "applyIOSLocalSetup").mockResolvedValue(setupResult);
-    const resolveKeys = spyOn(pullMod, "resolveEnvironmentKeys").mockResolvedValue({
-      appId: "app_matching",
+    const resolveKeys = spyOn(
+      iosDevelopmentKeyMod,
+      "resolveIOSDevelopmentPublicKey",
+    ).mockResolvedValue({
+      applicationId: "app_matching",
       instanceId: "ins_matching",
-      instanceLabel: "development",
       publishableKey: linkedKey,
     });
     await init({ yes: true });
 
     expect(resolveKeys).toHaveBeenCalledTimes(1);
-    expect(resolveKeys).toHaveBeenCalledWith({ app: "app_matching", cwd: iosCtx.cwd });
+    expect(resolveKeys).toHaveBeenCalledWith("app_matching");
     expect(iosApplyMod.applyIOSPlannedLocalSetup).toHaveBeenCalledWith(setupResult, linkedKey);
     expect(pullMod.pull).not.toHaveBeenCalled();
     expect(`${captured.out}\n${captured.err}`).not.toContain(linkedKey);
@@ -1338,10 +1331,12 @@ describe("init iOS", () => {
       .mockResolvedValueOnce({ profile: { appId: "app_previous" } } as never)
       .mockResolvedValueOnce({ profile: { appId: "app_previous" } } as never)
       .mockResolvedValue({ profile: { appId: "app_requested" } } as never);
-    const resolveKeys = spyOn(pullMod, "resolveEnvironmentKeys").mockResolvedValue({
-      appId: "app_requested",
+    const resolveKeys = spyOn(
+      iosDevelopmentKeyMod,
+      "resolveIOSDevelopmentPublicKey",
+    ).mockResolvedValue({
+      applicationId: "app_requested",
       instanceId: "ins_requested",
-      instanceLabel: "development",
       publishableKey: key,
     });
     const setupResult = iosSetupResult({
@@ -1392,10 +1387,12 @@ describe("init iOS", () => {
       .mockResolvedValueOnce(undefined)
       .mockResolvedValueOnce({ profile: { appId: "app_raced" } } as never)
       .mockResolvedValue({ profile: { appId: "app_requested" } } as never);
-    const resolveKeys = spyOn(pullMod, "resolveEnvironmentKeys").mockResolvedValue({
-      appId: "app_requested",
+    const resolveKeys = spyOn(
+      iosDevelopmentKeyMod,
+      "resolveIOSDevelopmentPublicKey",
+    ).mockResolvedValue({
+      applicationId: "app_requested",
       instanceId: "ins_requested",
-      instanceLabel: "development",
       publishableKey: key,
     });
     const setupResult = iosSetupResult({
@@ -1407,7 +1404,7 @@ describe("init iOS", () => {
     await init({ yes: true, app: "app_requested" });
 
     expect(resolveKeys).toHaveBeenCalledTimes(1);
-    expect(resolveKeys).toHaveBeenCalledWith({ app: "app_requested", cwd: iosCtx.cwd });
+    expect(resolveKeys).toHaveBeenCalledWith("app_requested");
     expect(iosApplyMod.applyIOSPlannedLocalSetup).toHaveBeenCalledWith(setupResult, key);
     expect(`${captured.out}\n${captured.err}`).not.toContain(key);
   });
@@ -1470,6 +1467,6 @@ describe("init iOS", () => {
 
     expect(bootstrapMod.promptAndBootstrap).not.toHaveBeenCalled();
     expect(pullMod.pull).not.toHaveBeenCalled();
-    expect(pullMod.resolveEnvironmentKeys).not.toHaveBeenCalled();
+    expect(iosDevelopmentKeyMod.resolveIOSDevelopmentPublicKey).not.toHaveBeenCalled();
   });
 });

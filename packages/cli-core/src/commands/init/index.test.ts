@@ -22,6 +22,7 @@ import {
   mockExistingProject,
   mockMiddlewareScaffold,
   iosApplyMod,
+  iosDevelopmentKeyMod,
 } from "../../test/lib/init-harness.ts";
 import * as telemetryMod from "../../lib/telemetry.ts";
 import { init } from "./index.ts";
@@ -92,7 +93,7 @@ describe("init", () => {
       name: "UserAbortError",
     });
 
-    expect(pullMod.resolveEnvironmentKeys).not.toHaveBeenCalled();
+    expect(iosDevelopmentKeyMod.resolveIOSDevelopmentPublicKey).not.toHaveBeenCalled();
     expect(pullMod.pull).not.toHaveBeenCalled();
     expect(iosApplyMod.applyIOSRuntimeKeySetup).not.toHaveBeenCalled();
   });
