@@ -1,10 +1,11 @@
-import { afterAll, afterEach, test, expect } from "bun:test";
+import { afterAll, afterEach, test, expect, spyOn } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { ios } from "./ios.ts";
 import type { ProjectContext } from "./types.ts";
 import { createIOSFixture } from "../ios/test-helpers.ts";
+import * as associatedDomain from "../ios/associated-domain.ts";
 
 const temporaryRoots: string[] = [];
 const emptyRoot = await mkdtemp(join(tmpdir(), "clerk-ios-framework-empty-"));
@@ -88,6 +89,30 @@ test("uses direct @main configuration as the fresh-project default", async () =>
       (i) => i.includes("Run scheme") && i.includes("manual runtime configuration"),
     ),
   ).toBe(false);
+});
+
+test("defers the Associated Domain host to ready direct configuration", async () => {
+  const root = await makeIOSFixture(false);
+  const unrelatedKey = `pk_test_${Buffer.from("unrelated-framework.clerk.example$").toString("base64")}`;
+  await Bun.write(join(root, ".env"), `CLERK_PUBLISHABLE_KEY=${unrelatedKey}\n`);
+  const planner = spyOn(associatedDomain, "planIOSAssociatedDomain");
+
+  try {
+    const plan = await ios.scaffold({ ...makeCtx(), cwd: root, iosTarget: "MyApp" });
+
+    expect(planner).toHaveBeenCalledWith(
+      expect.objectContaining({
+        root,
+        deferToPublishableKey: true,
+      }),
+    );
+    expect(
+      plan.postInstructions.some((instruction) => instruction.includes("Associated Domains")),
+    ).toBe(true);
+    expect(plan.postInstructions.join("\n")).not.toContain("unrelated-framework.clerk.example");
+  } finally {
+    planner.mockRestore();
+  }
 });
 
 test("omits manual Native Applications guidance after authenticated remote verification", async () => {

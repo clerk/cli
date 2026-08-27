@@ -454,8 +454,7 @@ export async function applyIOSLocalSetup(
     root: options.root,
     projectPath: selection.projectPath,
     targetId: selection.targetId,
-    deferToPublishableKey:
-      directConfigPlan != null && inspection.localPublishableKey.frontendApiHost == null,
+    deferToPublishableKey: directConfigPlan?.status === "ready",
     // A LocalSecrets write is a specialized secret transaction that cannot
     // yet share rollback ownership with a newly created entitlements file.
     allowMissingEntitlementsCreation: runtimeKeyPlan == null,

@@ -154,6 +154,8 @@ describe("clerk init --dry-run", () => {
     const root = await mkdtemp(join(tmpdir(), "clerk-ios-cli-direct-"));
     temporaryDirectories.push(root);
     await createIOSFixture(root, { clerkSDK: false, includeKey: false });
+    const unrelatedKey = `pk_test_${Buffer.from("unrelated-dry-run.clerk.example$").toString("base64")}`;
+    await Bun.write(join(root, ".env"), `CLERK_PUBLISHABLE_KEY=${unrelatedKey}\n`);
     const configDir = await createIsolatedCLIState();
     const before = await treeDigest(root);
 
@@ -182,6 +184,7 @@ describe("clerk init --dry-run", () => {
       automatable: true,
       files: ["MyApp/MyApp.entitlements"],
     });
+    expect(output.nativeReadiness.associatedDomain.expectedDomain).toBeUndefined();
     expect(configure.description).toContain("directly");
     expect(result.stdout).not.toContain("LocalSecrets");
     expect(result.stdout).not.toContain("pk_test_");

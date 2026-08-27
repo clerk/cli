@@ -308,8 +308,7 @@ export async function init(options: InitOptions = {}) {
             root: ctx.cwd,
             projectPath: dryRunSelection.projectPath,
             targetId: dryRunSelection.targetId,
-            deferToPublishableKey:
-              directConfigPlan != null && inspection.localPublishableKey.frontendApiHost == null,
+            deferToPublishableKey: directConfigPlan?.status === "ready",
             allowMissingEntitlementsCreation: runtimeKeyPlan?.status !== "ready",
           })
         : undefined;

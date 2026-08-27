@@ -328,9 +328,13 @@ function associatedDomainReadiness(
       code: "manual-review-required" as const,
       message: item.message,
     })) ?? [];
+  const plannedExpectedDomain =
+    associatedDomainPlan?.requiresPublishableKey === true
+      ? undefined
+      : (associatedDomainPlan?.expectedDomain ?? expectedDomain);
   return {
     status,
-    expectedDomain: associatedDomainPlan?.expectedDomain ?? expectedDomain,
+    expectedDomain: plannedExpectedDomain,
     files,
     automatable:
       associatedDomainPlan != null

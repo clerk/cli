@@ -78,8 +78,7 @@ export const ios: FrameworkScaffold = {
             root: ctx.cwd,
             projectPath: selection.projectPath,
             targetId: selection.targetId,
-            deferToPublishableKey:
-              directConfigPlan != null && inspection.localPublishableKey.frontendApiHost == null,
+            deferToPublishableKey: directConfigPlan?.status === "ready",
             allowMissingEntitlementsCreation: runtimeKeyPlan?.status !== "ready",
           })
         : undefined;

@@ -464,9 +464,12 @@ struct MyApp: App {
     );
   });
 
-  test("links ClerkKit and ClerkKitUI to a clean target and is byte-idempotent", async () => {
+  test("uses the linked key host over an unrelated root env during aggregate setup", async () => {
     const root = await createUnconfiguredFixture();
     const configDir = await createIsolatedCLIState();
+    const unrelatedKey = `pk_test_${Buffer.from("unrelated-root.clerk.example$").toString("base64")}`;
+    const existingEnv = `CLERK_PUBLISHABLE_KEY=${unrelatedKey}\n`;
+    await Bun.write(join(root, ".env"), existingEnv);
 
     const result = await runCLI(
       root,
@@ -479,6 +482,7 @@ struct MyApp: App {
       "ClerkKit and ClerkKitUI linked to MyApp",
     );
     expect(`${result.stdout}\n${result.stderr}`).not.toContain(authFixtureKey);
+    expect(`${result.stdout}\n${result.stderr}`).not.toContain(unrelatedKey);
     const inspection = await inspectIOSProject(root, { target: "MyApp" });
     const target = inspection.appTargets.find((candidate) => candidate.name === "MyApp");
     expect(target?.packages).toEqual({
@@ -498,8 +502,9 @@ struct MyApp: App {
     expect(source).toContain(".environment(Clerk.shared)");
     const entitlements = await Bun.file(join(root, "MyApp", "MyApp.entitlements")).text();
     expect(entitlements).toContain("webcredentials:ios-apply.clerk.example");
+    expect(entitlements).not.toContain("webcredentials:unrelated-root.clerk.example");
     expect(`${result.stdout}\n${result.stderr}`).toContain("Clerk Associated Domain added");
-    expect(await Bun.file(join(root, ".env")).exists()).toBe(false);
+    expect(await Bun.file(join(root, ".env")).text()).toBe(existingEnv);
     expect(await Bun.file(join(root, "MyApp", "LocalSecrets.plist")).exists()).toBe(false);
 
     const afterFirstRun = await treeDigest(root);
