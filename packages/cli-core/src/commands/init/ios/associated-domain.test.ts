@@ -1,5 +1,15 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { chmod, link, lstat, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
+import {
+  chmod,
+  link,
+  lstat,
+  mkdir,
+  mkdtemp,
+  readFile,
+  rm,
+  symlink,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { parse as parsePbxProject } from "@bacons/xcode/json";
@@ -273,9 +283,9 @@ describe("iOS Associated Domains setup", () => {
     expect(await treeDigest(root)).toEqual(before);
   });
 
-  test("blocks an entitlements file referenced by a target in another Xcode project", async () => {
+  test("blocks an entitlements file referenced by a deeply nested Xcode project", async () => {
     const root = await directFixture();
-    const secondaryRoot = join(root, "Secondary");
+    const secondaryRoot = join(root, "a", "b", "c", "d");
     const secondaryProjectPath = join(secondaryRoot, "MyApp.xcodeproj", "project.pbxproj");
     const secondaryTargetId = "919191919191919191919191";
     await createIOSFixture(secondaryRoot, { includeKey: false });
@@ -283,11 +293,27 @@ describe("iOS Associated Domains setup", () => {
       .replaceAll(IOS_FIXTURE_IDS.appTarget, secondaryTargetId)
       .replaceAll(
         "CODE_SIGN_ENTITLEMENTS = MyApp/MyApp.entitlements;",
-        "CODE_SIGN_ENTITLEMENTS = ../MyApp/MyApp.entitlements;",
+        "CODE_SIGN_ENTITLEMENTS = ../../../../MyApp/MyApp.entitlements;",
       );
     await writeFile(secondaryProjectPath, secondaryProject);
 
     const before = await treeDigest(root);
+    const plan = await planIOSAssociatedDomain(planOptions(root));
+
+    expect(plan.status).toBe("blocked");
+    expect(plan.blockers).toContainEqual(expect.objectContaining({ code: "shared-entitlements" }));
+    expect(await treeDigest(root)).toEqual(before);
+  });
+
+  test("fails closed when exhaustive project discovery reaches its traversal bound", async () => {
+    const root = await directFixture();
+    let directory = root;
+    for (let depth = 0; depth < 26; depth += 1) {
+      directory = join(directory, `level-${depth}`);
+      await mkdir(directory);
+    }
+    const before = await treeDigest(root);
+
     const plan = await planIOSAssociatedDomain(planOptions(root));
 
     expect(plan.status).toBe("blocked");

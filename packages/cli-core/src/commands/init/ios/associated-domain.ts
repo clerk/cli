@@ -4,8 +4,7 @@ import { parse as parsePbxProject } from "@bacons/xcode/json";
 import { decodePublishableKey } from "../../../lib/fapi.ts";
 import { inspectTargetBuildConfigurations } from "./build-settings.ts";
 import {
-  discoverIOSContainers,
-  inspectWorkspace,
+  discoverLocalIOSProjects,
   pathIsSafelyWithinIOSRoot,
   relativeIOSPath,
 } from "./discovery.ts";
@@ -23,14 +22,7 @@ import {
   type IOSMissingEntitlementsSettingsPlan,
 } from "./entitlements-settings.ts";
 import { inspectIOSProject } from "./inspect.ts";
-import {
-  asString,
-  asStringArray,
-  buildPbxParentIndex,
-  isRecord,
-  type PbxObject,
-  type PbxObjects,
-} from "./pbx.ts";
+import { asString, buildPbxParentIndex, isRecord, type PbxObject, type PbxObjects } from "./pbx.ts";
 import { parseIOSPlist } from "./plist.ts";
 import type { IOSAppTarget, IOSDiagnostic, IOSProjectInspectionResult } from "./types.ts";
 
@@ -368,6 +360,12 @@ function normalizeObjects(value: unknown): PbxObjects | undefined {
   return objects;
 }
 
+function exactStringArray(value: unknown): string[] | undefined {
+  return Array.isArray(value) && value.every((item) => typeof item === "string")
+    ? value
+    : undefined;
+}
+
 async function ownershipIsExclusive(
   root: string,
   projectPath: string,
@@ -390,37 +388,33 @@ async function ownershipIsExclusive(
     }
 
     const selectedProject = resolve(root, projectPath);
-    const discovered = await discoverIOSContainers(root);
-    const projectPaths = new Set([...discovered.projectPaths, selectedProject]);
-    for (const workspacePath of discovered.workspacePaths) {
-      const workspace = await inspectWorkspace(root, workspacePath);
-      for (const localProjectPath of workspace.localProjectPaths) {
-        projectPaths.add(localProjectPath);
-      }
-    }
-    for (const absoluteProject of [...projectPaths].sort()) {
+    const inventory = await discoverLocalIOSProjects(root, [selectedProject]);
+    if (!inventory.complete) return false;
+    for (const absoluteProject of inventory.projectPaths) {
       const pbxprojPath = resolve(absoluteProject, "project.pbxproj");
       if (!(await pathIsSafelyWithinIOSRoot(root, pbxprojPath))) return false;
+      const info = await lstat(pbxprojPath);
+      if (!info.isFile() || info.isSymbolicLink() || info.size > 15_000_000) return false;
       const bytes = new Uint8Array(await readFile(pbxprojPath));
-      if (bytes.byteLength > 15_000_000) return false;
       const archive = parsePbxProject(new TextDecoder().decode(bytes));
       const objects = normalizeObjects(archive.objects);
       if (!objects) return false;
       const rootObjectId = asString(archive.rootObject);
-      const projectObject =
-        (rootObjectId ? objects[rootObjectId] : undefined) ??
-        Object.values(objects).find((object) => object.isa === "PBXProject");
+      const projectObject = rootObjectId ? objects[rootObjectId] : undefined;
       if (projectObject?.isa !== "PBXProject") return false;
+      const targetIds = exactStringArray(projectObject.targets);
+      if (!targetIds) return false;
       const parents = buildPbxParentIndex(objects);
       const groupRootDirectory = resolve(
         dirname(absoluteProject),
         asString(projectObject.projectDirPath) ?? "",
       );
 
-      for (const targetId of asStringArray(projectObject.targets)) {
+      for (const targetId of targetIds) {
         if (absoluteProject === selectedProject && targetId === selectedTargetId) continue;
         const targetObject = objects[targetId];
-        if (targetObject?.isa !== "PBXNativeTarget") continue;
+        if (!targetObject) return false;
+        if (targetObject.isa !== "PBXNativeTarget") continue;
         const diagnostics: IOSDiagnostic[] = [];
         const configurations = await inspectTargetBuildConfigurations({
           root,
@@ -433,7 +427,12 @@ async function ownershipIsExclusive(
           parents,
           diagnostics,
         });
-        if (diagnostics.some((diagnostic) => diagnostic.severity === "error")) return false;
+        if (
+          configurations.length === 0 ||
+          diagnostics.some((diagnostic) => diagnostic.severity === "error")
+        ) {
+          return false;
+        }
         for (const configuration of configurations) {
           const resolution = configuration.model.entitlementsPath;
           if (resolution.state === "unresolved") return false;

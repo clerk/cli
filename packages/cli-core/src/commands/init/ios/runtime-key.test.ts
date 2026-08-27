@@ -140,6 +140,23 @@ async function fixture(key?: string, secondTarget = false): Promise<string> {
   return root;
 }
 
+async function shareLocalSecretsWithSecondTarget(root: string, productType: string): Promise<void> {
+  const projectPath = join(root, "MyApp.xcodeproj", "project.pbxproj");
+  const project = await Bun.file(projectPath).text();
+  await Bun.write(
+    projectPath,
+    project
+      .replace(
+        `buildPhases = ( ${IOS_FIXTURE_IDS.secondSourcesPhase}, ${IOS_FIXTURE_IDS.secondFrameworksPhase}, );`,
+        `buildPhases = ( ${IOS_FIXTURE_IDS.secondSourcesPhase}, ${IOS_FIXTURE_IDS.secondFrameworksPhase}, ${IOS_FIXTURE_IDS.resourcesPhase}, );`,
+      )
+      .replace(
+        `productReference = ${IOS_FIXTURE_IDS.secondProduct};\n      productType = "com.apple.product-type.application";`,
+        `productReference = ${IOS_FIXTURE_IDS.secondProduct};\n      productType = "${productType}";`,
+      ),
+  );
+}
+
 function options(root: string) {
   return {
     root,
@@ -573,15 +590,7 @@ describe("iOS runtime publishable-key transaction", () => {
 
   test("blocks a LocalSecrets resource shared by another iOS application target", async () => {
     const root = await fixture("pk_test_...", true);
-    const projectPath = join(root, "MyApp.xcodeproj", "project.pbxproj");
-    const project = await Bun.file(projectPath).text();
-    await Bun.write(
-      projectPath,
-      project.replace(
-        `buildPhases = ( ${IOS_FIXTURE_IDS.secondSourcesPhase}, ${IOS_FIXTURE_IDS.secondFrameworksPhase}, );`,
-        `buildPhases = ( ${IOS_FIXTURE_IDS.secondSourcesPhase}, ${IOS_FIXTURE_IDS.secondFrameworksPhase}, ${IOS_FIXTURE_IDS.resourcesPhase}, );`,
-      ),
-    );
+    await shareLocalSecretsWithSecondTarget(root, "com.apple.product-type.application");
     const before = await treeDigest(root);
 
     const plan = await planIOSRuntimeKey(options(root));
@@ -589,6 +598,40 @@ describe("iOS runtime publishable-key transaction", () => {
     expect(plan.status).toBe("blocked");
     expect(plan.blockers[0]?.code).toBe("shared-local-secrets");
     expect(await treeDigest(root)).toEqual(before);
+  });
+
+  test.each([
+    ["app extension", "com.apple.product-type.app-extension"],
+    ["unit-test bundle", "com.apple.product-type.bundle.unit-test"],
+  ])("blocks a LocalSecrets resource shared by another %s target", async (_name, productType) => {
+    const root = await fixture("pk_test_...", true);
+    await shareLocalSecretsWithSecondTarget(root, productType);
+
+    const plan = await planIOSRuntimeKey(options(root));
+
+    expect(plan.status).toBe("blocked");
+    expect(plan.blockers[0]?.code).toBe("shared-local-secrets");
+  });
+
+  test("blocks a LocalSecrets resource owned by a deep project with the same target ID", async () => {
+    const root = await fixture("pk_test_...");
+    const otherRoot = join(root, "a", "b", "c", "d");
+    await createIOSFixture(otherRoot, {
+      complete: false,
+      includeKey: false,
+      localSecrets: true,
+    });
+    const otherProjectPath = join(otherRoot, "MyApp.xcodeproj", "project.pbxproj");
+    const otherProject = (await Bun.file(otherProjectPath).text()).replace(
+      `path = LocalSecrets.plist; sourceTree = "<group>";`,
+      `path = "${join(root, "MyApp", "LocalSecrets.plist")}"; sourceTree = "<absolute>";`,
+    );
+    await Bun.write(otherProjectPath, otherProject);
+
+    const plan = await planIOSRuntimeKey(options(root));
+
+    expect(plan.status).toBe("blocked");
+    expect(plan.blockers[0]?.code).toBe("shared-local-secrets");
   });
 
   test("allows a sibling target's proven-disjoint external synchronized group", async () => {
@@ -619,14 +662,24 @@ describe("iOS runtime publishable-key transaction", () => {
     expect(plan.blockers).toEqual([]);
   });
 
-  test("ignores a missing unrelated project while proving selected-project ownership", async () => {
+  test("fails closed when a discovered local project is unreadable", async () => {
     const root = await fixture("pk_test_...");
     await mkdir(join(root, "Unrelated.xcodeproj"));
 
     const plan = await planIOSRuntimeKey(options(root));
 
-    expect(plan.status).toBe("ready");
-    expect(plan.blockers).toEqual([]);
+    expect(plan.status).toBe("blocked");
+    expect(plan.blockers[0]?.code).toBe("shared-local-secrets");
+  });
+
+  test("fails closed when a discovered workspace is unreadable", async () => {
+    const root = await fixture("pk_test_...");
+    await mkdir(join(root, "Unreadable.xcworkspace"));
+
+    const plan = await planIOSRuntimeKey(options(root));
+
+    expect(plan.status).toBe("blocked");
+    expect(plan.blockers[0]?.code).toBe("shared-local-secrets");
   });
 
   test("blocks an external symlinked resource that aliases the selected sink", async () => {

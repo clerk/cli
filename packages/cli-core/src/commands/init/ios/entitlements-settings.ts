@@ -4,8 +4,7 @@ import { basename, dirname, isAbsolute, relative, resolve, sep } from "node:path
 import { build as buildPbxProject, parse as parsePbxProject } from "@bacons/xcode/json";
 import { inspectTargetBuildConfigurations } from "./build-settings.ts";
 import {
-  discoverIOSContainers,
-  inspectWorkspace,
+  discoverLocalIOSProjects,
   pathIsSafelyWithinIOSRoot,
   relativeIOSPath,
 } from "./discovery.ts";
@@ -427,18 +426,9 @@ async function selectedSynchronizedRoot(
   }
 }
 
-async function localProjectPaths(root: string, selectedProjectPath: string): Promise<string[]> {
-  const containers = await discoverIOSContainers(root);
-  const paths = new Set([...containers.projectPaths, selectedProjectPath]);
-  for (const workspacePath of containers.workspacePaths) {
-    const workspace = await inspectWorkspace(root, workspacePath);
-    for (const projectPath of workspace.localProjectPaths) paths.add(projectPath);
-  }
-  return [...paths].sort();
-}
-
 async function synchronizedRootIsExclusive(
   root: string,
+  projectPaths: readonly string[],
   selectedProjectPath: string,
   selectedTargetId: string,
   selectedRoot: SynchronizedRoot,
@@ -452,7 +442,7 @@ async function synchronizedRootIsExclusive(
   } catch {
     return false;
   }
-  for (const absoluteProjectPath of await localProjectPaths(root, selectedProjectPath)) {
+  for (const absoluteProjectPath of projectPaths) {
     const pbxprojPath = resolve(absoluteProjectPath, "project.pbxproj");
     if (!(await pathIsSafelyWithinIOSRoot(root, pbxprojPath))) return false;
     let archive: unknown;
@@ -478,7 +468,8 @@ async function synchronizedRootIsExclusive(
     );
     for (const targetId of targetIds) {
       const target = objects[targetId];
-      if (target?.isa !== "PBXNativeTarget") continue;
+      if (!target) return false;
+      if (target.isa !== "PBXNativeTarget") continue;
       const groupIds = optionalExactStringArray(target.fileSystemSynchronizedGroups);
       if (!groupIds) return false;
       for (const groupId of groupIds) {
@@ -623,7 +614,7 @@ async function gitIgnoreState(destination: string): Promise<GitIgnoreState> {
 
 async function classicDestinationIsUnreferenced(
   root: string,
-  selectedProjectPath: string,
+  projectPaths: readonly string[],
   destination: string,
 ): Promise<boolean> {
   const normalizedDestination = resolve(destination).toLocaleLowerCase("en-US");
@@ -635,7 +626,7 @@ async function classicDestinationIsUnreferenced(
   } catch {
     return false;
   }
-  for (const absoluteProjectPath of await localProjectPaths(root, selectedProjectPath)) {
+  for (const absoluteProjectPath of projectPaths) {
     const pbxprojPath = resolve(absoluteProjectPath, "project.pbxproj");
     if (!(await pathIsSafelyWithinIOSRoot(root, pbxprojPath))) return false;
     let archive: unknown;
@@ -687,12 +678,13 @@ async function classicDestinationIsUnreferenced(
 
 async function entitlementsDestinationIsExclusive(
   root: string,
+  projectPaths: readonly string[],
   selectedProjectPath: string,
   selectedTargetId: string,
   destination: string,
 ): Promise<boolean> {
   const normalizedDestination = resolve(destination).toLocaleLowerCase("en-US");
-  for (const absoluteProjectPath of await localProjectPaths(root, selectedProjectPath)) {
+  for (const absoluteProjectPath of projectPaths) {
     const pbxprojPath = resolve(absoluteProjectPath, "project.pbxproj");
     if (!(await pathIsSafelyWithinIOSRoot(root, pbxprojPath))) return false;
     let archive: unknown;
@@ -718,7 +710,8 @@ async function entitlementsDestinationIsExclusive(
     for (const targetId of targetIds) {
       if (absoluteProjectPath === selectedProjectPath && targetId === selectedTargetId) continue;
       const targetObject = objects[targetId];
-      if (targetObject?.isa !== "PBXNativeTarget") continue;
+      if (!targetObject) return false;
+      if (targetObject.isa !== "PBXNativeTarget") continue;
       const diagnostics: IOSDiagnostic[] = [];
       const configurations = await inspectTargetBuildConfigurations({
         root,
@@ -986,9 +979,12 @@ export async function planIOSMissingEntitlementsSettings(
       configurationIds: snapshot.graph.configurationIds,
     });
   }
+  const inventory = await discoverLocalIOSProjects(root, [snapshot.absoluteProjectPath]);
   if (
+    !inventory.complete ||
     !(await synchronizedRootIsExclusive(
       root,
+      inventory.projectPaths,
       snapshot.absoluteProjectPath,
       options.targetId,
       synchronized.root,
@@ -1054,7 +1050,7 @@ export async function planIOSMissingEntitlementsSettings(
   if (
     !(await classicDestinationIsUnreferenced(
       root,
-      snapshot.absoluteProjectPath,
+      inventory.projectPaths,
       destination.absolutePath,
     ))
   ) {
@@ -1083,6 +1079,7 @@ export async function planIOSMissingEntitlementsSettings(
   if (
     !(await entitlementsDestinationIsExclusive(
       root,
+      inventory.projectPaths,
       snapshot.absoluteProjectPath,
       options.targetId,
       destination.absolutePath,

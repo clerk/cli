@@ -1225,6 +1225,7 @@ let package = Package(
 
     const result = await inspectWorkspace(root, workspace);
 
+    expect(result.complete).toBe(true);
     expect(result.inspection.projectPaths).toEqual(["MyApp.xcodeproj"]);
     expect(result.localProjectPaths).toEqual([join(root, "MyApp.xcodeproj")]);
   });
@@ -1289,6 +1290,7 @@ let package = Package(
 
     const result = await inspectWorkspace(root, workspace);
 
+    expect(result.complete).toBe(true);
     expect(result.inspection.projectPaths).toEqual(["MyApp.xcodeproj"]);
     expect(result.localProjectPaths).toEqual([join(root, "MyApp.xcodeproj")]);
   });
@@ -1310,6 +1312,7 @@ let package = Package(
     expect(JSON.parse(output)).toEqual({
       inspection: { path: "MyApp.xcworkspace", projectPaths: [] },
       localProjectPaths: [],
+      complete: false,
     });
   }, 10_000);
 
@@ -1323,7 +1326,19 @@ let package = Package(
     expect(result).toEqual({
       inspection: { path: "MyApp.xcworkspace", projectPaths: [] },
       localProjectPaths: [],
+      complete: false,
     });
+  });
+
+  test("reports malformed workspace inventory as incomplete", async () => {
+    const root = await fixture({ workspace: true });
+    const workspace = join(root, "MyApp.xcworkspace");
+    await Bun.write(join(workspace, "contents.xcworkspacedata"), "not an Xcode workspace\n");
+
+    const result = await inspectWorkspace(root, workspace);
+
+    expect(result.complete).toBe(false);
+    expect(result.localProjectPaths).toEqual([]);
   });
 
   test("does not guess when multiple application targets exist", async () => {
