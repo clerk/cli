@@ -98,6 +98,45 @@ async function writeWorkspacePackageResolved(workspaceName = "MyApp"): Promise<s
   return path;
 }
 
+async function replaceClerkWithLocalPackage(remoteDependency: boolean): Promise<void> {
+  const projectPath = join(root, "MyApp.xcodeproj", "project.pbxproj");
+  const source = await Bun.file(projectPath).text();
+  const remoteReference = `${IOS_FIXTURE_IDS.clerkPackage} = { isa = XCRemoteSwiftPackageReference; repositoryURL = "https://github.com/clerk/clerk-ios.git"; requirement = { kind = upToNextMajorVersion; minimumVersion = 1.0.0; }; };`;
+  if (!source.includes(remoteReference)) throw new Error("Fixture remote package not found");
+  await Bun.write(
+    projectPath,
+    source.replace(
+      remoteReference,
+      `${IOS_FIXTURE_IDS.clerkPackage} = { isa = XCLocalSwiftPackageReference; relativePath = LocalClerk; };`,
+    ),
+  );
+
+  const packageRoot = join(root, "LocalClerk");
+  await mkdir(packageRoot, { recursive: true });
+  const dependencies = remoteDependency
+    ? '[.package(url: "https://example.com/remote.git", from: "1.0.0")]'
+    : "[]";
+  await Bun.write(
+    join(packageRoot, "Package.swift"),
+    `// swift-tools-version: 6.0\nimport PackageDescription\nlet package = Package(name: "LocalClerk", products: [.library(name: "ClerkKit", targets: ["ClerkKit"])], dependencies: ${dependencies}, targets: [.target(name: "ClerkKit")])\n`,
+  );
+}
+
+async function addSecondWorkspaceProjectWithRemotePackage(): Promise<void> {
+  const nestedRoot = join(root, "Second");
+  await createIOSFixture(nestedRoot, { includeKey: false });
+  const projectPath = join(nestedRoot, "MyApp.xcodeproj", "project.pbxproj");
+  const source = await Bun.file(projectPath).text();
+  await Bun.write(
+    projectPath,
+    source.replace(`targets = ( ${IOS_FIXTURE_IDS.appTarget}, );`, "targets = ( );"),
+  );
+  await Bun.write(
+    join(root, "MyApp.xcworkspace", "contents.xcworkspacedata"),
+    '<?xml version="1.0" encoding="UTF-8"?><Workspace version="1.0"><FileRef location="group:MyApp.xcodeproj"></FileRef><FileRef location="group:Second/MyApp.xcodeproj"></FileRef></Workspace>',
+  );
+}
+
 async function writeSharedScheme(name: string, xml: string): Promise<void> {
   const directory = join(root, "MyApp.xcodeproj", "xcshareddata", "xcschemes");
   await mkdir(directory, { recursive: true });
@@ -423,6 +462,255 @@ describe("runIOSXcodeVerification", () => {
     expect(results.at(-1)?.remedy).toContain("--resolve-packages --build");
     expect(invocations.some((invocation) => invocation.argv.includes("-list"))).toBe(false);
     expect(invocations.some((invocation) => invocation.argv.includes("build"))).toBe(false);
+  });
+
+  for (const workspace of [false, true]) {
+    test(`requires explicit resolution for a local package with unknown transitive dependencies in a ${workspace ? "workspace" : "project"}`, async () => {
+      await createIOSFixture(root, { workspace });
+      await replaceClerkWithLocalPackage(true);
+      const inspection = await inspectIOSProject(root, { target: "MyApp" });
+      const invocations: Invocation[] = [];
+
+      const results = await runIOSXcodeVerification(
+        inspection,
+        { build: true },
+        dependencies(successfulXcodeRunner(invocations, { workspace })),
+      );
+
+      expect(results.at(-1)).toMatchObject({ name: "Swift packages", status: "fail" });
+      expect(results.at(-1)?.message).toContain("could not be proven local-only");
+      expect(results.at(-1)?.remedy).toContain("--resolve-packages --build");
+      expect(JSON.stringify(results)).not.toContain("No remote Swift package lock is required");
+      expect(invocations).toEqual([]);
+    });
+  }
+
+  test("includes a second inspected workspace project in package detection", async () => {
+    await createIOSFixture(root, { clerkSDK: false, workspace: true });
+    await addSecondWorkspaceProjectWithRemotePackage();
+    const inspection = await inspectIOSProject(root, { target: "MyApp" });
+    const invocations: Invocation[] = [];
+
+    const results = await runIOSXcodeVerification(
+      inspection,
+      { build: true },
+      dependencies(successfulXcodeRunner(invocations, { workspace: true })),
+    );
+
+    expect(inspection.projects.map((project) => project.path)).toContain("Second/MyApp.xcodeproj");
+    expect(results.at(-1)).toMatchObject({ name: "Swift packages", status: "fail" });
+    expect(results.at(-1)?.message).toContain("Remote Swift packages");
+    expect(invocations).toEqual([]);
+  });
+
+  test("fails closed when a workspace contains an external non-project reference", async () => {
+    await createIOSFixture(root, { clerkSDK: false, workspace: true });
+    await Bun.write(
+      join(root, "MyApp.xcworkspace", "contents.xcworkspacedata"),
+      '<?xml version="1.0" encoding="UTF-8"?><Workspace version="1.0"><FileRef location="group:MyApp.xcodeproj"></FileRef><FileRef location="absolute:/private/tmp/ExternalPackage"></FileRef></Workspace>',
+    );
+    const inspection = await inspectIOSProject(root, { target: "MyApp" });
+    const invocations: Invocation[] = [];
+
+    const results = await runIOSXcodeVerification(
+      inspection,
+      { build: true },
+      dependencies(successfulXcodeRunner(invocations, { workspace: true })),
+    );
+
+    expect(results.at(-1)).toMatchObject({ name: "Swift packages", status: "fail" });
+    expect(results.at(-1)?.message).toContain("could not be proven local-only");
+    expect(invocations).toEqual([]);
+  });
+
+  test("ignores inspectable non-package workspace metadata", async () => {
+    await createIOSFixture(root, { clerkSDK: false, workspace: true });
+    await Bun.write(join(root, "README.md"), "# My app\n");
+    await Bun.write(
+      join(root, "MyApp.xcworkspace", "contents.xcworkspacedata"),
+      '<?xml version="1.0" encoding="UTF-8"?><Workspace version="1.0"><FileRef location="group:MyApp.xcodeproj"></FileRef><FileRef location="group:README.md"></FileRef></Workspace>',
+    );
+    const inspection = await inspectIOSProject(root, { target: "MyApp" });
+    const invocations: Invocation[] = [];
+
+    const results = await runIOSXcodeVerification(
+      inspection,
+      { build: true },
+      dependencies(successfulXcodeRunner(invocations, { workspace: true })),
+    );
+
+    expect(results.every((result) => result.status === "pass")).toBe(true);
+    expect(results.find((result) => result.name === "Swift packages")?.message).toContain(
+      "No remote Swift package lock is required",
+    );
+  });
+
+  test("fails closed when workspace membership is incomplete", async () => {
+    await createIOSFixture(root, { clerkSDK: false, workspace: true });
+    await Bun.write(
+      join(root, "MyApp.xcworkspace", "contents.xcworkspacedata"),
+      '<?xml version="1.0" encoding="UTF-8"?><Workspace version="1.0"><FileRef location="group:MyApp.xcodeproj"></FileRef></Group></Workspace>',
+    );
+    const inspection = await inspectIOSProject(root, { target: "MyApp" });
+    const invocations: Invocation[] = [];
+
+    const results = await runIOSXcodeVerification(
+      inspection,
+      { build: true },
+      dependencies(successfulXcodeRunner(invocations, { workspace: true })),
+    );
+
+    expect(results.at(-1)).toMatchObject({ name: "Swift packages", status: "fail" });
+    expect(results.at(-1)?.message).toContain("could not be proven local-only");
+    expect(invocations).toEqual([]);
+  });
+
+  test("uses a valid lock for a local package with transitive remote dependencies", async () => {
+    await createIOSFixture(root);
+    await replaceClerkWithLocalPackage(true);
+    await writeProjectPackageResolved();
+    const inspection = await inspectIOSProject(root, { target: "MyApp" });
+    const invocations: Invocation[] = [];
+
+    const results = await runIOSXcodeVerification(
+      inspection,
+      { build: true },
+      dependencies(successfulXcodeRunner(invocations)),
+    );
+
+    expect(results.every((result) => result.status === "pass")).toBe(true);
+    const hydration = invocations.find((invocation) =>
+      invocation.argv.includes("-resolvePackageDependencies"),
+    );
+    const build = invocations.find(
+      (invocation) => invocation.argv.includes("xcodebuild") && invocation.argv.includes("build"),
+    );
+    expect(hydration?.argv).toContain("-onlyUsePackageVersionsFromResolvedFile");
+    expect(build?.argv).toContain("-onlyUsePackageVersionsFromResolvedFile");
+  });
+
+  test("switches a workspace local package to locked mode when resolution creates a lock", async () => {
+    await createIOSFixture(root, { workspace: true });
+    await replaceClerkWithLocalPackage(true);
+    const inspection = await inspectIOSProject(root, { target: "MyApp" });
+    const invocations: Invocation[] = [];
+    const baseRunner = successfulXcodeRunner(invocations, { workspace: true });
+    const runner: IOSXcodeCommandRunner = async (argv, commandOptions) => {
+      if (argv.includes("-resolvePackageDependencies")) {
+        invocations.push({ argv: [...argv], options: commandOptions });
+        await writeWorkspacePackageResolved();
+        return success();
+      }
+      return baseRunner(argv, commandOptions);
+    };
+
+    const results = await runIOSXcodeVerification(
+      inspection,
+      { resolvePackages: true, build: true },
+      dependencies(runner),
+    );
+
+    expect(results.every((result) => result.status === "pass")).toBe(true);
+    const build = invocations.find(
+      (invocation) => invocation.argv.includes("xcodebuild") && invocation.argv.includes("build"),
+    );
+    expect(build?.argv).toContain("-onlyUsePackageVersionsFromResolvedFile");
+  });
+
+  test("continues with a proven local-only package when explicit resolution creates no lock", async () => {
+    await createIOSFixture(root);
+    await replaceClerkWithLocalPackage(false);
+    const inspection = await inspectIOSProject(root, { target: "MyApp" });
+    const invocations: Invocation[] = [];
+
+    const results = await runIOSXcodeVerification(
+      inspection,
+      { resolvePackages: true, build: true },
+      dependencies(successfulXcodeRunner(invocations)),
+    );
+
+    expect(results.every((result) => result.status === "pass")).toBe(true);
+    expect(results.find((result) => result.name === "Swift packages")?.message).toContain(
+      "no remote package lock was produced",
+    );
+    const build = invocations.find(
+      (invocation) => invocation.argv.includes("xcodebuild") && invocation.argv.includes("build"),
+    );
+    expect(build?.argv).not.toContain("-onlyUsePackageVersionsFromResolvedFile");
+  });
+
+  test("uses a lock produced by explicit resolution when static inspection found no packages", async () => {
+    await createIOSFixture(root, { clerkSDK: false });
+    const inspection = await inspectIOSProject(root, { target: "MyApp" });
+    const invocations: Invocation[] = [];
+    const baseRunner = successfulXcodeRunner(invocations);
+    const runner: IOSXcodeCommandRunner = async (argv, commandOptions) => {
+      if (argv.includes("-resolvePackageDependencies")) {
+        invocations.push({ argv: [...argv], options: commandOptions });
+        await writeProjectPackageResolved();
+        return success();
+      }
+      return baseRunner(argv, commandOptions);
+    };
+
+    const results = await runIOSXcodeVerification(
+      inspection,
+      { resolvePackages: true, build: true },
+      dependencies(runner),
+    );
+
+    expect(results.every((result) => result.status === "pass")).toBe(true);
+    const build = invocations.find(
+      (invocation) => invocation.argv.includes("xcodebuild") && invocation.argv.includes("build"),
+    );
+    expect(build?.argv).toContain("-onlyUsePackageVersionsFromResolvedFile");
+  });
+
+  test("resolves a direct workspace local package before building frozen", async () => {
+    await createIOSFixture(root, { clerkSDK: false, workspace: true });
+    await mkdir(join(root, "LocalPackage"), { recursive: true });
+    await Bun.write(
+      join(root, "LocalPackage", "Package.swift"),
+      '// swift-tools-version: 6.0\nimport PackageDescription\nlet package = Package(name: "LocalPackage", dependencies: [.package(url: "https://example.com/remote.git", from: "1.0.0")])\n',
+    );
+    await Bun.write(
+      join(root, "MyApp.xcworkspace", "contents.xcworkspacedata"),
+      '<?xml version="1.0" encoding="UTF-8"?><Workspace version="1.0"><FileRef location="group:MyApp.xcodeproj"></FileRef><FileRef location="group:LocalPackage"></FileRef></Workspace>',
+    );
+    const inspection = await inspectIOSProject(root, { target: "MyApp" });
+    expect(inspection.projects.every((project) => project.packages.length === 0)).toBe(true);
+
+    const blockedInvocations: Invocation[] = [];
+    const blocked = await runIOSXcodeVerification(
+      inspection,
+      { build: true },
+      dependencies(successfulXcodeRunner(blockedInvocations, { workspace: true })),
+    );
+    expect(blocked.at(-1)).toMatchObject({ name: "Swift packages", status: "fail" });
+    expect(blocked.at(-1)?.message).toContain("could not be proven local-only");
+    expect(blockedInvocations).toEqual([]);
+
+    const invocations: Invocation[] = [];
+    const baseRunner = successfulXcodeRunner(invocations, { workspace: true });
+    const runner: IOSXcodeCommandRunner = async (argv, commandOptions) => {
+      if (argv.includes("-resolvePackageDependencies")) {
+        invocations.push({ argv: [...argv], options: commandOptions });
+        await writeWorkspacePackageResolved();
+        return success();
+      }
+      return baseRunner(argv, commandOptions);
+    };
+    const results = await runIOSXcodeVerification(
+      inspection,
+      { resolvePackages: true, build: true },
+      dependencies(runner),
+    );
+
+    expect(results.every((result) => result.status === "pass")).toBe(true);
+    const build = invocations.find(
+      (invocation) => invocation.argv.includes("xcodebuild") && invocation.argv.includes("build"),
+    );
+    expect(build?.argv).toContain("-onlyUsePackageVersionsFromResolvedFile");
   });
 
   test("explicitly resolves packages, reports lockfile creation, then builds frozen", async () => {
