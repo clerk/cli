@@ -39,7 +39,7 @@ clerk doctor --target MyApp --simulator --device <udid>
 | Check                 | Category       | What it verifies                                                                                                                                                                                     |
 | --------------------- | -------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Account credentials   | Authentication | Credential store has a session or a Platform API key is configured                                                                                                                                   |
-| Token validity        | Authentication | OAuth token is still valid (calls `/oauth/userinfo`); Platform API-key access is verified with a read-only application-list request                                                                  |
+| Token validity        | Authentication | OAuth access is verified through `/oauth/userinfo` or an account-scoped application-list fallback; Platform API-key access uses the same read-only application-list request                          |
 | Project linkage       | Project        | Current directory is linked to a Clerk app                                                                                                                                                           |
 | Linked application    | Project        | Linked application ID is accessible via the API                                                                                                                                                      |
 | Instances             | Project        | Configured dev/prod instance IDs match the application's instances                                                                                                                                   |
@@ -81,8 +81,9 @@ macros, and project build scripts:
   selected container's shared `Package.resolved`.
 - `--build` requires a locked remote package graph, verifies the chosen scheme
   belongs to the selected target, disables signing, filters Clerk credentials
-  from the child environment, and builds with temporary DerivedData and package
-  checkouts.
+  from the child environment, and uses isolated DerivedData and package
+  checkouts. Without `--resolve-packages`, it builds through a temporary
+  workspace with a private copy of `Package.resolved`.
 - `--simulator` additionally installs and launches that isolated build. It
   never guesses among multiple devices; agent mode requires `--device`.
 

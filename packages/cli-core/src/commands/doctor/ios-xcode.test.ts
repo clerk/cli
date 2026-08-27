@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdir, mkdtemp, rm, symlink } from "node:fs/promises";
+import { lstat, mkdir, mkdtemp, readdir, rename, rm, symlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { inspectIOSProject } from "../init/ios/inspect.ts";
@@ -189,9 +189,10 @@ function successfulXcodeRunner(
     if (args.includes("-version")) return success("Xcode 26.0\nBuild version 1A1\n");
     if (args.includes("-resolvePackageDependencies")) return success();
     if (args.includes("-list") && args.includes("xcodebuild")) {
+      const containerKind = args.includes("-workspace") ? "workspace" : "project";
       return success(
         JSON.stringify({
-          [options.workspace ? "workspace" : "project"]: {
+          [containerKind]: {
             schemes: options.schemes ?? ["MyApp"],
             targets: ["MyApp"],
             configurations: ["Debug", "Release"],
@@ -292,8 +293,13 @@ describe("runIOSXcodeVerification", () => {
     const build = invocations.find(
       (invocation) => invocation.argv.includes("xcodebuild") && invocation.argv.includes("build"),
     );
-    expect(build?.argv).toContain("-project");
-    expect(build?.argv).toContain(join(root, "MyApp.xcodeproj"));
+    expect(build?.argv).not.toContain("-project");
+    const workspaceIndex = build?.argv.indexOf("-workspace") ?? -1;
+    expect(workspaceIndex).toBeGreaterThan(-1);
+    const isolatedWorkspace = build?.argv[workspaceIndex + 1];
+    expect(isolatedWorkspace).toStartWith(join(root, ".clerk-doctor-"));
+    expect(isolatedWorkspace).toEndWith(".xcworkspace");
+    expect(isolatedWorkspace).not.toBe(join(root, "MyApp.xcworkspace"));
     expect(build?.argv).toContain("-scheme");
     expect(build?.argv).toContain("MyApp");
     expect(build?.argv).toContain("generic/platform=iOS Simulator");
@@ -310,19 +316,25 @@ describe("runIOSXcodeVerification", () => {
       expect(invocation.options.env.GITHUB_TOKEN).toBeUndefined();
       expect(JSON.stringify(invocation)).not.toContain("must_not_escape");
     }
+    expect((await readdir(root)).some((entry) => entry.startsWith(".clerk-doctor-"))).toBe(false);
   });
 
   test("stops when locked-package hydration changes Package.resolved", async () => {
     await createIOSFixture(root);
     const lockPath = await writeProjectPackageResolved();
+    const lockBefore = await Bun.file(lockPath).text();
+    const lockIdentity = await lstat(lockPath);
     const inspection = await inspectIOSProject(root, { target: "MyApp" });
     const invocations: Invocation[] = [];
     const baseRunner = successfulXcodeRunner(invocations);
     const runner: IOSXcodeCommandRunner = async (argv, commandOptions) => {
       if (argv.includes("-resolvePackageDependencies")) {
         invocations.push({ argv: [...argv], options: commandOptions });
+        const workspaceIndex = argv.indexOf("-workspace");
+        const isolatedWorkspace = argv[workspaceIndex + 1];
+        if (!isolatedWorkspace) throw new Error("Missing isolated workspace");
         await Bun.write(
-          lockPath,
+          join(isolatedWorkspace, "xcshareddata", "swiftpm", "Package.resolved"),
           packageResolvedContents().replace('"revision":"abc"', '"revision":"changed"'),
         );
         return success();
@@ -337,8 +349,83 @@ describe("runIOSXcodeVerification", () => {
     );
 
     expect(results.at(-1)).toMatchObject({ name: "Swift packages", status: "fail" });
-    expect(results.at(-1)?.message).toContain("Package.resolved updated");
+    expect(results.at(-1)?.message).toContain("isolated Package.resolved");
     expect(invocations.some((invocation) => invocation.argv.includes("-list"))).toBe(false);
+    expect(await Bun.file(lockPath).text()).toBe(lockBefore);
+    const lockAfter = await lstat(lockPath);
+    expect({ device: lockAfter.dev, inode: lockAfter.ino }).toEqual({
+      device: lockIdentity.dev,
+      inode: lockIdentity.ino,
+    });
+  });
+
+  test("keeps the original workspace lock unchanged when frozen hydration rewrites its copy", async () => {
+    await createIOSFixture(root, { workspace: true });
+    const lockPath = await writeWorkspacePackageResolved();
+    const lockBefore = await Bun.file(lockPath).text();
+    const lockIdentity = await lstat(lockPath);
+    const inspection = await inspectIOSProject(root, { target: "MyApp" });
+    const invocations: Invocation[] = [];
+    const baseRunner = successfulXcodeRunner(invocations, { workspace: true });
+    const runner: IOSXcodeCommandRunner = async (argv, commandOptions) => {
+      if (argv.includes("-resolvePackageDependencies")) {
+        invocations.push({ argv: [...argv], options: commandOptions });
+        const workspaceIndex = argv.indexOf("-workspace");
+        const isolatedWorkspace = argv[workspaceIndex + 1];
+        if (!isolatedWorkspace) throw new Error("Missing isolated workspace");
+        await Bun.write(
+          join(isolatedWorkspace, "xcshareddata", "swiftpm", "Package.resolved"),
+          packageResolvedContents().replace('"revision":"abc"', '"revision":"changed"'),
+        );
+        return success();
+      }
+      return baseRunner(argv, commandOptions);
+    };
+
+    const results = await runIOSXcodeVerification(
+      inspection,
+      { build: true },
+      dependencies(runner),
+    );
+
+    expect(results.at(-1)).toMatchObject({ name: "Swift packages", status: "fail" });
+    expect(results.at(-1)?.message).toContain("isolated Package.resolved");
+    expect(await Bun.file(lockPath).text()).toBe(lockBefore);
+    const lockAfter = await lstat(lockPath);
+    expect({ device: lockAfter.dev, inode: lockAfter.ino }).toEqual({
+      device: lockIdentity.dev,
+      inode: lockIdentity.ino,
+    });
+  });
+
+  test("reports but preserves a concurrent edit to the original package lock", async () => {
+    await createIOSFixture(root);
+    const lockPath = await writeProjectPackageResolved();
+    const changedLock = packageResolvedContents().replace(
+      '"revision":"abc"',
+      '"revision":"concurrent"',
+    );
+    const inspection = await inspectIOSProject(root, { target: "MyApp" });
+    const invocations: Invocation[] = [];
+    const baseRunner = successfulXcodeRunner(invocations);
+    let changed = false;
+    const runner: IOSXcodeCommandRunner = async (argv, commandOptions) => {
+      if (!changed && argv.includes("-resolvePackageDependencies")) {
+        changed = true;
+        await Bun.write(lockPath, changedLock);
+      }
+      return baseRunner(argv, commandOptions);
+    };
+
+    const results = await runIOSXcodeVerification(
+      inspection,
+      { build: true },
+      dependencies(runner),
+    );
+
+    expect(results.at(-1)).toMatchObject({ name: "Swift packages", status: "fail" });
+    expect(results.at(-1)?.message).toContain("original Package.resolved became updated");
+    expect(await Bun.file(lockPath).text()).toBe(changedLock);
   });
 
   test("reports locked-package hydration failures as Swift package failures", async () => {
@@ -853,7 +940,10 @@ describe("runIOSXcodeVerification", () => {
         dependencies(successfulXcodeRunner(invocations)),
       );
 
-      expect(results.at(-1)).toMatchObject({ name: "Swift packages", status: "fail" });
+      expect(results.at(-1)).toMatchObject({
+        name: "Swift packages",
+        status: "fail",
+      });
       expect(results.at(-1)?.detail).toContain("outside the inspected project root");
       expect(invocations).toEqual([]);
     } finally {
@@ -941,7 +1031,10 @@ describe("runIOSXcodeVerification", () => {
       (invocation) => invocation.argv.includes("xcodebuild") && invocation.argv.includes("build"),
     );
     expect(build?.argv).toContain("-workspace");
-    expect(build?.argv).toContain(join(root, "MyApp.xcworkspace"));
+    expect(build?.argv).not.toContain(join(root, "MyApp.xcworkspace"));
+    const workspaceIndex = build?.argv.indexOf("-workspace") ?? -1;
+    expect(build?.argv[workspaceIndex + 1]).toStartWith(join(root, ".clerk-doctor-"));
+    expect((await readdir(root)).some((entry) => entry.startsWith(".clerk-doctor-"))).toBe(false);
   });
 
   test("sanitizes bounded Xcode failure diagnostics", async () => {
@@ -1007,6 +1100,64 @@ describe("runIOSXcodeVerification", () => {
     ]);
     expect(simulatorCommands.flat()).not.toContain("--terminate-running-process");
     expect(simulatorCommands.flat()).not.toContain("--console");
+  });
+
+  test("preserves a replacement that appears at the isolated-workspace cleanup boundary", async () => {
+    await createIOSFixture(root, { clerkSDK: false });
+    const inspection = await inspectIOSProject(root, { target: "MyApp" });
+    const invocations: Invocation[] = [];
+    const baseRunner = successfulXcodeRunner(invocations, {
+      createApp: true,
+      simulatorDevices: {
+        devices: {
+          "com.apple.CoreSimulator.SimRuntime.iOS-26-5": [
+            {
+              name: "iPhone 17 Pro",
+              udid: "B926551C-01F4-4D5D-8CA8-90F2DF97C48A",
+              state: "Booted",
+              isAvailable: true,
+            },
+          ],
+        },
+      },
+    });
+    const movedWorkspace = join(root, "doctor-owned-workspace-moved");
+    const runner: IOSXcodeCommandRunner = async (argv, commandOptions) => {
+      const result = await baseRunner(argv, commandOptions);
+      if (argv.includes("simctl") && argv.includes("launch")) {
+        const build = invocations.find(
+          (invocation) =>
+            invocation.argv.includes("xcodebuild") && invocation.argv.includes("build"),
+        );
+        const workspaceIndex = build?.argv.indexOf("-workspace") ?? -1;
+        const isolatedWorkspace = build?.argv[workspaceIndex + 1];
+        if (!isolatedWorkspace) throw new Error("Missing isolated workspace");
+        await rename(isolatedWorkspace, movedWorkspace);
+        await mkdir(isolatedWorkspace);
+        await Bun.write(join(isolatedWorkspace, "replacement.txt"), "preserve me");
+      }
+      return result;
+    };
+
+    const results = await runIOSXcodeVerification(
+      inspection,
+      { simulator: true },
+      dependencies(runner),
+    );
+
+    expect(results.at(-1)).toMatchObject({
+      name: "Xcode temporary files",
+      status: "warn",
+    });
+    expect(results.at(-1)?.message).toContain("could not be removed safely");
+    const cleanupEntry = (await readdir(root)).find((entry) =>
+      entry.startsWith(".clerk-doctor-cleanup-"),
+    );
+    expect(cleanupEntry).toBeDefined();
+    expect(results.at(-1)?.remedy).toContain("Inspect");
+    expect(results.at(-1)?.remedy).toContain(join(root, cleanupEntry!));
+    expect(results.at(-1)?.remedy).not.toContain("Remove");
+    expect(await Bun.file(join(root, cleanupEntry!, "replacement.txt")).text()).toBe("preserve me");
   });
 
   test("builds but blocks simctl launch for a Run-scheme publishable key", async () => {

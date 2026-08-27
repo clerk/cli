@@ -18,7 +18,7 @@ import type { DoctorContext, KeylessInstanceInfo, ResolvedProfile } from "./type
 export function createDoctorContext(): DoctorContext {
   let tokenPromise: Promise<string | null> | undefined;
   let accountCredentialsPromise: Promise<boolean> | undefined;
-  let platformAPIKeyVerificationPromise: Promise<void> | undefined;
+  let accountAccessVerificationPromise: Promise<void> | undefined;
   let validTokenPromise: Promise<string | null> | undefined;
   let profilePromise: Promise<ResolvedProfile | undefined> | undefined;
   let appPromise: Promise<Application | null> | undefined;
@@ -39,11 +39,11 @@ export function createDoctorContext(): DoctorContext {
       return accountCredentialsPromise;
     },
 
-    verifyPlatformAPIKey() {
-      if (!platformAPIKeyVerificationPromise) {
-        platformAPIKeyVerificationPromise = listApplications().then(() => undefined);
+    verifyAccountAccess() {
+      if (!accountAccessVerificationPromise) {
+        accountAccessVerificationPromise = listApplications().then(() => undefined);
       }
-      return platformAPIKeyVerificationPromise;
+      return accountAccessVerificationPromise;
     },
 
     getToken() {
