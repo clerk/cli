@@ -4,7 +4,9 @@ import { pathIsSafelyWithinIOSRoot, relativeIOSPath } from "./discovery.ts";
 import {
   applyIOSFileTransaction,
   hashIOSFileBytes,
+  prepareIOSFileMutationBoundary,
   type IOSExistingFileMutation,
+  type IOSFileMutationBoundary,
 } from "./file-transaction.ts";
 import { hasExactIOSSwiftUIAppContentRoot } from "./direct-config.ts";
 import { inspectIOSProject, inspectIOSSourceMembership } from "./inspect.ts";
@@ -63,6 +65,7 @@ export interface IOSPrebuiltAuthPlan {
 /** @internal Candidate bytes are hidden from ordinary serialization. */
 export interface IOSPrebuiltAuthFileMutation {
   absolutePath: string;
+  boundary: IOSFileMutationBoundary;
   expectedHash: string;
   candidateHash: string;
   mode: number;
@@ -667,6 +670,7 @@ export async function planIOSPrebuiltAuth(
 function mutationWithHiddenBytes(
   snapshot: SourceSnapshot,
   candidateBytes: Uint8Array,
+  boundary: IOSFileMutationBoundary,
 ): IOSPrebuiltAuthFileMutation {
   const mutation = {
     absolutePath: snapshot.absolutePath,
@@ -675,6 +679,7 @@ function mutationWithHiddenBytes(
     mode: snapshot.mode,
   } as IOSPrebuiltAuthFileMutation;
   Object.defineProperties(mutation, {
+    boundary: { value: boundary, enumerable: false },
     originalBytes: { value: snapshot.bytes, enumerable: false },
     candidateBytes: { value: candidateBytes, enumerable: false },
   });
@@ -745,7 +750,18 @@ export async function prepareIOSPrebuiltAuthMutation(
   const newline = current.sourceSnapshot.newline;
   const generated = `${current.sourceHeader ?? ""}${GENERATED_CONTENT_VIEW.replace(/\n/g, newline)}`;
   const candidateBytes = new TextEncoder().encode(generated);
-  const mutation = mutationWithHiddenBytes(current.sourceSnapshot, candidateBytes);
+  const boundary = await prepareIOSFileMutationBoundary(
+    plan.root,
+    current.sourceSnapshot.absolutePath,
+  );
+  if (!boundary) {
+    return {
+      status: "stale",
+      plan,
+      message: "The selected Swift source moved outside its prepared project boundary.",
+    };
+  }
+  const mutation = mutationWithHiddenBytes(current.sourceSnapshot, candidateBytes, boundary);
   const candidateHash = mutation.candidateHash;
   return readyPrepared(plan, mutation, async () => {
     const verified = await preparePlan({
@@ -771,6 +787,7 @@ export async function validatePreparedIOSPrebuiltAuth(
 function asExistingMutation(mutation: IOSPrebuiltAuthFileMutation): IOSExistingFileMutation {
   return {
     path: mutation.absolutePath,
+    boundary: mutation.boundary,
     originalBytes: mutation.originalBytes,
     originalHash: mutation.expectedHash,
     candidateBytes: mutation.candidateBytes,

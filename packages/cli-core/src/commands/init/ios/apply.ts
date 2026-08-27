@@ -885,6 +885,7 @@ function directFileMutation(
 ): IOSExistingFileMutation {
   return {
     path: prepared.mutation.absolutePath,
+    boundary: prepared.mutation.boundary,
     originalBytes: prepared.mutation.originalBytes,
     originalHash: prepared.mutation.expectedHash,
     candidateBytes: prepared.mutation.candidateBytes,
@@ -898,6 +899,7 @@ function prebuiltAuthFileMutation(
 ): IOSExistingFileMutation {
   return {
     path: prepared.mutation.absolutePath,
+    boundary: prepared.mutation.boundary,
     originalBytes: prepared.mutation.originalBytes,
     originalHash: prepared.mutation.expectedHash,
     candidateBytes: prepared.mutation.candidateBytes,
@@ -909,6 +911,7 @@ function prebuiltAuthFileMutation(
 function reverseFileMutation(mutation: IOSExistingFileMutation): IOSExistingFileMutation {
   return {
     path: mutation.path,
+    boundary: mutation.boundary,
     originalBytes: mutation.candidateBytes,
     originalHash: mutation.candidateHash,
     candidateBytes: mutation.originalBytes,

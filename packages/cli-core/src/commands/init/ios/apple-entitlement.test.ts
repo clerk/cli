@@ -100,6 +100,9 @@ describe("iOS Sign in with Apple entitlement setup", () => {
       files: [{ path: "MyApp/MyApp.entitlements", operation: "modify" }],
     });
     expect(prepared.status).toBe("ready");
+    if (prepared.status !== "ready") throw new Error("expected prepared Apple mutation");
+    expect(prepared.mutations[0]?.boundary.rootPath).toBe(root);
+    expect(prepared.mutations[0]?.boundary.realParentPath.endsWith("/MyApp")).toBe(true);
     expect(JSON.stringify({ plan, prepared })).not.toContain("candidateBytes");
     expect(JSON.stringify({ plan, prepared })).not.toContain("<plist");
 
@@ -267,6 +270,7 @@ describe("iOS Sign in with Apple entitlement setup", () => {
       ...planOptions(root),
       allowMissingEntitlementsCreation: true,
     });
+    const prepared = await prepareIOSAppleEntitlementMutation(plan);
     const result = await applyIOSAppleEntitlement(plan);
 
     expect(plan).toMatchObject({
@@ -274,6 +278,11 @@ describe("iOS Sign in with Apple entitlement setup", () => {
       files: [{ path: "MyApp/MyApp.entitlements", operation: "create" }],
       missingEntitlementsSettings: { status: "ready" },
     });
+    expect(prepared.status).toBe("ready");
+    if (prepared.status !== "ready") throw new Error("expected prepared Apple create mutation");
+    const createMutation = prepared.mutations.find((mutation) => "kind" in mutation);
+    expect(createMutation?.boundary.rootPath).toBe(root);
+    expect(createMutation?.boundary.realParentPath.endsWith("/MyApp")).toBe(true);
     expect(result.status).toBe("applied");
     expect(await readFile(path, "utf8")).toContain(appleBlock());
     expect((await lstat(path)).mode & 0o7777).toBe(0o644);
@@ -316,6 +325,9 @@ struct MyApp: App {
     expect(prepared.consumedBaseMutationPaths).toEqual(
       associated.mutations.map((mutation) => mutation.path).sort(),
     );
+    const associatedCreate = associated.mutations.find((mutation) => "kind" in mutation);
+    const appleCreate = prepared.mutations.find((mutation) => "kind" in mutation);
+    expect(appleCreate?.boundary).toEqual(associatedCreate?.boundary);
     expect(JSON.stringify(prepared)).not.toContain("candidateBytes");
 
     const result = await applyIOSFileTransaction(prepared.mutations, [

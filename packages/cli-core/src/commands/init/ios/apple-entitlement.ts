@@ -1,5 +1,6 @@
 import { lstat, readFile } from "node:fs/promises";
 import { dirname, isAbsolute, resolve } from "node:path";
+import { isDeepStrictEqual } from "node:util";
 import {
   planIOSAssociatedDomain,
   type IOSAssociatedDomainBlockerCode,
@@ -8,6 +9,7 @@ import { pathIsSafelyWithinIOSRoot, relativeIOSPath } from "./discovery.ts";
 import {
   applyIOSFileTransaction,
   hashIOSFileBytes,
+  prepareIOSFileMutationBoundary,
   type IOSCreateFileMutation,
   type IOSExistingFileMutation,
   type IOSFileMutation,
@@ -652,14 +654,32 @@ export async function prepareIOSAppleEntitlementMutation(
       );
     }
 
+    const expectedParentIdentity =
+      plan.missingEntitlementsSettings.expectedSynchronizedRootIdentity;
+    const synchronizedRootPath = plan.missingEntitlementsSettings.synchronizedRootPath;
+    const boundary = await prepareIOSFileMutationBoundary(plan.root, entitlementsPath);
+    if (
+      !expectedParentIdentity ||
+      !synchronizedRootPath ||
+      dirname(entitlementsPath) !== resolve(plan.root, synchronizedRootPath)
+    ) {
+      return blockPrepared(
+        plan,
+        "invalid-plan",
+        "The entitlements destination no longer matches its synchronized target root.",
+      );
+    }
+    if (
+      !boundary ||
+      boundary.parentIdentity.device !== expectedParentIdentity.device ||
+      boundary.parentIdentity.inode !== expectedParentIdentity.inode
+    ) {
+      return { status: "stale", plan };
+    }
+
     let createMutation: IOSCreateFileMutation;
     if (baseEntitlements) {
-      const expectedIdentity = plan.missingEntitlementsSettings.expectedSynchronizedRootIdentity;
-      if (
-        !expectedIdentity ||
-        baseEntitlements.expectedParentIdentity.device !== expectedIdentity.device ||
-        baseEntitlements.expectedParentIdentity.inode !== expectedIdentity.inode
-      ) {
+      if (!isDeepStrictEqual(baseEntitlements.boundary, boundary)) {
         return { status: "stale", plan };
       }
       const inspected = inspectEntitlementsBytes(
@@ -681,28 +701,16 @@ export async function prepareIOSAppleEntitlementMutation(
       }
       createMutation = {
         ...baseEntitlements,
+        boundary: baseEntitlements.boundary,
         candidateBytes,
         candidateHash: hashIOSFileBytes(candidateBytes),
       };
     } else {
-      const expectedParentIdentity =
-        plan.missingEntitlementsSettings.expectedSynchronizedRootIdentity;
-      if (
-        !expectedParentIdentity ||
-        dirname(entitlementsPath) !==
-          resolve(plan.root, plan.missingEntitlementsSettings.synchronizedRootPath ?? "")
-      ) {
-        return blockPrepared(
-          plan,
-          "invalid-plan",
-          "The entitlements destination no longer matches its synchronized target root.",
-        );
-      }
       const candidateBytes = newEntitlementsBytes();
       createMutation = {
         kind: "create",
         path: entitlementsPath,
-        expectedParentIdentity: { ...expectedParentIdentity },
+        boundary,
         candidateBytes,
         candidateHash: hashIOSFileBytes(candidateBytes),
         mode: 0o644,
@@ -732,6 +740,10 @@ export async function prepareIOSAppleEntitlementMutation(
     }
     const base = baseByPath.get(absolutePath);
     if (base && isCreateMutation(base)) return { status: "stale", plan };
+    const boundary = await prepareIOSFileMutationBoundary(plan.root, absolutePath);
+    if (!boundary || (base && !isDeepStrictEqual(base.boundary, boundary))) {
+      return { status: "stale", plan };
+    }
     if (
       base &&
       (base.originalHash !== file.expectedHash ||
@@ -763,6 +775,7 @@ export async function prepareIOSAppleEntitlementMutation(
     }
     mutations.push({
       path: absolutePath,
+      boundary: base?.boundary ?? boundary,
       originalBytes: base?.originalBytes ?? current.document.bytes,
       originalHash: base?.originalHash ?? current.document.hash,
       candidateBytes,

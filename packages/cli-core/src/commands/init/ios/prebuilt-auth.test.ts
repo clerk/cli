@@ -151,6 +151,7 @@ describe("prebuilt AuthView source setup", () => {
   test("plans only an exact target-owned untouched SwiftUI placeholder", async () => {
     const root = await createFixture();
     const plan = await planIOSPrebuiltAuth(options(root));
+    const prepared = await prepareIOSPrebuiltAuthMutation(plan);
 
     expect(plan).toMatchObject({
       schemaVersion: 1,
@@ -162,6 +163,11 @@ describe("prebuilt AuthView source setup", () => {
     });
     expect(JSON.stringify(plan)).not.toContain("AuthView()");
     expect(JSON.stringify(plan)).not.toContain("Hello, world!");
+    expect(prepared.status).toBe("ready");
+    if (prepared.status !== "ready") throw new Error("expected prepared AuthView mutation");
+    expect(prepared.mutation.boundary.rootPath).toBe(root);
+    expect(prepared.mutation.boundary.realParentPath.endsWith("/MyApp")).toBe(true);
+    expect(JSON.stringify(prepared)).not.toContain("boundary");
   });
 
   test.each([
