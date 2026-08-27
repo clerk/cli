@@ -2,8 +2,8 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { mkdtemp, mkdir, rm, symlink } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { inspectWorkspace } from "./discovery.ts";
-import { inspectIOSProject } from "./inspect.ts";
+import { discoverIOSContainers, inspectWorkspace } from "./discovery.ts";
+import { inspectIOSProject, inspectIOSSourceMembership } from "./inspect.ts";
 import { createIOSFixture, IOS_FIXTURE_IDS, treeDigest } from "./test-helpers.ts";
 
 const temporaryDirectories: string[] = [];
@@ -19,7 +19,62 @@ afterEach(async () => {
   await Promise.all(temporaryDirectories.splice(0).map((path) => rm(path, { recursive: true })));
 });
 
+describe("discoverIOSContainers", () => {
+  test("marks a skipped symlinked Xcode container incomplete", async () => {
+    const root = await mkdtemp(join(tmpdir(), "clerk-ios-discovery-"));
+    temporaryDirectories.push(root);
+    const project = join(root, "Real.xcodeproj");
+    await mkdir(project);
+    await symlink(project, join(root, "Linked.xcodeproj"), "dir");
+
+    const discovery = await discoverIOSContainers(root, { exhaustive: true });
+
+    expect(discovery.projectPaths).toEqual([project]);
+    expect(discovery.complete).toBe(false);
+  });
+
+  test("marks symlinked and unreadable traversal paths incomplete", async () => {
+    const root = await mkdtemp(join(tmpdir(), "clerk-ios-discovery-"));
+    temporaryDirectories.push(root);
+    const linkedDirectory = join(root, "LinkedProjects");
+    const targetDirectory = join(root, "TargetProjects");
+    await mkdir(targetDirectory);
+    await symlink(targetDirectory, linkedDirectory, "dir");
+    await symlink(join(root, "MissingProjects"), join(root, "BrokenProjects"), "dir");
+
+    const discovery = await discoverIOSContainers(root, { exhaustive: true });
+
+    expect(discovery.complete).toBe(false);
+  });
+
+  test("does not taint discovery for file links or ignored directory links", async () => {
+    const root = await mkdtemp(join(tmpdir(), "clerk-ios-discovery-"));
+    temporaryDirectories.push(root);
+    const file = join(root, "Configuration.txt");
+    const ignoredTarget = join(root, "IgnoredTarget");
+    await Bun.write(file, "configuration");
+    await mkdir(ignoredTarget);
+    await symlink(file, join(root, "LinkedConfiguration.txt"), "file");
+    await symlink(ignoredTarget, join(root, "Pods"), "dir");
+
+    const discovery = await discoverIOSContainers(root, { exhaustive: true });
+
+    expect(discovery.complete).toBe(true);
+  });
+});
+
 describe("inspectIOSProject", () => {
+  test("fails source ownership closed when a project-container link is skipped", async () => {
+    const root = await fixture({ complete: true });
+    const project = join(root, "MyApp.xcodeproj");
+    await symlink(project, join(root, "Linked.xcodeproj"), "dir");
+
+    const memberships = await inspectIOSSourceMembership(root);
+
+    expect(memberships.length).toBeGreaterThan(0);
+    expect(memberships.every((membership) => !membership.complete)).toBe(true);
+  });
+
   test("inspects target settings, Clerk linkage, entitlements, and Swift setup", async () => {
     const root = await fixture({ complete: true, workspace: true });
     const inspection = await inspectIOSProject(root);

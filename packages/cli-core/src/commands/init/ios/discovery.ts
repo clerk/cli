@@ -1,4 +1,4 @@
-import { readdir, realpath } from "node:fs/promises";
+import { readdir, realpath, stat } from "node:fs/promises";
 import { basename, dirname, isAbsolute, relative, resolve, sep } from "node:path";
 import type { IOSWorkspaceInspection } from "./types.ts";
 
@@ -115,8 +115,22 @@ async function walkContainers(
 
   entries.sort((a, b) => a.name.localeCompare(b.name));
   for (const entry of entries) {
-    if (!entry.isDirectory()) continue;
     const absolutePath = resolve(directory, entry.name);
+
+    if (entry.isSymbolicLink()) {
+      if (IGNORED_DIRECTORIES.has(entry.name)) continue;
+      if (!state.includeHiddenDirectories && entry.name.startsWith(".")) continue;
+      try {
+        if ((await stat(absolutePath)).isDirectory()) state.complete = false;
+      } catch {
+        // A broken or unreadable link could have hidden a directory containing
+        // another Xcode container, so exhaustive ownership cannot be proven.
+        state.complete = false;
+      }
+      continue;
+    }
+
+    if (!entry.isDirectory()) continue;
 
     if (entry.name.endsWith(".xcodeproj")) {
       if (projects.size + workspaces.size >= MAX_DISCOVERED_CONTAINERS) {
