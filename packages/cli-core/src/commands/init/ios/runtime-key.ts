@@ -2595,6 +2595,10 @@ async function rollbackFiles(
         cleanupFailure ??= error;
       }
     }
+    if (staged.keyBearing && staged.recoveryClaims.some((claim) => claim.present)) {
+      fullyRestored = false;
+      payloadIsUnsafe = true;
+    }
   }
   const payload = stagedFiles.find(
     (staged) => staged.committed && staged.targetPath === dependency.payloadPath,

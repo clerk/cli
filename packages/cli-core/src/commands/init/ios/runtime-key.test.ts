@@ -5,6 +5,7 @@ import {
   lstat,
   mkdir,
   mkdtemp,
+  open,
   readdir,
   rename,
   rm,
@@ -804,6 +805,47 @@ describe("iOS runtime publishable-key transaction", () => {
     expect((await readdir(join(root, "MyApp"))).some((name) => name.includes(".clerk-"))).toBe(
       false,
     );
+  });
+
+  test("retains ignore protection for a modified recovery claim after commit aborts", async () => {
+    const root = await fixture("pk_test_...");
+    await initGit(root);
+    const plan = await planIOSRuntimeKey(options(root));
+    const plistPath = join(root, "MyApp", "LocalSecrets.plist");
+    const replacementPath = join(root, "MyApp", "editor-open-fd-replacement.plist");
+    const replacement = plistSource("newer-editor-value");
+    const key = publishableKey("commit-recovery-claim.clerk.example");
+    await Bun.write(replacementPath, replacement);
+    const originalHandle = await open(plistPath, "a");
+    let recoveryClaimPath: string | undefined;
+
+    const apply = applyIOSRuntimeKey(plan, key, {
+      beforeStagedCommitInstall: async (targetPath, claimPath) => {
+        if (targetPath !== plistPath) return;
+        recoveryClaimPath = claimPath;
+        await originalHandle.appendFile("\n<!-- open descriptor edit -->\n");
+        await rename(replacementPath, targetPath);
+      },
+    });
+
+    try {
+      await expect(apply).rejects.toThrow("Git-ignore protection was retained");
+    } finally {
+      await originalHandle.close();
+    }
+    expect(recoveryClaimPath).toBeDefined();
+    expect(await Bun.file(plistPath).text()).toBe(replacement);
+    expect(await Bun.file(plistPath).text()).not.toContain(key);
+    expect(await Bun.file(join(root, ".gitignore")).text()).toBe(
+      TEMPORARY_IGNORE_RULE + TARGET_IGNORE_RULE,
+    );
+    expect(await Bun.file(recoveryClaimPath!).text()).toContain("open descriptor edit");
+    expect(await Bun.file(recoveryClaimPath!).text()).not.toContain(key);
+    const ignored = Bun.spawn(
+      ["git", "check-ignore", "--quiet", "--no-index", "--", relative(root, recoveryClaimPath!)],
+      { cwd: root, stdout: "ignore", stderr: "ignore" },
+    );
+    expect(await ignored.exited).toBe(0);
   });
 
   test("preserves an editor replacement that wins the plist rollback boundary", async () => {
