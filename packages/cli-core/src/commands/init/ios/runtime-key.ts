@@ -15,7 +15,11 @@ import { basename, dirname, isAbsolute, relative, resolve, sep } from "node:path
 import { parse as parsePbxProject } from "@bacons/xcode/json";
 import { decodePublishableKey } from "../../../lib/fapi.ts";
 import { inspectIOSProject } from "./inspect.ts";
-import { pathIsSafelyWithinIOSRoot, relativeIOSPath } from "./discovery.ts";
+import {
+  discoverLocalIOSProjects,
+  pathIsSafelyWithinIOSRoot,
+  relativeIOSPath,
+} from "./discovery.ts";
 import type { IOSAppTarget } from "./types.ts";
 import {
   asString,
@@ -1262,56 +1266,63 @@ async function hasExclusiveRuntimeSinkOwnership(
     return false;
   }
 
-  const absoluteProjectPath = resolve(root, projectPath);
-  const pbxprojPath = resolve(absoluteProjectPath, "project.pbxproj");
-  if (!(await pathIsSafelyWithinIOSRoot(root, pbxprojPath))) return false;
-
-  let archive: unknown;
-  try {
-    const info = await lstat(pbxprojPath);
-    if (!info.isFile() || info.isSymbolicLink() || info.size > MAX_PBXPROJ_BYTES) return false;
-    archive = parsePbxProject(await readFile(pbxprojPath, "utf8"));
-  } catch {
-    return false;
-  }
-
-  if (!isRecord(archive)) return false;
-  const objects = normalizedObjects(archive.objects);
-  const projectObjectId = asString(archive.rootObject);
-  const projectObject = projectObjectId ? objects?.[projectObjectId] : undefined;
-  if (!objects || projectObject?.isa !== "PBXProject") return false;
-
-  const projectTargetIds = exactStringArray(projectObject.targets);
-  if (!projectTargetIds || !projectTargetIds.includes(targetId)) return false;
-  const parents = buildPbxParentIndex(objects);
-  const projectDirectory = dirname(absoluteProjectPath);
-  const groupRootDirectory = resolve(
-    projectDirectory,
-    asString(projectObject.projectDirPath) ?? "",
-  );
-
+  const selectedProjectPath = resolve(root, projectPath);
+  const inventory = await discoverLocalIOSProjects(root, [selectedProjectPath]);
+  if (!inventory.complete) return false;
   const owners = new Set<string>();
-  for (const candidateTargetId of projectTargetIds) {
-    const target = objects[candidateTargetId];
-    if (!target) return false;
-    if (target.isa !== "PBXNativeTarget" || asString(target.productType) !== APP_PRODUCT_TYPE) {
-      continue;
+  const selectedOwner = `${selectedProjectPath}\0${targetId}`;
+  let selectedTargetFound = false;
+  for (const absoluteProjectPath of inventory.projectPaths) {
+    const pbxprojPath = resolve(absoluteProjectPath, "project.pbxproj");
+    if (!(await pathIsSafelyWithinIOSRoot(root, pbxprojPath))) return false;
+
+    let archive: unknown;
+    try {
+      const info = await lstat(pbxprojPath);
+      if (!info.isFile() || info.isSymbolicLink() || info.size > MAX_PBXPROJ_BYTES) return false;
+      archive = parsePbxProject(await readFile(pbxprojPath, "utf8"));
+    } catch {
+      return false;
     }
 
-    const ownership = await targetOwnsCanonicalRuntimeSink({
-      canonicalSink,
-      groupRootDirectory,
-      objects,
-      parents,
+    if (!isRecord(archive)) return false;
+    const objects = normalizedObjects(archive.objects);
+    const projectObjectId = asString(archive.rootObject);
+    const projectObject = projectObjectId ? objects?.[projectObjectId] : undefined;
+    if (!objects || projectObject?.isa !== "PBXProject") return false;
+
+    const projectTargetIds = exactStringArray(projectObject.targets);
+    if (!projectTargetIds) return false;
+    const parents = buildPbxParentIndex(objects);
+    const projectDirectory = dirname(absoluteProjectPath);
+    const groupRootDirectory = resolve(
       projectDirectory,
-      sinkIdentity,
-      target,
-      targetId: candidateTargetId,
-    });
-    if (ownership == null) return false;
-    if (ownership) owners.add(candidateTargetId);
+      asString(projectObject.projectDirPath) ?? "",
+    );
+
+    for (const candidateTargetId of projectTargetIds) {
+      const target = objects[candidateTargetId];
+      if (!target) return false;
+      if (target.isa !== "PBXNativeTarget") continue;
+      if (absoluteProjectPath === selectedProjectPath && candidateTargetId === targetId) {
+        selectedTargetFound = true;
+      }
+
+      const ownership = await targetOwnsCanonicalRuntimeSink({
+        canonicalSink,
+        groupRootDirectory,
+        objects,
+        parents,
+        projectDirectory,
+        sinkIdentity,
+        target,
+        targetId: candidateTargetId,
+      });
+      if (ownership == null) return false;
+      if (ownership) owners.add(`${absoluteProjectPath}\0${candidateTargetId}`);
+    }
   }
-  return owners.size === 1 && owners.has(targetId);
+  return selectedTargetFound && owners.size === 1 && owners.has(selectedOwner);
 }
 
 async function prepareRuntimeKeyVerification(
