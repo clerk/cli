@@ -24,6 +24,8 @@ const SIMULATOR_LIST_TIMEOUT_MS = 15_000;
 const SIMULATOR_BOOT_TIMEOUT_MS = 2 * 60_000;
 const SIMULATOR_OPERATION_TIMEOUT_MS = 60_000;
 const FORCE_KILL_DELAY_MS = 2_000;
+const PROCESS_GROUP_EXIT_TIMEOUT_MS = 2_000;
+const PROCESS_GROUP_EXIT_POLL_MS = 10;
 const DEFAULT_OUTPUT_LIMIT_BYTES = 1024 * 1024;
 const JSON_OUTPUT_LIMIT_BYTES = 8 * 1024 * 1024;
 const MAX_PACKAGE_RESOLVED_BYTES = 2 * 1024 * 1024;
@@ -282,11 +284,16 @@ async function readBoundedStream(
 
 /** Default bounded, non-interactive command runner used by iOS doctor. */
 export const runIOSXcodeCommand: IOSXcodeCommandRunner = async (argv, options) => {
-  let process: ReturnType<typeof Bun.spawn>;
+  const usesIsolatedProcessGroup = globalThis.process.platform !== "win32";
+  let child: ReturnType<typeof Bun.spawn>;
   try {
-    process = Bun.spawn([...argv], {
+    child = Bun.spawn([...argv], {
       cwd: options.cwd,
       env: options.env,
+      // Xcode can launch package plugins and project-controlled build scripts.
+      // A separate POSIX process group lets a timeout stop that whole tree
+      // without signaling the Clerk CLI itself.
+      detached: usesIsolatedProcessGroup,
       stdin: "ignore",
       stdout: "pipe",
       stderr: "pipe",
@@ -302,26 +309,62 @@ export const runIOSXcodeCommand: IOSXcodeCommandRunner = async (argv, options) =
     };
   }
 
+  const signalProcessTree = (signal: NodeJS.Signals): void => {
+    if (usesIsolatedProcessGroup) {
+      try {
+        globalThis.process.kill(-child.pid, signal);
+        return;
+      } catch {
+        // If the isolated group disappeared there is nothing left to stop. If
+        // the leader still exists, fall back to Bun's direct-child signal.
+        if (child.exitCode !== null) return;
+      }
+    }
+    try {
+      child.kill(signal);
+    } catch {}
+  };
+
+  const processTreeIsAlive = (): boolean => {
+    if (!usesIsolatedProcessGroup) return child.exitCode === null;
+    try {
+      globalThis.process.kill(-child.pid, 0);
+      return true;
+    } catch (error) {
+      return !(
+        typeof error === "object" &&
+        error !== null &&
+        "code" in error &&
+        error.code === "ESRCH"
+      );
+    }
+  };
+
+  const waitForProcessTreeExit = async (): Promise<void> => {
+    const deadline = performance.now() + PROCESS_GROUP_EXIT_TIMEOUT_MS;
+    while (processTreeIsAlive() && performance.now() < deadline) {
+      await Bun.sleep(PROCESS_GROUP_EXIT_POLL_MS);
+    }
+  };
+
   let timedOut = false;
+  let forceKillSent = false;
   let forceKillTimer: ReturnType<typeof setTimeout> | undefined;
   const timeout = setTimeout(() => {
     timedOut = true;
-    try {
-      process.kill("SIGTERM");
-    } catch {}
+    signalProcessTree("SIGTERM");
     forceKillTimer = setTimeout(() => {
-      try {
-        process.kill("SIGKILL");
-      } catch {}
+      forceKillSent = true;
+      signalProcessTree("SIGKILL");
     }, FORCE_KILL_DELAY_MS);
   }, options.timeoutMs);
 
   const outputLimit = options.maxOutputBytes ?? DEFAULT_OUTPUT_LIMIT_BYTES;
   try {
     const [exitCode, stdout, stderr] = await Promise.all([
-      process.exited,
-      readBoundedStream(process.stdout as ReadableStream<Uint8Array>, outputLimit),
-      readBoundedStream(process.stderr as ReadableStream<Uint8Array>, outputLimit),
+      child.exited,
+      readBoundedStream(child.stdout as ReadableStream<Uint8Array>, outputLimit),
+      readBoundedStream(child.stderr as ReadableStream<Uint8Array>, outputLimit),
     ]);
     return {
       exitCode,
@@ -342,6 +385,14 @@ export const runIOSXcodeCommand: IOSXcodeCommandRunner = async (argv, options) =
   } finally {
     clearTimeout(timeout);
     if (forceKillTimer) clearTimeout(forceKillTimer);
+    // The leader can exit on SIGTERM while a descendant that closed its stdio
+    // remains alive. Force the group down and wait for it to disappear before
+    // the caller can remove temporary build files that descendants may hold.
+    if (timedOut && !forceKillSent) {
+      forceKillSent = true;
+      signalProcessTree("SIGKILL");
+    }
+    if (timedOut) await waitForProcessTreeExit();
   }
 };
 
