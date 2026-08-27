@@ -3,7 +3,7 @@ import { chmod, lstat, open, readFile, rename, rm } from "node:fs/promises";
 import { basename, dirname, relative, resolve } from "node:path";
 import { decodePublishableKey } from "../../../lib/fapi.ts";
 import { pathIsSafelyWithinIOSRoot, relativeIOSPath } from "./discovery.ts";
-import { inspectIOSProject } from "./inspect.ts";
+import { inspectIOSProject, inspectIOSSourceMembership } from "./inspect.ts";
 import { sanitizeSwiftSource } from "./swift.ts";
 
 const MAX_SWIFT_FILE_BYTES = 1_000_000;
@@ -23,6 +23,7 @@ export type IOSDirectConfigBlockerCode =
   | "generated-project"
   | "target-not-found"
   | "incomplete-source-membership"
+  | "shared-source"
   | "ambiguous-entry-point"
   | "unreadable-source"
   | "unsupported-encoding"
@@ -123,6 +124,8 @@ interface FileSnapshot {
   source: string;
   hash: string;
   mode: number;
+  device: number;
+  inode: number;
 }
 
 interface Range {
@@ -368,10 +371,52 @@ async function sourceSnapshot(
       source,
       hash: sha256(bytes),
       mode: info.mode & 0o7777,
+      device: info.dev,
+      inode: info.ino,
     };
   } catch {
     return undefined;
   }
+}
+
+type EntrySourceOwnership = "exclusive" | "shared" | "incomplete";
+
+function sourceOwnerKey(projectPath: string, targetId: string): string {
+  return `${projectPath}\0${targetId}`;
+}
+
+async function entrySourceOwnership(
+  root: string,
+  projectPath: string,
+  targetId: string,
+  snapshot: FileSnapshot,
+): Promise<EntrySourceOwnership> {
+  const memberships = await inspectIOSSourceMembership(root);
+  const selectedMembership = memberships.find(
+    (membership) => membership.projectPath === projectPath && membership.targetId === targetId,
+  );
+  if (!selectedMembership?.complete || memberships.some((membership) => !membership.complete)) {
+    return "incomplete";
+  }
+
+  const owners = new Set<string>();
+  try {
+    for (const membership of memberships) {
+      let ownsSource = false;
+      for (const file of membership.files) {
+        const info = await lstat(file.absolutePath);
+        if (!info.isFile() || info.isSymbolicLink()) return "incomplete";
+        if (info.dev === snapshot.device && info.ino === snapshot.inode) ownsSource = true;
+      }
+      if (ownsSource) owners.add(sourceOwnerKey(membership.projectPath, membership.targetId));
+    }
+  } catch {
+    return "incomplete";
+  }
+
+  const selectedOwner = sourceOwnerKey(projectPath, targetId);
+  if (!owners.has(selectedOwner)) return "incomplete";
+  return owners.size === 1 ? "exclusive" : "shared";
 }
 
 async function generatedProjectKind(
@@ -1325,6 +1370,28 @@ async function prepareDirectConfig(
     expectedSourceHash: snapshot.hash,
   });
 
+  const ownership = await entrySourceOwnership(root, projectPath, options.targetId, snapshot);
+  if (ownership === "incomplete") {
+    return blocked(
+      options,
+      root,
+      projectPath,
+      "incomplete-source-membership",
+      "Complete entry-source ownership across every local native target could not be proven.",
+      { plan: sourcePlan, snapshot },
+    );
+  }
+  if (ownership === "shared") {
+    return blocked(
+      options,
+      root,
+      projectPath,
+      "shared-source",
+      "The selected @main Swift source is shared, aliased, or not exclusively owned by the selected target.",
+      { plan: sourcePlan, snapshot },
+    );
+  }
+
   const parsed = parseAppStructure(snapshot.source);
   if ("blocker" in parsed) {
     return blocked(options, root, projectPath, parsed.blocker.code, parsed.blocker.message, {
@@ -1479,7 +1546,7 @@ function redactedKeyBlocker(
 }
 
 function mutationWithHiddenBytes(
-  snapshot: FileSnapshot,
+  snapshot: Pick<FileSnapshot, "absolutePath" | "bytes" | "hash" | "mode">,
   candidateBytes: Uint8Array,
 ): IOSDirectConfigFileMutation {
   const mutation = {
@@ -1708,9 +1775,7 @@ async function rollbackStagedSource(staged: StagedSource): Promise<boolean> {
   const rollbackMutation = mutationWithHiddenBytes(
     {
       absolutePath: staged.mutation.absolutePath,
-      relativePath: "",
       bytes: staged.mutation.candidateBytes,
-      source: "",
       hash: staged.mutation.candidateHash,
       mode: staged.mutation.mode,
     },
