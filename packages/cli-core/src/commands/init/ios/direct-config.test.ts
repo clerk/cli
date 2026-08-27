@@ -1,5 +1,16 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { chmod, lstat, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
+import { build as buildPbxProject, parse as parsePbxProject } from "@bacons/xcode/json";
+import {
+  chmod,
+  link,
+  lstat,
+  mkdir,
+  mkdtemp,
+  readFile,
+  rm,
+  symlink,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -9,11 +20,13 @@ import {
   validatePreparedIOSDirectConfig,
   type IOSDirectConfigBlockerCode,
 } from "./direct-config.ts";
+import type { PbxObjects } from "./pbx.ts";
 import { createIOSFixture, IOS_FIXTURE_IDS, treeDigest } from "./test-helpers.ts";
 
 const DEVELOPMENT_KEY = `pk_test_${Buffer.from("direct-config.clerk.accounts.dev$").toString("base64")}`;
 const OTHER_DEVELOPMENT_KEY = `pk_test_${Buffer.from("other-app.clerk.accounts.dev$").toString("base64")}`;
 const PRODUCTION_KEY = `pk_live_${Buffer.from("production.example.com$").toString("base64")}`;
+const SHARED_ENTRY_BUILD_FILE_ID = "454545454545454545454545";
 const temporaryDirectories: string[] = [];
 
 async function temporaryRoot(prefix = "clerk-ios-direct-config-"): Promise<string> {
@@ -46,6 +59,25 @@ async function source(root: string): Promise<string> {
 
 async function replaceSource(root: string, value: string | Uint8Array): Promise<void> {
   await writeFile(appSourcePath(root), value);
+}
+
+async function updateProject(root: string, update: (objects: PbxObjects) => void): Promise<void> {
+  const path = join(root, "MyApp.xcodeproj", "project.pbxproj");
+  const project = parsePbxProject(await readFile(path, "utf8"));
+  const objects = (project as unknown as { objects: PbxObjects }).objects;
+  update(objects);
+  await writeFile(path, buildPbxProject(project));
+}
+
+async function shareEntrySourceWithSecondTarget(root: string): Promise<void> {
+  await updateProject(root, (objects) => {
+    const phase = objects[IOS_FIXTURE_IDS.secondSourcesPhase]!;
+    phase.files = [...(phase.files as string[]), SHARED_ENTRY_BUILD_FILE_ID];
+    objects[SHARED_ENTRY_BUILD_FILE_ID] = {
+      isa: "PBXBuildFile",
+      fileRef: IOS_FIXTURE_IDS.appFile,
+    };
+  });
 }
 
 function blockerCodes(
@@ -498,6 +530,93 @@ struct MyApp: App {
 
     expect(await readFile(appSourcePath(root))).toEqual(mainBefore);
     expect(await readFile(adminPath, "utf8")).toContain("Clerk.configure");
+  });
+
+  test("refuses an entry source shared with another native target", async () => {
+    const root = await fixture({ secondTarget: true });
+    const before = await readFile(appSourcePath(root));
+    await shareEntrySourceWithSecondTarget(root);
+
+    const plan = await planIOSDirectConfig(planOptions(root));
+
+    expect(plan.status).toBe("blocked");
+    expect(blockerCodes(plan)).toContain("shared-source");
+    expect(await readFile(appSourcePath(root))).toEqual(before);
+  });
+
+  test("refuses an entry source aliased into another target through a hard link", async () => {
+    const root = await fixture({ secondTarget: true });
+    const aliasPath = join(root, "AdminApp", "SharedApp.swift");
+    await link(appSourcePath(root), aliasPath);
+    await updateProject(root, (objects) => {
+      objects[IOS_FIXTURE_IDS.secondAppFile]!.path = "SharedApp.swift";
+    });
+    const sourceInfo = await lstat(appSourcePath(root));
+    const aliasInfo = await lstat(aliasPath);
+    expect(aliasInfo.dev).toBe(sourceInfo.dev);
+    expect(aliasInfo.ino).toBe(sourceInfo.ino);
+
+    const plan = await planIOSDirectConfig(planOptions(root));
+
+    expect(plan.status).toBe("blocked");
+    expect(blockerCodes(plan)).toContain("shared-source");
+  });
+
+  test("refuses an entry source shared with a project below normal discovery depth", async () => {
+    const root = await fixture();
+    const deepRoot = join(root, "a", "b", "c", "d");
+    await createIOSFixture(deepRoot, { clerkSDK: false, includeKey: false });
+    await updateProject(deepRoot, (objects) => {
+      objects[IOS_FIXTURE_IDS.appFile]!.path = "../../../../../MyApp/MyAppApp.swift";
+    });
+
+    const plan = await planIOSDirectConfig(planOptions(root));
+
+    expect(plan.status).toBe("blocked");
+    expect(blockerCodes(plan)).toContain("shared-source");
+  });
+
+  test("fails closed when exhaustive entry-source discovery reaches its safety bound", async () => {
+    const root = await fixture();
+    const beyondBound = Array.from({ length: 26 }, (_, index) => `level-${index}`).reduce(
+      (directory, component) => join(directory, component),
+      root,
+    );
+    await mkdir(beyondBound, { recursive: true });
+
+    const plan = await planIOSDirectConfig(planOptions(root));
+
+    expect(plan.status).toBe("blocked");
+    expect(blockerCodes(plan)).toContain("incomplete-source-membership");
+  });
+
+  test("replanning refuses newly shared entry-source ownership before writing", async () => {
+    const root = await fixture({ secondTarget: true });
+    const before = await readFile(appSourcePath(root));
+    const plan = await planIOSDirectConfig(planOptions(root));
+    expect(plan.status).toBe("ready");
+    await shareEntrySourceWithSecondTarget(root);
+
+    const result = await applyIOSDirectConfig(plan, DEVELOPMENT_KEY);
+
+    expect(result.status).toBe("blocked");
+    expect(blockerCodes(result.plan)).toContain("shared-source");
+    expect(await readFile(appSourcePath(root))).toEqual(before);
+  });
+
+  test("rolls back when another target takes ownership before post-write validation", async () => {
+    const root = await fixture({ secondTarget: true });
+    const before = await readFile(appSourcePath(root));
+    const plan = await planIOSDirectConfig(planOptions(root));
+    expect(plan.status).toBe("ready");
+
+    const result = await applyIOSDirectConfig(plan, DEVELOPMENT_KEY, {
+      beforePostWriteValidation: async () => shareEntrySourceWithSecondTarget(root),
+    });
+
+    expect(result.status).toBe("rolled-back");
+    expect(await readFile(appSourcePath(root))).toEqual(before);
+    expect(blockerCodes(await planIOSDirectConfig(planOptions(root)))).toContain("shared-source");
   });
 
   test("detects stale source bytes before writing", async () => {
