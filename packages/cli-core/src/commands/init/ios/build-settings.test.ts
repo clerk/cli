@@ -384,6 +384,58 @@ describe("inspectTargetBuildConfigurations", () => {
     );
   });
 
+  test("accepts a semicolon after an xcconfig continuation marker", async () => {
+    const { configurations } = await inspectFixture({
+      xcconfig: [
+        "SUPPORTED_PLATFORMS = iphonesimulator \\;",
+        "  iphoneos",
+        "PRODUCT_BUNDLE_IDENTIFIER = com.example.Native",
+        "PRODUCT_BUNDLE_IDENTIFIER[sdk=iphoneos*] = com.example.Device",
+        "PRODUCT_BUNDLE_IDENTIFIER[sdk=iphonesimulator*] = com.example.Simulator",
+      ].join("\n"),
+      targetBuildSettings: {
+        SUPPORTED_PLATFORMS: "$(inherited)",
+        PRODUCT_BUNDLE_IDENTIFIER: "$(inherited)",
+      },
+    });
+
+    expect(configurations[0]?.model.bundleIdentifier).toMatchObject({
+      state: "unresolved",
+      missingVariables: ["sdk/architecture-conditioned build setting"],
+    });
+    expect(configurations[0]?.entitlementContexts.map((context) => context.label)).toEqual([
+      "iphoneos/arm64",
+      "iphonesimulator/arm64",
+      "iphonesimulator/x86_64",
+    ]);
+  });
+
+  test("preserves continued xcconfig values with CR-only line endings", async () => {
+    const { configurations } = await inspectFixture({
+      xcconfig: [
+        "SUPPORTED_PLATFORMS = iphonesimulator \\",
+        "  iphoneos",
+        "PRODUCT_BUNDLE_IDENTIFIER = com.example.Native",
+        "PRODUCT_BUNDLE_IDENTIFIER[sdk=iphoneos*] = com.example.Device",
+        "PRODUCT_BUNDLE_IDENTIFIER[sdk=iphonesimulator*] = com.example.Simulator",
+      ].join("\r"),
+      targetBuildSettings: {
+        SUPPORTED_PLATFORMS: "$(inherited)",
+        PRODUCT_BUNDLE_IDENTIFIER: "$(inherited)",
+      },
+    });
+
+    expect(configurations[0]?.model.bundleIdentifier).toMatchObject({
+      state: "unresolved",
+      missingVariables: ["sdk/architecture-conditioned build setting"],
+    });
+    expect(configurations[0]?.entitlementContexts.map((context) => context.label)).toEqual([
+      "iphoneos/arm64",
+      "iphonesimulator/arm64",
+      "iphonesimulator/x86_64",
+    ]);
+  });
+
   test("removes only the final backslash from a continued xcconfig value", async () => {
     const { configurations } = await inspectFixture({
       xcconfig: ["DEVELOPMENT_TEAM = ABCDE123\\\\", "45"].join("\n"),
