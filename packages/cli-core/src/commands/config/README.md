@@ -5,7 +5,7 @@ Manage Clerk instance configuration.
 Two modes exist, picked automatically:
 
 - **Account mode** (default) — full instance config document via the Platform API. Used whenever the project is linked or `--app` is passed; requires an account (`clerk auth login` or `CLERK_PLATFORM_API_KEY`).
-- **Keyless mode** — a reduced set of settings via the Backend API, using only the instance secret key the project already has on disk. No account, no login, and no platform API key required. See [Keyless mode](#keyless-mode).
+- **Accountless mode** — a reduced set of settings via the Backend API, using only the instance secret key the project already has on disk. No account, no login, and no platform API key required. See [Accountless mode](#accountless-mode).
 
 ## Commands
 
@@ -36,7 +36,7 @@ clerk config pull --keys auth_email session
   - a linked Clerk project in the current directory, or
   - `--app <id>` to target an application directly
 - Authenticated via `CLERK_PLATFORM_API_KEY`, `clerk auth login`, or the interactive human-mode prompt
-- **Or neither**: an unlinked project holding an instance secret key falls back to [keyless mode](#keyless-mode), which needs no account
+- **Or neither**: an unlinked project holding an instance secret key falls back to [accountless mode](#accountless-mode), which needs no account
 
 #### API Endpoints
 
@@ -75,7 +75,7 @@ clerk config schema --keys auth_email session
   - a linked Clerk project in the current directory, or
   - `--app <id>` to target an application directly
 - Authenticated via `CLERK_PLATFORM_API_KEY`, `clerk auth login`, or the interactive human-mode prompt
-- Account-only: in an unlinked project holding an instance secret key this exits with an error explaining that the schema describes the account-level config document (see [keyless mode](#keyless-mode))
+- Account-only: in an unlinked project holding an instance secret key this exits with an error explaining that the schema describes the account-level config document (see [accountless mode](#accountless-mode))
 
 #### API Endpoints
 
@@ -116,7 +116,7 @@ clerk config patch --file partial-config.json --dry-run
   - a linked Clerk project in the current directory, or
   - `--app <id>` to target an application directly
 - Authenticated via `CLERK_PLATFORM_API_KEY`, `clerk auth login`, or the interactive human-mode prompt
-- **Or neither**: an unlinked project holding an instance secret key falls back to [keyless mode](#keyless-mode), which needs no account
+- **Or neither**: an unlinked project holding an instance secret key falls back to [accountless mode](#accountless-mode), which needs no account
 
 #### API Endpoints
 
@@ -157,7 +157,7 @@ clerk config put --file full-config.json --dry-run
   - a linked Clerk project in the current directory, or
   - `--app <id>` to target an application directly
 - Authenticated via `CLERK_PLATFORM_API_KEY`, `clerk auth login`, or the interactive human-mode prompt
-- Account-only: in an unlinked project holding an instance secret key this exits with an error pointing at `clerk config patch` (see [keyless mode](#keyless-mode))
+- Account-only: in an unlinked project holding an instance secret key this exits with an error pointing at `clerk config patch` (see [accountless mode](#accountless-mode))
 
 #### API Endpoints
 
@@ -167,9 +167,9 @@ clerk config put --file full-config.json --dry-run
 
 ---
 
-## Keyless mode
+## Accountless mode
 
-A keyless application created by `clerk init` has no Clerk account behind it until someone claims it, so the Platform API — which authenticates an _account_ — cannot reach it. `clerk config pull` and `clerk config patch` fall back to Clerk's Backend API, authenticated with the instance secret key the project already keeps locally, so an unclaimed app can be configured without logging in.
+A accountless application created by `clerk init` has no Clerk account behind it until someone claims it, so the Platform API — which authenticates an _account_ — cannot reach it. `clerk config pull` and `clerk config patch` fall back to Clerk's Backend API, authenticated with the instance secret key the project already keeps locally, so an unclaimed app can be configured without logging in.
 
 ### When it engages
 
@@ -178,11 +178,11 @@ Both must hold, otherwise the account-authenticated path runs unchanged:
 1. No `--app` was passed.
 2. No linked project in the current directory.
 
-**Account credentials are not part of this decision.** Keyless mode works with or without `CLERK_PLATFORM_API_KEY` and with or without a `clerk auth login` session — the instance secret key is sufficient on its own. What rules it out is an explicit destination (`--app` or a linked profile), because that names an application the local secret key may not belong to.
+**Account credentials are not part of this decision.** Accountless mode works with or without `CLERK_PLATFORM_API_KEY` and with or without a `clerk auth login` session — the instance secret key is sufficient on its own. What rules it out is an explicit destination (`--app` or a linked profile), because that names an application the local secret key may not belong to.
 
 When credentials _are_ present and the directory simply isn't linked, the command prints a warning that it's using the reduced key-based view and points at `clerk link`, so the narrower output is never a silent surprise.
 
-The secret key is resolved the way the app itself would resolve one, and this order is shared by every keyless-capable command (`lib/keyless-target.ts`):
+The secret key is resolved the way the app itself would resolve one, and this order is shared by every accountless-capable command (`lib/keyless-target.ts`):
 
 1. `CLERK_SECRET_KEY`, or the framework's secret key variable (e.g. `NUXT_CLERK_SECRET_KEY`), in the environment
 2. `.env`, then `.env.local` — the later file wins
@@ -192,7 +192,7 @@ A key that doesn't start with `sk_` is rejected. The SDK file comes last because
 
 ### Payload shape
 
-The Backend API has no single config document — it exposes independent resources — so keyless payloads name them directly instead of translating between the two shapes. Each top-level key maps 1:1 to one endpoint:
+The Backend API has no single config document — it exposes independent resources — so accountless payloads name them directly instead of translating between the two shapes. Each top-level key maps 1:1 to one endpoint:
 
 ```sh
 clerk config patch --json '{
@@ -221,19 +221,19 @@ Any other top-level key exits with a usage error naming the supported ones. Most
 
 ### Round-trip verification
 
-A 200 or 204 from a keyless write only means Clerk's Backend API accepted the request — it silently drops fields it doesn't recognize inside a group instead of rejecting them, and at least one route (`PATCH /v1/instance` with `allowed_origins: null` or `[]`) accepts a value it then ignores. Printing "Config pushed successfully" off the HTTP status alone would paper over both.
+A 200 or 204 from a accountless write only means Clerk's Backend API accepted the request — it silently drops fields it doesn't recognize inside a group instead of rejecting them, and at least one route (`PATCH /v1/instance` with `allowed_origins: null` or `[]`) accepts a value it then ignores. Printing "Config pushed successfully" off the HTTP status alone would paper over both.
 
 After a write, the CLI checks every field it sent against the PATCH response body, and against nothing else. Fields whose value round-trips are reported as applied; fields the response doesn't reflect are named explicitly instead of folded into an unconditional success line.
 
 A follow-up GET looks like stronger evidence and is in fact weaker. BAPI omits writable-but-not-readable fields from its reads — `instance.support_email` is accepted and never echoed — and reads are eventually consistent, so a GET issued straight after a write routinely returns the pre-write value. Verifying against one reports perfectly good writes as dropped. This applies equally to the six groups that do have a GET route: the response body is the only read that is guaranteed to be about _this_ write.
 
-That leaves `PATCH /v1/instance`, which answers `204` with no body at all. Nothing can confirm it after the fact, so the check moves to before the request instead: the fields that route accepts are a closed set in BAPI's own schema (`additionalProperties: false`), and `assertKeylessPayload` rejects anything outside it. This matters because that route is also the one people reach for when trying to enable password auth or a social provider — none of which it accepts, and all of which it used to swallow with a `204` and a success message. The group is still reported as unconfirmed, and contributes no state to the printed envelope rather than a possibly-stale re-read.
+That leaves `PATCH /v1/instance`, which answers `204` with no body at all. Nothing can confirm it after the fact, so the check moves to before the request instead: the fields that route accepts are a closed set in BAPI's own schema (`additionalProperties: false`), and the legacy-named `assertKeylessPayload` rejects anything outside it. This matters because that route is also the one people reach for when trying to enable password auth or a social provider — none of which it accepts, and all of which it used to swallow with a `204` and a success message. The group is still reported as unconfirmed, and contributes no state to the printed envelope rather than a possibly-stale re-read.
 
 `restrictions` and `instance_settings` have no GET route, but both echo their new state in the PATCH response, so their writes verify normally.
 
 ### Differences from account mode
 
-| Behavior           | Account mode                             | Keyless mode                                                                                                                          |
+| Behavior           | Account mode                             | Accountless mode                                                                                                                      |
 | ------------------ | ---------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
 | Coverage           | Full config document                     | Seven Backend API resources                                                                                                           |
 | `--instance`       | Selects dev/prod                         | Usage error — the secret key already targets exactly one instance                                                                     |
@@ -244,7 +244,7 @@ That leaves `PATCH /v1/instance`, which answers `204` with no body at all. Nothi
 
 Run `clerk auth login` to claim the application; auto-claim links it, and every config command then uses account mode with full coverage.
 
-### API Endpoints (keyless mode)
+### API Endpoints (accountless mode)
 
 All requests go to the Clerk Backend API (default `https://api.clerk.dev`, overridable via `CLERK_BACKEND_API_URL`), authenticated with a `Bearer sk_…` instance secret key.
 

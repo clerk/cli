@@ -106,7 +106,7 @@ export async function openDashboard(
 }
 
 /**
- * The keyless counterpart to `openDashboard` above. An unclaimed keyless
+ * The accountless counterpart to `openDashboard` above. An unclaimed accountless
  * application belongs to no account, so `/apps/{appId}/instances/{instanceId}`
  * doesn't exist for it yet — the one page that does is the one-time claim
  * link. `clerk link` cannot help here (there is nothing in any account to
@@ -130,13 +130,13 @@ async function openKeylessDashboard(
       throw new CliError(
         `Found a secret key (from ${keyless.source}) but no claim link on disk, so there's no dashboard page to open yet. ` +
           "If this key belongs to an application you've already claimed, run `clerk link` (or pass `--app <app_id>`) to target it directly. " +
-          "Otherwise, run `clerk init --keyless` to regenerate a claim link.",
+          "Otherwise, run `clerk init --accountless` to regenerate a claim link.",
         { code: ERROR_CODE.NOT_LINKED },
       );
     }
 
     throw new CliError(
-      "No Clerk project linked to this directory, and no keyless application was found either. " +
+      "No Clerk project linked to this directory, and no accountless application was found either. " +
         "Run `clerk link` if you already have an application, or `clerk init` to create one.",
       { code: ERROR_CODE.NOT_LINKED },
     );

@@ -100,7 +100,7 @@ describe("users open", () => {
 
     test("says the application is unclaimed rather than that nothing is linked", async () => {
       await expect(open({ userId: "user_abc" })).rejects.toThrow(
-        /unclaimed keyless application \(secret key from \.env\.local\).*no Dashboard page/s,
+        /unclaimed accountless application \(secret key from \.env\.local\).*no Dashboard page/s,
       );
     });
 

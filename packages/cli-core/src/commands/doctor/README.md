@@ -37,32 +37,32 @@ clerk doctor --fix       # Offer to auto-fix issues
 | Shell completion      | Configuration  | Shell autocompletion is installed for the detected shell                                                                                                                                             |
 | MCP server            | Integration    | If a Clerk MCP entry is installed, every distinct configured server answers the `initialize` handshake; warns on an unreadable client config (skipped when nothing is installed; warns, never fails) |
 
-### Keyless applications
+### Accountless applications
 
 The Authentication token, Token validity, and Project linkage checks resolve
-the same keyless fallback the rest of the CLI uses (`lib/keyless-target.ts`):
+the same accountless fallback the rest of the CLI uses (`lib/keyless-target.ts`):
 a project with no account session and no linked profile, but a `sk_...` key
 on disk (or in `CLERK_SECRET_KEY`/framework env var), is running on an
-**unclaimed keyless application** — a legitimate, healthy state, not a broken
+**unclaimed accountless application** — a legitimate, healthy state, not a broken
 one.
 
-- No token, keyless key present → **pass**, naming the instance. The claim
+- No token, accountless key present → **pass**, naming the instance. The claim
   hint depends on where the app came from: with a `.clerk/keyless.json`
   breadcrumb (left by `clerk init`) it says `clerk auth login` claims it;
   without one — an SDK-minted `.clerk/.tmp/keyless.json`, or a hand-copied
   `CLERK_SECRET_KEY` — it says to claim from the Clerk Dashboard instead,
   because `clerk auth login` only auto-claims apps `clerk init` created.
-- Stored session expired, keyless key present → **warn** (not fail): the
-  keyless key still works, logging in again is optional.
-- Signed in (has account credentials) but this directory isn't linked, keyless
+- Stored session expired, accountless key present → **warn** (not fail): the
+  accountless key still works, logging in again is optional.
+- Signed in (has account credentials) but this directory isn't linked, accountless
   key present → **warn**: the account could reach the fuller configuration by
   running `clerk link`, so that's called out unlike the fully unclaimed case.
-- No token **and** no keyless key found anywhere → still **fail**. Keyless
+- No token **and** no accountless key found anywhere → still **fail**. Accountless
   only changes the outcome when there's actually a secret key to fall back to.
 
 The Linked application and Instances checks are account-only (the Platform
-API application/instance-list concepts have no keyless equivalent), so they
-continue to skip for a keyless project — the skip reason names the keyless
+API application/instance-list concepts have no accountless equivalent), so they
+continue to skip for a accountless project — the skip reason names the accountless
 application instead of reading like a problem.
 
 ## Auto-Fix (`--fix`)
@@ -117,8 +117,8 @@ Exit code 1 signals one or more checks failed.
 
 ## API Endpoints
 
-| Method | Endpoint                            | Description                                                     |
-| ------ | ----------------------------------- | --------------------------------------------------------------- |
-| `GET`  | `/oauth/userinfo`                   | Validates the stored auth token                                 |
-| `GET`  | `/v1/platform/applications/{appId}` | Verifies the linked app and its instances exist                 |
-| `GET`  | `/v1/instance`                      | Names the keyless application (best-effort, via its secret key) |
+| Method | Endpoint                            | Description                                                         |
+| ------ | ----------------------------------- | ------------------------------------------------------------------- |
+| `GET`  | `/oauth/userinfo`                   | Validates the stored auth token                                     |
+| `GET`  | `/v1/platform/applications/{appId}` | Verifies the linked app and its instances exist                     |
+| `GET`  | `/v1/instance`                      | Names the accountless application (best-effort, via its secret key) |

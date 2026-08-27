@@ -124,7 +124,7 @@ async function describeKeyless(keyless: KeylessTarget): Promise<Identity> {
   const instance = await withSpinner("Fetching instance info...", async () => {
     const response = await withApiContext(
       bapiRequest({ method: "GET", path: "/v1/instance", secretKey: keyless.secretKey }),
-      `Failed to read the keyless secret key from \`${keyless.source}\``,
+      `Failed to read the accountless secret key from \`${keyless.source}\``,
     );
     return response.body as { id?: string; environment_type?: string };
   });
@@ -198,7 +198,7 @@ function render(identity: Identity): void {
   if (identity.kind === "keyless") {
     log.data(identity.instanceId ?? "unknown instance");
     log.info(
-      `Not logged in — running on an unclaimed keyless application (key from \`${identity.keySource}\`)`,
+      `Not logged in — running on an unclaimed accountless application (key from \`${identity.keySource}\`)`,
     );
     // Not NEXT_STEPS.WHOAMI: `clerk link` needs an application in an account,
     // which an unclaimed app by definition isn't — the same dead end

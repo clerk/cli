@@ -6,7 +6,7 @@ Manage authentication with Clerk.
 
 ### `clerk auth login` (aliases: `signup`, `signin`, `sign-in`)
 
-Authenticates the user via an OAuth 2.0 PKCE flow. After a successful login (or when an existing session is detected in agent mode), the command attempts to automatically claim any keyless application previously created by `clerk init`.
+Authenticates the user via an OAuth 2.0 PKCE flow. After a successful login (or when an existing session is detected in agent mode), the command attempts to automatically claim any accountless application previously created by `clerk init`.
 
 1. Checks for an existing valid token — if found, prompts to re-authenticate (in agent mode, skips and runs autoclaim immediately)
 2. Generates PKCE parameters (code verifier, challenge, state)
@@ -18,9 +18,9 @@ Authenticates the user via an OAuth 2.0 PKCE flow. After a successful login (or 
 8. If this was a re-authentication over an existing session, revokes the previous grant. The outgoing session is read once the authorization code arrives and just before the token exchange replaces it, and revoked only after the replacement is stored — so an abandoned browser flow leaves the original session intact, and a concurrent refresh has the smallest possible window to rotate the token out from under the revocation. A failure here warns rather than failing the login
 9. **Autoclaim**: if `.clerk/keyless.json` exists in the current directory, claims the temporary application, links it to the project, and pulls environment variables
 
-#### Keyless autoclaim breadcrumb lifecycle
+#### Accountless autoclaim breadcrumb lifecycle
 
-When `clerk init` runs in keyless mode it writes `.clerk/keyless.json` containing a claim token. On the next `clerk auth login`:
+When `clerk init` runs in accountless mode it writes `.clerk/keyless.json` containing a claim token. On the next `clerk auth login`:
 
 - **404** — claim token expired or application already deleted; breadcrumb is cleared and a warning is shown.
 - **403** — authenticated account has no active organization; breadcrumb is cleared and a warning is shown.
@@ -37,7 +37,7 @@ OAuth requests are made against the Clerk OAuth system instance (default `https:
 | Token exchange | `POST` | `/oauth/token`                                | Exchanges authorization code + `code_verifier` for an access token                |
 | User info      | `GET`  | `/oauth/userinfo`                             | Fetches `sub` (user ID) and `email` using the access token                        |
 | Revoke         | `POST` | `/oauth/token/revoke`                         | Revokes the superseded refresh token on re-authentication (RFC 7009)              |
-| Autoclaim      | `POST` | `/v1/platform/accountless_applications/claim` | Claims a keyless application by token; returns the full `Application` object      |
+| Autoclaim      | `POST` | `/v1/platform/accountless_applications/claim` | Claims a accountless application by token; returns the full `Application` object  |
 
 ### `clerk auth logout` (aliases: `signout`, `sign-out`)
 

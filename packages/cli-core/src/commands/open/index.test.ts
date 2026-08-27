@@ -329,7 +329,7 @@ describe("openDashboard: unclaimed keyless application", () => {
     mockFindKeylessClaimUrl.mockResolvedValue(undefined);
     mockResolveKeylessTarget.mockResolvedValue({ secretKey: "sk_test_x", source: ".env.local" });
 
-    await expect(openDashboard(undefined)).rejects.toThrow(/clerk init --keyless/);
+    await expect(openDashboard(undefined)).rejects.toThrow(/clerk init --accountless/);
     expect(mockOpenBrowser).not.toHaveBeenCalled();
   });
 

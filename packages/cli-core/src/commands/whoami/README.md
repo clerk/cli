@@ -22,11 +22,11 @@ clerk whoami --json
 - Calls `resolveProfile(cwd)` (best-effort — failures are swallowed) to determine whether the working directory is linked to a Clerk application.
 - When linked, prints a `Linked to ...` line on **stderr** above the next-steps, where `...` is the app label rendered by `profileLabel()` from `lib/config.ts` — for example, `Linked to MyApp (app_xxx)`.
 - When not linked, only the existing `WHOAMI` next-steps are printed.
-- If no token exists, falls back to the keyless path below; when that finds nothing either, throws an `AuthError` ("Not logged in").
+- If no token exists, falls back to the accountless path below; when that finds nothing either, throws an `AuthError` ("Not logged in").
 
-### Keyless applications
+### Accountless applications
 
-An unclaimed keyless application has no account to name, so the instance itself is the identity. When there's no stored token but the directory holds an instance secret key (env var, `.env`/`.env.local`, or `.clerk/.tmp/keyless.json` — see [`lib/keyless-target.ts`](../../lib/keyless-target.ts)), `whoami` reads `GET /v1/instance` with that key and reports the instance instead of erroring. A secret key the API rejects (revoked, malformed) surfaces as an error naming the key and where it came from, not a bare "Request failed (401)".
+An unclaimed accountless application has no account to name, so the instance itself is the identity. When there's no stored token but the directory holds an instance secret key (env var, `.env`/`.env.local`, or `.clerk/.tmp/keyless.json` — see [`lib/keyless-target.ts`](../../lib/keyless-target.ts)), `whoami` reads `GET /v1/instance` with that key and reports the instance instead of erroring. A secret key the API rejects (revoked, malformed) surfaces as an error naming the key and where it came from, not a bare "Request failed (401)".
 
 ```json
 {
@@ -42,13 +42,13 @@ An unclaimed keyless application has no account to name, so the instance itself 
 }
 ```
 
-`publishableKey` and the secret key are found independently (see `findLocalSecretKey`/`findLocalPublishableKey` in `lib/keyless-target.ts`) and can each belong to a _different_ keyless application if a project's env files hold leftovers from more than one. `publishableKeyMismatch` is `true` when that's happened — checked by decoding the publishable key's Frontend API host (`decodePublishableKey` in `lib/fapi.ts`) and confirming it appears in the secret key's own `GET /v1/domains`. Whoami only warns in this case (on **stderr**) and still reports what it found; `clerk env pull` is the stricter, refusing to write the mismatched pair (see [`commands/env/README.md`](../env/README.md)).
+`publishableKey` and the secret key are found independently (see `findLocalSecretKey`/`findLocalPublishableKey` in `lib/keyless-target.ts`) and can each belong to a _different_ accountless application if a project's env files hold leftovers from more than one. `publishableKeyMismatch` is `true` when that's happened — checked by decoding the publishable key's Frontend API host (`decodePublishableKey` in `lib/fapi.ts`) and confirming it appears in the secret key's own `GET /v1/domains`. Whoami only warns in this case (on **stderr**) and still reports what it found; `clerk env pull` is the stricter, refusing to write the mismatched pair (see [`commands/env/README.md`](../env/README.md)).
 
 In human mode the instance ID goes to **stdout** and the explanation (including where the key came from) to **stderr**.
 
 | Method | Endpoint       | Description                                                                                    |
 | ------ | -------------- | ---------------------------------------------------------------------------------------------- |
-| `GET`  | `/v1/instance` | Reads the keyless instance's identity. Authenticated with the secret key.                      |
+| `GET`  | `/v1/instance` | Reads the accountless instance's identity. Authenticated with the secret key.                  |
 | `GET`  | `/v1/domains`  | Only when a local publishable key was found — checks it against the secret key's own instance. |
 
 - If the token is expired or invalid, throws an `AuthError` ("Session expired").

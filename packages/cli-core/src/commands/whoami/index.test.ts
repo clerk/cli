@@ -420,7 +420,7 @@ describe("whoami", () => {
       await runWhoami();
 
       expect(captured.out.trim()).toBe("ins_keyless_1");
-      expect(captured.err).toContain("unclaimed keyless application");
+      expect(captured.err).toContain("unclaimed accountless application");
       expect(captured.err).toContain(".env.local");
     });
   });

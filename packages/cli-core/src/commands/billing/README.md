@@ -5,9 +5,9 @@ The handlers are wired to top-level `clerk enable billing` and `clerk disable
 billing` commands.
 
 **Requires a claimed application.** Unlike `clerk enable/disable orgs`, these
-commands cannot run against an unclaimed keyless application: billing settings
+commands cannot run against an unclaimed accountless application: billing settings
 exist only in the account-level config document, and Clerk's Backend API exposes
-no billing resource an instance secret key could reach. In a keyless project both
+no billing resource an instance secret key could reach. In a accountless project both
 commands exit with an `auth_required` error pointing at `clerk auth login`.
 
 For arbitrary billing config edits (plans, trials, payment-method requirements)

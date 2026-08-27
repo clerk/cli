@@ -160,12 +160,12 @@ export function printKeylessInfo(envFile: string): void {
 
 /**
  * Printed instead of `printKeylessInfo` when init keeps an existing unclaimed
- * keyless app rather than minting a replacement (see `shouldKeepExistingKeyless`).
+ * accountless app rather than minting a replacement (see `shouldKeepExistingKeyless`).
  */
 export function printExistingKeylessInfo(envFile: string): void {
   const lines = [
-    `\n  This project already has an unclaimed keyless application (keys in ${envFile}).`,
-    `  Run ${bold("clerk auth login")} to claim it, or ${bold("clerk init --keyless --fresh")} to replace it with a new one.\n`,
+    `\n  This project already has an unclaimed accountless application (keys in ${envFile}).`,
+    `  Run ${bold("clerk auth login")} to claim it, or ${bold("clerk init --accountless --fresh")} to replace it with a new one.\n`,
   ];
   log.info(lines.map(dim).join("\n"));
 }
