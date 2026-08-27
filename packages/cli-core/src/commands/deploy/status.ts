@@ -77,7 +77,12 @@ export interface DeployStatusReport {
 
 type NativeAppleReadinessIssue = {
   bundleId: string;
-  reason: "authentication-disabled" | "registration-missing" | "native-api-disabled";
+  reason:
+    | "authentication-disabled"
+    | "registration-missing"
+    | "registration-ambiguous"
+    | "native-api-disabled"
+    | "verification-unavailable";
 };
 
 export type LiveDeploySnapshot = Omit<
@@ -253,6 +258,10 @@ export async function resolveLiveDeploySnapshot(
     } catch (error) {
       if (error instanceof UserAbortError) throw error;
       log.debug(`Could not read production Native Application settings: ${errorMessage(error)}`);
+      nativeAppleConfiguration = {
+        status: "verification-unavailable",
+        bundleId: preliminaryNativeAppleConfiguration.bundleId,
+      };
     }
   }
   const completedOAuthProviders = oauthProviderDescriptors
@@ -540,11 +549,25 @@ function isNativeAppleReadinessIssue(
   return (
     status === "authentication-disabled" ||
     status === "registration-missing" ||
-    status === "native-api-disabled"
+    status === "registration-ambiguous" ||
+    status === "native-api-disabled" ||
+    status === "verification-unavailable"
   );
 }
 
 function nativeAppleReadinessNextAction(issue: NativeAppleReadinessIssue): string {
+  if (issue.reason === "verification-unavailable") {
+    return (
+      `Clerk could not verify the production Native Application registration for ${issue.bundleId}. ` +
+      "Retry `clerk deploy status`; do not create another registration based on this unverified result."
+    );
+  }
+  if (issue.reason === "registration-ambiguous") {
+    return (
+      `Native Sign in with Apple has more than one App ID Prefix registration for ${issue.bundleId}. ` +
+      "Review the existing registrations at https://dashboard.clerk.com/~/native-applications before continuing; do not create another registration."
+    );
+  }
   if (issue.reason === "authentication-disabled") {
     return (
       `Apple is not explicitly enabled for authentication on the production instance for ${issue.bundleId}. ` +

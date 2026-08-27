@@ -70,7 +70,13 @@ export type OAuthProviderDescriptorResult = {
 export type NativeAppleConfiguration =
   | { status: "not-apple" | "hosted-or-unconfigured" }
   | {
-      status: "ready" | "authentication-disabled" | "registration-missing" | "native-api-disabled";
+      status:
+        | "ready"
+        | "authentication-disabled"
+        | "registration-missing"
+        | "registration-ambiguous"
+        | "native-api-disabled"
+        | "verification-unavailable";
       bundleId: string;
     };
 
@@ -254,8 +260,16 @@ export function inspectNativeAppleConfiguration(
     return { status: "authentication-disabled", bundleId };
   }
 
-  if (!iosApplications.some((application) => application.bundle_id === bundleId)) {
+  const registeredPrefixes = new Set(
+    iosApplications
+      .filter((application) => application.bundle_id === bundleId)
+      .map((application) => application.app_id_prefix),
+  );
+  if (registeredPrefixes.size === 0) {
     return { status: "registration-missing", bundleId };
+  }
+  if (registeredPrefixes.size > 1) {
+    return { status: "registration-ambiguous", bundleId };
   }
   return nativeSettings?.api_enabled === true
     ? { status: "ready", bundleId }

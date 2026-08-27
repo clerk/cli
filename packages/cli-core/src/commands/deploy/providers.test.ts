@@ -59,11 +59,15 @@ function descriptorByProvider(
   return descriptor;
 }
 
-function iosApplication(bundleId: string): IOSApplication {
+function iosApplication(
+  bundleId: string,
+  appIdPrefix = "ABCDE12345",
+  id = `ios_${appIdPrefix}_${bundleId}`,
+): IOSApplication {
   return {
     object: "ios_application",
-    id: `ios_${bundleId}`,
-    app_id_prefix: "ABCDE12345",
+    id,
+    app_id_prefix: appIdPrefix,
     bundle_id: bundleId,
     created_at: 1,
     updated_at: 1,
@@ -228,6 +232,44 @@ describe("deploy OAuth provider descriptors", () => {
         api_enabled: true,
       }),
     ).toEqual({ status: "registration-missing", bundleId: "com.example.app" });
+  });
+
+  test("rejects multiple App ID prefixes for one native Apple Bundle ID", () => {
+    const result = buildOAuthProviderDescriptors(
+      ["apple"],
+      schemaResponse({ connection_oauth_apple: appleOAuthSchema }),
+    );
+    const apple = descriptorByProvider(result.supported, "apple");
+    const config = {
+      connection_oauth_apple: {
+        enabled: true,
+        authenticatable: true,
+        bundle_id: "com.example.app",
+      },
+    };
+
+    expect(
+      inspectNativeAppleConfiguration(
+        config,
+        apple,
+        [
+          iosApplication("com.example.app", "PREFIX_ONE"),
+          iosApplication("com.example.app", "PREFIX_TWO"),
+        ],
+        { object: "native_settings", api_enabled: true },
+      ),
+    ).toEqual({ status: "registration-ambiguous", bundleId: "com.example.app" });
+    expect(
+      inspectNativeAppleConfiguration(
+        config,
+        apple,
+        [
+          iosApplication("com.example.app", "PREFIX_ONE", "ios_first"),
+          iosApplication("com.example.app", "PREFIX_ONE", "ios_duplicate"),
+        ],
+        { object: "native_settings", api_enabled: true },
+      ),
+    ).toEqual({ status: "ready", bundleId: "com.example.app" });
   });
 
   test("requires Native API and authenticatable Apple settings for native readiness", () => {

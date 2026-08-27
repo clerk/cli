@@ -292,7 +292,7 @@ describe("resolveDeployState", () => {
     }
   });
 
-  test("keeps the preliminary native Apple status when native endpoint reads fail", async () => {
+  test("reports native Apple verification as unavailable when native endpoint reads fail", async () => {
     mockActiveProductionEnvironment();
     mockFetchInstanceConfig.mockImplementation((_appId: string, instanceId: string) =>
       instanceId === "ins_prod"
@@ -315,8 +315,65 @@ describe("resolveDeployState", () => {
       expect(state.snapshot.pending).toEqual({ type: "oauth", provider: "apple" });
       expect(state.snapshot.nativeAppleReadinessIssue).toEqual({
         bundleId: "com.example.native",
-        reason: "registration-missing",
+        reason: "verification-unavailable",
       });
+      const report = buildDeployStatusReport(state, null);
+      expect(report.complete).toBe(false);
+      expect(report.nextAction).toContain("could not verify");
+      expect(report.nextAction).toContain("Retry `clerk deploy status`");
+      expect(report.nextAction).toContain("do not create another registration");
+      expect(report.nextAction).not.toContain("Register that Bundle ID");
+    }
+  });
+
+  test("reports multiple App ID prefixes for one native Apple Bundle ID as ambiguous", async () => {
+    mockActiveProductionEnvironment();
+    mockFetchInstanceConfig.mockImplementation((_appId: string, instanceId: string) =>
+      instanceId === "ins_prod"
+        ? {
+            connection_oauth_apple: {
+              enabled: true,
+              authenticatable: true,
+              bundle_id: "com.example.native",
+            },
+          }
+        : { connection_oauth_apple: { enabled: true } },
+    );
+    mockListIOSApplications.mockResolvedValue([
+      {
+        object: "ios_application",
+        id: "ios_first",
+        app_id_prefix: "FIRST12345",
+        bundle_id: "com.example.native",
+        created_at: 1,
+        updated_at: 1,
+      },
+      {
+        object: "ios_application",
+        id: "ios_second",
+        app_id_prefix: "SECOND1234",
+        bundle_id: "com.example.native",
+        created_at: 1,
+        updated_at: 1,
+      },
+    ]);
+
+    const state = await resolveDeployState({ ...ctx, productionInstanceId: "ins_prod" });
+
+    expect(state.kind).toBe("active");
+    if (state.kind === "active") {
+      expect(state.snapshot.completedOAuthProviders).toEqual([]);
+      expect(state.snapshot.pending).toEqual({ type: "oauth", provider: "apple" });
+      expect(state.snapshot.nativeAppleReadinessIssue).toEqual({
+        bundleId: "com.example.native",
+        reason: "registration-ambiguous",
+      });
+      const report = buildDeployStatusReport(state, null);
+      expect(report.complete).toBe(false);
+      expect(report.nextAction).toContain("more than one App ID Prefix registration");
+      expect(report.nextAction).toContain("Review the existing registrations");
+      expect(report.nextAction).toContain("do not create another registration");
+      expect(report.nextAction).not.toContain("Register that Bundle ID");
     }
   });
 

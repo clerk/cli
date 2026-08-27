@@ -631,10 +631,9 @@ async function nativeAppleCredentialsAreAlreadyConfigured(
     return false;
   }
 
-  let iosApplications: Awaited<ReturnType<typeof listIOSApplications>>;
-  let nativeSettings: Awaited<ReturnType<typeof getNativeSettings>>;
+  let nativeConfiguration: ReturnType<typeof inspectNativeAppleConfiguration>;
   try {
-    [iosApplications, nativeSettings] = await withSpinner(
+    const [iosApplications, nativeSettings] = await withSpinner(
       "Checking production Native Application settings...",
       async () =>
         Promise.all([
@@ -642,20 +641,27 @@ async function nativeAppleCredentialsAreAlreadyConfigured(
           getNativeSettings(ctx.appId, productionInstanceId),
         ]),
     );
+    nativeConfiguration = inspectNativeAppleConfiguration(
+      productionConfig,
+      descriptor,
+      iosApplications,
+      nativeSettings,
+    );
   } catch (error) {
     if (error instanceof UserAbortError) throw error;
+    nativeConfiguration = {
+      status: "verification-unavailable",
+      bundleId: preliminary.bundleId,
+    };
+  }
+
+  if (nativeConfiguration.status === "verification-unavailable") {
     throw new CliError(
       `clerk deploy could not verify the production Native Application registration for ${preliminary.bundleId}. ` +
-        "No Apple web credentials were requested. Verify the exact Bundle ID at https://dashboard.clerk.com/~/native-applications, then rerun `clerk deploy`.",
+        "No Apple web credentials were requested and no registration should be created from this unverified result. Retry `clerk deploy`, or review the existing registrations at https://dashboard.clerk.com/~/native-applications.",
     );
   }
 
-  const nativeConfiguration = inspectNativeAppleConfiguration(
-    productionConfig,
-    descriptor,
-    iosApplications,
-    nativeSettings,
-  );
   if (nativeConfiguration.status === "ready") {
     log.success(
       `Native Sign in with Apple is configured for ${nativeConfiguration.bundleId}; Apple web credentials are not required`,
@@ -667,6 +673,13 @@ async function nativeAppleCredentialsAreAlreadyConfigured(
     throwUsageError(
       `Native Sign in with Apple is configured for ${nativeConfiguration.bundleId}, but Native API is disabled on the production instance. ` +
         "Enable Native API at https://dashboard.clerk.com/~/native-applications, then rerun `clerk deploy`. The CLI will not infer an App ID Prefix or request unrelated Apple web credentials.",
+    );
+  }
+
+  if (nativeConfiguration.status === "registration-ambiguous") {
+    throwUsageError(
+      `Native Sign in with Apple has more than one App ID Prefix registration for ${nativeConfiguration.bundleId}. ` +
+        "Review the existing registrations at https://dashboard.clerk.com/~/native-applications, then rerun `clerk deploy`. Do not create another registration or add unrelated Apple web credentials.",
     );
   }
 

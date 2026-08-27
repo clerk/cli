@@ -1308,6 +1308,113 @@ describe("deploy", () => {
       expect(err).not.toContain("Configure Apple OAuth for production");
     });
 
+    test("refuses ambiguous App ID Prefix registrations for native-only Apple", async () => {
+      await linkedProject({
+        instances: { development: "ins_dev_123", production: "ins_prod_native_apple" },
+      });
+      mockLiveProduction({
+        instanceId: "ins_prod_native_apple",
+        developmentConfig: {
+          connection_oauth_apple: {
+            enabled: true,
+            authenticatable: true,
+            bundle_id: "com.example.native",
+          },
+        },
+        productionConfig: {
+          connection_oauth_apple: {
+            enabled: true,
+            authenticatable: true,
+            bundle_id: "com.example.native",
+          },
+        },
+      });
+      mockListIOSApplications.mockResolvedValue([
+        {
+          object: "ios_application",
+          id: "ios_first",
+          app_id_prefix: "FIRST12345",
+          bundle_id: "com.example.native",
+          created_at: 1,
+          updated_at: 1,
+        },
+        {
+          object: "ios_application",
+          id: "ios_second",
+          app_id_prefix: "SECOND1234",
+          bundle_id: "com.example.native",
+          created_at: 1,
+          updated_at: 1,
+        },
+      ]);
+      mockIsAgent.mockReturnValue(false);
+
+      let thrown: unknown;
+      try {
+        await runDeploy({});
+      } catch (error) {
+        thrown = error;
+      }
+
+      expect(thrown).toBeInstanceOf(CliError);
+      const message = (thrown as Error).message;
+      expect(message).toContain("more than one App ID Prefix registration");
+      expect(message).toContain("Review the existing registrations");
+      expect(message).toContain("Do not create another registration");
+      expect(message).not.toContain("Register it at");
+      expect(mockSelect).not.toHaveBeenCalled();
+      expect(mockInput).not.toHaveBeenCalled();
+      expect(mockPassword).not.toHaveBeenCalled();
+      expect(mockPatchInstanceConfig).not.toHaveBeenCalled();
+      expect(stripAnsi(captured.err)).toContain("Failed");
+    });
+
+    test("does not recommend registration creation when native Apple verification is unavailable", async () => {
+      await linkedProject({
+        instances: { development: "ins_dev_123", production: "ins_prod_native_apple" },
+      });
+      mockLiveProduction({
+        instanceId: "ins_prod_native_apple",
+        developmentConfig: {
+          connection_oauth_apple: {
+            enabled: true,
+            authenticatable: true,
+            bundle_id: "com.example.native",
+          },
+        },
+        productionConfig: {
+          connection_oauth_apple: {
+            enabled: true,
+            authenticatable: true,
+            bundle_id: "com.example.native",
+          },
+        },
+      });
+      mockListIOSApplications.mockRejectedValue(new Error("native endpoint unavailable"));
+      mockIsAgent.mockReturnValue(false);
+
+      let thrown: unknown;
+      try {
+        await runDeploy({});
+      } catch (error) {
+        thrown = error;
+      }
+
+      expect(thrown).toBeInstanceOf(CliError);
+      const message = (thrown as Error).message;
+      expect(message).toContain(
+        "could not verify the production Native Application registration for com.example.native",
+      );
+      expect(message).toContain("no registration should be created from this unverified result");
+      expect(message).toContain("Retry `clerk deploy`");
+      expect(message).not.toContain("Register it at");
+      expect(mockSelect).not.toHaveBeenCalled();
+      expect(mockInput).not.toHaveBeenCalled();
+      expect(mockPassword).not.toHaveBeenCalled();
+      expect(mockPatchInstanceConfig).not.toHaveBeenCalled();
+      expect(stripAnsi(captured.err)).toContain("Failed");
+    });
+
     test("refuses to infer an App ID Prefix when native Apple lacks an exact production registration", async () => {
       await linkedProject({
         instances: { development: "ins_dev_123", production: "ins_prod_native_apple" },
