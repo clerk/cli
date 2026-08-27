@@ -257,6 +257,31 @@ describe("inspectIOSProject", () => {
     });
   });
 
+  test("ignores device-only associated-domain values for simulator-only targets", async () => {
+    const root = await fixture({ complete: true });
+    await addTargetBuildSettings(root, [
+      ["ASSOCIATED_DOMAIN_HOST", "clerk.example.test"],
+      ["ASSOCIATED_DOMAIN_HOST[sdk=iphoneos*]", "stale-device.example.test"],
+    ]);
+    const projectPath = join(root, "MyApp.xcodeproj", "project.pbxproj");
+    const project = await Bun.file(projectPath).text();
+    await Bun.write(
+      projectPath,
+      project.replaceAll(
+        'SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";',
+        "SUPPORTED_PLATFORMS = iphonesimulator;",
+      ),
+    );
+    await setAssociatedDomainTemplate(root, "webcredentials:$(ASSOCIATED_DOMAIN_HOST)");
+
+    const inspection = await inspectIOSProject(root);
+
+    expect(inspection.appTargets[0]?.configurations[0]?.entitlements).toMatchObject({
+      associatedDomains: ["webcredentials:clerk.example.test"],
+      unresolvedAssociatedDomains: [],
+    });
+  });
+
   test("propagates referenced build-setting taints into associated-domain expansion", async () => {
     const root = await fixture({ complete: true });
     await addTargetBuildSettings(root, [

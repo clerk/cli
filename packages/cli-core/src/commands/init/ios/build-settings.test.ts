@@ -371,6 +371,28 @@ describe("inspectTargetBuildConfigurations", () => {
     );
   });
 
+  test("ignores device differences for simulator-only targets", async () => {
+    const { configurations, diagnostics } = await inspectFixture({
+      targetBuildSettings: {
+        SUPPORTED_PLATFORMS: "iphonesimulator",
+        PRODUCT_BUNDLE_IDENTIFIER: "com.example.Simulator",
+        "PRODUCT_BUNDLE_IDENTIFIER[sdk=iphoneos*]": "com.example.StaleDevice",
+      },
+    });
+
+    expect(configurations[0]?.model.bundleIdentifier).toMatchObject({
+      state: "resolved",
+      value: "com.example.Simulator",
+    });
+    expect(configurations[0]?.entitlementContexts.map((context) => context.label)).toEqual([
+      "iphonesimulator/arm64",
+      "iphonesimulator/x86_64",
+    ]);
+    expect(diagnostics).not.toContainEqual(
+      expect.objectContaining({ code: "xcode.conflicting-build-setting" }),
+    );
+  });
+
   test("preserves the textual order of xcconfig assignments and includes", async () => {
     const includeLast = await inspectFixture({
       xcconfig: [

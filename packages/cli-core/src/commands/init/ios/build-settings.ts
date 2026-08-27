@@ -861,11 +861,17 @@ export async function inspectTargetBuildConfigurations(options: {
     );
     const supportedPlatforms =
       supportedPlatformsResolution.state === "resolved" ? supportedPlatformsResolution.value : "";
+    const supportedPlatformTokens = new Set(
+      supportedPlatforms
+        .toLowerCase()
+        .split(/\s+/)
+        .filter((value) => value !== ""),
+    );
+    const hasModeledIOSPlatform =
+      supportedPlatformTokens.has("iphoneos") || supportedPlatformTokens.has("iphonesimulator");
     const activeContexts =
-      supportedPlatformsResolution.state === "resolved" &&
-      supportedPlatforms.trim() !== "" &&
-      !/\biphonesimulator\b/.test(supportedPlatforms)
-        ? [deviceContext]
+      supportedPlatformsResolution.state === "resolved" && hasModeledIOSPlatform
+        ? evaluatedContexts.filter(({ context }) => supportedPlatformTokens.has(context.sdk))
         : evaluatedContexts;
     const sdkRootResolution = resolveSettingAcrossContexts(
       "SDKROOT",
