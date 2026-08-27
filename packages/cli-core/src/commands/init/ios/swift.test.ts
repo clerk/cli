@@ -2,7 +2,11 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { inspectSwiftSources, sanitizeSwiftSource } from "./swift.ts";
+import {
+  inspectSwiftSources,
+  sanitizeSwiftSource,
+  sanitizeSwiftSourceWithStatus,
+} from "./swift.ts";
 
 const temporaryDirectories: string[] = [];
 
@@ -27,9 +31,113 @@ describe("sanitizeSwiftSource", () => {
     expect(sanitized).not.toContain(".environment");
     expect(sanitized).toContain("@main struct RealApp");
   });
+
+  test("removes bare, extended, multi-hash, and multiline regex literals", () => {
+    const source = [
+      "let bare = /Clerk.shared.auth.signInWithApple()/",
+      "let extended = #/AuthView()/#",
+      "let internalSlash = #/path/to/Clerk.shared.auth.startHostedAuth()/#",
+      "let escapedDelimiter = #/prefix\\/#Clerk.shared.auth.signUp()/#",
+      "let multiHash = ###/Clerk.shared.handle(url)/###",
+      "let multiline = ##/",
+      "  Clerk.shared.auth.signInWithPassword()",
+      "/##",
+      "let compactDivision = numerator/denominator/divisor",
+      "let spacedDivision = numerator / denominator / divisor",
+    ].join("\n");
+
+    const result = sanitizeSwiftSourceWithStatus(source);
+
+    expect(result.complete).toBe(true);
+    expect(result.sanitizedSource).not.toContain("Clerk.shared");
+    expect(result.sanitizedSource).not.toContain("AuthView");
+    expect(result.sanitizedSource).toContain("let compactDivision = numerator/denominator/divisor");
+    expect(result.sanitizedSource).toContain(
+      "let spacedDivision = numerator / denominator / divisor",
+    );
+    expect(result.sanitizedSource.length).toBe(source.length);
+    expect([...result.sanitizedSource.matchAll(/\n/g)].map((match) => match.index)).toEqual(
+      [...source.matchAll(/\n/g)].map((match) => match.index),
+    );
+  });
+
+  test("reports malformed and interpolation-like regex literals as incomplete", () => {
+    const malformed = sanitizeSwiftSourceWithStatus(
+      "let matcher = /Clerk.shared.auth.signInWithApple()\n@main struct RealApp: App {}",
+    );
+    expect(malformed.complete).toBe(false);
+    expect(malformed.sanitizedSource).not.toContain("Clerk.shared");
+    expect(malformed.sanitizedSource).toContain("@main struct RealApp");
+
+    const interpolated = sanitizeSwiftSourceWithStatus(
+      "let matcher = #/prefix\\#(value)Clerk.shared.auth.signInWithApple()/#",
+    );
+    expect(interpolated.complete).toBe(false);
+    expect(interpolated.sanitizedSource).not.toContain("Clerk.shared");
+  });
 });
 
 describe("inspectSwiftSources", () => {
+  test("ignores authentication symbols inside Swift regex literals", async () => {
+    const root = await mkdtemp(join(tmpdir(), "clerk-ios-swift-"));
+    temporaryDirectories.push(root);
+    const path = join(root, "Patterns.swift");
+    await Bun.write(
+      path,
+      `import ClerkKit
+       import ClerkKitUI
+       let native = #/Clerk.shared.auth.signInWithApple()/#
+       let prebuilt = /AuthView()/`,
+    );
+
+    const inspection = await inspectSwiftSources([
+      { absolutePath: path, relativePath: "Patterns.swift" },
+    ]);
+
+    expect(inspection.evidenceComplete).toBe(true);
+    expect(inspection.authFlowReferences).toEqual([]);
+  });
+
+  test("still records a real authentication call adjacent to a regex literal", async () => {
+    const root = await mkdtemp(join(tmpdir(), "clerk-ios-swift-"));
+    temporaryDirectories.push(root);
+    const path = join(root, "Authentication.swift");
+    await Bun.write(
+      path,
+      `import ClerkKit
+       let matcher = #/Clerk.shared.auth.signInWithApple()/#
+       func authenticate() async throws {
+         try await Clerk.shared.auth.signInWithApple()
+       }`,
+    );
+
+    const inspection = await inspectSwiftSources([
+      { absolutePath: path, relativePath: "Authentication.swift" },
+    ]);
+
+    expect(inspection.evidenceComplete).toBe(true);
+    expect(inspection.authFlowReferences).toEqual([{ path: "Authentication.swift" }]);
+  });
+
+  test("marks source evidence incomplete for an unclosed regex literal", async () => {
+    const root = await mkdtemp(join(tmpdir(), "clerk-ios-swift-"));
+    temporaryDirectories.push(root);
+    const path = join(root, "Patterns.swift");
+    await Bun.write(
+      path,
+      `import ClerkKit
+       let matcher = /Clerk.shared.auth.signInWithApple()
+       struct ContentView {}`,
+    );
+
+    const inspection = await inspectSwiftSources([
+      { absolutePath: path, relativePath: "Patterns.swift" },
+    ]);
+
+    expect(inspection.evidenceComplete).toBe(false);
+    expect(inspection.authFlowReferences).toEqual([]);
+  });
+
   test("records real Clerk evidence without retaining key expressions", async () => {
     const root = await mkdtemp(join(tmpdir(), "clerk-ios-swift-"));
     temporaryDirectories.push(root);
