@@ -1,14 +1,4 @@
-import {
-  chmod,
-  link,
-  lstat,
-  open,
-  readFile,
-  readdir,
-  realpath,
-  rename,
-  rm,
-} from "node:fs/promises";
+import { lstat, open, readFile, readdir, realpath, rename, rm } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import { isDeepStrictEqual } from "node:util";
 import { basename, dirname, isAbsolute, relative, resolve, sep } from "node:path";
@@ -31,6 +21,20 @@ import {
   type PbxObjects,
 } from "./pbx.ts";
 import { parseIOSPlist } from "./plist.ts";
+import {
+  IOSFileTransactionOwnershipError as RuntimeKeyFileOwnershipError,
+  fileMatchesIdentityAndHash,
+  identitiesMatch,
+  linkOwnedSourceWithoutClobber,
+  readPathIdentity,
+  readRegularFileIdentity,
+  readRegularFileIdentityAndHash,
+  removeClaimedPath,
+  restoreClaimWithoutClobber,
+  sameFile,
+  type ClaimedDestination as ClaimedFile,
+  type FileIdentity,
+} from "./file-transaction.ts";
 
 const APP_PRODUCT_TYPE = "com.apple.product-type.application";
 const MAX_PBXPROJ_BYTES = 15_000_000;
@@ -152,6 +156,12 @@ export interface IOSRuntimeKeyApplyOptions {
   afterPlistStage?: () => void | Promise<void>;
   afterPlistCommit?: () => void | Promise<void>;
   beforePostWriteValidation?: () => void | Promise<void>;
+  beforeStagedCommitInstall?: (targetPath: string, claimPath: string) => void | Promise<void>;
+  beforeStagedRollbackInstall?: (
+    targetPath: string,
+    originalSourcePath: string,
+    candidateClaimPath: string,
+  ) => void | Promise<void>;
 }
 
 type GitContext =
@@ -166,6 +176,7 @@ interface FileSnapshot {
   hash?: string;
   mode: number;
   bytes?: Uint8Array;
+  identity?: FileIdentity;
 }
 
 interface PreparedRuntimeKeyPlan {
@@ -192,6 +203,13 @@ interface StagedFile {
   committed: boolean;
   cleanupFailuresRemaining: number;
   keyBearing: boolean;
+  temporaryPresent: boolean;
+  stagedIdentity: FileIdentity;
+  committedIdentity?: FileIdentity;
+  claimedOriginal?: ClaimedFile;
+  recoveryClaims: ClaimedFile[];
+  claimPathIsSafe?: (path: string) => boolean | Promise<boolean>;
+  rollbackClaimPathIsSafe?: (path: string) => boolean | Promise<boolean>;
 }
 
 interface RollbackDependency {
@@ -202,6 +220,7 @@ interface RollbackDependency {
   protectionPath: string;
   /** Rules that protect both the final payload and its crash-safe staging file. */
   protectionRules: string[];
+  options: IOSRuntimeKeyApplyOptions;
 }
 
 class RuntimeKeyTemporaryFileCleanupError extends Error {
@@ -213,11 +232,19 @@ class RuntimeKeyTemporaryFileCleanupError extends Error {
   }
 }
 
+class RuntimeKeyClaimProtectionError extends RuntimeKeyFileOwnershipError {
+  constructor(readonly claimPath: string) {
+    super("a runtime-key recovery path was not protected by the committed ignore rule");
+  }
+}
+
 interface StageFileOptions {
   forceFailureAfterCreate?: boolean;
   cleanupFailures?: number;
   keyBearing?: boolean;
   beforeWrite?: (temporaryPath: string) => boolean | Promise<boolean>;
+  claimPathIsSafe?: (path: string) => boolean | Promise<boolean>;
+  rollbackClaimPathIsSafe?: (path: string) => boolean | Promise<boolean>;
 }
 
 function sha256(value: string | Uint8Array): string {
@@ -587,20 +614,35 @@ async function targetLocalSecretsPaths(
   return { paths: [...paths].sort() };
 }
 
+function isFileSystemError(error: unknown, code: string): boolean {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    "code" in error &&
+    (error as { code?: unknown }).code === code
+  );
+}
+
 async function snapshotExistingFile(
   path: string,
   maximumBytes: number,
 ): Promise<FileSnapshot | undefined> {
   try {
+    const beforeRead = await readRegularFileIdentity(path);
     const info = await lstat(path);
-    if (!info.isFile() || info.isSymbolicLink() || info.size > maximumBytes) return undefined;
+    if (!beforeRead || !info.isFile() || info.isSymbolicLink() || info.size > maximumBytes) {
+      return undefined;
+    }
     const bytes = new Uint8Array(await readFile(path));
+    const afterRead = await readRegularFileIdentity(path);
+    if (!afterRead || !identitiesMatch(beforeRead, afterRead)) return undefined;
     return {
       path,
       exists: true,
       hash: sha256(bytes),
-      mode: info.mode & 0o7777,
+      mode: afterRead.mode,
       bytes,
+      identity: afterRead,
     };
   } catch {
     return undefined;
@@ -615,15 +657,21 @@ async function snapshotOptionalFile(
 ): Promise<FileSnapshot | undefined> {
   if (!(await pathIsSafelyWithinIOSRoot(root, path))) return undefined;
   try {
+    const beforeRead = await readRegularFileIdentity(path);
     const info = await lstat(path);
-    if (!info.isFile() || info.isSymbolicLink() || info.size > maximumBytes) return undefined;
+    if (!beforeRead || !info.isFile() || info.isSymbolicLink() || info.size > maximumBytes) {
+      return undefined;
+    }
     const bytes = new Uint8Array(await readFile(path));
+    const afterRead = await readRegularFileIdentity(path);
+    if (!afterRead || !identitiesMatch(beforeRead, afterRead)) return undefined;
     return {
       path,
       exists: true,
       hash: sha256(bytes),
-      mode: info.mode & 0o7777,
+      mode: afterRead.mode,
       bytes,
+      identity: afterRead,
     };
   } catch (error) {
     if (error instanceof Error && "code" in error && error.code === "ENOENT") {
@@ -759,6 +807,32 @@ async function gitPathExitCode(
     return undefined;
   }
   const path = relative(repositoryRoot, canonicalPath);
+  if (path === ".." || path.startsWith(`..${sep}`) || isAbsolute(path)) return undefined;
+  try {
+    const child = Bun.spawn(["git", ...args, "--", path], {
+      cwd: repositoryRoot,
+      stdout: "ignore",
+      stderr: "ignore",
+    });
+    return await child.exited;
+  } catch {
+    return undefined;
+  }
+}
+
+async function prospectiveGitPathExitCode(
+  repositoryRoot: string,
+  args: string[],
+  absolutePath: string,
+): Promise<number | undefined> {
+  let canonicalParent: string;
+  try {
+    canonicalParent = await realpath(dirname(absolutePath));
+  } catch {
+    return undefined;
+  }
+  const candidate = resolve(canonicalParent, basename(absolutePath));
+  const path = relative(repositoryRoot, candidate);
   if (path === ".." || path.startsWith(`..${sep}`) || isAbsolute(path)) return undefined;
   try {
     const child = Bun.spawn(["git", ...args, "--", path], {
@@ -2064,14 +2138,19 @@ function replaceOrInsertPublishableKey(
 }
 
 async function snapshotMatches(snapshot: FileSnapshot): Promise<boolean> {
-  try {
-    const info = await lstat(snapshot.path);
-    if (!snapshot.exists) return false;
-    if (!info.isFile() || info.isSymbolicLink()) return false;
-    return sha256(await readFile(snapshot.path)) === snapshot.hash;
-  } catch (error) {
-    return !snapshot.exists && error instanceof Error && "code" in error && error.code === "ENOENT";
+  if (!snapshot.exists) {
+    try {
+      await lstat(snapshot.path);
+      return false;
+    } catch (error) {
+      return isFileSystemError(error, "ENOENT");
+    }
   }
+  return (
+    snapshot.identity !== undefined &&
+    snapshot.hash !== undefined &&
+    (await fileMatchesIdentityAndHash(snapshot.path, snapshot.identity, snapshot.hash))
+  );
 }
 
 async function fileMatchesHash(
@@ -2096,34 +2175,107 @@ async function syncDirectory(path: string): Promise<void> {
   }
 }
 
+function runtimeKeySiblingPath(path: string): string {
+  return resolve(dirname(path), `.${basename(path)}.clerk-${process.pid}-${randomUUID()}.tmp`);
+}
+
+type ClaimDestinationResult = { status: "claimed"; claim: ClaimedFile } | { status: "stale" };
+
+async function claimDestination(
+  staged: StagedFile,
+  expectedIdentity: FileIdentity,
+  expectedHash: string,
+  claimPathIsSafe = staged.claimPathIsSafe,
+): Promise<ClaimDestinationResult> {
+  const claimPath = runtimeKeySiblingPath(staged.targetPath);
+  if (staged.keyBearing && !(await claimPathIsSafe?.(claimPath))) {
+    throw new RuntimeKeyClaimProtectionError(claimPath);
+  }
+  try {
+    await rename(staged.targetPath, claimPath);
+  } catch (error) {
+    if (isFileSystemError(error, "ENOENT")) return { status: "stale" };
+    throw error;
+  }
+
+  const movedIdentity = await readPathIdentity(claimPath);
+  if (!movedIdentity) {
+    throw new RuntimeKeyFileOwnershipError(
+      "a claimed runtime-key destination could not be identified after it was moved",
+    );
+  }
+  const claim: ClaimedFile = { path: claimPath, present: true, identity: movedIdentity };
+  staged.recoveryClaims.push(claim);
+  if (staged.keyBearing && !(await claimPathIsSafe?.(claimPath))) {
+    await restoreClaimWithoutClobber(claim, staged.targetPath);
+    throw new RuntimeKeyClaimProtectionError(claimPath);
+  }
+  const movedExpectedFile =
+    identitiesMatch(movedIdentity, expectedIdentity) &&
+    (await fileMatchesIdentityAndHash(claimPath, expectedIdentity, expectedHash));
+  if (movedExpectedFile) return { status: "claimed", claim };
+
+  await restoreClaimWithoutClobber(claim, staged.targetPath);
+  return { status: "stale" };
+}
+
 async function stageFile(
   snapshot: FileSnapshot,
   content: Uint8Array,
   options: StageFileOptions = {},
 ): Promise<StagedFile> {
-  const temporaryPath = resolve(
-    dirname(snapshot.path),
-    `.${basename(snapshot.path)}.clerk-${process.pid}-${randomUUID()}.tmp`,
-  );
+  const temporaryPath = runtimeKeySiblingPath(snapshot.path);
   let created = false;
+  let openedIdentity: FileIdentity | undefined;
   try {
     const file = await open(temporaryPath, "wx", snapshot.mode);
     created = true;
     try {
+      const info = await file.stat();
+      if (!info.isFile()) throw new Error("staged path was not a regular file");
+      openedIdentity = { dev: info.dev, ino: info.ino, mode: info.mode & 0o7777 };
       if (options.beforeWrite && !(await options.beforeWrite(temporaryPath))) {
         throw new Error("temporary path is not safely ignored");
       }
       await file.writeFile(content);
       if (options.forceFailureAfterCreate) throw new Error("injected staging failure");
+      await file.chmod(snapshot.mode);
       await file.sync();
     } finally {
       await file.close();
     }
-    await chmod(temporaryPath, snapshot.mode);
+    const stagedIdentity = await readRegularFileIdentity(temporaryPath);
+    if (
+      !openedIdentity ||
+      !stagedIdentity ||
+      !sameFile(stagedIdentity, openedIdentity) ||
+      stagedIdentity.mode !== snapshot.mode ||
+      !(await fileMatchesIdentityAndHash(temporaryPath, stagedIdentity, sha256(content)))
+    ) {
+      throw new Error("staged runtime-key file changed before it could be committed");
+    }
+    return {
+      targetPath: snapshot.path,
+      temporaryPath,
+      candidateHash: sha256(content),
+      original: snapshot,
+      committed: false,
+      cleanupFailuresRemaining: options.cleanupFailures ?? 0,
+      keyBearing: options.keyBearing === true,
+      temporaryPresent: true,
+      stagedIdentity,
+      recoveryClaims: [],
+      claimPathIsSafe: options.claimPathIsSafe,
+      rollbackClaimPathIsSafe: options.rollbackClaimPathIsSafe,
+    };
   } catch {
     if (created) {
       try {
-        await rm(temporaryPath, { force: true });
+        const currentIdentity = await readRegularFileIdentity(temporaryPath);
+        if (!openedIdentity || !currentIdentity || !sameFile(currentIdentity, openedIdentity)) {
+          throw new Error("the staged runtime-key path no longer identified this transaction");
+        }
+        await rm(temporaryPath);
       } catch {
         throw new RuntimeKeyTemporaryFileCleanupError(
           "A temporary runtime-key file could not be removed. Inspect the LocalSecrets.plist directory for a .clerk-*.tmp file before continuing.",
@@ -2133,18 +2285,10 @@ async function stageFile(
     }
     throw new Error("The runtime-key update could not be staged safely.");
   }
-  return {
-    targetPath: snapshot.path,
-    temporaryPath,
-    candidateHash: sha256(content),
-    original: snapshot,
-    committed: false,
-    cleanupFailuresRemaining: options.cleanupFailures ?? 0,
-    keyBearing: options.keyBearing === true,
-  };
 }
 
 async function removeStagedTemporaryFile(staged: StagedFile): Promise<void> {
+  if (!staged.temporaryPresent) return;
   if (staged.cleanupFailuresRemaining > 0) {
     staged.cleanupFailuresRemaining -= 1;
     throw new RuntimeKeyTemporaryFileCleanupError(
@@ -2153,7 +2297,12 @@ async function removeStagedTemporaryFile(staged: StagedFile): Promise<void> {
     );
   }
   try {
-    await rm(staged.temporaryPath, { force: true });
+    const identity = await readRegularFileIdentity(staged.temporaryPath);
+    if (!identity || !sameFile(identity, staged.stagedIdentity)) {
+      throw new Error("the staged runtime-key path no longer identified this transaction");
+    }
+    await rm(staged.temporaryPath);
+    staged.temporaryPresent = false;
   } catch {
     throw new RuntimeKeyTemporaryFileCleanupError(
       "A temporary runtime-key file could not be removed. Inspect the LocalSecrets.plist directory for a .clerk-*.tmp file before continuing.",
@@ -2162,22 +2311,104 @@ async function removeStagedTemporaryFile(staged: StagedFile): Promise<void> {
   }
 }
 
-async function commitStagedFile(staged: StagedFile): Promise<"written" | "stale"> {
+async function committedCandidateMatches(staged: StagedFile): Promise<boolean> {
+  const identity = staged.committedIdentity ?? staged.stagedIdentity;
+  return fileMatchesIdentityAndHash(staged.targetPath, identity, staged.candidateHash);
+}
+
+async function claimedOriginalMatches(staged: StagedFile): Promise<boolean> {
+  if (!staged.original.exists) return true;
+  return (
+    staged.claimedOriginal?.present === true &&
+    staged.original.hash !== undefined &&
+    (await fileMatchesIdentityAndHash(
+      staged.claimedOriginal.path,
+      staged.claimedOriginal.identity,
+      staged.original.hash,
+    ))
+  );
+}
+
+async function commitStagedFile(
+  staged: StagedFile,
+  options: IOSRuntimeKeyApplyOptions = {},
+): Promise<"written" | "stale"> {
   if (!(await snapshotMatches(staged.original))) return "stale";
   if (staged.original.exists) {
-    await rename(staged.temporaryPath, staged.targetPath);
-    staged.committed = true;
-  } else {
+    if (!staged.original.identity || !staged.original.hash) return "stale";
+    const claimResult = await claimDestination(
+      staged,
+      staged.original.identity,
+      staged.original.hash,
+    );
+    if (claimResult.status === "stale") return "stale";
+    staged.claimedOriginal = claimResult.claim;
+    let installed = false;
     try {
-      await link(staged.temporaryPath, staged.targetPath);
+      if (
+        !(await claimedOriginalMatches(staged)) ||
+        !(await fileMatchesIdentityAndHash(
+          staged.temporaryPath,
+          staged.stagedIdentity,
+          staged.candidateHash,
+        ))
+      ) {
+        throw new RuntimeKeyFileOwnershipError(
+          "a runtime-key transaction file changed before installation",
+        );
+      }
+      await options.beforeStagedCommitInstall?.(staged.targetPath, staged.claimedOriginal.path);
+      if (!(await claimedOriginalMatches(staged))) {
+        throw new RuntimeKeyFileOwnershipError(
+          "the claimed runtime-key original changed before installation",
+        );
+      }
+      const installResult = await linkOwnedSourceWithoutClobber(
+        staged.temporaryPath,
+        staged.stagedIdentity,
+        staged.candidateHash,
+        staged.targetPath,
+      );
+      if (installResult === "occupied") {
+        await removeClaimedPath(staged.claimedOriginal, {
+          expectedHash: staged.original.hash,
+          expectedMode: staged.original.mode,
+        });
+        await syncDirectory(dirname(staged.targetPath));
+        return "stale";
+      }
+      installed = true;
     } catch (error) {
-      if (error instanceof Error && "code" in error && error.code === "EEXIST") return "stale";
+      if (!installed && staged.claimedOriginal.present) {
+        try {
+          await restoreClaimWithoutClobber(staged.claimedOriginal, staged.targetPath);
+        } catch (restoreError) {
+          throw new RuntimeKeyFileOwnershipError(
+            "the claimed runtime-key original could not be restored after commit stopped",
+            { cause: new AggregateError([error, restoreError]) },
+          );
+        }
+      }
       throw error;
     }
-    staged.committed = true;
-    await removeStagedTemporaryFile(staged);
+  } else {
+    const installResult = await linkOwnedSourceWithoutClobber(
+      staged.temporaryPath,
+      staged.stagedIdentity,
+      staged.candidateHash,
+      staged.targetPath,
+    );
+    if (installResult === "occupied") return "stale";
   }
+  staged.committed = true;
+  staged.committedIdentity = staged.stagedIdentity;
   await syncDirectory(dirname(staged.targetPath));
+  if (!(await committedCandidateMatches(staged))) {
+    throw new RuntimeKeyFileOwnershipError(
+      "the committed runtime-key destination changed before it could be verified",
+    );
+  }
+  await removeStagedTemporaryFile(staged);
   return "written";
 }
 
@@ -2185,24 +2416,163 @@ async function cleanupStagedFile(staged: StagedFile): Promise<void> {
   await removeStagedTemporaryFile(staged);
 }
 
-async function restoreCommittedFile(staged: StagedFile): Promise<"restored" | "stale"> {
-  const current = await snapshotExistingFile(staged.targetPath, Number.MAX_SAFE_INTEGER);
-  if (!current || current.hash !== staged.candidateHash) return "stale";
+async function releaseClaimedOriginals(stagedFiles: readonly StagedFile[]): Promise<boolean> {
+  const withClaims = stagedFiles.filter(
+    (staged) => staged.committed && staged.claimedOriginal?.present,
+  );
+  const states = await Promise.all(
+    withClaims.map(async (staged) =>
+      Boolean(
+        staged.original.hash &&
+        (await committedCandidateMatches(staged)) &&
+        (await claimedOriginalMatches(staged)),
+      ),
+    ),
+  );
+  if (!states.every(Boolean)) return false;
+  for (const staged of withClaims) {
+    await removeClaimedPath(staged.claimedOriginal!, {
+      expectedHash: staged.original.hash,
+      expectedMode: staged.original.mode,
+    });
+  }
+  return true;
+}
+
+async function discardClaimedOriginal(staged: StagedFile): Promise<boolean> {
+  if (!staged.claimedOriginal?.present) return true;
+  if (!staged.original.hash || !(await claimedOriginalMatches(staged))) return false;
+  await removeClaimedPath(staged.claimedOriginal, {
+    expectedHash: staged.original.hash,
+    expectedMode: staged.original.mode,
+  });
+  staged.committed = false;
+  return true;
+}
+
+async function restoreCommittedFile(
+  staged: StagedFile,
+  options: IOSRuntimeKeyApplyOptions = {},
+): Promise<"restored" | "stale"> {
+  if (!(await committedCandidateMatches(staged))) return "stale";
+  const candidateIdentity = staged.committedIdentity ?? staged.stagedIdentity;
+  const candidateClaimResult = await claimDestination(
+    staged,
+    candidateIdentity,
+    staged.candidateHash,
+    staged.rollbackClaimPathIsSafe,
+  );
+  if (candidateClaimResult.status === "stale") return "stale";
+  const candidateClaim = candidateClaimResult.claim;
   if (!staged.original.exists) {
-    await rm(staged.targetPath);
+    await removeClaimedPath(candidateClaim, {
+      expectedHash: staged.candidateHash,
+      expectedMode: staged.original.mode,
+    });
     await syncDirectory(dirname(staged.targetPath));
     staged.committed = false;
     return "restored";
   }
-  const rollback = await stageFile(current, staged.original.bytes!, {
-    keyBearing: staged.keyBearing,
-  });
+
+  let rollback: StagedFile | undefined;
+  const originalClaim = staged.claimedOriginal?.present ? staged.claimedOriginal : undefined;
+  if (!originalClaim) {
+    rollback = await stageFile(
+      {
+        path: staged.targetPath,
+        exists: false,
+        mode: staged.original.mode,
+      },
+      staged.original.bytes!,
+      {
+        keyBearing: staged.keyBearing,
+        beforeWrite: staged.claimPathIsSafe,
+        claimPathIsSafe: staged.claimPathIsSafe,
+        rollbackClaimPathIsSafe: staged.rollbackClaimPathIsSafe,
+      },
+    );
+  }
+  const originalSourcePath = originalClaim?.path ?? rollback!.temporaryPath;
+  const originalSource = await readRegularFileIdentityAndHash(originalSourcePath);
+  if (
+    !originalSource ||
+    (originalClaim && !sameFile(originalSource.identity, originalClaim.identity)) ||
+    (rollback && !sameFile(originalSource.identity, rollback.stagedIdentity))
+  ) {
+    throw new RuntimeKeyFileOwnershipError(
+      "the original runtime-key file could not be identified during rollback",
+    );
+  }
+  let sourceInstalled = false;
   try {
-    if ((await commitStagedFile(rollback)) !== "written") return "stale";
+    await options.beforeStagedRollbackInstall?.(
+      staged.targetPath,
+      originalSourcePath,
+      candidateClaim.path,
+    );
+    const installResult = await linkOwnedSourceWithoutClobber(
+      originalSourcePath,
+      originalSource.identity,
+      originalSource.hash,
+      staged.targetPath,
+    );
+    if (installResult === "occupied") {
+      await removeClaimedPath(candidateClaim, {
+        expectedHash: staged.candidateHash,
+        expectedMode: staged.original.mode,
+      });
+      return "stale";
+    }
+    sourceInstalled = true;
+    const restoredIdentity = await readRegularFileIdentity(staged.targetPath);
+    if (
+      !restoredIdentity ||
+      !sameFile(restoredIdentity, originalSource.identity) ||
+      !(await fileMatchesIdentityAndHash(
+        staged.targetPath,
+        originalSource.identity,
+        originalSource.hash,
+      ))
+    ) {
+      throw new RuntimeKeyFileOwnershipError(
+        "the restored runtime-key destination did not match its recovery source",
+      );
+    }
+    await removeClaimedPath(candidateClaim, {
+      expectedHash: staged.candidateHash,
+      expectedMode: staged.original.mode,
+    });
+    if (originalClaim) {
+      await removeClaimedPath(originalClaim, {
+        expectedHash: originalSource.hash,
+        expectedMode: originalSource.identity.mode,
+      });
+    }
     staged.committed = false;
+    await syncDirectory(dirname(staged.targetPath));
     return "restored";
+  } catch (error) {
+    if (!sourceInstalled) {
+      try {
+        const publicIdentity = await readPathIdentity(staged.targetPath);
+        if (!publicIdentity) {
+          await restoreClaimWithoutClobber(candidateClaim, staged.targetPath);
+        } else if (candidateClaim.present) {
+          await removeClaimedPath(candidateClaim, {
+            expectedHash: staged.candidateHash,
+            expectedMode: staged.original.mode,
+          });
+        }
+      } catch (restoreError) {
+        throw new RuntimeKeyFileOwnershipError(
+          "the claimed runtime-key candidate could not be recovered after rollback stopped",
+          { cause: new AggregateError([error, restoreError]) },
+        );
+      }
+    }
+    throw error;
   } finally {
-    await cleanupStagedFile(rollback);
+    if (rollback) await cleanupStagedFile(rollback);
   }
 }
 
@@ -2233,6 +2603,14 @@ async function rollbackFiles(
     ...(payload ? [payload] : []),
     ...[...stagedFiles].reverse().filter((staged) => staged !== payload),
   ];
+  const keyBearingPaths = (): string[] =>
+    stagedFiles
+      .filter((staged) => staged.keyBearing)
+      .flatMap((staged) => [
+        ...(staged.committed ? [staged.targetPath] : []),
+        ...(staged.temporaryPresent ? [staged.temporaryPath] : []),
+        ...staged.recoveryClaims.filter((claim) => claim.present).map((claim) => claim.path),
+      ]);
   for (const staged of ordered) {
     if (!staged.committed) continue;
     if (staged.targetPath === dependency.protectionPath && payloadIsUnsafe) {
@@ -2240,13 +2618,26 @@ async function rollbackFiles(
       continue;
     }
     try {
-      const restoreResult = await restoreCommittedFile(staged);
+      let restoreResult: "restored" | "stale";
+      try {
+        restoreResult = await restoreCommittedFile(staged, dependency.options);
+      } catch (error) {
+        if (
+          !(error instanceof RuntimeKeyClaimProtectionError) ||
+          staged.targetPath !== dependency.payloadPath ||
+          !(await ensureRollbackProtection(dependency, keyBearingPaths(), error.claimPath))
+        ) {
+          throw error;
+        }
+        restoreResult = await restoreCommittedFile(staged, dependency.options);
+      }
       if (restoreResult === "restored") {
         continue;
       }
       if (staged.targetPath === dependency.protectionPath && !payloadIsUnsafe) {
         // The payload is back to a non-key-bearing state, so retain a concurrent
         // ignore-file edit instead of overwriting it merely to restore our guard.
+        if (!(await discardClaimedOriginal(staged))) fullyRestored = false;
         continue;
       }
     } catch (error) {
@@ -2261,10 +2652,7 @@ async function rollbackFiles(
     if (staged.targetPath === dependency.payloadPath) payloadIsUnsafe = true;
   }
   if (payloadIsUnsafe) {
-    const unsafeKeyBearingPaths = stagedFiles
-      .filter((staged) => staged.keyBearing)
-      .map((staged) => (staged.committed ? staged.targetPath : staged.temporaryPath));
-    if (!(await ensureRollbackProtection(dependency, unsafeKeyBearingPaths))) {
+    if (!(await ensureRollbackProtection(dependency, keyBearingPaths()))) {
       fullyRestored = false;
     }
   }
@@ -2275,8 +2663,9 @@ async function rollbackFiles(
 async function ensureRollbackProtection(
   dependency: RollbackDependency,
   keyBearingPaths: string[],
+  prospectiveClaimPath?: string,
 ): Promise<boolean> {
-  if (
+  const pathsAreProtected =
     keyBearingPaths.length > 0 &&
     (
       await Promise.all(
@@ -2290,8 +2679,15 @@ async function ensureRollbackProtection(
           ),
         ),
       )
-    ).every(Boolean)
-  ) {
+    ).every(Boolean);
+  const prospectiveClaimIsProtected =
+    prospectiveClaimPath == null ||
+    (await localSecretsClaimPathIsIgnored(
+      dependency.root,
+      prospectiveClaimPath,
+      dependency.protectionRules[0]!,
+    ));
+  if (pathsAreProtected && prospectiveClaimIsProtected) {
     return true;
   }
 
@@ -2312,11 +2708,12 @@ async function ensureRollbackProtection(
   const protection = await stageFile(current, new TextEncoder().encode(protectedText));
   try {
     if ((await commitStagedFile(protection)) !== "written") return false;
+    if (!(await releaseClaimedOriginals([protection]))) return false;
   } finally {
     await cleanupStagedFile(protection);
   }
 
-  return (
+  const protectedPaths = (
     await Promise.all(
       keyBearingPaths.map(async (path) =>
         localSecretsIsIgnored(
@@ -2329,6 +2726,15 @@ async function ensureRollbackProtection(
       ),
     )
   ).every(Boolean);
+  return (
+    protectedPaths &&
+    (prospectiveClaimPath == null ||
+      (await localSecretsClaimPathIsIgnored(
+        dependency.root,
+        prospectiveClaimPath,
+        dependency.protectionRules[0]!,
+      )))
+  );
 }
 
 async function localSecretsIsIgnored(
@@ -2352,6 +2758,36 @@ async function localSecretsIsIgnored(
       context.root,
       ["check-ignore", "--quiet", "--no-index"],
       localSecretsPath,
+    );
+    return ignored === 0;
+  }
+  return (
+    context.state === "not-repository" &&
+    gitignoreRuleIsEffectiveWithoutRepository(gitignoreText, rule)
+  );
+}
+
+async function localSecretsClaimPathIsIgnored(
+  root: string,
+  claimPath: string,
+  rule: string,
+): Promise<boolean> {
+  if (await hasDescendantGitignore(root, claimPath)) return false;
+  const gitignore = await snapshotExistingFile(resolve(root, ".gitignore"), MAX_GITIGNORE_BYTES);
+  const gitignoreText = gitignore?.bytes ? decodeUTF8(gitignore.bytes) : undefined;
+  if (gitignoreText == null || !gitignoreContainsRule(gitignoreText, rule)) return false;
+  const context = await coherentGitContext(root, [dirname(claimPath)]);
+  if (context.state === "repository") {
+    const tracked = await prospectiveGitPathExitCode(
+      context.root,
+      ["ls-files", "--error-unmatch"],
+      claimPath,
+    );
+    if (tracked !== 1) return false;
+    const ignored = await prospectiveGitPathExitCode(
+      context.root,
+      ["check-ignore", "--quiet", "--no-index"],
+      claimPath,
     );
     return ignored === 0;
   }
@@ -2577,6 +3013,7 @@ export async function applyIOSRuntimeKey(
     payloadPath: localSecretsSnapshot.path,
     protectionPath: gitignoreSnapshot.path,
     protectionRules: [...(temporaryRule ? [temporaryRule] : []), targetGitignoreRule],
+    options,
   };
   const gitignoreCandidateIsCurrent = async (): Promise<boolean> =>
     gitignoreCandidateHash != null &&
@@ -2605,7 +3042,7 @@ export async function applyIOSRuntimeKey(
       (staged) => staged.targetPath === gitignoreSnapshot.path,
     );
     if (gitignoreStaged) {
-      const result = await commitStagedFile(gitignoreStaged);
+      const result = await commitStagedFile(gitignoreStaged, options);
       if (result === "stale") {
         if (!(await rollbackFiles(stagedFiles, rollbackDependency))) {
           throw new Error(
@@ -2653,6 +3090,11 @@ export async function applyIOSRuntimeKey(
         cleanupFailures: options.forcePlistCleanupFailureBeforeCommit === true ? 2 : 0,
         forceFailureAfterCreate: options.forcePlistStageFailureAfterCreate === true,
         keyBearing: true,
+        claimPathIsSafe: async (claimPath) =>
+          (await gitignoreCandidateIsCurrent()) &&
+          (await localSecretsClaimPathIsIgnored(plan.root, claimPath, temporaryRule)),
+        rollbackClaimPathIsSafe: async (claimPath) =>
+          localSecretsClaimPathIsIgnored(plan.root, claimPath, temporaryRule),
         beforeWrite: async (temporaryPath) => {
           if (!(await gitignoreCandidateIsCurrent())) return false;
           if (!(await localSecretsIsIgnored(plan.root, temporaryPath, temporaryRule))) return false;
@@ -2695,7 +3137,7 @@ export async function applyIOSRuntimeKey(
           message: ".gitignore changed before LocalSecrets.plist was committed.",
         };
       }
-      if ((await commitStagedFile(plistStaged)) === "stale") {
+      if ((await commitStagedFile(plistStaged, options)) === "stale") {
         if (!(await rollbackFiles(stagedFiles, rollbackDependency))) {
           throw new Error(
             "The runtime-key update became stale and automatic rollback was incomplete. Git-ignore protection was retained when possible; inspect LocalSecrets.plist and .gitignore before retrying.",
@@ -2728,7 +3170,22 @@ export async function applyIOSRuntimeKey(
       (!needsPlistWrite || (await gitignoreCandidateIsCurrent())) &&
       (await postWriteIsValid(plan, normalizedKey)) &&
       (!needsPlistWrite || (await gitignoreCandidateIsCurrent()));
-    if (valid) return { status: "applied", plan };
+    if (valid) {
+      const originalsReleased = await releaseClaimedOriginals(stagedFiles);
+      if (!originalsReleased) {
+        if (!(await rollbackFiles(stagedFiles, rollbackDependency))) {
+          throw new Error(
+            "The runtime-key update became stale and automatic rollback was incomplete. Git-ignore protection was retained when possible; inspect LocalSecrets.plist and .gitignore before retrying.",
+          );
+        }
+        return {
+          status: "stale",
+          plan,
+          message: "A target file changed before the runtime-key update was finalized.",
+        };
+      }
+      return { status: "applied", plan };
+    }
 
     if (!(await rollbackFiles(stagedFiles, rollbackDependency))) {
       throw new Error(

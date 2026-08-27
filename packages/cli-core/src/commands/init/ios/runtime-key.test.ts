@@ -1,5 +1,15 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { appendFile, mkdir, mkdtemp, readdir, rename, rm, symlink } from "node:fs/promises";
+import {
+  appendFile,
+  chmod,
+  lstat,
+  mkdir,
+  mkdtemp,
+  readdir,
+  rename,
+  rm,
+  symlink,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, relative } from "node:path";
 import plist from "@expo/plist";
@@ -770,6 +780,66 @@ describe("iOS runtime publishable-key transaction", () => {
     expect(await Bun.file(join(ignoreRoot, ".gitignore")).text()).toBe(newerIgnore);
   });
 
+  test("preserves an editor replacement that wins the plist commit boundary", async () => {
+    const root = await fixture("pk_test_...");
+    const plan = await planIOSRuntimeKey(options(root));
+    const plistPath = join(root, "MyApp", "LocalSecrets.plist");
+    const replacementPath = join(root, "MyApp", "editor-replacement.plist");
+    const replacement = plistSource("editor-owned-placeholder");
+    await Bun.write(replacementPath, replacement);
+    await chmod(replacementPath, 0o600);
+    const replacementIdentity = await lstat(replacementPath);
+
+    const result = await applyIOSRuntimeKey(plan, publishableKey("commit-boundary.clerk.example"), {
+      beforeStagedCommitInstall: async (targetPath) => {
+        if (targetPath === plistPath) await rename(replacementPath, targetPath);
+      },
+    });
+
+    expect(result.status).toBe("stale");
+    expect(await Bun.file(plistPath).text()).toBe(replacement);
+    expect((await lstat(plistPath)).ino).toBe(replacementIdentity.ino);
+    expect((await lstat(plistPath)).mode & 0o7777).toBe(0o600);
+    expect(await Bun.file(join(root, ".gitignore")).exists()).toBe(false);
+    expect((await readdir(join(root, "MyApp"))).some((name) => name.includes(".clerk-"))).toBe(
+      false,
+    );
+  });
+
+  test("preserves an editor replacement that wins the plist rollback boundary", async () => {
+    const root = await fixture("pk_test_...");
+    const plan = await planIOSRuntimeKey(options(root));
+    const plistPath = join(root, "MyApp", "LocalSecrets.plist");
+    const replacementPath = join(root, "MyApp", "editor-rollback-replacement.plist");
+    const replacement = plistSource("newer-editor-value");
+    const key = publishableKey("rollback-boundary.clerk.example");
+    await Bun.write(replacementPath, replacement);
+    await chmod(replacementPath, 0o600);
+    const replacementIdentity = await lstat(replacementPath);
+
+    const apply = applyIOSRuntimeKey(plan, key, {
+      forcePostWriteValidationFailure: true,
+      beforeStagedRollbackInstall: async (targetPath) => {
+        if (targetPath === plistPath) await rename(replacementPath, targetPath);
+      },
+    });
+
+    await expect(apply).rejects.toThrow("Git-ignore protection was retained");
+    expect(await Bun.file(plistPath).text()).toBe(replacement);
+    expect((await lstat(plistPath)).ino).toBe(replacementIdentity.ino);
+    expect((await lstat(plistPath)).mode & 0o7777).toBe(0o600);
+    expect(await Bun.file(plistPath).text()).not.toContain(key);
+    expect(await Bun.file(join(root, ".gitignore")).text()).toBe(
+      TEMPORARY_IGNORE_RULE + TARGET_IGNORE_RULE,
+    );
+    for (const name of await readdir(join(root, "MyApp"))) {
+      if (!name.includes(".clerk-") || !(await Bun.file(join(root, "MyApp", name)).exists())) {
+        continue;
+      }
+      expect(await Bun.file(join(root, "MyApp", name)).text()).not.toContain(key);
+    }
+  });
+
   test("rolls back every committed file byte-for-byte after validation failure", async () => {
     const root = await fixture("pk_test_...");
     const before = await treeDigest(root);
@@ -807,31 +877,36 @@ describe("iOS runtime publishable-key transaction", () => {
     expect(await Bun.file(join(root, ".gitignore")).exists()).toBe(false);
   });
 
-  test("rolls back when a nested gitignore appears before post-write validation", async () => {
+  test("leaves the public plist untouched when a nested gitignore blocks safe rollback", async () => {
     const root = await fixture("pk_test_...");
     const plistPath = join(root, "MyApp", "LocalSecrets.plist");
-    const plistBefore = await Bun.file(plistPath).text();
     const plan = await planIOSRuntimeKey(options(root));
+    const key = publishableKey("concurrent-nested-ignore.clerk.example");
+    let committedInode: number | undefined;
 
-    const result = await applyIOSRuntimeKey(
-      plan,
-      publishableKey("concurrent-nested-ignore.clerk.example"),
-      {
-        beforePostWriteValidation: async () => {
-          await Bun.write(
-            join(root, "MyApp", ".gitignore"),
-            "!LocalSecrets.plist\n!.LocalSecrets.plist.clerk-*.tmp\n",
-          );
-        },
+    const apply = applyIOSRuntimeKey(plan, key, {
+      beforePostWriteValidation: async () => {
+        committedInode = (await lstat(plistPath)).ino;
+        await Bun.write(
+          join(root, "MyApp", ".gitignore"),
+          "!LocalSecrets.plist\n!.LocalSecrets.plist.clerk-*.tmp\n",
+        );
       },
-    );
+    });
 
-    expect(result.status).toBe("rolled-back");
-    expect(await Bun.file(plistPath).text()).toBe(plistBefore);
-    expect(await Bun.file(join(root, ".gitignore")).exists()).toBe(false);
+    await expect(apply).rejects.toThrow("Git-ignore protection was retained");
+    expect(committedInode).toBeDefined();
+    expect((await lstat(plistPath)).ino).toBe(committedInode!);
+    expect(await Bun.file(plistPath).text()).toContain(key);
     expect(await Bun.file(join(root, "MyApp", ".gitignore")).text()).toContain(
       "!LocalSecrets.plist",
     );
+    for (const name of await readdir(join(root, "MyApp"))) {
+      if (!name.includes(".clerk-") || !(await Bun.file(join(root, "MyApp", name)).exists())) {
+        continue;
+      }
+      expect(await Bun.file(join(root, "MyApp", name)).text()).not.toContain(key);
+    }
   });
 
   test("rolls back when a sibling target concurrently begins owning the runtime sink", async () => {

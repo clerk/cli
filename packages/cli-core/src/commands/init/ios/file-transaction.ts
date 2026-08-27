@@ -105,13 +105,15 @@ interface StagedMutation {
   };
 }
 
-interface ClaimedDestination {
+/** @internal */
+export interface ClaimedDestination {
   path: string;
   present: boolean;
   identity: FileIdentity;
 }
 
-interface FileIdentity {
+/** @internal */
+export interface FileIdentity {
   dev: number;
   ino: number;
   mode: number;
@@ -157,7 +159,8 @@ interface IOSFileTransactionJournal {
 
 class IOSFileTransactionStaleError extends Error {}
 
-class IOSFileTransactionOwnershipError extends Error {}
+/** @internal */
+export class IOSFileTransactionOwnershipError extends Error {}
 
 class IOSFileTransactionUnsafeSetupCleanupError extends Error {
   constructor(cause: unknown) {
@@ -238,7 +241,8 @@ async function fileMatchesHash(path: string, expectedHash: string): Promise<bool
   }
 }
 
-async function readRegularFileIdentity(path: string): Promise<FileIdentity | undefined> {
+/** @internal */
+export async function readRegularFileIdentity(path: string): Promise<FileIdentity | undefined> {
   try {
     const info = await lstat(path);
     if (!info.isFile() || info.isSymbolicLink()) return undefined;
@@ -248,7 +252,8 @@ async function readRegularFileIdentity(path: string): Promise<FileIdentity | und
   }
 }
 
-async function readRegularFileIdentityAndHash(
+/** @internal */
+export async function readRegularFileIdentityAndHash(
   path: string,
 ): Promise<{ identity: FileIdentity; hash: string } | undefined> {
   try {
@@ -263,7 +268,8 @@ async function readRegularFileIdentityAndHash(
   }
 }
 
-async function readPathIdentity(path: string): Promise<FileIdentity | undefined> {
+/** @internal */
+export async function readPathIdentity(path: string): Promise<FileIdentity | undefined> {
   try {
     const info = await lstat(path);
     return { dev: info.dev, ino: info.ino, mode: info.mode & 0o7777 };
@@ -282,11 +288,13 @@ async function readDirectoryIdentity(path: string): Promise<DirectoryIdentity | 
   }
 }
 
-function identitiesMatch(left: FileIdentity, right: FileIdentity): boolean {
+/** @internal */
+export function identitiesMatch(left: FileIdentity, right: FileIdentity): boolean {
   return left.dev === right.dev && left.ino === right.ino && left.mode === right.mode;
 }
 
-function sameFile(left: FileIdentity, right: FileIdentity): boolean {
+/** @internal */
+export function sameFile(left: FileIdentity, right: FileIdentity): boolean {
   return left.dev === right.dev && left.ino === right.ino;
 }
 
@@ -374,7 +382,8 @@ async function mutationBoundariesStillMatch(
   return matches.every(Boolean);
 }
 
-async function fileMatchesIdentityAndHash(
+/** @internal */
+export async function fileMatchesIdentityAndHash(
   path: string,
   expectedIdentity: FileIdentity,
   expectedHash: string,
@@ -1571,7 +1580,8 @@ export async function recoverIOSFileTransactions(rootInput: string): Promise<voi
   }
 }
 
-async function removeClaimedPath(
+/** @internal */
+export async function removeClaimedPath(
   claim: ClaimedDestination,
   options: { expectedHash?: string; expectedMode?: number } = {},
 ): Promise<void> {
@@ -1593,7 +1603,8 @@ async function removeClaimedPath(
   await syncDirectoryStrict(dirname(claim.path));
 }
 
-async function restoreClaimWithoutClobber(
+/** @internal */
+export async function restoreClaimWithoutClobber(
   claim: ClaimedDestination,
   destinationPath: string,
 ): Promise<void> {
@@ -1707,7 +1718,8 @@ async function claimDestination(
   return { status: "stale" };
 }
 
-async function linkOwnedSourceWithoutClobber(
+/** @internal */
+export async function linkOwnedSourceWithoutClobber(
   sourcePath: string,
   sourceIdentity: FileIdentity,
   sourceHash: string,
