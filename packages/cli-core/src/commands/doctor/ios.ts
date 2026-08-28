@@ -106,7 +106,7 @@ async function authViewEnvironmentResult(
     const entitlementIsComplete =
       target.configurations.length > 0 &&
       target.configurations.every(
-        (configuration) => configuration.entitlements?.signInWithApple === true,
+        (configuration) => configuration.entitlements?.signInWithAppleState === "exact",
       );
     return entitlementIsComplete
       ? {
@@ -218,7 +218,9 @@ async function appleEntitlementResult(
 ): Promise<CheckResult | undefined> {
   const hasCustomAppleIntent = target.swift.appleAuthReferences.length > 0;
   const anyAppleEntitlement = target.configurations.some(
-    (configuration) => configuration.entitlements?.signInWithApple === true,
+    (configuration) =>
+      configuration.entitlements !== undefined &&
+      configuration.entitlements.signInWithAppleState !== "absent",
   );
   if (!hasCustomAppleIntent && !anyAppleEntitlement) return undefined;
 
@@ -407,7 +409,9 @@ async function remoteResults(
 
     const bundleIdentifier = readiness.target.bundleIdentifier;
     const hasAppleEntitlement = target?.configurations.some(
-      (configuration) => configuration.entitlements?.signInWithApple === true,
+      (configuration) =>
+        configuration.entitlements !== undefined &&
+        configuration.entitlements.signInWithAppleState !== "absent",
     );
     const hasCustomAppleIntent = (target?.swift.appleAuthReferences.length ?? 0) > 0;
     if (
