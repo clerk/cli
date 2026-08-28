@@ -18,6 +18,7 @@ import {
   xmlAttribute,
 } from "./discovery.ts";
 import { hasInterruptedIOSFileTransaction } from "./file-transaction.ts";
+import { localClerkIOSPackageIsStructurallyValid } from "./local-package.ts";
 import {
   asString,
   asStringArray,
@@ -88,6 +89,14 @@ const sourceMembershipByInspection = new WeakMap<
   IOSProjectInspectionResult,
   IOSTargetSourceMembership[]
 >();
+
+interface LocalSecretsDiscovery {
+  paths: string[];
+  complete: boolean;
+  evidence: IOSSourceEvidence[];
+}
+
+const localSecretsDiscoveryByTarget = new WeakMap<IOSAppTarget, LocalSecretsDiscovery>();
 
 function emptySwiftInspection() {
   return {
@@ -336,30 +345,60 @@ async function collectLocalSecretsPlists(
   root: string,
   directory: string,
   output: string[],
+  state: { complete: boolean; incompletePaths: Set<string> },
   depth = 0,
 ): Promise<void> {
-  if (depth > MAX_SECRET_DISCOVERY_DEPTH || output.length >= MAX_SECRET_FILES) return;
+  if (
+    depth > MAX_SECRET_DISCOVERY_DEPTH ||
+    output.length >= MAX_SECRET_FILES ||
+    !(await pathIsSafelyWithinIOSRoot(root, directory))
+  ) {
+    state.complete = false;
+    state.incompletePaths.add(directory);
+    return;
+  }
   let entries;
   try {
     entries = await readdir(directory, { withFileTypes: true });
   } catch {
+    state.complete = false;
+    state.incompletePaths.add(directory);
     return;
   }
 
   entries.sort((a, b) => a.name.localeCompare(b.name));
   for (const entry of entries) {
-    if (output.length >= MAX_SECRET_FILES) return;
     const absolutePath = resolve(directory, entry.name);
+    if (output.length >= MAX_SECRET_FILES) {
+      const couldHideLocalSecrets =
+        (entry.isDirectory() || entry.isSymbolicLink()) &&
+        !SOURCE_IGNORES.has(entry.name) &&
+        !entry.name.startsWith(".");
+      if (couldHideLocalSecrets || (entry.isFile() && entry.name === "LocalSecrets.plist")) {
+        state.complete = false;
+        state.incompletePaths.add(absolutePath);
+        return;
+      }
+      continue;
+    }
+    if (entry.isSymbolicLink()) {
+      if (!SOURCE_IGNORES.has(entry.name) && !entry.name.startsWith(".")) {
+        state.complete = false;
+        state.incompletePaths.add(absolutePath);
+      }
+      continue;
+    }
     if (entry.isDirectory()) {
       if (!SOURCE_IGNORES.has(entry.name) && !entry.name.startsWith(".")) {
-        await collectLocalSecretsPlists(root, absolutePath, output, depth + 1);
+        await collectLocalSecretsPlists(root, absolutePath, output, state, depth + 1);
       }
-    } else if (
-      entry.isFile() &&
-      entry.name === "LocalSecrets.plist" &&
-      (await pathIsSafelyWithinIOSRoot(root, absolutePath))
-    ) {
-      output.push(absolutePath);
+    } else if (entry.isFile() && entry.name === "LocalSecrets.plist") {
+      if (await pathIsSafelyWithinIOSRoot(root, absolutePath)) {
+        output.push(absolutePath);
+      } else {
+        state.complete = false;
+        state.incompletePaths.add(absolutePath);
+      }
     }
   }
 }
@@ -484,6 +523,8 @@ async function inspectLocalPublishableKeys(
   root: string,
   selection: IOSTargetSelection,
   targetLocalSecretsPaths: string[],
+  localSecretsDiscoveryComplete: boolean,
+  localSecretsDiscoveryEvidence: IOSSourceEvidence[],
   schemeRoots: string[],
   containerDiscoveryComplete: boolean,
   inlineCandidates: PublishableKeyCandidate[],
@@ -535,6 +576,10 @@ async function inspectLocalPublishableKeys(
     (!schemeDiscoveryComplete || !containerDiscoveryComplete) &&
     preferredKind !== "inline-literal" &&
     preferredKind !== "local-secrets-plist";
+  const localSecretsCouldBeEffective =
+    !localSecretsDiscoveryComplete &&
+    preferredKind !== "inline-literal" &&
+    preferredKind !== "run-scheme";
   if (runSchemeCouldBeEffective) {
     diagnostics.push({
       code: "xcode.incomplete-scheme-discovery",
@@ -548,6 +593,19 @@ async function inspectLocalPublishableKeys(
         ...schemeDiscoveryEvidence,
       ],
     });
+  }
+  if (localSecretsCouldBeEffective) {
+    const targetDescription = selection.state === "selected" ? ` for ${selection.targetName}` : "";
+    diagnostics.push({
+      code: "xcode.incomplete-local-secrets-discovery",
+      severity: "warning",
+      message: `LocalSecrets.plist discovery was incomplete${targetDescription}, so Clerk could not prove the selected target's runtime publishable key.`,
+      remedy:
+        "Make the selected target's synchronized folders readable, remove unsafe symlinks, or reduce excessive LocalSecrets.plist nesting or count, and rerun the command.",
+      evidence: localSecretsDiscoveryEvidence,
+    });
+  }
+  if (runSchemeCouldBeEffective || localSecretsCouldBeEffective) {
     return {
       evidenceComplete: false,
       found: false,
@@ -694,19 +752,6 @@ function addUnconsumedRuntimeKeyDiagnostics(
   }
 }
 
-async function localPackageIsClerk(root: string, packagePath: string): Promise<boolean> {
-  const manifestPath = resolve(packagePath, "Package.swift");
-  if (!(await pathIsSafelyWithinIOSRoot(root, manifestPath))) return false;
-  const manifest = Bun.file(manifestPath);
-  if (!(await manifest.exists()) || manifest.size > 1_000_000) return false;
-  try {
-    const source = await manifest.text();
-    return /\b(?:ClerkKit|ClerkKitUI)\b/.test(source);
-  } catch {
-    return false;
-  }
-}
-
 async function inspectPackageReferences(
   root: string,
   projectPath: string,
@@ -748,7 +793,7 @@ async function inspectPackageReferences(
         kind: "local",
         objectId,
         path: safelyLocal ? relativeIOSPath(root, absolutePath) : absolutePath,
-        isClerk: safelyLocal && (await localPackageIsClerk(root, absolutePath)),
+        isClerk: safelyLocal && (await localClerkIOSPackageIsStructurallyValid(root, absolutePath)),
       });
     }
   }
@@ -1111,11 +1156,17 @@ async function localSecretsForTarget(options: {
   targetObject: PbxObject;
   objects: PbxObjects;
   parents: Map<string, string>;
-}): Promise<string[]> {
+}): Promise<LocalSecretsDiscovery> {
   const { root, projectPath, groupRootDirectory, targetId, targetObject, objects, parents } =
     options;
   const projectDirectory = dirname(projectPath);
   const paths = new Set<string>();
+  const state = { complete: true, incompletePaths: new Set<string>() };
+  const graphEvidence: IOSSourceEvidence[] = [];
+  const projectFileEvidence = (objectId: string): IOSSourceEvidence => ({
+    path: relativeIOSPath(root, resolve(projectPath, "project.pbxproj")),
+    objectId,
+  });
   const resourcePhaseIds = new Set(
     asStringArray(targetObject.buildPhases).filter(
       (phaseId) => objects[phaseId]?.isa === "PBXResourcesBuildPhase",
@@ -1137,11 +1188,13 @@ async function localSecretsForTarget(options: {
         projectDirectory,
         groupRootDirectory,
       );
-      if (
-        absolutePath?.endsWith(`${sep}LocalSecrets.plist`) &&
-        (await pathIsSafelyWithinIOSRoot(root, absolutePath))
-      ) {
-        paths.add(absolutePath);
+      if (absolutePath?.endsWith(`${sep}LocalSecrets.plist`)) {
+        if (await pathIsSafelyWithinIOSRoot(root, absolutePath)) {
+          paths.add(absolutePath);
+        } else {
+          state.complete = false;
+          state.incompletePaths.add(absolutePath);
+        }
       }
     }
   }
@@ -1156,10 +1209,15 @@ async function localSecretsForTarget(options: {
       projectDirectory,
       groupRootDirectory,
     );
-    if (!groupPath || !(await pathIsSafelyWithinIOSRoot(root, groupPath))) continue;
+    if (!groupPath || !(await pathIsSafelyWithinIOSRoot(root, groupPath))) {
+      state.complete = false;
+      if (groupPath) state.incompletePaths.add(groupPath);
+      else graphEvidence.push(projectFileEvidence(groupId));
+      continue;
+    }
 
     const discovered: string[] = [];
-    await collectLocalSecretsPlists(root, groupPath, discovered);
+    await collectLocalSecretsPlists(root, groupPath, discovered, state);
     const excluded = synchronizedExclusions(group, targetId, resourcePhaseIds, objects);
     for (const absolutePath of discovered) {
       const relativePath = relative(groupPath, absolutePath).split(sep).join("/");
@@ -1167,7 +1225,14 @@ async function localSecretsForTarget(options: {
     }
   }
 
-  return [...paths].sort();
+  return {
+    paths: [...paths].sort(),
+    complete: state.complete,
+    evidence: [
+      ...[...state.incompletePaths].sort().map((path) => ({ path: relativeIOSPath(root, path) })),
+      ...graphEvidence,
+    ],
+  };
 }
 
 async function collectSwiftFiles(
@@ -1633,11 +1698,12 @@ async function parseProject(
         diagnostics,
       ),
       swift: swiftInspection,
-      runtimeKeySinks: targetLocalSecrets.map((path) => ({
+      runtimeKeySinks: targetLocalSecrets.paths.map((path) => ({
         kind: "local-secrets-plist" as const,
         path: relativeIOSPath(root, path),
       })),
     };
+    localSecretsDiscoveryByTarget.set(appTarget, targetLocalSecrets);
     appTargets.push(appTarget);
   }
 
@@ -1889,10 +1955,15 @@ export async function inspectIOSProject(
             }
           : { invalid: true as const }),
       })) ?? [];
+  const selectedLocalSecretsDiscovery = selectedAppTarget
+    ? localSecretsDiscoveryByTarget.get(selectedAppTarget)
+    : undefined;
   const localPublishableKeyInspection = await inspectLocalPublishableKeys(
     root,
     selection,
     selectedAppTarget?.runtimeKeySinks.map((sink) => resolve(root, sink.path)) ?? [],
+    selectedLocalSecretsDiscovery?.complete ?? true,
+    selectedLocalSecretsDiscovery?.evidence ?? [],
     [
       ...(selection.state === "selected" ? [resolve(root, selection.projectPath)] : []),
       ...discovered.workspacePaths,

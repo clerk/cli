@@ -66,6 +66,46 @@ async function transformProject(
   await Bun.write(projectPath, buildPbxProject(project));
 }
 
+async function addSynchronizedTargetRoot(root: string, path = "Synced"): Promise<void> {
+  const groupId = "474747474747474747474747";
+  await transformProject(root, (objects) => {
+    objects[groupId] = {
+      isa: "PBXFileSystemSynchronizedRootGroup",
+      path,
+      sourceTree: "<group>",
+    };
+    objects[IOS_FIXTURE_IDS.appTarget]!.fileSystemSynchronizedGroups = [groupId];
+  });
+}
+
+function localSecretsPlist(host: string): string {
+  const encodedHost = Buffer.from(`${host}$`).toString("base64");
+  return `<?xml version="1.0" encoding="UTF-8"?><plist version="1.0"><dict><key>CLERK_PUBLISHABLE_KEY</key><string>pk_test_${encodedHost}</string></dict></plist>`;
+}
+
+async function writeStructurallyValidLocalClerkPackage(root: string): Promise<void> {
+  const packageRoot = join(root, "LocalClerk");
+  await mkdir(join(packageRoot, "Sources", "ClerkKit"), { recursive: true });
+  await mkdir(join(packageRoot, "Sources", "ClerkKitUI"), { recursive: true });
+  await Bun.write(
+    join(packageRoot, "Package.swift"),
+    `// swift-tools-version: 6.0
+import PackageDescription
+let package = Package(
+  name: "Clerk",
+  products: [
+    .library(name: "ClerkKit", targets: ["ClerkKit"]),
+    .library(name: "ClerkKitUI", targets: ["ClerkKitUI"]),
+  ],
+  targets: [
+    .target(name: "ClerkKit"),
+    .target(name: "ClerkKitUI"),
+  ]
+)
+`,
+  );
+}
+
 async function setAssociatedDomainTemplate(root: string, template: string): Promise<void> {
   const entitlementsPath = join(root, "MyApp", "MyApp.entitlements");
   const entitlements = await Bun.file(entitlementsPath).text();
@@ -382,11 +422,7 @@ describe("inspectIOSProject", () => {
     async (kind) => {
       const root = await fixture({ clerkSDK: "core-only" });
       if (kind === "local") {
-        await mkdir(join(root, "LocalClerk"));
-        await Bun.write(
-          join(root, "LocalClerk", "Package.swift"),
-          '// swift-tools-version: 6.0\nimport PackageDescription\nlet package = Package(name: "Clerk", products: [.library(name: "ClerkKit", targets: ["ClerkKit"])], targets: [.target(name: "ClerkKit")])\n',
-        );
+        await writeStructurallyValidLocalClerkPackage(root);
       }
       await transformProject(root, (objects) => {
         delete objects[IOS_FIXTURE_IDS.clerkKit]!.package;
@@ -407,6 +443,64 @@ describe("inspectIOSProject", () => {
       });
     },
   );
+
+  test.each([
+    {
+      name: "comment",
+      manifest: `// swift-tools-version: 6.0
+import PackageDescription
+// Package(name: "Clerk", products: [.library(name: "ClerkKit", targets: ["ClerkKit"]), .library(name: "ClerkKitUI", targets: ["ClerkKitUI"])], targets: [.target(name: "ClerkKit"), .target(name: "ClerkKitUI")])
+let package = Package(name: "Other")
+`,
+    },
+    {
+      name: "dependency",
+      manifest: `// swift-tools-version: 6.0
+import PackageDescription
+let package = Package(
+  name: "Other",
+  dependencies: [.package(url: "https://github.com/clerk/clerk-ios", from: "1.0.0")],
+  targets: [.target(name: "Other", dependencies: [.product(name: "ClerkKit", package: "clerk-ios"), .product(name: "ClerkKitUI", package: "clerk-ios")])]
+)
+`,
+    },
+    {
+      name: "product-only declaration",
+      manifest: `// swift-tools-version: 6.0
+import PackageDescription
+let package = Package(
+  name: "Clerk",
+  products: [
+    .library(name: "ClerkKit", targets: ["ClerkKit"]),
+    .library(name: "ClerkKitUI", targets: ["ClerkKitUI"]),
+  ],
+  targets: [.target(name: "Other")]
+)
+`,
+    },
+  ])("does not attribute a local package from a $name decoy", async ({ manifest }) => {
+    const root = await fixture({ clerkSDK: "core-only" });
+    await mkdir(join(root, "LocalClerk", "Sources", "ClerkKit"), { recursive: true });
+    await mkdir(join(root, "LocalClerk", "Sources", "ClerkKitUI"), { recursive: true });
+    await Bun.write(join(root, "LocalClerk", "Package.swift"), manifest);
+    await transformProject(root, (objects) => {
+      objects[IOS_FIXTURE_IDS.clerkPackage] = {
+        isa: "XCLocalSwiftPackageReference",
+        relativePath: "LocalClerk",
+      };
+    });
+
+    const inspection = await inspectIOSProject(root);
+
+    expect(inspection.appTargets[0]?.packages).toEqual({
+      package: "unattributed",
+      clerkKit: "linked",
+      clerkKitUI: "absent",
+    });
+    expect(inspection.diagnostics).toContainEqual(
+      expect.objectContaining({ code: "clerk.package-unattributed" }),
+    );
+  });
 
   test("preserves absent, exact, and invalid Apple entitlement states", async () => {
     const cases = [
@@ -781,6 +875,147 @@ describe("inspectIOSProject", () => {
       }),
     );
     expect(JSON.stringify(inspection)).not.toContain("pk_live_");
+  });
+
+  test("reads LocalSecrets.plist from a completely discovered synchronized target root", async () => {
+    const root = await fixture({ complete: true, includeKey: false });
+    await addSynchronizedTargetRoot(root);
+    await mkdir(join(root, "Synced", "Configuration"), { recursive: true });
+    await Bun.write(
+      join(root, "Synced", "Configuration", "LocalSecrets.plist"),
+      localSecretsPlist("synchronized.clerk.example"),
+    );
+
+    const inspection = await inspectIOSProject(root);
+
+    expect(inspection.localPublishableKey).toMatchObject({
+      evidenceComplete: true,
+      found: true,
+      source: "Synced/Configuration/LocalSecrets.plist",
+      frontendApiHost: "synchronized.clerk.example",
+    });
+  });
+
+  test("fails closed when a discovered LocalSecrets.plist is followed by depth-truncated evidence", async () => {
+    const root = await fixture({ complete: true, includeKey: false });
+    await addSynchronizedTargetRoot(root);
+    await mkdir(join(root, "Synced", "00-visible"), { recursive: true });
+    await Bun.write(
+      join(root, "Synced", "00-visible", "LocalSecrets.plist"),
+      localSecretsPlist("visible.clerk.example"),
+    );
+    const hiddenDirectory = join(
+      root,
+      "Synced",
+      "10-deep",
+      "level-1",
+      "level-2",
+      "level-3",
+      "level-4",
+      "level-5",
+    );
+    await mkdir(hiddenDirectory, { recursive: true });
+    await Bun.write(
+      join(hiddenDirectory, "LocalSecrets.plist"),
+      localSecretsPlist("hidden.clerk.example"),
+    );
+
+    const inspection = await inspectIOSProject(root);
+
+    expect(inspection.localPublishableKey).toEqual({
+      evidenceComplete: false,
+      found: false,
+      conflict: false,
+      candidateSources: ["Synced/00-visible/LocalSecrets.plist"],
+      invalidSources: [],
+    });
+    expect(inspection.diagnostics).toContainEqual(
+      expect.objectContaining({
+        code: "xcode.incomplete-local-secrets-discovery",
+        message: expect.stringContaining("MyApp"),
+      }),
+    );
+    expect(inspection.localPublishableKey).not.toHaveProperty("source");
+    expect(inspection.localPublishableKey).not.toHaveProperty("frontendApiHost");
+  });
+
+  test("fails closed when synchronized LocalSecrets discovery exceeds its file bound", async () => {
+    const root = await fixture({ complete: true, includeKey: false });
+    await addSynchronizedTargetRoot(root);
+    for (let index = 0; index < 21; index += 1) {
+      const directory = join(root, "Synced", String(index).padStart(2, "0"));
+      await mkdir(directory, { recursive: true });
+      await Bun.write(
+        join(directory, "LocalSecrets.plist"),
+        localSecretsPlist(`bounded-${index}.clerk.example`),
+      );
+    }
+
+    const inspection = await inspectIOSProject(root);
+
+    expect(inspection.localPublishableKey.evidenceComplete).toBe(false);
+    expect(inspection.localPublishableKey.found).toBe(false);
+    expect(inspection.localPublishableKey.candidateSources).toHaveLength(20);
+    expect(inspection.localPublishableKey).not.toHaveProperty("source");
+    expect(inspection.localPublishableKey).not.toHaveProperty("frontendApiHost");
+  });
+
+  test("fails closed when synchronized LocalSecrets discovery skips a symlink", async () => {
+    if (process.platform === "win32") return;
+    const root = await fixture({ complete: true, includeKey: false });
+    await addSynchronizedTargetRoot(root);
+    const externalRoot = await mkdtemp(join(tmpdir(), "clerk-ios-local-secrets-"));
+    temporaryDirectories.push(externalRoot);
+    await Bun.write(
+      join(externalRoot, "LocalSecrets.plist"),
+      localSecretsPlist("external.clerk.example"),
+    );
+    await mkdir(join(root, "Synced"), { recursive: true });
+    await symlink(externalRoot, join(root, "Synced", "LinkedSecrets"));
+
+    const inspection = await inspectIOSProject(root);
+
+    expect(inspection.localPublishableKey).toEqual({
+      evidenceComplete: false,
+      found: false,
+      conflict: false,
+      candidateSources: [],
+      invalidSources: [],
+    });
+    expect(inspection.diagnostics).toContainEqual(
+      expect.objectContaining({
+        code: "xcode.incomplete-local-secrets-discovery",
+        evidence: [{ path: "Synced/LinkedSecrets" }],
+      }),
+    );
+  });
+
+  test("fails closed when a target-owned LocalSecrets.plist resolves outside the project", async () => {
+    if (process.platform === "win32") return;
+    const root = await fixture({ complete: true, includeKey: false, localSecrets: true });
+    const externalRoot = await mkdtemp(join(tmpdir(), "clerk-ios-local-secrets-"));
+    temporaryDirectories.push(externalRoot);
+    const externalPath = join(externalRoot, "LocalSecrets.plist");
+    await Bun.write(externalPath, localSecretsPlist("external.clerk.example"));
+    await rm(join(root, "MyApp", "LocalSecrets.plist"));
+    await symlink(externalPath, join(root, "MyApp", "LocalSecrets.plist"));
+
+    const inspection = await inspectIOSProject(root);
+
+    expect(inspection.localPublishableKey).toEqual({
+      evidenceComplete: false,
+      found: false,
+      conflict: false,
+      candidateSources: [],
+      invalidSources: [],
+    });
+    expect(inspection.appTargets[0]?.runtimeKeySinks).toEqual([]);
+    expect(inspection.diagnostics).toContainEqual(
+      expect.objectContaining({
+        code: "xcode.incomplete-local-secrets-discovery",
+        evidence: [{ path: "MyApp/LocalSecrets.plist" }],
+      }),
+    );
   });
 
   test("treats a direct @main literal as the selected target's runtime key without exposing it", async () => {
