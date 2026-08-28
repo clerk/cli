@@ -509,6 +509,33 @@ describe("iOS Clerk SDK installer", () => {
     );
   });
 
+  test("adds an iOS-only ClerkKit link when a multiplatform target already links it on macOS", async () => {
+    const root = await fixture({ clerkSDK: "core-only" });
+    await transformProject(root, (graph) => {
+      for (const configurationId of [IOS_FIXTURE_IDS.targetDebug, IOS_FIXTURE_IDS.targetRelease]) {
+        const settings = graph.objects[configurationId]!.buildSettings as Record<string, unknown>;
+        settings.SUPPORTED_PLATFORMS = "iphoneos iphonesimulator macosx";
+      }
+      graph.objects[IOS_FIXTURE_IDS.clerkKitBuildFile]!.platformFilter = "macos";
+    });
+
+    const plan = await planIOSSDKInstall(installOptions(root));
+    expect(plan.status).toBe("ready");
+    expect(await applyIOSSDKInstall(plan)).toMatchObject({ status: "applied" });
+
+    const graph = mutableGraph(parsePbxProject(await readFile(pbxprojPath(root), "utf8")));
+    const links = (graph.frameworks.files as string[])
+      .map((id) => graph.objects[id]!)
+      .filter((object) => object.productRef === IOS_FIXTURE_IDS.clerkKit);
+    expect(links).toHaveLength(2);
+    expect(
+      links
+        .map((object) => object.platformFilter)
+        .sort((a, b) => String(a).localeCompare(String(b))),
+    ).toEqual(["ios", "macos"]);
+    expect((await planIOSSDKInstall(installOptions(root))).status).toBe("satisfied");
+  });
+
   test("reuses a verified local package and canonical remote URL variants", async () => {
     const localRoot = await fixture();
     await mkdir(join(localRoot, "LocalClerk", "Sources", "ClerkKit"), { recursive: true });

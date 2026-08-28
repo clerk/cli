@@ -108,6 +108,7 @@ interface ProductGraph {
   productId?: string;
   inTarget: boolean;
   buildFileId?: string;
+  hasNonIOSBuildFile: boolean;
 }
 
 interface PreparedInstall {
@@ -707,6 +708,7 @@ function scanProductGraph(
   }
 
   const phaseMatches: Array<{ buildFileId: string; productId: string }> = [];
+  let hasNonIOSBuildFile = false;
   for (const buildFileId of frameworkFiles) {
     const buildFile = objects[buildFileId];
     if (!buildFile || buildFile.isa !== "PBXBuildFile") {
@@ -728,7 +730,11 @@ function scanProductGraph(
           },
         };
       }
-      if (applicability.applies) phaseMatches.push({ buildFileId, productId });
+      if (applicability.applies) {
+        phaseMatches.push({ buildFileId, productId });
+      } else {
+        hasNonIOSBuildFile = true;
+      }
     }
   }
   if (phaseMatches.length > 1) {
@@ -765,6 +771,7 @@ function scanProductGraph(
       productId,
       inTarget: targetProductId != null,
       buildFileId: phaseMatch?.buildFileId,
+      hasNonIOSBuildFile,
     },
   };
 }
@@ -1256,7 +1263,11 @@ async function prepareInstall(options: IOSSDKInstallOptions): Promise<PreparedIn
         parts.objects,
         `${parts.projectObjectId}:${options.targetId}:build-file:${productId}`,
       );
-      parts.objects[buildFileId] = { isa: "PBXBuildFile", productRef: productId };
+      parts.objects[buildFileId] = {
+        isa: "PBXBuildFile",
+        productRef: productId,
+        ...(graph.hasNonIOSBuildFile ? { platformFilter: "ios" } : {}),
+      };
       const phase = parts.objects[frameworkPhaseId]!;
       const currentFiles = strictStringArray(phase, "files")!;
       phase.files = [...currentFiles, buildFileId];
