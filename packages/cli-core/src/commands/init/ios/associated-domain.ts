@@ -747,12 +747,15 @@ function addDomainToXML(source: string, expectedDomain: string): string | undefi
 
   const afterKey = keyMatch.index + keyMatch[0].length;
   const tail = structural.slice(afterKey);
-  const selfClosing = /^\s*<array\b[^>]*\/\s*>/.exec(tail);
+  const selfClosing = /^(\s*)(<array\b[^>]*\/\s*>)/.exec(tail);
   if (selfClosing) {
-    const start = afterKey + (selfClosing.index ?? 0);
-    const end = start + selfClosing[0].length;
-    const keyIndent = lineIndentAt(source, keyMatch.index);
-    const replacement = `${newline}${keyIndent}<array>${newline}${keyIndent}\t<string>${encoded}</string>${newline}${keyIndent}</array>`;
+    const leading = selfClosing[1];
+    const tag = selfClosing[2];
+    if (leading == null || tag == null) return undefined;
+    const start = afterKey + leading.length;
+    const end = start + tag.length;
+    const arrayIndent = lineIndentAt(source, start);
+    const replacement = `<array>${newline}${arrayIndent}\t<string>${encoded}</string>${newline}${arrayIndent}</array>`;
     return `${source.slice(0, start)}${replacement}${source.slice(end)}`;
   }
   const open = /^\s*<array\b[^>]*>/.exec(tail);

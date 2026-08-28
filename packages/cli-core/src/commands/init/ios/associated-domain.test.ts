@@ -190,6 +190,38 @@ describe("iOS Associated Domains setup", () => {
     expect(updated).toContain(`webcredentials:${HOST}`);
   });
 
+  test("preserves a comment immediately before a self-closing Associated Domains array", async () => {
+    const root = await directFixture();
+    const path = join(root, "MyApp", "MyApp.entitlements");
+    const compact =
+      "<key>com.apple.developer.associated-domains</key><array><string>webcredentials:clerk.example.test</string></array>";
+    const existingBlock = [
+      "\t<key>com.apple.developer.associated-domains</key>",
+      "\t<!-- preserve this adjacent comment -->",
+      "\t<array/>",
+    ].join("\n");
+    const source = (await readFile(path, "utf8")).replace(compact, existingBlock);
+    await writeFile(path, source);
+
+    const plan = await planIOSAssociatedDomain(planOptions(root));
+    const result = await applyIOSAssociatedDomain(plan);
+    const expectedBlock = existingBlock.replace(
+      "\t<array/>",
+      ["\t<array>", `\t\t<string>webcredentials:${HOST}</string>`, "\t</array>"].join("\n"),
+    );
+    const expected = source.replace(existingBlock, expectedBlock);
+
+    expect(plan.status).toBe("ready");
+    expect(result.status).toBe("applied");
+    expect(await readFile(path, "utf8")).toBe(expected);
+
+    const digest = await treeDigest(root);
+    const rerun = await planIOSAssociatedDomain(planOptions(root));
+    expect(rerun.status).toBe("satisfied");
+    expect((await applyIOSAssociatedDomain(rerun)).status).toBe("satisfied");
+    expect(await treeDigest(root)).toEqual(digest);
+  });
+
   test("preserves a multiline nonempty array's closing line and indentation", async () => {
     const root = await directFixture();
     const path = join(root, "MyApp", "MyApp.entitlements");
