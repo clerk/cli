@@ -5,6 +5,7 @@ import { build as buildPbxProject, parse as parsePbxProject } from "@bacons/xcod
 import semver from "semver";
 import { inspectIOSProject } from "./inspect.ts";
 import { pathIsSafelyWithinIOSRoot, relativeIOSPath } from "./discovery.ts";
+import { localClerkIOSPackageIsStructurallyValid } from "./local-package.ts";
 import {
   applyIOSExistingFileTransaction,
   hashIOSFileBytes,
@@ -266,89 +267,6 @@ function projectParts(
   return { project, objects, projectObjectId, projectObject, targetObject };
 }
 
-function swiftManifestWithoutComments(source: string): string {
-  const chars = source.split("");
-  const blank = (start: number, end: number) => {
-    for (let index = start; index < end; index += 1) {
-      if (chars[index] !== "\n" && chars[index] !== "\r") chars[index] = " ";
-    }
-  };
-  let index = 0;
-  while (index < chars.length) {
-    if (chars[index] === "/" && chars[index + 1] === "/") {
-      const start = index;
-      index += 2;
-      while (index < chars.length && chars[index] !== "\n") index += 1;
-      blank(start, index);
-      continue;
-    }
-    if (chars[index] === "/" && chars[index + 1] === "*") {
-      const start = index;
-      let depth = 1;
-      index += 2;
-      while (index < chars.length && depth > 0) {
-        if (chars[index] === "/" && chars[index + 1] === "*") {
-          depth += 1;
-          index += 2;
-        } else if (chars[index] === "*" && chars[index + 1] === "/") {
-          depth -= 1;
-          index += 2;
-        } else {
-          index += 1;
-        }
-      }
-      blank(start, index);
-      continue;
-    }
-
-    let hashCount = 0;
-    while (chars[index + hashCount] === "#") hashCount += 1;
-    const quoteIndex = index + hashCount;
-    if (chars[quoteIndex] !== '"') {
-      index += 1;
-      continue;
-    }
-    const multiline = chars[quoteIndex + 1] === '"' && chars[quoteIndex + 2] === '"';
-    index = quoteIndex + (multiline ? 3 : 1);
-    while (index < chars.length) {
-      const closesQuote = multiline
-        ? chars[index] === '"' && chars[index + 1] === '"' && chars[index + 2] === '"'
-        : chars[index] === '"';
-      if (closesQuote) {
-        const quoteLength = multiline ? 3 : 1;
-        let closesHashes = true;
-        for (let hash = 0; hash < hashCount; hash += 1) {
-          if (chars[index + quoteLength + hash] !== "#") closesHashes = false;
-        }
-        if (closesHashes) {
-          index += quoteLength + hashCount;
-          break;
-        }
-      }
-      if (chars[index] === "\\") {
-        let escapeHashes = 0;
-        while (chars[index + 1 + escapeHashes] === "#") escapeHashes += 1;
-        if (escapeHashes === hashCount) {
-          index += 2 + escapeHashes;
-          continue;
-        }
-      }
-      index += 1;
-    }
-  }
-  return chars.join("");
-}
-
-async function safeDirectory(root: string, path: string): Promise<boolean> {
-  if (!(await pathIsSafelyWithinIOSRoot(root, path))) return false;
-  try {
-    const info = await lstat(path);
-    return info.isDirectory() && !info.isSymbolicLink();
-  } catch {
-    return false;
-  }
-}
-
 async function localReferenceIsClerk(
   root: string,
   projectPath: string,
@@ -357,28 +275,7 @@ async function localReferenceIsClerk(
   const relativePath = asString(object.relativePath);
   if (!relativePath) return false;
   const packagePath = resolve(dirname(projectPath), relativePath);
-  const manifestPath = resolve(packagePath, "Package.swift");
-  if (!(await pathIsSafelyWithinIOSRoot(root, manifestPath))) return false;
-  const manifest = Bun.file(manifestPath);
-  if (!(await manifest.exists()) || manifest.size > 1_000_000) return false;
-  try {
-    const source = swiftManifestWithoutComments(await manifest.text());
-    const declaresClerkPackage = /\bPackage\s*\(\s*name\s*:\s*"Clerk"\s*,/s.test(source);
-    const declaresProduct = (name: IOSSDKProduct) =>
-      new RegExp(
-        `\\.library\\s*\\(\\s*name\\s*:\\s*"${name}"\\s*,\\s*targets\\s*:\\s*\\[\\s*"${name}"\\s*\\]\\s*\\)`,
-        "s",
-      ).test(source);
-    return (
-      declaresClerkPackage &&
-      declaresProduct("ClerkKit") &&
-      declaresProduct("ClerkKitUI") &&
-      (await safeDirectory(root, resolve(packagePath, "Sources", "ClerkKit"))) &&
-      (await safeDirectory(root, resolve(packagePath, "Sources", "ClerkKitUI")))
-    );
-  } catch {
-    return false;
-  }
+  return localClerkIOSPackageIsStructurallyValid(root, packagePath);
 }
 
 async function verifiedPackages(
