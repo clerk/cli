@@ -17,6 +17,7 @@ import {
   relativeIOSPath,
   xmlAttribute,
 } from "./discovery.ts";
+import { recoverIOSFileTransactions } from "./file-transaction.ts";
 import {
   asString,
   asStringArray,
@@ -1727,6 +1728,7 @@ export async function inspectIOSProject(
         ? dirname(dirname(invocationPath))
         : dirname(invocationPath)
       : invocationPath;
+  await recoverIOSFileTransactions(root);
   const diagnostics: IOSDiagnostic[] = [];
   const discovered = await discoverIOSContainers(invocationPath, {
     exhaustive: options.exhaustiveContainerDiscovery === true,
