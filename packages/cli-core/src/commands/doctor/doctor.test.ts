@@ -240,6 +240,31 @@ describe("checkLoggedIn", () => {
     });
   });
 
+  test("does not read OAuth credentials when a Platform API key is configured", async () => {
+    const getToken = mock(async () => {
+      throw new Error("credential store is unavailable");
+    });
+    const ctx: DoctorContext = {
+      ...createMockContext({
+        platformAPIKey: true,
+        keylessKeyError: new CliError("not a secret key", {
+          code: ERROR_CODE.INVALID_KEY_FORMAT,
+        }),
+      }),
+      getToken,
+    };
+
+    const result = await checkLoggedIn(ctx);
+
+    expectCheck(result, {
+      name: "Logged in",
+      status: "warn",
+      message: ["Platform API key configured", "local secret key is unusable", "not a secret key"],
+      remedy: "Fix or remove the malformed secret key",
+    });
+    expect(getToken).not.toHaveBeenCalled();
+  });
+
   test("fail when no token", async () => {
     const ctx = createMockContext({ token: null });
     const result = await checkLoggedIn(ctx);
