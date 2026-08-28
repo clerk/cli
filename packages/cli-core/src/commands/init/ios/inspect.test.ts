@@ -24,6 +24,15 @@ async function setAssociatedDomainTemplate(root: string, template: string): Prom
   );
 }
 
+async function addAppleEntitlement(root: string, value: string): Promise<void> {
+  const entitlementsPath = join(root, "MyApp", "MyApp.entitlements");
+  const entitlements = await Bun.file(entitlementsPath).text();
+  await Bun.write(
+    entitlementsPath,
+    entitlements.replace("</dict>", `<key>com.apple.developer.applesignin</key>${value}\n</dict>`),
+  );
+}
+
 async function addTargetBuildSettings(
   root: string,
   settings: Array<[key: string, value: string]>,
@@ -183,6 +192,72 @@ describe("inspectIOSProject", () => {
       targetName: "MyApp",
       projectPath: "MyApp.xcodeproj",
     });
+  });
+
+  test("preserves absent, exact, and invalid Apple entitlement states", async () => {
+    const cases = [
+      {
+        name: "absent",
+        expectedState: "absent",
+        expectedExact: false,
+      },
+      {
+        name: "exact",
+        value: "<array><string>Default</string></array>",
+        expectedState: "exact",
+        expectedExact: true,
+      },
+      {
+        name: "empty array",
+        value: "<array></array>",
+        expectedState: "invalid",
+        expectedExact: false,
+      },
+      {
+        name: "wrong value type",
+        value: "<string>Default</string>",
+        expectedState: "invalid",
+        expectedExact: false,
+      },
+      {
+        name: "non-Default array",
+        value: "<array><string>PrimaryApp</string></array>",
+        expectedState: "invalid",
+        expectedExact: false,
+      },
+      {
+        name: "multi-value array",
+        value: "<array><string>Default</string><string>PrimaryApp</string></array>",
+        expectedState: "invalid",
+        expectedExact: false,
+      },
+    ] as const;
+
+    for (const testCase of cases) {
+      const root = await fixture({ complete: true });
+      if ("value" in testCase) await addAppleEntitlement(root, testCase.value);
+
+      const inspection = await inspectIOSProject(root);
+      const entitlements = inspection.appTargets[0]?.configurations.map(
+        (configuration) => configuration.entitlements,
+      );
+
+      expect(entitlements, testCase.name).toHaveLength(2);
+      expect(
+        entitlements?.every(
+          (value) =>
+            value?.signInWithAppleState === testCase.expectedState &&
+            value.signInWithApple === testCase.expectedExact,
+        ),
+        testCase.name,
+      ).toBe(true);
+      expect(
+        inspection.diagnostics.some(
+          (diagnostic) => diagnostic.code === "xcode.invalid-apple-entitlement",
+        ),
+        testCase.name,
+      ).toBe(testCase.expectedState === "invalid");
+    }
   });
 
   test("resolves matching associated-domain variables across device and simulator contexts", async () => {

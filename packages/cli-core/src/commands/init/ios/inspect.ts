@@ -46,6 +46,7 @@ import type {
 } from "./types.ts";
 
 const APP_PRODUCT_TYPE = "com.apple.product-type.application";
+const APPLE_SIGN_IN_KEY = "com.apple.developer.applesignin";
 const MAX_PBXPROJ_BYTES = 15_000_000;
 const MAX_SOURCE_FILES = 2_500;
 const MAX_SOURCE_DEPTH = 24;
@@ -686,6 +687,14 @@ function stringArray(value: unknown): string[] {
     : [];
 }
 
+function appleEntitlementState(
+  parsed: Record<string, unknown>,
+): IOSEntitlementsInspection["signInWithAppleState"] {
+  if (!Object.hasOwn(parsed, APPLE_SIGN_IN_KEY)) return "absent";
+  const value = parsed[APPLE_SIGN_IN_KEY];
+  return Array.isArray(value) && value.length === 1 && value[0] === "Default" ? "exact" : "invalid";
+}
+
 async function inspectEntitlements(
   root: string,
   absolutePath: string,
@@ -714,13 +723,24 @@ async function inspectEntitlements(
     if (!isRecord(parsed)) throw new Error("plist root is not a dictionary");
 
     const applicationIdentifier = asString(parsed["application-identifier"]);
+    const signInWithAppleState = appleEntitlementState(parsed);
+    if (signInWithAppleState === "invalid") {
+      diagnostics.push({
+        code: "xcode.invalid-apple-entitlement",
+        severity: "warning",
+        message: `${relativePath} has an invalid Sign in with Apple entitlement value.`,
+        remedy: `Set ${APPLE_SIGN_IN_KEY} to an array containing only Default, then rerun the inspector.`,
+        evidence: [{ path: relativePath, keyPath: APPLE_SIGN_IN_KEY }],
+      });
+    }
     return {
       path: relativePath,
       associatedDomains: stringArray(parsed["com.apple.developer.associated-domains"]).sort(),
       unresolvedAssociatedDomains: [],
       applicationIdentifier,
       teamIdentifier: asString(parsed["com.apple.developer.team-identifier"]),
-      signInWithApple: stringArray(parsed["com.apple.developer.applesignin"]).length > 0,
+      signInWithAppleState,
+      signInWithApple: signInWithAppleState === "exact",
     };
   } catch {
     diagnostics.push({

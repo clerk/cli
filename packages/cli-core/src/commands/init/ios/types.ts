@@ -20,6 +20,7 @@ export interface IOSDiagnostic {
     | "xcode.conflicting-build-setting"
     | "xcode.missing-entitlements"
     | "xcode.unreadable-entitlements"
+    | "xcode.invalid-apple-entitlement"
     | "xcode.external-path"
     | "xcode.generated-project"
     | "xcode.incomplete-source-membership"
@@ -42,6 +43,8 @@ export type IOSValueResolution =
     }
   | { state: "missing"; evidence: IOSSourceEvidence[] };
 
+export type IOSAppleEntitlementState = "absent" | "exact" | "invalid";
+
 export interface IOSEntitlementsInspection {
   path: string;
   associatedDomains: string[];
@@ -50,6 +53,9 @@ export interface IOSEntitlementsInspection {
   /** Literal prefix candidate from the source plist, validated against the Bundle ID. */
   literalAppIdentifierPrefix?: string;
   teamIdentifier?: string;
+  /** Whether the entitlement is absent, the exact supported value, or malformed. */
+  signInWithAppleState: IOSAppleEntitlementState;
+  /** True only for the exact supported one-element `Default` array. */
   signInWithApple: boolean;
 }
 
