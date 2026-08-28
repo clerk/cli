@@ -372,7 +372,7 @@ function buildIOSNativeAppleHealthAudit(
     automationBlockers.push(
       blocker(
         "apple-config-unsupported",
-        "This Clerk instance does not expose the narrow native Apple connection configuration required by clerk init.",
+        "This Clerk instance does not expose the narrow native Apple connection configuration required for automatic repair. Review the Apple connection in the Clerk Dashboard or contact Clerk support.",
       ),
     );
   }
@@ -381,7 +381,15 @@ function buildIOSNativeAppleHealthAudit(
     automationBlockers.push(
       blocker(
         "apple-config-invalid",
-        "The Apple connection configuration version could not be interpreted safely. Rerun clerk init before making remote changes.",
+        "The Apple connection configuration version could not be interpreted safely. Review the Apple connection in the Clerk Dashboard or contact Clerk support before making remote changes.",
+      ),
+    );
+  }
+  if (configVersion.status === "missing" && runtimeStatus === "required") {
+    automationBlockers.push(
+      blocker(
+        "apple-config-version-unavailable",
+        "The Apple connection configuration did not include the version required to protect an automatic repair. Review the Apple connection in the Clerk Dashboard or contact Clerk support.",
       ),
     );
   }
