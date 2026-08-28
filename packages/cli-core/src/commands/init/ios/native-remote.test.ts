@@ -57,6 +57,16 @@ function registration(
   };
 }
 
+function malformedRegistration(): IOSApplication {
+  return {
+    object: "ios_application",
+    id: "iosapp_malformed",
+    app_id_prefix: LOCAL_PREFIX,
+    created_at: 1_787_000_000_000,
+    updated_at: 1_787_000_000_000,
+  } as unknown as IOSApplication;
+}
+
 function selectedTarget(
   options: {
     bundleIdentifier?: string;
@@ -384,6 +394,42 @@ describe("Clerk Native Application remote setup", () => {
       name: "CliError",
       code: ERROR_CODE.PLAPI_UNEXPECTED_RESPONSE,
     });
+  });
+
+  test("rejects malformed iOS registrations before planning", () => {
+    let thrown: unknown;
+    try {
+      buildIOSNativeRemotePlan({
+        applicationId: APPLICATION_ID,
+        instanceId: INSTANCE_ID,
+        target: selectedTarget(),
+        nativeSettings: nativeSettings(true),
+        registrations: [malformedRegistration()],
+      });
+    } catch (error) {
+      thrown = error;
+    }
+
+    expect(thrown).toMatchObject({
+      name: "CliError",
+      code: ERROR_CODE.PLAPI_UNEXPECTED_RESPONSE,
+    });
+  });
+
+  test("rejects malformed registrations during the initial remote audit", async () => {
+    const { api, calls } = scriptedAPI({
+      nativeReads: [nativeSettings(true)],
+      registrationReads: [[malformedRegistration()]],
+    });
+
+    await expect(
+      prepareIOSNativeRemoteSetup(prepareOptions(), { api, prompts: prompts() }),
+    ).rejects.toMatchObject({
+      name: "CliError",
+      code: ERROR_CODE.PLAPI_UNEXPECTED_RESPONSE,
+    });
+
+    expect(calls).not.toContain("POST iOS registration");
   });
 
   test.each([
@@ -1090,6 +1136,26 @@ describe("Clerk Native Application remote setup", () => {
     expect(calls).not.toContain("PATCH native settings");
   });
 
+  test("rejects malformed registrations before the pre-write registration decision", async () => {
+    const { api, calls } = scriptedAPI({
+      nativeReads: [nativeSettings(true)],
+      registrationReads: [[malformedRegistration()]],
+    });
+
+    await expect(
+      applyRemoteSetup(
+        plan({ nativeApi: "satisfied", registration: "required" }),
+        api,
+        approvedTargetReader,
+      ),
+    ).rejects.toMatchObject({
+      name: "CliError",
+      code: ERROR_CODE.PLAPI_UNEXPECTED_RESPONSE,
+    });
+
+    expect(calls).not.toContain("POST iOS registration");
+  });
+
   test("creates the iOS registration before enabling Native API", async () => {
     const exactRegistration = registration();
     const { api, calls } = scriptedAPI({
@@ -1127,6 +1193,72 @@ describe("Clerk Native Application remote setup", () => {
         approvedTargetReader,
       ),
     ).resolves.toBeUndefined();
+    expect(calls.filter((call) => call === "POST iOS registration")).toHaveLength(1);
+  });
+
+  test("does not let a fallback list hide a malformed registration create response", async () => {
+    const exactRegistration = registration();
+    const { api, calls } = scriptedAPI({
+      nativeReads: [nativeSettings(true)],
+      registrationReads: [[], [exactRegistration]],
+      create: async () => malformedRegistration(),
+    });
+
+    await expect(
+      applyRemoteSetup(
+        plan({ nativeApi: "satisfied", registration: "required" }),
+        api,
+        approvedTargetReader,
+      ),
+    ).rejects.toMatchObject({
+      name: "CliError",
+      code: ERROR_CODE.PLAPI_UNEXPECTED_RESPONSE,
+    });
+
+    expect(calls.filter((call) => call === "GET iOS registrations")).toHaveLength(1);
+    expect(calls.filter((call) => call === "POST iOS registration")).toHaveLength(1);
+  });
+
+  test("rejects malformed registrations while confirming an ambiguous create", async () => {
+    const { api, calls } = scriptedAPI({
+      nativeReads: [nativeSettings(true)],
+      registrationReads: [[], [malformedRegistration()]],
+      create: async () => {
+        throw new Error("connection reset after create");
+      },
+    });
+
+    await expect(
+      applyRemoteSetup(
+        plan({ nativeApi: "satisfied", registration: "required" }),
+        api,
+        approvedTargetReader,
+      ),
+    ).rejects.toMatchObject({
+      name: "CliError",
+      code: ERROR_CODE.PLAPI_UNEXPECTED_RESPONSE,
+    });
+
+    expect(calls.filter((call) => call === "POST iOS registration")).toHaveLength(1);
+  });
+
+  test("rejects malformed registrations during final verification", async () => {
+    const { api, calls } = scriptedAPI({
+      nativeReads: [nativeSettings(true), nativeSettings(true)],
+      registrationReads: [[], [malformedRegistration()]],
+    });
+
+    await expect(
+      applyRemoteSetup(
+        plan({ nativeApi: "satisfied", registration: "required" }),
+        api,
+        approvedTargetReader,
+      ),
+    ).rejects.toMatchObject({
+      name: "CliError",
+      code: ERROR_CODE.PLAPI_UNEXPECTED_RESPONSE,
+    });
+
     expect(calls.filter((call) => call === "POST iOS registration")).toHaveLength(1);
   });
 

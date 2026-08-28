@@ -286,6 +286,45 @@ export type IOSApplication = {
   updated_at: number;
 };
 
+function unexpectedIOSApplicationResponse(): CliError {
+  return new CliError("Clerk returned an invalid iOS application response.", {
+    code: ERROR_CODE.PLAPI_UNEXPECTED_RESPONSE,
+  });
+}
+
+export function validateIOSApplication(value: unknown): IOSApplication {
+  if (value == null || typeof value !== "object" || Array.isArray(value)) {
+    throw unexpectedIOSApplicationResponse();
+  }
+  const item = value as Record<string, unknown>;
+  if (
+    item.object !== "ios_application" ||
+    typeof item.id !== "string" ||
+    typeof item.app_id_prefix !== "string" ||
+    typeof item.bundle_id !== "string" ||
+    typeof item.created_at !== "number" ||
+    !Number.isFinite(item.created_at) ||
+    typeof item.updated_at !== "number" ||
+    !Number.isFinite(item.updated_at)
+  ) {
+    throw unexpectedIOSApplicationResponse();
+  }
+  return value as IOSApplication;
+}
+
+export function validateIOSApplications(value: unknown): IOSApplication[] {
+  if (!Array.isArray(value)) throw unexpectedIOSApplicationResponse();
+  return value.map(validateIOSApplication);
+}
+
+async function readIOSApplicationResponse(response: Response): Promise<unknown> {
+  try {
+    return await response.json();
+  } catch {
+    throw unexpectedIOSApplicationResponse();
+  }
+}
+
 export type CreateIOSApplicationParams = {
   appIdPrefix: string;
   bundleId: string;
@@ -333,7 +372,7 @@ export async function listIOSApplications(
     getPlapiBaseUrl(),
   );
   const response = await plapiFetch("GET", url);
-  return response.json() as Promise<IOSApplication[]>;
+  return validateIOSApplications(await readIOSApplicationResponse(response));
 }
 
 export async function createIOSApplication(
@@ -353,7 +392,7 @@ export async function createIOSApplication(
     }),
     idempotencyKey: options.idempotencyKey,
   });
-  return response.json() as Promise<IOSApplication>;
+  return validateIOSApplication(await readIOSApplicationResponse(response));
 }
 
 export interface FetchApplicationOptions {

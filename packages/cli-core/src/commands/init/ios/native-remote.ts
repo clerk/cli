@@ -15,6 +15,8 @@ import {
   enableNativeApi,
   getNativeSettings,
   listIOSApplications,
+  validateIOSApplication,
+  validateIOSApplications,
   validateNativeSettings,
   type IOSApplication,
   type NativeSettings,
@@ -323,6 +325,7 @@ export function buildIOSNativeRemotePlan(options: {
   registrations: IOSApplication[];
 }): IOSNativeRemotePlan {
   const nativeSettings = validateNativeSettings(options.nativeSettings);
+  const registrations = validateIOSApplications(options.registrations);
   const identity = localIdentity(options.target);
   const blockers = [...identity.blockers];
   const bundleIdentifier = identity.bundleIdentifier;
@@ -348,7 +351,7 @@ export function buildIOSNativeRemotePlan(options: {
   }
 
   const matchingBundle = bundleIdentifier
-    ? options.registrations.filter((registration) => registration.bundle_id === bundleIdentifier)
+    ? registrations.filter((registration) => registration.bundle_id === bundleIdentifier)
     : [];
   const invalidRegisteredPrefixes = matchingBundle.filter(
     (registration) =>
@@ -454,7 +457,10 @@ async function readRemoteState(
     api.getNativeSettings(applicationId, instanceId),
     api.listIOSApplications(applicationId, instanceId),
   ]);
-  return { nativeSettings: validateNativeSettings(nativeSettings), registrations };
+  return {
+    nativeSettings: validateNativeSettings(nativeSettings),
+    registrations: validateIOSApplications(registrations),
+  };
 }
 
 function formatBlockers(plan: IOSNativeRemotePlan): string {
@@ -855,12 +861,14 @@ export async function applyIOSNativeRemoteSetup(
       );
     }
     try {
-      const created = await withSpinner("Registering the iOS application with Clerk...", async () =>
-        api.createIOSApplication(
-          plan.applicationId,
-          plan.instanceId,
-          { appIdPrefix: plan.appIdPrefix!, bundleId: plan.bundleIdentifier! },
-          { idempotencyKey: observedRegistrationRetryKey },
+      const created = validateIOSApplication(
+        await withSpinner("Registering the iOS application with Clerk...", async () =>
+          api.createIOSApplication(
+            plan.applicationId,
+            plan.instanceId,
+            { appIdPrefix: plan.appIdPrefix!, bundleId: plan.bundleIdentifier! },
+            { idempotencyKey: observedRegistrationRetryKey },
+          ),
         ),
       );
       if (
@@ -874,9 +882,14 @@ export async function applyIOSNativeRemoteSetup(
       }
     } catch (error) {
       logSuppressedFailure("Could not create the iOS application registration");
+      if (error instanceof CliError && error.code === ERROR_CODE.PLAPI_UNEXPECTED_RESPONSE) {
+        throw error;
+      }
       let registrations: IOSApplication[];
       try {
-        registrations = await api.listIOSApplications(plan.applicationId, plan.instanceId);
+        registrations = validateIOSApplications(
+          await api.listIOSApplications(plan.applicationId, plan.instanceId),
+        );
       } catch (fallbackError) {
         logSuppressedFailure("Could not confirm the iOS application registration");
         rethrowKnownRemoteError(fallbackError);

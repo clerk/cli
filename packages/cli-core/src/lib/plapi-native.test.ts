@@ -123,6 +123,7 @@ describe("PLAPI native application client", () => {
         bundle_id: "com.example.coolappy",
         created_at: 1_787_000_000_000,
         updated_at: 1_787_000_000_000,
+        future_field: "preserved",
       },
     ];
     stubFetch(async (input, init) => {
@@ -139,6 +140,53 @@ describe("PLAPI native application client", () => {
     );
     expect(result).toEqual(responseBody);
     expect(result[0]).not.toHaveProperty("team_id");
+    expect((result[0] as unknown as Record<string, unknown>).future_field).toBe("preserved");
+  });
+
+  test.each([
+    { name: "a non-array root", body: {} },
+    { name: "a null item", body: [null] },
+    {
+      name: "an incomplete item",
+      body: [
+        {
+          object: "ios_application",
+          id: "iosapp_123",
+          app_id_prefix: "ABCD123456",
+          created_at: 1_787_000_000_000,
+          updated_at: 1_787_000_000_000,
+        },
+      ],
+    },
+    {
+      name: "an item with a mistyped field",
+      body: [
+        {
+          object: "ios_application",
+          id: "iosapp_123",
+          app_id_prefix: "ABCD123456",
+          bundle_id: "com.example.coolappy",
+          created_at: "1787000000000",
+          updated_at: 1_787_000_000_000,
+        },
+      ],
+    },
+  ])("rejects $name from the iOS application list", async ({ body }) => {
+    stubFetch(async () => Response.json(body));
+
+    await expect(listIOSApplications("app_abc", "ins_dev_123")).rejects.toMatchObject({
+      name: "CliError",
+      code: ERROR_CODE.PLAPI_UNEXPECTED_RESPONSE,
+    });
+  });
+
+  test("rejects malformed JSON from the iOS application list", async () => {
+    stubFetch(async () => new Response("{", { status: 200 }));
+
+    await expect(listIOSApplications("app_abc", "ins_dev_123")).rejects.toMatchObject({
+      name: "CliError",
+      code: ERROR_CODE.PLAPI_UNEXPECTED_RESPONSE,
+    });
   });
 
   test("creates an iOS application with the public field names and idempotency key", async () => {
@@ -180,6 +228,48 @@ describe("PLAPI native application client", () => {
     expect(capturedHeaders?.get("Content-Type")).toBe("application/json");
     expect(capturedHeaders?.get("Idempotency-Key")).toBe("create-ios-app-123");
     expect(result).toEqual(responseBody);
+  });
+
+  test("rejects an incomplete iOS application create response", async () => {
+    stubFetch(async () =>
+      Response.json(
+        {
+          object: "ios_application",
+          id: "iosapp_123",
+          app_id_prefix: "ABCD123456",
+          bundle_id: "com.example.coolappy",
+        },
+        { status: 201 },
+      ),
+    );
+
+    await expect(
+      createIOSApplication(
+        "app_abc",
+        "development",
+        { appIdPrefix: "ABCD123456", bundleId: "com.example.coolappy" },
+        { idempotencyKey: "create-ios-app-123" },
+      ),
+    ).rejects.toMatchObject({
+      name: "CliError",
+      code: ERROR_CODE.PLAPI_UNEXPECTED_RESPONSE,
+    });
+  });
+
+  test("rejects malformed JSON from the iOS application create response", async () => {
+    stubFetch(async () => new Response("{", { status: 201 }));
+
+    await expect(
+      createIOSApplication(
+        "app_abc",
+        "development",
+        { appIdPrefix: "ABCD123456", bundleId: "com.example.coolappy" },
+        { idempotencyKey: "create-ios-app-123" },
+      ),
+    ).rejects.toMatchObject({
+      name: "CliError",
+      code: ERROR_CODE.PLAPI_UNEXPECTED_RESPONSE,
+    });
   });
 
   test("preserves typed PLAPI errors from native endpoints without credential data", async () => {
