@@ -153,6 +153,62 @@ struct MyApp: App {
     expect(JSON.stringify(plan)).not.toContain("hidden.clerk.example");
   });
 
+  test("blocks a domain when an exhaustively discovered workspace scheme conflicts", async () => {
+    const root = await temporaryRoot();
+    await createIOSFixture(root, { includeKey: false });
+    await Bun.write(
+      join(root, "MyApp", "MyAppApp.swift"),
+      `import ClerkKit
+import SwiftUI
+
+@main
+struct MyApp: App {
+  init() {
+    Clerk.configure(publishableKey: ProcessInfo.processInfo.environment["CLERK_PUBLISHABLE_KEY"] ?? "")
+  }
+
+  var body: some Scene { WindowGroup { Text("Hello") } }
+}
+`,
+    );
+
+    const visibleKey = `pk_test_${Buffer.from("visible.clerk.example$").toString("base64")}`;
+    const hiddenKey = `pk_test_${Buffer.from("hidden.clerk.example$").toString("base64")}`;
+    const projectSchemes = join(root, "MyApp.xcodeproj", "xcshareddata", "xcschemes");
+    await mkdir(projectSchemes, { recursive: true });
+    await Bun.write(
+      join(projectSchemes, "VisibleRuntime.xcscheme"),
+      `<Scheme><LaunchAction><BuildableProductRunnable><BuildableReference BlueprintIdentifier="${IOS_FIXTURE_IDS.appTarget}" /></BuildableProductRunnable><EnvironmentVariables><EnvironmentVariable key="CLERK_PUBLISHABLE_KEY" value="${visibleKey}" isEnabled="YES" /></EnvironmentVariables></LaunchAction></Scheme>`,
+    );
+
+    const workspace = join(root, "One", "Two", "Three", "Four", ".Hidden", "Deep.xcworkspace");
+    const workspaceSchemes = join(workspace, "xcshareddata", "xcschemes");
+    await mkdir(workspaceSchemes, { recursive: true });
+    await Bun.write(
+      join(workspace, "contents.xcworkspacedata"),
+      '<Workspace version="1.0"><FileRef location="group:../../../../../MyApp.xcodeproj" /></Workspace>',
+    );
+    await Bun.write(
+      join(workspaceSchemes, "HiddenRuntime.xcscheme"),
+      `<Scheme><LaunchAction><BuildableProductRunnable><BuildableReference BlueprintIdentifier="${IOS_FIXTURE_IDS.appTarget}" ReferencedContainer="container:../../../../../MyApp.xcodeproj" /></BuildableProductRunnable><EnvironmentVariables><EnvironmentVariable key="CLERK_PUBLISHABLE_KEY" value="${hiddenKey}" isEnabled="YES" /></EnvironmentVariables></LaunchAction></Scheme>`,
+    );
+
+    const before = await treeDigest(root);
+    const plan = await planIOSAssociatedDomain(planOptions(root));
+
+    expect(plan).toMatchObject({
+      status: "blocked",
+      requiresPublishableKey: false,
+      files: [],
+      blockers: [{ code: "runtime-key-unproven" }],
+    });
+    expect(plan.expectedDomain).toBeUndefined();
+    expect((await applyIOSAssociatedDomain(plan)).status).toBe("blocked");
+    expect(await treeDigest(root)).toEqual(before);
+    expect(JSON.stringify(plan)).not.toContain("visible.clerk.example");
+    expect(JSON.stringify(plan)).not.toContain("hidden.clerk.example");
+  });
+
   test("creates and attaches an iOS-only entitlements file for a synchronized multiplatform target", async () => {
     const root = await directFixture();
     await convertIOSFixtureToSynchronizedMissingEntitlements(root);
