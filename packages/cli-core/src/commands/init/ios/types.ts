@@ -24,6 +24,7 @@ export interface IOSDiagnostic {
     | "xcode.external-path"
     | "xcode.generated-project"
     | "xcode.incomplete-source-membership"
+    | "xcode.incomplete-scheme-discovery"
     | "clerk.package-unattributed"
     | "clerk.invalid-publishable-key"
     | "clerk.conflicting-publishable-keys";
@@ -175,6 +176,8 @@ export type IOSTargetSelection =
   | { state: "none" };
 
 export interface IOSLocalPublishableKeyInspection {
+  /** False when an effective Run-scheme source may have been hidden by bounded discovery. */
+  evidenceComplete: boolean;
   found: boolean;
   source?: string;
   frontendApiHost?: string;

@@ -47,6 +47,7 @@ function inspection(selected: IOSAppTarget): IOSProjectInspectionResult {
       projectPath: selected.projectPath,
     },
     localPublishableKey: {
+      evidenceComplete: true,
       found: false,
       conflict: false,
       candidateSources: [],
