@@ -505,14 +505,19 @@ export const runIOSXcodeCommand: IOSXcodeCommandRunner = async (argv, options) =
     globalThis.process.removeListener("exit", stopForProcessExit);
     clearTimeout(timeout);
     if (forceKillTimer) clearTimeout(forceKillTimer);
-    // The leader can exit on SIGTERM while a descendant that closed its stdio
+    // The command leader can exit while a descendant that closed its stdio
     // remains alive. Force the group down and wait for it to disappear before
     // the caller can remove temporary build files that descendants may hold.
     if (timedOut && !forceKillSent) {
       forceKillSent = true;
       signalProcessTree("SIGKILL");
     }
-    if (timedOut || interrupted) await waitForProcessTreeExit();
+    let shouldWaitForProcessTree = timedOut || interrupted;
+    if (usesIsolatedProcessGroup && processTreeIsAlive()) {
+      signalProcessTree("SIGKILL");
+      shouldWaitForProcessTree = true;
+    }
+    if (shouldWaitForProcessTree) await waitForProcessTreeExit();
   }
 };
 
