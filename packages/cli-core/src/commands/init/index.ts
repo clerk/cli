@@ -314,7 +314,9 @@ export async function init(options: InitOptions = {}) {
           })
         : undefined;
     const hasLocalAppleIntent = selectedTarget?.configurations.some(
-      (configuration) => configuration.entitlements?.signInWithApple === true,
+      (configuration) =>
+        configuration.entitlements !== undefined &&
+        configuration.entitlements.signInWithAppleState !== "absent",
     );
     const appleEntitlementPlan =
       dryRunSelection.state === "selected" &&

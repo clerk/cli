@@ -492,7 +492,9 @@ export async function applyIOSLocalSetup(
     );
   }
   const hasLocalAppleEntitlement = selectedTarget.configurations.some(
-    (configuration) => configuration.entitlements?.signInWithApple === true,
+    (configuration) =>
+      configuration.entitlements !== undefined &&
+      configuration.entitlements.signInWithAppleState !== "absent",
   );
   let nativeAppleRequested = options.signInWithApple === true;
   if (!nativeAppleRequested && options.signInWithApple == null && !options.agent && !options.yes) {

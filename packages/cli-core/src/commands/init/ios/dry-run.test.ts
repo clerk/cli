@@ -459,6 +459,39 @@ struct MyApp: App {
     }
   });
 
+  test("surfaces a malformed present Apple entitlement without requiring explicit opt-in", async () => {
+    const root = await mkdtemp(join(tmpdir(), "clerk-ios-cli-invalid-apple-dry-run-"));
+    temporaryDirectories.push(root);
+    await createIOSFixture(root, { complete: true });
+    const entitlementsPath = join(root, "MyApp", "MyApp.entitlements");
+    const entitlements = await Bun.file(entitlementsPath).text();
+    await Bun.write(
+      entitlementsPath,
+      entitlements.replace(
+        "</dict>",
+        "<key>com.apple.developer.applesignin</key><array></array>\n</dict>",
+      ),
+    );
+    const configDir = await createIsolatedCLIState();
+
+    const result = await runCLI(
+      root,
+      ["--mode", "human", "init", "--dry-run", "--json"],
+      isolatedCLIEnvironment(configDir),
+    );
+
+    expect(result.exitCode).toBe(0);
+    const output = JSON.parse(result.stdout);
+    const apple = output.plan.steps.find(
+      (step: { id: string }) => step.id === "enable-native-apple",
+    );
+    expect(apple).toMatchObject({ status: "blocked", automatable: false });
+    expect(apple.description).toContain("Sign in with Apple entitlement");
+    expect(output.inspection.diagnostics).toContainEqual(
+      expect.objectContaining({ code: "xcode.invalid-apple-entitlement" }),
+    );
+  });
+
   test("explicit prebuilt AuthView dry-run refuses to overwrite a partial existing flow without network access", async () => {
     const root = await mkdtemp(join(tmpdir(), "clerk-ios-cli-prebuilt-auth-dry-run-"));
     temporaryDirectories.push(root);
