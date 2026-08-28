@@ -102,7 +102,7 @@ describe("shouldInstallClerkKitUI", () => {
 
 describe("direct configuration compatibility", () => {
   test.each(["local-secrets-loader", "process-info-environment"] as const)(
-    "preserves an existing %s configure route",
+    "preserves a proven startup %s configure route",
     (publishableKeyWiring) => {
       const selected = target();
       selected.swift.configureCalls = [
@@ -122,24 +122,51 @@ describe("direct configuration compatibility", () => {
     },
   );
 
-  test("preserves an enabled selected-target scheme key route", () => {
+  test("does not infer compatibility from an enabled selected-target scheme key", () => {
     const selected = target();
     const result = inspection(selected);
     result.localPublishableKey.candidateSources = [
       "MyApp.xcodeproj/xcshareddata/xcschemes/MyApp.xcscheme",
     ];
 
-    expect(hasIOSDirectConfigCompatibility(result, selected)).toBe(true);
-    expect(shouldPlanIOSDirectConfig(result, selected)).toBe(false);
+    expect(hasIOSDirectConfigCompatibility(result, selected)).toBe(false);
+    expect(shouldPlanIOSDirectConfig(result, selected)).toBe(true);
   });
 
-  test("preserves a target-owned runtime key sink", () => {
+  test("does not infer compatibility from a target-owned runtime key sink", () => {
     const selected = target();
     selected.runtimeKeySinks = [{ kind: "local-secrets-plist", path: "MyApp/LocalSecrets.plist" }];
     const result = inspection(selected);
 
-    expect(hasIOSDirectConfigCompatibility(result, selected)).toBe(true);
-    expect(shouldPlanIOSDirectConfig(result, selected)).toBe(false);
+    expect(hasIOSDirectConfigCompatibility(result, selected)).toBe(false);
+    expect(shouldPlanIOSDirectConfig(result, selected)).toBe(true);
+  });
+
+  test.each([
+    {
+      name: "non-startup ProcessInfo",
+      publishableKeyWiring: "process-info-environment" as const,
+      startupBinding: "unproven" as const,
+    },
+    {
+      name: "non-startup LocalSecrets",
+      publishableKeyWiring: "local-secrets-loader" as const,
+      startupBinding: "unproven" as const,
+      localSecretsRuntimeBinding: "proven" as const,
+    },
+    {
+      name: "unproven LocalSecrets loader",
+      publishableKeyWiring: "local-secrets-loader" as const,
+      startupBinding: "app-init" as const,
+      localSecretsRuntimeBinding: "unproven" as const,
+    },
+  ])("does not preserve $name wiring", (configureCall) => {
+    const selected = target();
+    selected.swift.configureCalls = [{ path: "MyApp/Auth.swift", ...configureCall }];
+    const result = inspection(selected);
+
+    expect(hasIOSDirectConfigCompatibility(result, selected)).toBe(false);
+    expect(shouldPlanIOSDirectConfig(result, selected)).toBe(true);
   });
 
   test("plans direct configuration for a fresh compatible target", () => {

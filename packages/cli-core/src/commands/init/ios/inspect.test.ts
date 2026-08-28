@@ -772,6 +772,14 @@ describe("inspectIOSProject", () => {
     expect(inspection.appTargets[0]?.runtimeKeySinks).toEqual([
       { kind: "local-secrets-plist", path: "MyApp/LocalSecrets.plist" },
     ]);
+    expect(inspection.diagnostics).toContainEqual(
+      expect.objectContaining({
+        code: "clerk.unconsumed-publishable-key-source",
+        severity: "warning",
+        message: expect.stringContaining("LocalSecrets.plist"),
+        evidence: [{ path: "MyApp/LocalSecrets.plist", keyPath: "CLERK_PUBLISHABLE_KEY" }],
+      }),
+    );
     expect(JSON.stringify(inspection)).not.toContain("pk_live_");
   });
 
@@ -881,6 +889,19 @@ struct MyApp: App {
       frontendApiHost: "scheme.clerk.example",
       conflict: false,
     });
+    expect(inspection.diagnostics).toContainEqual(
+      expect.objectContaining({
+        code: "clerk.unconsumed-publishable-key-source",
+        severity: "warning",
+        message: expect.stringContaining("Run-scheme key"),
+        evidence: [
+          {
+            path: "MyApp.xcodeproj/xcshareddata/xcschemes/MyApp.xcscheme",
+            keyPath: "CLERK_PUBLISHABLE_KEY",
+          },
+        ],
+      }),
+    );
     expect(JSON.stringify(inspection)).not.toContain(schemeKey);
   });
 
@@ -1152,6 +1173,13 @@ struct MyApp: App {
         (diagnostic) => diagnostic.code === "xcode.incomplete-scheme-discovery",
       ),
     ).toBe(false);
+    expect(
+      inspection.diagnostics.some(
+        (diagnostic) =>
+          diagnostic.code === "clerk.unconsumed-publishable-key-source" &&
+          diagnostic.message.includes("LocalSecrets.plist"),
+      ),
+    ).toBe(false);
     expect(JSON.stringify(inspection)).not.toContain(visibleSchemeKey);
     expect(JSON.stringify(inspection)).not.toContain(hiddenSchemeKey);
   });
@@ -1270,6 +1298,13 @@ struct MyApp: App {
       ],
       invalidSources: [],
     });
+    expect(
+      inspection.diagnostics.some(
+        (diagnostic) =>
+          diagnostic.code === "clerk.unconsumed-publishable-key-source" &&
+          diagnostic.message.includes("Run-scheme key"),
+      ),
+    ).toBe(false);
     expect(JSON.stringify(inspection)).not.toContain(schemeKey);
     expect(JSON.stringify(inspection)).not.toContain(localSecretsKey);
   });

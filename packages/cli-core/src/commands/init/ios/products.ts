@@ -22,20 +22,30 @@ export function shouldInstallClerkKitUI(target: IOSAppTarget): boolean {
   return clerkKitUIInstallDecision(target) === "prebuilt";
 }
 
+export function hasIOSProvenStartupKeyWiring(
+  target: IOSAppTarget,
+  wiring: "local-secrets-loader" | "process-info-environment",
+): boolean {
+  return target.swift.configureCalls.some(
+    (call) =>
+      call.startupBinding === "app-init" &&
+      call.publishableKeyWiring === wiring &&
+      (wiring !== "local-secrets-loader" || call.localSecretsRuntimeBinding === "proven"),
+  );
+}
+
 /** Existing runtime-key routes that direct source configuration must preserve. */
 export function hasIOSDirectConfigCompatibility(
   inspection: IOSProjectInspectionResult,
   target: IOSAppTarget,
 ): boolean {
-  const hasCompatibleConfigure = target.swift.configureCalls.some(
-    (call) =>
-      call.publishableKeyWiring === "local-secrets-loader" ||
-      call.publishableKeyWiring === "process-info-environment",
+  // Preserve the inspection parameter for callers that make this decision
+  // from a complete inspection, but never infer runtime wiring from artifacts.
+  void inspection;
+  return (
+    hasIOSProvenStartupKeyWiring(target, "local-secrets-loader") ||
+    hasIOSProvenStartupKeyWiring(target, "process-info-environment")
   );
-  const hasEnabledSchemeKey = inspection.localPublishableKey.candidateSources.some((source) =>
-    source.endsWith(".xcscheme"),
-  );
-  return hasCompatibleConfigure || hasEnabledSchemeKey || target.runtimeKeySinks.length > 0;
 }
 
 /**
