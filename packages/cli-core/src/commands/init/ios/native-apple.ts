@@ -43,6 +43,7 @@ export type IOSNativeAppleBlockerCode =
   | "bundle-identifier-unavailable"
   | "apple-config-unsupported"
   | "apple-config-invalid"
+  | "apple-config-version-unavailable"
   | "apple-authenticatable-conflict"
   | "apple-bundle-identifier-conflict";
 
@@ -87,17 +88,11 @@ const preservedAppleFieldFingerprints = new WeakMap<
 
 export interface IOSNativeApplePatchOptions {
   dryRun: boolean;
-  /** Forwarded only by clients which explicitly advertise support. */
-  ifMatch?: string;
+  /** Required for every mutation attempt, including the server dry run. */
+  ifMatch: string;
 }
 
 export interface IOSNativeAppleAPI {
-  /**
-   * PLAPI supports both server dry-run and If-Match. Test or alternate
-   * adapters may opt out of If-Match; config-version revalidation remains
-   * mandatory either way.
-   */
-  supportsIfMatch?: boolean;
   fetchInstanceConfig(
     applicationId: string,
     instanceId: string,
@@ -117,7 +112,6 @@ export interface IOSNativeAppleAPI {
 }
 
 const defaultAPI: IOSNativeAppleAPI = {
-  supportsIfMatch: true,
   fetchInstanceConfig,
   fetchInstanceConfigSchema,
   patchInstanceConfig: async (applicationId, instanceId, config, options) =>
@@ -343,6 +337,20 @@ export function buildIOSNativeApplePlan(
     );
   }
 
+  const alreadySatisfied =
+    parsed.status === "valid" &&
+    parsed.value.enabled &&
+    parsed.value.authenticatable &&
+    parsed.bundleIdentifier === bundleIdentifier;
+  if (blockers.length === 0 && configVersion.status === "missing" && !alreadySatisfied) {
+    blockers.push(
+      blocker(
+        "apple-config-version-unavailable",
+        "The Apple connection configuration did not include the version required to protect a remote change. Rerun clerk init before continuing.",
+      ),
+    );
+  }
+
   const current = parsed.status === "valid" ? parsed.value : undefined;
   const desired: AppleConnectionState = { enabled: true, authenticatable: true };
   const bundleIdentifierConfiguration =
@@ -433,14 +441,16 @@ function formatBlockers(plan: IOSNativeApplePlan): string {
   return plan.blockers.map((item) => `  • ${item.message}`).join("\n");
 }
 
-function patchOptions(
-  api: IOSNativeAppleAPI,
-  plan: IOSNativeApplePlan,
-  dryRun: boolean,
-): IOSNativeApplePatchOptions {
+function patchOptions(plan: IOSNativeApplePlan, dryRun: boolean): IOSNativeApplePatchOptions {
+  if (!plan.configVersion) {
+    throw iosAppleError(
+      "The approved native Apple connection plan is missing the configuration version required to protect a remote change.",
+      ERROR_CODE.IOS_SETUP_PLAN_INVALID,
+    );
+  }
   return {
     dryRun,
-    ...(api.supportsIfMatch && plan.configVersion ? { ifMatch: plan.configVersion } : {}),
+    ifMatch: plan.configVersion,
   };
 }
 
@@ -535,7 +545,7 @@ async function validateServerPatch(
     plan.applicationId,
     plan.instanceId,
     applePatch(plan.bundleIdentifier),
-    patchOptions(api, plan, dryRun),
+    patchOptions(plan, dryRun),
   );
   validatePatchProjection(
     response,
@@ -622,15 +632,19 @@ function planIdentityMatches(approved: IOSNativeApplePlan, current: IOSNativeApp
 }
 
 function planVersionMatches(approved: IOSNativeApplePlan, current: IOSNativeApplePlan): boolean {
-  if (!approved.configVersion) return true;
-  return current.configVersion === approved.configVersion;
+  return approved.configVersion != null && current.configVersion === approved.configVersion;
 }
 
 export async function applyIOSNativeAppleConnection(
   plan: IOSNativeApplePlan,
   api: IOSNativeAppleAPI = defaultAPI,
 ): Promise<void> {
-  if (plan.status === "blocked" || !plan.current || !plan.bundleIdentifier) {
+  if (
+    plan.status === "blocked" ||
+    !plan.current ||
+    !plan.bundleIdentifier ||
+    (plan.status === "ready" && !plan.configVersion)
+  ) {
     throw iosAppleError(
       "The approved native Apple connection plan is incomplete. No remote Apple connection changes were made; rerun clerk init.",
       ERROR_CODE.IOS_SETUP_PLAN_INVALID,

@@ -57,7 +57,7 @@ function connection(
   return { enabled, authenticatable, ...extras };
 }
 
-function config(value: AppleConnection, configVersion: string | undefined = CONFIG_VERSION) {
+function config(value: AppleConnection, configVersion: string | null = CONFIG_VERSION) {
   return {
     ...(configVersion ? { config_version: configVersion } : {}),
     connection_oauth_apple: { ...value },
@@ -103,8 +103,7 @@ function statefulAPI(
   options: {
     initial?: AppleConnection;
     schema?: InstanceConfigSchema;
-    supportsIfMatch?: boolean;
-    version?: string | undefined;
+    version?: string | null;
     failFetch?: unknown;
     failDryRun?: unknown;
     failActual?: unknown;
@@ -128,20 +127,19 @@ function statefulAPI(
     ...(options.initial ?? connection()),
   } as AppleConnection;
   let version: string | undefined =
-    options.version === undefined ? CONFIG_VERSION : options.version;
+    options.version === null ? undefined : (options.version ?? CONFIG_VERSION);
   let writes = 0;
   const calls: string[] = [];
   const patchCalls: PatchCall[] = [];
 
   const api: IOSNativeAppleAPI = {
-    supportsIfMatch: options.supportsIfMatch ?? false,
     async fetchInstanceConfig(applicationId, instanceId, keys) {
       expect(applicationId).toBe(APPLICATION_ID);
       expect(instanceId).toBe(INSTANCE_ID);
       expect(keys).toEqual(["connection_oauth_apple"]);
       calls.push("GET config");
       if (options.failFetch) throw options.failFetch;
-      return config(current, version);
+      return config(current, version ?? null);
     },
     async fetchInstanceConfigSchema(applicationId, instanceId, keys) {
       expect(applicationId).toBe(APPLICATION_ID);
@@ -160,7 +158,7 @@ function statefulAPI(
         options: { ...patchOptions },
       });
 
-      if (patchOptions.ifMatch && patchOptions.ifMatch !== version) {
+      if (patchOptions.ifMatch !== version) {
         throw new Error("config version conflict");
       }
       if (patchOptions.dryRun && options.failDryRun) throw options.failDryRun;
@@ -269,6 +267,25 @@ describe("native Sign in with Apple remote setup", () => {
     expect(captured.err).toContain("already enabled");
   });
 
+  test("keeps a versionless already-satisfied connection read-only", async () => {
+    const harness = statefulAPI({
+      initial: connection(true, true, { bundle_id: BUNDLE_IDENTIFIER }),
+      version: null,
+    });
+    const plan = await prepareIOSNativeAppleConnection(baseOptions(), {
+      api: harness.api,
+      prompts: unexpectedPrompts(),
+    });
+
+    expect(plan.status).toBe("satisfied");
+    if (plan.status !== "satisfied") throw new Error("expected satisfied plan");
+    await applyIOSNativeAppleConnection(plan, harness.api);
+
+    expect(harness.patchCalls).toHaveLength(0);
+    expect(harness.actualWrites()).toBe(0);
+    expect(harness.calls.filter((call) => call === "GET config")).toHaveLength(2);
+  });
+
   test("rejects a satisfied plan when the connection changes after prepare", async () => {
     const harness = statefulAPI({
       initial: connection(true, true, { bundle_id: BUNDLE_IDENTIFIER }),
@@ -311,10 +328,7 @@ describe("native Sign in with Apple remote setup", () => {
       key_id: KEY_ID,
       unrelated_provider_setting: "keep-me",
     });
-    const harness = statefulAPI({
-      initial,
-      supportsIfMatch: true,
-    });
+    const harness = statefulAPI({ initial });
     const prepared = await prepareIOSNativeAppleConnection(baseOptions(), {
       api: harness.api,
       prompts: unexpectedPrompts(),
@@ -350,38 +364,6 @@ describe("native Sign in with Apple remote setup", () => {
       authenticatable: true,
       bundle_id: BUNDLE_IDENTIFIER,
     });
-  });
-
-  test("uses config-version rereads when an injected transport cannot send If-Match", async () => {
-    const harness = statefulAPI({ supportsIfMatch: false });
-    const prepared = await prepareIOSNativeAppleConnection(baseOptions(), {
-      api: harness.api,
-      prompts: unexpectedPrompts(),
-    });
-
-    expect(prepared.status).toBe("ready");
-    expect(harness.patchCalls).toHaveLength(0);
-    if (prepared.status !== "ready") throw new Error("expected ready plan");
-
-    await applyIOSNativeAppleConnection(prepared, harness.api);
-
-    expect(harness.actualWrites()).toBe(1);
-    expect(harness.patchCalls).toHaveLength(2);
-    for (const call of harness.patchCalls) expect(call.options.ifMatch).toBeUndefined();
-
-    const staleHarness = statefulAPI({ supportsIfMatch: false });
-    const stalePrepared = await prepareIOSNativeAppleConnection(baseOptions(), {
-      api: staleHarness.api,
-      prompts: unexpectedPrompts(),
-    });
-    if (stalePrepared.status !== "ready") throw new Error("expected ready plan");
-    staleHarness.setVersion(NEXT_CONFIG_VERSION);
-
-    await expect(applyIOSNativeAppleConnection(stalePrepared, staleHarness.api)).rejects.toThrow(
-      "changed after the approved preview",
-    );
-    expect(staleHarness.patchCalls).toHaveLength(0);
-    expect(staleHarness.actualWrites()).toBe(0);
   });
 
   test("requires the exact native Bundle ID even when Apple is already authenticatable", async () => {
@@ -547,7 +529,7 @@ describe("native Sign in with Apple remote setup", () => {
   });
 
   test("fails before writing when the approved config version becomes stale", async () => {
-    const harness = statefulAPI({ supportsIfMatch: true });
+    const harness = statefulAPI();
     const prepared = await prepareIOSNativeAppleConnection(baseOptions(), {
       api: harness.api,
       prompts: unexpectedPrompts(),
@@ -559,6 +541,36 @@ describe("native Sign in with Apple remote setup", () => {
     await expect(applyIOSNativeAppleConnection(prepared, harness.api)).rejects.toThrow(
       "changed after the approved preview",
     );
+    expect(harness.patchCalls).toHaveLength(0);
+    expect(harness.actualWrites()).toBe(0);
+  });
+
+  test("blocks a remote Apple change when its configuration version is unavailable", async () => {
+    const harness = statefulAPI({ version: null });
+
+    await expect(
+      prepareIOSNativeAppleConnection(baseOptions(), {
+        api: harness.api,
+        prompts: unexpectedPrompts(),
+      }),
+    ).rejects.toThrow("version required to protect a remote change");
+
+    expect(harness.patchCalls).toHaveLength(0);
+    expect(harness.actualWrites()).toBe(0);
+  });
+
+  test("rejects a serialized writable plan which is missing its configuration version", async () => {
+    const harness = statefulAPI();
+    const prepared = await prepareIOSNativeAppleConnection(baseOptions(), {
+      api: harness.api,
+      prompts: unexpectedPrompts(),
+    });
+    if (prepared.status !== "ready") throw new Error("expected ready plan");
+    const incomplete = { ...prepared, configVersion: undefined };
+
+    await expect(applyIOSNativeAppleConnection(incomplete, harness.api)).rejects.toMatchObject({
+      code: ERROR_CODE.IOS_SETUP_PLAN_INVALID,
+    });
     expect(harness.patchCalls).toHaveLength(0);
     expect(harness.actualWrites()).toBe(0);
   });
@@ -758,7 +770,7 @@ describe("native Sign in with Apple remote setup", () => {
     }
   });
 
-  test("accepts a missing config version but blocks malformed version material", () => {
+  test("requires a config version for writes but allows a versionless no-op", () => {
     const withoutVersion = buildIOSNativeApplePlan({
       applicationId: APPLICATION_ID,
       instanceId: INSTANCE_ID,
@@ -767,8 +779,23 @@ describe("native Sign in with Apple remote setup", () => {
       config: { connection_oauth_apple: connection() },
       schema: appleSchema(),
     });
-    expect(withoutVersion.status).toBe("ready");
+    expect(withoutVersion.status).toBe("blocked");
     expect(withoutVersion.configVersion).toBeUndefined();
+    expect(withoutVersion.blockers).toContainEqual(
+      expect.objectContaining({ code: "apple-config-version-unavailable" }),
+    );
+
+    const satisfiedWithoutVersion = buildIOSNativeApplePlan({
+      applicationId: APPLICATION_ID,
+      instanceId: INSTANCE_ID,
+      bundleIdentifier: BUNDLE_IDENTIFIER,
+      nativeApplicationReady: true,
+      config: {
+        connection_oauth_apple: connection(true, true, { bundle_id: BUNDLE_IDENTIFIER }),
+      },
+      schema: appleSchema(),
+    });
+    expect(satisfiedWithoutVersion.status).toBe("satisfied");
 
     const sensitiveVersion = `v1_${PRIVATE_KEY}`;
     const malformedVersion = buildIOSNativeApplePlan({
