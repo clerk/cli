@@ -66,14 +66,14 @@ import {
 import type { ProjectContext } from "./frameworks/types.js";
 import { type PackageManager, PACKAGE_MANAGERS } from "../../lib/package-manager.ts";
 import { inspectIOSProject } from "./ios/inspect.ts";
-import { buildIOSSetupPlan, hasIOSRuntimeKeyHandoffShape } from "./ios/plan.ts";
+import { buildIOSSetupPlan } from "./ios/plan.ts";
 import { planIOSDirectConfig } from "./ios/direct-config.ts";
 import { clerkKitUIInstallDecision, shouldPlanIOSDirectConfig } from "./ios/products.ts";
-import { planIOSRuntimeKey } from "./ios/runtime-key.ts";
 import { planIOSAssociatedDomain } from "./ios/associated-domain.ts";
 import { planIOSAppleEntitlement } from "./ios/apple-entitlement.ts";
 import { planIOSPrebuiltAuth } from "./ios/prebuilt-auth.ts";
 import { planIOSSDKInstall } from "./ios/install-sdk.ts";
+import { planIOSRuntimeKeyVerification } from "./ios/runtime-key.ts";
 import { resolveIOSDevelopmentPublicKey } from "./ios/development-key.ts";
 import { createIOSDryRunOutput, formatIOSSetupPlan } from "./ios/output.ts";
 import {
@@ -265,28 +265,8 @@ export async function init(options: InitOptions = {}) {
             targetId: dryRunSelection.targetId,
           })
         : undefined;
-    const preliminaryPlan = buildIOSSetupPlan(inspection, { directConfigPlan });
-    const configureStep = preliminaryPlan.steps.find(
-      (step) => step.id === "configure-publishable-key",
-    );
-    const needsRuntimeKeyHandoff =
-      dryRunSelection.state === "selected" &&
-      selectedTarget != null &&
-      configureStep?.status === "required" &&
-      hasIOSRuntimeKeyHandoffShape(inspection, selectedTarget);
-    const runtimeKeyPlan = needsRuntimeKeyHandoff
-      ? await planIOSRuntimeKey({
-          root: ctx.cwd,
-          projectPath: dryRunSelection.projectPath,
-          targetId: dryRunSelection.targetId,
-        })
-      : undefined;
     const prebuiltRuntimeBlockers = prebuiltAuthActive
-      ? planIOSPrebuiltAuthRuntimeBlockers(
-          inspection,
-          directConfigPlan,
-          runtimeKeyPlan?.status === "ready" ? runtimeKeyPlan : undefined,
-        )
+      ? planIOSPrebuiltAuthRuntimeBlockers(inspection, directConfigPlan)
       : [];
     const prebuiltAuthPlan =
       inspectedPrebuiltAuthPlan && prebuiltRuntimeBlockers.length > 0
@@ -310,7 +290,18 @@ export async function init(options: InitOptions = {}) {
             projectPath: dryRunSelection.projectPath,
             targetId: dryRunSelection.targetId,
             deferToPublishableKey: directConfigPlan?.status === "ready",
-            allowMissingEntitlementsCreation: runtimeKeyPlan?.status !== "ready",
+            allowMissingEntitlementsCreation: true,
+          })
+        : undefined;
+    const runtimeKeyVerificationPlan =
+      dryRunSelection.state === "selected" &&
+      selectedTarget?.swift.configureCalls.some(
+        (call) => call.publishableKeyWiring === "local-secrets-loader",
+      )
+        ? await planIOSRuntimeKeyVerification({
+            root: ctx.cwd,
+            projectPath: dryRunSelection.projectPath,
+            targetId: dryRunSelection.targetId,
           })
         : undefined;
     const hasLocalAppleIntent = selectedTarget?.configurations.some(
@@ -325,7 +316,7 @@ export async function init(options: InitOptions = {}) {
             root: ctx.cwd,
             projectPath: dryRunSelection.projectPath,
             targetId: dryRunSelection.targetId,
-            allowMissingEntitlementsCreation: runtimeKeyPlan?.status !== "ready",
+            allowMissingEntitlementsCreation: true,
           })
         : undefined;
     const strictSDKInstallPlan =
@@ -348,11 +339,8 @@ export async function init(options: InitOptions = {}) {
         : undefined;
     const plan = buildIOSSetupPlan(inspection, {
       sdkInstallPlan,
-      runtimeKeyPlan: runtimeKeyPlan && {
-        status: runtimeKeyPlan.status,
-        blockers: runtimeKeyPlan.blockers,
-      },
       directConfigPlan,
+      runtimeKeyVerificationPlan,
       associatedDomainPlan,
       appleEntitlementPlan,
       prebuiltAuthPlan,

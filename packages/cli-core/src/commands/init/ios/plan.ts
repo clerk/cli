@@ -10,11 +10,11 @@ import type {
 import { hasIOSDirectConfigCompatibility } from "./products.ts";
 import { clerkKitUIInstallDecision } from "./products.ts";
 import type { IOSDirectConfigPlan } from "./direct-config.ts";
-import type { IOSRuntimeKeyPlan } from "./runtime-key.ts";
 import { associatedDomainMatches, type IOSAssociatedDomainPlan } from "./associated-domain.ts";
 import type { IOSAppleEntitlementPlan } from "./apple-entitlement.ts";
 import type { IOSPrebuiltAuthPlan } from "./prebuilt-auth.ts";
 import type { IOSSDKInstallPlan } from "./install-sdk.ts";
+import type { IOSRuntimeKeyVerificationPlan } from "./runtime-key.ts";
 
 const NATIVE_APPLICATIONS_URL = "https://dashboard.clerk.com/~/native-applications";
 const QUICKSTART_URL = "https://clerk.com/docs/ios/getting-started/quickstart";
@@ -88,31 +88,13 @@ function publishableKeyRuntimeSource(
   return "available-only";
 }
 
-export function hasIOSRuntimeKeyHandoffShape(
-  inspection: IOSProjectInspectionResult,
-  target: IOSAppTarget,
-): boolean {
-  return (
-    inspection.generatedProject === null &&
-    target.swift.evidenceComplete &&
-    target.swift.entryPoints.length === 1 &&
-    target.swift.configureCalls.length === 1 &&
-    target.swift.configureCalls[0]?.publishableKeyWiring === "local-secrets-loader" &&
-    target.swift.configureCalls[0]?.localSecretsRuntimeBinding === "proven" &&
-    target.swift.configureCalls[0]?.startupBinding === "app-init" &&
-    target.swift.configureCalls[0]?.path === target.swift.entryPoints[0]?.path &&
-    target.swift.localSecretsRuntimeBindings.length === 1 &&
-    target.runtimeKeySinks.length === 1
-  );
-}
-
 export interface BuildIOSSetupPlanOptions {
   /** Strict SDK/package compatibility from the same planner used by apply. */
   sdkInstallPlan?: Pick<IOSSDKInstallPlan, "status" | "blockers">;
-  /** Strict, redacted file/Git readiness from the same planner used by apply. */
-  runtimeKeyPlan?: Pick<IOSRuntimeKeyPlan, "status" | "blockers">;
   /** Strict, publishable-key-redacted Swift source readiness from the apply planner. */
   directConfigPlan?: IOSDirectConfigPlan;
+  /** Read-only validation for the exact supported LocalSecrets compatibility path. */
+  runtimeKeyVerificationPlan?: Pick<IOSRuntimeKeyVerificationPlan, "status" | "blockers">;
   /** Strict existing-entitlements readiness from the same planner used by apply. */
   associatedDomainPlan?: Pick<
     IOSAssociatedDomainPlan,
@@ -268,8 +250,6 @@ export function buildIOSSetupPlan(
     (inspection.localPublishableKey.conflict ||
       (!inspection.localPublishableKey.found &&
         inspection.localPublishableKey.invalidSources.length > 0));
-  const localSecretsHandoff = hasIOSRuntimeKeyHandoffShape(inspection, target);
-  const needsLocalSecretsHandoff = localSecretsHandoff && !configureCallConnectedToRuntime;
   const hasDirectConfigCompatibility = hasIOSDirectConfigCompatibility(inspection, target);
   const directConfigPlanApplies = options.directConfigPlan != null && !hasDirectConfigCompatibility;
   const directConfigAutomationReady =
@@ -278,19 +258,15 @@ export function buildIOSSetupPlan(
     options.directConfigPlan.changes?.configuration !== "verify-existing";
   const directConfigBlocked =
     directConfigPlanApplies && options.directConfigPlan?.status === "blocked";
+  const runtimeKeyVerificationBlocked = options.runtimeKeyVerificationPlan?.status === "blocked";
+  const runtimeKeyVerificationBlocker = runtimeKeyVerificationBlocked
+    ? options.runtimeKeyVerificationPlan?.blockers.map((blocker) => blocker.message).join(" ")
+    : undefined;
   const directConfigBlocker = directConfigBlocked
     ? options.directConfigPlan?.blockers.map((blocker) => blocker.message).join(" ")
     : undefined;
-  const runtimeKeyAutomationReady =
-    needsLocalSecretsHandoff && options.runtimeKeyPlan?.status === "ready";
-  const runtimeKeyBlocker =
-    needsLocalSecretsHandoff && options.runtimeKeyPlan?.status === "blocked"
-      ? options.runtimeKeyPlan.blockers.map((blocker) => blocker.message).join(" ")
-      : undefined;
-  const configuredStatus: IOSSetupStepStatus = needsLocalSecretsHandoff
-    ? options.runtimeKeyPlan?.status === "blocked"
-      ? "blocked"
-      : "required"
+  const configuredStatus: IOSSetupStepStatus = runtimeKeyVerificationBlocked
+    ? "blocked"
     : publishableKeyBlocked
       ? "blocked"
       : directConfigBlocked
@@ -309,16 +285,14 @@ export function buildIOSSetupPlan(
       "configure-publishable-key",
       "Configure Clerk with a publishable key",
       configuredStatus,
-      needsLocalSecretsHandoff
-        ? runtimeKeyAutomationReady
-          ? `Clerk.configure(publishableKey:) is connected to the selected target's proven LocalSecrets.plist loader, but that runtime source does not contain a usable key. clerk init can fetch the linked development instance's publishable key directly into that plist without printing it or creating an env file.`
-          : runtimeKeyBlocker
-            ? `Clerk.configure(publishableKey:) is connected to the selected target's LocalSecrets.plist loader, but automatic key wiring is blocked: ${runtimeKeyBlocker}`
-            : "Clerk.configure(publishableKey:) is connected to the selected target's LocalSecrets.plist loader, but that source has no usable key. Add the development key manually or run the strict iOS setup preflight before applying it."
+      runtimeKeyVerificationBlocked
+        ? `The existing LocalSecrets.plist compatibility path cannot be verified safely. clerk init preserves this file and will not replace it. ${runtimeKeyVerificationBlocker ?? "Repair it manually, then rerun the command."}`
         : publishableKeyBlocked
           ? inspection.localPublishableKey.conflict
             ? "Multiple effective publishable-key sources point at different Clerk instances. Resolve the conflict before configuring the app."
-            : "The effective publishable-key source is malformed. Replace it before relying on Clerk.configure(...)."
+            : runtimeKeySource === "local-secrets"
+              ? "The existing LocalSecrets.plist publishable key is malformed. clerk init preserves this compatibility file and will not replace it; add the intended development key manually."
+              : "The effective publishable-key source is malformed. Replace it before relying on Clerk.configure(...)."
           : directConfigBlocked
             ? `Automatic direct configuration stopped because the selected Swift startup source is not safe to edit: ${directConfigBlocker ?? "Review the selected target's @main App initializer and root Scene manually."}`
             : configured
@@ -348,7 +322,7 @@ export function buildIOSSetupPlan(
                         : "Select a Clerk application and call Clerk.configure(publishableKey:) with its development publishable key directly in the selected target's @main App initializer.",
       target.swift.configureCalls,
       undefined,
-      runtimeKeyAutomationReady || directConfigAutomationReady,
+      directConfigAutomationReady && !runtimeKeyVerificationBlocked,
     ),
   );
 

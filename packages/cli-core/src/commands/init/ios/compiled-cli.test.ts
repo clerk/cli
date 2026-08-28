@@ -54,9 +54,10 @@ test("the compiled CLI semantically parses iOS XML plists", async () => {
       includeKey: false,
       localSecrets: true,
     });
+    const publishableKey = `pk_test_${Buffer.from("clerk.example.test$").toString("base64")}`;
     await Bun.write(
       join(fixtureRoot, "MyApp", "LocalSecrets.plist"),
-      '<?xml version="1.0" encoding="UTF-8"?><plist version="1.0"><dict><key>CLERK_PUBLISHABLE_KEY</key><string>replace-me</string></dict></plist>',
+      `<?xml version="1.0" encoding="UTF-8"?><plist version="1.0"><dict><key>CLERK_PUBLISHABLE_KEY</key><string>${publishableKey}</string></dict></plist>`,
     );
     await Bun.write(
       join(configDir, "config.json"),
@@ -124,8 +125,8 @@ test("the compiled CLI semantically parses iOS XML plists", async () => {
     expect(output.plan.steps).toContainEqual(
       expect.objectContaining({
         id: "configure-publishable-key",
-        status: "required",
-        automatable: true,
+        status: "satisfied",
+        automatable: false,
       }),
     );
     expect(output.plan.steps).toContainEqual(

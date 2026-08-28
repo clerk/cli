@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { build as buildPbxProject, parse as parsePbxProject } from "@bacons/xcode/json";
 import { inspectIOSProject } from "./inspect.ts";
-import { applyIOSLocalSetup, applyIOSPlannedLocalSetup, applyIOSRuntimeKeySetup } from "./apply.ts";
+import { applyIOSLocalSetup, applyIOSPlannedLocalSetup } from "./apply.ts";
 import {
   convertIOSFixtureToSynchronizedMissingEntitlements,
   createIOSFixture,
@@ -30,69 +30,6 @@ setDefaultTimeout(15_000);
 
 describe("clerk init iOS SDK runtime apply", () => {
   const captured = useCaptureLog();
-  test("does not combine LocalSecrets mutation with new entitlements creation", async () => {
-    const root = await mkdtemp(join(tmpdir(), "clerk-ios-runtime-missing-entitlements-"));
-    temporaryDirectories.push(root);
-    await createIOSFixture(root, { complete: true, includeKey: false, localSecrets: true });
-    await convertIOSFixtureToSynchronizedMissingEntitlements(root);
-    await Bun.write(
-      join(root, "MyApp", "LocalSecrets.plist"),
-      '<?xml version="1.0"?><plist version="1.0"><dict><key>CLERK_PUBLISHABLE_KEY</key><string>replace-me</string></dict></plist>',
-    );
-    const before = await treeDigest(root);
-
-    const setup = await applyIOSLocalSetup({
-      root,
-      target: "MyApp",
-      yes: true,
-      agent: false,
-      allowDirty: false,
-    });
-
-    expect(setup.runtimeKeyPlan).toMatchObject({ status: "ready" });
-    expect(setup.associatedDomainPlan).toBeUndefined();
-    expect(await treeDigest(root)).toEqual(before);
-  });
-
-  test("hands off a runtime key without rewriting a fully linked unattributed package graph", async () => {
-    const root = await mkdtemp(join(tmpdir(), "clerk-ios-unattributed-handoff-"));
-    temporaryDirectories.push(root);
-    await createIOSFixture(root, { complete: true, includeKey: false, localSecrets: true });
-    const projectFile = join(root, "MyApp.xcodeproj", "project.pbxproj");
-    const unattributedProject = (await Bun.file(projectFile).text())
-      .replace(
-        `package = ${IOS_FIXTURE_IDS.clerkPackage}; productName = ClerkKit;`,
-        "productName = ClerkKit;",
-      )
-      .replace(
-        `package = ${IOS_FIXTURE_IDS.clerkPackage}; productName = ClerkKitUI;`,
-        "productName = ClerkKitUI;",
-      );
-    await Bun.write(projectFile, unattributedProject);
-    await Bun.write(
-      join(root, "MyApp", "LocalSecrets.plist"),
-      '<?xml version="1.0"?><plist version="1.0"><dict><key>CLERK_PUBLISHABLE_KEY</key><string>replace-me</string></dict></plist>',
-    );
-    const beforeProjectBytes = await Bun.file(projectFile).bytes();
-
-    const setup = await applyIOSLocalSetup({
-      root,
-      target: "MyApp",
-      yes: true,
-      agent: false,
-      allowDirty: false,
-    });
-
-    expect(setup.runtimeKeyPlan).toMatchObject({ status: "ready" });
-    expect(await Bun.file(projectFile).bytes()).toEqual(beforeProjectBytes);
-
-    const key = developmentPublishableKey("unattributed.clerk.example");
-    await applyIOSRuntimeKeySetup(setup.runtimeKeyPlan!, key);
-
-    expect(await Bun.file(projectFile).bytes()).toEqual(beforeProjectBytes);
-    expect(await Bun.file(join(root, "MyApp", "LocalSecrets.plist")).text()).toContain(key);
-  });
-
   test("does not bypass AuthView compatibility proof for unattributed Clerk products", async () => {
     const root = await mkdtemp(join(tmpdir(), "clerk-ios-unattributed-auth-view-"));
     temporaryDirectories.push(root);
@@ -666,43 +603,6 @@ struct MyApp: App {
     const appliedEntitlements = await Bun.file(entitlementsPath).text();
     expect(appliedEntitlements).toContain(localComment);
     expect(appliedEntitlements).toContain("webcredentials:dirty-entitlements.clerk.example");
-  });
-
-  test("dirty-checks .gitignore when crash-safe key staging needs a guard", async () => {
-    const root = await mkdtemp(join(tmpdir(), "clerk-ios-runtime-dirty-ignore-"));
-    temporaryDirectories.push(root);
-    await createIOSFixture(root, { complete: true, includeKey: false, localSecrets: true });
-    await Bun.write(
-      join(root, "MyApp", "LocalSecrets.plist"),
-      '<?xml version="1.0"?><plist version="1.0"><dict><key>CLERK_PUBLISHABLE_KEY</key><string>replace-me</string></dict></plist>',
-    );
-    await Bun.write(join(root, ".gitignore"), "/MyApp/LocalSecrets.plist\n");
-    await runCommand(root, ["git", "init"]);
-    await runCommand(root, ["git", "add", "."]);
-    await runCommand(root, [
-      "git",
-      "-c",
-      "user.name=Clerk CLI Tests",
-      "-c",
-      "user.email=cli-tests@clerk.invalid",
-      "commit",
-      "-m",
-      "fixture",
-    ]);
-    await Bun.write(join(root, ".gitignore"), "/MyApp/LocalSecrets.plist\n# local change\n");
-    const before = await treeDigest(root);
-
-    await expect(
-      applyIOSLocalSetup({
-        root,
-        target: "MyApp",
-        yes: true,
-        agent: false,
-        allowDirty: false,
-      }),
-    ).rejects.toThrow(".gitignore already has local changes");
-
-    expect(await treeDigest(root)).toEqual(before);
   });
 
   test("fails closed when Git cannot determine the selected project file status", async () => {

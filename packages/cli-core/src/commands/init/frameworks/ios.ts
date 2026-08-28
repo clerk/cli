@@ -1,10 +1,10 @@
 import type { FrameworkScaffold, ProjectContext, ScaffoldPlan } from "./types.js";
 import { planIOSDirectConfig } from "../ios/direct-config.ts";
 import { inspectIOSProject } from "../ios/inspect.ts";
-import { buildIOSSetupPlan, hasIOSRuntimeKeyHandoffShape } from "../ios/plan.ts";
+import { buildIOSSetupPlan } from "../ios/plan.ts";
 import { clerkKitUIInstallDecision, shouldPlanIOSDirectConfig } from "../ios/products.ts";
-import { planIOSRuntimeKey } from "../ios/runtime-key.ts";
 import { planIOSAssociatedDomain } from "../ios/associated-domain.ts";
+import { planIOSRuntimeKeyVerification } from "../ios/runtime-key.ts";
 
 /**
  * iOS (Swift) support for `clerk init`.
@@ -15,7 +15,7 @@ import { planIOSAssociatedDomain } from "../ios/associated-domain.ts";
  * product linkage before this scaffolder runs. For a safely inspectable fresh
  * SwiftUI target, init configures the linked development publishable key
  * directly in the shipping @main App source. Existing LocalSecrets and
- * ProcessInfo integrations remain supported compatibility paths.
+ * ProcessInfo integrations remain read-only compatibility paths.
  *
  * Docs: https://clerk.com/docs/ios/getting-started/quickstart
  */
@@ -56,22 +56,6 @@ export const ios: FrameworkScaffold = {
             targetId: selection.targetId,
           })
         : undefined;
-    const preliminaryPlan = buildIOSSetupPlan(inspection, { directConfigPlan });
-    const preliminaryConfigureStep = preliminaryPlan.steps.find(
-      (step) => step.id === "configure-publishable-key",
-    );
-    const needsRuntimeKeyHandoff =
-      selection.state === "selected" &&
-      target != null &&
-      preliminaryConfigureStep?.status === "required" &&
-      hasIOSRuntimeKeyHandoffShape(inspection, target);
-    const runtimeKeyPlan = needsRuntimeKeyHandoff
-      ? await planIOSRuntimeKey({
-          root: ctx.cwd,
-          projectPath: selection.projectPath,
-          targetId: selection.targetId,
-        })
-      : undefined;
     const associatedDomainPlan =
       selection.state === "selected"
         ? await planIOSAssociatedDomain({
@@ -79,15 +63,20 @@ export const ios: FrameworkScaffold = {
             projectPath: selection.projectPath,
             targetId: selection.targetId,
             deferToPublishableKey: directConfigPlan?.status === "ready",
-            allowMissingEntitlementsCreation: runtimeKeyPlan?.status !== "ready",
+            allowMissingEntitlementsCreation: true,
+          })
+        : undefined;
+    const runtimeKeyVerificationPlan =
+      selection.state === "selected" && hasLocalSecretsConfigure
+        ? await planIOSRuntimeKeyVerification({
+            root: ctx.cwd,
+            projectPath: selection.projectPath,
+            targetId: selection.targetId,
           })
         : undefined;
     const setupPlan = buildIOSSetupPlan(inspection, {
-      runtimeKeyPlan: runtimeKeyPlan && {
-        status: runtimeKeyPlan.status,
-        blockers: runtimeKeyPlan.blockers,
-      },
       directConfigPlan,
+      runtimeKeyVerificationPlan,
       associatedDomainPlan,
     });
     const configureStep = setupPlan.steps.find((step) => step.id === "configure-publishable-key");

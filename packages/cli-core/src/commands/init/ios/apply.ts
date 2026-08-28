@@ -19,7 +19,7 @@ import {
   type IOSSDKInstallPlan,
   type PreparedIOSSDKInstallMutation,
 } from "./install-sdk.ts";
-import { buildIOSSetupPlan, hasIOSRuntimeKeyHandoffShape } from "./plan.ts";
+import { buildIOSSetupPlan } from "./plan.ts";
 import { clerkKitUIInstallDecision, shouldPlanIOSDirectConfig } from "./products.ts";
 import {
   planIOSDirectConfig,
@@ -29,17 +29,13 @@ import {
   type IOSDirectConfigPreparedMutation,
 } from "./direct-config.ts";
 import {
-  applyIOSExistingFileTransaction,
   applyIOSFileTransaction,
   type IOSExistingFileMutation,
   type IOSFileMutation,
 } from "./file-transaction.ts";
 import {
-  applyIOSRuntimeKey,
-  planIOSRuntimeKey,
   planIOSRuntimeKeyVerification,
   verifyIOSRuntimeKey,
-  type IOSRuntimeKeyPlan,
   type IOSRuntimeKeyVerificationPlan,
 } from "./runtime-key.ts";
 import {
@@ -123,8 +119,6 @@ export interface IOSLocalSetupResult {
   sdkInstallPlan?: IOSSDKInstallPlan;
   /** Fresh/default direct Swift configuration or existing inline verification. */
   directConfigPlan?: IOSDirectConfigPlan;
-  /** Pre-authorized, redacted plan whose key is resolved only after app linking. */
-  runtimeKeyPlan?: IOSRuntimeKeyPlan;
   /** Read-only proof for comparing an already configured sink after app linking. */
   runtimeKeyVerificationPlan?: IOSRuntimeKeyVerificationPlan;
   /** Existing entitlements files that can receive the exact linked webcredentials host. */
@@ -257,26 +251,19 @@ function blockerList(blockers: Array<{ message: string }>): string {
 export function planIOSPrebuiltAuthRuntimeBlockers(
   inspection: Awaited<ReturnType<typeof inspectIOSProject>>,
   directConfigPlan: IOSDirectConfigPlan | undefined,
-  runtimeKeyPlan: IOSRuntimeKeyPlan | undefined,
 ): string[] {
-  const setupPlan = buildIOSSetupPlan(inspection, { directConfigPlan, runtimeKeyPlan });
+  const setupPlan = buildIOSSetupPlan(inspection, { directConfigPlan });
   const configureStep = setupPlan.steps.find((step) => step.id === "configure-publishable-key");
   const environmentStep = setupPlan.steps.find((step) => step.id === "inject-clerk-environment");
   const directConfigurationReady =
     directConfigPlan?.status === "ready" && configureStep?.automatable === true;
-  const runtimeKeyConfigurationReady =
-    runtimeKeyPlan?.status === "ready" && configureStep?.automatable === true;
   const directEnvironmentReady =
     directConfigPlan?.status === "ready" &&
     (directConfigPlan.changes?.environment === "insert" ||
       directConfigPlan.changes?.environment === "satisfied");
   const blockers: string[] = [];
 
-  if (
-    configureStep?.status !== "satisfied" &&
-    !directConfigurationReady &&
-    !runtimeKeyConfigurationReady
-  ) {
+  if (configureStep?.status !== "satisfied" && !directConfigurationReady) {
     blockers.push(
       "Clerk.configure(publishableKey:) is neither proven at runtime nor included in the safe direct-configuration plan.",
     );
@@ -292,7 +279,6 @@ export function planIOSPrebuiltAuthRuntimeBlockers(
 
 async function validatePrebuiltAuthRuntimePostcondition(
   setup: IOSLocalSetupResult,
-  allowPendingRuntimeKey: boolean,
 ): Promise<boolean> {
   if (!setup.prebuiltAuthActive) return true;
   if (setup.nativeReadiness.target.status !== "selected") return false;
@@ -309,18 +295,10 @@ async function validatePrebuiltAuthRuntimePostcondition(
   ) {
     return false;
   }
-  const setupPlan = buildIOSSetupPlan(inspection, {
-    runtimeKeyPlan: allowPendingRuntimeKey ? setup.runtimeKeyPlan : undefined,
-  });
+  const setupPlan = buildIOSSetupPlan(inspection);
   const configureStep = setupPlan.steps.find((step) => step.id === "configure-publishable-key");
   const environmentStep = setupPlan.steps.find((step) => step.id === "inject-clerk-environment");
-  const configurationReady =
-    configureStep?.status === "satisfied" ||
-    (allowPendingRuntimeKey &&
-      setup.runtimeKeyPlan?.status === "ready" &&
-      configureStep?.automatable === true);
-
-  return configurationReady && environmentStep?.status === "satisfied";
+  return configureStep?.status === "satisfied" && environmentStep?.status === "satisfied";
 }
 
 /**
@@ -428,35 +406,25 @@ export async function applyIOSLocalSetup(
   const configureStep = buildIOSSetupPlan(inspection).steps.find(
     (candidate) => candidate.id === "configure-publishable-key",
   );
-  const needsRuntimeKeyHandoff =
-    configureStep?.status === "required" &&
-    hasIOSRuntimeKeyHandoffShape(inspection, selectedTarget);
-  const plannedRuntimeKey = needsRuntimeKeyHandoff
-    ? await planIOSRuntimeKey({
-        root: options.root,
-        projectPath: selection.projectPath,
-        targetId: selection.targetId,
-      })
-    : undefined;
-  const runtimeKeyPlan = plannedRuntimeKey?.status === "ready" ? plannedRuntimeKey : undefined;
+  const hasLocalSecretsConfigure = selectedTarget.swift.configureCalls.some(
+    (call) => call.publishableKeyWiring === "local-secrets-loader",
+  );
   const hasSatisfiedLocalRuntimeSink =
     configureStep?.status === "satisfied" &&
     inspection.localPublishableKey.source != null &&
     selectedTarget.runtimeKeySinks.some(
       (sink) => sink.path === inspection.localPublishableKey.source,
     );
-  const plannedRuntimeKeyVerification = hasSatisfiedLocalRuntimeSink
-    ? await planIOSRuntimeKeyVerification({
-        root: options.root,
-        projectPath: selection.projectPath,
-        targetId: selection.targetId,
-      })
-    : undefined;
+  const plannedRuntimeKeyVerification =
+    hasLocalSecretsConfigure || hasSatisfiedLocalRuntimeSink
+      ? await planIOSRuntimeKeyVerification({
+          root: options.root,
+          projectPath: selection.projectPath,
+          targetId: selection.targetId,
+        })
+      : undefined;
   const runtimeKeyVerificationPlan =
     plannedRuntimeKeyVerification?.status === "ready" ? plannedRuntimeKeyVerification : undefined;
-  const hasLocalSecretsConfigure = selectedTarget.swift.configureCalls.some(
-    (call) => call.publishableKeyWiring === "local-secrets-loader",
-  );
   const hasEnabledSchemeKey = inspection.localPublishableKey.candidateSources.some((source) =>
     source.endsWith(".xcscheme"),
   );
@@ -488,9 +456,7 @@ export async function applyIOSLocalSetup(
     projectPath: selection.projectPath,
     targetId: selection.targetId,
     deferToPublishableKey: directConfigPlan?.status === "ready",
-    // A LocalSecrets write is a specialized secret transaction that cannot
-    // yet share rollback ownership with a newly created entitlements file.
-    allowMissingEntitlementsCreation: runtimeKeyPlan == null,
+    allowMissingEntitlementsCreation: true,
   });
   // Associated Domains is an independent additive improvement. Unsupported
   // or ambiguous entitlements must not prevent the already-proven SDK/source
@@ -527,9 +493,7 @@ export async function applyIOSLocalSetup(
           root: options.root,
           projectPath: selection.projectPath,
           targetId: selection.targetId,
-          // New entitlements creation cannot be rolled back through the
-          // specialized LocalSecrets transaction.
-          allowMissingEntitlementsCreation: runtimeKeyPlan == null,
+          allowMissingEntitlementsCreation: true,
         })
       : undefined;
   // Existing entitlement evidence remains available for a read-only satisfied
@@ -558,12 +522,7 @@ export async function applyIOSLocalSetup(
 
   if (plannedRuntimeKeyVerification?.status === "blocked") {
     throw iosSetupError(
-      `The existing iOS runtime publishable key could not be verified safely. No local files were changed:\n${blockerList(plannedRuntimeKeyVerification.blockers)}`,
-    );
-  }
-  if (plannedRuntimeKey?.status === "blocked") {
-    throw iosSetupError(
-      `The development publishable key could not be wired safely. No local files were changed:\n${blockerList(plannedRuntimeKey.blockers)}`,
+      `The existing iOS runtime publishable key could not be verified safely. clerk init will not change that compatibility file; repair it manually, then rerun the command. No local files were changed:\n${blockerList(plannedRuntimeKeyVerification.blockers)}`,
     );
   }
   if (directConfigPlan?.status === "blocked") {
@@ -574,8 +533,7 @@ export async function applyIOSLocalSetup(
   if (
     (productDecision === "prebuilt" || prebuiltAuthActive) &&
     selectedTarget.swift.configureCalls.length === 0 &&
-    !directConfigPlan &&
-    !runtimeKeyPlan
+    !directConfigPlan
   ) {
     const reason = hasEnabledSchemeKey
       ? "an enabled Run-scheme publishable key already indicates a custom runtime configuration"
@@ -586,17 +544,13 @@ export async function applyIOSLocalSetup(
       `The fresh SwiftUI target was not edited because ${reason}. Resolve that setup or configure Clerk directly in the @main initializer, then rerun clerk init. No local files were changed.`,
     );
   }
-  if (hasLocalSecretsConfigure && !runtimeKeyPlan && !runtimeKeyVerificationPlan) {
+  if (hasLocalSecretsConfigure && !runtimeKeyVerificationPlan) {
     throw iosSetupError(
-      "An existing LocalSecrets-based Clerk configuration was found, but its selected-target runtime sink could not be proven. No local files were changed; repair or confirm that compatibility path manually.",
+      "An existing LocalSecrets-based Clerk configuration was found, but it does not provide one proven development publishable key to the selected target. clerk init preserves custom runtime sources and will not write this plist; add the intended key manually, then rerun the command.",
     );
   }
   if (prebuiltAuthActive) {
-    const runtimeBlockers = planIOSPrebuiltAuthRuntimeBlockers(
-      inspection,
-      directConfigPlan,
-      runtimeKeyPlan,
-    );
+    const runtimeBlockers = planIOSPrebuiltAuthRuntimeBlockers(inspection, directConfigPlan);
     if (runtimeBlockers.length > 0) {
       throw iosSetupError(
         `The prebuilt AuthView flow requires a proven Clerk runtime and SwiftUI environment before its source can be added. No local files were changed:\n${runtimeBlockers
@@ -631,19 +585,6 @@ export async function applyIOSLocalSetup(
     plannedPaths.push({
       absolutePath: resolve(options.root, selection.projectPath, "project.pbxproj"),
       displayPath: `${selection.projectPath}/project.pbxproj`,
-    });
-  }
-  if (runtimeKeyPlan?.localSecretsPath) {
-    plannedPaths.push({
-      absolutePath: resolve(options.root, runtimeKeyPlan.localSecretsPath),
-      displayPath: runtimeKeyPlan.localSecretsPath,
-    });
-  }
-  const changesGitignore = runtimeKeyPlan?.changesGitignore === true;
-  if (changesGitignore && runtimeKeyPlan?.gitignorePath) {
-    plannedPaths.push({
-      absolutePath: resolve(options.root, runtimeKeyPlan.gitignorePath),
-      displayPath: runtimeKeyPlan.gitignorePath,
     });
   }
   if (directConfigNeedsWrite(directConfigPlan) && directConfigPlan?.sourcePath) {
@@ -726,7 +667,6 @@ export async function applyIOSLocalSetup(
 
   const hasLocalWrites =
     installPlan.status === "ready" ||
-    runtimeKeyPlan != null ||
     directConfigNeedsWrite(directConfigPlan) ||
     prebuiltAuthPlan?.status === "ready" ||
     associatedDomainNeedsWrite(associatedDomainPlan) ||
@@ -745,19 +685,6 @@ export async function applyIOSLocalSetup(
   if (installPlan.status === "ready") {
     log.info(`  ${yellow("MODIFY")}  ${selection.projectPath}/project.pbxproj`);
     for (const action of installPlan.actions) log.info(`          ${action}`);
-  }
-  if (runtimeKeyPlan) {
-    if (changesGitignore && runtimeKeyPlan.gitignorePath) {
-      const operation = runtimeKeyPlan.expectedGitignoreHash == null ? "CREATE" : "MODIFY";
-      log.info(`  ${yellow(operation)}  ${runtimeKeyPlan.gitignorePath}`);
-    }
-    log.info(`  ${yellow("MODIFY")}  ${runtimeKeyPlan.localSecretsPath}`);
-    for (const action of runtimeKeyPlan.actions) log.info(`          ${action}`);
-    log.info(
-      dim(
-        "          The linked development publishable key will be fetched after authentication and will never be printed.",
-      ),
-    );
   }
   if (directConfigPlan) {
     const operation = directConfigNeedsWrite(directConfigPlan) ? "MODIFY" : "VERIFY";
@@ -881,7 +808,6 @@ export async function applyIOSLocalSetup(
     ...(unverifiedAppIdPrefixSuggestion ? { unverifiedAppIdPrefixSuggestion } : {}),
     sdkInstallPlan,
     directConfigPlan,
-    runtimeKeyPlan,
     runtimeKeyVerificationPlan,
     associatedDomainPlan,
     appleEntitlementPlan,
@@ -893,7 +819,6 @@ export async function applyIOSLocalSetup(
     requiresLinkedApp: true,
     requiresDevelopmentKey:
       directConfigPlan != null ||
-      runtimeKeyPlan != null ||
       runtimeKeyVerificationPlan != null ||
       associatedDomainPlan?.requiresPublishableKey === true,
     verifiesExistingKey:
@@ -927,18 +852,6 @@ function prebuiltAuthFileMutation(
     candidateBytes: prepared.mutation.candidateBytes,
     candidateHash: prepared.mutation.candidateHash,
     mode: prepared.mutation.mode,
-  };
-}
-
-function reverseFileMutation(mutation: IOSExistingFileMutation): IOSExistingFileMutation {
-  return {
-    path: mutation.path,
-    boundary: mutation.boundary,
-    originalBytes: mutation.candidateBytes,
-    originalHash: mutation.candidateHash,
-    candidateBytes: mutation.originalBytes,
-    candidateHash: mutation.originalHash,
-    mode: mutation.mode,
   };
 }
 
@@ -1040,16 +953,6 @@ function composeAppleMutations(
   ];
 }
 
-function existingMutationsOnly(mutations: readonly IOSFileMutation[]): IOSExistingFileMutation[] {
-  if (mutations.some((mutation) => "kind" in mutation && mutation.kind === "create")) {
-    throw iosSetupError(
-      "The approved iOS setup attempted to combine incompatible runtime and file-creation transactions. No additional local setup changes were written; rerun clerk init.",
-      ERROR_CODE.IOS_SETUP_PLAN_INVALID,
-    );
-  }
-  return mutations as IOSExistingFileMutation[];
-}
-
 function assertUniqueMutationPaths(mutations: readonly IOSFileMutation[]): void {
   const paths = mutations.map((mutation) => resolve(mutation.path));
   if (new Set(paths).size !== paths.length) {
@@ -1091,29 +994,12 @@ async function validateSatisfiedPrebuiltAuth(plan: IOSPrebuiltAuthPlan): Promise
   return current.status === "satisfied" && current.sourcePath === plan.sourcePath;
 }
 
-async function rollbackPreparedLocalMutations(
-  mutations: readonly IOSExistingFileMutation[],
-): Promise<void> {
-  if (mutations.length === 0) return;
-  const result = await applyIOSExistingFileTransaction(
-    [...mutations].reverse().map(reverseFileMutation),
-    [],
-  );
-  if (result.status !== "applied") {
-    throw iosSetupError(
-      "The publishable-key update failed, and a concurrent local edit prevented the approved iOS setup from being restored completely. Inspect the previewed project and entitlements files before retrying.",
-      ERROR_CODE.IOS_LOCAL_ROLLBACK_FAILED,
-    );
-  }
-}
-
 function requireDevelopmentKey(
   setup: IOSLocalSetupResult,
   publishableKey: string | undefined,
 ): string {
   const planNeedsKey = Boolean(
     setup.directConfigPlan ||
-    setup.runtimeKeyPlan ||
     setup.runtimeKeyVerificationPlan ||
     setup.associatedDomainPlan?.requiresPublishableKey,
   );
@@ -1164,21 +1050,9 @@ function assertCoherentLocalSetup(setup: IOSLocalSetupResult): void {
       ERROR_CODE.IOS_SETUP_PLAN_INVALID,
     );
   }
-  if (
-    setup.runtimeKeyPlan &&
-    (setup.associatedDomainPlan?.missingEntitlementsSettings ||
-      setup.appleEntitlementPlan?.missingEntitlementsSettings)
-  ) {
-    throw iosSetupError(
-      "The approved iOS setup cannot combine a LocalSecrets write with new entitlements-file creation. No local setup changes were written; rerun clerk init.",
-      ERROR_CODE.IOS_SETUP_PLAN_INVALID,
-    );
-  }
-  const runtimePlans = [
-    setup.directConfigPlan,
-    setup.runtimeKeyPlan,
-    setup.runtimeKeyVerificationPlan,
-  ].filter((plan) => plan != null);
+  const runtimePlans = [setup.directConfigPlan, setup.runtimeKeyVerificationPlan].filter(
+    (plan) => plan != null,
+  );
   if (runtimePlans.length > 1) {
     throw iosSetupError(
       "The approved iOS setup contains conflicting runtime configuration routes. No local setup changes were written; rerun clerk init.",
@@ -1226,8 +1100,8 @@ function assertCoherentLocalSetup(setup: IOSLocalSetupResult): void {
 /**
  * Commits a previously previewed iOS setup after authentication. Fresh direct
  * configuration combines project.pbxproj and the Swift entry source in one
- * guarded local transaction. Existing LocalSecrets integrations retain their
- * specialized compatibility transaction.
+ * guarded local transaction. Existing LocalSecrets integrations are verified
+ * read-only and are never rewritten.
  */
 export async function applyIOSPlannedLocalSetup(
   setup: IOSLocalSetupResult,
@@ -1257,11 +1131,7 @@ export async function applyIOSPlannedLocalSetup(
         ERROR_CODE.IOS_SETUP_STALE,
       );
     }
-    const runtimeBlockers = planIOSPrebuiltAuthRuntimeBlockers(
-      inspection,
-      setup.directConfigPlan,
-      setup.runtimeKeyPlan,
-    );
+    const runtimeBlockers = planIOSPrebuiltAuthRuntimeBlockers(inspection, setup.directConfigPlan);
     if (runtimeBlockers.length > 0) {
       throw iosSetupError(
         `The approved prebuilt AuthView setup no longer proves its Clerk runtime prerequisites. No local setup changes were written:\n${runtimeBlockers
@@ -1371,7 +1241,7 @@ export async function applyIOSPlannedLocalSetup(
       postconditions.push(async () => validateSatisfiedPrebuiltAuth(preparedPrebuiltAuth.plan));
     }
     if (setup.prebuiltAuthActive) {
-      postconditions.push(async () => validatePrebuiltAuthRuntimePostcondition(setup, false));
+      postconditions.push(async () => validatePrebuiltAuthRuntimePostcondition(setup));
     }
     assertUniqueMutationPaths(mutations);
 
@@ -1404,7 +1274,7 @@ export async function applyIOSPlannedLocalSetup(
     if (preparedPrebuiltAuth?.status === "ready") {
       log.success(`Prebuilt AuthView added to ${preparedPrebuiltAuth.plan.sourcePath}`);
     }
-    if (!setup.runtimeKeyPlan && preparedAssociatedDomain?.status === "ready") {
+    if (preparedAssociatedDomain?.status === "ready") {
       log.success("Clerk Associated Domain added to the selected target entitlements");
     }
     if (preparedAppleEntitlement?.status === "ready") {
@@ -1438,9 +1308,8 @@ export async function applyIOSPlannedLocalSetup(
   const localMutations = composeAppleMutations(baseMutations, preparedAppleEntitlement);
   assertUniqueMutationPaths(localMutations);
 
-  // SDK-only and LocalSecrets compatibility routes apply the PBX candidate
-  // after authentication. If the specialized key transaction subsequently
-  // fails, restore the PBX bytes when they are still untouched.
+  // SDK-only and read-only compatibility routes apply their local candidates
+  // together after authentication.
   if (localMutations.length > 0) {
     const postconditions: Array<() => boolean | Promise<boolean>> = [
       ...(preparedSDK ? [async () => validateIOSSDKInstallPostcondition(preparedSDK.plan)] : []),
@@ -1460,10 +1329,7 @@ export async function applyIOSPlannedLocalSetup(
           ? [async () => validateSatisfiedPrebuiltAuth(preparedPrebuiltAuth.plan)]
           : []),
       ...(setup.prebuiltAuthActive
-        ? [
-            async () =>
-              validatePrebuiltAuthRuntimePostcondition(setup, setup.runtimeKeyPlan != null),
-          ]
+        ? [async () => validatePrebuiltAuthRuntimePostcondition(setup)]
         : []),
     ];
     if (setup.runtimeKeyVerificationPlan) {
@@ -1489,27 +1355,6 @@ export async function applyIOSPlannedLocalSetup(
         ERROR_CODE.IOS_LOCAL_APPLY_FAILED,
       );
     }
-    if (!setup.runtimeKeyPlan && preparedSDK?.status === "ready") {
-      log.success(`${formatProducts(preparedSDK.plan.products)} linked to ${setup.targetName}`);
-    }
-    if (!setup.runtimeKeyPlan && preparedAssociatedDomain?.status === "ready") {
-      log.success("Clerk Associated Domain added to the selected target entitlements");
-    }
-    if (!setup.runtimeKeyPlan && preparedAppleEntitlement?.status === "ready") {
-      log.success("Sign in with Apple entitlement added to the selected target");
-    }
-    if (!setup.runtimeKeyPlan && preparedPrebuiltAuth?.status === "ready") {
-      log.success(`Prebuilt AuthView added to ${preparedPrebuiltAuth.plan.sourcePath}`);
-    }
-  }
-
-  if (setup.runtimeKeyPlan) {
-    try {
-      await applyIOSRuntimeKeySetup(setup.runtimeKeyPlan, key);
-    } catch (error) {
-      await rollbackPreparedLocalMutations(existingMutationsOnly(localMutations));
-      throw error;
-    }
     if (preparedSDK?.status === "ready") {
       log.success(`${formatProducts(preparedSDK.plan.products)} linked to ${setup.targetName}`);
     }
@@ -1522,43 +1367,11 @@ export async function applyIOSPlannedLocalSetup(
     if (preparedPrebuiltAuth?.status === "ready") {
       log.success(`Prebuilt AuthView added to ${preparedPrebuiltAuth.plan.sourcePath}`);
     }
-  } else if (setup.runtimeKeyVerificationPlan) {
+  }
+
+  if (setup.runtimeKeyVerificationPlan) {
     log.info(dim("The existing publishable key matches the linked Clerk application."));
   }
-}
-
-export async function applyIOSRuntimeKeySetup(
-  plan: IOSRuntimeKeyPlan,
-  publishableKey: string,
-): Promise<void> {
-  const result = await withSpinner("Wiring the development publishable key...", async () =>
-    applyIOSRuntimeKey(plan, publishableKey),
-  );
-  if (result.status === "applied") {
-    log.success(`Publishable key wired to ${plan.localSecretsPath}`);
-    return;
-  }
-  if (result.status === "satisfied") {
-    log.info(dim(`The linked publishable key is already wired to ${plan.localSecretsPath}.`));
-    return;
-  }
-  if (result.status === "stale") {
-    throw iosSetupError(
-      "LocalSecrets.plist or .gitignore changed after the preview. Nothing new was written; rerun clerk init to build a fresh plan.",
-      ERROR_CODE.IOS_SETUP_STALE,
-    );
-  }
-  if (result.status === "rolled-back") {
-    throw iosSetupError(
-      result.message ?? "The runtime-key update failed validation and was restored.",
-      ERROR_CODE.IOS_LOCAL_APPLY_FAILED,
-    );
-  }
-  const reasons = result.plan.blockers.map((blocker) => `  • ${blocker.message}`).join("\n");
-  throw iosSetupError(
-    result.message ?? `The development publishable key could not be wired safely:\n${reasons}`,
-    ERROR_CODE.IOS_LOCAL_APPLY_FAILED,
-  );
 }
 
 export async function verifyIOSRuntimeKeySetup(

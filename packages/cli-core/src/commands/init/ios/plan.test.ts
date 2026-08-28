@@ -6,8 +6,7 @@ import { planIOSDirectConfig } from "./direct-config.ts";
 import { planIOSAssociatedDomain } from "./associated-domain.ts";
 import { inspectIOSProject } from "./inspect.ts";
 import { formatIOSSetupPlan } from "./output.ts";
-import { buildIOSSetupPlan, hasIOSRuntimeKeyHandoffShape } from "./plan.ts";
-import { planIOSRuntimeKey } from "./runtime-key.ts";
+import { buildIOSSetupPlan } from "./plan.ts";
 import { createIOSFixture } from "./test-helpers.ts";
 
 const temporaryDirectories: string[] = [];
@@ -97,7 +96,7 @@ describe("buildIOSSetupPlan", () => {
     expect(configureStep?.description).toContain("More than one Clerk.configure");
   });
 
-  test("keeps an empty LocalSecrets handoff despite a stale scheme candidate", async () => {
+  test("does not replace an empty LocalSecrets source from a stale scheme candidate", async () => {
     const root = await mkdtemp(join(tmpdir(), "clerk-ios-plan-"));
     temporaryDirectories.push(root);
     await createIOSFixture(root, { complete: true, includeKey: false, localSecrets: true });
@@ -106,7 +105,6 @@ describe("buildIOSSetupPlan", () => {
       '<?xml version="1.0"?><plist version="1.0"><dict></dict></plist>',
     );
     const inspection = await inspectIOSProject(root);
-    const target = inspection.appTargets[0]!;
     const schemePath = "MyApp.xcodeproj/xcshareddata/xcschemes/MyApp.xcscheme";
     inspection.localPublishableKey = {
       evidenceComplete: true,
@@ -123,9 +121,8 @@ describe("buildIOSSetupPlan", () => {
       (step) => step.id === "configure-publishable-key",
     );
 
-    expect(hasIOSRuntimeKeyHandoffShape(inspection, target)).toBe(true);
-    expect(configureStep).toMatchObject({ status: "required", automatable: false });
-    expect(configureStep?.description).toContain("LocalSecrets.plist");
+    expect(configureStep).toMatchObject({ status: "review", automatable: false });
+    expect(configureStep?.description).toContain("could not be connected to its loader");
   });
 
   test("satisfies configuration and derives the domain from a redacted inline literal", async () => {
@@ -564,14 +561,7 @@ struct MyApp: App {
       ),
     );
     const inspection = await inspectIOSProject(root);
-    if (inspection.selection.state !== "selected") throw new Error("fixture target not selected");
-    const runtimeKeyPlan = await planIOSRuntimeKey({
-      root,
-      projectPath: inspection.selection.projectPath,
-      targetId: inspection.selection.targetId,
-    });
-
-    const plan = buildIOSSetupPlan(inspection, { runtimeKeyPlan });
+    const plan = buildIOSSetupPlan(inspection);
 
     expect(inspection.appTargets[0]?.swift.configureCalls[0]).toMatchObject({
       publishableKeyWiring: "local-secrets-loader",
@@ -691,7 +681,7 @@ struct MyApp: App {
     );
   });
 
-  test("offers to replace a malformed key in a proven selected-target runtime sink", async () => {
+  test("preserves a malformed key in a proven selected-target runtime sink", async () => {
     const root = await mkdtemp(join(tmpdir(), "clerk-ios-plan-"));
     temporaryDirectories.push(root);
     await createIOSFixture(root, { complete: true, includeKey: false, localSecrets: true });
@@ -701,18 +691,13 @@ struct MyApp: App {
     );
     const inspection = await inspectIOSProject(root);
     if (inspection.selection.state !== "selected") throw new Error("fixture target not selected");
-    const runtimeKeyPlan = await planIOSRuntimeKey({
-      root,
-      projectPath: inspection.selection.projectPath,
-      targetId: inspection.selection.targetId,
-    });
     const directConfigPlan = await planIOSDirectConfig({
       root,
       projectPath: inspection.selection.projectPath,
       targetId: inspection.selection.targetId,
     });
 
-    const plan = buildIOSSetupPlan(inspection, { runtimeKeyPlan, directConfigPlan });
+    const plan = buildIOSSetupPlan(inspection, { directConfigPlan });
 
     expect(inspection.localPublishableKey).toMatchObject({
       found: false,
@@ -721,12 +706,12 @@ struct MyApp: App {
     });
     expect(directConfigPlan.status).toBe("blocked");
     expect(plan.steps.find((step) => step.id === "configure-publishable-key")).toMatchObject({
-      status: "required",
-      automatable: true,
+      status: "blocked",
+      automatable: false,
     });
     expect(
       plan.steps.find((step) => step.id === "configure-publishable-key")?.description,
-    ).toContain("LocalSecrets.plist");
+    ).toContain("malformed");
     expect(
       plan.steps.find((step) => step.id === "configure-publishable-key")?.description,
     ).not.toContain("Automatic direct configuration stopped");

@@ -801,7 +801,7 @@ describe("init iOS", () => {
     expect(`${captured.out}\n${captured.err}`).not.toContain(VALID_DEVELOPMENT_KEY);
   });
 
-  test("wires a linked development key directly when iOS preflight proves a runtime sink", async () => {
+  test("passes the linked development key to the approved iOS setup", async () => {
     setup({ email: "test@test.com" });
     const iosCtx = {
       ...FAKE_CTX,
@@ -817,30 +817,14 @@ describe("init iOS", () => {
         ecosystem: "swift" as const,
       },
     };
-    const runtimeKeyPlan = {
-      schemaVersion: 1 as const,
-      kind: "clerk-ios-runtime-key" as const,
-      status: "ready" as const,
-      root: iosCtx.cwd,
-      projectPath: "MyApp.xcodeproj",
-      targetId: "TARGET",
-      localSecretsPath: "MyApp/LocalSecrets.plist",
-      gitignorePath: ".gitignore",
-      gitignoreRule: "/MyApp/LocalSecrets.plist",
-      expectedLocalSecretsHash: "source-hash",
-      expectedGitignoreHash: "ignore-hash",
-      changesGitignore: true,
-      actions: ["Set the redacted publishable key."],
-      blockers: [],
-    };
     spyOn(context, "gatherContext").mockResolvedValue(iosCtx);
     spyOn(config, "resolveProfile")
       .mockResolvedValueOnce(undefined)
       .mockResolvedValueOnce(undefined)
       .mockResolvedValue({ profile: { appId: "app_test" } } as never);
     const setupResult = iosSetupResult({
-      runtimeKeyPlan,
       requiresLinkedApp: true,
+      requiresDevelopmentKey: true,
     });
     const preflightSpy = spyOn(iosApplyMod, "applyIOSLocalSetup").mockResolvedValue(setupResult);
     const linkSpy = spyOn(linkMod, "link").mockResolvedValue(undefined);
@@ -1147,28 +1131,12 @@ describe("init iOS", () => {
         ecosystem: "swift" as const,
       },
     };
-    const runtimeKeyPlan = {
-      schemaVersion: 1 as const,
-      kind: "clerk-ios-runtime-key" as const,
-      status: "ready" as const,
-      root: iosCtx.cwd,
-      projectPath: "MyApp.xcodeproj",
-      targetId: "TARGET",
-      localSecretsPath: "MyApp/LocalSecrets.plist",
-      gitignorePath: ".gitignore",
-      gitignoreRule: "/MyApp/LocalSecrets.plist",
-      expectedLocalSecretsHash: "source-hash",
-      expectedGitignoreHash: "ignore-hash",
-      changesGitignore: true,
-      actions: ["Set the redacted publishable key."],
-      blockers: [],
-    };
     spyOn(context, "gatherContext").mockResolvedValue(iosCtx);
     spyOn(config, "resolveProfile").mockResolvedValue({
       profile: { appId: "app_linked" },
     } as never);
     spyOn(iosApplyMod, "applyIOSLocalSetup").mockResolvedValue(
-      iosSetupResult({ runtimeKeyPlan, requiresLinkedApp: true }),
+      iosSetupResult({ requiresLinkedApp: true, requiresDevelopmentKey: true }),
     );
     spyOn(iosDevelopmentKeyMod, "resolveIOSDevelopmentPublicKey").mockResolvedValue({
       applicationId: "app_changed",
@@ -1369,22 +1337,6 @@ describe("init iOS", () => {
     const { captured } = setup({ email: "test@test.com" });
     const iosCtx = nativeIOSContext();
     const key = `pk_test_${Buffer.from("frozen.clerk.example$").toString("base64")}`;
-    const runtimeKeyPlan = {
-      schemaVersion: 1 as const,
-      kind: "clerk-ios-runtime-key" as const,
-      status: "ready" as const,
-      root: iosCtx.cwd,
-      projectPath: "MyApp.xcodeproj",
-      targetId: "TARGET",
-      localSecretsPath: "MyApp/LocalSecrets.plist",
-      gitignorePath: ".gitignore",
-      gitignoreRule: "/MyApp/LocalSecrets.plist",
-      expectedLocalSecretsHash: "source-hash",
-      expectedGitignoreHash: "ignore-hash",
-      changesGitignore: true,
-      actions: ["Set the redacted publishable key."],
-      blockers: [],
-    };
     spyOn(context, "gatherContext").mockResolvedValue(iosCtx);
     spyOn(config, "resolveProfile")
       .mockResolvedValueOnce(undefined)
@@ -1399,8 +1351,8 @@ describe("init iOS", () => {
       publishableKey: key,
     });
     const setupResult = iosSetupResult({
-      runtimeKeyPlan,
       requiresLinkedApp: true,
+      requiresDevelopmentKey: true,
     });
     spyOn(iosApplyMod, "applyIOSLocalSetup").mockResolvedValue(setupResult);
 

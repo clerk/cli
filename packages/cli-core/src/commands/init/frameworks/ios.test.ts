@@ -155,7 +155,8 @@ test("keeps a proven LocalSecrets loader as a compatibility path", async () => {
 
   const plan = await ios.scaffold({ ...makeCtx(), cwd: root, iosTarget: "MyApp" });
 
-  expect(plan.postInstructions.some((i) => i.includes("LocalSecrets.plist loader"))).toBe(true);
+  expect(plan.postInstructions.some((i) => i.includes("LocalSecrets.plist"))).toBe(true);
+  expect(plan.postInstructions.some((i) => i.includes("will not replace it"))).toBe(true);
   expect(
     plan.postInstructions.some((i) => i.includes("single shipping `@main` App initializer")),
   ).toBe(false);

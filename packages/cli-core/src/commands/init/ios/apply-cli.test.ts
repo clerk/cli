@@ -869,7 +869,7 @@ import SwiftUI
     }
   });
 
-  test("pre-authorizes a proven runtime sink without fetching or writing its key", async () => {
+  test("preserves a LocalSecrets runtime sink that has no valid key", async () => {
     const root = await mkdtemp(join(tmpdir(), "clerk-ios-runtime-preflight-"));
     temporaryDirectories.push(root);
     await createIOSFixture(root, { complete: true, includeKey: false, localSecrets: true });
@@ -879,19 +879,16 @@ import SwiftUI
     );
     const before = await treeDigest(root);
 
-    const result = await applyIOSLocalSetup({
-      root,
-      target: "MyApp",
-      yes: true,
-      agent: false,
-      allowDirty: false,
-    });
+    await expect(
+      applyIOSLocalSetup({
+        root,
+        target: "MyApp",
+        yes: true,
+        agent: false,
+        allowDirty: false,
+      }),
+    ).rejects.toThrow("will not change that compatibility file");
 
-    expect(result.runtimeKeyPlan).toMatchObject({
-      status: "ready",
-      localSecretsPath: "MyApp/LocalSecrets.plist",
-    });
     expect(await treeDigest(root)).toEqual(before);
-    expect(JSON.stringify(result)).not.toContain("pk_live_");
   });
 });

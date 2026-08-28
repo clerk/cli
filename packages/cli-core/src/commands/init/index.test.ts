@@ -21,7 +21,6 @@ import {
   nextStepsMod,
   mockExistingProject,
   mockMiddlewareScaffold,
-  iosApplyMod,
   iosDevelopmentKeyMod,
 } from "../../test/lib/init-harness.ts";
 import * as telemetryMod from "../../lib/telemetry.ts";
@@ -95,7 +94,6 @@ describe("init", () => {
 
     expect(iosDevelopmentKeyMod.resolveIOSDevelopmentPublicKey).not.toHaveBeenCalled();
     expect(pullMod.pull).not.toHaveBeenCalled();
-    expect(iosApplyMod.applyIOSRuntimeKeySetup).not.toHaveBeenCalled();
   });
 
   test("agent mode runs existing-project flow without prompts", async () => {

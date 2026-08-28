@@ -75,7 +75,12 @@ describe("clerk init --dry-run", () => {
   test("non-TTY mode emits JSON without network requests or local/global writes", async () => {
     const root = await mkdtemp(join(tmpdir(), "clerk-ios-cli-"));
     temporaryDirectories.push(root);
-    await createIOSFixture(root, { complete: true });
+    await createIOSFixture(root, { complete: true, localSecrets: true });
+    const publishableKey = `pk_test_${Buffer.from("clerk.example.test$").toString("base64")}`;
+    await Bun.write(
+      join(root, "MyApp", "LocalSecrets.plist"),
+      `<?xml version="1.0"?><plist version="1.0"><dict><key>CLERK_PUBLISHABLE_KEY</key><string>${publishableKey}</string></dict></plist>`,
+    );
     const configDir = await createIsolatedCLIState();
     const projectBefore = await treeDigest(root);
     const configBefore = await treeDigest(configDir);

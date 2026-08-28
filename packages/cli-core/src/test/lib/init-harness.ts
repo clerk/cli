@@ -223,7 +223,6 @@ export function useInitHarness(): InitHarness {
         verifiesExistingKey: false,
       }),
       spyOn(iosApplyModule, "applyIOSPlannedLocalSetup").mockResolvedValue(undefined),
-      spyOn(iosApplyModule, "applyIOSRuntimeKeySetup").mockResolvedValue(undefined),
       spyOn(iosApplyModule, "verifyIOSRuntimeKeySetup").mockResolvedValue(undefined),
       spyOn(nativeRemoteModule, "prepareIOSNativeRemoteSetup").mockResolvedValue({
         schemaVersion: 1,
