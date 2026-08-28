@@ -243,6 +243,40 @@ export type NativeSettings = {
   api_enabled: boolean;
 };
 
+function unexpectedNativeSettingsResponse(): CliError {
+  return new CliError("Clerk returned an invalid Native API settings response.", {
+    code: ERROR_CODE.PLAPI_UNEXPECTED_RESPONSE,
+  });
+}
+
+/**
+ * Validate Native settings at runtime. This is exported so callers that inject
+ * an API implementation in tests or integrations retain the same fail-closed
+ * behavior as the production HTTP client.
+ */
+export function validateNativeSettings(value: unknown): NativeSettings {
+  if (
+    value == null ||
+    typeof value !== "object" ||
+    Array.isArray(value) ||
+    (value as Record<string, unknown>).object !== "native_settings" ||
+    typeof (value as Record<string, unknown>).api_enabled !== "boolean"
+  ) {
+    throw unexpectedNativeSettingsResponse();
+  }
+  return value as NativeSettings;
+}
+
+async function readNativeSettingsResponse(response: Response): Promise<NativeSettings> {
+  let value: unknown;
+  try {
+    value = await response.json();
+  } catch {
+    throw unexpectedNativeSettingsResponse();
+  }
+  return validateNativeSettings(value);
+}
+
 export type IOSApplication = {
   object: "ios_application";
   id: string;
@@ -271,7 +305,7 @@ export async function getNativeSettings(
     getPlapiBaseUrl(),
   );
   const response = await plapiFetch("GET", url);
-  return response.json() as Promise<NativeSettings>;
+  return readNativeSettingsResponse(response);
 }
 
 export async function enableNativeApi(
@@ -287,7 +321,7 @@ export async function enableNativeApi(
     body: JSON.stringify({ api_enabled: true }),
     idempotencyKey: options?.idempotencyKey,
   });
-  return response.json() as Promise<NativeSettings>;
+  return readNativeSettingsResponse(response);
 }
 
 export async function listIOSApplications(

@@ -9,7 +9,7 @@ mock.module("./credential-store.ts", () => ({
 
 const { createIOSApplication, enableNativeApi, getNativeSettings, listIOSApplications } =
   await import("./plapi.ts");
-const { PlapiError } = await import("./errors.ts");
+const { ERROR_CODE, PlapiError } = await import("./errors.ts");
 
 describe("PLAPI native application client", () => {
   const originalEnv = { ...process.env };
@@ -76,6 +76,40 @@ describe("PLAPI native application client", () => {
     expect(capturedHeaders?.get("Content-Type")).toBe("application/json");
     expect(capturedHeaders?.get("Idempotency-Key")).toBe("enable-native-api-123");
     expect(result).toEqual(responseBody);
+  });
+
+  test.each([
+    { name: "an array", body: [] },
+    { name: "the wrong object discriminator", body: { object: "instance", api_enabled: true } },
+    {
+      name: "a non-boolean enabled value",
+      body: { object: "native_settings", api_enabled: "false" },
+    },
+  ])("rejects $name from the Native settings GET", async ({ body }) => {
+    stubFetch(async () => Response.json(body));
+
+    await expect(getNativeSettings("app_abc", "development")).rejects.toMatchObject({
+      name: "CliError",
+      code: ERROR_CODE.PLAPI_UNEXPECTED_RESPONSE,
+    });
+  });
+
+  test.each([
+    { name: "an array", body: [] },
+    { name: "the wrong object discriminator", body: { object: "instance", api_enabled: true } },
+    {
+      name: "a non-boolean enabled value",
+      body: { object: "native_settings", api_enabled: "false" },
+    },
+  ])("rejects $name from the Native settings PATCH", async ({ body }) => {
+    stubFetch(async () => Response.json(body));
+
+    await expect(
+      enableNativeApi("app_abc", "development", { idempotencyKey: "enable-native-api-123" }),
+    ).rejects.toMatchObject({
+      name: "CliError",
+      code: ERROR_CODE.PLAPI_UNEXPECTED_RESPONSE,
+    });
   });
 
   test("lists the public iOS application DTOs", async () => {

@@ -15,7 +15,11 @@ import {
   type IOSNativeRemoteTargetReader,
   type IOSNativeRemoteTargetSnapshot,
 } from "./native-remote.ts";
-import type { IOSApplication, NativeSettings } from "../../../lib/plapi.ts";
+import {
+  validateNativeSettings,
+  type IOSApplication,
+  type NativeSettings,
+} from "../../../lib/plapi.ts";
 import type {
   IOSNativeRegistrationRetryIdentity,
   IOSNativeRegistrationRetryStore,
@@ -32,6 +36,10 @@ const captured = useCaptureLog();
 
 function nativeSettings(apiEnabled: boolean): NativeSettings {
   return { object: "native_settings", api_enabled: apiEnabled };
+}
+
+function malformedNativeSettings(apiEnabled: unknown): NativeSettings {
+  return { object: "native_settings", api_enabled: apiEnabled } as unknown as NativeSettings;
 }
 
 function registration(
@@ -356,6 +364,26 @@ describe("Clerk Native Application remote setup", () => {
         expect.objectContaining({ code: "app-id-prefix-invalid" }),
       ]),
     );
+  });
+
+  test("rejects malformed Native settings before planning", () => {
+    let thrown: unknown;
+    try {
+      buildIOSNativeRemotePlan({
+        applicationId: APPLICATION_ID,
+        instanceId: INSTANCE_ID,
+        target: selectedTarget(),
+        nativeSettings: malformedNativeSettings("false"),
+        registrations: [registration()],
+      });
+    } catch (error) {
+      thrown = error;
+    }
+
+    expect(thrown).toMatchObject({
+      name: "CliError",
+      code: ERROR_CODE.PLAPI_UNEXPECTED_RESPONSE,
+    });
   });
 
   test.each([
@@ -1251,6 +1279,93 @@ describe("Clerk Native Application remote setup", () => {
       ),
     ).resolves.toBeUndefined();
     expect(calls.filter((call) => call === "PATCH native settings")).toHaveLength(1);
+  });
+
+  test("does not let a follow-up GET hide a malformed Native settings PATCH response", async () => {
+    const exactRegistration = registration();
+    const { api, calls } = scriptedAPI({
+      nativeReads: [nativeSettings(false), nativeSettings(true)],
+      registrationReads: [[exactRegistration]],
+      enable: async () => malformedNativeSettings("false"),
+    });
+
+    await expect(
+      applyRemoteSetup(
+        plan({ nativeApi: "required", registration: "satisfied" }),
+        api,
+        approvedTargetReader,
+      ),
+    ).rejects.toMatchObject({
+      name: "CliError",
+      code: ERROR_CODE.PLAPI_UNEXPECTED_RESPONSE,
+    });
+
+    expect(calls.filter((call) => call === "GET native settings")).toHaveLength(1);
+    expect(calls.filter((call) => call === "PATCH native settings")).toHaveLength(1);
+  });
+
+  test("does not let a follow-up GET hide a Native settings client parser failure", async () => {
+    const exactRegistration = registration();
+    const { api, calls } = scriptedAPI({
+      nativeReads: [nativeSettings(false), nativeSettings(true)],
+      registrationReads: [[exactRegistration]],
+      enable: async () => validateNativeSettings(malformedNativeSettings("false")),
+    });
+
+    await expect(
+      applyRemoteSetup(
+        plan({ nativeApi: "required", registration: "satisfied" }),
+        api,
+        approvedTargetReader,
+      ),
+    ).rejects.toMatchObject({
+      name: "CliError",
+      code: ERROR_CODE.PLAPI_UNEXPECTED_RESPONSE,
+    });
+
+    expect(calls.filter((call) => call === "GET native settings")).toHaveLength(1);
+    expect(calls.filter((call) => call === "PATCH native settings")).toHaveLength(1);
+  });
+
+  test("rejects malformed Native settings returned by ambiguity confirmation", async () => {
+    const exactRegistration = registration();
+    const { api } = scriptedAPI({
+      nativeReads: [nativeSettings(false), malformedNativeSettings("false")],
+      registrationReads: [[exactRegistration]],
+      enable: async () => {
+        throw new Error("connection reset after enable");
+      },
+    });
+
+    await expect(
+      applyRemoteSetup(
+        plan({ nativeApi: "required", registration: "satisfied" }),
+        api,
+        approvedTargetReader,
+      ),
+    ).rejects.toMatchObject({
+      name: "CliError",
+      code: ERROR_CODE.PLAPI_UNEXPECTED_RESPONSE,
+    });
+  });
+
+  test("rejects malformed Native settings during final verification", async () => {
+    const exactRegistration = registration();
+    const { api } = scriptedAPI({
+      nativeReads: [nativeSettings(false), malformedNativeSettings("false")],
+      registrationReads: [[exactRegistration], [exactRegistration]],
+    });
+
+    await expect(
+      applyRemoteSetup(
+        plan({ nativeApi: "required", registration: "satisfied" }),
+        api,
+        approvedTargetReader,
+      ),
+    ).rejects.toMatchObject({
+      name: "CliError",
+      code: ERROR_CODE.PLAPI_UNEXPECTED_RESPONSE,
+    });
   });
 
   test("fails final verification when the approved remote postcondition is not present", async () => {

@@ -15,6 +15,7 @@ import {
   enableNativeApi,
   getNativeSettings,
   listIOSApplications,
+  validateNativeSettings,
   type IOSApplication,
   type NativeSettings,
 } from "../../../lib/plapi.ts";
@@ -321,6 +322,7 @@ export function buildIOSNativeRemotePlan(options: {
   nativeSettings: NativeSettings;
   registrations: IOSApplication[];
 }): IOSNativeRemotePlan {
+  const nativeSettings = validateNativeSettings(options.nativeSettings);
   const identity = localIdentity(options.target);
   const blockers = [...identity.blockers];
   const bundleIdentifier = identity.bundleIdentifier;
@@ -410,7 +412,7 @@ export function buildIOSNativeRemotePlan(options: {
     }
   }
 
-  const nativeApi = options.nativeSettings.api_enabled ? "satisfied" : "required";
+  const nativeApi = nativeSettings.api_enabled ? "satisfied" : "required";
   const actions: string[] = [];
   if (registration === "required" && appIdPrefix && bundleIdentifier) {
     actions.push(
@@ -452,7 +454,7 @@ async function readRemoteState(
     api.getNativeSettings(applicationId, instanceId),
     api.listIOSApplications(applicationId, instanceId),
   ]);
-  return { nativeSettings, registrations };
+  return { nativeSettings: validateNativeSettings(nativeSettings), registrations };
 }
 
 function formatBlockers(plan: IOSNativeRemotePlan): string {
@@ -898,23 +900,43 @@ export async function applyIOSNativeRemoteSetup(
   }
 
   if (currentPlan.nativeApi === "required") {
+    let enableError: unknown;
+    let enabledResponse: unknown;
+    let enableCompleted = false;
     try {
-      const enabled = await withSpinner("Enabling the Clerk Native API...", async () =>
+      enabledResponse = await withSpinner("Enabling the Clerk Native API...", async () =>
         api.enableNativeApi(plan.applicationId, plan.instanceId, {
           idempotencyKey: nativeAPIIdempotencyKey,
         }),
       );
+      enableCompleted = true;
+    } catch (error) {
+      logSuppressedFailure("Could not enable the Clerk Native API");
+      if (error instanceof CliError && error.code === ERROR_CODE.PLAPI_UNEXPECTED_RESPONSE) {
+        throw error;
+      }
+      enableError = error;
+    }
+
+    // A successful HTTP response with a malformed DTO is authoritative
+    // evidence of a protocol violation, not an ambiguous transport outcome.
+    // Validate outside the transport catch so a later GET cannot hide it.
+    if (enableCompleted) {
+      const enabled = validateNativeSettings(enabledResponse);
       if (!enabled.api_enabled) {
-        throw iosRemoteError(
+        enableError = iosRemoteError(
           "Clerk did not report the Native API as enabled. The local setup and any completed registration remain intact; rerun clerk init.",
           ERROR_CODE.PLAPI_UNEXPECTED_RESPONSE,
         );
       }
-    } catch (error) {
-      logSuppressedFailure("Could not enable the Clerk Native API");
+    }
+
+    if (enableError) {
       let current: NativeSettings;
       try {
-        current = await api.getNativeSettings(plan.applicationId, plan.instanceId);
+        current = validateNativeSettings(
+          await api.getNativeSettings(plan.applicationId, plan.instanceId),
+        );
       } catch (fallbackError) {
         logSuppressedFailure("Could not confirm Clerk Native API state");
         rethrowKnownRemoteError(fallbackError);
@@ -923,7 +945,7 @@ export async function applyIOSNativeRemoteSetup(
         );
       }
       if (!current.api_enabled) {
-        rethrowKnownRemoteError(error);
+        rethrowKnownRemoteError(enableError);
         throw iosRemoteError(
           "The Native API could not be enabled. The local setup and any completed iOS registration remain intact; rerun clerk init to retry safely.",
         );
