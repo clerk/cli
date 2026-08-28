@@ -1303,6 +1303,45 @@ describe("runIOSXcodeVerification", () => {
     ).toMatchObject({ status: "warn" });
   });
 
+  test("preserves build artifacts when subprocess cleanup cannot be confirmed", async () => {
+    await createIOSFixture(root, { clerkSDK: false });
+    const inspection = await inspectIOSProject(root, { target: "MyApp" });
+    const invocations: Invocation[] = [];
+    const baseRunner = successfulXcodeRunner(invocations);
+    const runner: IOSXcodeCommandRunner = async (argv, options) => {
+      const result = await baseRunner(argv, options);
+      return argv.includes("build")
+        ? { ...result, artifactCleanupUnsafe: true, truncated: true }
+        : result;
+    };
+    const verificationDependencies = dependencies(runner);
+    let removalAttempted = false;
+    verificationDependencies.removeTemporaryDirectory = async () => {
+      removalAttempted = true;
+    };
+
+    const results = await runIOSXcodeVerification(
+      inspection,
+      { build: true },
+      verificationDependencies,
+    );
+
+    expect(removalAttempted).toBe(false);
+    expect((await lstat(temporaryBuildRoot)).isDirectory()).toBe(true);
+    expect(
+      (await readdir(root)).some(
+        (entry) => entry.startsWith(".clerk-doctor-") && entry.endsWith(".xcworkspace"),
+      ),
+    ).toBe(true);
+    const preservationWarning = results.find(
+      (result) =>
+        result.name === "Xcode temporary files" &&
+        result.message.includes("Subprocess cleanup could not be confirmed"),
+    );
+    expect(preservationWarning).toMatchObject({ status: "warn" });
+    expect(preservationWarning?.remedy).toContain(temporaryBuildRoot);
+  });
+
   test("leaves a custom temporary directory untouched when no remover is supplied", async () => {
     await createIOSFixture(root, { clerkSDK: false });
     const inspection = await inspectIOSProject(root, { target: "MyApp" });
@@ -1731,6 +1770,160 @@ describe("Xcode subprocess safety", () => {
 
     expect(result.timedOut).toBe(true);
     expect(result.exitCode).not.toBe(0);
+  });
+
+  test("bounds leader settlement after forced termination", async () => {
+    const originalSpawn = Bun.spawn;
+    const closedStream = (): ReadableStream<Uint8Array> =>
+      new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.close();
+        },
+      });
+    const fakeChild = {
+      pid: 2_000_000,
+      exitCode: null,
+      exited: new Promise<number>(() => {}),
+      stdout: closedStream(),
+      stderr: closedStream(),
+      kill: () => {},
+    } as unknown as ReturnType<typeof Bun.spawn>;
+    Bun.spawn = (() => fakeChild) as typeof Bun.spawn;
+
+    const startedAt = performance.now();
+    try {
+      const result = await runIOSXcodeCommand(["xcodebuild"], {
+        cwd: root,
+        env: createIOSXcodeChildEnvironment(process.env),
+        timeoutMs: 10,
+        maxOutputBytes: 128,
+      });
+
+      expect(performance.now() - startedAt).toBeLessThan(3_500);
+      expect(result.timedOut).toBe(true);
+      expect(result.exitCode).toBeNull();
+      expect(result.artifactCleanupUnsafe).toBe(true);
+      expect(result.spawnError).toContain("did not exit after forced termination");
+    } finally {
+      Bun.spawn = originalSpawn;
+    }
+  }, 5_000);
+
+  test("bounds cancellation settlement for a stubborn inherited pipe", async () => {
+    const originalSpawn = Bun.spawn;
+    const cancellationNeverSettles = new Promise<void>(() => {});
+    const stubbornStream = (text: string): ReadableStream<Uint8Array> =>
+      new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(new TextEncoder().encode(text));
+        },
+        cancel() {
+          return cancellationNeverSettles;
+        },
+      });
+    const fakeChild = {
+      pid: 2_000_000,
+      exitCode: 0,
+      exited: Promise.resolve(0),
+      stdout: stubbornStream("retained stdout"),
+      stderr: stubbornStream("retained stderr"),
+      kill: () => {},
+    } as unknown as ReturnType<typeof Bun.spawn>;
+    Bun.spawn = (() => fakeChild) as typeof Bun.spawn;
+
+    const startedAt = performance.now();
+    try {
+      const result = await runIOSXcodeCommand(["xcodebuild"], {
+        cwd: root,
+        env: createIOSXcodeChildEnvironment(process.env),
+        timeoutMs: 5_000,
+        maxOutputBytes: 128,
+      });
+
+      expect(performance.now() - startedAt).toBeLessThan(1_500);
+      expect(result.exitCode).toBe(0);
+      expect(result.artifactCleanupUnsafe).toBe(true);
+      expect(result.truncated).toBe(true);
+      expect(result.stdout).toBe("retained stdout");
+      expect(result.stderr).toBe("retained stderr");
+    } finally {
+      Bun.spawn = originalSpawn;
+    }
+  });
+
+  test("bounds pipe draining when a timed-out descendant escapes the process group", async () => {
+    if (process.platform === "win32") return;
+
+    const descendantScript = join(root, "escaped-pipe-holder.ts");
+    await Bun.write(
+      descendantScript,
+      "setTimeout(() => process.exit(0), 1_500);\nsetInterval(() => {}, 1000);\n",
+    );
+    const parentScript = join(root, "spawn-escaped-pipe-holder.ts");
+    await Bun.write(
+      parentScript,
+      `const child = Bun.spawn([process.execPath, ${JSON.stringify(descendantScript)}], { detached: true, stdin: "ignore", stdout: "inherit", stderr: "inherit" });\nchild.unref();\nconsole.log(child.pid);\nsetInterval(() => {}, 1000);\n`,
+    );
+
+    let descendantPid: number | undefined;
+    const startedAt = performance.now();
+    try {
+      const result = await runIOSXcodeCommand([process.execPath, parentScript], {
+        cwd: root,
+        env: createIOSXcodeChildEnvironment(process.env),
+        timeoutMs: 50,
+        maxOutputBytes: 128,
+      });
+      descendantPid = Number(result.stdout.trim());
+
+      expect(performance.now() - startedAt).toBeLessThan(1_000);
+      expect(result.timedOut).toBe(true);
+      expect(result.artifactCleanupUnsafe).toBe(true);
+      expect(result.truncated).toBe(true);
+      expect(Number.isSafeInteger(descendantPid) && descendantPid > 0).toBe(true);
+      expect(processIsAlive(descendantPid)).toBe(true);
+    } finally {
+      if (descendantPid && processIsAlive(descendantPid)) {
+        try {
+          process.kill(descendantPid, "SIGKILL");
+        } catch {}
+      }
+    }
+  });
+
+  test("reaps a successful leader's same-group descendant before draining inherited pipes", async () => {
+    if (process.platform === "win32") return;
+
+    const descendantScript = join(root, "successful-pipe-holder.ts");
+    await Bun.write(descendantScript, "setInterval(() => {}, 1000);\n");
+    const parentScript = join(root, "spawn-successful-pipe-holder.ts");
+    await Bun.write(
+      parentScript,
+      `const child = Bun.spawn([process.execPath, ${JSON.stringify(descendantScript)}], { stdin: "ignore", stdout: "inherit", stderr: "inherit" });\nchild.unref();\nconsole.log(child.pid);\n`,
+    );
+
+    let descendantPid: number | undefined;
+    try {
+      const result = await runIOSXcodeCommand([process.execPath, parentScript], {
+        cwd: root,
+        env: createIOSXcodeChildEnvironment(process.env),
+        timeoutMs: 5_000,
+        maxOutputBytes: 128,
+      });
+      descendantPid = Number(result.stdout.trim());
+
+      expect(result.exitCode).toBe(0);
+      expect(result.timedOut).toBe(false);
+      expect(result.artifactCleanupUnsafe).toBeUndefined();
+      expect(Number.isSafeInteger(descendantPid) && descendantPid > 0).toBe(true);
+      expect(processIsAlive(descendantPid)).toBe(false);
+    } finally {
+      if (descendantPid && processIsAlive(descendantPid)) {
+        try {
+          process.kill(descendantPid, "SIGKILL");
+        } catch {}
+      }
+    }
   });
 
   test("terminates descendants even when the leader exits before forced cleanup", async () => {
