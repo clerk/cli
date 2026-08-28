@@ -1,3 +1,6 @@
 [install]
 # Only install package versions published at least 2 days ago
 minimumReleaseAge = 172800
+
+[test]
+preload = ["./packages/cli-core/src/test/version-preload.ts"]
