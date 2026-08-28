@@ -310,6 +310,7 @@ describe("Clerk Native Application remote setup", () => {
       nativeReads: [nativeSettings(true)],
       registrationReads: [[exactRegistration]],
     });
+    let inspections = 0;
 
     const result = await prepareIOSNativeRemoteSetup(prepareOptions({ yes: false }), {
       api,
@@ -336,7 +337,11 @@ describe("Clerk Native Application remote setup", () => {
       actions: [],
       blockers: [],
     });
-    await applyRemoteSetup(result, api);
+    await applyRemoteSetup(result, api, async (snapshot) => {
+      inspections += 1;
+      return approvedTargetReader(snapshot);
+    });
+    expect(inspections).toBe(1);
     expect(calls).toEqual([
       "GET native settings",
       "GET iOS registrations",
@@ -346,6 +351,79 @@ describe("Clerk Native Application remote setup", () => {
       "GET iOS registrations",
     ]);
     expect(captured.err).toContain("already configured");
+  });
+
+  test.each([
+    {
+      name: "Bundle ID",
+      current: selectedTarget({ bundleIdentifier: "com.example.Changed" }),
+    },
+    {
+      name: "App ID Prefix",
+      current: selectedTarget({ appIdPrefix: EXPLICIT_PREFIX }),
+    },
+  ])("fails a satisfied plan before remote access when its $name changes", async ({ current }) => {
+    const { api, calls } = scriptedAPI({
+      nativeReads: [nativeSettings(true)],
+      registrationReads: [[registration()]],
+    });
+    let inspections = 0;
+    const retryOperations: string[] = [];
+    const retryStore: IOSNativeRegistrationRetryStore = {
+      async getOrCreate() {
+        retryOperations.push("getOrCreate");
+        return "unexpected";
+      },
+      async peek() {
+        retryOperations.push("peek");
+        return undefined;
+      },
+      async clear() {
+        retryOperations.push("clear");
+        return true;
+      },
+    };
+
+    await expect(
+      applyRemoteSetup(
+        plan({ nativeApi: "satisfied", registration: "satisfied" }),
+        api,
+        async () => {
+          inspections += 1;
+          return current;
+        },
+        retryStore,
+      ),
+    ).rejects.toMatchObject({
+      code: ERROR_CODE.IOS_SETUP_STALE,
+      message: expect.stringContaining("Xcode target identity changed"),
+    });
+
+    expect(inspections).toBe(1);
+    expect(retryOperations).toEqual([]);
+    expect(calls).toEqual([]);
+  });
+
+  test("preserves recheck failure semantics for a satisfied plan", async () => {
+    const { api, calls } = scriptedAPI({
+      nativeReads: [nativeSettings(true)],
+      registrationReads: [[registration()]],
+    });
+
+    await expect(
+      applyRemoteSetup(
+        plan({ nativeApi: "satisfied", registration: "satisfied" }),
+        api,
+        async () => {
+          throw new Error("xcconfig unreadable");
+        },
+      ),
+    ).rejects.toMatchObject({
+      code: ERROR_CODE.IOS_REMOTE_VERIFY_FAILED,
+      message: expect.stringContaining("Xcode target identity could not be rechecked"),
+    });
+
+    expect(calls).toEqual([]);
   });
 
   test.each([

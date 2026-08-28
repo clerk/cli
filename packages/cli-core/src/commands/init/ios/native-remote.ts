@@ -653,7 +653,7 @@ function localTargetStillMatchesApprovedIdentity(
   );
 }
 
-async function revalidateLocalTargetBeforeRemoteMutation(
+async function revalidateLocalTargetBeforeRemoteAccess(
   plan: IOSNativeRemotePlan,
   targetReader: IOSNativeRemoteTargetReader,
 ): Promise<void> {
@@ -732,9 +732,11 @@ export async function applyIOSNativeRemoteSetup(
     );
   }
 
-  if (plan.registration === "required" || plan.nativeApi === "required") {
-    await revalidateLocalTargetBeforeRemoteMutation(plan, targetReader);
-  }
+  // The approved local identity is the basis for every remote audit, even
+  // when the preview found no work to perform. Revalidate before reading
+  // retry state or Clerk state so a satisfied plan cannot report success for
+  // a Bundle ID or App ID Prefix that changed after approval.
+  await revalidateLocalTargetBeforeRemoteAccess(plan, targetReader);
 
   const nativeAPIIdempotencyKey = `clerk-init-ios-native-api-${randomUUID()}`;
   const retryIdentity = registrationRetryIdentity(plan);
