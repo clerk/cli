@@ -511,7 +511,9 @@ export async function init(options: InitOptions = {}) {
           } catch (error) {
             if (interruptedExitCode() !== null) throw error;
             if (error instanceof ApiError || error instanceof CliError) throw error;
-            log.debug(`Could not inspect AuthView authentication methods: ${errorMessage(error)}`);
+            log.debug(
+              "Could not inspect AuthView authentication methods; underlying error details were omitted.",
+            );
             throw new CliError(
               "The linked Clerk application's AuthView methods could not be inspected safely. No local setup changes were written; rerun clerk init.",
               { code: ERROR_CODE.IOS_REMOTE_VERIFY_FAILED },
@@ -606,7 +608,7 @@ export async function init(options: InitOptions = {}) {
             if (interruptedExitCode() !== null) throw error;
             if (error instanceof ApiError || error instanceof CliError) throw error;
             log.debug(
-              `Could not revalidate AuthView authentication methods: ${errorMessage(error)}`,
+              "Could not revalidate AuthView authentication methods; underlying error details were omitted.",
             );
             throw new CliError(
               "The linked Clerk application's AuthView methods could not be revalidated safely. No local or remote setup changes were written; rerun clerk init.",
@@ -665,7 +667,9 @@ export async function init(options: InitOptions = {}) {
     } catch (error) {
       if (interruptedExitCode() !== null) throw error;
       if (error instanceof ApiError || error instanceof CliError) throw error;
-      log.debug(`Could not reconcile Clerk Native Application settings: ${errorMessage(error)}`);
+      log.debug(
+        "Could not reconcile Clerk Native Application settings; underlying error details were omitted.",
+      );
       throw new CliError(
         "The local iOS setup completed, but Clerk Native Application settings could not be completed remotely. Local changes remain intact; rerun clerk init to safely reconcile the additive remote steps.",
         { code: ERROR_CODE.IOS_REMOTE_APPLY_FAILED },
@@ -685,7 +689,9 @@ export async function init(options: InitOptions = {}) {
       } catch (error) {
         if (interruptedExitCode() !== null) throw error;
         if (error instanceof ApiError || error instanceof CliError) throw error;
-        log.debug(`Could not reconcile the native Apple connection: ${errorMessage(error)}`);
+        log.debug(
+          "Could not reconcile the native Apple connection; underlying error details were omitted.",
+        );
         throw new CliError(
           "The local iOS setup and Clerk Native Application registration completed, but the native Apple connection could not be completed. Those completed changes remain intact; rerun clerk init to reconcile Sign in with Apple safely.",
           { code: ERROR_CODE.IOS_REMOTE_APPLY_FAILED },

@@ -5,7 +5,6 @@ import {
   CliError,
   ERROR_CODE,
   type ErrorCode,
-  errorMessage,
   throwUsageError,
   throwUserAbort,
 } from "../../../lib/errors.ts";
@@ -47,6 +46,13 @@ function iosRemoteError(
 
 function rethrowKnownRemoteError(error: unknown): void {
   if (error instanceof CliError || error instanceof ApiError) throw error;
+}
+
+function logSuppressedFailure(context: string): void {
+  // Remote and transport exceptions can contain response bodies, request
+  // headers, or credentials. Keep verbose diagnostics useful without ever
+  // interpolating arbitrary exception content.
+  log.debug(`${context}; underlying error details were omitted.`);
 }
 
 export type IOSNativeRemoteBlockerCode =
@@ -555,7 +561,7 @@ export async function prepareIOSNativeRemoteSetup(
       readRemoteState(options.applicationId, options.instanceId, api),
     );
   } catch (error) {
-    log.debug(`Could not inspect Clerk Native Application settings: ${errorMessage(error)}`);
+    logSuppressedFailure("Could not inspect Clerk Native Application settings");
     rethrowKnownRemoteError(error);
     throw iosRemoteError(
       `Clerk Native Application settings could not be inspected. ${nativeSetupOutcome(options.applicationLinkChange)} Verify your application access and rerun clerk init.`,
@@ -721,8 +727,8 @@ async function revalidateLocalTargetBeforeRemoteAccess(
     current = await withSpinner("Rechecking the selected Xcode target identity...", async () =>
       targetReader(plan.localTarget!),
     );
-  } catch (error) {
-    log.debug(`Could not recheck the selected Xcode target identity: ${errorMessage(error)}`);
+  } catch {
+    logSuppressedFailure("Could not recheck the selected Xcode target identity");
     throw iosRemoteError(
       "The selected Xcode target identity could not be rechecked. No remote changes were made; rerun clerk init.",
       ERROR_CODE.IOS_REMOTE_VERIFY_FAILED,
@@ -800,10 +806,8 @@ export async function applyIOSNativeRemoteSetup(
         plan.registration === "required"
           ? await registrationRetryStore.getOrCreate(retryIdentity)
           : await registrationRetryStore.peek(retryIdentity);
-    } catch (error) {
-      log.debug(
-        `Could not read or preserve the iOS registration retry state: ${errorMessage(error)}`,
-      );
+    } catch {
+      logSuppressedFailure("Could not read or preserve the iOS registration retry state");
       throw iosRemoteError(
         "The iOS application registration retry state could not be read or preserved safely. The local setup remains intact, and no registration request was sent; verify CLI state directory access and rerun clerk init.",
       );
@@ -819,7 +823,7 @@ export async function applyIOSNativeRemoteSetup(
       reconciledPlan(plan, api),
     );
   } catch (error) {
-    log.debug(`Could not recheck Clerk Native Application settings: ${errorMessage(error)}`);
+    logSuppressedFailure("Could not recheck Clerk Native Application settings");
     rethrowKnownRemoteError(error);
     throw iosRemoteError(
       "Clerk Native Application settings could not be rechecked after the local setup. No remote changes were made; rerun clerk init.",
@@ -867,14 +871,12 @@ export async function applyIOSNativeRemoteSetup(
         );
       }
     } catch (error) {
-      log.debug(`Could not create the iOS application registration: ${errorMessage(error)}`);
+      logSuppressedFailure("Could not create the iOS application registration");
       let registrations: IOSApplication[];
       try {
         registrations = await api.listIOSApplications(plan.applicationId, plan.instanceId);
       } catch (fallbackError) {
-        log.debug(
-          `Could not confirm the iOS application registration: ${errorMessage(fallbackError)}`,
-        );
+        logSuppressedFailure("Could not confirm the iOS application registration");
         rethrowKnownRemoteError(fallbackError);
         throw iosRemoteError(
           "The iOS application registration could not be confirmed. The local setup remains intact; rerun clerk init to reconcile remote state.",
@@ -909,12 +911,12 @@ export async function applyIOSNativeRemoteSetup(
         );
       }
     } catch (error) {
-      log.debug(`Could not enable the Clerk Native API: ${errorMessage(error)}`);
+      logSuppressedFailure("Could not enable the Clerk Native API");
       let current: NativeSettings;
       try {
         current = await api.getNativeSettings(plan.applicationId, plan.instanceId);
       } catch (fallbackError) {
-        log.debug(`Could not confirm Clerk Native API state: ${errorMessage(fallbackError)}`);
+        logSuppressedFailure("Could not confirm Clerk Native API state");
         rethrowKnownRemoteError(fallbackError);
         throw iosRemoteError(
           "Native API enablement could not be confirmed. The local setup and any completed iOS registration remain intact; rerun clerk init.",
@@ -936,7 +938,7 @@ export async function applyIOSNativeRemoteSetup(
       reconciledPlan(plan, api),
     );
   } catch (error) {
-    log.debug(`Could not verify Clerk Native Application settings: ${errorMessage(error)}`);
+    logSuppressedFailure("Could not verify Clerk Native Application settings");
     rethrowKnownRemoteError(error);
     throw iosRemoteError(
       "Clerk Native Application settings could not be verified. The local setup and any completed remote changes remain intact; rerun clerk init.",
@@ -960,10 +962,8 @@ export async function applyIOSNativeRemoteSetup(
           "Preserved a newer iOS registration retry state created after this invocation began.",
         );
       }
-    } catch (error) {
-      log.debug(
-        `Could not clear the verified iOS registration retry state: ${errorMessage(error)}`,
-      );
+    } catch {
+      logSuppressedFailure("Could not clear the verified iOS registration retry state");
       throw iosRemoteError(
         "Clerk Native Application settings were verified, but the local registration retry state could not be cleared. No further remote changes are required; verify CLI state directory access and rerun clerk init.",
         ERROR_CODE.IOS_REMOTE_VERIFY_FAILED,

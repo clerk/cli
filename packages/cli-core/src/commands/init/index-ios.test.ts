@@ -25,6 +25,7 @@ import {
   FAKE_IOS_NATIVE_READINESS,
 } from "../../test/lib/init-harness.ts";
 import * as telemetryMod from "../../lib/telemetry.ts";
+import { getLogLevel, setLogLevel } from "../../lib/log.ts";
 import * as iosFileTransactionMod from "./ios/file-transaction.ts";
 import { init } from "./index.ts";
 import { ERROR_CODE, PlapiError } from "../../lib/errors.ts";
@@ -806,6 +807,48 @@ describe("init iOS", () => {
     expect(`${captured.out}\n${captured.err}`).not.toContain(VALID_DEVELOPMENT_KEY);
   });
 
+  test("omits unexpected AuthView inspection details from debug output", async () => {
+    const { captured } = setup({ email: "test@test.com" });
+    const iosCtx = nativeIOSContext();
+    const setupResult = iosSetupResult({
+      prebuiltAuthRequested: true,
+      prebuiltAuthActive: true,
+      prebuiltAuthPlan: iosPrebuiltAuthPlan({ status: "satisfied", root: iosCtx.cwd }),
+      prebuiltAuthAppleEntitlementPlan: iosAppleEntitlementPlan(),
+      requiresLinkedApp: true,
+      requiresDevelopmentKey: false,
+    });
+    spyOn(context, "gatherContext").mockResolvedValue(iosCtx);
+    spyOn(config, "resolveProfile").mockResolvedValue({
+      profile: { appId: "app_test" },
+    } as never);
+    spyOn(iosApplyMod, "applyIOSLocalSetup").mockResolvedValue(setupResult);
+    spyOn(iosDevelopmentKeyMod, "resolveIOSDevelopmentPublicKey").mockResolvedValue({
+      applicationId: "app_test",
+      instanceId: "ins_test",
+      publishableKey: VALID_DEVELOPMENT_KEY,
+    });
+    const sensitiveBearer = "Bearer ak_AUTH_VIEW_TOKEN_MUST_NOT_ESCAPE";
+    spyOn(fapiMod, "fetchUserSettings").mockRejectedValue(
+      new Error(`request failed with ${sensitiveBearer}`),
+    );
+
+    const previousLogLevel = getLogLevel();
+    try {
+      setLogLevel("debug");
+      await expect(init({ yes: true, prebuiltAuthUI: true })).rejects.toThrow(
+        "AuthView methods could not be inspected safely",
+      );
+    } finally {
+      setLogLevel(previousLogLevel);
+    }
+
+    expect(captured.err).toContain(
+      "Could not inspect AuthView authentication methods; underlying error details were omitted.",
+    );
+    expect(`${captured.out}\n${captured.err}`).not.toContain(sensitiveBearer);
+  });
+
   test("passes the linked development key to the approved iOS setup", async () => {
     setup({ email: "test@test.com" });
     const iosCtx = {
@@ -1166,7 +1209,7 @@ describe("init iOS", () => {
   });
 
   test("reports partial remote failure without claiming the local setup was rolled back", async () => {
-    setup({ email: "test@test.com" });
+    const { captured } = setup({ email: "test@test.com" });
     const stages = trackStages();
     const iosCtx = nativeIOSContext();
     const setupResult = iosSetupResult({
@@ -1182,17 +1225,28 @@ describe("init iOS", () => {
     const commitLocal = spyOn(iosApplyMod, "applyIOSPlannedLocalSetup").mockResolvedValue(
       undefined,
     );
+    const sensitiveBearer = "Bearer ak_NATIVE_RECONCILIATION_TOKEN_MUST_NOT_ESCAPE";
     spyOn(nativeRemoteMod, "applyIOSNativeRemoteSetup").mockRejectedValue(
-      new Error("remote mutation failed"),
+      new Error(`remote mutation failed with ${sensitiveBearer}`),
     );
 
-    await expect(init({ yes: true })).rejects.toMatchObject({
-      code: ERROR_CODE.IOS_REMOTE_APPLY_FAILED,
-      message: expect.stringContaining("Local changes remain intact; rerun clerk init"),
-    });
+    const previousLogLevel = getLogLevel();
+    try {
+      setLogLevel("debug");
+      await expect(init({ yes: true })).rejects.toMatchObject({
+        code: ERROR_CODE.IOS_REMOTE_APPLY_FAILED,
+        message: expect.stringContaining("Local changes remain intact; rerun clerk init"),
+      });
+    } finally {
+      setLogLevel(previousLogLevel);
+    }
 
     expect(commitLocal).toHaveBeenCalledTimes(1);
     expect(stages().at(-1)).toBe("ios_native_setup");
+    expect(captured.err).toContain(
+      "Could not reconcile Clerk Native Application settings; underlying error details were omitted.",
+    );
+    expect(`${captured.out}\n${captured.err}`).not.toContain(sensitiveBearer);
   });
 
   test("does not write a key when the linked app changes during resolution", async () => {

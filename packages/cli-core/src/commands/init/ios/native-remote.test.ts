@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { ERROR_CODE, UserAbortError } from "../../../lib/errors.ts";
+import { getLogLevel, setLogLevel } from "../../../lib/log.ts";
 import { useCaptureLog } from "../../../test/lib/stubs.ts";
 import type { IOSNativeReadinessTarget } from "./native-readiness.ts";
 import {
@@ -1299,19 +1300,28 @@ describe("Clerk Native Application remote setup", () => {
     });
 
     let thrown: unknown;
+    const previousLogLevel = getLogLevel();
     try {
-      await applyRemoteSetup(
-        plan({ nativeApi: "satisfied", registration: "required" }),
-        api,
-        approvedTargetReader,
-      );
-    } catch (error) {
-      thrown = error;
+      setLogLevel("debug");
+      try {
+        await applyRemoteSetup(
+          plan({ nativeApi: "satisfied", registration: "required" }),
+          api,
+          approvedTargetReader,
+        );
+      } catch (error) {
+        thrown = error;
+      }
+    } finally {
+      setLogLevel(previousLogLevel);
     }
 
     expect(thrown).toBeDefined();
     expect(String(thrown)).not.toContain(sensitiveBearer);
     expect(JSON.stringify(thrown)).not.toContain(sensitiveBearer);
+    expect(captured.err).toContain(
+      "Could not create the iOS application registration; underlying error details were omitted.",
+    );
     expect(captured.err).not.toContain(sensitiveBearer);
   });
 });
