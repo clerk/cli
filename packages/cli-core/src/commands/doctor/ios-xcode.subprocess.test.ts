@@ -57,6 +57,56 @@ async function waitForProcessExit(pid: number): Promise<void> {
   }
 }
 
+async function runSuccessfulLeaderWithBackgroundDescendant(): Promise<{
+  exitCode: number | null;
+  timedOut: boolean;
+  spawnError: string | undefined;
+  descendantAlive: boolean;
+}> {
+  const root = await mkdtemp(join(tmpdir(), "clerk-doctor-ios-xcode-success-test-"));
+  const descendantScript = join(root, "descendant.ts");
+  const parentScript = join(root, "xcode-parent.ts");
+  const pidPath = join(root, "descendant.pid");
+  await Bun.write(descendantScript, "setInterval(() => {}, 1_000);\n");
+  await Bun.write(
+    parentScript,
+    `const child = Bun.spawn([process.execPath, ${JSON.stringify(descendantScript)}], { stdin: "ignore", stdout: "ignore", stderr: "ignore" });\nawait Bun.write(${JSON.stringify(pidPath)}, JSON.stringify({ leader: process.pid, descendant: child.pid }));\nprocess.exit(0);\n`,
+  );
+
+  const { createIOSXcodeChildEnvironment, runIOSXcodeCommand } = await import(IOS_XCODE_MODULE);
+  let processTreePIDs: ProcessTreePIDs | undefined;
+  try {
+    const result = await runIOSXcodeCommand([process.execPath, parentScript], {
+      cwd: root,
+      env: createIOSXcodeChildEnvironment(process.env),
+      timeoutMs: 30_000,
+      maxOutputBytes: 128,
+    });
+    processTreePIDs = await waitForProcessTreePIDs(pidPath);
+    await waitForProcessExit(processTreePIDs.descendant);
+    return {
+      exitCode: result.exitCode,
+      timedOut: result.timedOut,
+      spawnError: result.spawnError,
+      descendantAlive: processIsAlive(processTreePIDs.descendant),
+    };
+  } finally {
+    if (!processTreePIDs) {
+      const cleanupDeadline = performance.now() + 500;
+      while (!processTreePIDs && performance.now() < cleanupDeadline) {
+        processTreePIDs = await readProcessTreePIDs(pidPath);
+        if (!processTreePIDs) await Bun.sleep(10);
+      }
+    }
+    if (processTreePIDs) {
+      try {
+        process.kill(-processTreePIDs.leader, "SIGKILL");
+      } catch {}
+    }
+    await rm(root, { recursive: true, force: true });
+  }
+}
+
 async function runParentShutdown(mode: ParentShutdown): Promise<{
   exitCode: number | null;
   signalCode: string | null;
@@ -138,6 +188,19 @@ async function runParentShutdown(mode: ParentShutdown): Promise<{
 }
 
 describe("iOS Xcode command parent shutdown", () => {
+  test.skipIf(process.platform === "win32")(
+    "reaps a background descendant after a successful command",
+    async () => {
+      const outcome = await runSuccessfulLeaderWithBackgroundDescendant();
+
+      expect(outcome.exitCode).toBe(0);
+      expect(outcome.timedOut).toBe(false);
+      expect(outcome.spawnError).toBeUndefined();
+      expect(outcome.descendantAlive).toBe(false);
+    },
+    15_000,
+  );
+
   test.skipIf(process.platform === "win32")(
     "terminates the detached process tree when the CLI receives SIGINT",
     async () => {
