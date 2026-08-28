@@ -187,6 +187,24 @@ describe("buildIOSNativeReadinessAudit", () => {
     });
   });
 
+  test("does not satisfy readiness with a differently cased service token", async () => {
+    const inspection = await inspectionFor({
+      complete: true,
+      includeKey: false,
+      localSecrets: true,
+    });
+    for (const configuration of inspection.appTargets[0]!.configurations) {
+      configuration.entitlements!.associatedDomains = ["WEBCREDENTIALS:native.clerk.example"];
+    }
+
+    const audit = buildIOSNativeReadinessAudit(inspection);
+
+    expect(audit.associatedDomain).toMatchObject({
+      status: "required",
+      expectedDomain: "webcredentials:native.clerk.example",
+    });
+  });
+
   test("blocks automation when configurations have mixed entitlements evidence", async () => {
     const inspection = await inspectionFor({
       complete: true,

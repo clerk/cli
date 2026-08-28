@@ -1,3 +1,4 @@
+import { associatedDomainMatches, type IOSAssociatedDomainPlan } from "./associated-domain.ts";
 import { buildIOSSetupPlan } from "./plan.ts";
 import type {
   IOSAppTarget,
@@ -5,7 +6,6 @@ import type {
   IOSSetupStepStatus,
   IOSValueResolution,
 } from "./types.ts";
-import type { IOSAssociatedDomainPlan } from "./associated-domain.ts";
 
 export const IOS_NATIVE_READINESS_PLAPI_BRIDGE_REQUIREMENT = {
   applicationId: "linked-application-id",
@@ -244,8 +244,8 @@ function associatedDomainReadiness(
     target != null &&
     target.configurations.length > 0 &&
     target.configurations.every((configuration) =>
-      configuration.entitlements?.associatedDomains.some(
-        (domain) => domain.toLowerCase() === expectedDomain.toLowerCase(),
+      configuration.entitlements?.associatedDomains.some((domain) =>
+        associatedDomainMatches(domain, expectedDomain),
       ),
     );
   // The legacy planner accepts Apple's ?mode=developer suffix. Native setup

@@ -11,7 +11,7 @@ import { hasIOSDirectConfigCompatibility } from "./products.ts";
 import { clerkKitUIInstallDecision } from "./products.ts";
 import type { IOSDirectConfigPlan } from "./direct-config.ts";
 import type { IOSRuntimeKeyPlan } from "./runtime-key.ts";
-import type { IOSAssociatedDomainPlan } from "./associated-domain.ts";
+import { associatedDomainMatches, type IOSAssociatedDomainPlan } from "./associated-domain.ts";
 import type { IOSAppleEntitlementPlan } from "./apple-entitlement.ts";
 import type { IOSPrebuiltAuthPlan } from "./prebuilt-auth.ts";
 import type { IOSSDKInstallPlan } from "./install-sdk.ts";
@@ -20,10 +20,6 @@ const NATIVE_APPLICATIONS_URL = "https://dashboard.clerk.com/~/native-applicatio
 const QUICKSTART_URL = "https://clerk.com/docs/ios/getting-started/quickstart";
 const NATIVE_APPLE_URL =
   "https://clerk.com/docs/ios/guides/configure/auth-strategies/sign-in-with-apple";
-
-function associatedDomainMatches(actual: string, expected: string): boolean {
-  return actual.toLowerCase() === expected.toLowerCase();
-}
 
 function selectedTarget(inspection: IOSProjectInspectionResult): IOSAppTarget | undefined {
   const selection = inspection.selection;

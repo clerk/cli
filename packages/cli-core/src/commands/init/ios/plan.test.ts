@@ -944,6 +944,27 @@ struct MyApp: App {
     expect(plan.steps.find((step) => step.id === "add-associated-domain")?.status).toBe("required");
   });
 
+  test("matches only the associated-domain hostname case-insensitively", async () => {
+    const root = await mkdtemp(join(tmpdir(), "clerk-ios-plan-"));
+    temporaryDirectories.push(root);
+    await createIOSFixture(root, { complete: true, includeKey: false, localSecrets: true });
+    const inspection = await inspectIOSProject(root);
+
+    for (const configuration of inspection.appTargets[0]!.configurations) {
+      configuration.entitlements!.associatedDomains = ["webcredentials:NATIVE.CLERK.EXAMPLE"];
+    }
+    expect(
+      buildIOSSetupPlan(inspection).steps.find((step) => step.id === "add-associated-domain"),
+    ).toMatchObject({ status: "satisfied" });
+
+    for (const configuration of inspection.appTargets[0]!.configurations) {
+      configuration.entitlements!.associatedDomains = ["WEBCREDENTIALS:native.clerk.example"];
+    }
+    expect(
+      buildIOSSetupPlan(inspection).steps.find((step) => step.id === "add-associated-domain"),
+    ).toMatchObject({ status: "required" });
+  });
+
   test("blocks all dependent steps when target selection is ambiguous", async () => {
     const plan = await planFor({ secondTarget: true });
 

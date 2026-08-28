@@ -479,8 +479,26 @@ async function ownershipIsExclusive(
   }
 }
 
+export function associatedDomainMatches(actual: string, expected: string): boolean {
+  const actualSeparator = actual.indexOf(":");
+  const expectedSeparator = expected.indexOf(":");
+  if (actualSeparator < 0 || expectedSeparator < 0) return false;
+
+  const actualService = actual.slice(0, actualSeparator);
+  const expectedService = expected.slice(0, expectedSeparator);
+  if (actualService !== expectedService) return false;
+
+  const splitHost = (value: string): [host: string, suffix: string] => {
+    const suffixStart = value.search(/[/?#]/);
+    return suffixStart < 0 ? [value, ""] : [value.slice(0, suffixStart), value.slice(suffixStart)];
+  };
+  const [actualHost, actualSuffix] = splitHost(actual.slice(actualSeparator + 1));
+  const [expectedHost, expectedSuffix] = splitHost(expected.slice(expectedSeparator + 1));
+  return actualHost.toLowerCase() === expectedHost.toLowerCase() && actualSuffix === expectedSuffix;
+}
+
 function exactDomainPresent(domains: readonly string[], expectedDomain: string): boolean {
-  return domains.includes(expectedDomain);
+  return domains.some((domain) => associatedDomainMatches(domain, expectedDomain));
 }
 
 async function generatedProjectKind(
