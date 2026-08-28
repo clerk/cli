@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createIOSFixture, IOS_FIXTURE_IDS } from "../init/ios/test-helpers.ts";
 import { planIOSSDKInstall } from "../init/ios/install-sdk.ts";
+import type { IOSNativeAppleBlockerCode } from "../init/ios/native-apple.ts";
 import { PlapiError } from "../../lib/errors.ts";
 import type { UserSettingsJSON } from "../../lib/fapi.ts";
 import type { Application } from "../../lib/plapi.ts";
@@ -12,6 +13,28 @@ import type { DoctorContext, ResolvedProfile } from "./types.ts";
 import { runIOSDoctorChecks, type IOSDoctorDependencies } from "./ios.ts";
 
 const roots: string[] = [];
+
+const unsupportedAppleAutomationCases: Array<{
+  name: string;
+  code: IOSNativeAppleBlockerCode;
+  detail: string;
+}> = [
+  {
+    name: "unsupported Apple schema",
+    code: "apple-config-unsupported",
+    detail: "Automatic Apple schema repair is unavailable.",
+  },
+  {
+    name: "invalid Apple config version",
+    code: "apple-config-invalid",
+    detail: "The Apple config version is invalid.",
+  },
+  {
+    name: "missing Apple config version",
+    code: "apple-config-version-unavailable",
+    detail: "The Apple config version required for repair is missing.",
+  },
+];
 
 function publishableKey(host: string, live = false): string {
   return `${live ? "pk_live_" : "pk_test_"}${Buffer.from(`${host}$`).toString("base64")}`;
@@ -822,7 +845,7 @@ struct MyApp: App {
     expect(JSON.stringify(audit.results)).not.toContain("authview-transport-secret");
   });
 
-  test("audits the Clerk Apple connection from a local entitlement", async () => {
+  test("passes a healthy versionless Clerk Apple connection from a local entitlement", async () => {
     const root = await fixture();
     await addAppleEntitlement(root);
     let appleCalls = 0;
@@ -849,7 +872,7 @@ struct MyApp: App {
               current: { enabled: true, authenticatable: true },
               blockers: [],
             },
-            automation: { status: "supported", configVersion: "v1_12345678", blockers: [] },
+            automation: { status: "supported", blockers: [] },
           };
         },
       }),
@@ -859,9 +882,10 @@ struct MyApp: App {
     expect(
       audit.results.find((result) => result.name === "iOS: Sign in with Apple entitlement")?.status,
     ).toBe("pass");
-    expect(
-      audit.results.find((result) => result.name === "iOS: Clerk Sign in with Apple")?.status,
-    ).toBe("pass");
+    const apple = audit.results.find((result) => result.name === "iOS: Clerk Sign in with Apple");
+    expect(apple?.status).toBe("pass");
+    expect(apple?.detail).toContain("no automatic repair is required");
+    expect(apple?.detail).not.toContain("clerk init");
   });
 
   test("fails the strict Apple check for a malformed present entitlement", async () => {
@@ -959,6 +983,49 @@ struct MyApp: App {
     expect(apple?.status).toBe("fail");
     expect(apple?.message).toContain("not bound to the selected Bundle ID");
   });
+
+  test.each(unsupportedAppleAutomationCases)(
+    "directs $name repairs away from clerk init",
+    async ({ code, detail }) => {
+      const root = await fixture();
+      await addAppleEntitlement(root);
+      const audit = await runIOSDoctorChecks(
+        context(),
+        { root, target: "MyApp" },
+        dependencies({
+          planIOSAppleEntitlement: async (options) => {
+            const { planIOSAppleEntitlement } = await import("../init/ios/apple-entitlement.ts");
+            return planIOSAppleEntitlement(options);
+          },
+          auditIOSNativeAppleHealth: async ({ applicationId, instanceId, bundleIdentifier }) => ({
+            schemaVersion: 1,
+            kind: "clerk-ios-native-apple-health",
+            applicationId,
+            instanceId,
+            bundleIdentifier,
+            runtime: {
+              status: "required",
+              connection: "required",
+              bundleIdentifierConfiguration: "satisfied",
+              current: { enabled: false, authenticatable: false },
+              blockers: [],
+            },
+            automation: {
+              status: "unsupported",
+              blockers: [{ code, message: detail }],
+            },
+          }),
+        }),
+      );
+
+      const apple = audit.results.find((result) => result.name === "iOS: Clerk Sign in with Apple");
+      expect(apple?.status).toBe("fail");
+      expect(apple?.detail).toContain(detail);
+      expect(apple?.remedy).toContain("Clerk Dashboard");
+      expect(apple?.remedy).toContain("support");
+      expect(apple?.remedy).not.toContain("clerk init");
+    },
+  );
 
   test("fails Apple permission errors without exposing the API response body", async () => {
     const root = await fixture();

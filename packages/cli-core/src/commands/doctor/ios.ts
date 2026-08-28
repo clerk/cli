@@ -438,10 +438,14 @@ async function remoteResults(
             message: "Clerk Sign in with Apple: configured for the selected Bundle ID",
             detail:
               apple.automation.status === "supported"
-                ? "The current connection is healthy and can be reconciled by clerk init."
+                ? "The current connection is healthy; no automatic repair is required."
                 : "The current connection is healthy; automatic repair is unavailable for this instance.",
           });
         } else if (apple.runtime.status === "required") {
+          const automationSupported = apple.automation.status === "supported";
+          const automationDetail = apple.automation.blockers
+            .map((blocker) => blocker.message)
+            .join("\n");
           results.push({
             name: "iOS: Clerk Sign in with Apple",
             status: "fail",
@@ -451,8 +455,16 @@ async function remoteResults(
                 : hasAppleEntitlement
                   ? "Clerk Sign in with Apple: local entitlement is present but the connection is disabled"
                   : "Clerk Sign in with Apple: custom Apple sign-in is referenced but the connection is disabled",
-            remedy:
-              "Run `clerk init --target <target> --sign-in-with-apple` if this app should offer Apple sign-in.",
+            ...(!automationSupported
+              ? {
+                  detail:
+                    automationDetail ||
+                    "Automatic native Sign in with Apple repair is unavailable for this instance.",
+                }
+              : {}),
+            remedy: automationSupported
+              ? "Run `clerk init --target <target> --sign-in-with-apple` if this app should offer Apple sign-in."
+              : "Review the Apple connection in the Clerk Dashboard or contact Clerk support, then rerun `clerk doctor`.",
           });
         } else {
           results.push({
