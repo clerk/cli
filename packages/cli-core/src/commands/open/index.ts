@@ -172,6 +172,9 @@ async function openKeylessDashboard(
     log.data(
       JSON.stringify({
         url,
+        accountless: true,
+        // Deprecated alias of `accountless`, kept for agents that still parse
+        // the legacy key.
         keyless: true,
         claimSource: source,
         instanceId: instance?.instanceId ?? null,

@@ -31,16 +31,19 @@ An unclaimed accountless application has no account to name, so the instance its
 ```json
 {
   "email": null,
-  "keyless": {
+  "accountless": {
     "instanceId": "ins_...",
     "environmentType": "development",
     "publishableKey": "pk_test_...",
     "publishableKeyMismatch": false,
     "keySource": ".clerk/.tmp/keyless.json"
   },
+  "keyless": { "…": "deprecated alias — same object as `accountless`" },
   "linked": null
 }
 ```
+
+`keyless` is a deprecated alias of `accountless`, carrying the identical object, kept for agents that still parse the legacy key.
 
 `publishableKey` and the secret key are found independently (see `findLocalSecretKey`/`findLocalPublishableKey` in `lib/keyless-target.ts`) and can each belong to a _different_ accountless application if a project's env files hold leftovers from more than one. `publishableKeyMismatch` is `true` when that's happened — checked by decoding the publishable key's Frontend API host (`decodePublishableKey` in `lib/fapi.ts`) and confirming it appears in the secret key's own `GET /v1/domains`. Whoami only warns in this case (on **stderr**) and still reports what it found; `clerk env pull` is the stricter, refusing to write the mismatched pair (see [`commands/env/README.md`](../env/README.md)).
 

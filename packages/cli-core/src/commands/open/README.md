@@ -58,5 +58,5 @@ When **no** claim link can be found at all, the error differs depending on what 
 - **`--print`** — the bare URL on stdout, nothing else. Works identically for the dashboard deep-link and the accountless claim link.
 - **Agent mode** (`isAgent()`) — a JSON object on stdout, `opened: false` either way:
   - Linked: `{ url, appId, appName, instanceId, instanceLabel, subpath, opened }`.
-  - Accountless: `{ url, accountless: true, claimSource, instanceId, environmentType, subpath: null, opened: false }`.
+  - Accountless: `{ url, accountless: true, keyless: true, claimSource, instanceId, environmentType, subpath: null, opened: false }` — `keyless` is a deprecated alias of `accountless`, kept for agents that still parse the legacy key (same treatment as `whoami`'s JSON output).
 - **Human mode** — `intro`/`outro` framing, the target app or claim-link context on stderr, then attempts `openBrowser()`. On failure, prints the URL as a fallback instead of failing the command.

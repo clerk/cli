@@ -277,10 +277,11 @@ function assertKeylessOnlyFlags(options: InitOptions, strategy: InitStrategy): v
   // (manual) or when --app/--login are what forced the authenticated flow
   // (both conflict with --accountless in assertUsableFlags above).
   let reason: string;
-  let remedy: string;
+  // Null when dropping the offending flag is the only remediation.
+  let remedy: string | null;
   if (strategy === "manual") {
     reason = "this framework does not support accountless setup";
-    remedy = "there is no way to force it here";
+    remedy = null;
   } else if (options.app) {
     reason = "--app was set, which cannot be combined with --accountless";
     remedy = "drop --app to allow accountless setup";
@@ -293,14 +294,15 @@ function assertKeylessOnlyFlags(options: InitOptions, strategy: InitStrategy): v
     remedy = "add --accountless to force an accountless app";
   }
 
+  const tail = (flag: string): string => (remedy ? `${remedy}, or drop ${flag}.` : `drop ${flag}.`);
   if (options.template) {
     throwUsageError(
-      `--template only applies to accountless applications, but ${reason}; ${remedy}, or drop --template.`,
+      `--template only applies to accountless applications, but ${reason}; ${tail("--template")}`,
     );
   }
   if (options.fresh) {
     throwUsageError(
-      `--fresh only applies to accountless applications, but ${reason}; ${remedy}, or drop --fresh.`,
+      `--fresh only applies to accountless applications, but ${reason}; ${tail("--fresh")}`,
     );
   }
 }

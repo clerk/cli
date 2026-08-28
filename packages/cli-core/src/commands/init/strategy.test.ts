@@ -116,6 +116,28 @@ describe("init strategy", () => {
     expect(keylessMod.createAccountlessApp).toHaveBeenCalled();
   });
 
+  test("deprecated --keyless behaves as --accountless and warns", async () => {
+    const { captured } = setup();
+    mockBootstrapTo(KEYLESS_CTX);
+    mockMiddlewareScaffold();
+
+    await init({ keyless: true });
+
+    expect(keylessMod.createAccountlessApp).toHaveBeenCalled();
+    expect(loginMod.login).not.toHaveBeenCalled();
+    expect(captured.err).toContain("`--keyless` is deprecated. Use `--accountless` instead.");
+  });
+
+  test("deprecated --keyless with --login throws the same usage error as --accountless", async () => {
+    setup();
+
+    await expect(init({ keyless: true, login: true })).rejects.toThrow(
+      /--accountless and --login cannot be combined/,
+    );
+    expect(keylessMod.createAccountlessApp).not.toHaveBeenCalled();
+    expect(loginMod.login).not.toHaveBeenCalled();
+  });
+
   test("--accountless takes precedence over an authed user", async () => {
     setup({ email: "user@example.com" });
     mockBootstrapTo(KEYLESS_CTX);

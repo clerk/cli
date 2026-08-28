@@ -172,7 +172,9 @@ async function checkKeyPairMismatch(
 function toJson(identity: Identity): Record<string, unknown> {
   if (identity.kind === "keyless") {
     const { kind: _kind, ...keyless } = identity;
-    return { email: null, keyless, linked: null };
+    // `keyless` is a deprecated alias of `accountless`, kept for agents that
+    // still parse the legacy key.
+    return { email: null, accountless: keyless, keyless, linked: null };
   }
 
   const resolved = identity.profile;

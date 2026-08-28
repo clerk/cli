@@ -277,7 +277,7 @@ describe("openDashboard: unclaimed keyless application", () => {
     expect(mockOpenBrowser).not.toHaveBeenCalled();
   });
 
-  test("agent mode: emits structured JSON with keyless: true, no browser", async () => {
+  test("agent mode: emits structured JSON with accountless: true (and the deprecated keyless alias), no browser", async () => {
     setMode("agent");
     mockFindKeylessClaimUrl.mockResolvedValue(CLAIM_DESTINATION);
     mockResolveKeylessTarget.mockResolvedValue({ secretKey: "sk_test_x", source: ".env" });
@@ -287,6 +287,7 @@ describe("openDashboard: unclaimed keyless application", () => {
     const payload = JSON.parse(captured.out);
     expect(payload).toEqual({
       url: CLAIM_DESTINATION.url,
+      accountless: true,
       keyless: true,
       claimSource: CLAIM_DESTINATION.source,
       instanceId: "ins_keyless123",

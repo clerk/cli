@@ -319,16 +319,18 @@ describe("whoami", () => {
 
       await runWhoami({ json: true });
 
+      const instance = {
+        instanceId: "ins_keyless_1",
+        environmentType: "development",
+        publishableKey: "pk_test_keyless",
+        publishableKeyMismatch: false,
+        keySource: ".env.local",
+      };
       expect(JSON.parse(captured.out)).toEqual({
         email: null,
         linked: null,
-        keyless: {
-          instanceId: "ins_keyless_1",
-          environmentType: "development",
-          publishableKey: "pk_test_keyless",
-          publishableKeyMismatch: false,
-          keySource: ".env.local",
-        },
+        accountless: instance,
+        keyless: instance,
       });
     });
 
