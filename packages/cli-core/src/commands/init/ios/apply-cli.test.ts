@@ -465,6 +465,32 @@ struct MyApp: App {
     );
   });
 
+  test("blocks a malformed present Apple entitlement without treating it as opt-in", async () => {
+    const root = await createUnconfiguredFixture();
+    const entitlementsPath = join(root, "MyApp", "MyApp.entitlements");
+    const entitlements = await Bun.file(entitlementsPath).text();
+    await Bun.write(
+      entitlementsPath,
+      entitlements.replace(
+        "</dict>",
+        "<key>com.apple.developer.applesignin</key><array></array>\n</dict>",
+      ),
+    );
+    const before = await treeDigest(root);
+
+    await expect(
+      applyIOSLocalSetup({
+        root,
+        target: "MyApp",
+        yes: true,
+        agent: true,
+        allowDirty: false,
+      }),
+    ).rejects.toThrow("Native Sign in with Apple could not be configured safely");
+
+    expect(await treeDigest(root)).toEqual(before);
+  });
+
   test("uses the linked key host over an unrelated root env during aggregate setup", async () => {
     const root = await createUnconfiguredFixture();
     const configDir = await createIsolatedCLIState();

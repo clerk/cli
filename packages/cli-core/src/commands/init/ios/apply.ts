@@ -519,9 +519,11 @@ export async function applyIOSLocalSetup(
   // this invocation explicitly opted into the strategy.
   const appleEntitlementPlan = nativeAppleRequested
     ? inspectedAppleEntitlementPlan
-    : inspectedAppleEntitlementPlan?.status === "satisfied"
+    : hasLocalAppleEntitlement && inspectedAppleEntitlementPlan?.status === "blocked"
       ? inspectedAppleEntitlementPlan
-      : undefined;
+      : inspectedAppleEntitlementPlan?.status === "satisfied"
+        ? inspectedAppleEntitlementPlan
+        : undefined;
   const prebuiltAuthAppleEntitlementPlan = prebuiltAuthActive
     ? inspectedAppleEntitlementPlan
     : undefined;
