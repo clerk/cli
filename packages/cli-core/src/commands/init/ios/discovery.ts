@@ -651,7 +651,15 @@ export async function inspectWorkspace(
       embeddedProject ?? resolveWorkspaceLocation(base, location, workspaceDirectory);
     const safelyLocal = await pathIsSafelyWithinIOSRoot(root, absolutePath);
     projectPaths.add(safelyLocal ? relativeIOSPath(root, absolutePath) : absolutePath);
-    if (safelyLocal) localProjectPaths.add(absolutePath);
+    if (safelyLocal) {
+      localProjectPaths.add(absolutePath);
+    } else {
+      // Keep external references visible in the serializable workspace
+      // inventory, but do not treat the local project graph as exhaustive.
+      // Ownership-sensitive writers must fail closed because an external
+      // target could still reference the same file.
+      complete = false;
+    }
   }
 
   return {

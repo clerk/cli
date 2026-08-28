@@ -403,6 +403,22 @@ describe("missing iOS entitlements build settings", () => {
     );
   });
 
+  test("fails closed when a workspace references an external Xcode project", async () => {
+    const root = await makeSynchronizedFixture();
+    const externalRoot = await temporaryRoot();
+    await createIOSFixture(externalRoot, { includeKey: false });
+    const workspace = join(root, "MyApp.xcworkspace");
+    await mkdir(workspace);
+    await writeFile(
+      join(workspace, "contents.xcworkspacedata"),
+      `<Workspace version="1.0"><FileRef location="absolute:${join(externalRoot, "MyApp.xcodeproj")}" /></Workspace>`,
+    );
+
+    expect(blockerCodes(await planIOSMissingEntitlementsSettings(options(root)))).toContain(
+      "shared-synchronized-root",
+    );
+  });
+
   test("fails closed when exhaustive project discovery reaches its traversal bound", async () => {
     const root = await makeSynchronizedFixture();
     let directory = root;
