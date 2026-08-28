@@ -12,6 +12,7 @@ import {
   type IOSXcodeCommandOptions,
   type IOSXcodeCommandResult,
   type IOSXcodeCommandRunner,
+  type IOSXcodeVerificationDependencies,
 } from "./ios-xcode.ts";
 
 interface Invocation {
@@ -1300,6 +1301,59 @@ describe("runIOSXcodeVerification", () => {
           result.message.includes("build directory could not be removed"),
       ),
     ).toMatchObject({ status: "warn" });
+  });
+
+  test("leaves a custom temporary directory untouched when no remover is supplied", async () => {
+    await createIOSFixture(root, { clerkSDK: false });
+    const inspection = await inspectIOSProject(root, { target: "MyApp" });
+    const invocations: Invocation[] = [];
+    const verificationDependencies: IOSXcodeVerificationDependencies = dependencies(
+      successfulXcodeRunner(invocations),
+    );
+    delete verificationDependencies.removeTemporaryDirectory;
+
+    const results = await runIOSXcodeVerification(
+      inspection,
+      { build: true },
+      verificationDependencies,
+    );
+
+    expect((await lstat(temporaryBuildRoot)).isDirectory()).toBe(true);
+    expect(
+      results.some(
+        (result) =>
+          result.name === "Xcode temporary files" &&
+          result.message.includes("build directory could not be removed"),
+      ),
+    ).toBe(false);
+  });
+
+  test("reports the quarantined path when temporary build removal fails", async () => {
+    await createIOSFixture(root, { clerkSDK: false });
+    const inspection = await inspectIOSProject(root, { target: "MyApp" });
+    const invocations: Invocation[] = [];
+    const verificationDependencies = dependencies(successfulXcodeRunner(invocations));
+    let quarantinePath: string | undefined;
+    verificationDependencies.removeTemporaryDirectory = async (path: string) => {
+      quarantinePath = path;
+      throw new Error("cleanup failed");
+    };
+
+    const results = await runIOSXcodeVerification(
+      inspection,
+      { build: true },
+      verificationDependencies,
+    );
+
+    expect(quarantinePath).toContain(".clerk-doctor-ios-cleanup-");
+    expect((await lstat(quarantinePath!)).isDirectory()).toBe(true);
+    expect(
+      results.find(
+        (result) =>
+          result.name === "Xcode temporary files" &&
+          result.message.includes("build directory could not be removed"),
+      )?.remedy,
+    ).toContain(quarantinePath!);
   });
 
   test("rejects a built Info.plist Bundle ID that differs from build settings", async () => {
