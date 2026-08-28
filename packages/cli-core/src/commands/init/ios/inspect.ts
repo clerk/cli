@@ -483,6 +483,7 @@ async function inspectLocalPublishableKeys(
   selection: IOSTargetSelection,
   targetLocalSecretsPaths: string[],
   schemeRoots: string[],
+  containerDiscoveryComplete: boolean,
   inlineCandidates: PublishableKeyCandidate[],
   preferredKind: PublishableKeyCandidate["kind"] | undefined,
   diagnostics: IOSDiagnostic[],
@@ -529,7 +530,7 @@ async function inspectLocalPublishableKeys(
   const localCandidates = decodedCandidates.filter((item) => !item.candidate.ambient);
   const ambientCandidates = decodedCandidates.filter((item) => item.candidate.ambient);
   const runSchemeCouldBeEffective =
-    !schemeDiscoveryComplete &&
+    (!schemeDiscoveryComplete || !containerDiscoveryComplete) &&
     preferredKind !== "inline-literal" &&
     preferredKind !== "local-secrets-plist";
   if (runSchemeCouldBeEffective) {
@@ -537,10 +538,13 @@ async function inspectLocalPublishableKeys(
       code: "xcode.incomplete-scheme-discovery",
       severity: "warning",
       message:
-        "Run-scheme discovery was incomplete, so Clerk could not prove the selected target's runtime publishable key.",
+        "Xcode container or Run-scheme discovery was incomplete, so Clerk could not prove the selected target's runtime publishable key.",
       remedy:
         "Make the selected Xcode project and workspace scheme directories readable, reduce excessive scheme nesting or count, and rerun the command.",
-      evidence: schemeDiscoveryEvidence,
+      evidence: [
+        ...(!containerDiscoveryComplete ? [{ path: "." }] : []),
+        ...schemeDiscoveryEvidence,
+      ],
     });
     return {
       evidenceComplete: false,
@@ -1806,6 +1810,7 @@ export async function inspectIOSProject(
       ...(selection.state === "selected" ? [resolve(root, selection.projectPath)] : []),
       ...discovered.workspacePaths,
     ],
+    discovered.complete,
     inlinePublishableKeyCandidates,
     preferredRuntimeKeyCandidateKind(selectedAppTarget),
     diagnostics,
