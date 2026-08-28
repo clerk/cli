@@ -1,4 +1,4 @@
-import { readdir, readFile } from "node:fs/promises";
+import { readdir, readFile, stat } from "node:fs/promises";
 import { dirname, extname, relative, resolve, sep } from "node:path";
 import { parse as parsePbxProject } from "@bacons/xcode/json";
 import { parseEnvFile } from "../../../lib/dotenv.ts";
@@ -50,6 +50,9 @@ const APPLE_SIGN_IN_KEY = "com.apple.developer.applesignin";
 const MAX_PBXPROJ_BYTES = 15_000_000;
 const MAX_SOURCE_FILES = 2_500;
 const MAX_SOURCE_DEPTH = 24;
+const MAX_SCHEME_DISCOVERY_DEPTH = 6;
+const MAX_SCHEME_FILES = 100;
+const RUN_SCHEME_PRIORITY = 5;
 const MAX_SECRET_DISCOVERY_DEPTH = 5;
 const MAX_SECRET_FILES = 20;
 const SOURCE_IGNORES = new Set([
@@ -151,30 +154,67 @@ interface PublishableKeyCandidate {
   ambient?: true;
 }
 
+interface SchemeDiscoveryState {
+  paths: string[];
+  complete: boolean;
+  incompletePaths: Set<string>;
+}
+
+function markSchemeDiscoveryIncomplete(state: SchemeDiscoveryState, path: string): void {
+  state.complete = false;
+  state.incompletePaths.add(path);
+}
+
 async function collectSchemeFiles(
   root: string,
   directory: string,
-  output: string[],
+  state: SchemeDiscoveryState,
   depth = 0,
 ): Promise<void> {
-  if (depth > 6 || output.length >= 100) return;
+  if (depth > MAX_SCHEME_DISCOVERY_DEPTH) {
+    markSchemeDiscoveryIncomplete(state, directory);
+    return;
+  }
   let entries;
   try {
     entries = await readdir(directory, { withFileTypes: true });
   } catch {
+    markSchemeDiscoveryIncomplete(state, directory);
     return;
   }
   entries.sort((a, b) => a.name.localeCompare(b.name));
   for (const entry of entries) {
     const path = resolve(directory, entry.name);
+    if (entry.isSymbolicLink()) {
+      let couldHideScheme = entry.name.endsWith(".xcscheme");
+      if (!couldHideScheme) {
+        if (!(await pathIsSafelyWithinIOSRoot(root, path))) {
+          couldHideScheme = true;
+        } else {
+          try {
+            couldHideScheme = (await stat(path)).isDirectory();
+          } catch {
+            couldHideScheme = true;
+          }
+        }
+      }
+      if (couldHideScheme) markSchemeDiscoveryIncomplete(state, path);
+      continue;
+    }
     if (entry.isDirectory()) {
-      await collectSchemeFiles(root, path, output, depth + 1);
-    } else if (
-      entry.isFile() &&
-      entry.name.endsWith(".xcscheme") &&
-      (await pathIsSafelyWithinIOSRoot(root, path))
-    ) {
-      output.push(path);
+      if (state.paths.length >= MAX_SCHEME_FILES) {
+        markSchemeDiscoveryIncomplete(state, path);
+      } else {
+        await collectSchemeFiles(root, path, state, depth + 1);
+      }
+    } else if (entry.isFile() && entry.name.endsWith(".xcscheme")) {
+      if (state.paths.length >= MAX_SCHEME_FILES) {
+        markSchemeDiscoveryIncomplete(state, path);
+      } else if (await pathIsSafelyWithinIOSRoot(root, path)) {
+        state.paths.push(path);
+      } else {
+        markSchemeDiscoveryIncomplete(state, path);
+      }
     }
   }
 }
@@ -211,23 +251,39 @@ async function schemePublishableKeyCandidates(
   root: string,
   selection: IOSTargetSelection,
   schemeRoots: string[],
-): Promise<PublishableKeyCandidate[]> {
-  if (selection.state !== "selected") return [];
-  const schemePaths: string[] = [];
+): Promise<{
+  candidates: PublishableKeyCandidate[];
+  complete: boolean;
+  incompleteEvidence: IOSSourceEvidence[];
+}> {
+  if (selection.state !== "selected") {
+    return { candidates: [], complete: true, incompleteEvidence: [] };
+  }
+  const state: SchemeDiscoveryState = {
+    paths: [],
+    complete: true,
+    incompletePaths: new Set(),
+  };
   for (const schemeRoot of [...new Set(schemeRoots)].sort()) {
     if (await pathIsSafelyWithinIOSRoot(root, schemeRoot)) {
-      await collectSchemeFiles(root, schemeRoot, schemePaths);
+      await collectSchemeFiles(root, schemeRoot, state);
+    } else {
+      markSchemeDiscoveryIncomplete(state, schemeRoot);
     }
   }
   const candidates: PublishableKeyCandidate[] = [];
 
-  for (const path of schemePaths.sort()) {
+  for (const path of state.paths.sort()) {
     const file = Bun.file(path);
-    if (!(await file.exists()) || file.size > 2_000_000) continue;
+    if (!(await file.exists()) || file.size > 2_000_000) {
+      markSchemeDiscoveryIncomplete(state, path);
+      continue;
+    }
     let xml: string;
     try {
       xml = maskXMLComments(await file.text());
     } catch {
+      markSchemeDiscoveryIncomplete(state, path);
       continue;
     }
 
@@ -260,12 +316,18 @@ async function schemePublishableKeyCandidates(
           value,
           source,
           evidence: [{ path: source, keyPath: "LaunchAction.EnvironmentVariables" }],
-          priority: 5,
+          priority: RUN_SCHEME_PRIORITY,
         });
       }
     }
   }
-  return candidates;
+  return {
+    candidates,
+    complete: state.complete,
+    incompleteEvidence: [...state.incompletePaths]
+      .sort()
+      .map((path) => ({ path: relativeIOSPath(root, path) })),
+  };
 }
 
 async function collectLocalSecretsPlists(
@@ -306,13 +368,18 @@ async function readPublishableKeyCandidates(
   targetLocalSecretsPaths: string[],
   schemeRoots: string[],
   inlineCandidates: PublishableKeyCandidate[],
-): Promise<PublishableKeyCandidate[]> {
+): Promise<{
+  candidates: PublishableKeyCandidate[];
+  schemeDiscoveryComplete: boolean;
+  schemeDiscoveryEvidence: IOSSourceEvidence[];
+}> {
   const selectedProjectDirectory =
     selection.state === "selected" ? dirname(resolve(root, selection.projectPath)) : root;
   const projectDirectories = [...new Set([selectedProjectDirectory, root])];
+  const schemeDiscovery = await schemePublishableKeyCandidates(root, selection, schemeRoots);
   const candidates: PublishableKeyCandidate[] = [
     ...inlineCandidates,
-    ...(await schemePublishableKeyCandidates(root, selection, schemeRoots)),
+    ...schemeDiscovery.candidates,
   ];
 
   for (const directory of projectDirectories) {
@@ -402,7 +469,13 @@ async function readPublishableKeyCandidates(
     });
   }
 
-  return candidates.sort((a, b) => a.priority - b.priority || a.source.localeCompare(b.source));
+  return {
+    candidates: candidates.sort(
+      (a, b) => a.priority - b.priority || a.source.localeCompare(b.source),
+    ),
+    schemeDiscoveryComplete: schemeDiscovery.complete,
+    schemeDiscoveryEvidence: schemeDiscovery.incompleteEvidence,
+  };
 }
 
 async function inspectLocalPublishableKeys(
@@ -414,13 +487,14 @@ async function inspectLocalPublishableKeys(
   preferredKind: PublishableKeyCandidate["kind"] | undefined,
   diagnostics: IOSDiagnostic[],
 ): Promise<IOSProjectInspectionResult["localPublishableKey"]> {
-  const candidates = await readPublishableKeyCandidates(
-    root,
-    selection,
-    targetLocalSecretsPaths,
-    schemeRoots,
-    inlineCandidates,
-  );
+  const { candidates, schemeDiscoveryComplete, schemeDiscoveryEvidence } =
+    await readPublishableKeyCandidates(
+      root,
+      selection,
+      targetLocalSecretsPaths,
+      schemeRoots,
+      inlineCandidates,
+    );
   const candidateSources = [...new Set(candidates.map((candidate) => candidate.source))].sort();
   const decodedCandidates: Array<{
     candidate: PublishableKeyCandidate;
@@ -454,6 +528,28 @@ async function inspectLocalPublishableKeys(
 
   const localCandidates = decodedCandidates.filter((item) => !item.candidate.ambient);
   const ambientCandidates = decodedCandidates.filter((item) => item.candidate.ambient);
+  const runSchemeCouldBeEffective =
+    !schemeDiscoveryComplete &&
+    preferredKind !== "inline-literal" &&
+    preferredKind !== "local-secrets-plist";
+  if (runSchemeCouldBeEffective) {
+    diagnostics.push({
+      code: "xcode.incomplete-scheme-discovery",
+      severity: "warning",
+      message:
+        "Run-scheme discovery was incomplete, so Clerk could not prove the selected target's runtime publishable key.",
+      remedy:
+        "Make the selected Xcode project and workspace scheme directories readable, reduce excessive scheme nesting or count, and rerun the command.",
+      evidence: schemeDiscoveryEvidence,
+    });
+    return {
+      evidenceComplete: false,
+      found: false,
+      conflict: false,
+      candidateSources,
+      invalidSources: [...invalidSources].sort(),
+    };
+  }
   // Proven app-init wiring determines which class of candidate can reach the
   // selected target. Discovery remains exhaustive and redacted for reporting.
   const effectivePriority = localCandidates[0]?.candidate.priority;
@@ -467,6 +563,7 @@ async function inspectLocalPublishableKeys(
   // Never fall through to a lower-precedence valid key when that source is malformed.
   if (effectiveCandidates.some((item) => !item.decoded)) {
     return {
+      evidenceComplete: true,
       found: false,
       source: effectiveCandidates[0]!.candidate.source,
       conflict: false,
@@ -496,6 +593,7 @@ async function inspectLocalPublishableKeys(
       evidence: effectiveValid.flatMap((item) => item.candidate.evidence),
     });
     return {
+      evidenceComplete: true,
       found: true,
       source: effective!.candidate.source,
       conflict: true,
@@ -506,6 +604,7 @@ async function inspectLocalPublishableKeys(
 
   if (!effective) {
     return {
+      evidenceComplete: true,
       found: false,
       conflict: false,
       candidateSources,
@@ -513,6 +612,7 @@ async function inspectLocalPublishableKeys(
     };
   }
   return {
+    evidenceComplete: true,
     found: true,
     conflict: false,
     source: effective.candidate.source,

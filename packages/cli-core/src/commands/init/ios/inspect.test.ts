@@ -62,6 +62,30 @@ async function writeSelectedTargetRunSchemeKey(root: string, value: string): Pro
   return schemePath;
 }
 
+function selectedTargetRunScheme(value: string, referencedContainer?: string): string {
+  const containerAttribute = referencedContainer
+    ? ` ReferencedContainer="container:${referencedContainer}"`
+    : "";
+  return `<Scheme><LaunchAction><BuildableProductRunnable><BuildableReference BlueprintIdentifier="${IOS_FIXTURE_IDS.appTarget}"${containerAttribute} /></BuildableProductRunnable><EnvironmentVariables><EnvironmentVariable key="CLERK_PUBLISHABLE_KEY" value="${value}" isEnabled="YES" /></EnvironmentVariables></LaunchAction></Scheme>`;
+}
+
+async function fillProjectSchemeLimit(root: string, finalScheme: string): Promise<void> {
+  const schemeDirectory = join(root, "MyApp.xcodeproj", "xcshareddata", "xcschemes");
+  await mkdir(schemeDirectory, { recursive: true });
+  await Promise.all(
+    Array.from({ length: 99 }, (_, index) =>
+      Bun.write(join(schemeDirectory, `A${String(index).padStart(3, "0")}.xcscheme`), "<Scheme />"),
+    ),
+  );
+  await Bun.write(join(schemeDirectory, "ZRuntime.xcscheme"), finalScheme);
+}
+
+async function writeWorkspaceRunScheme(root: string, name: string, source: string): Promise<void> {
+  const schemeDirectory = join(root, "MyApp.xcworkspace", "xcshareddata", "xcschemes");
+  await mkdir(schemeDirectory, { recursive: true });
+  await Bun.write(join(schemeDirectory, name), source);
+}
+
 afterEach(async () => {
   await Promise.all(temporaryDirectories.splice(0).map((path) => rm(path, { recursive: true })));
 });
@@ -166,6 +190,7 @@ describe("inspectIOSProject", () => {
     });
     expect(target?.runtimeKeySinks).toEqual([]);
     expect(inspection.localPublishableKey).toEqual({
+      evidenceComplete: true,
       found: false,
       conflict: false,
       candidateSources: [".env"],
@@ -546,6 +571,7 @@ describe("inspectIOSProject", () => {
     const inspection = await inspectIOSProject(root);
 
     expect(inspection.localPublishableKey).toEqual({
+      evidenceComplete: true,
       found: true,
       source: "MyApp/LocalSecrets.plist",
       frontendApiHost: "native.clerk.example",
@@ -590,6 +616,7 @@ struct MyApp: App {
     const inspection = await inspectIOSProject(root, { target: "MyApp" });
 
     expect(inspection.localPublishableKey).toEqual({
+      evidenceComplete: true,
       found: true,
       conflict: false,
       source: "MyApp/MyAppApp.swift",
@@ -631,6 +658,7 @@ struct MyApp: App {
     const inspection = await inspectIOSProject(root);
 
     expect(inspection.localPublishableKey).toEqual({
+      evidenceComplete: true,
       found: false,
       source: "MyApp/MyAppApp.swift",
       conflict: false,
@@ -658,12 +686,189 @@ struct MyApp: App {
     const inspection = await inspectIOSProject(root);
 
     expect(inspection.localPublishableKey).toMatchObject({
+      evidenceComplete: true,
       found: true,
       source: "MyApp.xcodeproj/xcshareddata/xcschemes/MyApp.xcscheme",
       frontendApiHost: "scheme.clerk.example",
       conflict: false,
     });
     expect(JSON.stringify(inspection)).not.toContain(schemeKey);
+  });
+
+  test("fails closed when bounded scheme discovery hides a conflicting workspace key", async () => {
+    const root = await fixture({ includeKey: false, workspace: true });
+    const visibleKey = `pk_test_${Buffer.from("visible.clerk.example$").toString("base64")}`;
+    const hiddenKey = `pk_test_${Buffer.from("hidden.clerk.example$").toString("base64")}`;
+    await Bun.write(
+      join(root, "MyApp", "MyAppApp.swift"),
+      `import ClerkKit
+import SwiftUI
+
+@main
+struct MyApp: App {
+  init() {
+    Clerk.configure(publishableKey: ProcessInfo.processInfo.environment["CLERK_PUBLISHABLE_KEY"] ?? "")
+  }
+
+  var body: some Scene { WindowGroup { Text("Hello") } }
+}
+`,
+    );
+    await fillProjectSchemeLimit(root, selectedTargetRunScheme(visibleKey));
+    await writeWorkspaceRunScheme(
+      root,
+      "WorkspaceRuntime.xcscheme",
+      selectedTargetRunScheme(hiddenKey, "MyApp.xcodeproj"),
+    );
+
+    const inspection = await inspectIOSProject(root);
+
+    expect(inspection.localPublishableKey).toEqual({
+      evidenceComplete: false,
+      found: false,
+      conflict: false,
+      candidateSources: ["MyApp.xcodeproj/xcshareddata/xcschemes/ZRuntime.xcscheme"],
+      invalidSources: [],
+    });
+    expect(inspection.localPublishableKey.frontendApiHost).toBeUndefined();
+    expect(inspection.diagnostics).toContainEqual(
+      expect.objectContaining({
+        code: "xcode.incomplete-scheme-discovery",
+        severity: "warning",
+        evidence: expect.arrayContaining([{ path: "MyApp.xcworkspace/xcshareddata" }]),
+      }),
+    );
+    expect(JSON.stringify(inspection)).not.toContain(visibleKey);
+    expect(JSON.stringify(inspection)).not.toContain(hiddenKey);
+  });
+
+  test("keeps a proven inline key authoritative when scheme discovery is incomplete", async () => {
+    const root = await fixture({ includeKey: false, workspace: true });
+    const inlineKey = `pk_test_${Buffer.from("inline.clerk.example$").toString("base64")}`;
+    const visibleSchemeKey = `pk_test_${Buffer.from("visible.clerk.example$").toString("base64")}`;
+    const hiddenSchemeKey = `pk_test_${Buffer.from("hidden.clerk.example$").toString("base64")}`;
+    await Bun.write(
+      join(root, "MyApp", "MyAppApp.swift"),
+      `import ClerkKit
+import SwiftUI
+
+@main
+struct MyApp: App {
+  init() {
+    Clerk.configure(publishableKey: "${inlineKey}")
+  }
+
+  var body: some Scene { WindowGroup { Text("Hello") } }
+}
+`,
+    );
+    await fillProjectSchemeLimit(root, selectedTargetRunScheme(visibleSchemeKey));
+    await writeWorkspaceRunScheme(
+      root,
+      "WorkspaceRuntime.xcscheme",
+      selectedTargetRunScheme(hiddenSchemeKey, "MyApp.xcodeproj"),
+    );
+
+    const inspection = await inspectIOSProject(root);
+
+    expect(inspection.localPublishableKey).toMatchObject({
+      evidenceComplete: true,
+      found: true,
+      conflict: false,
+      source: "MyApp/MyAppApp.swift",
+      frontendApiHost: "inline.clerk.example",
+    });
+    expect(
+      inspection.diagnostics.some(
+        (diagnostic) => diagnostic.code === "xcode.incomplete-scheme-discovery",
+      ),
+    ).toBe(false);
+    expect(JSON.stringify(inspection)).not.toContain(inlineKey);
+    expect(JSON.stringify(inspection)).not.toContain(visibleSchemeKey);
+    expect(JSON.stringify(inspection)).not.toContain(hiddenSchemeKey);
+  });
+
+  test("fails incomplete scheme discovery closed when inline startup wiring is ambiguous", async () => {
+    const root = await fixture({ includeKey: false, workspace: true });
+    const inlineKey = `pk_test_${Buffer.from("inline.clerk.example$").toString("base64")}`;
+    const visibleSchemeKey = `pk_test_${Buffer.from("visible.clerk.example$").toString("base64")}`;
+    const hiddenSchemeKey = `pk_test_${Buffer.from("hidden.clerk.example$").toString("base64")}`;
+    await Bun.write(
+      join(root, "MyApp", "MyAppApp.swift"),
+      `import ClerkKit
+import SwiftUI
+
+@main
+struct MyApp: App {
+  init() {
+    Clerk.configure(publishableKey: "${inlineKey}")
+    Clerk.configure(publishableKey: "${inlineKey}")
+  }
+
+  var body: some Scene { WindowGroup { Text("Hello") } }
+}
+`,
+    );
+    await fillProjectSchemeLimit(root, selectedTargetRunScheme(visibleSchemeKey));
+    await writeWorkspaceRunScheme(
+      root,
+      "WorkspaceRuntime.xcscheme",
+      selectedTargetRunScheme(hiddenSchemeKey, "MyApp.xcodeproj"),
+    );
+
+    const inspection = await inspectIOSProject(root);
+
+    expect(inspection.appTargets[0]?.swift.configureCalls).toHaveLength(2);
+    expect(inspection.localPublishableKey).toEqual({
+      evidenceComplete: false,
+      found: false,
+      conflict: false,
+      candidateSources: [
+        "MyApp.xcodeproj/xcshareddata/xcschemes/ZRuntime.xcscheme",
+        "MyApp/MyAppApp.swift",
+      ],
+      invalidSources: [],
+    });
+    expect(inspection.diagnostics).toContainEqual(
+      expect.objectContaining({ code: "xcode.incomplete-scheme-discovery" }),
+    );
+    expect(JSON.stringify(inspection)).not.toContain(inlineKey);
+    expect(JSON.stringify(inspection)).not.toContain(visibleSchemeKey);
+    expect(JSON.stringify(inspection)).not.toContain(hiddenSchemeKey);
+  });
+
+  test("keeps a proven LocalSecrets key authoritative when scheme discovery is incomplete", async () => {
+    const root = await fixture({
+      complete: true,
+      includeKey: false,
+      localSecrets: true,
+      workspace: true,
+    });
+    const visibleSchemeKey = `pk_test_${Buffer.from("visible.clerk.example$").toString("base64")}`;
+    const hiddenSchemeKey = `pk_test_${Buffer.from("hidden.clerk.example$").toString("base64")}`;
+    await fillProjectSchemeLimit(root, selectedTargetRunScheme(visibleSchemeKey));
+    await writeWorkspaceRunScheme(
+      root,
+      "WorkspaceRuntime.xcscheme",
+      selectedTargetRunScheme(hiddenSchemeKey, "MyApp.xcodeproj"),
+    );
+
+    const inspection = await inspectIOSProject(root);
+
+    expect(inspection.localPublishableKey).toMatchObject({
+      evidenceComplete: true,
+      found: true,
+      conflict: false,
+      source: "MyApp/LocalSecrets.plist",
+      frontendApiHost: "native.clerk.example",
+    });
+    expect(
+      inspection.diagnostics.some(
+        (diagnostic) => diagnostic.code === "xcode.incomplete-scheme-discovery",
+      ),
+    ).toBe(false);
+    expect(JSON.stringify(inspection)).not.toContain(visibleSchemeKey);
+    expect(JSON.stringify(inspection)).not.toContain(hiddenSchemeKey);
   });
 
   test("uses the LocalSecrets key proven by app-init wiring instead of a different scheme key", async () => {
@@ -675,6 +880,7 @@ struct MyApp: App {
     const inspection = await inspectIOSProject(root);
 
     expect(inspection.localPublishableKey).toEqual({
+      evidenceComplete: true,
       found: true,
       source: "MyApp/LocalSecrets.plist",
       frontendApiHost: "native.clerk.example",
@@ -703,6 +909,7 @@ struct MyApp: App {
     const inspection = await inspectIOSProject(root);
 
     expect(inspection.localPublishableKey).toEqual({
+      evidenceComplete: true,
       found: false,
       source: "MyApp/LocalSecrets.plist",
       conflict: false,
@@ -728,6 +935,7 @@ struct MyApp: App {
     const inspection = await inspectIOSProject(root);
 
     expect(inspection.localPublishableKey).toEqual({
+      evidenceComplete: true,
       found: false,
       conflict: false,
       candidateSources: ["MyApp.xcodeproj/xcshareddata/xcschemes/MyApp.xcscheme"],
@@ -765,6 +973,7 @@ struct MyApp: App {
     const inspection = await inspectIOSProject(root);
 
     expect(inspection.localPublishableKey).toEqual({
+      evidenceComplete: true,
       found: true,
       source: "MyApp.xcodeproj/xcshareddata/xcschemes/MyApp.xcscheme",
       frontendApiHost: "scheme-runtime.clerk.example",
@@ -793,6 +1002,7 @@ struct MyApp: App {
     const inspection = await inspectIOSProject(root);
 
     expect(inspection.localPublishableKey).toEqual({
+      evidenceComplete: true,
       found: false,
       conflict: false,
       candidateSources: [],
@@ -814,6 +1024,7 @@ struct MyApp: App {
     const inspection = await inspectIOSProject(root);
 
     expect(inspection.localPublishableKey).toEqual({
+      evidenceComplete: true,
       found: false,
       conflict: false,
       candidateSources: [],
@@ -836,6 +1047,7 @@ struct MyApp: App {
     const inspection = await inspectIOSProject(root);
 
     expect(inspection.localPublishableKey).toEqual({
+      evidenceComplete: true,
       found: true,
       source: "MyApp.xcodeproj/xcshareddata/xcschemes/First.xcscheme",
       conflict: true,
@@ -864,6 +1076,7 @@ struct MyApp: App {
       const inspection = await inspectIOSProject(root);
 
       expect(inspection.localPublishableKey).toMatchObject({
+        evidenceComplete: true,
         found: true,
         conflict: false,
         source: "MyApp/LocalSecrets.plist",
@@ -898,6 +1111,7 @@ struct MyApp: App {
     const inspection = await inspectIOSProject(root);
 
     expect(inspection.localPublishableKey).toEqual({
+      evidenceComplete: true,
       found: false,
       source: "MyApp.xcodeproj/xcshareddata/xcschemes/MyApp.xcscheme",
       conflict: false,
@@ -917,6 +1131,7 @@ struct MyApp: App {
     const inspection = await inspectIOSProject(root);
 
     expect(inspection.localPublishableKey).toEqual({
+      evidenceComplete: true,
       found: false,
       conflict: false,
       candidateSources: [],
@@ -1056,6 +1271,7 @@ struct MyApp: App {
       const inspection = await inspectIOSProject(root);
 
       expect(inspection.localPublishableKey).toEqual({
+        evidenceComplete: true,
         found: false,
         conflict: false,
         candidateSources: [],
