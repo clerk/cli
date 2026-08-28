@@ -91,7 +91,11 @@ export async function init(options: InitOptions = {}) {
   const agent = isAgent();
 
   setTelemetryStage("flags");
-  await assertUsableFlags(options, agent);
+  const optsAccountless = options.accountless === true || options.keyless === true;
+  if (options.keyless) {
+    log.warn("`--keyless` is deprecated. Use `--accountless` instead.");
+  }
+  await assertUsableFlags(options, agent, optsAccountless);
 
   const frameworkOverride = options.framework
     ? (lookupFramework(options.framework) ?? undefined)
@@ -121,10 +125,6 @@ export async function init(options: InitOptions = {}) {
 
   await enrichProjectContext(ctx);
 
-  const optsAccountless = options.accountless === true || options.keyless === true;
-  if (options.keyless) {
-    log.warn("`--keyless` is deprecated. Use `--accountless` instead.");
-  }
   // Skip auth-related I/O entirely when the user opted into accountless setup — those
   // values are not consumed once the strategy resolves to "keyless".
   //
@@ -212,8 +212,11 @@ export async function init(options: InitOptions = {}) {
  * application the CLI creates; `--login` and `--app` describe one that
  * already exists.
  */
-async function assertUsableFlags(options: InitOptions, agent: boolean): Promise<void> {
-  const accountless = options.accountless || options.keyless;
+async function assertUsableFlags(
+  options: InitOptions,
+  agent: boolean,
+  accountless: boolean,
+): Promise<void> {
   if (accountless && options.login) {
     throwUsageError("--accountless and --login cannot be combined.");
   }

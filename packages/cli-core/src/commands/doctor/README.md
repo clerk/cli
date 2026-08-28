@@ -62,7 +62,7 @@ one.
 
 The Linked application and Instances checks are account-only (the Platform
 API application/instance-list concepts have no accountless equivalent), so they
-continue to skip for a accountless project — the skip reason names the accountless
+continue to skip for an accountless project — the skip reason names the accountless
 application instead of reading like a problem.
 
 ## Auto-Fix (`--fix`)

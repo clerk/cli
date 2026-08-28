@@ -37,7 +37,7 @@ OAuth requests are made against the Clerk OAuth system instance (default `https:
 | Token exchange | `POST` | `/oauth/token`                                | Exchanges authorization code + `code_verifier` for an access token                |
 | User info      | `GET`  | `/oauth/userinfo`                             | Fetches `sub` (user ID) and `email` using the access token                        |
 | Revoke         | `POST` | `/oauth/token/revoke`                         | Revokes the superseded refresh token on re-authentication (RFC 7009)              |
-| Autoclaim      | `POST` | `/v1/platform/accountless_applications/claim` | Claims a accountless application by token; returns the full `Application` object  |
+| Autoclaim      | `POST` | `/v1/platform/accountless_applications/claim` | Claims an accountless application by token; returns the full `Application` object |
 
 ### `clerk auth logout` (aliases: `signout`, `sign-out`)
 
