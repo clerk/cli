@@ -185,6 +185,16 @@ class TemporaryBuildDirectoryReplacementError extends Error {
   }
 }
 
+class TemporaryBuildDirectoryCleanupError extends Error {
+  constructor(
+    readonly preservedPath: string,
+    error: unknown,
+  ) {
+    super(`The quarantined Xcode build directory could not be removed: ${errorMessage(error)}`);
+    this.name = "TemporaryBuildDirectoryCleanupError";
+  }
+}
+
 interface VerifiedBuildSettings {
   targetBuildDir?: string;
   fullProductName?: string;
@@ -1824,7 +1834,11 @@ async function removeOwnedTemporaryBuildDirectory(
     throw new TemporaryBuildDirectoryReplacementError(quarantine.path);
   }
 
-  await removeDirectory(quarantine.path);
+  try {
+    await removeDirectory(quarantine.path);
+  } catch (error) {
+    throw new TemporaryBuildDirectoryCleanupError(quarantine.path, error);
+  }
 
   for (const exposedPath of [directory.path, quarantine.path]) {
     try {
@@ -1954,6 +1968,8 @@ export async function runIOSXcodeVerification(
   results.push(pass("Xcode toolchain", version || "Xcode is available"));
 
   const customTemp = dependencies.makeTemporaryDirectory != null;
+  const shouldRemoveTemporaryDirectory =
+    dependencies.removeTemporaryDirectory != null || !customTemp;
   const makeTemporaryDirectory =
     dependencies.makeTemporaryDirectory ?? makeDefaultTemporaryDirectory;
   const removeTemporaryDirectory =
@@ -2601,14 +2617,16 @@ export async function runIOSXcodeVerification(
       }
     }
     try {
-      if (!preserveTemporaryDirectory) {
+      if (!preserveTemporaryDirectory && shouldRemoveTemporaryDirectory) {
         await removeOwnedTemporaryBuildDirectory(ownedTemporaryDirectory, removeTemporaryDirectory);
       }
     } catch (error) {
       const remedy =
         error instanceof TemporaryBuildDirectoryReplacementError
           ? `Inspect ${error.preservedPath}; Doctor preserved the replacement and did not recursively remove the exposed path.`
-          : `Remove ${temporaryDirectory} after confirming no build is still running.`;
+          : error instanceof TemporaryBuildDirectoryCleanupError
+            ? `Inspect ${error.preservedPath}; Doctor left the quarantined build directory intact after cleanup failed.`
+            : `Remove ${temporaryDirectory} after confirming no build is still running.`;
       results.push(
         warn(
           "Xcode temporary files",
