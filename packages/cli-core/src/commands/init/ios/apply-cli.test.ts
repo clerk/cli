@@ -280,6 +280,87 @@ describe("clerk init iOS SDK apply", () => {
     expect(appSource).toContain(".environment(Clerk.shared)");
   });
 
+  test("directly configures a fresh target without changing an unreferenced LocalSecrets plist", async () => {
+    const root = await mkdtemp(join(tmpdir(), "clerk-ios-unused-local-secrets-"));
+    temporaryDirectories.push(root);
+    await createIOSFixture(root, { includeKey: false, localSecrets: true });
+    const localSecretsPath = join(root, "MyApp", "LocalSecrets.plist");
+    const localSecretsBefore = await Bun.file(localSecretsPath).text();
+
+    const before = await inspectIOSProject(root, { target: "MyApp" });
+    expect(before.diagnostics).toContainEqual(
+      expect.objectContaining({
+        code: "clerk.unconsumed-publishable-key-source",
+        severity: "warning",
+      }),
+    );
+
+    const setup = await applyIOSLocalSetup({
+      root,
+      target: "MyApp",
+      yes: true,
+      agent: true,
+      allowDirty: false,
+    });
+
+    expect(setup.directConfigPlan).toMatchObject({
+      status: "ready",
+      changes: {
+        configuration: "insert-initializer",
+        environment: "insert",
+      },
+    });
+    expect(setup.runtimeKeyVerificationPlan).toBeUndefined();
+    await applyIOSPlannedLocalSetup(setup, authFixtureKey);
+
+    const appSource = await Bun.file(join(root, "MyApp", "MyAppApp.swift")).text();
+    expect(appSource).toContain("Clerk.configure(publishableKey:");
+    expect(appSource).toContain(".environment(Clerk.shared)");
+    expect(await Bun.file(localSecretsPath).text()).toBe(localSecretsBefore);
+  });
+
+  test("directly configures a fresh target without changing a stale Run-scheme key", async () => {
+    const root = await mkdtemp(join(tmpdir(), "clerk-ios-unused-scheme-key-"));
+    temporaryDirectories.push(root);
+    await createIOSFixture(root, { includeKey: false });
+    const schemeDirectory = join(root, "MyApp.xcodeproj", "xcshareddata", "xcschemes");
+    const schemePath = join(schemeDirectory, "MyApp.xcscheme");
+    const staleKey = `pk_test_${btoa("stale.clerk.example$")}`;
+    const schemeSource = `<Scheme><LaunchAction><BuildableProductRunnable><BuildableReference BlueprintIdentifier="${IOS_FIXTURE_IDS.appTarget}" /></BuildableProductRunnable><EnvironmentVariables><EnvironmentVariable key="CLERK_PUBLISHABLE_KEY" value="${staleKey}" isEnabled="YES" /></EnvironmentVariables></LaunchAction></Scheme>`;
+    await mkdir(schemeDirectory, { recursive: true });
+    await Bun.write(schemePath, schemeSource);
+
+    const before = await inspectIOSProject(root, { target: "MyApp" });
+    expect(before.diagnostics).toContainEqual(
+      expect.objectContaining({
+        code: "clerk.unconsumed-publishable-key-source",
+        severity: "warning",
+      }),
+    );
+
+    const setup = await applyIOSLocalSetup({
+      root,
+      target: "MyApp",
+      yes: true,
+      agent: true,
+      allowDirty: false,
+    });
+
+    expect(setup.directConfigPlan).toMatchObject({
+      status: "ready",
+      changes: {
+        configuration: "insert-initializer",
+        environment: "insert",
+      },
+    });
+    await applyIOSPlannedLocalSetup(setup, authFixtureKey);
+
+    const appSource = await Bun.file(join(root, "MyApp", "MyAppApp.swift")).text();
+    expect(appSource).toContain("Clerk.configure(publishableKey:");
+    expect(appSource).toContain(".environment(Clerk.shared)");
+    expect(await Bun.file(schemePath).text()).toBe(schemeSource);
+  });
+
   test("refuses a ProcessInfo compatibility path without proven SwiftUI environment injection", async () => {
     const root = await mkdtemp(join(tmpdir(), "clerk-ios-process-info-auth-view-"));
     temporaryDirectories.push(root);
