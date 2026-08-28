@@ -482,7 +482,7 @@ async function remoteResults(
             status: "fail",
             message: "Clerk Sign in with Apple: application access is not permitted",
             remedy:
-              "Use an account or Platform API key with applications:read access to the linked app.",
+              "Use an account or Platform API key with applications:manage access to the linked app.",
           });
         } else if (isAuthError(error) || (error instanceof PlapiError && error.status === 401)) {
           results.push({
