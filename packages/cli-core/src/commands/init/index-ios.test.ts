@@ -25,6 +25,7 @@ import {
   FAKE_IOS_NATIVE_READINESS,
 } from "../../test/lib/init-harness.ts";
 import * as telemetryMod from "../../lib/telemetry.ts";
+import * as iosFileTransactionMod from "./ios/file-transaction.ts";
 import { init } from "./index.ts";
 import { ERROR_CODE, PlapiError } from "../../lib/errors.ts";
 import type { IOSLocalSetupResult } from "./ios/apply.ts";
@@ -508,6 +509,9 @@ describe("init iOS", () => {
       },
     };
     spyOn(context, "gatherContext").mockResolvedValue(iosCtx);
+    const recover = spyOn(iosFileTransactionMod, "recoverIOSFileTransactions").mockResolvedValue(
+      undefined,
+    );
     spyOn(scaffoldMod, "scaffold").mockResolvedValue({
       actions: [],
       postInstructions: ["Add the Clerk iOS SDK via Swift Package Manager"],
@@ -515,6 +519,7 @@ describe("init iOS", () => {
 
     await init({ yes: true });
 
+    expect(recover).toHaveBeenCalledWith(iosCtx.cwd);
     expect(iosApplyMod.applyIOSLocalSetup).toHaveBeenCalledWith({
       root: iosCtx.cwd,
       target: undefined,

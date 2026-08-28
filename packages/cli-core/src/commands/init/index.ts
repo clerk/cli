@@ -66,6 +66,7 @@ import {
 import type { ProjectContext } from "./frameworks/types.js";
 import { type PackageManager, PACKAGE_MANAGERS } from "../../lib/package-manager.ts";
 import { inspectIOSProject } from "./ios/inspect.ts";
+import { recoverIOSFileTransactions } from "./ios/file-transaction.ts";
 import { buildIOSSetupPlan } from "./ios/plan.ts";
 import { planIOSDirectConfig } from "./ios/direct-config.ts";
 import { clerkKitUIInstallDecision, shouldPlanIOSDirectConfig } from "./ios/products.ts";
@@ -363,6 +364,11 @@ export async function init(options: InitOptions = {}) {
   let iosProfile: Awaited<ReturnType<typeof resolveProfile>> | undefined;
   let preauthenticatedIOSLabel: string | undefined;
   if (ctx.framework.dep === "ios") {
+    // A normal init is explicitly mutating and may finish a durable file
+    // transaction left by an interrupted earlier run. Dry-run returns above,
+    // so read-only inspection only reports recovery as required.
+    await recoverIOSFileTransactions(ctx.cwd);
+
     // Resolve the local link before the redacted preview. No application key
     // is fetched and no local file is written until the user has authorized
     // the complete semantic plan.
