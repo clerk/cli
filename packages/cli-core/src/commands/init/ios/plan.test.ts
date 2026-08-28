@@ -109,6 +109,7 @@ describe("buildIOSSetupPlan", () => {
     const target = inspection.appTargets[0]!;
     const schemePath = "MyApp.xcodeproj/xcshareddata/xcschemes/MyApp.xcscheme";
     inspection.localPublishableKey = {
+      evidenceComplete: true,
       found: true,
       source: schemePath,
       frontendApiHost: "stale.clerk.example",
@@ -616,6 +617,7 @@ struct MyApp: App {
     });
     const schemePath = "MyApp.xcodeproj/xcshareddata/xcschemes/MyApp.xcscheme";
     inspection.localPublishableKey = {
+      evidenceComplete: true,
       found: true,
       source: schemePath,
       frontendApiHost: "clerk.example.test",
@@ -652,6 +654,7 @@ struct MyApp: App {
       "CLERK_PUBLISHABLE_KEY environment variable",
     ]) {
       inspection.localPublishableKey = {
+        evidenceComplete: true,
         found: true,
         source,
         frontendApiHost: "clerk.example.test",

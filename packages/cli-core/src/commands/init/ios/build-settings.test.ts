@@ -754,6 +754,7 @@ describe("inspectTargetBuildConfigurations", () => {
         projectPath: "Example.xcodeproj",
       },
       localPublishableKey: {
+        evidenceComplete: true,
         found: false,
         conflict: false,
         candidateSources: [],
