@@ -269,7 +269,9 @@ function dependencies(runner: IOSXcodeCommandRunner) {
       GITHUB_TOKEN: "github_must_not_escape",
     },
     makeTemporaryDirectory: async () => temporaryBuildRoot,
-    removeTemporaryDirectory: async () => {},
+    removeTemporaryDirectory: async (path: string) => {
+      await rm(path, { recursive: true, force: false });
+    },
   };
 }
 
@@ -1270,6 +1272,34 @@ describe("runIOSXcodeVerification", () => {
     expect(await Bun.file(join(installPath!, "Info.plist")).text()).toContain(
       "com.example.Replacement",
     );
+  });
+
+  test("preserves a temporary build directory replacement created at cleanup", async () => {
+    await createIOSFixture(root, { clerkSDK: false });
+    const inspection = await inspectIOSProject(root, { target: "MyApp" });
+    const invocations: Invocation[] = [];
+    const replacementPath = join(temporaryBuildRoot, "replacement.txt");
+    const verificationDependencies = dependencies(successfulXcodeRunner(invocations));
+    verificationDependencies.removeTemporaryDirectory = async (quarantinePath: string) => {
+      await mkdir(temporaryBuildRoot);
+      await Bun.write(replacementPath, "preserve me");
+      await rm(quarantinePath, { recursive: true, force: false });
+    };
+
+    const results = await runIOSXcodeVerification(
+      inspection,
+      { build: true },
+      verificationDependencies,
+    );
+
+    expect(await Bun.file(replacementPath).text()).toBe("preserve me");
+    expect(
+      results.find(
+        (result) =>
+          result.name === "Xcode temporary files" &&
+          result.message.includes("build directory could not be removed"),
+      ),
+    ).toMatchObject({ status: "warn" });
   });
 
   test("rejects a built Info.plist Bundle ID that differs from build settings", async () => {
