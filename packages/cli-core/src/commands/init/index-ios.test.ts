@@ -1012,6 +1012,46 @@ describe("init iOS", () => {
     expect(`${captured.out}\n${captured.err}`).not.toContain("pk_test_must_not_be_forwarded");
   });
 
+  test("does not mutate Apple state when the application link changes during native setup", async () => {
+    setup({ email: "test@test.com" });
+    const iosCtx = nativeIOSContext();
+    const setupResult = iosSetupResult({
+      appleEntitlementPlan: iosAppleEntitlementPlan(),
+      nativeAppleRequested: true,
+      requiresLinkedApp: true,
+      requiresDevelopmentKey: false,
+    });
+    let linkedApplicationId = "app_test";
+    spyOn(context, "gatherContext").mockResolvedValue(iosCtx);
+    spyOn(config, "resolveProfile").mockImplementation(
+      async () => ({ profile: { appId: linkedApplicationId } }) as never,
+    );
+    spyOn(iosApplyMod, "applyIOSLocalSetup").mockResolvedValue(setupResult);
+    spyOn(nativeRemoteMod, "prepareIOSNativeRemoteSetup").mockResolvedValue(iosRemotePlan());
+    spyOn(nativeAppleMod, "prepareIOSNativeAppleConnection").mockResolvedValue(
+      iosNativeApplePlan(),
+    );
+    spyOn(iosApplyMod, "applyIOSPlannedLocalSetup").mockResolvedValue(undefined);
+    const applyNative = spyOn(nativeRemoteMod, "applyIOSNativeRemoteSetup").mockImplementation(
+      async () => {
+        linkedApplicationId = "app_changed";
+      },
+    );
+    const applyApple = spyOn(nativeAppleMod, "applyIOSNativeAppleConnection").mockResolvedValue(
+      undefined,
+    );
+
+    await expect(init({ yes: true, signInWithApple: true })).rejects.toMatchObject({
+      code: ERROR_CODE.IOS_SETUP_STALE,
+      message: expect.stringContaining(
+        "completed local and Clerk Native Application changes remain intact, but no native Apple connection changes were made",
+      ),
+    });
+
+    expect(applyNative).toHaveBeenCalledTimes(1);
+    expect(applyApple).not.toHaveBeenCalled();
+  });
+
   test("does not opt into native Apple merely because --yes was supplied", async () => {
     setup({ email: "test@test.com" });
     const iosCtx = nativeIOSContext();
@@ -1083,6 +1123,41 @@ describe("init iOS", () => {
 
     expect(nativeRemoteMod.applyIOSNativeRemoteSetup).not.toHaveBeenCalled();
     expect(stages().at(-1)).toBe("ios_local_setup");
+  });
+
+  test("does not mutate native state when the application link changes during local commit", async () => {
+    setup({ email: "test@test.com" });
+    const iosCtx = nativeIOSContext();
+    const setupResult = iosSetupResult({
+      requiresLinkedApp: true,
+      requiresDevelopmentKey: false,
+    });
+    let linkedApplicationId = "app_test";
+    spyOn(context, "gatherContext").mockResolvedValue(iosCtx);
+    spyOn(config, "resolveProfile").mockImplementation(
+      async () => ({ profile: { appId: linkedApplicationId } }) as never,
+    );
+    spyOn(iosApplyMod, "applyIOSLocalSetup").mockResolvedValue(setupResult);
+    spyOn(nativeRemoteMod, "prepareIOSNativeRemoteSetup").mockResolvedValue(iosRemotePlan());
+    const commitLocal = spyOn(iosApplyMod, "applyIOSPlannedLocalSetup").mockImplementation(
+      async () => {
+        linkedApplicationId = "app_changed";
+      },
+    );
+    const applyRemote = spyOn(nativeRemoteMod, "applyIOSNativeRemoteSetup").mockResolvedValue(
+      undefined,
+    );
+
+    await expect(init({ yes: true })).rejects.toMatchObject({
+      code: ERROR_CODE.IOS_SETUP_STALE,
+      message: expect.stringContaining(
+        "Local changes remain intact, but no Clerk Native Application changes were made",
+      ),
+    });
+
+    expect(commitLocal).toHaveBeenCalledTimes(1);
+    expect(applyRemote).not.toHaveBeenCalled();
+    expect(nativeAppleMod.applyIOSNativeAppleConnection).not.toHaveBeenCalled();
   });
 
   test("reports partial remote failure without claiming the local setup was rolled back", async () => {
@@ -1284,6 +1359,9 @@ describe("init iOS", () => {
       instanceId: "ins_matching",
       publishableKey: linkedKey,
     });
+    spyOn(nativeRemoteMod, "prepareIOSNativeRemoteSetup").mockResolvedValue(
+      iosRemotePlan({ applicationId: "app_matching", instanceId: "ins_matching" }),
+    );
     await init({ yes: true });
 
     expect(resolveKeys).toHaveBeenCalledTimes(1);
@@ -1315,6 +1393,9 @@ describe("init iOS", () => {
       verifiesExistingKey: true,
     });
     const localApply = spyOn(iosApplyMod, "applyIOSLocalSetup").mockResolvedValue(setupResult);
+    spyOn(nativeRemoteMod, "prepareIOSNativeRemoteSetup").mockResolvedValue(
+      iosRemotePlan({ applicationId: "app_requested", instanceId: "ins_requested" }),
+    );
 
     await init({ yes: true, app: "app_requested" });
 
@@ -1355,6 +1436,9 @@ describe("init iOS", () => {
       requiresDevelopmentKey: true,
     });
     spyOn(iosApplyMod, "applyIOSLocalSetup").mockResolvedValue(setupResult);
+    spyOn(nativeRemoteMod, "prepareIOSNativeRemoteSetup").mockResolvedValue(
+      iosRemotePlan({ applicationId: "app_requested", instanceId: "ins_requested" }),
+    );
 
     await init({ yes: true, app: "app_requested" });
 

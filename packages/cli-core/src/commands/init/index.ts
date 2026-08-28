@@ -648,6 +648,11 @@ export async function init(options: InitOptions = {}) {
       iosSetupForCommit,
       iosSetupForCommit.requiresDevelopmentKey ? keys.publishableKey : undefined,
     );
+    await assertIOSApplicationLinkStillMatches({
+      cwd: ctx.cwd,
+      applicationId: nativeRemotePlan.applicationId,
+      phase: "native-application",
+    });
     try {
       setTelemetryStage("ios_native_setup");
       await applyIOSNativeRemoteSetup(nativeRemotePlan);
@@ -663,6 +668,11 @@ export async function init(options: InitOptions = {}) {
     log.success("Clerk Native API and iOS application registration verified");
     ctx.iosNativeRemoteReady = true;
     if (nativeApplePlan) {
+      await assertIOSApplicationLinkStillMatches({
+        cwd: ctx.cwd,
+        applicationId: nativeApplePlan.applicationId,
+        phase: "native-apple",
+      });
       try {
         setTelemetryStage("ios_apple_setup");
         await applyIOSNativeAppleConnection(nativeApplePlan);
@@ -1159,6 +1169,21 @@ async function authenticateAndLink(
     applicationId,
     ...(applicationLinkChange ? { applicationLinkChange } : {}),
   };
+}
+
+async function assertIOSApplicationLinkStillMatches(options: {
+  cwd: string;
+  applicationId: string;
+  phase: "native-application" | "native-apple";
+}): Promise<void> {
+  const linked = await resolveProfile(options.cwd);
+  if (linked?.profile.appId === options.applicationId) return;
+
+  const message =
+    options.phase === "native-application"
+      ? "The local Clerk application link changed after the approved iOS setup was committed. Local changes remain intact, but no Clerk Native Application changes were made; rerun clerk init."
+      : "The local Clerk application link changed after Clerk Native Application setup completed. The completed local and Clerk Native Application changes remain intact, but no native Apple connection changes were made; rerun clerk init.";
+  throw new CliError(message, { code: ERROR_CODE.IOS_SETUP_STALE });
 }
 
 // --- Keyless app setup ---
