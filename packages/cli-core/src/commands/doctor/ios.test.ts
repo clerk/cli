@@ -1048,7 +1048,8 @@ struct MyApp: App {
     const apple = audit.results.find((result) => result.name === "iOS: Clerk Sign in with Apple");
     expect(apple?.status).toBe("fail");
     expect(apple?.message).toContain("not permitted");
-    expect(apple?.remedy).toContain("applications:read");
+    expect(apple?.remedy).toContain("applications:manage");
+    expect(apple?.remedy).not.toContain("applications:read");
     expect(JSON.stringify(audit.results)).not.toContain("apple-secret-value");
   });
 });
