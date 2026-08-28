@@ -1421,7 +1421,6 @@ export async function verifyIOSRuntimeKeySetup(
     verifyIOSRuntimeKey(plan, linkedPublishableKey),
   );
   assertRuntimeKeyVerificationMatched(result);
-  log.info(dim("The existing publishable key matches the linked Clerk application."));
 }
 
 function assertRuntimeKeyVerificationMatched(

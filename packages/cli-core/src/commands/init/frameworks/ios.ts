@@ -67,7 +67,7 @@ export const ios: FrameworkScaffold = {
           })
         : undefined;
     const runtimeKeyVerificationPlan =
-      selection.state === "selected" && hasLocalSecretsConfigure
+      selection.state === "selected" && (hasLocalSecretsConfigure || hasProcessInfoConfigure)
         ? await planIOSRuntimeKeyVerification({
             root: ctx.cwd,
             projectPath: selection.projectPath,

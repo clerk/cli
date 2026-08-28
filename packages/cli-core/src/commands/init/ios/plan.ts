@@ -286,7 +286,7 @@ export function buildIOSSetupPlan(
       "Configure Clerk with a publishable key",
       configuredStatus,
       runtimeKeyVerificationBlocked
-        ? `The existing LocalSecrets.plist compatibility path cannot be verified safely. clerk init preserves this file and will not replace it. ${runtimeKeyVerificationBlocker ?? "Repair it manually, then rerun the command."}`
+        ? `The existing iOS runtime-key compatibility path cannot be verified safely. clerk init preserves this source and will not replace it. ${runtimeKeyVerificationBlocker ?? "Repair it manually, then rerun the command."}`
         : publishableKeyBlocked
           ? inspection.localPublishableKey.conflict
             ? "Multiple effective publishable-key sources point at different Clerk instances. Resolve the conflict before configuring the app."

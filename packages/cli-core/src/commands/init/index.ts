@@ -82,6 +82,7 @@ import {
   applyIOSPlannedLocalSetup,
   normalizeIOSSDKInstallPlanForSetup,
   planIOSPrebuiltAuthRuntimeBlockers,
+  verifyIOSRuntimeKeySetup,
   type IOSLocalSetupResult,
 } from "./ios/apply.ts";
 import {
@@ -671,6 +672,12 @@ export async function init(options: InitOptions = {}) {
       applicationId: nativeRemotePlan.applicationId,
       phase: "native-application",
     });
+    if (iosSetupForCommit.runtimeKeyVerificationPlan) {
+      await verifyIOSRuntimeKeySetup(
+        iosSetupForCommit.runtimeKeyVerificationPlan,
+        keys.publishableKey,
+      );
+    }
     try {
       setTelemetryStage("ios_native_setup");
       await applyIOSNativeRemoteSetup(nativeRemotePlan);
@@ -693,6 +700,12 @@ export async function init(options: InitOptions = {}) {
         applicationId: nativeApplePlan.applicationId,
         phase: "native-apple",
       });
+      if (iosSetupForCommit.runtimeKeyVerificationPlan) {
+        await verifyIOSRuntimeKeySetup(
+          iosSetupForCommit.runtimeKeyVerificationPlan,
+          keys.publishableKey,
+        );
+      }
       try {
         setTelemetryStage("ios_apple_setup");
         await applyIOSNativeAppleConnection(nativeApplePlan);
