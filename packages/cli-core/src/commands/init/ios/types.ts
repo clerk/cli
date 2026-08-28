@@ -28,7 +28,8 @@ export interface IOSDiagnostic {
     | "xcode.interrupted-file-transaction"
     | "clerk.package-unattributed"
     | "clerk.invalid-publishable-key"
-    | "clerk.conflicting-publishable-keys";
+    | "clerk.conflicting-publishable-keys"
+    | "clerk.unconsumed-publishable-key-source";
   severity: IOSDiagnosticSeverity;
   message: string;
   remedy?: string;

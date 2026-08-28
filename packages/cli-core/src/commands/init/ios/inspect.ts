@@ -31,6 +31,7 @@ import {
   type PbxObjects,
 } from "./pbx.ts";
 import { parseIOSPlist } from "./plist.ts";
+import { hasIOSProvenStartupKeyWiring } from "./products.ts";
 import { inspectSwiftSources } from "./swift.ts";
 import type {
   IOSAppTarget,
@@ -647,6 +648,50 @@ function preferredRuntimeKeyCandidateKind(
   }
   if (call.publishableKeyWiring === "process-info-environment") return "run-scheme";
   return undefined;
+}
+
+function addUnconsumedRuntimeKeyDiagnostics(
+  target: IOSAppTarget | undefined,
+  localPublishableKey: IOSProjectInspectionResult["localPublishableKey"],
+  diagnostics: IOSDiagnostic[],
+): void {
+  if (!target) return;
+
+  if (
+    target.runtimeKeySinks.length > 0 &&
+    !hasIOSProvenStartupKeyWiring(target, "local-secrets-loader")
+  ) {
+    diagnostics.push({
+      code: "clerk.unconsumed-publishable-key-source",
+      severity: "warning",
+      message:
+        "Clerk found a target-owned LocalSecrets.plist but could not prove that the selected app consumes it at startup.",
+      remedy:
+        "Clerk will leave this file unchanged. Connect it from Clerk.configure in the selected @main app's init(), or remove it if it is stale.",
+      evidence: target.runtimeKeySinks.map((sink) => ({
+        path: sink.path,
+        keyPath: "CLERK_PUBLISHABLE_KEY",
+      })),
+    });
+  }
+
+  const schemeSources = localPublishableKey.candidateSources.filter((source) =>
+    source.endsWith(".xcscheme"),
+  );
+  if (
+    schemeSources.length > 0 &&
+    !hasIOSProvenStartupKeyWiring(target, "process-info-environment")
+  ) {
+    diagnostics.push({
+      code: "clerk.unconsumed-publishable-key-source",
+      severity: "warning",
+      message:
+        "Clerk found a selected-target Run-scheme key but could not prove that the selected app consumes it at startup.",
+      remedy:
+        "Clerk will leave this scheme unchanged. Read CLERK_PUBLISHABLE_KEY from ProcessInfo in Clerk.configure in the selected @main app's init(), or remove the variable if it is stale.",
+      evidence: schemeSources.map((path) => ({ path, keyPath: "CLERK_PUBLISHABLE_KEY" })),
+    });
+  }
 }
 
 async function localPackageIsClerk(root: string, packagePath: string): Promise<boolean> {
@@ -1857,6 +1902,7 @@ export async function inspectIOSProject(
     preferredRuntimeKeyCandidateKind(selectedAppTarget),
     diagnostics,
   );
+  addUnconsumedRuntimeKeyDiagnostics(selectedAppTarget, localPublishableKeyInspection, diagnostics);
   const result: IOSProjectInspectionResult = {
     schemaVersion: 1,
     platform: "ios",
