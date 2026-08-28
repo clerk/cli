@@ -390,7 +390,7 @@ describe("iOS Clerk SDK installer", () => {
     ]);
   });
 
-  test("prepares an internal SDK mutation for a combined transaction", async () => {
+  test("prepares a non-serializable internal SDK mutation for a combined transaction", async () => {
     const root = await fixture();
     await transformProject(root, removeClerkSDK);
     const before = await readFile(pbxprojPath(root));
@@ -404,7 +404,21 @@ describe("iOS Clerk SDK installer", () => {
     expect(prepared.mutation.boundary.rootPath).toBe(root);
     expect(await validateIOSSDKInstallPostcondition(prepared.plan)).toBe(false);
     expect(prepared.mutation.path).toBe(pbxprojPath(root));
-    expect(JSON.stringify(prepared.plan)).not.toContain("candidateBytes");
+    expect(Object.getOwnPropertyDescriptor(prepared, "mutation")).toEqual({
+      value: prepared.mutation,
+      enumerable: false,
+      configurable: false,
+      writable: false,
+    });
+    const serializedPlan = JSON.stringify(prepared.plan);
+    const serializedPrepared = JSON.stringify(prepared);
+    expect(serializedPrepared).toBe(`{"status":"ready","plan":${serializedPlan}}`);
+    expect(serializedPrepared).not.toContain("mutation");
+    expect(serializedPrepared).not.toContain("originalBytes");
+    expect(serializedPrepared).not.toContain("candidateBytes");
+    expect(serializedPrepared).not.toContain("originalHash");
+    expect(serializedPrepared).not.toContain("candidateHash");
+    expect(serializedPrepared).not.toContain("boundary");
 
     const result = await applyIOSExistingFileTransaction(
       [prepared.mutation],
