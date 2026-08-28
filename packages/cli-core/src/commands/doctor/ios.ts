@@ -14,6 +14,7 @@ import { inspectIOSProject } from "../init/ios/inspect.ts";
 import { auditIOSNativeAppleHealth } from "../init/ios/native-apple.ts";
 import { buildIOSNativeReadinessAudit } from "../init/ios/native-readiness.ts";
 import { auditIOSNativeRemoteSetup } from "../init/ios/native-remote.ts";
+import { planIOSSDKInstall, type IOSSDKInstallPlan } from "../init/ios/install-sdk.ts";
 import { buildIOSSetupPlan } from "../init/ios/plan.ts";
 import type { IOSAppTarget, IOSProjectInspectionResult, IOSSetupStep } from "../init/ios/types.ts";
 import type { CheckResult, DoctorContext } from "./types.ts";
@@ -41,6 +42,7 @@ export interface IOSDoctorDependencies {
   auditIOSPrebuiltAuthEnvironment: typeof auditIOSPrebuiltAuthEnvironment;
   planIOSAppleEntitlement: typeof planIOSAppleEntitlement;
   auditIOSNativeAppleHealth: typeof auditIOSNativeAppleHealth;
+  planIOSSDKInstall: typeof planIOSSDKInstall;
 }
 
 const defaultDependencies: IOSDoctorDependencies = {
@@ -52,6 +54,7 @@ const defaultDependencies: IOSDoctorDependencies = {
   auditIOSPrebuiltAuthEnvironment,
   planIOSAppleEntitlement,
   auditIOSNativeAppleHealth,
+  planIOSSDKInstall,
 };
 
 function selectedTarget(inspection: IOSProjectInspectionResult): IOSAppTarget | undefined {
@@ -188,8 +191,11 @@ function localStepResult(step: IOSSetupStep): CheckResult {
   }
 }
 
-function localResults(inspection: IOSProjectInspectionResult): CheckResult[] {
-  const plan = buildIOSSetupPlan(inspection);
+function localResults(
+  inspection: IOSProjectInspectionResult,
+  sdkInstallPlan?: IOSSDKInstallPlan,
+): CheckResult[] {
+  const plan = buildIOSSetupPlan(inspection, { sdkInstallPlan });
   const results = plan.steps
     .filter((step) => step.id !== "register-native-application" || step.status === "blocked")
     .map(localStepResult);
@@ -548,8 +554,18 @@ export async function runIOSDoctorChecks(
     target: options.target,
     exhaustiveContainerDiscovery: true,
   });
-  const results = localResults(inspection);
   const target = selectedTarget(inspection);
+  const sdkInstallPlan =
+    target && target.swift.authViewReferences.length > 0
+      ? await dependencies.planIOSSDKInstall({
+          root: inspection.root,
+          projectPath: target.projectPath,
+          targetId: target.id,
+          includeClerkKitUI: true,
+          requirePrebuiltAuthCompatibility: true,
+        })
+      : undefined;
+  const results = localResults(inspection, sdkInstallPlan);
   if (target) {
     const apple = await appleEntitlementResult(inspection, target, dependencies);
     if (apple) results.splice(Math.max(0, results.length - 1), 0, apple);
