@@ -272,19 +272,35 @@ async function isAuthenticatedForAgent(): Promise<boolean> {
 function assertKeylessOnlyFlags(options: InitOptions, strategy: InitStrategy): void {
   if (strategy === "keyless") return;
 
-  const reason =
-    strategy === "manual"
-      ? "this framework does not support accountless setup"
-      : "this run resolved to the authenticated flow instead (already signed in, --app was set, or a project is already linked)";
+  // "Add --accountless" is only valid remediation when accountless setup is
+  // actually reachable from here — not when the framework doesn't support it
+  // (manual) or when --app/--login are what forced the authenticated flow
+  // (both conflict with --accountless in assertUsableFlags above).
+  let reason: string;
+  let remedy: string;
+  if (strategy === "manual") {
+    reason = "this framework does not support accountless setup";
+    remedy = "there is no way to force it here";
+  } else if (options.app) {
+    reason = "--app was set, which cannot be combined with --accountless";
+    remedy = "drop --app to allow accountless setup";
+  } else if (options.login) {
+    reason = "--login was set, which cannot be combined with --accountless";
+    remedy = "drop --login to allow accountless setup";
+  } else {
+    reason =
+      "this run resolved to the authenticated flow instead (already signed in, or a project is already linked)";
+    remedy = "add --accountless to force an accountless app";
+  }
 
   if (options.template) {
     throwUsageError(
-      `--template only applies to accountless applications, but ${reason}. Add --accountless to force an accountless app, or drop --template.`,
+      `--template only applies to accountless applications, but ${reason}; ${remedy}, or drop --template.`,
     );
   }
   if (options.fresh) {
     throwUsageError(
-      `--fresh only applies to accountless applications, but ${reason}. Add --accountless to force an accountless app, or drop --fresh.`,
+      `--fresh only applies to accountless applications, but ${reason}; ${remedy}, or drop --fresh.`,
     );
   }
 }
