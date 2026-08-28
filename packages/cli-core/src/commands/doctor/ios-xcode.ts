@@ -140,6 +140,10 @@ interface OwnedDirectoryBoundary extends OwnedTemporaryDirectory {
   realPath: string;
 }
 
+interface OwnedTemporaryBuildDirectory extends OwnedDirectoryBoundary {
+  parent: OwnedDirectoryBoundary;
+}
+
 interface BuiltInfoPlistSnapshot {
   device: number;
   inode: number;
@@ -169,6 +173,15 @@ class BuiltApplicationReplacementError extends Error {
       `The claimed simulator application changed during verification. Its replacement was preserved at ${preservedPath}.`,
     );
     this.name = "BuiltApplicationReplacementError";
+  }
+}
+
+class TemporaryBuildDirectoryReplacementError extends Error {
+  constructor(readonly preservedPath: string) {
+    super(
+      `The isolated Xcode build directory changed during cleanup. Its replacement was preserved at ${preservedPath}.`,
+    );
+    this.name = "TemporaryBuildDirectoryReplacementError";
   }
 }
 
@@ -1714,6 +1727,116 @@ async function removeDefaultTemporaryDirectory(path: string): Promise<void> {
   await rm(path, { recursive: true, force: true });
 }
 
+async function captureOwnedTemporaryBuildDirectory(
+  path: string,
+): Promise<OwnedTemporaryBuildDirectory | undefined> {
+  try {
+    const absolutePath = resolve(path);
+    const parentPath = dirname(absolutePath);
+    const [info, parentInfo, realPath, parentRealPath] = await Promise.all([
+      lstat(absolutePath),
+      lstat(parentPath),
+      realpath(absolutePath),
+      realpath(parentPath),
+    ]);
+    if (
+      !info.isDirectory() ||
+      info.isSymbolicLink() ||
+      !parentInfo.isDirectory() ||
+      parentInfo.isSymbolicLink() ||
+      dirname(realPath) !== parentRealPath
+    ) {
+      return undefined;
+    }
+    return {
+      path: absolutePath,
+      realPath,
+      device: info.dev,
+      inode: info.ino,
+      parent: {
+        path: parentPath,
+        realPath: parentRealPath,
+        device: parentInfo.dev,
+        inode: parentInfo.ino,
+      },
+    };
+  } catch {
+    return undefined;
+  }
+}
+
+async function ownedDirectoryStillMatches(directory: OwnedDirectoryBoundary): Promise<boolean> {
+  try {
+    const info = await lstat(directory.path);
+    return (
+      info.isDirectory() &&
+      !info.isSymbolicLink() &&
+      info.dev === directory.device &&
+      info.ino === directory.inode &&
+      (await realpath(directory.path)) === directory.realPath
+    );
+  } catch {
+    return false;
+  }
+}
+
+async function removeOwnedTemporaryBuildDirectory(
+  directory: OwnedTemporaryBuildDirectory,
+  removeDirectory: (path: string) => Promise<void>,
+): Promise<void> {
+  if (
+    !(await ownedDirectoryStillMatches(directory.parent)) ||
+    !(await ownedDirectoryStillMatches(directory))
+  ) {
+    throw new TemporaryBuildDirectoryReplacementError(directory.path);
+  }
+
+  const quarantinePath = await mkdtemp(join(directory.parent.path, ".clerk-doctor-ios-cleanup-"));
+  const quarantine = await captureOwnedTemporaryBuildDirectory(quarantinePath);
+  if (
+    !quarantine ||
+    quarantine.parent.device !== directory.parent.device ||
+    quarantine.parent.inode !== directory.parent.inode ||
+    quarantine.parent.realPath !== directory.parent.realPath
+  ) {
+    throw new TemporaryBuildDirectoryReplacementError(quarantinePath);
+  }
+
+  const cleanupPath = join(quarantine.path, "build");
+  try {
+    await rename(directory.path, cleanupPath);
+  } catch (error) {
+    if (isMissingPathError(error)) {
+      throw new TemporaryBuildDirectoryReplacementError(directory.path);
+    }
+    throw error;
+  }
+
+  const cleanupDirectory: OwnedDirectoryBoundary = {
+    ...directory,
+    path: cleanupPath,
+    realPath: join(quarantine.realPath, "build"),
+  };
+  if (
+    !(await ownedDirectoryStillMatches(quarantine)) ||
+    !(await ownedDirectoryStillMatches(cleanupDirectory))
+  ) {
+    throw new TemporaryBuildDirectoryReplacementError(quarantine.path);
+  }
+
+  await removeDirectory(quarantine.path);
+
+  for (const exposedPath of [directory.path, quarantine.path]) {
+    try {
+      await lstat(exposedPath);
+      throw new TemporaryBuildDirectoryReplacementError(exposedPath);
+    } catch (error) {
+      if (error instanceof TemporaryBuildDirectoryReplacementError) throw error;
+      if (!isMissingPathError(error)) throw error;
+    }
+  }
+}
+
 /**
  * Runs only the explicitly requested Xcode verification phases. The supplied
  * inspection must already have one selected application target; no project,
@@ -1837,8 +1960,12 @@ export async function runIOSXcodeVerification(
     dependencies.removeTemporaryDirectory ??
     (customTemp ? async () => {} : removeDefaultTemporaryDirectory);
   let temporaryDirectory: string;
+  let ownedTemporaryDirectory: OwnedTemporaryBuildDirectory;
   try {
     temporaryDirectory = await makeTemporaryDirectory();
+    const captured = await captureOwnedTemporaryBuildDirectory(temporaryDirectory);
+    if (!captured) throw new Error("The created directory is not an owned local directory.");
+    ownedTemporaryDirectory = captured;
   } catch (error) {
     results.push(
       fail(
@@ -2474,13 +2601,19 @@ export async function runIOSXcodeVerification(
       }
     }
     try {
-      if (!preserveTemporaryDirectory) await removeTemporaryDirectory(temporaryDirectory);
+      if (!preserveTemporaryDirectory) {
+        await removeOwnedTemporaryBuildDirectory(ownedTemporaryDirectory, removeTemporaryDirectory);
+      }
     } catch (error) {
+      const remedy =
+        error instanceof TemporaryBuildDirectoryReplacementError
+          ? `Inspect ${error.preservedPath}; Doctor preserved the replacement and did not recursively remove the exposed path.`
+          : `Remove ${temporaryDirectory} after confirming no build is still running.`;
       results.push(
         warn(
           "Xcode temporary files",
           "The isolated Xcode build directory could not be removed",
-          `Remove ${temporaryDirectory} after confirming no build is still running.`,
+          remedy,
           errorMessage(error),
         ),
       );
