@@ -92,12 +92,11 @@ async function claimHint(ctx: DoctorContext): Promise<string> {
 
 export async function checkLoggedIn(ctx: DoctorContext): Promise<CheckResult> {
   const check = defineCheck("Logged in", ctx.fixes.login);
-  const token = await ctx.getToken();
 
   // Malformed-key detection is a side effect of resolving the keyless target
   // (see getKeylessKeyError), so resolve it before any early return — a
-  // stored account token must not hide a broken local CLERK_SECRET_KEY that
-  // other commands still prefer over the account session.
+  // Platform API key or stored account token must not hide a broken local
+  // CLERK_SECRET_KEY that other commands still prefer over account credentials.
   const keyless = await ctx.getKeylessTarget();
   const keyError = await ctx.getKeylessKeyError();
 
@@ -114,6 +113,11 @@ export async function checkLoggedIn(ctx: DoctorContext): Promise<CheckResult> {
     }
     return check.pass("Platform API key configured");
   }
+
+  // Only consult OAuth credential storage when a Platform API key is not
+  // configured. The Platform key is sufficient for Doctor, and an unreadable
+  // fallback credential store must not make an otherwise valid setup fail.
+  const token = await ctx.getToken();
 
   if (token) {
     if (keyError) {
