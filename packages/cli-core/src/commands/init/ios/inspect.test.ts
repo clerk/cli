@@ -86,6 +86,17 @@ async function writeWorkspaceRunScheme(root: string, name: string, source: strin
   await Bun.write(join(schemeDirectory, name), source);
 }
 
+async function writeDeepWorkspaceRunScheme(root: string, source: string): Promise<void> {
+  const workspace = join(root, "One", "Two", "Three", "Four", "Deep.xcworkspace");
+  const schemeDirectory = join(workspace, "xcshareddata", "xcschemes");
+  await mkdir(schemeDirectory, { recursive: true });
+  await Bun.write(
+    join(workspace, "contents.xcworkspacedata"),
+    '<Workspace version="1.0"><FileRef location="group:../../../../MyApp.xcodeproj" /></Workspace>',
+  );
+  await Bun.write(join(schemeDirectory, "DeepRuntime.xcscheme"), source);
+}
+
 afterEach(async () => {
   await Promise.all(temporaryDirectories.splice(0).map((path) => rm(path, { recursive: true })));
 });
@@ -737,6 +748,102 @@ struct MyApp: App {
         severity: "warning",
         evidence: expect.arrayContaining([{ path: "MyApp.xcworkspace/xcshareddata" }]),
       }),
+    );
+    expect(JSON.stringify(inspection)).not.toContain(visibleKey);
+    expect(JSON.stringify(inspection)).not.toContain(hiddenKey);
+  });
+
+  test("fails closed when bounded container discovery hides a conflicting workspace scheme", async () => {
+    const root = await fixture({ includeKey: false });
+    const visibleKey = `pk_test_${Buffer.from("visible.clerk.example$").toString("base64")}`;
+    const hiddenKey = `pk_test_${Buffer.from("hidden.clerk.example$").toString("base64")}`;
+    await Bun.write(
+      join(root, "MyApp", "MyAppApp.swift"),
+      `import ClerkKit
+import SwiftUI
+
+@main
+struct MyApp: App {
+  init() {
+    Clerk.configure(publishableKey: ProcessInfo.processInfo.environment["CLERK_PUBLISHABLE_KEY"] ?? "")
+  }
+
+  var body: some Scene { WindowGroup { Text("Hello") } }
+}
+`,
+    );
+    await writeSelectedTargetRunSchemeKey(root, visibleKey);
+    await writeDeepWorkspaceRunScheme(
+      root,
+      selectedTargetRunScheme(hiddenKey, "../../../../MyApp.xcodeproj"),
+    );
+
+    const inspection = await inspectIOSProject(root);
+
+    expect(inspection.localPublishableKey).toEqual({
+      evidenceComplete: false,
+      found: false,
+      conflict: false,
+      candidateSources: ["MyApp.xcodeproj/xcshareddata/xcschemes/MyApp.xcscheme"],
+      invalidSources: [],
+    });
+    expect(inspection.localPublishableKey.frontendApiHost).toBeUndefined();
+    expect(inspection.diagnostics).toContainEqual(
+      expect.objectContaining({
+        code: "xcode.incomplete-scheme-discovery",
+        severity: "warning",
+        evidence: expect.arrayContaining([{ path: "." }]),
+      }),
+    );
+    expect(JSON.stringify(inspection)).not.toContain(visibleKey);
+    expect(JSON.stringify(inspection)).not.toContain(hiddenKey);
+  });
+
+  test("fails closed when exhaustive container discovery reaches its depth bound", async () => {
+    const root = await fixture({ includeKey: false });
+    const visibleKey = `pk_test_${Buffer.from("visible.clerk.example$").toString("base64")}`;
+    const hiddenKey = `pk_test_${Buffer.from("hidden.clerk.example$").toString("base64")}`;
+    await Bun.write(
+      join(root, "MyApp", "MyAppApp.swift"),
+      `import ClerkKit
+import SwiftUI
+
+@main
+struct MyApp: App {
+  init() {
+    Clerk.configure(publishableKey: ProcessInfo.processInfo.environment["CLERK_PUBLISHABLE_KEY"] ?? "")
+  }
+
+  var body: some Scene { WindowGroup { Text("Hello") } }
+}
+`,
+    );
+    await writeSelectedTargetRunSchemeKey(root, visibleKey);
+
+    const nesting = Array.from({ length: 25 }, (_, index) => `Level${index}`);
+    const workspace = join(root, ...nesting, "Deep.xcworkspace");
+    const schemeDirectory = join(workspace, "xcshareddata", "xcschemes");
+    await mkdir(schemeDirectory, { recursive: true });
+    const projectReference = `${"../".repeat(nesting.length)}MyApp.xcodeproj`;
+    await Bun.write(
+      join(workspace, "contents.xcworkspacedata"),
+      `<Workspace version="1.0"><FileRef location="group:${projectReference}" /></Workspace>`,
+    );
+    await Bun.write(
+      join(schemeDirectory, "DeepRuntime.xcscheme"),
+      selectedTargetRunScheme(hiddenKey, projectReference),
+    );
+
+    const inspection = await inspectIOSProject(root, { exhaustiveContainerDiscovery: true });
+
+    expect(inspection.localPublishableKey).toMatchObject({
+      evidenceComplete: false,
+      found: false,
+      conflict: false,
+    });
+    expect(inspection.localPublishableKey.frontendApiHost).toBeUndefined();
+    expect(inspection.diagnostics).toContainEqual(
+      expect.objectContaining({ code: "xcode.incomplete-scheme-discovery" }),
     );
     expect(JSON.stringify(inspection)).not.toContain(visibleKey);
     expect(JSON.stringify(inspection)).not.toContain(hiddenKey);
