@@ -170,7 +170,9 @@ function runtimeFrontendHost(
   target: IOSAppTarget,
 ): string | undefined {
   const key = inspection.localPublishableKey;
-  if (!key.found || key.conflict || !key.source || !key.frontendApiHost) return undefined;
+  if (!key.evidenceComplete || !key.found || key.conflict || !key.source || !key.frontendApiHost) {
+    return undefined;
+  }
   const source = key.source;
   const connected = target.swift.configureCalls.some((call) => {
     if (call.startupBinding !== "app-init") return false;
