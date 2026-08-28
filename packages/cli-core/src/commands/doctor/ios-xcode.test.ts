@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { lstat, mkdir, mkdtemp, readdir, rename, rm, symlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { inspectIOSProject } from "../init/ios/inspect.ts";
 import { createIOSFixture, IOS_FIXTURE_IDS } from "../init/ios/test-helpers.ts";
 import {
@@ -1138,9 +1138,138 @@ describe("runIOSXcodeVerification", () => {
       "raw",
       "-expect",
       "string",
+      "-n",
       "--",
     ]);
+    const install = simulatorCommands.find((argv) => argv[2] === "install");
+    const plistPath = plistInspection?.argv.at(-1);
+    const installPath = install?.at(-1);
+    if (!plistPath || !installPath) throw new Error("Missing claimed application path");
+    expect(dirname(plistPath)).toBe(installPath);
+    expect(installPath).toContain(".clerk-doctor-built-");
     expect(simulatorCommands.at(-1)?.at(-1)).toBe("com.example.MyApp");
+  });
+
+  test("rejects whitespace in the verbatim built Info.plist Bundle ID", async () => {
+    await createIOSFixture(root, { clerkSDK: false });
+    const inspection = await inspectIOSProject(root, { target: "MyApp" });
+    const invocations: Invocation[] = [];
+
+    const results = await runIOSXcodeVerification(
+      inspection,
+      { simulator: true },
+      dependencies(
+        successfulXcodeRunner(invocations, {
+          createApp: true,
+          artifactBundleIdentifier: " com.example.MyApp ",
+        }),
+      ),
+    );
+
+    expect(
+      results.find((result) => result.name === "iOS Simulator" && result.status === "fail"),
+    ).toMatchObject({ message: "The built application's Info.plist has an invalid Bundle ID" });
+    expect(invocations.some((invocation) => invocation.argv.includes("simctl"))).toBe(false);
+  });
+
+  test("preserves a built application replacement made during plist inspection", async () => {
+    await createIOSFixture(root, { clerkSDK: false });
+    const inspection = await inspectIOSProject(root, { target: "MyApp" });
+    const invocations: Invocation[] = [];
+    const baseRunner = successfulXcodeRunner(invocations, { createApp: true });
+    const movedApplication = join(temporaryBuildRoot, "plutil-original.app");
+    let claimedApplicationPath: string | undefined;
+    const runner: IOSXcodeCommandRunner = async (argv, commandOptions) => {
+      const result = await baseRunner(argv, commandOptions);
+      if (argv[0] === "/usr/bin/plutil") {
+        const infoPlistPath = argv.at(-1);
+        if (!infoPlistPath) throw new Error("Missing claimed Info.plist path");
+        claimedApplicationPath = dirname(infoPlistPath);
+        await rename(claimedApplicationPath, movedApplication);
+        await mkdir(claimedApplicationPath);
+        await Bun.write(
+          join(claimedApplicationPath, "Info.plist"),
+          builtInfoPlist("com.example.Replacement"),
+        );
+      }
+      return result;
+    };
+
+    const results = await runIOSXcodeVerification(
+      inspection,
+      { simulator: true },
+      dependencies(runner),
+    );
+
+    expect(
+      results.find((result) => result.message.includes("changed during Bundle ID inspection")),
+    ).toMatchObject({ name: "iOS Simulator", status: "fail" });
+    expect(invocations.some((invocation) => invocation.argv.includes("simctl"))).toBe(false);
+    expect((await lstat(movedApplication)).isDirectory()).toBe(true);
+    expect(await Bun.file(join(claimedApplicationPath!, "Info.plist")).text()).toContain(
+      "com.example.Replacement",
+    );
+    expect(
+      results.find(
+        (result) =>
+          result.name === "Xcode temporary files" &&
+          result.message.includes("claimed simulator application"),
+      ),
+    ).toMatchObject({ status: "warn" });
+  });
+
+  test("preserves a built application replacement made during simulator installation", async () => {
+    await createIOSFixture(root, { clerkSDK: false });
+    const inspection = await inspectIOSProject(root, { target: "MyApp" });
+    const invocations: Invocation[] = [];
+    const devices = {
+      devices: {
+        "com.apple.CoreSimulator.SimRuntime.iOS-26-5": [
+          {
+            name: "iPhone 17 Pro",
+            udid: "B926551C-01F4-4D5D-8CA8-90F2DF97C48A",
+            state: "Booted",
+            isAvailable: true,
+          },
+        ],
+      },
+    };
+    const baseRunner = successfulXcodeRunner(invocations, {
+      createApp: true,
+      simulatorDevices: devices,
+    });
+    const movedApplication = join(temporaryBuildRoot, "install-original.app");
+    let installPath: string | undefined;
+    const runner: IOSXcodeCommandRunner = async (argv, commandOptions) => {
+      const result = await baseRunner(argv, commandOptions);
+      if (argv.includes("simctl") && argv.includes("install")) {
+        installPath = argv.at(-1);
+        if (!installPath) throw new Error("Missing claimed application install path");
+        await rename(installPath, movedApplication);
+        await mkdir(installPath);
+        await Bun.write(join(installPath, "Info.plist"), builtInfoPlist("com.example.Replacement"));
+      }
+      return result;
+    };
+
+    const results = await runIOSXcodeVerification(
+      inspection,
+      { simulator: true },
+      dependencies(runner),
+    );
+
+    expect(
+      results.find((result) => result.message.includes("changed during installation")),
+    ).toMatchObject({ name: "iOS Simulator", status: "fail" });
+    expect(
+      invocations.some(
+        (invocation) => invocation.argv.includes("simctl") && invocation.argv.includes("launch"),
+      ),
+    ).toBe(false);
+    expect((await lstat(movedApplication)).isDirectory()).toBe(true);
+    expect(await Bun.file(join(installPath!, "Info.plist")).text()).toContain(
+      "com.example.Replacement",
+    );
   });
 
   test("rejects a built Info.plist Bundle ID that differs from build settings", async () => {

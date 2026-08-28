@@ -136,12 +136,39 @@ interface IsolatedXcodeContainer {
 
 type OwnedTemporaryDirectory = Pick<IsolatedXcodeContainer, "path" | "device" | "inode">;
 
+interface OwnedDirectoryBoundary extends OwnedTemporaryDirectory {
+  realPath: string;
+}
+
+interface BuiltInfoPlistSnapshot {
+  device: number;
+  inode: number;
+  hash: string;
+}
+
+interface ClaimedBuiltApplication extends OwnedTemporaryDirectory {
+  boundary: OwnedDirectoryBoundary;
+  originalPath: string;
+  infoPlistPath: string;
+  buildSettingsBundleIdentifier: string;
+  infoPlistSnapshot?: BuiltInfoPlistSnapshot;
+}
+
 class IsolatedWorkspaceReplacementError extends Error {
   constructor(readonly preservedPath: string) {
     super(
       `The isolated Xcode workspace was replaced before cleanup. Its replacement was preserved at ${preservedPath}.`,
     );
     this.name = "IsolatedWorkspaceReplacementError";
+  }
+}
+
+class BuiltApplicationReplacementError extends Error {
+  constructor(readonly preservedPath: string) {
+    super(
+      `The claimed simulator application changed during verification. Its replacement was preserved at ${preservedPath}.`,
+    );
+    this.name = "BuiltApplicationReplacementError";
   }
 }
 
@@ -1414,13 +1441,96 @@ function isWithin(root: string, path: string): boolean {
   return rel === "" || (!rel.startsWith(`..${sep}`) && rel !== ".." && !isAbsolute(rel));
 }
 
-async function validateBuiltApplication(
+async function verifiedClaimedApplicationRealPath(
+  application: Pick<ClaimedBuiltApplication, "path" | "device" | "inode" | "boundary">,
+): Promise<string | undefined> {
+  try {
+    const boundaryInfo = await lstat(application.boundary.path);
+    if (
+      !boundaryInfo.isDirectory() ||
+      boundaryInfo.isSymbolicLink() ||
+      boundaryInfo.dev !== application.boundary.device ||
+      boundaryInfo.ino !== application.boundary.inode ||
+      (await realpath(application.boundary.path)) !== application.boundary.realPath
+    ) {
+      return undefined;
+    }
+    const appInfo = await lstat(application.path);
+    if (
+      !appInfo.isDirectory() ||
+      appInfo.isSymbolicLink() ||
+      appInfo.dev !== application.device ||
+      appInfo.ino !== application.inode
+    ) {
+      return undefined;
+    }
+    const realApp = await realpath(application.path);
+    if (!isWithin(application.boundary.realPath, realApp)) return undefined;
+    return realApp;
+  } catch {
+    return undefined;
+  }
+}
+
+async function readBuiltInfoPlistSnapshot(
+  application: Pick<
+    ClaimedBuiltApplication,
+    "path" | "device" | "inode" | "boundary" | "infoPlistPath"
+  >,
+): Promise<BuiltInfoPlistSnapshot | undefined> {
+  try {
+    const realApp = await verifiedClaimedApplicationRealPath(application);
+    if (!realApp) return undefined;
+    const before = await lstat(application.infoPlistPath);
+    if (
+      !before.isFile() ||
+      before.isSymbolicLink() ||
+      before.size <= 0 ||
+      before.size > MAX_BUILT_INFO_PLIST_BYTES
+    ) {
+      return undefined;
+    }
+    const realInfoPlist = await realpath(application.infoPlistPath);
+    if (!isWithin(realApp, realInfoPlist)) return undefined;
+    const bytes = await readFile(application.infoPlistPath);
+    const after = await lstat(application.infoPlistPath);
+    if (
+      !after.isFile() ||
+      after.isSymbolicLink() ||
+      after.dev !== before.dev ||
+      after.ino !== before.ino ||
+      after.size !== before.size ||
+      bytes.byteLength !== before.size
+    ) {
+      return undefined;
+    }
+    return {
+      device: after.dev,
+      inode: after.ino,
+      hash: new Bun.CryptoHasher("sha256").update(bytes).digest("hex"),
+    };
+  } catch {
+    return undefined;
+  }
+}
+
+async function claimedBuiltApplicationStillMatches(
+  application: ClaimedBuiltApplication,
+): Promise<boolean> {
+  if (!application.infoPlistSnapshot) return false;
+  const current = await readBuiltInfoPlistSnapshot(application);
+  return (
+    current?.device === application.infoPlistSnapshot.device &&
+    current.inode === application.infoPlistSnapshot.inode &&
+    current.hash === application.infoPlistSnapshot.hash
+  );
+}
+
+async function claimBuiltApplication(
   derivedDataPath: string,
   settings: VerifiedBuildSettings,
 ): Promise<{
-  appPath?: string;
-  infoPlistPath?: string;
-  buildSettingsBundleIdentifier?: string;
+  application?: ClaimedBuiltApplication;
   result?: CheckResult;
 }> {
   if (!settings.targetBuildDir || !settings.fullProductName || !settings.bundleIdentifier) {
@@ -1442,14 +1552,26 @@ async function validateBuiltApplication(
       ),
     };
   }
-  let realApp: string;
+  let boundary: OwnedDirectoryBoundary;
+  let originalInfo;
   try {
-    const info = await lstat(appPath);
-    if (!info.isDirectory() || info.isSymbolicLink()) throw new Error("not a local app directory");
-    const paths = await Promise.all([realpath(derivedDataPath), realpath(appPath)]);
-    const [realDerivedData, resolvedApp] = paths;
+    const boundaryInfo = await lstat(derivedDataPath);
+    if (!boundaryInfo.isDirectory() || boundaryInfo.isSymbolicLink()) {
+      throw new Error("not a local DerivedData directory");
+    }
+    const realDerivedData = await realpath(derivedDataPath);
+    boundary = {
+      path: derivedDataPath,
+      realPath: realDerivedData,
+      device: boundaryInfo.dev,
+      inode: boundaryInfo.ino,
+    };
+    originalInfo = await lstat(appPath);
+    if (!originalInfo.isDirectory() || originalInfo.isSymbolicLink()) {
+      throw new Error("not a local app directory");
+    }
+    const resolvedApp = await realpath(appPath);
     if (!isWithin(realDerivedData, resolvedApp)) throw new Error("external app directory");
-    realApp = resolvedApp;
   } catch {
     return {
       result: fail(
@@ -1460,38 +1582,106 @@ async function validateBuiltApplication(
     };
   }
 
-  const infoPlistPath = join(appPath, "Info.plist");
+  const claimedPath = join(dirname(appPath), `.clerk-doctor-built-${randomUUID()}.app`);
   try {
-    const info = await lstat(infoPlistPath);
-    if (
-      !info.isFile() ||
-      info.isSymbolicLink() ||
-      info.size <= 0 ||
-      info.size > MAX_BUILT_INFO_PLIST_BYTES
-    ) {
-      throw new Error("not a bounded local plist file");
-    }
-    const realInfoPlist = await realpath(infoPlistPath);
-    if (!isWithin(realApp, realInfoPlist)) throw new Error("external Info.plist");
+    await rename(appPath, claimedPath);
   } catch {
     return {
       result: fail(
         "iOS Simulator",
-        "The built application's Info.plist is missing or unsafe",
-        "Open Xcode's build log and inspect the selected application product.",
+        "The built simulator application changed before Doctor could claim it",
+        "Stop concurrent builds, then rerun the selected scheme verification.",
       ),
     };
   }
 
-  return {
-    appPath,
-    infoPlistPath,
+  const application: ClaimedBuiltApplication = {
+    path: claimedPath,
+    boundary,
+    originalPath: appPath,
+    device: originalInfo.dev,
+    inode: originalInfo.ino,
+    infoPlistPath: join(claimedPath, "Info.plist"),
     buildSettingsBundleIdentifier: settings.bundleIdentifier,
   };
+  const infoPlistSnapshot = await readBuiltInfoPlistSnapshot(application);
+  if (!infoPlistSnapshot) {
+    return {
+      application,
+      result: fail(
+        "iOS Simulator",
+        "The built application's Info.plist is missing or unsafe, or changed during claiming",
+        "Open Xcode's build log and inspect the selected application product.",
+      ),
+    };
+  }
+  application.infoPlistSnapshot = infoPlistSnapshot;
+  return { application };
+}
+
+async function removeClaimedBuiltApplication(application: ClaimedBuiltApplication): Promise<void> {
+  const currentMatches = application.infoPlistSnapshot
+    ? await claimedBuiltApplicationStillMatches(application)
+    : (await verifiedClaimedApplicationRealPath(application)) != null;
+  if (!currentMatches) {
+    throw new BuiltApplicationReplacementError(application.path);
+  }
+
+  const quarantinePath = await mkdtemp(
+    join(dirname(application.path), ".clerk-doctor-built-cleanup-"),
+  );
+  const quarantineInfo = await lstat(quarantinePath);
+  const quarantineRealPath = await realpath(quarantinePath);
+  if (
+    !quarantineInfo.isDirectory() ||
+    quarantineInfo.isSymbolicLink() ||
+    !isWithin(application.boundary.realPath, quarantineRealPath)
+  ) {
+    throw new BuiltApplicationReplacementError(quarantinePath);
+  }
+  const quarantine: OwnedDirectoryBoundary = {
+    path: quarantinePath,
+    realPath: quarantineRealPath,
+    device: quarantineInfo.dev,
+    inode: quarantineInfo.ino,
+  };
+  const cleanupPath = join(quarantinePath, "application.app");
+  try {
+    await rename(application.path, cleanupPath);
+  } catch (error) {
+    if (isMissingPathError(error)) {
+      throw new BuiltApplicationReplacementError(application.path);
+    }
+    throw error;
+  }
+
+  const cleanupApplication: ClaimedBuiltApplication = {
+    ...application,
+    path: cleanupPath,
+    boundary: quarantine,
+    infoPlistPath: join(cleanupPath, "Info.plist"),
+  };
+  const cleanupMatches = application.infoPlistSnapshot
+    ? await claimedBuiltApplicationStillMatches(cleanupApplication)
+    : (await verifiedClaimedApplicationRealPath(cleanupApplication)) != null;
+  if (!cleanupMatches) {
+    throw new BuiltApplicationReplacementError(quarantinePath);
+  }
+  await rm(quarantinePath, { recursive: true, force: false });
+
+  for (const exposedPath of [application.originalPath, application.path]) {
+    try {
+      await lstat(exposedPath);
+      throw new BuiltApplicationReplacementError(exposedPath);
+    } catch (error) {
+      if (error instanceof BuiltApplicationReplacementError) throw error;
+      if (!isMissingPathError(error)) throw error;
+    }
+  }
 }
 
 function parseBuiltBundleIdentifier(output: string): string | undefined {
-  const value = output.trim();
+  const value = output;
   if (
     !value ||
     value.length > 255 ||
@@ -1668,6 +1858,7 @@ export async function runIOSXcodeVerification(
   let executionResolvedPath = resolvedPath;
   let containerArgs = [executionContainer.flag, executionContainer.absolutePath];
   let isolatedContainer: IsolatedXcodeContainer | undefined;
+  let claimedApplication: ClaimedBuiltApplication | undefined;
 
   try {
     if (options.resolvePackages) {
@@ -2046,13 +2237,10 @@ export async function runIOSXcodeVerification(
       return results;
     }
 
-    const application = await validateBuiltApplication(derivedDataPath, buildSettings);
-    if (
-      !application.appPath ||
-      !application.infoPlistPath ||
-      !application.buildSettingsBundleIdentifier
-    ) {
-      results.push(application.result!);
+    const applicationResolution = await claimBuiltApplication(derivedDataPath, buildSettings);
+    claimedApplication = applicationResolution.application;
+    if (!claimedApplication?.infoPlistSnapshot) {
+      results.push(applicationResolution.result!);
       return results;
     }
     const bundleIdentifierResult = await run(
@@ -2063,8 +2251,9 @@ export async function runIOSXcodeVerification(
         "raw",
         "-expect",
         "string",
+        "-n",
         "--",
-        application.infoPlistPath,
+        claimedApplication.infoPlistPath,
       ],
       TOOLCHAIN_TIMEOUT_MS,
       4_096,
@@ -2076,6 +2265,16 @@ export async function runIOSXcodeVerification(
           "Built application Bundle ID inspection",
           bundleIdentifierResult,
           "Open Xcode's build log and inspect CFBundleIdentifier in the selected application product.",
+        ),
+      );
+      return results;
+    }
+    if (!(await claimedBuiltApplicationStillMatches(claimedApplication))) {
+      results.push(
+        fail(
+          "iOS Simulator",
+          "The claimed simulator application changed during Bundle ID inspection",
+          "Stop concurrent builds and rerun the selected scheme verification.",
         ),
       );
       return results;
@@ -2093,7 +2292,7 @@ export async function runIOSXcodeVerification(
       );
       return results;
     }
-    if (artifactBundleIdentifier !== application.buildSettingsBundleIdentifier) {
+    if (artifactBundleIdentifier !== claimedApplication.buildSettingsBundleIdentifier) {
       results.push(
         fail(
           "iOS Simulator",
@@ -2165,8 +2364,19 @@ export async function runIOSXcodeVerification(
       return results;
     }
 
+    if (!(await claimedBuiltApplicationStillMatches(claimedApplication))) {
+      results.push(
+        fail(
+          "iOS Simulator",
+          "The claimed simulator application changed before installation",
+          "Stop concurrent builds and rerun the selected scheme verification.",
+        ),
+      );
+      return results;
+    }
+
     const install = await run(
-      [xcrun, "simctl", "install", device.udid, application.appPath],
+      [xcrun, "simctl", "install", device.udid, claimedApplication.path],
       SIMULATOR_OPERATION_TIMEOUT_MS,
     );
     if (!isCommandSuccess(install)) {
@@ -2176,6 +2386,16 @@ export async function runIOSXcodeVerification(
           "Application install",
           install,
           "Inspect the selected simulator and the built app product in Xcode.",
+        ),
+      );
+      return results;
+    }
+    if (!(await claimedBuiltApplicationStillMatches(claimedApplication))) {
+      results.push(
+        fail(
+          "iOS Simulator",
+          "The claimed simulator application changed during installation",
+          "Stop concurrent builds and rerun the selected scheme verification.",
         ),
       );
       return results;
@@ -2215,6 +2435,7 @@ export async function runIOSXcodeVerification(
     );
     return results;
   } finally {
+    let preserveTemporaryDirectory = false;
     if (isolatedContainer) {
       try {
         await removeIsolatedFrozenContainer(isolatedContainer);
@@ -2233,8 +2454,27 @@ export async function runIOSXcodeVerification(
         );
       }
     }
+    if (claimedApplication) {
+      try {
+        await removeClaimedBuiltApplication(claimedApplication);
+      } catch (error) {
+        preserveTemporaryDirectory = true;
+        const remedy =
+          error instanceof BuiltApplicationReplacementError
+            ? `Inspect ${error.preservedPath}; Doctor preserved the replacement and its temporary build directory.`
+            : `Inspect ${temporaryDirectory}; Doctor left the temporary build directory intact because claimed-app cleanup failed.`;
+        results.push(
+          warn(
+            "Xcode temporary files",
+            "The claimed simulator application could not be removed safely",
+            remedy,
+            errorMessage(error),
+          ),
+        );
+      }
+    }
     try {
-      await removeTemporaryDirectory(temporaryDirectory);
+      if (!preserveTemporaryDirectory) await removeTemporaryDirectory(temporaryDirectory);
     } catch (error) {
       results.push(
         warn(
