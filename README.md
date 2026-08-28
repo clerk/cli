@@ -16,6 +16,12 @@ brew install clerk/stable/clerk
 npm install -g clerk
 ```
 
+After installing the Clerk CLI, you can disable telemetry:
+
+```sh
+clerk telemetry disable
+```
+
 ## Usage
 
 ```
