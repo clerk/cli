@@ -336,7 +336,9 @@ export async function applyIOSLocalSetup(
     }
     if (selection.state === "not-found") {
       throwUsageError(
-        `The iOS target "${selection.requested}" was not found. Available targets: ${selection.candidates.join(", ") || "none"}.`,
+        `The iOS target "${selection.requested}" was not found. Available targets: ${
+          selection.candidates.join(", ") || "none"
+        }.`,
       );
     }
     throw iosSetupError(
@@ -383,7 +385,9 @@ export async function applyIOSLocalSetup(
   }
   if (prebuiltAuthRequested && inspectedPrebuiltAuthPlan.status === "blocked") {
     throw iosSetupError(
-      `The prebuilt AuthView flow could not be added safely. No local files were changed:\n${blockerList(inspectedPrebuiltAuthPlan.blockers)}`,
+      `The prebuilt AuthView flow could not be added safely. No local files were changed:\n${blockerList(
+        inspectedPrebuiltAuthPlan.blockers,
+      )}`,
     );
   }
   const prebuiltAuthActive =
@@ -409,6 +413,9 @@ export async function applyIOSLocalSetup(
   const hasLocalSecretsConfigure = selectedTarget.swift.configureCalls.some(
     (call) => call.publishableKeyWiring === "local-secrets-loader",
   );
+  const hasRunSchemeConfigure = selectedTarget.swift.configureCalls.some(
+    (call) => call.publishableKeyWiring === "process-info-environment",
+  );
   const hasSatisfiedLocalRuntimeSink =
     configureStep?.status === "satisfied" &&
     inspection.localPublishableKey.source != null &&
@@ -416,7 +423,7 @@ export async function applyIOSLocalSetup(
       (sink) => sink.path === inspection.localPublishableKey.source,
     );
   const plannedRuntimeKeyVerification =
-    hasLocalSecretsConfigure || hasSatisfiedLocalRuntimeSink
+    hasLocalSecretsConfigure || hasRunSchemeConfigure || hasSatisfiedLocalRuntimeSink
       ? await planIOSRuntimeKeyVerification({
           root: options.root,
           projectPath: selection.projectPath,
@@ -511,7 +518,9 @@ export async function applyIOSLocalSetup(
     : undefined;
   if (appleEntitlementPlan?.status === "blocked") {
     throw iosSetupError(
-      `Native Sign in with Apple could not be configured safely. No local files were changed:\n${blockerList(appleEntitlementPlan.blockers)}`,
+      `Native Sign in with Apple could not be configured safely. No local files were changed:\n${blockerList(
+        appleEntitlementPlan.blockers,
+      )}`,
     );
   }
   const { sdkInstallPlan, reviewOnlyUnattributedInstall } = normalizeIOSSDKInstallPlanForSetup({
@@ -522,12 +531,16 @@ export async function applyIOSLocalSetup(
 
   if (plannedRuntimeKeyVerification?.status === "blocked") {
     throw iosSetupError(
-      `The existing iOS runtime publishable key could not be verified safely. clerk init will not change that compatibility file; repair it manually, then rerun the command. No local files were changed:\n${blockerList(plannedRuntimeKeyVerification.blockers)}`,
+      `The existing iOS runtime publishable key could not be verified safely. clerk init will not change that compatibility file; repair it manually, then rerun the command. No local files were changed:\n${blockerList(
+        plannedRuntimeKeyVerification.blockers,
+      )}`,
     );
   }
   if (directConfigPlan?.status === "blocked") {
     throw iosSetupError(
-      `The selected SwiftUI app could not be configured automatically. No local files were changed:\n${blockerList(directConfigPlan.blockers)}`,
+      `The selected SwiftUI app could not be configured automatically. No local files were changed:\n${blockerList(
+        directConfigPlan.blockers,
+      )}`,
     );
   }
   if (
@@ -544,9 +557,9 @@ export async function applyIOSLocalSetup(
       `The fresh SwiftUI target was not edited because ${reason}. Resolve that setup or configure Clerk directly in the @main initializer, then rerun clerk init. No local files were changed.`,
     );
   }
-  if (hasLocalSecretsConfigure && !runtimeKeyVerificationPlan) {
+  if ((hasLocalSecretsConfigure || hasRunSchemeConfigure) && !runtimeKeyVerificationPlan) {
     throw iosSetupError(
-      "An existing LocalSecrets-based Clerk configuration was found, but it does not provide one proven development publishable key to the selected target. clerk init preserves custom runtime sources and will not write this plist; add the intended key manually, then rerun the command.",
+      "An existing Clerk runtime-key configuration was found, but it does not provide one proven development publishable key to the selected target. clerk init preserves custom runtime sources and will not rewrite them; repair the intended key manually, then rerun the command.",
     );
   }
   if (prebuiltAuthActive) {
@@ -564,7 +577,9 @@ export async function applyIOSLocalSetup(
     const verb = installPlan.products.length === 1 ? "is" : "are";
     log.info(
       dim(
-        `\n${formatProducts(installPlan.products)} ${verb} already linked to ${selection.targetName}.`,
+        `\n${formatProducts(installPlan.products)} ${verb} already linked to ${
+          selection.targetName
+        }.`,
       ),
     );
   }
@@ -572,12 +587,16 @@ export async function applyIOSLocalSetup(
     const verb = installPlan.products.length === 1 ? "is" : "are";
     log.info(
       dim(
-        `\n${formatProducts(installPlan.products)} ${verb} already linked to ${selection.targetName}, but package attribution is not represented in this project graph. The existing Xcode package graph will be left unchanged.`,
+        `\n${formatProducts(installPlan.products)} ${verb} already linked to ${
+          selection.targetName
+        }, but package attribution is not represented in this project graph. The existing Xcode package graph will be left unchanged.`,
       ),
     );
   } else if (installPlan.status === "blocked") {
     throw iosSetupError(
-      `The Clerk iOS SDK could not be installed automatically:\n${blockerList(installPlan.blockers)}`,
+      `The Clerk iOS SDK could not be installed automatically:\n${blockerList(
+        installPlan.blockers,
+      )}`,
     );
   }
   const plannedPaths: Array<{ absolutePath: string; displayPath: string }> = [];
@@ -798,7 +817,10 @@ export async function applyIOSLocalSetup(
     );
   }
   if (hasLocalWrites && !options.yes) {
-    const proceed = await confirm({ message: "Apply these local iOS changes?", default: false });
+    const proceed = await confirm({
+      message: "Apply these local iOS changes?",
+      default: false,
+    });
     if (!proceed) throwUserAbort();
   }
 
@@ -872,7 +894,9 @@ async function prepareSDKForCommit(
   }
   if (prepared.status === "blocked") {
     throw iosSetupError(
-      `The Clerk iOS SDK could no longer be prepared safely. No local setup changes were written:\n${preparedSDKBlockers(prepared)}`,
+      `The Clerk iOS SDK could no longer be prepared safely. No local setup changes were written:\n${preparedSDKBlockers(
+        prepared,
+      )}`,
     );
   }
   return prepared;
@@ -891,7 +915,9 @@ async function preparePrebuiltAuthForCommit(
   }
   if (prepared.status === "blocked") {
     throw iosSetupError(
-      `The prebuilt AuthView flow could no longer be prepared safely. No local setup changes were written:\n${blockerList(prepared.plan.blockers)}`,
+      `The prebuilt AuthView flow could no longer be prepared safely. No local setup changes were written:\n${blockerList(
+        prepared.plan.blockers,
+      )}`,
     );
   }
   return prepared;
@@ -915,7 +941,9 @@ async function prepareAssociatedDomainForCommit(
   if (prepared.status === "blocked") {
     const reasons = blockerList(prepared.plan.blockers);
     throw iosSetupError(
-      `The Clerk Associated Domain could no longer be prepared safely. No local setup changes were written${reasons ? `:\n${reasons}` : "."}`,
+      `The Clerk Associated Domain could no longer be prepared safely. No local setup changes were written${
+        reasons ? `:\n${reasons}` : "."
+      }`,
     );
   }
   return prepared;
@@ -926,7 +954,9 @@ async function prepareAppleEntitlementForCommit(
   baseMutations: readonly IOSFileMutation[],
 ): Promise<PreparedIOSAppleEntitlementMutation | undefined> {
   if (!plan) return undefined;
-  const prepared = await prepareIOSAppleEntitlementMutation(plan, { baseMutations });
+  const prepared = await prepareIOSAppleEntitlementMutation(plan, {
+    baseMutations,
+  });
   if (prepared.status === "stale") {
     throw iosSetupError(
       "An iOS entitlements file changed after the Sign in with Apple preview. No local setup changes were written; rerun clerk init.",
@@ -935,7 +965,9 @@ async function prepareAppleEntitlementForCommit(
   }
   if (prepared.status === "blocked") {
     throw iosSetupError(
-      `The Sign in with Apple entitlement could no longer be prepared safely. No local setup changes were written:\n${blockerList(prepared.plan.blockers)}`,
+      `The Sign in with Apple entitlement could no longer be prepared safely. No local setup changes were written:\n${blockerList(
+        prepared.plan.blockers,
+      )}`,
     );
   }
   return prepared;
@@ -1143,8 +1175,8 @@ export async function applyIOSPlannedLocalSetup(
   }
   const key = requireDevelopmentKey(setup, publishableKey);
 
-  // Existing LocalSecrets values are verified before any PBX mutation. A
-  // mismatched application can therefore never change the selected target.
+  // Existing LocalSecrets and Run-scheme values are verified before any local
+  // mutation. A mismatched application can therefore never change the target.
   if (setup.runtimeKeyVerificationPlan) {
     const result = await withSpinner("Verifying the existing iOS publishable key...", async () =>
       verifyIOSRuntimeKey(setup.runtimeKeyVerificationPlan!, key),
@@ -1165,7 +1197,9 @@ export async function applyIOSPlannedLocalSetup(
     }
     if (preparedDirect.status === "blocked") {
       throw iosSetupError(
-        `The Swift app entry source could no longer be configured safely. No local setup changes were written:\n${blockerList(preparedDirect.plan.blockers)}`,
+        `The Swift app entry source could no longer be configured safely. No local setup changes were written:\n${blockerList(
+          preparedDirect.plan.blockers,
+        )}`,
       );
     }
     // Verify an existing inline key before using the supplied key to derive
@@ -1370,6 +1404,11 @@ export async function applyIOSPlannedLocalSetup(
   }
 
   if (setup.runtimeKeyVerificationPlan) {
+    if (localMutations.length === 0) {
+      await options.beforePostWriteValidation?.();
+      const result = await verifyIOSRuntimeKey(setup.runtimeKeyVerificationPlan, key);
+      assertRuntimeKeyVerificationMatched(result);
+    }
     log.info(dim("The existing publishable key matches the linked Clerk application."));
   }
 }
@@ -1397,7 +1436,7 @@ function assertRuntimeKeyVerificationMatched(
   }
   if (result.status === "stale") {
     throw iosSetupError(
-      "LocalSecrets.plist changed after the read-only verification preflight. No key was changed; rerun clerk init.",
+      "The selected iOS runtime-key source changed after the read-only verification preflight. No key was changed; rerun clerk init.",
       ERROR_CODE.IOS_SETUP_STALE,
     );
   }

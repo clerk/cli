@@ -414,7 +414,11 @@ struct MyApp: App {
   test("refuses a LocalSecrets compatibility path without proven SwiftUI environment injection", async () => {
     const root = await mkdtemp(join(tmpdir(), "clerk-ios-local-secrets-auth-view-"));
     temporaryDirectories.push(root);
-    await createIOSFixture(root, { complete: true, includeKey: false, localSecrets: true });
+    await createIOSFixture(root, {
+      complete: true,
+      includeKey: false,
+      localSecrets: true,
+    });
     await addStarterContentViewToFixture(root);
     const appPath = join(root, "MyApp", "MyAppApp.swift");
     const appSource = (await Bun.file(appPath).text()).replace("import ClerkKitUI\n", "").replace(
@@ -625,7 +629,10 @@ struct MyApp: App {
       configDir,
     );
     expect(optedIn.exitCode).toBe(0);
-    expect(currentAppleConnection()).toMatchObject({ enabled: true, authenticatable: true });
+    expect(currentAppleConnection()).toMatchObject({
+      enabled: true,
+      authenticatable: true,
+    });
 
     // Keep the local entitlement as detection evidence while simulating a
     // Clerk connection that has not been opted into for this invocation.
@@ -637,7 +644,10 @@ struct MyApp: App {
     );
 
     expect(withoutOptIn.exitCode).toBe(0);
-    expect(currentAppleConnection()).toEqual({ enabled: false, authenticatable: true });
+    expect(currentAppleConnection()).toEqual({
+      enabled: false,
+      authenticatable: true,
+    });
     expect(`${withoutOptIn.stdout}\n${withoutOptIn.stderr}`).not.toContain(
       "Native Sign in with Apple enabled in Clerk",
     );
@@ -672,7 +682,9 @@ struct MyApp: App {
   test("uses the linked key host over an unrelated root env during aggregate setup", async () => {
     const root = await createUnconfiguredFixture();
     const configDir = await createIsolatedCLIState();
-    const unrelatedKey = `pk_test_${Buffer.from("unrelated-root.clerk.example$").toString("base64")}`;
+    const unrelatedKey = `pk_test_${Buffer.from("unrelated-root.clerk.example$").toString(
+      "base64",
+    )}`;
     const existingEnv = `CLERK_PUBLISHABLE_KEY=${unrelatedKey}\n`;
     await Bun.write(join(root, ".env"), existingEnv);
 
@@ -820,7 +832,11 @@ import SwiftUI
   test("links both products only to a fresh explicitly selected second target", async () => {
     const root = await mkdtemp(join(tmpdir(), "clerk-ios-second-target-"));
     temporaryDirectories.push(root);
-    await createIOSFixture(root, { clerkSDK: false, includeKey: false, secondTarget: true });
+    await createIOSFixture(root, {
+      clerkSDK: false,
+      includeKey: false,
+      secondTarget: true,
+    });
     const configDir = await createIsolatedCLIState();
 
     const result = await runCLI(
@@ -833,8 +849,14 @@ import SwiftUI
     const inspection = await inspectIOSProject(root);
     const primary = inspection.appTargets.find((target) => target.name === "MyApp");
     const selected = inspection.appTargets.find((target) => target.name === "AdminApp");
-    expect(primary?.packages).toMatchObject({ clerkKit: "absent", clerkKitUI: "absent" });
-    expect(selected?.packages).toMatchObject({ clerkKit: "linked", clerkKitUI: "linked" });
+    expect(primary?.packages).toMatchObject({
+      clerkKit: "absent",
+      clerkKitUI: "absent",
+    });
+    expect(selected?.packages).toMatchObject({
+      clerkKit: "linked",
+      clerkKitUI: "linked",
+    });
   });
 
   test("validates an apparently linked graph before treating it as a no-op", async () => {
@@ -918,7 +940,11 @@ import SwiftUI
   test("an already-linked SDK returns a read-only runtime verification without prompting or writing", async () => {
     const root = await mkdtemp(join(tmpdir(), "clerk-ios-runtime-verification-"));
     temporaryDirectories.push(root);
-    await createIOSFixture(root, { complete: true, includeKey: false, localSecrets: true });
+    await createIOSFixture(root, {
+      complete: true,
+      includeKey: false,
+      localSecrets: true,
+    });
     const entitlementsPath = join(root, "MyApp", "MyApp.entitlements");
     await Bun.write(
       entitlementsPath,
@@ -941,7 +967,10 @@ import SwiftUI
 
       expect(result.runtimeKeyVerificationPlan).toMatchObject({
         status: "ready",
-        localSecretsPath: "MyApp/LocalSecrets.plist",
+        source: {
+          kind: "local-secrets-plist",
+          path: "MyApp/LocalSecrets.plist",
+        },
       });
       expect(confirmation).not.toHaveBeenCalled();
       expect(await treeDigest(root)).toEqual(before);
@@ -953,7 +982,11 @@ import SwiftUI
   test("preserves a LocalSecrets runtime sink that has no valid key", async () => {
     const root = await mkdtemp(join(tmpdir(), "clerk-ios-runtime-preflight-"));
     temporaryDirectories.push(root);
-    await createIOSFixture(root, { complete: true, includeKey: false, localSecrets: true });
+    await createIOSFixture(root, {
+      complete: true,
+      includeKey: false,
+      localSecrets: true,
+    });
     await Bun.write(
       join(root, "MyApp", "LocalSecrets.plist"),
       '<?xml version="1.0"?><plist version="1.0"><dict><key>CLERK_PUBLISHABLE_KEY</key><string>replace-me</string></dict></plist>',

@@ -82,7 +82,13 @@ function iosAppleEntitlementPlan(
     projectPath: "MyApp.xcodeproj",
     targetId: "TARGET",
     targetName: "MyApp",
-    files: [{ path: "MyApp/MyApp.entitlements", operation: "modify", expectedHash: "hash" }],
+    files: [
+      {
+        path: "MyApp/MyApp.entitlements",
+        operation: "modify",
+        expectedHash: "hash",
+      },
+    ],
     actions: ["Add the native Sign in with Apple entitlement."],
     blockers: [],
     ...overrides,
@@ -280,6 +286,28 @@ describe("init iOS", () => {
     expect(linkMod.link).not.toHaveBeenCalled();
     expect(iosDevelopmentKeyMod.resolveIOSDevelopmentPublicKey).not.toHaveBeenCalled();
     expect(nativeRemoteMod.prepareIOSNativeRemoteSetup).not.toHaveBeenCalled();
+    expect(iosApplyMod.applyIOSPlannedLocalSetup).not.toHaveBeenCalled();
+  });
+
+  test("does not let agent mode guess an application for an existing runtime key", async () => {
+    setup({ isAgent: true, email: "test@test.com" });
+    const iosCtx = nativeIOSContext();
+    spyOn(context, "gatherContext").mockResolvedValue(iosCtx);
+    spyOn(config, "resolveProfile").mockResolvedValue(undefined);
+    spyOn(iosApplyMod, "applyIOSLocalSetup").mockResolvedValue(
+      iosSetupResult({
+        requiresLinkedApp: true,
+        requiresDevelopmentKey: true,
+        verifiesExistingKey: true,
+      }),
+    );
+
+    await expect(init({ yes: true })).rejects.toThrow(
+      "Agent mode cannot choose its matching Clerk application safely; rerun with --app <app_id>",
+    );
+
+    expect(linkMod.link).not.toHaveBeenCalled();
+    expect(iosDevelopmentKeyMod.resolveIOSDevelopmentPublicKey).not.toHaveBeenCalled();
     expect(iosApplyMod.applyIOSPlannedLocalSetup).not.toHaveBeenCalled();
   });
 
@@ -627,7 +655,10 @@ describe("init iOS", () => {
     const setupResult = iosSetupResult({
       prebuiltAuthRequested: true,
       prebuiltAuthActive: true,
-      prebuiltAuthPlan: iosPrebuiltAuthPlan({ status: "satisfied", root: iosCtx.cwd }),
+      prebuiltAuthPlan: iosPrebuiltAuthPlan({
+        status: "satisfied",
+        root: iosCtx.cwd,
+      }),
       prebuiltAuthAppleEntitlementPlan: iosAppleEntitlementPlan(),
       requiresLinkedApp: true,
       requiresDevelopmentKey: false,
@@ -729,7 +760,12 @@ describe("init iOS", () => {
         status: "blocked",
         files: [],
         actions: [],
-        blockers: [{ code: "unsupported-entitlements", message: "Review the entitlements file." }],
+        blockers: [
+          {
+            code: "unsupported-entitlements",
+            message: "Review the entitlements file.",
+          },
+        ],
       }),
       requiresLinkedApp: true,
       requiresDevelopmentKey: false,
@@ -770,7 +806,10 @@ describe("init iOS", () => {
     const setupResult = iosSetupResult({
       prebuiltAuthRequested: true,
       prebuiltAuthActive: true,
-      prebuiltAuthPlan: iosPrebuiltAuthPlan({ status: "satisfied", root: iosCtx.cwd }),
+      prebuiltAuthPlan: iosPrebuiltAuthPlan({
+        status: "satisfied",
+        root: iosCtx.cwd,
+      }),
       prebuiltAuthAppleEntitlementPlan: iosAppleEntitlementPlan(),
       requiresLinkedApp: true,
       requiresDevelopmentKey: false,
@@ -813,7 +852,10 @@ describe("init iOS", () => {
     const setupResult = iosSetupResult({
       prebuiltAuthRequested: true,
       prebuiltAuthActive: true,
-      prebuiltAuthPlan: iosPrebuiltAuthPlan({ status: "satisfied", root: iosCtx.cwd }),
+      prebuiltAuthPlan: iosPrebuiltAuthPlan({
+        status: "satisfied",
+        root: iosCtx.cwd,
+      }),
       prebuiltAuthAppleEntitlementPlan: iosAppleEntitlementPlan(),
       requiresLinkedApp: true,
       requiresDevelopmentKey: false,
@@ -1040,7 +1082,10 @@ describe("init iOS", () => {
       applyApple.mock.invocationCallOrder[0]!,
     );
     expect(scaffold).toHaveBeenCalledWith(
-      expect.objectContaining({ iosNativeRemoteReady: true, iosNativeAppleReady: true }),
+      expect.objectContaining({
+        iosNativeRemoteReady: true,
+        iosNativeAppleReady: true,
+      }),
     );
     expect(stages()).toEqual([
       "flags",
@@ -1109,7 +1154,10 @@ describe("init iOS", () => {
     } as never);
     spyOn(iosApplyMod, "applyIOSLocalSetup").mockResolvedValue(
       iosSetupResult({
-        appleEntitlementPlan: iosAppleEntitlementPlan({ status: "satisfied", actions: [] }),
+        appleEntitlementPlan: iosAppleEntitlementPlan({
+          status: "satisfied",
+          actions: [],
+        }),
         nativeAppleRequested: false,
         requiresLinkedApp: true,
         requiresDevelopmentKey: false,
@@ -1419,7 +1467,10 @@ describe("init iOS", () => {
       publishableKey: linkedKey,
     });
     spyOn(nativeRemoteMod, "prepareIOSNativeRemoteSetup").mockResolvedValue(
-      iosRemotePlan({ applicationId: "app_matching", instanceId: "ins_matching" }),
+      iosRemotePlan({
+        applicationId: "app_matching",
+        instanceId: "ins_matching",
+      }),
     );
     await init({ yes: true });
 
@@ -1453,7 +1504,10 @@ describe("init iOS", () => {
     });
     const localApply = spyOn(iosApplyMod, "applyIOSLocalSetup").mockResolvedValue(setupResult);
     spyOn(nativeRemoteMod, "prepareIOSNativeRemoteSetup").mockResolvedValue(
-      iosRemotePlan({ applicationId: "app_requested", instanceId: "ins_requested" }),
+      iosRemotePlan({
+        applicationId: "app_requested",
+        instanceId: "ins_requested",
+      }),
     );
 
     await init({ yes: true, app: "app_requested" });
@@ -1496,7 +1550,10 @@ describe("init iOS", () => {
     });
     spyOn(iosApplyMod, "applyIOSLocalSetup").mockResolvedValue(setupResult);
     spyOn(nativeRemoteMod, "prepareIOSNativeRemoteSetup").mockResolvedValue(
-      iosRemotePlan({ applicationId: "app_requested", instanceId: "ins_requested" }),
+      iosRemotePlan({
+        applicationId: "app_requested",
+        instanceId: "ins_requested",
+      }),
     );
 
     await init({ yes: true, app: "app_requested" });

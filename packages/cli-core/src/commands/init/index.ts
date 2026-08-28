@@ -153,7 +153,9 @@ export async function init(options: InitOptions = {}) {
     agent && (options.login || options.app) ? await validateAgentAuthentication() : undefined;
   if (validatedAgentAuthLabel === null) {
     throwUsageError(
-      `${options.app ? "--app" : "--login"} requires authentication that agent mode cannot complete interactively. Ask the user to run \`clerk auth login\`, then re-run \`clerk init\`.`,
+      `${
+        options.app ? "--app" : "--login"
+      } requires authentication that agent mode cannot complete interactively. Ask the user to run \`clerk auth login\`, then re-run \`clerk init\`.`,
     );
   }
 
@@ -297,7 +299,9 @@ export async function init(options: InitOptions = {}) {
     const runtimeKeyVerificationPlan =
       dryRunSelection.state === "selected" &&
       selectedTarget?.swift.configureCalls.some(
-        (call) => call.publishableKeyWiring === "local-secrets-loader",
+        (call) =>
+          call.publishableKeyWiring === "local-secrets-loader" ||
+          call.publishableKeyWiring === "process-info-environment",
       )
         ? await planIOSRuntimeKeyVerification({
             root: ctx.cwd,
@@ -451,7 +455,9 @@ export async function init(options: InitOptions = {}) {
         target: iosLocalSetup.nativeReadiness.target,
         appIdPrefix: options.appIdPrefix,
         ...(iosLocalSetup.unverifiedAppIdPrefixSuggestion
-          ? { unverifiedAppIdPrefixSuggestion: iosLocalSetup.unverifiedAppIdPrefixSuggestion }
+          ? {
+              unverifiedAppIdPrefixSuggestion: iosLocalSetup.unverifiedAppIdPrefixSuggestion,
+            }
           : {}),
       });
     }
@@ -534,7 +540,9 @@ export async function init(options: InitOptions = {}) {
             .map((blocker) => `  • ${blocker.message}`)
             .join("\n");
           throw new CliError(
-            `AuthView exposes Sign in with Apple for the linked development instance, but the required selected-target entitlement could not be prepared safely. No local setup changes were written${reasons ? `:\n${reasons}` : "."}`,
+            `AuthView exposes Sign in with Apple for the linked development instance, but the required selected-target entitlement could not be prepared safely. No local setup changes were written${
+              reasons ? `:\n${reasons}` : "."
+            }`,
             { code: ERROR_CODE.IOS_SETUP_BLOCKED },
           );
         }
@@ -548,7 +556,9 @@ export async function init(options: InitOptions = {}) {
       target: iosLocalSetup.nativeReadiness.target,
       appIdPrefix: options.appIdPrefix,
       ...(iosLocalSetup.unverifiedAppIdPrefixSuggestion
-        ? { unverifiedAppIdPrefixSuggestion: iosLocalSetup.unverifiedAppIdPrefixSuggestion }
+        ? {
+            unverifiedAppIdPrefixSuggestion: iosLocalSetup.unverifiedAppIdPrefixSuggestion,
+          }
         : {}),
       ...(iosApplicationLinkChange ? { applicationLinkChange: iosApplicationLinkChange } : {}),
       agent,
@@ -1410,7 +1420,10 @@ export function registerInit(program: Program): void {
     .option("-y, --yes", "Skip confirmation prompts")
     .option("--no-skills", "Skip the optional agent skills install prompt")
     .setExamples([
-      { command: "clerk init", description: "Auto-detect framework and set up Clerk" },
+      {
+        command: "clerk init",
+        description: "Auto-detect framework and set up Clerk",
+      },
       {
         command: "clerk init --framework next",
         description: "Set up for Next.js (skips detection)",
@@ -1419,7 +1432,10 @@ export function registerInit(program: Program): void {
         command: "clerk init --app app_123",
         description: "Link to a specific Clerk application",
       },
-      { command: "clerk init --starter", description: "Create a new project with Clerk" },
+      {
+        command: "clerk init --starter",
+        description: "Create a new project with Clerk",
+      },
       {
         command: "clerk init --starter --framework next --pm bun",
         description: "Bootstrap with Bun",
@@ -1448,8 +1464,14 @@ export function registerInit(program: Program): void {
         command: "clerk init --dry-run --target MyApp --json",
         description: "Inspect one iOS app target and emit a machine-readable plan",
       },
-      { command: "clerk init -y", description: "Skip all confirmation prompts" },
-      { command: "clerk init --no-skills", description: "Skip the agent skills install prompt" },
+      {
+        command: "clerk init -y",
+        description: "Skip all confirmation prompts",
+      },
+      {
+        command: "clerk init --no-skills",
+        description: "Skip the agent skills install prompt",
+      },
     ])
     .action(init);
 }
