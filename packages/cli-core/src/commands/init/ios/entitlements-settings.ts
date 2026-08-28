@@ -895,7 +895,10 @@ async function inspectSelectedTarget(
   projectPath: string,
   targetId: string,
 ): Promise<string | undefined> {
-  const inspection = await inspectIOSProject(root, { target: targetId });
+  const inspection = await inspectIOSProject(root, {
+    target: targetId,
+    exhaustiveContainerDiscovery: true,
+  });
   if (
     inspection.selection.state !== "selected" ||
     inspection.selection.targetId !== targetId ||

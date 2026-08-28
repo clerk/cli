@@ -3,6 +3,7 @@ import { cp, mkdir, mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { parse as parsePbxProject } from "@bacons/xcode/json";
+import { ERROR_CODE } from "../../../lib/errors.ts";
 import { inspectIOSProject } from "./inspect.ts";
 import { applyIOSLocalSetup, applyIOSPlannedLocalSetup } from "./apply.ts";
 import {
@@ -32,6 +33,102 @@ setDefaultTimeout(15_000);
 
 describe("clerk init iOS SDK apply", () => {
   const captured = useCaptureLog();
+
+  test("uses exhaustive project discovery before implicitly selecting a target", async () => {
+    const root = await mkdtemp(join(tmpdir(), "clerk-ios-exhaustive-apply-selection-"));
+    temporaryDirectories.push(root);
+    await createIOSFixture(root, { complete: true });
+    await createIOSFixture(join(root, "Level0", "Level1", "Level2", "Level3"), {
+      complete: true,
+    });
+    const before = await treeDigest(root);
+
+    expect((await inspectIOSProject(root)).selection.state).toBe("selected");
+    await expect(
+      applyIOSLocalSetup({
+        root,
+        yes: true,
+        agent: true,
+        allowDirty: false,
+      }),
+    ).rejects.toThrow("More than one iOS application target is eligible");
+
+    expect(await treeDigest(root)).toEqual(before);
+  });
+
+  test("fails closed when exhaustive project discovery reaches its safety bound", async () => {
+    const root = await mkdtemp(join(tmpdir(), "clerk-ios-incomplete-apply-selection-"));
+    temporaryDirectories.push(root);
+    await createIOSFixture(root, { complete: true });
+    const nesting = Array.from({ length: 25 }, (_, index) => `Level${index}`);
+    await mkdir(join(root, ...nesting), { recursive: true });
+    const before = await treeDigest(root);
+
+    await expect(
+      applyIOSLocalSetup({
+        root,
+        target: "MyApp",
+        yes: true,
+        agent: true,
+        allowDirty: false,
+      }),
+    ).rejects.toMatchObject({
+      code: ERROR_CODE.IOS_TARGET_UNRESOLVED,
+      message: expect.stringContaining("Xcode project discovery was incomplete"),
+    });
+
+    expect(await treeDigest(root)).toEqual(before);
+  });
+
+  test("fails closed when a workspace exposes an incomplete project inventory", async () => {
+    const root = await mkdtemp(join(tmpdir(), "clerk-ios-incomplete-workspace-apply-"));
+    temporaryDirectories.push(root);
+    await createIOSFixture(root, { complete: true, localSecrets: true });
+    const workspace = join(root, "Broken.xcworkspace");
+    await mkdir(workspace);
+    await Bun.write(
+      join(workspace, "contents.xcworkspacedata"),
+      '<Workspace version="1.0"><FileRef location="group:MyApp.xcodeproj" />',
+    );
+    const before = await treeDigest(root);
+
+    await expect(
+      applyIOSLocalSetup({
+        root,
+        yes: true,
+        agent: true,
+        allowDirty: false,
+      }),
+    ).rejects.toMatchObject({
+      code: ERROR_CODE.IOS_TARGET_UNRESOLVED,
+      message: expect.stringContaining("Xcode project discovery was incomplete"),
+    });
+
+    expect(await treeDigest(root)).toEqual(before);
+  });
+
+  test("keeps a single deeply nested project selected through setup planning", async () => {
+    const root = await mkdtemp(join(tmpdir(), "clerk-ios-deep-apply-selection-"));
+    temporaryDirectories.push(root);
+    const projectRoot = join(root, "Level0", "Level1", "Level2", "Level3");
+    await createIOSFixture(projectRoot, { complete: true, localSecrets: true });
+    const before = await treeDigest(root);
+
+    const setup = await applyIOSLocalSetup({
+      root,
+      yes: true,
+      agent: true,
+      allowDirty: false,
+    });
+
+    expect(setup.nativeReadiness.target).toMatchObject({
+      status: "selected",
+      projectPath: "Level0/Level1/Level2/Level3/MyApp.xcodeproj",
+      targetId: IOS_FIXTURE_IDS.appTarget,
+      targetName: "MyApp",
+    });
+    expect(await treeDigest(root)).toEqual(before);
+  });
 
   test("applies the explicit prebuilt AuthView opt-in in the aggregate Swift transaction", async () => {
     const root = await mkdtemp(join(tmpdir(), "clerk-ios-prebuilt-auth-apply-"));

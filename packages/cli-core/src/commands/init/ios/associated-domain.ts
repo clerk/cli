@@ -23,7 +23,7 @@ import {
   validateIOSMissingEntitlementsSettingsPostcondition,
   type IOSMissingEntitlementsSettingsPlan,
 } from "./entitlements-settings.ts";
-import { inspectIOSProject } from "./inspect.ts";
+import { hasIncompleteIOSContainerDiscovery, inspectIOSProject } from "./inspect.ts";
 import { asString, buildPbxParentIndex, isRecord, type PbxObject, type PbxObjects } from "./pbx.ts";
 import { parseIOSPlist } from "./plist.ts";
 import type { IOSAppTarget, IOSDiagnostic, IOSProjectInspectionResult } from "./types.ts";
@@ -1037,7 +1037,9 @@ export async function validatePreparedIOSAssociatedDomain(
   }
   const inspection = await inspectIOSProject(prepared.plan.root, {
     target: prepared.plan.targetId,
+    exhaustiveContainerDiscovery: true,
   });
+  if (hasIncompleteIOSContainerDiscovery(inspection)) return false;
   const target = selectedTarget(inspection, prepared.plan.projectPath, prepared.plan.targetId);
   if (!target) return false;
   if (

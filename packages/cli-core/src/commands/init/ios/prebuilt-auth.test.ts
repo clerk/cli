@@ -374,7 +374,12 @@ struct DecoyApp: App {
     });
 
     const projectPath = join(deepRoot, "MyApp.xcodeproj", "project.pbxproj");
-    const project = parsePbxProject(await readFile(projectPath, "utf8"));
+    const project = parsePbxProject(
+      (await readFile(projectPath, "utf8")).replaceAll(
+        IOS_FIXTURE_IDS.appTarget,
+        IOS_FIXTURE_IDS.secondTarget,
+      ),
+    );
     const objects = (project as unknown as { objects: PbxObjects }).objects;
     (objects[IOS_FIXTURE_IDS.appGroup]!.children as string[]).push(CONTENT_FILE_ID);
     (objects[IOS_FIXTURE_IDS.sourcesPhase]!.files as string[]).push(CONTENT_BUILD_FILE_ID);

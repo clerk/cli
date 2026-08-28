@@ -21,7 +21,7 @@ import {
 } from "../../../lib/plapi.ts";
 import { confirm, text } from "../../../lib/prompts.ts";
 import { withSpinner } from "../../../lib/spinner.ts";
-import { inspectIOSProject } from "./inspect.ts";
+import { hasIncompleteIOSContainerDiscovery, inspectIOSProject } from "./inspect.ts";
 import type {
   IOSNativeReadinessTarget,
   IOSUnverifiedAppIdPrefixSuggestion,
@@ -205,7 +205,13 @@ function copyTargetSnapshot(
 }
 
 const defaultTargetReader: IOSNativeRemoteTargetReader = async (snapshot) => {
-  const inspection = await inspectIOSProject(snapshot.root, { target: snapshot.targetId });
+  const inspection = await inspectIOSProject(snapshot.root, {
+    target: snapshot.targetId,
+    exhaustiveContainerDiscovery: true,
+  });
+  if (hasIncompleteIOSContainerDiscovery(inspection)) {
+    return { status: "blocked", reason: "target-not-selected" };
+  }
   return buildIOSNativeReadinessAudit(inspection).target;
 };
 

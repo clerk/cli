@@ -11,7 +11,7 @@ import {
 import { log } from "../../../lib/log.ts";
 import { confirm } from "../../../lib/prompts.ts";
 import { withSpinner } from "../../../lib/spinner.ts";
-import { inspectIOSProject } from "./inspect.ts";
+import { hasIncompleteIOSContainerDiscovery, inspectIOSProject } from "./inspect.ts";
 import {
   planIOSSDKInstall,
   prepareIOSSDKInstallMutation,
@@ -299,7 +299,16 @@ async function validatePrebuiltAuthRuntimePostcondition(
   const target = setup.nativeReadiness.target;
   const inspection = await inspectIOSProject(setup.nativeReadiness.root, {
     target: target.targetId,
+    exhaustiveContainerDiscovery: true,
   });
+  if (
+    hasIncompleteIOSContainerDiscovery(inspection) ||
+    inspection.selection.state !== "selected" ||
+    inspection.selection.targetId !== target.targetId ||
+    inspection.selection.projectPath !== target.projectPath
+  ) {
+    return false;
+  }
   const setupPlan = buildIOSSetupPlan(inspection, {
     runtimeKeyPlan: allowPendingRuntimeKey ? setup.runtimeKeyPlan : undefined,
   });
@@ -323,8 +332,17 @@ export async function applyIOSLocalSetup(
   options: ApplyIOSLocalSetupOptions,
 ): Promise<IOSLocalSetupResult> {
   const inspection = await withSpinner("Inspecting Xcode project...", async () =>
-    inspectIOSProject(options.root, { target: options.target }),
+    inspectIOSProject(options.root, {
+      target: options.target,
+      exhaustiveContainerDiscovery: true,
+    }),
   );
+  if (hasIncompleteIOSContainerDiscovery(inspection)) {
+    throw iosSetupError(
+      "Xcode project discovery was incomplete, so Clerk cannot safely select an iOS application target. Run the command from the intended project's directory, make nested project directories readable, or reduce excessive project nesting or count.",
+      ERROR_CODE.IOS_TARGET_UNRESOLVED,
+    );
+  }
   const selection = inspection.selection;
   if (selection.state !== "selected") {
     if (selection.state === "ambiguous") {
@@ -1226,7 +1244,19 @@ export async function applyIOSPlannedLocalSetup(
     }
     const inspection = await inspectIOSProject(setup.nativeReadiness.root, {
       target: setup.nativeReadiness.target.targetId,
+      exhaustiveContainerDiscovery: true,
     });
+    if (
+      hasIncompleteIOSContainerDiscovery(inspection) ||
+      inspection.selection.state !== "selected" ||
+      inspection.selection.targetId !== setup.nativeReadiness.target.targetId ||
+      inspection.selection.projectPath !== setup.nativeReadiness.target.projectPath
+    ) {
+      throw iosSetupError(
+        "The approved prebuilt AuthView setup no longer identifies the same exhaustively discovered Xcode target. No local setup changes were written; rerun clerk init.",
+        ERROR_CODE.IOS_SETUP_STALE,
+      );
+    }
     const runtimeBlockers = planIOSPrebuiltAuthRuntimeBlockers(
       inspection,
       setup.directConfigPlan,

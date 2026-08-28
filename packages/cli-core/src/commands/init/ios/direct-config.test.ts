@@ -754,6 +754,14 @@ struct MyApp: App {
     const root = await fixture();
     const deepRoot = join(root, "a", "b", "c", "d");
     await createIOSFixture(deepRoot, { clerkSDK: false, includeKey: false });
+    const deepProjectPath = join(deepRoot, "MyApp.xcodeproj", "project.pbxproj");
+    await writeFile(
+      deepProjectPath,
+      (await readFile(deepProjectPath, "utf8")).replaceAll(
+        IOS_FIXTURE_IDS.appTarget,
+        IOS_FIXTURE_IDS.secondTarget,
+      ),
+    );
     await updateProject(deepRoot, (objects) => {
       objects[IOS_FIXTURE_IDS.appFile]!.path = "../../../../../MyApp/MyAppApp.swift";
     });

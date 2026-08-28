@@ -9,7 +9,11 @@ import {
   type IOSFileMutationBoundary,
 } from "./file-transaction.ts";
 import { hasExactIOSSwiftUIAppContentRoot } from "./direct-config.ts";
-import { inspectIOSProject, inspectIOSSourceMembership } from "./inspect.ts";
+import {
+  hasIncompleteIOSContainerDiscovery,
+  inspectIOSProject,
+  inspectIOSSourceMembership,
+} from "./inspect.ts";
 import type { IOSBuildConfiguration } from "./types.ts";
 
 const MAX_SWIFT_FILE_BYTES = 1_000_000;
@@ -429,7 +433,19 @@ async function preparePlan(options: IOSPrebuiltAuthPlanOptions): Promise<Prepare
     );
   }
   const projectPath = relativeIOSPath(root, absoluteProjectPath);
-  const inspection = await inspectIOSProject(root, { target: options.targetId });
+  const inspection = await inspectIOSProject(root, {
+    target: options.targetId,
+    exhaustiveContainerDiscovery: true,
+  });
+  if (hasIncompleteIOSContainerDiscovery(inspection)) {
+    return blocked(
+      options,
+      root,
+      projectPath,
+      "incomplete-source-membership",
+      "Complete local Xcode container discovery could not be proven.",
+    );
+  }
   if (
     inspection.selection.state !== "selected" ||
     inspection.selection.targetId !== options.targetId ||

@@ -25,6 +25,7 @@ export interface IOSDiagnostic {
     | "xcode.external-path"
     | "xcode.generated-project"
     | "xcode.incomplete-source-membership"
+    | "xcode.incomplete-container-discovery"
     | "xcode.interrupted-file-transaction"
     | "clerk.package-unattributed"
     | "clerk.invalid-publishable-key";
