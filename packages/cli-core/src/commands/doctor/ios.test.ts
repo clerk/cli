@@ -50,15 +50,15 @@ async function fixture(options: Parameters<typeof createIOSFixture>[1] = {}): Pr
   return root;
 }
 
-async function addAppleEntitlement(root: string): Promise<void> {
+async function addAppleEntitlement(
+  root: string,
+  value = "<array><string>Default</string></array>",
+): Promise<void> {
   const entitlementsPath = join(root, "MyApp", "MyApp.entitlements");
   const entitlements = await readFile(entitlementsPath, "utf8");
   await writeFile(
     entitlementsPath,
-    entitlements.replace(
-      "</dict>",
-      "<key>com.apple.developer.applesignin</key><array><string>Default</string></array></dict>",
-    ),
+    entitlements.replace("</dict>", `<key>com.apple.developer.applesignin</key>${value}</dict>`),
   );
 }
 
@@ -836,6 +836,48 @@ struct MyApp: App {
     expect(
       audit.results.find((result) => result.name === "iOS: Clerk Sign in with Apple")?.status,
     ).toBe("pass");
+  });
+
+  test("fails the strict Apple check for a malformed present entitlement", async () => {
+    const root = await fixture();
+    await addAppleEntitlement(root, "<array></array>");
+    let entitlementCalls = 0;
+    let appleHealthCalls = 0;
+    const audit = await runIOSDoctorChecks(
+      context(),
+      { root, target: "MyApp" },
+      dependencies({
+        planIOSAppleEntitlement: async (options) => {
+          entitlementCalls++;
+          const { planIOSAppleEntitlement } = await import("../init/ios/apple-entitlement.ts");
+          return planIOSAppleEntitlement(options);
+        },
+        auditIOSNativeAppleHealth: async ({ applicationId, instanceId, bundleIdentifier }) => {
+          appleHealthCalls++;
+          return {
+            schemaVersion: 1,
+            kind: "clerk-ios-native-apple-health",
+            applicationId,
+            instanceId,
+            bundleIdentifier,
+            runtime: {
+              status: "required",
+              connection: "required",
+              bundleIdentifierConfiguration: "satisfied",
+              current: { enabled: false, authenticatable: false },
+              blockers: [],
+            },
+            automation: { status: "supported", configVersion: "v1_12345678", blockers: [] },
+          };
+        },
+      }),
+    );
+
+    expect(entitlementCalls).toBe(1);
+    expect(appleHealthCalls).toBe(1);
+    expect(
+      audit.results.find((result) => result.name === "iOS: Sign in with Apple entitlement")?.status,
+    ).toBe("fail");
   });
 
   test("classifies access errors without exposing the API response body", async () => {
