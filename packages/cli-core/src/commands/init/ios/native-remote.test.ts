@@ -14,6 +14,10 @@ import {
   type IOSNativeRemoteTargetSnapshot,
 } from "./native-remote.ts";
 import type { IOSApplication, NativeSettings } from "../../../lib/plapi.ts";
+import type {
+  IOSNativeRegistrationRetryIdentity,
+  IOSNativeRegistrationRetryStore,
+} from "./native-registration-retry.ts";
 
 const APPLICATION_ID = "app_native_test";
 const INSTANCE_ID = "ins_native_development";
@@ -95,6 +99,55 @@ const approvedTargetReader: IOSNativeRemoteTargetReader = async (snapshot) => ({
   appIdPrefix: snapshot.appIdPrefix,
 });
 
+function memoryRegistrationRetryStore(): {
+  store: IOSNativeRegistrationRetryStore;
+  pending(identity: IOSNativeRegistrationRetryIdentity): string | undefined;
+} {
+  const entries = new Map<string, string>();
+  let issued = 0;
+  const scope = (identity: IOSNativeRegistrationRetryIdentity) => JSON.stringify(identity);
+  return {
+    store: {
+      async getOrCreate(identity) {
+        const key = scope(identity);
+        const existing = entries.get(key);
+        if (existing) return existing;
+        issued += 1;
+        const created = `clerk-init-ios-registration-test-${issued}`;
+        entries.set(key, created);
+        return created;
+      },
+      async clear(identity) {
+        entries.delete(scope(identity));
+      },
+    },
+    pending(identity) {
+      return entries.get(scope(identity));
+    },
+  };
+}
+
+function registrationRetryIdentity(
+  overrides: Partial<IOSNativeRegistrationRetryIdentity> = {},
+): IOSNativeRegistrationRetryIdentity {
+  return {
+    applicationId: APPLICATION_ID,
+    instanceId: INSTANCE_ID,
+    bundleIdentifier: BUNDLE_IDENTIFIER,
+    appIdPrefix: LOCAL_PREFIX,
+    ...overrides,
+  };
+}
+
+async function applyRemoteSetup(
+  approved: IOSNativeRemotePlan,
+  api: IOSNativeRemoteAPI,
+  targetReader: IOSNativeRemoteTargetReader = approvedTargetReader,
+  registrationRetryStore: IOSNativeRegistrationRetryStore = memoryRegistrationRetryStore().store,
+): Promise<void> {
+  await applyIOSNativeRemoteSetup(approved, api, targetReader, registrationRetryStore);
+}
+
 function plan(options: {
   nativeApi: "required" | "satisfied";
   registration: "required" | "satisfied";
@@ -142,8 +195,10 @@ interface ScriptedAPIOptions {
 function scriptedAPI(options: ScriptedAPIOptions = {}): {
   api: IOSNativeRemoteAPI;
   calls: string[];
+  registrationIdempotencyKeys: string[];
 } {
   const calls: string[] = [];
+  const registrationIdempotencyKeys: string[] = [];
   const nativeReads = options.nativeReads ?? [nativeSettings(false)];
   const registrationReads = options.registrationReads ?? [[]];
   let nativeReadIndex = 0;
@@ -158,6 +213,7 @@ function scriptedAPI(options: ScriptedAPIOptions = {}): {
 
   return {
     calls,
+    registrationIdempotencyKeys,
     api: {
       async getNativeSettings(applicationId, instanceId) {
         expect(applicationId).toBe(APPLICATION_ID);
@@ -189,6 +245,7 @@ function scriptedAPI(options: ScriptedAPIOptions = {}): {
           bundleId: BUNDLE_IDENTIFIER,
         });
         expect(mutationOptions.idempotencyKey).toStartWith("clerk-init-ios-registration-");
+        registrationIdempotencyKeys.push(mutationOptions.idempotencyKey);
         calls.push("POST iOS registration");
         if (options.create) {
           return options.create(applicationId, instanceId, params, mutationOptions);
@@ -272,7 +329,7 @@ describe("Clerk Native Application remote setup", () => {
       actions: [],
       blockers: [],
     });
-    await applyIOSNativeRemoteSetup(result, api);
+    await applyRemoteSetup(result, api);
     expect(calls).toEqual([
       "GET native settings",
       "GET iOS registrations",
@@ -312,7 +369,7 @@ describe("Clerk Native Application remote setup", () => {
         prompts: prompts(),
       });
 
-      await expect(applyIOSNativeRemoteSetup(approved, api)).rejects.toMatchObject({
+      await expect(applyRemoteSetup(approved, api)).rejects.toMatchObject({
         code: ERROR_CODE.IOS_SETUP_STALE,
         message:
           "Clerk Native Application settings changed after the approved preview. No remote changes were made; rerun clerk init to review the new plan.",
@@ -628,7 +685,7 @@ describe("Clerk Native Application remote setup", () => {
       registrationReads: [[], [exactRegistration]],
     });
 
-    await applyIOSNativeRemoteSetup(
+    await applyRemoteSetup(
       plan({ nativeApi: "required", registration: "required" }),
       api,
       approvedTargetReader,
@@ -645,7 +702,7 @@ describe("Clerk Native Application remote setup", () => {
     });
 
     await expect(
-      applyIOSNativeRemoteSetup(
+      applyRemoteSetup(
         plan({ nativeApi: "satisfied", registration: "required" }),
         api,
         approvedTargetReader,
@@ -699,9 +756,7 @@ describe("Clerk Native Application remote setup", () => {
       expectedAppIdPrefix: approved.appIdPrefix,
     });
 
-    await expect(
-      applyIOSNativeRemoteSetup(approved, api, async () => current),
-    ).rejects.toMatchObject({
+    await expect(applyRemoteSetup(approved, api, async () => current)).rejects.toMatchObject({
       code: ERROR_CODE.IOS_SETUP_STALE,
       message: expect.stringContaining("Xcode target identity changed"),
     });
@@ -718,7 +773,7 @@ describe("Clerk Native Application remote setup", () => {
     });
 
     await expect(
-      applyIOSNativeRemoteSetup(
+      applyRemoteSetup(
         plan({ nativeApi: "satisfied", registration: "required" }),
         api,
         async () => {
@@ -742,10 +797,8 @@ describe("Clerk Native Application remote setup", () => {
     });
 
     await expect(
-      applyIOSNativeRemoteSetup(
-        plan({ nativeApi: "required", registration: "satisfied" }),
-        api,
-        async () => selectedTarget({ bundleIdentifier: "com.example.Changed" }),
+      applyRemoteSetup(plan({ nativeApi: "required", registration: "satisfied" }), api, async () =>
+        selectedTarget({ bundleIdentifier: "com.example.Changed" }),
       ),
     ).rejects.toMatchObject({ code: ERROR_CODE.IOS_SETUP_STALE });
 
@@ -769,7 +822,7 @@ describe("Clerk Native Application remote setup", () => {
       localAppIdPrefix: null,
     });
 
-    await applyIOSNativeRemoteSetup(approved, api, async () => {
+    await applyRemoteSetup(approved, api, async () => {
       inspections += 1;
       return selectedTarget({ appIdPrefix: EXPLICIT_PREFIX });
     });
@@ -786,7 +839,7 @@ describe("Clerk Native Application remote setup", () => {
       registrationReads: [[], [exactRegistration]],
     });
 
-    await applyIOSNativeRemoteSetup(
+    await applyRemoteSetup(
       plan({ nativeApi: "required", registration: "required" }),
       api,
       approvedTargetReader,
@@ -810,13 +863,84 @@ describe("Clerk Native Application remote setup", () => {
     });
 
     await expect(
-      applyIOSNativeRemoteSetup(
+      applyRemoteSetup(
         plan({ nativeApi: "satisfied", registration: "required" }),
         api,
         approvedTargetReader,
       ),
     ).resolves.toBeUndefined();
     expect(calls.filter((call) => call === "POST iOS registration")).toHaveLength(1);
+  });
+
+  test("reuses a pending registration key across invocations until final verification", async () => {
+    const retry = memoryRegistrationRetryStore();
+    const ambiguous = scriptedAPI({
+      nativeReads: [nativeSettings(true)],
+      registrationReads: [[], []],
+      create: async () => {
+        throw new Error("connection reset after unknown outcome");
+      },
+    });
+
+    await expect(
+      applyRemoteSetup(
+        plan({ nativeApi: "satisfied", registration: "required" }),
+        ambiguous.api,
+        approvedTargetReader,
+        retry.store,
+      ),
+    ).rejects.toThrow("could not be registered");
+    const firstKey = ambiguous.registrationIdempotencyKeys[0]!;
+    expect(retry.pending(registrationRetryIdentity())).toBe(firstKey);
+
+    const exactRegistration = registration();
+    const retried = scriptedAPI({
+      nativeReads: [nativeSettings(true), nativeSettings(true)],
+      registrationReads: [[], [exactRegistration]],
+    });
+    await applyRemoteSetup(
+      plan({ nativeApi: "satisfied", registration: "required" }),
+      retried.api,
+      approvedTargetReader,
+      retry.store,
+    );
+
+    expect(retried.registrationIdempotencyKeys).toEqual([firstKey]);
+    expect(retry.pending(registrationRetryIdentity())).toBeUndefined();
+
+    const recreated = scriptedAPI({
+      nativeReads: [nativeSettings(true), nativeSettings(true)],
+      registrationReads: [[], [exactRegistration]],
+    });
+    await applyRemoteSetup(
+      plan({ nativeApi: "satisfied", registration: "required" }),
+      recreated.api,
+      approvedTargetReader,
+      retry.store,
+    );
+    expect(recreated.registrationIdempotencyKeys[0]).not.toBe(firstKey);
+  });
+
+  test("clears a pending retry when a rerun verifies that registration already exists", async () => {
+    const retry = memoryRegistrationRetryStore();
+    const pendingKey = await retry.store.getOrCreate(registrationRetryIdentity());
+    const exactRegistration = registration();
+    const { api, calls, registrationIdempotencyKeys } = scriptedAPI({
+      nativeReads: [nativeSettings(true), nativeSettings(true)],
+      registrationReads: [[exactRegistration], [exactRegistration]],
+    });
+
+    await applyRemoteSetup(
+      plan({ nativeApi: "satisfied", registration: "required" }),
+      api,
+      approvedTargetReader,
+      retry.store,
+    );
+
+    expect(pendingKey).toStartWith("clerk-init-ios-registration-");
+    expect(registrationIdempotencyKeys).toEqual([]);
+    expect(calls).not.toContain("POST iOS registration");
+    expect(retry.pending(registrationRetryIdentity())).toBeUndefined();
   });
 
   test("reconciles an ambiguous Native API error when a re-read shows it enabled", async () => {
@@ -831,7 +955,7 @@ describe("Clerk Native Application remote setup", () => {
     });
 
     await expect(
-      applyIOSNativeRemoteSetup(
+      applyRemoteSetup(
         plan({ nativeApi: "required", registration: "satisfied" }),
         api,
         approvedTargetReader,
@@ -847,7 +971,7 @@ describe("Clerk Native Application remote setup", () => {
     });
 
     await expect(
-      applyIOSNativeRemoteSetup(
+      applyRemoteSetup(
         plan({ nativeApi: "required", registration: "required" }),
         api,
         approvedTargetReader,
@@ -888,7 +1012,7 @@ describe("Clerk Native Application remote setup", () => {
 
     let thrown: unknown;
     try {
-      await applyIOSNativeRemoteSetup(
+      await applyRemoteSetup(
         plan({ nativeApi: "satisfied", registration: "required" }),
         api,
         approvedTargetReader,
