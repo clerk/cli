@@ -499,6 +499,7 @@ export async function planIOSAssociatedDomain(
   const root = resolve(options.root);
   const inspection = await inspectIOSProject(root, {
     target: options.targetId,
+    exhaustiveContainerDiscovery: true,
   });
   const target = selectedTarget(inspection, options.projectPath, options.targetId);
   if (!target) {
