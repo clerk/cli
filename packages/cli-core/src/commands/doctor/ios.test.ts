@@ -3,6 +3,7 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createIOSFixture, IOS_FIXTURE_IDS } from "../init/ios/test-helpers.ts";
+import { planIOSSDKInstall } from "../init/ios/install-sdk.ts";
 import { PlapiError } from "../../lib/errors.ts";
 import type { UserSettingsJSON } from "../../lib/fapi.ts";
 import type { Application } from "../../lib/plapi.ts";
@@ -121,6 +122,7 @@ function dependencies(overrides: Partial<IOSDoctorDependencies> = {}): IOSDoctor
           "Apple remote audit should not run without local Apple intent or entitlement",
         );
       }),
+    planIOSSDKInstall: overrides.planIOSSDKInstall ?? planIOSSDKInstall,
   };
 }
 
@@ -140,6 +142,30 @@ describe("runIOSDoctorChecks", () => {
     expect(audit.results.find((result) => result.name === "iOS: Native Application")?.status).toBe(
       "pass",
     );
+  });
+
+  test("fails AuthView setup when the linked clerk-ios SDK is incompatible", async () => {
+    const root = await fixture({ complete: true });
+    const projectPath = join(root, "MyApp.xcodeproj", "project.pbxproj");
+    const project = await readFile(projectPath, "utf8");
+    await writeFile(
+      projectPath,
+      project.replace(
+        "requirement = { kind = upToNextMajorVersion; minimumVersion = 1.0.0; };",
+        "requirement = { kind = exactVersion; version = 0.70.0; };",
+      ),
+    );
+    const before = await readFile(projectPath, "utf8");
+
+    const audit = await runIOSDoctorChecks(context(), { root, target: "MyApp" }, dependencies());
+
+    const sdk = audit.results.find(
+      (result) => result.name === "iOS: Install Clerk's iOS SDK for the selected target",
+    );
+    expect(sdk?.status).toBe("fail");
+    expect(sdk?.message).toContain("blocked");
+    expect(sdk?.detail).toContain("require clerk-ios");
+    expect(await readFile(projectPath, "utf8")).toBe(before);
   });
 
   test("does not pass an unused Clerk environment modifier as shipping root wiring", async () => {
