@@ -13,18 +13,20 @@ import {
   writeFile,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import {
   applyIOSExistingFileTransaction,
   applyIOSFileTransaction,
   hashIOSFileBytes,
   IOSFileTransactionError,
   prepareIOSFileMutationBoundary,
+  recoverIOSFileTransactions,
   type IOSCreateFileMutation,
   type IOSExistingFileMutation,
 } from "./file-transaction.ts";
 
 const temporaryDirectories: string[] = [];
+const FILE_TRANSACTION_MODULE = `${import.meta.dir}/file-transaction.ts`;
 
 async function temporaryRoot(): Promise<string> {
   const root = await mkdtemp(join(tmpdir(), "clerk-ios-file-transaction-"));
@@ -80,12 +82,85 @@ async function expectRecoverableClaimedOriginals(
   root: string,
   expectedContents: string[],
 ): Promise<void> {
-  const transactionFiles = (await readdir(root)).filter((name) => name.includes(".clerk-"));
-  const claimedOriginals = transactionFiles.filter((name) => name.endsWith(".claimed"));
-  expect(transactionFiles.filter((name) => name.endsWith(".tmp"))).toEqual([]);
+  const entries = await readdir(root, { withFileTypes: true });
+  const transactionFiles = entries.filter((entry) => entry.name.includes(".clerk-"));
+  const claimedOriginals = transactionFiles
+    .filter((entry) => entry.isFile() && entry.name.endsWith(".claimed"))
+    .map((entry) => join(root, entry.name));
+  for (const entry of transactionFiles.filter(
+    (entry) => entry.isDirectory() && entry.name.endsWith(".recovery"),
+  )) {
+    const originalPath = join(root, entry.name, "original");
+    if (await Bun.file(originalPath).exists()) claimedOriginals.push(originalPath);
+  }
+  expect(transactionFiles.filter((entry) => entry.name.endsWith(".tmp"))).toEqual([]);
   expect(
-    (await Promise.all(claimedOriginals.map((name) => readFile(join(root, name), "utf8")))).sort(),
+    (await Promise.all(claimedOriginals.map((path) => readFile(path, "utf8")))).sort(),
   ).toEqual([...expectedContents].sort());
+}
+
+async function crashFileTransaction(
+  root: string,
+  paths: string[],
+  phase: "lock-publication" | "journal-publication" | "claim" | "rollback-claim" | "committed",
+  killAfter = 1,
+): Promise<string | undefined> {
+  const publicationMarker = join(root, `.publication-${phase}`);
+  const source = `
+    const { readFile, lstat, writeFile } = await import("node:fs/promises");
+    const {
+      applyIOSExistingFileTransaction,
+      hashIOSFileBytes,
+      prepareIOSFileMutationBoundary,
+    } = await import(${JSON.stringify(FILE_TRANSACTION_MODULE)});
+    const root = ${JSON.stringify(root)};
+    const paths = ${JSON.stringify(paths)};
+    const mutations = [];
+    for (const [index, path] of paths.entries()) {
+      const originalBytes = new Uint8Array(await readFile(path));
+      const candidateBytes = new TextEncoder().encode("candidate " + index + "\\n");
+      const boundary = await prepareIOSFileMutationBoundary(root, path);
+      const info = await lstat(path);
+      mutations.push({
+        path,
+        boundary,
+        originalBytes,
+        originalHash: hashIOSFileBytes(originalBytes),
+        candidateBytes,
+        candidateHash: hashIOSFileBytes(candidateBytes),
+        mode: info.mode & 0o7777,
+      });
+    }
+    let claims = 0;
+    const crash = () => process.kill(process.pid, "SIGKILL");
+    const crashDuringPublication = async (path) => {
+      await writeFile(${JSON.stringify(publicationMarker)}, path, "utf8");
+      crash();
+    };
+    const hooks =
+      ${JSON.stringify(phase)} === "lock-publication"
+        ? { beforeRootLockPublication: crashDuringPublication }
+        : ${JSON.stringify(phase)} === "journal-publication"
+          ? { beforeRecoveryJournalPublication: crashDuringPublication }
+          : ${JSON.stringify(phase)} === "claim"
+            ? { afterExistingDestinationClaim: () => { if (++claims === ${killAfter}) crash(); } }
+            : ${JSON.stringify(phase)} === "rollback-claim"
+              ? { afterRollbackDestinationClaim: crash }
+              : { afterDurableCommit: crash };
+    const postconditions = ${JSON.stringify(phase)} === "rollback-claim"
+      ? [async () => false]
+      : [async () => true];
+    await applyIOSExistingFileTransaction(mutations, postconditions, hooks);
+    process.exit(97);
+  `;
+  const child = Bun.spawn([process.execPath, "-e", source], {
+    stdout: "ignore",
+    stderr: "ignore",
+  });
+  await child.exited;
+  expect(child.signalCode).toBe("SIGKILL");
+  if (!phase.endsWith("publication")) return undefined;
+  return readFile(publicationMarker, "utf8");
 }
 
 async function waitForCondition(condition: () => boolean | Promise<boolean>): Promise<void> {
@@ -98,7 +173,7 @@ async function waitForCondition(condition: () => boolean | Promise<boolean>): Pr
 
 async function waitForStagingFile(root: string): Promise<void> {
   await waitForCondition(async () =>
-    (await readdir(root)).some((name) => name.includes(".clerk-")),
+    (await readdir(root)).some((name) => name.includes(".clerk-") && name.endsWith(".tmp")),
   );
 }
 
@@ -1106,4 +1181,233 @@ describe("iOS create-file transaction", () => {
     await expect(lstat(createdPath)).rejects.toMatchObject({ code: "ENOENT" });
     await expectNoTemporaryFiles(root);
   });
+});
+
+describe("iOS file transaction crash recovery", () => {
+  test("does not touch the project root when no interrupted transaction exists", async () => {
+    const root = await temporaryRoot();
+    const before = await lstat(root, { bigint: true });
+
+    await recoverIOSFileTransactions(root);
+
+    const after = await lstat(root, { bigint: true });
+    expect(after.mtimeNs).toBe(before.mtimeNs);
+    expect(await readdir(root)).toEqual([]);
+  });
+
+  test("never publishes a partial root lock when SIGKILL interrupts publication", async () => {
+    const root = await temporaryRoot();
+    const path = join(root, "App.swift");
+    await writeFile(path, "original source\n");
+
+    const lockPath = await crashFileTransaction(root, [path], "lock-publication");
+
+    expect(lockPath).toBeDefined();
+    await expect(lstat(lockPath!)).rejects.toMatchObject({ code: "ENOENT" });
+    expect(await readFile(path, "utf8")).toBe("original source\n");
+    const prepared = await mutation(path, "candidate source\n", root);
+    expect(await applyIOSExistingFileTransaction([prepared], [async () => true])).toEqual({
+      status: "applied",
+    });
+  }, 15_000);
+
+  test("never publishes a partial initial journal when SIGKILL interrupts publication", async () => {
+    const root = await temporaryRoot();
+    const path = join(root, "App.swift");
+    await writeFile(path, "original source\n");
+
+    const journalPath = await crashFileTransaction(root, [path], "journal-publication");
+
+    expect(journalPath).toBeDefined();
+    await expect(lstat(journalPath!)).rejects.toMatchObject({ code: "ENOENT" });
+    await recoverIOSFileTransactions(root);
+    expect(await readFile(path, "utf8")).toBe("original source\n");
+    const prepared = await mutation(path, "candidate source\n", root);
+    expect(await applyIOSExistingFileTransaction([prepared], [async () => true])).toEqual({
+      status: "applied",
+    });
+  }, 15_000);
+
+  test("does not write through a project root redirected after initial journal publication", async () => {
+    const base = await temporaryRoot();
+    const root = join(base, "project");
+    const displacedRoot = join(base, "project-original");
+    const outsideRoot = join(base, "outside");
+    const path = join(root, "App.swift");
+    await mkdir(root);
+    await mkdir(outsideRoot);
+    await writeFile(path, "original source\n");
+    await writeFile(join(outsideRoot, "sentinel"), "outside bytes\n");
+    const prepared = await mutation(path, "candidate source\n", root);
+    let outsideJournalPath = "";
+    let outsideMtime: bigint | undefined;
+    let outsideEntries: string[] = [];
+
+    let caught: unknown;
+    try {
+      await applyIOSExistingFileTransaction([prepared], [async () => true], {
+        beforeRecoveryJournalPublication: async (journalPath) => {
+          outsideJournalPath = join(outsideRoot, basename(journalPath));
+          await writeFile(outsideJournalPath, "outside journal bytes\n");
+        },
+        afterInitialRecoveryJournalPublication: async () => {
+          await rename(root, displacedRoot);
+          await symlink(outsideRoot, root, "dir");
+          outsideMtime = (await lstat(outsideRoot, { bigint: true })).mtimeNs;
+          outsideEntries = (await readdir(outsideRoot)).sort();
+        },
+      });
+    } catch (error) {
+      caught = error;
+    }
+
+    expect(caught).toBeInstanceOf(IOSFileTransactionError);
+    expect((caught as IOSFileTransactionError).code).toBe("stage-failed");
+    expect(outsideMtime).toBeDefined();
+    const outsideAfter = await lstat(outsideRoot, { bigint: true });
+    expect(outsideAfter.mtimeNs).toBe(outsideMtime!);
+    expect((await readdir(outsideRoot)).sort()).toEqual(outsideEntries);
+    expect(await readFile(outsideJournalPath, "utf8")).toBe("outside journal bytes\n");
+    expect(await readFile(join(outsideRoot, "sentinel"), "utf8")).toBe("outside bytes\n");
+    expect(await readFile(join(displacedRoot, "App.swift"), "utf8")).toBe("original source\n");
+    expect((await readdir(displacedRoot)).some((name) => name.endsWith(".journal"))).toBe(true);
+  });
+
+  test("does not write through a project root redirected before lock publication", async () => {
+    const base = await temporaryRoot();
+    const root = join(base, "project");
+    const displacedRoot = join(base, "project-original");
+    const outsideRoot = join(base, "outside");
+    const path = join(root, "App.swift");
+    await mkdir(root);
+    await mkdir(outsideRoot);
+    await writeFile(path, "original source\n");
+    await writeFile(join(outsideRoot, "sentinel"), "outside bytes\n");
+    const prepared = await mutation(path, "candidate source\n", root);
+    const outsideBefore = await lstat(outsideRoot, { bigint: true });
+
+    const result = await applyIOSExistingFileTransaction([prepared], [async () => true], {
+      beforeRootLockPublication: async () => {
+        await rename(root, displacedRoot);
+        await symlink(outsideRoot, root, "dir");
+      },
+    });
+
+    const outsideAfter = await lstat(outsideRoot, { bigint: true });
+    expect(result).toEqual({ status: "stale" });
+    expect(outsideAfter.mtimeNs).toBe(outsideBefore.mtimeNs);
+    expect(await readFile(join(outsideRoot, "sentinel"), "utf8")).toBe("outside bytes\n");
+    expect(await readdir(outsideRoot)).toEqual(["sentinel"]);
+    expect(await readFile(join(displacedRoot, "App.swift"), "utf8")).toBe("original source\n");
+  });
+
+  test("never overwrites an occupied claim inside the transaction-owned directory", async () => {
+    const root = await temporaryRoot();
+    const path = join(root, "App.swift");
+    await writeFile(path, "original source\n");
+    const prepared = await mutation(path, "candidate source\n", root);
+    let occupiedClaimPath = "";
+
+    let caught: unknown;
+    try {
+      await applyIOSExistingFileTransaction([prepared], [async () => true], {
+        afterRecoveryJournalPublished: async (journalPath) => {
+          const journal = JSON.parse(await readFile(journalPath, "utf8")) as {
+            mutations: Array<{ originalClaimPath: string }>;
+          };
+          occupiedClaimPath = journal.mutations[0]!.originalClaimPath;
+          await writeFile(occupiedClaimPath, "newer claim occupant\n");
+        },
+      });
+    } catch (error) {
+      caught = error;
+    }
+
+    expect(caught).toBeInstanceOf(IOSFileTransactionError);
+    expect((caught as IOSFileTransactionError).code).toBe("commit-failed");
+    expect(await readFile(path, "utf8")).toBe("original source\n");
+    expect(await readFile(occupiedClaimPath, "utf8")).toBe("newer claim occupant\n");
+  });
+
+  test("restores a destination after SIGKILL immediately follows its claim", async () => {
+    const root = await temporaryRoot();
+    const path = join(root, "project.pbxproj");
+    await writeFile(path, "original project\n");
+
+    await crashFileTransaction(root, [path], "claim");
+
+    await expect(lstat(path)).rejects.toMatchObject({ code: "ENOENT" });
+    expect((await readdir(root)).some((name) => name.endsWith(".journal"))).toBe(true);
+    await recoverIOSFileTransactions(root);
+    expect(await readFile(path, "utf8")).toBe("original project\n");
+    await expectNoTemporaryFiles(root);
+  }, 15_000);
+
+  test("rolls back every file after SIGKILL interrupts a later claim", async () => {
+    const root = await temporaryRoot();
+    const firstPath = join(root, "project.pbxproj");
+    const secondPath = join(root, "App.swift");
+    await writeFile(firstPath, "original project\n");
+    await writeFile(secondPath, "original source\n");
+
+    await crashFileTransaction(root, [firstPath, secondPath], "claim", 2);
+
+    expect(await readFile(firstPath, "utf8")).toBe("candidate 0\n");
+    await expect(lstat(secondPath)).rejects.toMatchObject({ code: "ENOENT" });
+    await recoverIOSFileTransactions(root);
+    expect(await readFile(firstPath, "utf8")).toBe("original project\n");
+    expect(await readFile(secondPath, "utf8")).toBe("original source\n");
+    await expectNoTemporaryFiles(root);
+  }, 15_000);
+
+  test("recovers SIGKILL during rollback without leaving the destination absent", async () => {
+    const root = await temporaryRoot();
+    const path = join(root, "App.swift");
+    await writeFile(path, "original source\n");
+
+    await crashFileTransaction(root, [path], "rollback-claim");
+
+    await expect(lstat(path)).rejects.toMatchObject({ code: "ENOENT" });
+    await recoverIOSFileTransactions(root);
+    expect(await readFile(path, "utf8")).toBe("original source\n");
+    await expectNoTemporaryFiles(root);
+  }, 15_000);
+
+  test("keeps committed bytes after SIGKILL interrupts artifact cleanup", async () => {
+    const root = await temporaryRoot();
+    const path = join(root, "App.swift");
+    await writeFile(path, "original source\n");
+
+    await crashFileTransaction(root, [path], "committed");
+
+    expect(await readFile(path, "utf8")).toBe("candidate 0\n");
+    await recoverIOSFileTransactions(root);
+    expect(await readFile(path, "utf8")).toBe("candidate 0\n");
+    await expectNoTemporaryFiles(root);
+  }, 15_000);
+
+  test("rejects recovery when a prepared parent is redirected outside its canonical root", async () => {
+    const base = await temporaryRoot();
+    const root = join(base, "project");
+    const parent = join(root, "Sources");
+    const displacedParent = join(base, "outside-Sources");
+    const path = join(parent, "App.swift");
+    await mkdir(parent, { recursive: true });
+    await writeFile(path, "original source\n");
+
+    await crashFileTransaction(root, [path], "claim");
+    await rename(parent, displacedParent);
+    await symlink(displacedParent, parent, "dir");
+
+    let caught: unknown;
+    try {
+      await recoverIOSFileTransactions(root);
+    } catch (error) {
+      caught = error;
+    }
+    expect(caught).toBeInstanceOf(IOSFileTransactionError);
+    expect((caught as IOSFileTransactionError).code).toBe("recovery-failed");
+    await expect(lstat(path)).rejects.toMatchObject({ code: "ENOENT" });
+    expect((await readdir(displacedParent)).some((name) => name.endsWith(".recovery"))).toBe(true);
+  }, 15_000);
 });
