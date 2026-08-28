@@ -759,17 +759,28 @@ function inspectTargetPackages(
   const clerkKit = targetProductState(targetObject, objects, "ClerkKit");
   const clerkKitUI = targetProductState(targetObject, objects, "ClerkKitUI");
   const packageById = new Map(packages.map((item) => [item.objectId, item]));
+  const productIds = [...clerkKit.productIds, ...clerkKitUI.productIds];
   const productPackageIds = [...clerkKit.packageIds, ...clerkKitUI.packageIds];
-  const attributed = productPackageIds
-    .map((id) => packageById.get(id))
-    .filter((item): item is IOSPackageReference => item?.isClerk === true);
+  const uniqueProductPackageIds = new Set(productPackageIds);
+  // Explicit product attribution is authoritative only when the entire Clerk
+  // product graph resolves to one verified package. Some workspace-local and
+  // older Xcode graphs omit every package field, so retain that separate
+  // declared-package fallback below.
+  const explicitlyAttributedPackage =
+    productPackageIds.length === productIds.length && uniqueProductPackageIds.size === 1
+      ? packageById.get(productPackageIds[0]!)
+      : undefined;
+  const attributedClerkPackage = explicitlyAttributedPackage?.isClerk
+    ? explicitlyAttributedPackage
+    : undefined;
   const declaredClerkPackage = packages.find((item) => item.isClerk);
   const hasClerkProduct = clerkKit.state !== "absent" || clerkKitUI.state !== "absent";
 
   let packageKind: IOSClerkPackageState["package"] = "absent";
-  if (attributed[0]) packageKind = attributed[0].kind;
-  else if (declaredClerkPackage) packageKind = declaredClerkPackage.kind;
-  else if (hasClerkProduct) {
+  if (attributedClerkPackage) packageKind = attributedClerkPackage.kind;
+  else if (productPackageIds.length === 0 && declaredClerkPackage) {
+    packageKind = declaredClerkPackage.kind;
+  } else if (hasClerkProduct) {
     packageKind = "unattributed";
     diagnostics.push({
       code: "clerk.package-unattributed",
