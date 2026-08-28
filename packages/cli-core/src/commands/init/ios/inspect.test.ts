@@ -1,20 +1,58 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { build as buildPbxProject, parse as parsePbxProject } from "@bacons/xcode/json";
-import { mkdtemp, mkdir, rm, symlink } from "node:fs/promises";
+import { lstat, mkdtemp, mkdir, readFile, rm, symlink } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { discoverIOSContainers, inspectWorkspace } from "./discovery.ts";
 import { inspectIOSProject, inspectIOSSourceMembership } from "./inspect.ts";
+import { recoverIOSFileTransactions } from "./file-transaction.ts";
 import type { PbxObjects } from "./pbx.ts";
 import { createIOSFixture, IOS_FIXTURE_IDS, treeDigest } from "./test-helpers.ts";
 
 const temporaryDirectories: string[] = [];
+const FILE_TRANSACTION_MODULE = `${import.meta.dir}/file-transaction.ts`;
 
 async function fixture(options: Parameters<typeof createIOSFixture>[1] = {}): Promise<string> {
   const root = await mkdtemp(join(tmpdir(), "clerk-ios-inspect-"));
   temporaryDirectories.push(root);
   await createIOSFixture(root, options);
   return root;
+}
+
+async function interruptProjectFileTransaction(root: string, path: string): Promise<void> {
+  const source = `
+    const { readFile, lstat } = await import("node:fs/promises");
+    const {
+      applyIOSExistingFileTransaction,
+      hashIOSFileBytes,
+      prepareIOSFileMutationBoundary,
+    } = await import(${JSON.stringify(FILE_TRANSACTION_MODULE)});
+    const root = ${JSON.stringify(root)};
+    const path = ${JSON.stringify(path)};
+    const originalBytes = new Uint8Array(await readFile(path));
+    const candidateBytes = new TextEncoder().encode("candidate project bytes\\n");
+    const boundary = await prepareIOSFileMutationBoundary(root, path);
+    const info = await lstat(path);
+    await applyIOSExistingFileTransaction([
+      {
+        path,
+        boundary,
+        originalBytes,
+        originalHash: hashIOSFileBytes(originalBytes),
+        candidateBytes,
+        candidateHash: hashIOSFileBytes(candidateBytes),
+        mode: info.mode & 0o7777,
+      },
+    ], [async () => true], {
+      afterExistingDestinationClaim: () => process.kill(process.pid, "SIGKILL"),
+    });
+  `;
+  const child = Bun.spawn([process.execPath, "-e", source], {
+    stdout: "ignore",
+    stderr: "ignore",
+  });
+  await child.exited;
+  expect(child.signalCode).toBe("SIGKILL");
 }
 
 async function transformProject(
@@ -159,6 +197,36 @@ describe("discoverIOSContainers", () => {
 });
 
 describe("inspectIOSProject", () => {
+  test("reports interrupted file transactions without recovering or changing project bytes", async () => {
+    const root = await fixture({ complete: true });
+    const projectPath = join(root, "MyApp.xcodeproj", "project.pbxproj");
+    const originalProject = await readFile(projectPath);
+    await interruptProjectFileTransaction(root, projectPath);
+
+    await expect(lstat(projectPath)).rejects.toMatchObject({ code: "ENOENT" });
+    const beforeInspection = await treeDigest(root);
+    const inspection = await inspectIOSProject(root);
+
+    expect(inspection).toMatchObject({
+      selection: { state: "none" },
+      diagnostics: [
+        {
+          code: "xcode.interrupted-file-transaction",
+          severity: "error",
+        },
+      ],
+    });
+    expect(await treeDigest(root)).toEqual(beforeInspection);
+    await expect(lstat(projectPath)).rejects.toMatchObject({ code: "ENOENT" });
+
+    await recoverIOSFileTransactions(root);
+    expect(Buffer.from(await readFile(projectPath))).toEqual(Buffer.from(originalProject));
+    expect((await inspectIOSProject(root)).selection).toMatchObject({
+      state: "selected",
+      targetName: "MyApp",
+    });
+  }, 15_000);
+
   test("fails source ownership closed when a project-container link is skipped", async () => {
     const root = await fixture({ complete: true });
     const project = join(root, "MyApp.xcodeproj");

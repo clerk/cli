@@ -1523,10 +1523,23 @@ async function recoverIOSFileTransactionsUnlocked(rootPath: string): Promise<voi
   }
 }
 
-async function hasInterruptedIOSFileTransaction(rootPath: string): Promise<boolean> {
+/**
+ * Reports whether a durable iOS file transaction still needs recovery.
+ *
+ * This check is intentionally read-only. Doctor, dry-run, and other
+ * inspection-only callers use it to fail closed without changing the
+ * checkout. A mutating `clerk init` path must call
+ * {@link recoverIOSFileTransactions} before it performs semantic inspection.
+ */
+export async function hasInterruptedIOSFileTransaction(rootInput: string): Promise<boolean> {
+  const rootPath = resolve(rootInput);
   try {
     const entries = await readdir(rootPath, { withFileTypes: true });
-    return entries.some((entry) => JOURNAL_NAME_PATTERN.test(entry.name));
+    return entries.some(
+      (entry) =>
+        JOURNAL_NAME_PATTERN.test(entry.name) &&
+        !activeJournalPaths.has(resolve(rootPath, entry.name)),
+    );
   } catch (error) {
     if (isFileSystemError(error, "ENOENT")) return false;
     throw error;
