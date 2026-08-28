@@ -43,6 +43,9 @@ const SIMULATOR_OPERATION_TIMEOUT_MS = 60_000;
 const FORCE_KILL_DELAY_MS = 2_000;
 const PROCESS_GROUP_EXIT_TIMEOUT_MS = 2_000;
 const PROCESS_GROUP_EXIT_POLL_MS = 10;
+const LEADER_EXIT_SETTLEMENT_GRACE_MS = 250;
+const OUTPUT_DRAIN_GRACE_MS = 250;
+const OUTPUT_CANCEL_SETTLEMENT_GRACE_MS = 250;
 const DEFAULT_OUTPUT_LIMIT_BYTES = 1024 * 1024;
 const JSON_OUTPUT_LIMIT_BYTES = 8 * 1024 * 1024;
 const MAX_PACKAGE_RESOLVED_BYTES = 2 * 1024 * 1024;
@@ -79,6 +82,8 @@ export interface IOSXcodeCommandResult {
   stderr: string;
   timedOut: boolean;
   truncated: boolean;
+  /** Destructive cleanup is unsafe because subprocess shutdown could not be proven. */
+  artifactCleanupUnsafe?: boolean;
   spawnError?: string;
 }
 
@@ -99,6 +104,13 @@ export interface IOSXcodeVerificationDependencies {
 interface BoundedOutput {
   text: string;
   truncated: boolean;
+  forcedClosed: boolean;
+}
+
+interface BoundedOutputDrain {
+  completion: Promise<void>;
+  cancel: () => void;
+  snapshot: () => BoundedOutput;
 }
 
 interface SelectedContainer {
@@ -318,9 +330,11 @@ function commandFailure(
 ): CheckResult {
   const reason = result.timedOut
     ? `${action} timed out`
-    : result.spawnError
-      ? `${action} could not start`
-      : `${action} exited with code ${result.exitCode ?? "unknown"}`;
+    : result.artifactCleanupUnsafe
+      ? `${action} left subprocess cleanup unverified`
+      : result.spawnError
+        ? `${action} could not start`
+        : `${action} exited with code ${result.exitCode ?? "unknown"}`;
   return fail(name, reason, remedy, diagnosticDetail(result));
 }
 
@@ -346,39 +360,101 @@ function swiftPackageCommandFailure(action: string, result: IOSXcodeCommandResul
 }
 
 function isCommandSuccess(result: IOSXcodeCommandResult): boolean {
-  return !result.timedOut && !result.spawnError && result.exitCode === 0;
+  return (
+    !result.timedOut && !result.spawnError && !result.artifactCleanupUnsafe && result.exitCode === 0
+  );
 }
 
-async function readBoundedStream(
+function startBoundedStreamDrain(
   stream: ReadableStream<Uint8Array>,
   limit: number,
-): Promise<BoundedOutput> {
+): BoundedOutputDrain {
   const reader = stream.getReader();
   let retained = new Uint8Array(0);
   let total = 0;
-  try {
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      total += value.byteLength;
-      if (value.byteLength >= limit) {
-        retained = value.slice(value.byteLength - limit);
-        continue;
-      }
-      const overflow = Math.max(0, retained.byteLength + value.byteLength - limit);
-      const previous = overflow > 0 ? retained.slice(overflow) : retained;
-      const next = new Uint8Array(previous.byteLength + value.byteLength);
-      next.set(previous);
-      next.set(value, previous.byteLength);
-      retained = next;
+  let forcedClosed = false;
+  let readFailed = false;
+  let cancellation: Promise<void> | undefined;
+  const cancel = (): void => {
+    if (forcedClosed) return;
+    forcedClosed = true;
+    try {
+      cancellation = reader.cancel();
+    } catch (error) {
+      cancellation = Promise.reject(
+        error instanceof Error ? error : new Error(errorMessage(error)),
+      );
     }
-  } finally {
-    reader.releaseLock();
-  }
-  return {
-    text: new TextDecoder().decode(retained),
-    truncated: total > limit,
+    // The aggregate completion below observes this rejection too. This
+    // additional handler keeps a cancellation that never rejoins the runner
+    // from becoming an unhandled rejection later.
+    void cancellation.catch(() => {});
   };
+  const completion = (async (): Promise<void> => {
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        total += value.byteLength;
+        if (value.byteLength >= limit) {
+          retained = value.slice(value.byteLength - limit);
+          continue;
+        }
+        const overflow = Math.max(0, retained.byteLength + value.byteLength - limit);
+        const previous = overflow > 0 ? retained.slice(overflow) : retained;
+        const next = new Uint8Array(previous.byteLength + value.byteLength);
+        next.set(previous);
+        next.set(value, previous.byteLength);
+        retained = next;
+      }
+    } catch (error) {
+      if (!forcedClosed) {
+        readFailed = true;
+        throw error;
+      }
+    } finally {
+      try {
+        await cancellation;
+      } finally {
+        reader.releaseLock();
+      }
+    }
+  })();
+  return {
+    completion,
+    cancel,
+    snapshot: () => ({
+      text: new TextDecoder().decode(retained),
+      truncated: total > limit || forcedClosed || readFailed,
+      forcedClosed,
+    }),
+  };
+}
+
+type TimedPromiseSettlement<T> =
+  | { status: "fulfilled"; value: T }
+  | { status: "rejected"; reason: unknown }
+  | { status: "timed-out" };
+
+async function settlePromiseWithin<T>(
+  promise: Promise<T>,
+  timeoutMs: number,
+): Promise<TimedPromiseSettlement<T>> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const observed = promise.then<TimedPromiseSettlement<T>, TimedPromiseSettlement<T>>(
+    (value) => ({ status: "fulfilled", value }),
+    (reason) => ({ status: "rejected", reason }),
+  );
+  try {
+    return await Promise.race([
+      observed,
+      new Promise<TimedPromiseSettlement<T>>((resolveTimeout) => {
+        timer = setTimeout(() => resolveTimeout({ status: "timed-out" }), timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
 }
 
 /** Default bounded, non-interactive command runner used by iOS doctor. */
@@ -439,20 +515,46 @@ export const runIOSXcodeCommand: IOSXcodeCommandRunner = async (argv, options) =
     }
   };
 
-  const waitForProcessTreeExit = async (): Promise<void> => {
+  const waitForProcessTreeExit = async (): Promise<boolean> => {
     const deadline = performance.now() + PROCESS_GROUP_EXIT_TIMEOUT_MS;
     while (processTreeIsAlive() && performance.now() < deadline) {
       await Bun.sleep(PROCESS_GROUP_EXIT_POLL_MS);
     }
+    return !processTreeIsAlive();
   };
 
+  type LeaderExitOutcome =
+    | { status: "exited"; exitCode: number }
+    | { status: "failed"; reason: unknown }
+    | { status: "timed-out" };
+  const observedLeaderExit = child.exited.then<LeaderExitOutcome, LeaderExitOutcome>(
+    (exitCode) => ({ status: "exited", exitCode }),
+    (reason) => ({ status: "failed", reason }),
+  );
+  let resolveLeaderExitDeadline: (outcome: LeaderExitOutcome) => void = () => {};
+  const leaderExitDeadline = new Promise<LeaderExitOutcome>((resolveDeadline) => {
+    resolveLeaderExitDeadline = resolveDeadline;
+  });
+  let leaderExitDeadlineTimer: ReturnType<typeof setTimeout> | undefined;
   let interrupted = false;
+  let timedOut = false;
+  let forceKillSent = false;
+  const forceKillLeader = (): void => {
+    if (!forceKillSent) {
+      forceKillSent = true;
+      signalProcessTree("SIGKILL");
+    }
+    leaderExitDeadlineTimer ??= setTimeout(
+      () => resolveLeaderExitDeadline({ status: "timed-out" }),
+      LEADER_EXIT_SETTLEMENT_GRACE_MS,
+    );
+  };
   const sharedInterrupt = interruptSignal();
   const stopForInterrupt = (): void => {
     interrupted = true;
     // The CLI exits after only a short telemetry flush. Kill synchronously so
     // detached Xcode build scripts cannot outlive that shutdown window.
-    signalProcessTree("SIGKILL");
+    forceKillLeader();
   };
   const stopForProcessExit = (): void => {
     // In an interactive terminal, clack owns raw-mode Ctrl-C while its spinner
@@ -465,60 +567,103 @@ export const runIOSXcodeCommand: IOSXcodeCommandRunner = async (argv, options) =
   if (sharedInterrupt.aborted) stopForInterrupt();
   else sharedInterrupt.addEventListener("abort", stopForInterrupt, { once: true });
 
-  let timedOut = false;
-  let forceKillSent = false;
   let forceKillTimer: ReturnType<typeof setTimeout> | undefined;
   const timeout = setTimeout(() => {
     timedOut = true;
     signalProcessTree("SIGTERM");
-    forceKillTimer = setTimeout(() => {
-      forceKillSent = true;
-      signalProcessTree("SIGKILL");
-    }, FORCE_KILL_DELAY_MS);
+    forceKillTimer = setTimeout(forceKillLeader, FORCE_KILL_DELAY_MS);
   }, options.timeoutMs);
 
   const outputLimit = options.maxOutputBytes ?? DEFAULT_OUTPUT_LIMIT_BYTES;
-  try {
-    const [exitCode, stdout, stderr] = await Promise.all([
-      child.exited,
-      readBoundedStream(child.stdout as ReadableStream<Uint8Array>, outputLimit),
-      readBoundedStream(child.stderr as ReadableStream<Uint8Array>, outputLimit),
-    ]);
-    return {
-      exitCode,
-      stdout: stdout.text,
-      stderr: stderr.text,
-      timedOut,
-      truncated: stdout.truncated || stderr.truncated,
-    };
-  } catch (error) {
-    return {
-      exitCode: null,
-      stdout: "",
-      stderr: "",
-      timedOut,
-      truncated: false,
-      spawnError: sanitizeIOSXcodeDiagnostic(errorMessage(error)),
-    };
-  } finally {
-    sharedInterrupt.removeEventListener("abort", stopForInterrupt);
-    globalThis.process.removeListener("exit", stopForProcessExit);
-    clearTimeout(timeout);
-    if (forceKillTimer) clearTimeout(forceKillTimer);
-    // The command leader can exit while a descendant that closed its stdio
-    // remains alive. Force the group down and wait for it to disappear before
-    // the caller can remove temporary build files that descendants may hold.
-    if (timedOut && !forceKillSent) {
-      forceKillSent = true;
-      signalProcessTree("SIGKILL");
-    }
-    let shouldWaitForProcessTree = timedOut || interrupted;
-    if (usesIsolatedProcessGroup && processTreeIsAlive()) {
-      signalProcessTree("SIGKILL");
-      shouldWaitForProcessTree = true;
-    }
-    if (shouldWaitForProcessTree) await waitForProcessTreeExit();
+  const stdoutDrain = startBoundedStreamDrain(
+    child.stdout as ReadableStream<Uint8Array>,
+    outputLimit,
+  );
+  const stderrDrain = startBoundedStreamDrain(
+    child.stderr as ReadableStream<Uint8Array>,
+    outputLimit,
+  );
+  // allSettled observes both drain rejections immediately, including if a
+  // stubborn stream remains pending after the runner's cancellation deadline.
+  const settledDrains = Promise.allSettled([stdoutDrain.completion, stderrDrain.completion]);
+  let exitCode: number | null = null;
+  let spawnError: string | undefined;
+  let artifactCleanupUnsafe = false;
+  const leaderExit = await Promise.race([observedLeaderExit, leaderExitDeadline]);
+  if (leaderExit.status === "exited") {
+    exitCode = leaderExit.exitCode;
+  } else if (leaderExit.status === "failed") {
+    artifactCleanupUnsafe = true;
+    spawnError = sanitizeIOSXcodeDiagnostic(errorMessage(leaderExit.reason));
+  } else {
+    artifactCleanupUnsafe = true;
+    spawnError = "The Xcode command leader did not exit after forced termination.";
   }
+  sharedInterrupt.removeEventListener("abort", stopForInterrupt);
+  globalThis.process.removeListener("exit", stopForProcessExit);
+  clearTimeout(timeout);
+  if (forceKillTimer) clearTimeout(forceKillTimer);
+  if (leaderExitDeadlineTimer) clearTimeout(leaderExitDeadlineTimer);
+  // The command leader can exit while a descendant that closed its stdio
+  // remains alive. Force the group down and wait for it to disappear before
+  // the caller can remove temporary build files that descendants may hold.
+  if (timedOut && !forceKillSent) {
+    forceKillSent = true;
+    signalProcessTree("SIGKILL");
+  }
+  let shouldWaitForProcessTree = timedOut || interrupted;
+  if (usesIsolatedProcessGroup && processTreeIsAlive()) {
+    signalProcessTree("SIGKILL");
+    shouldWaitForProcessTree = true;
+  }
+  if (shouldWaitForProcessTree && !(await waitForProcessTreeExit())) {
+    artifactCleanupUnsafe = true;
+    spawnError ??= "The Xcode subprocess group could not be confirmed stopped.";
+  }
+
+  const initialDrainSettlement = await settlePromiseWithin(settledDrains, OUTPUT_DRAIN_GRACE_MS);
+  const drainsFinished = initialDrainSettlement.status === "fulfilled";
+  let finalDrainSettlement = initialDrainSettlement;
+  if (!drainsFinished) {
+    stdoutDrain.cancel();
+    stderrDrain.cancel();
+    finalDrainSettlement = await settlePromiseWithin(
+      settledDrains,
+      OUTPUT_CANCEL_SETTLEMENT_GRACE_MS,
+    );
+  }
+  const stdout = stdoutDrain.snapshot();
+  const stderr = stderrDrain.snapshot();
+  let outputError: unknown;
+  if (finalDrainSettlement.status === "fulfilled") {
+    const [stdoutResult, stderrResult] = finalDrainSettlement.value;
+    outputError =
+      stdoutResult.status === "rejected"
+        ? stdoutResult.reason
+        : stderrResult.status === "rejected"
+          ? stderrResult.reason
+          : undefined;
+  } else if (finalDrainSettlement.status === "rejected") {
+    outputError = finalDrainSettlement.reason;
+  }
+  if (outputError !== undefined) {
+    artifactCleanupUnsafe = true;
+    spawnError ??= sanitizeIOSXcodeDiagnostic(errorMessage(outputError));
+  }
+  artifactCleanupUnsafe ||=
+    !drainsFinished ||
+    finalDrainSettlement.status !== "fulfilled" ||
+    stdout.forcedClosed ||
+    stderr.forcedClosed;
+  return {
+    exitCode,
+    stdout: stdout.text,
+    stderr: stderr.text,
+    timedOut,
+    truncated: stdout.truncated || stderr.truncated,
+    ...(artifactCleanupUnsafe ? { artifactCleanupUnsafe: true } : {}),
+    ...(spawnError ? { spawnError } : {}),
+  };
 };
 
 /**
@@ -1949,13 +2094,17 @@ export async function runIOSXcodeVerification(
   const runner = dependencies.runner ?? runIOSXcodeCommand;
   const xcrun = dependencies.xcrunPath ?? XCRUN;
   const env = createIOSXcodeChildEnvironment(dependencies.environment ?? process.env);
-  const run = async (argv: readonly string[], timeoutMs: number, maxOutputBytes?: number) =>
-    runner(argv, {
+  let artifactCleanupUnsafe = false;
+  const run = async (argv: readonly string[], timeoutMs: number, maxOutputBytes?: number) => {
+    const result = await runner(argv, {
       cwd: inspection.root,
       env,
       timeoutMs,
       ...(maxOutputBytes ? { maxOutputBytes } : {}),
     });
+    artifactCleanupUnsafe ||= result.artifactCleanupUnsafe === true;
+    return result;
+  };
 
   const toolchain = await run([xcrun, "xcodebuild", "-version"], TOOLCHAIN_TIMEOUT_MS);
   if (!isCommandSuccess(toolchain)) {
@@ -2583,8 +2732,17 @@ export async function runIOSXcodeVerification(
     );
     return results;
   } finally {
-    let preserveTemporaryDirectory = false;
-    if (isolatedContainer) {
+    let preserveTemporaryDirectory = artifactCleanupUnsafe;
+    if (artifactCleanupUnsafe) {
+      results.push(
+        warn(
+          "Xcode temporary files",
+          "Subprocess cleanup could not be confirmed",
+          `Inspect ${temporaryDirectory} before removing it. Doctor preserved its temporary build artifacts because another process may still be using them.${isolatedContainer ? ` The isolated workspace at ${isolatedContainer.path} was also preserved.` : ""}`,
+        ),
+      );
+    }
+    if (isolatedContainer && !artifactCleanupUnsafe) {
       try {
         await removeIsolatedFrozenContainer(isolatedContainer);
       } catch (error) {
@@ -2602,7 +2760,7 @@ export async function runIOSXcodeVerification(
         );
       }
     }
-    if (claimedApplication) {
+    if (claimedApplication && !artifactCleanupUnsafe) {
       try {
         await removeClaimedBuiltApplication(claimedApplication);
       } catch (error) {
