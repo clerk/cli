@@ -32,6 +32,7 @@ import type {
 import type { CheckResult } from "./types.ts";
 
 const XCRUN = "/usr/bin/xcrun";
+const PLUTIL = "/usr/bin/plutil";
 const TOOLCHAIN_TIMEOUT_MS = 10_000;
 const DISCOVERY_TIMEOUT_MS = 30_000;
 const RESOLUTION_TIMEOUT_MS = 5 * 60_000;
@@ -47,6 +48,7 @@ const JSON_OUTPUT_LIMIT_BYTES = 8 * 1024 * 1024;
 const MAX_PACKAGE_RESOLVED_BYTES = 2 * 1024 * 1024;
 const MAX_SCHEME_BYTES = 2 * 1024 * 1024;
 const MAX_WORKSPACE_BYTES = 2 * 1024 * 1024;
+const MAX_BUILT_INFO_PLIST_BYTES = 4 * 1024 * 1024;
 const APP_PRODUCT_TYPE = "com.apple.product-type.application";
 
 export interface IOSXcodeVerificationOptions {
@@ -1415,7 +1417,12 @@ function isWithin(root: string, path: string): boolean {
 async function validateBuiltApplication(
   derivedDataPath: string,
   settings: VerifiedBuildSettings,
-): Promise<{ appPath?: string; bundleIdentifier?: string; result?: CheckResult }> {
+): Promise<{
+  appPath?: string;
+  infoPlistPath?: string;
+  buildSettingsBundleIdentifier?: string;
+  result?: CheckResult;
+}> {
   if (!settings.targetBuildDir || !settings.fullProductName || !settings.bundleIdentifier) {
     return {
       result: fail(
@@ -1435,14 +1442,14 @@ async function validateBuiltApplication(
       ),
     };
   }
+  let realApp: string;
   try {
     const info = await lstat(appPath);
     if (!info.isDirectory() || info.isSymbolicLink()) throw new Error("not a local app directory");
-    const [realDerivedData, realApp] = await Promise.all([
-      realpath(derivedDataPath),
-      realpath(appPath),
-    ]);
-    if (!isWithin(realDerivedData, realApp)) throw new Error("external app directory");
+    const paths = await Promise.all([realpath(derivedDataPath), realpath(appPath)]);
+    const [realDerivedData, resolvedApp] = paths;
+    if (!isWithin(realDerivedData, resolvedApp)) throw new Error("external app directory");
+    realApp = resolvedApp;
   } catch {
     return {
       result: fail(
@@ -1452,7 +1459,49 @@ async function validateBuiltApplication(
       ),
     };
   }
-  return { appPath, bundleIdentifier: settings.bundleIdentifier };
+
+  const infoPlistPath = join(appPath, "Info.plist");
+  try {
+    const info = await lstat(infoPlistPath);
+    if (
+      !info.isFile() ||
+      info.isSymbolicLink() ||
+      info.size <= 0 ||
+      info.size > MAX_BUILT_INFO_PLIST_BYTES
+    ) {
+      throw new Error("not a bounded local plist file");
+    }
+    const realInfoPlist = await realpath(infoPlistPath);
+    if (!isWithin(realApp, realInfoPlist)) throw new Error("external Info.plist");
+  } catch {
+    return {
+      result: fail(
+        "iOS Simulator",
+        "The built application's Info.plist is missing or unsafe",
+        "Open Xcode's build log and inspect the selected application product.",
+      ),
+    };
+  }
+
+  return {
+    appPath,
+    infoPlistPath,
+    buildSettingsBundleIdentifier: settings.bundleIdentifier,
+  };
+}
+
+function parseBuiltBundleIdentifier(output: string): string | undefined {
+  const value = output.trim();
+  if (
+    !value ||
+    value.length > 255 ||
+    value.includes("\n") ||
+    value.includes("\r") ||
+    !/^[A-Za-z0-9.-]+$/.test(value)
+  ) {
+    return undefined;
+  }
+  return value;
 }
 
 function resolvedTargetBundleIdentifiers(target: IOSAppTarget): string[] {
@@ -1998,19 +2047,68 @@ export async function runIOSXcodeVerification(
     }
 
     const application = await validateBuiltApplication(derivedDataPath, buildSettings);
-    if (!application.appPath || !application.bundleIdentifier) {
+    if (
+      !application.appPath ||
+      !application.infoPlistPath ||
+      !application.buildSettingsBundleIdentifier
+    ) {
       results.push(application.result!);
       return results;
     }
-    const inspectedBundleIdentifiers = resolvedTargetBundleIdentifiers(target);
-    if (
-      inspectedBundleIdentifiers.length === 1 &&
-      inspectedBundleIdentifiers[0] !== application.bundleIdentifier
-    ) {
+    const bundleIdentifierResult = await run(
+      [
+        PLUTIL,
+        "-extract",
+        "CFBundleIdentifier",
+        "raw",
+        "-expect",
+        "string",
+        "--",
+        application.infoPlistPath,
+      ],
+      TOOLCHAIN_TIMEOUT_MS,
+      4_096,
+    );
+    if (!isCommandSuccess(bundleIdentifierResult)) {
+      results.push(
+        commandFailure(
+          "iOS Simulator",
+          "Built application Bundle ID inspection",
+          bundleIdentifierResult,
+          "Open Xcode's build log and inspect CFBundleIdentifier in the selected application product.",
+        ),
+      );
+      return results;
+    }
+    const artifactBundleIdentifier = bundleIdentifierResult.truncated
+      ? undefined
+      : parseBuiltBundleIdentifier(bundleIdentifierResult.stdout);
+    if (!artifactBundleIdentifier) {
       results.push(
         fail(
           "iOS Simulator",
-          "The built application's Bundle ID differs from the inspected target",
+          "The built application's Info.plist has an invalid Bundle ID",
+          "Open Xcode's build log and inspect CFBundleIdentifier in the selected application product.",
+        ),
+      );
+      return results;
+    }
+    if (artifactBundleIdentifier !== application.buildSettingsBundleIdentifier) {
+      results.push(
+        fail(
+          "iOS Simulator",
+          "The built application's Bundle ID differs from Xcode's build settings",
+          "Review the target's Info.plist processing and PRODUCT_BUNDLE_IDENTIFIER setting in Xcode.",
+        ),
+      );
+      return results;
+    }
+    const inspectedBundleIdentifiers = resolvedTargetBundleIdentifiers(target);
+    if (!inspectedBundleIdentifiers.includes(artifactBundleIdentifier)) {
+      results.push(
+        fail(
+          "iOS Simulator",
+          "The built application's Bundle ID does not match the inspected target",
           "Review the scheme configuration and target build settings in Xcode.",
         ),
       );
@@ -2084,7 +2182,7 @@ export async function runIOSXcodeVerification(
     }
 
     const launch = await run(
-      [xcrun, "simctl", "launch", device.udid, application.bundleIdentifier],
+      [xcrun, "simctl", "launch", device.udid, artifactBundleIdentifier],
       SIMULATOR_OPERATION_TIMEOUT_MS,
     );
     if (!isCommandSuccess(launch)) {
@@ -2101,7 +2199,7 @@ export async function runIOSXcodeVerification(
     results.push(
       pass(
         "iOS Simulator",
-        `Launched ${application.bundleIdentifier} on ${device.name} (${device.runtime})`,
+        `Launched ${artifactBundleIdentifier} on ${device.name} (${device.runtime})`,
         "Manually verify sign-in, sign-out, app relaunch, and every redirect-based method you enabled.",
       ),
     );

@@ -173,6 +173,12 @@ function buildSettingsOutput(
   ]);
 }
 
+function builtInfoPlist(bundleIdentifier: string): string {
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict><key>CFBundleIdentifier</key><string>${bundleIdentifier}</string></dict></plist>`;
+}
+
 function successfulXcodeRunner(
   invocations: Invocation[],
   options: {
@@ -181,6 +187,11 @@ function successfulXcodeRunner(
     buildFailure?: string;
     createApp?: boolean;
     simulatorDevices?: unknown;
+    buildSettingsBundleIdentifier?: string;
+    artifactBundleIdentifier?: string;
+    omitInfoPlist?: boolean;
+    malformedInfoPlist?: boolean;
+    infoPlistSymlinkTarget?: string;
   } = {},
 ): IOSXcodeCommandRunner {
   return async (argv, commandOptions) => {
@@ -200,23 +211,41 @@ function successfulXcodeRunner(
         }),
       );
     }
-    if (args.includes("-showBuildSettings")) return success(buildSettingsOutput());
+    if (args.includes("-showBuildSettings")) {
+      return success(
+        buildSettingsOutput({ bundleIdentifier: options.buildSettingsBundleIdentifier }),
+      );
+    }
     if (args.includes("build") && args.includes("xcodebuild")) {
       if (options.buildFailure) return failure(options.buildFailure);
       if (options.createApp) {
-        await mkdir(
-          join(
-            temporaryBuildRoot,
-            "DerivedData",
-            "Build",
-            "Products",
-            "Debug-iphonesimulator",
-            "MyApp.app",
-          ),
-          { recursive: true },
+        const appPath = join(
+          temporaryBuildRoot,
+          "DerivedData",
+          "Build",
+          "Products",
+          "Debug-iphonesimulator",
+          "MyApp.app",
         );
+        await mkdir(appPath, { recursive: true });
+        const infoPlistPath = join(appPath, "Info.plist");
+        if (options.infoPlistSymlinkTarget) {
+          await symlink(options.infoPlistSymlinkTarget, infoPlistPath);
+        } else if (!options.omitInfoPlist) {
+          await Bun.write(
+            infoPlistPath,
+            options.malformedInfoPlist
+              ? "not a property list"
+              : builtInfoPlist(options.artifactBundleIdentifier ?? "com.example.MyApp"),
+          );
+        }
       }
       return success();
+    }
+    if (args[0] === "/usr/bin/plutil") {
+      return options.malformedInfoPlist
+        ? failure("Info.plist could not be parsed")
+        : success(options.artifactBundleIdentifier ?? "com.example.MyApp");
     }
     if (args.includes("simctl") && args.includes("list")) {
       return success(JSON.stringify(options.simulatorDevices));
@@ -1100,6 +1129,130 @@ describe("runIOSXcodeVerification", () => {
     ]);
     expect(simulatorCommands.flat()).not.toContain("--terminate-running-process");
     expect(simulatorCommands.flat()).not.toContain("--console");
+    const plistInspection = invocations.find(
+      (invocation) => invocation.argv[0] === "/usr/bin/plutil",
+    );
+    expect(plistInspection?.argv.slice(1, -1)).toEqual([
+      "-extract",
+      "CFBundleIdentifier",
+      "raw",
+      "-expect",
+      "string",
+      "--",
+    ]);
+    expect(simulatorCommands.at(-1)?.at(-1)).toBe("com.example.MyApp");
+  });
+
+  test("rejects a built Info.plist Bundle ID that differs from build settings", async () => {
+    await createIOSFixture(root, { clerkSDK: false });
+    const inspection = await inspectIOSProject(root, { target: "MyApp" });
+    const invocations: Invocation[] = [];
+
+    const results = await runIOSXcodeVerification(
+      inspection,
+      { simulator: true },
+      dependencies(
+        successfulXcodeRunner(invocations, {
+          createApp: true,
+          artifactBundleIdentifier: "com.example.OtherApp",
+        }),
+      ),
+    );
+
+    expect(results.find((result) => result.name === "Xcode build")?.status).toBe("pass");
+    expect(results.at(-1)).toMatchObject({ name: "iOS Simulator", status: "fail" });
+    expect(results.at(-1)?.message).toContain("differs from Xcode's build settings");
+    expect(invocations.some((invocation) => invocation.argv.includes("simctl"))).toBe(false);
+  });
+
+  test("rejects a built Info.plist Bundle ID that does not match the inspected target", async () => {
+    await createIOSFixture(root, { clerkSDK: false });
+    const inspection = await inspectIOSProject(root, { target: "MyApp" });
+    const invocations: Invocation[] = [];
+
+    const results = await runIOSXcodeVerification(
+      inspection,
+      { simulator: true },
+      dependencies(
+        successfulXcodeRunner(invocations, {
+          createApp: true,
+          buildSettingsBundleIdentifier: "com.example.OtherApp",
+          artifactBundleIdentifier: "com.example.OtherApp",
+        }),
+      ),
+    );
+
+    expect(results.at(-1)).toMatchObject({ name: "iOS Simulator", status: "fail" });
+    expect(results.at(-1)?.message).toContain("does not match the inspected target");
+    expect(invocations.some((invocation) => invocation.argv.includes("simctl"))).toBe(false);
+  });
+
+  test("fails closed when the built application has no Info.plist", async () => {
+    await createIOSFixture(root, { clerkSDK: false });
+    const inspection = await inspectIOSProject(root, { target: "MyApp" });
+    const invocations: Invocation[] = [];
+
+    const results = await runIOSXcodeVerification(
+      inspection,
+      { simulator: true },
+      dependencies(
+        successfulXcodeRunner(invocations, {
+          createApp: true,
+          omitInfoPlist: true,
+        }),
+      ),
+    );
+
+    expect(results.at(-1)).toMatchObject({ name: "iOS Simulator", status: "fail" });
+    expect(results.at(-1)?.message).toContain("Info.plist is missing or unsafe");
+    expect(invocations.some((invocation) => invocation.argv[0] === "/usr/bin/plutil")).toBe(false);
+    expect(invocations.some((invocation) => invocation.argv.includes("simctl"))).toBe(false);
+  });
+
+  test("fails closed when the built Info.plist is malformed", async () => {
+    await createIOSFixture(root, { clerkSDK: false });
+    const inspection = await inspectIOSProject(root, { target: "MyApp" });
+    const invocations: Invocation[] = [];
+
+    const results = await runIOSXcodeVerification(
+      inspection,
+      { simulator: true },
+      dependencies(
+        successfulXcodeRunner(invocations, {
+          createApp: true,
+          malformedInfoPlist: true,
+        }),
+      ),
+    );
+
+    expect(results.at(-1)).toMatchObject({ name: "iOS Simulator", status: "fail" });
+    expect(results.at(-1)?.message).toContain("Bundle ID inspection exited with code");
+    expect(invocations.some((invocation) => invocation.argv[0] === "/usr/bin/plutil")).toBe(true);
+    expect(invocations.some((invocation) => invocation.argv.includes("simctl"))).toBe(false);
+  });
+
+  test("rejects a symlinked built Info.plist", async () => {
+    await createIOSFixture(root, { clerkSDK: false });
+    const externalInfoPlist = join(root, "external-Info.plist");
+    await Bun.write(externalInfoPlist, builtInfoPlist("com.example.MyApp"));
+    const inspection = await inspectIOSProject(root, { target: "MyApp" });
+    const invocations: Invocation[] = [];
+
+    const results = await runIOSXcodeVerification(
+      inspection,
+      { simulator: true },
+      dependencies(
+        successfulXcodeRunner(invocations, {
+          createApp: true,
+          infoPlistSymlinkTarget: externalInfoPlist,
+        }),
+      ),
+    );
+
+    expect(results.at(-1)).toMatchObject({ name: "iOS Simulator", status: "fail" });
+    expect(results.at(-1)?.message).toContain("Info.plist is missing or unsafe");
+    expect(invocations.some((invocation) => invocation.argv[0] === "/usr/bin/plutil")).toBe(false);
+    expect(invocations.some((invocation) => invocation.argv.includes("simctl"))).toBe(false);
   });
 
   test("preserves a replacement that appears at the isolated-workspace cleanup boundary", async () => {
