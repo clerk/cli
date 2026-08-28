@@ -1,9 +1,11 @@
 import { afterEach, describe, expect, test } from "bun:test";
+import { build as buildPbxProject, parse as parsePbxProject } from "@bacons/xcode/json";
 import { mkdtemp, mkdir, rm, symlink } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { discoverIOSContainers, inspectWorkspace } from "./discovery.ts";
 import { inspectIOSProject, inspectIOSSourceMembership } from "./inspect.ts";
+import type { PbxObjects } from "./pbx.ts";
 import { createIOSFixture, IOS_FIXTURE_IDS, treeDigest } from "./test-helpers.ts";
 
 const temporaryDirectories: string[] = [];
@@ -13,6 +15,17 @@ async function fixture(options: Parameters<typeof createIOSFixture>[1] = {}): Pr
   temporaryDirectories.push(root);
   await createIOSFixture(root, options);
   return root;
+}
+
+async function transformProject(
+  root: string,
+  transform: (objects: PbxObjects) => void,
+): Promise<void> {
+  const projectPath = join(root, "MyApp.xcodeproj", "project.pbxproj");
+  const project = parsePbxProject(await Bun.file(projectPath).text());
+  const objects = (project as unknown as { objects: PbxObjects }).objects;
+  transform(objects);
+  await Bun.write(projectPath, buildPbxProject(project));
 }
 
 async function setAssociatedDomainTemplate(root: string, template: string): Promise<void> {
@@ -229,6 +242,103 @@ describe("inspectIOSProject", () => {
       projectPath: "MyApp.xcodeproj",
     });
   });
+
+  test("does not attribute a Clerk product to an unrelated declared clerk-ios package", async () => {
+    const root = await fixture({ clerkSDK: "core-only" });
+    const wrongPackageId = "272727272727272727272727";
+    await transformProject(root, (objects) => {
+      objects[wrongPackageId] = {
+        isa: "XCRemoteSwiftPackageReference",
+        repositoryURL: "https://github.com/example/not-clerk",
+        requirement: { kind: "upToNextMajorVersion", minimumVersion: "1.0.0" },
+      };
+      objects[IOS_FIXTURE_IDS.project]!.packageReferences = [
+        IOS_FIXTURE_IDS.clerkPackage,
+        wrongPackageId,
+      ];
+      objects[IOS_FIXTURE_IDS.clerkKit]!.package = wrongPackageId;
+    });
+
+    const inspection = await inspectIOSProject(root);
+
+    expect(inspection.appTargets[0]?.packages).toEqual({
+      package: "unattributed",
+      clerkKit: "linked",
+      clerkKitUI: "absent",
+    });
+    expect(
+      inspection.diagnostics.some((diagnostic) => diagnostic.code === "clerk.package-unattributed"),
+    ).toBe(true);
+  });
+
+  test.each([
+    {
+      name: "another package",
+      transform(objects: PbxObjects) {
+        const wrongPackageId = "272727272727272727272727";
+        objects[wrongPackageId] = {
+          isa: "XCRemoteSwiftPackageReference",
+          repositoryURL: "https://github.com/example/not-clerk",
+          requirement: { kind: "upToNextMajorVersion", minimumVersion: "1.0.0" },
+        };
+        objects[IOS_FIXTURE_IDS.clerkKitUI]!.package = wrongPackageId;
+      },
+    },
+    {
+      name: "an unresolved package",
+      transform(objects: PbxObjects) {
+        objects[IOS_FIXTURE_IDS.clerkKitUI]!.package = "282828282828282828282828";
+      },
+    },
+    {
+      name: "no package",
+      transform(objects: PbxObjects) {
+        delete objects[IOS_FIXTURE_IDS.clerkKitUI]!.package;
+      },
+    },
+  ])("fails closed when Clerk products have mixed attribution to $name", async ({ transform }) => {
+    const root = await fixture();
+    await transformProject(root, transform);
+
+    const inspection = await inspectIOSProject(root);
+
+    expect(inspection.appTargets[0]?.packages).toEqual({
+      package: "unattributed",
+      clerkKit: "linked",
+      clerkKitUI: "linked",
+    });
+  });
+
+  test.each(["remote", "local"] as const)(
+    "preserves the %s Clerk package fallback when all products lack attribution",
+    async (kind) => {
+      const root = await fixture({ clerkSDK: "core-only" });
+      if (kind === "local") {
+        await mkdir(join(root, "LocalClerk"));
+        await Bun.write(
+          join(root, "LocalClerk", "Package.swift"),
+          '// swift-tools-version: 6.0\nimport PackageDescription\nlet package = Package(name: "Clerk", products: [.library(name: "ClerkKit", targets: ["ClerkKit"])], targets: [.target(name: "ClerkKit")])\n',
+        );
+      }
+      await transformProject(root, (objects) => {
+        delete objects[IOS_FIXTURE_IDS.clerkKit]!.package;
+        if (kind === "local") {
+          objects[IOS_FIXTURE_IDS.clerkPackage] = {
+            isa: "XCLocalSwiftPackageReference",
+            relativePath: "LocalClerk",
+          };
+        }
+      });
+
+      const inspection = await inspectIOSProject(root);
+
+      expect(inspection.appTargets[0]?.packages).toEqual({
+        package: kind,
+        clerkKit: "linked",
+        clerkKitUI: "absent",
+      });
+    },
+  );
 
   test("preserves absent, exact, and invalid Apple entitlement states", async () => {
     const cases = [
