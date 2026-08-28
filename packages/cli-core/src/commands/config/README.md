@@ -169,7 +169,7 @@ clerk config put --file full-config.json --dry-run
 
 ## Accountless mode
 
-A accountless application created by `clerk init` has no Clerk account behind it until someone claims it, so the Platform API — which authenticates an _account_ — cannot reach it. `clerk config pull` and `clerk config patch` fall back to Clerk's Backend API, authenticated with the instance secret key the project already keeps locally, so an unclaimed app can be configured without logging in.
+An accountless application created by `clerk init` has no Clerk account behind it until someone claims it, so the Platform API — which authenticates an _account_ — cannot reach it. `clerk config pull` and `clerk config patch` fall back to Clerk's Backend API, authenticated with the instance secret key the project already keeps locally, so an unclaimed app can be configured without logging in.
 
 ### When it engages
 
@@ -221,7 +221,7 @@ Any other top-level key exits with a usage error naming the supported ones. Most
 
 ### Round-trip verification
 
-A 200 or 204 from a accountless write only means Clerk's Backend API accepted the request — it silently drops fields it doesn't recognize inside a group instead of rejecting them, and at least one route (`PATCH /v1/instance` with `allowed_origins: null` or `[]`) accepts a value it then ignores. Printing "Config pushed successfully" off the HTTP status alone would paper over both.
+A 200 or 204 from an accountless write only means Clerk's Backend API accepted the request — it silently drops fields it doesn't recognize inside a group instead of rejecting them, and at least one route (`PATCH /v1/instance` with `allowed_origins: null` or `[]`) accepts a value it then ignores. Printing "Config pushed successfully" off the HTTP status alone would paper over both.
 
 After a write, the CLI checks every field it sent against the PATCH response body, and against nothing else. Fields whose value round-trips are reported as applied; fields the response doesn't reflect are named explicitly instead of folded into an unconditional success line.
 
