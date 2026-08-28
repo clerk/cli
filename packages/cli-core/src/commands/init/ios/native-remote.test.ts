@@ -117,8 +117,15 @@ function memoryRegistrationRetryStore(): {
         entries.set(key, created);
         return created;
       },
-      async clear(identity) {
-        entries.delete(scope(identity));
+      async peek(identity) {
+        return entries.get(scope(identity));
+      },
+      async clear(identity, expectedKey) {
+        const key = scope(identity);
+        const existing = entries.get(key);
+        if (existing && existing !== expectedKey) return false;
+        entries.delete(key);
+        return true;
       },
     },
     pending(identity) {
@@ -761,7 +768,7 @@ describe("Clerk Native Application remote setup", () => {
       message: expect.stringContaining("Xcode target identity changed"),
     });
 
-    expect(calls).toEqual(["GET native settings", "GET iOS registrations"]);
+    expect(calls).toEqual([]);
     expect(calls).not.toContain("POST iOS registration");
     expect(calls).not.toContain("PATCH native settings");
   });
@@ -785,7 +792,7 @@ describe("Clerk Native Application remote setup", () => {
       message: expect.stringContaining("Xcode target identity could not be rechecked"),
     });
 
-    expect(calls).toEqual(["GET native settings", "GET iOS registrations"]);
+    expect(calls).toEqual([]);
     expect(calls).not.toContain("POST iOS registration");
     expect(calls).not.toContain("PATCH native settings");
   });
@@ -802,7 +809,7 @@ describe("Clerk Native Application remote setup", () => {
       ),
     ).rejects.toMatchObject({ code: ERROR_CODE.IOS_SETUP_STALE });
 
-    expect(calls).toEqual(["GET native settings", "GET iOS registrations"]);
+    expect(calls).toEqual([]);
     expect(calls).not.toContain("POST iOS registration");
     expect(calls).not.toContain("PATCH native settings");
   });
@@ -941,6 +948,65 @@ describe("Clerk Native Application remote setup", () => {
     expect(registrationIdempotencyKeys).toEqual([]);
     expect(calls).not.toContain("POST iOS registration");
     expect(retry.pending(registrationRetryIdentity())).toBeUndefined();
+  });
+
+  test("rechecks remote state after a paused invocation acquires a newer retry generation", async () => {
+    const retry = memoryRegistrationRetryStore();
+    let releaseGet!: () => void;
+    const getGate = new Promise<void>((resolve) => {
+      releaseGet = resolve;
+    });
+    let reportPaused!: () => void;
+    const paused = new Promise<void>((resolve) => {
+      reportPaused = resolve;
+    });
+    const pausedStore: IOSNativeRegistrationRetryStore = {
+      async getOrCreate(identity) {
+        reportPaused();
+        await getGate;
+        return retry.store.getOrCreate(identity);
+      },
+      async peek(identity) {
+        return retry.store.peek(identity);
+      },
+      async clear(identity, expectedKey) {
+        return retry.store.clear(identity, expectedKey);
+      },
+    };
+    const exactRegistration = registration();
+    const resumed = scriptedAPI({
+      nativeReads: [nativeSettings(true), nativeSettings(true)],
+      registrationReads: [[exactRegistration], [exactRegistration]],
+    });
+
+    const resumedApply = applyRemoteSetup(
+      plan({ nativeApi: "satisfied", registration: "required" }),
+      resumed.api,
+      approvedTargetReader,
+      pausedStore,
+    );
+    await paused;
+
+    const first = scriptedAPI({
+      nativeReads: [nativeSettings(true), nativeSettings(true)],
+      registrationReads: [[], [exactRegistration]],
+    });
+    await applyRemoteSetup(
+      plan({ nativeApi: "satisfied", registration: "required" }),
+      first.api,
+      approvedTargetReader,
+      retry.store,
+    );
+    const completedKey = first.registrationIdempotencyKeys[0]!;
+    expect(retry.pending(registrationRetryIdentity())).toBeUndefined();
+
+    releaseGet();
+    await resumedApply;
+
+    expect(resumed.registrationIdempotencyKeys).toEqual([]);
+    expect(resumed.calls).not.toContain("POST iOS registration");
+    expect(retry.pending(registrationRetryIdentity())).toBeUndefined();
+    expect(completedKey).toStartWith("clerk-init-ios-registration-");
   });
 
   test("reconciles an ambiguous Native API error when a re-read shows it enabled", async () => {

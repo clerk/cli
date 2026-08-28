@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, readFile, rm, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -75,9 +75,21 @@ describe("iOS native registration retry state", () => {
     const target = identity();
     const first = await store.getOrCreate(target);
 
-    await store.clear(target);
+    expect(await store.clear(target, first)).toBe(true);
 
     expect(await store.getOrCreate(target)).not.toBe(first);
+  });
+
+  test("does not let a delayed clear remove a newer registration generation", async () => {
+    const stateDirectory = await temporaryStateDirectory();
+    const store = createIOSNativeRegistrationRetryStore(() => stateDirectory);
+    const target = identity();
+    const first = await store.getOrCreate(target);
+    expect(await store.clear(target, first)).toBe(true);
+    const newer = await store.getOrCreate(target);
+
+    expect(await store.clear(target, first)).toBe(false);
+    expect(await store.peek(target)).toBe(newer);
   });
 
   test("retains an old pending operation until remote verification clears it", async () => {
@@ -105,5 +117,26 @@ describe("iOS native registration retry state", () => {
     await writeFile(join(directory, filename!), "{ malformed");
 
     await expect(store.getOrCreate(target)).rejects.toThrow("retry record is malformed");
+  });
+
+  test("fails closed without stealing an abandoned stale filesystem lock", async () => {
+    const stateDirectory = await temporaryStateDirectory();
+    const store = createIOSNativeRegistrationRetryStore(() => stateDirectory, {
+      lockRetryMs: 1,
+      lockTimeoutMs: 10,
+      lockStaleMs: 5,
+    });
+    const target = identity();
+    const first = await store.getOrCreate(target);
+    const directory = join(stateDirectory, "idempotency");
+    const [filename] = await readdir(directory);
+    const lock = join(directory, `${filename!}.lock`);
+    await mkdir(lock);
+    const stale = new Date(Date.now() - 60_000);
+    await utimes(lock, stale, stale);
+
+    expect(first).toStartWith("clerk-init-ios-registration-");
+    await expect(store.getOrCreate(target)).rejects.toThrow("lock is stale");
+    expect(await readdir(lock)).toEqual([]);
   });
 });

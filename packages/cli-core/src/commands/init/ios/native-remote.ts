@@ -726,6 +726,33 @@ export async function applyIOSNativeRemoteSetup(
     );
   }
 
+  if (plan.registration === "required" || plan.nativeApi === "required") {
+    await revalidateLocalTargetBeforeRemoteMutation(plan, targetReader);
+  }
+
+  const nativeAPIIdempotencyKey = `clerk-init-ios-native-api-${randomUUID()}`;
+  const retryIdentity = registrationRetryIdentity(plan);
+  let observedRegistrationRetryKey: string | undefined;
+
+  if (retryIdentity) {
+    try {
+      observedRegistrationRetryKey =
+        plan.registration === "required"
+          ? await registrationRetryStore.getOrCreate(retryIdentity)
+          : await registrationRetryStore.peek(retryIdentity);
+    } catch (error) {
+      log.debug(
+        `Could not read or preserve the iOS registration retry state: ${errorMessage(error)}`,
+      );
+      throw iosRemoteError(
+        "The iOS application registration retry state could not be read or preserved safely. The local setup remains intact, and no registration request was sent; verify CLI state directory access and rerun clerk init.",
+      );
+    }
+  }
+
+  // Acquire the stable registration generation before the authoritative
+  // remote re-read. A second CLI that resumes after another invocation has
+  // completed must observe that completion before deciding whether to POST.
   let currentPlan: IOSNativeRemotePlan;
   try {
     currentPlan = await withSpinner("Rechecking Clerk Native Application settings...", async () =>
@@ -746,13 +773,6 @@ export async function applyIOSNativeRemoteSetup(
     );
   }
 
-  if (currentPlan.registration === "required" || currentPlan.nativeApi === "required") {
-    await revalidateLocalTargetBeforeRemoteMutation(plan, targetReader);
-  }
-
-  const nativeAPIIdempotencyKey = `clerk-init-ios-native-api-${randomUUID()}`;
-  const retryIdentity = registrationRetryIdentity(plan);
-
   // Register first so Native API is never enabled by this command without a
   // matching iOS application registration already present.
   if (currentPlan.registration === "required") {
@@ -762,13 +782,10 @@ export async function applyIOSNativeRemoteSetup(
         ERROR_CODE.IOS_SETUP_PLAN_INVALID,
       );
     }
-    let registrationIdempotencyKey: string;
-    try {
-      registrationIdempotencyKey = await registrationRetryStore.getOrCreate(retryIdentity);
-    } catch (error) {
-      log.debug(`Could not preserve the iOS registration retry state: ${errorMessage(error)}`);
+    if (!observedRegistrationRetryKey) {
       throw iosRemoteError(
-        "The iOS application registration retry could not be preserved safely. The local setup remains intact, and no registration request was sent; verify CLI state directory access and rerun clerk init.",
+        "The approved Clerk Native Application plan did not retain a safe registration retry. No registration request was sent; rerun clerk init.",
+        ERROR_CODE.IOS_SETUP_PLAN_INVALID,
       );
     }
     try {
@@ -777,7 +794,7 @@ export async function applyIOSNativeRemoteSetup(
           plan.applicationId,
           plan.instanceId,
           { appIdPrefix: plan.appIdPrefix!, bundleId: plan.bundleIdentifier! },
-          { idempotencyKey: registrationIdempotencyKey },
+          { idempotencyKey: observedRegistrationRetryKey },
         ),
       );
       if (
@@ -872,9 +889,17 @@ export async function applyIOSNativeRemoteSetup(
       ERROR_CODE.IOS_REMOTE_VERIFY_FAILED,
     );
   }
-  if (retryIdentity) {
+  if (retryIdentity && observedRegistrationRetryKey) {
     try {
-      await registrationRetryStore.clear(retryIdentity);
+      const cleared = await registrationRetryStore.clear(
+        retryIdentity,
+        observedRegistrationRetryKey,
+      );
+      if (!cleared) {
+        log.debug(
+          "Preserved a newer iOS registration retry state created after this invocation began.",
+        );
+      }
     } catch (error) {
       log.debug(
         `Could not clear the verified iOS registration retry state: ${errorMessage(error)}`,
