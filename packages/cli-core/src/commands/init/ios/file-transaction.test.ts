@@ -17,6 +17,7 @@ import { basename, dirname, join } from "node:path";
 import {
   applyIOSExistingFileTransaction,
   applyIOSFileTransaction,
+  hasInterruptedIOSFileTransaction,
   hashIOSFileBytes,
   IOSFileTransactionError,
   prepareIOSFileMutationBoundary,
@@ -1184,6 +1185,22 @@ describe("iOS create-file transaction", () => {
 });
 
 describe("iOS file transaction crash recovery", () => {
+  test("does not report the current process's active transaction as interrupted", async () => {
+    const root = await temporaryRoot();
+    const path = join(root, "App.swift");
+    await writeFile(path, "original source\n");
+    const prepared = await mutation(path, "candidate source\n", root);
+
+    const result = await applyIOSExistingFileTransaction(
+      [prepared],
+      [async () => !(await hasInterruptedIOSFileTransaction(root))],
+    );
+
+    expect(result).toEqual({ status: "applied" });
+    expect(await readFile(path, "utf8")).toBe("candidate source\n");
+    expect(await hasInterruptedIOSFileTransaction(root)).toBe(false);
+  });
+
   test("does not touch the project root when no interrupted transaction exists", async () => {
     const root = await temporaryRoot();
     const before = await lstat(root, { bigint: true });

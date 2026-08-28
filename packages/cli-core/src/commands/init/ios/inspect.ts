@@ -17,7 +17,7 @@ import {
   relativeIOSPath,
   xmlAttribute,
 } from "./discovery.ts";
-import { recoverIOSFileTransactions } from "./file-transaction.ts";
+import { hasInterruptedIOSFileTransaction } from "./file-transaction.ts";
 import {
   asString,
   asStringArray,
@@ -1728,7 +1728,36 @@ export async function inspectIOSProject(
         ? dirname(dirname(invocationPath))
         : dirname(invocationPath)
       : invocationPath;
-  await recoverIOSFileTransactions(root);
+  if (await hasInterruptedIOSFileTransaction(root)) {
+    return {
+      schemaVersion: 1,
+      platform: "ios",
+      root,
+      workspaces: [],
+      projects: [],
+      appTargets: [],
+      selection: { state: "none" },
+      localPublishableKey: {
+        evidenceComplete: false,
+        found: false,
+        conflict: false,
+        candidateSources: [],
+        invalidSources: [],
+      },
+      generatedProject: null,
+      diagnostics: [
+        {
+          code: "xcode.interrupted-file-transaction",
+          severity: "error",
+          message:
+            "Clerk stopped inspection because an iOS file update is incomplete or still active.",
+          remedy:
+            "Wait for any running Clerk command to finish. If none is running, run `clerk init` without `--dry-run` to recover the interrupted update before inspecting the project again.",
+          evidence: [],
+        },
+      ],
+    };
+  }
   const diagnostics: IOSDiagnostic[] = [];
   const discovered = await discoverIOSContainers(invocationPath, {
     exhaustive: options.exhaustiveContainerDiscovery === true,
