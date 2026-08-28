@@ -305,7 +305,7 @@ describe("init iOS", () => {
       }),
     );
 
-    await init({ yes: true, appIdPrefix: "CONFIRMED123" });
+    await init({ yes: true, appIdPrefix: "CONFIRM123" });
 
     expect(linkMod.link).toHaveBeenCalledWith({
       skipIfLinked: true,
@@ -317,7 +317,7 @@ describe("init iOS", () => {
     expect(nativeRemoteMod.prepareIOSNativeRemoteSetup).toHaveBeenCalledWith(
       expect.objectContaining({
         root: FAKE_IOS_NATIVE_READINESS.root,
-        appIdPrefix: "CONFIRMED123",
+        appIdPrefix: "CONFIRM123",
         applicationLinkChange: "created-and-linked",
       }),
     );
@@ -351,7 +351,7 @@ describe("init iOS", () => {
       iosRemotePlan({
         applicationId: "app_existing",
         instanceId: "ins_existing",
-        appIdPrefix: "REGISTERED123",
+        appIdPrefix: "REGIST1234",
         nativeApi: "satisfied",
         registration: "satisfied",
         status: "satisfied",
@@ -416,7 +416,7 @@ describe("init iOS", () => {
     setup();
 
     await expect(init({ appIdPrefix: "   " })).rejects.toThrow(
-      "--app-id-prefix must contain between 1 and 255 characters",
+      "--app-id-prefix must contain exactly 10 ASCII letters or numbers",
     );
 
     expect(context.gatherContext).not.toHaveBeenCalled();

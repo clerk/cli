@@ -33,7 +33,10 @@ import {
   type IOSNativeRegistrationRetryStore,
 } from "./native-registration-retry.ts";
 
-const APP_ID_PREFIX_MAX_LENGTH = 255;
+const APP_ID_PREFIX_LENGTH = 10;
+const BUNDLE_IDENTIFIER_MAX_LENGTH = 255;
+const APP_ID_PREFIX_PATTERN = /^[A-Za-z0-9]{10}$/;
+const BUNDLE_IDENTIFIER_PATTERN = /^[A-Za-z0-9.-]+$/;
 
 function iosRemoteError(
   message: string,
@@ -49,7 +52,9 @@ function rethrowKnownRemoteError(error: unknown): void {
 export type IOSNativeRemoteBlockerCode =
   | "target-not-selected"
   | "bundle-identifier-unavailable"
+  | "bundle-identifier-invalid"
   | "app-id-prefix-required"
+  | "app-id-prefix-invalid"
   | "app-id-prefix-conflict"
   | "duplicate-bundle-registration";
 
@@ -162,8 +167,8 @@ const defaultPrompts: IOSNativeRemotePrompts = {
       default: suggested?.source === "partial-literal-entitlements" ? suggested.value : undefined,
       placeholder: suggested?.value ?? "ABCDE12345",
       validate: (value) =>
-        validateAppIdPrefix(value) ??
-        `Enter an App ID Prefix between 1 and ${APP_ID_PREFIX_MAX_LENGTH} characters. Verify it in Apple Developer; it can differ from your Team ID.`,
+        validateAppIdPrefix(value) != null ||
+        `Enter an App ID Prefix containing exactly ${APP_ID_PREFIX_LENGTH} ASCII letters or numbers. Verify it in Apple Developer; it can differ from your Team ID.`,
     });
   },
   confirmChanges: async () =>
@@ -176,7 +181,15 @@ function blocker(code: IOSNativeRemoteBlockerCode, message: string): IOSNativeRe
 
 export function validateAppIdPrefix(value: string | undefined): string | undefined {
   const normalized = value?.trim();
-  return normalized && normalized.length <= APP_ID_PREFIX_MAX_LENGTH ? normalized : undefined;
+  return normalized && APP_ID_PREFIX_PATTERN.test(normalized) ? normalized : undefined;
+}
+
+export function validateBundleIdentifier(value: string | undefined): string | undefined {
+  return value &&
+    value.length <= BUNDLE_IDENTIFIER_MAX_LENGTH &&
+    BUNDLE_IDENTIFIER_PATTERN.test(value)
+    ? value
+    : undefined;
 }
 
 function copyTargetSnapshot(
@@ -245,13 +258,33 @@ function localIdentity(target: IOSNativeReadinessTarget): {
     };
   }
 
+  const blockers: IOSNativeRemoteBlocker[] = [];
+  if (!validateBundleIdentifier(target.bundleIdentifier.value)) {
+    blockers.push(
+      blocker(
+        "bundle-identifier-invalid",
+        `The selected target's Bundle ID must contain between 1 and ${BUNDLE_IDENTIFIER_MAX_LENGTH} ASCII letters, numbers, hyphens, or periods.`,
+      ),
+    );
+  }
+
   const appIdPrefixCandidates =
     target.appIdPrefix.status === "resolved"
       ? [target.appIdPrefix.value]
       : target.appIdPrefix.status === "conflicting"
         ? target.appIdPrefix.candidates
         : (target.appIdPrefix.candidates ?? []);
-  const blockers: IOSNativeRemoteBlocker[] = [];
+  const invalidLocalPrefixes = appIdPrefixCandidates.filter(
+    (candidate) => validateAppIdPrefix(candidate) !== candidate,
+  );
+  if (invalidLocalPrefixes.length > 0) {
+    blockers.push(
+      blocker(
+        "app-id-prefix-invalid",
+        `The selected target contains an invalid Apple App ID Prefix. App ID Prefixes must contain exactly ${APP_ID_PREFIX_LENGTH} ASCII letters or numbers.`,
+      ),
+    );
+  }
   if (target.appIdPrefix.status === "conflicting") {
     blockers.push(
       blocker(
@@ -263,7 +296,11 @@ function localIdentity(target: IOSNativeReadinessTarget): {
 
   return {
     bundleIdentifier: target.bundleIdentifier.value,
-    appIdPrefix: target.appIdPrefix.status === "resolved" ? target.appIdPrefix.value : undefined,
+    appIdPrefix:
+      target.appIdPrefix.status === "resolved" &&
+      validateAppIdPrefix(target.appIdPrefix.value) === target.appIdPrefix.value
+        ? target.appIdPrefix.value
+        : undefined,
     appIdPrefixCandidates,
     blockers,
   };
@@ -285,8 +322,8 @@ export function buildIOSNativeRemotePlan(options: {
   if (options.requestedAppIdPrefix != null && !explicitPrefix) {
     blockers.push(
       blocker(
-        "app-id-prefix-required",
-        `The Apple App ID Prefix must contain between 1 and ${APP_ID_PREFIX_MAX_LENGTH} characters after trimming.`,
+        "app-id-prefix-invalid",
+        `The supplied Apple App ID Prefix must contain exactly ${APP_ID_PREFIX_LENGTH} ASCII letters or numbers.`,
       ),
     );
   }
@@ -305,12 +342,27 @@ export function buildIOSNativeRemotePlan(options: {
   const matchingBundle = bundleIdentifier
     ? options.registrations.filter((registration) => registration.bundle_id === bundleIdentifier)
     : [];
+  const invalidRegisteredPrefixes = matchingBundle.filter(
+    (registration) =>
+      validateAppIdPrefix(registration.app_id_prefix) !== registration.app_id_prefix,
+  );
+  if (invalidRegisteredPrefixes.length > 0) {
+    blockers.push(
+      blocker(
+        "app-id-prefix-invalid",
+        `An existing Clerk registration for ${bundleIdentifier} contains an invalid Apple App ID Prefix. Review the Native Applications page before continuing.`,
+      ),
+    );
+  }
   const registeredPrefixes = [...new Set(matchingBundle.map((item) => item.app_id_prefix))].sort();
   const selectedPrefix = explicitPrefix ?? identity.appIdPrefix;
   let appIdPrefix = selectedPrefix;
   let registration: IOSNativeRemotePlan["registration"] = "blocked";
 
-  if (bundleIdentifier) {
+  const hasInvalidIdentity = blockers.some(
+    (item) => item.code === "bundle-identifier-invalid" || item.code === "app-id-prefix-invalid",
+  );
+  if (bundleIdentifier && !hasInvalidIdentity) {
     if (selectedPrefix) {
       const conflicts = registeredPrefixes.filter((prefix) => prefix !== selectedPrefix);
       if (conflicts.length > 0) {

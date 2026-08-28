@@ -761,7 +761,9 @@ function assertUsableFlags(options: InitOptions): void {
     );
   }
   if (options.appIdPrefix != null && !validateAppIdPrefix(options.appIdPrefix)) {
-    throwUsageError("--app-id-prefix must contain between 1 and 255 characters after trimming.");
+    throwUsageError(
+      "--app-id-prefix must contain exactly 10 ASCII letters or numbers after trimming.",
+    );
   }
   if (options.dryRun && options.starter) {
     throwUsageError(
@@ -1392,7 +1394,7 @@ export function registerInit(program: Program): void {
     .option("--allow-dirty", "Allow an iOS project file with existing local changes to be updated")
     .option(
       "--app-id-prefix <prefix>",
-      "Apple App ID Prefix to use when Clerk needs to register the selected iOS Bundle ID",
+      "10-character Apple App ID Prefix to use when Clerk needs to register the selected iOS Bundle ID",
     )
     .option("--sign-in-with-apple", "Enable native Sign in with Apple for the selected iOS target")
     .option(

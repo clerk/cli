@@ -7,6 +7,7 @@ import {
   buildIOSNativeRemotePlan,
   prepareIOSNativeRemoteSetup,
   validateAppIdPrefix,
+  validateBundleIdentifier,
   type IOSNativeRemoteAPI,
   type IOSNativeRemotePlan,
   type IOSNativeRemotePrompts,
@@ -298,10 +299,153 @@ function prompts(
 }
 
 describe("Clerk Native Application remote setup", () => {
-  test("validates the public App ID Prefix contract without assuming a Team ID shape", () => {
-    expect(validateAppIdPrefix("  legacy.prefix-value  ")).toBe("legacy.prefix-value");
+  test("validates Apple identity formats without equating a prefix to the Team ID", () => {
+    expect(validateAppIdPrefix("  LeGaCy1234  ")).toBe("LeGaCy1234");
+    expect(validateAppIdPrefix("legacy.prefix-value")).toBeUndefined();
     expect(validateAppIdPrefix("   ")).toBeUndefined();
-    expect(validateAppIdPrefix("x".repeat(256))).toBeUndefined();
+    expect(validateAppIdPrefix("x")).toBeUndefined();
+    expect(validateAppIdPrefix("x".repeat(11))).toBeUndefined();
+    expect(validateBundleIdentifier("NativeApp")).toBe("NativeApp");
+    expect(validateBundleIdentifier("com.example-NativeApp")).toBe("com.example-NativeApp");
+    expect(validateBundleIdentifier("com.example_bad")).toBeUndefined();
+    expect(validateBundleIdentifier("x".repeat(256))).toBeUndefined();
+  });
+
+  test("accepts a legacy App ID Prefix that differs from DEVELOPMENT_TEAM", async () => {
+    const { api } = scriptedAPI({
+      nativeReads: [nativeSettings(true)],
+      registrationReads: [[registration(LOCAL_PREFIX)]],
+    });
+
+    const result = await prepareIOSNativeRemoteSetup(
+      prepareOptions({
+        target: selectedTarget({ appIdPrefix: null }),
+        unverifiedAppIdPrefixSuggestion: {
+          source: "xcode-development-team",
+          value: "ABCDE12345",
+        },
+      }),
+      { api, prompts: prompts() },
+    );
+
+    expect(result).toMatchObject({
+      status: "satisfied",
+      appIdPrefix: LOCAL_PREFIX,
+      registration: "satisfied",
+      blockers: [],
+    });
+  });
+
+  test("blocks the malformed Bundle ID and App ID Prefix reproduction together", () => {
+    const result = buildIOSNativeRemotePlan({
+      applicationId: APPLICATION_ID,
+      instanceId: INSTANCE_ID,
+      target: selectedTarget({
+        bundleIdentifier: "com.example_bad",
+        appIdPrefix: "x",
+      }),
+      nativeSettings: nativeSettings(false),
+      registrations: [],
+    });
+
+    expect(result.status).toBe("blocked");
+    expect(result.blockers).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ code: "bundle-identifier-invalid" }),
+        expect.objectContaining({ code: "app-id-prefix-invalid" }),
+      ]),
+    );
+  });
+
+  test.each([
+    {
+      name: "local Bundle ID",
+      target: selectedTarget({ bundleIdentifier: "com.example_bad" }),
+      requestedAppIdPrefix: undefined,
+      registrations: [],
+      blocker: "bundle-identifier-invalid",
+    },
+    {
+      name: "local App ID Prefix",
+      target: selectedTarget({ appIdPrefix: "x" }),
+      requestedAppIdPrefix: undefined,
+      registrations: [],
+      blocker: "app-id-prefix-invalid",
+    },
+    {
+      name: "partial local App ID Prefix candidate",
+      target: selectedTarget({
+        appIdPrefix: null,
+        appIdPrefixCandidates: ["invalid-"],
+      }),
+      requestedAppIdPrefix: undefined,
+      registrations: [],
+      blocker: "app-id-prefix-invalid",
+    },
+    {
+      name: "explicit App ID Prefix",
+      target: selectedTarget({ appIdPrefix: null }),
+      requestedAppIdPrefix: "x",
+      registrations: [],
+      blocker: "app-id-prefix-invalid",
+    },
+    {
+      name: "existing registration App ID Prefix",
+      target: selectedTarget({ appIdPrefix: null }),
+      requestedAppIdPrefix: undefined,
+      registrations: [registration("x")],
+      blocker: "app-id-prefix-invalid",
+    },
+  ])("blocks an invalid $name before approval", (fixture) => {
+    const result = buildIOSNativeRemotePlan({
+      applicationId: APPLICATION_ID,
+      instanceId: INSTANCE_ID,
+      target: fixture.target,
+      requestedAppIdPrefix: fixture.requestedAppIdPrefix,
+      nativeSettings: nativeSettings(false),
+      registrations: [...fixture.registrations],
+    });
+
+    expect(result.status).toBe("blocked");
+    expect(result.registration).toBe("blocked");
+    expect(result.actions).not.toContainEqual(expect.stringContaining("Register iOS Bundle ID"));
+    expect(result.blockers).toContainEqual(expect.objectContaining({ code: fixture.blocker }));
+  });
+
+  test.each([
+    {
+      name: "invalid local identity",
+      target: selectedTarget({ bundleIdentifier: "com.example_bad" }),
+      registrations: [] as IOSApplication[],
+    },
+    {
+      name: "invalid existing registration",
+      target: selectedTarget({ appIdPrefix: null }),
+      registrations: [registration("x")],
+    },
+  ])("does not request consent or write for an $name", async ({ target, registrations }) => {
+    let consentCalls = 0;
+    const { api, calls } = scriptedAPI({
+      nativeReads: [nativeSettings(false)],
+      registrationReads: [[...registrations]],
+    });
+
+    await expect(
+      prepareIOSNativeRemoteSetup(prepareOptions({ target, yes: false }), {
+        api,
+        prompts: prompts({
+          confirmChanges: async () => {
+            consentCalls += 1;
+            return true;
+          },
+        }),
+      }),
+    ).rejects.toMatchObject({ code: ERROR_CODE.IOS_SETUP_BLOCKED });
+
+    expect(consentCalls).toBe(0);
+    expect(calls).toEqual(["GET native settings", "GET iOS registrations"]);
+    expect(calls).not.toContain("POST iOS registration");
+    expect(calls).not.toContain("PATCH native settings");
   });
 
   test("revalidates a satisfied plan without prompting or writing", async () => {
