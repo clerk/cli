@@ -263,6 +263,9 @@ describe("native Sign in with Apple remote setup", () => {
       configVersion: CONFIG_VERSION,
       blockers: [expect.objectContaining({ code: "apple-config-unsupported" })],
     });
+    expect(result.automation.blockers.map((blocker) => blocker.message).join("\n")).not.toContain(
+      "clerk init",
+    );
     expect(calls.sort()).toEqual(["GET config", "GET schema"]);
     const serialized = JSON.stringify(result);
     for (const sensitive of [SERVICES_ID, PRIVATE_KEY, TEAM_ID, KEY_ID]) {
@@ -302,6 +305,59 @@ describe("native Sign in with Apple remote setup", () => {
     });
   });
 
+  test("requires a config version only when the health audit finds a repair", async () => {
+    const api: IOSNativeAppleReadAPI = {
+      async fetchInstanceConfig() {
+        return config(connection(false, true), null);
+      },
+      async fetchInstanceConfigSchema() {
+        return appleSchema();
+      },
+    };
+
+    const result = await auditIOSNativeAppleHealth(
+      {
+        applicationId: APPLICATION_ID,
+        instanceId: INSTANCE_ID,
+        bundleIdentifier: BUNDLE_IDENTIFIER,
+      },
+      api,
+    );
+
+    expect(result.runtime.status).toBe("required");
+    expect(result.automation).toMatchObject({
+      status: "unsupported",
+      blockers: [expect.objectContaining({ code: "apple-config-version-unavailable" })],
+    });
+    expect(result.automation.configVersion).toBeUndefined();
+    expect(result.automation.blockers.map((blocker) => blocker.message).join("\n")).not.toContain(
+      "clerk init",
+    );
+  });
+
+  test("keeps a healthy versionless connection supported when no repair is required", async () => {
+    const api: IOSNativeAppleReadAPI = {
+      async fetchInstanceConfig() {
+        return config(connection(true, true, { bundle_id: BUNDLE_IDENTIFIER }), null);
+      },
+      async fetchInstanceConfigSchema() {
+        return appleSchema();
+      },
+    };
+
+    const result = await auditIOSNativeAppleHealth(
+      {
+        applicationId: APPLICATION_ID,
+        instanceId: INSTANCE_ID,
+        bundleIdentifier: BUNDLE_IDENTIFIER,
+      },
+      api,
+    );
+
+    expect(result.runtime.status).toBe("satisfied");
+    expect(result.automation).toEqual({ status: "supported", blockers: [] });
+  });
+
   test("keeps malformed automation metadata from poisoning healthy runtime state", async () => {
     const api: IOSNativeAppleReadAPI = {
       async fetchInstanceConfig() {
@@ -329,6 +385,9 @@ describe("native Sign in with Apple remote setup", () => {
       status: "unsupported",
       blockers: [expect.objectContaining({ code: "apple-config-invalid" })],
     });
+    expect(result.automation.blockers.map((blocker) => blocker.message).join("\n")).not.toContain(
+      "clerk init",
+    );
     expect(JSON.stringify(result)).not.toContain(PRIVATE_KEY);
   });
 
