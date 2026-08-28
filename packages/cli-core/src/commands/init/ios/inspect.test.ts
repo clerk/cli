@@ -3,7 +3,7 @@ import { build as buildPbxProject, parse as parsePbxProject } from "@bacons/xcod
 import { lstat, mkdtemp, mkdir, readFile, rm, symlink, truncate } from "node:fs/promises";
 import { dirname, join, relative } from "node:path";
 import { tmpdir } from "node:os";
-import { discoverIOSContainers, inspectWorkspace } from "./discovery.ts";
+import { discoverIOSContainers, discoverLocalIOSProjects, inspectWorkspace } from "./discovery.ts";
 import { inspectIOSProject, inspectIOSSourceMembership } from "./inspect.ts";
 import { recoverIOSFileTransactions } from "./file-transaction.ts";
 import type { PbxObject, PbxObjects } from "./pbx.ts";
@@ -1340,6 +1340,41 @@ let package = Package(
     expect(result.complete).toBe(false);
     expect(result.localProjectPaths).toEqual([]);
   });
+
+  test.each(["absolute", "parent-relative", "symlink-escape"] as const)(
+    "keeps an external %s workspace project visible while marking ownership incomplete",
+    async (kind) => {
+      const root = await fixture({ workspace: true });
+      const externalRoot = await fixture();
+      const workspace = join(root, "MyApp.xcworkspace");
+      const externalProject = join(externalRoot, "MyApp.xcodeproj");
+      let location: string;
+      let visiblePath = externalProject;
+      if (kind === "absolute") {
+        location = `absolute:${externalProject}`;
+      } else if (kind === "parent-relative") {
+        location = `group:${relative(root, externalProject)}`;
+      } else {
+        visiblePath = join(root, "External.xcodeproj");
+        await symlink(externalProject, visiblePath);
+        location = "group:External.xcodeproj";
+      }
+      await Bun.write(
+        join(workspace, "contents.xcworkspacedata"),
+        `<Workspace version="1.0"><FileRef location="${location}" /></Workspace>`,
+      );
+
+      const result = await inspectWorkspace(root, workspace);
+      const inventory = await discoverLocalIOSProjects(root);
+
+      expect(result.inspection.projectPaths).toContain(visiblePath);
+      expect(JSON.parse(JSON.stringify(result.inspection)).projectPaths).toContain(visiblePath);
+      expect(result.localProjectPaths).not.toContain(visiblePath);
+      expect(result.complete).toBe(false);
+      expect(inventory.projectPaths).not.toContain(visiblePath);
+      expect(inventory.complete).toBe(false);
+    },
+  );
 
   test("does not guess when multiple application targets exist", async () => {
     const root = await fixture({ secondTarget: true });
