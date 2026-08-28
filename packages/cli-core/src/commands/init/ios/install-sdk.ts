@@ -1480,10 +1480,12 @@ export async function prepareIOSSDKInstallMutation(
     };
   }
 
-  return {
-    status: "ready",
+  const result = {
+    status: "ready" as const,
     plan: prepared.plan,
-    mutation: {
+  } as Extract<PreparedIOSSDKInstallMutation, { status: "ready" }>;
+  Object.defineProperty(result, "mutation", {
+    value: {
       path: prepared.pbxprojPath,
       boundary: prepared.boundary,
       originalBytes: prepared.originalBytes,
@@ -1492,7 +1494,11 @@ export async function prepareIOSSDKInstallMutation(
       candidateHash: prepared.candidateHash,
       mode: prepared.mode,
     },
-  };
+    enumerable: false,
+    configurable: false,
+    writable: false,
+  });
+  return result;
 }
 
 export async function applyIOSSDKInstall(
