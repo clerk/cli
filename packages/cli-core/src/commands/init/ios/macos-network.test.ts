@@ -23,7 +23,11 @@ const temporaryDirectories: string[] = [];
 async function temporaryRoot(): Promise<string> {
   const root = await mkdtemp(join(tmpdir(), "clerk-macos-network-"));
   temporaryDirectories.push(root);
-  await createIOSFixture(root, { platform: "macos", includeKey: false });
+  await createIOSFixture(root, {
+    platform: "macos",
+    includeKey: false,
+    macOSAppleEntitlement: false,
+  });
   return root;
 }
 
@@ -63,6 +67,15 @@ async function enableSandbox(root: string): Promise<void> {
   });
 }
 
+async function removeNetworkEntitlement(root: string): Promise<void> {
+  const path = entitlementsPath(root);
+  const source = (await readFile(path, "utf8")).replace(
+    /\s*<key>com\.apple\.security\.network\.client<\/key>\s*<true\s*\/>/,
+    "",
+  );
+  await writeFile(path, source);
+}
+
 afterEach(async () => {
   await Promise.all(
     temporaryDirectories.splice(0).map((path) => rm(path, { recursive: true, force: true })),
@@ -72,6 +85,13 @@ afterEach(async () => {
 describe("macOS outgoing network capability", () => {
   test("does nothing for a provably unsandboxed macOS app", async () => {
     const root = await temporaryRoot();
+    await updateBuildSettings(root, (settings) => {
+      delete settings.ENABLE_APP_SANDBOX;
+    });
+    await writeFile(
+      entitlementsPath(root),
+      '<?xml version="1.0" encoding="UTF-8"?>\n<plist version="1.0"><dict></dict></plist>\n',
+    );
     const before = await treeDigest(root);
 
     const plan = await planMacOSNetworkCapability(options(root));
@@ -84,10 +104,11 @@ describe("macOS outgoing network capability", () => {
   test("adds only network.client to an existing sandboxed entitlement plist", async () => {
     const root = await temporaryRoot();
     await enableSandbox(root);
+    await removeNetworkEntitlement(root);
     const path = entitlementsPath(root);
     const source = (await readFile(path, "utf8")).replace(
-      "<key>application-identifier</key>",
-      "<!-- keep this comment -->\n<key>application-identifier</key>",
+      "<key>com.apple.security.app-sandbox</key>",
+      "<!-- keep this comment -->\n<key>com.apple.security.app-sandbox</key>",
     );
     await writeFile(path, source);
 
@@ -103,7 +124,7 @@ describe("macOS outgoing network capability", () => {
     expect(after).toContain("<!-- keep this comment -->");
     expect(after).toContain("<key>com.apple.security.network.client</key>");
     expect(after).toContain("<true/>");
-    expect(after).not.toContain("<key>com.apple.security.app-sandbox</key>");
+    expect(after).toContain("<key>com.apple.security.app-sandbox</key>");
     expect((await planMacOSNetworkCapability(options(root))).status).toBe("satisfied");
   });
 
@@ -209,6 +230,7 @@ describe("macOS outgoing network capability", () => {
   test("composes its candidate with a later Sign in with Apple entitlement", async () => {
     const root = await temporaryRoot();
     await enableSandbox(root);
+    await removeNetworkEntitlement(root);
     const networkPlan = await planMacOSNetworkCapability(options(root));
     const network = await prepareMacOSNetworkCapabilityMutation(networkPlan);
     expect(network.status).toBe("ready");
@@ -218,6 +240,7 @@ describe("macOS outgoing network capability", () => {
       root,
       projectPath: "MyApp.xcodeproj",
       targetId: IOS_FIXTURE_IDS.appTarget,
+      platform: "macos",
     });
     const apple = await prepareIOSAppleEntitlementMutation(applePlan, {
       baseMutations: network.mutations,
@@ -239,6 +262,7 @@ describe("macOS outgoing network capability", () => {
   test("does not serialize prepared entitlement bytes", async () => {
     const root = await temporaryRoot();
     await enableSandbox(root);
+    await removeNetworkEntitlement(root);
     const prepared = await prepareMacOSNetworkCapabilityMutation(
       await planMacOSNetworkCapability(options(root)),
     );

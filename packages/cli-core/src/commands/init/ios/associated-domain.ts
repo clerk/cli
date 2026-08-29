@@ -37,7 +37,12 @@ import {
 } from "./entitlements-settings.ts";
 import { hasIncompleteIOSContainerDiscovery, inspectIOSProject } from "./inspect.ts";
 import { asString, buildPbxParentIndex, isRecord, type PbxObject, type PbxObjects } from "./pbx.ts";
-import type { IOSAppTarget, IOSDiagnostic, IOSProjectInspectionResult } from "./types.ts";
+import type {
+  IOSAppTarget,
+  IOSDiagnostic,
+  IOSNativePlatform,
+  IOSProjectInspectionResult,
+} from "./types.ts";
 
 const ASSOCIATED_DOMAINS_KEY = "com.apple.developer.associated-domains";
 const MAX_ENTITLEMENTS_BYTES = 1_000_000;
@@ -91,6 +96,8 @@ export interface IOSAssociatedDomainPlanOptions {
   /** Invocation-root-relative selected .xcodeproj path. */
   projectPath: string;
   targetId: string;
+  /** Defaults to iOS; capability planners may share these ownership checks on macOS. */
+  platform?: IOSNativePlatform;
   /** A separately proven direct Swift configuration will supply the runtime key after auth. */
   deferToPublishableKey?: boolean;
   /** Allows the strict synchronized-root planner to create and attach a new file. */
@@ -530,6 +537,7 @@ export async function planIOSAssociatedDomain(
         root,
         projectPath: options.projectPath,
         targetId: options.targetId,
+        platform: options.platform,
       });
       if (settingsPlan.status === "ready" && settingsPlan.entitlementsPath) {
         return {
@@ -548,7 +556,9 @@ export async function planIOSAssociatedDomain(
             expectedDomain
               ? `Create ${settingsPlan.entitlementsPath} with ${expectedDomain}.`
               : `Create ${settingsPlan.entitlementsPath} with the linked development instance's exact webcredentials host (resolved after authentication).`,
-            `Attach ${settingsPlan.entitlementsPath} only to iPhone and iPad SDK builds for every selected-target configuration.`,
+            options.platform === "macos"
+              ? `Attach ${settingsPlan.entitlementsPath} only to macOS SDK builds for every selected-target configuration.`
+              : `Attach ${settingsPlan.entitlementsPath} only to iPhone and iPad SDK builds for every selected-target configuration.`,
           ],
           blockers: [],
         };
