@@ -24,6 +24,19 @@ afterEach(async () => {
 });
 
 describe("buildIOSSetupPlan", () => {
+  test("uses macOS labels and omits the iOS Associated Domain step", async () => {
+    const plan = await planFor({ platform: "macos", complete: true });
+
+    expect(plan.selection).toMatchObject({ state: "selected", platform: "macos" });
+    expect(plan.steps.map((step) => step.id)).not.toContain("add-associated-domain");
+    expect(plan.steps.find((step) => step.id === "select-target")?.title).toBe(
+      "Select the macOS application target",
+    );
+    expect(plan.steps.find((step) => step.id === "register-native-application")?.title).toBe(
+      "Register the macOS app in Clerk Dashboard",
+    );
+  });
+
   test("returns stable ordered steps while preserving a custom project key source", async () => {
     const plan = await planFor({ complete: true });
 

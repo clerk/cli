@@ -21,6 +21,7 @@ import {
   type PbxObject,
   type PbxObjects,
 } from "./pbx.ts";
+import type { IOSNativePlatform } from "./types.ts";
 
 const APP_PRODUCT_TYPE = "com.apple.product-type.application";
 const CLERK_REPOSITORY = "https://github.com/clerk/clerk-ios";
@@ -40,6 +41,7 @@ export interface IOSSDKInstallOptions {
   /** Project-root-relative path selected by the iOS inspector. */
   projectPath: string;
   targetId: string;
+  platform?: IOSNativePlatform;
   includeClerkKitUI?: boolean;
   /** Used only when a new clerk-ios remote reference must be created. */
   minimumVersion?: string;
@@ -78,6 +80,7 @@ export interface IOSSDKInstallPlan {
   root: string;
   projectPath: string;
   targetId: string;
+  platform: IOSNativePlatform;
   products: IOSSDKProduct[];
   minimumVersion: string;
   requirePrebuiltAuthCompatibility?: true;
@@ -110,7 +113,7 @@ interface ProductGraph {
   productId?: string;
   inTarget: boolean;
   buildFileId?: string;
-  hasNonIOSBuildFile: boolean;
+  hasOtherPlatformBuildFile: boolean;
 }
 
 interface PreparedInstall {
@@ -220,6 +223,7 @@ function makePlan(
     root,
     projectPath,
     targetId: options.targetId,
+    platform: options.platform ?? "ios",
     products: requestedProducts(options.includeClerkKitUI),
     minimumVersion: effectiveMinimumVersion(options),
     ...(options.requirePrebuiltAuthCompatibility ? { requirePrebuiltAuthCompatibility: true } : {}),
@@ -540,7 +544,10 @@ function clerkProductName(object: PbxObject | undefined): IOSSDKProduct | undefi
   return PRODUCT_NAMES.find((productName) => productName === name);
 }
 
-function buildFileIOSApplicability(object: PbxObject): {
+function buildFilePlatformApplicability(
+  object: PbxObject,
+  platform: IOSNativePlatform,
+): {
   applies: boolean;
   recognized: boolean;
 } {
@@ -558,13 +565,17 @@ function buildFileIOSApplicability(object: PbxObject): {
   }
   const filters = [...asStringArray(rawFilters), ...(platformFilter ? [platformFilter] : [])];
   if (filters.length === 0) return { applies: true, recognized: true };
-  if (filters.some((filter) => /(?:^|[^a-z])(?:ios|iphone)/i.test(filter))) {
-    return { applies: true, recognized: true };
-  }
   const recognized = filters.every((filter) =>
-    /(?:maccatalyst|macos|tvos|watchos|xros|visionos|driverkit)/i.test(filter),
+    /^(?:ios|iphone(?:os|simulator)?|maccatalyst|macos|tvos|watchos|xros|visionos|driverkit)$/i.test(
+      filter,
+    ),
   );
-  return { applies: false, recognized };
+  if (!recognized) return { applies: false, recognized: false };
+  const applies =
+    platform === "ios"
+      ? filters.some((filter) => /^(?:ios|iphone(?:os|simulator)?)$/i.test(filter))
+      : filters.some((filter) => /^macos$/i.test(filter));
+  return { applies, recognized: true };
 }
 
 function validateProductPackage(
@@ -610,6 +621,7 @@ function scanProductGraph(
   objects: PbxObjects,
   verifiedPackageIds: Set<string>,
   unsafeLocalPackageIds: Set<string>,
+  platform: IOSNativePlatform,
 ): { graph?: ProductGraph; blocker?: IOSSDKInstallBlocker } {
   const targetMatches = targetProductIds.filter(
     (id) => clerkProductName(objects[id]) === productName,
@@ -624,7 +636,7 @@ function scanProductGraph(
   }
 
   const phaseMatches: Array<{ buildFileId: string; productId: string }> = [];
-  let hasNonIOSBuildFile = false;
+  let hasOtherPlatformBuildFile = false;
   for (const buildFileId of frameworkFiles) {
     const buildFile = objects[buildFileId];
     if (!buildFile || buildFile.isa !== "PBXBuildFile") {
@@ -637,7 +649,7 @@ function scanProductGraph(
     }
     const productId = asString(buildFile.productRef);
     if (productId && clerkProductName(objects[productId]) === productName) {
-      const applicability = buildFileIOSApplicability(buildFile);
+      const applicability = buildFilePlatformApplicability(buildFile, platform);
       if (!applicability.recognized) {
         return {
           blocker: {
@@ -649,7 +661,7 @@ function scanProductGraph(
       if (applicability.applies) {
         phaseMatches.push({ buildFileId, productId });
       } else {
-        hasNonIOSBuildFile = true;
+        hasOtherPlatformBuildFile = true;
       }
     }
   }
@@ -687,7 +699,7 @@ function scanProductGraph(
       productId,
       inTarget: targetProductId != null,
       buildFileId: phaseMatch?.buildFileId,
-      hasNonIOSBuildFile,
+      hasOtherPlatformBuildFile,
     },
   };
 }
@@ -696,6 +708,7 @@ function validateCandidateGraph(
   parts: ProjectParts,
   packageId: string,
   products: IOSSDKProduct[],
+  platform: IOSNativePlatform,
 ): boolean {
   const packageReferences = strictStringArray(parts.projectObject, "packageReferences");
   const targetProducts = strictStringArray(parts.targetObject, "packageProductDependencies");
@@ -722,8 +735,8 @@ function validateCandidateGraph(
       return (
         buildFile?.isa === "PBXBuildFile" &&
         asString(buildFile?.productRef) === productId &&
-        buildFileIOSApplicability(buildFile).recognized &&
-        buildFileIOSApplicability(buildFile).applies
+        buildFilePlatformApplicability(buildFile, platform).recognized &&
+        buildFilePlatformApplicability(buildFile, platform).applies
       );
     });
     if (linked.length !== 1) return false;
@@ -733,7 +746,7 @@ function validateCandidateGraph(
       const linkedProduct = parts.objects[asString(buildFile.productRef) ?? ""];
       return (
         clerkProductName(linkedProduct) === productName &&
-        buildFileIOSApplicability(buildFile).applies
+        buildFilePlatformApplicability(buildFile, platform).applies
       );
     });
     if (allLinkedProducts.length !== 1) return false;
@@ -892,10 +905,24 @@ async function prepareInstall(options: IOSSDKInstallOptions): Promise<PreparedIn
       root,
       projectPath,
       "target-not-found",
-      `The selected target ${options.targetId} is not a verified iOS application target in ${projectPath}.`,
+      `The selected target ${options.targetId} is not a verified native Apple application target in ${projectPath}.`,
       source,
     );
   }
+  const platform = inspection.selection.platform;
+  if (options.platform && platform !== options.platform) {
+    return blocked(
+      options,
+      root,
+      projectPath,
+      "target-not-found",
+      `The selected target is no longer a verified ${
+        options.platform === "macos" ? "macOS" : "iOS"
+      } application target.`,
+      source,
+    );
+  }
+  options = { ...options, platform };
 
   // Parse a second model instead of structured-cloning. pbxproj data literals
   // can be Buffers, which structuredClone turns into writer-incompatible
@@ -1068,6 +1095,7 @@ async function prepareInstall(options: IOSSDKInstallOptions): Promise<PreparedIn
       parts.objects,
       verifiedPackageIds,
       unsafeLocalPackageIds,
+      platform,
     );
     if (result.blocker) {
       productBlockers.push(result.blocker);
@@ -1197,7 +1225,7 @@ async function prepareInstall(options: IOSSDKInstallOptions): Promise<PreparedIn
       parts.objects[buildFileId] = {
         isa: "PBXBuildFile",
         productRef: productId,
-        ...(graph.hasNonIOSBuildFile ? { platformFilter: "ios" } : {}),
+        ...(graph.hasOtherPlatformBuildFile ? { platformFilter: platform } : {}),
       };
       const phase = parts.objects[frameworkPhaseId]!;
       const currentFiles = strictStringArray(phase, "files")!;
@@ -1220,7 +1248,9 @@ async function prepareInstall(options: IOSSDKInstallOptions): Promise<PreparedIn
       root,
       projectPath,
       "generated-project",
-      `This is a ${generator === "xcodegen" ? "XcodeGen" : "Tuist"} project; update its source manifest instead of generated project.pbxproj output.`,
+      `This is a ${
+        generator === "xcodegen" ? "XcodeGen" : "Tuist"
+      } project; update its source manifest instead of generated project.pbxproj output.`,
       source,
     );
   }
@@ -1251,7 +1281,10 @@ async function prepareInstall(options: IOSSDKInstallOptions): Promise<PreparedIn
     );
   }
   const candidateParts = projectParts(reparsed, options.targetId);
-  if (!candidateParts || !validateCandidateGraph(candidateParts, selectedPackage.id, products)) {
+  if (
+    !candidateParts ||
+    !validateCandidateGraph(candidateParts, selectedPackage.id, products, platform)
+  ) {
     return blocked(
       options,
       root,
@@ -1294,7 +1327,7 @@ export async function validateIOSSDKInstallPostcondition(
   if (
     packages.length !== 1 ||
     !selectedPackage ||
-    !validateCandidateGraph(parts, selectedPackage.id, plan.products)
+    !validateCandidateGraph(parts, selectedPackage.id, plan.products, plan.platform)
   ) {
     return false;
   }
@@ -1310,7 +1343,8 @@ export async function validateIOSSDKInstallPostcondition(
   if (
     inspection.selection.state !== "selected" ||
     inspection.selection.targetId !== plan.targetId ||
-    inspection.selection.projectPath !== plan.projectPath
+    inspection.selection.projectPath !== plan.projectPath ||
+    inspection.selection.platform !== plan.platform
   ) {
     return false;
   }
@@ -1352,7 +1386,11 @@ export type PreparedIOSSDKInstallMutation =
   | { status: "blocked"; plan: IOSSDKInstallPlan }
   | { status: "stale"; plan: IOSSDKInstallPlan }
   | { status: "satisfied"; plan: IOSSDKInstallPlan }
-  | { status: "ready"; plan: IOSSDKInstallPlan; mutation: IOSExistingFileMutation };
+  | {
+      status: "ready";
+      plan: IOSSDKInstallPlan;
+      mutation: IOSExistingFileMutation;
+    };
 
 /**
  * Reprepares a serialized SDK plan and exposes its PBX mutation without writing
@@ -1369,6 +1407,7 @@ export async function prepareIOSSDKInstallMutation(
     root: plan.root,
     projectPath: plan.projectPath,
     targetId: plan.targetId,
+    platform: plan.platform,
     includeClerkKitUI: plan.products.includes("ClerkKitUI"),
     minimumVersion: plan.minimumVersion,
     requirePrebuiltAuthCompatibility: plan.requirePrebuiltAuthCompatibility,
@@ -1397,6 +1436,7 @@ export async function prepareIOSSDKInstallMutation(
           root: plan.root,
           projectPath: plan.projectPath,
           targetId: plan.targetId,
+          platform: plan.platform,
           includeClerkKitUI: plan.products.includes("ClerkKitUI"),
           minimumVersion: plan.minimumVersion,
           requirePrebuiltAuthCompatibility: plan.requirePrebuiltAuthCompatibility,

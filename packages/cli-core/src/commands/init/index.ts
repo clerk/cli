@@ -143,7 +143,7 @@ export async function init(options: InitOptions = {}) {
     options.prebuiltAuthUI === true;
   if (requiresExistingIOSProject && frameworkOverride && frameworkOverride.dep !== "ios") {
     throwUsageError(
-      "--target, --allow-dirty, --app-id-prefix, --sign-in-with-apple, and --prebuilt-auth-ui apply only to native iOS projects.",
+      "--target, --allow-dirty, --app-id-prefix, --sign-in-with-apple, and --prebuilt-auth-ui apply only to native Apple projects.",
     );
   }
 
@@ -196,7 +196,7 @@ export async function init(options: InitOptions = {}) {
   if (options.dryRun) {
     if (ctx.framework.dep !== "ios") {
       throwUsageError(
-        `--dry-run currently supports native iOS projects only; detected ${ctx.framework.name}.`,
+        `--dry-run currently supports native Apple projects only; detected ${ctx.framework.name}.`,
       );
     }
     await runAppleNativeDryRun({

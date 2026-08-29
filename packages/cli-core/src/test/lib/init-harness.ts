@@ -94,6 +94,7 @@ export const FAKE_IOS_NATIVE_READINESS: IOSNativeReadinessAudit = {
     projectPath: "MyApp.xcodeproj",
     targetId: "TARGET",
     targetName: "MyApp",
+    platform: "ios",
     bundleIdentifier: { status: "resolved", value: "com.example.MyApp" },
     appIdPrefix: {
       status: "resolved",
@@ -214,6 +215,7 @@ export function useInitHarness(): InitHarness {
       spyOn(bootstrapModule, "confirmOverwrite").mockResolvedValue(undefined),
       spyOn(iosApplyModule, "applyIOSLocalSetup").mockResolvedValue({
         targetName: "MyApp",
+        platform: "ios",
         setupPlan: {
           schemaVersion: 1,
           kind: "clerk-ios-setup",

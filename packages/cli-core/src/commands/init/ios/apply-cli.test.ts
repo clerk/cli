@@ -51,7 +51,7 @@ describe("clerk init iOS SDK apply", () => {
         agent: true,
         allowDirty: false,
       }),
-    ).rejects.toThrow("More than one iOS application target is eligible");
+    ).rejects.toThrow("More than one native Apple application target is eligible");
 
     expect(await treeDigest(root)).toEqual(before);
   });
@@ -126,6 +126,37 @@ describe("clerk init iOS SDK apply", () => {
       projectPath: "Level0/Level1/Level2/Level3/MyApp.xcodeproj",
       targetId: IOS_FIXTURE_IDS.appTarget,
       targetName: "MyApp",
+    });
+    expect(await treeDigest(root)).toEqual(before);
+  });
+
+  test("plans a pure macOS app without an Associated Domain action", async () => {
+    const root = await mkdtemp(join(tmpdir(), "clerk-macos-local-setup-"));
+    temporaryDirectories.push(root);
+    await createIOSFixture(root, {
+      platform: "macos",
+      complete: true,
+      includeKey: false,
+      localSecrets: true,
+    });
+    const before = await treeDigest(root);
+
+    const setup = await applyIOSLocalSetup({
+      root,
+      yes: true,
+      agent: true,
+      allowDirty: false,
+      prebuiltAuthUI: false,
+      signInWithApple: false,
+    });
+
+    expect(setup).toMatchObject({
+      platform: "macos",
+      associatedDomainPlan: undefined,
+      nativeReadiness: {
+        target: { status: "selected", platform: "macos" },
+        associatedDomain: { status: "not-applicable", files: [], blockers: [] },
+      },
     });
     expect(await treeDigest(root)).toEqual(before);
   });

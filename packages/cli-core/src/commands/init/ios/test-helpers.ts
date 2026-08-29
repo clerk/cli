@@ -97,6 +97,7 @@ function pbxproj(options: IOSFixtureOptions): string {
     platform === "macos"
       ? "MACOSX_DEPLOYMENT_TARGET = 14.0;"
       : "IPHONEOS_DEPLOYMENT_TARGET = 17.0;";
+  const sandboxSettings = platform === "macos" ? "ENABLE_APP_SANDBOX = YES;" : "";
   const includeClerkSDK = options.clerkSDK !== false;
   const includeClerkKitUI = includeClerkSDK && options.clerkSDK !== "core-only";
   const releaseBundle = options.conflictingBundle
@@ -169,8 +170,8 @@ function pbxproj(options: IOSFixtureOptions): string {
     ${IDS.projectDebug} = { isa = XCBuildConfiguration; buildSettings = { SDKROOT = ${sdkRoot}; }; name = Debug; };
     ${IDS.projectRelease} = { isa = XCBuildConfiguration; buildSettings = { SDKROOT = ${sdkRoot}; }; name = Release; };
     ${IDS.targetConfigList} = { isa = XCConfigurationList; buildConfigurations = ( ${IDS.targetDebug}, ${IDS.targetRelease}, ); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release; };
-    ${IDS.targetDebug} = { isa = XCBuildConfiguration; ${baseConfigurationReference} buildSettings = { CODE_SIGN_ENTITLEMENTS = MyApp/MyApp.entitlements; ${debugIdentitySettings} ${deploymentTargetSetting} SUPPORTED_PLATFORMS = "${supportedPlatforms}"; }; name = Debug; };
-    ${IDS.targetRelease} = { isa = XCBuildConfiguration; ${baseConfigurationReference} buildSettings = { ${releaseEntitlements} ${releaseIdentitySettings} ${deploymentTargetSetting} SUPPORTED_PLATFORMS = "${supportedPlatforms}"; }; name = Release; };
+    ${IDS.targetDebug} = { isa = XCBuildConfiguration; ${baseConfigurationReference} buildSettings = { CODE_SIGN_ENTITLEMENTS = MyApp/MyApp.entitlements; ${debugIdentitySettings} ${deploymentTargetSetting} ${sandboxSettings} SUPPORTED_PLATFORMS = "${supportedPlatforms}"; }; name = Debug; };
+    ${IDS.targetRelease} = { isa = XCBuildConfiguration; ${baseConfigurationReference} buildSettings = { ${releaseEntitlements} ${releaseIdentitySettings} ${deploymentTargetSetting} ${sandboxSettings} SUPPORTED_PLATFORMS = "${supportedPlatforms}"; }; name = Release; };
     ${options.secondTarget ? secondTargetObjects(options.secondTarget === "watchos" ? "watchos" : "ios") : ""}
   };
   rootObject = ${IDS.project};
@@ -243,6 +244,15 @@ const ENTITLEMENTS = `<?xml version="1.0" encoding="UTF-8"?>
 </dict></plist>
 `;
 
+const MACOS_ENTITLEMENTS = `<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+<key>com.apple.security.app-sandbox</key><true/>
+<key>com.apple.security.network.client</key><true/>
+<key>com.apple.developer.applesignin</key><array><string>Default</string></array>
+</dict></plist>
+`;
+
 export async function createIOSFixture(
   root: string,
   options: IOSFixtureOptions = {},
@@ -252,7 +262,10 @@ export async function createIOSFixture(
   await mkdir(join(root, "MyApp"), { recursive: true });
   await Bun.write(join(project, "project.pbxproj"), pbxproj(options));
   await Bun.write(join(root, "MyApp", "MyAppApp.swift"), swiftSource(options.complete === true));
-  await Bun.write(join(root, "MyApp", "MyApp.entitlements"), ENTITLEMENTS);
+  await Bun.write(
+    join(root, "MyApp", "MyApp.entitlements"),
+    options.platform === "macos" ? MACOS_ENTITLEMENTS : ENTITLEMENTS,
+  );
   if (options.secondTarget) {
     const platform = options.secondTarget === "watchos" ? "watchos" : "ios";
     const directoryName = platform === "watchos" ? "WatchApp" : "AdminApp";
