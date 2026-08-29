@@ -39,6 +39,7 @@ const MAX_ENTITLEMENTS_BYTES = 1_000_000;
 export type IOSAssociatedDomainBlockerCode =
   | "invalid-selection"
   | "generated-project"
+  | "unresolved-platform"
   | "runtime-key-unproven"
   | "missing-entitlements"
   | "mixed-entitlements"
@@ -551,6 +552,18 @@ export async function planIOSAssociatedDomain(
       blocker("invalid-selection", "The selected iOS target could not be resolved exactly."),
     ]);
   }
+  if (!target.platformEvidenceComplete) {
+    return blockedPlan(
+      options,
+      [
+        blocker(
+          "unresolved-platform",
+          "Resolve SDKROOT and SUPPORTED_PLATFORMS consistently across every selected-target build configuration before changing entitlements.",
+        ),
+      ],
+      target.name,
+    );
+  }
   const generator =
     inspection.generatedProject ??
     (await generatedProjectKind(root, resolve(root, options.projectPath)));
@@ -1051,7 +1064,7 @@ export async function validatePreparedIOSAssociatedDomain(
   });
   if (hasIncompleteIOSContainerDiscovery(inspection)) return false;
   const target = selectedTarget(inspection, prepared.plan.projectPath, prepared.plan.targetId);
-  if (!target) return false;
+  if (!target?.platformEvidenceComplete) return false;
   if (
     inspection.generatedProject != null ||
     (await generatedProjectKind(

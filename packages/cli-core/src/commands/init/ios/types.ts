@@ -19,6 +19,7 @@ export interface IOSDiagnostic {
     | "xcode.no-ios-app-target"
     | "xcode.ambiguous-app-target"
     | "xcode.target-not-found"
+    | "xcode.unresolved-target-platform"
     | "xcode.unresolved-build-setting"
     | "xcode.conflicting-build-setting"
     | "xcode.missing-entitlements"
@@ -153,6 +154,8 @@ export interface IOSAppTarget {
    * includes iOS continues through the iOS path.
    */
   platform: IOSNativePlatform;
+  /** False when any build configuration's native platform is unresolved or conflicts. */
+  platformEvidenceComplete: boolean;
   productName?: string;
   projectPath: string;
   configurations: IOSBuildConfiguration[];

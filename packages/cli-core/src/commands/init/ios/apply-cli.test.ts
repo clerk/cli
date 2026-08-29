@@ -34,6 +34,31 @@ setDefaultTimeout(15_000);
 describe("clerk init iOS SDK apply", () => {
   const captured = useCaptureLog();
 
+  test("makes no local or remote plan when a configuration platform is unresolved", async () => {
+    const root = await mkdtemp(join(tmpdir(), "clerk-native-unresolved-platform-"));
+    temporaryDirectories.push(root);
+    await createIOSFixture(root, {
+      platform: "macos",
+      releasePlatform: "unresolved",
+      complete: true,
+    });
+    const before = await treeDigest(root);
+
+    await expect(
+      applyIOSLocalSetup({
+        root,
+        target: "MyApp",
+        yes: true,
+        agent: true,
+        allowDirty: false,
+      }),
+    ).rejects.toMatchObject({
+      code: ERROR_CODE.IOS_TARGET_UNRESOLVED,
+      message: expect.stringContaining("platform could not be proven consistently"),
+    });
+    expect(await treeDigest(root)).toEqual(before);
+  });
+
   test("uses exhaustive project discovery before implicitly selecting a target", async () => {
     const root = await mkdtemp(join(tmpdir(), "clerk-ios-exhaustive-apply-selection-"));
     temporaryDirectories.push(root);

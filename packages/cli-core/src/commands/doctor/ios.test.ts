@@ -227,6 +227,37 @@ describe("runIOSDoctorChecks", () => {
     expect(audit.results.some((result) => result.name === "Environment variables")).toBeFalse();
   });
 
+  test("fails locally without SDK or remote planning when platform evidence is unresolved", async () => {
+    const root = await fixture({
+      complete: true,
+      platform: "macos",
+      releasePlatform: "unresolved",
+    });
+    let sdkPlanCalls = 0;
+    let remoteCalls = 0;
+    const audit = await runIOSDoctorChecks(
+      context(),
+      { root, target: "MyApp" },
+      dependencies({
+        planIOSSDKInstall: async (...args) => {
+          sdkPlanCalls += 1;
+          return planIOSSDKInstall(...args);
+        },
+        fetchApplication: async () => {
+          remoteCalls += 1;
+          throw new Error("remote inspection must not run");
+        },
+      }),
+    );
+
+    expect(audit.inspection.selection).toMatchObject({ state: "selected", platform: "macos" });
+    expect(audit.inspection.appTargets[0]?.platformEvidenceComplete).toBe(false);
+    expect(sdkPlanCalls).toBe(0);
+    expect(remoteCalls).toBe(0);
+    expect(audit.results.every((result) => result.status === "fail")).toBe(true);
+    expect(audit.results[0]?.detail).toContain("platform is not proven consistently");
+  });
+
   test("reports missing macOS sandbox network access without changing the project", async () => {
     const root = await fixture({
       complete: true,

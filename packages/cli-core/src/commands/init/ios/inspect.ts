@@ -1077,16 +1077,70 @@ async function parseProject(
       parents,
       diagnostics: configurationDiagnostics,
     });
-    const targetPlatform: IOSNativePlatform | undefined = targetConfigurations.some(
-      (configuration) => configuration.platform === "ios",
-    )
+    const concretePlatforms = new Set(
+      targetConfigurations.flatMap((configuration) =>
+        configuration.platformEvidenceComplete && configuration.platform
+          ? [configuration.platform]
+          : [],
+      ),
+    );
+    const hasUncertainConfiguration = targetConfigurations.some(
+      (configuration) => !configuration.platformEvidenceComplete,
+    );
+    const hasResolvedUnsupportedConfiguration = targetConfigurations.some(
+      (configuration) => configuration.platformEvidenceComplete && !configuration.platform,
+    );
+    const inferredPlatforms = new Set(
+      targetConfigurations.flatMap((configuration) =>
+        configuration.platform ? [configuration.platform] : [],
+      ),
+    );
+    const targetPlatform: IOSNativePlatform | undefined = concretePlatforms.has("ios")
       ? "ios"
-      : targetConfigurations.some((configuration) => configuration.platform === "macos")
+      : concretePlatforms.has("macos")
         ? "macos"
-        : targetConfigurations.length === 0
-          ? "ios"
+        : hasUncertainConfiguration || targetConfigurations.length === 0
+          ? inferredPlatforms.has("macos")
+            ? "macos"
+            : "ios"
           : undefined;
     if (!targetPlatform) continue;
+    const platformEvidenceComplete =
+      targetConfigurations.length > 0 &&
+      !hasUncertainConfiguration &&
+      !hasResolvedUnsupportedConfiguration &&
+      concretePlatforms.size === 1;
+    if (!platformEvidenceComplete) {
+      const configurationSummary =
+        targetConfigurations.length === 0
+          ? "no build configurations were inspectable"
+          : targetConfigurations
+              .map((configuration) => {
+                const label = configuration.platform
+                  ? configuration.platform === "macos"
+                    ? "macOS"
+                    : "iOS"
+                  : "unsupported";
+                return `${configuration.model.name}=${
+                  configuration.platformEvidenceComplete ? label : "unresolved"
+                }`;
+              })
+              .join(", ");
+      configurationDiagnostics.push({
+        code: "xcode.unresolved-target-platform",
+        severity: "error",
+        message: `${targetName} does not have one proven native platform across every build configuration (${configurationSummary}).`,
+        remedy:
+          "Resolve SDKROOT and SUPPORTED_PLATFORMS consistently for every build configuration before running Clerk setup.",
+        evidence: [
+          {
+            path: relativeIOSPath(root, resolve(projectPath, "project.pbxproj")),
+            objectId: targetId,
+            keyPath: "buildConfigurations",
+          },
+        ],
+      });
+    }
     appTargetCandidates.push({
       targetId,
       targetName,
@@ -1153,6 +1207,7 @@ async function parseProject(
       id: targetId,
       name: targetName,
       platform: targetPlatform,
+      platformEvidenceComplete,
       productName: asString(targetObject.productName),
       projectPath: projectRelativePath,
       configurations,

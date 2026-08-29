@@ -58,6 +58,7 @@ export type IOSSDKInstallBlockerCode =
   | "target-not-found"
   | "ambiguous-target"
   | "incomplete-container-discovery"
+  | "unresolved-platform"
   | "ambiguous-package"
   | "duplicate-package"
   | "unattributed-product"
@@ -910,6 +911,19 @@ async function prepareInstall(options: IOSSDKInstallOptions): Promise<PreparedIn
     );
   }
   const platform = inspection.selection.platform;
+  const inspectedTarget = inspection.appTargets.find(
+    (target) => target.id === options.targetId && target.projectPath === projectPath,
+  );
+  if (!inspectedTarget?.platformEvidenceComplete) {
+    return blocked(
+      options,
+      root,
+      projectPath,
+      "unresolved-platform",
+      "Resolve SDKROOT and SUPPORTED_PLATFORMS consistently across every selected-target build configuration before changing Swift package links.",
+      source,
+    );
+  }
   if (options.platform && platform !== options.platform) {
     return blocked(
       options,
@@ -1364,7 +1378,9 @@ export async function validateIOSSDKInstallPostcondition(
   const target = inspection.appTargets.find(
     (item) => item.id === plan.targetId && item.projectPath === plan.projectPath,
   );
-  if (!target || !["remote", "local"].includes(target.packages.package)) return false;
+  if (!target?.platformEvidenceComplete || !["remote", "local"].includes(target.packages.package)) {
+    return false;
+  }
   return plan.products.every((productName) =>
     productName === "ClerkKit"
       ? target.packages.clerkKit === "linked"

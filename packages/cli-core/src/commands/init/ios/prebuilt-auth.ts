@@ -29,6 +29,7 @@ export interface IOSPrebuiltAuthPlanOptions {
 export type IOSPrebuiltAuthBlockerCode =
   | "invalid-selection"
   | "target-not-found"
+  | "unresolved-platform"
   | "generated-project"
   | "incompatible-deployment-target"
   | "incomplete-source-membership"
@@ -488,6 +489,15 @@ async function preparePlan(options: IOSPrebuiltAuthPlanOptions): Promise<Prepare
       projectPath,
       "target-not-found",
       "The selected native Apple application target disappeared during inspection.",
+    );
+  }
+  if (!target.platformEvidenceComplete) {
+    return blocked(
+      options,
+      root,
+      projectPath,
+      "unresolved-platform",
+      "Resolve SDKROOT and SUPPORTED_PLATFORMS consistently across every selected-target build configuration before changing authentication UI.",
     );
   }
   if (options.platform && target.platform !== options.platform) {

@@ -40,6 +40,7 @@ export type IOSDirectConfigBlockerCode =
   | "external-path"
   | "generated-project"
   | "target-not-found"
+  | "unresolved-platform"
   | "incomplete-source-membership"
   | "shared-source"
   | "ambiguous-entry-point"
@@ -1150,6 +1151,15 @@ async function prepareDirectConfig(
       projectPath,
       "target-not-found",
       "The selected native Apple application target disappeared during inspection.",
+    );
+  }
+  if (!target.platformEvidenceComplete) {
+    return blocked(
+      options,
+      root,
+      projectPath,
+      "unresolved-platform",
+      "Resolve SDKROOT and SUPPORTED_PLATFORMS consistently across every selected-target build configuration before changing Swift startup code.",
     );
   }
   if (options.platform && target.platform !== options.platform) {
