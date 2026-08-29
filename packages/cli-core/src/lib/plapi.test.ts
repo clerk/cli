@@ -20,7 +20,7 @@ const {
   triggerApplicationDomainDNSCheck,
   listApplicationDomains,
 } = await import("./plapi.ts");
-const { AuthError, PlapiError } = await import("./errors.ts");
+const { AuthError, ERROR_CODE, PlapiError } = await import("./errors.ts");
 
 describe("plapi", () => {
   const originalEnv = { ...process.env };
@@ -340,6 +340,45 @@ describe("plapi", () => {
 
       const result = await fetchApplication("app_abc");
       expect(result).toEqual(mockApp);
+    });
+
+    test("rejects malformed application JSON", async () => {
+      stubFetch(async () => new Response("{", { status: 200 }));
+
+      await expect(fetchApplication("app_abc")).rejects.toMatchObject({
+        name: "CliError",
+        code: ERROR_CODE.PLAPI_UNEXPECTED_RESPONSE,
+        message: "Clerk returned an invalid application response.",
+      });
+    });
+
+    test.each([
+      { name: "missing instances", body: { application_id: "app_abc" } },
+      {
+        name: "non-array instances",
+        body: { application_id: "app_abc", instances: {} },
+      },
+      {
+        name: "a malformed instance",
+        body: {
+          application_id: "app_abc",
+          instances: [
+            {
+              instance_id: "ins_1",
+              environment_type: "development",
+              publishable_key: 123,
+            },
+          ],
+        },
+      },
+    ])("rejects $name in an application response", async ({ body }) => {
+      stubFetch(async () => Response.json(body));
+
+      await expect(fetchApplication("app_abc")).rejects.toMatchObject({
+        name: "CliError",
+        code: ERROR_CODE.PLAPI_UNEXPECTED_RESPONSE,
+        message: "Clerk returned an invalid application response.",
+      });
     });
 
     test("throws PlapiError on non-2xx response", async () => {

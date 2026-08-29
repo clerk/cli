@@ -98,7 +98,13 @@ describe("config pull", () => {
   test("supports --app without a linked profile", async () => {
     const mockApp = {
       application_id: "app_1",
-      instances: [{ instance_id: "ins_dev", environment_type: "development" }],
+      instances: [
+        {
+          instance_id: "ins_dev",
+          environment_type: "development",
+          publishable_key: "pk_test_fixture",
+        },
+      ],
     };
 
     stubFetch(async (input) => {

@@ -170,6 +170,54 @@ export interface Application {
   instances: ApplicationInstance[];
 }
 
+function unexpectedApplicationResponse(): CliError {
+  return new CliError("Clerk returned an invalid application response.", {
+    code: ERROR_CODE.PLAPI_UNEXPECTED_RESPONSE,
+  });
+}
+
+function validateApplication(value: unknown): Application {
+  if (value == null || typeof value !== "object" || Array.isArray(value)) {
+    throw unexpectedApplicationResponse();
+  }
+
+  const application = value as Record<string, unknown>;
+  if (
+    typeof application.application_id !== "string" ||
+    (application.name !== undefined && typeof application.name !== "string") ||
+    !Array.isArray(application.instances)
+  ) {
+    throw unexpectedApplicationResponse();
+  }
+
+  for (const value of application.instances) {
+    if (value == null || typeof value !== "object" || Array.isArray(value)) {
+      throw unexpectedApplicationResponse();
+    }
+    const instance = value as Record<string, unknown>;
+    if (
+      typeof instance.instance_id !== "string" ||
+      typeof instance.environment_type !== "string" ||
+      typeof instance.publishable_key !== "string" ||
+      (instance.secret_key !== undefined && typeof instance.secret_key !== "string")
+    ) {
+      throw unexpectedApplicationResponse();
+    }
+  }
+
+  return value as Application;
+}
+
+async function readApplicationResponse(response: Response): Promise<Application> {
+  let value: unknown;
+  try {
+    value = await response.json();
+  } catch {
+    throw unexpectedApplicationResponse();
+  }
+  return validateApplication(value);
+}
+
 export type DomainSummary = {
   id: string;
   name: string;
@@ -413,7 +461,7 @@ export async function fetchApplication(
     url.searchParams.set("include_secret_keys", "true");
   }
   const response = await plapiFetch("GET", url);
-  return response.json() as Promise<Application>;
+  return readApplicationResponse(response);
 }
 
 export async function listApplicationDomains(
