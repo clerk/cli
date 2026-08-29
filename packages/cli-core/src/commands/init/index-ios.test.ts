@@ -84,7 +84,6 @@ function iosAppleEntitlementPlan(
     root: "/tmp/test",
     projectPath: "MyApp.xcodeproj",
     targetId: "TARGET",
-    platform: "ios",
     targetName: "MyApp",
     files: [
       {
@@ -126,6 +125,7 @@ function iosPrebuiltAuthPlan(overrides: Partial<IOSPrebuiltAuthPlan> = {}): IOSP
     root: "/tmp/test",
     projectPath: "MyApp.xcodeproj",
     targetId: "TARGET",
+    platform: "ios",
     allowDirty: false,
     appSourcePath: "MyApp/MyAppApp.swift",
     expectedAppSourceHash: "app-hash",
@@ -257,7 +257,7 @@ describe("init iOS", () => {
     spyOn(context, "gatherContext").mockResolvedValue(FAKE_CTX);
 
     await expect(init({ target: "MyApp" })).rejects.toThrow(
-      "--target, --allow-dirty, --app-id-prefix, --sign-in-with-apple, and --prebuilt-auth-ui apply only to native iOS projects",
+      "--target, --allow-dirty, --app-id-prefix, --sign-in-with-apple, and --prebuilt-auth-ui apply only to native Apple projects",
     );
 
     expect(loginMod.login).not.toHaveBeenCalled();
@@ -336,7 +336,7 @@ describe("init iOS", () => {
       spyOn(context, "gatherContext").mockResolvedValue(nativeIOSContext());
 
       await expect(init({ yes: true })).rejects.toThrow(
-        "Native iOS setup in agent mode requires valid Clerk authentication",
+        "Native Apple setup in agent mode requires valid Clerk authentication",
       );
 
       expect(iosApplyMod.applyIOSLocalSetup).not.toHaveBeenCalled();
@@ -553,7 +553,7 @@ describe("init iOS", () => {
     spyOn(frameworkMod, "lookupFramework").mockReturnValue(FAKE_CTX.framework);
 
     await expect(init({ framework: "next", target: "MyApp" })).rejects.toThrow(
-      "--target, --allow-dirty, --app-id-prefix, --sign-in-with-apple, and --prebuilt-auth-ui apply only to native iOS projects",
+      "--target, --allow-dirty, --app-id-prefix, --sign-in-with-apple, and --prebuilt-auth-ui apply only to native Apple projects",
     );
 
     expect(context.gatherContext).not.toHaveBeenCalled();
@@ -565,7 +565,7 @@ describe("init iOS", () => {
     spyOn(context, "gatherContext").mockResolvedValue(null);
 
     await expect(init({ target: "MyApp" })).rejects.toThrow(
-      "Could not detect an existing native iOS project",
+      "Could not detect an existing native Apple project",
     );
 
     expect(bootstrapMod.promptAndBootstrap).not.toHaveBeenCalled();
@@ -575,7 +575,7 @@ describe("init iOS", () => {
     setup();
 
     await expect(init({ starter: true, target: "MyApp" })).rejects.toThrow(
-      "require an existing native iOS project",
+      "require an existing native Apple project",
     );
 
     expect(context.gatherContext).not.toHaveBeenCalled();
@@ -583,8 +583,8 @@ describe("init iOS", () => {
   });
 
   test.each([
-    [{ accountless: true }, "--accountless is not supported for iOS"],
-    [{ keyless: true }, "--accountless is not supported for iOS"],
+    [{ accountless: true }, "--accountless is not supported for native Apple projects"],
+    [{ keyless: true }, "--accountless is not supported for native Apple projects"],
     [{ template: "native" as const }, "--template only applies to accountless applications"],
     [{ fresh: true }, "--fresh only applies to accountless applications"],
   ])("rejects iOS-incompatible flags before Xcode apply", async (flags, message) => {

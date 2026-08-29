@@ -92,12 +92,24 @@ export function buildIOSSetupPlan(
   const target = selectedTarget(inspection);
   const targetEvidence = selectedEvidence(target);
   const steps: IOSSetupStep[] = [];
-  const platformLabel = target?.platform === "macos" ? "macOS" : target ? "iOS" : "native Apple";
+  const platform =
+    target?.platform ??
+    (inspection.platform === "ios" || inspection.platform === "macos"
+      ? inspection.platform
+      : undefined);
+  const platformLabel =
+    platform === "macos" ? "macOS" : platform === "ios" ? "iOS" : "native Apple";
+  const selectTargetTitle =
+    platform === "macos"
+      ? "Select the macOS application target"
+      : platform === "ios"
+        ? "Select the iOS application target"
+        : "Select the native Apple application target";
 
   steps.push(
     step(
       "select-target",
-      `Select the ${platformLabel} application target`,
+      selectTargetTitle,
       target ? "satisfied" : "blocked",
       target
         ? `Using ${target.name} in ${target.projectPath}.`
@@ -116,10 +128,24 @@ export function buildIOSSetupPlan(
 
   if (!target) {
     const blockedSteps: Array<[IOSSetupStep["id"], string]> = [
-      ["install-clerk-sdk", "Install Clerk's native SDK"],
+      [
+        "install-clerk-sdk",
+        platform === "macos"
+          ? "Install Clerk's Swift SDK"
+          : platform === "ios"
+            ? "Install Clerk's iOS SDK"
+            : "Install Clerk's native SDK",
+      ],
       ["configure-publishable-key", "Configure Clerk"],
       ["inject-clerk-environment", "Inject Clerk into SwiftUI"],
-      ["register-native-application", "Register the native application"],
+      [
+        "register-native-application",
+        platform === "macos"
+          ? "Register the macOS application"
+          : platform === "ios"
+            ? "Register the iOS application"
+            : "Register the native application",
+      ],
       ["add-authentication-flow", "Add an authentication flow"],
       ["verify-integration", "Verify the integration"],
     ];
@@ -170,10 +196,12 @@ export function buildIOSSetupPlan(
   steps.push(
     step(
       "install-clerk-sdk",
-      `Install Clerk's native SDK for the selected ${platformLabel} target`,
+      target.platform === "macos"
+        ? "Install Clerk's Swift SDK for the selected target"
+        : "Install Clerk's iOS SDK for the selected target",
       sdkStatus,
       strictSDKBlocked
-        ? `The selected Clerk iOS SDK cannot support this approved setup safely: ${
+        ? `The selected Clerk ${target.platform === "macos" ? "Swift" : "iOS"} SDK cannot support this approved setup safely: ${
             strictSDKBlocker ?? "Update the clerk-ios package and rerun the plan."
           }`
         : productDecision === "unknown"
@@ -355,7 +383,9 @@ export function buildIOSSetupPlan(
   steps.push(
     step(
       "register-native-application",
-      `Register the ${platformLabel} app in Clerk Dashboard`,
+      target.platform === "macos"
+        ? "Register the macOS app in Clerk Dashboard"
+        : "Register the iOS app in Clerk Dashboard",
       registrationBlocked ? "blocked" : "review",
       registrationBlocked
         ? "A single Bundle ID could not be resolved across build configurations. Make it explicit or consistent before registering the app."
