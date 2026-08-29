@@ -10,6 +10,15 @@ import type {
 
 const MAX_SWIFT_FILE_BYTES = 1_000_000;
 
+const CLERK_CONFIGURE_CALL = /\bClerk\s*\.\s*configure\s*\(/;
+const CLERK_URL_HANDLER = /\b(?:Clerk\s*\.\s*shared|clerk)\s*\.\s*handle\s*\(/;
+const CLERK_NATIVE_AUTH_FLOW =
+  /\b(?:Clerk\s*\.\s*shared|clerk)\s*\.\s*auth\s*\.\s*(?:signIn(?:With(?:Password|EmailCode|EmailLink|PhoneCode|OAuth|IdToken|Apple|Passkey|EnterpriseSSO|Ticket))?|signUp(?:With(?:OAuth|Apple|IdToken|EnterpriseSSO|Ticket))?|startHostedAuth)\s*\(/;
+const CLERK_ENVIRONMENT_INJECTION =
+  /\.\s*environment\s*\(\s*(?:\\?\.\s*self\s*,\s*)?Clerk\s*\.\s*shared\s*\)/;
+const CLERK_ENVIRONMENT_CONSUMER = /@Environment\s*\(\s*Clerk\s*\.\s*self\s*\)/;
+const CLERK_AUTH_VIEW = /\bAuthView\s*\(/;
+
 function blankRange(chars: string[], start: number, end: number): void {
   for (let i = start; i < end; i++) {
     if (chars[i] !== "\n" && chars[i] !== "\r") chars[i] = " ";
@@ -76,6 +85,17 @@ function consumeRegexLiteral(
   }
 
   return { end: chars.length, complete: false };
+}
+
+function containsClerkEvidence(source: string): boolean {
+  return [
+    CLERK_CONFIGURE_CALL,
+    CLERK_URL_HANDLER,
+    CLERK_NATIVE_AUTH_FLOW,
+    CLERK_ENVIRONMENT_INJECTION,
+    CLERK_ENVIRONMENT_CONSUMER,
+    CLERK_AUTH_VIEW,
+  ].some((pattern) => pattern.test(source));
 }
 
 /**
@@ -151,11 +171,15 @@ function sanitizeSwift(source: string, blankStrings: boolean): SwiftSourceSaniti
       chars[quoteIndex] === '"' && chars[quoteIndex + 1] === '"' && chars[quoteIndex + 2] === '"';
     i = quoteIndex + (multiline ? 3 : 1);
     let closed = false;
+    let interpolationDepth = 0;
+    let hasClosedInterpolation = false;
 
     while (i < chars.length) {
-      const closesQuote = multiline
-        ? chars[i] === '"' && chars[i + 1] === '"' && chars[i + 2] === '"'
-        : chars[i] === '"';
+      const closesQuote =
+        interpolationDepth === 0 &&
+        (multiline
+          ? chars[i] === '"' && chars[i + 1] === '"' && chars[i + 2] === '"'
+          : chars[i] === '"');
 
       if (closesQuote) {
         const quoteLength = multiline ? 3 : 1;
@@ -176,14 +200,29 @@ function sanitizeSwift(source: string, blankStrings: boolean): SwiftSourceSaniti
         let escapeHashes = 0;
         while (chars[i + 1 + escapeHashes] === "#") escapeHashes++;
         if (escapeHashes === hashCount) {
-          i += 2 + escapeHashes;
+          const escapedCharacter = i + 1 + escapeHashes;
+          if (interpolationDepth === 0 && chars[escapedCharacter] === "(") {
+            interpolationDepth = 1;
+          }
+          i = escapedCharacter + 1;
           continue;
+        }
+      }
+
+      if (interpolationDepth > 0) {
+        if (chars[i] === "(") interpolationDepth++;
+        if (chars[i] === ")") {
+          interpolationDepth--;
+          if (interpolationDepth === 0) hasClosedInterpolation = true;
         }
       }
       i++;
     }
 
     if (!closed) complete = false;
+    if (hasClosedInterpolation && containsClerkEvidence(chars.slice(start, i).join(""))) {
+      complete = false;
+    }
     if (blankStrings) blankRange(chars, start, i);
   }
 
@@ -202,10 +241,6 @@ function has(source: string, pattern: RegExp): boolean {
   pattern.lastIndex = 0;
   return pattern.test(source);
 }
-
-const CLERK_URL_HANDLER = /\b(?:Clerk\s*\.\s*shared|clerk)\s*\.\s*handle\s*\(/;
-const CLERK_NATIVE_AUTH_FLOW =
-  /\b(?:Clerk\s*\.\s*shared|clerk)\s*\.\s*auth\s*\.\s*(?:signIn(?:With(?:Password|EmailCode|EmailLink|PhoneCode|OAuth|IdToken|Apple|Passkey|EnterpriseSSO|Ticket))?|signUp(?:With(?:OAuth|Apple|IdToken|EnterpriseSSO|Ticket))?|startHostedAuth)\s*\(/;
 
 function matchingBrace(source: string, openingBrace: number): number | undefined {
   let depth = 0;
@@ -462,7 +497,7 @@ function configureCallEvidence(
 ): IOSConfigureCallEvidence[] {
   const calls: IOSConfigureCallEvidence[] = [];
   const initializerBodies = mainInitializerBodies(sanitizedSource);
-  const pattern = /\bClerk\s*\.\s*configure\s*\(/g;
+  const pattern = new RegExp(CLERK_CONFIGURE_CALL.source, "g");
   let match: RegExpExecArray | null;
 
   while ((match = pattern.exec(sanitizedSource)) !== null) {
@@ -602,17 +637,14 @@ export async function inspectSwiftSources(
     if (importsClerkModule) {
       configureCalls.push(...configureCallEvidence(sanitized, source, evidence));
     }
-    if (
-      importsClerkModule &&
-      has(sanitized, /\.\s*environment\s*\(\s*(?:\\?\.\s*self\s*,\s*)?Clerk\s*\.\s*shared\s*\)/)
-    ) {
+    if (importsClerkModule && has(sanitized, CLERK_ENVIRONMENT_INJECTION)) {
       environmentInjections.push(evidence);
     }
-    if (importsClerkModule && has(sanitized, /@Environment\s*\(\s*Clerk\s*\.\s*self\s*\)/)) {
+    if (importsClerkModule && has(sanitized, CLERK_ENVIRONMENT_CONSUMER)) {
       environmentConsumers.push(evidence);
     }
     if (
-      (importsUI && has(sanitized, /\bAuthView\s*\(/)) ||
+      (importsUI && has(sanitized, CLERK_AUTH_VIEW)) ||
       (importsClerkModule && has(sanitized, CLERK_NATIVE_AUTH_FLOW))
     ) {
       authFlowReferences.push(evidence);
