@@ -18,6 +18,7 @@ import { errorMessage } from "../../lib/errors.ts";
 import { isRecord } from "../../lib/objects.ts";
 import { interruptSignal } from "../../lib/signals.ts";
 import {
+  discoverReferencedIOSProjects,
   inspectWorkspace,
   maskXMLComments,
   pathIsSafelyWithinIOSRoot,
@@ -1026,7 +1027,7 @@ async function containerPackageGraph(
   let complete = true;
   let hasDirectRemotePackage = false;
   let hasLocalPackage = false;
-  const projectPaths = new Set([target.projectPath]);
+  const projectPaths = new Set([resolve(inspection.root, target.projectPath)]);
   if (container.kind === "workspace") {
     const [workspace, packageReferences] = await Promise.all([
       inspectWorkspace(inspection.root, container.absolutePath),
@@ -1034,11 +1035,16 @@ async function containerPackageGraph(
     ]);
     complete = workspace.complete && packageReferences.complete;
     hasLocalPackage = packageReferences.hasLocalPackage;
-    for (const projectPath of workspace.inspection.projectPaths) projectPaths.add(projectPath);
+    for (const projectPath of workspace.localProjectPaths) projectPaths.add(projectPath);
   }
 
+  const referencedProjects = await discoverReferencedIOSProjects(inspection.root, projectPaths);
+  complete &&= referencedProjects.complete;
+  for (const projectPath of referencedProjects.projectPaths) projectPaths.add(projectPath);
+
   const inspectedProjects = new Map(inspection.projects.map((project) => [project.path, project]));
-  for (const projectPath of projectPaths) {
+  for (const absoluteProjectPath of projectPaths) {
+    const projectPath = relativeIOSPath(inspection.root, absoluteProjectPath);
     const project = inspectedProjects.get(projectPath);
     if (!project) {
       complete = false;
