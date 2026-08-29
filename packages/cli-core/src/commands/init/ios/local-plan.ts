@@ -10,6 +10,10 @@ import { planIOSDirectConfig, type IOSDirectConfigPlan } from "./direct-config.t
 import { planIOSAssociatedDomain, type IOSAssociatedDomainPlan } from "./associated-domain.ts";
 import { planIOSAppleEntitlement, type IOSAppleEntitlementPlan } from "./apple-entitlement.ts";
 import { planIOSSDKInstall, type IOSSDKInstallPlan } from "./install-sdk.ts";
+import {
+  planMacOSNetworkCapability,
+  type MacOSNetworkCapabilityPlan,
+} from "./macos-network.ts";
 import { buildIOSSetupPlan } from "./plan.ts";
 import {
   buildIOSNativeReadinessAudit,
@@ -65,6 +69,7 @@ export interface IOSLocalSetupProposal {
   directConfigPlan?: IOSDirectConfigPlan;
   plannedAssociatedDomain?: IOSAssociatedDomainPlan;
   associatedDomainPlan?: IOSAssociatedDomainPlan;
+  macOSNetworkCapabilityPlan?: MacOSNetworkCapabilityPlan;
   inspectedAppleEntitlementPlan?: IOSAppleEntitlementPlan;
   appleEntitlementPlan?: IOSAppleEntitlementPlan;
   prebuiltAuthAppleEntitlementPlan?: IOSAppleEntitlementPlan;
@@ -258,6 +263,15 @@ export async function buildIOSLocalSetupProposal(
   const nativeReadiness = buildIOSNativeReadinessAudit(inspection, {
     associatedDomainPlan: plannedAssociatedDomain,
   });
+  const macOSNetworkCapabilityPlan =
+    selectedTarget.platform === "macos"
+      ? await planMacOSNetworkCapability({
+          root: options.root,
+          projectPath: selection.projectPath,
+          targetId: selection.targetId,
+          allowMissingEntitlementsCreation: true,
+        })
+      : undefined;
 
   const hasLocalAppleEntitlement = selectedTarget.configurations.some(
     (configuration) =>
@@ -283,6 +297,7 @@ export async function buildIOSLocalSetupProposal(
           root: options.root,
           projectPath: selection.projectPath,
           targetId: selection.targetId,
+          platform: selectedTarget.platform,
           allowMissingEntitlementsCreation: true,
         })
       : undefined;
@@ -306,6 +321,7 @@ export async function buildIOSLocalSetupProposal(
     sdkInstallPlan,
     directConfigPlan,
     associatedDomainPlan: plannedAssociatedDomain,
+    macOSNetworkCapabilityPlan,
     appleEntitlementPlan,
     prebuiltAuthPlan: prebuiltAuthPlanForSetup,
     prebuiltAuthSelected: prebuiltAuthRequested,
@@ -332,6 +348,7 @@ export async function buildIOSLocalSetupProposal(
     directConfigPlan,
     plannedAssociatedDomain,
     associatedDomainPlan,
+    macOSNetworkCapabilityPlan,
     inspectedAppleEntitlementPlan,
     appleEntitlementPlan,
     prebuiltAuthAppleEntitlementPlan,

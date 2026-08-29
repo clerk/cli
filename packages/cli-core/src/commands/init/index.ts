@@ -90,17 +90,17 @@ type InitOptions = {
   template?: KeylessTemplate;
   /** Replace an existing unclaimed keyless application instead of keeping it. */
   fresh?: boolean;
-  /** Inspect an iOS project and print the setup plan without changing local or remote state. */
+  /** Inspect a native Apple project and print the setup plan without changing local or remote state. */
   dryRun?: boolean;
-  /** Emit the read-only iOS inspection and setup plan as JSON. */
+  /** Emit the read-only native Apple inspection and setup plan as JSON. */
   json?: boolean;
-  /** iOS application target name or PBX object ID. */
+  /** Native Apple application target name or PBX object ID. */
   target?: string;
-  /** Allow an iOS apply action to update a project file that already has local changes. */
+  /** Allow native Apple setup to update a project file that already has local changes. */
   allowDirty?: boolean;
-  /** Apple App ID Prefix used when a new Clerk iOS registration is required. */
+  /** Apple App ID Prefix used when a new Clerk native application registration is required. */
   appIdPrefix?: string;
-  /** Opt into native Sign in with Apple setup for the selected iOS target. */
+  /** Opt into native Sign in with Apple setup for the selected native Apple target. */
   signInWithApple?: boolean;
   /** Opt into ClerkKitUI's prebuilt AuthView flow for a proven pristine SwiftUI target. */
   prebuiltAuthUI?: boolean;
@@ -339,7 +339,7 @@ export async function init(options: InitOptions = {}) {
     authenticatedKeysHandled,
   });
 
-  // Native platforms (iOS/Android) have no npx/Node toolchain to run `skills add` with.
+  // Native platforms (Apple/Android) have no npx/Node toolchain to run `skills add` with.
   if (options.skills !== false && isNpmFramework(ctx.framework)) {
     setTelemetryStage("skills");
     bar();
@@ -988,16 +988,25 @@ export function registerInit(program: Program): void {
     )
     .option(
       "--dry-run",
-      "Inspect an existing iOS project and print a setup plan without changing local or remote state",
+      "Inspect an existing native Apple project and print a setup plan without changing local or remote state",
     )
-    .option("--json", "Output the read-only iOS inspection and setup plan as JSON")
-    .option("--target <name-or-id>", "Select an iOS application target by name or PBX object ID")
-    .option("--allow-dirty", "Allow an iOS project file with existing local changes to be updated")
+    .option("--json", "Output the read-only native Apple inspection and setup plan as JSON")
+    .option(
+      "--target <name-or-id>",
+      "Select a native Apple application target by name or PBX object ID",
+    )
+    .option(
+      "--allow-dirty",
+      "Allow a native Apple project file with existing local changes to be updated",
+    )
     .option(
       "--app-id-prefix <prefix>",
-      "10-character Apple App ID Prefix to use when Clerk needs to register the selected iOS Bundle ID",
+      "10-character Apple App ID Prefix to use when Clerk needs to register the selected Bundle ID",
     )
-    .option("--sign-in-with-apple", "Enable native Sign in with Apple for the selected iOS target")
+    .option(
+      "--sign-in-with-apple",
+      "Enable native Sign in with Apple for the selected native Apple target",
+    )
     .option(
       "--prebuilt-auth-ui",
       "Add ClerkKitUI's prebuilt AuthView flow to a proven pristine SwiftUI target",
@@ -1043,11 +1052,11 @@ export function registerInit(program: Program): void {
       },
       {
         command: "clerk init --dry-run",
-        description: "Inspect an iOS project and print its setup plan without changes",
+        description: "Inspect a native Apple project and print its setup plan without changes",
       },
       {
         command: "clerk init --dry-run --target MyApp --json",
-        description: "Inspect one iOS app target and emit a machine-readable plan",
+        description: "Inspect one native Apple app target and emit a machine-readable plan",
       },
       {
         command: "clerk init -y",

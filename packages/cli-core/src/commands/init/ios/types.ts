@@ -226,6 +226,7 @@ export type IOSSetupStepId =
   | "inject-clerk-environment"
   | "register-native-application"
   | "enable-native-apple"
+  | "enable-macos-network"
   | "add-associated-domain"
   | "add-authentication-flow"
   | "verify-integration";

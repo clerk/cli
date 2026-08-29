@@ -14,6 +14,7 @@ import type { IOSAppleEntitlementPlan } from "./apple-entitlement.ts";
 import type { IOSPrebuiltAuthPlan } from "./prebuilt-auth.ts";
 import type { IOSSDKInstallPlan } from "./install-sdk.ts";
 import { normalizeBundleIdentifierIdentity } from "../../../lib/apple-native-identity.ts";
+import type { MacOSNetworkCapabilityPlan } from "./macos-network.ts";
 
 const NATIVE_APPLICATIONS_URL = "https://dashboard.clerk.com/~/native-applications";
 const QUICKSTART_URL = "https://clerk.com/docs/ios/getting-started/quickstart";
@@ -79,6 +80,11 @@ export interface BuildIOSSetupPlanOptions {
   >;
   /** Optional native Apple capability requested or already present locally. */
   appleEntitlementPlan?: Pick<IOSAppleEntitlementPlan, "status" | "actions" | "blockers">;
+  /** App Sandbox network access required by a native macOS target. */
+  macOSNetworkCapabilityPlan?: Pick<
+    MacOSNetworkCapabilityPlan,
+    "status" | "actions" | "blockers" | "files"
+  >;
   /** Strict source readiness for the optional prebuilt AuthView scaffold. */
   prebuiltAuthPlan?: Pick<IOSPrebuiltAuthPlan, "status" | "sourcePath" | "actions" | "blockers">;
   /** Whether this invocation explicitly selected the optional AuthView scaffold. */
@@ -97,8 +103,6 @@ export function buildIOSSetupPlan(
     (inspection.platform === "ios" || inspection.platform === "macos"
       ? inspection.platform
       : undefined);
-  const platformLabel =
-    platform === "macos" ? "macOS" : platform === "ios" ? "iOS" : "native Apple";
   const selectTargetTitle =
     platform === "macos"
       ? "Select the macOS application target"
@@ -421,6 +425,34 @@ export function buildIOSSetupPlan(
         target.configurations.flatMap((configuration) => configuration.entitlementsPath.evidence),
         [{ kind: "documentation", url: NATIVE_APPLE_URL }],
         options.appleEntitlementPlan.status === "ready",
+      ),
+    );
+  }
+
+  if (target.platform === "macos" && options.macOSNetworkCapabilityPlan) {
+    const networkPlan = options.macOSNetworkCapabilityPlan;
+    const networkStatus: IOSSetupStepStatus =
+      networkPlan.status === "satisfied"
+        ? "satisfied"
+        : networkPlan.status === "ready"
+          ? "required"
+          : "blocked";
+    const networkDescription =
+      networkPlan.status === "satisfied"
+        ? "The selected macOS target can make outgoing network connections when App Sandbox is enabled."
+        : networkPlan.status === "ready"
+          ? networkPlan.actions.join(" ")
+          : networkPlan.blockers.map((item) => item.message).join(" ") ||
+            "Outgoing network access could not be verified for the selected macOS target.";
+    steps.push(
+      step(
+        "enable-macos-network",
+        "Allow outgoing network access",
+        networkStatus,
+        networkDescription,
+        networkPlan.files.map((file) => ({ path: file.path })),
+        undefined,
+        networkPlan.status === "ready",
       ),
     );
   }

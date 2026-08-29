@@ -226,6 +226,7 @@ export function useInitHarness(): InitHarness {
             targetId: "TARGET",
             targetName: "MyApp",
             projectPath: "MyApp.xcodeproj",
+            platform: "ios",
           },
           summary: { satisfied: 0, required: 0, review: 0, blocked: 0 },
           steps: [],

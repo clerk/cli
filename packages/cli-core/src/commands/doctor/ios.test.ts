@@ -4,8 +4,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createIOSFixture, IOS_FIXTURE_IDS } from "../init/ios/test-helpers.ts";
 import { planIOSSDKInstall } from "../init/ios/install-sdk.ts";
+import { planMacOSNetworkCapability } from "../init/ios/macos-network.ts";
 import type { IOSNativeAppleBlockerCode } from "../init/ios/native-apple.ts";
-import { PlapiError } from "../../lib/errors.ts";
+import { CliError, ERROR_CODE, PlapiError } from "../../lib/errors.ts";
 import type { UserSettingsJSON } from "../../lib/fapi.ts";
 import type { Application } from "../../lib/plapi.ts";
 import { auditIOSPrebuiltAuthEnvironment } from "../init/ios/prebuilt-auth-environment.ts";
@@ -86,6 +87,19 @@ async function addAppleEntitlement(
   );
 }
 
+async function setMacOSNetworkEntitlement(root: string, state: "absent" | "false"): Promise<void> {
+  const entitlementsPath = join(root, "MyApp", "MyApp.entitlements");
+  const replacement =
+    state === "false" ? "\n<key>com.apple.security.network.client</key><false/>" : "";
+  await writeFile(
+    entitlementsPath,
+    (await readFile(entitlementsPath, "utf8")).replace(
+      /\s*<key>com\.apple\.security\.network\.client<\/key>\s*<true\s*\/>/,
+      replacement,
+    ),
+  );
+}
+
 async function writeSelectedTargetRunSchemeKey(root: string, key: string): Promise<void> {
   const schemeDirectory = join(root, "MyApp.xcodeproj", "xcshareddata", "xcschemes");
   await mkdir(schemeDirectory, { recursive: true });
@@ -146,6 +160,7 @@ function dependencies(overrides: Partial<IOSDoctorDependencies> = {}): IOSDoctor
         );
       }),
     planIOSSDKInstall: overrides.planIOSSDKInstall ?? planIOSSDKInstall,
+    planMacOSNetworkCapability: overrides.planMacOSNetworkCapability ?? planMacOSNetworkCapability,
   };
 }
 
@@ -203,9 +218,79 @@ describe("runIOSDoctorChecks", () => {
     expect(
       audit.results.find((result) => result.name === "macOS: Native Application")?.status,
     ).toBe("pass");
+    expect(
+      audit.results.find((result) => result.name === "macOS: Allow outgoing network access")
+        ?.status,
+    ).toBe("pass");
     expect(audit.results.some((result) => result.name.includes("associated domain"))).toBeFalse();
     expect(audit.results.some((result) => result.name.startsWith("iOS:"))).toBeFalse();
     expect(audit.results.some((result) => result.name === "Environment variables")).toBeFalse();
+  });
+
+  test("reports missing macOS sandbox network access without changing the project", async () => {
+    const root = await fixture({
+      complete: true,
+      platform: "macos",
+      includeKey: false,
+      localSecrets: true,
+      macOSAppleEntitlement: false,
+    });
+    await setMacOSNetworkEntitlement(root, "absent");
+    const before = await readFile(join(root, "MyApp", "MyApp.entitlements"), "utf8");
+
+    const audit = await runIOSDoctorChecks(context(), { root, target: "MyApp" }, dependencies());
+    const result = audit.results.find(
+      (candidate) => candidate.name === "macOS: Allow outgoing network access",
+    );
+
+    expect(result).toMatchObject({
+      status: "fail",
+      message: "Allow outgoing network access: setup required",
+      remedy: "Run `clerk init --target <target>` to safely complete this step.",
+    });
+    expect(await readFile(join(root, "MyApp", "MyApp.entitlements"), "utf8")).toBe(before);
+  });
+
+  test("reports an explicit macOS network denial as manual Xcode work", async () => {
+    const root = await fixture({
+      complete: true,
+      platform: "macos",
+      includeKey: false,
+      localSecrets: true,
+      macOSAppleEntitlement: false,
+    });
+    await setMacOSNetworkEntitlement(root, "false");
+
+    const audit = await runIOSDoctorChecks(context(), { root, target: "MyApp" }, dependencies());
+    const result = audit.results.find(
+      (candidate) => candidate.name === "macOS: Allow outgoing network access",
+    );
+
+    expect(result?.status).toBe("fail");
+    expect(result?.message).toBe("Allow outgoing network access: blocked");
+    expect(result?.remedy).toContain("explicitly disables outgoing network access");
+  });
+
+  test("fails remote inspection when the application payload is malformed", async () => {
+    const root = await fixture({ complete: true });
+    const audit = await runIOSDoctorChecks(
+      context(),
+      { root, target: "MyApp" },
+      dependencies({
+        fetchApplication: async () => {
+          throw new CliError("Unexpected application payload", {
+            code: ERROR_CODE.PLAPI_UNEXPECTED_RESPONSE,
+          });
+        },
+      }),
+    );
+
+    expect(audit.results.find((result) => result.name === "iOS: Native Application")).toMatchObject(
+      {
+        status: "fail",
+        message: "Native Application: Clerk returned an invalid remote response",
+      },
+    );
   });
 
   test("audits native Sign in with Apple for a pure macOS application", async () => {

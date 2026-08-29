@@ -149,6 +149,7 @@ function iosSetupResult(overrides: Partial<IOSLocalSetupResult> = {}): IOSLocalS
         targetId: "TARGET",
         targetName: "MyApp",
         projectPath: "MyApp.xcodeproj",
+        platform: "ios",
       },
       summary: { satisfied: 0, required: 0, review: 0, blocked: 0 },
       steps: [],
@@ -757,7 +758,7 @@ describe("init iOS", () => {
       } as never);
 
     await expect(init({ yes: true, prebuiltAuthUI: true })).rejects.toThrow(
-      "AuthView methods changed while the approved iOS setup was being prepared",
+      "AuthView methods changed while the approved native Apple setup was being prepared",
     );
 
     expect(environment).toHaveBeenCalledTimes(2);
@@ -1346,7 +1347,7 @@ describe("init iOS", () => {
     });
 
     await expect(init({ yes: true })).rejects.toThrow(
-      "linked Clerk application changed while its iOS publishable key was being resolved",
+      "linked Clerk application changed while its native publishable key was being resolved",
     );
 
     expect(iosApplyMod.applyIOSLocalSetup).toHaveBeenCalledTimes(1);
@@ -1394,7 +1395,7 @@ describe("init iOS", () => {
     });
 
     await expect(init({ yes: true })).rejects.toThrow(
-      "local Clerk application link changed before the approved iOS setup",
+      "local Clerk application link changed before the approved native Apple setup",
     );
 
     expect(iosApplyMod.applyIOSPlannedLocalSetup).not.toHaveBeenCalled();

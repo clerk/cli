@@ -22,6 +22,7 @@ import {
 } from "./entitlements-settings.ts";
 import { isRecord } from "./pbx.ts";
 import { parseIOSPlist } from "./plist.ts";
+import type { IOSNativePlatform } from "./types.ts";
 
 const APPLE_SIGN_IN_KEY = "com.apple.developer.applesignin";
 const APPLE_SIGN_IN_VALUE = "Default";
@@ -51,6 +52,8 @@ export interface IOSAppleEntitlementPlan {
   root: string;
   projectPath: string;
   targetId: string;
+  /** Defaults to iOS for older serialized plans. */
+  platform?: IOSNativePlatform;
   targetName?: string;
   files: IOSAppleEntitlementPlanFile[];
   /** PBX settings needed only when the target has no entitlements file yet. */
@@ -64,6 +67,8 @@ export interface IOSAppleEntitlementPlanOptions {
   /** Invocation-root-relative selected .xcodeproj path. */
   projectPath: string;
   targetId: string;
+  /** Defaults to iOS. */
+  platform?: IOSNativePlatform;
   /** Allows the strict synchronized-root planner to create and attach a new file. */
   allowMissingEntitlementsCreation?: boolean;
 }
@@ -123,6 +128,7 @@ function planBase(options: IOSAppleEntitlementPlanOptions) {
     root: resolve(options.root),
     projectPath: options.projectPath.replaceAll("\\", "/"),
     targetId: options.targetId,
+    platform: options.platform ?? "ios",
   };
 }
 
@@ -455,11 +461,16 @@ function candidateWithApple(root: string, document: EntitlementsDocument): Uint8
 export async function planIOSAppleEntitlement(
   options: IOSAppleEntitlementPlanOptions,
 ): Promise<IOSAppleEntitlementPlan> {
-  const normalized = { ...options, root: resolve(options.root) };
+  const normalized = {
+    ...options,
+    root: resolve(options.root),
+    platform: options.platform ?? "ios",
+  };
   const entitlementProbe = await planIOSAssociatedDomain({
     root: normalized.root,
     projectPath: normalized.projectPath,
     targetId: normalized.targetId,
+    platform: normalized.platform,
     deferToPublishableKey: true,
     allowMissingEntitlementsCreation: normalized.allowMissingEntitlementsCreation,
   });
@@ -511,8 +522,8 @@ export async function planIOSAppleEntitlement(
       ? []
       : [
           files.some((file) => file.operation === "create")
-            ? "Create and attach an iOS entitlements file with the Sign in with Apple entitlement set to Default."
-            : "Set the Sign in with Apple entitlement to Default in every selected-target iOS entitlements configuration.",
+            ? `Create and attach a ${normalized.platform === "macos" ? "macOS" : "iOS"} entitlements file with the Sign in with Apple entitlement set to Default.`
+            : `Set the Sign in with Apple entitlement to Default in every selected-target ${normalized.platform === "macos" ? "macOS" : "iOS"} entitlements configuration.`,
         ],
     blockers: [],
   };
@@ -590,6 +601,7 @@ export async function prepareIOSAppleEntitlementMutation(
     root: plan.root,
     projectPath: plan.projectPath,
     targetId: plan.targetId,
+    platform: plan.platform,
     allowMissingEntitlementsCreation: plan.missingEntitlementsSettings != null,
   });
   if (replanned.status === "blocked") return { status: "blocked", plan: replanned };
@@ -790,6 +802,7 @@ export async function validatePreparedIOSAppleEntitlement(
     root: prepared.plan.root,
     projectPath: prepared.plan.projectPath,
     targetId: prepared.plan.targetId,
+    platform: prepared.plan.platform,
   });
   const expectedPaths = prepared.plan.files.map((file) => file.path).sort();
   return (
