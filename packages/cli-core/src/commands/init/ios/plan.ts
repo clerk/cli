@@ -7,14 +7,12 @@ import type {
   IOSSourceEvidence,
   IOSValueResolution,
 } from "./types.ts";
-import { hasIOSDirectConfigCompatibility } from "./products.ts";
 import { clerkKitUIInstallDecision } from "./products.ts";
 import type { IOSDirectConfigPlan } from "./direct-config.ts";
 import { associatedDomainMatches, type IOSAssociatedDomainPlan } from "./associated-domain.ts";
 import type { IOSAppleEntitlementPlan } from "./apple-entitlement.ts";
 import type { IOSPrebuiltAuthPlan } from "./prebuilt-auth.ts";
 import type { IOSSDKInstallPlan } from "./install-sdk.ts";
-import type { IOSRuntimeKeyVerificationPlan } from "./runtime-key.ts";
 
 const NATIVE_APPLICATIONS_URL = "https://dashboard.clerk.com/~/native-applications";
 const QUICKSTART_URL = "https://clerk.com/docs/ios/getting-started/quickstart";
@@ -69,32 +67,11 @@ function step(
   return { id, title, status, automatable, description, links, evidence };
 }
 
-function publishableKeyRuntimeSource(
-  source: string | undefined,
-  target: IOSAppTarget,
-): "inline-literal" | "run-scheme" | "local-secrets" | "available-only" | undefined {
-  if (!source) return undefined;
-  if (
-    target.swift.configureCalls.some(
-      (call) => call.path === source && call.publishableKeyWiring === "inline-literal",
-    )
-  ) {
-    return "inline-literal";
-  }
-  if (source.endsWith(".xcscheme")) return "run-scheme";
-  if (target.runtimeKeySinks.some((sink) => sink.path === source)) {
-    return "local-secrets";
-  }
-  return "available-only";
-}
-
 export interface BuildIOSSetupPlanOptions {
   /** Strict SDK/package compatibility from the same planner used by apply. */
   sdkInstallPlan?: Pick<IOSSDKInstallPlan, "status" | "blockers">;
   /** Strict, publishable-key-redacted Swift source readiness from the apply planner. */
   directConfigPlan?: IOSDirectConfigPlan;
-  /** Read-only validation for the exact supported LocalSecrets compatibility path. */
-  runtimeKeyVerificationPlan?: Pick<IOSRuntimeKeyVerificationPlan, "status" | "blockers">;
   /** Strict existing-entitlements readiness from the same planner used by apply. */
   associatedDomainPlan?: Pick<
     IOSAssociatedDomainPlan,
@@ -217,112 +194,71 @@ export function buildIOSSetupPlan(
   );
 
   const configured = target.swift.configureCalls.length > 0;
-  const usablePublishableKey =
-    inspection.localPublishableKey.found &&
-    !inspection.localPublishableKey.conflict &&
-    inspection.localPublishableKey.frontendApiHost != null;
-  const runtimeKeySource = publishableKeyRuntimeSource(
-    inspection.localPublishableKey.source,
-    target,
-  );
-  const publishableKeySourceIsRuntime =
-    runtimeKeySource === "inline-literal" ||
-    runtimeKeySource === "run-scheme" ||
-    runtimeKeySource === "local-secrets";
-  const configureCallConnectedToRuntime =
-    usablePublishableKey &&
-    runtimeKeySource != null &&
-    runtimeKeySource !== "available-only" &&
+  const oneStartupConfigure =
+    target.swift.evidenceComplete &&
+    !sourceEntryPointIsAmbiguous &&
     target.swift.configureCalls.length === 1 &&
-    target.swift.configureCalls.every(
-      (call) =>
-        call.startupBinding === "app-init" &&
-        (runtimeKeySource === "inline-literal"
-          ? call.publishableKeyWiring === "inline-literal" &&
-            call.inlinePublishableKey?.state === "valid"
-          : runtimeKeySource === "local-secrets"
-            ? call.publishableKeyWiring === "local-secrets-loader" &&
-              call.localSecretsRuntimeBinding === "proven"
-            : call.publishableKeyWiring === "process-info-environment"),
-    );
+    target.swift.configureCalls[0]?.startupBinding === "app-init";
+  const configureCall = target.swift.configureCalls[0];
+  const inlineConfigureValid =
+    oneStartupConfigure &&
+    configureCall?.publishableKeyWiring === "inline-literal" &&
+    configureCall.inlinePublishableKey?.state === "valid";
+  const customConfigureReady =
+    oneStartupConfigure && configureCall?.publishableKeyWiring === "custom";
   const publishableKeyBlocked =
-    publishableKeySourceIsRuntime &&
-    (inspection.localPublishableKey.conflict ||
-      (!inspection.localPublishableKey.found &&
-        inspection.localPublishableKey.invalidSources.length > 0));
-  const hasDirectConfigCompatibility = hasIOSDirectConfigCompatibility(inspection, target);
-  const directConfigPlanApplies = options.directConfigPlan != null && !hasDirectConfigCompatibility;
+    configureCall?.publishableKeyWiring === "inline-literal" &&
+    configureCall.inlinePublishableKey?.state === "invalid";
+  const directConfigPlanApplies = options.directConfigPlan != null;
   const directConfigAutomationReady =
     directConfigPlanApplies &&
     options.directConfigPlan?.status === "ready" &&
     options.directConfigPlan.changes?.configuration !== "verify-existing";
   const directConfigBlocked =
     directConfigPlanApplies && options.directConfigPlan?.status === "blocked";
-  const runtimeKeyVerificationBlocked = options.runtimeKeyVerificationPlan?.status === "blocked";
-  const runtimeKeyVerificationBlocker = runtimeKeyVerificationBlocked
-    ? options.runtimeKeyVerificationPlan?.blockers.map((blocker) => blocker.message).join(" ")
-    : undefined;
   const directConfigBlocker = directConfigBlocked
     ? options.directConfigPlan?.blockers.map((blocker) => blocker.message).join(" ")
     : undefined;
-  const configuredStatus: IOSSetupStepStatus = runtimeKeyVerificationBlocked
+  const configuredStatus: IOSSetupStepStatus = publishableKeyBlocked
     ? "blocked"
-    : publishableKeyBlocked
+    : directConfigBlocked
       ? "blocked"
-      : directConfigBlocked
-        ? "blocked"
-        : configured
-          ? sourceEntryPointIsAmbiguous || !configureCallConnectedToRuntime
-            ? "review"
-            : "satisfied"
-          : directConfigAutomationReady
+      : configured
+        ? inlineConfigureValid || customConfigureReady
+          ? "satisfied"
+          : "review"
+        : directConfigAutomationReady
+          ? "required"
+          : target.swift.evidenceComplete
             ? "required"
-            : target.swift.evidenceComplete
-              ? "required"
-              : "review";
+            : "review";
   steps.push(
     step(
       "configure-publishable-key",
       "Configure Clerk with a publishable key",
       configuredStatus,
-      runtimeKeyVerificationBlocked
-        ? `The existing iOS runtime-key compatibility path cannot be verified safely. clerk init preserves this source and will not replace it. ${runtimeKeyVerificationBlocker ?? "Repair it manually, then rerun the command."}`
-        : publishableKeyBlocked
-          ? inspection.localPublishableKey.conflict
-            ? "Multiple effective publishable-key sources point at different Clerk instances. Resolve the conflict before configuring the app."
-            : runtimeKeySource === "local-secrets"
-              ? "The existing LocalSecrets.plist publishable key is malformed. clerk init preserves this compatibility file and will not replace it; add the intended development key manually."
-              : "The effective publishable-key source is malformed. Replace it before relying on Clerk.configure(...)."
-          : directConfigBlocked
-            ? `Automatic direct configuration stopped because the selected Swift startup source is not safe to edit: ${directConfigBlocker ?? "Review the selected target's @main App initializer and root Scene manually."}`
-            : configured
-              ? target.swift.configureCalls.length > 1
-                ? "More than one Clerk.configure(...) call is present. Confirm that every call uses the intended selected-target runtime key and runs during app startup."
-                : sourceEntryPointIsAmbiguous
-                  ? "A Clerk.configure(...) call is present, but multiple @main entry points make startup ownership ambiguous. Confirm which entry point ships."
-                  : configureCallConnectedToRuntime
-                    ? runtimeKeySource === "inline-literal"
-                      ? "Clerk is configured directly in the selected target's @main initializer with a valid publishable key. The value is intentionally redacted from this plan."
-                      : "A Clerk.configure(...) call is connected to a recognized selected-target runtime key loader. The key expression and value are intentionally redacted from this plan."
-                    : usablePublishableKey
-                      ? runtimeKeySource === "available-only"
-                        ? "A usable publishable key is available to copy, but the app is not proven to load it at runtime. Configure Clerk directly in the selected target's @main App initializer, or repair the app's existing runtime loader if it intentionally uses one."
-                        : "A selected-target runtime publishable key is present, but the Clerk.configure(...) expression could not be connected to its loader. Confirm the wiring manually; the expression and value are intentionally redacted."
-                      : "A Clerk.configure(...) call is present, but the inspector could not validate a usable selected-target runtime key source. Confirm the runtime value manually; the expression is intentionally redacted."
-              : !target.swift.evidenceComplete
-                ? "No Clerk.configure(...) call was found in the safely inspected source subset. Complete source membership inspection or confirm startup setup manually."
-                : inspection.localPublishableKey.conflict
-                  ? "Available publishable-key candidates point to different Clerk instances. Choose the intended development instance and call Clerk.configure(publishableKey:) directly in the selected target's @main App initializer."
-                  : inspection.localPublishableKey.invalidSources.length > 0
-                    ? "The available publishable-key candidate is malformed. Replace it with the intended development key and call Clerk.configure(publishableKey:) directly in the selected target's @main App initializer."
-                    : inspection.localPublishableKey.found
-                      ? "A local publishable key is available, but it is not proven to configure this target. New projects should call Clerk.configure(publishableKey:) directly in the selected target's @main App initializer; the plan will never print the key."
-                      : directConfigAutomationReady
-                        ? `clerk init can add Clerk.configure(publishableKey:) directly to ${options.directConfigPlan?.sourcePath ?? "the single shipping @main App initializer"} with the selected application's development key. The preview and result keep the value redacted.`
-                        : "Select a Clerk application and call Clerk.configure(publishableKey:) with its development publishable key directly in the selected target's @main App initializer.",
+      publishableKeyBlocked
+        ? "The inline Clerk publishable key is malformed. Replace it before relying on Clerk.configure(...)."
+        : directConfigBlocked
+          ? `Automatic direct configuration stopped because the selected Swift startup source is not safe to edit: ${directConfigBlocker ?? "Review the selected target's @main App initializer and root Scene manually."}`
+          : configured
+            ? target.swift.configureCalls.length > 1
+              ? "More than one Clerk.configure(...) call is present. Confirm which call configures the shipping app before continuing."
+              : sourceEntryPointIsAmbiguous
+                ? "A Clerk.configure(...) call is present, but multiple @main entry points make startup ownership ambiguous. Confirm which entry point ships."
+                : inlineConfigureValid
+                  ? "Clerk is configured directly in the selected target's @main initializer with a valid publishable key. The value is intentionally redacted from this plan."
+                  : customConfigureReady
+                    ? "Clerk is configured at app startup through a custom publishable-key source. clerk init will preserve that source and require the developer to select its Clerk application; the value is not inspected or independently verified."
+                    : "A Clerk.configure(...) call is present, but it is not proven to run from the selected app's startup initializer. Confirm the shipping configuration manually; the expression is intentionally redacted."
+            : !target.swift.evidenceComplete
+              ? "No Clerk.configure(...) call was found in the safely inspected source subset. Complete source membership inspection or confirm startup setup manually."
+              : directConfigAutomationReady
+                ? `clerk init can add Clerk.configure(publishableKey:) directly to ${options.directConfigPlan?.sourcePath ?? "the single shipping @main App initializer"} with the selected application's development key. The preview and result keep the value redacted.`
+                : "Select a Clerk application and call Clerk.configure(publishableKey:) with its development publishable key directly in the selected target's @main App initializer.",
       target.swift.configureCalls,
       undefined,
-      directConfigAutomationReady && !runtimeKeyVerificationBlocked,
+      directConfigAutomationReady,
     ),
   );
 
@@ -471,10 +407,7 @@ export function buildIOSSetupPlan(
   const expectedDomain = inspection.localPublishableKey.frontendApiHost
     ? `webcredentials:${inspection.localPublishableKey.frontendApiHost}`
     : undefined;
-  const expectedDomainIsSelectedTargetRuntime =
-    runtimeKeySource === "inline-literal" ||
-    runtimeKeySource === "run-scheme" ||
-    runtimeKeySource === "local-secrets";
+  const expectedDomainIsSelectedTargetRuntime = inlineConfigureValid;
   const entitlements = target.configurations
     .map((configuration) => configuration.entitlements)
     .filter((value) => value != null);

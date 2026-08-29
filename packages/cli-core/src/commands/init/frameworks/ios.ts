@@ -4,7 +4,6 @@ import { inspectIOSProject } from "../ios/inspect.ts";
 import { buildIOSSetupPlan } from "../ios/plan.ts";
 import { clerkKitUIInstallDecision, shouldPlanIOSDirectConfig } from "../ios/products.ts";
 import { planIOSAssociatedDomain } from "../ios/associated-domain.ts";
-import { planIOSRuntimeKeyVerification } from "../ios/runtime-key.ts";
 
 /**
  * iOS (Swift) support for `clerk init`.
@@ -14,8 +13,8 @@ import { planIOSRuntimeKeyVerification } from "../ios/runtime-key.ts";
  * file. The dedicated iOS apply phase safely handles the selected target's SPM
  * product linkage before this scaffolder runs. For a safely inspectable fresh
  * SwiftUI target, init configures the linked development publishable key
- * directly in the shipping @main App source. Existing LocalSecrets and
- * ProcessInfo integrations remain read-only compatibility paths.
+ * directly in the shipping @main App source. Existing custom key sources are
+ * preserved and require the developer to select their Clerk application.
  *
  * Docs: https://clerk.com/docs/ios/getting-started/quickstart
  */
@@ -38,11 +37,8 @@ export const ios: FrameworkScaffold = {
         : undefined;
     const productDecision = target ? clerkKitUIInstallDecision(target) : "prebuilt";
     const includeClerkKitUI = productDecision === "prebuilt";
-    const hasLocalSecretsConfigure = target?.swift.configureCalls.some(
-      (call) => call.publishableKeyWiring === "local-secrets-loader",
-    );
-    const hasProcessInfoConfigure = target?.swift.configureCalls.some(
-      (call) => call.publishableKeyWiring === "process-info-environment",
+    const hasCustomConfigure = target?.swift.configureCalls.some(
+      (call) => call.publishableKeyWiring === "custom",
     );
     const shouldPlanDirectConfig =
       selection.state === "selected" &&
@@ -62,21 +58,13 @@ export const ios: FrameworkScaffold = {
             root: ctx.cwd,
             projectPath: selection.projectPath,
             targetId: selection.targetId,
-            deferToPublishableKey: directConfigPlan?.status === "ready",
+            deferToPublishableKey:
+              directConfigPlan?.status === "ready" || hasCustomConfigure === true,
             allowMissingEntitlementsCreation: true,
-          })
-        : undefined;
-    const runtimeKeyVerificationPlan =
-      selection.state === "selected" && (hasLocalSecretsConfigure || hasProcessInfoConfigure)
-        ? await planIOSRuntimeKeyVerification({
-            root: ctx.cwd,
-            projectPath: selection.projectPath,
-            targetId: selection.targetId,
           })
         : undefined;
     const setupPlan = buildIOSSetupPlan(inspection, {
       directConfigPlan,
-      runtimeKeyVerificationPlan,
       associatedDomainPlan,
     });
     const configureStep = setupPlan.steps.find((step) => step.id === "configure-publishable-key");
@@ -137,15 +125,13 @@ export const ios: FrameworkScaffold = {
     const configureInstructions = needsAttention("configure-publishable-key")
       ? selection.state === "selected" && configureStep?.status === "blocked"
         ? [configureStep.description]
-        : hasLocalSecretsConfigure
-          ? [configureStep?.description ?? "Repair the existing LocalSecrets runtime wiring."]
-          : hasProcessInfoConfigure
-            ? [
-                "Keep the existing ProcessInfo integration connected to CLERK_PUBLISHABLE_KEY in the enabled Run scheme. This is a compatibility path; clerk init does not write or replace Run-scheme variables.",
-              ]
-            : [
-                'Configure Clerk directly in the single shipping `@main` App initializer with the selected application\'s development publishable key: `Clerk.configure(publishableKey: "<development-publishable-key>")`. For a safely inspectable SwiftUI target, `clerk init` applies this with the value redacted from previews and output.',
-              ]
+        : hasCustomConfigure
+          ? [
+              "Keep the existing custom Clerk.configure(...) source unchanged. Select the Clerk application it belongs to during setup, or pass --app <app_id> in agent mode; clerk init does not inspect or rewrite the custom key value.",
+            ]
+          : [
+              'Configure Clerk directly in the single shipping `@main` App initializer with the selected application\'s development publishable key: `Clerk.configure(publishableKey: "<development-publishable-key>")`. For a safely inspectable SwiftUI target, `clerk init` applies this with the value redacted from previews and output.',
+            ]
       : [];
     const authFlowInstructions = needsAttention("add-authentication-flow")
       ? [

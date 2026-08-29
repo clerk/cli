@@ -32,6 +32,11 @@ interface LinkOptions {
    * this so a web app's ambient key cannot silently choose the embedded app.
    */
   skipAutolink?: boolean;
+  /**
+   * Require the developer to affirm an existing application. Used when a
+   * native project contains an opaque custom key source that must be preserved.
+   */
+  requireExistingAppSelection?: boolean;
 }
 
 export async function link(options: LinkOptions = {}): Promise<void> {
@@ -46,7 +51,12 @@ export async function link(options: LinkOptions = {}): Promise<void> {
   const existing = await resolveProfile(cwd);
   const targetsDifferentApp = options.app && existing && options.app !== existing.profile.appId;
 
-  if (existing && options.skipIfLinked && !targetsDifferentApp) {
+  if (
+    existing &&
+    options.skipIfLinked &&
+    !targetsDifferentApp &&
+    !options.requireExistingAppSelection
+  ) {
     printExistingStatus(existing, normalizedRemote);
     return;
   }
@@ -90,7 +100,12 @@ export async function link(options: LinkOptions = {}): Promise<void> {
           createApplication(options.createIfMissing),
           "Failed to create application",
         )
-      : await resolveApp(cwd, displayPath, !existing && !options.skipAutolink);
+      : await resolveApp(
+          cwd,
+          displayPath,
+          !existing && !options.skipAutolink,
+          options.requireExistingAppSelection !== true,
+        );
 
   const devInstance = app.instances.find((i) => i.environment_type === "development");
   const prodInstance = app.instances.find((i) => i.environment_type === "production");
@@ -174,6 +189,17 @@ async function handleExistingProfile(
     return confirm({ message: `Re-link to ${cyan(appLabel(targetApp))}?`, default: false });
   }
 
+  if (options.requireExistingAppSelection) {
+    const label = existing.profile.appName
+      ? `${existing.profile.appName} (${existing.profile.appId})`
+      : existing.profile.appId;
+    const keepExisting = await confirm({
+      message: `Use ${cyan(label)} for this preserved iOS key configuration?`,
+      default: true,
+    });
+    return !keepExisting;
+  }
+
   return confirm({ message: "Re-link to a different application?", default: false });
 }
 
@@ -193,6 +219,7 @@ async function resolveApp(
   cwd: string,
   displayPath: string,
   detectKeys: boolean,
+  allowCreate = true,
 ): Promise<Application> {
   const apps = await fetchAppsTolerantly();
 
@@ -204,6 +231,7 @@ async function resolveApp(
   return pickOrCreateApp({
     apps,
     message: `Select a Clerk application to link ${dim(`(repo: ${basename(displayPath)})`)}`,
+    allowCreate,
   });
 }
 

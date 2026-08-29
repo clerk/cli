@@ -44,6 +44,7 @@ export async function fetchAppsTolerantly(): Promise<Application[]> {
 export async function pickOrCreateApp(opts: {
   apps: Application[];
   message: string;
+  allowCreate?: boolean;
 }): Promise<Application> {
   const appChoices = opts.apps.map((a) => ({ name: appLabel(a), value: a.application_id }));
   const createChoice = {
@@ -51,13 +52,20 @@ export async function pickOrCreateApp(opts: {
     value: CREATE_NEW_APP,
   };
 
+  if (opts.allowCreate === false && appChoices.length === 0) {
+    throw new CliError(
+      "No existing Clerk applications are available. Create the intended application first, then rerun with --app <app_id>.",
+      { code: ERROR_CODE.APP_NOT_FOUND },
+    );
+  }
+
   const selectedId = await search<string>({
     message: opts.message,
     source: (term) => {
       const filtered = term
         ? appChoices.filter((c) => c.name.toLowerCase().includes(term.toLowerCase()))
         : appChoices;
-      return [createChoice, ...filtered];
+      return opts.allowCreate === false ? filtered : [createChoice, ...filtered];
     },
   });
 

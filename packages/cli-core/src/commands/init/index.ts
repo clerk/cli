@@ -74,7 +74,6 @@ import { planIOSAssociatedDomain } from "./ios/associated-domain.ts";
 import { planIOSAppleEntitlement } from "./ios/apple-entitlement.ts";
 import { planIOSPrebuiltAuth } from "./ios/prebuilt-auth.ts";
 import { planIOSSDKInstall } from "./ios/install-sdk.ts";
-import { planIOSRuntimeKeyVerification } from "./ios/runtime-key.ts";
 import { resolveIOSDevelopmentPublicKey } from "./ios/development-key.ts";
 import { createIOSDryRunOutput, formatIOSSetupPlan } from "./ios/output.ts";
 import {
@@ -82,7 +81,6 @@ import {
   applyIOSPlannedLocalSetup,
   normalizeIOSSDKInstallPlanForSetup,
   planIOSPrebuiltAuthRuntimeBlockers,
-  verifyIOSRuntimeKeySetup,
   type IOSLocalSetupResult,
 } from "./ios/apply.ts";
 import {
@@ -242,6 +240,9 @@ export async function init(options: InitOptions = {}) {
           )
         : undefined;
     const productDecision = selectedTarget ? clerkKitUIInstallDecision(selectedTarget) : undefined;
+    const hasCustomConfigure = selectedTarget?.swift.configureCalls.some(
+      (call) => call.publishableKeyWiring === "custom",
+    );
     const inspectedPrebuiltAuthPlan =
       dryRunSelection.state === "selected"
         ? await planIOSPrebuiltAuth({
@@ -293,21 +294,9 @@ export async function init(options: InitOptions = {}) {
             root: ctx.cwd,
             projectPath: dryRunSelection.projectPath,
             targetId: dryRunSelection.targetId,
-            deferToPublishableKey: directConfigPlan?.status === "ready",
+            deferToPublishableKey:
+              directConfigPlan?.status === "ready" || hasCustomConfigure === true,
             allowMissingEntitlementsCreation: true,
-          })
-        : undefined;
-    const runtimeKeyVerificationPlan =
-      dryRunSelection.state === "selected" &&
-      selectedTarget?.swift.configureCalls.some(
-        (call) =>
-          call.publishableKeyWiring === "local-secrets-loader" ||
-          call.publishableKeyWiring === "process-info-environment",
-      )
-        ? await planIOSRuntimeKeyVerification({
-            root: ctx.cwd,
-            projectPath: dryRunSelection.projectPath,
-            targetId: dryRunSelection.targetId,
           })
         : undefined;
     const hasLocalAppleIntent = selectedTarget?.configurations.some(
@@ -346,7 +335,6 @@ export async function init(options: InitOptions = {}) {
     const plan = buildIOSSetupPlan(inspection, {
       sdkInstallPlan,
       directConfigPlan,
-      runtimeKeyVerificationPlan,
       associatedDomainPlan,
       appleEntitlementPlan,
       prebuiltAuthPlan,
@@ -399,9 +387,9 @@ export async function init(options: InitOptions = {}) {
       signInWithApple: options.signInWithApple,
       prebuiltAuthUI: options.prebuiltAuthUI,
     });
-    if (agent && iosLocalSetup.verifiesExistingKey && !options.app && !iosProfile) {
+    if (agent && iosLocalSetup.requiresExplicitApplication && !options.app) {
       throwUsageError(
-        "This iOS target already contains a publishable key. Agent mode cannot choose its matching Clerk application safely; rerun with --app <app_id>. No local files were changed.",
+        "This iOS target already contains a preserved publishable-key configuration. Agent mode cannot choose its Clerk application; ask the developer which existing application it belongs to, then rerun with --app <app_id>. The custom key value was not inspected and no local files were changed.",
       );
     }
   }
@@ -473,6 +461,7 @@ export async function init(options: InitOptions = {}) {
       options.app,
       createIfMissing,
       iosLocalSetup?.requiresLinkedApp === true,
+      iosLocalSetup?.requiresExplicitApplication === true,
       preauthenticatedIOSLabel,
     );
     authenticatedAppId = authenticated.applicationId;
@@ -672,12 +661,6 @@ export async function init(options: InitOptions = {}) {
       applicationId: nativeRemotePlan.applicationId,
       phase: "native-application",
     });
-    if (iosSetupForCommit.runtimeKeyVerificationPlan) {
-      await verifyIOSRuntimeKeySetup(
-        iosSetupForCommit.runtimeKeyVerificationPlan,
-        keys.publishableKey,
-      );
-    }
     try {
       setTelemetryStage("ios_native_setup");
       await applyIOSNativeRemoteSetup(nativeRemotePlan);
@@ -700,12 +683,6 @@ export async function init(options: InitOptions = {}) {
         applicationId: nativeApplePlan.applicationId,
         phase: "native-apple",
       });
-      if (iosSetupForCommit.runtimeKeyVerificationPlan) {
-        await verifyIOSRuntimeKeySetup(
-          iosSetupForCommit.runtimeKeyVerificationPlan,
-          keys.publishableKey,
-        );
-      }
       try {
         setTelemetryStage("ios_apple_setup");
         await applyIOSNativeAppleConnection(nativeApplePlan);
@@ -1155,6 +1132,7 @@ async function authenticateAndLink(
   app: string | undefined,
   createIfMissing: string | undefined,
   requireLinkedAppId: boolean,
+  requireExplicitApplication: boolean,
   preauthenticatedLabel?: string,
 ): Promise<{
   applicationId?: string;
@@ -1165,7 +1143,7 @@ async function authenticateAndLink(
 
   const alreadyOnRequestedApp = profile && (!app || profile.profile.appId === app);
 
-  if (label && alreadyOnRequestedApp) {
+  if (label && alreadyOnRequestedApp && !requireExplicitApplication) {
     log.info(dim(`${label} · Linked to ${profile.profile.appId}`));
     return { applicationId: profile.profile.appId };
   }
@@ -1180,6 +1158,7 @@ async function authenticateAndLink(
     cwd,
     createIfMissing,
     ...(requireLinkedAppId && { skipAutolink: true }),
+    ...(requireExplicitApplication && { requireExistingAppSelection: true }),
   });
 
   const linked = app || requireLinkedAppId ? await resolveProfile(cwd) : undefined;

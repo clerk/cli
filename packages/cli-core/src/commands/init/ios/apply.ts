@@ -34,11 +34,6 @@ import {
   type IOSFileMutation,
 } from "./file-transaction.ts";
 import {
-  planIOSRuntimeKeyVerification,
-  verifyIOSRuntimeKey,
-  type IOSRuntimeKeyVerificationPlan,
-} from "./runtime-key.ts";
-import {
   planIOSAssociatedDomain,
   prepareIOSAssociatedDomainMutation,
   validatePreparedIOSAssociatedDomain,
@@ -119,8 +114,6 @@ export interface IOSLocalSetupResult {
   sdkInstallPlan?: IOSSDKInstallPlan;
   /** Fresh/default direct Swift configuration or existing inline verification. */
   directConfigPlan?: IOSDirectConfigPlan;
-  /** Read-only proof for comparing an already configured sink after app linking. */
-  runtimeKeyVerificationPlan?: IOSRuntimeKeyVerificationPlan;
   /** Existing entitlements files that can receive the exact linked webcredentials host. */
   associatedDomainPlan?: IOSAssociatedDomainPlan;
   /** Selected-target Sign in with Apple entitlement setup or verification. */
@@ -142,8 +135,8 @@ export interface IOSLocalSetupResult {
   requiresLinkedApp: boolean;
   /** The approved local transaction consumes the linked development publishable key. */
   requiresDevelopmentKey: boolean;
-  /** An existing runtime value must not be paired with an auto-created agent app. */
-  verifiesExistingKey: boolean;
+  /** A preserved runtime configuration requires the developer to choose its Clerk application. */
+  requiresExplicitApplication: boolean;
 }
 
 /** @internal Test-only hook used to prove aggregate post-write rollback. */
@@ -407,34 +400,15 @@ export async function applyIOSLocalSetup(
     requirePrebuiltAuthCompatibility: prebuiltAuthActive,
   });
 
-  const configureStep = buildIOSSetupPlan(inspection).steps.find(
-    (candidate) => candidate.id === "configure-publishable-key",
+  const customConfigureCalls = selectedTarget.swift.configureCalls.filter(
+    (call) => call.publishableKeyWiring === "custom",
   );
-  const hasLocalSecretsConfigure = selectedTarget.swift.configureCalls.some(
-    (call) => call.publishableKeyWiring === "local-secrets-loader",
-  );
-  const hasRunSchemeConfigure = selectedTarget.swift.configureCalls.some(
-    (call) => call.publishableKeyWiring === "process-info-environment",
-  );
-  const hasSatisfiedLocalRuntimeSink =
-    configureStep?.status === "satisfied" &&
-    inspection.localPublishableKey.source != null &&
-    selectedTarget.runtimeKeySinks.some(
-      (sink) => sink.path === inspection.localPublishableKey.source,
-    );
-  const plannedRuntimeKeyVerification =
-    hasLocalSecretsConfigure || hasRunSchemeConfigure || hasSatisfiedLocalRuntimeSink
-      ? await planIOSRuntimeKeyVerification({
-          root: options.root,
-          projectPath: selection.projectPath,
-          targetId: selection.targetId,
-        })
-      : undefined;
-  const runtimeKeyVerificationPlan =
-    plannedRuntimeKeyVerification?.status === "ready" ? plannedRuntimeKeyVerification : undefined;
-  const hasEnabledSchemeKey = inspection.localPublishableKey.candidateSources.some((source) =>
-    source.endsWith(".xcscheme"),
-  );
+  const hasCustomConfigure = customConfigureCalls.length > 0;
+  const hasSupportedCustomConfigure =
+    selectedTarget.swift.evidenceComplete &&
+    selectedTarget.swift.status !== "ambiguous" &&
+    selectedTarget.swift.configureCalls.length === 1 &&
+    customConfigureCalls[0]?.startupBinding === "app-init";
   const shouldPlanDirectConfig = shouldPlanIOSDirectConfig(
     inspection,
     selectedTarget,
@@ -462,7 +436,7 @@ export async function applyIOSLocalSetup(
     root: options.root,
     projectPath: selection.projectPath,
     targetId: selection.targetId,
-    deferToPublishableKey: directConfigPlan?.status === "ready",
+    deferToPublishableKey: directConfigPlan?.status === "ready" || hasSupportedCustomConfigure,
     allowMissingEntitlementsCreation: true,
   });
   // Associated Domains is an independent additive improvement. Unsupported
@@ -529,13 +503,6 @@ export async function applyIOSLocalSetup(
     prebuiltAuthActive,
   });
 
-  if (plannedRuntimeKeyVerification?.status === "blocked") {
-    throw iosSetupError(
-      `The existing iOS runtime publishable key could not be verified safely. clerk init will not change that compatibility file; repair it manually, then rerun the command. No local files were changed:\n${blockerList(
-        plannedRuntimeKeyVerification.blockers,
-      )}`,
-    );
-  }
   if (directConfigPlan?.status === "blocked") {
     throw iosSetupError(
       `The selected SwiftUI app could not be configured automatically. No local files were changed:\n${blockerList(
@@ -548,18 +515,13 @@ export async function applyIOSLocalSetup(
     selectedTarget.swift.configureCalls.length === 0 &&
     !directConfigPlan
   ) {
-    const reason = hasEnabledSchemeKey
-      ? "an enabled Run-scheme publishable key already indicates a custom runtime configuration"
-      : selectedTarget.runtimeKeySinks.length > 0
-        ? "a target-owned LocalSecrets.plist exists without a proven loader"
-        : "the selected runtime configuration could not be proven";
     throw iosSetupError(
-      `The fresh SwiftUI target was not edited because ${reason}. Resolve that setup or configure Clerk directly in the @main initializer, then rerun clerk init. No local files were changed.`,
+      "The fresh SwiftUI target was not edited because the selected runtime configuration could not be proven. Configure Clerk directly in the @main initializer, then rerun clerk init. No local files were changed.",
     );
   }
-  if ((hasLocalSecretsConfigure || hasRunSchemeConfigure) && !runtimeKeyVerificationPlan) {
+  if (hasCustomConfigure && !hasSupportedCustomConfigure) {
     throw iosSetupError(
-      "An existing Clerk runtime-key configuration was found, but it does not provide one proven development publishable key to the selected target. clerk init preserves custom runtime sources and will not rewrite them; repair the intended key manually, then rerun the command.",
+      "A custom Clerk.configure(...) source was found, but it is not one unambiguous call in the selected app's startup initializer. clerk init preserved it and made no local or remote changes. Confirm the shipping configuration manually, then rerun the command.",
     );
   }
   if (prebuiltAuthActive) {
@@ -693,12 +655,7 @@ export async function applyIOSLocalSetup(
     prebuiltAuthAppleEntitlementPlan?.status === "ready";
   if (hasLocalWrites) {
     log.info("\nclerk init will make the following local iOS changes:\n");
-  } else if (
-    directConfigPlan ||
-    runtimeKeyVerificationPlan ||
-    appleEntitlementPlan ||
-    prebuiltAuthPlan
-  ) {
+  } else if (directConfigPlan || appleEntitlementPlan || prebuiltAuthPlan) {
     log.info("\nclerk init will perform the following read-only iOS verification:\n");
   }
   if (installPlan.status === "ready") {
@@ -830,7 +787,6 @@ export async function applyIOSLocalSetup(
     ...(unverifiedAppIdPrefixSuggestion ? { unverifiedAppIdPrefixSuggestion } : {}),
     sdkInstallPlan,
     directConfigPlan,
-    runtimeKeyVerificationPlan,
     associatedDomainPlan,
     appleEntitlementPlan,
     prebuiltAuthPlan,
@@ -840,12 +796,9 @@ export async function applyIOSLocalSetup(
     nativeAppleRequested,
     requiresLinkedApp: true,
     requiresDevelopmentKey:
-      directConfigPlan != null ||
-      runtimeKeyVerificationPlan != null ||
-      associatedDomainPlan?.requiresPublishableKey === true,
-    verifiesExistingKey:
-      directConfigPlan?.changes?.configuration === "verify-existing" ||
-      runtimeKeyVerificationPlan != null,
+      directConfigPlan != null || associatedDomainPlan?.requiresPublishableKey === true,
+    requiresExplicitApplication:
+      hasSupportedCustomConfigure || directConfigPlan?.changes?.configuration === "verify-existing",
   };
 }
 
@@ -1031,9 +984,7 @@ function requireDevelopmentKey(
   publishableKey: string | undefined,
 ): string {
   const planNeedsKey = Boolean(
-    setup.directConfigPlan ||
-    setup.runtimeKeyVerificationPlan ||
-    setup.associatedDomainPlan?.requiresPublishableKey,
+    setup.directConfigPlan || setup.associatedDomainPlan?.requiresPublishableKey,
   );
   if (planNeedsKey !== setup.requiresDevelopmentKey) {
     throw iosSetupError(
@@ -1082,15 +1033,7 @@ function assertCoherentLocalSetup(setup: IOSLocalSetupResult): void {
       ERROR_CODE.IOS_SETUP_PLAN_INVALID,
     );
   }
-  const runtimePlans = [setup.directConfigPlan, setup.runtimeKeyVerificationPlan].filter(
-    (plan) => plan != null,
-  );
-  if (runtimePlans.length > 1) {
-    throw iosSetupError(
-      "The approved iOS setup contains conflicting runtime configuration routes. No local setup changes were written; rerun clerk init.",
-      ERROR_CODE.IOS_SETUP_PLAN_INVALID,
-    );
-  }
+  const runtimePlans = [setup.directConfigPlan].filter((plan) => plan != null);
   const plans: Array<{ root: string; projectPath: string; targetId: string }> = [
     setup.sdkInstallPlan,
     ...runtimePlans,
@@ -1132,8 +1075,8 @@ function assertCoherentLocalSetup(setup: IOSLocalSetupResult): void {
 /**
  * Commits a previously previewed iOS setup after authentication. Fresh direct
  * configuration combines project.pbxproj and the Swift entry source in one
- * guarded local transaction. Existing LocalSecrets integrations are verified
- * read-only and are never rewritten.
+ * guarded local transaction. Existing custom key sources are preserved and
+ * are never rewritten or interpreted.
  */
 export async function applyIOSPlannedLocalSetup(
   setup: IOSLocalSetupResult,
@@ -1174,15 +1117,6 @@ export async function applyIOSPlannedLocalSetup(
     }
   }
   const key = requireDevelopmentKey(setup, publishableKey);
-
-  // Existing LocalSecrets and Run-scheme values are verified before any local
-  // mutation. A mismatched application can therefore never change the target.
-  if (setup.runtimeKeyVerificationPlan) {
-    const result = await withSpinner("Verifying the existing iOS publishable key...", async () =>
-      verifyIOSRuntimeKey(setup.runtimeKeyVerificationPlan!, key),
-    );
-    assertRuntimeKeyVerificationMatched(result);
-  }
 
   const preparedSDK = await prepareSDKForCommit(setup.sdkInstallPlan);
   const preparedPrebuiltAuth = await preparePrebuiltAuthForCommit(setup.prebuiltAuthPlan);
@@ -1342,8 +1276,8 @@ export async function applyIOSPlannedLocalSetup(
   const localMutations = composeAppleMutations(baseMutations, preparedAppleEntitlement);
   assertUniqueMutationPaths(localMutations);
 
-  // SDK-only and read-only compatibility routes apply their local candidates
-  // together after authentication.
+  // SDK-only and custom-runtime routes apply their local candidates together
+  // after the developer has selected the intended Clerk application.
   if (localMutations.length > 0) {
     const postconditions: Array<() => boolean | Promise<boolean>> = [
       ...(preparedSDK ? [async () => validateIOSSDKInstallPostcondition(preparedSDK.plan)] : []),
@@ -1366,12 +1300,10 @@ export async function applyIOSPlannedLocalSetup(
         ? [async () => validatePrebuiltAuthRuntimePostcondition(setup)]
         : []),
     ];
-    if (setup.runtimeKeyVerificationPlan) {
+    if (options.beforePostWriteValidation) {
       postconditions.push(async () => {
         await options.beforePostWriteValidation?.();
-        return (
-          (await verifyIOSRuntimeKey(setup.runtimeKeyVerificationPlan!, key)).status === "matched"
-        );
+        return true;
       });
     }
     const result = await withSpinner("Applying the local iOS setup...", async () =>
@@ -1403,44 +1335,5 @@ export async function applyIOSPlannedLocalSetup(
     }
   }
 
-  if (setup.runtimeKeyVerificationPlan) {
-    if (localMutations.length === 0) {
-      await options.beforePostWriteValidation?.();
-      const result = await verifyIOSRuntimeKey(setup.runtimeKeyVerificationPlan, key);
-      assertRuntimeKeyVerificationMatched(result);
-    }
-    log.info(dim("The existing publishable key matches the linked Clerk application."));
-  }
-}
-
-export async function verifyIOSRuntimeKeySetup(
-  plan: IOSRuntimeKeyVerificationPlan,
-  linkedPublishableKey: string,
-): Promise<void> {
-  const result = await withSpinner("Verifying the existing iOS publishable key...", async () =>
-    verifyIOSRuntimeKey(plan, linkedPublishableKey),
-  );
-  assertRuntimeKeyVerificationMatched(result);
-}
-
-function assertRuntimeKeyVerificationMatched(
-  result: Awaited<ReturnType<typeof verifyIOSRuntimeKey>>,
-): void {
-  if (result.status === "matched") return;
-  if (result.status === "mismatched") {
-    throw iosSetupError(
-      "The existing iOS runtime publishable key does not match the linked Clerk application's development key. No key was changed; link the matching application or clear the existing runtime key intentionally before rerunning clerk init.",
-      ERROR_CODE.IOS_PUBLISHABLE_KEY_MISMATCH,
-    );
-  }
-  if (result.status === "stale") {
-    throw iosSetupError(
-      "The selected iOS runtime-key source changed after the read-only verification preflight. No key was changed; rerun clerk init.",
-      ERROR_CODE.IOS_SETUP_STALE,
-    );
-  }
-  const reasons = result.plan.blockers.map((blocker) => `  • ${blocker.message}`).join("\n");
-  throw iosSetupError(
-    `The existing iOS runtime publishable key could not be verified safely. No key was changed:\n${reasons}`,
-  );
+  if (localMutations.length === 0) await options.beforePostWriteValidation?.();
 }
