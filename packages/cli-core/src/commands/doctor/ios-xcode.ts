@@ -249,17 +249,45 @@ function fail(name: string, message: string, remedy?: string, detail?: string): 
   };
 }
 
+function splitStructuralURLSuffix(value: string): { token: string; suffix: string } {
+  const suffix = value.match(/[\])},.;]+$/)?.[0] ?? "";
+  return {
+    token: suffix ? value.slice(0, -suffix.length) : value,
+    suffix,
+  };
+}
+
 function sanitizeSupportedURLTokens(value: string): string {
-  return value.replace(/\b(?:https?|ssh|git(?:\+ssh)?):\/\/[^\s"'`<>]+/gi, (token) => {
-    const queryIndex = token.indexOf("?");
-    const fragmentIndex = token.indexOf("#");
-    const secretIndex = [queryIndex, fragmentIndex]
+  return value.replace(/\b(?:https?|ssh|git(?:\+ssh)?):\/\/[^\s"'`<>]+/gi, (matched) => {
+    const { token, suffix } = splitStructuralURLSuffix(matched);
+    const secretIndex = [token.indexOf("?"), token.indexOf("#")]
       .filter((index) => index >= 0)
       .reduce((lowest, index) => Math.min(lowest, index), token.length);
-    const removed = token.slice(secretIndex);
-    const structuralSuffix = removed.match(/[\])},.;]+$/)?.[0] ?? "";
-    return `${token.slice(0, secretIndex).replace(/^((?:https?|ssh|git(?:\+ssh)?):\/\/)[^/\s]+@/i, "$1<redacted>@")}${structuralSuffix}`;
+    const withoutQueryOrFragment = token.slice(0, secretIndex);
+    const parsed = withoutQueryOrFragment.match(
+      /^((?:https?|ssh|git(?:\+ssh)?):\/\/)([^/]*)(.*)$/i,
+    );
+    if (!parsed) return suffix;
+
+    const scheme = parsed[1] ?? "";
+    const rawAuthority = parsed[2] ?? "";
+    const pathname = parsed[3] ?? "";
+    const userInfoIndex = rawAuthority.lastIndexOf("@");
+    const host = rawAuthority.slice(userInfoIndex + 1);
+    const authority = userInfoIndex >= 0 ? `<redacted>@${host}` : host;
+    const redactedPath = pathname && pathname !== "/" ? "/<redacted>" : pathname;
+    return `${scheme}${authority}${redactedPath}${suffix}`;
   });
+}
+
+function sanitizeScpStyleURLTokens(value: string): string {
+  return value.replace(
+    /(^|[^A-Za-z0-9._~%+-])[A-Za-z0-9._~%+-]+@((?:\[[^\]\s"'`<>/]+\]|[^@:\s/[\]"'`<>]+)):[^\s"'`<>]+/gm,
+    (matched, prefix: string, host: string) => {
+      const { suffix } = splitStructuralURLSuffix(matched);
+      return `${prefix}<redacted>@${host}:<redacted>${suffix}`;
+    },
+  );
 }
 
 function redactPEMPrivateKeys(value: string): string {
@@ -289,11 +317,9 @@ export function sanitizeIOSXcodeDiagnostic(value: string): string {
     }
   }
 
-  return sanitizeSupportedURLTokens(redactPEMPrivateKeys(withoutControls))
-    .replace(
-      /(^|[\s("'`=])[A-Za-z0-9._~%!$&'()*+,;=:+-]+@((?:\[[0-9A-Fa-f:.]+\]|[A-Za-z0-9.-]+):[^\s"'`<>]+)/gm,
-      "$1<redacted>@$2",
-    )
+  return sanitizeScpStyleURLTokens(
+    sanitizeSupportedURLTokens(redactPEMPrivateKeys(withoutControls)),
+  )
     .replace(/\bBasic\s+[A-Za-z0-9+/_=-]{4,}/gi, "Basic <redacted>")
     .replace(/\bBearer\s+[A-Za-z0-9._~+/=-]+/gi, "Bearer <redacted>")
     .replace(/\b(?:pk|sk|ak)_[A-Za-z0-9._~+/=-]+/gi, "<redacted>")
