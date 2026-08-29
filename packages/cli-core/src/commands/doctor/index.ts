@@ -6,6 +6,7 @@ import { log } from "../../lib/log.ts";
 import { CliError, ERROR_CODE, errorMessage } from "../../lib/errors.ts";
 import { intro, outro, bar, withSpinner } from "../../lib/spinner.ts";
 import { setTelemetryStage } from "../../lib/telemetry.ts";
+import { inspectIOSProject } from "../init/ios/inspect.ts";
 import { createDoctorContext } from "./context.ts";
 import {
   checkLoggedIn,
@@ -35,19 +36,25 @@ const ACCOUNT_CHECKS: CheckFn[] = [
 
 const CONFIGURATION_CHECKS: CheckFn[] = [checkConfigFile, checkShellCompletion, checkMcp];
 
-export function getDoctorChecks(ios: boolean): CheckFn[] {
-  const checks = [...ACCOUNT_CHECKS, ...(ios ? [] : [checkEnvVars]), ...CONFIGURATION_CHECKS];
+export function getDoctorChecks(appleNative: boolean): CheckFn[] {
+  const checks = [
+    ...ACCOUNT_CHECKS,
+    ...(appleNative ? [] : [checkEnvVars]),
+    ...CONFIGURATION_CHECKS,
+  ];
   return isAgent() ? [checkHostExecution, ...checks] : checks;
 }
 
 export interface DoctorRunDependencies {
   detectFramework: typeof detectFramework;
+  inspectIOSProject: typeof inspectIOSProject;
   getDoctorChecks: typeof getDoctorChecks;
   runIOSDoctorChecks: typeof runIOSDoctorChecks;
 }
 
 const defaultDoctorRunDependencies: DoctorRunDependencies = {
   detectFramework,
+  inspectIOSProject,
   getDoctorChecks,
   runIOSDoctorChecks,
 };
@@ -68,9 +75,23 @@ export async function runChecks(
   const framework = explicitlyRequestsIOS
     ? { dep: "ios" }
     : await dependencies.detectFramework(process.cwd());
-  const ios = framework?.dep === "ios";
+  const appleNativeCandidate = framework?.dep === "ios";
+  let appleNativeInspection: Awaited<ReturnType<typeof inspectIOSProject>> | undefined;
+  let appleNativeInspectionFailed = false;
+  if (appleNativeCandidate) {
+    try {
+      appleNativeInspection = await dependencies.inspectIOSProject(process.cwd(), {
+        ...(options.target ? { target: options.target } : {}),
+        exhaustiveContainerDiscovery: true,
+      });
+    } catch {
+      appleNativeInspectionFailed = true;
+    }
+  }
+  const appleNative =
+    appleNativeInspectionFailed || (appleNativeInspection?.appTargets.length ?? 0) > 0;
   const common = await Promise.all(
-    dependencies.getDoctorChecks(ios).map(async (check) => {
+    dependencies.getDoctorChecks(appleNative).map(async (check) => {
       try {
         return await check(ctx);
       } catch (error) {
@@ -83,26 +104,42 @@ export async function runChecks(
     }),
   );
 
-  if (!ios) return common;
-  try {
-    setTelemetryStage("doctor_ios_audit");
-    const iosChecks = await dependencies.runIOSDoctorChecks(ctx, {
-      root: process.cwd(),
-      ...(options.target ? { target: options.target } : {}),
-    });
-    return [...common, ...iosChecks.results];
-  } catch {
+  if (!appleNativeCandidate) return common;
+  if (appleNativeInspectionFailed || !appleNativeInspection) {
     return [
       ...common,
       {
-        name: "iOS inspection",
+        name: "Apple-native inspection",
         status: "fail",
-        message: "iOS project inspection failed",
+        message: "Apple-native project inspection failed",
         detail: "The semantic Xcode inspection did not complete safely.",
         remedy: "Run from the Xcode project root and pass `--target <name-or-id>` if needed.",
       },
     ];
   }
+  if (!appleNative) return common;
+
+  let appleNativeChecks: Awaited<ReturnType<typeof runIOSDoctorChecks>>;
+  try {
+    setTelemetryStage("doctor_ios_audit");
+    appleNativeChecks = await dependencies.runIOSDoctorChecks(ctx, {
+      root: process.cwd(),
+      ...(options.target ? { target: options.target } : {}),
+      preparedInspection: appleNativeInspection,
+    });
+  } catch {
+    return [
+      ...common,
+      {
+        name: "Apple-native inspection",
+        status: "fail",
+        message: "Apple-native project inspection failed",
+        detail: "The semantic Xcode inspection did not complete safely.",
+        remedy: "Run from the Xcode project root and pass `--target <name-or-id>` if needed.",
+      },
+    ];
+  }
+  return [...common, ...appleNativeChecks.results];
 }
 
 function printResults(results: CheckResult[], options: DoctorOptions): void {
