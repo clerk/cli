@@ -1,4 +1,4 @@
-import { lstat, readFile, readdir, realpath, stat } from "node:fs/promises";
+import { lstat, readdir, realpath, stat } from "node:fs/promises";
 import { basename, dirname, isAbsolute, relative, resolve, sep } from "node:path";
 import { parse as parsePbxProject } from "@bacons/xcode/json";
 import {
@@ -9,6 +9,7 @@ import {
   resolvePbxFilePath,
   type PbxObjects,
 } from "./pbx.ts";
+import { readBoundedRegularFile } from "./bounded-file.ts";
 import type { IOSWorkspaceInspection } from "./types.ts";
 
 const MAX_DISCOVERY_DEPTH = 3;
@@ -225,20 +226,11 @@ async function referencedProjectsForProject(
     return { projectPaths: [], complete: false, valid: true };
   }
 
-  let source: string;
-  try {
-    const projectFileInfo = await lstat(pbxprojPath);
-    if (
-      !projectFileInfo.isFile() ||
-      projectFileInfo.isSymbolicLink() ||
-      projectFileInfo.size > MAX_PBXPROJ_BYTES
-    ) {
-      return { projectPaths: [], complete: false, valid: true };
-    }
-    source = await readFile(pbxprojPath, "utf8");
-  } catch {
+  const projectFile = await readBoundedRegularFile(pbxprojPath, MAX_PBXPROJ_BYTES);
+  if (projectFile.status !== "ok") {
     return { projectPaths: [], complete: false, valid: true };
   }
+  const source = new TextDecoder().decode(projectFile.bytes);
 
   let archive: Record<string, unknown>;
   try {
@@ -517,9 +509,9 @@ export async function inspectWorkspace(
     if (!(await pathIsSafelyWithinIOSRoot(root, contentsPath))) {
       throw new Error("external workspace");
     }
-    const file = Bun.file(contentsPath);
-    if (!(await file.exists()) || file.size > 2_000_000) throw new Error("unreadable workspace");
-    xml = maskXMLComments(await file.text());
+    const file = await readBoundedRegularFile(contentsPath, 2_000_000);
+    if (file.status !== "ok") throw new Error("unreadable workspace");
+    xml = maskXMLComments(new TextDecoder().decode(file.bytes));
   } catch {
     return {
       inspection: { path: relativeIOSPath(root, workspacePath), projectPaths: [] },

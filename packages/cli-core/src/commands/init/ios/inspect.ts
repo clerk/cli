@@ -1,4 +1,4 @@
-import { readdir, readFile, stat } from "node:fs/promises";
+import { readdir, stat } from "node:fs/promises";
 import { dirname, extname, relative, resolve, sep } from "node:path";
 import { parse as parsePbxProject } from "@bacons/xcode/json";
 import { parseEnvFile } from "../../../lib/dotenv.ts";
@@ -9,6 +9,7 @@ import {
   resolveEntitlementsAbsolutePath,
   type EntitlementBuildContext,
 } from "./build-settings.ts";
+import { readBoundedRegularFile } from "./bounded-file.ts";
 import {
   discoverIOSContainers,
   discoverReferencedIOSProjects,
@@ -51,6 +52,7 @@ import type {
 
 const APP_PRODUCT_TYPE = "com.apple.product-type.application";
 const APPLE_SIGN_IN_KEY = "com.apple.developer.applesignin";
+const MAX_ENTITLEMENTS_BYTES = 2_000_000;
 const MAX_PBXPROJ_BYTES = 15_000_000;
 const MAX_SOURCE_FILES = 2_500;
 const MAX_SOURCE_DEPTH = 24;
@@ -909,8 +911,8 @@ async function inspectEntitlements(
   diagnostics: IOSDiagnostic[],
 ): Promise<IOSEntitlementsInspection | undefined> {
   const relativePath = relativeIOSPath(root, absolutePath);
-  const file = Bun.file(absolutePath);
-  if (!(await file.exists())) {
+  const file = await readBoundedRegularFile(absolutePath, MAX_ENTITLEMENTS_BYTES);
+  if (file.status === "missing") {
     diagnostics.push({
       code: "xcode.missing-entitlements",
       severity: "warning",
@@ -922,7 +924,8 @@ async function inspectEntitlements(
   }
 
   try {
-    const bytes = new Uint8Array(await file.arrayBuffer());
+    if (file.status !== "ok") throw new Error("unreadable entitlements");
+    const bytes = file.bytes;
     if (new TextDecoder().decode(bytes.slice(0, 8)).startsWith("bplist")) {
       throw new Error("binary plist");
     }
@@ -1475,8 +1478,8 @@ async function parseProject(
     });
     return { inspection: emptyInspection(), appTargets: [], appTargetCandidates: [], diagnostics };
   }
-  const file = Bun.file(pbxprojPath);
-  if (!(await file.exists())) {
+  const file = await readBoundedRegularFile(pbxprojPath, MAX_PBXPROJ_BYTES);
+  if (file.status === "missing") {
     diagnostics.push({
       code: "xcode.missing-project-file",
       severity: "error",
@@ -1485,7 +1488,7 @@ async function parseProject(
     });
     return { inspection: emptyInspection(), appTargets: [], appTargetCandidates: [], diagnostics };
   }
-  if (file.size > MAX_PBXPROJ_BYTES) {
+  if (file.status === "too-large") {
     diagnostics.push({
       code: "xcode.malformed-project",
       severity: "error",
@@ -1497,7 +1500,8 @@ async function parseProject(
 
   let archive: Record<string, unknown>;
   try {
-    const parsed: unknown = parsePbxProject(await readFile(pbxprojPath, "utf8"));
+    if (file.status !== "ok") throw new Error("unreadable project");
+    const parsed: unknown = parsePbxProject(new TextDecoder().decode(file.bytes));
     if (!isRecord(parsed)) throw new Error("invalid project root");
     archive = parsed;
   } catch (error) {
