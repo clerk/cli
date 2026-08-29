@@ -26,8 +26,7 @@ export interface IOSDiagnostic {
     | "xcode.incomplete-source-membership"
     | "xcode.interrupted-file-transaction"
     | "clerk.package-unattributed"
-    | "clerk.invalid-publishable-key"
-    | "clerk.conflicting-publishable-keys";
+    | "clerk.invalid-publishable-key";
   severity: IOSDiagnosticSeverity;
   message: string;
   remedy?: string;
@@ -159,17 +158,16 @@ export type IOSTargetSelection =
   | { state: "not-found"; requested: string; candidates: string[] }
   | { state: "none" };
 
-export interface IOSLocalPublishableKeyInspection {
-  /** False when an effective runtime-key source may have been hidden by bounded discovery. */
-  evidenceComplete: boolean;
-  found: boolean;
-  source?: string;
-  frontendApiHost?: string;
-  instanceType?: "development" | "production";
-  conflict: boolean;
-  candidateSources: string[];
-  invalidSources: string[];
-}
+export type IOSLocalPublishableKeyInspection =
+  | {
+      state: "valid";
+      source: string;
+      frontendApiHost: string;
+      instanceType: "development" | "production";
+    }
+  | { state: "invalid"; source: string }
+  | { state: "unproven" }
+  | { state: "missing" };
 
 export interface IOSProjectInspectionResult {
   schemaVersion: 1;

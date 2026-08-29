@@ -423,11 +423,7 @@ describe("inspectIOSProject", () => {
       sourceFilesScanned: 1,
     });
     expect(inspection.localPublishableKey).toEqual({
-      evidenceComplete: true,
-      found: false,
-      conflict: false,
-      candidateSources: [],
-      invalidSources: [],
+      state: "unproven",
     });
     const fixtureKey = `pk_test_${Buffer.from("clerk.example.test$").toString("base64")}`;
     expect(JSON.stringify(inspection)).not.toContain(fixtureKey);
@@ -1038,14 +1034,10 @@ struct MyApp: App {
     const inspection = await inspectIOSProject(root, { target: "MyApp" });
 
     expect(inspection.localPublishableKey).toEqual({
-      evidenceComplete: true,
-      found: true,
-      conflict: false,
+      state: "valid",
       source: "MyApp/MyAppApp.swift",
       frontendApiHost: "inline.clerk.example",
       instanceType: "development",
-      candidateSources: ["MyApp/MyAppApp.swift"],
-      invalidSources: [],
     });
     expect(JSON.stringify(inspection)).not.toContain(publishableKey);
   });
@@ -1072,14 +1064,39 @@ struct MyApp: App {
     const inspection = await inspectIOSProject(root);
 
     expect(inspection.localPublishableKey).toEqual({
-      evidenceComplete: true,
-      found: false,
+      state: "invalid",
       source: "MyApp/MyAppApp.swift",
-      conflict: false,
-      candidateSources: ["MyApp/MyAppApp.swift"],
-      invalidSources: ["MyApp/MyAppApp.swift"],
     });
     expect(JSON.stringify(inspection)).not.toContain(invalidInlineKey);
+  });
+
+  test("marks multiple valid configure calls as unproven instead of invalid", async () => {
+    const root = await fixture({ includeKey: false });
+    const startupKey = `pk_test_${Buffer.from("startup.clerk.example$").toString("base64")}`;
+    const deferredKey = `pk_test_${Buffer.from("deferred.clerk.example$").toString("base64")}`;
+    await Bun.write(
+      join(root, "MyApp", "MyAppApp.swift"),
+      `import ClerkKit
+import SwiftUI
+
+@main
+struct MyApp: App {
+  init() { Clerk.configure(publishableKey: "${startupKey}") }
+
+  var body: some Scene { WindowGroup { Text("Hello") } }
+
+  func configureAgain() {
+    Clerk.configure(publishableKey: "${deferredKey}")
+  }
+}
+`,
+    );
+
+    const inspection = await inspectIOSProject(root);
+
+    expect(inspection.localPublishableKey).toEqual({ state: "unproven" });
+    expect(JSON.stringify(inspection)).not.toContain(startupKey);
+    expect(JSON.stringify(inspection)).not.toContain(deferredKey);
   });
 
   test("does not treat web-framework key names as native iOS configuration", async () => {
@@ -1090,11 +1107,7 @@ struct MyApp: App {
     const inspection = await inspectIOSProject(root);
 
     expect(inspection.localPublishableKey).toEqual({
-      evidenceComplete: true,
-      found: false,
-      conflict: false,
-      candidateSources: [],
-      invalidSources: [],
+      state: "missing",
     });
   });
 
