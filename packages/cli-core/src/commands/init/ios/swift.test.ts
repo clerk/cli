@@ -517,6 +517,36 @@ Clerk.configure(publishableKey: key)`,
     expect(JSON.stringify(inspection)).not.toContain("must-not-leak");
   });
 
+  test("rejects EnvironmentValues overloads as Clerk environment injections", async () => {
+    const root = await mkdtemp(join(tmpdir(), "clerk-ios-swift-environment-"));
+    temporaryDirectories.push(root);
+    const path = join(root, "App.swift");
+
+    for (const keyPath of ["\\.self", ".self"]) {
+      await Bun.write(
+        path,
+        `import ClerkKit
+         import SwiftUI
+         @main struct AppMain: App {
+           var body: some Scene {
+             WindowGroup {
+               ContentView().environment(${keyPath}, Clerk.shared)
+             }
+           }
+         }`,
+      );
+
+      const inspection = await inspectSwiftSources([
+        { absolutePath: path, relativePath: "App.swift" },
+      ]);
+
+      expect(inspection.appRootEvidence).toEqual([{ path: "App.swift" }]);
+      expect(inspection.environmentInjections).toEqual([]);
+      expect(inspection.rootEnvironmentInjections).toEqual([]);
+      expect(inspection.status).toBe("partial");
+    }
+  });
+
   test("retains only decoded metadata for a valid inline publishable key", async () => {
     const root = await mkdtemp(join(tmpdir(), "clerk-ios-swift-"));
     temporaryDirectories.push(root);

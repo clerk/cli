@@ -18,7 +18,7 @@ const CLERK_NATIVE_AUTH_FLOW =
 const CLERK_MAGIC_LINK_AUTH_FLOW =
   /(?:\b(?:Clerk\s*\.\s*shared|clerk)\s*\.\s*auth\s*\.\s*signInWithEmailLink|\.\s*sendEmailLink)\s*\(/;
 const CLERK_ENVIRONMENT_INJECTION =
-  /\.\s*environment\s*\(\s*(?:\\?\.\s*self\s*,\s*)?Clerk\s*\.\s*shared\s*\)/;
+  /\.\s*environment\s*\(\s*Clerk\s*\.\s*shared\s*\)/;
 const CLERK_ENVIRONMENT_CONSUMER = /@Environment\s*\(\s*Clerk\s*\.\s*self\s*\)/;
 const CLERK_AUTH_VIEW = /\bAuthView\s*\(/;
 const CLERK_KIT_IMPORT =
@@ -819,7 +819,11 @@ export async function inspectSwiftSources(
     if (importsClerkModule && has(sanitized, CLERK_ENVIRONMENT_INJECTION)) {
       environmentInjections.push(evidence);
     }
-    if (importsClerkModule && appRoot?.clerkEnvironment.found) {
+    if (
+      importsClerkModule &&
+      appRoot?.clerkEnvironment.found &&
+      !appRoot.clerkEnvironment.conflicting
+    ) {
       rootEnvironmentInjections.push(evidence);
     }
     if (importsClerkModule && has(sanitized, CLERK_ENVIRONMENT_CONSUMER)) {

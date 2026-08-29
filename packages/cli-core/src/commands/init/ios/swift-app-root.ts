@@ -353,7 +353,7 @@ function clerkEnvironment(
       modifier.openingParenthesis + 1,
       modifier.closingParenthesis,
     );
-    if (/^\s*(?:\\?\.\s*self\s*,\s*)?Clerk\s*\.\s*shared\s*$/.test(argumentsSource)) {
+    if (/^\s*Clerk\s*\.\s*shared\s*$/.test(argumentsSource)) {
       found = true;
     } else if (/\bClerk\s*\.\s*shared\b/.test(argumentsSource)) {
       conflicting = true;

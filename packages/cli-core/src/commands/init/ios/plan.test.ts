@@ -233,6 +233,35 @@ struct MyApp: App {
     ).toContain("not proven on the shipping WindowGroup root");
   });
 
+  test("does not satisfy environment setup from an invalid EnvironmentValues overload", async () => {
+    for (const keyPath of ["\\.self", ".self"]) {
+      const root = await mkdtemp(join(tmpdir(), "clerk-ios-plan-root-environment-"));
+      temporaryDirectories.push(root);
+      await createIOSFixture(root, { complete: true });
+      await Bun.write(
+        join(root, "MyApp", "MyAppApp.swift"),
+        `import ClerkKit
+         import ClerkKitUI
+         import SwiftUI
+         @main struct MyApp: App {
+           var body: some Scene {
+             WindowGroup { AuthView().environment(${keyPath}, Clerk.shared) }
+           }
+         }`,
+      );
+
+      const inspection = await inspectIOSProject(root);
+      const plan = buildIOSSetupPlan(inspection);
+
+      expect(inspection.appTargets[0]?.swift.environmentInjections).toEqual([]);
+      expect(inspection.appTargets[0]?.swift.rootEnvironmentInjections).toEqual([]);
+      expect(plan.steps.find((step) => step.id === "inject-clerk-environment")).toMatchObject({
+        status: "required",
+        automatable: false,
+      });
+    }
+  });
+
   test("advertises a proven prebuilt AuthView scaffold without selecting it", async () => {
     const root = await mkdtemp(join(tmpdir(), "clerk-ios-plan-prebuilt-auth-"));
     temporaryDirectories.push(root);

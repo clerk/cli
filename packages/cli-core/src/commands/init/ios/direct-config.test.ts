@@ -340,6 +340,34 @@ struct MyApp: App {
     expect(await readFile(appSourcePath(root))).toEqual(before);
   });
 
+  test("blocks invalid EnvironmentValues overloads at the WindowGroup root", async () => {
+    for (const keyPath of ["\\.self", ".self"]) {
+      const root = await fixture();
+      await replaceSource(
+        root,
+        `import ClerkKit
+import SwiftUI
+
+@main
+struct MyApp: App {
+  var body: some Scene {
+    WindowGroup {
+      ContentView().environment(${keyPath}, Clerk.shared)
+    }
+  }
+}
+`,
+      );
+
+      const before = await readFile(appSourcePath(root));
+      const plan = await planIOSDirectConfig(planOptions(root));
+
+      expect(plan.status).toBe("blocked");
+      expect(blockerCodes(plan)).toContain("conflicting-environment");
+      expect(await readFile(appSourcePath(root))).toEqual(before);
+    }
+  });
+
   test("refuses indirect Clerk access before an existing inline configuration", async () => {
     const root = await fixture();
     await replaceSource(
