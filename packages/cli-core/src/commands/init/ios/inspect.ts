@@ -28,6 +28,7 @@ import {
   sanitizeRepositoryURL,
   type PbxObject,
   type PbxObjects,
+  type PbxParentIndex,
 } from "./pbx.ts";
 import { parseIOSPlist } from "./plist.ts";
 import { inspectSwiftSources } from "./swift.ts";
@@ -631,7 +632,7 @@ async function sourceFilesForTarget(options: {
   targetId: string;
   targetObject: PbxObject;
   objects: PbxObjects;
-  parents: Map<string, string>;
+  parents: PbxParentIndex;
   diagnostics: IOSDiagnostic[];
 }): Promise<{
   files: Array<{ absolutePath: string; relativePath: string }>;

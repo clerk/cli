@@ -9,6 +9,7 @@ import {
   resolvePbxFilePath,
   type PbxObject,
   type PbxObjects,
+  type PbxParentIndex,
 } from "./pbx.ts";
 import type {
   IOSBuildConfiguration,
@@ -611,7 +612,7 @@ async function settingsForConfiguration(
   configurationName: string,
   context: BuildContext,
   objects: PbxObjects,
-  parents: Map<string, string>,
+  parents: PbxParentIndex,
   diagnostics: IOSDiagnostic[],
   inherited: BuildSettingsEvaluation = {
     settings: {},
@@ -791,7 +792,7 @@ export async function inspectTargetBuildConfigurations(options: {
   targetId: string;
   targetObject: PbxObject;
   objects: PbxObjects;
-  parents: Map<string, string>;
+  parents: PbxParentIndex;
   diagnostics: IOSDiagnostic[];
 }): Promise<InspectedTargetConfiguration[]> {
   const {

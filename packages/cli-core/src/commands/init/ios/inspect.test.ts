@@ -339,6 +339,44 @@ describe("discoverIOSContainers", () => {
 });
 
 describe("inspectIOSProject", () => {
+  test("marks source membership incomplete when a group-relative file has multiple parents", async () => {
+    const root = await fixture({ complete: true });
+    const alternateGroupId = "565656565656565656565656";
+    await mkdir(join(root, "Alternate"));
+    await Bun.write(
+      join(root, "Alternate", "MyAppApp.swift"),
+      'import SwiftUI\n\n@main\nstruct AlternateApp: App {\n  var body: some Scene { WindowGroup { Text("Alternate") } }\n}\n',
+    );
+    await transformProject(root, (objects) => {
+      const appGroup = objects[IOS_FIXTURE_IDS.appGroup]!;
+      delete objects[IOS_FIXTURE_IDS.appGroup];
+      objects[alternateGroupId] = {
+        isa: "PBXGroup",
+        children: [IOS_FIXTURE_IDS.appFile],
+        path: "Alternate",
+        sourceTree: "<group>",
+      };
+      objects[IOS_FIXTURE_IDS.appGroup] = appGroup;
+      objects[IOS_FIXTURE_IDS.mainGroup]!.children = [
+        alternateGroupId,
+        ...((objects[IOS_FIXTURE_IDS.mainGroup]!.children as string[]) ?? []),
+      ];
+    });
+
+    const inspection = await inspectIOSProject(root);
+    const memberships = await inspectIOSSourceMembership(root);
+    const appMembership = memberships.find(
+      (membership) => membership.targetId === IOS_FIXTURE_IDS.appTarget,
+    );
+
+    expect(inspection.appTargets[0]?.swift.evidenceComplete).toBe(false);
+    expect(inspection.appTargets[0]?.swift.sourceFilesScanned).toBe(0);
+    expect(inspection.diagnostics).toContainEqual(
+      expect.objectContaining({ code: "xcode.incomplete-source-membership" }),
+    );
+    expect(appMembership).toMatchObject({ complete: false, files: [] });
+  });
+
   test("reports interrupted file transactions without recovering or changing project bytes", async () => {
     const root = await fixture({ complete: true });
     const projectPath = join(root, "MyApp.xcodeproj", "project.pbxproj");
@@ -863,6 +901,54 @@ let package = Package(
 
     expect(result.inspection.projectPaths).toEqual(["MyApp.xcodeproj"]);
     expect(result.localProjectPaths).toEqual([join(root, "MyApp.xcodeproj")]);
+  });
+
+  test.each([
+    ["decimal", "group:MyApp&#46;xcodeproj"],
+    ["hexadecimal", "group:MyApp&#x2E;xcodeproj"],
+  ])("decodes %s numeric entities in workspace locations", async (_label, location) => {
+    const root = await fixture({ workspace: true });
+    const workspace = join(root, "MyApp.xcworkspace");
+    await Bun.write(
+      join(workspace, "contents.xcworkspacedata"),
+      `<Workspace version="1.0"><FileRef location="${location}"></FileRef></Workspace>`,
+    );
+
+    const result = await inspectWorkspace(root, workspace);
+
+    expect(result.inspection.projectPaths).toEqual(["MyApp.xcodeproj"]);
+    expect(result.localProjectPaths).toEqual([join(root, "MyApp.xcodeproj")]);
+  });
+
+  test.each(["&#0;", "&#xD800;", "&#1114112;", "&#x110000;"])(
+    "rejects invalid XML code point %s in a workspace location",
+    async (reference) => {
+      const root = await fixture({ workspace: true });
+      const workspace = join(root, "MyApp.xcworkspace");
+      await Bun.write(
+        join(workspace, "contents.xcworkspacedata"),
+        `<Workspace version="1.0"><FileRef location="group:MyApp${reference}.xcodeproj"></FileRef></Workspace>`,
+      );
+
+      const result = await inspectWorkspace(root, workspace);
+
+      expect(result.inspection.projectPaths).toEqual([]);
+      expect(result.localProjectPaths).toEqual([]);
+    },
+  );
+
+  test("does not decode numeric syntax introduced by an escaped ampersand", async () => {
+    const root = await fixture({ workspace: true });
+    const workspace = join(root, "MyApp.xcworkspace");
+    await Bun.write(
+      join(workspace, "contents.xcworkspacedata"),
+      '<Workspace version="1.0"><FileRef location="group:MyApp&amp;#46;xcodeproj"></FileRef></Workspace>',
+    );
+
+    const result = await inspectWorkspace(root, workspace);
+
+    expect(result.inspection.projectPaths).toEqual([]);
+    expect(result.localProjectPaths).toEqual([]);
   });
 
   test("does not parse a workspace location token from inside another quoted attribute", async () => {

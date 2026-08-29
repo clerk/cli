@@ -92,6 +92,54 @@ describe("resolvePbxFilePath", () => {
       ),
     ).toBe("/tmp/Example/Root.swift");
   });
+
+  test("does not resolve a group-relative object with multiple distinct parents", () => {
+    const file = {
+      isa: "PBXFileReference",
+      path: "App.swift",
+      sourceTree: "<group>",
+    };
+    const firstGroup = {
+      isa: "PBXGroup",
+      children: ["file"],
+      path: "First",
+      sourceTree: "<group>",
+    };
+    const secondGroup = {
+      isa: "PBXGroup",
+      children: ["file"],
+      path: "Second",
+      sourceTree: "<group>",
+    };
+
+    for (const objects of [
+      { firstGroup, secondGroup, file },
+      { secondGroup, firstGroup, file },
+    ] satisfies PbxObjects[]) {
+      const parents = buildPbxParentIndex(objects);
+
+      expect(parents.get("file")).toBeNull();
+      expect(resolvePbxFilePath("file", objects, parents, "/tmp/Example")).toBeUndefined();
+    }
+  });
+
+  test("keeps repeated membership in one parent unambiguous", () => {
+    const objects: PbxObjects = {
+      group: {
+        isa: "PBXGroup",
+        children: ["file", "file"],
+        path: "Sources",
+        sourceTree: "<group>",
+      },
+      file: { isa: "PBXFileReference", path: "App.swift", sourceTree: "<group>" },
+    };
+    const parents = buildPbxParentIndex(objects);
+
+    expect(parents.get("file")).toBe("group");
+    expect(resolvePbxFilePath("file", objects, parents, "/tmp/Example")).toBe(
+      "/tmp/Example/Sources/App.swift",
+    );
+  });
 });
 
 describe("sanitizeRepositoryURL", () => {

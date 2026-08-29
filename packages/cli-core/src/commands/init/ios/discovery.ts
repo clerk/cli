@@ -3,7 +3,6 @@ import { basename, dirname, isAbsolute, relative, resolve, sep } from "node:path
 import { parse as parsePbxProject } from "@bacons/xcode/json";
 import {
   asString,
-  asStringArray,
   buildPbxParentIndex,
   isRecord,
   resolvePbxFilePath,
@@ -267,12 +266,6 @@ async function referencedProjectsForProject(
     asString(projectObject.projectDirPath) ?? "",
   );
   const parents = buildPbxParentIndex(objects);
-  const parentCounts = new Map<string, number>();
-  for (const object of Object.values(objects)) {
-    for (const childId of asStringArray(object.children)) {
-      parentCounts.set(childId, (parentCounts.get(childId) ?? 0) + 1);
-    }
-  }
   const projectPaths = new Set<string>();
   let complete = true;
   for (const projectReference of projectReferences) {
@@ -286,10 +279,12 @@ async function referencedProjectsForProject(
       complete = false;
       continue;
     }
-    const parentCount = parentCounts.get(fileReferenceId) ?? 0;
     const sourceTree = asString(fileReference.sourceTree) ?? "<group>";
     const rawPath = asString(fileReference.path);
-    if (parentCount > 1 || (sourceTree === "<absolute>" && (!rawPath || !isAbsolute(rawPath)))) {
+    if (
+      parents.get(fileReferenceId) === null ||
+      (sourceTree === "<absolute>" && (!rawPath || !isAbsolute(rawPath)))
+    ) {
       complete = false;
       continue;
     }
@@ -420,13 +415,59 @@ export async function discoverIOSContainers(
   };
 }
 
-function decodeXMLAttribute(value: string): string {
-  return value
-    .replaceAll("&quot;", '"')
-    .replaceAll("&apos;", "'")
-    .replaceAll("&lt;", "<")
-    .replaceAll("&gt;", ">")
-    .replaceAll("&amp;", "&");
+function validXMLCodePoint(value: number): boolean {
+  return (
+    value === 0x09 ||
+    value === 0x0a ||
+    value === 0x0d ||
+    (value >= 0x20 && value <= 0xd7ff) ||
+    (value >= 0xe000 && value <= 0xfffd) ||
+    (value >= 0x10000 && value <= 0x10ffff)
+  );
+}
+
+const XML_NAMED_ENTITIES = [
+  ["&quot;", '"'],
+  ["&apos;", "'"],
+  ["&lt;", "<"],
+  ["&gt;", ">"],
+  ["&amp;", "&"],
+] as const;
+
+function decodeXMLAttribute(value: string): string | undefined {
+  const chunks: string[] = [];
+  let cursor = 0;
+  while (cursor < value.length) {
+    const start = value.indexOf("&", cursor);
+    if (start === -1) {
+      chunks.push(value.slice(cursor));
+      break;
+    }
+    chunks.push(value.slice(cursor, start));
+    if (value[start + 1] === "#") {
+      const end = value.indexOf(";", start + 2);
+      if (end === -1) return undefined;
+      const reference = value.slice(start + 2, end);
+      const hexadecimal = reference.startsWith("x");
+      const digits = hexadecimal ? reference.slice(1) : reference;
+      if (!(hexadecimal ? /^[0-9A-Fa-f]+$/ : /^[0-9]+$/).test(digits)) return undefined;
+      const codePoint = Number.parseInt(digits, hexadecimal ? 16 : 10);
+      if (!Number.isSafeInteger(codePoint) || !validXMLCodePoint(codePoint)) return undefined;
+      chunks.push(String.fromCodePoint(codePoint));
+      cursor = end + 1;
+      continue;
+    }
+
+    const named = XML_NAMED_ENTITIES.find(([entity]) => value.startsWith(entity, start));
+    if (named) {
+      chunks.push(named[1]);
+      cursor = start + named[0].length;
+    } else {
+      chunks.push("&");
+      cursor = start + 1;
+    }
+  }
+  return chunks.join("");
 }
 
 export function xmlAttribute(source: string, name: string): string | undefined {
