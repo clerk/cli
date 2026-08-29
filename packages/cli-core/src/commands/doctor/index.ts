@@ -89,7 +89,9 @@ export async function runChecks(
     }
   }
   const appleNative =
-    appleNativeInspectionFailed || (appleNativeInspection?.appTargets.length ?? 0) > 0;
+    appleNativeInspectionFailed ||
+    options.target != null ||
+    (appleNativeInspection?.appTargets.length ?? 0) > 0;
   const common = await Promise.all(
     dependencies.getDoctorChecks(appleNative).map(async (check) => {
       try {
