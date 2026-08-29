@@ -75,9 +75,86 @@ describe("sanitizeSwiftSource", () => {
     expect(interpolated.complete).toBe(false);
     expect(interpolated.sanitizedSource).not.toContain("Clerk.shared");
   });
+
+  test("keeps ordinary string interpolation complete without hiding later Clerk calls", () => {
+    const source = String.raw`let message = "Hello \(user.name): \(format("%@", value))"
+Clerk.configure(publishableKey: key)`;
+
+    const result = sanitizeSwiftSourceWithStatus(source);
+
+    expect(result.complete).toBe(true);
+    expect(result.sanitizedSource).not.toContain("user.name");
+    expect(result.sanitizedSource).not.toContain("format");
+    expect(result.sanitizedSource).toContain("Clerk.configure(publishableKey: key)");
+  });
+
+  test("marks interpolation that contains executable Clerk evidence incomplete", () => {
+    const configure = sanitizeSwiftSourceWithStatus(
+      String.raw`let message = "configured: \(Clerk.configure(publishableKey: "pk_test_hidden"))"`,
+    );
+    const auth = sanitizeSwiftSourceWithStatus(
+      String.raw`let message = #"signed in: \#(try await Clerk.shared.auth.signInWithApple())"#`,
+    );
+
+    expect(configure.complete).toBe(false);
+    expect(configure.sanitizedSource).not.toContain("Clerk.configure");
+    expect(auth.complete).toBe(false);
+    expect(auth.sanitizedSource).not.toContain("Clerk.shared");
+  });
 });
 
 describe("inspectSwiftSources", () => {
+  test("fails Clerk evidence closed when a configure call is hidden in interpolation", async () => {
+    const root = await mkdtemp(join(tmpdir(), "clerk-ios-swift-"));
+    temporaryDirectories.push(root);
+    const path = join(root, "App.swift");
+    await Bun.write(
+      path,
+      String.raw`import ClerkKit
+       @main struct AppMain: App {
+         let diagnostic = "\(Clerk.configure(publishableKey: "pk_test_hidden"))"
+         var body: some Scene { WindowGroup { ContentView() } }
+       }`,
+    );
+
+    const inspection = await inspectSwiftSources([
+      { absolutePath: path, relativePath: "App.swift" },
+    ]);
+
+    expect(inspection.evidenceComplete).toBe(false);
+    expect(inspection.entryPoints).toEqual([{ path: "App.swift" }]);
+    expect(inspection.configureCalls).toEqual([]);
+  });
+
+  test("keeps ordinary interpolation complete while detecting a real configure call", async () => {
+    const root = await mkdtemp(join(tmpdir(), "clerk-ios-swift-"));
+    temporaryDirectories.push(root);
+    const path = join(root, "App.swift");
+    await Bun.write(
+      path,
+      String.raw`import ClerkKit
+       @main struct AppMain: App {
+         init() {
+           let diagnostic = "Hello \(user.name): \(format("%@", value))"
+           Clerk.configure(publishableKey: key)
+         }
+       }`,
+    );
+
+    const inspection = await inspectSwiftSources([
+      { absolutePath: path, relativePath: "App.swift" },
+    ]);
+
+    expect(inspection.evidenceComplete).toBe(true);
+    expect(inspection.configureCalls).toEqual([
+      {
+        path: "App.swift",
+        publishableKeyWiring: "custom",
+        startupBinding: "app-init",
+      },
+    ]);
+  });
+
   test("ignores authentication symbols inside Swift regex literals", async () => {
     const root = await mkdtemp(join(tmpdir(), "clerk-ios-swift-"));
     temporaryDirectories.push(root);
