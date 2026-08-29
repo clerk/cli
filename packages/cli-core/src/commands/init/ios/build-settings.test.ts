@@ -890,6 +890,10 @@ describe("inspectTargetBuildConfigurations", () => {
         IPHONEOS_DEPLOYMENT_TARGET: "",
         "PRODUCT_BUNDLE_IDENTIFIER[arch=arm64]": "com.clerk.MacExampleApp",
         "PRODUCT_BUNDLE_IDENTIFIER[arch=x86_64]": "com.clerk.MacExampleApp",
+        "ENABLE_APP_SANDBOX[arch=arm64]": "YES",
+        "ENABLE_APP_SANDBOX[arch=x86_64]": "YES",
+        "ENABLE_OUTGOING_NETWORK_CONNECTIONS[arch=arm64]": "YES",
+        "ENABLE_OUTGOING_NETWORK_CONNECTIONS[arch=x86_64]": "YES",
       },
     });
 
@@ -898,6 +902,8 @@ describe("inspectTargetBuildConfigurations", () => {
       model: {
         bundleIdentifier: { state: "resolved", value: "com.clerk.MacExampleApp" },
         deploymentTarget: { state: "resolved", value: "14.0" },
+        appSandbox: { state: "resolved", value: "YES" },
+        outgoingNetworkConnections: { state: "resolved", value: "YES" },
       },
     });
     expect(configurations[0]?.entitlementContexts.map((context) => context.label)).toEqual([
