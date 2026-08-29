@@ -223,6 +223,35 @@ struct MyApp: App {
     expect(hasExactIOSSwiftUIAppContentRoot(await source(interpolated))).toBe(false);
   });
 
+  test("refuses mutation when a configure call executes inside string interpolation", async () => {
+    const root = await fixture();
+    await replaceSource(
+      root,
+      String.raw`import SwiftUI
+import ClerkKit
+
+@main
+struct MyApp: App {
+  init() {
+    let diagnostic = "configured: \(Clerk.configure(publishableKey: "pk_test_hidden"))"
+  }
+
+  var body: some Scene { WindowGroup { ContentView() } }
+}
+`,
+    );
+    const before = await readFile(appSourcePath(root));
+
+    const plan = await planIOSDirectConfig(planOptions(root));
+    const prepared = await prepareIOSDirectConfigMutation(plan, DEVELOPMENT_KEY);
+
+    expect(plan.status).toBe("blocked");
+    expect(blockerCodes(plan)).toContain("incomplete-source-membership");
+    expect(prepared.status).toBe("blocked");
+    expect(prepared.mutation).toBeUndefined();
+    expect(await readFile(appSourcePath(root))).toEqual(before);
+  });
+
   test("configures a compact pristine app and is byte-idempotent", async () => {
     const root = await fixture();
     const firstPlan = await planIOSDirectConfig(planOptions(root));
