@@ -17,13 +17,13 @@ clerk doctor --target MyApp
 
 ## Options
 
-| Flag          | Description                                           |
-| ------------- | ----------------------------------------------------- |
-| `--verbose`   | Show detailed diagnostic info for each check          |
-| `--json`      | Output results as machine-readable JSON               |
-| `--spotlight` | Only show warnings and failures (hide passing checks) |
-| `--fix`       | Offer to auto-fix issues with known remedies          |
-| `--target`    | Select an iOS application target by name or object ID |
+| Flag          | Description                                                    |
+| ------------- | -------------------------------------------------------------- |
+| `--verbose`   | Show detailed diagnostic info for each check                   |
+| `--json`      | Output results as machine-readable JSON                        |
+| `--spotlight` | Only show warnings and failures (hide passing checks)          |
+| `--fix`       | Offer to auto-fix issues with known remedies                   |
+| `--target`    | Select an iOS or macOS application target by name or object ID |
 
 ## Checks
 
@@ -34,29 +34,31 @@ clerk doctor --target MyApp
 | Project linkage       | Project        | Current directory is linked to a Clerk app                                                                                                                                                           |
 | Linked application    | Project        | Linked application ID is accessible via the API                                                                                                                                                      |
 | Instances             | Project        | Configured dev/prod instance IDs match the application's instances                                                                                                                                   |
-| Environment variables | Environment    | Non-iOS projects have Clerk keys in `.env.local` or `.env`                                                                                                                                           |
+| Environment variables | Environment    | Projects without a supported iOS or macOS app have Clerk keys in `.env.local` or `.env`                                                                                                              |
 | CLI configuration     | Configuration  | CLI config file exists and parses                                                                                                                                                                    |
 | Shell completion      | Configuration  | Shell autocompletion is installed for the detected shell                                                                                                                                             |
 | MCP server            | Integration    | If a Clerk MCP entry is installed, every distinct configured server answers the `initialize` handshake; warns on an unreadable client config (skipped when nothing is installed; warns, never fails) |
 
-### iOS projects
+### iOS and macOS projects
 
-When the current directory contains an Xcode project or `--target` is provided,
-doctor replaces the web `.env` check with the same semantic Xcode, Swift, and
-entitlements inspection used by `clerk init`. It reports separate results for:
+When the current directory contains a supported iOS or macOS application target,
+or `--target` is provided, Doctor replaces the web `.env` check with the same
+semantic Xcode, Swift, and entitlements inspection used by `clerk init`. It
+reports separate results for:
 
 - application-target selection;
 - ClerkKit and ClerkKitUI product linkage;
 - `Clerk.configure` and, for direct literal configuration, the selected target's effective development key;
 - SwiftUI environment injection and authentication-flow evidence;
 - AuthView's enabled methods and required local Apple capability;
-- Associated Domains and the optional Sign in with Apple entitlement;
+- iOS Associated Domains or the macOS outgoing-network capability;
+- the optional Sign in with Apple entitlement;
 - Native API state and the exact Bundle ID registration on the linked
   development instance; and
 - the Clerk Apple connection when the selected target already declares the
   native Apple entitlement.
 
-iOS diagnostics never require a secret key in the Xcode project or an env
+Native Apple diagnostics never require a secret key in the Xcode project or an env
 file. A direct literal publishable key is compared with the linked development
 application using only redacted Frontend API host metadata. For a single
 startup `Clerk.configure` call that uses a custom publishable-key source,
@@ -157,8 +159,8 @@ Exit code 1 signals one or more checks failed.
 | ------ | ---------------------------------------------------------------------------------- | --------------------------------------------------------------------------------- |
 | `GET`  | `/oauth/userinfo`                                                                  | Validates the stored auth token                                                   |
 | `GET`  | `/v1/platform/applications/{appId}`                                                | Verifies the linked app and its instances exist                                   |
-| `GET`  | `/v1/platform/applications/{appId}/instances/{instanceId}/native_settings`         | Verifies Native API state for iOS projects                                        |
-| `GET`  | `/v1/platform/applications/{appId}/instances/{instanceId}/native_applications/ios` | Verifies the exact iOS Bundle ID registration                                     |
+| `GET`  | `/v1/platform/applications/{appId}/instances/{instanceId}/native_settings`         | Verifies Native API state for iOS and macOS projects                              |
+| `GET`  | `/v1/platform/applications/{appId}/instances/{instanceId}/native_applications/ios` | Verifies the exact native Apple Bundle ID registration                            |
 | `GET`  | `/v1/platform/applications/{appId}/instances/{instanceId}/config`                  | Audits the Apple connection when native Apple is relevant                         |
 | `GET`  | `/v1/platform/applications/{appId}/instances/{instanceId}/config/schema`           | Determines whether an unhealthy Apple connection can be safely reconciled by init |
 | `GET`  | `https://{fapiHost}/v1/environment`                                                | Verifies whether AuthView currently offers native Apple sign-in                   |
