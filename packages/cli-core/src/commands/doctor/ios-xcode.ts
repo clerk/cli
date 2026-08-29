@@ -894,7 +894,7 @@ async function selectContainer(
   };
 }
 
-type ContainerPackageGraph = "direct-remote" | "local-unknown" | "none";
+type ContainerPackageGraph = "direct-remote" | "incomplete" | "local-unknown" | "none";
 
 interface WorkspacePackageReferences {
   complete: boolean;
@@ -1024,6 +1024,7 @@ async function containerPackageGraph(
   target: IOSAppTarget,
 ): Promise<ContainerPackageGraph> {
   let complete = true;
+  let hasDirectRemotePackage = false;
   let hasLocalPackage = false;
   const projectPaths = new Set([target.projectPath]);
   if (container.kind === "workspace") {
@@ -1044,11 +1045,13 @@ async function containerPackageGraph(
       continue;
     }
     for (const reference of project.packages) {
-      if (reference.kind === "remote") return "direct-remote";
-      hasLocalPackage = true;
+      if (reference.kind === "remote") hasDirectRemotePackage = true;
+      else hasLocalPackage = true;
     }
   }
-  return hasLocalPackage || !complete ? "local-unknown" : "none";
+  if (!complete) return "incomplete";
+  if (hasDirectRemotePackage) return "direct-remote";
+  return hasLocalPackage ? "local-unknown" : "none";
 }
 
 function packageResolvedPath(container: SelectedContainer): string {
@@ -2060,6 +2063,16 @@ export async function runIOSXcodeVerification(
   const container = containerResolution.container;
   const results: CheckResult[] = [pass("Xcode container", `Using ${container.relativePath}`)];
   const packageGraph = await containerPackageGraph(inspection, container, target);
+  if (packageGraph === "incomplete") {
+    results.push(
+      fail(
+        "Swift packages",
+        "The Xcode container's Swift package graph could not be inspected completely",
+        "Keep workspace project and package references inside the project root, repair malformed workspace metadata, then rerun the command.",
+      ),
+    );
+    return results;
+  }
   const resolvedPath = packageResolvedPath(container);
   const initialLockRead = await readSafePackageResolvedSnapshot(
     inspection.root,
