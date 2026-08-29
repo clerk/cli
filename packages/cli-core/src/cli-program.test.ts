@@ -23,6 +23,19 @@ test("does not register the removed clerk skill command", () => {
   expect(skill).toBeUndefined();
 });
 
+test("doctor help describes static iOS and macOS target audits", () => {
+  const program = createProgram();
+  const doctor = program.commands.find((command) => command.name() === "doctor")!;
+  const help = doctor.helpInformation();
+
+  expect(help).toContain("Select an iOS or macOS application target");
+  expect(help).toContain("Audit a specific iOS or macOS application target");
+  expect(help).not.toContain("--build");
+  expect(help).not.toContain("--resolve-packages");
+  expect(help).not.toContain("--simulator");
+  expect(help).not.toContain("--device");
+});
+
 test("registers users create and list as subcommands", () => {
   const program = createProgram();
   const users = program.commands.find((command) => command.name() === "users")!;

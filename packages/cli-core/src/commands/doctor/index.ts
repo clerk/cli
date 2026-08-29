@@ -247,7 +247,7 @@ export function registerDoctor(program: Program): void {
     .option("--json", "Output results as JSON")
     .option("--spotlight", "Only show warnings and failures")
     .option("--fix", "Attempt to auto-fix issues")
-    .option("--target <name-or-id>", "Select an iOS application target")
+    .option("--target <name-or-id>", "Select an iOS or macOS application target")
     .setExamples([
       { command: "clerk doctor", description: "Run all health checks" },
       { command: "clerk doctor --verbose", description: "Show detailed output for each check" },
@@ -256,7 +256,7 @@ export function registerDoctor(program: Program): void {
       { command: "clerk doctor --spotlight", description: "Only show warnings and failures" },
       {
         command: "clerk doctor --target MyApp",
-        description: "Audit a specific iOS application target",
+        description: "Audit a specific iOS or macOS application target",
       },
     ])
     .action(doctor);
