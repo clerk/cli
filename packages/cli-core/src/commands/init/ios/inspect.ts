@@ -39,6 +39,7 @@ import type {
   IOSClerkPackageState,
   IOSDiagnostic,
   IOSEntitlementsInspection,
+  IOSNativePlatform,
   IOSPackageReference,
   IOSProductLinkState,
   IOSProjectInspection,
@@ -67,7 +68,12 @@ const SOURCE_IGNORES = new Set([
 interface ParsedProject {
   inspection: IOSProjectInspection;
   appTargets: IOSAppTarget[];
-  appTargetCandidates: Array<{ targetId: string; targetName: string; projectPath: string }>;
+  appTargetCandidates: Array<{
+    targetId: string;
+    targetName: string;
+    projectPath: string;
+    platform: IOSNativePlatform;
+  }>;
   diagnostics: IOSDiagnostic[];
   sourceMemberships?: IOSTargetSourceMembership[];
 }
@@ -119,7 +125,10 @@ function canonicalRequirement(value: unknown): Record<string, string> | undefine
   return Object.keys(requirement).length > 0 ? requirement : undefined;
 }
 
-function buildFileIOSApplicability(object: PbxObject): {
+function buildFilePlatformApplicability(
+  object: PbxObject,
+  platform?: IOSNativePlatform,
+): {
   applies: boolean;
   recognized: boolean;
 } {
@@ -137,13 +146,18 @@ function buildFileIOSApplicability(object: PbxObject): {
   }
   const filters = [...asStringArray(rawFilters), ...(platformFilter ? [platformFilter] : [])];
   if (filters.length === 0) return { applies: true, recognized: true };
-  if (filters.some((filter) => /(?:^|[^a-z])(?:ios|iphone)/i.test(filter))) {
-    return { applies: true, recognized: true };
-  }
   const recognized = filters.every((filter) =>
-    /(?:maccatalyst|macos|tvos|watchos|xros|visionos|driverkit)/i.test(filter),
+    /^(?:ios|iphone(?:os|simulator)?|maccatalyst|macos|tvos|watchos|xros|visionos|driverkit)$/i.test(
+      filter,
+    ),
   );
-  return { applies: false, recognized };
+  if (!recognized) return { applies: false, recognized: false };
+  if (!platform) return { applies: true, recognized: true };
+  const applies =
+    platform === "ios"
+      ? filters.some((filter) => /^(?:ios|iphone(?:os|simulator)?)$/i.test(filter))
+      : filters.some((filter) => /^macos$/i.test(filter));
+  return { applies, recognized: true };
 }
 
 function inspectInlinePublishableKey(
@@ -245,6 +259,7 @@ function targetProductState(
   targetObject: PbxObject,
   objects: PbxObjects,
   productName: "ClerkKit" | "ClerkKitUI",
+  platform: IOSNativePlatform,
 ): { state: IOSProductLinkState; productIds: string[]; packageIds: string[] } {
   const targetProductIds = asStringArray(targetObject.packageProductDependencies);
   const matchingProductIds = targetProductIds.filter((id) => {
@@ -263,7 +278,7 @@ function targetProductState(
     if (phase?.isa !== "PBXFrameworksBuildPhase") continue;
     for (const buildFileId of asStringArray(phase.files)) {
       const buildFile = objects[buildFileId];
-      if (!buildFile || !buildFileIOSApplicability(buildFile).applies) continue;
+      if (!buildFile || !buildFilePlatformApplicability(buildFile, platform).applies) continue;
       const productRef = asString(buildFile.productRef);
       if (productRef) linkedProductIds.add(productRef);
     }
@@ -287,9 +302,10 @@ function inspectTargetPackages(
   objects: PbxObjects,
   packages: IOSPackageReference[],
   diagnostics: IOSDiagnostic[],
+  platform: IOSNativePlatform,
 ): IOSClerkPackageState {
-  const clerkKit = targetProductState(targetObject, objects, "ClerkKit");
-  const clerkKitUI = targetProductState(targetObject, objects, "ClerkKitUI");
+  const clerkKit = targetProductState(targetObject, objects, "ClerkKit", platform);
+  const clerkKitUI = targetProductState(targetObject, objects, "ClerkKitUI", platform);
   const packageById = new Map(packages.map((item) => [item.objectId, item]));
   const productIds = [...clerkKit.productIds, ...clerkKitUI.productIds];
   const productPackageIds = [...clerkKit.packageIds, ...clerkKitUI.packageIds];
@@ -714,6 +730,7 @@ async function sourceFilesForTarget(options: {
   objects: PbxObjects;
   parents: PbxParentIndex;
   diagnostics: IOSDiagnostic[];
+  platform?: IOSNativePlatform;
 }): Promise<{
   files: Array<{ absolutePath: string; relativePath: string }>;
   complete: boolean;
@@ -727,6 +744,7 @@ async function sourceFilesForTarget(options: {
     objects,
     parents,
     diagnostics,
+    platform,
   } = options;
   const projectDirectory = dirname(projectPath);
   const files = new Map<string, { absolutePath: string; relativePath: string }>();
@@ -773,7 +791,7 @@ async function sourceFilesForTarget(options: {
         );
         continue;
       }
-      const applicability = buildFileIOSApplicability(buildFile);
+      const applicability = buildFilePlatformApplicability(buildFile, platform);
       if (!applicability.applies) {
         if (!applicability.recognized) state.complete = false;
         continue;
@@ -1051,16 +1069,21 @@ async function parseProject(
       parents,
       diagnostics: configurationDiagnostics,
     });
-    if (
-      targetConfigurations.length > 0 &&
-      !targetConfigurations.some((configuration) => configuration.isIOS)
-    ) {
-      continue;
-    }
+    const targetPlatform: IOSNativePlatform | undefined = targetConfigurations.some(
+      (configuration) => configuration.platform === "ios",
+    )
+      ? "ios"
+      : targetConfigurations.some((configuration) => configuration.platform === "macos")
+        ? "macos"
+        : targetConfigurations.length === 0
+          ? "ios"
+          : undefined;
+    if (!targetPlatform) continue;
     appTargetCandidates.push({
       targetId,
       targetName,
       projectPath: projectRelativePath,
+      platform: targetPlatform,
     });
     if (requestedTarget && requestedTarget !== targetId && requestedTarget !== targetName) {
       continue;
@@ -1081,12 +1104,21 @@ async function parseProject(
       diagnostics,
     );
     addBuildSettingConflictDiagnostics(targetName, configurations, diagnostics);
-    const targetSources = sourceMembershipById.get(targetId) ?? {
-      files: [],
-      complete: false,
-      diagnostics: [],
-    };
-    diagnostics.push(...targetSources.diagnostics);
+    const ownershipSources = sourceMembershipById.get(targetId);
+    const targetSourceDiagnostics: IOSDiagnostic[] = [];
+    const targetSources = await sourceFilesForTarget({
+      root,
+      projectPath,
+      groupRootDirectory,
+      targetId,
+      targetObject,
+      objects,
+      parents,
+      diagnostics: targetSourceDiagnostics,
+      platform: targetPlatform,
+    });
+    targetSources.complete &&= ownershipSources?.complete ?? false;
+    diagnostics.push(...targetSourceDiagnostics);
 
     const swiftInspection =
       targetSources.files.length > 0
@@ -1112,6 +1144,7 @@ async function parseProject(
     const appTarget: IOSAppTarget = {
       id: targetId,
       name: targetName,
+      platform: targetPlatform,
       productName: asString(targetObject.productName),
       projectPath: projectRelativePath,
       configurations,
@@ -1123,6 +1156,7 @@ async function parseProject(
         objects,
         packages,
         diagnostics,
+        targetPlatform,
       ),
       swift: swiftInspection,
     };
@@ -1185,7 +1219,7 @@ function selectTarget(
     diagnostics.push({
       code: "xcode.target-not-found",
       severity: "error",
-      message: `No iOS application target matches "${requestedTarget}".`,
+      message: `No supported iOS or macOS application target matches "${requestedTarget}".`,
       remedy: "Choose one of the reported target names or IDs.",
       evidence: candidates.map((candidate) => ({
         path: candidate.projectPath,
@@ -1207,8 +1241,9 @@ function selectTarget(
     diagnostics.push({
       code: "xcode.no-ios-app-target",
       severity: "error",
-      message: "No iOS application target was found.",
-      remedy: "Run from an iOS app project, or pass --framework ios from its project root.",
+      message: "No supported iOS or macOS application target was found.",
+      remedy:
+        "Run from an iOS or macOS app project, or pass --framework ios from its project root.",
       evidence: [],
     });
     return { state: "none" };
@@ -1217,7 +1252,7 @@ function selectTarget(
   diagnostics.push({
     code: "xcode.ambiguous-app-target",
     severity: "error",
-    message: `Found ${candidates.length} iOS application targets; none was selected automatically.`,
+    message: `Found ${candidates.length} supported Apple application targets; none was selected automatically.`,
     remedy: "Rerun with --target <target-name-or-id>.",
     evidence: candidates.map((candidate) => ({
       path: candidate.projectPath,
@@ -1264,7 +1299,7 @@ export async function inspectIOSProject(
   if (await hasInterruptedIOSFileTransaction(root)) {
     return {
       schemaVersion: 1,
-      platform: "ios",
+      platform: "apple-native",
       root,
       workspaces: [],
       projects: [],
@@ -1277,7 +1312,7 @@ export async function inspectIOSProject(
           code: "xcode.interrupted-file-transaction",
           severity: "error",
           message:
-            "Clerk stopped inspection because an iOS file update is incomplete or still active.",
+            "Clerk stopped inspection because an Apple project file update is incomplete or still active.",
           remedy:
             "Wait for any running Clerk command to finish. If none is running, run `clerk init` without `--dry-run` to recover the interrupted update before inspecting the project again.",
           evidence: [],
@@ -1321,7 +1356,7 @@ export async function inspectIOSProject(
       code: "xcode.no-project",
       severity: "error",
       message: "No .xcodeproj was found in the inspected root.",
-      remedy: "Run this command from the directory containing your iOS project.",
+      remedy: "Run this command from the directory containing your iOS or macOS project.",
       evidence: [],
     });
   }
@@ -1384,9 +1419,14 @@ export async function inspectIOSProject(
         )
       : undefined;
   const localPublishableKeyInspection = inspectInlinePublishableKey(selectedAppTarget, diagnostics);
+  const candidatePlatforms = new Set(appTargetCandidates.map((candidate) => candidate.platform));
+  const inspectionPlatform =
+    selectedAppTarget?.platform ??
+    (candidatePlatforms.size === 1 ? appTargetCandidates[0]?.platform : undefined) ??
+    "apple-native";
   const result: IOSProjectInspectionResult = {
     schemaVersion: 1,
-    platform: "ios",
+    platform: inspectionPlatform,
     root,
     workspaces: workspaces.sort((a, b) => a.path.localeCompare(b.path)),
     projects: projects.sort((a, b) => a.path.localeCompare(b.path)),

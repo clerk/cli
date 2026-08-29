@@ -627,7 +627,7 @@ describe("inspectTargetBuildConfigurations", () => {
       },
     });
 
-    expect(configurations[0]?.isIOS).toBe(true);
+    expect(configurations[0]?.platform).toBe("ios");
     expect(diagnostics).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
@@ -656,7 +656,7 @@ describe("inspectTargetBuildConfigurations", () => {
       },
     });
 
-    expect(configurations[0]?.isIOS).toBe(true);
+    expect(configurations[0]?.platform).toBe("ios");
   });
 
   test("still rejects targets with fully resolved non-iOS platform evidence", async () => {
@@ -668,7 +668,7 @@ describe("inspectTargetBuildConfigurations", () => {
       },
     });
 
-    expect(configurations[0]?.isIOS).toBe(false);
+    expect(configurations[0]?.platform).toBeUndefined();
   });
 
   test("rejects resolved non-iOS targets despite a stale iOS deployment target", async () => {
@@ -680,7 +680,7 @@ describe("inspectTargetBuildConfigurations", () => {
       },
     });
 
-    expect(configurations[0]?.isIOS).toBe(false);
+    expect(configurations[0]?.platform).toBeUndefined();
   });
 
   test("keeps targets when some non-iOS platform evidence remains unresolved", async () => {
@@ -692,7 +692,52 @@ describe("inspectTargetBuildConfigurations", () => {
       },
     });
 
-    expect(configurations[0]?.isIOS).toBe(true);
+    expect(configurations[0]?.platform).toBe("ios");
+  });
+
+  test("classifies Clerk's native macOS app settings and resolves both architectures", async () => {
+    const { configurations, diagnostics } = await inspectFixture({
+      targetBuildSettings: {
+        SDKROOT: "macosx",
+        SUPPORTED_PLATFORMS: "macosx",
+        MACOSX_DEPLOYMENT_TARGET: "14.0",
+        IPHONEOS_DEPLOYMENT_TARGET: "",
+        "PRODUCT_BUNDLE_IDENTIFIER[arch=arm64]": "com.clerk.MacExampleApp",
+        "PRODUCT_BUNDLE_IDENTIFIER[arch=x86_64]": "com.clerk.MacExampleApp",
+      },
+    });
+
+    expect(configurations[0]).toMatchObject({
+      platform: "macos",
+      model: {
+        bundleIdentifier: { state: "resolved", value: "com.clerk.MacExampleApp" },
+        deploymentTarget: { state: "resolved", value: "14.0" },
+      },
+    });
+    expect(configurations[0]?.entitlementContexts.map((context) => context.label)).toEqual([
+      "macosx/arm64",
+      "macosx/x86_64",
+    ]);
+    expect(diagnostics).not.toContainEqual(
+      expect.objectContaining({ code: "xcode.conflicting-build-setting" }),
+    );
+  });
+
+  test("keeps an iOS-capable multiplatform target on the iOS automation path", async () => {
+    const { configurations } = await inspectFixture({
+      targetBuildSettings: {
+        SDKROOT: "iphoneos",
+        SUPPORTED_PLATFORMS: "iphoneos iphonesimulator macosx",
+        MACOSX_DEPLOYMENT_TARGET: "14.0",
+      },
+    });
+
+    expect(configurations[0]?.platform).toBe("ios");
+    expect(configurations[0]?.entitlementContexts.map((context) => context.label)).toEqual([
+      "iphoneos/arm64",
+      "iphonesimulator/arm64",
+      "iphonesimulator/x86_64",
+    ]);
   });
 
   test("preserves dangling target configurations as blocking placeholders", async () => {
@@ -723,6 +768,7 @@ describe("inspectTargetBuildConfigurations", () => {
         {
           id: "target",
           name: "Example",
+          platform: "ios",
           projectPath: "Example.xcodeproj",
           configurations: configurations.map(({ model }) => model),
           packages: { package: "absent", clerkKit: "absent", clerkKitUI: "absent" },
@@ -750,6 +796,7 @@ describe("inspectTargetBuildConfigurations", () => {
         targetId: "target",
         targetName: "Example",
         projectPath: "Example.xcodeproj",
+        platform: "ios",
       },
       localPublishableKey: { state: "missing" },
       generatedProject: null,

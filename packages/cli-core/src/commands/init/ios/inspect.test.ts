@@ -739,6 +739,7 @@ describe("inspectIOSProject", () => {
       targetId: IOS_FIXTURE_IDS.appTarget,
       targetName: "MyApp",
       projectPath: "MyApp.xcodeproj",
+      platform: "ios",
     });
     expect(inspection.workspaces).toEqual([
       { path: "MyApp.xcworkspace", projectPaths: ["MyApp.xcodeproj"] },
@@ -1490,6 +1491,50 @@ let package = Package(
 
     expect(inspection.appTargets.map((target) => target.name)).toEqual(["MyApp"]);
     expect(inspection.selection).toMatchObject({ state: "selected", targetName: "MyApp" });
+  });
+
+  test("selects a pure macOS SwiftUI application as an Apple native target", async () => {
+    const root = await fixture({ complete: true, platform: "macos", includeKey: false });
+    const inspection = await inspectIOSProject(root);
+
+    expect(inspection.platform).toBe("macos");
+    expect(inspection.selection).toMatchObject({
+      state: "selected",
+      targetName: "MyApp",
+      platform: "macos",
+    });
+    expect(inspection.appTargets).toHaveLength(1);
+    expect(inspection.appTargets[0]).toMatchObject({
+      platform: "macos",
+      configurations: [
+        {
+          deploymentTarget: { state: "resolved", value: "14.0" },
+        },
+        {
+          deploymentTarget: { state: "resolved", value: "14.0" },
+        },
+      ],
+      swift: {
+        status: "complete",
+      },
+    });
+    expect(inspection.diagnostics).not.toContainEqual(
+      expect.objectContaining({ code: "xcode.no-ios-app-target" }),
+    );
+  });
+
+  test("requires target selection when a root contains separate iOS and macOS apps", async () => {
+    const root = await fixture({ platform: "macos", secondTarget: true });
+    const ambiguous = await inspectIOSProject(root);
+    const macOS = await inspectIOSProject(root, { target: "MyApp" });
+    const iOS = await inspectIOSProject(root, { target: "AdminApp" });
+
+    expect(ambiguous.platform).toBe("apple-native");
+    expect(ambiguous.selection.state).toBe("ambiguous");
+    expect(macOS.selection).toMatchObject({ state: "selected", platform: "macos" });
+    expect(macOS.platform).toBe("macos");
+    expect(iOS.selection).toMatchObject({ state: "selected", platform: "ios" });
+    expect(iOS.platform).toBe("ios");
   });
 
   test("preserves conflicting configuration values instead of guessing", async () => {

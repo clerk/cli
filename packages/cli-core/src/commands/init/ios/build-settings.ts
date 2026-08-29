@@ -14,6 +14,7 @@ import {
 import type {
   IOSBuildConfiguration,
   IOSDiagnostic,
+  IOSNativePlatform,
   IOSSourceEvidence,
   IOSValueResolution,
 } from "./types.ts";
@@ -25,13 +26,20 @@ const INSPECTED_BUILD_SETTING_KEYS = [
   "DEVELOPMENT_TEAM",
   "CODE_SIGN_ENTITLEMENTS",
   "IPHONEOS_DEPLOYMENT_TARGET",
+  "MACOSX_DEPLOYMENT_TARGET",
   "SDKROOT",
   "SUPPORTED_PLATFORMS",
 ] as const;
 
 interface BuildContext {
-  label: "iphoneos/arm64" | "iphonesimulator/arm64" | "iphonesimulator/x86_64";
-  sdk: "iphoneos" | "iphonesimulator";
+  label:
+    | "iphoneos/arm64"
+    | "iphonesimulator/arm64"
+    | "iphonesimulator/x86_64"
+    | "macosx/arm64"
+    | "macosx/x86_64";
+  platform: IOSNativePlatform;
+  sdk: "iphoneos" | "iphonesimulator" | "macosx";
   arch: "arm64" | "x86_64";
 }
 
@@ -51,9 +59,21 @@ type XCConfigOperation =
   | { kind: "unresolved-continuation" };
 
 const BUILD_CONTEXTS: BuildContext[] = [
-  { label: "iphoneos/arm64", sdk: "iphoneos", arch: "arm64" },
-  { label: "iphonesimulator/arm64", sdk: "iphonesimulator", arch: "arm64" },
-  { label: "iphonesimulator/x86_64", sdk: "iphonesimulator", arch: "x86_64" },
+  { label: "iphoneos/arm64", platform: "ios", sdk: "iphoneos", arch: "arm64" },
+  {
+    label: "iphonesimulator/arm64",
+    platform: "ios",
+    sdk: "iphonesimulator",
+    arch: "arm64",
+  },
+  {
+    label: "iphonesimulator/x86_64",
+    platform: "ios",
+    sdk: "iphonesimulator",
+    arch: "x86_64",
+  },
+  { label: "macosx/arm64", platform: "macos", sdk: "macosx", arch: "arm64" },
+  { label: "macosx/x86_64", platform: "macos", sdk: "macosx", arch: "x86_64" },
 ];
 
 interface XCConfigCondition {
@@ -687,6 +707,9 @@ async function settingsForConfiguration(
 export interface InspectedTargetConfiguration {
   model: IOSBuildConfiguration;
   entitlementContexts: EntitlementBuildContext[];
+  /** Undefined when resolved platform evidence excludes iOS and macOS. */
+  platform?: IOSNativePlatform;
+  /** Compatibility flag for existing iOS-only mutation planners. */
   isIOS: boolean;
 }
 
@@ -723,6 +746,7 @@ function resolveSettingAcrossContexts(
   targetName: string,
   configurationName: string,
   diagnostics: IOSDiagnostic[],
+  reportConflict = true,
 ): IOSValueResolution {
   const variants = contexts.map(({ context, evaluation, builtins }) => ({
     context,
@@ -732,16 +756,18 @@ function resolveSettingAcrossContexts(
   if (signatures.size <= 1)
     return variants[0]?.resolution ?? { state: "missing", evidence: [evidence] };
 
-  addDiagnosticOnce(diagnostics, {
-    code: "xcode.conflicting-build-setting",
-    severity: "warning",
-    message: `${targetName} ${configurationName} has different ${key} values by SDK and architecture: ${variants
-      .map(({ context, resolution }) => `${context.label}=${resolutionDisplay(resolution)}`)
-      .join(", ")}`,
-    remedy:
-      "Make device and simulator architecture values consistent or select the intended SDK and architecture explicitly.",
-    evidence: variants.flatMap(({ resolution }) => resolution.evidence),
-  });
+  if (reportConflict) {
+    addDiagnosticOnce(diagnostics, {
+      code: "xcode.conflicting-build-setting",
+      severity: "warning",
+      message: `${targetName} ${configurationName} has different ${key} values by SDK and architecture: ${variants
+        .map(({ context, resolution }) => `${context.label}=${resolutionDisplay(resolution)}`)
+        .join(", ")}`,
+      remedy:
+        "Make device and simulator architecture values consistent or select the intended SDK and architecture explicitly.",
+      evidence: variants.flatMap(({ resolution }) => resolution.evidence),
+    });
+  }
 
   return {
     state: "unresolved",
@@ -778,8 +804,9 @@ function missingConfiguration(
       deploymentTarget: missing,
     },
     entitlementContexts: [],
-    // The product type identifies this as an application target, but the
-    // dangling configuration does not contain enough evidence to exclude iOS.
+    // Preserve the existing iOS fail-closed path for a dangling application
+    // configuration whose platform cannot be resolved.
+    platform: "ios",
     isIOS: true,
   };
 }
@@ -901,35 +928,100 @@ export async function inspectTargetBuildConfigurations(options: {
       });
     }
 
-    const deviceContext = evaluatedContexts[0];
-    if (!deviceContext) continue;
+    if (evaluatedContexts.length === 0) continue;
     const evidence = (setting: string): IOSSourceEvidence => ({
       path: pbxprojRelativePath,
       objectId: targetId,
       keyPath: `buildConfigurations.${name}.buildSettings.${setting}`,
     });
-    const supportedPlatformsResolution = resolveSettingAcrossContexts(
+    // Select the automation platform without emitting cross-platform
+    // conflicts. Once selected, every inspected setting is resolved only
+    // across that platform's device/architecture contexts.
+    const initialSupportedPlatformsResolution = resolveSettingAcrossContexts(
       "SUPPORTED_PLATFORMS",
       evaluatedContexts,
       evidence("SUPPORTED_PLATFORMS"),
       targetName,
       name,
       diagnostics,
+      false,
     );
     const supportedPlatforms =
-      supportedPlatformsResolution.state === "resolved" ? supportedPlatformsResolution.value : "";
+      initialSupportedPlatformsResolution.state === "resolved"
+        ? initialSupportedPlatformsResolution.value
+        : "";
     const supportedPlatformTokens = new Set(
       supportedPlatforms
         .toLowerCase()
         .split(/\s+/)
         .filter((value) => value !== ""),
     );
-    const hasModeledIOSPlatform =
+    const hasIOSPlatform =
       supportedPlatformTokens.has("iphoneos") || supportedPlatformTokens.has("iphonesimulator");
-    const activeContexts =
-      supportedPlatformsResolution.state === "resolved" && hasModeledIOSPlatform
-        ? evaluatedContexts.filter(({ context }) => supportedPlatformTokens.has(context.sdk))
-        : evaluatedContexts;
+    const hasMacOSPlatform = supportedPlatformTokens.has("macosx");
+    const supportedPlatform: IOSNativePlatform | undefined = hasIOSPlatform
+      ? "ios"
+      : hasMacOSPlatform
+        ? "macos"
+        : undefined;
+    const platformCandidateContexts = supportedPlatform
+      ? evaluatedContexts.filter(({ context }) => context.platform === supportedPlatform)
+      : evaluatedContexts;
+    const initialSDKRootResolution = resolveSettingAcrossContexts(
+      "SDKROOT",
+      platformCandidateContexts,
+      evidence("SDKROOT"),
+      targetName,
+      name,
+      diagnostics,
+      false,
+    );
+    const initialSDKRoot =
+      initialSDKRootResolution.state === "resolved"
+        ? initialSDKRootResolution.value.toLowerCase()
+        : "";
+    const hasIOSSDK = /iphone(?:os|simulator)/.test(initialSDKRoot);
+    const hasMacOSSDK = initialSDKRoot.includes("macosx");
+    const hasUnknownPlatformEvidence =
+      initialSDKRootResolution.state === "unresolved" ||
+      initialSupportedPlatformsResolution.state === "unresolved";
+    const hasResolvedUnsupportedEvidence =
+      (initialSDKRootResolution.state === "resolved" &&
+        initialSDKRoot !== "" &&
+        !hasIOSSDK &&
+        !hasMacOSSDK) ||
+      (initialSupportedPlatformsResolution.state === "resolved" &&
+        supportedPlatforms !== "" &&
+        !hasIOSPlatform &&
+        !hasMacOSPlatform);
+    // Existing iOS-capable multiplatform targets intentionally retain the iOS
+    // setup path. A target is classified as macOS only when no iOS evidence is
+    // present. Unknown evidence retains the existing fail-closed iOS path.
+    const platform: IOSNativePlatform | undefined =
+      hasIOSPlatform || hasIOSSDK
+        ? "ios"
+        : hasMacOSPlatform || hasMacOSSDK
+          ? "macos"
+          : hasUnknownPlatformEvidence || !hasResolvedUnsupportedEvidence
+            ? "ios"
+            : undefined;
+    const platformContexts = platform
+      ? evaluatedContexts.filter(({ context }) => context.platform === platform)
+      : evaluatedContexts;
+    const hasExplicitContextFilter =
+      initialSupportedPlatformsResolution.state === "resolved" &&
+      platformContexts.some(({ context }) => supportedPlatformTokens.has(context.sdk));
+    const activeContexts = hasExplicitContextFilter
+      ? platformContexts.filter(({ context }) => supportedPlatformTokens.has(context.sdk))
+      : platformContexts;
+    const supportedPlatformsResolution = resolveSettingAcrossContexts(
+      "SUPPORTED_PLATFORMS",
+      activeContexts,
+      evidence("SUPPORTED_PLATFORMS"),
+      targetName,
+      name,
+      diagnostics,
+    );
     const sdkRootResolution = resolveSettingAcrossContexts(
       "SDKROOT",
       activeContexts,
@@ -938,32 +1030,16 @@ export async function inspectTargetBuildConfigurations(options: {
       name,
       diagnostics,
     );
+    const deploymentTargetSetting =
+      platform === "macos" ? "MACOSX_DEPLOYMENT_TARGET" : "IPHONEOS_DEPLOYMENT_TARGET";
     const deploymentTarget = resolveSettingAcrossContexts(
-      "IPHONEOS_DEPLOYMENT_TARGET",
+      deploymentTargetSetting,
       activeContexts,
-      evidence("IPHONEOS_DEPLOYMENT_TARGET"),
+      evidence(deploymentTargetSetting),
       targetName,
       name,
       diagnostics,
     );
-    const sdkRoot = sdkRootResolution.state === "resolved" ? sdkRootResolution.value : "";
-    const hasIOSSDK = sdkRootResolution.state === "resolved" && sdkRoot.includes("iphoneos");
-    const hasIOSPlatform =
-      supportedPlatformsResolution.state === "resolved" &&
-      /iphone(?:os|simulator)/.test(supportedPlatforms);
-    const hasUnknownPlatformEvidence =
-      sdkRootResolution.state === "unresolved" ||
-      supportedPlatformsResolution.state === "unresolved";
-    const hasResolvedNonIOSEvidence =
-      (sdkRootResolution.state === "resolved" && sdkRoot !== "" && !hasIOSSDK) ||
-      (supportedPlatformsResolution.state === "resolved" &&
-        supportedPlatforms !== "" &&
-        !hasIOSPlatform);
-    // SDKROOT and SUPPORTED_PLATFORMS describe the target platform directly.
-    // IPHONEOS_DEPLOYMENT_TARGET can remain as a stale setting on a non-iOS
-    // target, so it must not override resolved platform evidence.
-    const explicitlyNonIOS =
-      !hasUnknownPlatformEvidence && !hasIOSSDK && !hasIOSPlatform && hasResolvedNonIOSEvidence;
 
     const model: IOSBuildConfiguration = {
       name,
@@ -997,7 +1073,7 @@ export async function inspectTargetBuildConfigurations(options: {
       ["PRODUCT_BUNDLE_IDENTIFIER", model.bundleIdentifier],
       ["DEVELOPMENT_TEAM", model.developmentTeam],
       ["CODE_SIGN_ENTITLEMENTS", model.entitlementsPath],
-      ["IPHONEOS_DEPLOYMENT_TARGET", model.deploymentTarget],
+      [deploymentTargetSetting, model.deploymentTarget],
       ["SDKROOT", sdkRootResolution],
       ["SUPPORTED_PLATFORMS", supportedPlatformsResolution],
     ];
@@ -1022,7 +1098,8 @@ export async function inspectTargetBuildConfigurations(options: {
         globalTaintOverrides: new Set(evaluation.globalTaintOverrides),
         builtins: { ...builtins },
       })),
-      isIOS: !explicitlyNonIOS,
+      platform,
+      isIOS: platform === "ios",
     });
   }
 

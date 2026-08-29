@@ -1,5 +1,8 @@
 export type IOSDiagnosticSeverity = "info" | "warning" | "error";
 
+/** The Apple platform selected for Clerk automation on an application target. */
+export type IOSNativePlatform = "ios" | "macos";
+
 export interface IOSSourceEvidence {
   /** Project-root-relative path. */
   path: string;
@@ -141,6 +144,11 @@ export interface IOSSwiftInspection {
 export interface IOSAppTarget {
   id: string;
   name: string;
+  /**
+   * The platform this CLI run will configure. A multiplatform target that
+   * includes iOS continues through the iOS path.
+   */
+  platform: IOSNativePlatform;
   productName?: string;
   projectPath: string;
   configurations: IOSBuildConfiguration[];
@@ -163,10 +171,21 @@ export interface IOSWorkspaceInspection {
 }
 
 export type IOSTargetSelection =
-  | { state: "selected"; targetId: string; targetName: string; projectPath: string }
+  | {
+      state: "selected";
+      targetId: string;
+      targetName: string;
+      projectPath: string;
+      platform: IOSNativePlatform;
+    }
   | {
       state: "ambiguous";
-      candidates: Array<{ targetId: string; targetName: string; projectPath: string }>;
+      candidates: Array<{
+        targetId: string;
+        targetName: string;
+        projectPath: string;
+        platform: IOSNativePlatform;
+      }>;
     }
   | { state: "not-found"; requested: string; candidates: string[] }
   | { state: "none" };
@@ -184,7 +203,7 @@ export type IOSLocalPublishableKeyInspection =
 
 export interface IOSProjectInspectionResult {
   schemaVersion: 1;
-  platform: "ios";
+  platform: IOSNativePlatform | "apple-native";
   /** Absolute invocation root. Paths nested below it are emitted relatively. */
   root: string;
   workspaces: IOSWorkspaceInspection[];
